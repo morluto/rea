@@ -30,7 +30,7 @@ const observedJavaScriptRuntimeKindSchema = javascriptRuntimeKindSchema.or(
 /** Input for one passive attach-only V8 Inspector observation. */
 export const observeJavaScriptRuntimeInputSchema = z.strictObject({
   ...runtimeEndpoint,
-  target_id: z.string().trim().min(1),
+  target_id: z.string().min(1),
   runtime_kind: javascriptRuntimeKindSchema.optional(),
   observation_ms: z.int().min(0).default(100),
 });
@@ -115,6 +115,12 @@ export type JavaScriptRuntimeTargetList = z.infer<
 const javascriptRuntimeScriptSchema = z.strictObject({
   script_key: prefixedDigestSchema("v8_script"),
   location: javascriptRuntimeTargetLocationSchema,
+  reported_url: z
+    .string()
+    .optional()
+    .describe(
+      "Exact Inspector URL for an authorized file script, retained separately from its verified filesystem path.",
+    ),
   execution_context_key: z.string().nullable(),
   cdp_hash: z.string().nullable(),
   length: z
@@ -160,6 +166,13 @@ export const javascriptRuntimeObservationSchema = z.strictObject({
   scripts: z.strictObject({
     items: z.array(javascriptRuntimeScriptSchema),
     observed_total: z.int().min(0),
+    parse_failed_total: z
+      .int()
+      .min(0)
+      .optional()
+      .describe(
+        "Valid scriptFailedToParse events observed; absent in legacy snapshots.",
+      ),
     excluded: z.strictObject({
       unsupported_location: z.int().min(0),
       invalid_protocol_value: z.int().min(0),

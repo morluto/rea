@@ -1,13 +1,17 @@
 import * as t from "@babel/types";
 
 import { javascriptBootstrapAt } from "./javascriptBootstrap.js";
+import { javascriptBundlerFactoryRoles } from "./javascriptBundlerFactoryRoles.js";
 import { proveJavaScriptBootstrapIntegrity } from "./javascriptBootstrapIntegrity.js";
 import {
   semanticMemberChain,
   semanticStaticPropertyKey,
+  readExactJavaScriptLiteral,
   unwrapJavaScriptExpression,
 } from "./javascriptAstValues.js";
 import { collectJavaScriptIdentityWritesSteps } from "./javascriptElectronMemberWrites.js";
+import { semanticBindingAtRead } from "./javascriptSemanticMutationInitializers.js";
+import { SEMANTIC_ALIAS_SELECTION_LIMIT } from "./javascriptSemanticResourceLimits.js";
 import { createSemanticModuleInterop } from "./javascriptModuleInterop.js";
 import {
   semanticRequireOrigin,
@@ -25,8 +29,11 @@ import {
 } from "./javascriptStaticAnalysisHelpers.js";
 import {
   completeSemanticSteps,
-  traverseJavaScriptAst,
+  traverseJavaScriptValueAst,
 } from "./javascriptSemanticTraversal.js";
+
+/** A standalone Webpack bootstrap uses the module, exports, loader convention. */
+const BOOTSTRAP_RUNTIME = "webpack-bootstrap";
 
 /** Loader bindings and literal externals proven for one standalone bootstrap. */
 interface BootstrapExternals {
@@ -154,17 +161,47 @@ const canonicalWebpackInteropBindings = (
   // and Object/Reflect mutators; any write that may select `n` counts.
   const writes = new Set<t.Node>();
   const interop = createSemanticModuleInterop(state);
+  const excludesLoader = (node: t.Node): boolean =>
+    interop.isFreshObject(node) || readExactJavaScriptLiteral(node).found;
+  const loaderMayOwnReference = (root: t.Node): boolean => {
+    const first = unwrapJavaScriptExpression(root).node;
+    if (!t.isIdentifier(first)) return !excludesLoader(first);
+    // Only proven separate values are terminals. An unsupported expression
+    // might return the loader, so preserve that uncertainty instead of dropping it.
+    const pending = [first];
+    const seen = new Set<t.Identifier>();
+    while (pending.length > 0) {
+      const node = pending.pop();
+      if (node === undefined || seen.has(node)) continue;
+      seen.add(node);
+      if (seen.size > SEMANTIC_ALIAS_SELECTION_LIMIT) {
+        state.valueResourceLimits.add("alias-selections");
+        return true;
+      }
+      const binding = resolveSemanticBindingState(state, node, node.name);
+      if (binding === undefined) return true;
+      if (loaderBindingIds.has(binding.bindingId)) return true;
+      const selected = semanticBindingAtRead(binding, node, state).binding;
+      for (const initializers of [
+        selected.initializers,
+        selected.referenceInitializers,
+      ])
+        for (const source of initializers) {
+          // A fresh container does not establish the selected property's value.
+          if (source.projection.length !== 0) return true;
+          const next = unwrapJavaScriptExpression(source.node).node;
+          if (t.isIdentifier(next)) pending.push(next);
+          else if (!excludesLoader(next)) return true;
+        }
+    }
+    return false;
+  };
   completeSemanticSteps(
     collectJavaScriptIdentityWritesSteps(
       state.program,
+      state.erasedSyntaxNodes,
       (root, kind) => {
-        const node = unwrapJavaScriptExpression(root).node;
-        return kind === "member" &&
-          t.isIdentifier(node) &&
-          loaderBindingIds.has(
-            resolveSemanticBindingState(state, node, node.name)?.bindingId ??
-              "",
-          )
+        return kind === "member" && loaderMayOwnReference(root)
           ? [["loader"]]
           : [];
       },
@@ -241,7 +278,7 @@ const isInstalledBeforeEntryDispatch = (
   for (let index = 0; index < body.body.length; index += 1) {
     const topLevel = body.body[index];
     if (topLevel === undefined) continue;
-    traverseJavaScriptAst(topLevel, {
+    traverseJavaScriptValueAst(topLevel, state.erasedSyntaxNodes, {
       enter: (node, _parent, ancestors) => {
         if (
           entryIndex < 0 &&
@@ -341,14 +378,18 @@ const proveBootstrapExternals = (
   });
   for (const { factory } of factories) {
     // The bootstrap proves `table[key](module, module.exports, loader)`.
-    const loaderParameter = factory.params[2];
-    const bindingId = t.isIdentifier(loaderParameter)
-      ? resolveSemanticBindingState(
-          state,
-          loaderParameter,
-          loaderParameter.name,
-        )?.bindingId
-      : undefined;
+    const loaderParameter = javascriptBundlerFactoryRoles(
+      factory,
+      BOOTSTRAP_RUNTIME,
+    ).loader;
+    const bindingId =
+      loaderParameter === undefined
+        ? undefined
+        : resolveSemanticBindingState(
+            state,
+            loaderParameter,
+            loaderParameter.name,
+          )?.bindingId;
     if (
       bindingId !== undefined &&
       singleDefinition(state, bindingId, "parameter")
@@ -390,14 +431,12 @@ const externalSpecifier = (
   factory: t.FunctionExpression | t.ArrowFunctionExpression | t.ObjectMethod,
   state: JavaScriptSemanticAnalysisState,
 ): string | undefined => {
-  const moduleParameter = factory.params[0];
-  const names = factory.params.map((parameter) =>
-    t.isIdentifier(parameter) ? parameter.name : null,
-  );
+  const moduleParameter = javascriptBundlerFactoryRoles(
+    factory,
+    BOOTSTRAP_RUNTIME,
+  ).module;
   if (
-    !t.isIdentifier(moduleParameter) ||
-    // A duplicated name binds the later argument, not the module object.
-    new Set(names).size !== names.length ||
+    moduleParameter === undefined ||
     factory.generator ||
     factory.async ||
     (t.isObjectMethod(factory) && factory.kind !== "method")

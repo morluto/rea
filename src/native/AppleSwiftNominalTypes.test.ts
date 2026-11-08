@@ -480,3 +480,25 @@ describe("Swift nominal type declaration bounds", () => {
     ).toMatchObject({ status: "complete" });
   });
 });
+
+it("uses qualified nominal context for a nested class vtable owner", () => {
+  const bytes = nominalImage((image) => {
+    context(image, MODULE, 0, null, { at: 0x700, value: "ReaMod" });
+    context(image, 0x340, 0x51, MODULE, { at: 0x710, value: "Outer" });
+    context(image, 0x380, 0x80000050, 0x340, { at: 0x720, value: "Inner" });
+    image.u32(0x380 + 28, 1);
+    image.u32(0x380 + 48, 1);
+    image.rel(0x380 + 56, 0x900);
+    return [0x380];
+  });
+  const result = decodeAppleDispatchMetadata(bytes, 100, provenance);
+  expect(result.swift_decls[0]).toMatchObject({
+    name: "Inner",
+    qualified_name: "Outer.Inner",
+    module: "ReaMod",
+  });
+  expect(result.swift_dispatch_slots[0]).toMatchObject({
+    owner: "Outer.Inner",
+    decode: { status: "decoded" },
+  });
+});

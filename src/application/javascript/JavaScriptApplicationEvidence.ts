@@ -7,7 +7,7 @@ import type {
   AnalyzeJavaScriptApplicationInput,
   JavaScriptApplicationAnalysisResult,
 } from "../../domain/javascript/javascriptApplicationAnalysis.js";
-import { JAVASCRIPT_APPLICATION_PROVIDER } from "../InvestigationProviders.js";
+import { JAVASCRIPT_APPLICATION_PROVIDER } from "../../domain/investigationProviders.js";
 import { freezeOwnedJsonSnapshotSteps } from "../../domain/immutableJson.js";
 import { rememberOwnedApplicationGraphEvidence } from "./JavaScriptApplicationEvidenceGraph.js";
 import { completeJavaScriptAnalysisSteps } from "./JavaScriptAnalysisControl.js";

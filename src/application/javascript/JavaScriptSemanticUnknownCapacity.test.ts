@@ -1,3 +1,4 @@
+import { javaScriptSemanticQueryInputSchema } from "../../domain/javascript/javascriptSemanticQuerySchemas.js";
 import { createHash } from "node:crypto";
 import { expect, it } from "vitest";
 import type { JavaScriptArtifactFile } from "../../domain/javascript/javascriptArtifactFiles.js";
@@ -83,10 +84,13 @@ it("bounds unknowns independently of retained nodes and accounts for examined om
   );
   expect(javaScriptSemanticGraphSchema.parse(graph)).toEqual(graph);
   expect(
-    queryJavaScriptSemanticGraph(graph, {
-      seed: { kind: "property", name: "missing" },
-      direction: "backward-provenance",
-    }),
+    queryJavaScriptSemanticGraph(
+      graph,
+      javaScriptSemanticQueryInputSchema.parse({
+        seed: { kind: "property", name: "missing" },
+        direction: "backward-provenance",
+      }),
+    ),
   ).toMatchObject({ status: "partial", coverage: { status: "partial" } });
 });
 
@@ -313,4 +317,26 @@ it("applies the same unknown admission in direct and transferred construction", 
   expect(direct.finish(digest, application)).toEqual(
     transferred.finish(digest, application),
   );
+});
+
+it("bounds reads within unmodeled nested operator operands", () => {
+  const body = `const base = "token"; const value = ${"wrap(".repeat(30)}base${")".repeat(30)} + "/x";`;
+  const bounded = fileProjection(source("app.js", body), 200, 1);
+  expect(bounded.unknowns.length).toBeLessThanOrEqual(1);
+  expect(bounded.omittedUnknownOccurrences?.length).toBeGreaterThan(0);
+  const projection = createJavaScriptSemanticGraphProjection({
+    totalUnknowns: 1,
+    fileUnknowns: 1,
+  });
+  projection.adoptFileProjection(bounded);
+  const graph = projection.finish(digest, application);
+  expect(graph.coverage.truncated).toBe(true);
+  const trace = queryJavaScriptSemanticGraph(
+    graph,
+    javaScriptSemanticQueryInputSchema.parse({
+      seed: { kind: "literal", value: "token" },
+      direction: "forward-influence",
+    }),
+  );
+  expect(trace.status).not.toBe("found");
 });

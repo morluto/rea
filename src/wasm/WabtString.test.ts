@@ -17,15 +17,27 @@ it("frames escaped quotes and trailing backslashes without consuming the next fo
       const encoded = JSON.stringify(value);
       const source = encoded + ' (export "next" (func 0))';
       expect(watStringEnd(source, 1)).toBe(encoded.length);
-      expect(watString(source, 1).bytes).toEqual(Buffer.from(value));
+      expect(
+        Buffer.compare(watString(source, 1).bytes, Buffer.from(value)),
+      ).toBe(0);
     }
   }
 });
 
 it("rejects missing terminators, including a dangling escape or escaped last quote", () => {
   for (const source of ['"', '"payload', '"payload\\', '"payload\\"']) {
-    expect(() => watStringEnd(source, 1)).toThrow("Incomplete WABT string");
-    expect(() => watString(source, 1)).toThrow("Incomplete WABT string");
+    expect(() => watStringEnd(source, 1)).toThrow(
+      expect.objectContaining({
+        _tag: "WabtAdmissionError",
+        code: "incomplete_string",
+      }),
+    );
+    expect(() => watString(source, 1)).toThrow(
+      expect.objectContaining({
+        _tag: "WabtAdmissionError",
+        code: "incomplete_string",
+      }),
+    );
     expect(() => parseWabtWat(`(module (import ${source}`)).toThrow();
   }
 });
@@ -51,6 +63,9 @@ it("preserves quoted WAT punctuation, nested comments, escaped names and unknown
     },
   ]);
   expect(() => parseWabtWat('(module (import "env" "\\q" (func)))')).toThrow(
-    "Unsupported WABT name escape",
+    expect.objectContaining({
+      _tag: "WabtAdmissionError",
+      code: "unsupported_escape",
+    }),
   );
 });

@@ -8,16 +8,18 @@ import type {
 import { semanticCallableIdForNode } from "./javascriptSemanticProjection.js";
 import { createSemanticCallableIdStack } from "./javascriptSemanticCallableStack.js";
 import {
+  readExactJavaScriptLiteral,
   semanticStaticPropertyName,
   unwrapJavaScriptExpression,
 } from "./javascriptAstValues.js";
 import {
   resolveSemanticBindingState,
-  semanticResolutionBlocked,
   type JavaScriptSemanticAnalysisState,
 } from "./javascriptSemanticState.js";
 import { compareUnicodeCodePoints } from "../unicodeCodePointOrder.js";
-import { traverseJavaScriptAst } from "./javascriptSemanticTraversal.js";
+import { traverseJavaScriptValueAst } from "./javascriptSemanticTraversal.js";
+import { semanticBindingAtRead } from "./javascriptSemanticMutationInitializers.js";
+import { isUnmodifiedGlobalReference } from "./javascriptSemanticAmbientWrites.js";
 import { range } from "./javascriptStaticAnalysisHelpers.js";
 import {
   assignedSemanticResultBindings,
@@ -99,6 +101,50 @@ export const collectJavaScriptSemanticPromises = (
   });
 };
 
+/**
+ * Node's `Promise` constructor calls the executor synchronously and throws a
+ * `TypeError` when it is not callable, before any promise object exists. An
+ * exactly readable literal that cannot be a function — or a missing argument —
+ * is therefore not a promise construction, while an identifier, a call result or
+ * a spread may still supply a function and keeps its operation.
+ *
+ * A class expression is callable enough to pass Node's own check, so it is kept.
+ */
+const rejectsPromiseExecutor = (
+  node: t.Node,
+  state: JavaScriptSemanticAnalysisState,
+): boolean => {
+  if (!t.isNewExpression(node)) return false;
+  const executor = node.arguments[0];
+  if (executor === undefined) return true;
+  if (t.isSpreadElement(executor)) return false;
+  const value = unwrapJavaScriptExpression(executor).node;
+  if (t.isFunctionExpression(value) || t.isArrowFunctionExpression(value))
+    return false;
+  if (t.isClassExpression(value)) return false;
+  // `NaN` and `Infinity` are unshadowed globals rather than literals, and neither
+  // is callable.
+  if (
+    t.isIdentifier(value) &&
+    (value.name === "NaN" || value.name === "Infinity") &&
+    isUnmodifiedGlobalReference(value, state, value.name)
+  )
+    return true;
+  // Every unary operator yields a primitive, and a primitive is never callable.
+  // A numeric literal is read directly rather than through the exact-value
+  // reader, which refuses to price a non-finite literal such as `1e309`.
+  return (
+    t.isUnaryExpression(value) ||
+    t.isNumericLiteral(value) ||
+    readExactJavaScriptLiteral(value).found ||
+    t.isTemplateLiteral(value) ||
+    t.isBigIntLiteral(value) ||
+    t.isRegExpLiteral(value) ||
+    t.isArrayExpression(value) ||
+    t.isObjectExpression(value)
+  );
+};
+
 const collectCandidates = (
   program: t.Program,
   state: JavaScriptSemanticAnalysisState,
@@ -110,11 +156,11 @@ const collectCandidates = (
   );
   const callableStack = createSemanticCallableIdStack(admittedCallables);
   const ancestors: t.Node[] = [];
-  traverseJavaScriptAst(program, {
+  traverseJavaScriptValueAst(program, state.erasedSyntaxNodes, {
     enter: (node, parent) => {
       callableStack.enter(node, parent);
       const details = promiseCandidateDetails(node, state);
-      if (details !== null) {
+      if (details !== null && !rejectsPromiseExecutor(node, state)) {
         output.push({
           node,
           ...details,
@@ -140,7 +186,7 @@ const promiseCandidateDetails = (
   if (
     t.isNewExpression(node) &&
     t.isIdentifier(node.callee, { name: "Promise" }) &&
-    isUnshadowedGlobalPromise(node.callee, state)
+    isUnmodifiedGlobalReference(node.callee, state, "Promise")
   )
     return { kind: "constructor", method: "new" };
   if (t.isCallExpression(node) || t.isOptionalCallExpression(node)) {
@@ -149,7 +195,7 @@ const promiseCandidateDetails = (
     const method = semanticStaticPropertyName(member.property, member.computed);
     if (
       t.isIdentifier(member.object, { name: "Promise" }) &&
-      isUnshadowedGlobalPromise(member.object, state)
+      isUnmodifiedGlobalReference(node.callee, state, ["Promise", method ?? ""])
     ) {
       if (method === "all" || method === "allSettled")
         return { kind: "aggregate", method };
@@ -163,13 +209,6 @@ const promiseCandidateDetails = (
     return { kind: "awaited-expression", method: "await" };
   return null;
 };
-
-const isUnshadowedGlobalPromise = (
-  node: t.Identifier,
-  state: JavaScriptSemanticAnalysisState,
-): boolean =>
-  resolveSemanticBindingState(state, node, "Promise") === undefined &&
-  !semanticResolutionBlocked(state, node, "Promise");
 
 const isPromiseProducer = (
   node: t.Node,
@@ -447,14 +486,16 @@ const resolvePromiseExpression = (
     return { promiseIds: [direct.promiseId], status: "complete" };
   if (!t.isIdentifier(node)) return unresolvedPromise();
   const binding = resolveSemanticBindingState(state, node, node.name);
+  if (binding === undefined || seenBindings.has(binding.bindingId))
+    return unresolvedPromise();
+  const read = semanticBindingAtRead(binding, node, state);
   if (
-    binding === undefined ||
-    binding.mutable ||
-    binding.initializers.length !== 1 ||
-    seenBindings.has(binding.bindingId)
+    read.status !== "ordered" ||
+    !read.hasDefiniteInitializer ||
+    read.binding.initializers.length !== 1
   )
     return unresolvedPromise();
-  const initializer = binding.initializers[0];
+  const initializer = read.binding.initializers[0];
   if (initializer === undefined || initializer.projection.length > 0)
     return unresolvedPromise();
   const nestedSeen = new Set(seenBindings);

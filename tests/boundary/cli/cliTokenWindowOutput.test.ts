@@ -4,6 +4,7 @@ import { Cli, Formatter } from "incur";
 import { estimateTokenCount } from "tokenx";
 import { describe, expect, it } from "vitest";
 
+import { parseCliOutputArguments } from "../../../src/cliOutput.js";
 import {
   createCliResultOutput,
   streamCliCommandResults,
@@ -34,7 +35,10 @@ const renderWindow = async (
     "--token-offset",
     String(offset),
   ];
-  const output = createCliResultOutput(argv, destination);
+  const output = createCliResultOutput(
+    parseCliOutputArguments(argv),
+    destination,
+  );
   if (output === undefined) throw new Error("Missing TOON output surface");
   const handled = await output.write(value, {
     command: "fixture",
@@ -191,7 +195,12 @@ describe("token windows through Incur output policies", () => {
         },
       });
       const output = createCliResultOutput(
-        ["fixture", "--filter-output", "missing", ...windowFlags],
+        parseCliOutputArguments([
+          "fixture",
+          "--filter-output",
+          "missing",
+          ...windowFlags,
+        ]),
         destination,
       )!;
       const handled = await output.write(
@@ -249,7 +258,10 @@ describe("token windows through Incur output policies", () => {
               callback();
             },
           });
-          const output = createCliResultOutput(argv, destination)!;
+          const output = createCliResultOutput(
+            parseCliOutputArguments(argv),
+            destination,
+          )!;
           const cli = Cli.create("policy-test", { sync: false });
           if (grouped) {
             const group = Cli.create("group", {

@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { utcDateTimeSchema } from "./offsetDateTime.js";
 
 import { webRuntimeCommandTimeoutSchema } from "./browserDeadline.js";
 import {
@@ -12,7 +13,7 @@ import { browserVersionSchema } from "./browserObservationSchemas.js";
 export const observeWebSessionInputSchema = z.strictObject({
   cdp_endpoint: browserObservationEndpointSchema,
   allowed_origins: browserAllowedOriginsSchema,
-  target_id: z.string().trim().min(1),
+  target_id: z.string().min(1),
   observation_ms: z.int().min(1).default(10_000),
   command_timeout_ms: webRuntimeCommandTimeoutSchema,
 });
@@ -20,6 +21,11 @@ export type ObserveWebSessionInput = z.infer<
   typeof observeWebSessionInputSchema
 >;
 
+const destinationScopeSchema = z.enum([
+  "approved",
+  "outside_policy",
+  "unsupported",
+]);
 const timelineEventSchema = z.object({
   sequence: z.int().min(1),
   type: z.enum([
@@ -45,10 +51,18 @@ const timelineEventSchema = z.object({
   loader_id: z.string().nullable(),
   request_id: z.string().nullable(),
   url: z.string().nullable(),
-  destination_scope: z
-    .enum(["approved", "outside_policy", "unsupported"])
-    .nullable(),
+  destination_scope: destinationScopeSchema.nullable(),
   detail: z.string().nullable(),
+  redirect_response: z
+    .object({
+      url: z.string().nullable(),
+      status: z.number().nullable(),
+      scope: destinationScopeSchema.nullable(),
+    })
+    .optional()
+    .describe(
+      "Prior-hop response metadata. URL and status require an approved response origin; null scope is unknown. Omitted in historical Evidence.",
+    ),
 });
 
 /** Navigation-aware session result for external user actions. */
@@ -60,8 +74,8 @@ export const webObservationSessionSchema = z.object({
     final_url: z.string().nullable(),
   }),
   window: z.object({
-    armed_at: z.iso.datetime(),
-    ended_at: z.iso.datetime(),
+    armed_at: utcDateTimeSchema,
+    ended_at: utcDateTimeSchema,
     requested_ms: z.int().min(1),
     end_reason: z.enum([
       "window_elapsed",

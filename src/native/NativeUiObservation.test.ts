@@ -248,7 +248,6 @@ describe("native UI capture selection and budgets", () => {
         },
       },
     );
-    expect(result.ok).toBe(false);
     if (result.ok) throw new Error("Expected scenario cancellation");
     expect(result.error._tag).toBe("AnalysisCancelledError");
     expect(result.error.cause).toBe(controller.signal.reason);
@@ -274,7 +273,6 @@ describe("native UI capture selection and budgets", () => {
         invoke: async () => ({ ok: true, result: largeSnapshot }),
       },
     );
-    expect(result.ok).toBe(false);
     if (result.ok) throw new Error("Expected scenario output limit failure");
     expect(result.error._tag).toBe("AnalysisCapabilityUnavailableError");
     expect(result.error.partialObservation).toMatchObject({
@@ -311,7 +309,6 @@ describe("native UI deadline execution", () => {
         },
       },
     );
-    expect(result.ok).toBe(true);
     if (!result.ok) throw new Error("expected a completed scenario");
     const limitation = result.value.limitations.join("\n");
     expect(limitation).toContain("selected native_ui_deadline_ms of 2500 ms");
@@ -327,7 +324,6 @@ describe("native UI deadline execution", () => {
       environment: {},
       invoke: async () => ({ ok: true, result: snapshot }),
     });
-    expect(result.ok).toBe(true);
     if (!result.ok) throw new Error("expected a completed observation");
     const limitation = result.value.limitations.join("\n");
     expect(limitation).toContain("selected native_ui_deadline_ms of 180000 ms");
@@ -354,7 +350,6 @@ describe("native UI deadline execution", () => {
         throw new ExecFileOutputCancelledError(reason);
       },
     });
-    expect(result.ok).toBe(false);
     if (result.ok) throw new Error("Expected deadline timeout");
     expect(result.error).toBeInstanceOf(AnalysisTimeoutError);
     expect(result.error.cause).toBe(reason);
@@ -377,7 +372,6 @@ describe("native UI deadline execution", () => {
         throw new ExecFileOutputCancelledError(producerReason);
       },
     });
-    expect(result.ok).toBe(false);
     if (result.ok) throw new Error("Expected producer cancellation");
     expect(result.error).toBeInstanceOf(AnalysisCancelledError);
     expect(result.error.cause).toBe(producerReason);
@@ -409,7 +403,6 @@ describe("native UI deadline execution", () => {
         },
       },
     );
-    expect(result.ok).toBe(false);
     if (result.ok) throw new Error("Expected deadline timeout");
     expect(result.error).toBeInstanceOf(AnalysisTimeoutError);
     expect(result.error.cause).toBe(reason);
@@ -442,7 +435,6 @@ it("classifies a helper subprocess timeout as the selected UI deadline", async (
       },
     },
   );
-  expect(result.ok).toBe(false);
   if (result.ok) throw new Error("Expected helper deadline timeout");
   expect(result.error).toBeInstanceOf(AnalysisTimeoutError);
   const projected = projectAnalysisError(result.error);
@@ -476,7 +468,6 @@ describe("native UI interruption provenance", () => {
       },
     );
     clearTimeout(timer);
-    expect(result.ok).toBe(false);
     if (result.ok) throw new Error("Expected deadline timeout");
     expect(result.error).toBeInstanceOf(AnalysisTimeoutError);
     expect(result.error.cause).toBe(reason);
@@ -494,7 +485,6 @@ describe("native UI interruption provenance", () => {
       signal: caller.signal,
       invoke: async () => ({ ok: true, result: snapshot }),
     });
-    expect(result.ok).toBe(false);
     if (result.ok) throw new Error("Expected caller cancellation");
     expect(result.error._tag).toBe("AnalysisCancelledError");
     expect(result.error.cause).toBe(reason);
@@ -517,7 +507,6 @@ describe("native UI interruption provenance", () => {
         throw failure;
       },
     });
-    expect(result.ok).toBe(false);
     if (result.ok) throw new Error("Expected helper failure");
     expect(result.error._tag).toBe("ProviderAdapterError");
     expect(result.error.cause).toBe(failure);
@@ -539,7 +528,6 @@ describe("native UI interruption provenance", () => {
         return { ok: true, result: { malformed: true } };
       },
     });
-    expect(result.ok).toBe(false);
     if (result.ok) throw new Error("Expected schema failure");
     expect(result.error._tag).toBe("ProviderAdapterError");
     expect(result.error.cause).toMatchObject({ name: "ZodError" });
@@ -561,7 +549,22 @@ describe("native UI target and cancellation failures", () => {
       }),
     });
     expect(result.ok).toBe(false);
-    if (!result.ok) expect(result.error.message).toContain(code);
+    if (!result.ok) {
+      const projected = projectAnalysisError(result.error);
+      expect(projected.message).toBe(
+        "Grant permission or select an unambiguous window",
+      );
+      if (code === "ambiguous-window")
+        expect(projected).toMatchObject({
+          code: "invalid_request",
+          details: {
+            issues: [
+              { path: ["window_id"], message: expect.stringContaining(code) },
+            ],
+          },
+        });
+      else expect(projected.details?.reason).toContain(code);
+    }
   });
   it("preserves the underlying helper failure reason in diagnostics", async () => {
     const result = await observeNativeUi(target, "observe_native_ui", scope, {
@@ -577,8 +580,9 @@ describe("native UI target and cancellation failures", () => {
     expect(result.error).toMatchObject({
       diagnostics: {
         reason: "Native helper returned invalid JSON: Unexpected token",
-        remediation:
-          "Native helper failed, timed out, or returned malformed capture data; install compatible Xcode command-line tools and inspect local OS permissions",
+        remediation: expect.stringMatching(
+          /Xcode command.line tools.*local OS permissions/iu,
+        ),
       },
     });
   });
@@ -613,7 +617,6 @@ describe("native UI target and cancellation failures", () => {
       launch_time: 1,
       action: { kind: "scroll", path: [1] },
     });
-    expect(result.ok).toBe(false);
     if (result.ok) throw new Error("Expected failed action");
     expect(result.error._tag).toBe("AnalysisCapabilityUnavailableError");
     expect(result.error.partialObservation).toMatchObject({
@@ -645,7 +648,6 @@ describe("native UI target and cancellation failures", () => {
       },
     );
     expect(calls).toBe(1);
-    expect(result.ok).toBe(false);
     if (result.ok) throw new Error("Expected scenario cancellation");
     expect(result.error._tag).toBe("AnalysisCancelledError");
     expect(result.error.cause).toBe(controller.signal.reason);

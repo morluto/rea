@@ -24,6 +24,7 @@ const project = (reported: JsonValue[], sensitiveValueCount = 0) => {
   return projectAnalysisView(
     {
       evidenceId: parent.evidence_id,
+      predicateType: parent.predicate_type,
       operation: parent.operation,
       normalizedResult: parent.normalized_result,
       limitations: [],

@@ -1,3 +1,4 @@
+import type { JsonValue } from "../../domain/jsonValue.js";
 import { createEvidence } from "../../domain/evidence.js";
 import {
   readRuntimeReconciliationInput,
@@ -111,4 +112,4 @@ export const SOURCE_TO_BUNDLE_COMPARISON_EXAMPLE = {
     limitations: [],
   }),
   application: JAVASCRIPT_APPLICATION_EVIDENCE_EXAMPLE,
-};
+} satisfies Readonly<Record<string, JsonValue>>;

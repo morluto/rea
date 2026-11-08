@@ -44,8 +44,11 @@ credentials and resets it between sequences.
     `guid` of the answer's own entities (at the read view's entity or list location, a write's response location, or
     else the root) also maps within the collection the call names, since two collections can reuse a live id for
     different entities. An equal pair is kept in that collection, so another collection's mapping of the same live id
-    does not replace it. A collection's map is a bijection: the first pairing of either side wins. Outside identifier
-    fields, a string maps when the environment's state holds it as an id, and the keys of two objects keyed by ids map
+    does not replace it. Global mappings are one-to-one and first-pair-wins; equal global pairs also reserve both ids.
+    If an equal pair conflicts with another pairing, its contested live or environment id is not used to normalize
+    either pair, in either observation order. Only non-identity, unconflicted mappings count as mapped ids. Outside
+    identifier fields, a string maps only at a field where learning found it held as an id in environment state. The
+    keys of two objects keyed by ids map
     when their values pair (keys that partly overlap only when they are digits, UUIDs or their entries' identities, and
     every value pairs);
   - ids are learned only from an answer the environment gave this call, from its state or from a recording of exactly
@@ -62,14 +65,20 @@ credentials and resets it between sequences.
   reported `refused`. A browser probe keeps its request bodies; one captured without response bodies is refused, since
   only statuses would compare, and so is one that makes POST, PUT or PATCH calls without recorded request bodies, since
   those calls would be made empty.
-- Answers compare after normalisation: empty response text equals no body (a JSON empty string stays one); mapped ids
-  compare equal, in scalar sets as well, an entity's own identity within the call's collection and any other id by the
+- Answers compare after normalisation: empty response text and JSON `null` equal no body (a JSON empty string stays one);
+  decoded JSON values compare structurally, plain text compares as text, and retained base64 bodies compare as bytes
+  (including against UTF-8 text with the same bytes), without treating a base64 spelling as text. Mapped ids compare
+  equal in identifier fields, in `ids`/`uuids`/`guids` scalar lists, and for an entity's own identity within the call's
+  collection; other numeric fields stay literal. Any other id compares by the
   probe's mapping, and an entity's own identity both sides hold verbatim differs when its collection's mapping gives it
   another environment value (a reference keeps raw equality, as the probe's mapping cannot tell which collection it
   names); an object's members compare under the environment's mapped keys only when it is keyed by learned ids as
   learning reads one, and any other object compares field by field; two clock values (ISO-8601 strings, or epoch numbers under
-  time-named fields) compare by format only; two different generated values (both UUIDs, or both of one length and the
-  same character classes with a digit) that neither side maps compare equal and are counted. A body over the replay
+  time-named fields) compare by format only; numeric array elements remain literal.
+  Different strings normalize as generated only at direct entity fields where
+  the executed served write plan proves a unique token or UUID/token identity
+  generator, and neither side participates in an ID mapping. A UUID or token
+  shape alone is insufficient evidence. A body over the replay
   limit, text or binary, compares by status only, as does a live body the probe did not record, unless the answer has
   none by definition (204, 205, 304, or an answer to `HEAD`). Both are counted.
 - A step agrees when the statuses are equal and the normalised bodies are. Differences are categorised: `status`,
@@ -77,7 +86,10 @@ credentials and resets it between sequences.
   environment refused the call), `not-served`, `no-tool` and `unmapped-id`, each with a JSON pointer and short values.
 - The report gives agreement overall, per probe and per tool, agreement ignoring item order beside it, the counts per
   category, the ids mapped and the values normalised, the records left uncompared, and each step's differences (at most
-  20 per step).
+  20 per step). Each step gives `differences_total` before that cap, `differences_omitted`, and
+  `differences_truncated`, true when entries were omitted. Equality and categories use all differences.
+  Omitted entries are not retained and `--full-output` cannot recover them; further investigation uses the original
+  capture and probe Evidence.
 
 ## Non-goals
 

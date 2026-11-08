@@ -78,7 +78,20 @@ cliTest.skipIf(process.platform !== "darwin")(
       const graph = interfaceBuilderAnalysisSchema.parse(
         parseEvidence(decoded.json).normalized_result,
       ).graph;
-      expect(graph.truncated).toBe(false);
+      // The fixture need not describe a complete view hierarchy to establish
+      // decoded object facts used by asset-key matching.
+      expect(graph.coverage).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            facet: "archive_decode",
+            status: "complete",
+          }),
+          expect.objectContaining({
+            facet: "archive_object_decode",
+            status: "complete",
+          }),
+        ]),
+      );
       const resource = graph.nodes.find(
         (node) =>
           node.kind === "resource" && node.attributes.class_name === "NSImage",
@@ -143,11 +156,14 @@ cliTest.skipIf(process.platform !== "darwin")(
       expect(binaryResult).toEqual({
         target_sha256: executableSha256,
         catalogs: result.catalogs,
+        catalog_coverage: result.catalog_coverage,
+        inventory_coverage: result.inventory_coverage,
         total_records: result.total_records,
         offset: result.offset,
         limit: result.limit,
         records: result.records,
         resource_key_matches: result.resource_key_matches,
+        resource_key_coverage: result.resource_key_coverage,
         next_offset: result.next_offset,
         truncated: result.truncated,
         limitations: result.limitations,

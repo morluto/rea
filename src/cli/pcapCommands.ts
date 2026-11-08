@@ -1,3 +1,4 @@
+import { projectCliAnalysisResult } from "./projectCliAnalysisResult.js";
 import { z } from "incur";
 import { PcapAnalysisService } from "../application/pcap/PcapAnalysisService.js";
 import type { PcapAnalysisPort } from "../application/pcap/PcapAnalysisPort.js";
@@ -9,6 +10,7 @@ import type { Logger } from "pino";
 import type { CliInstance } from "./types.js";
 import { withCommandCancellation } from "./commandCancellation.js";
 import { finishAnalysisCommand } from "./finishAnalysisCommand.js";
+import { bindCliEvidenceCallerPath } from "./cliEvidenceCallerPath.js";
 
 /** Expose the same explicit pcap requests through one-shot CLI commands. */
 export const registerPcapCommands = (
@@ -18,16 +20,25 @@ export const registerPcapCommands = (
   provider: PcapAnalysisPort = createPcapAnalysisProvider(environment),
 ): void => {
   const service = new PcapAnalysisService(provider);
-  const execute = (name: string, operation: PcapOperation, input: unknown) =>
+  const execute = (
+    name: string,
+    operation: PcapOperation,
+    input: unknown,
+    callerPath?: string,
+  ) =>
     withCommandCancellation((signal) =>
       logCliCommand(logger, name, () =>
         finishAnalysisCommand(
-          () => service.execute(operation, input, { signal }),
+          callerPath === undefined
+            ? () => service.execute(operation, input, { signal })
+            : bindCliEvidenceCallerPath(callerPath, () =>
+                service.execute(operation, input, { signal }),
+              ),
           { close: () => provider.close() },
           "pcap",
           operation,
           signal,
-        ),
+        ).then(projectCliAnalysisResult),
       ),
     );
 
@@ -48,8 +59,13 @@ export const registerPcapCommands = (
         .describe("Local pcap or pcapng capture file to inspect"),
     }),
     run: ({ args }) =>
-      execute(CLI_COMMANDS.inspectPcapCapture, "inspect_pcap_capture", {
-        path: args.path,
-      }),
+      execute(
+        CLI_COMMANDS.inspectPcapCapture,
+        "inspect_pcap_capture",
+        {
+          path: args.path,
+        },
+        args.path,
+      ),
   });
 };

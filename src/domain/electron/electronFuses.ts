@@ -88,6 +88,7 @@ const electronFuseSliceSchema = z.strictObject({
   file_offset: z.int().nonnegative(),
   size: z.int().nonnegative(),
   architecture: z.string().min(1).nullable(),
+  hidden: z.boolean().exactOptional(),
   sentinel_count: z.int().nonnegative(),
   sentinels: z.array(electronFuseSentinelSchema),
 });

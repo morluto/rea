@@ -17,6 +17,7 @@ interface SourceInterval {
 interface CallableInterval extends SourceInterval {
   readonly callableId: string;
   readonly priority: string;
+  readonly computedKeyRange: JavaScriptSourceRange | null;
 }
 
 interface SourceIntervalTree<Interval extends SourceInterval> {
@@ -40,6 +41,7 @@ export const createSemanticCallableOwnerLookup = (
     .map((callable, order): CallableInterval => ({
       callableId: callable.callableId,
       range: callable.location,
+      computedKeyRange: callable.computedKeyLocation,
       order,
       priority: positionKey(callable.location),
     }))
@@ -65,7 +67,11 @@ export const createSemanticCallableOwnerLookup = (
       )
         continue;
       const candidate = current.entry;
-      if (javascriptSourceRangeContains(candidate.range, location)) {
+      if (
+        javascriptSourceRangeContains(candidate.range, location) &&
+        (candidate.computedKeyRange === null ||
+          !javascriptSourceRangeContains(candidate.computedKeyRange, location))
+      ) {
         const node = nodes.get(candidate.callableId);
         const rank =
           best === undefined

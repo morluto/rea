@@ -4,7 +4,6 @@ import {
   type Evidence,
   type EvidenceObservation,
 } from "../domain/evidence.js";
-import { jsonValueSchema } from "../domain/jsonValue.js";
 import { sanitizeBrowserUrl } from "../domain/browserObservation.js";
 import type {
   InspectWebPageInput,
@@ -16,6 +15,7 @@ import type {
 } from "../domain/browserObservationSchemas.js";
 import type {
   AnalyzeWebBundleInput,
+  WebBundleAcquisitionPartialObservation,
   WebBundleAnalysis,
 } from "../domain/webBundleAnalysis.js";
 import type {
@@ -31,6 +31,7 @@ import type {
   BrowserCaptureComparisonInput,
 } from "../domain/browserCaptureComparison.js";
 import { commitBrowserScenarioNormalization } from "../domain/browserScenarioNormalization.js";
+import { digestCanonicalValue } from "../domain/canonicalDigest.js";
 import type {
   CaptureWebScreenshotInput,
   CompareWebScreenshotsInput,
@@ -51,6 +52,7 @@ type BrowserEvidenceResult =
   | BrowserTargetList
   | WebPageInspection
   | WebBundleAnalysis
+  | WebBundleAcquisitionPartialObservation
   | WebObservationSession
   | WebMcpDiscovery
   | BrowserCaptureComparison
@@ -66,36 +68,60 @@ type BrowserEvidenceOperation =
   | "capture_web_screenshot"
   | "compare_web_screenshots";
 
+const isBundleAcquisition = (
+  result: BrowserEvidenceResult,
+): result is WebBundleAcquisitionPartialObservation =>
+  "kind" in result && result.kind === "web-bundle-acquisition";
+
 /** Create Evidence for one request-scoped external browser observation. */
 export const createBrowserEvidence = (
   operation: BrowserEvidenceOperation,
   input: BrowserEvidenceInput,
   result: BrowserEvidenceResult,
   provider: ProviderIdentity,
-): Evidence =>
-  createEvidence(undefined, provider, {
+): Evidence => {
+  const acquisition = isBundleAcquisition(result);
+  const observed = acquisition ? result.inspection : result;
+  const comparison =
+    operation === "compare_web_captures" ||
+    operation === "compare_web_screenshots";
+  return createEvidence(undefined, provider, {
     predicateType: browserPredicate(operation),
     operation,
-    parameters: browserParameters(input, result),
-    result: jsonValueSchema.parse(result),
-    confidence: "observed",
-    authority: "external-service",
-    environment:
-      "browser" in result
+    parameters: {
+      ...browserParameters(input, result),
+      ...(comparison
         ? {
-            id: `${result.browser.product}@${result.browser.revision}`,
+            comparison_input_sha256: digestCanonicalValue(
+              input,
+              "Browser comparison input",
+            ),
+          }
+        : {}),
+    },
+    result,
+    confidence: comparison ? "derived" : "observed",
+    authority: comparison ? "analyst-inference" : "external-service",
+    environment:
+      "browser" in observed
+        ? {
+            id: `${observed.browser.product}@${observed.browser.revision}`,
             platform: "unknown",
             architecture: "unknown",
             isolation: "none",
           }
         : null,
     limitations: [
-      ...result.limitations,
-      ...("browser" in result
+      ...observed.limitations,
+      ...(acquisition && result.source_maps.limitation !== undefined
+        ? [result.source_maps.limitation]
+        : []),
+      ...("browser" in observed
         ? ["Browser host platform and architecture were not observed."]
         : []),
     ],
   });
+};
 
 const browserParameters = (
   input: BrowserEvidenceInput,

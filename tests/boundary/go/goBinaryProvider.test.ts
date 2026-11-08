@@ -82,7 +82,6 @@ it("keeps the header-search budget distinct from a worker CPU limit", async () =
   const path = join(root, "overlapping.elf");
   await writeFile(path, createGoOverlappingElfFixture());
   const result = await new GoBinaryProvider().inspect({ path });
-  expect(result.ok).toBe(false);
   if (result.ok) throw new Error("Overlapping header search must be refused");
   const projected = projectAnalysisError(result.error);
   expect(projected).toMatchObject({
@@ -99,6 +98,30 @@ it("keeps the header-search budget distinct from a worker CPU limit", async () =
   expect(projected.remediation.action).not.toMatch(/observed signal/u);
 });
 
+it("reports unreadable ELF names alongside the no-record limitation", async () => {
+  const bytes = createGoBinaryFixture({ omitBuildInfo: true }).bytes;
+  const nameTableHeader = 256 + 64;
+  bytes.writeBigUInt64LE(0x800n, nameTableHeader + 8);
+  bytes.writeBigUInt64LE(24n, nameTableHeader + 32);
+  bytes.writeUInt32LE(3, 768);
+  const root = await createTestTempDirectory("rea-go-unknown-section-names-");
+  const path = join(root, "unknown-names.elf");
+  await writeFile(path, bytes);
+
+  const result = await new GoBinaryProvider().inspect({ path });
+  if (!result.ok) throw result.error;
+  expect(result.value.build_info).toBeNull();
+  expect(result.value.limitations).toContain(
+    "No recognized Go build-info record was found in the inspected image; absent metadata does not establish that the binary is not Go.",
+  );
+  expect(result.value.limitations).toContainEqual(
+    expect.stringMatching(
+      /section names.*unavailable.*compression type 3.*unsupported/iu,
+    ),
+  );
+  expect(result.value).not.toHaveProperty("section_names_limitation");
+});
+
 it.skipIf(process.platform === "win32")(
   "rejects a symlink without replacing its selected file identity",
   async () => {
@@ -109,7 +132,12 @@ it.skipIf(process.platform === "win32")(
     await symlink(original, selected);
     const result = await new GoBinaryProvider().inspect({ path: selected });
     expect(result.ok).toBe(false);
-    if (!result.ok) expect(result.error).toBeInstanceOf(AnalysisInputError);
+    if (!result.ok) {
+      expect(result.error).toBeInstanceOf(AnalysisInputError);
+      const projected = projectAnalysisError(result.error);
+      expect(projected.remediation.action).toContain(original);
+      expect(projected).not.toHaveProperty("recovery");
+    }
   },
 );
 

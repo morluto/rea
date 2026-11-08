@@ -1,5 +1,8 @@
-import { describe, expect, it, vi } from "vitest";
-import { NativeModuleResolver } from "./NativeModuleResolver.js";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import {
+  NativeModuleResolver,
+  type ModuleResolverLauncher,
+} from "./NativeModuleResolver.js";
 import { webModuleResolutionObservationSchema } from "../../domain/webModuleTrace.js";
 import { projectAnalysisError } from "../../domain/analysisErrorProjection.js";
 
@@ -167,6 +170,26 @@ describe("optional native resolution acquisition", () => {
         message: expect.stringContaining("REA_BROWSER_EXECUTABLE"),
       });
   });
+  it.each(["relative/chromium", ""])(
+    "retains an invalid selected browser path %j without launching",
+    async (executable) => {
+      const provider = new NativeModuleResolver(
+        { REA_BROWSER_EXECUTABLE: executable },
+        () => {
+          throw new Error("must not launch");
+        },
+      );
+      const result = await provider.resolve(input);
+      if (result.ok) throw new Error("expected configuration refusal");
+      expect(projectAnalysisError(result.error)).toMatchObject({
+        code: "capability_unavailable",
+        details: {
+          reason: "invalid_browser_executable",
+          diagnostics: { executable },
+        },
+      });
+    },
+  );
   it("does not acquire a browser after caller cancellation", async () => {
     const controller = new AbortController();
     const reason = { request: "opaque admission cancellation" };
@@ -194,6 +217,61 @@ describe("optional native resolution acquisition", () => {
         executable: "/missing/browser",
         error_message: "spawn EACCES fixture",
       },
+    });
+  });
+});
+
+describe("native resolution Chromium sandbox", () => {
+  const hostPlatform = process.platform;
+  afterEach(() => {
+    Object.defineProperty(process, "platform", { value: hostPlatform });
+  });
+
+  it.each([
+    { environment: {}, sandbox: true },
+    { environment: { REA_BROWSER_NO_SANDBOX: "false" }, sandbox: true },
+    { environment: { REA_BROWSER_NO_SANDBOX: "true" }, sandbox: false },
+  ])(
+    "launches Chromium with sandbox $sandbox for $environment",
+    async ({ environment, sandbox }) => {
+      Object.defineProperty(process, "platform", { value: "linux" });
+      let launchOptions: Parameters<ModuleResolverLauncher>[0] | undefined;
+      const provider = new NativeModuleResolver(
+        { REA_BROWSER_EXECUTABLE: "/browser", ...environment },
+        (options) => {
+          launchOptions = options;
+          return Promise.reject(new Error("launch boundary reached"));
+        },
+      );
+      const result = await provider.resolve(input);
+      if (result.ok) throw new Error("expected startup failure");
+      expect(launchOptions?.chromiumSandbox).toBe(sandbox);
+      expect(launchOptions?.args).not.toContain("--no-sandbox");
+      expect(result.error).toMatchObject({
+        remediationAction: sandbox
+          ? expect.stringContaining("REA_BROWSER_NO_SANDBOX=true")
+          : undefined,
+      });
+    },
+  );
+
+  it("keeps the default recovery for engine failures after a sandboxed launch", async () => {
+    Object.defineProperty(process, "platform", { value: "linux" });
+    const provider = new NativeModuleResolver(
+      { REA_BROWSER_EXECUTABLE: "/browser" },
+      () =>
+        Promise.resolve({
+          version: () => "fixture",
+          newContext: () =>
+            Promise.reject(new Error("fixture context failure")),
+          close: () => Promise.resolve(),
+        }),
+    );
+    const result = await provider.resolve(input);
+    if (result.ok) throw new Error("expected engine failure");
+    expect(result.error).toMatchObject({
+      remediationAction: undefined,
+      diagnostics: { error_message: "fixture context failure" },
     });
   });
 });

@@ -1,13 +1,12 @@
 import { z } from "zod";
+import { readRecordedResponseDeclaration } from "./recordedResponseBody.js";
 
 const responseSchema = z.object({
   response: z.object({
     status: z.unknown().optional(),
-    content: z.unknown().optional(),
     headers: z.unknown().optional(),
   }),
 });
-const contentSchema = z.object({ mimeType: z.unknown().optional() });
 const headerSchema = z.object({
   name: z.string(),
   value: z.unknown(),
@@ -56,29 +55,27 @@ export const apiSurfaceResponse = (
   readonly mime: string;
   readonly mimeSourceLength: number;
 } => {
+  if (format === "har") {
+    const response = readRecordedResponseDeclaration(reported);
+    const status = response?.status;
+    const mime = response?.content?.mimeType;
+    return {
+      status: typeof status === "number" && status !== 0 ? status : null,
+      mime: typeof mime === "string" ? mime : "",
+      mimeSourceLength: 0,
+    };
+  }
   const parsed = responseSchema.safeParse(reported);
   if (!parsed.success) return { status: null, mime: "", mimeSourceLength: 0 };
   const response = parsed.data.response;
   const status =
-    format === "saz"
-      ? typeof response.status === "string" &&
-        /^[0-9]{3}$/u.test(response.status)
-        ? Number(response.status)
-        : null
-      : typeof response.status === "number"
-        ? response.status
-        : null;
-  const content = contentSchema.safeParse(response.content);
-  const saz = format === "saz" ? sazContentType(response.headers) : undefined;
-  const mime =
-    format === "saz"
-      ? saz?.value
-      : content.success
-        ? content.data.mimeType
-        : undefined;
+    typeof response.status === "string" && /^[0-9]{3}$/u.test(response.status)
+      ? Number(response.status)
+      : null;
+  const contentType = sazContentType(response.headers);
   return {
     status: status === 0 ? null : status,
-    mime: typeof mime === "string" ? mime : "",
-    mimeSourceLength: saz?.sourceLength ?? 0,
+    mime: contentType?.value ?? "",
+    mimeSourceLength: contentType?.sourceLength ?? 0,
   };
 };

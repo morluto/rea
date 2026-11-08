@@ -90,7 +90,7 @@ export function* jsonValueValidationSteps(
           kind: "array",
           value,
           depth,
-          index: value.length - 1,
+          index: 0,
         });
         inspect = false;
       } else if (isRecord(value)) {
@@ -114,11 +114,11 @@ export function* jsonValueValidationSteps(
     const frame = pending[pending.length - 1];
     if (frame === undefined) return finish(undefined);
     if (frame.kind === "array") {
-      if (frame.index < 0) {
+      if (frame.index >= frame.value.length) {
         pending.pop();
         continue;
       }
-      const index = frame.index--;
+      const index = frame.index++;
       const descriptor = Object.getOwnPropertyDescriptor(frame.value, index);
       if (descriptor === undefined || !Object.hasOwn(descriptor, "value"))
         return finish(
@@ -204,3 +204,8 @@ objectValidation._zod.toJSONSchema = objectProjection;
 /** JSON object boundary for caller-visible parameter maps. */
 export const jsonObjectSchema = jsonValueSchema.pipe(objectValidation);
 jsonObjectSchema._zod.toJSONSchema = objectProjection;
+
+/** Validate an exclusively owned JSON object while retaining its existing tree. */
+export const ownedJsonObjectSchema =
+  ownedJsonValueSchema.pipe(objectValidation);
+ownedJsonObjectSchema._zod.toJSONSchema = objectProjection;

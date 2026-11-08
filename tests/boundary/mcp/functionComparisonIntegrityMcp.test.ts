@@ -14,7 +14,7 @@ import {
   type FunctionComparisonResult,
 } from "../../../src/domain/functionComparisonSchemas.js";
 import { summarize } from "../../../src/domain/functionComparisonResults.js";
-import { jsonValueSchema } from "../../../src/domain/jsonValue.js";
+
 import { createApplicationMcpHarness } from "../../fixtures/applicationMcpHarness.js";
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
@@ -165,7 +165,7 @@ it.each([
       predicateType: base.predicate_type,
       operation: base.operation,
       parameters: base.parameters,
-      result: jsonValueSchema.parse(scenario.result(result)),
+      result: scenario.result(result),
       confidence: base.confidence,
       authority: base.authority,
       limitations: base.limitations,

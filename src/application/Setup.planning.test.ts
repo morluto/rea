@@ -101,6 +101,54 @@ describe("selected skill admission", () => {
     },
   );
 
+  it.each([
+    { decision: "the offered skill ID", acceptAll: false },
+    { decision: "accept all", acceptAll: true },
+  ])(
+    "keeps a CLI-only skill choice independent of detected personal copies ($decision)",
+    async ({ acceptAll }) => {
+      const host = new FakeSetupHost();
+      host.hopper = "/Applications/Hopper";
+      host.clients = [{ name: "claude_code", configPath: "/claude.json" }];
+      const offered: string[] = [];
+      const result = await runSetup(
+        { ...options(false), structured: false },
+        host,
+        async (actions, context) => {
+          if (context?.stage === "select") {
+            const skill = actions.find(({ kind }) => kind === "install_skill");
+            offered.push(skill?.id ?? "");
+            if (acceptAll) return true;
+            return {
+              approved: false,
+              selectedActionIds: skill === undefined ? [] : [skill.id],
+            };
+          }
+          return true;
+        },
+      );
+      expect(offered).toEqual(["install_skill"]);
+      expect(result.status).toBe("ready");
+      expect(
+        result.plannedActions.map(({ id, target }) => ({ id, target })),
+      ).toEqual([
+        {
+          id: "install_skill",
+          target: join(
+            "/fixture/home",
+            ".agents",
+            "skills",
+            "reverse-engineer-anything",
+          ),
+        },
+      ]);
+      expect(result.appliedActions).toEqual(["installed_skill"]);
+      expect(host.skillInstalls).toBe(1);
+      expect(host.configurations).toBe(0);
+      expect(host.skillDirectoryValidations).toEqual([[], []]);
+    },
+  );
+
   it("rechecks directory admission after approval before changing clients or Hopper", async () => {
     const host = new FakeSetupHost("linux");
     host.distribution = {
@@ -253,10 +301,13 @@ describe("setup client selection", () => {
       configPath: "/codex.toml",
       format: "toml" as const,
     };
-    host.clients = [codex];
+    host.clients = [
+      codex,
+      { name: "grok_bot", configPath: "/grokbot", format: "unsupported" },
+    ];
     host.availableClients = [
       { name: "cursor", configPath: "/cursor.json" },
-      codex,
+      ...host.clients,
     ];
 
     const result = await runSetup(
@@ -282,6 +333,31 @@ describe("setup client selection", () => {
     expect(host.hopperInstalls).toBe(0);
     expect(host.skillInstalls).toBe(0);
   });
+
+  it.each([undefined, false])(
+    "omits manual clients from automatic readiness while preserving detection (skill: %s)",
+    async (installSkill) => {
+      const host = new FakeSetupHost();
+      host.clients = [
+        { name: "grok_bot", configPath: "/grokbot", format: "unsupported" },
+      ];
+      const result = await runSetup(
+        {
+          ...options(true),
+          allDetectedClients: true,
+          ...(installSkill === undefined ? {} : { installSkill }),
+        },
+        host,
+      );
+      expect(result.status).toBe("ready");
+      expect(result.doctor.scope.clients).toEqual([]);
+      expect(result.clientStates).toMatchObject([
+        { client: { name: "grok_bot" }, detected: true },
+      ]);
+      expect(result.clients).toEqual({});
+      expect(host.configurations).toBe(0);
+    },
+  );
 
   it.each([true, false])(
     "handles repeated clients once in first-selected order (dry run: %s)",

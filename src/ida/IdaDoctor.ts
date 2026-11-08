@@ -8,10 +8,7 @@ import {
 } from "./IdaConfiguration.js";
 import type { Result } from "../domain/result.js";
 import type { ConfigurationError } from "../domain/configurationErrors.js";
-import { privateRuntimeRootCapability } from "../process/PrivateRuntimeRoot.js";
-import { constants } from "node:fs";
-import { access, stat } from "node:fs/promises";
-import { resolveIdaWorkspaceParent } from "./IdaWorkspace.js";
+import { inspectIdaWorkspaceReadiness } from "./IdaWorkspaceReadiness.js";
 import type { RetainedResourceScope } from "../application/AnalysisProvider.js";
 
 /** Check the registration without launching IDA, and retain only the configuration file reference. */
@@ -57,7 +54,7 @@ export const inspectIdaRegistration = async (
             : "IDA MCP registration is not configured.",
         remediation: valid
           ? null
-          : "Set REA_IDA_MCP_CONFIG to your upstream IDA MCP registration JSON; see docs/ida-provider.md.",
+          : "Set REA_IDA_MCP_CONFIG to your upstream IDA MCP registration JSON; see docs/providers/ida-provider.md.",
         classification:
           path === undefined ? "missing_analysis_engine" : "config_drift",
       },
@@ -69,8 +66,8 @@ export const inspectIdaRegistration = async (
 const inspectPrivateWorkspace = async (
   workspaceRoot: string | undefined,
 ): Promise<DoctorProviderCheck> => {
-  const privacy = privateRuntimeRootCapability();
-  const unusable = await workspaceRootFailure(workspaceRoot);
+  const { privacy, unusable } =
+    await inspectIdaWorkspaceReadiness(workspaceRoot);
   return {
     name: "private_workspace",
     ok: privacy.available && unusable === undefined,
@@ -87,7 +84,7 @@ const inspectPrivateWorkspace = async (
       ? privacy.remediation
       : unusable === undefined
         ? null
-        : "Set workspaceRoot to an existing directory REA can create entries in, or omit it to use the system temporary directory; see docs/ida-provider.md.",
+        : "Set workspaceRoot to an existing directory REA can create entries in, or omit it to use the system temporary directory; see docs/providers/ida-provider.md.",
     classification:
       !privacy.available && privacy.code === "runtime_missing"
         ? "missing_dependency"
@@ -97,18 +94,4 @@ const inspectPrivateWorkspace = async (
             ? "config_drift"
             : "unsupported_host",
   };
-};
-
-const workspaceRootFailure = async (
-  root: string | undefined,
-): Promise<string | undefined> => {
-  try {
-    const parent = await resolveIdaWorkspaceParent(root);
-    if (!(await stat(parent)).isDirectory())
-      return `IDA workspaceRoot ${root ?? "the system temporary directory"} is not a directory.`;
-    await access(parent, constants.W_OK | constants.X_OK);
-    return undefined;
-  } catch (cause: unknown) {
-    return `IDA workspaceRoot ${root ?? "the system temporary directory"} is not a usable directory: ${cause instanceof Error ? cause.message : String(cause)}`;
-  }
 };

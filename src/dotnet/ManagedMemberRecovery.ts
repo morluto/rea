@@ -18,6 +18,7 @@ type TypeInventory = Pick<
   | "types"
   | "nesting_read"
   | "selection"
+  | "method_rows"
   | "limitations"
 >;
 
@@ -38,6 +39,7 @@ export const prepareManagedMemberRecovery = (
     ...inventory,
     metadata: { ...inventory.metadata, status: "partial" },
     signature_resolution: null,
+    assembly: null,
     exported_types: null,
     fields: [],
     methods: [],
@@ -49,7 +51,9 @@ export const prepareManagedMemberRecovery = (
     limitations: [
       ...inventory.limitations,
       "Member decoding exceeded capacity after the type inventory was admitted; fields, methods, member references, call edges, field accesses, exported types and user strings are not examined to completion. Empty member collections do not establish absence.",
-      "Use the returned TypeDef full_name values with type_names (CLI --type) to inspect a smaller selection; a single selected type can still exceed capacity.",
+      inventory.selection !== null && inventory.types.length === 1
+        ? "This single-type selection already reached the member-decoding capacity. Member references and exported types are assembly-wide and still count toward the shared budget."
+        : "Use the returned TypeDef full_name values with type_names (CLI --type) to inspect a smaller selection; a single selected type can still exceed capacity.",
       "Metadata tokens are build-local coordinates and require the reported artifact SHA-256 and MVID. Type names and list ranges retain their original metadata and nesting uncertainty.",
     ],
   };

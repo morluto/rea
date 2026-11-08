@@ -1,17 +1,15 @@
+import { objcClassSymbol } from "./objcClassSymbol.js";
 import type { JsonValue } from "./jsonValue.js";
-import type { AddressedName } from "./hopperValues.js";
+import type { AddressedName } from "./native/nativeInventory.js";
 import type {
   MachoImportBinding,
-  ObjcClassImportBindingCoverage,
+  ObjcClassDiscoveryCoverage,
 } from "./native/objcSwiftMetadata.js";
 import {
   classifySwiftSymbol,
-  isSwiftMangledSymbolName,
+  isSwiftSymbolName,
   type SwiftTypeCategory,
 } from "./swiftSymbolClassification.js";
-
-/** Objective-C class definition markers emitted by modern Apple clang. */
-const OBJC_CLASS_MARKER = "OBJC_CLASS_$_" as const;
 
 /** Local class records emitted by Apple's fragile Objective-C ABI. */
 const LEGACY_OBJC_CLASS_PREFIX = "l_OBJC_CLASS_" as const;
@@ -21,14 +19,6 @@ const LEGACY_OBJC_CLASS_PREFIX = "l_OBJC_CLASS_" as const;
  * share the substring but are uses, not definitions.
  */
 const OBJC_PROTOCOL_MARKER = "OBJC_PROTOCOL_$_" as const;
-
-export interface ObjcClassDiscoveryCoverage {
-  readonly status:
-    | ObjcClassImportBindingCoverage["status"]
-    | "unknown"
-    | "not_applicable";
-  readonly reason: string | null;
-}
 
 export interface ObjcClassImportBindingScan {
   readonly bindings: readonly MachoImportBinding[];
@@ -44,7 +34,7 @@ export const selectObjcClassCandidates = (
     names
       .filter(
         ({ name, objc_class_label }) =>
-          name.includes(OBJC_CLASS_MARKER) ||
+          objcClassSymbol(name)?.metaclass === false ||
           objc_class_label === "hopper_legacy_class_object" ||
           (name.startsWith(LEGACY_OBJC_CLASS_PREFIX) &&
             name.length > LEGACY_OBJC_CLASS_PREFIX.length &&
@@ -56,16 +46,7 @@ export const selectObjcClassCandidates = (
 /** Project selected class labels, coalescing only exact proven import identities. */
 export const projectObjcClassCandidates = (
   candidates: readonly AddressedName[],
-  bindingScan: ObjcClassImportBindingScan = {
-    bindings: [],
-    coverage: {
-      status: candidates.length === 0 ? "not_applicable" : "unknown",
-      reason:
-        candidates.length === 0
-          ? null
-          : "Exact class-import binding identity is unavailable.",
-    },
-  },
+  bindingScan: ObjcClassImportBindingScan,
 ): JsonValue => {
   const classes = coalesceBoundClassAliases(candidates, bindingScan.bindings);
   return {
@@ -78,17 +59,6 @@ export const projectObjcClassCandidates = (
   };
 };
 
-/** Select, then project Objective-C class labels for provider-neutral callers. */
-export const discoverObjcClasses = (
-  names: readonly AddressedName[],
-  pattern: string,
-  bindingScan?: ObjcClassImportBindingScan,
-): JsonValue =>
-  projectObjcClassCandidates(
-    selectObjcClassCandidates(names, pattern),
-    bindingScan,
-  );
-
 /** Select and deduplicate Objective-C and Swift protocol labels. */
 export const discoverObjcProtocols = (
   names: readonly AddressedName[],
@@ -97,9 +67,7 @@ export const discoverObjcProtocols = (
     names.filter(
       ({ name }) =>
         name.includes(OBJC_PROTOCOL_MARKER) ||
-        name.includes("_TtP") ||
-        (name.endsWith("Mp") &&
-          classifySwiftSymbol(name)?.category === "protocols"),
+        classifySwiftSymbol(name)?.protocolIdentity === true,
     ),
   );
   return {
@@ -107,16 +75,6 @@ export const discoverObjcProtocols = (
     protocols: protocols.map(toJsonEntry),
   };
 };
-
-/**
- * A Swift symbol carries either a demangler mangling or a name the category
- * decoder already accepts, including visible runtime class names (`_Tt…`) and
- * the optional leading underscore of legacy encodings (`__T0…`). Whether the
- * nominal category can be decoded is a separate question, so it must not decide
- * whether the symbol is Swift at all.
- */
-const isSwiftSymbolName = (name: string): boolean =>
-  isSwiftMangledSymbolName(name) || classifySwiftSymbol(name) !== undefined;
 
 /** Categorize procedure names using Swift manglings at their exact addresses. */
 export const categorizeSwiftTypes = (
@@ -335,20 +293,11 @@ const coalesceBoundClassAliases = (
 };
 
 const classNameFromImport = (symbol: string): string | undefined => {
-  const canonical = symbol.startsWith("_") ? symbol.slice(1) : symbol;
-  return canonical.startsWith(OBJC_CLASS_MARKER) &&
-    canonical.length > OBJC_CLASS_MARKER.length
-    ? canonical
-    : undefined;
+  const facts = objcClassSymbol(symbol);
+  return facts?.metaclass === false ? facts.symbol : undefined;
 };
 
-const classNameFromDisplayName = (name: string): string | undefined =>
-  name.startsWith(OBJC_CLASS_MARKER) && name.length > OBJC_CLASS_MARKER.length
-    ? name
-    : name.startsWith(`_${OBJC_CLASS_MARKER}`) &&
-        name.length > OBJC_CLASS_MARKER.length + 1
-      ? name.slice(1)
-      : undefined;
+const classNameFromDisplayName = classNameFromImport;
 
 const toObjcClassEntry = (entry: ObjcClassOutputEntry): JsonValue => ({
   address: entry.address,

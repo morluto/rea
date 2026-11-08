@@ -1,3 +1,4 @@
+import { projectCliAnalysisResult } from "./projectCliAnalysisResult.js";
 import { z } from "incur";
 import { createSqliteDatabaseService } from "../composition/sqlite.js";
 import { CLI_COMMANDS } from "../cliCommandNames.js";
@@ -5,8 +6,10 @@ import { logCliCommand } from "../cliLogging.js";
 import type { Logger } from "pino";
 import type { CliInstance } from "./types.js";
 import { withCommandCancellation } from "./commandCancellation.js";
+import { localPathStringSchema } from "../domain/localPath.js";
 import { absoluteCallerPath } from "../filesystem/callerPath.js";
-import { finishAnalysisCommand } from "./finishAnalysisCommand.js";
+import { finishCliEvidenceCommand } from "./cliEvidenceCallerPath.js";
+import { cliDecimalField } from "./options.js";
 import { inspectSqliteDatabaseInputSchema } from "../domain/sqlite/sqliteDatabase.js";
 
 /** Resolve an operator-selected SQLite snapshot through the shared inspection workflow. */
@@ -20,10 +23,12 @@ export const registerSqliteCommands = (
     description:
       "Inspect SQLite schema and optional ordinary-table rows from a local snapshot",
     args: z.object({
-      path: z.string().describe("Local SQLite database snapshot"),
+      path: localPathStringSchema.describe("Local SQLite database snapshot"),
     }),
     options: z.object({
-      workerTimeoutMs: inspectSqliteDatabaseInputSchema.shape.worker_timeout_ms,
+      workerTimeoutMs: cliDecimalField(
+        inspectSqliteDatabaseInputSchema.shape.worker_timeout_ms,
+      ),
       table: z
         .string()
         .optional()
@@ -40,19 +45,15 @@ export const registerSqliteCommands = (
         .describe(
           "Compact inventory by default, or selected-table details when table is supplied; database requests full schema",
         ),
-      rowLimit: z
-        .number()
-        .int()
-        .min(1)
-        .optional()
-        .describe(
-          "Positive safe integer row count; default 20; requires table",
-        ),
+      rowLimit: cliDecimalField(
+        inspectSqliteDatabaseInputSchema.shape.row_limit,
+      ).describe("Positive safe integer row count; default 20; requires table"),
     }),
     run: ({ args, options }) =>
       withCommandCancellation((signal) =>
         logCliCommand(logger, CLI_COMMANDS.inspectSqliteDatabase, () =>
-          finishAnalysisCommand(
+          finishCliEvidenceCommand(
+            args.path,
             () =>
               service.inspect(
                 {
@@ -79,7 +80,7 @@ export const registerSqliteCommands = (
             "sqlite",
             "inspect_sqlite_database",
             signal,
-          ),
+          ).then(projectCliAnalysisResult),
         ),
       ),
   });

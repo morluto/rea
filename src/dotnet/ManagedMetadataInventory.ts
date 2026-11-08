@@ -13,10 +13,13 @@ import {
   readCustomAttribute,
   readModule,
   readResource,
+  managedMetadataTypeNames,
+  type ManagedMetadataTypeNameLookup,
 } from "./ManagedMetadataInventoryRows.js";
 import { metadataToken } from "./ManagedMetadataHeaps.js";
 import type { TypeMemberListFacts } from "./ManagedTypeMemberLists.js";
 import {
+  appendManagedParseIssues,
   readManagedValue,
   uniqueManagedParseIssues,
 } from "./ManagedReaderFailure.js";
@@ -76,7 +79,7 @@ const readRows = <Item>(
 };
 
 const heapExtent = (layout: ManagedMetadataLayout): number =>
-  Math.max(layout.strings.size, layout.blob.size);
+  Math.max(layout.strings.size, layout.blob?.size ?? 0);
 
 const validateIdentityTableCounts = (
   layout: ManagedMetadataLayout,
@@ -166,6 +169,7 @@ const readAttributes = (
   layout: ManagedMetadataLayout,
   issues: ManagedParseIssue[],
   memberLists: TypeMemberListFacts,
+  typeNames: ManagedMetadataTypeNameLookup,
 ): {
   readonly attributes: readonly CustomAttribute[];
   readonly targetFrameworks: readonly string[];
@@ -180,6 +184,7 @@ const readAttributes = (
           heapExtent(layout),
           issues,
           memberLists,
+          typeNames,
         ),
       issues,
     ),
@@ -207,9 +212,10 @@ export const readManagedMetadataInventory = (
     ManagedMetadataInventory,
     "module" | "issues"
   > = readManagedModuleIdentity(bytes, layout),
+  typeNames?: ManagedMetadataTypeNameLookup,
 ): ManagedMetadataInventory => {
   const issues: ManagedParseIssue[] = [...memberLists.issues];
-  issues.push(...identity.issues);
+  appendManagedParseIssues(issues, identity.issues);
   const { module } = identity;
   const assembly =
     readManagedValue(
@@ -228,6 +234,7 @@ export const readManagedMetadataInventory = (
     layout,
     issues,
     memberLists,
+    typeNames ?? managedMetadataTypeNames(bytes, layout, issues),
   );
   return {
     module,

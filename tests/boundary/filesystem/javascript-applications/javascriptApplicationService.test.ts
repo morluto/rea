@@ -20,7 +20,8 @@ import { createJavaScriptArtifactReader } from "../../../../src/artifacts/javasc
 import { createJavaScriptSourceAnalysis } from "../../../../src/artifacts/javascript/JavaScriptSourceAnalysis.js";
 import { analyzeAndAdoptJavaScriptArtifactFiles } from "../../../../src/application/javascript/JavaScriptArtifactAnalysis.js";
 import { createJavaScriptSemanticGraphProjection } from "../../../../src/application/javascript/JavaScriptSemanticGraphBuilder.js";
-import { buildJavaScriptArtifactGraph } from "../../../../src/application/javascript/JavaScriptArtifactGraphBuilder.js";
+import { immutableArtifactGraph } from "../../../fixtures/javascriptArtifactGraph.js";
+import type { JavaScriptApplicationGraph } from "../../../../src/domain/javascript/javascriptApplicationGraph.js";
 import { writeFixtureFiles } from "../../../support/javascriptApplicationFixture.js";
 
 describe("JavaScript source selection cancellation boundary", () => {
@@ -175,27 +176,31 @@ it("resolves lazy package and JSON facts without completing their skipped observ
       ),
     ).toBe(false);
 
-    const graph = buildJavaScriptArtifactGraph(
+    const graph = await immutableArtifactGraph(
       snapshot,
       files,
       outcome.analysis,
     );
     expect(graph.coverage.status).toBe("partial");
-    expect(
-      graph.edges.find(
-        ({ relation, properties }) =>
-          relation === "imports" && properties.specifier === "late-pkg",
-      )?.properties,
-    ).toMatchObject({
+    const packageRelationships = graph.edges.filter(
+      ({ relation, properties }) =>
+        relation === "imports" &&
+        properties.module_link_kind === "require" &&
+        properties.specifier === "late-pkg",
+    );
+    expect(packageRelationships).toHaveLength(1);
+    expect(packageRelationships[0]?.properties).toMatchObject({
       resolution_status: "resolved",
       resolved_path: "app/node_modules/late-pkg/index.cjs",
     });
-    expect(
-      graph.edges.find(
-        ({ relation, properties }) =>
-          relation === "imports" && properties.specifier === "./config.json",
-      )?.properties,
-    ).toMatchObject({
+    const jsonRelationships = graph.edges.filter(
+      ({ relation, properties }) =>
+        relation === "imports" &&
+        properties.module_link_kind === "require" &&
+        properties.specifier === "./config.json",
+    );
+    expect(jsonRelationships).toHaveLength(1);
+    expect(jsonRelationships[0]?.properties).toMatchObject({
       target_file_kind: "json",
       target_json_status: "included",
     });
@@ -222,7 +227,7 @@ it("resolves lazy package and JSON facts without completing their skipped observ
 });
 
 const unknownScopeObservation = (
-  graph: ReturnType<typeof buildJavaScriptArtifactGraph>,
+  graph: JavaScriptApplicationGraph,
   path: string,
 ) =>
   graph.nodes
@@ -231,7 +236,7 @@ const unknownScopeObservation = (
     .find(({ properties }) => properties.path === path);
 
 const expectSkippedStructuredSource = (
-  graph: ReturnType<typeof buildJavaScriptArtifactGraph>,
+  graph: JavaScriptApplicationGraph,
   path: string,
   operation: string,
 ): void => {
@@ -548,5 +553,57 @@ describe("JavaScript application cleanup diagnostics", () => {
       cleanup,
       partialObservation,
     });
+  });
+});
+
+describe("JavaScript application symbolic coverage", () => {
+  it("analyzes sources spreading recursive call results while preserving coverage limits and independent endpoints", async () => {
+    const root = await createTestTempDirectory("rea-js-recursive-spread-");
+    await writeFile(
+      join(root, "self.js"),
+      'function f(o) { const stay = f(o); return { ...stay, c: stay.sc.startsWith("k") }; }\nfetch("/kept-self");\n',
+    );
+    await writeFile(
+      join(root, "mutual.js"),
+      'function a(o) { const stay = b(o); return { ...stay, c: stay.sc.startsWith("k") }; }\nfunction b(o) { const stay = a(o); return { ...stay, c: stay.sc.startsWith("k") }; }\nfetch("/kept-mutual");\n',
+    );
+    const result = await analyzeJavaScriptApplication({
+      input_path: root,
+      format: "directory",
+      source_paths: ["self.js", "mutual.js"],
+    });
+    if (!result.ok) throw result.error;
+    const normalized = javascriptApplicationAnalysisResultSchema.parse(
+      result.value.normalized_result,
+    );
+    expect(normalized.statistics).toMatchObject({
+      parsed_javascript_files: 2,
+      parse_failures: 0,
+    });
+    const endpoints = normalized.graph.nodes
+      .filter(({ kind }) => kind === "endpoint")
+      .flatMap(({ observations }) =>
+        observations.map(({ properties }) => properties.value),
+      )
+      .sort();
+    expect(endpoints).toEqual(["/kept-mutual", "/kept-self"]);
+
+    const assetObservations = normalized.graph.nodes
+      .filter(({ kind }) => kind === "javascript-asset")
+      .flatMap(({ observations }) => observations);
+    for (const path of ["self.js", "mutual.js"]) {
+      const observation = assetObservations.find(
+        ({ properties }) => properties.path === path,
+      );
+      expect(observation?.properties).toMatchObject({
+        parse_status: "partial",
+        analysis_coverage: {
+          examination: {
+            status: "limited",
+            electron_call_paths_limited: true,
+          },
+        },
+      });
+    }
   });
 });

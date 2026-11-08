@@ -25,6 +25,15 @@ import {
   sameZipName,
   type StoredZipName,
 } from "./zipEntryName.js";
+import {
+  APK_V1_MANIFEST_PATH,
+  APK_V1_META_INF_PREFIX,
+  isV1SignatureBlockName,
+  isV1SignatureFileName,
+  isV1SignatureMetadataName,
+  startsWithV1MetaInfPrefix,
+  v1SignatureFileNameForBlock,
+} from "./apkV1MetadataName.js";
 
 const CD_SIGNATURE = 0x02014b50;
 const CD_FIXED_SIZE = 46;
@@ -55,37 +64,6 @@ export const MAX_V1_SIGNERS = 32;
 
 /** Duplicated central-directory names decoded for the report; the rest are counted. */
 export const MAX_DUPLICATE_NAME_SAMPLE = 5;
-
-const META_INF = "META-INF/";
-const MANIFEST = "META-INF/MANIFEST.MF";
-const META_INF_BYTES = Uint8Array.from(
-  [...META_INF].map((c) => c.charCodeAt(0)),
-);
-
-/** True when the raw name starts with `META-INF/` (apksig's selection). */
-const startsWithMetaInf = (
-  bytes: Uint8Array,
-  start: number,
-  length: number,
-): boolean => {
-  if (length < META_INF_BYTES.length) return false;
-  for (let i = 0; i < META_INF_BYTES.length; i += 1)
-    if (bytes[start + i] !== META_INF_BYTES[i]) return false;
-  return true;
-};
-
-const BLOCK_SUFFIXES = [".RSA", ".DSA", ".EC"] as const;
-const isSignatureFile = (name: string): boolean => name.endsWith(".SF");
-const isSignatureBlock = (name: string): boolean =>
-  BLOCK_SUFFIXES.some((suffix) => name.endsWith(suffix));
-
-/** The `.SF` file apksig pairs with a signature block. */
-const signatureFileFor = (block: string): string =>
-  `${block.slice(0, block.lastIndexOf("."))}.SF`;
-
-/** The one owner of which `META-INF/` names take part in v1 signing. */
-const isV1SignatureName = (name: string): boolean =>
-  name === MANIFEST || isSignatureFile(name) || isSignatureBlock(name);
 
 /** A signing-relevant central-directory entry and where its data is stored. */
 export interface ApkV1Entry {
@@ -331,10 +309,10 @@ export const centralDirectoryV1SignatureEntries = (
       });
     starts[i] = nameStart;
     lengths[i] = nameLength;
-    if (startsWithMetaInf(bytes, nameStart, nameLength)) {
+    if (startsWithV1MetaInfPrefix(bytes, nameStart, nameLength)) {
       const rawName = bytes.subarray(nameStart, nameStart + nameLength);
       const name = decodeZipName(rawName);
-      if (isV1SignatureName(name)) {
+      if (isV1SignatureMetadataName(name)) {
         if (entries.length >= MAX_V1_SIGNATURE_ENTRIES)
           return err({
             kind: "budget-exceeded",
@@ -373,7 +351,9 @@ export const centralDirectoryV1SignatureEntries = (
 export const detectV1Signature = (
   entries: readonly ApkV1Entry[],
 ): ApkV1Signature => {
-  const selected = entries.filter((entry) => entry.name.startsWith(META_INF));
+  const selected = entries.filter((entry) =>
+    entry.name.startsWith(APK_V1_META_INF_PREFIX),
+  );
   // Case-sensitive throughout, as apksig matches JAR signature entries.
   const seen = new Set<string>();
   const duplicates = new Set<string>();
@@ -382,24 +362,24 @@ export const detectV1Signature = (
     else seen.add(name);
   const signatureFiles = selected
     .map((entry) => entry.name)
-    .filter(isSignatureFile);
-  const blocks = selected.filter((entry) => isSignatureBlock(entry.name));
+    .filter(isV1SignatureFileName);
+  const blocks = selected.filter((entry) => isV1SignatureBlockName(entry.name));
   const sfNames = new Set(signatureFiles);
   const paired = new Set<string>();
   const signers = blocks.flatMap((block) => {
-    const signatureFile = signatureFileFor(block.name);
+    const signatureFile = v1SignatureFileNameForBlock(block.name);
     if (!sfNames.has(signatureFile) || paired.has(block.name)) return [];
     paired.add(block.name);
     // apksig reads every signer's manifest, so a duplicate one affects them all.
     const duplicate =
-      [block.name, signatureFile, MANIFEST].find((name) =>
+      [block.name, signatureFile, APK_V1_MANIFEST_PATH].find((name) =>
         duplicates.has(name),
       ) ?? null;
     return [{ signatureFile, block, duplicate }];
   });
   return {
     present: signers.length > 0,
-    hasManifest: selected.some((entry) => entry.name === MANIFEST),
+    hasManifest: selected.some((entry) => entry.name === APK_V1_MANIFEST_PATH),
     signatureFiles,
     blockFiles: blocks.map((block) => block.name),
     signers,

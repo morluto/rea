@@ -71,23 +71,82 @@ const atomLength = (
   if (at >= payload.length) fail("BEAM atom table is truncated.");
   const first = payload[at]!;
   if (!compact) return [first, at + 1];
-  if ((first & 0x07) !== 0) fail("BEAM atom length is not a u tag.");
-  if ((first & 0x08) === 0) return [first >> 4, at + 1];
-  if ((first & 0x10) !== 0) fail("BEAM atom length encoding is unsupported.");
-  if (at + 1 >= payload.length) fail("BEAM atom table is truncated.");
-  return [((first & 0xe0) << 3) | payload[at + 1]!, at + 2];
+  const decoded = compactUnsigned(payload, at);
+  if (decoded.value > BigInt(payload.length - decoded.next))
+    fail("BEAM atom table is truncated.");
+  return [Number(decoded.value), decoded.next];
+};
+
+/** Decode OTP's compact unsigned `u` tag without allocating from its value. */
+const compactUnsigned = (
+  payload: Buffer,
+  at: number,
+): { value: bigint; next: number } => {
+  let cursor = at;
+  let value: bigint;
+  for (;;) {
+    if (cursor >= payload.length) fail("BEAM atom table is truncated.");
+    const first = payload[cursor]!;
+    if ((first & 0x07) !== 0) fail("BEAM atom length is not a u tag.");
+    if ((first & 0x08) === 0) {
+      value = BigInt(first >> 4);
+      cursor += 1;
+      break;
+    }
+    if ((first & 0x10) === 0) {
+      if (cursor + 1 >= payload.length) fail("BEAM atom table is truncated.");
+      value = BigInt(((first >> 5) << 8) | payload[cursor + 1]!);
+      cursor += 2;
+      break;
+    }
+    const byteCountCode = first >> 5;
+    cursor += 1;
+    // OTP's size-of-size form always produces at least a 9-byte integer.
+    // unpack_varint rejects any value wider than SWord, even with leading
+    // zeroes, so no unsigned atom length can be represented by this form.
+    if (byteCountCode === 7) fail("BEAM atom length encoding overflows.");
+    value = readCompactUnsignedBytes(payload, cursor, byteCountCode + 2);
+    cursor += byteCountCode + 2;
+    break;
+  }
+  return { value, next: cursor };
+};
+
+const readCompactUnsignedBytes = (
+  payload: Buffer,
+  at: number,
+  byteCount: number,
+): bigint => {
+  if (byteCount > payload.length - at) fail("BEAM atom table is truncated.");
+  // OTP's unpack_varint only accepts values that fit a signed machine word.
+  // For REA's supported 64-bit runtime target, that is at most eight bytes.
+  const maxValue = 9_223_372_036_854_775_807n;
+  let value = 0n;
+  for (let index = 0; index < byteCount; index += 1) {
+    const byte = BigInt(payload[at + index]!);
+    if (value > (maxValue - byte) >> 8n)
+      fail("BEAM atom length encoding overflows.");
+    value = (value << 8n) | byte;
+  }
+  return value;
 };
 
 const parseAtoms = (
   payload: Buffer,
   maxAtoms: number,
-  encoding: "latin1" | "utf8",
+  format: "Atom" | "AtU8",
 ): ErlangBeam["atoms"] => {
   if (payload.length < 4) fail("BEAM atom table is truncated.");
-  // OTP 28+ writes a negated count and compact-encoded name lengths.
-  const declared = payload.readInt32BE(0);
-  const compact = declared < 0;
-  const count = Math.abs(declared);
+  // Only AtU8 supports OTP 28+'s negated count and compact name lengths.
+  // Historical Atom uses an unsigned count and single-byte lengths.
+  const encoding = format === "AtU8" ? "utf8" : "latin1";
+  const declared =
+    format === "AtU8" ? payload.readInt32BE(0) : payload.readUInt32BE(0);
+  const compact = format === "AtU8" && declared < 0;
+  const count = compact ? -declared : declared;
+  // Every entry needs at least one length byte, regardless of the layout.
+  // Reject an impossible table before treating its count as a budget refusal.
+  if (count > payload.length - 4) fail("BEAM atom table is truncated.");
   if (count > maxAtoms)
     throw new BeamCapacityFailure(
       "atoms",
@@ -170,11 +229,6 @@ export const parseErlangBeam = (
   if (bytes.subarray(8, 12).toString("latin1") !== "BEAM")
     fail("Expected a BEAM form type.");
   const formEnd = 8 + formSize;
-  if (
-    formEnd < bytes.length &&
-    bytes.subarray(formEnd).some((byte) => byte !== 0)
-  )
-    fail("BEAM form does not consume the selected file.");
   const chunks: ErlangBeam["chunks"] = [];
   const payloads = new Map<string, { payload: Buffer; offset: number }>();
   let at = 12;
@@ -192,9 +246,6 @@ export const parseErlangBeam = (
     requireRange(bytes, payloadOffset, size);
     const padded = payloadOffset + size + ((4 - (size % 4)) % 4);
     if (padded > formEnd) fail("BEAM chunk padding exceeds the form.");
-    const padding = bytes.subarray(payloadOffset + size, padded);
-    if (padding.some((byte) => byte !== 0))
-      fail("BEAM chunk padding is non-zero.");
     const payload = bytes.subarray(payloadOffset, payloadOffset + size);
     chunks.push({
       index: chunks.length,
@@ -206,19 +257,27 @@ export const parseErlangBeam = (
         sha256: sha256(payload),
       },
     });
-    if (!payloads.has(name)) payloads.set(name, { payload, offset: at });
+    // OTP's loader replaces the selected payload on each matching chunk.
+    // Keep every occurrence above; decode the last occurrence of each name.
+    payloads.set(name, { payload, offset: at });
     at = padded;
   }
-  const atomChunk = payloads.get("AtU8") ?? payloads.get("Atom");
-  const atomEncoding = payloads.has("AtU8")
-    ? "utf8"
-    : payloads.has("Atom")
-      ? "latin1"
-      : null;
+  const utf8AtomChunk = payloads.get("AtU8");
+  const legacyAtomChunk = payloads.get("Atom");
+  // Historical OTP selects Atom when AtU8 has no payload. Without a legacy
+  // table, a present empty AtU8 still fails its required count header.
+  const useUtf8Atoms =
+    utf8AtomChunk !== undefined &&
+    (utf8AtomChunk.payload.length > 0 || legacyAtomChunk === undefined);
+  const atomChunk = useUtf8Atoms ? utf8AtomChunk : legacyAtomChunk;
+  const atomFormat =
+    atomChunk === undefined ? null : useUtf8Atoms ? "AtU8" : "Atom";
+  const atomEncoding =
+    atomFormat === null ? null : atomFormat === "AtU8" ? "utf8" : "latin1";
   const atoms =
-    atomChunk === undefined || atomEncoding === null
+    atomChunk === undefined || atomFormat === null
       ? null
-      : parseAtoms(atomChunk.payload, input.max_atoms, atomEncoding);
+      : parseAtoms(atomChunk.payload, input.max_atoms, atomFormat);
   const declaredRows = (name: string): number => {
     const payload = payloads.get(name)?.payload;
     return payload !== undefined && payload.length >= 4 ? u32(payload, 0) : 0;
@@ -253,10 +312,13 @@ export const parseErlangBeam = (
           function: atomAt(atoms, row[1]!),
           arity: row[2]!,
         }));
+  const lambdaChunk = payloads.get("FunT");
+  // OTP skips the optional lambda parser for a zero-byte selected chunk.
+  // A four-byte zero count remains a decoded, explicitly empty table.
   const lambdas =
-    payloads.get("FunT") === undefined
+    lambdaChunk === undefined || lambdaChunk.payload.length === 0
       ? null
-      : parseRows(payloads.get("FunT")!.payload, 6, "lambda").map((row) => ({
+      : parseRows(lambdaChunk.payload, 6, "lambda").map((row) => ({
           function_index: row[0]!,
           function: atomAt(atoms, row[0]!),
           arity: row[1]!,

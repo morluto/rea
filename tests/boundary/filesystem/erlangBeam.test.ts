@@ -50,12 +50,14 @@ describe("Erlang BEAM stable filesystem boundary", () => {
     const tooSmall = await service.inspect({ path, max_file_bytes: 16 });
     if (tooSmall.ok) throw new Error("Expected resource budget failure");
     expect(tooSmall.error._tag).toBe("AnalysisResourceConstraintError");
+    const reason = { source: "caller-request", operation: "cancel" };
     const cancelled = await service.inspect(
-      { path },
-      { signal: AbortSignal.abort() },
+      { path: join(root, "missing.beam") },
+      { signal: AbortSignal.abort(reason) },
     );
     if (cancelled.ok) throw new Error("Expected cancellation");
     expect(cancelled.error._tag).toBe("AnalysisCancelledError");
+    expect(cancelled.error.cause).toBe(reason);
   });
 
   it("stops combined table rows at the shared budget", async () => {

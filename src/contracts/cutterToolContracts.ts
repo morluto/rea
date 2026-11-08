@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { jsonValueSchema } from "../domain/jsonValue.js";
+import { cutterDiscoverySchema } from "../domain/cutterDiscovery.js";
 import type { ToolContract } from "./toolContractTypes.js";
 import { evidenceResultOf } from "./toolOutputSchemaPrimitives.js";
 import { toolContractMetadata } from "./toolEffects.js";
@@ -21,15 +22,6 @@ export const cutterCommandInputSchema = z.strictObject({
   json: z.boolean().default(false),
 });
 
-export const cutterSessionSchema = z.strictObject({
-  session_id: z.string().uuid(),
-  pid: z.int().positive(),
-  document_generation: z.int().nonnegative(),
-  current_file: z.string().nullable(),
-  cutter_version: z.string().nullable(),
-  identity_status: z.literal("partial"),
-});
-
 export const cutterCommandResultSchema = z.strictObject({
   command: z.string(),
   output: jsonValueSchema.nullable(),
@@ -41,24 +33,6 @@ export const cutterCommandResultSchema = z.strictObject({
   current_file: z.string().nullable(),
   document_generation: z.int().nonnegative(),
   identity_status: z.literal("partial"),
-});
-
-export const cutterDiscoverySchema = z.strictObject({
-  sessions: z.array(cutterSessionSchema),
-  bridge_directory: z.string(),
-  discovery_status: z.enum([
-    "sessions_found",
-    "no_live_bridge_found",
-    "bridge_directory_unavailable",
-    "bridge_directory_insecure",
-    "bridge_directory_capacity_exceeded",
-  ]),
-  bridge_directory_security: z.enum([
-    "private_verified",
-    "not_private",
-    "unverified_platform_acl",
-    "not_checked",
-  ]),
 });
 
 /** Live Cutter discovery and arbitrary Rizin command contracts. */

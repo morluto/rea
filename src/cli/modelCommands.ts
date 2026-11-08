@@ -6,6 +6,7 @@ import { safeParseJson } from "../domain/safeJson.js";
 import { z } from "incur";
 import type { Logger } from "pino";
 import type { CliInstance } from "./types.js";
+import { localPathStringSchema } from "../domain/localPath.js";
 import { absoluteCallerPath } from "../filesystem/callerPath.js";
 import { createModelArtifactService } from "../composition/model.js";
 import { CLI_COMMANDS } from "../cliCommandNames.js";
@@ -25,7 +26,9 @@ export const registerModelCommands = (
     description:
       "Inspect GGUF or safetensors headers without loading model weights",
     args: z.object({
-      path: z.string().describe("Local model file, detected by content"),
+      path: localPathStringSchema.describe(
+        "Local model file, detected by content",
+      ),
     }),
     options: z.object({
       ...analysisEvidenceDeliveryOptions,
@@ -81,11 +84,12 @@ export const registerModelCommands = (
             );
           const service = createModelArtifactService();
           return deliverCliAnalysisEvidence({
+            callerInputPath: args.path,
             run: () =>
               service.inspect(
                 {
-                  path: absoluteCallerPath(args.path),
-                  hash: options.hash,
+                  path: selected.data.path,
+                  hash: selected.data.hash,
                   detail: "complete",
                 },
                 { signal },

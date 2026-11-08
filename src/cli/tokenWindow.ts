@@ -3,6 +3,7 @@ import { estimateTokenCount } from "tokenx";
 export interface TokenWindow {
   readonly text: string;
   readonly total: number;
+  readonly start: number;
   readonly end: number;
   readonly truncated: boolean;
 }
@@ -41,11 +42,17 @@ export const sliceTextByTokenWindow = (
   const total = estimateTokenCount(text);
   const end = limit === undefined ? total : offset + limit;
   if (offset === 0 && end >= total)
-    return { text, total, end: total, truncated: false };
+    return { text, total, start: 0, end: total, truncated: false };
 
   const actualEnd = Math.min(end, total);
   if (offset >= actualEnd)
-    return { text: "", total, end: actualEnd, truncated: true };
+    return {
+      text: "",
+      total,
+      start: actualEnd,
+      end: actualEnd,
+      truncated: true,
+    };
 
   const parts: string[] = [];
   let tokenPosition = 0;
@@ -75,6 +82,7 @@ export const sliceTextByTokenWindow = (
   return {
     text: parts.join(""),
     total,
+    start: offset,
     end: actualEnd,
     truncated: true,
   };

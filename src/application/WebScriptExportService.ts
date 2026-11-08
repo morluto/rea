@@ -1,5 +1,4 @@
 import { createHash } from "node:crypto";
-import { isAbsolute } from "node:path";
 
 import { z } from "zod";
 
@@ -21,7 +20,6 @@ import { AnalysisError } from "../domain/analysisErrorBase.js";
 import { createEvidence, type Evidence } from "../domain/evidence.js";
 import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
 import { analysisInputErrorFromIssues } from "../domain/inputIssueProjection.js";
-import { jsonValueSchema } from "../domain/jsonValue.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { err, ok, type Result } from "../domain/result.js";
@@ -32,7 +30,7 @@ import {
 } from "../domain/webScriptExport.js";
 import { WebScriptExportError } from "../domain/webScriptExportError.js";
 import type { ExecutionOptions } from "./AnalysisProvider.js";
-import { WEB_SCRIPT_EXPORT_PROVIDER as PROVIDER } from "./InvestigationProviders.js";
+import { WEB_SCRIPT_EXPORT_PROVIDER as PROVIDER } from "../domain/investigationProviders.js";
 import {
   readRegularFile,
   RegularFileReadFailure,
@@ -86,17 +84,6 @@ export const exportWebScriptsValidated = async (
   resources: ArtifactResourceScope,
   options: ExecutionOptions = {},
 ): Promise<Result<Evidence, AnalysisError>> => {
-  if (!isAbsolute(input.capture_path) || !isAbsolute(input.output_directory))
-    return err(
-      new AnalysisInputError(OPERATION, undefined, [
-        {
-          path: [],
-          reason: "invalid_format",
-          message:
-            "capture_path and output_directory must be absolute filesystem paths on this host.",
-        },
-      ]),
-    );
   try {
     if (options.signal?.aborted)
       return err(
@@ -136,7 +123,7 @@ export const exportWebScriptsValidated = async (
             capture_path: input.capture_path,
             output_directory: input.output_directory,
           },
-          result: jsonValueSchema.parse(result),
+          result,
           rawResult: null,
           confidence: "derived",
           authority: "historical-reference",

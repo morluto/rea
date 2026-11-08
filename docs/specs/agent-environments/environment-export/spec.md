@@ -33,11 +33,14 @@ previous increment.
   copies of the inputs (mode `0600` on POSIX; Windows retains inherited ACLs
   and does not provide an owner-only guarantee), `artifacts/check_<name>/verify.py` and
   `tasks/smoke.json`, where `<name>` defaults to the manifest's kebab-case name
-  and `--name` must be a kebab-case label of at most 64 characters that is not a
+  and `--name` must be a kebab-case label of at most 63 characters for its DNS label that is not a
   device name Windows reserves (`con`, `prn`, `aux`, `nul`, `com1`–`com9`,
-  `lpt1`–`lpt9`), since the env folder could not be created there.
-- The Dockerfile reads `FROM node:24.18.0-bookworm-slim`, sets
-  `MCP_HOST=0.0.0.0` and `MCP_PORT=18765`, installs Debian's `python3` for the
+  `lpt1`–`lpt9`). Its HTTP hostname identity must remain unchanged, so numeric
+  labels interpreted as IP addresses are refused before planning.
+- The Dockerfile uses the Node version pinned in `.nvmrc` with the
+  `bookworm-slim` variant, sets
+  `MCP_HOST=0.0.0.0`, `MCP_PORT=18765`, and
+  `MCP_ALLOWED_HOSTS=127.0.0.1,localhost,<name>`, installs Debian's `python3` for the
   framework's readiness probe, installs
   `rea-agents@<PRODUCT_IDENTITY.packageVersion>` from the registry or, with
   `--package-tarball`, copies the tarball as `rea-agents.tgz`, installs it
@@ -66,7 +69,7 @@ previous increment.
 - Add the `agentenv` CI scope, the reusable `real-agentenv.yml` workflow
   (`workflow_dispatch` and `workflow_call` with `build_cache_artifact`,
   `ubuntu-24.04`, SHA-pinned actions, `setup-python` 3.12, a virtual
-  environment with `agentenv-framework==0.9.1334`, the runner's Docker, 30
+  environment with `agentenv-framework==0.9.1431`, the runner's Docker, 30
   minutes), the `verify:agentenv:environment` script and
   `scripts/verify-agentenv-environment.mjs`, which requires absolute
   `REA_AGENT_ENV_COMMAND` and `REA_DOCKER_COMMAND` like every other lane
@@ -91,7 +94,7 @@ recorded in `verification.md` is the proof that one exported bundle runs under
 
 The export copies bytes and never inspects the tarball; it does not build or
 run the image itself. Its writes are not transactional: a host failure after
-the first file leaves the partial folder for inspection, as `docs/cli.md`
+the first file leaves the partial folder for inspection, as `docs/getting-started/cli.md`
 states. The verifier checks one replayed status and the tool count, not every
 tool. The lane passes `--sandbox local` as designed although
 `tasks/smoke.json` already pins `sandbox_type: local` on its deploy step, so

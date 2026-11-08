@@ -1,12 +1,15 @@
+import { projectCliAnalysisResult } from "./projectCliAnalysisResult.js";
+import { webBundleDeliveryOptions } from "./javascriptRouteDelivery.js";
 import {
-  parseJavaScriptRouteDelivery,
-  javascriptRouteDeliveryOptions,
-} from "./javascriptRouteDelivery.js";
-import { deliverCliAnalysisEvidence } from "./analysisEvidenceDelivery.js";
+  deliverCliAnalysisEvidence,
+  parseCliAnalysisEvidenceDelivery,
+} from "./analysisEvidenceDelivery.js";
+import { webRoutesDeliverySchema } from "../domain/analysisView/javascriptRoutesView.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import { Cli, z } from "incur";
 
-import { browserContext, browserCliError } from "../cliBrowserContext.js";
+import { browserCliError } from "./browserCliError.js";
+import { createBrowserObservationProvider } from "../composition/browserObservation.js";
 import {
   analyzeWebBundle,
   inspectWebPage,
@@ -22,6 +25,8 @@ import { analyzeWebBundleInputSchema } from "../domain/webBundleAnalysis.js";
 import { observeWebSessionInputSchema } from "../domain/browserSession.js";
 import { analysisInputErrorFromIssues } from "../domain/inputIssueProjection.js";
 import type { Logger } from "pino";
+import { cliDomainInput } from "./domainInput.js";
+import { cliDecimalField } from "./options.js";
 import { CLI_COMMANDS } from "../cliCommandNames.js";
 import {
   browserPageInspectionOptions,
@@ -51,9 +56,9 @@ const registerTargetList = (
     description:
       "List page targets from a selected loopback CDP browser, optionally filtered by origin",
     args: z.object({
-      endpoint: z
-        .string()
-        .describe("Loopback CDP HTTP endpoint or browser WebSocket URL"),
+      endpoint: cliDomainInput(
+        listBrowserTargetsInputSchema.shape.cdp_endpoint,
+      ),
     }),
     options: z.object({
       allowedOrigins: browserScopeOptions.allowedOrigins,
@@ -61,7 +66,7 @@ const registerTargetList = (
     run: ({ args, options }) =>
       withCommandCancellation((signal) =>
         logCliCommand(logger, "list-browser-targets", async () => {
-          const context = browserContext();
+          const provider = createBrowserObservationProvider();
           const input = {
             cdp_endpoint: args.endpoint,
             allowed_origins: options.allowedOrigins,
@@ -76,16 +81,16 @@ const registerTargetList = (
               ),
             );
           return await finishAnalysisCommand(
-            () => listBrowserTargets(context.provider, parsed.data, { signal }),
+            () => listBrowserTargets(provider, parsed.data, { signal }),
             {
               close: async () => {
-                await context.provider.close?.();
+                await provider.close?.();
               },
             },
-            context.provider.identity().id,
+            provider.identity().id,
             "list_browser_targets",
             signal,
-          );
+          ).then(projectCliAnalysisResult);
         }),
       ),
   });
@@ -99,16 +104,18 @@ const registerPageInspection = (
     description:
       "Passively inspect one page through CDP, defaulting to its current origin",
     args: z.object({
-      endpoint: z
-        .string()
-        .describe("Loopback CDP HTTP endpoint or browser WebSocket URL"),
-      targetId: z.string().describe("Target ID from list-browser-targets"),
+      endpoint: cliDomainInput(
+        listBrowserTargetsInputSchema.shape.cdp_endpoint,
+      ),
+      targetId: observeWebSessionInputSchema.shape.target_id.describe(
+        "Target ID from list-browser-targets",
+      ),
     }),
     options: browserPageInspectionOptions,
     run: ({ args, options }) =>
       withCommandCancellation((signal) =>
         logCliCommand(logger, "inspect-web-page", async () => {
-          const context = browserContext();
+          const provider = createBrowserObservationProvider();
           const input = {
             cdp_endpoint: args.endpoint,
             allowed_origins: options.allowedOrigins,
@@ -133,16 +140,16 @@ const registerPageInspection = (
               ),
             );
           return await finishAnalysisCommand(
-            () => inspectWebPage(context.provider, parsed.data, { signal }),
+            () => inspectWebPage(provider, parsed.data, { signal }),
             {
               close: async () => {
-                await context.provider.close?.();
+                await provider.close?.();
               },
             },
-            context.provider.identity().id,
+            provider.identity().id,
             "inspect_web_page",
             signal,
-          );
+          ).then(projectCliAnalysisResult);
         }),
       ),
   });
@@ -156,35 +163,42 @@ const registerBundleAnalysis = (
     description:
       "Capture and statically analyze a page bundle, defaulting to the selected target origin",
     args: z.object({
-      endpoint: z
-        .string()
-        .describe("Loopback CDP HTTP endpoint or browser WebSocket URL"),
-      targetId: z.string().describe("Target ID from list-browser-targets"),
+      endpoint: cliDomainInput(
+        listBrowserTargetsInputSchema.shape.cdp_endpoint,
+      ),
+      targetId: observeWebSessionInputSchema.shape.target_id.describe(
+        "Target ID from list-browser-targets",
+      ),
     }),
     options: z.object({
       ...browserScopeOptions,
-      ...javascriptRouteDeliveryOptions,
+      ...webBundleDeliveryOptions,
       observationMs: observationDuration(500),
       fetchSourceMaps: z
         .boolean()
         .default(false)
         .describe("Fetch source maps referenced by captured scripts"),
-      maxHeapMb: analyzeWebBundleInputSchema.shape.max_heap_mb,
-      analysisTimeoutMs: analyzeWebBundleInputSchema.shape.analysis_timeout_ms,
-      totalAnalysisTimeoutMs:
+      maxHeapMb: cliDecimalField(analyzeWebBundleInputSchema.shape.max_heap_mb),
+      analysisTimeoutMs: cliDecimalField(
+        analyzeWebBundleInputSchema.shape.analysis_timeout_ms,
+      ),
+      totalAnalysisTimeoutMs: cliDecimalField(
         analyzeWebBundleInputSchema.shape.total_analysis_timeout_ms,
-      sourceMapFetchTimeoutMs:
+      ),
+      sourceMapFetchTimeoutMs: cliDecimalField(
         analyzeWebBundleInputSchema.shape.source_map_fetch_timeout_ms,
+      ),
     }),
     run: ({ args, options }) =>
       withCommandCancellation((signal) =>
         logCliCommand(logger, "analyze-web-bundle", async () => {
-          const delivery = parseJavaScriptRouteDelivery(
+          const delivery = parseCliAnalysisEvidenceDelivery(
             "analyze_web_bundle",
             options,
+            webRoutesDeliverySchema,
           );
           if (!delivery.ok) return projectAnalysisError(delivery.error);
-          const context = browserContext();
+          const provider = createBrowserObservationProvider();
           const input = {
             cdp_endpoint: args.endpoint,
             allowed_origins: options.allowedOrigins,
@@ -219,14 +233,13 @@ const registerBundleAnalysis = (
             );
           return deliverCliAnalysisEvidence({
             ...delivery.value,
-            run: () =>
-              analyzeWebBundle(context.provider, parsed.data, { signal }),
+            run: () => analyzeWebBundle(provider, parsed.data, { signal }),
             service: {
               close: async () => {
-                await context.provider.close?.();
+                await provider.close?.();
               },
             },
-            providerId: context.provider.identity().id,
+            providerId: provider.identity().id,
             operation: "analyze_web_bundle",
             signal,
           });
@@ -242,10 +255,12 @@ const registerObservationSession = (
   cli.command(CLI_COMMANDS.observeWebSession, {
     description: "Observe user-driven page navigation during a chosen window",
     args: z.object({
-      endpoint: z
-        .string()
-        .describe("Loopback CDP HTTP endpoint or browser WebSocket URL"),
-      targetId: z.string().describe("Target ID from list-browser-targets"),
+      endpoint: cliDomainInput(
+        listBrowserTargetsInputSchema.shape.cdp_endpoint,
+      ),
+      targetId: observeWebSessionInputSchema.shape.target_id.describe(
+        "Target ID from list-browser-targets",
+      ),
     }),
     options: z.object({
       ...browserScopeOptions,
@@ -254,7 +269,7 @@ const registerObservationSession = (
     run: ({ args, options }) =>
       withCommandCancellation((signal) =>
         logCliCommand(logger, "observe-web-session", async () => {
-          const context = browserContext();
+          const provider = createBrowserObservationProvider();
           const input = {
             cdp_endpoint: args.endpoint,
             allowed_origins: options.allowedOrigins,
@@ -272,16 +287,16 @@ const registerObservationSession = (
               ),
             );
           return await finishAnalysisCommand(
-            () => observeWebSession(context.provider, parsed.data, { signal }),
+            () => observeWebSession(provider, parsed.data, { signal }),
             {
               close: async () => {
-                await context.provider.close?.();
+                await provider.close?.();
               },
             },
-            context.provider.identity().id,
+            provider.identity().id,
             "observe_web_session",
             signal,
-          );
+          ).then(projectCliAnalysisResult);
         }),
       ),
   });

@@ -32,3 +32,11 @@ export const javaScriptRuntime = (versions: {
         version: versions.bun,
         nodeCompatibilityVersion: versions.node,
       };
+
+/** Bun is supported when its reported Node.js compatibility version is. */
+export const supportsJavaScriptRuntime = (
+  runtime: JavaScriptRuntime,
+): boolean =>
+  supportsNodeVersion(
+    runtime.id === "node" ? runtime.version : runtime.nodeCompatibilityVersion,
+  );

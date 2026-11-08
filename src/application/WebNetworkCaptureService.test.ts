@@ -212,7 +212,6 @@ it("projects completed raw capture facts on failure through the caller's selecti
     record_ordinals: [0],
     sensitive_values: ["private-marker"],
   });
-  expect(result.ok).toBe(false);
   if (result.ok) throw new Error("Cancellation must remain the primary result");
   expect(result.error._tag).toBe("AnalysisCancelledError");
   expect(result.error.cause).toBe(reason);
@@ -270,7 +269,6 @@ it("keeps a redacted cleanup error linked to its live owner through service clos
     format: "har",
     sensitive_values: ["private-marker"],
   });
-  expect(result.ok).toBe(false);
   if (result.ok) throw new Error("Retained cleanup must remain a failure");
   const returnedError = result.error;
   expect(returnedError.cleanupIncomplete).toBe(true);
@@ -376,6 +374,31 @@ it.each([
   }).inspect({ capture_path: "/capture.har", format: "har", ...extra });
   expect(result.ok).toBe(false);
   if (!result.ok) expect(result.error._tag).toBe("AnalysisInputError");
+});
+
+it("reports an ordinal past the capture's records as an out-of-range selection", async () => {
+  const report = fixture();
+  const result = await new WebNetworkCaptureService({
+    inspect: () => Promise.resolve(ok(report)),
+  }).inspect({
+    capture_path: "/capture.har",
+    format: "har",
+    record_ordinals: [0, 5],
+  });
+  if (result.ok) throw new Error("expected an out-of-range ordinal");
+  expect(projectAnalysisError(result.error)).toMatchObject({
+    code: "invalid_request",
+    details: {
+      issues: [
+        {
+          path: ["record_ordinals", 1],
+          reason: "out_of_range",
+          minimum: 0,
+          maximum: report.total_records - 1,
+        },
+      ],
+    },
+  });
 });
 
 it("rejects a port changing the artifact identity or producer ordinal sequence", async () => {

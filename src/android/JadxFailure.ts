@@ -1,4 +1,4 @@
-import { jadxOperationTimeoutGuidance } from "./JadxRelease.js";
+import { jadxOperationTimeoutGuidance } from "./JadxOperationTimeout.js";
 import { JadxInterruption } from "./JadxInterruption.js";
 import { z } from "zod";
 import { AnalysisError } from "../domain/analysisErrorBase.js";

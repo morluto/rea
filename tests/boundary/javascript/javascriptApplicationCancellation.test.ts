@@ -1,7 +1,7 @@
 import { setImmediate } from "node:timers";
 import { mkdir, open, realpath, symlink, writeFile } from "node:fs/promises";
-import { join } from "node:path";
-import { expect, it, onTestFinished } from "vitest";
+import { basename, join } from "node:path";
+import { expect, it, onTestFinished, vi } from "vitest";
 import { z } from "zod";
 import {
   ArtifactResourceScope,
@@ -13,6 +13,87 @@ import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
 import { AnalysisOutputError } from "../../../src/domain/analysisErrorCore.js";
 import { analyzeJavaScriptApplication } from "../../support/javascriptApplicationScope.js";
+import { PrivateRuntimeRoot } from "../../../src/process/PrivateRuntimeRoot.js";
+import { JavaScriptAnalysisWorker } from "../../../src/javascript/analysis/JavaScriptAnalysisWorker.js";
+
+it.each(["worker-phase", "final-cleanup", "no-cancellation"] as const)(
+  "preserves the primary through failed worker cleanup and exact-owner retry: %s",
+  async (timing) => {
+    const root = await createTestTempDirectory("rea-js-primary-cleanup-");
+    await writeFile(join(root, "main.js"), "export const observed = 7;");
+    const controller = new AbortController();
+    const reason = { request: "cancelled while worker resources remain owned" };
+    let denyRemoval = true;
+    let runtimePath: string | undefined;
+    const originalClose = PrivateRuntimeRoot.prototype.close;
+    const close = vi
+      .spyOn(PrivateRuntimeRoot.prototype, "close")
+      .mockImplementation(async function (this: PrivateRuntimeRoot) {
+        if (basename(this.path).startsWith("rea-javascript-analysis-")) {
+          runtimePath = this.path;
+          if (timing === "final-cleanup") controller.abort(reason);
+          if (denyRemoval)
+            throw new Error(
+              "controlled JavaScript worker root removal failure",
+            );
+        }
+        await originalClose.call(this);
+      });
+    // Exercise physical finalization even after the one healthy source finishes.
+    const reuse = vi
+      .spyOn(JavaScriptAnalysisWorker.prototype, "canReuse")
+      .mockReturnValue(false);
+    const scope = new ArtifactResourceScope();
+    onTestFinished(async () => {
+      denyRemoval = false;
+      try {
+        await scope.close();
+      } finally {
+        close.mockRestore();
+        reuse.mockRestore();
+      }
+    });
+    const result = await analyzeOwnedApplication(
+      { input_path: root, format: "directory" },
+      scope,
+      {
+        signal: controller.signal,
+        progress: {
+          async report(event) {
+            if (
+              timing === "worker-phase" &&
+              event.phase.startsWith("javascript_worker_")
+            )
+              controller.abort(reason);
+          },
+        },
+      },
+    );
+    if (result.ok) throw new Error("Expected cleanup failure");
+    expect(runtimePath).toBeDefined();
+    expect(result.error.cleanupIncomplete).toBe(true);
+    expect(result.error.cleanupResources).toContain(runtimePath);
+    expect(projectAnalysisError(result.error)).toMatchObject({
+      code: "cleanup_incomplete",
+      details: { partial_observation: expect.any(Object) },
+    });
+    if (timing !== "no-cancellation") {
+      expect(result.error.cleanupPrimary).toBeDefined();
+      expect(result.error.cleanupPrimary?.cause).toBe(reason);
+    }
+    denyRemoval = false;
+    await scope.close();
+    expect(result.error.cleanupIncomplete).toBe(false);
+    expect(result.error.cleanupResources).toEqual([]);
+    const projected = projectAnalysisError(result.error);
+    expect(projected.code).toBe(
+      timing === "no-cancellation" ? "execution_failure" : "cancelled",
+    );
+    expect(projected.details).toMatchObject({
+      partial_observation: expect.any(Object),
+    });
+  },
+);
 
 it.each(["during cleanup", "on the next control turn"] as const)(
   "retains the final source when cancellation arrives %s after analysis",

@@ -5,9 +5,9 @@
  * certificates it identifies (by `issuerAndSerialNumber` or
  * `subjectKeyIdentifier`) and its digest and signature algorithm OIDs.
  *
- * This owns the DER structure only. Certificate facts (fingerprint, subject)
- * stay with the adapter's X.509 owner, and no signature is verified: a
- * `SignerInfo` naming a certificate is what the block declares.
+ * This owns the CMS BER structure only. Certificate facts (fingerprint,
+ * subject) stay with the adapter's X.509 owner, and no signature is verified:
+ * a `SignerInfo` naming a certificate is what the block declares.
  *
  * Dependency-free and bounded. Every tag and length is checked against its
  * enclosing element; BER indefinite lengths (which some JAR signers emit) are
@@ -17,6 +17,8 @@
  * conflated with malformed input.
  */
 import { type Result, err, ok } from "../result.js";
+import { decodeAsn1Oid } from "../asn1Oid.js";
+import { Asn1BerFailure, Asn1BerReader, type Asn1BerNode } from "../asn1Ber.js";
 
 export type ApkV1BlockError =
   | { readonly kind: "malformed-pkcs7"; readonly detail: string }
@@ -25,7 +27,7 @@ export type ApkV1BlockError =
       readonly resource:
         | "v1-block-certificates"
         | "v1-signer-infos"
-        | "der-elements";
+        | "asn1-elements";
       readonly limit: number;
     };
 
@@ -34,9 +36,9 @@ export const MAX_V1_BLOCK_CERTIFICATES = 32;
 /** SignerInfos in one block; apksig verifies one, more is pathological. */
 export const MAX_V1_SIGNER_INFOS = 32;
 /** Nesting depth; SignedData → X.509 extensions is under 12 levels deep. */
-const MAX_DER_DEPTH = 32;
+const MAX_ASN1_DEPTH = 32;
 /** Elements read while decoding one block; bounds work for any byte length. */
-export const MAX_DER_ELEMENTS = 65_536;
+export const MAX_ASN1_ELEMENTS = 65_536;
 
 export interface ApkV1SignerInfo {
   readonly identifiedBy: "issuer-and-serial" | "subject-key-identifier";
@@ -73,15 +75,6 @@ const TAG = {
   context0Primitive: 0x80,
 } as const;
 
-interface Tlv {
-  readonly tag: number;
-  readonly start: number;
-  readonly contentStart: number;
-  readonly contentEnd: number;
-  readonly end: number;
-  readonly depth: number;
-}
-
 /** Expected failures inside one decode; converted to a Result at the boundary. */
 class BlockFailure {
   constructor(readonly error: ApkV1BlockError) {}
@@ -89,94 +82,42 @@ class BlockFailure {
 const malformed = (detail: string): BlockFailure =>
   new BlockFailure({ kind: "malformed-pkcs7", detail });
 
-class DerReader {
-  #elements = 0;
-  constructor(readonly bytes: Uint8Array) {}
+class ApkBerReader {
+  readonly #reader: Asn1BerReader;
+
+  constructor(bytes: Uint8Array) {
+    const buffer = Buffer.isBuffer(bytes)
+      ? bytes
+      : Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+    this.#reader = new Asn1BerReader(buffer, MAX_ASN1_ELEMENTS, MAX_ASN1_DEPTH);
+  }
 
   /** One TLV starting at `at`, which must end at or before `limit`. */
-  read(at: number, limit: number, depth: number): Tlv {
-    if (depth > MAX_DER_DEPTH)
-      throw malformed(`nesting deeper than ${String(MAX_DER_DEPTH)}`);
-    this.#elements += 1;
-    if (this.#elements > MAX_DER_ELEMENTS)
-      throw new BlockFailure({
-        kind: "budget-exceeded",
-        resource: "der-elements",
-        limit: MAX_DER_ELEMENTS,
-      });
-    if (at + 2 > limit)
-      throw malformed(`element at byte ${String(at)} is truncated`);
-    const tag = this.bytes[at] ?? 0;
-    if ((tag & 0x1f) === 0x1f)
-      throw malformed(`high-tag-number form at byte ${String(at)}`);
-    const first = this.bytes[at + 1] ?? 0;
-    let contentStart = at + 2;
-    if (first === 0x80) {
-      if ((tag & 0x20) === 0)
-        throw malformed(
-          `indefinite length on a primitive at byte ${String(at)}`,
-        );
-      // BER indefinite length: children run to an end-of-contents marker.
-      let child = contentStart;
-      for (;;) {
-        if (child + 2 > limit)
-          throw malformed(
-            `indefinite element at byte ${String(at)} has no end-of-contents`,
-          );
-        if (this.bytes[child] === 0 && this.bytes[child + 1] === 0)
-          return {
-            tag,
-            start: at,
-            contentStart,
-            contentEnd: child,
-            end: child + 2,
-            depth,
-          };
-        child = this.read(child, limit, depth + 1).end;
-      }
+  read(at: number, limit: number, depth: number): Asn1BerNode {
+    try {
+      return this.#reader.read(at, limit, depth);
+    } catch (cause: unknown) {
+      if (!(cause instanceof Asn1BerFailure)) throw cause;
+      if (cause.kind === "budget-exceeded")
+        throw new BlockFailure({
+          kind: "budget-exceeded",
+          resource: "asn1-elements",
+          limit: MAX_ASN1_ELEMENTS,
+        });
+      throw malformed(cause.message);
     }
-    let length = first;
-    if (first > 0x80) {
-      const count = first & 0x7f;
-      if (count > 4)
-        throw malformed(
-          `length of ${String(count)} bytes at byte ${String(at)}`,
-        );
-      if (contentStart + count > limit)
-        throw malformed(`length at byte ${String(at)} is truncated`);
-      length = 0;
-      for (let i = 0; i < count; i += 1)
-        length = length * 256 + (this.bytes[contentStart + i] ?? 0);
-      contentStart += count;
-    }
-    const end = contentStart + length;
-    if (end > limit)
-      throw malformed(
-        `element at byte ${String(at)} runs past its enclosing element`,
-      );
-    return { tag, start: at, contentStart, contentEnd: end, end, depth };
   }
 
-  children(parent: Tlv): Tlv[] {
-    const out: Tlv[] = [];
-    for (let at = parent.contentStart; at < parent.contentEnd;) {
-      const child = this.read(at, parent.contentEnd, parent.depth + 1);
-      out.push(child);
-      at = child.end;
-    }
-    return out;
-  }
-
-  content(tlv: Tlv): Uint8Array {
-    return this.bytes.subarray(tlv.contentStart, tlv.contentEnd);
-  }
-
-  raw(tlv: Tlv): Uint8Array {
-    return this.bytes.subarray(tlv.start, tlv.end);
+  rawEncodedSpan(tlv: Asn1BerNode): Uint8Array {
+    return this.#reader.bytes.subarray(tlv.start, tlv.end);
   }
 }
 
-const expectTag = (tlv: Tlv | undefined, tag: number, what: string): Tlv => {
+const expectTag = (
+  tlv: Asn1BerNode | undefined,
+  tag: number,
+  what: string,
+): Asn1BerNode => {
   if (tlv === undefined) throw malformed(`${what} is missing`);
   if (tlv.tag !== tag)
     throw malformed(
@@ -185,46 +126,128 @@ const expectTag = (tlv: Tlv | undefined, tag: number, what: string): Tlv => {
   return tlv;
 };
 
-/** Dotted OID text; arcs are accumulated as BigInt so no arc overflows. */
-const oidText = (content: Uint8Array): string => {
-  if (content.length === 0 || content.length > 64)
-    throw malformed(`object identifier of ${String(content.length)} bytes`);
-  const arcs: bigint[] = [];
-  let value = 0n;
-  for (const [index, byte] of content.entries()) {
-    value = (value << 7n) | BigInt(byte & 0x7f);
-    if ((byte & 0x80) !== 0) {
-      if (index === content.length - 1)
-        throw malformed("object identifier is truncated");
-      continue;
+/** BER permits an OCTET STRING to use constructed form with string fragments. */
+const expectOctetString = (
+  tlv: Asn1BerNode | undefined,
+  what: string,
+): Asn1BerNode => {
+  if (tlv === undefined) throw malformed(`${what} is missing`);
+  if (tlv.tag === TAG.octetString) return tlv;
+  if (tlv.tag !== 0x24)
+    throw malformed(
+      `${what} has tag 0x${tlv.tag.toString(16)}, expected 0x4 or 0x24`,
+    );
+  const validateFragments = (node: Asn1BerNode): void => {
+    for (const child of node.children) {
+      if (child.tag === TAG.octetString) continue;
+      if (child.tag === 0x24) validateFragments(child);
+      else
+        throw malformed(
+          `${what} has non-OCTET STRING fragment tag 0x${child.tag.toString(16)}`,
+        );
     }
-    if (arcs.length === 0) {
-      const first = value < 80n ? value / 40n : 2n;
-      arcs.push(first, value - first * 40n);
-    } else arcs.push(value);
-    value = 0n;
-  }
-  return arcs.join(".");
+  };
+  validateFragments(tlv);
+  return tlv;
 };
 
-const algorithmOid = (reader: DerReader, tlv: Tlv | undefined, what: string) =>
+/** Dotted OID text; arcs are accumulated as BigInt so no arc overflows. */
+const oidText = (content: Uint8Array): string => {
+  const decoded = decodeAsn1Oid(content, { bytes: 64, arcBytes: 64 });
+  if (decoded.ok) return decoded.value;
+  if (decoded.error.kind === "truncated")
+    throw malformed("object identifier is truncated");
+  throw malformed(`object identifier of ${String(content.length)} bytes`);
+};
+
+const algorithmOid = (tlv: Asn1BerNode | undefined, what: string) =>
   oidText(
-    reader.content(
-      expectTag(
-        reader.children(expectTag(tlv, TAG.sequence, what))[0],
-        TAG.oid,
-        `${what} algorithm`,
-      ),
-    ),
+    expectTag(
+      expectTag(tlv, TAG.sequence, what).children[0],
+      TAG.oid,
+      `${what} algorithm`,
+    ).content,
   );
 
 const equalBytes = (a: Uint8Array, b: Uint8Array): boolean =>
   a.length === b.length && a.every((byte, i) => byte === b[i]);
 
+/**
+ * apksig compares serials as signed INTEGER values, tolerating redundant sign
+ * octets even though DER requires minimal encoding. Normalize each parsed
+ * identity once; retain the original certificate encoding independently.
+ */
+const integerIdentityContents = (bytes: Uint8Array): Uint8Array => {
+  let start = 0;
+  while (start < bytes.length - 1) {
+    const first = bytes[start];
+    const nextHigh = ((bytes[start + 1] ?? 0) & 0x80) !== 0;
+    if (!((first === 0x00 && !nextHigh) || (first === 0xff && nextHigh))) break;
+    start += 1;
+  }
+  return start === 0 ? bytes : bytes.subarray(start);
+};
+
+/**
+ * RFC 5280 §7.1: RDN order matters; attributes in one SET do not. This
+ * comparison profile admits ASCII PrintableString/UTF8String for common
+ * caseIgnore DirectoryString attributes. Other name rules remain unknown;
+ * exact encoded identity is still available independently of normalization.
+ */
+const directoryNameKey = (name: Asn1BerNode): string | null => {
+  try {
+    const attributes = new Set([
+      "2.5.4.3",
+      "2.5.4.6",
+      "2.5.4.7",
+      "2.5.4.8",
+      "2.5.4.10",
+      "2.5.4.11",
+    ]);
+    const rdns: string[][] = [];
+    for (const rdn of name.children) {
+      if (rdn.tag !== TAG.set || rdn.children.length === 0) return null;
+      const values: string[] = [];
+      for (const attribute of rdn.children) {
+        if (attribute.tag !== TAG.sequence || attribute.children.length !== 2)
+          return null;
+        const [id, value] = attribute.children;
+        if (
+          id?.tag !== TAG.oid ||
+          value === undefined ||
+          ![0x0c, 0x13].includes(value.tag)
+        )
+          return null;
+        const oid = oidText(id.content);
+        if (
+          !attributes.has(oid) ||
+          value.content.some((byte) => byte < 0x20 || byte > 0x7e)
+        )
+          return null;
+        const text = Buffer.from(value.content)
+          .toString("ascii")
+          .trim()
+          .replace(/ +/gu, " ")
+          .toLowerCase();
+        if (value.tag === 0x13 && !/^[a-z0-9 '()+,./:=?-]*$/iu.test(text))
+          return null;
+        values.push(JSON.stringify([oid, text]));
+      }
+      rdns.push(values.sort());
+    }
+    return JSON.stringify(rdns);
+  } catch (cause) {
+    if (cause instanceof BlockFailure && cause.error.kind === "malformed-pkcs7")
+      return null;
+    throw cause;
+  }
+};
+
 /** The X.509 facts a SignerInfo can name: issuer Name DER, serial and SKI. */
 interface CertificateIdentity {
   readonly issuer: Uint8Array;
-  readonly serial: Uint8Array;
+  readonly issuerKey: string | null;
+  readonly serialIdentity: Uint8Array;
   readonly subjectKeyIdentifier: Uint8Array | null;
 }
 
@@ -234,16 +257,16 @@ interface CertificateIdentity {
  * by a SignerInfo (null) but is still reported by the adapter's X.509 owner.
  */
 const certificateIdentity = (
-  reader: DerReader,
-  certificate: Tlv,
+  reader: ApkBerReader,
+  certificate: Asn1BerNode,
 ): CertificateIdentity | null => {
   try {
     const tbs = expectTag(
-      reader.children(certificate)[0],
+      certificate.children[0],
       TAG.sequence,
       "tbsCertificate",
     );
-    const fields = reader.children(tbs);
+    const fields = tbs.children;
     const offset = fields[0]?.tag === TAG.context0 ? 1 : 0;
     const serial = expectTag(fields[offset], TAG.integer, "serialNumber");
     const issuer = expectTag(fields[offset + 2], TAG.sequence, "issuer");
@@ -251,25 +274,27 @@ const certificateIdentity = (
     const extensions = fields.find((field) => field.tag === TAG.context3);
     if (extensions !== undefined) {
       const list = expectTag(
-        reader.children(extensions)[0],
+        extensions.children[0],
         TAG.sequence,
         "extensions",
       );
-      for (const extension of reader.children(list)) {
-        const parts = reader.children(extension);
+      for (const extension of list.children) {
+        const parts = extension.children;
         const id = expectTag(parts[0], TAG.oid, "extension id");
-        if (oidText(reader.content(id)) !== OID_SUBJECT_KEY_IDENTIFIER)
-          continue;
+        if (oidText(id.content) !== OID_SUBJECT_KEY_IDENTIFIER) continue;
         const value = expectTag(parts.at(-1), TAG.octetString, "extnValue");
         const inner = reader.read(value.contentStart, value.contentEnd, 0);
-        subjectKeyIdentifier = reader.content(
-          expectTag(inner, TAG.octetString, "keyIdentifier"),
-        );
+        subjectKeyIdentifier = expectTag(
+          inner,
+          TAG.octetString,
+          "keyIdentifier",
+        ).content;
       }
     }
     return {
-      issuer: reader.raw(issuer),
-      serial: reader.content(serial),
+      issuer: reader.rawEncodedSpan(issuer),
+      issuerKey: directoryNameKey(issuer),
+      serialIdentity: integerIdentityContents(serial.content),
       subjectKeyIdentifier,
     };
   } catch (cause: unknown) {
@@ -280,34 +305,35 @@ const certificateIdentity = (
 };
 
 const signerInfo = (
-  reader: DerReader,
-  tlv: Tlv,
+  reader: ApkBerReader,
+  tlv: Asn1BerNode,
   identities: readonly (CertificateIdentity | null)[],
   index: number,
 ): ApkV1SignerInfo => {
   const what = `signerInfo ${String(index)}`;
-  const fields = reader.children(expectTag(tlv, TAG.sequence, what));
+  const fields = expectTag(tlv, TAG.sequence, what).children;
   expectTag(fields[0], TAG.integer, `${what} version`);
   const sid = fields[1];
   let identifiedBy: ApkV1SignerInfo["identifiedBy"];
   let certificateIndex: number;
   if (sid?.tag === TAG.sequence) {
-    const parts = reader.children(sid);
-    const issuer = reader.raw(
-      expectTag(parts[0], TAG.sequence, `${what} issuer`),
-    );
-    const serial = reader.content(
-      expectTag(parts[1], TAG.integer, `${what} serialNumber`),
+    const parts = sid.children;
+    const issuerNode = expectTag(parts[0], TAG.sequence, `${what} issuer`);
+    const issuer = reader.rawEncodedSpan(issuerNode);
+    const issuerKey = directoryNameKey(issuerNode);
+    const serialIdentity = integerIdentityContents(
+      expectTag(parts[1], TAG.integer, `${what} serialNumber`).content,
     );
     identifiedBy = "issuer-and-serial";
     certificateIndex = identities.findIndex(
       (identity) =>
         identity !== null &&
-        equalBytes(identity.issuer, issuer) &&
-        equalBytes(identity.serial, serial),
+        (equalBytes(identity.issuer, issuer) ||
+          (issuerKey !== null && identity.issuerKey === issuerKey)) &&
+        equalBytes(identity.serialIdentity, serialIdentity),
     );
   } else if (sid?.tag === TAG.context0Primitive) {
-    const keyId = reader.content(sid);
+    const keyId = sid.content;
     identifiedBy = "subject-key-identifier";
     certificateIndex = identities.findIndex(
       (identity) =>
@@ -315,19 +341,14 @@ const signerInfo = (
         equalBytes(identity.subjectKeyIdentifier, keyId),
     );
   } else throw malformed(`${what} has no supported signer identifier`);
-  const digestAlgorithmOid = algorithmOid(
-    reader,
-    fields[2],
-    `${what} digestAlgorithm`,
-  );
+  const digestAlgorithmOid = algorithmOid(fields[2], `${what} digestAlgorithm`);
   // signedAttrs ([0] IMPLICIT) is optional before signatureAlgorithm.
   const next = fields[3]?.tag === TAG.context0 ? 4 : 3;
   const signatureAlgorithmOid = algorithmOid(
-    reader,
     fields[next],
     `${what} signatureAlgorithm`,
   );
-  expectTag(fields[next + 1], TAG.octetString, `${what} signature`);
+  expectOctetString(fields[next + 1], `${what} signature`);
   return {
     identifiedBy,
     certificateIndex: certificateIndex < 0 ? null : certificateIndex,
@@ -337,31 +358,29 @@ const signerInfo = (
 };
 
 const decode = (bytes: Uint8Array): ApkV1SignedData => {
-  const reader = new DerReader(bytes);
+  const reader = new ApkBerReader(bytes);
   const contentInfo = expectTag(
     reader.read(0, bytes.length, 0),
     TAG.sequence,
     "ContentInfo",
   );
-  const [contentType, explicit] = reader.children(contentInfo);
-  const type = oidText(
-    reader.content(expectTag(contentType, TAG.oid, "contentType")),
-  );
+  const [contentType, explicit] = contentInfo.children;
+  const type = oidText(expectTag(contentType, TAG.oid, "contentType").content);
   if (type !== OID_SIGNED_DATA)
     throw malformed(`contentType ${type} is not SignedData`);
   const signedData = expectTag(
-    reader.children(expectTag(explicit, TAG.context0, "content"))[0],
+    expectTag(explicit, TAG.context0, "content").children[0],
     TAG.sequence,
     "SignedData",
   );
-  const fields = reader.children(signedData);
+  const fields = signedData.children;
   expectTag(fields[0], TAG.integer, "SignedData version");
   expectTag(fields[1], TAG.set, "digestAlgorithms");
   expectTag(fields[2], TAG.sequence, "encapContentInfo");
   let at = 3;
-  const certificates: Tlv[] = [];
+  const certificates: Asn1BerNode[] = [];
   if (fields[at]?.tag === TAG.context0) {
-    for (const choice of reader.children(fields[at] as Tlv)) {
+    for (const choice of fields[at]!.children) {
       // Other CertificateChoices (extended, attribute, other) carry no X.509 signer.
       if (choice.tag !== TAG.sequence)
         throw malformed(
@@ -378,7 +397,7 @@ const decode = (bytes: Uint8Array): ApkV1SignedData => {
     at += 1;
   }
   if (fields[at]?.tag === TAG.context1) at += 1;
-  const infos = reader.children(expectTag(fields[at], TAG.set, "signerInfos"));
+  const infos = expectTag(fields[at], TAG.set, "signerInfos").children;
   if (infos.length > MAX_V1_SIGNER_INFOS)
     throw new BlockFailure({
       kind: "budget-exceeded",
@@ -389,7 +408,9 @@ const decode = (bytes: Uint8Array): ApkV1SignedData => {
     certificateIdentity(reader, certificate),
   );
   return {
-    certificates: certificates.map((certificate) => reader.raw(certificate)),
+    certificates: certificates.map((certificate) =>
+      reader.rawEncodedSpan(certificate),
+    ),
     signerInfos: infos.map((info, index) =>
       signerInfo(reader, info, identities, index),
     ),

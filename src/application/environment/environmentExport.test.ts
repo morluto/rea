@@ -1,4 +1,11 @@
-import { mkdir, readdir, readFile, stat, writeFile } from "node:fs/promises";
+import {
+  chmod,
+  mkdir,
+  readdir,
+  readFile,
+  stat,
+  writeFile,
+} from "node:fs/promises";
 import { join, sep } from "node:path";
 
 import { describe, expect, it } from "vitest";
@@ -55,13 +62,19 @@ describe("readEnvironmentExportInputs", () => {
     );
     if (!inputs.ok) throw inputs.error;
     expect(inputs.value.manifest.path).toBe(files.manifestPath);
-    expect(inputs.value.manifest.bytes).toEqual(
-      await readFile(files.manifestPath),
-    );
+    expect(
+      Buffer.compare(
+        inputs.value.manifest.bytes,
+        await readFile(files.manifestPath),
+      ),
+    ).toBe(0);
     expect(inputs.value.manifest.value).toEqual(fixture.manifest);
-    expect(inputs.value.evidence.bytes).toEqual(
-      await readFile(files.capturePath),
-    );
+    expect(
+      Buffer.compare(
+        inputs.value.evidence.bytes,
+        await readFile(files.capturePath),
+      ),
+    ).toBe(0);
     expect(inputs.value.evidence.value).toEqual(fixture.capture);
   });
 
@@ -107,7 +120,7 @@ describe("readEnvironmentExportInputs", () => {
   });
 });
 
-describe("exportEnvironmentBundle", () => {
+const registerBundlePublicationCases = () => {
   it("writes the bundle into an absent directory with the read bytes copied unchanged", async () => {
     const { root, files, input, directory } = await prepare(
       "rea-environment-export-",
@@ -144,11 +157,17 @@ describe("exportEnvironmentBundle", () => {
         (await readFile(join(directory, file.path))).length,
       );
     expect(
-      await readFile(join(directory, "envs/grafana-example/manifest.json")),
-    ).toEqual(await readFile(files.manifestPath));
+      Buffer.compare(
+        await readFile(join(directory, "envs/grafana-example/manifest.json")),
+        await readFile(files.manifestPath),
+      ),
+    ).toBe(0);
     expect(
-      await readFile(join(directory, "envs/grafana-example/evidence.json")),
-    ).toEqual(input.evidence.bytes);
+      Buffer.compare(
+        await readFile(join(directory, "envs/grafana-example/evidence.json")),
+        input.evidence.bytes,
+      ),
+    ).toBe(0);
     expect(await listFiles(root)).toEqual(
       expect.arrayContaining(["capture.json", "manifest.json"]),
     );
@@ -176,13 +195,18 @@ describe("exportEnvironmentBundle", () => {
       bytes: 7,
     });
     expect(
-      await readFile(join(directory, "envs/replay-copy/rea-agents.tgz")),
-    ).toEqual(await readFile(tarball));
+      Buffer.compare(
+        await readFile(join(directory, "envs/replay-copy/rea-agents.tgz")),
+        await readFile(tarball),
+      ),
+    ).toBe(0);
     expect(
       await readFile(join(directory, "envs/replay-copy/Dockerfile"), "utf8"),
     ).toContain("COPY rea-agents.tgz /tmp/");
   });
+};
 
+const registerBundleDestinationAdmissionCases = () => {
   it("refuses a non-empty directory, a file path and a missing tarball before writing anything", async () => {
     const { root, input, directory } = await prepare(
       "rea-environment-export-refusals-",
@@ -209,6 +233,15 @@ describe("exportEnvironmentBundle", () => {
     expect(projectAnalysisError(asFile.error).details?.issues).toEqual([
       expect.objectContaining({ path: ["directory"] }),
     ]);
+    const fileRefusal = projectAnalysisError(asFile.error);
+    expect(fileRefusal.message).toContain("must be a directory");
+    expect(fileRefusal.message).not.toContain("identity changed");
+    expect(fileRefusal.details?.issues).toEqual([
+      expect.objectContaining({ message: fileRefusal.message }),
+    ]);
+    expect(await readFile(join(directory, "keep.txt"), "utf8")).toBe(
+      "existing",
+    );
     const missingTarball = await exportEnvironmentBundle({
       ...input,
       directory: join(root, "fresh"),
@@ -221,6 +254,54 @@ describe("exportEnvironmentBundle", () => {
     expect(await listFiles(root)).not.toContain("fresh/README.md");
   });
 
+  it.skipIf(process.platform === "win32" || process.getuid?.() === 0)(
+    "distinguishes denied output writing from denied input reading and recovers with the same inputs",
+    async () => {
+      const { input, directory, files } = await prepare(
+        "rea-environment-export-denied-",
+      );
+      await mkdir(directory, { mode: 0o500 });
+      try {
+        const denied = await exportEnvironmentBundle({ ...input, directory });
+        if (denied.ok) throw new Error("Expected write denial");
+        expect(projectAnalysisError(denied.error)).toMatchObject({
+          message: expect.stringContaining("denied writing"),
+          remediation: {
+            action: expect.stringContaining("writable destination"),
+          },
+          details: {
+            diagnostics: {
+              boundary: "filesystem-write",
+              system_code: "EACCES",
+            },
+          },
+        });
+        expect(await readdir(directory)).toEqual([]);
+        await chmod(files.manifestPath, 0);
+        const readDenied = await readEnvironmentExportInputs(
+          files.manifestPath,
+          files.capturePath,
+        );
+        if (readDenied.ok) throw new Error("Expected read denial");
+        expect(readDenied.error).toMatchObject({
+          _tag: "AnalysisAccessDeniedError",
+          path: files.manifestPath,
+          cause: { code: "EACCES", path: files.manifestPath },
+        });
+        expect(projectAnalysisError(readDenied.error)).toMatchObject({
+          code: "access_denied",
+          details: { boundary: "filesystem-read" },
+        });
+      } finally {
+        await chmod(directory, 0o700);
+        await chmod(files.manifestPath, 0o600);
+      }
+      expect((await exportEnvironmentBundle({ ...input, directory })).ok).toBe(
+        true,
+      );
+    },
+  );
+
   it("accepts an existing empty directory", async () => {
     const { input, directory } = await prepare("rea-environment-export-empty-");
     await mkdir(directory);
@@ -228,6 +309,11 @@ describe("exportEnvironmentBundle", () => {
     expect(exported.ok).toBe(true);
     expect(await listFiles(directory)).toHaveLength(7);
   });
+};
+
+describe("exportEnvironmentBundle", () => {
+  registerBundlePublicationCases();
+  registerBundleDestinationAdmissionCases();
 });
 
 describe("exportEnvironmentBundle file modes", () => {

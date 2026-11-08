@@ -1,4 +1,4 @@
-import { z } from "zod";
+import { positiveDecimalIntegerSchema } from "./positiveDecimalInteger.js";
 
 import { AnalysisResourceConstraintError } from "../domain/analysisErrorCore.js";
 import { ConfigurationError } from "../domain/configurationErrors.js";
@@ -55,26 +55,21 @@ export const DEFAULT_BRIDGE_MAX_REQUEST: BridgeMaxRequestBytes = {
   source: "default",
 };
 
+/**
+ * Peer a ceiling refusal is reported for. Ghidra differs from the other two:
+ * its Java bridge reads no request ceiling, so only the REA client enforces
+ * this setting for Ghidra and recovery must not ask for a bridge restart.
+ */
+export type BridgePeer = "Hopper" | "Cutter" | "Ghidra";
+
 export const bridgeMaxRequestBytesConstraint = `${BRIDGE_MAX_REQUEST_BYTES_SETTING} must be a positive decimal integer from ${String(MINIMUM_BRIDGE_MAX_REQUEST_BYTES)} to ${String(MAXIMUM_BRIDGE_MAX_REQUEST_BYTES)} bytes; the default is ${String(DEFAULT_BRIDGE_MAX_REQUEST_BYTES)} bytes (16 MiB). A value below ${String(MINIMUM_BRIDGE_MAX_REQUEST_BYTES)} bytes cannot carry the largest admitted symbol-name command, and a larger value is refused so the encoded payload plus its framing LF stays one string under Node's single-string ceiling.`;
 
-const decimalInteger = /^[1-9]\d*$/u;
-
-const withinRequestRange = (value: string): boolean => {
-  // The pattern check reports a non-decimal value. Refine only bounds integers.
-  if (!decimalInteger.test(value)) return true;
-  const parsed = BigInt(value);
-  return (
-    parsed >= BigInt(MINIMUM_BRIDGE_MAX_REQUEST_BYTES) &&
-    parsed <= BigInt(MAXIMUM_BRIDGE_MAX_REQUEST_BYTES)
-  );
-};
-
 /** Optional decimal byte count for the Hopper and Cutter request payload ceiling. */
-export const bridgeMaxRequestBytesSchema = z
-  .string()
-  .regex(decimalInteger, { error: bridgeMaxRequestBytesConstraint })
-  .refine(withinRequestRange, { error: bridgeMaxRequestBytesConstraint })
-  .transform(Number);
+export const bridgeMaxRequestBytesSchema = positiveDecimalIntegerSchema(
+  MINIMUM_BRIDGE_MAX_REQUEST_BYTES,
+  MAXIMUM_BRIDGE_MAX_REQUEST_BYTES,
+  bridgeMaxRequestBytesConstraint,
+);
 
 /** Resolve the effective ceiling from one environment value. */
 export const parseBridgeMaxRequestBytes = (
@@ -114,11 +109,14 @@ export const resolveBridgeMaxRequestBytes = (
 /** How to read and change the effective bridge request ceiling. */
 export const bridgeMaxRequestBytesRecovery = (
   limit: BridgeMaxRequestBytes,
+  peer: BridgePeer = "Hopper",
 ): string =>
   [
     `The effective ${BRIDGE_MAX_REQUEST_BYTES_SETTING} value is ${String(limit.maximumBytes)} bytes (source ${limit.source}; default ${String(DEFAULT_BRIDGE_MAX_REQUEST_BYTES)}, floor ${String(MINIMUM_BRIDGE_MAX_REQUEST_BYTES)}, maximum ${String(MAXIMUM_BRIDGE_MAX_REQUEST_BYTES)}).`,
     `Set ${BRIDGE_MAX_REQUEST_BYTES_SETTING} in the environment that starts REA to a decimal integer from ${String(MINIMUM_BRIDGE_MAX_REQUEST_BYTES)} to ${String(MAXIMUM_BRIDGE_MAX_REQUEST_BYTES)}, then restart REA.`,
-    "Restart Hopper or Cutter from that same environment so the bridge uses this ceiling.",
+    peer === "Ghidra"
+      ? `The Ghidra bridge enforces no request ceiling of its own, so only the REA client applies ${BRIDGE_MAX_REQUEST_BYTES_SETTING} to Ghidra requests.`
+      : "Restart Hopper or Cutter from that same environment so the bridge uses this ceiling.",
   ].join(" ");
 
 const limitFacts = (
@@ -132,13 +130,13 @@ export const bridgeRequestOversizeError = (
   operation: string,
   limit: BridgeMaxRequestBytes,
   payloadBytes: number,
-  peer: "Hopper" | "Cutter",
+  peer: BridgePeer,
 ): AnalysisResourceConstraintError => {
-  const recovery = bridgeMaxRequestBytesRecovery(limit);
+  const recovery = bridgeMaxRequestBytesRecovery(limit, peer);
   const refusal =
     peer === "Cutter"
       ? `Cutter request exceeds its authenticated frame limit of ${String(limit.maximumBytes)} bytes; no command was sent.`
-      : `Hopper request exceeds its ${String(limit.maximumBytes)}-byte payload limit; no request was sent.`;
+      : `${peer} request exceeds its ${String(limit.maximumBytes)}-byte payload limit; no request was sent.`;
   return new AnalysisResourceConstraintError(
     operation,
     "transport",
@@ -153,10 +151,10 @@ export const bridgeRequestLimitMismatchError = (
   operation: string,
   limit: BridgeMaxRequestBytes,
   bridgeBytes: number,
-  peer: "Hopper" | "Cutter",
+  peer: BridgePeer,
   sent = peer === "Cutter" ? "No command was sent." : "No request was sent.",
 ): AnalysisResourceConstraintError => {
-  const recovery = bridgeMaxRequestBytesRecovery(limit);
+  const recovery = bridgeMaxRequestBytesRecovery(limit, peer);
   return new AnalysisResourceConstraintError(
     operation,
     "transport",
@@ -173,7 +171,7 @@ export const bridgeRequestLimitMismatchError = (
 export const bridgeResponseOversizeError = (
   limit: BridgeMaxRequestBytes,
 ): AnalysisResourceConstraintError => {
-  const recovery = bridgeMaxRequestBytesRecovery(limit);
+  const recovery = bridgeMaxRequestBytesRecovery(limit, "Cutter");
   return new AnalysisResourceConstraintError(
     "cutter_command",
     "transport",

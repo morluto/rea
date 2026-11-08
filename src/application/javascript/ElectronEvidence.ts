@@ -30,20 +30,15 @@ export const createElectronEvidence = (
     result,
     confidence: "observed",
     authority: "external-service",
-    environment:
-      "target" in result
-        ? {
-            id: `${result.browser.product}@${result.browser.revision}`,
-            platform: "unknown",
-            architecture: "unknown",
-            isolation: "none",
-          }
-        : null,
+    environment: {
+      id: `${result.browser.product}@${result.browser.revision}`,
+      platform: "unknown",
+      architecture: "unknown",
+      isolation: "none",
+    },
     limitations: [
       ...result.limitations,
-      ...("target" in result
-        ? ["Browser host platform and architecture were not observed."]
-        : []),
+      "Browser host platform and architecture were not observed.",
     ],
   });
 

@@ -72,6 +72,46 @@ it("reads 3.7, 3.10 and 3.12 layouts including nested code", () => {
   );
 });
 
+it("preserves signed co_firstlineno in code objects and code constants", () => {
+  const nested = marshalCode("py311", {
+    name: "inner",
+    firstlineno: -7,
+  });
+  const bytes = Buffer.concat([
+    pythonPycHeader(3531),
+    marshalCode("py311", {
+      firstlineno: -1,
+      consts: [nested],
+    }),
+  ]);
+  const report = parse(bytes);
+  expect(root(report).firstlineno).toBe(-1);
+  expect(root(report).consts).toContainEqual({
+    kind: "code",
+    name: "inner",
+    firstlineno: -7,
+  });
+  expect(pythonPycSchema.safeParse(report).success).toBe(true);
+  expect(
+    pythonPycSchema.safeParse({
+      ...report,
+      code_objects: [
+        { ...root(report), firstlineno: -0x8000_0001 },
+        ...report.code_objects.slice(1),
+      ],
+    }).success,
+  ).toBe(false);
+  expect(
+    pythonPycSchema.safeParse({
+      ...report,
+      code_objects: [
+        { ...root(report), firstlineno: 0x8000_0000 },
+        ...report.code_objects.slice(1),
+      ],
+    }).success,
+  ).toBe(false);
+});
+
 it("decodes a hash-based header and a FLAG_REF top-level code object", () => {
   const bytes = pythonPycFixture("py311", {
     flaggedCode: true,
@@ -91,12 +131,115 @@ it("decodes a hash-based header and a FLAG_REF top-level code object", () => {
   expect(root(report).name).toBe("<module>");
 });
 
-it("fails unknown magics and truncated marshal without partial success", () => {
-  const unknown = Buffer.concat([pythonPycHeader(1), marshalCode("py311")]);
-  expect(() => parse(unknown)).toThrow(PythonPycFormatFailure);
+it("rejects truncated marshal without partial success", () => {
   expect(() => parse(pythonPycFixture("py311").subarray(0, 20))).toThrow(
     PythonPycFormatFailure,
   );
+});
+
+it.each([
+  { magic: 3571, layout: "py311", version: "3.13" },
+  { magic: 3401, layout: "py37", version: "3.8" },
+] as const)(
+  "decodes supported standalone magic $magic with its own marshal layout",
+  ({ magic, layout, version }) => {
+    const result = parse(
+      Buffer.concat([pythonPycHeader(magic), marshalCode(layout)]),
+    );
+    expect(result.header).toMatchObject({
+      magic,
+      python_version: version,
+      code_layout: layout,
+    });
+    expect(root(result).name).toBe("<module>");
+  },
+);
+
+it.each([
+  { magic: 3627, version: "3.14", flags: 0x0, mode: "timestamp-based" },
+  { magic: 3666, version: "3.15", flags: 0x0, mode: "timestamp-based" },
+  // A non-zero flag word and a PEP 552 hash-based header, so a refusal that hardcoded
+  // `flags 0x0, timestamp-based` could not pass.
+  { magic: 3666, version: "3.15", flags: 0x3, mode: "hash-based" },
+  { magic: 3627, version: "3.14", flags: 0x1, mode: "hash-based" },
+] as const)(
+  "qualifies the recognized CPython $version header without a pinned code layout",
+  ({ magic, version, flags, mode }) => {
+    // The header is still a packed 16-byte 3.7+ header, so its identity and flags are
+    // reported even though no marshal layout is pinned for this version.
+    const header = pythonPycHeader(magic, {
+      flags,
+      ...(flags === 0 ? {} : { sourceHash: Buffer.alloc(8, 0xab) }),
+    });
+    let failure: unknown;
+    try {
+      parse(header);
+    } catch (error) {
+      failure = error;
+    }
+    expect(failure).toBeInstanceOf(PythonPycFormatFailure);
+    expect(failure).toMatchObject({ kind: "unsupported" });
+    if (!(failure instanceof PythonPycFormatFailure)) throw failure;
+    expect(failure.message).toContain(
+      `CPython ${version} header is recognized`,
+    );
+    expect(failure.message).toContain(`magic ${magic}, 16-byte header`);
+    expect(failure.message).toContain(`flags 0x${flags.toString(16)}`);
+    expect(failure.message).toContain(mode);
+    expect(failure.message).not.toContain(
+      mode === "hash-based" ? "timestamp-based" : "hash-based",
+    );
+    expect(failure.message).toMatch(/no marshal code layout.*pinned/iu);
+    expect(failure.message).toMatch(/marshal decoding.*CPython 3\.7/iu);
+  },
+);
+
+it("does not qualify a magic outside the pinned identity table", () => {
+  expect(() => parse(pythonPycHeader(1))).toThrow(
+    expect.objectContaining({
+      kind: "unsupported",
+      message: expect.stringMatching(/not a pinned CPython identity.*header/iu),
+    }),
+  );
+});
+
+it("reports a short unknown header before unsupported magic, and bad CR LF before either", () => {
+  const unknown = pythonPycHeader(1).subarray(0, 4);
+  expect(() => parse(unknown)).toThrow(
+    expect.objectContaining({
+      kind: "malformed",
+      message: expect.stringMatching(/shorter than.*16.byte.*header/iu),
+    }),
+  );
+  const badTrailer = Buffer.from(unknown);
+  badTrailer[3] = 0;
+  expect(() => parse(badTrailer)).toThrow(
+    expect.objectContaining({
+      kind: "malformed",
+      message: expect.stringMatching(/magic.*little.endian.*CR LF/iu),
+    }),
+  );
+});
+
+it("classifies the 12-byte 3.7 alpha header as unsupported", () => {
+  for (const magic of [3390, 3391]) {
+    const header = Buffer.alloc(12);
+    header.writeUInt16LE(magic);
+    header[2] = 0x0d;
+    header[3] = 0x0a;
+    expect(() => parse(Buffer.concat([header, marshalCode("py37")]))).toThrow(
+      expect.objectContaining({
+        kind: "unsupported",
+        message: expect.stringContaining("unsupported 12-byte CPython header"),
+      }),
+    );
+    expect(() => parse(header.subarray(0, 4))).toThrow(
+      expect.objectContaining({
+        kind: "unsupported",
+        message: expect.stringContaining("unsupported 12-byte CPython header"),
+      }),
+    );
+  }
 });
 
 const u32 = (value: number): Buffer => {
@@ -266,11 +409,11 @@ it("charges long digits to the string budget and keeps large previews bounded", 
 
 it("decodes marshal strings with CPython surrogatepass rules", () => {
   const report = parse(
-    withConsts([marshalUnicode(Buffer.from([0x73, 0xed, 0xa0, 0x80]))]),
+    withConsts([marshalUnicode(Buffer.from("efbbbf73eda080efbbbf", "hex"))]),
   );
   expect(root(report).consts[0]).toMatchObject({
     kind: "str",
-    value: "s\ud800",
+    value: "\ufeffs\ud800\ufeff",
   });
   expect(() =>
     parse(withConsts([marshalUnicode(Buffer.from([0xf0, 0x90, 0x80]))])),
@@ -280,21 +423,56 @@ it("decodes marshal strings with CPython surrogatepass rules", () => {
   ).toThrow(PythonPycFormatFailure);
 });
 
-it("keeps non-finite float and complex constants JSON-safe", () => {
+it.each([0x73, 0x74, 0x75, 0x61, 0x41, 0x28, 0x5b, 0x3c, 0x3e])(
+  "classifies a negative signed marshal count (tag %i) before applying limits",
+  (tag) => {
+    expect(() =>
+      parse(withConsts([Buffer.concat([Buffer.from([tag]), i32(-1)])])),
+    ).toThrow(PythonPycFormatFailure);
+  },
+);
+
+it("keeps signed zero and non-finite float and complex constants JSON-safe", () => {
   const report = parse(
     withConsts([
       Buffer.concat([Buffer.from([0x67]), f64(Infinity)]),
       Buffer.concat([Buffer.from([0x79]), f64(0), f64(-Infinity)]),
       Buffer.concat([Buffer.from([0x67]), f64(Number.NaN)]),
+      Buffer.concat([Buffer.from([0x67]), f64(-0)]),
+      Buffer.concat([Buffer.from([0x67]), f64(0)]),
+      Buffer.concat([Buffer.from([0x79]), f64(-0), f64(-0)]),
     ]),
   );
   expect(root(report).consts).toEqual([
     { kind: "float", value: "inf" },
     { kind: "complex", real: 0, imag: "-inf" },
     { kind: "float", value: "nan" },
+    { kind: "float", value: "-0.0" },
+    { kind: "float", value: 0 },
+    { kind: "complex", real: "-0.0", imag: "-0.0" },
   ]);
   expect(pythonPycSchema.safeParse(report).success).toBe(true);
   expect(JSON.parse(JSON.stringify(report))).toEqual(report);
+});
+
+it("truncates string previews without introducing a lone surrogate", () => {
+  const prefix = "x".repeat(79);
+  const report = parse(
+    withConsts([
+      marshalUnicode(Buffer.from(`${prefix}😀tail`)),
+      marshalUnicode(
+        Buffer.concat([
+          Buffer.from(prefix),
+          Buffer.from("eda080", "hex"),
+          Buffer.from("tail"),
+        ]),
+      ),
+    ]),
+  );
+  expect(root(report).consts).toEqual([
+    { kind: "str", bytes: 87, truncated: true, value: prefix },
+    { kind: "str", bytes: 86, truncated: true, value: `${prefix}\ud800` },
+  ]);
 });
 
 it("accepts an empty co_filename", () => {
@@ -878,6 +1056,79 @@ it("accepts code objects as set members and dictionary keys", () => {
   expect(pythonPycSchema.safeParse(report).success).toBe(true);
 });
 
+it("rejects code keys and members whose consts are unhashable", () => {
+  const list = Buffer.concat([Buffer.from([0x5b]), u32(0)]);
+  const int = Buffer.concat([Buffer.from([0x69]), i32(1)]);
+  const tuple = (...items: Buffer[]): Buffer =>
+    Buffer.concat([Buffer.from([0x29, items.length]), ...items]);
+  const code = (...consts: Buffer[]): Buffer =>
+    marshalCode("py311", { name: "u", qualname: "u", consts });
+  const setOf = (kind: number, member: Buffer): Buffer =>
+    Buffer.concat([Buffer.from([kind]), u32(1), member]);
+  const dictKey = (key: Buffer): Buffer =>
+    Buffer.concat([Buffer.from([0x7b]), key, int, Buffer.from([0x30])]);
+  for (const key of [code(list), code(tuple(int, list)), code(code(list))]) {
+    expect(() => parse(withConsts([setOf(0x3c, key)]))).toThrow(
+      PythonPycFormatFailure,
+    );
+    expect(() => parse(withConsts([setOf(0x3e, key)]))).toThrow(
+      PythonPycFormatFailure,
+    );
+    expect(() => parse(withConsts([dictKey(key)]))).toThrow(
+      PythonPycFormatFailure,
+    );
+  }
+  const cyclic = Buffer.concat([
+    Buffer.from([0x29 | 0x80, 1]),
+    marshalCode("py311", {
+      name: "u",
+      qualname: "u",
+      flagged: true,
+      constsObject: tuple(marshalRef(0)),
+    }),
+  ]);
+  expect(() => parse(withConsts([cyclic, setOf(0x3c, marshalRef(1))]))).toThrow(
+    PythonPycFormatFailure,
+  );
+
+  // A set inside a tuple that reaches the unfinished tuple, directly, inside
+  // a code object's consts, or as those consts, before the list is read.
+  for (const member of [
+    marshalRef(0),
+    marshalCode("py311", {
+      name: "u",
+      qualname: "u",
+      constsObject: tuple(marshalRef(0)),
+    }),
+    marshalCode("py311", {
+      name: "u",
+      qualname: "u",
+      constsObject: marshalRef(0),
+    }),
+  ])
+    expect(() =>
+      parse(
+        withConsts([
+          Buffer.concat([
+            Buffer.from([0x29 | 0x80, 2]),
+            setOf(0x3c, member),
+            list,
+          ]),
+        ]),
+      ),
+    ).toThrow(PythonPycFormatFailure);
+
+  const unhashed = parse(withConsts([tuple(code(list))]));
+  expect(unhashed.coverage.status).toBe("complete");
+  expect(unhashed.code_objects[1]?.consts[0]).toEqual({
+    kind: "list",
+    length: 0,
+  });
+  const hashable = parse(withConsts([setOf(0x3c, code(tuple(int)))]));
+  expect(root(hashable).consts[0]).toEqual({ kind: "set", length: 1 });
+  expect(hashable.coverage.status).toBe("complete");
+});
+
 it("keeps the first dictionary key when a later key compares equal", () => {
   const key = (filename: string): Buffer =>
     marshalCode("py311", {
@@ -952,6 +1203,30 @@ const parseWith = (bytes: Buffer, limits: Partial<typeof defaults> = {}) =>
     },
     { ...defaults, ...limits },
   );
+
+it("preflights expanded shared code-name keys before building their hex table", () => {
+  const width = 1000;
+  const name = Buffer.alloc(1100, 0x61);
+  const namesObject = Buffer.concat([
+    Buffer.from([0x28]),
+    i32(width),
+    Buffer.from([0x61 | 0x80]),
+    u32(name.length),
+    name,
+    ...Array.from({ length: width - 1 }, () => marshalRef(0)),
+  ]);
+  const child = marshalCode("py311", { namesObject });
+  const bytes = withConsts([
+    Buffer.concat([Buffer.from([0x3e]), u32(1), child]),
+  ]);
+
+  expect(() => parseWith(bytes, { max_string_bytes: 4096 })).toThrow(
+    expect.objectContaining({
+      boundary: "string",
+      message: expect.stringContaining("max_string_bytes 4096"),
+    }),
+  );
+});
 
 it("keeps one descendant list when many wrappers share a container", () => {
   const children = 1800;
@@ -1303,6 +1578,15 @@ it("rejects code CPython treats as corrupt instead of complete coverage", () => 
   expect(() => parse(file("py37", 3394, { argcount: 1 }))).toThrow(
     /co_varnames is too small/,
   );
+  expect(() => parse(file("py311", 3531, { flags: 0x80000000 }))).toThrow(
+    /co_flags is negative/,
+  );
+  expect(() => parse(file("py38", 3411, { flags: 0x80000000 }))).toThrow(
+    /co_flags is negative/,
+  );
+  expect(() => parse(file("py38", 3411, { stacksize: 0xffffffff }))).toThrow(
+    /co_stacksize is negative/,
+  );
 
   const valid = parse(
     file("py311", 3531, {
@@ -1316,6 +1600,33 @@ it("rejects code CPython treats as corrupt instead of complete coverage", () => 
   );
   expect(root(valid).argcount).toBe(1);
   expect(valid.coverage.status).toBe("complete");
+  const unknownPositiveFlags = parse(
+    file("py311", 3531, { flags: 0x40000000 }),
+  );
+  expect(root(unknownPositiveFlags).flags).toBe(0x40000000);
+  expect(unknownPositiveFlags.coverage.status).toBe("complete");
+  const negativePy37Flags = parse(file("py37", 3394, { flags: 0x80000000 }));
+  expect(root(negativePy37Flags).flags).toBe(-0x80000000);
+  expect(pythonPycSchema.safeParse(negativePy37Flags).success).toBe(true);
+  const negativePy37Stacksize = parse(
+    file("py37", 3394, { stacksize: 0xffffffff }),
+  );
+  expect(root(negativePy37Stacksize).stacksize).toBe(-1);
+  expect(pythonPycSchema.safeParse(negativePy37Stacksize).success).toBe(true);
+  const negativePy38AlphaFlags = parse(
+    file("py37", 3401, { flags: 0x80000000 }),
+  );
+  expect(root(negativePy38AlphaFlags).flags).toBe(-0x80000000);
+  const ambiguousPy38Fields = parse(
+    file("py38", 3410, { stacksize: 0xffffffff, flags: 0x80000000 }),
+  );
+  expect(root(ambiguousPy38Fields)).toMatchObject({
+    stacksize: -1,
+    flags: -0x80000000,
+  });
+  expect(ambiguousPy38Fields.limitations).toEqual(
+    expect.arrayContaining([expect.stringContaining("Magic 3410 is shared")]),
+  );
   const py37 = parse(
     file("py37", 3394, {
       argcount: 1,
@@ -1340,3 +1651,21 @@ it("leaves 3.11 alpha magics with other code layouts unsupported", () => {
     parse(pythonPycFixture("py311", { magic: 3495 })).header,
   ).toMatchObject({ python_version: "3.11", code_layout: "py311" });
 });
+
+it.each([false, true])(
+  "preserves a source-encoded lone surrogate at the preview boundary (truncated=%s)",
+  (truncated) => {
+    const text = Buffer.concat([
+      Buffer.from("a".repeat(79)),
+      Buffer.from([0xed, 0xa0, 0x80]),
+      ...(truncated ? [Buffer.from("z")] : []),
+    ]);
+    const report = parse(withConsts([marshalUnicode(text)]));
+    expect(root(report).consts[0]).toEqual({
+      kind: "str",
+      value: "a".repeat(79) + "\ud800",
+      bytes: truncated ? 83 : 82,
+      truncated,
+    });
+  },
+);

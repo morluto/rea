@@ -1,8 +1,12 @@
 import { err, ok, type Result } from "../domain/result.js";
-import type { ObjcSwiftMetadata } from "../domain/native/objcSwiftMetadata.js";
+import {
+  projectObjcClassMethods,
+  type ObjcSwiftMetadata,
+} from "../domain/native/objcSwiftMetadata.js";
 import type { Segment, Section } from "./AppleMachoSelection.js";
 import { boundClassName, decodeObjcCategories } from "./AppleObjcCategories.js";
 import { readObjcPropertiesOf } from "./AppleObjcProperties.js";
+import { BinaryFormatFailure } from "./metadata/BinaryContainer.js";
 import type { DecodeIssue } from "./AppleDispatchDecodeFacts.js";
 import { createObjcProtocolReader } from "./AppleObjcProtocols.js";
 import type {
@@ -247,7 +251,10 @@ export const decodeObjcDispatchFacets = (input: {
     ({ name }) => name === "__objc_protolist",
   )) {
     if (section.size % 8 !== 0)
-      throw new RangeError("Misaligned Objective-C protocol list");
+      throw new BinaryFormatFailure(
+        "malformed",
+        "Misaligned Objective-C protocol list",
+      );
     for (let index = 0; index < section.size / 8; index++) {
       if (budget.isFull()) {
         budget.markTruncated();
@@ -354,36 +361,33 @@ export const decodeObjcDispatchFacets = (input: {
       location: hex(read.pointer(ro + 64n)),
       onTruncated,
     });
-    const protocols = protocolReader.list(read.pointer(ro + 40n), onTruncated);
+    const adoptedProtocols = protocolReader.readList(ro + 40n, onTruncated);
+    if (!adoptedProtocols.ok)
+      failures.push(
+        `Protocol list of ${name}: ${adoptedProtocols.error.reason}`,
+      );
+    const protocols = adoptedProtocols.ok
+      ? adoptedProtocols.value
+      : adoptedProtocols.error.names;
     const classDecodeReasons = [
       ...(superclass.name === null && !root
         ? ["superclass_binding_unresolved"]
         : []),
       ...(classListTruncated ? ["max_records_reached"] : []),
+      ...(adoptedProtocols.ok ? [] : ["protocol_list_unreadable"]),
     ];
     result.objc_classes.push({
       name,
       super_class: superclass.name,
       is_meta_class: meta,
       is_root_class: root,
-      methods: result.objc_dispatch_implementations
-        .filter(
+      methods: projectObjcClassMethods(
+        result.objc_dispatch_implementations.filter(
           (item) =>
             item.class_name === name &&
             item.method_type === (meta ? "class" : "instance"),
-        )
-        .map((item) => ({
-          selector: item.selector,
-          method_type: item.method_type,
-          address:
-            item.implementation_address !== null &&
-            BigInt(item.implementation_address) <=
-              BigInt(Number.MAX_SAFE_INTEGER)
-              ? Number(BigInt(item.implementation_address))
-              : null,
-          is_required: null,
-          is_optional: null,
-        })),
+        ),
+      ),
       properties,
       protocols,
       ivar_count: ivarCount,
@@ -414,7 +418,10 @@ export const decodeObjcDispatchFacets = (input: {
     ({ name }) => name === "__objc_classlist",
   )) {
     if (section.size % 8 !== 0)
-      throw new RangeError("Misaligned Objective-C class-list size");
+      throw new BinaryFormatFailure(
+        "malformed",
+        "Misaligned Objective-C class-list size",
+      );
     for (let index = 0; index < section.size / 8; index++) {
       if (budget.isFull()) {
         budget.markTruncated();
@@ -450,7 +457,7 @@ export const decodeObjcDispatchFacets = (input: {
     issues: categoryIssues,
     admit: () => budget.admit(),
     methods,
-    protocols: (list, onTruncated) => protocolReader.list(list, onTruncated),
+    protocolList: protocolReader.readList,
     localClassName: (address) => readLocalClass(read, address).name,
   });
   return {

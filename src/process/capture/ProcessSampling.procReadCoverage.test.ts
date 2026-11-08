@@ -36,6 +36,7 @@ const fixture = vi.hoisted(() => ({
   >(),
   runId: "fixture-run-token",
   runIdFailure: undefined as string | undefined,
+  runIdAvailability: undefined as "absent" | "unavailable" | undefined,
   runIdReads: 0,
 }));
 
@@ -147,6 +148,15 @@ vi.mock("node:fs/promises", async (importOriginal) => {
 vi.mock("../ProcessOwnership.js", () => ({
   readProcessRunId: async () => {
     fixture.runIdReads += 1;
+    if (
+      fixture.runIdFailure !== undefined &&
+      fixture.runIdAvailability !== undefined
+    )
+      throw new ProcessRunTokenReadError(
+        100,
+        fixture.runIdAvailability,
+        fixture.runIdFailure,
+      );
     if (fixture.runIdFailure !== undefined)
       throw Object.assign(new Error(fixture.runIdFailure), {
         code: fixture.runIdFailure,
@@ -166,6 +176,7 @@ vi.mock("../ExecFileOutput.js", () => ({
   },
 }));
 
+import { ProcessRunTokenReadError } from "../ProcessRunTokenObservations.js";
 import { startProcessSampler } from "./ProcessSampling.js";
 import { readLinuxProcessStat } from "./LinuxProcessSampling.js";
 import type { ProcessSample } from "../../domain/process/processCapture.js";
@@ -242,6 +253,7 @@ const setUpFixture = (): void => {
   fixture.statReads.clear();
   fixture.statMutations.clear();
   fixture.runIdFailure = undefined;
+  fixture.runIdAvailability = undefined;
   fixture.runIdReads = 0;
   for (const pid of [100, 200, 300, 400]) fixture.tasks.set(pid, [String(pid)]);
   fixture.children.set("100:100", "200 400");
@@ -626,3 +638,41 @@ it("marks a completed clean pass as neither partial nor interrupted", async () =
   expect(result.coverage.sampling_failures).toBe(0);
   expect(result.coverage.first_sampling_failure).toBeNull();
 });
+
+it.each(["absent", "unavailable"] as const)(
+  "classifies native token availability during Darwin sampler initialization: %s",
+  async (availability) => {
+    setUpFixture();
+    Object.defineProperty(process, "platform", {
+      configurable: true,
+      value: "darwin",
+    });
+    fixture.runIdAvailability = availability;
+    fixture.runIdFailure =
+      availability === "absent"
+        ? "process_not_in_snapshot"
+        : "permission_denied";
+    try {
+      const { samples, stop } = start();
+      await waitFor(() => fixture.runIdReads > 0);
+      await flushImmediateProcPass();
+      const result = await stop();
+      expect(samples).toEqual([]);
+      expect(result.partial).toBe(availability !== "absent");
+      if (availability === "absent") {
+        expect(result.coverage.sampling_failures).toBe(0);
+        expect(result.coverage.first_sampling_failure).toBeNull();
+      } else {
+        expect(result.coverage.sampling_failures).toBeGreaterThan(0);
+        expect(result.coverage.first_sampling_failure).toContain(
+          "permission_denied",
+        );
+      }
+    } finally {
+      Object.defineProperty(process, "platform", {
+        configurable: true,
+        value: "linux",
+      });
+    }
+  },
+);

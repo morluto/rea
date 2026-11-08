@@ -2,12 +2,10 @@ import { z } from "zod";
 import { absoluteLocalPathStringSchema } from "../localPath.js";
 import type { JsonValue } from "../jsonValue.js";
 
-/** Format identity is shared by discovery, catalog, and observed SQLite results. */
-export const SQLITE_PROVIDER_IDENTITY = {
-  id: "sqlite",
-  name: "REA SQLite database inspector",
-  version: null,
-} as const;
+/** SQLite exposes this table as a row source but omits its own catalog entry. */
+export const SQLITE_SCHEMA_TABLE_NAME = "sqlite_schema";
+export const sqliteSchemaHasObjectDeclaration = (name: string): boolean =>
+  name !== SQLITE_SCHEMA_TABLE_NAME;
 
 /** Default ordinary-table sample size when the caller selects a table. */
 export const SQLITE_ROW_LIMIT_DEFAULT = 20;

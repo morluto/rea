@@ -48,7 +48,11 @@ const execute = async (
   const client = new NativeMacOSProvider({}, runner, "darwin").createClient(
     nativeMachoTarget("/fixture/app"),
   );
-  return client.execute("list_architectures", parameters);
+  try {
+    return await client.execute("list_architectures", parameters);
+  } finally {
+    expect((await client.close()).ok).toBe(true);
+  }
 };
 
 describe("native_command_timeout_ms", () => {
@@ -65,6 +69,7 @@ describe("native_command_timeout_ms", () => {
     const runner = new RecordingRunner();
     const result = await execute(runner, { native_command_timeout_ms: 1_500 });
     expect(result.ok, JSON.stringify(result)).toBe(true);
+    expect(runner.timeouts.length).toBeGreaterThan(0);
     expect(runner.timeouts.every((timeout) => timeout === 1_500)).toBe(true);
   });
 
@@ -72,7 +77,7 @@ describe("native_command_timeout_ms", () => {
     const calls: {
       command: string;
       arguments: readonly string[];
-      timeoutMs: number;
+      timeoutMs: number | null;
     }[] = [];
     vi.mocked(runOwnedCommand).mockImplementation(async (spawn, limits) => {
       calls.push({
@@ -86,7 +91,6 @@ describe("native_command_timeout_ms", () => {
     const result = await runner.run("lipo", ["-info", "/fixture/app"], {
       timeoutMs: 120_000,
     });
-    expect(result.ok).toBe(false);
     if (result.ok) throw new Error("expected resolution timeout");
     expect(result.error.reason).toBe("timeout");
     expect(calls).toEqual([
@@ -99,7 +103,7 @@ describe("native_command_timeout_ms", () => {
   });
 
   it("uses 60000 ms for xcrun resolution when the caller omits the deadline", async () => {
-    const timeouts: number[] = [];
+    const timeouts: (number | null)[] = [];
     vi.mocked(runOwnedCommand).mockImplementation(async (_spawn, limits) => {
       timeouts.push(limits.timeoutMs);
       throw new OwnedCommandFailure("timeout", "Command deadline elapsed.");

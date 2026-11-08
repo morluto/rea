@@ -1,4 +1,5 @@
 import type { JsonObject } from "../../domain/analysisView/environmentStateRules.js";
+import type { BodyAddress } from "../../domain/analysisView/environmentStateWriteRules.js";
 import { isUuid } from "../../domain/analysisView/environmentStateWriteValues.js";
 import type { JsonValue } from "../../domain/jsonValue.js";
 import type { ProbeToolCall } from "./environmentCompareMatch.js";
@@ -26,30 +27,48 @@ export class IdMap {
   readonly #toLive = new Map<string, string | number>();
   readonly #scoped = new Map<string, Map<string, string | number>>();
   readonly #envValues = new Set<string>();
+  readonly #stateReferenceFields = new Map<string, Set<string>>();
+  // Equal-pair collisions can make either side unsafe: raw equality on the second pair would hide its conflict.
+  readonly #ambiguousEnvValues = new Set<string>();
   #conflicts = 0;
 
   /**
-   * Pair a live value with an environment value. The first pairing of either side wins. A collection keeps its own
-   * first pairing, including a pair of equal values, and one environment value stands for one live value there.
+   * Pair a live value with an environment value. The first pairing of either side wins; if a conflict includes an equal
+   * pair, the accepted global destination is withheld from translation so raw equality cannot hide that conflict. A
+   * collection keeps its own first pairing, including equal values. `size` counts usable non-identity translations.
    */
-  learn(live: string | number, env: string | number, scope?: string): void {
+  learn(
+    live: string | number,
+    env: string | number,
+    scope?: string,
+    stateReferenceField?: string,
+  ): void {
     const liveKey = String(live);
     const envKey = String(env);
     if (scope !== undefined && !this.#pairScoped(scope, liveKey, env, envKey))
       return;
-    if (liveKey === envKey) return;
+    if (scope !== undefined && liveKey === envKey) return;
     const known = this.#toEnv.get(liveKey);
     if (known !== undefined) {
-      if (String(known) !== envKey) this.#conflicts += 1;
+      if (String(known) !== envKey) {
+        this.#conflicts += 1;
+        if (liveKey === envKey) this.#ambiguousEnvValues.add(String(known));
+      } else if (stateReferenceField !== undefined)
+        this.#noteStateReference(liveKey, stateReferenceField);
       return;
     }
-    if (this.#toLive.has(envKey)) {
+    const knownLive = this.#toLive.get(envKey);
+    if (knownLive !== undefined) {
       this.#conflicts += 1;
+      if (String(knownLive) === envKey || liveKey === envKey)
+        this.#ambiguousEnvValues.add(envKey);
       return;
     }
     this.#toEnv.set(liveKey, env);
     this.#toLive.set(envKey, live);
     this.#envValues.add(envKey);
+    if (stateReferenceField !== undefined)
+      this.#noteStateReference(liveKey, stateReferenceField);
   }
 
   /** Store one collection's pairing. False when it conflicts with a pairing that collection already kept. */
@@ -81,11 +100,13 @@ export class IdMap {
   /** The environment's value for a live one: the collection's own when a scope is given and it knows one, else the probe's. */
   env(live: string | number, scope?: string): string | number | undefined {
     const liveKey = String(live);
-    return (
-      (scope === undefined
-        ? undefined
-        : this.#scoped.get(scope)?.get(liveKey)) ?? this.#toEnv.get(liveKey)
-    );
+    const scoped =
+      scope === undefined ? undefined : this.#scoped.get(scope)?.get(liveKey);
+    if (scoped !== undefined) return scoped;
+    const global = this.#toEnv.get(liveKey);
+    return global !== undefined && !this.#ambiguousEnvValues.has(String(global))
+      ? global
+      : undefined;
   }
 
   hasLive(value: string | number): boolean {
@@ -100,8 +121,22 @@ export class IdMap {
     return this.#envValues.has(String(value));
   }
 
+  #noteStateReference(value: string, field: string): void {
+    const fields = this.#stateReferenceFields.get(value) ?? new Set<string>();
+    fields.add(field);
+    this.#stateReferenceFields.set(value, fields);
+  }
+
+  /** A non-identifier string field that learning proved is an id in environment state. */
+  isStateReference(value: string, field: string): boolean {
+    return this.#stateReferenceFields.get(String(value))?.has(field) ?? false;
+  }
+
   get size(): number {
-    return this.#toEnv.size;
+    return [...this.#toEnv].filter(
+      ([live, env]) =>
+        live !== String(env) && !this.#ambiguousEnvValues.has(String(env)),
+    ).length;
   }
 
   get conflicts(): number {
@@ -211,8 +246,9 @@ export const keyedByLearnedIds = (
 const learnKeyedEntries = (
   live: JsonObject,
   env: JsonObject,
-  map: IdMap,
-  heldIds: ReadonlySet<string>,
+  context: LearnContext,
+  own: boolean,
+  at: string,
 ): boolean => {
   const liveEntries = Object.entries(live);
   const envEntries = Object.entries(env);
@@ -242,8 +278,11 @@ const learnKeyedEntries = (
   for (const [left, right] of paired.pairs) {
     const [liveKey, liveValue] = liveEntries[left]!;
     const [envKey, envValue] = envEntries[right]!;
-    map.learn(liveKey, envKey);
-    learnIds(liveValue, envValue, map, { heldIds });
+    context.map.learn(liveKey, envKey, own ? context.scope : undefined);
+    learnAt(liveValue, envValue, context, {
+      at: childPointer(at, liveKey),
+      own,
+    });
   }
   return true;
 };
@@ -310,18 +349,24 @@ const learnAt = (
       context.map.learn(live, env, context.scope);
     return;
   }
-  if (learnKeyedEntries(live, env, context.map, context.heldIds)) return;
   const own = place.own || place.at === context.entityAt;
+  if (learnKeyedEntries(live, env, context, own, place.at)) return;
   for (const [key, value] of Object.entries(live)) {
     if (!Object.hasOwn(env, key)) continue;
     const other = env[key];
     const pair = idPair(key, value, other, context.heldIds);
-    if (pair !== undefined)
+    if (pair !== undefined) {
+      const stateReferenceField =
+        !ID_FIELD.test(key) &&
+        typeof value === "string" &&
+        typeof other === "string" &&
+        context.heldIds.has(other);
       context.map.learn(
         ...pair,
         own && IDENTITY_FIELD.test(key) ? context.scope : undefined,
+        stateReferenceField ? key : undefined,
       );
-    else
+    } else
       learnAt(value, other, context, {
         at: childPointer(place.at, key),
         own: false,
@@ -360,6 +405,19 @@ export const learnIds = (
     { at: "", own: false },
   );
 
+/** A live identifier as the environment's value, in its own type; unchanged when unmapped. */
+const inEnvTerms = (
+  value: string | number,
+  env: string | number | undefined,
+): JsonValue => {
+  if (env === undefined) return value;
+  return typeof value === "string"
+    ? String(env)
+    : typeof env === "number"
+      ? env
+      : value;
+};
+
 /** A value with every string or number equal to a mapped live identifier replaced by the environment's value, in its own type. */
 export const translateValue = (value: JsonValue, map: IdMap): JsonValue => {
   if (Array.isArray(value))
@@ -371,27 +429,64 @@ export const translateValue = (value: JsonValue, map: IdMap): JsonValue => {
         translateValue(item, map),
       ]),
     );
-  if (!isScalarId(value)) return value;
-  const env = map.env(value);
-  if (env === undefined) return value;
-  return typeof value === "string"
-    ? String(env)
-    : typeof env === "number"
-      ? env
-      : value;
+  return isScalarId(value) ? inEnvTerms(value, map.env(value)) : value;
 };
 
-/** The arguments the environment is called with: path values as matched, already in its terms, paging values as sent, and every other value translated. */
+/** A bulk write's body argument, how it names its entities, and the collection whose own mapping translates those ids. */
+export interface BulkIds {
+  readonly body: string;
+  readonly address: BodyAddress;
+  readonly idField: string;
+  readonly scope: string;
+}
+
+/** A bulk write's body with each id it names translated by its collection's own mapping, and every other value as `translateValue` does. */
+const translateBulkBody = (
+  body: JsonValue,
+  map: IdMap,
+  bulk: BulkIds,
+): JsonValue => {
+  const { address, idField, scope } = bulk;
+  const id = (value: JsonValue): JsonValue =>
+    isScalarId(value) ? inEnvTerms(value, map.env(value, scope)) : value;
+  const entries = (value: JsonValue): JsonValue =>
+    Array.isArray(value)
+      ? value.map((entry) =>
+          address.by === "ids"
+            ? id(entry)
+            : isObject(entry) && Object.hasOwn(entry, idField)
+              ? {
+                  ...(translateValue(entry, map) as JsonObject),
+                  [idField]: id(entry[idField]!),
+                }
+              : translateValue(entry, map),
+        )
+      : translateValue(value, map);
+  if (address.member === null) return entries(body);
+  return isObject(body)
+    ? Object.fromEntries(
+        Object.entries(body).map(([key, value]) => [
+          key,
+          key === address.member ? entries(value) : translateValue(value, map),
+        ]),
+      )
+    : translateValue(body, map);
+};
+
+/** The arguments the environment is called with: path values as matched, already in its terms, paging values as sent, a bulk body's ids by their collection's mapping, and every other value translated. */
 export const environmentArguments = (
   call: ProbeToolCall,
   map: IdMap,
+  bulk?: BulkIds,
 ): Record<string, JsonValue> =>
   Object.fromEntries(
     Object.entries(call.args).map(([name, value]) => [
       name,
       call.pathArguments.includes(name) || call.pagingArguments.includes(name)
         ? value
-        : translateValue(value, map),
+        : bulk !== undefined && name === bulk.body
+          ? translateBulkBody(value, map, bulk)
+          : translateValue(value, map),
     ]),
   );
 

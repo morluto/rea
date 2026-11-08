@@ -42,36 +42,47 @@ const describeSchema = (
   references: JsonSchemaReferences,
   inherited: JsonSchemaScope | undefined,
   describeProperty: (property: string) => string | undefined,
+  propertyDescription?: string,
 ): unknown => {
   if (!isObject(schema)) return schema;
+  // These operands are complete producer results, not fields an agent builds.
+  // Their owner keeps full canonical validation; only their wire declaration
+  // omits the repeated result schema. Analyst-authored controls stay explicit.
+  if (schema.type === "object" && schema["x-rea-complete-observation"] === true)
+    return {
+      type: "object",
+      description: [
+        propertyDescription ??
+          (typeof schema.description === "string"
+            ? schema.description
+            : undefined),
+        "Pass the complete returned normalized_result unchanged. Its fields are omitted from this declaration; the server still validates the complete canonical observation.",
+      ]
+        .filter((text) => text !== undefined)
+        .join(" "),
+    };
   const scope = references.enter(schema, inherited);
-  return Object.fromEntries(
+  const described = Object.fromEntries(
     Object.entries(schema).map(([key, value]) => {
       if (schemaMaps.has(key) && isObject(value))
         return [
           key,
           Object.fromEntries(
             Object.entries(value).map(([name, child]) => {
-              const described = describeSchema(
-                child,
-                references,
-                scope,
-                describeProperty,
-              );
-              if (
-                key !== "properties" ||
-                !isObject(described) ||
-                !isObject(child)
-              )
-                return [name, described];
               const description =
-                referencedDescription(references, child, scope) ??
-                describeProperty(name);
+                key === "properties" && isObject(child)
+                  ? (referencedDescription(references, child, scope) ??
+                    describeProperty(name))
+                  : undefined;
               return [
                 name,
-                description === undefined
-                  ? described
-                  : { ...described, description },
+                describeSchema(
+                  child,
+                  references,
+                  scope,
+                  describeProperty,
+                  description,
+                ),
               ];
             }),
           ),
@@ -96,6 +107,9 @@ const describeSchema = (
       return [key, value];
     }),
   );
+  return propertyDescription === undefined
+    ? described
+    : { ...described, description: propertyDescription };
 };
 
 const objectBranch = (
@@ -246,6 +260,11 @@ const normalizeAdvertisedSchema = (value: unknown): SchemaNormalization => {
     if (node.type === undefined) node.type = "boolean";
     changed = true;
   }
+  if (node.const === "") {
+    delete node.const;
+    if (node.type === undefined) node.type = "string";
+    changed = true;
+  }
   if (
     Array.isArray(node.enum) &&
     node.enum.length > 0 &&
@@ -253,6 +272,18 @@ const normalizeAdvertisedSchema = (value: unknown): SchemaNormalization => {
   ) {
     delete node.enum;
     if (node.type === undefined) node.type = "boolean";
+    changed = true;
+  }
+  if (Array.isArray(node.enum) && node.enum.includes("")) {
+    // Removing only the empty member would reject a canonical-valid input.
+    // Gemini transports turn const into enum and refuse empty enum members.
+    const values = node.enum;
+    delete node.enum;
+    if (
+      node.type === undefined &&
+      values.every((item) => typeof item === "string")
+    )
+      node.type = "string";
     changed = true;
   }
 
@@ -380,6 +411,38 @@ const flattenRootObjectUnion = (
       variants.set(name, known);
     }
   const required = sharedRequiredProperties(branches);
+  // A default lifted out of an input group can make a client send a field
+  // rejected by another strict group. Keep it only when every group owns the
+  // property and supplies the same default.
+  for (const [name, schemas] of variants) {
+    const defaults = branches.map((branch) => {
+      const property = isObject(branch.properties)
+        ? branch.properties[name]
+        : undefined;
+      return isObject(property) ? property.default : undefined;
+    });
+    if (
+      defaults.every(
+        (value) => value !== undefined && isDeepStrictEqual(value, defaults[0]),
+      )
+    )
+      continue;
+    const withoutDefaults: unknown[] = [];
+    for (const schema of schemas) {
+      let withoutDefault = schema;
+      if (isObject(schema) && Object.hasOwn(schema, "default")) {
+        const { default: _default, ...rest } = schema;
+        withoutDefault = rest;
+      }
+      if (
+        !withoutDefaults.some((known) =>
+          isDeepStrictEqual(known, withoutDefault),
+        )
+      )
+        withoutDefaults.push(withoutDefault);
+    }
+    variants.set(name, withoutDefaults);
+  }
   // A coarse property minimum rejects underspecified objects. Partner fields
   // and exact group membership remain enforced by the canonical runtime parser.
   const fewestRequired = Math.min(

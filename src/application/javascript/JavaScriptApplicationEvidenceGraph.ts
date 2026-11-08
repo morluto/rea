@@ -2,9 +2,10 @@ import {
   JAVASCRIPT_APPLICATION_PROVIDER,
   JAVASCRIPT_RUNTIME_RECONCILIATION_PROVIDER,
   MANAGED_WORKFLOW_PROVIDER,
-} from "../InvestigationProviders.js";
+} from "../../domain/investigationProviders.js";
 import { isImmutableEvidence, type Evidence } from "../../domain/evidence.js";
-import { safeParseEvidence } from "../../domain/evidenceValidation.js";
+import { readEvidence } from "../../domain/evidenceValidation.js";
+import { EvidenceIntegrityError } from "../../domain/evidenceErrors.js";
 import {
   type AnalysisInputIssue,
   AnalysisInputError,
@@ -42,9 +43,11 @@ export interface ApplicationGraphEvidenceInputFailure {
 /** Convert typed parser issues into this workflow's caller-facing input error. */
 export const applicationGraphEvidenceInputError = (
   operation: string,
-  failure: ApplicationGraphEvidenceInputFailure,
-): AnalysisInputError =>
-  new AnalysisInputError(operation, undefined, failure.issues);
+  failure: ApplicationGraphEvidenceInputFailure | EvidenceIntegrityError,
+): AnalysisInputError | EvidenceIntegrityError =>
+  failure instanceof EvidenceIntegrityError
+    ? failure
+    : new AnalysisInputError(operation, undefined, failure.issues);
 
 class InvalidApplicationGraphEvidence extends Error {
   constructor(readonly issues: readonly AnalysisInputIssue[]) {
@@ -84,10 +87,10 @@ export const parseApplicationGraphEvidence = (
   path: readonly (string | number)[] = [],
 ): Result<
   ApplicationGraphEvidenceSource,
-  ApplicationGraphEvidenceInputFailure
+  ApplicationGraphEvidenceInputFailure | EvidenceIntegrityError
 > =>
   captureInputValidation(() => {
-    const evidence = parseEvidenceInput(input, path);
+    const evidence = parseEvidenceInput(input);
     const owned = ownedApplicationSources.get(evidence);
     if (owned !== undefined) return owned;
     if (evidence.operation === "analyze_javascript_application") {
@@ -321,11 +324,12 @@ const requireProvider = (
 export const parseNativeApplicationEvidence = (
   inputs: readonly unknown[],
   path: readonly (string | number)[] = [],
-): Result<readonly Evidence[], ApplicationGraphEvidenceInputFailure> =>
+): Result<
+  readonly Evidence[],
+  ApplicationGraphEvidenceInputFailure | EvidenceIntegrityError
+> =>
   captureInputValidation(() => {
-    const parsed = inputs.map((input, index) =>
-      parseEvidenceInput(input, [...path, index]),
-    );
+    const parsed = inputs.map((input) => parseEvidenceInput(input));
     const withoutSubject = parsed.findIndex(({ subject }) => subject === null);
     if (withoutSubject !== -1)
       throw invalidEvidence(
@@ -338,23 +342,24 @@ export const parseNativeApplicationEvidence = (
 
 const captureInputValidation = <Value>(
   operation: () => Value,
-): Result<Value, ApplicationGraphEvidenceInputFailure> => {
+): Result<
+  Value,
+  ApplicationGraphEvidenceInputFailure | EvidenceIntegrityError
+> => {
   try {
     return ok(operation());
   } catch (cause: unknown) {
     if (cause instanceof InvalidApplicationGraphEvidence)
       return err({ issues: cause.issues });
+    if (cause instanceof EvidenceIntegrityError) return err(cause);
     throw cause;
   }
 };
 
-const parseEvidenceInput = (
-  input: unknown,
-  path: readonly (string | number)[],
-): Evidence => {
-  const parsed = safeParseEvidence(input);
-  if (parsed.ok) return parsed.value;
-  throw zodInputFailure(parsed.error, input, path);
+const parseEvidenceInput = (input: unknown): Evidence => {
+  const parsed = readEvidence(input);
+  if (!parsed.ok) throw parsed.error;
+  return parsed.value;
 };
 
 const parseCallerValue = <Value>(

@@ -4,10 +4,13 @@ import { readFile, readdir } from "node:fs/promises";
 import { join } from "node:path";
 import { promisify } from "node:util";
 import { expect, it } from "vitest";
+import { withVerifierCleanup } from "../../../scripts/lib/verifier-cleanup.mjs";
+import { awaitAcknowledgement } from "../../fixtures/lifecycleAcknowledgement.js";
 import { JavaScriptAnalysisWorker } from "../../../src/javascript/analysis/JavaScriptAnalysisWorker.js";
 import { createJavaScriptSourceAnalysis } from "../../../src/artifacts/javascript/JavaScriptSourceAnalysis.js";
 import { ArtifactResourceScope } from "../../../src/artifacts/ArtifactResourceScope.js";
 import { cleanupOwnedProcessGroup } from "../../../src/process/ProcessOwnership.js";
+import { ProcessOwnershipEvidenceOwner } from "../../../src/process/ProcessOwnershipEvidence.js";
 import type { OwnedProcessGroup } from "../../../src/process/ProcessOwnership.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { ProviderCleanupError } from "../../../src/domain/providerCleanupError.js";
@@ -55,8 +58,23 @@ it("reuses one real owned analyzer while retaining distinct source identities an
       "export function next() { return { observed: 8 }; }",
     );
     for (const [index, file] of [first, second].entries()) {
-      const result = await worker.analyze(file, { nodes: 100, unknowns: 100 });
+      const phases: string[] = [];
+      const result = await worker.analyze(
+        file,
+        { nodes: 100, unknowns: 100 },
+        undefined,
+        async (phase) => {
+          phases.push(phase);
+        },
+      );
       if (!result.ok) throw result.error.error;
+      expect(phases).toEqual([
+        "parse",
+        "static",
+        "semantic",
+        "projection",
+        "transfer",
+      ]);
       expect(result.value.javascript.parse_status).toBe("complete");
       expect(
         result.value.module?.callables[0]?.returnSites[0]?.value,
@@ -209,7 +227,7 @@ it("keeps a worker parked while a limit change closes the previous process", asy
   let replacement:
     | ReturnType<typeof createJavaScriptSourceAnalysis>
     | undefined;
-  try {
+  await withVerifierCleanup(async () => {
     const initial = await createJavaScriptSourceAnalysis(limits, 1, {
       scope,
       launcher,
@@ -236,7 +254,7 @@ it("keeps a worker parked while a limit change closes the previous process", asy
       1,
       { scope, launcher },
     );
-    await closeStarted;
+    await awaitAcknowledgement(closeStarted, replacement, "worker close");
 
     const concurrent = await createJavaScriptSourceAnalysis(limits, 1, {
       scope,
@@ -272,13 +290,19 @@ it("keeps a worker parked while a limit change closes the previous process", asy
     await scope.close();
     await exits.get(parkedPid);
     expect(exited.has(parkedPid)).toBe(true);
-  } finally {
-    JavaScriptAnalysisWorker.prototype.close = originalClose;
-    releaseClose();
-    const port = await replacement?.catch(() => undefined);
-    await port?.close().catch(() => undefined);
-    await scope.close();
-  }
+  }, [
+    releaseClose,
+    async () => {
+      const port = await replacement?.catch(() => undefined);
+      await port?.close();
+    },
+    async () => {
+      await scope.close();
+    },
+    () => {
+      JavaScriptAnalysisWorker.prototype.close = originalClose;
+    },
+  ]);
 });
 
 it("does not start a replacement when closing the previous worker fails", async () => {
@@ -534,7 +558,9 @@ const worker = new JavaScriptAnalysisWorker({ heapMb: 128, timeoutMs: 10000 }, a
   ] });
   // The launcher is deliberately orphaned when this host exits; cleanup still
   // requires its run token and executable identity, rather than its old parent.
-  const { expectedParentPid, ...ownership } = launched.ownership;
+  // The live ledger belongs to this host and cannot be serialized. Transfer
+  // only the process facts needed for the independent fixture cleanup.
+  const { expectedParentPid, evidenceOwner, ...ownership } = launched.ownership;
   await writeFile(${JSON.stringify(ownershipPath)}, JSON.stringify(ownership));
   return { ...launched, cleanup: async () => ({ cleaned: false, reason: "fixture inspection unavailable" }) };
 });
@@ -560,9 +586,12 @@ catch (error) {
     const ownership = JSON.parse(
       await readFile(ownershipPath, "utf8"),
     ) as OwnedProcessGroup;
-    expect(await cleanupOwnedProcessGroup(ownership)).toMatchObject({
-      cleaned: true,
-    });
+    expect(
+      await cleanupOwnedProcessGroup({
+        ...ownership,
+        evidenceOwner: new ProcessOwnershipEvidenceOwner(),
+      }),
+    ).toMatchObject({ cleaned: true });
   }
 });
 

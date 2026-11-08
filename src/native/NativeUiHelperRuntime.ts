@@ -67,6 +67,9 @@ export const createNativeUiHelperRuntime = (
             import.meta.url,
           ),
         ),
+        fileURLToPath(
+          new URL("../../bridge/native/NativeUIValues.swift", import.meta.url),
+        ),
         main,
         "-o",
         output,

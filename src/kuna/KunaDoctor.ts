@@ -20,6 +20,7 @@ import {
   KUNA_COMMAND_REMEDIATION,
   KUNA_PROVIDER_ID,
   KUNA_UNSUPPORTED_HOST_REMEDIATION,
+  KUNA_UNVERIFIED_VERSION_REMEDIATION,
   KUNA_VERIFIED_VERSION,
   KUNA_VERSION_PROBE_REMEDIATION,
 } from "./KunaRelease.js";
@@ -138,6 +139,9 @@ export const inspectKunaProvider = async (
   }
   const { value } = installation;
   const cache = await cacheCheck(environment, platform);
+  const versionGuidance = value.verified
+    ? null
+    : KUNA_UNVERIFIED_VERSION_REMEDIATION;
   return {
     id: KUNA_PROVIDER_ID,
     configured,
@@ -157,9 +161,9 @@ export const inspectKunaProvider = async (
         detail: `${value.executable} reports Kuna ${value.version} (sha256 ${value.sha256})${
           value.verified
             ? "."
-            : `; REA verified ${KUNA_VERIFIED_VERSION}, so this release's project layout is unverified.`
+            : `; REA verified ${KUNA_VERIFIED_VERSION}, so this release's project layout is unverified. ${versionGuidance}`
         }`,
-        remediation: null,
+        remediation: versionGuidance,
         classification: "config_drift",
         details: {
           executable: value.executable,
@@ -182,11 +186,12 @@ const installationFailure = (
   code: failure.code,
   detail: failure.reason,
   remediation:
-    failure.code === "unsupported_host"
+    failure.remediation ??
+    (failure.code === "unsupported_host"
       ? KUNA_UNSUPPORTED_HOST_REMEDIATION
       : failure.code === "version_unresolved"
         ? KUNA_VERSION_PROBE_REMEDIATION
-        : KUNA_COMMAND_REMEDIATION,
+        : KUNA_COMMAND_REMEDIATION),
   classification:
     failure.code === "unsupported_host"
       ? "unsupported_host"

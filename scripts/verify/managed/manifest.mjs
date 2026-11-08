@@ -7,7 +7,7 @@ import { inspectManagedMembersBytes } from "../../../dist/dotnet/ManagedMemberIn
 import { projectManagedApplicationGraphEvidence } from "../../../dist/application/managed/ManagedApplicationGraphService.js";
 import { traceApplicationFeatureEvidence } from "../../../dist/application/javascript/JavaScriptApplicationWorkflowService.js";
 import { createEvidence } from "../../../dist/domain/evidence.js";
-import { MANAGED_STATIC_PROVIDER } from "../../../dist/application/InvestigationProviders.js";
+import { MANAGED_STATIC_PROVIDER } from "../../../dist/domain/investigationProviders.js";
 import {
   ensure,
   methodTokenRow,

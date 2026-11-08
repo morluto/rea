@@ -9,17 +9,42 @@ import {
   symlink,
   writeFile,
 } from "node:fs/promises";
-import { dirname, join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { promisify } from "node:util";
-
 import { spawn } from "@lydell/node-pty";
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
+import { parse as parseToml } from "smol-toml";
 
+import type { SetupResult } from "../../../src/application/SetupTypes.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+import { cliTest, type TestCli } from "../../support/cli/cliFixture.js";
 
 const execute = promisify(execFile);
 const decisionMarker = "REA_SETUP_DECISION:";
+const isolatedSetupEnvironment = (home: string) => ({
+  HOME: home,
+  USERPROFILE: home,
+  CODEX_HOME: join(home, ".codex"),
+  XDG_CONFIG_HOME: join(home, ".config"),
+  XDG_DATA_HOME: join(home, ".local", "share"),
+  XDG_CACHE_HOME: join(home, ".cache"),
+});
+const runSetup = (cli: TestCli, home: string, dryRun: string) =>
+  cli.run({
+    arguments: [
+      "setup",
+      "--yes",
+      "--client",
+      "codex",
+      "--skill=false",
+      dryRun,
+      "--format",
+      "json",
+    ],
+    cwd: home,
+    environment: isolatedSetupEnvironment(home),
+  });
 const decisionSchema = z.object({
   approved: z.boolean(),
   selectedActionIds: z.array(z.string()),
@@ -82,6 +107,112 @@ const clientStates = [
 ] as const;
 
 const agentActions = actions.filter(({ kind }) => kind !== "install_hopper");
+
+cliTest.for([
+  "--dry-run=abc",
+  "--dry-run=",
+  "--dryRun=abc",
+  "--dry-run=ab\ncd",
+] as const)(
+  "rejects malformed setup dry-run value %s before approved changes are written",
+  async (dryRun, { cli }) => {
+    const home = await createTestTempDirectory("rea-cli-invalid-dry-run-");
+    const config = join(home, ".codex", "config.toml");
+    const result = await runSetup(cli, home, dryRun);
+
+    await expect(access(config)).rejects.toMatchObject({ code: "ENOENT" });
+    expect(result.exitCode).not.toBe(0);
+    expect(`${result.stdout}\n${result.stderr}`).toContain("--dry-run");
+  },
+);
+
+cliTest.for(["--dry-run=true", "--dry-run=false"] as const)(
+  "accepts explicit setup dry-run value %s",
+  async (dryRun, { cli }) => {
+    const home = await createTestTempDirectory("rea-cli-explicit-dry-run-");
+    const config = join(home, ".codex", "config.toml");
+    const result = await runSetup(cli, home, dryRun);
+
+    expect(result.exitCode, result.stderr).toBe(0);
+    if (dryRun === "--dry-run=true") {
+      expect(result.json).toMatchObject({ status: "planned" });
+      await expect(access(config)).rejects.toMatchObject({ code: "ENOENT" });
+    } else {
+      expect(result.json).toMatchObject({ status: "ready" });
+      await expect(access(config)).resolves.toBeUndefined();
+    }
+  },
+);
+
+cliTest(
+  "reports invalid dry-run through the public CLI without a stack trace",
+  async ({ cli }) => {
+    const home = await createTestTempDirectory(
+      "rea-cli-public-invalid-dry-run-",
+    );
+    const config = join(home, ".codex", "config.toml");
+    const result = await runSetup(cli, home, "--dry-run=abc");
+
+    expect(result.exitCode).not.toBe(0);
+    expect(result.json).toMatchObject({ code: "PARSE_ERROR" });
+    expect(result.stdout).toContain("--dry-run");
+    expect(`${result.stdout}\n${result.stderr}`).not.toContain(
+      "Incur.ParseError",
+    );
+    await expect(access(config)).rejects.toMatchObject({ code: "ENOENT" });
+  },
+);
+
+cliTest(
+  "shows setup help even when a malformed dry-run value is present",
+  async ({ cli }) => {
+    const home = await createTestTempDirectory("rea-cli-help-invalid-dry-run-");
+    const config = join(home, ".codex", "config.toml");
+    const result = await cli.run({
+      arguments: ["setup", "--dry-run=abc", "--help"],
+      cwd: home,
+      environment: isolatedSetupEnvironment(home),
+    });
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain("Usage: rea setup");
+    expect(result.stdout).not.toContain("Invalid --dry-run value");
+    await expect(access(config)).rejects.toMatchObject({ code: "ENOENT" });
+  },
+);
+
+cliTest(
+  "rejects an overridden malformed dry-run before changing existing Codex configuration",
+  async ({ cli }) => {
+    const selectedHome = await createTestTempDirectory(
+      "rea-cli-existing-dry-run-",
+    );
+    const config = join(selectedHome, ".codex", "config.toml");
+    const original = 'model = "retained-evidence"\n';
+    await mkdir(dirname(config), { recursive: true });
+    await writeFile(config, original);
+    const before = await lstat(config);
+    const result = await cli.run({
+      arguments: [
+        "setup",
+        "--yes",
+        "--client",
+        "codex",
+        "--skill=false",
+        "--dry-run=abc",
+        "--dryRun=false",
+        "--json",
+      ],
+      cwd: selectedHome,
+      environment: isolatedSetupEnvironment(selectedHome),
+    });
+    expect(result.exitCode, result.stderr).toBe(1);
+    expect(result.json).toMatchObject({ code: "PARSE_ERROR" });
+    expect(await readFile(config, "utf8")).toBe(original);
+    expect((await lstat(config)).mtimeMs).toBe(before.mtimeMs);
+    expect(await readdir(dirname(config))).toEqual(["config.toml"]);
+  },
+);
 
 const runSetupDryRunInTty = async (
   home: string,
@@ -175,6 +306,107 @@ describe("TTY setup dry run", () => {
     });
   });
 });
+
+cliTest.skipIf(process.platform === "win32")(
+  "repairs a Codex timeout without replacing an equivalent caller-selected launcher",
+  async ({ cli }) => {
+    const home = await createTestTempDirectory("rea-codex-alias-repair-");
+    const codexHome = join(home, ".codex");
+    const config = join(codexHome, "config.toml");
+    const backup = `${config}.rea.backup`;
+    const alias = join(home, "rea-launcher-alias.mjs");
+    await mkdir(codexHome);
+    await symlink(resolve("scripts/rea.mjs"), alias, "file");
+    const original = [
+      "# Caller-owned Codex approval policy",
+      'approval_policy = "on-request"',
+      'sandbox_mode = "read-only"',
+      "",
+      "[mcp_servers.rea]",
+      `command = ${JSON.stringify(process.execPath)}`,
+      `args = ${JSON.stringify([alias, "mcp"])}`,
+      "startup_timeout_sec = 0",
+      "tool_timeout_sec = 900",
+      'default_tools_approval_mode = "prompt"',
+      "",
+      "[mcp_servers.rea.tools.open_binary]",
+      'approval_mode = "approve"',
+      "output_token_limit = 2048",
+      "",
+    ].join("\n");
+    await writeFile(config, original);
+    const setup = (approval: "--dry-run" | "--yes") =>
+      cli.run({
+        arguments: [
+          "setup",
+          "--client",
+          "codex",
+          "--no-skill",
+          approval,
+          "--json",
+        ],
+        cwd: home,
+        environment: {
+          HOME: home,
+          USERPROFILE: home,
+          CODEX_HOME: codexHome,
+          XDG_CONFIG_HOME: join(home, ".config"),
+          XDG_DATA_HOME: join(home, ".local", "share"),
+          XDG_CACHE_HOME: join(home, ".cache"),
+        },
+        timeoutMs: 20_000,
+      });
+
+    const planned = await setup("--dry-run");
+    expect(planned.exitCode, planned.stderr).toBe(0);
+    expect(planned.json).toMatchObject({
+      status: "planned",
+      plannedActions: [
+        expect.objectContaining({
+          id: "configure_client:codex",
+          operation: "update",
+          target: config,
+          backupPath: backup,
+        }),
+      ],
+    });
+    expect(await readFile(config, "utf8")).toBe(original);
+    await expect(access(backup)).rejects.toMatchObject({ code: "ENOENT" });
+
+    const applied = await setup("--yes");
+    expect(applied.exitCode, applied.stderr).toBe(0);
+    expect(applied.json).toMatchObject({ status: "ready" });
+    const repaired = await readFile(config, "utf8");
+    expect(parseToml(repaired)).toMatchObject({
+      approval_policy: "on-request",
+      sandbox_mode: "read-only",
+      mcp_servers: {
+        rea: {
+          command: process.execPath,
+          args: [alias, "mcp"],
+          startup_timeout_sec: 30,
+          tool_timeout_sec: 900,
+          default_tools_approval_mode: "prompt",
+          tools: {
+            open_binary: { approval_mode: "approve", output_token_limit: 2048 },
+          },
+        },
+      },
+    });
+    expect(await readFile(backup, "utf8")).toBe(original);
+    expect((await lstat(alias)).isSymbolicLink()).toBe(true);
+
+    const repeated = await setup("--yes");
+    expect(repeated.exitCode, repeated.stderr).toBe(0);
+    expect(repeated.json).toMatchObject({
+      status: "ready",
+      plannedActions: [],
+      appliedActions: [],
+    });
+    expect(await readFile(config, "utf8")).toBe(repaired);
+    expect(await readFile(backup, "utf8")).toBe(original);
+  },
+);
 
 describe("interactive setup journey", () => {
   it("shows detected and absent clients without preselecting detected clients", async () => {
@@ -389,6 +621,75 @@ describe("interactive setup completion", () => {
       );
     },
   );
+
+  it("prints IDA and JADX with their product spellings", async () => {
+    const { stderr } = await execute(
+      process.execPath,
+      [
+        "--input-type=module",
+        "--eval",
+        [
+          'import { renderInteractiveSetupResult } from "./dist/cli/interactiveSetup.js";',
+          "renderInteractiveSetupResult({",
+          '  status: "ready",',
+          "  plannedActions: [],",
+          "  appliedActions: [],",
+          "  clients: {},",
+          "  doctor: {",
+          "    healthy: true,",
+          '    availableProviders: ["hopper", "ghidra", "ida", "jadx", "kuna"],',
+          "    checks: [],",
+          "  },",
+          "}, {});",
+        ].join("\n"),
+      ],
+      { cwd: process.cwd(), env: { ...process.env, NO_COLOR: "1" } },
+    );
+
+    expect(stderr).toContain(
+      "Deep analysis: Hopper, Ghidra, IDA, JADX, and Kuna",
+    );
+    expect(stderr).not.toContain("Ida");
+    expect(stderr).not.toContain("Jadx");
+  });
+
+  it("prints retained cleanup resources without relying on paths in remediation", async () => {
+    const resources = ["/fixture/owned backup", "/fixture/临时目录"];
+    const result: SetupResult = {
+      status: "needs_human",
+      code: "cleanup_failed",
+      plannedActions: [],
+      appliedActions: [],
+      clients: {},
+      clientStates: [],
+      doctor: {
+        healthy: true,
+        environment_healthy: true,
+        availableProviders: [],
+        scope: {
+          mode: "explicit",
+          clients: [],
+          providers: [],
+          skill: false,
+          target: null,
+        },
+      },
+      remediation: "Owned descriptor remains busy",
+      cleanup: { reason: "Owned descriptor remains busy", resources },
+    };
+    const { stderr } = await execute(
+      process.execPath,
+      [
+        "--input-type=module",
+        "--eval",
+        'import { renderInteractiveSetupResult } from "./dist/cli/interactiveSetup.js";\n' +
+          `renderInteractiveSetupResult(${JSON.stringify(result)}, {});`,
+      ],
+      { cwd: process.cwd(), env: { ...process.env, NO_COLOR: "1" } },
+    );
+    expect(stderr).toContain(result.remediation);
+    for (const resource of resources) expect(stderr).toContain(resource);
+  });
 });
 
 interface JourneyStep {

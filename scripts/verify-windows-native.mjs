@@ -23,7 +23,7 @@ import { pathToFileURL } from "node:url";
 import { verifyWindowsProtocolInput } from "./lib/windows-protocol-input.mjs";
 import { verifyWindowsJobMemoryLimit } from "./lib/windows-job-memory-limit.mjs";
 import { verifyVolumeRootAppendLease } from "./lib/windows-volume-root-append-lease.mjs";
-import { closeVerifierResources } from "./lib/verifier-cleanup.mjs";
+import { withVerifierCleanup } from "./lib/verifier-cleanup.mjs";
 
 if (process.platform !== "win32")
   throw new Error(
@@ -608,8 +608,7 @@ process.stdout.write(JSON.stringify({executable:basename(process.execPath),abiVe
     );
     const heldPath = join(retryRuntime.observation.path, "snapshot.bin");
     let holder;
-    let primaryError;
-    try {
+    await withVerifierCleanup(async () => {
       await retryRuntime.snapshot(source, "snapshot.bin");
       holder = await startDeleteSharingDeniedReader(heldPath);
       // The reader denies delete sharing. Cleanup must retain ownership when
@@ -636,20 +635,12 @@ process.stdout.write(JSON.stringify({executable:basename(process.execPath),abiVe
         /No native private runtime/u,
       );
       report.controls.cleanupFailureRetainsOwnershipForRetry = true;
-    } catch (cause) {
-      primaryError = cause;
-      throw cause;
-    } finally {
-      await closeVerifierResources(
-        [
-          ...(holder === undefined
-            ? []
-            : [() => stopDeleteSharingDeniedReader(holder)]),
-          () => retryRuntime.close(),
-        ],
-        primaryError,
-      );
-    }
+    }, [
+      async () => {
+        if (holder !== undefined) await stopDeleteSharingDeniedReader(holder);
+      },
+      () => retryRuntime.close(),
+    ]);
     const transientRuntime = WindowsPrivateRuntime.create(
       workspace,
       "cleanup-transient-",
@@ -659,8 +650,7 @@ process.stdout.write(JSON.stringify({executable:basename(process.execPath),abiVe
       "snapshot.bin",
     );
     let transientHolder;
-    let transientPrimaryError;
-    try {
+    await withVerifierCleanup(async () => {
       await transientRuntime.snapshot(source, "snapshot.bin");
       transientHolder = await startDeleteSharingDeniedReader(transientHeldPath);
       // Keep the reader held through the first close attempt. Without retries,
@@ -690,20 +680,13 @@ process.stdout.write(JSON.stringify({executable:basename(process.execPath),abiVe
         /No native private runtime/u,
       );
       report.controls.cleanupTransientConflictRetries = true;
-    } catch (cause) {
-      transientPrimaryError = cause;
-      throw cause;
-    } finally {
-      await closeVerifierResources(
-        [
-          ...(transientHolder === undefined
-            ? []
-            : [() => stopDeleteSharingDeniedReader(transientHolder)]),
-          () => transientRuntime.close(),
-        ],
-        transientPrimaryError,
-      );
-    }
+    }, [
+      async () => {
+        if (transientHolder !== undefined)
+          await stopDeleteSharingDeniedReader(transientHolder);
+      },
+      () => transientRuntime.close(),
+    ]);
     report.controls = {
       ...report.controls,
       protectedDaclReadback: true,

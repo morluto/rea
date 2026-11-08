@@ -155,6 +155,7 @@ const checkEvidenceNormalization = (
     "ast-static-analysis",
     "static-relationship-inference",
     "native-analysis-provider",
+    "managed-static-analysis",
   ].includes(evidence.authority);
   if (runtimeLocation && staticAuthority)
     context.addIssue({

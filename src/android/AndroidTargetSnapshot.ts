@@ -19,6 +19,7 @@ import {
   RegularFileAdmissionFailure,
   assertRegularFileActive,
   sameRegularFileState,
+  type StableRegularFileDescriptor,
 } from "../filesystem/RegularFile.js";
 import type { AndroidOperation } from "../domain/android/androidAnalysis.js";
 
@@ -173,9 +174,12 @@ const copyAndroidSnapshot = async (
     // Close each descriptor through its owner. A rejected close keeps the
     // copy outcome and stays retained until that owner is retried; the
     // partial file is removed only after those close attempts.
-    const source = adoptSnapshotHandle(
-      await openSnapshotSource(sourcePath, signal, retain(sourcePath)),
+    const { handle, initial } = await openSnapshotSource(
+      sourcePath,
+      signal,
+      retain(sourcePath),
     );
+    const source = adoptSnapshotHandle(handle);
     return await withOwnedFileHandle(
       sourcePath,
       source.owner,
@@ -184,7 +188,6 @@ const copyAndroidSnapshot = async (
         ...retain(sourcePath),
       },
       async () => {
-        const initial = await source.handle.stat();
         assertRegularFileActive(signal);
         let copiedBytes = 0;
         const hash = createHash("sha256");
@@ -286,18 +289,18 @@ const openSnapshotSource = async (
   retention: {
     readonly retainFailedClose?: (owner: OwnedFileHandle) => void;
   },
-): Promise<FileHandle> => {
+): Promise<StableRegularFileDescriptor> => {
   try {
     return await openRegularFile(path, { symlinks: "follow", signal });
   } catch (cause: unknown) {
     if (!(cause instanceof RegularFileAdmissionFailure)) throw cause;
-    throw new RegularFileCleanupFailure(
+    throw new RegularFileCleanupFailure({
       path,
-      cause.owner,
-      { kind: "failed", cause: cause.cause },
-      cause.cleanupCause,
-      retainAdmissionOwner(retention.retainFailedClose, cause.owner),
-    );
+      owner: cause.owner,
+      outcome: { kind: "failed", cause: cause.cause },
+      cleanupCause: cause.cleanupCause,
+      retention: retainAdmissionOwner(retention.retainFailedClose, cause.owner),
+    });
   }
 };
 
@@ -328,15 +331,10 @@ const projectSnapshotFailure = (
     return cause;
   const projected = projectSnapshotFailure(cause.outcome.cause, projectChanged);
   if (projected === cause.outcome.cause) return cause;
-  return new RegularFileCleanupFailure(
-    cause.path,
-    cause.owner,
-    { kind: "failed", cause: projected },
-    cause.cleanupCause,
-    cause.retention,
-    cause.completionCancellation,
-    cause.operationFailure,
-  );
+  return new RegularFileCleanupFailure({
+    ...cause,
+    outcome: { kind: "failed", cause: projected },
+  });
 };
 
 const verifySourceState = async (

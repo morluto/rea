@@ -18,11 +18,15 @@ import type {
   JavaScriptModuleOrigin,
   JavaScriptSemanticModuleLink,
 } from "../../domain/javascript/javascriptSemanticIr.js";
-import { moduleResolutionModeForJavaScriptReference } from "../../domain/javascript/javascriptModuleResolutionMode.js";
+import {
+  isJsonModuleTarget,
+  moduleResolutionModeForJavaScriptReference,
+} from "../../domain/javascript/javascriptModuleResolutionMode.js";
 import type { JavaScriptArtifactFile } from "../../domain/javascript/javascriptArtifactFiles.js";
 import {
   addAstContainsEdge,
   artifactLocalIdentity,
+  fileOccurrenceIdentity,
   type JavaScriptArtifactGraphContext,
   type JavaScriptArtifactGraphCoverage,
 } from "./JavaScriptArtifactGraphContext.js";
@@ -106,6 +110,7 @@ export const addJavaScriptSourceModules = (
           label: file.path,
           properties: {
             semantic_role: "source-module",
+            file_occurrence: fileOccurrenceIdentity(file),
             source_sha256: file.sha256,
             path: file.path,
             logical_module_key: file.path,
@@ -202,6 +207,7 @@ const addExportRelationship = (
         label: `${file.path}:${link.exportedName}`,
         properties: {
           semantic_role: "export-binding",
+          file_occurrence: fileOccurrenceIdentity(file),
           module_path: file.path,
           relationship_kind: link.kind,
           exported_name: link.exportedName,
@@ -324,10 +330,9 @@ const resolveModuleTarget = (
     node,
     path,
     file,
-    jsonStatus:
-      file.kind === "json" || file.kind === "package-json"
-        ? input.context.analysis.jsonDocuments.read(file).status
-        : null,
+    jsonStatus: isJsonModuleTarget(path, file.kind)
+      ? input.context.analysis.jsonDocuments.read(file).status
+      : null,
     status: "resolved",
     limitations: resolution.limitations,
     resolution,

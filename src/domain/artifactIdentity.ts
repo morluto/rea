@@ -86,25 +86,16 @@ export const artifactManifestId = (
   )}`;
 
 /** Identify one integrity disagreement at its observed logical path. */
-export const artifactContradictionId = (
-  input: {
-    readonly rootArtifactId: string;
-    readonly logicalPath: string;
-  } & (
-    | { readonly declaredSha256: string; readonly observedSha256: string }
-    | { readonly integrity: ArtifactIntegrityPair }
-  ),
-): string =>
+export const artifactContradictionId = (input: {
+  readonly rootArtifactId: string;
+  readonly logicalPath: string;
+  readonly integrity: ArtifactIntegrityPair;
+}): string =>
   `ic_${digestCanonicalValue(
     {
       root_artifact_id: input.rootArtifactId,
       logical_path: input.logicalPath,
-      ...("integrity" in input
-        ? artifactIntegrityPairOf(input.integrity)
-        : {
-            declared_sha256: input.declaredSha256,
-            observed_sha256: input.observedSha256,
-          }),
+      ...artifactIntegrityPairOf(input.integrity),
     },
     "Artifact",
   )}`;

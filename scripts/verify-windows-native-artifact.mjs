@@ -1,39 +1,42 @@
 #!/usr/bin/env node
 
-import { createHash } from "node:crypto";
-import { readFile } from "node:fs/promises";
+import { access, readFile } from "node:fs/promises";
 
 const root = new URL("../", import.meta.url);
+const source = new URL("src/domain/windowsNativeArtifact.ts", root);
+let sourceExists = true;
+try {
+  await access(source);
+} catch (cause) {
+  if (cause?.code !== "ENOENT") throw cause;
+  sourceExists = false;
+}
+const owner = sourceExists
+  ? await (
+      await import("./lib/verifier-source-loader.mjs")
+    ).importVerifierSource(source.href, import.meta.url)
+  : await import(new URL("dist/domain/windowsNativeArtifact.js", root).href);
+const {
+  WINDOWS_NATIVE_ARTIFACT,
+  parseWindowsNativeManifest,
+  validateWindowsNativeArtifact,
+} = owner;
 const packageJson = JSON.parse(
   await readFile(new URL("package.json", root), "utf8"),
 );
-const manifest = JSON.parse(
-  await readFile(new URL("native/windows/build/manifest.json", root), "utf8"),
+const parsed = parseWindowsNativeManifest(
+  JSON.parse(
+    await readFile(new URL("native/windows/build/manifest.json", root), "utf8"),
+  ),
+  packageJson.version,
 );
+if (!parsed.ok) throw parsed.error;
+const manifest = parsed.value;
 const bytes = await readFile(
-  new URL("native/windows/build/rea-windows-x64.node", root),
+  new URL(`native/windows/build/${WINDOWS_NATIVE_ARTIFACT.artifact}`, root),
 );
-if (
-  manifest.packageVersion !== packageJson.version ||
-  manifest.platform !== "win32" ||
-  manifest.architecture !== "x64" ||
-  manifest.abiVersion !== 1 ||
-  manifest.nodeApiVersion !== 8 ||
-  manifest.artifact !== "rea-windows-x64.node" ||
-  createHash("sha256").update(bytes).digest("hex") !== manifest.artifactSha256
-)
-  throw new Error(
-    "Windows native artifact metadata or SHA-256 does not match this package; run the Windows native build lane.",
-  );
-const offset = bytes.length >= 64 ? bytes.readUInt32LE(0x3c) : bytes.length;
-if (
-  bytes.toString("latin1", 0, 2) !== "MZ" ||
-  offset > bytes.length - 26 ||
-  bytes.toString("latin1", offset, offset + 4) !== "PE\0\0" ||
-  bytes.readUInt16LE(offset + 4) !== 0x8664 ||
-  bytes.readUInt16LE(offset + 24) !== 0x20b
-)
-  throw new Error("Windows native artifact must be a Windows x64 PE32+ image.");
+const valid = validateWindowsNativeArtifact(manifest, bytes);
+if (!valid.ok) throw valid.error;
 process.stdout.write(
   `${JSON.stringify({ ok: true, ...manifest, artifactBytes: bytes.length })}\n`,
 );

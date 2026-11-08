@@ -4,7 +4,7 @@ import {
   absoluteLocalPathStringSchema,
   localPathStringSchema,
 } from "../localPath.js";
-import { BINARY_ARCHITECTURES } from "../binaryTargetTypes.js";
+import { binaryMetadataArchitecture } from "../binaryMetadataArchitecture.js";
 import {
   machoSelectionContainsRange,
   selectedSliceAgreesWithReport,
@@ -12,25 +12,12 @@ import {
   machoTargetSelectionSchema,
 } from "../apple/machoTargetSelection.js";
 
-/** Preserve the format owner's architecture spelling separately from Evidence vocabulary. */
-export const rustArchitectureForSubject = (architecture: string) => {
-  switch (architecture) {
-    case "386":
-      return "x86";
-    case "amd64":
-      return "x86_64";
-    default:
-      return BINARY_ARCHITECTURES.find(
-        (supported) => supported === architecture,
-      );
-  }
-};
-
 /** Known revisions used to interpret compatible cargo-auditable documents. */
 export const RUST_AUDITABLE_FORMAT_VERSIONS = [0, 1, 8] as const;
 
 const index = z.int().nonnegative();
 const rustcHash = z.string().regex(/^[0-9a-f]{40}$/u);
+export const rustPackageFeaturesSchema = z.array(z.string().min(1)).nullable();
 
 /** One embedded package, with omitted kind and root preserved as null and false. */
 export const rustPackageSchema = z.strictObject({
@@ -39,6 +26,7 @@ export const rustPackageSchema = z.strictObject({
   source: z.string().min(1),
   kind: z.enum(["runtime", "build"]).nullable(),
   dependencies: z.array(index),
+  features: rustPackageFeaturesSchema.default(null),
   root: z.boolean(),
 });
 
@@ -51,7 +39,9 @@ const dependencyEdgeSchema = z.strictObject({
 export const rustAuditableMetadataSchema = z.strictObject({
   section_name: z.enum([".dep-v0", "__DATA,.dep-v0"]),
   file_offset: index,
+  /** Stored section range, including accepted PE file-alignment bytes. */
   section_bytes: z.int().positive(),
+  /** Bytes consumed by the zlib stream; the inflate ratio uses this size. */
   compressed_bytes: z.int().positive(),
   uncompressed_bytes: z.int().positive(),
   /** Original embedded revision; null means the source omitted the field. */
@@ -136,12 +126,12 @@ const checkSection = (
 ): void => {
   if (
     !inside(fileBytes, metadata.file_offset, metadata.section_bytes) ||
-    metadata.compressed_bytes !== metadata.section_bytes
+    metadata.compressed_bytes > metadata.section_bytes
   )
     issue(
       context,
       ["auditable_metadata", "file_offset"],
-      "Dependency section range is outside the selected artifact or disagrees with its compressed size.",
+      "Dependency section range is outside the selected artifact or shorter than its compressed stream.",
     );
 };
 
@@ -327,7 +317,7 @@ const checkSlice = (report: RustBinary, context: z.RefinementCtx): void => {
     !selectedSliceAgreesWithReport(
       slice,
       report.format,
-      rustArchitectureForSubject(report.architecture),
+      binaryMetadataArchitecture(report.architecture),
     ) ||
     ranges.some(
       ({ offset, bytes }) =>

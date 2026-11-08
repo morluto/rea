@@ -1,15 +1,11 @@
-import type { JavaScriptOpaqueScopeEffects } from "./javascriptSemanticOpaqueEffects.js";
-import type { SemanticIterationSource } from "./javascriptSemanticIterationSources.js";
+import type { SemanticPropertyReadSource } from "./javascriptSemanticIterationSources.js";
 import * as t from "@babel/types";
 import {
   semanticStaticPropertyKey,
   staticJavaScriptTruthiness,
   unwrapJavaScriptExpression,
 } from "./javascriptAstValues.js";
-import {
-  semanticBindingAtRead,
-  semanticEffectTiming,
-} from "./javascriptSemanticMutationInitializers.js";
+import type { SemanticIterationSource } from "./javascriptSemanticIterationFacts.js";
 
 import type {
   JavaScriptSemanticPropertyPath,
@@ -117,11 +113,44 @@ export interface JavaScriptSemanticScopeState {
   readonly bindings: Map<string, JavaScriptSemanticBindingState>;
   /** Object environment introduced by `with`, active only for its body. */
   readonly dynamicWithStatement?: t.WithStatement;
+  /** Ordinary functions own `arguments`; arrow functions inherit it. */
+  readonly implicitArguments?: true;
 }
+
+/** One source owns sites and the minimal scope tree reaching them; O(AST) storage. */
+export interface JavaScriptOpaqueScopeEffects {
+  /** Cheap source evidence collected with declarations, before alias queries. */
+  mayReferenceGlobalCode: boolean;
+  readonly sites: WeakSet<t.Node>;
+  readonly sloppySites: WeakSet<t.Node>;
+  readonly byScope: Map<string, t.CallExpression[]>;
+  readonly children: Map<string, Set<string>>;
+  readonly globalSites: (
+    | t.CallExpression
+    | t.OptionalCallExpression
+    | t.NewExpression
+    | t.TaggedTemplateExpression
+  )[];
+}
+
+/** Intrinsic prototypes tracked from mutation sites to inherited reads. */
+export const semanticPrototypeOwners = [
+  "Object",
+  "Array",
+  "String",
+  "Function",
+  "Number",
+  "Boolean",
+  "RegExp",
+  "BigInt",
+] as const;
+export type SemanticPrototypeOwner = (typeof semanticPrototypeOwners)[number];
 
 /** Shared state for semantic collection and evaluation. */
 export interface JavaScriptSemanticAnalysisState {
   arrayIterationUnknown: boolean;
+  /** Receiver isolation requires the completed member-effect inventory. */
+  memberMutationFactsComplete: boolean;
   readonly program: t.Program;
   readonly opaqueEffects: JavaScriptOpaqueScopeEffects;
   /** Effective loader for static imports in this source artifact. */
@@ -133,6 +162,8 @@ export interface JavaScriptSemanticAnalysisState {
   /** Callee sites whose possible local returns needed a broader projection. */
   readonly returnedReferenceWidenings: Set<t.Node>;
   readonly parentsByNode: WeakMap<t.Node, t.Node>;
+  /** TypeScript syntax omitted from JavaScript value evaluation. */
+  readonly erasedSyntaxNodes: WeakSet<t.Node>;
   readonly scopes: JavaScriptSemanticScopeState[];
   readonly scopesById: Map<string, JavaScriptSemanticScopeState>;
   /** Scope boundaries and descendant scopes resolved on demand. */
@@ -144,6 +175,14 @@ export interface JavaScriptSemanticAnalysisState {
   prototypeRequireMutationObserved: boolean | undefined;
   /** Source evidence that Object.prototype may add inherited enumerable keys. */
   prototypeEnumerationMayAffect: boolean | undefined;
+  readonly implicitPropertyReads: WeakMap<
+    t.Node,
+    readonly SemanticPropertyReadSource[]
+  >;
+  readonly prototypeMutationSites: {
+    readonly owner: SemanticPrototypeOwner;
+    readonly node: t.Node;
+  }[];
   /** Effects on a cached require exports object, independent of local projections. */
   readonly requiredModuleEffects: Map<
     string,
@@ -169,6 +208,10 @@ export interface JavaScriptSemanticAnalysisState {
   readonly ambientBindingWrites: Map<string, t.Node[]>;
   /** Source-local writes, tagged by global, import.meta or CJS module identity. */
   readonly ambientWrites: SemanticPropertyPathCoverage;
+  /** Browser receivers proven to be only the ambient global identity. */
+  readonly retainedGlobalCallReceivers: WeakSet<t.Node>;
+  /** Store targets whose ownership is unknown or ambient, as classified by ambient indexing. */
+  readonly escapingReferenceStores: WeakSet<t.MemberExpression>;
   /** Ambient object identities passed to calls whose effects are not evaluated. */
   readonly ambientEscapes: SemanticPropertyPathCoverage;
   /** Capture sites keep later opaque effects from changing earlier copies. */
@@ -197,6 +240,12 @@ export interface JavaScriptBindingIndex {
     referenceNode: t.Node,
   ): JavaScriptSemanticBindingState | undefined;
   effectsForReferenceAt(
+    site: t.Node,
+    referenceNode: t.Node,
+    propertyPath?: JavaScriptSemanticPropertyPath,
+  ): JavaScriptSemanticReferenceEffectsAtSite;
+  /** Order declarations within one activation; deferred and repeating effects stay unknown. */
+  effectsForReferenceWithinActivationAt(
     site: t.Node,
     referenceNode: t.Node,
     propertyPath?: JavaScriptSemanticPropertyPath,
@@ -301,7 +350,14 @@ type SemanticBindingLookup =
       readonly kind: "binding" | "uncertain-binding";
       readonly binding: JavaScriptSemanticBindingState;
     }
-  | { readonly kind: "ambient" | "uncertain-ambient" | "captured" | "unknown" };
+  | {
+      readonly kind:
+        | "ambient"
+        | "uncertain-ambient"
+        | "captured"
+        | "unknown"
+        | "implicit-arguments";
+    };
 
 /** Retain both a dynamic lookup's uncertainty and its possible outer write owner. */
 export const semanticBindingLookupFromScope = (
@@ -314,6 +370,8 @@ export const semanticBindingLookupFromScope = (
     const binding = scope.bindings.get(name);
     if (binding !== undefined)
       return { kind: uncertain ? "uncertain-binding" : "binding", binding };
+    if (name === "arguments" && scope.implicitArguments === true)
+      return { kind: "implicit-arguments" };
     if (!scope.bindingsComplete) {
       if (scope.dynamicWithStatement === undefined) return { kind: "unknown" };
       const lookup = semanticWithRequireLookup(
@@ -523,96 +581,4 @@ export const semanticVariableScope = (
     candidate = outer;
   }
   return candidate;
-};
-
-/** Identify a global name only when no lexical or dynamic environment shadows it. */
-export const isUnshadowedGlobal = (
-  node: t.Node,
-  state: JavaScriptSemanticAnalysisState,
-  name: string,
-): boolean =>
-  t.isIdentifier(node, { name }) &&
-  (resolveSemanticBindingState(state, node, name) === undefined
-    ? !semanticResolutionBlocked(state, node, name)
-    : isUnmodifiedCommonJsWrapperBinding(node, name, state));
-
-/** A program-level `var` redeclaration still denotes its untouched CJS wrapper parameter. */
-export const isUnmodifiedCommonJsWrapperBinding = (
-  node: t.Node,
-  name: string,
-  state: JavaScriptSemanticAnalysisState,
-): boolean => {
-  const binding = commonJsWrapperBindingDeclaration(node, name, state);
-  return (
-    binding !== undefined &&
-    !semanticBindingHasPriorValueWrite(node, binding, state)
-  );
-};
-
-/** Retained value and pattern stores share one source-ordered write boundary. */
-export const semanticBindingHasPriorValueWrite = (
-  site: t.Node,
-  binding: JavaScriptSemanticBindingState,
-  state: JavaScriptSemanticAnalysisState,
-): boolean => {
-  if (binding.definitions.some(({ kind }) => kind === "function")) return true;
-  const writes = state.bindingWrites.get(binding.bindingId) ?? [];
-  const read = semanticBindingAtRead(binding, site, state.parentsByNode);
-  const retained =
-    read.status === "ordered"
-      ? new Set([
-          ...read.binding.initializers,
-          ...read.binding.referenceInitializers,
-        ])
-      : undefined;
-  const representedWrites = new Set<t.Node>();
-  const retainedWrites = new Set<t.Node>();
-  for (const source of [
-    ...binding.initializers,
-    ...binding.referenceInitializers,
-  ]) {
-    let owner: t.Node | undefined = source.node;
-    while (owner !== undefined && !writes.includes(owner))
-      owner = state.parentsByNode.get(owner);
-    if (owner !== undefined) {
-      representedWrites.add(owner);
-      if (retained === undefined || retained.has(source))
-        retainedWrites.add(owner);
-    } else if (
-      (retained === undefined || retained.has(source)) &&
-      semanticEffectTiming(site, source.node, state) !== "after"
-    )
-      return true;
-  }
-  return writes.some(
-    (write) =>
-      (!representedWrites.has(write) || retainedWrites.has(write)) &&
-      semanticEffectTiming(site, write, state) !== "after",
-  );
-};
-
-/** Program `var` redeclarations retain wrapper identity until a source write. */
-export const commonJsWrapperBindingDeclaration = (
-  node: t.Node,
-  name: string,
-  state: JavaScriptSemanticAnalysisState,
-): JavaScriptSemanticBindingState | undefined => {
-  // Parser sourceType separates explicit modules from script/CommonJS source;
-  // specifier resolution mode does not establish that distinction.
-  if (
-    state.program.sourceType !== "script" ||
-    !["module", "exports", "require", "__dirname", "__filename"].includes(
-      name,
-    ) ||
-    !t.isIdentifier(node, { name })
-  )
-    return undefined;
-  const binding = resolveSemanticBindingState(state, node, name);
-  if (binding === undefined) return undefined;
-  const scope = state.scopesById.get(binding.scopeId);
-  return scope?.kind === "program" &&
-    binding.declarationKinds.size > 0 &&
-    [...binding.declarationKinds].every((kind) => kind === "var")
-    ? binding
-    : undefined;
 };

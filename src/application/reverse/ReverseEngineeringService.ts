@@ -15,12 +15,12 @@ import {
   AnalysisInputError,
   AnalysisResourceConstraintError,
   AnalysisTimeoutError,
+  AnalysisOutputError,
 } from "../../domain/analysisErrorCore.js";
 import {
   AnalysisError,
   type AnalysisCleanupObservation,
 } from "../../domain/analysisErrorBase.js";
-import { AnalysisOutputError } from "../../domain/analysisErrorCore.js";
 import { ProviderAdapterError } from "../../domain/providerAdapterError.js";
 import { createEvidence, type Evidence } from "../../domain/evidence.js";
 import { analysisInputErrorFromIssues } from "../../domain/inputIssueProjection.js";
@@ -47,12 +47,14 @@ import {
 } from "../../process/OwnedCommand.js";
 import type { ProviderProcessSupervisor } from "../../process/ProviderProcess.js";
 import { absoluteCallerPath } from "../../filesystem/callerPath.js";
+import { parseAnalysisInput } from "../AnalysisInput.js";
 
 export type ReverseEngineeringOperation =
   | "inspect_with_objdump"
   | "execute_rizin_command";
 
 const MAX_COMBINED_OUTPUT_BYTES = 16 * 1024 * 1024;
+export const REVERSE_COMMAND_OUTPUT_LIMITATION = `REA stopped collecting output at its ${String(MAX_COMBINED_OUTPUT_BYTES)}-byte cap and requested termination of the provider process; the captured stdout and stderr are a prefix and command completion is unknown. Narrow the command or page its output.`;
 // Eight concurrent captures bound retained provider output to 128 MiB.
 const MAX_CONCURRENT_REVERSE_ENGINEERING_OPERATIONS = 8;
 
@@ -77,6 +79,7 @@ interface ReverseEngineeringCommandRunner {
     readonly stderrInvalidUtf8?: boolean;
     readonly stdoutBytes?: number;
     readonly stderrBytes?: number;
+    readonly outputTruncated?: boolean;
   }>;
 }
 
@@ -213,14 +216,17 @@ export class ReverseEngineeringService {
       recordEvidence: undefined,
     },
   ): Promise<Result<Evidence, AnalysisError>> {
-    const parsed = objdumpInputSchema.safeParse(rawInput);
-    if (!parsed.success)
-      return err(new AnalysisInputError("inspect_with_objdump"));
+    const parsed = parseAnalysisInput(
+      "inspect_with_objdump",
+      rawInput,
+      objdumpInputSchema,
+    );
+    if (!parsed.ok) return parsed;
     const {
       detail,
       command_timeout_ms: commandTimeoutMs,
       ...input
-    } = parsed.data;
+    } = parsed.value;
     if (detail === "summary") {
       const ready = requireAnalysisViewRetention(
         "inspect_with_objdump",
@@ -448,6 +454,7 @@ export class ReverseEngineeringService {
     let cleanupIncomplete = false;
     let cleanupOnlyFailure = false;
     let completionStatus: "complete" | "unknown" = "complete";
+    let outputLimitReached = false;
     let failure: AnalysisError | undefined;
     let cleanupOwner: ProviderProcessSupervisor | undefined;
     let earlyFailure: AnalysisError | undefined;
@@ -468,6 +475,7 @@ export class ReverseEngineeringService {
       stderrBytes = output.stderrBytes ?? Buffer.byteLength(stderr);
       stdoutInvalidUtf8 = output.stdoutInvalidUtf8 === true;
       stderrInvalidUtf8 = output.stderrInvalidUtf8 === true;
+      outputTruncated = output.outputTruncated === true;
     } catch (cause) {
       cleanupOwner =
         cause instanceof OwnedOutputFailure ? cause.cleanupOwner : undefined;
@@ -501,6 +509,8 @@ export class ReverseEngineeringService {
         );
       const capture = execFileOutputFailure(cause);
       const code = capture?.code ?? commandFailureCode(cause);
+      if (code === "ERR_CHILD_PROCESS_STDIO_MAXBUFFER")
+        outputLimitReached = true;
       if (earlyFailure === undefined && code === "E2BIG")
         earlyFailure = new AnalysisResourceConstraintError(
           operation,
@@ -518,7 +528,10 @@ export class ReverseEngineeringService {
       if (
         earlyFailure === undefined &&
         (capture === undefined ||
+          (cause instanceof OwnedOutputFailure && cause.launchFailure) ||
           code === "ENOENT" ||
+          code === "EACCES" ||
+          code === "EPERM" ||
           code === "ERR_PROVIDER_LAUNCH")
       ) {
         if (commandCancelled(signal, cause, code))
@@ -532,23 +545,30 @@ export class ReverseEngineeringService {
             ...ownedCleanupOptions(cause),
             ...reverseCommandTimeoutGuidance(timeoutMs),
           });
-        else if (code === "EACCES" || code === "EPERM")
-          earlyFailure = new AnalysisAccessDeniedError(
+        else {
+          const provider =
+            operation === "inspect_with_objdump" ? "objdump" : "rizin";
+          const setting =
+            provider === "objdump"
+              ? "REA_OBJDUMP_COMMAND"
+              : "REA_RIZIN_COMMAND";
+          earlyFailure = new AnalysisCapabilityUnavailableError(
+            profile.identity.id,
             operation,
-            command,
-            code,
+            `Unable to run configured command (${String(code ?? "unknown error")})`,
             {
               cause,
+              userMessage: `Could not launch the selected ${provider} executable ${JSON.stringify(command)} (${String(code ?? "unknown error")}).`,
+              remediationAction: `Set ${setting} to an installed executable ${provider === "objdump" ? "GNU objdump" : "Rizin"} command, or make that command available on PATH. Check execute permission on the command and search permission on its parent directories before retrying.`,
+              diagnostics: {
+                boundary: "provider-launch",
+                command,
+                system_code: code ?? null,
+              },
               ...ownedCleanupOptions(cause),
             },
           );
-        else
-          earlyFailure = new AnalysisCapabilityUnavailableError(
-            operation === "inspect_with_objdump" ? "objdump" : "rizin",
-            operation,
-            `Unable to run configured command (${String(code ?? "unknown error")})`,
-            { cause, ...ownedCleanupOptions(cause) },
-          );
+        }
       }
       if (earlyFailure === undefined && capture !== undefined) {
         stdout = capture.stdout;
@@ -586,12 +606,6 @@ export class ReverseEngineeringService {
             capturedOutput,
             ...ownedCleanupOptions(cause),
             ...reverseCommandTimeoutGuidance(timeoutMs),
-          });
-        else if (code === "EACCES" || code === "EPERM")
-          failure = new AnalysisAccessDeniedError(operation, command, code, {
-            cause,
-            capturedOutput,
-            ...ownedCleanupOptions(cause),
           });
         if (
           cause instanceof OwnedOutputFailure &&
@@ -698,10 +712,10 @@ export class ReverseEngineeringService {
     const limitations = [
       ...(absolutePath === undefined
         ? [
-            "The objdump version is not reported; the output lists BFD targets advertised by the installed tool and does not establish support for the selected artifact.",
+            "The objdump implementation and version are unknown. The captured output is the selected command's response and does not establish support for an artifact.",
           ]
         : [
-            "The executable version and supported formats are reported as unknown because no reliable version probe was performed.",
+            "The executable implementation, version and supported formats are unknown because no reliable identity probe was performed.",
           ]),
       "A non-zero process exit is preserved as an observed command result.",
       ...(operation === "inspect_with_objdump" &&
@@ -722,6 +736,7 @@ export class ReverseEngineeringService {
             "Rizin commands and retained plugins may read files or access network resources outside the selected artifact; those external inputs are not bound to Evidence.",
           ]
         : []),
+      ...(profile.limitations ?? []),
       ...(stdoutInvalidUtf8 || stderrInvalidUtf8
         ? [
             `Captured ${[
@@ -732,12 +747,14 @@ export class ReverseEngineeringService {
             )} bytes contain invalid or incomplete UTF-8; replacement characters in the text capture do not preserve the original bytes.`,
           ]
         : []),
-      ...(outputTruncated
-        ? [
-            "The provider command ended before completion could be confirmed; captured output is partial.",
-          ]
-        : []),
-      ...(signalName === null
+      ...(outputLimitReached
+        ? [REVERSE_COMMAND_OUTPUT_LIMITATION]
+        : outputTruncated
+          ? [
+              "Captured provider output is partial because bytes were omitted; process completion is reported separately.",
+            ]
+          : []),
+      ...(signalName === null || outputLimitReached
         ? []
         : [
             `The provider process terminated by signal ${signalName}; captured output may be partial and command completion is unknown.`,
@@ -749,9 +766,7 @@ export class ReverseEngineeringService {
             `Command completion is unknown because the operation failed with ${failure._tag}: ${failure.message}`,
           ]),
       ...(absolutePath === undefined
-        ? [
-            "This output lists BFD targets advertised by the installed objdump and is independent of the selected artifact.",
-          ]
+        ? []
         : [
             "When both are available, pre-run and post-run digests detect artifact changes across the provider call but cannot prove the exact bytes consumed during the call.",
           ]),
@@ -832,6 +847,7 @@ interface OwnedOutputFailureOptions {
   readonly cleanup?: AnalysisCleanupObservation;
   readonly cleanupOwner?: ProviderProcessSupervisor;
   readonly cause?: unknown;
+  readonly launchFailure?: boolean;
 }
 
 class OwnedOutputFailure extends Error {
@@ -848,6 +864,7 @@ class OwnedOutputFailure extends Error {
   readonly collectionFailure: boolean;
   readonly cleanup: AnalysisCleanupObservation | undefined;
   readonly cleanupOwner: ProviderProcessSupervisor | undefined;
+  readonly launchFailure: boolean;
 
   constructor(options: OwnedOutputFailureOptions) {
     super("Owned provider command did not produce a complete result.", {
@@ -866,6 +883,7 @@ class OwnedOutputFailure extends Error {
     this.collectionFailure = options.collectionFailure ?? false;
     this.cleanup = options.cleanup;
     this.cleanupOwner = options.cleanupOwner;
+    this.launchFailure = options.launchFailure ?? false;
   }
 }
 
@@ -924,6 +942,7 @@ const runOwnedCommandOutput =
       return {
         stdout: snapshot.stdout.text,
         stderr: snapshot.stderr.text,
+        outputTruncated: snapshot.diagnosticTruncated === true,
         stdoutInvalidUtf8: snapshot.stdout.invalidUtf8 === true,
         stderrInvalidUtf8: snapshot.stderr.invalidUtf8 === true,
         stdoutBytes: snapshot.stdout.bytes,
@@ -951,12 +970,15 @@ const runOwnedCommandOutput =
               : launchErrorCode === "E2BIG"
                 ? "E2BIG"
                 : snapshot === null
-                  ? "ERR_PROVIDER_LAUNCH"
+                  ? typeof launchErrorCode === "string"
+                    ? launchErrorCode
+                    : "ERR_PROVIDER_LAUNCH"
                   : (snapshot.exitCode ?? null);
       throw new OwnedOutputFailure({
         stdout: snapshot?.stdout.text ?? "",
         stderr: snapshot?.stderr.text ?? "",
         code,
+        launchFailure: cause.reason === "process" && snapshot === null,
         signal: snapshot?.signal ?? null,
         outputTruncated: snapshot?.diagnosticTruncated === true,
         stdoutInvalidUtf8: snapshot?.stdout.invalidUtf8 === true,
@@ -1037,7 +1059,11 @@ export const digestFile = async (
       remainingMs,
     );
     const abort = (): void => {
-      stream.destroy(new AnalysisCancelledError("artifact_digest"));
+      stream.destroy(
+        new AnalysisCancelledError("artifact_digest", {
+          cause: signal?.reason,
+        }),
+      );
     };
     const cleanup = (): void => {
       clearTimeout(timer);
@@ -1046,7 +1072,11 @@ export const digestFile = async (
     if (signal?.aborted) {
       cleanup();
       stream.destroy();
-      rejectDigest(new AnalysisCancelledError("artifact_digest"));
+      rejectDigest(
+        new AnalysisCancelledError("artifact_digest", {
+          cause: signal.reason,
+        }),
+      );
       return;
     }
     signal?.addEventListener("abort", abort, { once: true });
@@ -1119,7 +1149,9 @@ const statWithDeadline = (
   timeoutMs: number,
 ): Promise<Stats> => {
   if (signal?.aborted)
-    return Promise.reject(new AnalysisCancelledError("artifact_digest"));
+    return Promise.reject(
+      new AnalysisCancelledError("artifact_digest", { cause: signal.reason }),
+    );
   return new Promise<Stats>((resolveStat, rejectStat) => {
     let settled = false;
     const finish = (outcome: Result<Stats, unknown>): void => {
@@ -1131,7 +1163,13 @@ const statWithDeadline = (
       else rejectStat(outcome.error);
     };
     const abort = (): void =>
-      finish(err(new AnalysisCancelledError("artifact_digest")));
+      finish(
+        err(
+          new AnalysisCancelledError("artifact_digest", {
+            cause: signal?.reason,
+          }),
+        ),
+      );
     const timer = setTimeout(
       () =>
         finish(

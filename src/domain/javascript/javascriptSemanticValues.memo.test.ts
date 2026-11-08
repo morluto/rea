@@ -178,7 +178,7 @@ it.each([
   [false, true],
   [true, true],
 ])(
-  "recomputes a shared cyclic value under a different active ancestor (prewarmed: %s, rebound: %s)",
+  "keeps forward object references unknown across read snapshots (prewarmed: %s, rebound: %s)",
   (prewarmed, rebound) => {
     const parsed = parseJavaScriptSource(
       `
@@ -204,18 +204,22 @@ ${rebound ? "a=0; b=0;" : ""}
         if (entry.name === "a" || entry.name === "b")
           evaluateSemanticBinding(entry, state);
     const value = evaluateSemanticBinding(binding, state);
-    const firstCommon = property(property(value, "first"), "shared");
-    const secondCommon = property(property(value, "second"), "shared");
-    expect(property(firstCommon, "a").status).toBe("cycle");
-    expect(property(property(firstCommon, "b"), "own")).toEqual({
-      status: "literal",
-      value: "b",
-    });
-    expect(property(secondCommon, "b").status).toBe("cycle");
-    expect(property(property(secondCommon, "a"), "own")).toEqual({
-      status: "literal",
-      value: "a",
-    });
+    // These object initializers read common before its lexical declaration.
+    // Expanding them into an abstract cycle would invent a runtime value.
+    for (const [side, own] of [
+      ["first", "a"],
+      ["second", "b"],
+    ] as const) {
+      const object = property(value, side);
+      expect(property(object, "shared")).toEqual({
+        status: "unknown",
+        reason: "Binding common has no proven initializer at this read.",
+      });
+      expect(property(object, "own")).toEqual({
+        status: "literal",
+        value: own,
+      });
+    }
   },
 );
 
@@ -362,7 +366,13 @@ const root = ${balancedOr(aliases)};
 });
 
 it("uses immutable exact identity proofs and shares unchanged union branches", () => {
-  const proofs = new SemanticDependencyProofs(["a", "b", "c", "d", "e"]);
+  const proofs = SemanticDependencyProofs.forBindings([
+    "a",
+    "b",
+    "c",
+    "d",
+    "e",
+  ]);
   const a = proofs.binding("a");
   const b = proofs.binding("b");
   const c = proofs.binding("c");
@@ -381,10 +391,108 @@ it("uses immutable exact identity proofs and shares unchanged union branches", (
   expect(proofs.has(undefined, "a")).toBe(false);
   expect(proofs.intersects(abc, new Map([["d", 0]]))).toBe(false);
   expect(proofs.intersects(abc, new Map([["c", 0]]))).toBe(true);
-  const single = new SemanticDependencyProofs(["only"]);
+  const single = SemanticDependencyProofs.forBindings(["only"]);
   expect(single.has(single.binding("only"), "only")).toBe(true);
   expect(single.has(undefined, "only")).toBe(false);
   expect(() => proofs.binding("unindexed")).toThrow(
     "Unindexed semantic dependency",
   );
+});
+
+it("preserves exact union membership through repeated overlapping proof pairs", () => {
+  const names = ["a", "b", "c", "d", "e"];
+  const proofs = SemanticDependencyProofs.forBindings(names);
+  const subsets = Array.from({ length: 2 ** names.length }, (_, mask) => {
+    const members = names.filter((_, index) => (mask & (1 << index)) !== 0);
+    return {
+      members,
+      proof: members.reduce<ReturnType<typeof proofs.binding>>(
+        (proof, name) => proofs.union(proof, proofs.binding(name)),
+        undefined,
+      ),
+    };
+  });
+  for (const first of subsets)
+    for (const second of subsets) {
+      const expected = new Set([...first.members, ...second.members]);
+      for (const union of [
+        proofs.union(first.proof, second.proof),
+        proofs.union(second.proof, first.proof),
+        proofs.union(first.proof, second.proof),
+      ])
+        expect(names.filter((name) => proofs.has(union, name))).toEqual(
+          [...expected].sort(),
+        );
+      expect(names.filter((name) => proofs.has(first.proof, name))).toEqual(
+        first.members,
+      );
+      expect(names.filter((name) => proofs.has(second.proof, name))).toEqual(
+        second.members,
+      );
+    }
+});
+
+it("shares identity layout without retaining unions across query lifetimes", () => {
+  const layout = SemanticDependencyProofs.forBindings(["a", "b", "c"]);
+  const first = layout.forQuery();
+  const second = layout.forQuery();
+  const a = first.binding("a");
+  const b = first.binding("b");
+  const ab = first.union(a, b);
+  expect(first.union(a, b)).toBe(ab);
+  expect(first.union(b, a)).toBe(ab);
+  expect(second.binding("a")).toBe(a);
+  const fresh = second.union(a, b);
+  expect(fresh).not.toBe(ab);
+  expect(["a", "b", "c"].map((name) => second.has(fresh, name))).toEqual([
+    true,
+    true,
+    false,
+  ]);
+});
+
+it("releases query union ownership when state-owned values are invalidated", () => {
+  const parsed = parseJavaScriptSource(
+    "const a=1; const result=a+a;",
+    "queries.js",
+  );
+  if (parsed === null) throw new Error("Expected parsed source");
+  const steps = indexJavaScriptBindingsSteps(parsed.program);
+  let step = steps.next();
+  while (step.done !== true) step = steps.next();
+  const state = step.value;
+  const result = [...state.bindingsById.values()].find(
+    ({ name }) => name === "result",
+  );
+  if (result === undefined) throw new Error("Missing result binding");
+  const union = SemanticDependencyProofs.prototype.union;
+  const owners = new Set<SemanticDependencyProofs>();
+  const spy = vi
+    .spyOn(SemanticDependencyProofs.prototype, "union")
+    .mockImplementation(function (
+      this: SemanticDependencyProofs,
+      first,
+      second,
+    ) {
+      owners.add(this);
+      return union.call(this, first, second);
+    });
+  try {
+    expect(evaluateSemanticBinding(result, state)).toEqual({
+      status: "literal",
+      value: 2,
+    });
+    expect(owners.size).toBe(1);
+    const firstOwners = new Set(owners);
+    owners.clear();
+    clearSemanticValueCaches(state);
+    expect(evaluateSemanticBinding(result, state)).toEqual({
+      status: "literal",
+      value: 2,
+    });
+    expect(owners.size).toBe(1);
+    expect([...owners].some((owner) => firstOwners.has(owner))).toBe(false);
+  } finally {
+    spy.mockRestore();
+  }
 });

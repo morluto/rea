@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import * as t from "@babel/types";
 
 import {
   analyzeJavaScriptSemantics,
@@ -270,8 +271,9 @@ describe("typed-array reference dependencies", () => {
   });
 
   it("does not retain the cross-product of scalar assignments and store sites", () => {
+    const storeCount = 48;
     const stores = Array.from(
-      { length: 48 },
+      { length: storeCount },
       (_, i) =>
         `value = heap[index + ${i} >> 2]; heap[index + ${i + 1} >> 2] = value;`,
     ).join("\n");
@@ -279,9 +281,21 @@ describe("typed-array reference dependencies", () => {
       const heap = new Int32Array(buffer);
       function copy(index) { let value = 0; ${stores} }
     `);
+    for (const name of ["heap", "value"])
+      expect(
+        bindings.find((binding) => binding.name === name)!.escapedPaths,
+      ).toEqual([]);
+    // An unknown parameter need not be numeric: '+' may invoke conversion methods.
+    const indexEscapes = bindings.find(
+      (binding) => binding.name === "index",
+    )!.escapedPaths;
+    expect(indexEscapes.length).toBeGreaterThan(0);
+    expect(indexEscapes.length).toBeLessThanOrEqual(2 * storeCount);
     expect(
-      bindings.reduce((n, binding) => n + binding.escapedPaths.length, 0),
-    ).toBe(0);
+      indexEscapes.every(({ node }) =>
+        t.isBinaryExpression(node, { operator: "+" }),
+      ),
+    ).toBe(true);
     expect(
       bindings.find((binding) => binding.name === "heap")!.memberWrites.length,
     ).toBeGreaterThan(0);

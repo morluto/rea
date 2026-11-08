@@ -28,6 +28,42 @@ describe("IdMap", () => {
     expect(map.size).toBe(0);
   });
 
+  it("reserves equal pairs and withholds a target that represents two live IDs", () => {
+    for (const pairs of [
+      [
+        [1, 1],
+        [2, 1],
+      ],
+      [
+        [2, 1],
+        [1, 1],
+      ],
+    ] as const) {
+      const map = new IdMap();
+      for (const [live, env] of pairs) map.learn(live, env);
+      expect(map.env(1)).toBeUndefined();
+      expect(map.env(2)).toBeUndefined();
+      expect(map.size).toBe(0);
+      expect(map.conflicts).toBe(1);
+    }
+  });
+
+  it("withholds a mapping when its live ID later also pairs equally", () => {
+    const map = new IdMap();
+    map.learn(2, 1);
+    map.learn(2, 2);
+    expect(map.env(2)).toBeUndefined();
+    expect(map.size).toBe(0);
+  });
+
+  it("withholds an environment ID reserved by a conflicting equal pair", () => {
+    const map = new IdMap();
+    map.learn(1, 2);
+    map.learn(1, 1);
+    expect(map.env(1)).toBeUndefined();
+    expect(map.size).toBe(0);
+  });
+
   it("keeps an equal id in its collection and rejects a second live id for one environment id there", () => {
     const map = new IdMap();
     map.learn(101, 1, "/api/books");

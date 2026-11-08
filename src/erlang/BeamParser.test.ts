@@ -7,8 +7,10 @@ import {
 } from "../domain/erlang/beam.js";
 import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
 import {
+  erlangBeamChunksFixture,
   erlangBeamDeclaredRowsFixture,
   erlangBeamFixture,
+  erlangBeamLegacyAtomsFixture,
   erlangBeamManyAtomsFixture,
   erlangBeamOtp29Fixture,
 } from "./Beam.fixture.js";
@@ -31,87 +33,210 @@ const parse = (bytes: Buffer, input = defaults) =>
     input,
   );
 
-it("reads atoms, exports, imports, lambdas and the Code header", () => {
-  const report = parse(erlangBeamFixture("demo"));
-  expect(report.atom_encoding).toBe("utf8");
-  expect(report.module).toBe("demo");
-  expect(report.atoms?.map((atom) => atom.name)).toEqual([
-    "demo",
+it("selects the last table and Code payload for every repeated chunk name", () => {
+  const original = erlangBeamFixture("selected");
+  const decoy = erlangBeamFixture("decoy");
+  const changedFields = new Map([
+    ["Code", 16],
+    ["ExpT", 8],
+    ["ImpT", 12],
+    ["FunT", 8],
+  ]);
+  for (let at = 12; at < decoy.length;) {
+    const name = decoy.toString("latin1", at, at + 4);
+    const size = decoy.readUInt32BE(at + 4);
+    const field = changedFields.get(name);
+    if (field !== undefined) decoy.writeUInt32BE(9, at + 8 + field);
+    at += 8 + size + ((4 - (size % 4)) % 4);
+  }
+  const repeated = Buffer.concat([
+    original.subarray(0, 12),
+    decoy.subarray(12),
+    original.subarray(12),
+  ]);
+  repeated.writeUInt32BE(repeated.length - 8, 4);
+  const report = parse(repeated);
+  const control = parse(original);
+  expect(control.module).toBe("selected");
+  expect(control.atoms?.map(({ name }) => name)).toEqual([
+    "selected",
     "module_info",
     "start",
     "erlang",
     "get_module_info",
   ]);
-  expect(report.exports).toEqual([
-    { function_index: 3, function: "start", arity: 0, label: 2 },
-    { function_index: 2, function: "module_info", arity: 0, label: 1 },
-    { function_index: 2, function: "module_info", arity: 1, label: 3 },
-  ]);
-  expect(report.imports).toEqual([
-    {
-      module_index: 4,
-      module: "erlang",
-      function_index: 5,
-      function: "get_module_info",
-      arity: 1,
-    },
-  ]);
-  expect(report.lambdas?.[0]).toMatchObject({
-    function: "start",
-    arity: 1,
-    label: 4,
-    old_unique: 42,
-  });
-  expect(report.code).toMatchObject({
-    instruction_set: 0,
+  expect(control.exports).toHaveLength(3);
+  expect(control.imports).toHaveLength(1);
+  expect(control.lambdas).toHaveLength(1);
+  expect(control.code).toMatchObject({
     opcode_max: 169,
     labels: 4,
     functions: 2,
-    extra_header_bytes: 0,
-    instructions: { bytes: 4 },
   });
-  expect(report.chunks.map((chunk) => chunk.name)).toEqual([
-    "AtU8",
-    "Code",
-    "ExpT",
-    "ImpT",
-    "FunT",
-  ]);
+  expect(report.atoms).toEqual(control.atoms);
+  expect(report.exports).toEqual(control.exports);
+  expect(report.imports).toEqual(control.imports);
+  expect(report.lambdas).toEqual(control.lambdas);
+  expect(report.code).toEqual({
+    ...control.code,
+    instructions: {
+      ...control.code!.instructions,
+      offset: control.code!.instructions.offset + decoy.length - 12,
+    },
+  });
+  expect(report.chunks).toHaveLength(control.chunks.length * 2);
 });
 
-// Expected values come from beam_lib:chunks/2 on the same file under OTP 29.
-it("reads a compiler-produced OTP 29 BEAM with the compact atom table", () => {
-  const report = parse(erlangBeamOtp29Fixture());
-  expect(report.module).toBe("rea_beam_fixture");
-  expect(report.atoms?.map((atom) => atom.name)).toEqual([
-    "rea_beam_fixture",
-    "hello",
-    "lists",
-    "reverse",
-    "module_info",
-    "erlang",
-    "get_module_info",
+it("rejects a malformed selected atom table instead of using an earlier table", () => {
+  const original = erlangBeamFixture();
+  const invalid = erlangBeamChunksFixture([["AtU8", Buffer.from([0])]]);
+  const repeated = Buffer.concat([original, invalid.subarray(12)]);
+  repeated.writeUInt32BE(repeated.length - 8, 4);
+  expect(() => parse(repeated)).toThrow(/truncated/);
+});
+
+it("falls back from an empty AtU8 to legacy Atom, while nonempty alternates keep precedence", () => {
+  const control = parse(erlangBeamLegacyAtomsFixture());
+  const empty = parse(erlangBeamLegacyAtomsFixture(Buffer.alloc(0)));
+  expect(empty.atoms).toEqual(control.atoms);
+  expect(empty.atom_encoding).toBe("latin1");
+  expect(empty.module).toBe("demo");
+  expect(empty.exports?.[0]?.function).toBe("ÿ");
+  expect(empty.chunks.map(({ name }) => name)).toEqual([
+    "Atom",
+    "AtU8",
+    "ExpT",
   ]);
-  expect(report.exports).toEqual([
-    { function_index: 5, function: "module_info", arity: 1, label: 6 },
-    { function_index: 5, function: "module_info", arity: 0, label: 4 },
-    { function_index: 2, function: "hello", arity: 1, label: 2 },
-  ]);
+  expect(empty.chunks[1]?.payload.bytes).toBe(0);
+  const alternate = parse(
+    erlangBeamLegacyAtomsFixture(
+      Buffer.concat([
+        Buffer.from([0, 0, 0, 2, 4]),
+        Buffer.from("demo"),
+        Buffer.from([3]),
+        Buffer.from("new"),
+      ]),
+    ),
+  );
+  expect(alternate.atom_encoding).toBe("utf8");
+  expect(alternate.exports?.[0]?.function).toBe("new");
+  const zeroCount = parse(erlangBeamLegacyAtomsFixture(Buffer.alloc(4)));
+  expect(zeroCount.atom_encoding).toBe("utf8");
+  expect(zeroCount.atoms).toEqual([]);
+  expect(zeroCount.exports?.[0]?.function).toBeNull();
+});
+
+it.each([Buffer.from([0]), Buffer.from([0, 0, 0, 1])])(
+  "rejects a malformed nonempty AtU8 without falling back: %j",
+  (payload) => {
+    expect(() => parse(erlangBeamLegacyAtomsFixture(payload))).toThrow(
+      /truncated/,
+    );
+  },
+);
+
+it.each(["AtU8", "Atom"])(
+  "does not turn an empty standalone %s atom table into decoded facts",
+  (name) => {
+    expect(() =>
+      parse(erlangBeamChunksFixture([[name, Buffer.alloc(0)]])),
+    ).toThrow(/atom table is truncated/);
+  },
+);
+
+it("uses the last AtU8 occurrence even when empty", () => {
+  const control = erlangBeamLegacyAtomsFixture(Buffer.from([0, 0, 0, 0]));
+  const empty = erlangBeamChunksFixture([["AtU8", Buffer.alloc(0)]]);
+  const bytes = Buffer.concat([control, empty.subarray(12)]);
+  bytes.writeUInt32BE(bytes.length - 8, 4);
+  const report = parse(bytes);
+  expect(report.atom_encoding).toBe("latin1");
+  expect(report.exports?.[0]?.function).toBe("ÿ");
   expect(
-    report.imports?.map((row) => [row.module, row.function, row.arity]),
-  ).toEqual([
-    ["lists", "reverse", 1],
-    ["erlang", "get_module_info", 1],
-    ["erlang", "get_module_info", 2],
-  ]);
-  expect(report.code).toMatchObject({
-    instruction_set: 0,
-    opcode_max: 181,
-    labels: 7,
-    functions: 3,
-    extra_header_bytes: 0,
-    instructions: { bytes: 49 },
-  });
+    report.chunks
+      .filter(({ name }) => name === "AtU8")
+      .map(({ payload }) => payload.bytes),
+  ).toEqual([4, 0]);
+});
+
+it.each([
+  { payload: Buffer.alloc(0), expected: null },
+  { payload: Buffer.alloc(4), expected: [] },
+])(
+  "distinguishes empty optional FunT from a zero row count: $payload",
+  ({ payload, expected }) => {
+    const original = erlangBeamOtp29Fixture();
+    const extension = erlangBeamChunksFixture([["FunT", payload]]);
+    const bytes = Buffer.concat([original, extension.subarray(12)]);
+    bytes.writeUInt32BE(bytes.length - 8, 4);
+    const control = parse(original);
+    const report = parse(bytes);
+    expect(control.lambdas).toBeNull();
+    expect(report.lambdas).toEqual(expected);
+    expect(report.atoms).toEqual(control.atoms);
+    expect(report.exports).toEqual(control.exports);
+    expect(report.imports).toEqual(control.imports);
+    expect(report.code).toEqual(control.code);
+    expect(report.chunks.at(-1)?.payload.bytes).toBe(payload.length);
+  },
+);
+
+it("does not reuse an earlier FunT when its last occurrence is empty", () => {
+  const original = erlangBeamFixture();
+  const extension = erlangBeamChunksFixture([["FunT", Buffer.alloc(0)]]);
+  const bytes = Buffer.concat([original, extension.subarray(12)]);
+  bytes.writeUInt32BE(bytes.length - 8, 4);
+  const report = parse(bytes);
+  expect(report.lambdas).toBeNull();
+  expect(
+    report.chunks
+      .filter(({ name }) => name === "FunT")
+      .map(({ payload }) => payload.bytes),
+  ).toEqual([28, 0]);
+});
+
+it.each([Buffer.from([0]), Buffer.from([0, 0, 0, 1])])(
+  "rejects truncated nonempty FunT payloads: %j",
+  (payload) => {
+    expect(() => parse(erlangBeamChunksFixture([["FunT", payload]]))).toThrow(
+      /lambda table is truncated/,
+    );
+  },
+);
+
+it("accepts extended compact atom lengths and rejects truncated or overflowing values", () => {
+  const compactAtom = (length: Buffer, name: Buffer): Buffer =>
+    erlangBeamChunksFixture([
+      [
+        "AtU8",
+        Buffer.concat([Buffer.from([0xff, 0xff, 0xff, 0xff]), length, name]),
+      ],
+    ]);
+  const name = Buffer.from("0123456789abcdef", "ascii");
+  const extended = parse(compactAtom(Buffer.from([0x18, 0x00, 0x10]), name));
+  expect(extended.module).toBe(name.toString("ascii"));
+  expect(() => parse(compactAtom(Buffer.from([0x18, 0x00]), name))).toThrow(
+    /BEAM atom table is truncated/,
+  );
+  expect(() => parse(compactAtom(Buffer.from([0x19]), name))).toThrow(
+    /BEAM atom length is not a u tag/,
+  );
+  expect(() =>
+    parse(
+      compactAtom(
+        Buffer.from([0xd8, 0x80, 0, 0, 0, 0, 0, 0, 0]),
+        Buffer.alloc(0),
+      ),
+    ),
+  ).toThrow(/BEAM atom length encoding overflows/);
+  expect(() =>
+    parse(
+      compactAtom(
+        Buffer.from([0xf8, 0x00, 0, 0, 0, 0, 0, 0, 0, 0, 0]),
+        Buffer.alloc(0),
+      ),
+    ),
+  ).toThrow(/BEAM atom length encoding overflows/);
 });
 
 it("fails a truncated FOR1 container without partial success", () => {
@@ -126,22 +251,6 @@ it("fails a FOR1 form that is not BEAM", () => {
   expect(() => parse(bytes)).toThrow(ArtifactReaderFailure);
 });
 
-const singleChunkBeam = (name: string, payload: Buffer): Buffer => {
-  const header = Buffer.alloc(8);
-  header.write(name, 0, "latin1");
-  header.writeUInt32BE(payload.length, 4);
-  const pad = (4 - (payload.length % 4)) % 4;
-  const form = Buffer.concat([
-    Buffer.from("BEAM"),
-    header,
-    payload,
-    Buffer.alloc(pad),
-  ]);
-  const size = Buffer.alloc(4);
-  size.writeUInt32BE(form.length);
-  return Buffer.concat([Buffer.from("FOR1"), size, form]);
-};
-
 it("rejects a short remainder inside the BEAM form", () => {
   const bytes = Buffer.alloc(16);
   bytes.write("FOR1");
@@ -152,13 +261,15 @@ it("rejects a short remainder inside the BEAM form", () => {
 
 it("rejects an AtU8 atom name that is not UTF-8", () => {
   expect(() =>
-    parse(singleChunkBeam("AtU8", Buffer.from([0, 0, 0, 1, 1, 0xff]))),
+    parse(
+      erlangBeamChunksFixture([["AtU8", Buffer.from([0, 0, 0, 1, 1, 0xff])]]),
+    ),
   ).toThrow(/BEAM atom name is not valid UTF-8/);
 });
 
 it("keeps a latin1 atom byte unchanged", () => {
   const report = parse(
-    singleChunkBeam("Atom", Buffer.from([0, 0, 0, 1, 1, 0xff])),
+    erlangBeamChunksFixture([["Atom", Buffer.from([0, 0, 0, 1, 1, 0xff])]]),
   );
   expect(report.atom_encoding).toBe("latin1");
   expect(report.module).toBe("ÿ");
@@ -184,9 +295,13 @@ it("rejects combined table rows before allocating them", () => {
   );
   const count = Buffer.alloc(4);
   count.writeUInt32BE(MAX_INSPECT_ERLANG_BEAM_TABLE_ROWS + 1);
-  expect(() => parse(singleChunkBeam("ExpT", count))).toThrow(/row budget/);
+  expect(() => parse(erlangBeamChunksFixture([["ExpT", count]]))).toThrow(
+    /row budget/,
+  );
   count.writeUInt32BE(MAX_INSPECT_ERLANG_BEAM_TABLE_ROWS);
-  expect(() => parse(singleChunkBeam("ExpT", count))).toThrow(/truncated/);
+  expect(() => parse(erlangBeamChunksFixture([["ExpT", count]]))).toThrow(
+    /truncated/,
+  );
 });
 
 it("fails when the atom budget is exhausted", () => {

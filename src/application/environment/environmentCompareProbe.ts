@@ -1,17 +1,26 @@
 import { z } from "zod";
-import { isJsonLike } from "../../domain/analysisView/EnvironmentManifestAccumulator.js";
+
+import { readRecordedRequestBody } from "../../domain/analysisView/recordedExchangeBody.js";
+import {
+  isJsonLike,
+  mediaTypeEssence,
+} from "../../domain/analysisView/recordedMediaType.js";
 import {
   primaryOrigin,
   type OriginStats,
 } from "../../domain/analysisView/environmentManifestOrigin.js";
 import {
-  mediaTypeEssence,
   readRecordedRequestLine,
   type RecordedRequestLine,
   type RequestLineExclusion,
 } from "../../domain/analysisView/webNetworkRouteTemplates.js";
 import { parseExactJson } from "../../domain/exactJsonNumber.js";
 import type { JsonValue } from "../../domain/jsonValue.js";
+import {
+  compareOffsetDateTimeInstants,
+  readRecordedStart,
+  type OffsetDateTimeInstant,
+} from "../../domain/offsetDateTime.js";
 import type { WebNetworkCaptureRecord } from "../../domain/webNetworkCapture.js";
 import type { Answer } from "./environmentCompareDiff.js";
 import type { ProbeRequest } from "./environmentCompareMatch.js";
@@ -38,18 +47,14 @@ export interface ProbeStep {
 const BODYLESS_STATUSES: ReadonlySet<number> = new Set([204, 205, 304]);
 
 const startedSchema = z.object({ startedDateTime: z.string() });
-const postDataSchema = z.object({
-  request: z.object({
-    postData: z.object({ mimeType: z.string(), text: z.string() }),
-  }),
-});
-
 const methodSchema = z.object({ request: z.object({ method: z.string() }) });
 
-const startedMs = (record: WebNetworkCaptureRecord): number | undefined => {
+const startedInstant = (
+  record: WebNetworkCaptureRecord,
+): OffsetDateTimeInstant | undefined => {
   const started = startedSchema.safeParse(record.reported);
-  const ms = started.success ? Date.parse(started.data.startedDateTime) : NaN;
-  return Number.isFinite(ms) ? ms : undefined;
+  if (!started.success) return undefined;
+  return readRecordedStart(started.data.startedDateTime)?.instant;
 };
 
 /** Whether a probe makes calls that carry a request body: a POST, PUT or PATCH. */
@@ -68,17 +73,15 @@ export const sendsBodies = (
 export const requestBody = (
   record: WebNetworkCaptureRecord,
 ): JsonValue | undefined => {
-  const parsed = postDataSchema.safeParse(record.reported);
-  if (!parsed.success) return undefined;
-  const { mimeType, text } = parsed.data.request.postData;
+  const facts = readRecordedRequestBody(record.reported);
+  if (facts.kind !== "request" || facts.postData.kind !== "object")
+    return undefined;
+  const { mimeType, text } = facts.postData;
+  if (mimeType === undefined || text === undefined) return undefined;
   return isJsonLike(mediaTypeEssence(mimeType))
     ? (parseExactJson(text) ?? text)
     : text;
 };
-
-/** A body over the replay limit, text or bytes: only a prefix is known, so only the status compares. */
-export const isCut = (body: ReplayedBody): boolean =>
-  body.kind === "cut" || (body.kind === "base64" && !body.whole);
 
 /** The application's answer as an environment answer carries it: JSON, text, or null when it is empty; a body the probe did not record is marked. */
 const liveAnswer = (
@@ -88,16 +91,11 @@ const liveAnswer = (
 ): Answer => {
   if (body.kind === "none")
     return method === "HEAD" || BODYLESS_STATUSES.has(status)
-      ? { status, body: null }
-      : { status, body: null, unobserved: true };
-  if (body.kind === "json") return { status, body: body.value };
-  if (body.kind === "base64")
-    return { status, body: body.encoded, cut: isCut(body) };
-  return {
-    status,
-    body: body.text === "" ? null : body.text,
-    cut: isCut(body),
-  };
+      ? { status, body }
+      : { status, body, unobserved: true };
+  if (body.kind === "text" && body.text === "")
+    return { status, body: { kind: "none" } };
+  return { status, body };
 };
 
 /** The origin a probe calls the application at, chosen as the manifest chooses its own. */
@@ -123,13 +121,17 @@ export const probeRequests = (
   const unobserved: UnobservedRecord[] = [];
   // Without a start time for every record the probe keeps its recorded order, as state extraction does.
   const starts = new Map(
-    records.map((record) => [record.ordinal, startedMs(record)]),
+    records.map((record) => [record.ordinal, startedInstant(record)]),
   );
-  const timed = [...starts.values()].every((ms) => ms !== undefined);
+  const timed = [...starts.values()].every((instant) => instant !== undefined);
   const ordered = [...records].sort(
     (left, right) =>
-      (timed ? starts.get(left.ordinal)! - starts.get(right.ordinal)! : 0) ||
-      left.ordinal - right.ordinal,
+      (timed
+        ? compareOffsetDateTimeInstants(
+            starts.get(left.ordinal)!,
+            starts.get(right.ordinal)!,
+          )
+        : 0) || left.ordinal - right.ordinal,
   );
   const lines = new Map(
     records.map((record) => [
@@ -141,16 +143,16 @@ export const probeRequests = (
   const origin = probeOrigin(lines);
   for (const record of ordered) {
     const line = lines.get(record.ordinal);
-    const exchange = recordedExchange(record);
     const { ordinal } = record;
     if (line?.kind === "line" && line.origin !== origin)
       unobserved.push({ ordinal, reason: "other-origin" });
-    else if (line?.kind !== "line" || exchange === undefined)
+    else if (line?.kind !== "line")
       unobserved.push({
         ordinal,
         reason: line?.kind === "excluded" ? line.reason : "request-unavailable",
       });
     else {
+      const exchange = recordedExchange(record, line);
       const request = {
         method: line.method,
         path: exchange.path,

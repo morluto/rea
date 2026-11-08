@@ -5,6 +5,7 @@ export const MODEL_CAPACITY_LIMITS = [
   "representation-bytes",
   "exact-offset",
   "metadata-nesting",
+  "json-nesting",
 ] as const;
 
 /** Which fixed model allowance refused the request. */
@@ -49,6 +50,7 @@ export const MODEL_HEADER_BYTES = 100_000_000;
 export const MODEL_REPORT_BYTES = 32 * 1024 * 1024;
 export const MODEL_ARRAY_PREVIEW = 8;
 export const MODEL_METADATA_NESTING = 32;
+export const MODEL_JSON_NESTING = 32;
 
 const fixedModelLimit = (allowance: string): string =>
   `${allowance}. This release has no runtime override. Additional host memory does not raise it. Repeating the unchanged request fails the same way.`;
@@ -74,6 +76,10 @@ export const modelCapacityRemediation = (limit: ModelCapacityLimit): string => {
       return fixedModelLimit(
         `GGUF metadata nesting is limited to ${String(MODEL_METADATA_NESTING)} array frames`,
       );
+    case "json-nesting":
+      return fixedModelLimit(
+        `Safetensors JSON nesting is limited to ${String(MODEL_JSON_NESTING)} levels`,
+      );
   }
 };
 
@@ -92,6 +98,8 @@ export const modelCapacityReportedLimits = (
       return { maximum_exact_offset: Number.MAX_SAFE_INTEGER };
     case "metadata-nesting":
       return { maximum_array_frames: MODEL_METADATA_NESTING };
+    case "json-nesting":
+      return { maximum_json_depth: MODEL_JSON_NESTING };
   }
 };
 

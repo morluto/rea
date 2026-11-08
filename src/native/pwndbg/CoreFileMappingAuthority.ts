@@ -1,5 +1,8 @@
 import { AnalysisCapabilityUnavailableError } from "../../domain/analysisErrorCore.js";
-import type { RecordedCrash } from "../../domain/native/recordedCrash.js";
+import {
+  isLinuxCoreNote,
+  type RecordedCrash,
+} from "../../domain/native/recordedCrash.js";
 import { err, ok, type Result } from "../../domain/result.js";
 
 /** Interpret source-bound ELF64 NT_FILE paths once, before GDB can open them. */
@@ -8,7 +11,7 @@ export function validateCoreFileMappingAuthority(
   snapshot: Buffer,
 ): Result<void, AnalysisCapabilityUnavailableError> {
   for (const note of report.notes) {
-    if (note.type !== "NT_FILE") continue;
+    if (!isLinuxCoreNote(note, 0x46494c45)) continue;
     const refuse = (reason: string) => {
       const message = `Core mapping note ${note.index} cannot be confined to the owned debugger sysroot: ${reason}.`;
       return err(

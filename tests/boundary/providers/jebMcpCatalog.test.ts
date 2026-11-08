@@ -1,4 +1,6 @@
-import { createServer } from "node:http";
+import { createVerifierHttpServer } from "../../../scripts/lib/verifier-http-server.mjs";
+import { withVerifierCleanup } from "../../../scripts/lib/verifier-cleanup.mjs";
+import type { IncomingMessage, ServerResponse } from "node:http";
 
 import { expect, it } from "vitest";
 import { z } from "zod";
@@ -12,13 +14,18 @@ const requestSchema = z.object({
   params: z.object({ cursor: z.string().optional() }).passthrough().optional(),
 });
 
-it("reads every JEB catalog page and refreshes the connected engine catalog", async () => {
-  let includeOpen = true;
-  let repeatedCursor = false;
-  let infinitePages = false;
-  let pageCount = 0;
+const createCatalogServer = async () => {
+  const controls = {
+    includeOpen: true,
+    repeatedCursor: false,
+    infinitePages: false,
+    pageCount: 0,
+  };
   const cursors: (string | undefined)[] = [];
-  const server = createServer(async (request, response) => {
+  const handleRequest = async (
+    request: IncomingMessage,
+    response: ServerResponse,
+  ) => {
     if (request.method !== "POST") {
       request.resume();
       response.writeHead(request.method === "DELETE" ? 200 : 405).end();
@@ -45,12 +52,12 @@ it("reads every JEB catalog page and refreshes the connected engine catalog", as
       };
     } else if (message.method === "tools/list") {
       const cursor = message.params?.cursor;
-      pageCount += 1;
-      if (!infinitePages) cursors.push(cursor);
+      controls.pageCount += 1;
+      if (!controls.infinitePages) cursors.push(cursor);
       const names =
         cursor === undefined
           ? ["get_client_information"]
-          : includeOpen
+          : controls.includeOpen
             ? ["open_project"]
             : ["list_units"];
       result = {
@@ -58,9 +65,9 @@ it("reads every JEB catalog page and refreshes the connected engine catalog", as
           name,
           inputSchema: { type: "object" },
         })),
-        ...(infinitePages
-          ? { nextCursor: `fresh-page-${pageCount}` }
-          : cursor === undefined || repeatedCursor
+        ...(controls.infinitePages
+          ? { nextCursor: `fresh-page-${controls.pageCount}` }
+          : cursor === undefined || controls.repeatedCursor
             ? { nextCursor: "second-page" }
             : {}),
       };
@@ -69,21 +76,32 @@ it("reads every JEB catalog page and refreshes the connected engine catalog", as
     }
     response.writeHead(200, { "Content-Type": "application/json" });
     response.end(JSON.stringify({ jsonrpc: "2.0", id: message.id, result }));
-  });
+  };
+  const { server, close } = createVerifierHttpServer(handleRequest);
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
   const address = server.address();
   if (address === null || typeof address === "string")
     throw new Error("Expected an ephemeral TCP listener");
-  const connection = createStreamableHttpJebMcpConnection(
-    new URL(`http://127.0.0.1:${address.port}/mcp`),
-    { discoveryTimeoutMs: 1_000 },
-  );
+
+  return {
+    controls,
+    cursors,
+    endpoint: `http://127.0.0.1:${address.port}/mcp`,
+    close,
+  };
+};
+
+it("reads every JEB catalog page and refreshes the connected engine catalog", async () => {
+  const { controls, cursors, endpoint, close } = await createCatalogServer();
+  const connection = createStreamableHttpJebMcpConnection(new URL(endpoint), {
+    discoveryTimeoutMs: 1_000,
+  });
   try {
     expect(await connection.listTools()).toEqual([
       "get_client_information",
       "open_project",
     ]);
-    includeOpen = false;
+    controls.includeOpen = false;
     expect(await connection.listTools()).toEqual([
       "get_client_information",
       "list_units",
@@ -94,29 +112,28 @@ it("reads every JEB catalog page and refreshes the connected engine catalog", as
       undefined,
       "second-page",
     ]);
-    infinitePages = true;
-    const before = pageCount;
+    controls.infinitePages = true;
+    const before = controls.pageCount;
     await expect(connection.listTools()).rejects.toBeInstanceOf(
       AnalysisTimeoutError,
     );
-    expect(pageCount - before).toBeGreaterThan(2);
-    infinitePages = false;
+    expect(controls.pageCount - before).toBeGreaterThan(2);
+    controls.infinitePages = false;
     expect(await connection.listTools()).toEqual([
       "get_client_information",
       "list_units",
     ]);
 
     // Shared initial acquisition also owns a finite deadline and can recover.
-    const acquiring = createStreamableHttpJebMcpConnection(
-      new URL(`http://127.0.0.1:${address.port}/mcp`),
-      { discoveryTimeoutMs: 1_000 },
-    );
+    const acquiring = createStreamableHttpJebMcpConnection(new URL(endpoint), {
+      discoveryTimeoutMs: 1_000,
+    });
     try {
-      infinitePages = true;
+      controls.infinitePages = true;
       await expect(acquiring.listTools()).rejects.toBeInstanceOf(
         AnalysisTimeoutError,
       );
-      infinitePages = false;
+      controls.infinitePages = false;
       expect(await acquiring.listTools()).toEqual([
         "get_client_information",
         "list_units",
@@ -124,21 +141,16 @@ it("reads every JEB catalog page and refreshes the connected engine catalog", as
     } finally {
       await acquiring.close();
     }
-    repeatedCursor = true;
+    controls.repeatedCursor = true;
     await expect(connection.listTools()).rejects.toThrow(
       "repeated a tool catalog cursor",
     );
-    repeatedCursor = false;
+    controls.repeatedCursor = false;
     expect(await connection.listTools()).toEqual([
       "get_client_information",
       "list_units",
     ]);
   } finally {
-    await connection.close();
-    await new Promise<void>((resolve, reject) =>
-      server.close((cause) =>
-        cause === undefined ? resolve() : reject(cause),
-      ),
-    );
+    await withVerifierCleanup(() => connection.close(), [close]);
   }
 });

@@ -9,7 +9,7 @@ import { inspectManagedArtifactBytes } from "../../../dist/dotnet/ManagedArtifac
 import { inspectManagedMembersBytes } from "../../../dist/dotnet/ManagedMemberInspector.js";
 import { importManagedReconstructionEvidence } from "../../../dist/application/managed/ManagedReconstructionService.js";
 import { createEvidence } from "../../../dist/domain/evidence.js";
-import { MANAGED_STATIC_PROVIDER } from "../../../dist/application/InvestigationProviders.js";
+import { MANAGED_STATIC_PROVIDER } from "../../../dist/domain/investigationProviders.js";
 import { createManagedManifestVerifier } from "./manifest.mjs";
 
 const execFileAsync = promisify(execFile);

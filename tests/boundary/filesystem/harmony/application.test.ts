@@ -1,3 +1,4 @@
+import { projectCliAnalysisResult } from "../../../../src/cli/projectCliAnalysisResult.js";
 import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { TextReader, Uint8ArrayWriter, ZipWriter } from "@zip.js/zip.js";
@@ -5,6 +6,7 @@ import { TextReader, Uint8ArrayWriter, ZipWriter } from "@zip.js/zip.js";
 import { describe, expect, it } from "vitest";
 
 import { createTestTempDirectory } from "../../../fixtures/temporaryDirectory.js";
+import { fragmentInventoryEvidence } from "../../../fixtures/artifactEvidence.js";
 import {
   createNonApplicationZipInventory,
   inventoryApplicationPackage,
@@ -15,8 +17,12 @@ import {
 
 import { projectHarmonyApplicationEvidence } from "../../../../src/application/harmony/HarmonyApplicationService.js";
 import { createDirectAnalysis } from "../../../../src/composition/directAnalysis.js";
-import { harmonyApplicationProjectionResultSchema } from "../../../../src/domain/harmony/harmonyApplication.js";
+import {
+  harmonyApplicationProjectionResultSchema,
+  type HarmonyApplicationProjectionResult,
+} from "../../../../src/domain/harmony/harmonyApplication.js";
 import { artifactInventoryResultSchema } from "../../../../src/domain/artifactGraph.js";
+import { createEvidence } from "../../../../src/domain/evidence.js";
 import { parseBinaryTarget } from "../../../../src/application/BinaryTargetResolver.js";
 import {
   ZIP_PACKAGE_FORMATS,
@@ -35,6 +41,141 @@ const stageHapEntries = [
   { path: "assets/web/index.js", content: "bridge();" },
   { path: "META-INF/FIXTURE.p7b", content: "opaque signing" },
 ] as const;
+
+const PKG_CONTEXT_NAME = "pkgContextInfo.json";
+
+const unreadDeclarationLimitations = (
+  limitations: readonly string[],
+): string[] => limitations.filter((text) => text.includes(PKG_CONTEXT_NAME));
+
+const projectStageHap = async (
+  label: string,
+  entries: readonly { path: string; content: string | Uint8Array }[],
+): Promise<HarmonyApplicationProjectionResult> => {
+  const path = await writeApplicationZip(label, "Fixture.hap", entries);
+  return requireDeterministicProjection(
+    projectHarmonyApplicationEvidence,
+    await inventoryApplicationPackage(path),
+    harmonyApplicationProjectionResultSchema,
+  );
+};
+
+const stageHapWithDeclaration = stageHapEntries.map(({ path, content }) => ({
+  path,
+  content,
+}));
+
+describe("HarmonyOS N-API declaration disclosure", () => {
+  it("discloses the unread declaration by its names, not its wording", async () => {
+    const projection = await projectStageHap("rea-harmony-pkg-context-", [
+      ...stageHapWithDeclaration,
+      {
+        path: PKG_CONTEXT_NAME,
+        content: '{"libentry.so":{"isSO":true}}',
+      },
+    ]);
+    const control = await projectStageHap(
+      "rea-harmony-pkg-context-control-",
+      stageHapWithDeclaration,
+    );
+
+    const disclosed = unreadDeclarationLimitations(projection.limitations);
+    expect(disclosed).toHaveLength(1);
+    expect(disclosed[0]).toContain("bridge_candidates");
+    expect(disclosed[0]).toMatch(/\bisSO\b/);
+    expect(disclosed[0]).toMatch(/not read|not narrowed/iu);
+    expect(projection.bridge_candidates).toEqual(control.bridge_candidates);
+    expect(unreadDeclarationLimitations(control.limitations)).toEqual([]);
+  });
+
+  it("does not disclose a declaration the package does not carry", async () => {
+    const projection = await projectStageHap(
+      "rea-harmony-no-pkg-context-",
+      stageHapWithDeclaration,
+    );
+    expect(unreadDeclarationLimitations(projection.limitations)).toEqual([]);
+  });
+});
+
+describe("HarmonyOS unclassified inventory", () => {
+  it("retains distinct unclassified paths sharing content with a classified file", async () => {
+    const path = await writeApplicationZip(
+      "rea-harmony-unclassified-",
+      "Fixture.hap",
+      [
+        { path: "module.json", content: "{}" },
+        { path: "pkgContextInfo.json", content: "{}" },
+        { path: ".pages.info", content: "{}" },
+        { path: "metadata-copy.json", content: "{}" },
+        { path: "resources/base/bridge.js", content: "bridge();" },
+      ],
+    );
+    const inventory = await inventoryApplicationPackage(path);
+    const original = JSON.stringify(inventory);
+    const projection = requireDeterministicProjection(
+      projectHarmonyApplicationEvidence,
+      inventory,
+      harmonyApplicationProjectionResultSchema,
+    );
+    expect(projection.unclassified_components).toEqual([
+      expect.objectContaining({
+        path: ".pages.info",
+        sha256:
+          "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+      }),
+      expect.objectContaining({ path: "metadata-copy.json" }),
+      expect.objectContaining({ path: "pkgContextInfo.json" }),
+    ]);
+    expect(projection.components.resources.map(({ path }) => path)).toEqual([
+      "resources/base/bridge.js",
+    ]);
+    expect(projection.components.javascript.map(({ path }) => path)).toEqual([
+      "resources/base/bridge.js",
+    ]);
+    expect(projection.coverage).toEqual({
+      status: "complete-within-inventory",
+      inventory_complete: true,
+    });
+    const pages = fragmentInventoryEvidence(inventory, 3);
+    const assembled = requireSuccessfulProjection(
+      projectHarmonyApplicationEvidence({
+        inventory_evidence: [...pages].reverse(),
+      }),
+    );
+    const fromPages = harmonyApplicationProjectionResultSchema.parse(
+      assembled.normalized_result,
+    );
+    expect(fromPages.unclassified_components).toEqual(
+      projection.unclassified_components,
+    );
+    expect(fromPages.coverage).toEqual(projection.coverage);
+    expect(JSON.stringify(inventory)).toBe(original);
+  });
+});
+
+it("retains inventoried certificate-block suffixes without claiming verified signatures", async () => {
+  const names = ["CERT.RSA", "CERT.DSA", "CERT.EC", "FIXTURE.p7b"];
+  const path = await writeApplicationZip(
+    "rea-harmony-certificate-paths-",
+    "Fixture.hap",
+    [
+      ...names.map((name) => ({
+        path: `META-INF/${name}`,
+        content: "opaque bytes",
+      })),
+      { path: "META-INF/MANIFEST.MF", content: "manifest" },
+      { path: "META-INF/CERT.SF", content: "signature file" },
+    ],
+  );
+  const graph = requireDeterministicProjection(
+    projectHarmonyApplicationEvidence,
+    await inventoryApplicationPackage(path),
+    harmonyApplicationProjectionResultSchema,
+  );
+  expect(graph.components.signing.map(({ path }) => path).sort()).toEqual(
+    names.map((name) => `META-INF/${name}`).sort(),
+  );
+});
 
 describe("HarmonyOS application projection", () => {
   it.each(["js", "mjs", "cjs", "jsx", "ts", "tsx", "mts", "cts"])(
@@ -122,6 +263,7 @@ describe("HarmonyOS application projection", () => {
       }),
     ]);
     expect(left.app_pack_children).toEqual([]);
+    expect(left.unclassified_components).toEqual([]);
     expect(JSON.stringify(left)).not.toContain("opaque signing");
     expect(left.limitations).toContain(
       "Manifest, module, resource, and signing semantics require a dedicated HarmonyOS provider; this projection reports exact inventory paths and hashes only.",
@@ -164,6 +306,7 @@ describe("HarmonyOS application projection", () => {
     expect(projection.app_pack_children.map(({ path }) => path).sort()).toEqual(
       ["entry.hap", "feature.hsp"],
     );
+    expect(projection.unclassified_components).toEqual([]);
     expect(projection.packaging_model).toBe("unknown");
     expect(projection.limitations).toContain(
       "App Pack child packages are listed by inventory path only; their contents are not recursively inventoried by this projection.",
@@ -228,6 +371,34 @@ describe("HarmonyOS packaging boundaries", () => {
     ]);
   });
 
+  it("does not classify a rawfile named module.json as a manifest", async () => {
+    const path = await writeApplicationZip(
+      "rea-harmony-rawfile-module-manifest-",
+      "Legacy.hap",
+      [
+        { path: "config.json", content: '{"app":{}}' },
+        {
+          path: "assets/entry/resources/rawfile/module.json",
+          content: '{"note":"ordinary raw resource"}',
+        },
+      ],
+    );
+    const inventory = await inventoryApplicationPackage(path);
+    const result = projectHarmonyApplicationEvidence({
+      inventory_evidence: [inventory],
+    });
+    const projection = harmonyApplicationProjectionResultSchema.parse(
+      requireSuccessfulProjection(result).normalized_result,
+    );
+    expect(projection.packaging_model).toBe("fa");
+    expect(projection.components.manifests.map(({ path }) => path)).toEqual([
+      "config.json",
+    ]);
+    expect(projection.components.resources.map(({ path }) => path)).toEqual([
+      "assets/entry/resources/rawfile/module.json",
+    ]);
+  });
+
   it("rejects non-HarmonyOS inventory Evidence", async () => {
     const inventory = await createNonApplicationZipInventory(
       "rea-harmony-invalid-",
@@ -247,10 +418,84 @@ describe("HarmonyOS packaging boundaries", () => {
       path,
       JSON.stringify({ log: { version: "1.2", creator: {}, entries: [] } }),
     );
-    const result = await runProviderAnalysis(path, "inventory_artifact", {});
+    const result = await runProviderAnalysis(
+      path,
+      "inventory_artifact",
+      {},
+    ).then(projectCliAnalysisResult);
     expect(result).toMatchObject({
       error: "Analysis failed",
       code: "target_unavailable",
+    });
+  });
+});
+
+describe("HarmonyOS partial inventory classification", () => {
+  it("does not claim complete classification from a missing inventory occurrence", async () => {
+    const path = await writeApplicationZip(
+      "rea-harmony-partial-",
+      "Fixture.hap",
+      [
+        { path: "module.json", content: "{}" },
+        { path: ".pages.info", content: "page metadata" },
+      ],
+    );
+    const inventory = await inventoryApplicationPackage(path);
+    if (inventory.subject === null) throw new Error("Missing fixture subject");
+    const result = artifactInventoryResultSchema.parse(
+      inventory.normalized_result,
+    );
+    const partial = createEvidence(
+      {
+        path: inventory.subject.local_path,
+        sha256: inventory.subject.digest.sha256,
+        format: inventory.subject.format,
+      },
+      inventory.provider,
+      {
+        operation: inventory.operation,
+        parameters: inventory.parameters,
+        result: {
+          ...result,
+          occurrences: result.occurrences.filter(
+            ({ logical_path }) => logical_path !== ".pages.info",
+          ),
+        },
+        confidence: "derived",
+        authority: inventory.authority,
+      },
+    );
+    const projection = requireDeterministicProjection(
+      projectHarmonyApplicationEvidence,
+      partial,
+      harmonyApplicationProjectionResultSchema,
+    );
+    expect(projection.unclassified_components).toEqual([]);
+    // Coverage is the structured fact a partial inventory reports, and the two
+    // independent causes of a partial projection stay empty, so `partial` is
+    // attributable to the missing occurrence alone. The prose limitation that
+    // accompanies it is explanatory wording, so it stays in review rather than
+    // in a substring assertion.
+    expect(projection.coverage).toEqual({
+      status: "partial",
+      inventory_complete: false,
+    });
+    expect(projection.unavailable_components).toEqual([]);
+    expect(projection.bridge_candidate_coverage).toEqual({
+      status: "complete",
+      total_candidates: 0,
+      emitted_candidates: 0,
+      omitted_candidates: 0,
+    });
+    const tampered = {
+      ...partial,
+      normalized_result: inventory.normalized_result,
+    };
+    expect(
+      projectHarmonyApplicationEvidence({ inventory_evidence: [tampered] }),
+    ).toMatchObject({
+      ok: false,
+      error: { _tag: "EvidenceIntegrityError" },
     });
   });
 });
@@ -318,6 +563,9 @@ describe("HarmonyOS inventory coverage", () => {
     await writer.add("ets/modules.abc", new TextReader("opaque bytecode"), {
       password: "fixture-only",
     });
+    await writer.add("pkgContextInfo.json", new TextReader("{}"), {
+      password: "fixture-only",
+    });
     await writeFile(path, await writer.close());
     const evidence = await inventoryApplicationPackage(path);
     const projection = requireDeterministicProjection(
@@ -326,9 +574,16 @@ describe("HarmonyOS inventory coverage", () => {
       harmonyApplicationProjectionResultSchema,
     );
     expect(projection.components.bytecode).toEqual([]);
+    expect(projection.unclassified_components).toEqual([]);
     expect(projection.unavailable_components).toEqual([
       expect.objectContaining({
         path: "ets/modules.abc",
+        artifact_id: null,
+        sha256: null,
+        encrypted: true,
+      }),
+      expect.objectContaining({
+        path: "pkgContextInfo.json",
         artifact_id: null,
         sha256: null,
         encrypted: true,
@@ -341,5 +596,84 @@ describe("HarmonyOS inventory coverage", () => {
     expect(projection.limitations).toContainEqual(
       expect.stringContaining("component and runtime absence is unknown"),
     );
+  });
+});
+
+describe("HarmonyOS manifest path rules", () => {
+  it("claims stage and FA models only from the exact manifest filenames", async () => {
+    // HAP/HSP/App Pack members are ZIP names. OpenHarmony's stage, FA, and
+    // app-pack manifests are module.json, config.json, and pack.info.
+    const path = await writeApplicationZip(
+      "rea-harmony-manifest-case-",
+      "Fixture.hap",
+      [
+        { path: "MODULE.JSON", content: "{}" },
+        { path: "CONFIG.JSON", content: "{}" },
+        { path: "PACK.INFO", content: "{}" },
+      ],
+    );
+    const projection = requireDeterministicProjection(
+      projectHarmonyApplicationEvidence,
+      await inventoryApplicationPackage(path),
+      harmonyApplicationProjectionResultSchema,
+    );
+    expect(projection.packaging_model).toBe("unknown");
+    expect(projection.components.manifests).toEqual([]);
+    // Exact-case manifest names only, so these members belong to no manifest
+    // category and are disclosed as unclassified rather than silently dropped.
+    expect(
+      projection.unclassified_components.map(({ path }) => path).sort(),
+    ).toEqual(["CONFIG.JSON", "MODULE.JSON", "PACK.INFO"]);
+  });
+
+  it.each([
+    { paths: ["a/module.json", "z/config.json"] },
+    { paths: ["a/config.json", "z/module.json"] },
+  ])("keeps Stage precedence for $paths", async ({ paths }) => {
+    const path = await writeApplicationZip(
+      "rea-harmony-mixed-model-",
+      "Both.hap",
+      paths.map((path) => ({ path, content: "{}" })),
+    );
+    const projection = requireDeterministicProjection(
+      projectHarmonyApplicationEvidence,
+      await inventoryApplicationPackage(path),
+      harmonyApplicationProjectionResultSchema,
+    );
+    expect(projection.packaging_model).toBe("stage");
+    expect(
+      projection.components.manifests.map(({ path }) => path).sort(),
+    ).toEqual(paths.toSorted());
+  });
+
+  it.each([
+    { name: "module.json", model: "stage" },
+    { name: "config.json", model: "fa" },
+    { name: "MODULE.JSON", model: "unknown" },
+  ])("retains the path hint for unavailable $name", async ({ name, model }) => {
+    const root = await createTestTempDirectory("rea-harmony-locked-manifest-");
+    const path = join(root, "Locked.hap");
+    const writer = new ZipWriter(new Uint8ArrayWriter());
+    await writer.add(name, new TextReader("{}"), { password: "fixture-only" });
+    await writeFile(path, await writer.close());
+    const projection = requireDeterministicProjection(
+      projectHarmonyApplicationEvidence,
+      await inventoryApplicationPackage(path),
+      harmonyApplicationProjectionResultSchema,
+    );
+    expect(projection.packaging_model).toBe(model);
+    expect(projection.components.manifests).toEqual([]);
+    expect(projection.unavailable_components).toEqual([
+      expect.objectContaining({
+        path: name,
+        artifact_id: null,
+        sha256: null,
+        encrypted: true,
+      }),
+    ]);
+    expect(projection.coverage).toEqual({
+      status: "partial",
+      inventory_complete: true,
+    });
   });
 });

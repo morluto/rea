@@ -15,9 +15,6 @@ export const cdpScriptSourceDeadlineOmissionReason = (
 ): string =>
   `script source was omitted because the ${String(timeoutMs)} ms command_timeout_ms source collection deadline elapsed (deadlineExpired). This is not the caller observation window. ${noRuntimeOverrideSentence(`The ${String(WEB_RUNTIME_LIMITS.sourceBytes)}-byte source budget stays fixed.`, "command_timeout_ms")}`;
 
-export const CDP_SCRIPT_SOURCE_DEADLINE_OMISSION_REASON =
-  cdpScriptSourceDeadlineOmissionReason(selectedCdpCommandTimeoutMs(undefined));
-
 /** Shared admission for source text retained from passive CDP script reads. */
 export class CdpScriptSourceBudget {
   readonly #deadline: ProviderStartupDeadline;

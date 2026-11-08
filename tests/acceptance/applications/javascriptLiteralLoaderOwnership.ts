@@ -319,6 +319,7 @@ const expectCompetingLoaderGraph = (
     "local module",
     "projected module",
     "resolve-only",
+    "createRequire base",
     "missing wildcard alias",
     "earlier reassigned module alias",
   ].includes(loader);
@@ -359,8 +360,20 @@ const expectCompetingLoaderGraph = (
           relation: "imports",
           properties: expect.objectContaining({
             kind: "require",
-            specifier: null,
+            operation: "load",
+            specifier: "../shared/window.cjs",
+            resolution_base_path: "../other/nested/main.cjs",
+            resolution_status: "not-found",
             resolved_path: null,
+          }),
+          evidence: expect.objectContaining({
+            location: expect.objectContaining({
+              available: true,
+              value: expect.objectContaining({
+                kind: "source-range",
+                source: "b/main.mjs",
+              }),
+            }),
           }),
         }),
       ]),
