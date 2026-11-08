@@ -29,6 +29,9 @@ cliTest.skipIf(process.platform !== "darwin")(
           HOPPER_LAUNCHER_PATH: join(root, "missing-hopper"),
           GHIDRA_INSTALL_DIR: join(root, "missing-ghidra"),
           JAVA_HOME: join(root, "missing-java"),
+          REA_IDA_MCP_CONFIG: join(root, "missing-ida-mcp.json"),
+          REA_KUNA_COMMAND: join(root, "missing-kuna"),
+          REA_KUNA_CACHE_DIR: join(root, "missing-kuna-cache"),
         },
       });
       expect(result.exitCode).toBe(1);
