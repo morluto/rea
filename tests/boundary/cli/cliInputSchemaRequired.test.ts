@@ -658,7 +658,12 @@ describe("reference-source outline-depth input schema", () => {
     const cli = createCli({});
     const advertised = await advertisedSchema(cli, "import-reference-source");
     const outlineDepth = advertised.options?.properties?.outlineDepth;
-    expect(outlineDepth).toMatchObject({ type: "integer", minimum: 0 });
+    expect(outlineDepth).toMatchObject({
+      anyOf: [
+        { type: "integer", minimum: 0 },
+        { type: "string", pattern: "^[0-9]+$" },
+      ],
+    });
 
     const parser = parserSchema(cli, "import-reference-source", "options");
     expect(parser?.safeParse({}).success).toBe(true);
@@ -692,6 +697,9 @@ describe("reference-source outline-depth input schema", () => {
     }
     expect(validate({ outlineDepth: -1 })).toBe(false);
     expect(validate({ outlineDepth: 9007199254740992 })).toBe(false);
+    expect(validate({ outlineDepth: "02" })).toBe(true);
+    for (const token of ["0x2", "2e0"])
+      expect(validate({ outlineDepth: token })).toBe(false);
   });
 });
 

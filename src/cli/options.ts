@@ -23,13 +23,6 @@ type DecimalWrapper =
       readonly kind: "optional" | "exactOptional" | "nullable" | "readonly";
     };
 
-/** Parse decimal integer tokens before Number coercion can erase their syntax. */
-export const cliIntegerArgument = (min: number) =>
-  z
-    .string()
-    .regex(DECIMAL_INTEGER_TOKEN, "Expected a decimal integer")
-    .pipe(z.coerce.number<string>().safe().min(min));
-
 const decimalToken = (domain: z.ZodNumber) =>
   z
     .string()
@@ -150,6 +143,10 @@ export const cliDecimalField = <Field extends z.ZodType>(
       : admitted.describe(numeric.description);
   return publishDecimalInput(described) as z.ZodType<z.output<Field>>;
 };
+
+/** Safe decimal integer at or above `min`, advertised with its token guard. */
+export const cliIntegerArgument = (min: number) =>
+  cliDecimalField(z.int().safe().min(min));
 
 /** Adapt each numeric property of a shared shape; other properties stay unchanged. */
 export const cliDecimalShape = <Shape extends Record<string, z.ZodType>>(
