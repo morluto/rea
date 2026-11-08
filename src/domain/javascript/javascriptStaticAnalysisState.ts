@@ -89,6 +89,10 @@ export interface JavaScriptAnalysisAccumulator {
   readonly pendingNativeAddonBindings: (
     | t.VariableDeclarator
     | t.AssignmentExpression
+    | t.ReturnStatement
+    | t.ArrowFunctionExpression
+    | t.CallExpression
+    | t.OptionalCallExpression
   )[];
   readonly protocols: LocatedJavaScriptFinding<ElectronProtocolFinding>[];
   readonly moduleRangeIndex: JavaScriptModuleRangeIndex;

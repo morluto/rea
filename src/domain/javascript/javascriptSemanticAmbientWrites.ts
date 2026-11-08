@@ -46,6 +46,8 @@ import { semanticCopiedReferencePath } from "./javascriptSemanticCopiedReference
 
 export {
   isUnmodifiedGlobalReference,
+  isUnmodifiedImportMetaDirname,
+  isUnmodifiedImportMetaFilename,
   isUnmodifiedImportMetaUrl,
 } from "./javascriptSemanticGlobalReference.js";
 

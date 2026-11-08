@@ -8,6 +8,7 @@ import {
 import type { ElectronBoundarySummary } from "../../domain/javascript/javascriptApplicationAnalysis.js";
 import type { JavaScriptArtifactAnalysis } from "./JavaScriptArtifactAnalysisTypes.js";
 import type { JavaScriptArtifactFile } from "../../domain/javascript/javascriptArtifactFiles.js";
+import { resolveElectronNativeAddonPaths } from "./ElectronBoundaryNativeResolution.js";
 import {
   resolveArtifactPathByContext,
   type ResolveArtifactPathInput,
@@ -298,17 +299,15 @@ export const summarizeElectronBoundaries = (
         }),
     ).length,
     native_addon_bindings: nativeBindings.length,
-    resolved_native_addon_bindings: nativeBindings.filter(({ file, finding }) =>
-      resolvesToFile({
-        file,
-        specifier: finding.specifier,
-        context: "module-specifier",
-        files,
-        jsonDocuments: analysis.jsonDocuments,
-        directoryPaths,
-        kind: "native-addon",
-        moduleKind: finding.module_kind,
-      }),
+    resolved_native_addon_bindings: nativeBindings.filter(
+      ({ file, finding }) =>
+        resolveElectronNativeAddonPaths({
+          file,
+          finding,
+          files,
+          jsonDocuments: analysis.jsonDocuments,
+          directoryPaths,
+        }).length > 0,
     ).length,
     protocol_registrations: protocolCount,
   };
@@ -363,13 +362,12 @@ interface ResolveToFileInput {
   readonly files: ReadonlyMap<string, JavaScriptArtifactFile>;
   readonly jsonDocuments: JavaScriptJsonDocuments;
   readonly directoryPaths?: ReadonlySet<string> | undefined;
-  readonly kind?: JavaScriptArtifactFile["kind"];
   readonly moduleKind?: "import" | "require";
   readonly runtimePathKind?: ResolveArtifactPathInput["runtimePathKind"];
 }
 
-const resolvesToFile = (input: ResolveToFileInput): boolean => {
-  const resolved = resolveArtifactPathByContext({
+const resolvesToFile = (input: ResolveToFileInput): boolean =>
+  resolveArtifactPathByContext({
     declaredPath: input.specifier,
     sourcePath: input.file.path,
     context: input.context,
@@ -382,12 +380,7 @@ const resolvesToFile = (input: ResolveToFileInput): boolean => {
       ? {}
       : { runtimePathKind: input.runtimePathKind }),
     ...(input.moduleKind === undefined ? {} : { moduleKind: input.moduleKind }),
-  }).resolved_path;
-  return (
-    resolved !== null &&
-    (input.kind === undefined || input.files.get(resolved)?.kind === input.kind)
-  );
-};
+  }).resolved_path !== null;
 
 const ipcRecordKey = (path: string, finding: ElectronIpcFinding): string => {
   const identity = `${path}\0${String(finding.location.start.line)}:${String(finding.location.start.column)}\0${finding.side}\0${finding.operation}\0${finding.channel ?? finding.channel_expression}\0${JSON.stringify(finding.handler_location)}`;

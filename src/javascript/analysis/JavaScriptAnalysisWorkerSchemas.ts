@@ -298,6 +298,25 @@ const electron = z
         members: strings,
         namespace_access: z.boolean().optional(),
         dynamic_member_access: z.boolean().optional(),
+        resolution: z
+          .discriminatedUnion("kind", [
+            z.strictObject({
+              kind: z.literal("node-gyp-build"),
+              directory: z.string().nullable(),
+            }),
+            z.strictObject({
+              kind: z.literal("bindings"),
+              addon_name: z.string(),
+              module_root: z.string().nullable(),
+            }),
+            z.strictObject({
+              kind: z.literal("candidates"),
+              resolution_context: pathContext,
+              candidates: strings,
+              resolution_base_path: z.string().exactOptional(),
+            }),
+          ])
+          .optional(),
       }),
     ),
     protocols: z.array(
@@ -447,14 +466,19 @@ export const javaScriptWorkerStaticAnalysisSchema = z
       sender_validations: analysis.electron.sender_validations.map(withRuntime),
       native_addon_bindings: analysis.electron.native_addon_bindings.map(
         (value) => {
-          const { namespace_access, dynamic_member_access, ...rest } =
-            withRuntime(value);
+          const {
+            namespace_access,
+            dynamic_member_access,
+            resolution,
+            ...rest
+          } = withRuntime(value);
           return {
             ...rest,
             ...(namespace_access === undefined ? {} : { namespace_access }),
             ...(dynamic_member_access === undefined
               ? {}
               : { dynamic_member_access }),
+            ...(resolution === undefined ? {} : { resolution }),
           };
         },
       ),

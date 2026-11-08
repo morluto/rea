@@ -37,8 +37,15 @@ export const estimateJavaScriptStaticApplicationProjection = (
       registration.modules.length *
       2;
   }
-  for (const binding of facts.electron.native_addon_bindings)
-    records += binding.members.length * 3;
+  for (const binding of facts.electron.native_addon_bindings) {
+    records +=
+      binding.members.length * 3 +
+      (binding.resolution?.kind === "candidates"
+        ? binding.resolution.candidates.length * 2
+        : binding.resolution === undefined
+          ? 0
+          : 4);
+  }
   for (const path of facts.electron.call_paths ?? []) {
     // One contextual node and edge per step, with repeated guards and identity.
     records += path.steps.length * 4 + 8;

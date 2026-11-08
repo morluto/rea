@@ -461,8 +461,10 @@ const isDirectoryPath = (
   );
 };
 
-/** Whether the expression denotes the current module's URL. */
-export const isImportMetaUrl = (node: t.Node | undefined): boolean => {
+const isImportMetaProperty = (
+  node: t.Node | undefined,
+  propertyName: string,
+): boolean => {
   if (node === undefined) return false;
   const expression = unwrapJavaScriptExpression(node).node;
   if (!t.isMemberExpression(expression)) return false;
@@ -472,13 +474,29 @@ export const isImportMetaUrl = (node: t.Node | undefined): boolean => {
     object.meta.name === "import" &&
     object.property.name === "meta" &&
     semanticStaticPropertyName(expression.property, expression.computed) ===
-      "url"
+      propertyName
   );
 };
 
+/** Whether the expression denotes the current module's URL. */
+export const isImportMetaUrl = (node: t.Node | undefined): boolean =>
+  isImportMetaProperty(node, "url");
+
+/** Whether the expression denotes the current module's directory path. */
+export const isImportMetaDirname = (node: t.Node | undefined): boolean =>
+  isImportMetaProperty(node, "dirname");
+
+/** Whether the expression denotes the current module's file path. */
+export const isImportMetaFilename = (node: t.Node | undefined): boolean =>
+  isImportMetaProperty(node, "filename");
+
 const isFileIdentity = (node: t.Node | undefined): boolean => {
   if (node !== undefined) node = unwrapJavaScriptExpression(node).node;
-  if (t.isIdentifier(node, { name: "__filename" }) || isImportMetaUrl(node))
+  if (
+    t.isIdentifier(node, { name: "__filename" }) ||
+    isImportMetaUrl(node) ||
+    isImportMetaFilename(node)
+  )
     return true;
   if (!t.isCallExpression(node)) return false;
   const name = calleeName(node.callee);

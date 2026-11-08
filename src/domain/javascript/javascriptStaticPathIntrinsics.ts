@@ -6,6 +6,8 @@ import { completeSemanticSteps } from "./javascriptSemanticTraversal.js";
 import { evaluateSemanticExpressionProvenance } from "./javascriptSemanticValues.js";
 import {
   isUnmodifiedGlobalReference,
+  isUnmodifiedImportMetaDirname,
+  isUnmodifiedImportMetaFilename,
   isUnmodifiedImportMetaUrl,
 } from "./javascriptSemanticAmbientWrites.js";
 import { unwrapJavaScriptExpression } from "./javascriptAstValues.js";
@@ -47,6 +49,7 @@ export const createStaticPathIntrinsicQuery = (
     node = unwrapJavaScriptExpression(node).node;
     if (t.isIdentifier(node, { name: "__filename" }))
       return isUnmodifiedGlobalReference(node, index.bindings, "__filename");
+    if (isUnmodifiedImportMetaFilename(node, index.bindings)) return true;
     return (
       t.isCallExpression(node) &&
       node.arguments.length === 1 &&
@@ -57,12 +60,15 @@ export const createStaticPathIntrinsicQuery = (
   return (callee, fact) => {
     if (fact === "source-directory") {
       callee = unwrapJavaScriptExpression(callee).node;
-      return t.isIdentifier(callee, { name: "__dirname" })
-        ? isUnmodifiedGlobalReference(callee, index.bindings, "__dirname")
-        : t.isCallExpression(callee) &&
-            callee.arguments.length === 1 &&
-            nativeMethod(callee.callee, "dirname", ["path", "path/posix"]) &&
-            sourceFile(callee.arguments[0]);
+      if (t.isIdentifier(callee, { name: "__dirname" }))
+        return isUnmodifiedGlobalReference(callee, index.bindings, "__dirname");
+      if (isUnmodifiedImportMetaDirname(callee, index.bindings)) return true;
+      return (
+        t.isCallExpression(callee) &&
+        callee.arguments.length === 1 &&
+        nativeMethod(callee.callee, "dirname", ["path", "path/posix"]) &&
+        sourceFile(callee.arguments[0])
+      );
     }
     const kind = fact ?? "resolve";
     const cached = facts.get(callee)?.get(kind);

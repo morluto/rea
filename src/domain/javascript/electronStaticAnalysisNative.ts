@@ -4,8 +4,18 @@ import {
   compareUnicodeCodePoints,
   compositeKey,
 } from "../unicodeCodePointOrder.js";
-import { stripQueryAndFragment } from "../artifactPathSyntax.js";
-import type { ElectronNativeAddonBindingFinding } from "./electronStaticAnalysisTypes.js";
+import type {
+  ElectronNativeAddonBindingFinding,
+  ElectronNativeAddonResolution,
+} from "./electronStaticAnalysisTypes.js";
+import {
+  isDlopenCallCandidate,
+  isNativeSpecifier,
+  mayInvokeNativeLoader,
+  resolveDlopenCall,
+  resolveNativeLoaderCall,
+  type NativeMemberAccess,
+} from "./electronNativeAddonLoaders.js";
 import {
   isTypeOnlyExportDeclaration,
   isTypeOnlyExportSpecifier,
@@ -13,17 +23,12 @@ import {
   isTypeOnlyImportSpecifier,
 } from "./javascriptModuleDeclaration.js";
 import { addLocatedFinding } from "./javascriptStaticAnalysisFindings.js";
-import {
-  argumentNode,
-  range,
-  stringValue,
-} from "./javascriptStaticAnalysisHelpers.js";
+import { range } from "./javascriptStaticAnalysisHelpers.js";
 import {
   propertyName,
   semanticStaticPropertyKey,
   unwrapJavaScriptExpression,
 } from "./javascriptAstValues.js";
-import { semanticRequireCallAt } from "./javascriptSemanticRequireOrigin.js";
 import {
   commonJsExportApplicability,
   commonJsRuntimeExportValues,
@@ -32,7 +37,10 @@ import {
   type CommonJsExportSite,
 } from "./javascriptCommonJsExportReceivers.js";
 import type { JavaScriptReceiverIndex } from "./javascriptSemanticAnalysis.js";
-import type { JavaScriptSemanticAnalysisState } from "./javascriptSemanticState.js";
+import {
+  resolveSemanticBindingState,
+  type JavaScriptSemanticAnalysisState,
+} from "./javascriptSemanticState.js";
 import type { JavaScriptFindingContext } from "./javascriptStaticAnalysisState.js";
 
 interface NativeBindingInput {
@@ -44,6 +52,7 @@ interface NativeBindingInput {
   readonly members: readonly string[];
   readonly namespaceAccess: boolean;
   readonly dynamicMemberAccess: boolean;
+  readonly resolution?: ElectronNativeAddonResolution;
 }
 
 /** Inspect JavaScript-side imports and re-exports of native .node addons. */
@@ -54,20 +63,27 @@ export const inspectElectronNativeNode = (
   if (t.isImportDeclaration(node)) inspectImport(node, context);
   else if (t.isExportNamedDeclaration(node)) inspectNamedExport(node, context);
   else if (t.isExportAllDeclaration(node)) inspectExportAll(node, context);
+  else if (isDlopenCallCandidate(node))
+    context.accumulator.pendingNativeAddonBindings.push(node);
   else if (t.isVariableDeclarator(node) || t.isAssignmentExpression(node)) {
-    const value = nativeCallReceiver(
-      t.isVariableDeclarator(node) ? node.init : node.right,
-    );
+    const value = t.isVariableDeclarator(node) ? node.init : node.right;
     // Admission is syntax only; the shared call owner proves loader and arguments later.
+    if (mayInvokeNativeLoader(value))
+      context.accumulator.pendingNativeAddonBindings.push(node);
+  } else if (t.isReturnStatement(node)) {
     if (
-      value !== undefined &&
-      value.arguments.some((argument) =>
-        t.isArrayExpression(argument)
-          ? argument.elements.some((element) =>
-              isNativeSpecifier(stringValue(element) ?? "", "require"),
-            )
-          : isNativeSpecifier(stringValue(argument) ?? "", "require"),
-      )
+      node.argument != null &&
+      !t.isAssignmentExpression(
+        unwrapJavaScriptExpression(node.argument).node,
+      ) &&
+      mayInvokeNativeLoader(node.argument)
+    )
+      context.accumulator.pendingNativeAddonBindings.push(node);
+  } else if (t.isArrowFunctionExpression(node)) {
+    if (
+      !t.isBlockStatement(node.body) &&
+      !t.isAssignmentExpression(unwrapJavaScriptExpression(node.body).node) &&
+      mayInvokeNativeLoader(node.body)
     )
       context.accumulator.pendingNativeAddonBindings.push(node);
   }
@@ -81,13 +97,34 @@ export function* finishElectronNativeBindingsSteps(
   const pending = context.accumulator.pendingNativeAddonBindings;
   if (pending.length === 0) return;
   yield* index.indexMemberMutationFactsSteps();
-  const receivers = pending.some((node) => t.isAssignmentExpression(node))
-    ? yield* indexCommonJsExportReceiversSteps(index.bindings)
-    : new Map<CommonJsExportSite, CommonJsExportReceiverEffect>();
+  let receivers:
+    | ReadonlyMap<CommonJsExportSite, CommonJsExportReceiverEffect>
+    | undefined;
   for (const node of pending) {
-    if (t.isVariableDeclarator(node))
+    if (t.isVariableDeclarator(node)) {
       inspectRequireBinding(node, context, index.bindings);
-    else inspectReExport(node, context, index.bindings, receivers.get(node));
+    } else if (t.isAssignmentExpression(node)) {
+      const exported = commonJsRuntimeExportValues(node, index.bindings)[0];
+      if (exported !== undefined) {
+        if (receivers === undefined)
+          receivers = yield* indexCommonJsExportReceiversSteps(index.bindings);
+        inspectReExport(
+          node,
+          exported,
+          context,
+          index.bindings,
+          receivers.get(node),
+        );
+      } else {
+        inspectLexicalAssignment(node, context, index.bindings);
+      }
+    } else if (t.isReturnStatement(node)) {
+      inspectReturnedLoader(node, node.argument, context, index.bindings);
+    } else if (t.isArrowFunctionExpression(node)) {
+      inspectReturnedLoader(node.body, node.body, context, index.bindings);
+    } else {
+      inspectDlopen(node, context, index.bindings);
+    }
   }
   pending.length = 0;
 }
@@ -186,7 +223,7 @@ const inspectRequireBinding = (
   context: JavaScriptFindingContext,
   bindings: JavaScriptSemanticAnalysisState,
 ): void => {
-  const required = nativeRequire(node.init, context, bindings);
+  const required = resolveNativeLoaderCall(node.init, context, bindings);
   if (required === undefined) return;
   addBinding({
     context,
@@ -194,39 +231,118 @@ const inspectRequireBinding = (
     specifier: required.specifier,
     kind: "require",
     moduleKind: "require",
+    ...(required.resolution === undefined
+      ? {}
+      : { resolution: required.resolution }),
     ...(required.hasMemberAccess ? required.access : bindingMembers(node.id)),
   });
 };
 
 const inspectReExport = (
   node: t.AssignmentExpression,
+  exported: NonNullable<ReturnType<typeof commonJsRuntimeExportValues>[number]>,
   context: JavaScriptFindingContext,
   bindings: JavaScriptSemanticAnalysisState,
   receiver: CommonJsExportReceiverEffect | undefined,
 ): void => {
-  const exported = commonJsRuntimeExportValues(node, bindings)[0];
-  if (exported === undefined) return;
   const applicability = commonJsExportApplicability(
     receiver,
     exported.exportedName,
   );
   if (applicability === "detached") return;
+  // The export owner leaves arithmetic/logical stores without a selected RHS.
+  const value = exported.value;
+  if (value == null) return;
+  const required = resolveNativeLoaderCall(value, context, bindings);
+  if (required === undefined) return;
   if (applicability === "uncertain") {
     context.accumulator.unknownFindings += 1;
     return;
   }
-  // The export owner leaves arithmetic/logical stores without a selected RHS.
-  const value = exported.value;
-  if (value == null) return;
-  const required = nativeRequire(value, context, bindings);
-  if (required === undefined) return;
   addBinding({
     context,
     node,
     specifier: required.specifier,
     kind: "re-export",
     moduleKind: "require",
+    ...(required.resolution === undefined
+      ? {}
+      : { resolution: required.resolution }),
     ...required.access,
+  });
+};
+
+const inspectLexicalAssignment = (
+  node: t.AssignmentExpression,
+  context: JavaScriptFindingContext,
+  bindings: JavaScriptSemanticAnalysisState,
+): void => {
+  if (
+    node.operator !== "=" &&
+    node.operator !== "??=" &&
+    node.operator !== "||="
+  )
+    return;
+  const left = unwrapJavaScriptExpression(node.left).node;
+  const isLexicalIdentifier =
+    t.isIdentifier(left) &&
+    left.name !== "module" &&
+    left.name !== "exports" &&
+    resolveSemanticBindingState(bindings, left, left.name) !== undefined;
+  const isDestructuringAssign =
+    node.operator === "=" && t.isObjectPattern(left);
+  if (!isLexicalIdentifier && !isDestructuringAssign) return;
+  const required = resolveNativeLoaderCall(node.right, context, bindings);
+  if (required === undefined) return;
+  addBinding({
+    context,
+    node,
+    specifier: required.specifier,
+    kind: "require",
+    moduleKind: "require",
+    ...(required.resolution === undefined
+      ? {}
+      : { resolution: required.resolution }),
+    ...(required.hasMemberAccess ? required.access : bindingMembers(left)),
+  });
+};
+
+const inspectReturnedLoader = (
+  locationNode: t.Node,
+  valueNode: t.Node | null | undefined,
+  context: JavaScriptFindingContext,
+  bindings: JavaScriptSemanticAnalysisState,
+): void => {
+  const required = resolveNativeLoaderCall(valueNode, context, bindings);
+  if (required === undefined) return;
+  addBinding({
+    context,
+    node: locationNode,
+    specifier: required.specifier,
+    kind: "require",
+    moduleKind: "require",
+    ...(required.resolution === undefined
+      ? {}
+      : { resolution: required.resolution }),
+    ...required.access,
+  });
+};
+
+const inspectDlopen = (
+  node: t.CallExpression | t.OptionalCallExpression,
+  context: JavaScriptFindingContext,
+  bindings: JavaScriptSemanticAnalysisState,
+): void => {
+  const dlopened = resolveDlopenCall(node, context, bindings);
+  if (dlopened === undefined) return;
+  addBinding({
+    context,
+    node,
+    specifier: dlopened.specifier,
+    kind: dlopened.kind,
+    moduleKind: "require",
+    resolution: dlopened.resolution,
+    ...dlopened.access,
   });
 };
 
@@ -244,6 +360,7 @@ const addBinding = (input: NativeBindingInput): void => {
       members,
       input.namespaceAccess,
       input.dynamicMemberAccess,
+      resolutionKey(input.resolution),
     ]),
     node,
     value: {
@@ -253,87 +370,30 @@ const addBinding = (input: NativeBindingInput): void => {
       members,
       namespace_access: input.namespaceAccess,
       dynamic_member_access: input.dynamicMemberAccess,
+      ...(input.resolution === undefined
+        ? {}
+        : { resolution: input.resolution }),
       module_key: null,
       location: range(node),
     },
   });
 };
 
-const nativeCallReceiver = (
-  node: t.Node | null | undefined,
-): t.CallExpression | t.OptionalCallExpression | undefined => {
-  if (node == null) return undefined;
-  node = unwrapJavaScriptExpression(node).node;
-  while (t.isMemberExpression(node) || t.isOptionalMemberExpression(node))
-    node = unwrapJavaScriptExpression(node.object).node;
-  return t.isCallExpression(node) || t.isOptionalCallExpression(node)
-    ? node
-    : undefined;
+const resolutionKey = (
+  resolution: ElectronNativeAddonResolution | undefined,
+): readonly (string | readonly string[] | null)[] => {
+  if (resolution === undefined) return ["direct"];
+  if (resolution.kind === "node-gyp-build")
+    return ["node-gyp-build", resolution.directory];
+  if (resolution.kind === "bindings")
+    return ["bindings", resolution.addon_name, resolution.module_root];
+  return [
+    "candidates",
+    resolution.resolution_context,
+    resolution.candidates,
+    resolution.resolution_base_path ?? null,
+  ];
 };
-
-const nativeRequire = (
-  node: t.Node | null | undefined,
-  context: JavaScriptFindingContext,
-  bindings: JavaScriptSemanticAnalysisState,
-):
-  | {
-      readonly specifier: string;
-      readonly hasMemberAccess: boolean;
-      readonly access: NativeMemberAccess;
-    }
-  | undefined => {
-  if (node == null) return undefined;
-  node = unwrapJavaScriptExpression(node).node;
-  let member: string | null = null;
-  let hasMemberAccess = false;
-  while (t.isMemberExpression(node) || t.isOptionalMemberExpression(node)) {
-    if (!t.isNode(node.object)) return undefined;
-    const property = semanticStaticPropertyKey(node.property, node.computed);
-    // Walking inward leaves the first member consumed from the addon itself.
-    member = property;
-    hasMemberAccess = true;
-    node = unwrapJavaScriptExpression(node.object).node;
-  }
-  if (!t.isCallExpression(node) && !t.isOptionalCallExpression(node))
-    return undefined;
-  const call = semanticRequireCallAt(
-    node,
-    bindings,
-    context.accumulator.factoryRequireBindingIds,
-  );
-  if (
-    call === undefined ||
-    call.loader === "local" ||
-    call.operation !== "load"
-  )
-    return undefined;
-  const specifier = stringValue(argumentNode(call.arguments?.[0]));
-  if (specifier === undefined || !isNativeSpecifier(specifier, "require"))
-    return undefined;
-  if (
-    call.loader === "unknown" ||
-    !call.sourceRelative ||
-    call.sourceRelativePath !== undefined
-  ) {
-    context.accumulator.unknownFindings += 1;
-    return undefined;
-  }
-  return {
-    specifier,
-    hasMemberAccess,
-    access: {
-      members: member === null ? [] : [member],
-      namespaceAccess: !hasMemberAccess,
-      dynamicMemberAccess: hasMemberAccess && member === null,
-    },
-  };
-};
-
-interface NativeMemberAccess {
-  readonly members: readonly string[];
-  readonly namespaceAccess: boolean;
-  readonly dynamicMemberAccess: boolean;
-}
 
 const bindingMembers = (pattern: t.Node): NativeMemberAccess => {
   if (!t.isObjectPattern(pattern))
@@ -351,13 +411,4 @@ const bindingMembers = (pattern: t.Node): NativeMemberAccess => {
     else members.push(key);
   }
   return { members, namespaceAccess, dynamicMemberAccess };
-};
-
-const isNativeSpecifier = (
-  specifier: string,
-  moduleKind: ElectronNativeAddonBindingFinding["module_kind"],
-): boolean => {
-  const path =
-    moduleKind === "require" ? specifier : stripQueryAndFragment(specifier);
-  return path.toLowerCase().endsWith(".node");
 };

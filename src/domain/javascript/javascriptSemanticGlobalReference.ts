@@ -2,7 +2,11 @@ import * as t from "@babel/types";
 import { electronMemberPath } from "./javascriptElectronMemberWrites.js";
 import { isUnshadowedGlobal } from "./javascriptSemanticMutationInitializers.js";
 import type { JavaScriptSemanticAnalysisState } from "./javascriptSemanticState.js";
-import { isImportMetaUrl } from "./javascriptStaticAnalysisHelpers.js";
+import {
+  isImportMetaDirname,
+  isImportMetaFilename,
+  isImportMetaUrl,
+} from "./javascriptStaticAnalysisHelpers.js";
 
 export const GLOBAL_OBJECT_NAMES = ["globalThis", "global", "window", "self"];
 
@@ -54,3 +58,19 @@ export const isUnmodifiedImportMetaUrl = (
   state: JavaScriptSemanticAnalysisState,
 ): boolean =>
   isImportMetaUrl(node) && !state.ambientWrites.covers(["import-meta", "url"]);
+
+/** A module directory base is known only while its property has no visible write. */
+export const isUnmodifiedImportMetaDirname = (
+  node: t.Node | undefined,
+  state: JavaScriptSemanticAnalysisState,
+): boolean =>
+  isImportMetaDirname(node) &&
+  !state.ambientWrites.covers(["import-meta", "dirname"]);
+
+/** A module file path is known only while its property has no visible write. */
+export const isUnmodifiedImportMetaFilename = (
+  node: t.Node | undefined,
+  state: JavaScriptSemanticAnalysisState,
+): boolean =>
+  isImportMetaFilename(node) &&
+  !state.ambientWrites.covers(["import-meta", "filename"]);

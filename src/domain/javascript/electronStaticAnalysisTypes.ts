@@ -197,6 +197,24 @@ export type ElectronUtilityProcessFinding = ElectronUtilityProcessFindingState &
       }
   );
 
+/** Proven loader or bounded path-candidate metadata for a native .node binding. */
+export type ElectronNativeAddonResolution =
+  | {
+      readonly kind: "node-gyp-build";
+      readonly directory: string | null;
+    }
+  | {
+      readonly kind: "bindings";
+      readonly addon_name: string;
+      readonly module_root: string | null;
+    }
+  | {
+      readonly kind: "candidates";
+      readonly resolution_context: JavaScriptStaticPathContext;
+      readonly candidates: readonly string[];
+      readonly resolution_base_path?: string;
+    };
+
 /** JavaScript-side binding or re-export requested from one native .node addon. */
 export interface ElectronNativeAddonBindingFinding {
   readonly specifier: string;
@@ -207,6 +225,8 @@ export interface ElectronNativeAddonBindingFinding {
   /** Omitted in legacy findings; omission means unknown, not false. */
   readonly namespace_access?: boolean;
   readonly dynamic_member_access?: boolean;
+  /** Present when resolution uses a helper package or bounded path candidates. */
+  readonly resolution?: ElectronNativeAddonResolution;
   readonly module_key: string | null;
   /** Recovered factory runtime; absent in older or unbundled findings. */
   readonly module_runtime?: string;

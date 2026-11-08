@@ -683,16 +683,22 @@ are reported as ambiguous without adding a caller-to-handler edge. A matching
 channel still does not prove registration order, reachability, or runtime use.
 
 Native-addon call bindings consume the same loader identity and normalized
-arguments as dependency analysis, including optional calls. Local methods or
-parameters named `require` establish no native binding; `require.resolve` records
-lookup rather than a native namespace. CommonJS re-export bindings require a
-selected export value and an applicable shared export receiver. Arithmetic and
-logical compound stores keep their dependency observations without asserting that
-the addon is the selected exported value.
+arguments as dependency analysis, including optional calls, proven
+`node-gyp-build` and `bindings` helper calls, `process.dlopen`, source-anchored
+filesystem `.node` expressions, and bounded `process.platform` / `process.arch` /
+`os.platform()` / `os.arch()` `.node` path templates. Local methods or
+parameters named `require`, `bindings`, `load`, or `dlopen` establish no native
+binding; `require.resolve` records lookup rather than a native namespace unless
+passed into `process.dlopen`. CommonJS re-export bindings require a selected
+export value and an applicable shared export receiver. Arithmetic and logical
+compound stores keep their dependency observations without asserting that the
+addon is the selected exported value.
 
 For `.node` bindings, member names mean “requested by JavaScript syntax.” A
-resolved add-on path does not convert them into verified native exports. Native
-symbol verification remains a separate deep-analysis claim.
+resolved add-on path associates the loading module with candidate `.node`
+artifacts in the application graph without converting requested members into
+verified native exports. Native symbol verification remains a separate
+deep-analysis claim.
 
 Exact endpoint values preserve useful local diagnostics, including query values
 and fragments, while removing URL username/password credentials when the value
