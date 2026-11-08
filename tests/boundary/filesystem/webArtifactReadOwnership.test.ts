@@ -123,7 +123,6 @@ it("retains cancelled source read ownership until service close retries it", asy
   });
 
   const cancelled = await service.trace(input, { signal: controller.signal });
-  expect(cancelled.ok).toBe(false);
   if (cancelled.ok) throw new Error("Expected cancelled source read");
   const expectedAcquisition: WebArtifactAcquisition = {
     kind: "web-artifact-acquisition",
@@ -151,7 +150,6 @@ it("retains cancelled source read ownership until service close retries it", asy
 
   injected.abortController = undefined;
   const blocked = await service.trace(input);
-  expect(blocked.ok).toBe(false);
   if (blocked.ok) throw new Error("Expected retained cleanup to block load");
   expect(blocked.error.cleanupIncomplete).toBe(true);
   expect(injected.closeAttempts).toBe(2);

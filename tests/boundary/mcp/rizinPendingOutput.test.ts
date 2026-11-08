@@ -44,10 +44,9 @@ test.each([
       },
     });
     const manager = createRizinTestManager(
-      {},
+      { REA_DEBUGGER_COMMAND_DEADLINE_MS: "100" },
       {
         spawnProcess: injected.spawnProcess,
-        frameTimeoutMs: 100,
       },
     );
     const server = new McpServer({ name: "rizin-partial-test", version: "1" });
@@ -98,33 +97,101 @@ test.each([
 );
 
 test.each([
-  { mode: "exit", maximum: 10, invalid: true, expected: "first\n�A" },
-  { mode: "cancel", maximum: 9, invalid: true, expected: "first\n�" },
-  { mode: "exit", maximum: 9, invalid: false, expected: "first\n�" },
-  { mode: "cancel", maximum: 8, invalid: true, expected: "first" },
+  {
+    mode: "exit",
+    maximum: 10,
+    invalid: true,
+    expected: "first\n�A",
+    payload: null,
+  },
+  {
+    mode: "cancel",
+    maximum: 9,
+    invalid: true,
+    expected: "first\n�",
+    payload: null,
+  },
+  {
+    mode: "exit",
+    maximum: 9,
+    invalid: false,
+    expected: "first\n�",
+    payload: null,
+  },
+  {
+    mode: "cancel",
+    maximum: 8,
+    invalid: true,
+    expected: "first",
+    payload: null,
+  },
+  { mode: "exit", maximum: 3, invalid: false, expected: "", payload: "🚀🚀X" },
+  {
+    mode: "exit",
+    maximum: 4,
+    invalid: false,
+    expected: "🚀",
+    payload: "🚀🚀X",
+  },
+  {
+    mode: "exit",
+    maximum: 7,
+    invalid: false,
+    expected: "🚀",
+    payload: "🚀🚀X",
+  },
+  {
+    mode: "exit",
+    maximum: 8,
+    invalid: false,
+    expected: "🚀🚀",
+    payload: "🚀🚀X",
+  },
+  {
+    mode: "exit",
+    maximum: 5,
+    invalid: false,
+    expected: "中",
+    payload: "中文X",
+  },
+  {
+    mode: "exit",
+    maximum: 6,
+    invalid: false,
+    expected: "中文",
+    payload: "中文X",
+  },
+  {
+    mode: "exit",
+    maximum: 3,
+    invalid: false,
+    expected: "hel",
+    payload: "hello",
+  },
 ])(
   "bounds pending UTF-8 after $mode (budget: $maximum, invalid: $invalid)",
-  async ({ mode, maximum, invalid, expected }) => {
+  async ({ mode, maximum, invalid, expected, payload }) => {
     const controller = new AbortController();
     const injected = createInjectedProcess({
       onWrite: (text, control) => {
         if (!text.includes("!echo __REA_COMMAND_COMPLETE_")) return;
         control.output(
-          Buffer.concat([
-            Buffer.from("first\0"),
-            invalid ? Buffer.from([0xff]) : Buffer.from("�"),
-            Buffer.from("ABCDEFGHIJKLM"),
-          ]),
+          payload === null
+            ? Buffer.concat([
+                Buffer.from("first\0"),
+                invalid ? Buffer.from([0xff]) : Buffer.from("�"),
+                Buffer.from("ABCDEFGHIJKLM"),
+              ])
+            : Buffer.from(payload),
         );
         if (mode === "exit") control.exit();
         else controller.abort();
       },
     });
     const manager = createRizinTestManager(
-      {},
+      { REA_DEBUGGER_MAX_COMMAND_OUTPUT_BYTES: String(maximum) },
       {
         spawnProcess: injected.spawnProcess,
-        maxCommandOutputBytes: maximum,
       },
     );
     try {
@@ -258,7 +325,6 @@ test("retains partial bytes and uncertainty when exited output never closes", as
     });
     if (!started.ok) throw started.error;
     const result = await manager.execute(started.value.session_id, "dr");
-    expect(result.ok).toBe(false);
     if (result.ok) throw new Error("Expected retained cleanup uncertainty");
     expect(result.error.partialObservation).toMatchObject({
       normalized_result: {
@@ -309,7 +375,6 @@ test.each(["cancel", "overflow", "cancel-overflow"] as const)(
         "dr",
         controller.signal,
       );
-      expect(result.ok).toBe(false);
       if (result.ok) throw new Error("Expected interrupted command");
       const expected = mode.includes("overflow")
         ? [
@@ -359,7 +424,6 @@ test.each(["before-wait", "during-wait"])(
       });
       if (!started.ok) throw started.error;
       const result = await manager.execute(started.value.session_id, "dr");
-      expect(result.ok).toBe(false);
       if (result.ok) throw new Error("Expected stdin protocol failure");
       expect(result.error.partialObservation).toMatchObject({
         normalized_result: {
@@ -403,7 +467,6 @@ test("marks output discarded by the byte queue limit during exit drainage", asyn
     });
     if (!started.ok) throw started.error;
     const result = await manager.execute(started.value.session_id, "dr");
-    expect(result.ok).toBe(false);
     if (result.ok) throw new Error("Expected bounded queue failure");
     const observation = result.error.partialObservation;
     expect(observation).toMatchObject({
@@ -441,11 +504,12 @@ test("publishes the bounded prefix when an oversized frame has no terminator", a
     },
   });
   const manager = createRizinTestManager(
-    {},
+    {
+      REA_DEBUGGER_MAX_COMMAND_OUTPUT_BYTES: "20",
+      REA_DEBUGGER_COMMAND_DEADLINE_MS: "100",
+    },
     {
       spawnProcess: injected.spawnProcess,
-      maxCommandOutputBytes: 20,
-      frameTimeoutMs: 100,
     },
   );
   try {

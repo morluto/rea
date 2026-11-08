@@ -72,7 +72,6 @@ it.each([
         runtime_kind: kind,
         observation_ms: 0,
       });
-      expect(result.ok).toBe(false);
       if (result.ok) throw new Error("Expected Inspector admission refusal");
       const diagnostic = projectAnalysisError(result.error);
       expect(diagnostic).toMatchObject({

@@ -3,6 +3,14 @@ import { createInterface } from "node:readline";
 
 const snapshot = JSON.parse(await readFile(process.argv[2], "utf8"));
 const reply = structuredClone(snapshot.reply);
+if (process.argv[3] === "inventory") {
+  const removed = snapshot.tools.tools.findIndex(
+    (tool) => tool.name !== "binary_session",
+  );
+  const [template] = snapshot.tools.tools.splice(removed, 1);
+  const unexpected = { ...template, name: "doctor_unexpected_fixture" };
+  snapshot.tools.tools.push(unexpected, unexpected);
+}
 if (process.argv[3] === "invalid") {
   reply.structuredContent.schema_violation_control = true;
   reply.content = reply.content.map((item) =>
