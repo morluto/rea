@@ -1,6 +1,10 @@
 import { xmlAttributeQuoteStarts } from "../xmlDocument.js";
 import type { DesktopTaskCheckInput } from "./appTask.js";
-import { isBookkeepingName, isVolatileValue } from "./appTaskDraftNoise.js";
+import {
+  isBookkeepingName,
+  isUuid,
+  isVolatileValue,
+} from "./appTaskDraftNoise.js";
 import { textOpensXml, type FileNote } from "./appTaskDraftFileNotes.js";
 
 /** Lines a text file's guard names, and how far from the added line it looks for them when it has no like sibling. */
@@ -134,7 +138,7 @@ const volatileAt = (line: string, xmlQuotes: ReadonlySet<number>): number => {
     }
     if (
       (isVolatileValue(token, key !== undefined && isBookkeepingName(key)) &&
-        !/^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/iu.test(token)) ||
+        !isUuid(token)) ||
       /^\p{L}+_\d{6,}$/u.test(token)
     )
       return index;

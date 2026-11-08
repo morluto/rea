@@ -48,6 +48,7 @@ export const isRenumberedKey = (key: string): boolean => {
 };
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/iu;
+export const isUuid = (value: string): boolean => UUID.test(value);
 /** Seconds since 1970 of 2000-01-01 and 2100-01-01: an epoch time a save stamps falls between. */
 const EPOCH_RANGE = [946_684_800, 4_102_444_800] as const;
 
@@ -63,7 +64,7 @@ export const isVolatileValue = (
   value: string,
   bookkeeping = false,
 ): boolean => {
-  if (UUID.test(value) || ENCODED.test(value.trim())) return true;
+  if (isUuid(value) || ENCODED.test(value.trim())) return true;
   if (!bookkeeping) return false;
   if (!/^\d{10}(?:\d{3})?$/u.test(value)) return false;
   const seconds = Number(value.slice(0, 10));
