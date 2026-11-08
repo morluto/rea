@@ -967,3 +967,52 @@ it("treats a variable-expanding client's recorded expression as unresolved", () 
   expect(cursor.value.unresolvedSettings).toEqual(new Set());
   expect(cursor.value.values.PATH).toBe("${PATH}:/opt/jdk/bin");
 });
+
+it("keeps a typed Qwen setting unresolved without discarding its recorded expression", () => {
+  const parsed = parseClientConfiguration(
+    JSON.stringify({
+      mcpServers: {
+        rea: {
+          command: "rea",
+          args: ["mcp"],
+          env: { REA_GHIDRA_STARTUP_TIMEOUT_MS: "${JOBS}" },
+        },
+      },
+    }),
+    "json",
+  );
+  const details = clientRegistrationEnvironmentDetails(parsed, "qwen_code");
+  expect(details.ok).toBe(true);
+  if (!details.ok) return;
+  expect(details.value.values.REA_GHIDRA_STARTUP_TIMEOUT_MS).toBe("${JOBS}");
+  expect(details.value.unresolvedSettings).toEqual(
+    new Set(["REA_GHIDRA_STARTUP_TIMEOUT_MS"]),
+  );
+});
+
+it("keeps a differently cased Qwen expression unresolved on Windows", () => {
+  const parsed = parseClientConfiguration(
+    JSON.stringify({
+      mcpServers: {
+        rea: {
+          command: "rea",
+          args: ["mcp"],
+          env: { rea_ghidra_startup_timeout_ms: "${JOBS}" },
+        },
+      },
+    }),
+    "json",
+  );
+  const details = clientRegistrationEnvironmentDetails(
+    parsed,
+    "qwen_code",
+    {},
+    "fragment",
+    "win32",
+  );
+  expect(details.ok).toBe(true);
+  if (!details.ok) return;
+  expect(
+    [...details.value.unresolvedSettings].map((name) => name.toUpperCase()),
+  ).toEqual(["REA_GHIDRA_STARTUP_TIMEOUT_MS"]);
+});

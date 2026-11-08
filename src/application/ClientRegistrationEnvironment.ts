@@ -209,7 +209,9 @@ export const recordedProviderSettings = (
     ),
     differing: names.filter(
       (name) =>
-        recorded[name] !== undefined && recorded[name] !== selected[name],
+        expressions[name] === undefined &&
+        recorded[name] !== undefined &&
+        recorded[name] !== selected[name],
     ),
     unresolved: names.filter((name) => expressions[name] !== undefined),
   };
@@ -273,14 +275,20 @@ const validatedDetails = (
   expressionSettings: ReadonlySet<string> = new Set(),
 ): Result<ClientRegistrationEnvironmentDetails, ConfigurationError> => {
   const runtimeEnvironment = snapshotEnvironment(environment, platform);
+  const unresolved = new Set(
+    Object.keys(
+      snapshotEnvironment(
+        Object.fromEntries([...expressionSettings].map((name) => [name, ""])),
+        platform,
+      ),
+    ),
+  );
   const validated =
     validation === "fragment"
-      ? parseEnvironmentValues(runtimeEnvironment, expressionSettings)
-      : parseEnvironment(runtimeEnvironment, expressionSettings);
+      ? parseEnvironmentValues(runtimeEnvironment, unresolved)
+      : parseEnvironment(runtimeEnvironment, unresolved);
   if (!validated.ok) return validated;
-  return ok(
-    environmentDetails(environment, validated.value, expressionSettings),
-  );
+  return ok(environmentDetails(environment, validated.value, unresolved));
 };
 
 const environmentDetails = (
