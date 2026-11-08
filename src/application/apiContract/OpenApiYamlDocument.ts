@@ -1,4 +1,4 @@
-import { isCollection, isMap, isSeq, parseDocument, visit } from "yaml";
+import { isCollection, isMap, parseDocument, visit } from "yaml";
 
 import {
   AnalysisInputError,
@@ -111,12 +111,9 @@ export const decodeOpenApiYaml = (
   // member names, so refuse the document instead of inventing one.
   let complexKeyFound = false;
   visit(document, (_key, node) => {
-    if (isMap(node))
-      for (const pair of node.items)
-        if (isCollection(pair.key)) complexKeyFound = true;
-    else if (isSeq(node))
-      for (const item of node.items)
-        if (isCollection(item)) complexKeyFound = true;
+    if (!isMap(node)) return;
+    for (const pair of node.items)
+      if (isCollection(pair.key)) complexKeyFound = true;
   });
   if (complexKeyFound)
     return err(

@@ -16,6 +16,12 @@ import {
   type ApiContractOperation,
 } from "./apiContract.js";
 
+// Refusals name the format the caller selected; the shared parser serves both.
+const FORMAT_DOCUMENT_KIND: Record<ApiContract["format"], string> = {
+  "openapi-json": "JSON",
+  "openapi-yaml": "YAML",
+};
+
 const methods = [
   "get",
   "put",
@@ -378,14 +384,14 @@ export function* parseApiContractSteps(
   sourceFormat: ApiContract["format"] = "openapi-json",
 ): Generator<void, Result<ApiContract, AnalysisError>> {
   const root = record(value);
+  const documentKind = FORMAT_DOCUMENT_KIND[sourceFormat];
   if (root === undefined || typeof root.openapi !== "string")
     return err(
       new AnalysisInputError(API_CONTRACT_OPERATION, undefined, [
         {
           path: ["path"],
           reason: "invalid_format",
-          message:
-            "Expected an OpenAPI JSON object with an openapi version string.",
+          message: `Expected an OpenAPI ${documentKind} document with an openapi version string.`,
         },
       ]),
     );
@@ -395,7 +401,7 @@ export function* parseApiContractSteps(
       new AnalysisUnsupportedTargetError(
         API_CONTRACT_OPERATION,
         artifact.path,
-        "Only OpenAPI 3.0, 3.1 and 3.2 JSON documents are supported.",
+        `Only OpenAPI 3.0, 3.1 and 3.2 ${documentKind} documents are supported.`,
       ),
     );
   const inventory = new ContractInventory(artifact);

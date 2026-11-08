@@ -196,6 +196,50 @@ it("decodes only the JSON-compatible shape the shared parser already accepts", (
   expect(unsupported.ok).toBe(true);
 });
 
+it("keeps collection-valued sequence items and names the selected format in parser refusals", async () => {
+  // A sequence item is a value, never a member name, so these documents are
+  // composable and must not be refused as non-scalar keys.
+  const nested = contractOf(
+    await importText(
+      "nested.yaml",
+      [
+        "openapi: 3.0.4",
+        'info: {title: Owned API, version: "1"}',
+        "paths: {}",
+        "servers:",
+        "  - url: /a",
+        "examples: [[1, 2], [3, 4]]",
+        "list:",
+        "  - - 1",
+        "    - 2",
+      ].join("\n"),
+      "openapi-yaml",
+    ),
+  );
+  expect(nested.operations).toEqual([]);
+
+  const missingVersion = contractError(
+    await importText(
+      "no-version.yaml",
+      "info: {title: t}\npaths: {}\n",
+      "openapi-yaml",
+    ),
+  );
+  expect(missingVersion).toContain("OpenAPI YAML document");
+  expect(missingVersion).not.toContain("OpenAPI JSON object");
+
+  const unsupportedVersion = contractError(
+    await importText(
+      "bad-version.yaml",
+      'openapi: "3.3.0"\ninfo: {}\n',
+      "openapi-yaml",
+    ),
+  );
+  expect(unsupportedVersion).toContain(
+    "Only OpenAPI 3.0, 3.1 and 3.2 YAML documents are supported.",
+  );
+});
+
 const contractError = (
   result: Awaited<ReturnType<typeof importText>>,
 ): string => {
