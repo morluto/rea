@@ -2,7 +2,10 @@ import { withCommandCancellation } from "./commandCancellation.js";
 import { z } from "incur";
 
 import type { DoctorScope } from "../application/Doctor.js";
-import { DOCTOR_PROVIDER_IDS } from "../application/DoctorProviderIds.js";
+import {
+  DESKTOP_BUILD_PROVIDER_ID,
+  DOCTOR_PROVIDER_IDS,
+} from "../application/DoctorProviderIds.js";
 import {
   isSetupFailure,
   type SetupOptions,
@@ -59,6 +62,18 @@ const registerSetupCommand = (
         .boolean()
         .default(false)
         .describe("Also approve Hopper installation with --yes"),
+      desktopBuild: z
+        .boolean()
+        .default(false)
+        .describe(
+          "Prepare this host for desktop builds: pack REA's build-computer runtime and record the build settings in the selected registrations",
+        ),
+      installAgentenv: z
+        .boolean()
+        .default(false)
+        .describe(
+          "With --desktop-build, also install the agentenv-framework release bundles target with uv",
+        ),
       client: z
         .array(supportedClientSchema)
         .default([])
@@ -125,7 +140,9 @@ const registerDoctorCommand = (
       provider: z
         .array(z.enum(DOCTOR_PROVIDER_IDS))
         .default([])
-        .describe("Deep-analysis provider whose readiness is required"),
+        .describe(
+          "Deep-analysis provider, or desktop_build for a desktop build host, whose readiness is required",
+        ),
       skill: z
         .boolean()
         .optional()
@@ -207,6 +224,8 @@ const registerMaintenanceCommands = (
 interface SetupCommandOptions {
   readonly yes: boolean;
   readonly installHopper: boolean;
+  readonly desktopBuild: boolean;
+  readonly installAgentenv: boolean;
   readonly client: readonly string[];
   readonly skillClient: readonly string[];
   readonly toolFamilies?: string | undefined;
@@ -261,10 +280,12 @@ const setupRunOptions = (
   hasExplicitScope: boolean,
 ): SetupOptions => {
   const { options } = input;
+  const desktopBuild = desktopBuildSelected(options);
   const agentIntegrationSelected =
     options.allDetected ||
     options.client.length > 0 ||
-    options.skillClient.length > 0;
+    options.skillClient.length > 0 ||
+    desktopBuild;
   const hasSelectedClients =
     hasExplicitScope &&
     (options.client.length > 0 || options.skillClient.length > 0);
@@ -275,6 +296,7 @@ const setupRunOptions = (
     dryRun: options.dryRun,
     allDetectedClients: options.allDetected,
     proposeHopper: interactive || options.installHopper,
+    ...desktopBuildOptions(options),
     ...(hasSelectedClients ? { clientIds: options.client } : {}),
     ...(options.skillClient.length > 0
       ? { skillClientIds: options.skillClient }
@@ -293,13 +315,30 @@ const setupRunOptions = (
             ...(options.skillClient.length > 0
               ? { skillClients: options.skillClient }
               : {}),
-            providers: options.installHopper ? ["hopper"] : [],
+            providers: setupProviders(options),
             skill: options.skill ?? agentIntegrationSelected,
           },
         }
       : {}),
   };
 };
+
+/** `--install-agentenv` implies `--desktop-build`. */
+const desktopBuildSelected = (options: SetupCommandOptions): boolean =>
+  options.desktopBuild || options.installAgentenv;
+
+const desktopBuildOptions = (
+  options: SetupCommandOptions,
+): Pick<SetupOptions, "desktopBuild" | "installAgentenv"> =>
+  desktopBuildSelected(options)
+    ? { desktopBuild: true, installAgentenv: options.installAgentenv }
+    : {};
+
+/** Providers whose readiness the selected setup requires. */
+const setupProviders = (options: SetupCommandOptions): readonly string[] => [
+  ...(options.installHopper ? ["hopper"] : []),
+  ...(desktopBuildSelected(options) ? [DESKTOP_BUILD_PROVIDER_ID] : []),
+];
 
 const setupIsInteractive = (
   options: SetupCommandOptions,
@@ -320,7 +359,9 @@ const setupHasExplicitScope = (options: SetupCommandOptions): boolean =>
   options.client.length > 0 ||
   options.skillClient.length > 0 ||
   options.skill !== undefined ||
-  options.installHopper;
+  options.installHopper ||
+  options.desktopBuild ||
+  options.installAgentenv;
 
 const doctorScope = (options: {
   readonly client: readonly string[];

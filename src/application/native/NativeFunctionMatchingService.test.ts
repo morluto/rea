@@ -74,7 +74,6 @@ it("retains transitive provenance without treating dependencies as native observ
     undefined,
     (id) => (id === dependency.evidence_id ? dependency : undefined),
   );
-  expect(missing.ok).toBe(false);
   if (missing.ok) throw new Error("Missing ancestor accepted");
   expect(missing.error).toMatchObject({
     evidenceId: ancestor.evidence_id,
@@ -933,7 +932,6 @@ it("enforces the caller-resolved representation allowance and names its setting"
   const lowered = await matchNativeFunctions(small, {
     representationAllowance: { maximumBytes: 64 * 1024, source: "runtime" },
   });
-  expect(lowered.ok).toBe(false);
   if (lowered.ok) throw new Error("Lowered allowance admitted the request");
   expect(lowered.error).toMatchObject({
     _tag: "AnalysisResourceConstraintError",
