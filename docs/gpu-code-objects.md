@@ -132,6 +132,9 @@ Kernel representations have different meanings:
   retain an unknown count and partial decoding coverage. Unsupported parameter
   layouts and unknown shared-memory declarations likewise retain their known
   facts, explicit limitations and partial coverage through retained pages.
+  If aligning a parameter would exceed the safe-integer offset range, that offset
+  and subsequent offsets stay null. Known names and sizes remain available;
+  an unknown total does not erase an independently known safe offset.
 - CUBIN identifies CUDA entry symbols and reads numeric `nv.info` records,
   including V2 kernel-parameter sizes, and native section declarations. Global
   register declarations also cover compiler

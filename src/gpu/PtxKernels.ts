@@ -308,10 +308,12 @@ export function* readPtxKernels(
         value.align > 0 &&
         Number.isSafeInteger(value.align)
       ) {
-        offset = Math.ceil(parameterBytes / value.align) * value.align;
-        parameterBytes = Number.isSafeInteger(offset + value.size)
-          ? offset + value.size
-          : null;
+        const aligned = Math.ceil(parameterBytes / value.align) * value.align;
+        offset = Number.isSafeInteger(aligned) ? aligned : null;
+        parameterBytes =
+          offset !== null && Number.isSafeInteger(offset + value.size)
+            ? offset + value.size
+            : null;
       } else parameterBytes = null;
       parameters.push({
         ordinal: parameters.length,
