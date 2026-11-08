@@ -301,6 +301,10 @@ export const inspectNugetPackageEvidence = async (
   };
   const reader = new ZipArtifactReader(input.path, "zip");
   let members: NugetArchiveMember[];
+  // A close that fails leaves the reader owning its descriptor, so the failure
+  // is carried into the result instead of being swallowed: dropping it would
+  // report a clean inventory from a reader that never released the archive.
+  let closeFailure: unknown;
   try {
     members = await resources.run(() =>
       inventoryMembers(reader, input, options.signal),
@@ -315,10 +319,28 @@ export const inspectNugetPackageEvidence = async (
       sha256,
       bytes: bytes.length,
     });
+    await reader.close().catch((failure: unknown) => {
+      closeFailure = failure;
+    });
+    if (closeFailure !== undefined)
+      refusal.retainSecondaryFailure(
+        inputFailure(
+          "The ZIP reader could not be closed after the inventory failed; the archive may still be open.",
+          closeFailure,
+        ),
+      );
     return err(refusal);
-  } finally {
-    await reader.close().catch(() => undefined);
   }
+  await reader.close().catch((failure: unknown) => {
+    closeFailure = failure;
+  });
+  if (closeFailure !== undefined)
+    return err(
+      inputFailure(
+        "The ZIP reader could not be closed, so the archive may still be open and the inventory is not published.",
+        closeFailure,
+      ),
+    );
   const parsed = parseNugetPackage(artifact, members, {
     maxEntries: input.max_entries,
   });
