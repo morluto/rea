@@ -236,6 +236,53 @@ it("uses the entry format for JSON within an archive", () => {
   expect(value?.refers_to).toBeUndefined();
 });
 
+it("keeps JSON archive edits whose keys resemble XML attributes", () => {
+  const archive = (contents: unknown) => {
+    const bytes = new TextEncoder().encode(JSON.stringify(contents));
+    return zipView(
+      [
+        zipEntry(
+          {
+            name: "state.json",
+            size: bytes.length,
+            compressedSize: bytes.length,
+            method: 8,
+            encrypted: false,
+          },
+          bytes,
+        ),
+      ],
+      1,
+    );
+  };
+  const file = draftOf({
+    "Documents/state.zip": statePath(
+      "document",
+      "zip",
+      archive({ title: "old", attributes: { history: "first" } }),
+      archive({ title: "new", attributes: { history: "second" } }),
+    ),
+  })[0];
+  expect(file?.suggested).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({
+        kind: "value_equals",
+        pointer: "/entries/[name=state.json]/view/title",
+        value: "new",
+      }),
+      expect.objectContaining({
+        kind: "value_equals",
+        pointer: "/entries/[name=state.json]/view/attributes/history",
+        value: "second",
+      }),
+    ]),
+  );
+  expect(
+    file?.values.find(({ pointer }) => pointer.endsWith("/attributes/history"))
+      ?.note,
+  ).toBeUndefined();
+});
+
 describe("draftTaskFiles values' text and references", () => {
   it("keeps the spaces the XML reader kept as text in an element's compact XML, and leaves out its layout", () => {
     const paragraph = "<p>Meet on <s>Sunday</s> <s>evening</s>.</p>";

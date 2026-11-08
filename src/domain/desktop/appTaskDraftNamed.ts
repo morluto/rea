@@ -548,7 +548,7 @@ export const namedDraft = (
   options: NamedOptions,
 ): NamedDraft => {
   const change = diffNamedMembers(ends.baseline, ends.final);
-  const noise = changeNoise(change, ends);
+  const noise = changeNoise(change, ends, tree.xml);
   const named = (view: JsonValue | null, pointer: string) =>
     byName(view, pointer, tree) && !tree.leavesOut(view, pointer);
   const texts = wholeTextSuggestions(file, change, ends, {
@@ -642,7 +642,7 @@ export const presenceValues = (
   return draftValues(change, {
     ends: from,
     listed: tree.listed,
-    noise: changeNoise(change, from),
+    noise: changeNoise(change, from, tree.xml),
     format: (view, pointer) => valueFormat(tree, view, pointer),
     referenceRoots: (view) => referenceRoots(tree, view),
   });
