@@ -45,8 +45,19 @@ export const applicationGraphSubjectTarget = (
   source: ApplicationGraphEvidenceSource,
 ): EvidenceSubjectTarget | undefined => {
   const subject = source.evidence.subject;
+  const staticRootObserved =
+    source.kind === "static-application" &&
+    source.graph.nodes.some(
+      (node) =>
+        node.kind === "artifact" &&
+        node.identity.strategy === "content-digest" &&
+        node.identity.sha256 === source.rootArtifactSha256 &&
+        node.observations.some(
+          ({ evidence }) => evidence.extractor.operation === "inventory-root",
+        ),
+    );
   return evidenceSubjectTarget(
-    source.kind === "static-application" ||
+    staticRootObserved ||
       (source.kind === "managed-application" &&
         subject?.format === "pe" &&
         subject.digest.sha256 === source.rootArtifactSha256)

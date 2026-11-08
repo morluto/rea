@@ -776,11 +776,11 @@ describe("application workflow CLI parity", () => {
         seed: { kind: "module", value: "renderer.js", match: "exact" },
         summary: {
           matched_seeds: 1,
-          traced_nodes: 1,
-          traced_edges: 0,
+          traced_nodes: 2,
+          traced_edges: 1,
           terminal_paths: 0,
           native_handoffs: 0,
-          observed_facts: 1,
+          observed_facts: 3,
           inferred_facts: 0,
           unknown_facts: 0,
           unavailable_facts: 0,
@@ -810,7 +810,7 @@ describe("application workflow CLI parity", () => {
       predicate_type: "rea.application-version-comparison",
       normalized_result: {
         summary: {
-          unchanged: 0,
+          unchanged: 1,
           added: 2,
           removed: 0,
           changed: 1,
@@ -853,7 +853,7 @@ describe("application workflow CLI parity", () => {
           reference_inventory_state: "complete",
           application_graph_status: "complete",
           retained_source_files: 1,
-          retained_application_nodes: 1,
+          retained_application_nodes: 2,
         },
       },
     });
@@ -1943,7 +1943,7 @@ const assertTraceFileView = async (root: string, traced: unknown) => {
       parent_evidence_id: parent.evidence_id,
       parent_operation: "trace_application_feature",
       artifact,
-      summary: { summary: { matched_seeds: 1, traced_nodes: 1 } },
+      summary: { summary: { matched_seeds: 1, traced_nodes: 2 } },
     },
   });
   expect(
@@ -1960,7 +1960,7 @@ const assertTraceFileView = async (root: string, traced: unknown) => {
       kind: "feature-trace",
       artifact,
       items: [{ seed: true, observation_count: 1 }],
-      coverage: { total: 1, exhausted: true },
+      coverage: { total: 2, exhausted: false },
     },
   });
   // Without a session ledger the CLI cannot retain a parent for a selected view.

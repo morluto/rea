@@ -7,6 +7,9 @@ import {
   type Evidence,
 } from "../../domain/evidence.js";
 import { ok } from "../../domain/result.js";
+import { createJavaScriptApplicationGraph } from "../../domain/javascript/javascriptApplicationGraph.js";
+import { createJavaScriptSemanticGraph } from "../../domain/javascript/javascriptSemanticGraph.js";
+import { javascriptApplicationAnalysisResultSchema } from "../../domain/javascript/javascriptApplicationAnalysis.js";
 import {
   JAVASCRIPT_APPLICATION_VERSION_COMPARISON_EXAMPLE,
   JAVASCRIPT_FEATURE_TRACE_EXAMPLE,
@@ -28,6 +31,51 @@ import {
 const reference = ({ evidence_id }: Evidence) => ({
   kind: "retained-evidence" as const,
   evidence_id,
+});
+
+it("keeps a static trace subject unknown when legacy graph root evidence is omitted", () => {
+  const original = JAVASCRIPT_FEATURE_TRACE_EXAMPLE.application;
+  const result = javascriptApplicationAnalysisResultSchema.parse(
+    original.normalized_result,
+  );
+  const { graph_id: _graphId, ...graphInput } = result.graph;
+  const graph = createJavaScriptApplicationGraph({
+    ...graphInput,
+    nodes: graphInput.nodes.filter(({ kind }) => kind !== "artifact"),
+    root_node_ids: graphInput.nodes
+      .filter(({ kind }) => kind === "javascript-asset")
+      .map(({ node_id }) => node_id),
+    edges: [],
+  });
+  const { graph_id: _semanticId, ...semanticInput } = result.semantic_graph;
+  const semanticGraph = createJavaScriptSemanticGraph({
+    ...semanticInput,
+    application_graph_id: graph.graph_id,
+  });
+  if (original.subject === null)
+    throw new Error("Expected application subject");
+  const legacy = createEvidence(
+    {
+      path: original.subject.local_path,
+      sha256: original.subject.digest.sha256,
+      format: original.subject.format,
+    },
+    original.provider,
+    {
+      operation: original.operation,
+      predicateType: original.predicate_type,
+      parameters: original.parameters,
+      result: { ...result, graph, semantic_graph: semanticGraph },
+      confidence: "derived",
+      authority: "shipped-artifact",
+    },
+  );
+  const trace = traceApplicationFeatureEvidence({
+    ...JAVASCRIPT_FEATURE_TRACE_EXAMPLE,
+    application: legacy,
+  });
+  if (!trace.ok) throw trace.error;
+  expect(trace.value.evidence.subject).toBeNull();
 });
 
 const native = createEvidence(
