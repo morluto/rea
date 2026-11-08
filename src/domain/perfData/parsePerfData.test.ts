@@ -191,6 +191,22 @@ describe("parsePerfData event attributes", () => {
     ]);
   });
 
+  it("marks the inventory incomplete when an ids section cannot be located", () => {
+    const bytes = buildPerfRecording();
+    // An offset above the safe-integer range is unreadable, not absent: the
+    // group still owns identifiers this pass never saw.
+    bytes.writeBigUInt64LE(
+      0xffffffffffffffffn,
+      PERF_HEADER_BYTES + PERF_ATTR_BYTES,
+    );
+    const archive = parsed(bytes);
+    expect(archive.events[0]?.ids).toEqual([]);
+    expect(archive.summary.identifiers_present).toBe(false);
+    expect(archive.diagnostics).toEqual([
+      expect.objectContaining({ code: "invalid-ids-section", ordinal: 0 }),
+    ]);
+  });
+
   it("rejects an attribute that declares less than a usable event", () => {
     const bytes = buildPerfRecording();
     bytes.writeUInt32LE(8, PERF_HEADER_BYTES + 0x04);

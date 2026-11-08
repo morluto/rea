@@ -226,7 +226,11 @@ const readEvents = (
     }
     const idsList: number[] = [];
     let idsTruncated = false;
-    if (ids !== null) {
+    if (ids === null) {
+      // The entry names an ids section, so this group's identifiers exist even
+      // though the extent that locates them could not be read.
+      state.identifiersPresent = false;
+    } else {
       // The writer places the id arrays outside the attribute entries, so an
       // offset inside the entry is not required; containment in the file is.
       if (ids.size % 8 !== 0 || !ids.within_file) {
