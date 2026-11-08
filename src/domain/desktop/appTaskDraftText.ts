@@ -35,6 +35,8 @@ export interface TextPlacement {
 /** Text checks for the elements whose text changed, and the pointers those checks make redundant: text and whole runs holding text in them, or an element added whole checked itself, not an attribute or name of an element both ends hold, nor an element holding no text, as an image or a break. */
 export interface WholeTextSuggestions {
   readonly suggestions: readonly DesktopTaskCheckInput[];
+  /** Kept positioned items associated with the selected text checks. */
+  readonly guards: readonly DesktopTaskCheckInput[];
   /** Elements whose text changed that no check took, because every place for one held more text than the limit. */
   readonly long: readonly string[];
   readonly covers: (pointer: string) => boolean;
@@ -509,6 +511,8 @@ const textHolder = (
 interface Placed {
   readonly element: string;
   readonly check: DesktopTaskCheckInput;
+  /** Positioned items can supply checks of their kept siblings. */
+  readonly guards?: readonly DesktopTaskCheckInput[];
 }
 
 /** What text checks read: the file, its two ends, and where checks go. */
@@ -744,6 +748,7 @@ export const wholeTextSuggestions = (
     .slice(0, place.limit.suggestions);
   return {
     suggestions: suggested.map(({ check }) => check),
+    guards: suggested.flatMap(({ guards }) => guards ?? []),
     long: [...long],
     covers: (pointer) => {
       if (
