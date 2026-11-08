@@ -969,6 +969,59 @@ describe("ReleaseExposureService Electron layout paths", () => {
   );
 });
 
+describe("ReleaseExposureService Electron discovery identity", () => {
+  it("joins hosts through a symlinked parent the desktop owner resolved", async () => {
+    const host = "/work/app/App.exe";
+    const { service, desktop, electronFuses } = owners(
+      directoryScan([host, "/work/app/helper.exe"]),
+    );
+    const report = electronDesktopReport();
+    desktop.inspect.mockResolvedValue(
+      ok(
+        evidence({
+          ...report,
+          root: { ...report.root, canonical_path: "/private/work/app" },
+          files: [
+            {
+              ...report.files[0],
+              local_path: "/private/work/app/resources/app.asar",
+            },
+          ],
+        }),
+      ),
+    );
+    electronFuses.inspect.mockImplementation(async (input) =>
+      ok(
+        evidence(
+          fuseReport(
+            (input as { path?: string }).path === host ? [] : [slice(0)],
+          ),
+        ),
+      ),
+    );
+    expect((await runAsNode(service))?.status).toBe("unknown");
+  });
+
+  it("keeps safe fuses unknown when discovery stopped after one layout", async () => {
+    const { service, desktop, electronFuses } = owners(
+      directoryScan(["/work/app/app.exe"]),
+    );
+    const report = electronDesktopReport();
+    desktop.inspect.mockResolvedValue(
+      ok(
+        evidence({
+          ...report,
+          coverage: { ...report.coverage, status: "partial" },
+        }),
+      ),
+    );
+    electronFuses.inspect.mockResolvedValue(
+      ok(evidence(fuseReport([slice(0)]))),
+    );
+    expect((await runAsNode(service))?.status).toBe("unknown");
+  });
+});
+
 describe("ReleaseExposureService Electron host identity", () => {
   it("keeps safe fuses decided when inventory stopped after the named executable", async () => {
     const { service, desktop, electronFuses } = owners({

@@ -245,6 +245,9 @@ export class ReleaseExposureService {
         electron_family_reason: family.reason,
         electron_executable_included: prepared.electronExecutableIncluded,
         electron_host_paths: prepared.electronHostPaths,
+        ...(family.family === "electron" && desktop.layoutsComplete === false
+          ? { electron_layouts_complete: false }
+          : {}),
         fuse_images: fuseImages,
         go_images: goImages,
         rust_images: rustImages,
@@ -279,7 +282,13 @@ export class ReleaseExposureService {
           archivePaths: [],
         });
       }
-      return ok(desktopFamily(result.value, scan.target.kind));
+      return ok(
+        desktopFamily(
+          result.value,
+          scan.target.kind,
+          scan.target.selected_path,
+        ),
+      );
     } catch (cause) {
       if (cause instanceof AnalysisError && stopsAudit(cause))
         return err(cause);
@@ -633,7 +642,31 @@ interface DesktopFamilyFact {
   readonly family: ReleaseExposureOwnerFacts["electron_family"];
   readonly reason: string | null;
   readonly archivePaths: readonly ArchiveBasis[];
+  /** False when discovery stopped before it listed every ASAR layout. */
+  readonly layoutsComplete?: boolean;
 }
+
+/**
+ * The desktop owner resolves its root, so a target selected through a
+ * symlinked parent (`/tmp/App` for `/private/tmp/App`) gets canonical
+ * `local_path`s while the audit's images keep the caller's spelling. Rebase an
+ * owner path under the canonical root onto the selected path so the two join.
+ */
+const callerPath = (
+  localPath: string,
+  canonicalRoot: string,
+  selectedPath: string,
+): string => {
+  if (canonicalRoot === selectedPath) return localPath;
+  if (localPath === canonicalRoot) return selectedPath;
+  const separator = localPath.charAt(canonicalRoot.length);
+  if (
+    localPath.startsWith(canonicalRoot) &&
+    (separator === "/" || separator === "\\")
+  )
+    return `${selectedPath}${localPath.slice(canonicalRoot.length)}`;
+  return localPath;
+};
 
 /**
  * The desktop owner names Electron only from an ASAR layout, so an `asar: false`
@@ -643,6 +676,7 @@ interface DesktopFamilyFact {
 const desktopFamily = (
   evidence: Evidence,
   targetKind: ReleaseExposureScan["target"]["kind"],
+  selectedPath: string,
 ): DesktopFamilyFact => {
   const report = desktopApplicationSchema.safeParse(evidence.normalized_result);
   if (!report.success)
@@ -658,16 +692,23 @@ const desktopFamily = (
     const files = new Map(
       report.data.files.map((file) => [file.file_id, file]),
     );
+    const partial = report.data.coverage.status === "partial";
     return {
       family: "electron",
-      reason: null,
+      // A partial discovery may have stopped before another layout's host.
+      reason: partial ? "Desktop application coverage is partial." : null,
+      layoutsComplete: !partial,
       archivePaths: electron.basis_file_ids.flatMap((id) => {
         const file = files.get(id);
         return file === undefined
           ? []
           : [
               {
-                path: file.local_path,
+                path: callerPath(
+                  file.local_path,
+                  report.data.root.canonical_path,
+                  selectedPath,
+                ),
                 electronArchive: desktopPathConventions(file.path)
                   .electronArchive,
                 layout: posix.dirname(posix.dirname(file.path)),

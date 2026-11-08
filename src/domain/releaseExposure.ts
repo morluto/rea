@@ -429,6 +429,11 @@ export interface ReleaseExposureOwnerFacts {
   readonly electron_executable_included?: boolean;
   /** Images named as the Electron host. Others may be helpers with no fuses. */
   readonly electron_host_paths?: readonly string[];
+  /**
+   * False when desktop discovery stopped before it listed every ASAR layout,
+   * so a layout it never reached may hold a host whose fuses were not read.
+   */
+  readonly electron_layouts_complete?: boolean;
   readonly fuse_images: readonly FuseImageFact[];
   readonly go_images: readonly MetadataImageFact[];
   readonly rust_images: readonly MetadataImageFact[];
@@ -596,8 +601,9 @@ const fuseCheck = (
       !(image.implications ?? []).some((item) => item.subject === spec.subject),
   );
   const partialFuseSample =
-    nativeImagesMayBeUnread(scan) &&
-    owners.electron_executable_included !== true;
+    owners.electron_layouts_complete === false ||
+    (nativeImagesMayBeUnread(scan) &&
+      owners.electron_executable_included !== true);
   let status: Status;
   if (outcomes.includes(spec.exposed)) status = "exposed";
   else if (owners.electron_family === "not_electron") status = "not_applicable";

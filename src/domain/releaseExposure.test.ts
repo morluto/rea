@@ -415,6 +415,34 @@ describe("release exposure unread fuse images", () => {
     ).toBe("not_observed");
   });
 
+  it("does not treat a partial desktop layout list as an absent fuse", () => {
+    const fuseFacts = {
+      electron_family: "electron" as const,
+      electron_executable_included: true,
+      fuse_images: [
+        {
+          kind: "report" as const,
+          role: "native-image" as const,
+          implications: [
+            { subject: "electron_run_as_node", outcome: "not_honored" },
+          ],
+        },
+      ],
+    };
+    expect(
+      statusOf(
+        reportFor(
+          scan({}),
+          owners({ ...fuseFacts, electron_layouts_complete: false }),
+        ),
+        "electron.run_as_node",
+      ),
+    ).toBe("unknown");
+    expect(
+      statusOf(reportFor(scan({}), owners(fuseFacts)), "electron.run_as_node"),
+    ).toBe("not_observed");
+  });
+
   it("does not treat incomplete inventory as an absent fuse", () => {
     const fuseFacts = {
       electron_family: "electron" as const,
