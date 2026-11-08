@@ -1,12 +1,7 @@
 import type { JsonValue } from "../jsonValue.js";
 import { collapseWhitespace, type DesktopTaskCheckInput } from "./appTask.js";
 import { sameJson } from "./appTaskChecks.js";
-import {
-  holdsSplitDate,
-  isCoordinates,
-  isRenumberedKey,
-  isStamp,
-} from "./appTaskDraftNoise.js";
+import { holdsSplitDate, isCoordinates, isStamp } from "./appTaskDraftNoise.js";
 import { holdsNoisyText } from "./appTaskDraftText.js";
 import { decimalOf, valueEqualsCheck } from "./appTaskDraftScalars.js";
 import {
@@ -65,8 +60,8 @@ const guardAt = (
     !context.named(ends.final, pointer)
   )
     return undefined;
-  const before = resolvePointer(ends.baseline, pointer);
-  const after = resolvePointer(ends.final, pointer);
+  const before = resolvePointer(ends.baseline, pointer, "xml");
+  const after = resolvePointer(ends.final, pointer, "xml");
   if (before === undefined || after === undefined) return undefined;
   if (
     check.kind === "value_equals" &&
@@ -127,12 +122,6 @@ const guardAt = (
     : undefined;
 };
 
-/** Whether a selector key keys a member by a value the app renumbers, as Gnumeric's `[@ExprID=2]`. */
-const renumberedKey = (key: string) =>
-  [...key.matchAll(/\[@(?<attribute>[^=\]]+)=/gu)].some(({ groups }) =>
-    isRenumberedKey(groups?.attribute ?? ""),
-  );
-
 /** A like sibling of a checked member: its pointer by the selector it pairs by at both ends, and its element at the seed. */
 interface Sibling {
   readonly member: string;
@@ -177,11 +166,12 @@ const siblingsOf = (
   context: GuardContext,
   step: ReturnType<typeof listSteps>[number],
 ): { readonly siblings: Sibling[]; readonly all: JsonValue[] } => {
-  const newer = resolvePointer(context.ends.final, step.list);
-  const older = resolvePointer(context.ends.baseline, step.list);
+  const newer = resolvePointer(context.ends.final, step.list, "xml");
+  const older = resolvePointer(context.ends.baseline, step.list, "xml");
   const member = resolvePointer(
     context.ends.final,
     `${step.list}/${step.member}`,
+    "xml",
   );
   if (!Array.isArray(newer) || !Array.isArray(older) || !isXmlElement(member))
     return { siblings: [], all: [] };
@@ -207,7 +197,7 @@ const siblingsOf = (
     (item) => isXmlElement(item) && item.name === member.name,
   );
   if (likes.length === 0) return { siblings: [], all };
-  const pairing = pairMembers(newer, older, holdsTagOnly(step.list));
+  const pairing = pairMembers(newer, older, holdsTagOnly(step.list), "xml");
   return {
     siblings: likes.flatMap(({ index }) => {
       const key = pairing.newer.keys[index];
@@ -215,7 +205,6 @@ const siblingsOf = (
       const element = partner === undefined ? undefined : older[partner];
       return key === undefined ||
         /^\d+$/u.test(key) ||
-        renumberedKey(key) ||
         partner === undefined ||
         pairing.older.keys[partner] !== key ||
         !isXmlElement(element)
@@ -248,7 +237,7 @@ const readAt = (sibling: Sibling, rest: readonly string[]) => {
   const value =
     rest.length === 0
       ? sibling.element
-      : resolvePointer(sibling.element, `/${rest.join("/")}`);
+      : resolvePointer(sibling.element, `/${rest.join("/")}`, "xml");
   return (
     isXmlElement(value)
       ? elementText(value)
@@ -309,7 +298,6 @@ const rekeyed = (
       !value.includes("][") &&
       !isStamp(value) &&
       !isPlaceholder(value) &&
-      !isRenumberedKey(key) &&
       !isSaveNumberedId(key, value)
         ? [{ prefix: "@" as const, key, value }]
         : [],
@@ -320,7 +308,7 @@ const rekeyed = (
     ...childConditions(element).flatMap((spelled) => selectorOf(spelled) ?? []),
   ].filter((condition) => !selectsByRead(condition, read, text));
   const at = (member: string, view: JsonValue | null) =>
-    resolvePointer(view, `${step.list}/${member}`);
+    resolvePointer(view, `${step.list}/${member}`, "xml");
   const end = at(sibling.member, context.ends.final);
   for (const condition of candidates) {
     const member = escapeToken(`[name=${tag}]${spellCondition(condition)}`);
@@ -342,7 +330,7 @@ const variesAmong = (all: readonly JsonValue[]) => {
       known.get(pointer) ??
       new Set(
         all.map((item) =>
-          JSON.stringify(resolvePointer(item, pointer) ?? null),
+          JSON.stringify(resolvePointer(item, pointer, "xml") ?? null),
         ),
       ).size > 1;
     known.set(pointer, varied);
@@ -383,7 +371,6 @@ const guardField = (
       typeof value === "string" &&
       !selected.has(key) &&
       !isIdentifyingAttribute(key) &&
-      !isRenumberedKey(key) &&
       !isStamp(value) &&
       !numberedInOrder(all, String(sibling.element.name), key) &&
       varies(["attributes", escapeToken(key)])

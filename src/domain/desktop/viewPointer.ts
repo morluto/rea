@@ -126,9 +126,14 @@ const elementHolds = (
 };
 
 /** Whether a `>` condition's path inside a member holds its value: in an XML element as `elementHolds` reads it, in a JSON record the string at those keys. */
-const holdsInside = (member: JsonValue, { key, value }: Condition) => {
+const holdsInside = (
+  member: JsonValue,
+  { key, value }: Condition,
+  format: string | null | undefined,
+) => {
   const steps = insideSteps(key) ?? [];
-  if (isXmlElement(member)) return elementHolds(member, steps, value);
+  if (format === "xml")
+    return isXmlElement(member) && elementHolds(member, steps, value);
   let found: JsonValue | undefined = member;
   for (const step of steps)
     found = isRecord(found) ? own(found, step) : undefined;
@@ -136,22 +141,27 @@ const holdsInside = (member: JsonValue, { key, value }: Condition) => {
 };
 
 /** Whether an array member meets every condition; selectors compare strings only. */
-const selects = (member: JsonValue, conditions: readonly Condition[]) =>
+const selects = (
+  member: JsonValue,
+  conditions: readonly Condition[],
+  format: string | null | undefined,
+) =>
   isRecord(member) &&
   conditions.every((condition) =>
     condition.prefix === ">"
-      ? holdsInside(member, condition)
+      ? holdsInside(member, condition, format)
       : fieldOf(member, condition) === condition.value,
   );
 
 /** Whether a member meets a selector's conditions, or undefined when the string is no selector. */
 export const selectorTest = (
   selector: string,
+  format: string | null | undefined,
 ): ((member: JsonValue) => boolean) | undefined => {
   const conditions = selectorOf(selector);
   return conditions === undefined
     ? undefined
-    : (member) => selects(member, conditions);
+    : (member) => selects(member, conditions, format);
 };
 
 /** One step into an array: by index, or by a selector that must match one member, or none when it is the last. */
@@ -159,6 +169,7 @@ const arrayStep = (
   items: readonly JsonValue[],
   token: string,
   last: boolean,
+  format: string | null | undefined,
 ): { readonly member: JsonValue } | Stepped => {
   if (INDEX.test(token)) {
     const index = Number(token);
@@ -174,7 +185,7 @@ const arrayStep = (
           problem: `${token} is not a selector of the form [KEY=VALUE]`,
         }
       : { kind: "none" };
-  const matched = items.filter((item) => selects(item, conditions));
+  const matched = items.filter((item) => selects(item, conditions, format));
   if (matched.length === 1) return { member: matched[0] ?? null };
   if (matched.length > 1)
     return {
@@ -201,10 +212,12 @@ const arrayStep = (
 export const locatePointer = (
   view: JsonValue | null,
   pointer: string,
+  format: string | null | undefined,
 ): Located => {
   if (pointer === "")
     return { kind: "value", value: view, searched: [], byPosition: [] };
   let current: JsonValue = view;
+  let currentFormat = format;
   const segments = pointer.slice(1).split("/");
   const steps = { searched: [] as string[], byPosition: [] as string[] };
   for (const [position, segment] of segments.entries()) {
@@ -217,14 +230,28 @@ export const locatePointer = (
       const indexed = INDEX.test(token);
       if (!indexed && selectorOf(token) !== undefined)
         steps.searched.push(array);
-      const step = arrayStep(current, token, position === segments.length - 1);
+      const step = arrayStep(
+        current,
+        token,
+        position === segments.length - 1,
+        currentFormat,
+      );
       if ("kind" in step) return { ...step, ...steps };
       if (indexed && typeof step.member === "object" && step.member !== null)
         steps.byPosition.push(array);
       current = step.member;
-    } else if (isRecord(current) && Object.hasOwn(current, token))
+    } else if (isRecord(current) && Object.hasOwn(current, token)) {
+      // The archive entry is metadata until its view is entered.
+      if (
+        format === "zip" &&
+        position === 2 &&
+        segments[0] === "entries" &&
+        token === "view"
+      )
+        currentFormat =
+          typeof current.format === "string" ? current.format : undefined;
       current = current[token] ?? null;
-    else return { kind: "none", ...steps };
+    } else return { kind: "none", ...steps };
   }
   return { kind: "value", value: current, ...steps };
 };
@@ -285,12 +312,13 @@ const selectorGroups = (tokens: Iterable<string>) => {
 const selectedMembers = (
   items: readonly JsonValue[],
   tokens: Iterable<string>,
+  format: string | null | undefined,
 ): ReadonlyMap<string, JsonValue> => {
   const selected = new Map<string, JsonValue>();
   const listed = [...tokens];
   for (const token of listed) {
     const meets = selectorOf(token)?.some(readsChild)
-      ? selectorTest(token)
+      ? selectorTest(token, format)
       : undefined;
     const matched = meets === undefined ? [] : items.filter(meets);
     if (matched.length === 1) selected.set(token, matched[0] ?? null);
@@ -318,12 +346,13 @@ const selectedMembers = (
  */
 export const memberLookup = (
   value: JsonValue | undefined,
-  tokens: Iterable<string> = [],
+  tokens: Iterable<string>,
+  format: string | null | undefined,
 ): ((token: string) => JsonValue | undefined) => {
   if (!Array.isArray(value))
     return (token) =>
       isRecord(value) && Object.hasOwn(value, token) ? value[token] : undefined;
-  const selected = selectedMembers(value, tokens);
+  const selected = selectedMembers(value, tokens, format);
   return (token) =>
     INDEX.test(token) ? value[Number(token)] : selected.get(token);
 };
@@ -332,7 +361,8 @@ export const memberLookup = (
 export const resolvePointer = (
   view: JsonValue | null,
   pointer: string,
+  format: string | null | undefined,
 ): JsonValue | undefined => {
-  const located = locatePointer(view, pointer);
+  const located = locatePointer(view, pointer, format);
   return located.kind === "value" ? located.value : undefined;
 };

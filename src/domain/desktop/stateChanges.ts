@@ -2,7 +2,7 @@ import type { JsonValue } from "../jsonValue.js";
 import type { DesktopStateFormat } from "./stateFormats.js";
 import { holdsTagOnly, pairMembers } from "./memberPairing.js";
 import { memberLookup } from "./viewPointer.js";
-import { zipLeavesOut } from "./zipView.js";
+import { zipEntryAt, zipLeavesOut } from "./zipView.js";
 
 const MAX_LISTED = 100;
 
@@ -64,6 +64,10 @@ const ownEntry = (value: JsonValue): string => {
 interface WalkOptions {
   readonly keyed?: boolean;
   readonly outermost?: boolean;
+  readonly format?: (
+    pointer: string,
+    older: boolean,
+  ) => string | null | undefined;
 }
 
 /** What a walk notes, and how; `older` when it walks the earlier version against the later one. */
@@ -77,16 +81,33 @@ interface Noting extends WalkOptions {
 const keyedMembers = (
   from: readonly JsonValue[],
   other: JsonValue | undefined,
-  at: { readonly older: boolean; readonly list: string },
+  at: {
+    readonly older: boolean;
+    readonly list: string;
+    readonly format: string | null | undefined;
+    readonly otherFormat: string | null | undefined;
+  },
 ) => {
   const others = Array.isArray(other) ? other : [];
+  // Different entry formats cannot share selector semantics. Preserve each
+  // side's resolvable positions instead of inventing cross-format identities.
+  if (
+    Array.isArray(other) &&
+    at.format !== at.otherFormat &&
+    at.format != null &&
+    at.otherFormat != null
+  )
+    return from.map((_item, index) => ({
+      key: String(index),
+      counterpart: others[index],
+    }));
   const hold = holdsTagOnly(at.list);
   const pairing = at.older
-    ? pairMembers(others, from, hold)
-    : pairMembers(from, others, hold);
+    ? pairMembers(others, from, hold, at.format)
+    : pairMembers(from, others, hold, at.format);
   const older = at.older;
   const side = older ? pairing.older : pairing.newer;
-  const lookup = memberLookup(other);
+  const lookup = memberLookup(other, [], at.otherFormat);
   return side.keys.map((key, index) => {
     const partner = side.partners[index];
     // Once the array became another type, a member's counterpart is what its pointer names there.
@@ -127,19 +148,41 @@ const walk = (
     const members = keyedMembers(from, other, {
       older: into.older === true,
       list: path.segments.map((segment) => `/${segment}`).join(""),
+      format: into.format?.(
+        path.segments.map((segment) => `/${segment}`).join(""),
+        into.older === true,
+      ),
+      otherFormat: into.format?.(
+        path.segments.map((segment) => `/${segment}`).join(""),
+        into.older !== true,
+      ),
     });
     from.forEach((item, index) => {
       const member = members[index];
       if (member !== undefined) visit(member.key, item, member.counterpart);
     });
   } else if (Array.isArray(from)) {
-    const lookup = memberLookup(other);
+    const lookup = memberLookup(
+      other,
+      [],
+      into.format?.(
+        path.segments.map((segment) => `/${segment}`).join(""),
+        into.older !== true,
+      ),
+    );
     from.forEach((item, index) =>
       visit(String(index), item, lookup(String(index))),
     );
   } else if (isRecord(from)) {
     // The keys go to the lookup together, so an array compared with an object is searched once per field set.
-    const lookup = memberLookup(other, Object.keys(from));
+    const lookup = memberLookup(
+      other,
+      Object.keys(from),
+      into.format?.(
+        path.segments.map((segment) => `/${segment}`).join(""),
+        into.older !== true,
+      ),
+    );
     for (const [key, item] of Object.entries(from))
       visit(key, item, lookup(key));
   }
@@ -329,7 +372,7 @@ export const diffStateViews = (
 ): DesktopStateDifference => {
   const difference =
     (format === "xml" || format === "json") && options.named === true
-      ? namedOrPositional(before, after)
+      ? namedOrPositional(before, after, format)
       : compareViews(format, before, after);
   // Only REA's own readers write coverage flags; JSON and key files are data.
   const flagged = format === "text" || format === "xml" || format === "sqlite";
@@ -344,8 +387,12 @@ export const diffStateViews = (
 const namedOrPositional = (
   before: JsonValue,
   after: JsonValue,
+  format: "xml" | "json",
 ): DesktopStateDifference => {
-  const named = compareTrees(before, after, { keyed: true });
+  const named = compareTrees(before, after, {
+    keyed: true,
+    format: () => format,
+  });
   return named.added_count + named.removed_count + named.changed_count > 0
     ? named
     : compareTrees(before, after);
@@ -363,7 +410,10 @@ const compareViews = (
     case "xml":
       return compareTrees(before, after);
     case "zip":
-      return compareTrees(before, after, { keyed: true });
+      return compareTrees(before, after, {
+        keyed: true,
+        format: archiveFormat(after, before),
+      });
     case "keyfile":
     case "dconf":
       return compareMaps("keys", keyEntries(before), keyEntries(after));
@@ -387,5 +437,21 @@ const compareViews = (
 export const diffNamedMembers = (
   before: JsonValue,
   after: JsonValue,
+  format: "json" | "xml" | "zip" = "xml",
 ): DesktopStateDifference =>
-  compareTrees(before, after, { keyed: true, outermost: true });
+  compareTrees(before, after, {
+    keyed: true,
+    outermost: true,
+    format: format === "zip" ? archiveFormat(after, before) : () => format,
+  });
+
+const archiveFormat =
+  (after: JsonValue, before: JsonValue) =>
+  (pointer: string, older: boolean): string | undefined => {
+    const entry = zipEntryAt(older ? before : after, pointer);
+    return typeof entry === "object" &&
+      entry !== null &&
+      typeof entry.format === "string"
+      ? entry.format
+      : undefined;
+  };
