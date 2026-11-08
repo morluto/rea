@@ -569,19 +569,16 @@ export const namedDraft = (
   // The count guard sits outside the cap, so line and sibling guards never squeeze it out.
   const guards = edited
     ? [
-        ...[
-          ...texts.guards,
-          ...draftGuards(
-            {
-              file,
-              ends,
-              named,
-              noisy: (pointer) => noise(pointer) !== undefined,
-              chars: options.limit.chars,
-            },
-            suggested,
-          ),
-        ].slice(0, MAX_GUARDS),
+        ...draftGuards(
+          {
+            file,
+            ends,
+            named,
+            noisy: (pointer) => noise(pointer) !== undefined,
+            chars: options.limit.chars,
+          },
+          suggested,
+        ).slice(0, MAX_GUARDS),
         ...counts.guards,
       ]
     : [];

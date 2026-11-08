@@ -315,10 +315,8 @@ export const detectStateFormat = (
       : safeParseJson(text).ok)
   )
     return "json";
-  if (namedXml(path, trimmed))
-    return parseXmlDocument(text, XML_POLICY).ok ? "xml" : "text";
-  // Checked by its well-formedness pass, so text that only opens with `<` builds no document.
-  if (opensElement(trimmed))
+  // Check syntax without constructing a document for format detection.
+  if (namedXml(path, trimmed) || opensElement(trimmed))
     return isWellFormedXml(text, XML_POLICY) ? "xml" : "text";
   return isKeyfile(text) ? "keyfile" : "text";
 };

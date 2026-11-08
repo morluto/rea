@@ -538,10 +538,7 @@ const fieldsOf = (
         context.long?.push(at);
         return [];
       }
-      return [
-        wholeTextCheck(file, at, { value, children: field.children }, undefined)
-          .check,
-      ];
+      return [wholeTextCheck(file, at, value, undefined)];
     }
     return pieces.flatMap((value) =>
       value.length > context.chars

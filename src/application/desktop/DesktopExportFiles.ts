@@ -24,6 +24,7 @@ import {
 import { err } from "../../domain/result.js";
 import { refuse } from "./DesktopExportInstall.js";
 import type { RetainedContent } from "./DesktopRetainedContent.js";
+import { readZipView } from "./DesktopZipView.js";
 
 /** A file the export writes from bytes it made. */
 export interface GeneratedFile {
@@ -116,7 +117,7 @@ const shippedSeed = (
 };
 
 /**
- * The view of each rewritten text seed, including a formerly unreadable gzip
+ * The view of each rewritten seed, including a formerly unreadable gzip
  * seed, as the bundle ships it: the computer starts from these bytes.
  */
 export const shippedSeedViews = async (
@@ -141,9 +142,11 @@ export const shippedSeedViews = async (
     const view =
       "error" in document
         ? err(document.error)
-        : isTextualFormat(format)
-          ? textualView(format, document.bytes)
-          : undefined;
+        : format === "zip"
+          ? await readZipView(document.bytes, signal)
+          : isTextualFormat(format)
+            ? textualView(format, document.bytes)
+            : undefined;
     views.set(seed.home, {
       format,
       ...compressionOf(document),
