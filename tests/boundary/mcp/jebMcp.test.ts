@@ -1,5 +1,6 @@
 import { Ajv2020 } from "ajv/dist/2020.js";
-import { afterAll, expect, it, onTestFinished } from "vitest";
+import { Client } from "@modelcontextprotocol/client";
+import { afterAll, expect, it, onTestFinished, vi } from "vitest";
 import { z } from "zod";
 
 import type {
@@ -9,10 +10,12 @@ import type {
 import { createAnalysisExecution } from "../../../src/application/AnalysisProvider.js";
 import { toolContract } from "../../../src/contracts/toolContracts.js";
 import { parseEvidence } from "../../../src/domain/evidence.js";
+import { AnalysisError } from "../../../src/domain/analysisErrorBase.js";
 import { ok } from "../../../src/domain/result.js";
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
 import { createApplicationMcpHarness } from "../../fixtures/applicationMcpHarness.js";
 import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
+import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import {
   expandToolAvailability,
   toolAvailabilityInventory,
@@ -104,6 +107,70 @@ it("discovers current JEB operation support and recovery through binary_session"
     remediation: expect.stringContaining("does not advertise"),
   });
   expect(probes).toBe(2);
+});
+
+it("reports retained JEB availability cleanup through binary_session", async () => {
+  const fixture = await startJebMcpFixture(
+    (tool) => jebPrimaryResponses[tool]!,
+    { tools: [], nextCursor: "repeat" },
+  );
+  onTestFinished(() => fixture.close());
+  const provider = new JebProvider({
+    environment: { REA_JEB_MCP_URL: fixture.endpoint },
+  });
+  const { client, close } = await createApplicationMcpHarness({
+    serverOptions: { environment: {}, jebAnalysis: provider },
+  });
+  const inspect = provider.inspectAvailability.bind(provider);
+  let originating: AnalysisError | undefined;
+  const inspection = vi
+    .spyOn(provider, "inspectAvailability")
+    .mockImplementation(async (signal) => {
+      try {
+        return await inspect(signal);
+      } catch (cause: unknown) {
+        if (cause instanceof AnalysisError) originating = cause;
+        throw cause;
+      }
+    });
+  const nativeClose = Client.prototype.close;
+  let allowClose = false;
+  const clientClose = vi
+    .spyOn(Client.prototype, "close")
+    .mockImplementation(async function (this: Client) {
+      if (!allowClose) throw new Error("injected JEB client close failure");
+      await nativeClose.call(this);
+    });
+  try {
+    const result = await client.callTool({
+      name: "binary_session",
+      arguments: { detail: "complete" },
+    });
+    expect(result.isError).toBe(true);
+    expect(parseMcpToolError(result)).toMatchObject({
+      error: {
+        code: "cleanup_incomplete",
+        details: {
+          resources: expect.arrayContaining([
+            expect.stringContaining(fixture.endpoint),
+          ]),
+        },
+      },
+    });
+    if (originating === undefined)
+      throw new Error("Missing retained JEB error");
+    expect(originating.cleanupIncomplete).toBe(true);
+    allowClose = true;
+    await provider.close();
+    expect(originating.cleanupIncomplete).toBe(false);
+    expect(originating.cleanupResources).toEqual([]);
+  } finally {
+    allowClose = true;
+    clientClose.mockRestore();
+    inspection.mockRestore();
+    await close();
+    await provider.close();
+  }
 });
 
 it("advertises exact valid JEB schemas and records inline evidence through MCP", async () => {
