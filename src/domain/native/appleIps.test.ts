@@ -40,6 +40,8 @@ it("rejects extra caller arguments and admits an empty crash inventory", () => {
       bundle_id: null,
       incident_id: null,
       name: null,
+      build_version: null,
+      platform: null,
       unlisted_keys: [],
     },
     process: {
@@ -47,6 +49,7 @@ it("rejects extra caller arguments and admits an empty crash inventory", () => {
       path: null,
       pid: null,
       parent: null,
+      parent_pid: null,
       cpu_type: null,
       translated: null,
       os_version: null,

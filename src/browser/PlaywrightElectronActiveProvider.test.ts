@@ -3,6 +3,8 @@ import { cleanupElectronProcesses } from "./ElectronProcessCleanup.js";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
+import { createHash } from "node:crypto";
+import { fileURLToPath } from "node:url";
 
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
 import {
@@ -30,6 +32,27 @@ it("passes the selected environment and ownership token to Electron launch", asy
   vi.stubEnv("LANG", "ambient-language");
   vi.stubEnv("XAUTHORITY", "/ambient/.Xauthority");
   let launchedEnvironment: unknown;
+  const callerArguments = [
+    "--",
+    "/caller/plugin.asar",
+    "-r",
+    "caller-hook.cjs",
+    "\\server\\share\\".repeat(150),
+  ];
+  const launchPlan = [
+    "-r",
+    fileURLToPath(
+      new URL("../../scripts/electron-active-hook.cjs", import.meta.url),
+    ),
+    process.execPath,
+    ...callerArguments,
+  ];
+  const handoff = JSON.stringify({
+    length: launchPlan.length,
+    sha256: createHash("sha256")
+      .update(JSON.stringify(launchPlan))
+      .digest("hex"),
+  });
   const provider = new PlaywrightElectronActiveProvider(
     {
       LANG: "selected-language",
@@ -38,6 +61,7 @@ it("passes the selected environment and ownership token to Electron launch", asy
       XAUTHORITY: "/selected/display-authorization",
       WAYLAND_DISPLAY: "selected-wayland",
       REA_PRIVATE_VALUE: "not-a-launch-setting",
+      REA_ELECTRON_CAPTURE_ARGV: "forged ambient launch plan",
     },
     async (options) => {
       launchedEnvironment = options?.env;
@@ -48,6 +72,7 @@ it("passes the selected environment and ownership token to Electron launch", asy
     ...electronActiveObservationInputSchema.parse({
       executable_path: process.execPath,
       application_path: process.execPath,
+      args: callerArguments,
     }),
     application_root: dirname(process.execPath),
   });
@@ -60,7 +85,9 @@ it("passes the selected environment and ownership token to Electron launch", asy
     XAUTHORITY: "/selected/display-authorization",
     WAYLAND_DISPLAY: "selected-wayland",
     REA_PROCESS_RUN_ID: expect.any(String),
+    REA_ELECTRON_CAPTURE_ARGV: handoff,
   });
+  expect(handoff.length).toBeLessThan(128);
 });
 
 it("passes required Windows runtime variables without inheriting unrelated values", () => {
@@ -291,7 +318,6 @@ it("retains the partial capture without taskkill when Windows lineage is unavail
       application_root: dirname(process.execPath),
     });
 
-    expect(result.ok).toBe(false);
     if (result.ok) throw new Error("Expected unverified cleanup to fail");
     expect(terminateTree).not.toHaveBeenCalled();
     expect(result.error).toMatchObject({
@@ -352,7 +378,6 @@ it("retains the initial snapshot when the final state read fails", async () => {
     application_root: dirname(process.execPath),
   });
 
-  expect(result.ok).toBe(false);
   if (result.ok) throw new Error("Expected final state capture to fail");
   const partialObservation = result.error.partialObservation;
   expect(partialObservation).toMatchObject({
@@ -385,7 +410,6 @@ it("rejects active capture before launch when EnableNodeCliInspectArguments fuse
     application_root: root,
   });
 
-  expect(result.ok).toBe(false);
   if (result.ok) throw new Error("Expected capture to fail");
   expect(launchSpy).not.toHaveBeenCalled();
   expect(result.error).toMatchObject({
@@ -482,7 +506,6 @@ it("cancels a windowless wait action and cleans up the owned application", async
   expect(application.firstWindow).toHaveBeenCalledOnce();
   expect(application.close).toHaveBeenCalledOnce();
   expect(cleanupSpies.some((spy) => spy.mock.calls.length > 0)).toBe(true);
-  expect(result.ok).toBe(false);
   if (result.ok) throw new Error("Expected the capture to be cancelled");
   expect(result.error).toMatchObject({
     _tag: "BrowserObservationError",
@@ -594,7 +617,6 @@ it("cancels a pending initial state read and cleans up the owned application", a
 
   expect(application.close).toHaveBeenCalledOnce();
   expect(cleanupSpies.some((spy) => spy.mock.calls.length > 0)).toBe(true);
-  expect(result.ok).toBe(false);
   if (result.ok) throw new Error("Expected the capture to be cancelled");
   expect(result.error).toMatchObject({
     _tag: "BrowserObservationError",
@@ -639,7 +661,6 @@ it("observes an initial state read started after cancellation and rejected by cl
     expect(application.close).toHaveBeenCalledOnce();
     expect(cleanupSpies.some((spy) => spy.mock.calls.length > 0)).toBe(true);
     expect(unhandled).toEqual([]);
-    expect(result.ok).toBe(false);
     if (result.ok) throw new Error("Expected the capture to be cancelled");
     expect(result.error).toMatchObject({
       _tag: "BrowserObservationError",
@@ -676,7 +697,6 @@ it("keeps a failure observed with cancellation as the cancellation cause", async
 
   const result = await captureWithController(controller, application, []);
 
-  expect(result.ok).toBe(false);
   if (result.ok) throw new Error("Expected the capture to be cancelled");
   expect(result.error).toMatchObject({
     _tag: "BrowserObservationError",
@@ -715,7 +735,6 @@ it("reports an expired final state grace period as the caller's cancellation", a
     await vi.advanceTimersByTimeAsync(5_000);
     const result = await capture;
 
-    expect(result.ok).toBe(false);
     if (result.ok) throw new Error("Expected the capture to be cancelled");
     expect(result.error).toMatchObject({
       _tag: "BrowserObservationError",
@@ -768,7 +787,6 @@ it("cancels a completed capture when cancellation arrives during application clo
   const result = await captureWithController(controller, application, []);
 
   expect(application.close).toHaveBeenCalledOnce();
-  expect(result.ok).toBe(false);
   if (result.ok) throw new Error("Expected the capture to be cancelled");
   expect(result.error).toMatchObject({
     _tag: "BrowserObservationError",
@@ -811,7 +829,6 @@ it("cancels a completed capture when cancellation arrives during process cleanup
 
   const result = await captureWithController(controller, application, []);
 
-  expect(result.ok).toBe(false);
   if (result.ok) throw new Error("Expected the capture to be cancelled");
   expect(result.error).toMatchObject({
     _tag: "BrowserObservationError",
@@ -846,7 +863,6 @@ it("keeps cleanup failure precedence over cancellation observed during cleanup",
 
   const result = await captureWithController(controller, application, []);
 
-  expect(result.ok).toBe(false);
   if (result.ok) throw new Error("Expected cleanup to fail");
   expect(result.error).toMatchObject({
     cleanupIncomplete: true,
@@ -898,7 +914,6 @@ it.each(["process", "transport"] as const)(
 
     const result = await captureWithController(controller, application, []);
 
-    expect(result.ok).toBe(false);
     if (result.ok) throw new Error("Expected incomplete cleanup");
     expect(result.error).toMatchObject({
       cleanupIncomplete: true,

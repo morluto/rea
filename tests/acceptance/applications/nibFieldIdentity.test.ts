@@ -194,7 +194,7 @@ cliTest(
     expect(report.limitations).toContainEqual(
       expect.stringContaining("NSString NS.bytes is not valid UTF-8"),
     );
-    expect(await readFile(path)).toEqual(archive);
+    expect(Buffer.compare(await readFile(path), archive)).toBe(0);
   },
   60_000,
 );

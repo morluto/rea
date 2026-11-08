@@ -3,23 +3,25 @@ import { z } from "zod";
 import {
   apkSignatureResultSchema,
   apkSignatureUninterpretedBytes,
+  apkSignatureMatchesSubject,
   type ApkSignatureResult,
 } from "../apkSignature/apkSignatureReport.js";
 import {
   apkSignatureSchemeSchema,
   apkSignatureViewItemsSchema,
-  type apkSignatureViewRequestSchema,
+  apkSignatureViewRequestSchema,
 } from "../apkSignature/apkSignatureQuery.js";
 import { isImmutableJsonSnapshot } from "../immutableJson.js";
 import type { JsonValue } from "../jsonValue.js";
 import { err, ok, type Result } from "../result.js";
 import type { AnalysisError } from "../analysisErrorBase.js";
-import type {
-  AnalysisViewParent,
-  AnalysisViewRequest,
-  UnsignedAnalysisView,
-} from "./analysisView.js";
-import { parseAnalysisViewResult } from "./analysisViewParent.js";
+import type { AnalysisViewParent } from "./analysisViewParent.js";
+import {
+  assertOwnedView,
+  type AdmittedView,
+  type SummaryAnalysisView,
+} from "./analysisViewShape.js";
+import { createAnalysisViewResultReader } from "./analysisViewParent.js";
 import { analysisViewInputError } from "./analysisViewErrors.js";
 import {
   boundedViewMessages,
@@ -89,25 +91,20 @@ interface Checked {
   readonly unknowns: readonly string[];
 }
 const checked = new WeakMap<object, Checked>();
+const readReport = createAnalysisViewResultReader(apkSignatureResultSchema);
 const read = (parent: AnalysisViewParent): Result<Checked, AnalysisError> => {
-  const key = parent.normalizedResult;
-  const reusable =
-    parent.sealedResult === true &&
-    key !== null &&
-    typeof key === "object" &&
-    isImmutableJsonSnapshot(key);
-  const cached = reusable ? checked.get(key) : undefined;
-  let report = cached?.report;
-  if (report === undefined) {
-    const parsed = parseAnalysisViewResult(apkSignatureResultSchema, parent);
-    if (!parsed.ok) return parsed;
-    report = reusable ? (key as ApkSignatureResult) : parsed.value;
-  }
+  const parsed = readReport(parent);
+  if (!parsed.ok) return parsed;
+  const report = parsed.value;
+  const reusable = isImmutableJsonSnapshot(report);
+  const cached = reusable ? checked.get(report) : undefined;
   // Parent identity is checked on every read, independently of reusable facts.
   if (
     parent.subject != null &&
-    (parent.subject.local_path !== report.artifact.path ||
-      parent.subject.digest.sha256 !== report.artifact.sha256)
+    !apkSignatureMatchesSubject(report.artifact, {
+      sha256: parent.subject.digest.sha256,
+      format: parent.subject.format,
+    })
   )
     return err(
       analysisViewInputError([
@@ -189,7 +186,7 @@ const read = (parent: AnalysisViewParent): Result<Checked, AnalysisError> => {
     },
   });
   const value = { report, summary, unknowns };
-  if (reusable) checked.set(key, value);
+  if (reusable) checked.set(report, value);
   return ok(value);
 };
 
@@ -267,8 +264,8 @@ function* records(
 
 export const projectApkSignatureView = (
   parent: AnalysisViewParent,
-  view: AnalysisViewRequest,
-): Result<UnsignedAnalysisView, AnalysisError> => {
+  view: AdmittedView,
+) => {
   if (view.kind !== "summary" && view.kind !== "apk-signature")
     return err(
       analysisViewInputError([
@@ -280,6 +277,9 @@ export const projectApkSignatureView = (
         },
       ]),
     );
+  assertOwnedView<
+    SummaryAnalysisView | z.output<typeof apkSignatureViewRequestSchema>
+  >(view, "summary", "apk-signature");
   const parsed = read(parent);
   if (!parsed.ok) return parsed;
   const { report, summary } = parsed.value;
@@ -301,7 +301,7 @@ export const projectApkSignatureView = (
   };
   if (view.kind === "summary")
     return ok({
-      kind: "summary",
+      kind: "summary" as const,
       view,
       ...shared,
       summary,
@@ -328,7 +328,7 @@ export const projectApkSignatureView = (
     items.push(item);
   }
   return ok({
-    kind: "apk-signature",
+    kind: "apk-signature" as const,
     view,
     ...shared,
     source_coverage: summary.source_coverage,

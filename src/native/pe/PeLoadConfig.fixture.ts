@@ -1,7 +1,7 @@
-import {
-  LOAD_CONFIG_KNOWN_STRUCT_BYTES,
-  loadConfigFieldLayout,
-} from "../../domain/native/peLoadConfig.js";
+import { loadConfigFieldLayout } from "../../domain/native/peLoadConfig.js";
+
+/** Authored fixture directory sizes through GuardMemcpyFunctionPointer. */
+const LOAD_CONFIG_KNOWN_STRUCT_BYTES = { 32: 192, 64: 320 } as const;
 
 /** File and RVA layout shared by the synthetic PE32 and PE32+ images. */
 export const PE_LOAD_CONFIG_FIXTURE = {

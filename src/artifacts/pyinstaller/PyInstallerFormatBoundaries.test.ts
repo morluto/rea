@@ -19,7 +19,6 @@ import {
 import { readPyzArchive } from "./PyzArchive.js";
 import { marshalCode } from "../../python/PythonPyc.fixture.js";
 import { createEvidence } from "../../domain/evidence.js";
-import { jsonValueSchema } from "../../domain/jsonValue.js";
 import { parseArtifactInventoryEvidence } from "../../domain/artifactInventoryEvidence.js";
 import {
   ArtifactReaderFailure,
@@ -365,7 +364,7 @@ it.each([true, false])(
               parameters: { page: index },
               confidence: "observed",
               authority: "shipped-artifact",
-              result: jsonValueSchema.parse({
+              result: {
                 ...inventory,
                 nodes: index === 0 ? inventory.nodes : [],
                 edges: index === 0 ? inventory.edges : [],
@@ -378,7 +377,7 @@ it.each([true, false])(
                         row,
                       ]
                     : [row],
-              }),
+              },
             },
           ),
         );
@@ -572,7 +571,9 @@ for (const typeCode of ["o", "d"] as const) {
           path,
           inventory,
         );
-        expect(await readFile(join(output, realPath))).toEqual(payload);
+        expect(
+          Buffer.compare(await readFile(join(output, realPath)), payload),
+        ).toBe(0);
       },
     );
   });
@@ -795,8 +796,11 @@ it.each(["x", "s", "empty-module"])(
           inventory,
         );
         expect(
-          (await readFile(join(output, "PYZ.pyz/app.pyc"))).subarray(16),
-        ).toEqual(Buffer.from("readable module"));
+          Buffer.compare(
+            (await readFile(join(output, "PYZ.pyz/app.pyc"))).subarray(16),
+            Buffer.from("readable module"),
+          ),
+        ).toBe(0);
       },
     );
   },
@@ -832,6 +836,86 @@ it.each([
     ).resolves.toMatchObject({ ok: false, error: { reason: "integrity" } });
   });
 });
+
+it.each([false, true])(
+  "preserves PYZ role paths, bytecode and encryption with marker %s",
+  async (marker) => {
+    const body = Buffer.from("role payload");
+    await withPyInstallerReader(
+      cArchiveExecutable({
+        layout: "2.1",
+        pythonVersion: 309,
+        members: [
+          ...(marker
+            ? [
+                {
+                  name: "pyimod00_crypto_key",
+                  typeCode: "m",
+                  payload: Buffer.from("key"),
+                  compress: false,
+                },
+              ]
+            : []),
+          {
+            name: "PYZ.pyz",
+            typeCode: "z",
+            compress: false,
+            payload: pyzArchive({
+              magic: PYTHON_39_MAGIC,
+              modules: [
+                { name: "app.mod", typeCode: 0, body },
+                { name: "app.pkg", typeCode: 1, body },
+                { name: "assets/config.json", typeCode: 2, body },
+                { name: "app.ns", typeCode: 3, body: Buffer.alloc(0) },
+              ],
+            }),
+          },
+        ],
+      }),
+      async (reader, _handle, path) => {
+        const entries: ArtifactEntry[] = [];
+        for await (const entry of reader.entries()) entries.push(entry);
+        const inventory = await scanCanonicalArtifactInventory(path);
+        for (const [logicalPath, code, bytecode] of [
+          ["PYZ.pyz/app/mod.pyc", 0, true],
+          ["PYZ.pyz/app/pkg/__init__.pyc", 1, true],
+          ["PYZ.pyz/assets/config.json", 2, false],
+          ["PYZ.pyz/app/ns", 3, false],
+        ] as const) {
+          const entry = entries.find(
+            (candidate) => candidate.path === logicalPath,
+          );
+          expect(entry).toMatchObject({
+            encrypted: code === 3 ? false : marker,
+            formatMetadata: {
+              type_code: code,
+              bytecode_header: bytecode
+                ? marker
+                  ? "unknown"
+                  : "derived"
+                : "not-bytecode",
+            },
+          });
+          expect(
+            inventory.occurrences.find(
+              (row) => row.logical_path === logicalPath,
+            ),
+          ).toMatchObject({
+            entry_kind: code === 3 ? "metadata" : "file",
+            encrypted: code === 3 ? false : marker,
+            format_metadata: { type_code: code },
+          });
+          if (!marker && code !== 3) {
+            const bytes = await buffer(await reader.open(entry!));
+            expect(bytes.subarray(bytecode ? 16 : 0).equals(body)).toBe(true);
+            if (bytecode)
+              expect(bytes.subarray(0, 4).equals(PYTHON_39_MAGIC)).toBe(true);
+          }
+        }
+      },
+    );
+  },
+);
 
 it("retains legacy namespace payload extents without materializing them", async () => {
   const image = pyzArchive({
@@ -1380,7 +1464,9 @@ it.each([true, false])(
           source,
           inventory,
         );
-        expect(await readFile(join(output, path))).toEqual(file.payload);
+        expect(
+          Buffer.compare(await readFile(join(output, path)), file.payload),
+        ).toBe(0);
       },
     );
   },

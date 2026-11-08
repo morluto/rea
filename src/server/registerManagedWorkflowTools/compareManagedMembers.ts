@@ -1,7 +1,7 @@
 import { workflowUnknownInput } from "../../application/investigation/WorkflowUnknown.js";
 import type { EvidenceMcpServer } from "../EvidenceMcpServer.js";
 import { runAdmittedToolOperation } from "../admittedToolOperation.js";
-import { recordSessionEvidenceSources } from "../sessionEvidence.js";
+import { recordEvidenceSources } from "../../application/investigation/recordEvidenceSources.js";
 
 import { executeManagedMemberComparison } from "../../application/managed/ManagedMemberComparisonService.js";
 import { logToolExecution } from "../toolLogging.js";
@@ -29,11 +29,18 @@ export const registerCompareManagedMembers = (
           const result = await logToolExecution(
             options.logger,
             compareContract.name,
-            () => Promise.resolve(executeManagedMemberComparison(input)),
+            () =>
+              Promise.resolve(
+                executeManagedMemberComparison(
+                  input,
+                  options.session.evidenceForAnalysis.bind(options.session),
+                  { signal: context.mcpReq.signal },
+                ),
+              ),
           );
           if (!result.ok)
             return server.delivery.toCallToolResult(result, compareContract);
-          const recorded = recordSessionEvidenceSources(
+          const recorded = recordEvidenceSources(
             options.recordEvidence,
             result.value.sources,
           );

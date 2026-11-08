@@ -1,6 +1,10 @@
 #!/usr/bin/env node
 import assert from "node:assert/strict";
-import { requireMcpOperationResult } from "./lib/mcp-verifier-results.mjs";
+import {
+  requireMcpLifecycleResult,
+  requireMcpOutput,
+  requireMcpToolError,
+} from "./lib/mcp-verifier-results.mjs";
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
 import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
@@ -10,8 +14,10 @@ import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
+import { Ajv2020 } from "ajv/dist/2020.js";
 import { parseEvidence } from "../dist/domain/evidence.js";
-import { functionDossierSchema } from "../dist/domain/hopperValues.js";
+import { functionDossierSchema } from "../dist/domain/native/functionDossier.js";
+import { nativeInstructionSchema } from "../dist/domain/native/nativeInstruction.js";
 import { inspectVerifierGhidraInstallation } from "./lib/ghidra-installation-inspection.mjs";
 import { buildDosComFixture } from "../tests/conformance/ghidra/dos-com-fixture.mjs";
 import { createVerifierRun, completeVerifierRun } from "./lib/verifier-run.mjs";
@@ -155,6 +161,83 @@ try {
     instruction.bytes.replaceAll(" ", "").toLowerCase(),
     fixture.entry_hex,
   );
+  // This NOP follows the entry's terminating INT 20h and is not reached by
+  // either function. It remains valid instruction bytes outside the listing.
+  const unlistedAddress = "0x1013f";
+  const unlistedBytes = await call("read_bytes", {
+    address: unlistedAddress,
+    length: 1,
+  });
+  assert.equal(unlistedBytes.bytes_hex, "90");
+  const unlistedResponse = await client.callTool({
+    name: "inspect_native_instruction",
+    arguments: { address: unlistedAddress },
+  });
+  const unlistedEvidence = parseEvidence(
+    requireMcpOutput(unlistedResponse, "inspect_native_instruction"),
+  );
+  const unlisted = unlistedEvidence.normalized_result;
+  assert.equal(unlisted.status, "not-in-listing");
+  assert.equal(unlisted.bytes, null);
+  assert.ok(
+    unlisted.limitations.some((item) =>
+      item.includes("did not attempt a decode"),
+    ),
+  );
+  const tools = (await client.listTools()).tools;
+  const advertised = tools.find(
+    (tool) => tool.name === "inspect_native_instruction",
+  );
+  assert.ok(advertised?.outputSchema);
+  const ajv = new Ajv2020({ strict: false, validateFormats: false });
+  assert.equal(ajv.validateSchema(advertised.outputSchema), true);
+  assert.equal(
+    ajv.validate(advertised.outputSchema, unlistedResponse.structuredContent),
+    true,
+    JSON.stringify(ajv.errors),
+  );
+  assert.ok(
+    nativeInstructionSchema.safeParse({ ...unlisted, status: "undecodable" })
+      .success,
+  );
+  const contextDefinition = tools.find(
+    (tool) => tool.name === "inspect_address_context",
+  );
+  assert.ok(contextDefinition?.outputSchema);
+  const documents = await call("list_documents");
+  assert.equal(documents.length, 1);
+  const document = documents[0];
+  for (const input of [
+    { address: fixture.entry, document: `${document}-not-a-program` },
+    { address: "not-an-address", document },
+  ]) {
+    const direct = requireMcpToolError(
+      await client.callTool({ name: "address_name", arguments: input }),
+    );
+    const response = await client.callTool(
+      { name: "inspect_address_context", arguments: input },
+      { timeout: 240000, toolDefinition: contextDefinition },
+    );
+    const context = requireMcpLifecycleResult(
+      response,
+      "inspect_address_context",
+    );
+    assert.equal(context.name.state, "unavailable");
+    assert.equal(context.name.error.code, "invalid_request");
+    assert.deepEqual(context.name.error.details.issues, direct.details.issues);
+    assert.equal(context.name.reason, direct.message);
+    assert.equal(context.name.remediation, direct.remediation.action);
+  }
+  assert.equal(
+    (await call("resolve_native_call_targets", { address: unlistedAddress }))
+      .status,
+    "unavailable",
+  );
+  assert.deepEqual(
+    (await cli("inspect-native-instruction", unlistedAddress))
+      .normalized_result,
+    unlisted,
+  );
   const cliImage = await cli("inspect-native-load-image");
   const stable = (x) => ({
     ...x,
@@ -193,6 +276,67 @@ try {
   assert.equal(updated.annotations.inline_comment, changes.inline_comment);
   assert.equal(updated.dossier.procedure.name, changes.name);
   assert.ok(updated.dossier.pseudocode.includes(changes.name));
+  // Exercise the documented recovery through the public MCP catalog on real
+  // Ghidra, rather than assuming the provider exposes direct comment methods.
+  const contextCall = async (name, args) => {
+    const definition = tools.find((tool) => tool.name === name);
+    assert.ok(definition?.outputSchema, `${name} must be advertised`);
+    const response = await client.callTool(
+      { name, arguments: args },
+      { timeout: 240000, toolDefinition: definition },
+    );
+    return requireMcpOutput(response, name);
+  };
+  const context = (
+    await contextCall("inspect_address_context", {
+      address: fixture.entry,
+    })
+  ).result;
+  assert.equal(context.procedure.state, "available");
+  assert.equal(context.procedure.value.found, true);
+  for (const facet of [context.comment, context.inline_comment]) {
+    assert.equal(facet.state, "unavailable");
+    assert.match(
+      facet.remediation,
+      /analyze_function.*parent_evidence_id.*inspect_analysis_view/u,
+    );
+  }
+  assert.match(context.bookmarks.remediation, /binary_session/u);
+  const summary = parseEvidence(
+    await contextCall("analyze_function", {
+      procedure: context.procedure.value.procedure.address,
+    }),
+  ).normalized_result;
+  const comments = parseEvidence(
+    await contextCall("inspect_analysis_view", {
+      source: {
+        kind: "retained-evidence",
+        evidence_id: summary.parent_evidence_id,
+      },
+      view: { kind: "native", facet: "comments" },
+    }),
+  ).normalized_result;
+  for (const [kind, text] of [
+    ["comment", changes.comment],
+    ["inline", changes.inline_comment],
+  ])
+    assert.ok(
+      comments.item.some(
+        (item) =>
+          item.address === context.procedure.value.query_address &&
+          item.kind === kind &&
+          item.text === text,
+      ),
+    );
+  const outside = (
+    await contextCall("inspect_address_context", {
+      address: unlistedAddress,
+    })
+  ).result;
+  assert.equal(outside.procedure.state, "available");
+  assert.equal(outside.procedure.value.found, false);
+  assert.equal(outside.comment.state, "unavailable");
+  assert.match(outside.comment.remediation, /binary_session/u);
   assert.equal(
     await call("procedure_address", { procedure: changes.name }),
     fixture.entry,
@@ -303,7 +447,9 @@ try {
       fresh_decompiler: true,
       clear_comments: true,
       cli_mcp_parity: true,
+      address_context_comment_recovery: true,
     },
+    context_input_errors_preserved: true,
     original_unchanged: true,
     address_truncation_rejected: true,
     limitations: image.limitations,
@@ -339,16 +485,11 @@ async function call(name, args = {}) {
     { name, arguments: args },
     { timeout: 240000 },
   );
-  assert.notEqual(value.isError, true, JSON.stringify(value));
-  const projected = requireMcpOperationResult(value, name);
-  if (name === "open_binary" || name === "close_binary") return projected;
-  const evidence = parseEvidence(value.structuredContent);
+  if (["open_binary", "close_binary"].includes(name))
+    return requireMcpLifecycleResult(value, name);
+  const evidence = parseEvidence(requireMcpOutput(value, name));
   assert.equal(evidence.subject.digest.sha256, sha256);
-  assert.deepEqual(
-    evidence.normalized_result,
-    value.structuredContent.normalized_result,
-  );
-  return projected;
+  return evidence.normalized_result;
 }
 async function cli(command, address, options = []) {
   const { stdout } = await promisify(execFile)(

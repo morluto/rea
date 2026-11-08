@@ -1,4 +1,4 @@
-import { ok as javaProbeOk } from "../domain/result.js";
+import { ok as javaProbeOk, err, ok } from "../domain/result.js";
 import type { GhidraJavaObservation } from "./GhidraJavaProbe.js";
 import { describe, expect, it } from "vitest";
 
@@ -6,10 +6,9 @@ import { createTestBinarySession } from "../../tests/fixtures/binarySession.js";
 import { parseConfig } from "../config/parseConfig.js";
 import type { AnalysisOperation } from "../application/AnalysisProvider.js";
 import type { BinaryTarget } from "../domain/binaryTargetTypes.js";
-import { functionDossierSchema } from "../domain/hopperValues.js";
+import { functionDossierSchema } from "../domain/native/functionDossier.js";
 import { createAnalysisProfile } from "../domain/analysisProfile.js";
 import { ghidraFunctionDossier } from "../domain/ghidraValues.fixture.js";
-import { err, ok } from "../domain/result.js";
 import { silentLogger } from "../logger.js";
 import { GhidraProvider } from "./GhidraProvider.js";
 import { GhidraSessionError } from "./GhidraSessionError.js";
@@ -309,19 +308,59 @@ describe("Ghidra relationship coverage replay", () => {
 describe("Ghidra snapshot profile admission", () => {
   it.each([
     {
+      parameter: "byte_search_coverage",
+      current: "separate-loaded-overlays-v1",
+      legacy: undefined,
+    },
+    {
+      parameter: "inventory_search_projection",
+      current: "provider-inventory-facts-v1",
+      legacy: undefined,
+    },
+    {
+      parameter: "data_type_observations",
+      current: "bit-field-base-and-lookup-v1",
+      legacy: undefined,
+    },
+    {
+      parameter: "byte_search_boundary",
+      current: "contiguous-eligible-initialized-blocks-v1",
+      legacy: undefined,
+    },
+    {
+      parameter: "instruction_status",
+      current: "unlisted-and-containing-code-data-v3",
+      legacy: "unlisted-address-without-decode-v1",
+    },
+    {
+      parameter: "instruction_status",
+      current: "unlisted-and-containing-code-data-v3",
+      legacy: undefined,
+    },
+    {
       parameter: "function_boundary_observations",
       current: "ghidra-function-boundary-limitations-v4",
       legacy: "ghidra-function-boundary-limitations-v3",
     },
     {
       parameter: "instruction_references",
-      current: "exact-address-incoming-without-synthetic-entry-v2",
+      current: "exact-address-incoming-without-synthetic-entry-v3",
+      legacy: "exact-address-incoming-without-synthetic-entry-v2",
+    },
+    {
+      parameter: "instruction_references",
+      current: "exact-address-incoming-without-synthetic-entry-v3",
       legacy: "exact-address-incoming-v1",
     },
     {
       parameter: "instruction_references",
-      current: "exact-address-incoming-without-synthetic-entry-v2",
+      current: "exact-address-incoming-without-synthetic-entry-v3",
       legacy: undefined,
+    },
+    {
+      parameter: "function_references",
+      current: "complete-body-and-entry-reference-manager-v3",
+      legacy: "complete-body-and-entry-reference-manager-v2",
     },
     {
       parameter: "call_relationship_coverage",

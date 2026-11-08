@@ -54,8 +54,6 @@ export const createSystemDoctorHost = (
   return systemDoctorHost({
     environment,
     ...(signal === undefined ? {} : { signal }),
-    providerRegistrationEnvironment: () =>
-      jebRegistration.registrationEnvironment,
     resolveProviderRequestBudget: async (
       analysisProvider,
       registrationEnvironment,

@@ -19,6 +19,7 @@ import {
   RegularFileAdmissionFailure,
   assertRegularFileActive,
   sameRegularFileState,
+  type StableRegularFileDescriptor,
 } from "../filesystem/RegularFile.js";
 import type { AndroidOperation } from "../domain/android/androidAnalysis.js";
 
@@ -173,9 +174,12 @@ const copyAndroidSnapshot = async (
     // Close each descriptor through its owner. A rejected close keeps the
     // copy outcome and stays retained until that owner is retried; the
     // partial file is removed only after those close attempts.
-    const source = adoptSnapshotHandle(
-      await openSnapshotSource(sourcePath, signal, retain(sourcePath)),
+    const { handle, initial } = await openSnapshotSource(
+      sourcePath,
+      signal,
+      retain(sourcePath),
     );
+    const source = adoptSnapshotHandle(handle);
     return await withOwnedFileHandle(
       sourcePath,
       source.owner,
@@ -184,7 +188,6 @@ const copyAndroidSnapshot = async (
         ...retain(sourcePath),
       },
       async () => {
-        const initial = await source.handle.stat();
         assertRegularFileActive(signal);
         let copiedBytes = 0;
         const hash = createHash("sha256");
@@ -286,7 +289,7 @@ const openSnapshotSource = async (
   retention: {
     readonly retainFailedClose?: (owner: OwnedFileHandle) => void;
   },
-): Promise<FileHandle> => {
+): Promise<StableRegularFileDescriptor> => {
   try {
     return await openRegularFile(path, { symlinks: "follow", signal });
   } catch (cause: unknown) {

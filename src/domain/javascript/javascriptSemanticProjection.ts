@@ -20,6 +20,7 @@ import {
 } from "./javascriptSemanticTraversal.js";
 import {
   evaluateSemanticBinding,
+  evaluateSemanticExpression,
   evaluateSemanticProvenance,
 } from "./javascriptSemanticValues.js";
 import { range } from "./javascriptStaticAnalysisHelpers.js";
@@ -46,7 +47,7 @@ import {
   type CommonJsExportSite,
 } from "./javascriptCommonJsExportReceivers.js";
 import type { JavaScriptSemanticPropertyPath } from "./javascriptSemanticPropertyPaths.js";
-import { semanticComputedMethodKey } from "./javascriptSemanticEvaluationOrder.js";
+import { semanticMethodDefinitionExpression } from "./javascriptSemanticEvaluationOrder.js";
 
 interface CollectCallableInput {
   readonly node: t.Node;
@@ -76,7 +77,7 @@ export const collectSemanticCallable = (input: CollectCallableInput): void => {
     computedKeyLocation:
       "key" in node &&
       t.isNode(node.key) &&
-      semanticComputedMethodKey(node, node.key)
+      semanticMethodDefinitionExpression(node, node.key)
         ? range(node.key)
         : null,
     returnSites: [],
@@ -268,6 +269,17 @@ export const immutableSemanticBindings = (
       mutable: binding.mutable,
       definitions: binding.definitions,
       value: evaluateSemanticBinding(binding, state),
+      ...(binding.memberWrites.length > 0 &&
+      binding.initializers.length === 1 &&
+      binding.initializers[0]?.projection.length === 0
+        ? {
+            initializerValue: evaluateSemanticExpression(
+              binding.initializers[0].node,
+              state,
+              binding.initializers[0].node,
+            ),
+          }
+        : {}),
       provenance: evaluateSemanticProvenance(binding, state),
     }))
     .sort((left, right) =>

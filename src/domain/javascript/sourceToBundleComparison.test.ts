@@ -466,8 +466,8 @@ describe("source-map declaration resolution", () => {
     },
     {
       sourceRoot: "",
-      expectedSource: "file:///a.js",
-      expectedResolution: { kind: "suffix", path: "a.js" },
+      expectedSource: "file:///artifact/dist/a.js",
+      expectedResolution: { kind: "artifact-relative", path: "dist/a.js" },
     },
     {
       sourceRoot: null,

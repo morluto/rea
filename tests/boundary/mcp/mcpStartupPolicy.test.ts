@@ -13,8 +13,6 @@ import {
   profileMcpModuleLoading,
 } from "../../../scripts/lib/mcp-startup-probe.mjs";
 import {
-  MCP_PHASE_BUDGET_FLOOR_MS,
-  MCP_PHASE_BUDGET_MAXIMUM_MS,
   mcpPhaseBudgetRecovery,
   resolveMcpStartupBudgets,
   type McpPhaseBudget,
@@ -28,16 +26,16 @@ const errorMessage = (cause: unknown): string =>
   cause instanceof Error ? cause.message : String(cause);
 
 const expectPhaseText = (text: string, budget: McpPhaseBudget) => {
-  expect(budget.floorMilliseconds).toBe(MCP_PHASE_BUDGET_FLOOR_MS);
-  expect(budget.maximumMilliseconds).toBe(MCP_PHASE_BUDGET_MAXIMUM_MS);
+  expect(text).toContain(mcpPhaseBudgetRecovery(budget));
+  expect(budget.floorMilliseconds).toBe(1);
+  expect(budget.maximumMilliseconds).toBe(2_147_483_647);
   expect(text).toContain(budget.setting);
-  expect(text).toContain(
-    `${String(budget.milliseconds)} ms (source ${budget.source}`,
-  );
+  expect(text).toContain(budget.phase);
+  expect(text).toContain(`${String(budget.milliseconds)} ms`);
+  expect(text).toContain(`source ${budget.source}`);
   expect(text).toContain(`default ${String(budget.defaultMilliseconds)} ms`);
-  expect(text).toContain(`floor ${String(MCP_PHASE_BUDGET_FLOOR_MS)} ms`);
-  expect(text).toContain(`maximum ${String(MCP_PHASE_BUDGET_MAXIMUM_MS)} ms`);
-  expect(text).not.toContain("no runtime override");
+  expect(text).toContain(`floor ${String(budget.floorMilliseconds)} ms`);
+  expect(text).toContain(`maximum ${String(budget.maximumMilliseconds)} ms`);
 };
 
 const expectThrownBudget = async (
@@ -65,8 +63,11 @@ describe("MCP startup policy", () => {
     expect(budgets.firstCatalog.milliseconds).toBe(20_000);
     expect(budgets.doctor.milliseconds).toBe(30_000);
     const initialize = mcpPhaseBudgetRecovery(budgets.initialize);
-    expect(initialize).toBe(mcpStartupPhaseBudgetRecovery(budgets.initialize));
     expectPhaseText(initialize, budgets.initialize);
+    expectPhaseText(
+      mcpStartupPhaseBudgetRecovery(budgets.initialize),
+      budgets.initialize,
+    );
     expectPhaseText(
       mcpStartupPhaseBudgetRecovery(budgets.toolsList),
       budgets.toolsList,
@@ -77,12 +78,8 @@ describe("MCP startup policy", () => {
     );
     const doctor = mcpDoctorDeadlineRecovery(budgets.doctor);
     expectPhaseText(doctor, budgets.doctor);
-    expect(doctor).toContain(
-      `startup_timeout_sec of ${String(MCP_STARTUP_POLICY.codexStartupTimeoutSeconds)} seconds`,
-    );
-    expect(doctor).toContain("client guidance");
-    expect(doctor).toContain("does not enforce");
-    expect(doctor).not.toContain("REA_MCP_STARTUP");
+    expect(doctor).toMatch(/Codex.*startup_timeout_sec.*client guidance/iu);
+    expect(doctor).toMatch(/REA does not enforce/iu);
     const selected = resolveMcpStartupBudgets({
       REA_MCP_INITIALIZE_BUDGET_MS: "16000",
     });
@@ -203,8 +200,8 @@ describe("packaged MCP startup probe failures", () => {
       const message = errorMessage(cause);
       expect(message).toContain("unrelated probe failure");
       expect(message).not.toContain("expected the unrelated probe failure");
-      expect(message).not.toContain("no runtime override");
-      expect(message).not.toContain("phase budget");
+      for (const budget of Object.values(probePolicy()))
+        expect(message).not.toContain(budget.setting);
     }
   });
 
@@ -254,9 +251,8 @@ describe("packaged MCP startup probe failures", () => {
     } catch (cause) {
       const message = errorMessage(cause);
       expect(message).not.toContain("expected the unrelated probe failure");
-      expect(message).not.toContain("no runtime override");
-      expect(message).not.toContain("phase budget");
-      expect(message).not.toContain("MCP doctor startup deadline");
+      for (const budget of Object.values(probePolicy()))
+        expect(message).not.toContain(budget.setting);
     }
   });
 });

@@ -1,6 +1,7 @@
 import type { ClientConfigurationWriteProblem } from "./ClientConfigurationPublication.js";
 import type { DoctorReport, DoctorScope, runDoctor } from "./Doctor.js";
 import type { LinuxDistribution } from "./LinuxHopper.js";
+import type { HopperRequestFailure } from "./HopperDownload.js";
 import type { HopperReleaseError } from "./HopperReleaseFeed.js";
 import type {
   SkillDestination,
@@ -34,6 +35,11 @@ export interface SetupInitialState {
 
 /** Result of one backup/write/readback transaction. */
 export type ClientConfigurationResult =
+  | {
+      readonly status: "failed";
+      readonly reason: "registration_ownership";
+      readonly detail: string;
+    }
   | {
       readonly status: "failed";
       readonly reason: "conflict";
@@ -154,6 +160,8 @@ export interface SetupResult {
   readonly clientStates: readonly SetupClientState[];
   readonly remediation?: string;
   readonly code?: SetupFailureCode;
+  /** The Hopper vendor request (stage, URL and observed outcome) whose failure stopped installation. */
+  readonly download?: HopperRequestFailure;
   /** Identified resources still retained after finalization; absent after confirmed release. */
   readonly cleanup?: AnalysisCleanupObservation | undefined;
 }
@@ -230,6 +238,8 @@ export interface SetupOptions {
   /** Skill roots to update independently of MCP registrations (maintenance). */
   readonly skillClientIds?: readonly string[];
   readonly installSkill?: boolean;
+  /** Comma-separated tool families the MCP registration advertises. */
+  readonly toolFamilies?: string;
   readonly readinessScope?: DoctorScope;
   readonly dryRun?: boolean;
   readonly allDetectedClients?: boolean;

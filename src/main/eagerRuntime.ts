@@ -1,3 +1,4 @@
+import { AnalysisSettings } from "../application/AnalysisSettings.js";
 import { snapshotEnvironment } from "../process/snapshotEnvironment.js";
 
 import type { AppConfig } from "../config/types.js";
@@ -38,7 +39,13 @@ export const runEager = async (
   }
   const logger = createLogger("mcp", config.value.logLevel);
   const serverLogger = logger.child({ layer: "server" });
-  const session = createBinarySession(config.value, logger, environment);
+  const analysisSettings = new AnalysisSettings(environment);
+  const session = createBinarySession(
+    config.value,
+    logger,
+    environment,
+    analysisSettings.read,
+  );
   const startup = new AbortController();
   let transport: Awaited<ReturnType<typeof startMcpTransport>> | undefined;
   let settleStartup!: () => void;
@@ -118,6 +125,7 @@ export const runEager = async (
         {
           logger,
           serverLogger,
+          analysisSettings,
           environment,
           signal: startup.signal,
           delivery: createToolResultDelivery(config.value.mcpMaxResponseBytes),
@@ -125,7 +133,10 @@ export const runEager = async (
             dependencies.loadOptionalProviders ??
             (() =>
               loadOptionalObservationProviders(
-                createOptionalObservationFactories(environment),
+                createOptionalObservationFactories(
+                  environment,
+                  analysisSettings.read,
+                ),
               )),
         },
       );

@@ -7,8 +7,12 @@ import {
   ANALYSIS_SNAPSHOT_PROVIDER,
   ANALYSIS_SNAPSHOT_TARGET,
 } from "../../domain/analysisSnapshot.fixture.js";
-import { createEvidence } from "../../domain/evidence.js";
-import { createEvidenceBundle } from "../../domain/evidenceBundle.js";
+import { createEvidence, immutableEvidence } from "../../domain/evidence.js";
+import { createAnalysisExecutionEvidence } from "../../domain/analysisObservation.js";
+import {
+  createEvidenceBundle,
+  evidenceBundleForTarget,
+} from "../../domain/evidenceBundle.js";
 import { ok } from "../../domain/result.js";
 import { createAnalysisExecution } from "../AnalysisProvider.js";
 import {
@@ -29,9 +33,70 @@ import {
   AnalysisSnapshotCache,
   SNAPSHOT_CACHE_ENTRY_CEILING,
   isSnapshotCacheable,
+  isSourceEvidenceRetainable,
 } from "./AnalysisSnapshotCache.js";
 import { EvidenceLedger } from "../investigation/EvidenceLedger.js";
 import { enhancedOutputSchemas } from "../../contracts/toolOutputSchemaGroups.js";
+
+it.each(["provider", "workflow"] as const)(
+  "owns nested %s execution data before returning control to callers",
+  (kind) => {
+    const cache = new AnalysisSnapshotCache();
+    const target = structuredClone(ANALYSIS_SNAPSHOT_TARGET);
+    const profile = structuredClone(ANALYSIS_SNAPSHOT_PROFILE);
+    const analysisProfile =
+      kind === "provider" ? profile : workflowAnalysisProfile(profile);
+    const execution = createAnalysisExecution(
+      { nested: { value: "original" } },
+      structuredClone(
+        kind === "provider"
+          ? ANALYSIS_SNAPSHOT_PROVIDER
+          : REA_WORKFLOW_PROVIDER,
+      ),
+      {
+        rawResult: { nested: { value: "raw" } },
+        subject: target,
+        analysisProfile,
+        locations: [{ kind: "address", address: "0x1000" }],
+        relationshipCoverage: {
+          status: "partial",
+          limitations: ["original coverage"],
+        },
+      },
+    );
+    const input = {
+      target,
+      profile,
+      operation: "procedure_info" as const,
+      parameters: { address: "0x1000", document: "fixture" },
+      execution: { ...execution, analysisProfile },
+    };
+    if (kind === "provider") cache.record(input);
+    else cache.recordWorkflow(input);
+    const entries = () =>
+      kind === "provider" ? cache.entries() : cache.workflowEntries();
+    const expected = entries();
+    for (const payload of [execution.result, execution.rawResult]) {
+      if (payload === null || typeof payload !== "object")
+        throw new Error("Expected structured observation payload");
+      Reflect.set(payload, "nested", { value: "caller edit" });
+    }
+    const location = execution.locations[0];
+    if (location !== undefined) Reflect.set(location, "address", "0x2000");
+    if (execution.relationshipCoverage?.status === "partial")
+      execution.relationshipCoverage.limitations.push("caller edit");
+    Reflect.set(execution.limitations, 0, "caller limitation");
+    Reflect.set(execution.provider, "name", "caller provider");
+    Reflect.set(execution.subject, "path", "/tmp/caller-edited-subject");
+    if (kind === "workflow") {
+      const upstream = analysisProfile.parameters.upstream_analysis_profile;
+      if (upstream === null || typeof upstream !== "object")
+        throw new Error("Expected nested workflow profile");
+      Reflect.set(upstream, "parameters", { loader: "caller profile" });
+    }
+    expect(entries()).toEqual(expected);
+  },
+);
 
 it("exports independent nested query, workflow and Evidence payloads", () => {
   const cache = new AnalysisSnapshotCache();
@@ -174,7 +239,7 @@ it.each(["provider", "workflow"] as const)(
     };
     const nameImport = ledger.import(createEvidenceBundle([nameOnly]));
     if (!nameImport.ok) throw nameImport.error;
-    cache.refreshEvidenceDisplay(nameImport.value.replacements);
+    cache.refreshEvidenceMetadata(nameImport.value.replacements);
     expect(cache.entries()).toEqual(before.value.entries);
     expect(cache.workflowEntries()).toEqual(before.value.workflow_entries);
     // A different observation for this exact query is not the entry's dependency.
@@ -201,7 +266,7 @@ it.each(["provider", "workflow"] as const)(
       createEvidenceBundle([relocate(alternative)]),
     );
     if (!foreign.ok) throw foreign.error;
-    cache.refreshEvidenceDisplay(foreign.value.replacements);
+    cache.refreshEvidenceMetadata(foreign.value.replacements);
     expect(cache.entries()).toEqual(before.value.entries);
     expect(cache.workflowEntries()).toEqual(before.value.workflow_entries);
     // A result may cite several observations; updating their envelopes does not change its payload.
@@ -209,13 +274,13 @@ it.each(["provider", "workflow"] as const)(
       createEvidenceBundle(dependencies.map(relocate)),
     );
     if (!dependentImport.ok) throw dependentImport.error;
-    cache.refreshEvidenceDisplay(dependentImport.value.replacements);
+    cache.refreshEvidenceMetadata(dependentImport.value.replacements);
     expect(cache.entries()).toEqual(before.value.entries);
     expect(cache.workflowEntries()).toEqual(before.value.workflow_entries);
     const relocated = relocate(evidence);
     const imported = ledger.import(createEvidenceBundle([relocated]));
     if (!imported.ok) throw imported.error;
-    cache.refreshEvidenceDisplay(imported.value.replacements);
+    cache.refreshEvidenceMetadata(imported.value.replacements);
     const after = cache.export(target, profile, ledger.export());
     if (!after.ok) throw after.error;
     const entries =
@@ -228,6 +293,90 @@ it.each(["provider", "workflow"] as const)(
         ? before.value.entries
         : before.value.workflow_entries;
     expect(originalEntries[0]?.execution.subject?.path).toBe(target.path);
+  },
+);
+
+it.each(["provider", "workflow"] as const)(
+  "exports target-scoped %s rows without changing retained observations",
+  (kind) => {
+    const cache = new AnalysisSnapshotCache();
+    const ledger = new EvidenceLedger();
+    const target = ANALYSIS_SNAPSHOT_TARGET;
+    const profile = ANALYSIS_SNAPSHOT_PROFILE;
+    const operation = kind === "provider" ? "procedure_info" : "trace_feature";
+    const provider =
+      kind === "provider" ? ANALYSIS_SNAPSHOT_PROVIDER : REA_WORKFLOW_PROVIDER;
+    const analysisProfile =
+      kind === "provider"
+        ? profile
+        : workflowAnalysisProfile(profile, operation);
+    const child = { ...target, path: "/tmp/child", sha256: "b".repeat(64) };
+    for (const [index, subject] of [target, null, child].entries()) {
+      const parameters = { address: `0x${index}000` };
+      const result = { observation: index };
+      const execution = createAnalysisExecution(result, provider, {
+        subject,
+        analysisProfile,
+      });
+      const input = {
+        target,
+        profile,
+        operation,
+        parameters,
+        execution: { ...execution, subject, analysisProfile },
+      };
+      if (kind === "provider")
+        cache.record({ ...input, operation: "procedure_info" });
+      else cache.recordWorkflow(input);
+      expect(
+        ledger.record(
+          createEvidence(subject ?? undefined, provider, {
+            operation,
+            parameters,
+            result,
+            analysisProfile,
+            confidence: kind === "provider" ? "observed" : "derived",
+          }),
+        ).ok,
+      ).toBe(true);
+    }
+    const before =
+      kind === "provider" ? cache.entries() : cache.workflowEntries();
+    expect(before).toHaveLength(3);
+    const evidence = ledger.export();
+    const exported = cache.export(
+      target,
+      profile,
+      evidenceBundleForTarget(evidence, target.sha256),
+    );
+    if (!exported.ok) throw exported.error;
+    const snapshot = parseAnalysisSnapshot(
+      JSON.parse(serializeAnalysisSnapshot(exported.value)),
+    );
+    const saved =
+      kind === "provider" ? snapshot.entries : snapshot.workflow_entries;
+    expect(saved).toHaveLength(1);
+    expect(saved[0]?.execution.subject?.sha256).toBe(target.sha256);
+    expect(snapshot.evidence_bundle.records).toHaveLength(1);
+    expect(
+      kind === "provider" ? cache.entries() : cache.workflowEntries(),
+    ).toEqual(before);
+    expect(ledger.export()).toEqual(evidence);
+    const restored = new AnalysisSnapshotCache();
+    expect(restored.stage(snapshot)).toBe(1);
+    expect(
+      kind === "provider" ? restored.entries() : restored.workflowEntries(),
+    ).toEqual(saved);
+    if (kind === "provider") {
+      expect(
+        cache.lookup(target, profile, "procedure_info", { address: "0x1000" })
+          ?.subject,
+      ).toBeNull();
+      expect(
+        cache.lookup(target, profile, "procedure_info", { address: "0x2000" })
+          ?.subject?.sha256,
+      ).toBe(child.sha256);
+    }
   },
 );
 
@@ -569,6 +718,26 @@ describe("analysis snapshot cache policy", () => {
       effects: { changesPermissions: true },
       cacheable: false,
     },
+    {
+      policy: "snapshot",
+      operation: "decode_interface_builder",
+      cacheable: false,
+    },
+    {
+      policy: "snapshot",
+      operation: "inspect_asset_catalog",
+      cacheable: false,
+    },
+    {
+      policy: "snapshot",
+      operation: "inspect_keyed_archive",
+      cacheable: false,
+    },
+    {
+      policy: "snapshot",
+      operation: "trace_dylib_resolution",
+      cacheable: false,
+    },
     { policy: "snapshot", operation: "list_documents", cacheable: false },
     { policy: "snapshot", operation: "list_strings", cacheable: false },
     {
@@ -609,6 +778,157 @@ describe("analysis snapshot cache policy", () => {
       );
     },
   );
+});
+
+describe("document-scoped snapshot admission", () => {
+  it("retains caller observations without a document while refusing to replay them", () => {
+    const descriptor: CapabilityDescriptor = {
+      operation: "procedure_callers",
+      provider: ANALYSIS_SNAPSHOT_PROVIDER,
+      available: true,
+      reason: null,
+      effects: {
+        mutatesArtifact: false,
+        launchesProcess: false,
+        mayShowUi: false,
+        mayAccessNetwork: false,
+        mayWriteFilesystem: false,
+        changesPermissions: false,
+        requiresRoot: false,
+      },
+      limitations: [],
+    };
+    const parameters = { procedure: "0x1000" };
+    expect(
+      isSourceEvidenceRetainable("procedure_callers", descriptor, parameters),
+    ).toBe(true);
+    expect(
+      isSnapshotCacheable("procedure_callers", descriptor, parameters),
+    ).toBe(false);
+    expect(
+      isSnapshotCacheable("procedure_callers", descriptor, {
+        ...parameters,
+        document: "fixture",
+      }),
+    ).toBe(true);
+    const callees = { ...descriptor, operation: "procedure_callees" as const };
+    expect(
+      isSourceEvidenceRetainable("procedure_callees", callees, parameters),
+    ).toBe(true);
+    const pseudocode = {
+      ...descriptor,
+      operation: "procedure_pseudo_code" as const,
+    };
+    expect(
+      isSourceEvidenceRetainable(
+        "procedure_pseudo_code",
+        pseudocode,
+        parameters,
+      ),
+    ).toBe(false);
+    expect(
+      isSourceEvidenceRetainable("procedure_pseudo_code", pseudocode, {
+        ...parameters,
+        document: "fixture",
+      }),
+    ).toBe(true);
+    const ghidra = {
+      ...pseudocode,
+      provider: { ...pseudocode.provider, id: "ghidra" },
+    };
+    expect(
+      isSnapshotCacheable("procedure_pseudo_code", ghidra, parameters),
+    ).toBe(false);
+    expect(
+      isSnapshotCacheable(
+        "procedure_pseudo_code",
+        ghidra,
+        parameters,
+        "one-shot-target",
+      ),
+    ).toBe(true);
+    for (const refused of [
+      pseudocode,
+      { ...ghidra, cachePolicy: "live" as const },
+      { ...ghidra, effects: { ...ghidra.effects, mutatesArtifact: true } },
+      { ...ghidra, effects: { ...ghidra.effects, changesPermissions: true } },
+    ])
+      expect(
+        isSnapshotCacheable(
+          "procedure_pseudo_code",
+          refused,
+          parameters,
+          "one-shot-target",
+        ),
+      ).toBe(false);
+  });
+});
+
+it("retains producer-required xrefs without replaying a filesystem-writing query", () => {
+  const descriptor: CapabilityDescriptor = {
+    operation: "xrefs",
+    provider: ANALYSIS_SNAPSHOT_PROVIDER,
+    available: true,
+    reason: null,
+    effects: {
+      mutatesArtifact: false,
+      launchesProcess: true,
+      mayShowUi: false,
+      mayAccessNetwork: false,
+      mayWriteFilesystem: false,
+      changesPermissions: false,
+      requiresRoot: false,
+    },
+    limitations: [],
+  };
+  const xrefs = descriptor;
+  expect(
+    isSourceEvidenceRetainable("xrefs", xrefs, { address: "0x1000" }),
+  ).toBe(false);
+  expect(isSnapshotCacheable("xrefs", xrefs, { address: "0x1000" })).toBe(
+    false,
+  );
+  expect(isSourceEvidenceRetainable("xrefs", xrefs, {})).toBe(false);
+  const writingXrefs = {
+    ...xrefs,
+    effects: { ...xrefs.effects, mayWriteFilesystem: true },
+  };
+  expect(
+    isSourceEvidenceRetainable("xrefs", writingXrefs, { address: "0x1000" }),
+  ).toBe(false);
+  expect(
+    isSourceEvidenceRetainable(
+      "xrefs",
+      writingXrefs,
+      { address: "0x1000" },
+      { requiresSourceEvidence: true },
+    ),
+  ).toBe(true);
+  expect(
+    isSourceEvidenceRetainable(
+      "xrefs",
+      writingXrefs,
+      {},
+      { requiresSourceEvidence: true },
+    ),
+  ).toBe(false);
+  expect(
+    isSourceEvidenceRetainable(
+      "xrefs",
+      {
+        ...writingXrefs,
+        effects: { ...writingXrefs.effects, mutatesArtifact: true },
+      },
+      { address: "0x1000" },
+      { requiresSourceEvidence: true },
+    ),
+  ).toBe(false);
+  expect(
+    isSnapshotCacheable("xrefs", writingXrefs, {
+      address: "0x1000",
+      document: "fixture",
+    }),
+  ).toBe(false);
 });
 
 describe("analysis snapshot cache partitioning", () => {
@@ -733,7 +1053,9 @@ describe("analysis snapshot cache partitioning", () => {
     ).toMatchObject({
       provider: ANALYSIS_SNAPSHOT_PROVIDER,
       analysisProfile: ANALYSIS_SNAPSHOT_PROFILE,
-      limitations: [expect.stringContaining("local REA analysis snapshot")],
+      limitations: [
+        expect.stringMatching(/snapshot.*did not re.run the provider/iu),
+      ],
     });
     const changedProfile = createAnalysisProfile(ANALYSIS_SNAPSHOT_PROVIDER, {
       loader: "configured-override",
@@ -924,10 +1246,280 @@ it("does not replay pre-envelope call graphs under the revised workflow profile"
     }),
   ).toBeUndefined();
   expect(
-    enhancedOutputSchemas.get_call_graph?.safeParse({
+    enhancedOutputSchemas.get_call_graph.safeParse({
       normalized_result: oldResult,
     }).success,
   ).toBe(false);
+});
+
+it("keeps older value-trace Evidence as history without replaying its source IDs", () => {
+  const cache = new AnalysisSnapshotCache();
+  const target = ANALYSIS_SNAPSHOT_TARGET;
+  const profile = ANALYSIS_SNAPSHOT_PROFILE;
+  const operation = "trace_native_values" as const;
+  const parameters = { procedure: "0x1000" };
+  const oldProfile = workflowAnalysisProfile(profile);
+  const oldResult = {
+    seed: "0x1000",
+    target_sha256: target.sha256,
+    nodes: [],
+    edges: [],
+    procedures: [
+      {
+        address: "0x1000",
+        depth: 0,
+        evidence_id: `ev_${"a".repeat(64)}`,
+        provider: profile.provider.id,
+        analysis_profile_digest: profile.digest,
+      },
+    ],
+    unknowns: [],
+    total_nodes: 0,
+    total_edges: 0,
+    decompilations: 1,
+    next_offset: null,
+    page_truncated: false,
+    traversal: { status: "complete" },
+    truncated: false,
+    limitations: [],
+  };
+  const execution = {
+    ...createAnalysisExecution(oldResult, REA_WORKFLOW_PROVIDER, {
+      subject: target,
+    }),
+    analysisProfile: oldProfile,
+  };
+  cache.recordWorkflow({ target, profile, operation, parameters, execution });
+  const evidence = createEvidence(target, REA_WORKFLOW_PROVIDER, {
+    operation,
+    parameters,
+    result: oldResult,
+    confidence: "derived",
+    analysisProfile: oldProfile,
+  });
+  const exported = cache.export(
+    target,
+    profile,
+    createEvidenceBundle([evidence]),
+  );
+  if (!exported.ok) throw exported.error;
+  const snapshot = parseAnalysisSnapshot(exported.value);
+  expect(snapshot.evidence_bundle.records).toContainEqual(evidence);
+  expect(
+    snapshotEvidenceForQuery(snapshot, {
+      target,
+      bindingProfile: profile,
+      operation,
+      parameters,
+      provider: REA_WORKFLOW_PROVIDER,
+      evidenceProfile: workflowAnalysisProfile(profile, operation),
+    }),
+  ).toBeUndefined();
+});
+
+it("declines source-bearing snapshot entries while replaying omitted and empty source controls", () => {
+  const cache = new AnalysisSnapshotCache();
+  const target = ANALYSIS_SNAPSHOT_TARGET;
+  const profile = ANALYSIS_SNAPSHOT_PROFILE;
+  const source = createEvidence(target, ANALYSIS_SNAPSHOT_PROVIDER, {
+    operation: "source",
+    parameters: {},
+    result: "observed source",
+  });
+  const parameters = { address: "0x1000", document: "fixture" };
+  cache.record({
+    target,
+    profile,
+    operation: "procedure_info",
+    parameters,
+    execution: createAnalysisExecution(
+      "parent observation",
+      ANALYSIS_SNAPSHOT_PROVIDER,
+      {
+        subject: target,
+        analysisProfile: profile,
+        sourceEvidence: [source],
+      },
+    ),
+  });
+  expect(
+    cache.lookup(target, profile, "procedure_info", parameters),
+  ).toBeUndefined();
+  expect(cache.entries()).toEqual([]);
+
+  for (const sourceEvidence of [undefined, []] as const) {
+    const control = {
+      address: sourceEvidence === undefined ? "0x2000" : "0x3000",
+      document: "fixture",
+    };
+    cache.record({
+      target,
+      profile,
+      operation: "procedure_info",
+      parameters: control,
+      execution: createAnalysisExecution(
+        "source-free observation",
+        ANALYSIS_SNAPSHOT_PROVIDER,
+        {
+          subject: target,
+          analysisProfile: profile,
+          ...(sourceEvidence === undefined ? {} : { sourceEvidence }),
+        },
+      ),
+    });
+    expect(
+      cache.lookup(target, profile, "procedure_info", control)?.result,
+    ).toBe("source-free observation");
+  }
+  expect(cache.entries()).toHaveLength(2);
+});
+
+it("replays source-bearing entries only when their complete retained closure exists", () => {
+  const target = ANALYSIS_SNAPSHOT_TARGET;
+  const profile = ANALYSIS_SNAPSHOT_PROFILE;
+  const leaf = immutableEvidence(
+    createEvidence(target, ANALYSIS_SNAPSHOT_PROVIDER, {
+      operation: "leaf",
+      parameters: {},
+      result: "leaf observation",
+    }),
+  );
+  const source = immutableEvidence(
+    createEvidence(target, ANALYSIS_SNAPSHOT_PROVIDER, {
+      operation: "source",
+      parameters: {},
+      result: "source observation",
+      evidenceLinks: [leaf.evidence_id],
+    }),
+  );
+  const parameters = { address: "0x1000", document: "fixture" };
+  const execution = createAnalysisExecution(
+    "parent observation",
+    ANALYSIS_SNAPSHOT_PROVIDER,
+    {
+      subject: target,
+      analysisProfile: profile,
+      sourceEvidence: [source],
+    },
+  );
+  const parent = immutableEvidence(
+    createAnalysisExecutionEvidence(
+      "procedure_info",
+      parameters,
+      execution,
+      "observed",
+    ),
+  );
+  const complete = new Map(
+    [parent, source, leaf].map((record) => [record.evidence_id, record]),
+  );
+  const input = {
+    target,
+    profile,
+    operation: "procedure_info" as const,
+    parameters,
+    execution: { ...execution, evidenceId: parent.evidence_id },
+  };
+  const missingLeaf = new AnalysisSnapshotCache();
+  missingLeaf.record(input, (id) =>
+    id === leaf.evidence_id ? undefined : complete.get(id),
+  );
+  expect(
+    missingLeaf.lookup(target, profile, "procedure_info", parameters),
+  ).toBeUndefined();
+  const cache = new AnalysisSnapshotCache();
+  cache.record(input, (id) => complete.get(id));
+  expect(
+    cache
+      .lookup(target, profile, "procedure_info", parameters)
+      ?.sourceEvidence?.map((record) => record.evidence_id),
+  ).toEqual([source.evidence_id, parent.evidence_id]);
+  if (source.subject === null) throw new Error("Expected source subject");
+  const ledger = new EvidenceLedger();
+  for (const record of [parent, source, leaf])
+    expect(ledger.record(record).ok).toBe(true);
+  const movedSource = {
+    ...source,
+    subject: {
+      ...source.subject,
+      local_path: "/relocated/source",
+      name: "source",
+    },
+  };
+  const replacement = ledger.import(createEvidenceBundle([movedSource]));
+  if (!replacement.ok) throw replacement.error;
+  cache.refreshEvidenceMetadata(replacement.value.replacements);
+  expect(
+    cache.lookup(target, profile, "procedure_info", parameters)
+      ?.sourceEvidence?.[0]?.subject?.local_path,
+  ).toBe("/relocated/source");
+  const exported = cache.export(target, profile, ledger.export());
+  if (!exported.ok) throw exported.error;
+  const imported = new AnalysisSnapshotCache();
+  imported.stage(exported.value);
+  expect(
+    imported
+      .lookup(target, profile, "procedure_info", parameters)
+      ?.sourceEvidence?.map((record) => record.evidence_id),
+  ).toEqual([source.evidence_id, parent.evidence_id]);
+  expect(
+    imported.lookup(target, profile, "procedure_info", parameters)
+      ?.sourceEvidence?.[0]?.subject?.local_path,
+  ).toBe("/relocated/source");
+  const pruned = parseAnalysisSnapshot({
+    ...exported.value,
+    evidence_bundle: createEvidenceBundle([parent, movedSource]),
+  });
+  const incomplete = new AnalysisSnapshotCache();
+  incomplete.stage(pruned);
+  const partial = new Map(
+    [parent, movedSource].map((record) => [record.evidence_id, record]),
+  );
+  expect(
+    incomplete.lookup(target, profile, "procedure_info", parameters, (id) =>
+      partial.get(id),
+    ),
+  ).toBeUndefined();
+  partial.set(leaf.evidence_id, leaf);
+  expect(
+    incomplete
+      .lookup(target, profile, "procedure_info", parameters, (id) =>
+        partial.get(id),
+      )
+      ?.sourceEvidence?.map((record) => record.evidence_id),
+  ).toEqual([source.evidence_id, parent.evidence_id]);
+
+  const otherSource = immutableEvidence(
+    createEvidence(target, ANALYSIS_SNAPSHOT_PROVIDER, {
+      operation: "other_source",
+      parameters: {},
+      result: "different source",
+    }),
+  );
+  const otherParent = immutableEvidence(
+    createAnalysisExecutionEvidence(
+      "procedure_info",
+      parameters,
+      { ...execution, sourceEvidence: [otherSource] },
+      "observed",
+    ),
+  );
+  const records = [parent, movedSource, leaf, otherParent, otherSource];
+  const ambiguous = new AnalysisSnapshotCache();
+  ambiguous.stage(
+    parseAnalysisSnapshot({
+      ...exported.value,
+      evidence_bundle: createEvidenceBundle(records),
+    }),
+  );
+  const allRecords = new Map(
+    records.map((record) => [record.evidence_id, record]),
+  );
+  expect(
+    ambiguous.lookup(target, profile, "procedure_info", parameters, (id) =>
+      allRecords.get(id),
+    ),
+  ).toBeUndefined();
 });
 
 describe("executions that report truncated references", () => {
@@ -967,14 +1559,64 @@ describe("executions that report truncated references", () => {
   });
 });
 
-it("revises the trace_feature workflow profile so earlier results are not replayed", () => {
+it("does not replay references when the snapshot would lose their classifications", () => {
+  const cache = new AnalysisSnapshotCache();
+  const parameters = { address: "0x1000", document: "fixture" };
+  cache.record({
+    target: ANALYSIS_SNAPSHOT_TARGET,
+    profile: ANALYSIS_SNAPSHOT_PROFILE,
+    operation: "xrefs",
+    parameters,
+    execution: createAnalysisExecution(["0x2000"], ANALYSIS_SNAPSHOT_PROVIDER, {
+      referenceClassifications: [
+        {
+          sourceAddress: "0x2000",
+          targetAddress: "0x1000",
+          kind: "stored_pointer",
+          provenance: "relocation",
+          width: 8,
+        },
+      ],
+    }),
+  });
+  expect(
+    cache.lookup(
+      ANALYSIS_SNAPSHOT_TARGET,
+      ANALYSIS_SNAPSHOT_PROFILE,
+      "xrefs",
+      parameters,
+    ),
+  ).toBeUndefined();
+});
+
+it("revises trace workflow profiles so earlier results are not replayed", () => {
   const profile = ANALYSIS_SNAPSHOT_PROFILE;
+
+  expect(
+    workflowAnalysisProfile(profile, "trace_feature").parameters
+      .workflow_revision,
+  ).toBe(9);
 
   expect(workflowAnalysisProfile(profile, "trace_feature")).not.toEqual(
     workflowAnalysisProfile(profile),
   );
   expect(
-    workflowAnalysisProfile(profile, "trace_call_path"),
-    "other workflows keep their profile",
-  ).toEqual(workflowAnalysisProfile(profile));
+    workflowAnalysisProfile(profile, "trace_call_path").parameters
+      .workflow_revision,
+  ).toBe(2);
+  expect(workflowAnalysisProfile(profile, "trace_call_path")).not.toEqual(
+    workflowAnalysisProfile(profile),
+  );
+});
+
+it("binds native value-trace absence semantics without changing other workflows", () => {
+  const profile = ANALYSIS_SNAPSHOT_PROFILE;
+  const valueTrace = workflowAnalysisProfile(profile, "trace_native_values");
+  expect(valueTrace.parameters.value_flow_absence).toBe(
+    "recorded-versus-unavailable-v1",
+  );
+  expect(valueTrace.digest).not.toBe(workflowAnalysisProfile(profile).digest);
+  expect(workflowAnalysisProfile(profile, "xrefs")).toEqual(
+    workflowAnalysisProfile(profile),
+  );
 });

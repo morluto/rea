@@ -1,3 +1,4 @@
+import type { AnalysisSettingsReader } from "../../domain/analysisSettings.js";
 import {
   ASAR_HEADER_ADMISSION_SETTING,
   parseAsarHeaderAdmission,
@@ -39,6 +40,7 @@ const OPERATION = "analyze_javascript_application" as const;
 
 /** Execution options plus the composition root's environment for admission settings. */
 export interface JavaScriptApplicationOptions extends ExecutionOptions {
+  readonly settings?: AnalysisSettingsReader;
   readonly environment?: Readonly<Record<string, string | undefined>>;
 }
 
@@ -67,6 +69,12 @@ export const analyzeJavaScriptApplicationValidated = async (
     options.environment?.[ASAR_HEADER_ADMISSION_SETTING],
   );
   if (!asarHeaderAdmission.ok) return asarHeaderAdmission;
+  const overrides = options.settings?.().overrides;
+  const header = overrides?.["asar.max_header_bytes"];
+  const acceptedAdmission =
+    header === undefined
+      ? asarHeaderAdmission.value
+      : { maximumBytes: header, source: "runtime" as const };
   let reconstructed: JavaScriptArtifactReconstructionResult | undefined;
   let result: JavaScriptApplicationAnalysisResult | undefined;
   let evidence: Evidence | undefined;
@@ -84,7 +92,8 @@ export const analyzeJavaScriptApplicationValidated = async (
       scope,
       options.signal,
       options.progress,
-      asarHeaderAdmission.value,
+      acceptedAdmission,
+      overrides,
     );
     const { electron_summary: summary, ...application } = reconstructed;
     await options.progress?.report({

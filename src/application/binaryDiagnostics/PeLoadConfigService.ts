@@ -1,26 +1,17 @@
-import { isAbsolute } from "node:path";
 import type { ExecutionOptions } from "../AnalysisProvider.js";
 import type { PeLoadConfigPort } from "./PeLoadConfigPort.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
-import {
-  AnalysisCancelledError,
-  AnalysisInputError,
-  AnalysisOutputError,
-} from "../../domain/analysisErrorCore.js";
+import { AnalysisOutputError } from "../../domain/analysisErrorCore.js";
 import { createEvidence, type Evidence } from "../../domain/evidence.js";
 import {
   inspectPeLoadConfigInputSchema,
   peLoadConfigSchema,
   type PeLoadConfig,
 } from "../../domain/native/peLoadConfig.js";
-import { analysisInputErrorFromIssues } from "../../domain/inputIssueProjection.js";
-import {
-  decodePeMachine,
-  peOptionalHeaderMagic,
-  type PeArchitecture,
-} from "../../domain/peMachine.js";
+import { peSubjectArchitecture } from "../../domain/peMachine.js";
 import { err, type Result } from "../../domain/result.js";
 import { completeProviderEvidence } from "../ProviderOperationExecution.js";
+import { parseAnalysisInput } from "../AnalysisInput.js";
 
 const OPERATION = "inspect_pe_load_config";
 
@@ -36,34 +27,20 @@ export class PeLoadConfigService {
     rawInput: unknown,
     options?: ExecutionOptions,
   ): Promise<Result<Evidence, AnalysisError>> {
-    if (options?.signal?.aborted)
-      return err(
-        new AnalysisCancelledError(OPERATION, { cause: options.signal.reason }),
-      );
-    const input = inspectPeLoadConfigInputSchema.safeParse(rawInput);
-    if (!input.success)
-      return err(
-        analysisInputErrorFromIssues(OPERATION, input.error.issues, rawInput, {
-          cause: input.error,
-        }),
-      );
-    if (!isAbsolute(input.data.path))
-      return err(
-        new AnalysisInputError(OPERATION, undefined, [
-          {
-            path: ["path"],
-            reason: "invalid_format",
-            message: "Expected an absolute filesystem path on this host.",
-          },
-        ]),
-      );
-    const result = await this.provider.inspect(input.data, options);
+    const input = parseAnalysisInput(
+      OPERATION,
+      rawInput,
+      inspectPeLoadConfigInputSchema,
+      options?.signal,
+    );
+    if (!input.ok) return input;
+    const result = await this.provider.inspect(input.value, options);
     if (!result.ok) return result;
     const report = peLoadConfigSchema.safeParse(result.value);
     if (
       !report.success ||
-      report.data.artifact.path !== input.data.path ||
-      !validReport(report.data, input.data)
+      report.data.artifact.path !== input.value.path ||
+      !validReport(report.data, input.value)
     )
       return err(
         new AnalysisOutputError(
@@ -72,7 +49,7 @@ export class PeLoadConfigService {
         ),
       );
     const value = report.data;
-    const architecture = subjectArchitecture(value);
+    const architecture = peSubjectArchitecture(value.machine, value.format);
     const locations = [
       { kind: "artifact-path" as const, path: value.artifact.path },
       ...fileRange(value.tls?.directory ?? null),
@@ -97,7 +74,7 @@ export class PeLoadConfigService {
         this.provider.identity,
         {
           operation: OPERATION,
-          parameters: input.data,
+          parameters: input.value,
           result: value,
           confidence: "observed",
           limitations: value.limitations,
@@ -108,17 +85,6 @@ export class PeLoadConfigService {
     );
   }
 }
-
-const subjectArchitecture = (
-  report: PeLoadConfig,
-): PeArchitecture | undefined => {
-  const machine = decodePeMachine(report.machine);
-  if (machine === undefined || machine.nativeOsOverride) return undefined;
-  const magic = report.format === "pe32-plus" ? 0x20b : 0x10b;
-  return magic === peOptionalHeaderMagic(machine.architecture)
-    ? machine.architecture
-    : undefined;
-};
 
 const fileRange = (
   directory: { file_offset: number; size: number } | null,

@@ -1,12 +1,7 @@
-import { isAbsolute } from "node:path";
 import type { ExecutionOptions } from "../AnalysisProvider.js";
 import type { KernelModulePort } from "./KernelModulePort.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
-import {
-  AnalysisCancelledError,
-  AnalysisInputError,
-  AnalysisOutputError,
-} from "../../domain/analysisErrorCore.js";
+import { AnalysisOutputError } from "../../domain/analysisErrorCore.js";
 import { createEvidence, type Evidence } from "../../domain/evidence.js";
 import { elfObjectTypeName } from "../../domain/native/elfNotes.js";
 import {
@@ -19,11 +14,11 @@ import {
   MODULE_SIGNATURE_PKCS7_ID_TYPE,
   type KernelModule,
 } from "../../domain/native/kernelModule.js";
-import { analysisInputErrorFromIssues } from "../../domain/inputIssueProjection.js";
 import { BINARY_ARCHITECTURES } from "../../domain/binaryTargetTypes.js";
 import { elfArchitecture } from "../../domain/elfFixedHeader.js";
 import { err, type Result } from "../../domain/result.js";
 import { completeProviderEvidence } from "../ProviderOperationExecution.js";
+import { parseAnalysisInput } from "../AnalysisInput.js";
 
 const OPERATION = "inspect_kernel_module";
 
@@ -41,37 +36,23 @@ export class KernelModuleService {
     rawInput: unknown,
     options?: ExecutionOptions,
   ): Promise<Result<Evidence, AnalysisError>> {
-    if (options?.signal?.aborted)
-      return err(
-        new AnalysisCancelledError(OPERATION, { cause: options.signal.reason }),
-      );
-    const input = inspectKernelModuleInputSchema.safeParse(rawInput);
-    if (!input.success)
-      return err(
-        analysisInputErrorFromIssues(OPERATION, input.error.issues, rawInput, {
-          cause: input.error,
-        }),
-      );
-    if (!isAbsolute(input.data.path))
-      return err(
-        new AnalysisInputError(OPERATION, undefined, [
-          {
-            path: ["path"],
-            reason: "invalid_format",
-            message: "Expected an absolute filesystem path on this host.",
-          },
-        ]),
-      );
-    const result = await this.provider.inspect(input.data, options);
+    const input = parseAnalysisInput(
+      OPERATION,
+      rawInput,
+      inspectKernelModuleInputSchema,
+      options?.signal,
+    );
+    if (!input.ok) return input;
+    const result = await this.provider.inspect(input.value, options);
     if (!result.ok) return result;
     const report = kernelModuleSchema.safeParse(result.value);
     if (
       !report.success ||
-      report.data.artifact.path !== input.data.path ||
+      report.data.artifact.path !== input.value.path ||
       !validReport(
         report.data,
-        input.data.max_entries,
-        input.data.max_file_bytes,
+        input.value.max_entries,
+        input.value.max_file_bytes,
       )
     )
       return err(
@@ -105,7 +86,7 @@ export class KernelModuleService {
         this.provider.identity,
         {
           operation: OPERATION,
-          parameters: input.data,
+          parameters: input.value,
           result: value,
           confidence: "observed",
           limitations: value.limitations,

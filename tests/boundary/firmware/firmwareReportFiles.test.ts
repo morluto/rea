@@ -11,7 +11,14 @@ import { FIRMWARE_LIMITS } from "../../../src/firmware/FirmwareRelease.js";
 import { AnalysisError } from "../../../src/domain/analysisErrorBase.js";
 import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
 import { SafeOutputTree } from "../../../src/artifacts/SafeOutputTree.js";
-import { firmwareRequestSchema } from "../../../src/domain/firmware/firmwareAnalysis.js";
+import {
+  normalizeBinwalkReport,
+  normalizeUnblobReport,
+} from "../../../src/firmware/FirmwareReports.js";
+import {
+  firmwareResultSchemas,
+  firmwareRequestSchema,
+} from "../../../src/domain/firmware/firmwareAnalysis.js";
 import { createHash } from "node:crypto";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
@@ -112,8 +119,8 @@ it.each([
     expect(projected.remediation.action).toContain("cannot be replayed as-is");
     if (state === "oversized") {
       expect(projected.remediation.action).toContain("no runtime override");
-      expect(projected.remediation.action).toContain(
-        "Repeating the unchanged request fails the same way",
+      expect(projected.remediation.action).toMatch(
+        /unchanged request.*fails/iu,
       );
       expect(projected.remediation.action).not.toContain(
         "Rerun the same REA request",
@@ -127,8 +134,8 @@ it.each([
       expect(projected.remediation.action).toContain(
         "Rerun the same REA request",
       );
-      expect(projected.remediation.action).not.toContain(
-        "Repeating the unchanged request fails the same way",
+      expect(projected.remediation.action).not.toMatch(
+        /unchanged request.*fails/iu,
       );
     }
   },
@@ -153,6 +160,7 @@ it("orders extracted firmware paths by code point independently of host locale",
     root,
     1024,
     16,
+    Number.MAX_SAFE_INTEGER,
     "inspect_firmware_regions",
   );
   // Locale collation would interleave case and place "ä" by language rules.
@@ -179,7 +187,13 @@ it.skipIf(process.platform !== "linux")(
     );
     await writeFile(join(root, "good.bin"), "1234");
     await expect(
-      inventoryFirmwareOutput(root, 4, 10, "extract_firmware"),
+      inventoryFirmwareOutput(
+        root,
+        4,
+        10,
+        Number.MAX_SAFE_INTEGER,
+        "extract_firmware",
+      ),
     ).rejects.toMatchObject({
       _tag: "AnalysisOutputError",
       diagnostics: { raw_name_hex: "626164ff2e62696e" },
@@ -197,7 +211,13 @@ it.each([
     await writeFile(join(root, "a"), "1");
     await writeFile(join(root, "b"), "2");
     await expect(
-      inventoryFirmwareOutput(root, bytes, files, "extract_firmware"),
+      inventoryFirmwareOutput(
+        root,
+        bytes,
+        files,
+        Number.MAX_SAFE_INTEGER,
+        "extract_firmware",
+      ),
     ).rejects.toMatchObject({
       _tag: "AnalysisResourceConstraintError",
       resource: "capacity",
@@ -207,6 +227,23 @@ it.each([
     });
   },
 );
+
+it("refuses a staged file that reaches the producer's per-file limit", async () => {
+  const root = await createTestTempDirectory("rea-firmware-file-limit-");
+  await writeFile(join(root, "below"), "123");
+  await expect(
+    inventoryFirmwareOutput(root, 1024, 10, 4, "extract_firmware"),
+  ).resolves.toEqual([expect.objectContaining({ size: 3 })]);
+  await writeFile(join(root, "reached"), "1234");
+  await expect(
+    inventoryFirmwareOutput(root, 1024, 10, 4, "extract_firmware"),
+  ).rejects.toMatchObject({
+    _tag: "AnalysisResourceConstraintError",
+    resource: "file-size",
+    reportedLimits: { file_size_bytes: 4 },
+    retryable: false,
+  });
+});
 
 it("attributes missing sources to the selected path without relabeling snapshot destination failure", async () => {
   const root = await createTestTempDirectory("rea-firmware-source-");
@@ -277,7 +314,7 @@ it("does not activate an abort-bound source during awaited destination setup", a
   await expect(access(join(root, "published"))).rejects.toMatchObject({
     code: "ENOENT",
   });
-  expect(await readFile(source)).toEqual(bytes);
+  expect(Buffer.compare(await readFile(source), bytes)).toBe(0);
 });
 
 it.skipIf(process.platform === "win32" || process.getuid?.() === 0)(
@@ -308,3 +345,95 @@ it.skipIf(process.platform === "win32" || process.getuid?.() === 0)(
     }
   },
 );
+
+it("retains unfamiliar Unblob report members from JSON files through public diagnostics", async () => {
+  const root = await createTestTempDirectory("rea-firmware-report-metadata-");
+  const inputPath = join(root, "input.bin");
+  const reportPath = join(root, "report.json");
+  const sha256 = "a".repeat(64);
+  const unfamiliar: unknown = JSON.parse(
+    '{"__typename__":"FutureReport","__proto__":{"source":"local","empty":null},"constructor":false,"prototype":0,"nested":{"__proto__":"retained"}}',
+  );
+  const record = {
+    task: { path: inputPath, depth: 0, blob_id: "", is_multi_file: false },
+    reports: [
+      { __typename__: "HashReport", sha256 },
+      {
+        __typename__: "StatReport",
+        path: inputPath,
+        size: 4,
+        is_dir: false,
+        is_file: true,
+        is_link: false,
+        link_target: null,
+      },
+      unfamiliar,
+    ],
+    subtasks: [],
+  };
+  await writeFile(reportPath, JSON.stringify([record]));
+  const files = new FirmwareFileAccess();
+  try {
+    const raw = await files.report(reportPath, "extract_firmware");
+    const normalized = normalizeUnblobReport(raw, {
+      inputPath,
+      outputRoot: join(root, "output"),
+      sha256,
+      length: 4,
+      offset: 0,
+      maxDepth: 3,
+    });
+    const diagnostics =
+      firmwareResultSchemas.extract_firmware.shape.diagnostics.parse(
+        normalized.diagnostics,
+      );
+    expect(JSON.stringify(diagnostics)).toBe(
+      JSON.stringify([{ input_path: "$input", report: unfamiliar }]),
+    );
+    expect(normalized.coverage).toBe("partial");
+    for (const malformed of [{}, { __typename__: null }, { __typename__: 1 }]) {
+      expect(() =>
+        normalizeUnblobReport(
+          [{ ...record, reports: [...record.reports.slice(0, 2), malformed] }],
+          {
+            inputPath,
+            outputRoot: join(root, "output"),
+            sha256,
+            length: 4,
+            offset: 0,
+            maxDepth: 3,
+          },
+        ),
+      ).toThrow();
+    }
+  } finally {
+    await files.close();
+  }
+});
+
+it("rejects Binwalk extraction activity under every own JSON member", async () => {
+  const root = await createTestTempDirectory(
+    "rea-firmware-report-extractions-",
+  );
+  const reportPath = join(root, "report.json");
+  const inputPath = join(root, "input.bin");
+  const files = new FirmwareFileAccess();
+  try {
+    for (const extractions of [
+      "{}",
+      '{"__proto__":null}',
+      '{"ordinary":false}',
+    ]) {
+      await writeFile(
+        reportPath,
+        `[{"Analysis":{"file_path":${JSON.stringify(inputPath)},"file_map":[],"extractions":${extractions}}}]`,
+      );
+      const raw = await files.report(reportPath, "inspect_firmware_regions");
+      const normalize = () => normalizeBinwalkReport(raw, inputPath, 4);
+      if (extractions === "{}") expect(normalize()).toEqual([]);
+      else expect(normalize).toThrow("Expected one inspection-only report");
+    }
+  } finally {
+    await files.close();
+  }
+});

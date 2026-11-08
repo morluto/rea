@@ -39,6 +39,7 @@ export const registerGoCommands = (cli: CliInstance, logger: Logger): void => {
           CLI_COMMANDS.inspectGoBinary,
           async () =>
             deliverCliAnalysisEvidence({
+              callerInputPath: args.path,
               run: () =>
                 service.inspect(
                   {

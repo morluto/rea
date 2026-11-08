@@ -3,7 +3,6 @@ import type { ExecutionOptions } from "../AnalysisProvider.js";
 import type { PythonPycPort } from "./PythonPycPort.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
 import {
-  AnalysisCancelledError,
   AnalysisInputError,
   AnalysisOutputError,
 } from "../../domain/analysisErrorCore.js";
@@ -13,9 +12,9 @@ import {
   PYTHON_PYC_HEADER_BYTES,
   pythonPycSchema,
 } from "../../domain/python/pythonPyc.js";
-import { analysisInputErrorFromIssues } from "../../domain/inputIssueProjection.js";
 import { err, type Result } from "../../domain/result.js";
 import { completeProviderEvidence } from "../ProviderOperationExecution.js";
+import { parseAnalysisInput } from "../AnalysisInput.js";
 
 const OPERATION = "inspect_python_pyc";
 
@@ -24,25 +23,21 @@ export class PythonPycService {
   constructor(readonly provider: PythonPycPort) {}
 
   close(): Promise<void> {
-    return this.provider.close?.() ?? Promise.resolve();
+    return this.provider.close();
   }
 
   async inspect(
     rawInput: unknown,
     options?: ExecutionOptions,
   ): Promise<Result<Evidence, AnalysisError>> {
-    if (options?.signal?.aborted)
-      return err(
-        new AnalysisCancelledError(OPERATION, { cause: options.signal.reason }),
-      );
-    const input = inspectPythonPycInputSchema.safeParse(rawInput);
-    if (!input.success)
-      return err(
-        analysisInputErrorFromIssues(OPERATION, input.error.issues, rawInput, {
-          cause: input.error,
-        }),
-      );
-    if (!isAbsolute(input.data.path))
+    const input = parseAnalysisInput(
+      OPERATION,
+      rawInput,
+      inspectPythonPycInputSchema,
+      options?.signal,
+    );
+    if (!input.ok) return input;
+    if (!isAbsolute(input.value.path))
       return err(
         new AnalysisInputError(OPERATION, undefined, [
           {
@@ -52,15 +47,15 @@ export class PythonPycService {
           },
         ]),
       );
-    const result = await this.provider.inspect(input.data, options);
+    const result = await this.provider.inspect(input.value, options);
     if (!result.ok) return result;
     const report = pythonPycSchema.safeParse(result.value);
     if (
       !report.success ||
-      report.data.artifact.path !== input.data.path ||
-      report.data.artifact.bytes > input.data.max_file_bytes ||
-      report.data.coverage.objects > input.data.max_objects ||
-      report.data.coverage.marshal_depth > input.data.max_depth
+      report.data.artifact.path !== input.value.path ||
+      report.data.artifact.bytes > input.value.max_file_bytes ||
+      report.data.coverage.objects > input.value.max_objects ||
+      report.data.coverage.marshal_depth > input.value.max_depth
     )
       return err(
         new AnalysisOutputError(
@@ -79,7 +74,7 @@ export class PythonPycService {
         this.provider.identity,
         {
           operation: OPERATION,
-          parameters: input.data,
+          parameters: input.value,
           result: value,
           confidence: "observed",
           limitations: value.limitations,

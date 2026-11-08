@@ -75,9 +75,15 @@ it.each([
       await new Promise<void>((resolve) =>
         signal.addEventListener("abort", () => resolve(), { once: true }),
       );
-      return err(
-        new AnalysisCancelledError("open_binary", { cause: signal.reason }),
-      );
+      return {
+        ok: false,
+        error: new AnalysisCancelledError("open_binary", {
+          cause: signal.reason,
+        }),
+        targetAtCompletion: null,
+        providerIdAtCompletion: null,
+        selection: { kind: "none" },
+      };
     });
     let closeFails = failedClose;
     const close = vi.spyOn(session, "close").mockImplementation(async () =>
@@ -139,7 +145,7 @@ it.each(["optional", "late-handle"] as const)(
   "closes resources settling after startup cancellation at %s",
   async (stage) => {
     const session = sessionOwner();
-    vi.spyOn(session, "open").mockResolvedValue(ok(target));
+    vi.spyOn(session, "open").mockResolvedValue({ ok: true, value: target });
     const closeSession = vi.spyOn(session, "close").mockResolvedValue(ok(null));
     const input = new PassThrough();
     const signals = new EventEmitter();
@@ -222,7 +228,9 @@ it("hands exact startup bytes to the installed SDK framing owner", async () => {
     owner.resume();
     input.write(ping.subarray(11));
     await expect.poll(() => messages.length).toBe(2);
-    expect(Buffer.concat(raw)).toEqual(Buffer.concat([request, ping]));
+    expect(
+      Buffer.compare(Buffer.concat(raw), Buffer.concat([request, ping])),
+    ).toBe(0);
     expect(messages[0]).toMatchObject({
       params: { clientInfo: { name: "é🚀" } },
     });

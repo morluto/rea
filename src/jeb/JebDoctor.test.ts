@@ -1,7 +1,7 @@
 import { expect, it } from "vitest";
 import { inspectJebRegistration } from "./JebDoctor.js";
 import { providerRegistrationEnvironment } from "../application/SetupRegistrationEnvironment.js";
-import { DEFAULT_JEB_MCP_ENDPOINT } from "./JebMcpEndpoint.js";
+import { DEFAULT_JEB_MCP_ENDPOINT } from "../config/jebMcpEndpoint.js";
 
 it("keeps the JEB endpoint for setup without launching the engine", () => {
   const inspection = inspectJebRegistration({

@@ -1,3 +1,4 @@
+import { observePythonBytecodePrefix } from "../domain/python/pythonBytecodeIdentity.js";
 import { createHash } from "node:crypto";
 import { decodeMarshalUtf8 } from "../domain/python/marshalUtf8.js";
 import {
@@ -6,7 +7,7 @@ import {
   PYTHON_PYC_HASH_BASED,
   PYTHON_PYC_HEADER_BYTES,
   PYTHON_PYC_INT_PREVIEW_BITS,
-  pythonPycMagicEntry,
+  pythonPycMarshalProfile,
   type InspectPythonPycInput,
   type PythonPyc,
   type PythonPycCodeLayout,
@@ -205,28 +206,43 @@ export const parsePythonPyc = (
 ): PythonPyc => {
   if (bytes.length !== artifact.bytes)
     malformed("Selected artifact length disagrees with the retained bytes.");
-  if (bytes.length < 4) malformed("Selected file is shorter than a pyc magic.");
-  if (bytes[2] !== 0x0d || bytes[3] !== 0x0a)
-    malformed("Pyc magic is not a little-endian integer followed by CR LF.");
-  const magic = bytes.readUInt16LE(0);
-  const mapped = pythonPycMagicEntry(magic);
-  if (mapped !== null && mapped.header_bytes !== PYTHON_PYC_HEADER_BYTES)
+  const prefix = observePythonBytecodePrefix(bytes);
+  if (prefix.state === "incomplete")
+    return malformed("Selected file is shorter than a pyc magic.");
+  if (prefix.state === "invalid-crlf")
+    return malformed(
+      "Pyc magic is not a little-endian integer followed by CR LF.",
+    );
+  const { magic, identity } = prefix;
+  const mapped = pythonPycMarshalProfile(magic);
+  if (identity !== null && identity.headerBytes !== PYTHON_PYC_HEADER_BYTES)
     return unsupported(
-      `Pyc magic ${magic} uses an unsupported ${mapped.header_bytes}-byte CPython header.`,
+      `Pyc magic ${magic} uses an unsupported ${identity.headerBytes}-byte CPython header.`,
     );
   if (bytes.length < PYTHON_PYC_HEADER_BYTES)
     malformed(
       "Selected file is shorter than a 16-byte CPython 3.7+ pyc header.",
     );
-  if (mapped === null)
+  if (mapped === null || identity === null) {
+    // A known identity without a pinned code layout is a different outcome from an
+    // unrecognized magic: the header below is still qualified from the same packed
+    // fields every 3.7+ pyc uses, so report it instead of a bare rejection.
+    const flags = bytes.readUInt32LE(4);
+    const hashBased = (flags & PYTHON_PYC_HASH_BASED) !== 0;
+    const headerFacts = `16-byte header, flags 0x${flags.toString(16)}, ${
+      hashBased ? "hash-based" : "timestamp-based"
+    }`;
     return unsupported(
-      `Pyc magic ${magic} is outside the pinned CPython 3.7–3.13 table.`,
+      identity === null
+        ? `Pyc magic ${magic} is not a pinned CPython identity, so its header cannot be qualified; standalone marshal decoding is pinned for CPython 3.7–3.13.`
+        : `CPython ${identity.pythonVersion} header is recognized (magic ${magic}, ${headerFacts}), but no marshal code layout is pinned for that version, so its code objects cannot be decoded. Standalone marshal decoding is pinned for CPython 3.7–3.13.`,
     );
+  }
   const flags = bytes.readUInt32LE(4);
   const hashBased = (flags & PYTHON_PYC_HASH_BASED) !== 0;
   const header = {
     magic,
-    python_version: mapped.python_version,
+    python_version: identity.pythonVersion,
     code_layout: mapped.code_layout,
     flags,
     hash_based: hashBased,

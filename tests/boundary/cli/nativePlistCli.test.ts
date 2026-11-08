@@ -113,7 +113,7 @@ describe.skipIf(process.platform !== "darwin")(
             ]),
           },
         });
-        expect(await readFile(path)).toEqual(source);
+        expect(Buffer.compare(await readFile(path), source)).toBe(0);
       },
     );
 
@@ -289,6 +289,7 @@ describe.skipIf(process.platform !== "darwin")(
                     {
                       tool: "plutil",
                       command: ["/usr/bin/plutil", "-lint", "--", "$PLIST"],
+                      exit: { code: 0, signal: null },
                     },
                   ]
                 : [{ tool: "file" }],

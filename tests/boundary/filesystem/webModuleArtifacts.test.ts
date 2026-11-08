@@ -294,3 +294,58 @@ describe("caller-selected web module files", () => {
     );
   });
 });
+
+describe("selected captured script index", () => {
+  it("reports an index past the manifest's scripts as an out-of-range selection", async () => {
+    const f = await fixture();
+    const response = await new LocalWebModuleArtifacts().load({
+      manifest_path: f.manifestPath,
+      script_index: 5,
+    });
+    if (response.ok) throw new Error("expected an out-of-range index");
+    expect(projectAnalysisError(response.error)).toMatchObject({
+      code: "invalid_request",
+      details: {
+        issues: [
+          {
+            path: ["script_index"],
+            reason: "out_of_range",
+            minimum: 0,
+            maximum: 0,
+          },
+        ],
+      },
+    });
+  });
+
+  it("distinguishes an empty valid manifest from a malformed manifest", async () => {
+    const f = await fixture();
+    const parsed: unknown = JSON.parse(await readFile(f.manifestPath, "utf8"));
+    const manifest = webScriptExportResultSchema
+      .omit({ manifest: true })
+      .parse(parsed);
+    manifest.scripts = [];
+    await writeFile(f.manifestPath, JSON.stringify(manifest));
+
+    const artifacts = new LocalWebModuleArtifacts();
+    const input = { manifest_path: f.manifestPath, script_index: 0 };
+    const empty = await artifacts.load(input);
+    if (empty.ok) throw new Error("expected an empty-manifest selection fault");
+    expect(projectAnalysisError(empty.error)).toMatchObject({
+      code: "invalid_request",
+      details: {
+        issues: [{ path: ["script_index"], reason: "invalid_value" }],
+      },
+    });
+
+    await writeFile(f.manifestPath, "{");
+    const malformed = await artifacts.load(input);
+    if (malformed.ok) throw new Error("expected a malformed manifest fault");
+    expect(projectAnalysisError(malformed.error)).toMatchObject({
+      code: "invalid_request",
+      details: {
+        issues: [{ path: ["manifest_path"], reason: "invalid_format" }],
+      },
+    });
+  });
+});

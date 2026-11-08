@@ -221,7 +221,9 @@ it.each(["valid", "invalid"] as const)(
           expectedPythonCommandFailure("SyntaxError"),
         );
       expect(await readdir(root.path)).toEqual(["pack"]);
-      expect(await readFile(tarball)).toEqual(await readFile(input.tarball));
+      expect(
+        Buffer.compare(await readFile(tarball), await readFile(input.tarball)),
+      ).toBe(0);
     }, [() => (commands === undefined ? root.close() : commands.close())]);
     await expect(access(root.path)).rejects.toMatchObject({ code: "ENOENT" });
   },

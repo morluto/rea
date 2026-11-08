@@ -15,6 +15,7 @@ import type { EnvironmentBuildReport } from "../../domain/environmentBundleExpor
 import { err, ok, type Result } from "../../domain/result.js";
 import { inspectAnalysisView } from "../analysisView/AnalysisViewService.js";
 import {
+  BUNDLE_NAME_CONSTRAINT,
   ENVIRONMENT_EXPORT_OPERATION,
   isPortableBundleName,
   planEnvironmentBundle,
@@ -24,6 +25,7 @@ import {
 import {
   anonymousOrigin,
   credentialScanWarnings,
+  savedCredentialWarnings,
   nameFromCaptureFile,
   type EnvironmentBuildWarning,
 } from "./environmentBuildReport.js";
@@ -35,9 +37,10 @@ import {
   type WrittenBundleFile,
 } from "./environmentExport.js";
 import {
-  loadEnvironmentSource,
+  composeEnvironmentSource,
   parseCaptureEvidence,
   parseEvidenceFile,
+  parseViewEvidence,
 } from "./environmentSource.js";
 import { prepareServedState } from "./environmentState.js";
 
@@ -104,9 +107,6 @@ export interface EnvironmentBuildInput {
   /** Refuse an existing directory and never create its parent, as MCP output directories require. */
   readonly exclusiveDestination?: boolean | undefined;
 }
-
-/** The report environment-build prints and export_environment_bundle returns. */
-export type { EnvironmentBuildReport };
 
 const captureOperations = new Set([
   "inspect_web_network_capture",
@@ -190,7 +190,7 @@ const unnamed = (path: string): AnalysisInputError =>
   new AnalysisInputError(
     ENVIRONMENT_BUILD_OPERATION,
     {
-      userMessage: `The capture's origin is a loopback or IP address, and ${path === "" ? "retained Evidence has no file name to take one from" : `${path} yields no portable environment name (a kebab-case label of at most 64 characters that is not a Windows device name)`}; name the environment.`,
+      userMessage: `The capture's origin is a loopback or IP address, and ${path === "" ? "retained Evidence has no file name to take one from" : `${path} yields no portable environment name (${BUNDLE_NAME_CONSTRAINT})`}; name the environment.`,
     },
     [
       {
@@ -288,9 +288,21 @@ export const buildEnvironment = async (
     ENVIRONMENT_BUILD_OPERATION,
   );
   if (!manifest.ok) return manifest;
-  const source = loadEnvironmentSource(
+  const parsedManifest = parseViewEvidence(
+    ENVIRONMENT_BUILD_OPERATION,
+    "manifest",
     manifest.value.value,
+    "environment-manifest",
+  );
+  if (!parsedManifest.ok) return parsedManifest;
+  const recorded = parseCaptureEvidence(
+    ENVIRONMENT_BUILD_OPERATION,
     input.capture.value,
+  );
+  if (!recorded.ok) return recorded;
+  const source = composeEnvironmentSource(
+    parsedManifest.value,
+    recorded.value,
     ENVIRONMENT_BUILD_OPERATION,
   );
   if (!source.ok) return source;
@@ -306,12 +318,10 @@ export const buildEnvironment = async (
     name,
     operation: ENVIRONMENT_EXPORT_OPERATION,
   });
-  const recorded = parseCaptureEvidence(
-    ENVIRONMENT_BUILD_OPERATION,
-    input.capture.value,
+  warnings.push(
+    ...credentialScanWarnings(recorded.value),
+    ...savedCredentialWarnings(capture.parameters),
   );
-  if (!recorded.ok) return recorded;
-  warnings.push(...credentialScanWarnings(recorded.value));
 
   const packageSource: EnvironmentPackageSource =
     input.packageTarball === undefined

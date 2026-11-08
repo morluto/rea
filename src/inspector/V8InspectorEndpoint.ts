@@ -28,6 +28,7 @@ export interface V8InspectorTarget {
 
 export interface V8InspectorDiscovery {
   readonly limitations: readonly string[];
+  readonly ambiguousTargetIds?: readonly string[];
   readonly runtime: JavaScriptRuntimeTargetList["runtime"];
   readonly targets: readonly V8InspectorTarget[];
 }
@@ -43,12 +44,13 @@ export const discoverV8Inspector = async (
     readCdpJson(new URL("/json/list", endpoint), operation, signal),
   ]);
   const version = parseCdpEndpointValue(versionSchema, versionInput, operation);
-  const { targets, limitations } = parseCdpDiscoveryTargets(
+  const { targets, limitations, ambiguousTargetIds } = parseCdpDiscoveryTargets(
     targetsInput,
     operation,
   );
   return {
     limitations,
+    ambiguousTargetIds,
     runtime: {
       product: version.Browser,
       protocol_version: version["Protocol-Version"],

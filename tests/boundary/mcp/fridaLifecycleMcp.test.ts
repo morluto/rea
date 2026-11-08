@@ -21,7 +21,10 @@ import type {
 } from "../../../src/application/frida/FridaInstrumentationPort.js";
 import type { EvidenceWriter } from "../../../src/application/investigation/InvestigationRecordPort.js";
 import { toolContract } from "../../../src/contracts/toolContracts.js";
-import { expandToolAvailability } from "../../../src/contracts/toolOutputSchemaPrimitives.js";
+import {
+  expandToolAvailability,
+  toolAvailabilityInventory,
+} from "../../../src/contracts/toolOutputSchemaPrimitives.js";
 import type { AnalysisPartialObservation } from "../../../src/domain/analysisErrorBase.js";
 import { AnalysisCancelledError } from "../../../src/domain/analysisErrorCore.js";
 import { EvidenceIntegrityError } from "../../../src/domain/evidenceErrors.js";
@@ -36,10 +39,8 @@ import { silentLogger } from "../../../src/logger.js";
 import { createServer } from "../../../src/server/createServer.js";
 import { EvidenceMcpServer } from "../../../src/server/EvidenceMcpServer.js";
 import { registerFridaTools } from "../../../src/server/registerFridaTools.js";
-import {
-  createToolResultDelivery,
-  ToolResultDelivery,
-} from "../../../src/server/toolResult.js";
+import { ToolResultDelivery } from "../../../src/server/ToolResultDelivery.js";
+import { createToolResultDelivery } from "../../../src/server/toolResult.js";
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 
@@ -305,12 +306,14 @@ it("retains detached state and resume evidence when remote cleanup needs retry",
   ).toBe(true);
   const inventory = await fixture.client.callTool({
     name: "binary_session",
-    arguments: {},
+    arguments: { detail: "complete" },
   });
   const availability = expandToolAvailability(
-    toolContract("binary_session").outputSchema.parse(
-      inventory.structuredContent,
-    ).result.tool_availability,
+    toolAvailabilityInventory.parse(
+      toolContract("binary_session").outputSchema.parse(
+        inventory.structuredContent,
+      ).result.tool_availability,
+    ),
   );
   expect(
     availability.find((tool) => tool.name === "close_frida_session"),
@@ -384,7 +387,7 @@ it.each([
     );
     const partial = vi.spyOn(
       ToolResultDelivery.prototype,
-      "toRecordedPartialErrorToolResult",
+      "toPartialErrorToolResult",
     );
     onTestFinished(() => {
       loadSpy.mockRestore();
@@ -526,7 +529,7 @@ it("preserves the native resume failure after MCP cancellation reaches the serve
     fixture.controls.resume = async () => {};
     throw new Error("native resume rejected");
   };
-  const delivery = vi.spyOn(ToolResultDelivery.prototype, "toCallToolResult");
+  const delivery = vi.spyOn(ToolResultDelivery.prototype, "toErrorToolResult");
   onTestFinished(() => delivery.mockRestore());
   let serverSignal: AbortSignal | undefined;
   const resume = fixture.manager.resumeSession.bind(fixture.manager);
@@ -562,12 +565,9 @@ it("preserves the native resume failure after MCP cancellation reaches the serve
   await pending;
   await vi.waitFor(() => expect(delivery).toHaveBeenCalledOnce());
   expect(delivery.mock.calls[0]?.[0]).toMatchObject({
-    ok: false,
-    error: {
-      _tag: "AnalysisCapabilityUnavailableError",
-      operation: "resume_frida_session",
-      message: expect.stringContaining("native resume rejected"),
-    },
+    _tag: "AnalysisCapabilityUnavailableError",
+    operation: "resume_frida_session",
+    message: expect.stringContaining("native resume rejected"),
   });
   expect(fixture.controls.detachCalls).toBe(1);
   expect(fixture.unloaded).toEqual(["resume-failure"]);
@@ -622,13 +622,15 @@ it("declares non-destructive session mutation when status retains Evidence", asy
   ).toMatchObject({ readOnlyHint: false, destructiveHint: false });
   const inventory = await client.callTool({
     name: "binary_session",
-    arguments: {},
+    arguments: { detail: "complete" },
   });
   expect(inventory.isError).not.toBe(true);
   const available = expandToolAvailability(
-    toolContract("binary_session").outputSchema.parse(
-      inventory.structuredContent,
-    ).result.tool_availability,
+    toolAvailabilityInventory.parse(
+      toolContract("binary_session").outputSchema.parse(
+        inventory.structuredContent,
+      ).result.tool_availability,
+    ),
   );
   expect(
     available.find((tool) => tool.name === "frida_session_status"),

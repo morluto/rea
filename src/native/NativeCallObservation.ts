@@ -36,9 +36,15 @@ export const NATIVE_CALL_OBSERVATION_LIMITATIONS = [
   "Registers are the raw integer argument registers at entry. For Objective-C methods the first two hold the receiver and the selector.",
   "Receiver classes come from LLDB's Objective-C runtime reader without running target code; they are null for class methods and for receivers LLDB cannot classify.",
   "Calls that never reach a symbol's entry, such as inlined code or objc_direct methods called directly, are not observed.",
+  "Source locations come from LLDB line-table metadata; REA does not read or verify the named source-file contents.",
   "The target is launched directly under LLDB, not through LaunchServices; LLDB disables ASLR for it, so load addresses can equal file addresses.",
   "The observation window is checked about once a second, and recording pauses the process at every entry, which slows it.",
 ] as const;
+
+export const NATIVE_CALL_BREAKPOINT_LOCATION_LIST_INCOMPLETE_LIMITATION =
+  "The breakpoint location list is incomplete; location_count gives the full matching count.";
+export const NATIVE_CALL_BREAKPOINT_LOCATION_BUDGET_LIMITATION =
+  "Resolved breakpoint locations exceeded the aggregate 8388608-byte (8 MiB) metadata budget; omitted locations are counted in location_count. This metadata limit does not change the process outcome. This release has no runtime override.";
 
 /** Launch the active Mach-O under LLDB, record requested call entries, then stop it. */
 export const observeNativeCalls = async (
@@ -116,6 +122,10 @@ const nativeCallFacts = (
   trace: NativeCallReadback,
 ) => {
   const { run } = trace;
+  const terminated = run.terminated && trace.terminated;
+  const terminationSummary = terminated
+    ? "the process was killed"
+    : "termination was requested but could not be confirmed";
   const unresolved = run.breakpoints
     .filter(({ location_count: count }) => count === 0)
     .map(({ index }) => index);
@@ -153,7 +163,7 @@ const nativeCallFacts = (
       outcome: run.outcome,
       exit_status: run.exit_status,
       exit_description: run.exit_description,
-      terminated: run.terminated && trace.terminated,
+      terminated,
       elapsed_ms: run.elapsed_ms,
       stdout: trace.stdout,
       stderr: trace.stderr,
@@ -183,17 +193,17 @@ const nativeCallFacts = (
       "The selected pathname digest and LLDB module identity are checked around launch. No immutable executable snapshot is used; concurrent in-place mutation or replacement and restoration cannot be ruled out, so the loaded-image digest remains unknown.",
       ...(eventLimit
         ? [
-            `Observation stopped at max_events (${input.max_events}); later calls were not recorded and the process was killed.`,
+            `Observation stopped at max_events (${input.max_events}); later calls were not recorded and ${terminationSummary}.`,
           ]
         : []),
       ...(resourceLimit
         ? [
-            "Observation stopped before retaining the next complete event because the estimated 8388608-byte (8 MiB) trace-payload or 65536-frame aggregate budget was reached; the process was killed. This release has no runtime override for those budgets.",
+            `Observation stopped before retaining the next complete event because the estimated 8388608-byte (8 MiB) trace-payload or 65536-frame aggregate budget was reached; ${terminationSummary}. This release has no runtime override for those budgets.`,
           ]
         : []),
       ...(run.outcome === "duration-elapsed"
         ? [
-            `The process was still running after duration_ms (${input.duration_ms}) and was killed.`,
+            `The process was still running after duration_ms (${input.duration_ms}); ${terminationSummary}.`,
           ]
         : []),
       ...(run.target_identity.stable
@@ -203,7 +213,7 @@ const nativeCallFacts = (
           ]),
       ...(run.outcome === "stop-limit"
         ? [
-            "Observation stopped after repeated signal or exception stops; the process was killed.",
+            `Observation stopped after repeated signal or exception stops; ${terminationSummary}.`,
           ]
         : []),
       ...(unresolved.length === 0
@@ -212,16 +222,13 @@ const nativeCallFacts = (
             `Breakpoints ${unresolved.join(", ")} matched no code in any image loaded while observing; their calls could not be observed.`,
           ]),
       ...(run.breakpoints.some(
-        ({ location_count: count, locations }) => locations.length < count,
+        ({ location_count: count, locations }) =>
+          locations.length < count && !breakpointLocationLimit,
       )
-        ? [
-            "Breakpoints with many matching locations list only the first 64; location_count gives the total.",
-          ]
+        ? [NATIVE_CALL_BREAKPOINT_LOCATION_LIST_INCOMPLETE_LIMITATION]
         : []),
       ...(breakpointLocationLimit
-        ? [
-            "Resolved breakpoint locations exceeded the aggregate 8388608-byte (8 MiB) metadata budget; omitted locations are counted in location_count. This metadata limit does not change the process outcome. This release has no runtime override.",
-          ]
+        ? [NATIVE_CALL_BREAKPOINT_LOCATION_BUDGET_LIMITATION]
         : []),
       ...(trace.stdout === null || trace.stderr === null
         ? ["One or more target output captures were unavailable."]

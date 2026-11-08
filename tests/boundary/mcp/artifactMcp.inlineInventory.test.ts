@@ -1,11 +1,14 @@
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
+import { INLINE_EVIDENCE_MCP_ENVIRONMENT } from "../../../scripts/lib/mcp-verification-environment.mjs";
 import { readFile, unlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
-import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
-import { Ajv2020 } from "ajv/dist/2020.js";
+import type { Client } from "@modelcontextprotocol/client";
 import { TextReader, Uint8ArrayWriter, ZipWriter } from "@zip.js/zip.js";
-import { expect, it } from "vitest";
+import { afterAll, expect } from "vitest";
+import { mcpTest } from "../../support/mcp/mcpFixture.js";
+import { ownArtifactSession } from "../../support/mcp/artifactSession.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 import { z } from "zod";
 import { keyedArchiveResultSchema } from "../../../src/domain/apple/keyedArchive.js";
 
@@ -20,11 +23,14 @@ import {
 } from "../../../src/domain/evidence.js";
 import { artifactInspectionResultSchema } from "../../../src/domain/artifactInspection.js";
 import { artifactInventoryResultSchema } from "../../../src/domain/artifactGraph.js";
-import { jsonValueSchema } from "../../../src/domain/jsonValue.js";
+
 import {
   analysisViewResultSchema,
   type AnalysisViewResult,
 } from "../../../src/domain/analysisView/analysisView.js";
+
+const schemaValidation = createMcpSchemaValidation();
+afterAll(() => schemaValidation.clear());
 
 const assertInventorySubjectValidation = async (
   client: Client,
@@ -82,26 +88,27 @@ const assertInventorySubjectValidation = async (
   }
 };
 
-it("preserves keyed archive identities and rejects inconsistent inventory carrier subjects", async () => {
-  const directory = await createTestTempDirectory("rea-keyed-mcp-");
-  const path = join(directory, "archive.plist");
-  await writeFile(
-    path,
-    await readFile(
-      new URL(
-        "../../fixtures/golden/keyed-archive/foundation.xml",
-        import.meta.url,
+mcpTest(
+  "preserves keyed archive identities and rejects inconsistent inventory carrier subjects",
+  async ({ mcp, onTestFinished }) => {
+    const directory = await createTestTempDirectory("rea-keyed-mcp-");
+    const path = join(directory, "archive.plist");
+    await writeFile(
+      path,
+      await readFile(
+        new URL(
+          "../../fixtures/golden/keyed-archive/foundation.xml",
+          import.meta.url,
+        ),
       ),
-    ),
-  );
-  const session = createTestBinarySession(new ArtifactProvider(process.env));
-  const server = createServer({ kind: "session", session });
-  const client = new Client({ name: "keyed-mcp-test", version: "1" });
-  const [clientTransport, serverTransport] =
-    InMemoryTransport.createLinkedPair();
-  try {
-    await server.connect(serverTransport);
-    await client.connect(clientTransport);
+    );
+    const session = createTestBinarySession(new ArtifactProvider(process.env));
+    ownArtifactSession(session, onTestFinished);
+    const client = await mcp.connect(
+      createServer({ kind: "session", session }),
+      { name: "keyed-mcp-test", version: "1" },
+      schemaValidation,
+    );
     const opened = await client.callTool({
       name: "open_binary",
       arguments: { path },
@@ -181,12 +188,8 @@ it("preserves keyed archive identities and rejects inconsistent inventory carrie
     if (inventory === undefined) throw new Error("Missing inventory Evidence");
     await assertInventorySubjectValidation(client, inventory);
     await assertInventorySubjectValidation(client, parent);
-  } finally {
-    await client.close();
-    await server.close();
-    await session.close();
-  }
-});
+  },
+);
 
 const createInventoryViewReader = async (
   client: Client,
@@ -198,16 +201,15 @@ const createInventoryViewReader = async (
   );
   if (advertised?.outputSchema === undefined)
     throw new Error("Missing advertised view schemas");
-  const ajv = new Ajv2020({ strict: false, validateFormats: false });
+  const ajv = schemaValidation.assertions;
   const inputSchema: Record<string, unknown> = advertised.inputSchema;
   const outputSchema: Record<string, unknown> = advertised.outputSchema;
-  const validateInput = ajv.compile(inputSchema);
-  const validateOutput = ajv.compile(outputSchema);
   const malformed = {
     source: { kind: "retained-evidence", evidence_id: parent.evidence_id },
     view: { kind: "inventory", collection: "nodes", logical_paths: [] },
   };
-  if (profile === "full") expect(validateInput(malformed)).toBe(false);
+  if (profile === "full")
+    expect(ajv.validate(inputSchema, malformed)).toBe(false);
   const rejected = await client.callTool({
     name: "inspect_analysis_view",
     arguments: malformed,
@@ -224,8 +226,8 @@ const createInventoryViewReader = async (
   ) => {
     const arguments_ = { source, view };
     expect(
-      validateInput(arguments_),
-      JSON.stringify(validateInput.errors),
+      ajv.validate(inputSchema, arguments_),
+      JSON.stringify(ajv.errors),
     ).toBe(true);
     const reply = await client.callTool({
       name: "inspect_analysis_view",
@@ -234,8 +236,8 @@ const createInventoryViewReader = async (
     if (reply.isError)
       throw new Error(JSON.stringify(parseMcpToolError(reply)));
     expect(
-      validateOutput(reply.structuredContent),
-      JSON.stringify(validateOutput.errors),
+      ajv.validate(outputSchema, reply.structuredContent),
+      JSON.stringify(ajv.errors),
     ).toBe(true);
     const evidence = parseEvidence(reply.structuredContent);
     return {
@@ -265,13 +267,25 @@ const assertPortableRoundtrip = async (
   });
   if (closed.isError)
     throw new Error(JSON.stringify(parseMcpToolError(closed)));
-  const missing = await client.callTool({
+  const summaryRequest = {
     name: "inspect_analysis_view",
     arguments: {
       source: { kind: "retained-evidence", evidence_id: parent.evidence_id },
       view: { kind: "summary" },
     },
+  } as const;
+  const retained = await client.callTool(summaryRequest);
+  if (retained.isError)
+    throw new Error(JSON.stringify(parseMcpToolError(retained)));
+  expect(parseEvidence(retained.structuredContent).normalized_result).toEqual(
+    originalView,
+  );
+  const reset = await client.callTool({
+    name: "reset_investigation",
+    arguments: {},
   });
+  if (reset.isError) throw new Error(JSON.stringify(parseMcpToolError(reset)));
+  const missing = await client.callTool(summaryRequest);
   expect(parseMcpToolError(missing)).toMatchObject({
     error: { details: { reason: "missing" } },
   });
@@ -281,13 +295,7 @@ const assertPortableRoundtrip = async (
   });
   if (imported.isError)
     throw new Error(JSON.stringify(parseMcpToolError(imported)));
-  const restored = await client.callTool({
-    name: "inspect_analysis_view",
-    arguments: {
-      source: { kind: "retained-evidence", evidence_id: parent.evidence_id },
-      view: { kind: "summary" },
-    },
-  });
+  const restored = await client.callTool(summaryRequest);
   if (restored.isError)
     throw new Error(JSON.stringify(parseMcpToolError(restored)));
   expect(parseEvidence(restored.structuredContent).normalized_result).toEqual(
@@ -332,9 +340,51 @@ const assertSummaryDelivery = async (
   );
 };
 
-it.each(["full", "compact"] as const)(
+const assertOccurrencePages = async (
+  readView: Awaited<ReturnType<typeof createInventoryViewReader>>,
+  occurrences: z.output<typeof artifactInventoryResultSchema>["occurrences"],
+) => {
+  const paths = ["files/0.txt", "files/519.txt", "missing.txt"];
+  const matched = occurrences.filter((row) => paths.includes(row.logical_path));
+  expect(matched.map((row) => row.logical_path)).toEqual(paths.slice(0, 2));
+  const selected = await readView({
+    kind: "inventory",
+    collection: "occurrences",
+    logical_paths: paths,
+    offset: 0,
+    limit: 1,
+  });
+  expect(selected.result).toMatchObject({
+    kind: "inventory",
+    source_complete: true,
+    items: matched.slice(0, 1),
+    coverage: { examined: 1, total: 2, next_offset: 1, exhausted: false },
+  });
+  const next = await readView({
+    kind: "inventory",
+    collection: "occurrences",
+    logical_paths: paths,
+    offset: 1,
+    limit: 1,
+  });
+  expect(next.result).toMatchObject({
+    items: matched.slice(1, 2),
+    coverage: { examined: 1, next_offset: null, exhausted: true },
+  });
+  const none = await readView({
+    kind: "inventory",
+    collection: "occurrences",
+    logical_paths: [],
+  });
+  expect(none.result).toMatchObject({
+    items: [],
+    coverage: { total: 0, exhausted: true },
+  });
+};
+
+mcpTest.for(["full", "compact"] as const)(
   "keeps complete ZIP output and reads retained inventory views after the source is removed (%s)",
-  async (profile) => {
+  async (profile, { mcp, onTestFinished }) => {
     const directory = await createTestTempDirectory("rea-artifact-inline-");
     const archive = join(directory, "many.zip");
     const writer = new ZipWriter(new Uint8ArrayWriter());
@@ -347,157 +397,122 @@ it.each(["full", "compact"] as const)(
     await writeFile(archive, await writer.close());
 
     const session = createTestBinarySession(new ArtifactProvider(process.env));
-    const server = createServer(
-      { kind: "session", session },
-      {
-        environment: { ...process.env, REA_MCP_INPUT_SCHEMA_PROFILE: profile },
-      },
-    );
-    const client = new Client({ name: "artifact-inline-test", version: "1" });
-    const [clientTransport, serverTransport] =
-      InMemoryTransport.createLinkedPair();
-    try {
-      await server.connect(serverTransport);
-      await client.connect(clientTransport);
-      const opened = await client.callTool({
-        name: "open_binary",
-        arguments: { path: archive },
-      });
-      expect(opened.isError).not.toBe(true);
-      const result = await client.callTool({
-        name: "inspect_artifact",
-        arguments: {},
-      });
-      expect(result.isError, JSON.stringify(result.structuredContent)).not.toBe(
-        true,
-      );
-      const parent = parseEvidence(result.structuredContent);
-      await assertSummaryDelivery(client, session, parent);
-      const parsedInspection = artifactInspectionResultSchema.parse(
-        parent.normalized_result,
-      );
-      const inventoryEvidence = parsedInspection.substeps[0]?.evidence;
-      if (inventoryEvidence === undefined)
-        throw new Error("Missing inventory Evidence");
-      const graph = artifactInventoryResultSchema.parse(
-        inventoryEvidence.normalized_result,
-      );
-      expect(graph).toMatchObject({
-        integrity_contradictions: [],
-        coverage: { scope: "container-entries", status: "complete" },
-      });
-      expect(graph.occurrences).toHaveLength(fileCount + 1);
-      // Follow-ups must use retained source facts, not reopen this archive.
-      await unlink(archive);
-      const readView = await createInventoryViewReader(client, parent, profile);
-      const summary = await readView({ kind: "summary" });
-      expect(summary.result).toMatchObject({
-        kind: "summary",
-        parent_evidence_id: parent.evidence_id,
-        artifact: { path: archive, sha256: graph.manifest.root_sha256 },
-        summary: {
-          manifest: graph.manifest,
-          source_complete: true,
-          available_counts: { occurrences: fileCount + 1 },
-          observed_entry_kind_counts: { file: fileCount + 1 },
-          inventory_evidence_ids: [inventoryEvidence.evidence_id],
-        },
-      });
-      expect(summary.evidence.evidence_links).toEqual([parent.evidence_id]);
-      const paths = ["files/0.txt", "files/519.txt", "missing.txt"];
-      const selected = await readView({
-        kind: "inventory",
-        collection: "occurrences",
-        logical_paths: paths,
-        offset: 0,
-        limit: 1,
-      });
-      expect(selected.result).toMatchObject({
-        kind: "inventory",
-        source_complete: true,
-        items: graph.occurrences
-          .filter((row) => paths.includes(row.logical_path))
-          .slice(0, 1),
-        coverage: { examined: 1, total: 2, next_offset: 1, exhausted: false },
-      });
-      const next = await readView({
-        kind: "inventory",
-        collection: "occurrences",
-        logical_paths: paths,
-        offset: 1,
-        limit: 1,
-      });
-      expect(next.result).toMatchObject({
-        coverage: { examined: 1, next_offset: null, exhausted: true },
-      });
-      const none = await readView({
-        kind: "inventory",
-        collection: "occurrences",
-        logical_paths: [],
-      });
-      expect(none.result).toMatchObject({
-        items: [],
-        coverage: { total: 0, exhausted: true },
-      });
-
-      const partial = createEvidence(
-        { path: archive, sha256: graph.manifest.root_sha256, format: "zip" },
-        inventoryEvidence.provider,
+    ownArtifactSession(session, onTestFinished);
+    const client = await mcp.connect(
+      createServer(
+        { kind: "session", session },
         {
-          operation: "inventory_artifact",
-          parameters: {},
-          result: jsonValueSchema.parse({
-            ...graph,
-            occurrences: graph.occurrences.slice(0, 1),
-          }),
-        },
-      );
-      const partialReply = await client.callTool({
-        name: "inspect_analysis_view",
-        arguments: {
-          source: { kind: "inline", evidence: partial },
-          view: {
-            kind: "inventory",
-            collection: "occurrences",
-            logical_paths: ["missing.txt"],
+          environment: {
+            ...process.env,
+            ...INLINE_EVIDENCE_MCP_ENVIRONMENT,
+            REA_MCP_INPUT_SCHEMA_PROFILE: profile,
           },
         },
-      });
-      expect(
-        parseEvidence(partialReply.structuredContent).normalized_result,
-      ).toMatchObject({
-        source_complete: false,
-        items: [],
-        unknowns: expect.arrayContaining([
-          expect.stringContaining("Missing matches do not establish absence"),
-        ]),
-      });
+      ),
+      { name: "artifact-inline-test", version: "1" },
+      schemaValidation,
+    );
+    const opened = await client.callTool({
+      name: "open_binary",
+      arguments: { path: archive },
+    });
+    expect(opened.isError).not.toBe(true);
+    const result = await client.callTool({
+      name: "inspect_artifact",
+      arguments: {},
+    });
+    expect(result.isError, JSON.stringify(result.structuredContent)).not.toBe(
+      true,
+    );
+    const parent = parseEvidence(result.structuredContent);
+    await assertSummaryDelivery(client, session, parent);
+    const parsedInspection = artifactInspectionResultSchema.parse(
+      parent.normalized_result,
+    );
+    const inventoryEvidence = parsedInspection.substeps[0]?.evidence;
+    if (inventoryEvidence === undefined)
+      throw new Error("Missing inventory Evidence");
+    const graph = artifactInventoryResultSchema.parse(
+      inventoryEvidence.normalized_result,
+    );
+    expect(graph).toMatchObject({
+      integrity_contradictions: [],
+      coverage: { scope: "container-entries", status: "complete" },
+    });
+    expect(graph.occurrences).toHaveLength(fileCount + 1);
+    // Follow-ups must use retained source facts, not reopen this archive.
+    await unlink(archive);
+    const readView = await createInventoryViewReader(client, parent, profile);
+    const summary = await readView({ kind: "summary" });
+    expect(summary.result).toMatchObject({
+      kind: "summary",
+      parent_evidence_id: parent.evidence_id,
+      artifact: { path: archive, sha256: graph.manifest.root_sha256 },
+      summary: {
+        manifest: graph.manifest,
+        source_complete: true,
+        available_counts: { occurrences: fileCount + 1 },
+        observed_entry_kind_counts: { file: fileCount + 1 },
+        inventory_evidence_ids: [inventoryEvidence.evidence_id],
+      },
+    });
+    expect(summary.evidence.evidence_links).toEqual([parent.evidence_id]);
+    await assertOccurrencePages(readView, graph.occurrences);
 
-      await assertPortableRoundtrip(client, directory, parent, summary.result);
-    } finally {
-      await client.close();
-      await server.close();
-      await session.close();
-    }
+    const partial = createEvidence(
+      { path: archive, sha256: graph.manifest.root_sha256, format: "zip" },
+      inventoryEvidence.provider,
+      {
+        operation: "inventory_artifact",
+        parameters: {},
+        result: {
+          ...graph,
+          occurrences: graph.occurrences.slice(0, 1),
+        },
+      },
+    );
+    const partialReply = await client.callTool({
+      name: "inspect_analysis_view",
+      arguments: {
+        source: { kind: "inline", evidence: partial },
+        view: {
+          kind: "inventory",
+          collection: "occurrences",
+          logical_paths: ["missing.txt"],
+        },
+      },
+    });
+    expect(
+      parseEvidence(partialReply.structuredContent).normalized_result,
+    ).toMatchObject({
+      source_complete: false,
+      items: [],
+      unknowns: expect.arrayContaining([
+        expect.stringContaining("Missing matches do not establish absence"),
+      ]),
+    });
+
+    await assertPortableRoundtrip(client, directory, parent, summary.result);
   },
 );
 
-it("refuses summary delivery without a retained Evidence owner and preserves complete delivery", async () => {
-  const directory = await createTestTempDirectory("rea-inventory-fixed-");
-  const archive = join(directory, "fixture.zip");
-  const writer = new ZipWriter(new Uint8ArrayWriter());
-  await writer.add("main.js", new TextReader("console.log('fixed');\n"));
-  await writeFile(archive, await writer.close());
-  const session = createTestBinarySession(new ArtifactProvider(process.env));
-  const opened = await session.open(archive);
-  if (!opened.ok) throw opened.error;
-  const server = createServer({ kind: "fixed", analysis: session });
-  const client = new Client({ name: "artifact-fixed-test", version: "1" });
-  const [clientTransport, serverTransport] =
-    InMemoryTransport.createLinkedPair();
-  try {
-    await server.connect(serverTransport);
-    await client.connect(clientTransport);
+mcpTest(
+  "refuses summary delivery without a retained Evidence owner and preserves complete delivery",
+  async ({ mcp, onTestFinished }) => {
+    const directory = await createTestTempDirectory("rea-inventory-fixed-");
+    const archive = join(directory, "fixture.zip");
+    const writer = new ZipWriter(new Uint8ArrayWriter());
+    await writer.add("main.js", new TextReader("console.log('fixed');\n"));
+    await writeFile(archive, await writer.close());
+    const session = createTestBinarySession(new ArtifactProvider(process.env));
+    ownArtifactSession(session, onTestFinished);
+    const opened = await session.open(archive);
+    if (!opened.ok) throw opened.error;
+    const client = await mcp.connect(
+      createServer({ kind: "fixed", analysis: session }),
+      { name: "artifact-fixed-test", version: "1" },
+      schemaValidation,
+    );
     const summary = await client.callTool({
       name: "inspect_artifact",
       arguments: { detail: "summary" },
@@ -518,9 +533,5 @@ it("refuses summary delivery without a retained Evidence owner and preserves com
     ).toMatchObject({
       substeps: [expect.objectContaining({ operation: "inventory_artifact" })],
     });
-  } finally {
-    await client.close();
-    await server.close();
-    await session.close();
-  }
-});
+  },
+);

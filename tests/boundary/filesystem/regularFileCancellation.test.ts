@@ -359,7 +359,7 @@ it.each([false, true])(
           return withOwnedRegularFile(
             path,
             { signal: inner.signal },
-            async (nested) => {
+            async ({ handle: nested }) => {
               innerHandle = nested;
               const value = await nested.readFile();
               const close = nested.close.bind(nested);
@@ -434,7 +434,7 @@ it.each(
       expect(admitted?.fd).toBe(-1);
       expect(resources?.hasPending ?? false).toBe(false);
       await resources?.retryCleanup();
-      expect(await readFile(path)).toEqual(bytes);
+      expect(Buffer.compare(await readFile(path), bytes)).toBe(0);
     } finally {
       vi.restoreAllMocks();
       await resources?.close();
@@ -500,7 +500,7 @@ it.each(["completed", "failed"] as const)(
             signal: controller.signal,
             retainFailedClose: (owner) => retained.push(owner),
           },
-          async (handle) => {
+          async ({ handle }) => {
             const bytes = await handle.readFile();
             if (outcome === "failed") throw primary;
             return bytes;

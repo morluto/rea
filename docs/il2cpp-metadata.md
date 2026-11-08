@@ -148,7 +148,7 @@ rea inspect-analysis-view /tmp/metadata-query.json --json
 ```
 
 Use the exported Evidence with the CLI's inline Evidence source format described
-in [CLI and Evidence](cli.md#run-a-command). Compact delivery requires
+in [CLI and Evidence](getting-started/cli.md#run-a-command). Compact delivery requires
 `--evidence_output`; existing files are never overwritten. The full export
 preserves every decoded row for subsequent queries without the original file.
 
@@ -241,7 +241,7 @@ record addresses remain distinct candidates, and conflicting file mappings
 remain malformed.
 
 Module records establish names through their declared NUL-terminated string pointers. NUL/0xFF padding, spaces, Unicode and suffix-shared storage are supported. A pointer to a longer string does not match just its suffix; a pointer directly into a shared suffix may name it. Exact reversed UTF-8 matching avoids rescanning the file for every name and retains duplicate-name owners until module records resolve them. A contributor investigated a Linux
-`GameAssembly.so` from Unity 2023.2.13f1 whose static registration was not located. When no static pair is resolved on x86-64, the reader searches executable ranges for bytes consistent with RIP-relative LEA/MOV references to module-array candidates. Exactly one referenced array candidate must remain. `code_gen_modules_field` is then `null`, and Evidence is **inferred**: instruction boundaries, the absence of a static registration elsewhere, and runtime use were not verified. The module records and slots themselves remain file observations. Static-table associations are **derived**. Otherwise the result is `code-registration-not-found`.
+`GameAssembly.so` from Unity 2023.2.13f1 whose static registration was not located. When no static pair is resolved on x86-64 or arm64, the reader searches executable ranges for bytes consistent with a reference to a module-array candidate: RIP-relative LEA/MOV on x86-64, an adjacent `adrp`/`add` pair on arm64. Exactly one referenced array candidate must remain. `code_gen_modules_field` is then `null`, and Evidence is **inferred**: instruction boundaries, the absence of a static registration elsewhere, and runtime use were not verified. The module records and slots themselves remain file observations. Static-table associations are **derived**. Otherwise the result is `code-registration-not-found`. Cpp2IL's StrippedCodeRegSupport plugin also recovers the module list of an inlined CodeRegistration from the module names; this fallback additionally requires the exact located module set and a single code reference. A Unity 2022.3.62f3 macOS Master build checked by a contributor keeps neither registration symbol; its type table is then inferred as described below.
 
 The binary/metadata pair is caller-selected. Name/count/token agreement is structural evidence, not a cryptographic same-build proof. File-offset locations refer to the primary metadata artifact; linked virtual addresses refer to `binary.artifact`. Both SHA-256 identities remain available in compact native pages as `artifact` and `binary_source`.
 
@@ -299,6 +299,30 @@ The result adds:
 `Il2CppMetadataRegistration.typesCount` and its value. That record is found as
 the single place whose `fieldOffsetsCount` and `typeDefinitionsSizesCount` both
 equal the metadata type-definition count and whose type table is file mapped.
+Linking reads only that table. When no record on x86-64 or arm64 has both of
+those counts, the reader collects maximal runs of pointers to Il2CppType-shaped
+records (an assigned Il2CppTypeEnum kind from 0x01 to 0x1e; class and
+value-type data below the type-definition count) that are long enough for every
+type index the metadata references. Exactly one such run may exist in the
+image, it must start and end inside its mapping (a run touching either end may
+continue in a neighbouring mapping), and its start must be loaded by the same
+instruction forms as the module-array fallback. `types_field` is then `null`,
+`types_count` is that run's length rather than an observed `typesCount`, and
+Evidence is **inferred**. The run length is at least every referenced type
+index but can differ from `typesCount`: a type-shaped pointer after the table
+would lengthen it, and an unreadable slot (such as an unresolved relocation)
+would end it early. Only the type indices the metadata references are read. A
+second long-enough run anywhere, a run that a type-shaped neighbour extends
+before the loaded address, a run touching a mapping end or a slot the loader
+binds or leaves unresolved (its stored word is only a placeholder), and a covered
+128-byte record whose two counts match but whose other fields are unusable all
+leave `metadata-registration-not-found` rather than a guess; the search stops
+at the second run. The length requirement only separates the type table from
+other pointer runs when the metadata references most of it: on the one Master
+build checked, the highest referenced index is 6,031 of 6,576 entries. A
+metadata referencing few type indices usually
+leaves several short runs and fails closed.
+
 Counts use their declared 32-bit width independently of alignment padding.
 The complete 128-byte registration must have unambiguous loader coverage. Its
 used fields through byte 112 must be file-backed; a trailing declared zero-fill
@@ -354,7 +378,8 @@ the result has no rows, and `generic_method_pointers_field`,
 `generic_method_pointers_count` and `generic_method_table_stride` are `null`.
 A table of a few rows can still leave two layouts agreeing, which fails as
 ambiguous rather than picking one. Metadata versions 24 and 39 and builds
-without a static CodeRegistration (`code_gen_modules_field` `null`) fail as
+without a static CodeRegistration (`code_gen_modules_field` `null`) or
+MetadataRegistration (`types_field` `null`) fail as
 `generic-methods-unsupported`: for version 24 the type-definition generic
 container offset and the generic class layout have not been checked against a
 real build, so it is refused rather than guessed.
@@ -419,10 +444,10 @@ The builds checked are listed after the module search rules above.
 | `code-registration-not-found`           | input error | No unique module table or executable-byte array candidate was resolved.                                      |
 | `invalid-method-token`                  | input error | A token is outside its module's method-pointer rows, or a MethodDef row is reused within one image.          |
 | `invalid-method-pointer`                | input error | A slot is unavailable or its nonzero address lacks unambiguous executable file coverage.                     |
-| `metadata-registration-not-found`       | input error | No single MetadataRegistration matches the type-definition count.                                            |
+| `metadata-registration-not-found`       | input error | No single MetadataRegistration or code-loaded type-table candidate was resolved.                             |
 | `invalid-type`                          | input error | A type index or `Il2CppType` record is out of range, unmapped or malformed.                                  |
 | `unsupported-type-kind`                 | unsupported | A valid type kind has no implemented rendering.                                                              |
-| `generic-methods-unsupported`           | unsupported | Generic instances were requested for metadata version 24 or 39 or a build without a static CodeRegistration. |
+| `generic-methods-unsupported`           | unsupported | Generic instances were requested for metadata version 24 or 39, or a build lacks either static registration. |
 | `generic-method-registration-not-found` | input error | No CodeRegistration layout bounds every genericMethodTable row, or the generic tables are unreadable.        |
 | `ambiguous-generic-method-registration` | input error | More than one CodeRegistration layout bounds every genericMethodTable row.                                   |
 
@@ -457,7 +482,7 @@ Native address queries batch exact 64-bit hexadecimal `addresses` and `states` (
 ## Ghidra function names
 
 The CLI can turn a linked report into a
-[`REA_GHIDRA_SEED_FILE`](installation.md) so Ghidra names every IL2CPP method
+[`REA_GHIDRA_SEED_FILE`](getting-started/installation.md) so Ghidra names every IL2CPP method
 before auto-analysis:
 
 ```bash
@@ -503,6 +528,12 @@ message names one reason:
 | `image-range-overlap`     | Two images claim the same type definitions.                                                                      |
 | `invalid-string`          | A name index is outside the strings section, its string is unterminated, or it is not valid UTF-8.               |
 
+Record extents are checked for the decoded images, types, methods, fields,
+properties, events, parameters, string literals, nested types, generic
+containers, generic parameters and interface offsets. Other header sections
+are checked for file bounds and overlap; their internal record layouts are not
+decoded or validated by this inventory.
+
 A version field that disagrees with the file's layout, for example a version
 39 file relabeled as 29, usually surfaces as `unexpected-header-size` or
 `record-size-mismatch`.
@@ -522,7 +553,7 @@ report to 64 MiB, checking row counts before allocation and JSON/UTF-8/base64 ex
 decoding, before serialization. Names and identical literal spans are decoded
 once within one stable file snapshot; no filesystem results are cached across
 inspections. Ownership assignment also yields to cancellation. MCP also applies its
-[response transport budget](mcp-contracts.md); a complete report within the
+[response transport budget](reference/mcp-contracts.md); a complete report within the
 report limit can still require the summary and paging path.
 
 ## Outside this tool
@@ -535,8 +566,8 @@ report limit can still require the summary and paging path.
 - Full method signatures beyond the rendered field, parameter and return type
   names, and type names for metadata version 27.
 - Running Ghidra or another disassembler. `--ghidra-seeds` only writes a seed
-  file for [`REA_GHIDRA_SEED_FILE`](installation.md); use the
-  [native workflow](native-investigation.md) for native code.
+  file for [`REA_GHIDRA_SEED_FILE`](getting-started/installation.md); use the
+  [native workflow](guides/native/native-investigation.md) for native code.
 - Metadata versions other than 24, 27, 29, 31 and 39.
 
 Names come from the metadata file only. They do not establish which methods

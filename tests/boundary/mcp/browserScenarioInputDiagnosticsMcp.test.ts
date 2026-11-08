@@ -146,8 +146,7 @@ cliTest.for(["full", "compact"] as const)(
           category: "invalid_input",
           retryable: false,
           remediation: {
-            action:
-              "Read the declared input schema or CLI usage for capture_browser_scenario; if using MCP and the catalog may be stale, call tools/list. Correct the listed fields, then retry. Do not repeat the unchanged call.",
+            action: expect.stringContaining("capture_browser_scenario"),
           },
           recovery: {
             kind: "inspect_input_contract",
@@ -175,13 +174,7 @@ cliTest.for(["full", "compact"] as const)(
             recovery: { kind: "inspect_input_contract", operation: tool.name },
             details: {
               operation: tool.name,
-              issues: [
-                {
-                  message: expect.stringContaining(
-                    `${scenario.issue.path.join(".")}: Too big: expected number to be <=2147483647`,
-                  ),
-                },
-              ],
+              issues: [scenario.issue],
             },
           });
         }

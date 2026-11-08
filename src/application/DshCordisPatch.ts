@@ -449,6 +449,7 @@ export const parseDshCordisDocument = (
     servers: source.config === undefined ? {} : { rea: source.config },
     serversPath: [],
     dialect: "dsh",
+    environmentKey: "env",
     legacyServers: {},
   };
 };

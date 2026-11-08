@@ -4,7 +4,7 @@ import { expect, it } from "vitest";
 import { graphForJavaScript as graphFor } from "../../../tests/fixtures/javascriptSemanticGraph.js";
 import { createJavaScriptSemanticGraphProjection } from "./JavaScriptSemanticGraphBuilder.js";
 import { queryJavaScriptSemanticGraph } from "../../domain/javascript/javascriptSemanticQuery.js";
-import { resolveJavaScriptSemanticEvidence } from "../../domain/javascript/javascriptSemanticGraph.js";
+import { resolveJavaScriptSemanticEvidence } from "../../../tests/support/javascriptSemanticGraphFixture.js";
 
 const SHA256 = "a".repeat(64);
 const GRAPH_ID = `jag_${"b".repeat(64)}`;
@@ -360,7 +360,13 @@ it("does not promote transformed return expressions to resolved aliases", () => 
       ({ relation, target_node_id }) =>
         relation === "aliases" && target_node_id === returnNode.node_id,
     ),
-  ).toEqual([expect.objectContaining({ resolution: "candidate" })]);
+  ).toEqual([]);
+  expect(
+    graph.relations.filter(
+      ({ relation, target_node_id }) =>
+        relation === "influences" && target_node_id === returnNode.node_id,
+    ),
+  ).toEqual([expect.objectContaining({ resolution: "resolved" })]);
   const output = graph.nodes.find(
     ({ kind, label }) => kind === "binding" && label === "output",
   );
@@ -376,10 +382,8 @@ it("does not promote transformed return expressions to resolved aliases", () => 
       direction: "backward-provenance",
     }),
   );
-  expect(strict.nodes.map(({ node_id }) => node_id)).not.toContain(
-    input.node_id,
-  );
-  expect(strict.status).toBe("ambiguous");
+  expect(strict.nodes.map(({ node_id }) => node_id)).toContain(input.node_id);
+  expect(strict.status).toBe("partial");
 });
 
 it("uses unavailable evidence when no source produced semantic IR", () => {

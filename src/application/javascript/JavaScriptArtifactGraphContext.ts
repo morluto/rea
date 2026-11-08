@@ -17,13 +17,13 @@ import type {
   JavaScriptArtifactAnalysis,
   JavaScriptArtifactAnalysisScope,
 } from "./JavaScriptArtifactAnalysisTypes.js";
-import type { JavaScriptUnanalyzedArtifactLookup } from "../../domain/javascript/javascriptArtifactFiles.js";
-import { HTML_INLINE_SCRIPT_LOCATION_LIMIT } from "../../domain/javascript/htmlArtifactReferences.js";
 import type {
+  JavaScriptUnanalyzedArtifactLookup,
   JavaScriptArtifactFile,
   JavaScriptArtifactFileSet,
   JavaScriptArtifactFileKind,
 } from "../../domain/javascript/javascriptArtifactFiles.js";
+import { HTML_INLINE_SCRIPT_LOCATION_LIMIT } from "../../domain/javascript/htmlArtifactReferences.js";
 import { JavaScriptArtifactGraphAccumulator } from "./JavaScriptArtifactGraphAccumulator.js";
 import {
   artifactObservationEvidence,

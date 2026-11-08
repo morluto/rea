@@ -16,8 +16,9 @@ vi.mock("node:fs/promises", async (importOriginal) => {
     opendir: async (...args: Parameters<typeof filesystem.opendir>) => {
       const directory = await filesystem.opendir(...args);
       if (String(args[0]) === race.directory) {
-        const close = directory.close.bind(directory);
-        vi.spyOn(directory, "close").mockImplementation(async () => {
+        const closing: { close(): Promise<void> } = directory;
+        const close = closing.close.bind(directory);
+        vi.spyOn(closing, "close").mockImplementation(async () => {
           await close();
           const hook = race.afterDirectoryClose;
           race.afterDirectoryClose = undefined;

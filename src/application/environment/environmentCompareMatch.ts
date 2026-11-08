@@ -59,9 +59,7 @@ const collectionAt = (
   segments?: readonly string[],
 ): string => {
   const params = new Set(tool.params.map((param) => param.index));
-  return `/${tool.path_template
-    .slice(1)
-    .split("/")
+  return `/${segmentsOf(tool.path_template)
     .slice(0, end)
     .map((segment, index) => {
       if (!params.has(index)) return segment;
@@ -78,7 +76,7 @@ export const collectionScope = (
   tool: EnvironmentManifestTool,
   segments?: readonly string[],
 ): string => {
-  const length = tool.path_template.slice(1).split("/").length;
+  const length = segmentsOf(tool.path_template).length;
   return collectionAt(
     tool,
     tool.params.some((param) => param.index === length - 1)
@@ -215,12 +213,12 @@ export const matchProbeRequest = (
   if (best === undefined) return undefined;
   const { tool } = best;
   const names = probeArguments(tool, bodies);
-  const args: Record<string, JsonValue> = {};
+  const args = new Map<string, JsonValue>();
   const pathArguments: string[] = [];
   for (const param of tool.params) {
     const name = names.path.get(param.name) ?? param.name;
     // The environment decodes a path id once. Passing the raw segment keeps `book%2531` from becoming `book1`.
-    args[name] = segments[param.index]!;
+    args.set(name, segments[param.index]!);
     pathArguments.push(name);
   }
   const ignoredQuery: string[] = [];
@@ -238,12 +236,12 @@ export const matchProbeRequest = (
       }
     }
   for (const [name, values] of queryValues)
-    args[name] = values.length === 1 ? values[0]! : values;
+    args.set(name, values.length === 1 ? values[0]! : values);
   if (names.body !== undefined && request.body !== undefined)
-    args[names.body] = request.body;
+    args.set(names.body, request.body);
   return {
     tool,
-    args,
+    args: Object.fromEntries(args),
     pathArguments,
     pagingArguments,
     ignoredQuery,

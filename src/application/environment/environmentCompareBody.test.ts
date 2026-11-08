@@ -10,6 +10,7 @@ import {
   environmentStateServeFixture,
 } from "../../../tests/fixtures/environmentServe.js";
 import { compareEnvironment } from "./environmentCompare.js";
+import { requestBody } from "./environmentCompareProbe.js";
 import { REPLAY_BODY_LIMIT_BYTES } from "./environmentSource.js";
 
 const responseCapture = (
@@ -144,3 +145,24 @@ describe("environment comparison response representation", () => {
     expect(compare(json, text).probes[0]?.results[0]?.equal).toBe(false);
   });
 });
+
+it.each([
+  { mimeType: " TEXT/PLAIN ; charset=utf-8", expected: { value: 1 } },
+  { mimeType: "application/problem+json", expected: { value: 1 } },
+  { mimeType: "text/problem+json", expected: '{"value":1}' },
+])(
+  "reads probe request arguments independently of body-size and parameter admission: $mimeType",
+  ({ mimeType, expected }) => {
+    const capture = environmentManifestCaptureFixture([
+      {
+        request: {
+          method: "POST",
+          url: "http://app.example/api/value",
+          bodySize: "not-a-size",
+          postData: { mimeType, text: '{"value":1}', params: 7 },
+        },
+      },
+    ]);
+    expect(requestBody(capture.records[0]!)).toEqual(expected);
+  },
+);

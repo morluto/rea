@@ -5,8 +5,8 @@ import type { ElectronStaticValue } from "./electronStaticAnalysisTypes.js";
 import {
   readExactJavaScriptLiteral,
   semanticStaticPropertyKey,
-  semanticStaticPropertyName,
 } from "./javascriptAstValues.js";
+import { electronMemberPath } from "./javascriptElectronMemberWrites.js";
 import { sourceSlice } from "./javascriptStaticAnalysisHelpers.js";
 import type { JavaScriptFindingContext } from "./javascriptStaticAnalysisState.js";
 
@@ -15,18 +15,11 @@ export const electronCalleePath = (
   callee: t.Node,
   context: JavaScriptFindingContext,
 ): readonly string[] | undefined => {
-  const members: string[] = [];
-  let root = callee;
-  while (t.isMemberExpression(root) || t.isOptionalMemberExpression(root)) {
-    const member = semanticStaticPropertyName(root.property, root.computed);
-    if (member === "" || !t.isNode(root.object)) return undefined;
-    members.push(member);
-    root = root.object;
-  }
+  const { root, members } = electronMemberPath(callee);
+  if (!members.every((member): member is string => member !== null))
+    return undefined;
   const exported = context.electronBindings?.get(root.start ?? -1);
-  return exported === undefined
-    ? undefined
-    : [...exported, ...members.toReversed()];
+  return exported === undefined ? undefined : [...exported, ...members];
 };
 
 /** Preserve one literal value or the exact inert expression. */

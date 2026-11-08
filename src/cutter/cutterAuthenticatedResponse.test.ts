@@ -2,8 +2,7 @@ import { expect, it } from "vitest";
 
 import { AnalysisResourceConstraintError } from "../domain/analysisErrorCore.js";
 import {
-  MAXIMUM_BRIDGE_MAX_REQUEST_BYTES,
-  MINIMUM_BRIDGE_MAX_REQUEST_BYTES,
+  bridgeMaxRequestBytesRecovery,
   type BridgeMaxRequestBytes,
 } from "../config/bridgeMaxRequestBytes.js";
 import {
@@ -128,12 +127,9 @@ it("reports the configured ceiling when a response frame does not fit", () => {
   expect(error.operation).toBe("cutter_command");
   expect(error.resource).toBe("transport");
   expect(error.reportedLimits).toMatchObject({ max_request_bytes: 64 });
-  expect(error.reason).toContain("REA_BRIDGE_MAX_REQUEST_BYTES");
-  expect(error.reason).toContain("value is 64 bytes");
-  expect(error.reason).toContain("source setting");
-  expect(error.reason).toContain(String(MINIMUM_BRIDGE_MAX_REQUEST_BYTES));
-  expect(error.reason).toContain(String(MAXIMUM_BRIDGE_MAX_REQUEST_BYTES));
-  expect(error.reason).toContain("restart");
+  expect(error.remediationAction).toBe(
+    bridgeMaxRequestBytesRecovery(ceiling, "Cutter"),
+  );
 });
 
 it("reads one challenge and one response without buffering a third frame", () => {

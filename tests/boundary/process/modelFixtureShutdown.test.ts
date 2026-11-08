@@ -244,7 +244,7 @@ for (const protocol of protocols)
           expect(closed.cause).toBe(lateFailure);
         } else expect(closed).toEqual({ kind: "fixture-closed" });
         expect(callbackFinished).toBe(true);
-        expect(await readFile(artifactPath)).toEqual(artifact);
+        expect(Buffer.compare(await readFile(artifactPath), artifact)).toBe(0);
         expect(fixture.failure).toBe(
           outcome === "late-error" ? String(lateFailure) : undefined,
         );
@@ -394,7 +394,7 @@ for (const protocol of protocols)
         await bounded(Promise.all(closing), "both admitted fixture closes"),
       ).toEqual([{ kind: "fixture-closed" }, { kind: "fixture-closed" }]);
       expect(callbackFinished).toBe(true);
-      expect(await readFile(artifactPath)).toEqual(artifact);
+      expect(Buffer.compare(await readFile(artifactPath), artifact)).toBe(0);
       expect(fixture.failure).toBe(ordinaryFailure);
       expect(server.listening).toBe(false);
       expect(server.address()).toBeNull();

@@ -1,10 +1,20 @@
-import { chmod, lstat, readFile, unlink } from "node:fs/promises";
+import {
+  chmod,
+  lstat,
+  readFile,
+  symlink,
+  unlink,
+  writeFile,
+} from "node:fs/promises";
 import { createHash } from "node:crypto";
-import { basename, dirname } from "node:path";
+import { crc32 } from "node:zlib";
+import { basename, dirname, join } from "node:path";
 import { expect, it, onTestFinished } from "vitest";
 import { z } from "zod";
 
 import { toolContract } from "../../../src/contracts/toolContracts.js";
+import { adbResultSchemas } from "../../../src/domain/adb/adbDeviceAnalysis.js";
+import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import {
   execFileOutput,
   execFileOutputFailure,
@@ -17,6 +27,95 @@ import {
   createTestWorkspace,
   removeTestWorkspace,
 } from "../../support/workspace/workspaceFixture.js";
+
+it
+  .skipIf(process.platform === "win32")
+  .each([
+    "zero width",
+    "zero height",
+    "invalid chunk type",
+    "invalid checksum",
+    "truncated header",
+    "valid",
+  ] as const)(
+  "validates the screencap PNG header before publishing: %s",
+  async (kind) => {
+    const workspace = await createTestWorkspace("rea-adb-screen-cli-");
+    onTestFinished(() => removeTestWorkspace(workspace.root));
+    const png = Buffer.from(
+      "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGP4z8AAAAMBAQDJ/pLvAAAAAElFTkSuQmCC",
+      "base64",
+    );
+    if (kind === "zero width") png.writeUInt32BE(0, 16);
+    if (kind === "zero height") png.writeUInt32BE(0, 20);
+    if (kind === "invalid chunk type") png[12] = 0xc9;
+    if (kind !== "invalid checksum")
+      png.writeUInt32BE(crc32(png.subarray(12, 29)), 29);
+    else png[29] = png[29]! ^ 0xff;
+    const frame = kind === "truncated header" ? png.subarray(0, 24) : png;
+    await writeFile(workspace.path("frame.png"), frame);
+    const adb = await workspace.write(
+      "adb",
+      `#!/bin/sh
+if [ "$1" = version ]; then printf 'Android Debug Bridge version 1.0.41\\nVersion 34.0.5-cli\\n'; exit 0; fi
+if [ "$1" = -s ] && [ "$3" = exec-out ]; then /bin/cat "$(dirname "$0")/frame.png"; exit 0; fi
+exit 1
+`,
+    );
+    await chmod(adb, 0o755);
+    const outputPath = workspace.path("captures");
+    const result = await execFileOutput(
+      process.execPath,
+      [
+        "scripts/rea.mjs",
+        "capture-adb-screen",
+        "device",
+        "--output-directory",
+        outputPath,
+        "--json",
+      ],
+      {
+        env: { ...process.env, REA_ADB_PATH: adb },
+        timeout: 20_000,
+        stopSignal: "SIGTERM",
+        maxBuffer: 1024 * 1024,
+      },
+    ).then(
+      (output) => ({ exitCode: 0, stdout: output.stdout }),
+      (cause: unknown) => {
+        const failure = execFileOutputFailure(cause);
+        if (failure === undefined) throw cause;
+        return { exitCode: failure.code, stdout: failure.stdout };
+      },
+    );
+    if (kind === "valid") {
+      expect(result.exitCode).toBe(0);
+      const output = JSON.parse(result.stdout) as {
+        normalized_result: unknown;
+        limitations: string[];
+      };
+      expect(
+        adbResultSchemas.capture_adb_screen.parse(output.normalized_result),
+      ).toMatchObject({ width: 1, height: 1 });
+      expect(output.limitations).toContainEqual(
+        expect.stringMatching(
+          /PNG signature.*IHDR.*checksum.*dimensions.*validated.*encoding.*image contents.*not validated/iu,
+        ),
+      );
+      expect(
+        (await readFile(join(outputPath, "screen.png"))).equals(frame),
+      ).toBe(true);
+    } else {
+      expect(result.exitCode).toBe(1);
+      expect(JSON.parse(result.stdout)).toMatchObject({
+        code: "unreadable_output",
+      });
+      await expect(
+        readFile(join(outputPath, "screen.png")),
+      ).rejects.toMatchObject({ code: "ENOENT" });
+    }
+  },
+);
 
 it.skipIf(process.platform === "win32").each([
   { exit: 1, stdout: "", stderr: "adb: error: closed", overwrite: false },
@@ -152,12 +251,207 @@ it.each([
   },
 );
 
+it.skipIf(process.platform === "win32")(
+  "names an existing REA_ADB_PATH the host cannot execute",
+  async () => {
+    const workspace = await createTestWorkspace("rea-adb-unusable-cli-");
+    onTestFinished(() => removeTestWorkspace(workspace.root));
+    const directory = dirname(await workspace.write("adb-dir/keep", ""));
+    const file = await workspace.write(
+      "adb",
+      `#!/bin/sh
+printf 'Android Debug Bridge version 1.0.41\\nVersion 34.0.5-cli\\n'
+`,
+    );
+    await chmod(file, 0o644);
+    for (const [argv, binary] of [
+      [["inspect-adb-client", "--json"], directory],
+      [["inspect-adb-client", "--json"], file],
+      [["list-adb-devices", "--json"], directory],
+    ] as const) {
+      const result = await serve(argv, { REA_ADB_PATH: binary });
+      expectConfigurationRefusal(
+        result,
+        `Execution of the selected adb binary was denied (EACCES): ${binary}. Set REA_ADB_PATH to an absolute path to the adb executable file, not a directory`,
+      );
+    }
+    // A parent component that is a file, a symlink loop and a missing path
+    // fail before any process starts, so no exit code is reported.
+    const loop = workspace.path("adb-loop");
+    await symlink(loop, loop);
+    for (const [binary, filesystemError] of [
+      [`${file}/adb`, "ENOTDIR"],
+      [loop, "ELOOP"],
+      [workspace.path("missing-adb"), "ENOENT"],
+    ] as const) {
+      const refused = await serve(["inspect-adb-client", "--json"], {
+        REA_ADB_PATH: binary,
+      });
+      expectConfigurationRefusal(
+        refused,
+        `The selected adb binary was not found: ${binary}. Set REA_ADB_PATH`,
+      );
+      const { details } = JSON.parse(refused.stdout) as {
+        details: { diagnostics: Record<string, unknown> };
+      };
+      expect(details.diagnostics).toMatchObject({
+        selected_binary: binary,
+        path_source: "environment",
+        filesystem_error: filesystemError,
+      });
+      expect(details.diagnostics).not.toHaveProperty("exit_code");
+    }
+    await chmod(file, 0o755);
+    const result = await serve(["inspect-adb-client", "--json"], {
+      REA_ADB_PATH: file,
+    });
+    expect(JSON.parse(result.stdout)).toMatchObject({
+      normalized_result: {
+        client: { binary_path: file, path_source: "environment" },
+      },
+    });
+  },
+);
+
+it.skipIf(process.platform === "win32")(
+  "names a PATH adb the host cannot execute",
+  async () => {
+    const workspace = await createTestWorkspace("rea-adb-unusable-path-");
+    onTestFinished(() => removeTestWorkspace(workspace.root));
+    const adb = await workspace.write("bin/adb", "#!/bin/sh\nexit 0\n");
+    await chmod(adb, 0o644);
+    const environment: Record<string, string | undefined> = {
+      ...process.env,
+      PATH: dirname(adb),
+    };
+    delete environment.REA_ADB_PATH;
+    const stdout = await execFileOutput(
+      process.execPath,
+      ["scripts/rea.mjs", "inspect-adb-client", "--json"],
+      {
+        env: environment,
+        timeout: 20_000,
+        stopSignal: "SIGTERM",
+        maxBuffer: 1024 * 1024,
+      },
+    ).then(
+      () => {
+        throw new Error("inspect-adb-client accepted a non-executable adb");
+      },
+      (cause: unknown) => {
+        const failure = execFileOutputFailure(cause);
+        if (failure === undefined) throw cause;
+        return failure.stdout;
+      },
+    );
+    expectConfigurationRefusal(
+      { stdout, exitCode: 1 },
+      "Execution of the selected adb binary was denied (EACCES): adb. Make sure the adb found on PATH is a file with execute permission, not a directory",
+    );
+  },
+);
+
 it("validates device serials before contacting any device", async () => {
   const result = await serve(["inspect-adb-device", "bad serial", "--json"]);
+  expect(result.exitCode).toBe(1);
   expect(JSON.parse(result.stdout)).toMatchObject({
-    code: "invalid_request",
-    category: "invalid_input",
+    code: "VALIDATION_ERROR",
   });
+});
+
+it("retains safe structured constraints for ADB selectors", async () => {
+  const cases = [
+    {
+      argv: ["inspect-adb-device", "bad serial"],
+      path: "serial",
+      expected: "regex",
+    },
+    {
+      argv: ["inspect-adb-device", "S".repeat(257)],
+      path: "serial",
+      maximum: 256,
+    },
+    {
+      argv: ["inspect-adb-package", "S", "bad package"],
+      path: "package",
+      expected: "regex",
+    },
+    {
+      argv: ["inspect-adb-package", "S", "a".repeat(257)],
+      path: "package",
+      maximum: 256,
+    },
+    {
+      argv: ["start-adb-activity", "S", "bad action"],
+      path: "action",
+      expected: "regex",
+    },
+    {
+      argv: ["start-adb-activity", "S", "a".repeat(257)],
+      path: "action",
+      maximum: 256,
+    },
+    {
+      argv: ["start-adb-activity", "S", "x", "--component", "bad component"],
+      path: "component",
+      expected: "regex",
+    },
+    {
+      argv: ["start-adb-activity", "S", "x", "--component", "a".repeat(513)],
+      path: "component",
+      maximum: 512,
+    },
+    {
+      argv: ["start-adb-activity", "S", "x", "--data-uri", "bad uri"],
+      path: "data-uri",
+      expected: "regex",
+    },
+    {
+      argv: ["start-adb-activity", "S", "x", "--data-uri", "a".repeat(2049)],
+      path: "data-uri",
+      maximum: 2048,
+    },
+    {
+      argv: ["read-adb-setting", "S", "system", "k".repeat(257)],
+      path: "key",
+      maximum: 256,
+    },
+    {
+      argv: ["read-adb-setting", "S", "system", "bad key"],
+      path: "key",
+      expected: "regex",
+    },
+  ];
+  for (const { argv, path, expected, maximum } of cases) {
+    const result = await serve([...argv, "--json"], {
+      REA_ADB_PATH: "/path/that/does/not/exist",
+    });
+    expect(result.exitCode, path).toBe(1);
+    expect(JSON.parse(result.stdout), path).toMatchObject({
+      code: "VALIDATION_ERROR",
+      fieldErrors: [
+        expect.objectContaining({
+          path,
+          ...(expected === undefined ? { maximum } : { expected }),
+        }),
+      ],
+    });
+    expect(result.stdout).not.toContain(argv.at(-1));
+  }
+  const both = await serve(
+    ["start-adb-activity", "bad serial", "bad action", "--json"],
+    { REA_ADB_PATH: "/path/that/does/not/exist" },
+  );
+  expect(both.exitCode).toBe(1);
+  expect(JSON.parse(both.stdout)).toMatchObject({
+    code: "VALIDATION_ERROR",
+    fieldErrors: expect.arrayContaining([
+      expect.objectContaining({ path: "serial", expected: "regex" }),
+      expect.objectContaining({ path: "action", expected: "regex" }),
+    ]),
+  });
+  expect(both.stdout).not.toContain("bad serial");
+  expect(both.stdout).not.toContain("bad action");
 });
 
 it.each(["string:key", ":", "string"])(
@@ -185,6 +479,55 @@ it.each(["string:key", ":", "string"])(
     });
     expect(error.remediation.action).not.toBe("");
     expect(error.message).not.toBe("");
+  },
+);
+
+it.each([16, 17])(
+  "enforces the activity extra count before host admission: %d entries",
+  async (count) => {
+    const root = await createTestTempDirectory("rea-adb-extra-limit-");
+    const missingAdb = join(root, "missing-adb");
+    const extras = Array.from({ length: count }, (_, index) => [
+      "--extra",
+      `string:key${index}:value${index}`,
+    ]).flat();
+    const result = await execFileOutput(
+      process.execPath,
+      [
+        "scripts/rea.mjs",
+        "start-adb-activity",
+        "emulator-5554",
+        "android.intent.action.VIEW",
+        ...extras,
+        "--json",
+      ],
+      {
+        env: { ...process.env, REA_ADB_PATH: missingAdb },
+        timeout: 20_000,
+        stopSignal: "SIGTERM",
+        maxBuffer: 1024 * 1024,
+      },
+    ).then(
+      (output) => ({ exitCode: 0, stdout: output.stdout }),
+      (cause: unknown) => {
+        const failure = execFileOutputFailure(cause);
+        if (failure === undefined || typeof failure.code !== "number")
+          throw cause;
+        return { exitCode: failure.code, stdout: failure.stdout };
+      },
+    );
+    if (count === 16) {
+      expectConfigurationRefusal(
+        result,
+        `The selected adb binary was not found: ${missingAdb}. Set REA_ADB_PATH`,
+      );
+    } else {
+      expect(JSON.parse(result.stdout)).toMatchObject({
+        code: "VALIDATION_ERROR",
+        fieldErrors: [{ code: "too_big", path: "extra" }],
+      });
+    }
+    expect(result.exitCode, result.stdout).toBe(1);
   },
 );
 

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { parseJebMcpEndpoint } from "./JebMcpEndpoint.js";
+import { parseJebMcpEndpoint } from "../config/jebMcpEndpoint.js";
 
 describe("JEB MCP endpoint", () => {
   it("rejects an explicit empty query or fragment instead of dropping it", () => {

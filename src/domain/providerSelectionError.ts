@@ -13,11 +13,17 @@ export type ProviderSelectionFailureReason =
   | "ambiguous"
   | "invalid_options";
 
+/** Which observation produced a rejection; availability says nothing about the target. */
+export type ProviderRejectionOrigin = "availability" | "target";
+
 /** One actionable candidate rejection retained in caller diagnostics. */
 export interface ProviderSelectionRejection {
   readonly providerId: string;
+  readonly origin: ProviderRejectionOrigin;
   readonly code: string;
   readonly reason: string;
+  /** The readiness owner's repair; target-support refusals carry none. */
+  readonly remediation?: string;
   readonly diagnostics: Readonly<Record<string, JsonValue>>;
 }
 
@@ -64,7 +70,8 @@ export class ProviderSelectionError extends AnalysisError {
       ...rejection,
       diagnostics: structuredClone(rejection.diagnostics),
     }));
-    this.remediationAction = options.remediationAction;
+    this.remediationAction =
+      options.remediationAction ?? requestedProviderRepair(options);
     this.userMessage =
       options.userMessage ?? providerSelectionUserMessage(options);
   }
@@ -80,6 +87,29 @@ const providerSelectionDiagnostic = (
   return `Analysis provider selection failed (${options.reason}) for ${options.requestedProviderId}; candidates: ${candidates}`;
 };
 
+/**
+ * A concrete selection refused by its provider's readiness is repaired by
+ * that provider's own instruction, not by generic selection advice.
+ */
+const requestedProviderRepair = (
+  options: ProviderSelectionErrorOptions,
+): string | undefined =>
+  options.reason === "provider_unavailable"
+    ? options.rejections?.find(
+        ({ providerId, origin }) =>
+          providerId === options.requestedProviderId &&
+          origin === "availability",
+      )?.remediation
+    : undefined;
+
+/** True when every recorded rejection describes availability, not target support. */
+const providerAvailabilityOnly = (
+  rejections: readonly ProviderSelectionRejection[] | undefined,
+): boolean =>
+  rejections !== undefined &&
+  rejections.length > 0 &&
+  rejections.every(({ origin }) => origin === "availability");
+
 const providerSelectionUserMessage = (
   options: ProviderSelectionErrorOptions,
 ): string => {
@@ -89,7 +119,9 @@ const providerSelectionUserMessage = (
     case "unknown_provider":
       return `The requested analysis provider is unknown. Choose one of: ${options.candidateIds.join(", ") || "no configured providers"}.`;
     case "provider_unavailable":
-      return "The selected analysis provider is unavailable. Review the reported local diagnostics or run `rea doctor`, then retry.";
+      return providerAvailabilityOnly(options.rejections)
+        ? "Provider selection failed local readiness checks. No target-support refusal was reported. Review the local provider diagnostics or run `rea doctor`, then retry."
+        : "The selected analysis provider is unavailable. Review the reported local diagnostics or run `rea doctor`, then retry.";
     case "target_unsupported":
       return "The selected analysis provider does not support this target. Choose another provider or open a supported extracted binary.";
     case "invalid_options":

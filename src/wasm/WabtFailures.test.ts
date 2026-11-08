@@ -29,16 +29,20 @@ it.each(["configuration", "producer"] as const)(
         diagnostics: {
           previous_error: {
             code: "provider_timeout",
-            details: { timeout_ms: 1234 },
-            recovery: { kind: "inspect_timeout_state", timeout_ms: 1234 },
-            remediation: {
-              action: expect.stringContaining("command_timeout_ms above 1234"),
+            details: {
+              timeout_ms: 1234,
+              limit: {
+                setting: "wasm.command_timeout_ms",
+                effective_value: 1234,
+                rea_restart_required: false,
+              },
             },
+            recovery: { kind: "inspect_timeout_state", timeout_ms: 1234 },
           },
         },
       },
     });
-    expect(projected.remediation.action).not.toContain("Increase");
+    expect(projected.recovery).toBeUndefined();
   },
 );
 
@@ -82,18 +86,22 @@ it.each([1234, 2_147_483_647])(
     );
     expect(projected).toMatchObject({
       code: "provider_timeout",
-      details: { timeout_ms: commandTimeoutMs },
+      details: {
+        timeout_ms: commandTimeoutMs,
+        limit: {
+          setting: "wasm.command_timeout_ms",
+          effective_value: commandTimeoutMs,
+          minimum: 1,
+          maximum: 2_147_483_647,
+          unit: "ms",
+          parameter: "command_timeout_ms",
+          applies_at: "next_operation",
+          agent_editable: true,
+          rea_restart_required: false,
+        },
+      },
       recovery: { kind: "inspect_timeout_state", timeout_ms: commandTimeoutMs },
     });
-    expect(projected.remediation.action).toContain("no server restart");
-    expect(projected.remediation.action).toContain("cleanup");
-    if (commandTimeoutMs === 2_147_483_647) {
-      expect(projected.remediation.action).toContain(
-        "no higher command deadline",
-      );
-      expect(projected.remediation.action).not.toContain("Increase");
-    } else
-      expect(projected.remediation.action).toContain("--command-timeout-ms");
   },
 );
 

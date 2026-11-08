@@ -112,7 +112,11 @@ it("does not consume a DLL name past the uint32 RVA end", async () => {
   const report = await parse(peImportNameAtRva(0xfffffff8));
   expect(report.imports[0]?.name).toBeNull();
   expect(report.imports[0]?.functions).toHaveLength(2);
-  expect(report.coverage.status).toBe("partial");
+  expect(report.coverage).toMatchObject({
+    status: "partial",
+    reason:
+      "1 import table issue(s) affect reported rows or metadata; see issues",
+  });
   expect(report.issues).toEqual(
     expect.arrayContaining([
       expect.objectContaining({
@@ -359,7 +363,11 @@ it.each([
     /invalid/u,
   ],
   ["ordinal 0", { ordinal: 0 }, /ordinal 0/u],
-  ["a name pefile truncates", { name: "A".repeat(512) }, /invalid/u],
+  [
+    "a name reaching pefile's read limit",
+    { name: "A".repeat(512) },
+    /512-byte read limit/u,
+  ],
 ] as const)(
   "withholds the import hash for %s rather than diverge from pefile",
   async (_label, entry, reason) => {
@@ -374,6 +382,44 @@ it.each([
     expect(report.imphash.reason).toMatch(reason);
   },
 );
+
+it.each([511, 512, 513])(
+  "retains a %i-byte function name and explains the pefile read boundary",
+  async (length) => {
+    const name = "A".repeat(length);
+    const report = await parse(
+      peImportImage({
+        sectionBytes: 0x1000,
+        dlls: [{ name: "k.dll", functions: [{ name }] }],
+      }),
+    );
+    expect(report.coverage.status).toBe("complete");
+    expect(report.imports[0]?.functions[0]?.name).toBe(name);
+    if (length === 511) {
+      expect(report.imphash.md5).toBe("897726129e4219bdf7853234ba4eeb69");
+      expect(report.imphash.reason).toBeNull();
+    } else {
+      expect(report.imphash.md5).toBeNull();
+      expect(report.imphash.reason).toContain("512-byte read limit");
+      expect(report.imphash.reason).toContain("truncated name");
+    }
+  },
+);
+
+it("describes the same bounded read for a long DLL name", async () => {
+  const name = `${"A".repeat(513)}.dll`;
+  const report = await parse(
+    peImportImage({
+      sectionBytes: 0x1000,
+      dlls: [{ name, functions: [{ name: "ExitProcess" }] }],
+    }),
+  );
+  expect(report.imports[0]?.name).toBe(name);
+  expect(report.imphash.md5).toBeNull();
+  expect(report.imphash.reason).toContain(
+    "DLL name reaches pefile's 512-byte read limit",
+  );
+});
 
 it("reads delay-load descriptors separately from the import hash", async () => {
   const bytes = peImportImage({

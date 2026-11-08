@@ -6,6 +6,9 @@ import {
 import type { JsonValue } from "../domain/jsonValue.js";
 import { DarwinProcessOwnershipInspectionError } from "../process/DarwinProcessRunTokenReader.js";
 import { boundedUtf8Text } from "../process/boundedUtf8Text.js";
+import type { GhidraDiagnosticsScope } from "./GhidraDiagnostics.js";
+import { ghidraFileOffsetOutcome } from "./GhidraFileOffsetFailure.js";
+import { GhidraAdmissionError } from "./GhidraAdmissionError.js";
 import { GhidraLaunchSupportError } from "./GhidraJavaLaunch.js";
 import {
   GhidraLaunchError,
@@ -26,6 +29,7 @@ export type GhidraSessionFailureKind =
   | "start"
   | "process"
   | "protocol"
+  | "checkpoint"
   | "remote"
   | "analysis_timeout";
 
@@ -184,10 +188,23 @@ const createGhidraSessionError = (failure: {
     },
   );
 
-/** Bind session-failure construction to a live, token-redacted diagnostic view. */
+/** Bridge input failures share classification with their domain error projection. */
+export const isGhidraInputFailureCode = (code: string | undefined): boolean =>
+  code === "invalid_request" ||
+  code === "invalid_regex_pattern" ||
+  code === "not_found" ||
+  code === "procedure_not_found" ||
+  code === "file_offset_unmapped" ||
+  code === "procedure_ambiguous" ||
+  code === "file_offset_ambiguous" ||
+  code === "ambiguous";
+
+/** Bind session-failure construction to its causal diagnostic scope. */
 export const bindGhidraSessionFailure =
   (
-    diagnostics: () => Readonly<Record<string, JsonValue>>,
+    diagnostics: (
+      scope: GhidraDiagnosticsScope,
+    ) => Readonly<Record<string, JsonValue>>,
     redact: (value: string, incomplete?: boolean) => string = (value) => value,
   ) =>
   (
@@ -203,7 +220,14 @@ export const bindGhidraSessionFailure =
       kind,
       message: redact(message),
       diagnostics: {
-        ...diagnostics(),
+        ...diagnostics(
+          kind === "remote" &&
+            (isGhidraInputFailureCode(options.remoteCode) ||
+              options.remoteCode === "invalid_function_name" ||
+              ghidraFileOffsetOutcome(options.remoteCode) !== undefined)
+            ? "request"
+            : "session",
+        ),
         ...(cause === undefined
           ? {}
           : { failure_cause: describeCause(cause, redact) }),
@@ -268,6 +292,7 @@ const describeErrorCause = (
     message: message.text,
     ...(message.truncated ? { message_truncated: true } : {}),
     ...causeCode(cause, redact),
+    ...causeAdmissionDetail(cause, redact),
     ...causeSignal(cause, redact),
     ...causeCommandOutcome(cause, redact),
     ...causeCompilerOutcome(cause, redact),
@@ -304,6 +329,24 @@ const causeCommandOutcome = (
       killed: outcome.killed,
     },
   };
+};
+
+const causeAdmissionDetail = (
+  cause: Error,
+  redact: (value: string, incomplete?: boolean) => string,
+): Record<string, JsonValue> => {
+  if (!(cause instanceof GhidraAdmissionError) || cause.detail === undefined)
+    return {};
+  const detail: Record<string, JsonValue> = {};
+  for (const [key, value] of Object.entries(cause.detail)) {
+    if (typeof value === "number") {
+      detail[key] = value;
+      continue;
+    }
+    const bounded = boundedUtf8Text(redact(value), MAX_CAUSE_FIELD_BYTES);
+    detail[key] = bounded.text;
+  }
+  return { detail };
 };
 
 const causeCode = (

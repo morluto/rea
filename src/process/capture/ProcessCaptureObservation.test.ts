@@ -192,7 +192,9 @@ it("marks redacted scripted input as an interaction unknown", () => {
         scheduled_at_ms: 0,
         dispatched_at_ms: 0,
         type: "input",
-        data: "<redacted-input:6-bytes>",
+        data: "",
+        sensitive: true,
+        input_bytes: 6,
         outcome: "dispatched",
       },
     ],
@@ -207,8 +209,9 @@ it("marks redacted scripted input as an interaction unknown", () => {
 
   expect(result.residual_unknowns).toContainEqual({
     scope: "interaction",
-    reason:
-      "Sensitive scripted input values are redacted from process capture Evidence.",
+    reason: expect.stringMatching(
+      /sensitive scripted input.*terminal echoes.*redacted.*terminal states.*redacted stream.*private display effects.*transformed values.*unknown/iu,
+    ),
   });
 });
 

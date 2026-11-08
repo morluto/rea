@@ -1,6 +1,6 @@
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
-import { Ajv2020 } from "ajv/dist/2020.js";
-import { expect, it, onTestFinished } from "vitest";
+import { afterAll, expect, it, onTestFinished } from "vitest";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 import { WebRuntimeService } from "../../../src/application/WebRuntimeService.js";
 import { recordingWebRuntimePort } from "../../../src/application/WebRuntimeService.fixture.js";
 import { CdpWebRuntimeProvider } from "../../../src/browser/execution/CdpWebRuntimeProvider.js";
@@ -11,10 +11,15 @@ import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
 import {
+  negativeColumnScript,
   runtimeSourceA,
   runtimeSourceB,
+  startNegativeColumnBrowser,
   startRuntimeBrowser,
 } from "../../fixtures/webRuntime.js";
+
+const schemaValidation = createMcpSchemaValidation();
+afterAll(() => schemaValidation.clear());
 
 it("advertises actual SDK schemas, instrumentation effects and session-owned inline runtime evidence", async () => {
   const session = createTestBinarySession(() => {
@@ -26,7 +31,10 @@ it("advertises actual SDK schemas, instrumentation effects and session-owned inl
       webRuntime: new WebRuntimeService(recordingWebRuntimePort()),
     },
   );
-  const client = new Client({ name: "web-runtime-contract", version: "1" });
+  const client = new Client(
+    { name: "web-runtime-contract", version: "1" },
+    { jsonSchemaValidator: schemaValidation },
+  );
   onTestFinished(async () => {
     await client.close();
     await server.close();
@@ -37,7 +45,7 @@ it("advertises actual SDK schemas, instrumentation effects and session-owned inl
   await server.connect(serverTransport);
   await client.connect(clientTransport);
   const tools = (await client.listTools()).tools;
-  const ajv = new Ajv2020({ strict: false, validateFormats: false });
+  const ajv = schemaValidation.assertions;
   const input = {
     cdp_endpoint: "http://127.0.0.1:9222",
     target_id: "allowed-page",
@@ -84,7 +92,10 @@ it("advertises actual SDK schemas, instrumentation effects and session-owned inl
     name: "observe_web_execution",
     arguments: { ...input, observation_ms: 2_147_483_648 },
   });
-  expect(invalid.isError).toBe(true);
+  expect(parseMcpToolError(invalid).error).toMatchObject({
+    code: "invalid_request",
+    category: "invalid_input",
+  });
 });
 
 cliTest(
@@ -113,7 +124,10 @@ cliTest(
       { kind: "session", session },
       { webRuntime: new WebRuntimeService(provider) },
     );
-    const client = new Client({ name: "runtime-frame-identity", version: "1" });
+    const client = new Client(
+      { name: "runtime-frame-identity", version: "1" },
+      { jsonSchemaValidator: schemaValidation },
+    );
     onTestFinished(async () => {
       await client.close();
       await server.close();
@@ -176,6 +190,94 @@ cliTest(
   20_000,
 );
 
+cliTest(
+  "delivers negative columns Chrome reports through MCP and the compiled CLI",
+  async ({ cli }) => {
+    const browser = await startNegativeColumnBrowser();
+    const provider = new CdpWebRuntimeProvider();
+    const session = createTestBinarySession(() => {
+      throw new Error("Binary provider must not start");
+    });
+    const server = createServer(
+      { kind: "session", session },
+      { webRuntime: new WebRuntimeService(provider) },
+    );
+    const client = new Client(
+      { name: "runtime-negative-columns", version: "1" },
+      { jsonSchemaValidator: schemaValidation },
+    );
+    onTestFinished(async () => {
+      await client.close();
+      await server.close();
+      await provider.close();
+      await session.close();
+      await browser.close();
+    });
+    const [clientTransport, serverTransport] =
+      InMemoryTransport.createLinkedPair();
+    await server.connect(serverTransport);
+    await client.connect(clientTransport);
+    const advertised = (await client.listTools()).tools.find(
+      ({ name }) => name === "inspect_web_event_listeners",
+    )?.outputSchema;
+    if (advertised === undefined)
+      throw new Error("Missing advertised listener output schema");
+    const outputSchema: Record<string, unknown> = advertised;
+    const response = await client.callTool({
+      name: "inspect_web_event_listeners",
+      arguments: {
+        cdp_endpoint: browser.endpoint,
+        target_id: "allowed-page",
+        allowed_origins: [browser.allowedOrigin],
+        selector: "#selected",
+      },
+    });
+    expect(response.isError).not.toBe(true);
+    const ajv = schemaValidation.assertions;
+    expect(
+      ajv.validate(outputSchema, response.structuredContent),
+      JSON.stringify(ajv.errors),
+    ).toBe(true);
+    const cliResult = await cli.run({
+      arguments: [
+        "inspect-web-event-listeners",
+        browser.endpoint,
+        "allowed-page",
+        "#selected",
+        "--allowed-origins",
+        browser.allowedOrigin,
+        "--json",
+      ],
+      environment: process.env,
+    });
+    expect(cliResult.exitCode).toBe(0);
+    for (const evidence of [
+      toolContract("inspect_web_event_listeners").outputSchema.parse(
+        response.structuredContent,
+      ),
+      cliResult.json,
+    ])
+      expect(parseEvidence(evidence).normalized_result).toMatchObject({
+        listeners: [
+          {
+            location: {
+              script_id: negativeColumnScript.scriptId,
+              line_number: 21,
+              column_number: -50,
+            },
+          },
+        ],
+        sources: [
+          {
+            script_id: negativeColumnScript.scriptId,
+            resource_start: { line_number: 21, column_number: -60 },
+          },
+        ],
+      });
+  },
+  20_000,
+);
+
 it.each([
   {
     name: "observe_web_execution" as const,
@@ -200,7 +302,10 @@ it.each([
       { kind: "session", session },
       { webRuntime: new WebRuntimeService(new CdpWebRuntimeProvider()) },
     );
-    const client = new Client({ name: "web-runtime-partial", version: "1" });
+    const client = new Client(
+      { name: "web-runtime-partial", version: "1" },
+      { jsonSchemaValidator: schemaValidation },
+    );
     onTestFinished(async () => {
       await client.close();
       await server.close();

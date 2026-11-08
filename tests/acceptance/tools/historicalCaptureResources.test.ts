@@ -1,3 +1,8 @@
+import {
+  captureDecoderHeapRecovery,
+  CAPTURE_DECODER_OLD_GENERATION_SETTING,
+  DEFAULT_CAPTURE_DECODER_HEAP,
+} from "../../../src/config/captureDecoderHeap.js";
 import { execFile } from "node:child_process";
 import { truncate, writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -5,7 +10,7 @@ import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { expect, it } from "vitest";
 
-import { NODE_CAPTURE_PROCESS_MEMORY_LIMIT_BYTES } from "../../../src/browser/history/CaptureRelease.js";
+import { captureDecoderProcessMemoryLimitBytes } from "../../../src/browser/history/CaptureRelease.js";
 import { WEB_NETWORK_CAPTURE_LIMITS } from "../../../src/domain/webNetworkCapture.js";
 import { connectLocalToolsMcp } from "../../fixtures/localToolsMcp.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
@@ -46,7 +51,10 @@ const capture = (count: number) =>
 // Node.js enforces the decoder's V8 heap flags. Bun ignores them; on Windows
 // the decoder's Job Object commit limit is the enforced bound instead, and
 // Bun elsewhere has no bound this capture can reach.
-const jobLimit = NODE_CAPTURE_PROCESS_MEMORY_LIMIT_BYTES;
+const testHeap = { oldGenerationMiB: 64, source: "setting" } as const;
+const jobLimit = captureDecoderProcessMemoryLimitBytes(
+  testHeap.oldGenerationMiB,
+);
 it.skipIf(process.versions.bun !== undefined && jobLimit === null)(
   "reports real HAR memory exhaustion through CLI and MCP and preserves server usability",
   async () => {
@@ -57,7 +65,11 @@ it.skipIf(process.versions.bun !== undefined && jobLimit === null)(
       WEB_NETWORK_CAPTURE_LIMITS.inputBytes,
     );
     await writeFile(path, dense);
-    const { call, client } = await connectLocalToolsMcp();
+    const { call, client } = await connectLocalToolsMcp({
+      [CAPTURE_DECODER_OLD_GENERATION_SETTING]: String(
+        testHeap.oldGenerationMiB,
+      ),
+    });
     const response = await call("inspect_web_network_capture", {
       capture_path: path,
       format: "har",
@@ -69,22 +81,18 @@ it.skipIf(process.versions.bun !== undefined && jobLimit === null)(
       error: {
         code: "resource_constraint",
         retryable: false,
-        message: expect.stringContaining(
-          jobLimit === null
-            ? "192 MiB V8 old-generation heap (source default)"
-            : "Windows Job Object memory limit",
-        ),
-        remediation: {
-          action: expect.stringContaining(
-            "smaller capture exported by its producer",
-          ),
-        },
         details: {
           resource: "memory",
+          limit: {
+            setting: "capture.decoder_old_generation_mib",
+            effective_value: testHeap.oldGenerationMiB,
+            source: testHeap.source,
+            rea_restart_required: false,
+          },
           reported_limits:
             jobLimit === null
               ? {
-                  old_generation_heap_mib: 192,
+                  old_generation_heap_mib: testHeap.oldGenerationMiB,
                   observed_exit_code: process.platform === "win32" ? 134 : null,
                   observed_signal:
                     process.platform === "win32" ? null : "SIGABRT",
@@ -103,20 +111,27 @@ it.skipIf(process.versions.bun !== undefined && jobLimit === null)(
     expect(JSON.stringify(response)).not.toContain("caller-marked");
     expect(JSON.stringify(response)).not.toContain("rea doctor");
     const remediation = String(exhausted.error.remediation?.action ?? "");
-    expect(remediation).toContain(
-      "The effective REA_CAPTURE_DECODER_OLD_GENERATION_MIB value is 192 MiB (source default; default 192 MiB, floor 8 MiB, maximum 16384 MiB).",
-    );
-    expect(remediation).toContain(
-      "Set REA_CAPTURE_DECODER_OLD_GENERATION_MIB in the environment that starts REA",
-    );
-    expect(remediation).not.toContain("no runtime override");
-    const failed: unknown = await execute(process.execPath, [
-      cli,
-      "inspect-web-network-capture",
-      path,
-      "har",
-      "--json",
-    ]).then(
+    expect(remediation).toContain(captureDecoderHeapRecovery(testHeap));
+    const failed: unknown = await execute(
+      process.execPath,
+      [
+        cli,
+        "inspect-web-network-capture",
+        path,
+        "har",
+        "--json",
+        "--sensitive-value",
+        "caller-marked",
+      ],
+      {
+        env: {
+          ...process.env,
+          [CAPTURE_DECODER_OLD_GENERATION_SETTING]: String(
+            testHeap.oldGenerationMiB,
+          ),
+        },
+      },
+    ).then(
       () => undefined,
       (cause: unknown) => cause,
     );
@@ -125,10 +140,20 @@ it.skipIf(process.versions.bun !== undefined && jobLimit === null)(
       typeof failed === "object" && failed !== null && "stdout" in failed
         ? String(failed.stdout)
         : "";
-    expect(JSON.parse(stdout)).toMatchObject({ code: "resource_constraint" });
-    expect(stdout).toContain("REA_CAPTURE_DECODER_OLD_GENERATION_MIB");
-    expect(stdout).toContain("source default");
-    expect(stdout).not.toContain("no runtime override");
+    expect(JSON.parse(stdout)).toMatchObject({
+      code: "resource_constraint",
+      details: {
+        limit: {
+          setting: "capture.decoder_old_generation_mib",
+          effective_value: testHeap.oldGenerationMiB,
+          source: testHeap.source,
+          rea_restart_required: false,
+        },
+      },
+      remediation: {
+        action: expect.stringContaining(captureDecoderHeapRecovery(testHeap)),
+      },
+    });
     const small = join(root, "small.har");
     await writeFile(small, capture(2));
     await client.ping();
@@ -142,13 +167,24 @@ it.skipIf(process.versions.bun !== undefined && jobLimit === null)(
     });
     const controlText = JSON.stringify(control.structuredContent);
     expect(controlText).toContain(
-      "The effective REA_CAPTURE_DECODER_OLD_GENERATION_MIB value is 192 MiB (source default; default 192 MiB, floor 8 MiB, maximum 16384 MiB).",
+      "The effective REA_CAPTURE_DECODER_OLD_GENERATION_MIB value is 64 MiB (source setting; default 192 MiB, floor 8 MiB, maximum 16384 MiB).",
     );
-    expect(controlText).toContain("source default");
+    expect(controlText).toContain("source setting");
     expect(controlText).toContain("floor 8 MiB");
     expect(controlText).toContain("maximum 16384 MiB");
     expect(controlText).toContain(
       "Set REA_CAPTURE_DECODER_OLD_GENERATION_MIB in the environment that starts REA",
+    );
+    const defaultServer = await connectLocalToolsMcp();
+    const defaultControl = await defaultServer.call(
+      "inspect_web_network_capture",
+      { capture_path: small, format: "har" },
+    );
+    expect(defaultControl.isError, JSON.stringify(defaultControl)).not.toBe(
+      true,
+    );
+    expect(JSON.stringify(defaultControl.structuredContent)).toContain(
+      captureDecoderHeapRecovery(DEFAULT_CAPTURE_DECODER_HEAP),
     );
     await truncate(path, WEB_NETWORK_CAPTURE_LIMITS.inputBytes + 1);
     const oversized = await call("inspect_web_network_capture", {

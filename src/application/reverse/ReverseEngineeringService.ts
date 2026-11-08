@@ -15,12 +15,12 @@ import {
   AnalysisInputError,
   AnalysisResourceConstraintError,
   AnalysisTimeoutError,
+  AnalysisOutputError,
 } from "../../domain/analysisErrorCore.js";
 import {
   AnalysisError,
   type AnalysisCleanupObservation,
 } from "../../domain/analysisErrorBase.js";
-import { AnalysisOutputError } from "../../domain/analysisErrorCore.js";
 import { ProviderAdapterError } from "../../domain/providerAdapterError.js";
 import { createEvidence, type Evidence } from "../../domain/evidence.js";
 import { analysisInputErrorFromIssues } from "../../domain/inputIssueProjection.js";
@@ -47,12 +47,14 @@ import {
 } from "../../process/OwnedCommand.js";
 import type { ProviderProcessSupervisor } from "../../process/ProviderProcess.js";
 import { absoluteCallerPath } from "../../filesystem/callerPath.js";
+import { parseAnalysisInput } from "../AnalysisInput.js";
 
 export type ReverseEngineeringOperation =
   | "inspect_with_objdump"
   | "execute_rizin_command";
 
 const MAX_COMBINED_OUTPUT_BYTES = 16 * 1024 * 1024;
+export const REVERSE_COMMAND_OUTPUT_LIMITATION = `REA stopped collecting output at its ${String(MAX_COMBINED_OUTPUT_BYTES)}-byte cap and requested termination of the provider process; the captured stdout and stderr are a prefix and command completion is unknown. Narrow the command or page its output.`;
 // Eight concurrent captures bound retained provider output to 128 MiB.
 const MAX_CONCURRENT_REVERSE_ENGINEERING_OPERATIONS = 8;
 
@@ -214,21 +216,17 @@ export class ReverseEngineeringService {
       recordEvidence: undefined,
     },
   ): Promise<Result<Evidence, AnalysisError>> {
-    const parsed = objdumpInputSchema.safeParse(rawInput);
-    if (!parsed.success)
-      return err(
-        analysisInputErrorFromIssues(
-          "inspect_with_objdump",
-          parsed.error.issues,
-          rawInput,
-          { cause: parsed.error },
-        ),
-      );
+    const parsed = parseAnalysisInput(
+      "inspect_with_objdump",
+      rawInput,
+      objdumpInputSchema,
+    );
+    if (!parsed.ok) return parsed;
     const {
       detail,
       command_timeout_ms: commandTimeoutMs,
       ...input
-    } = parsed.data;
+    } = parsed.value;
     if (detail === "summary") {
       const ready = requireAnalysisViewRetention(
         "inspect_with_objdump",
@@ -456,6 +454,7 @@ export class ReverseEngineeringService {
     let cleanupIncomplete = false;
     let cleanupOnlyFailure = false;
     let completionStatus: "complete" | "unknown" = "complete";
+    let outputLimitReached = false;
     let failure: AnalysisError | undefined;
     let cleanupOwner: ProviderProcessSupervisor | undefined;
     let earlyFailure: AnalysisError | undefined;
@@ -510,6 +509,8 @@ export class ReverseEngineeringService {
         );
       const capture = execFileOutputFailure(cause);
       const code = capture?.code ?? commandFailureCode(cause);
+      if (code === "ERR_CHILD_PROCESS_STDIO_MAXBUFFER")
+        outputLimitReached = true;
       if (earlyFailure === undefined && code === "E2BIG")
         earlyFailure = new AnalysisResourceConstraintError(
           operation,
@@ -552,7 +553,7 @@ export class ReverseEngineeringService {
               ? "REA_OBJDUMP_COMMAND"
               : "REA_RIZIN_COMMAND";
           earlyFailure = new AnalysisCapabilityUnavailableError(
-            provider,
+            profile.identity.id,
             operation,
             `Unable to run configured command (${String(code ?? "unknown error")})`,
             {
@@ -711,10 +712,10 @@ export class ReverseEngineeringService {
     const limitations = [
       ...(absolutePath === undefined
         ? [
-            "The objdump version is not reported; the output lists BFD targets advertised by the installed tool and does not establish support for the selected artifact.",
+            "The objdump implementation and version are unknown. The captured output is the selected command's response and does not establish support for an artifact.",
           ]
         : [
-            "The executable version and supported formats are reported as unknown because no reliable version probe was performed.",
+            "The executable implementation, version and supported formats are unknown because no reliable identity probe was performed.",
           ]),
       "A non-zero process exit is preserved as an observed command result.",
       ...(operation === "inspect_with_objdump" &&
@@ -735,6 +736,7 @@ export class ReverseEngineeringService {
             "Rizin commands and retained plugins may read files or access network resources outside the selected artifact; those external inputs are not bound to Evidence.",
           ]
         : []),
+      ...(profile.limitations ?? []),
       ...(stdoutInvalidUtf8 || stderrInvalidUtf8
         ? [
             `Captured ${[
@@ -745,12 +747,14 @@ export class ReverseEngineeringService {
             )} bytes contain invalid or incomplete UTF-8; replacement characters in the text capture do not preserve the original bytes.`,
           ]
         : []),
-      ...(outputTruncated
-        ? [
-            "Captured provider output is partial because bytes were omitted; process completion is reported separately.",
-          ]
-        : []),
-      ...(signalName === null
+      ...(outputLimitReached
+        ? [REVERSE_COMMAND_OUTPUT_LIMITATION]
+        : outputTruncated
+          ? [
+              "Captured provider output is partial because bytes were omitted; process completion is reported separately.",
+            ]
+          : []),
+      ...(signalName === null || outputLimitReached
         ? []
         : [
             `The provider process terminated by signal ${signalName}; captured output may be partial and command completion is unknown.`,
@@ -762,9 +766,7 @@ export class ReverseEngineeringService {
             `Command completion is unknown because the operation failed with ${failure._tag}: ${failure.message}`,
           ]),
       ...(absolutePath === undefined
-        ? [
-            "This output lists BFD targets advertised by the installed objdump and is independent of the selected artifact.",
-          ]
+        ? []
         : [
             "When both are available, pre-run and post-run digests detect artifact changes across the provider call but cannot prove the exact bytes consumed during the call.",
           ]),
@@ -1057,7 +1059,11 @@ export const digestFile = async (
       remainingMs,
     );
     const abort = (): void => {
-      stream.destroy(new AnalysisCancelledError("artifact_digest"));
+      stream.destroy(
+        new AnalysisCancelledError("artifact_digest", {
+          cause: signal?.reason,
+        }),
+      );
     };
     const cleanup = (): void => {
       clearTimeout(timer);
@@ -1066,7 +1072,11 @@ export const digestFile = async (
     if (signal?.aborted) {
       cleanup();
       stream.destroy();
-      rejectDigest(new AnalysisCancelledError("artifact_digest"));
+      rejectDigest(
+        new AnalysisCancelledError("artifact_digest", {
+          cause: signal.reason,
+        }),
+      );
       return;
     }
     signal?.addEventListener("abort", abort, { once: true });
@@ -1139,7 +1149,9 @@ const statWithDeadline = (
   timeoutMs: number,
 ): Promise<Stats> => {
   if (signal?.aborted)
-    return Promise.reject(new AnalysisCancelledError("artifact_digest"));
+    return Promise.reject(
+      new AnalysisCancelledError("artifact_digest", { cause: signal.reason }),
+    );
   return new Promise<Stats>((resolveStat, rejectStat) => {
     let settled = false;
     const finish = (outcome: Result<Stats, unknown>): void => {
@@ -1151,7 +1163,13 @@ const statWithDeadline = (
       else rejectStat(outcome.error);
     };
     const abort = (): void =>
-      finish(err(new AnalysisCancelledError("artifact_digest")));
+      finish(
+        err(
+          new AnalysisCancelledError("artifact_digest", {
+            cause: signal?.reason,
+          }),
+        ),
+      );
     const timer = setTimeout(
       () =>
         finish(

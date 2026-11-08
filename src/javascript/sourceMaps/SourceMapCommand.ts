@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { ExecutionOptions } from "../../application/AnalysisProvider.js";
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
+import { analysisErrorWithCleanupFailure } from "../../domain/analysisErrorCleanup.js";
 import {
   AnalysisCancelledError,
   AnalysisOutputError,
@@ -13,13 +14,15 @@ import {
 import { ProviderAdapterError } from "../../domain/providerAdapterError.js";
 import { ProviderCleanupError } from "../../domain/providerCleanupError.js";
 import type { JsonValue } from "../../domain/jsonValue.js";
-import { err, ok, type Result } from "../../domain/result.js";
+import { err, type Result } from "../../domain/result.js";
 import { noRuntimeOverrideSentence } from "../../domain/browserDeadline.js";
 import {
   DEFAULT_WEB_SOURCE_MAP_DECODE_TIMEOUT_MS,
   WEB_SOURCE_MAP_LIMITS,
   webSourceMapDecodeTimeoutRecovery,
+  type WebSourceMapReport,
 } from "../../domain/webSourceLocation.js";
+import { parseSourceMapReply } from "./SourceMapReply.js";
 import { PrivateRuntimeRoot } from "../../process/PrivateRuntimeRoot.js";
 import {
   RuntimeControlUnavailableError,
@@ -62,9 +65,12 @@ export interface SourceMapDecoderDependencies {
 }
 
 export interface SourceMapCleanupOwner {
-  close(
-    previousError: string | null,
-  ): Promise<ProviderCleanupError | undefined>;
+  close(): Promise<ProviderCleanupError | undefined>;
+}
+
+/** The caller retains retry authority independently of the returned error. */
+export interface SourceMapCleanupRetention {
+  owner?: SourceMapCleanupOwner | undefined;
 }
 
 type CodecPhysicalObservation =
@@ -88,7 +94,6 @@ type CodecOutcome =
 
 export class SourceMapCleanupFailure extends ProviderCleanupError {
   constructor(
-    readonly cleanupOwner: SourceMapCleanupOwner,
     resources: readonly string[],
     diagnostics: Readonly<Record<string, JsonValue>>,
   ) {
@@ -96,14 +101,15 @@ export class SourceMapCleanupFailure extends ProviderCleanupError {
   }
 }
 
-/** Run a trusted codec command and release its process/root before returning output. */
+/** Interpret a trusted codec reply, then release its process and private root. */
 export const runSourceMapCommand = async (
   request: string,
   path: string,
   options: ExecutionOptions | undefined,
   dependencies: SourceMapDecoderDependencies,
+  retainedCleanup: SourceMapCleanupRetention,
   decodeTimeoutMs: number = DEFAULT_WEB_SOURCE_MAP_DECODE_TIMEOUT_MS,
-): Promise<Result<string, AnalysisError>> => {
+): Promise<Result<WebSourceMapReport, AnalysisError>> => {
   try {
     await (dependencies.prepareOwnership ?? prepareProcessOwnershipInspection)(
       options?.signal,
@@ -131,23 +137,43 @@ export const runSourceMapCommand = async (
     options?.signal,
   );
   const command = new OwnedCodec(path, dependencies, deadline, decodeTimeoutMs);
-  let result: Result<string, AnalysisError>;
+  let result: Result<WebSourceMapReport, AnalysisError>;
   try {
     await command.start(request);
-    result = ok(await command.collect());
+    result = parseSourceMapReply(
+      await command.collect(),
+      path,
+      SOURCE_MAP_CODEC_MEMORY_LIMIT_BYTES,
+    );
   } catch (cause: unknown) {
     result = err(command.failure(cause));
   } finally {
     command.dispose();
     deadline.dispose();
   }
-  const cleanup = await command.close(result.ok ? null : result.error.message);
-  if (cleanup !== undefined) return err(cleanup);
-  return result.ok && options?.signal?.aborted
-    ? err(
-        new AnalysisCancelledError(OPERATION, { cause: options.signal.reason }),
-      )
-    : result;
+  const cleanup = await command.close();
+  const observation = result.ok ? result.value : undefined;
+  const completed =
+    result.ok && options?.signal?.aborted
+      ? err(
+          new AnalysisCancelledError(OPERATION, {
+            cause: options.signal.reason,
+            partialObservation: observation,
+          }),
+        )
+      : result;
+  if (cleanup === undefined) return completed;
+  if (observation !== undefined) cleanup.retainPartialObservation(observation);
+  retainedCleanup.owner = command;
+  return completed.ok
+    ? err(cleanup)
+    : err(
+        analysisErrorWithCleanupFailure(
+          completed.error,
+          cleanup,
+          OPERATION,
+        ).bindCleanupDependencies([cleanup], command),
+      );
 };
 
 class OwnedCodec implements SourceMapCleanupOwner {
@@ -471,9 +497,7 @@ class OwnedCodec implements SourceMapCleanupOwner {
     ];
   }
 
-  async close(
-    previousError: string | null,
-  ): Promise<ProviderCleanupError | undefined> {
+  async close(): Promise<ProviderCleanupError | undefined> {
     const failures: string[] = [];
     let processReleased = this.#supervisor === undefined;
     if (this.#supervisor !== undefined) {
@@ -497,10 +521,9 @@ class OwnedCodec implements SourceMapCleanupOwner {
       this.#cleanupAnchor = undefined;
       return undefined;
     }
-    const failure = new SourceMapCleanupFailure(this, this.cleanupResources, {
+    const failure = new SourceMapCleanupFailure(this.cleanupResources, {
       map_path: this.path,
       cleanup_failures: failures,
-      previous_error: previousError,
       codec_pid: this.#supervisor?.launch.process.pid ?? null,
     }).bindCleanupResourceOwner(this);
     if (this.#cleanupAnchor === undefined) this.#cleanupAnchor = failure;

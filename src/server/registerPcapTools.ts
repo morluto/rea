@@ -6,16 +6,13 @@ import type { WithAdmittedAnalysis } from "./analysisAdmission.js";
 import type { Logger } from "pino";
 import {
   createContractToolHandler,
-  createEvidenceToolHandler,
+  createRetainedSummaryToolHandler,
 } from "./contractToolHandler.js";
 import {
   toolRegistrationOptions,
   applicationToolRegistrationOptions,
 } from "./toolRegistrationOptions.js";
 import type { EvidenceLookup } from "../application/EvidenceInputResolver.js";
-import { retainedSummaryDelivery } from "./retainedSummaryDelivery.js";
-import { analysisInputErrorFromIssues } from "../domain/inputIssueProjection.js";
-import { err } from "../domain/result.js";
 
 /** Bind pcap handlers to their exact named contracts through admission. */
 export const registerPcapTools = (
@@ -40,39 +37,17 @@ export const registerPcapTools = (
     handler(clientContract),
   );
   const contract = toolContract("inspect_pcap_capture");
-  const delivery = retainedSummaryDelivery(new Set([contract.name]), {
-    recordEvidence,
-    evidenceById,
-  });
-  const capture = createEvidenceToolHandler(
+  const capture = createRetainedSummaryToolHandler(
     server,
-    async (rawInput, options) => {
-      const parsed = contract.inputSchema.safeParse(rawInput);
-      if (!parsed.success)
-        return err(
-          analysisInputErrorFromIssues(
-            contract.name,
-            parsed.error.issues,
-            rawInput,
-            { cause: parsed.error },
-          ),
-        );
-      const { detail, ...input } = parsed.data;
-      const parameters = { detail };
-      const ready = delivery.preflight(contract.name, parameters);
-      if (!ready.ok) return ready;
-      const result = await service.execute(contract.name, input, options);
-      return result.ok
-        ? delivery.projectEvidence(contract.name, parameters, result.value)
-        : result;
-    },
+    contract,
+    (input, options) => service.execute(contract.name, input, options),
     logger,
-    recordEvidence,
+    { recordEvidence, evidenceById },
     withAdmittedAnalysis,
   );
   server.registerTool(
     contract.name,
     applicationToolRegistrationOptions(contract),
-    capture(contract),
+    capture,
   );
 };

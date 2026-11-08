@@ -4,7 +4,7 @@ import {
   AnalysisResourceConstraintError,
 } from "../domain/analysisErrorCore.js";
 import type { JsonValue } from "../domain/jsonValue.js";
-import type { FunctionDossier } from "../domain/hopperValues.js";
+import type { FunctionDossier } from "../domain/native/functionDossier.js";
 import type { RelationshipCoverage } from "../domain/relationshipCoverage.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import { err, ok, type Result } from "../domain/result.js";
@@ -172,6 +172,18 @@ export class KunaReferenceQueries {
           },
         };
       });
+    const calleeDiscovery =
+      node.kind === "data"
+        ? {
+            discovery: {
+              callees: {
+                status: "partial" as const,
+                reason:
+                  "Kuna classifies this graph node as data and does not analyze it as a function body.",
+              },
+            },
+          }
+        : {};
     return ok({
       callers: identities(graph.callers.get(address) ?? []),
       callees: identities(graph.callees.get(address) ?? []),
@@ -191,8 +203,9 @@ export class KunaReferenceQueries {
             limitations: [
               "Kuna reports indirect calls in this function without every target; additional callees remain unknown.",
             ],
+            ...calleeDiscovery,
           }
-        : { status: "complete" },
+        : { status: "complete", ...calleeDiscovery },
       source: this.#source(graph, node),
     });
   }
@@ -208,6 +221,7 @@ export class KunaReferenceQueries {
       has_indirect_calls: graph.hasIndirectCalls,
       function: {
         address: node.address,
+        kind: node.kind,
         has_indirect_calls: node.hasIndirectCalls,
         forwards_to: node.forwardsTo,
         forwarding_target_in_graph:
@@ -306,15 +320,22 @@ export class KunaReferenceQueries {
   }
 
   #parsed<T>(
-    parsed: Result<T, string>,
+    parsed: Result<
+      T,
+      { readonly code: string; readonly field?: string | undefined }
+    >,
     label: string,
   ): Result<T, AnalysisError> {
-    return parsed.ok
-      ? parsed
-      : err(
-          new ProviderAdapterError(KUNA_PROVIDER_ID, "kuna:references", {
-            userMessage: `Kuna's ${label} cannot be used: ${parsed.error}`,
-          }),
-        );
+    if (parsed.ok) return parsed;
+    const { code, field } = parsed.error;
+    return err(
+      new ProviderAdapterError(KUNA_PROVIDER_ID, "kuna:references", {
+        diagnostics: {
+          code,
+          ...(field === undefined ? {} : { field }),
+        },
+        userMessage: `Kuna's ${label} cannot be used: ${code}`,
+      }),
+    );
   }
 }

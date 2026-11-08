@@ -206,9 +206,8 @@ export const withRegularFileCompletion = async <Value>(
           ...(signal === undefined ? {} : { signal }),
           symlinks: options.symlinks ?? "follow",
         },
-        async (handle) => {
+        async ({ handle, initial: stats }) => {
           admitted = handle;
-          const stats = await handle.stat();
           assertRegularFileActive(signal);
           const value = await read(handle, stats);
           assertRegularFileActive(signal);

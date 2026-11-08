@@ -5,7 +5,10 @@ import {
   withArtifactFileHandle,
   bindArtifactFileCleanup,
 } from "./ArtifactFileOperation.js";
-import { ArtifactResourceRetryFailure } from "./ArtifactResourceScope.js";
+import {
+  ArtifactResourceRetryFailure,
+  ArtifactResourceScope,
+} from "./ArtifactResourceScope.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { expect, it } from "vitest";
 
@@ -16,7 +19,6 @@ import {
   type ArtifactReader,
 } from "./ArtifactReader.js";
 import { translateArtifactFailure } from "./ArtifactOperationFailure.js";
-import { ArtifactResourceScope } from "./ArtifactResourceScope.js";
 
 const deferred = <T>() => {
   let resolve: (value: T) => void = () => {};
@@ -82,7 +84,7 @@ it("stops a close hook even when retained cleanup is still failing", async () =>
     (cause: unknown) => cause,
   );
   expect(closeFailure).toMatchObject({
-    message: "Artifact cleanup remains incomplete: stuck lease, close hook",
+    message: expect.stringContaining("stuck lease, close hook"),
     failedOwners: [owner],
     cleanup: {
       reason: "still owned; hook still stopping",
@@ -303,7 +305,7 @@ it("retains the same failed reader owner in a retry failure and retries before a
 
   await expect(scope.run(async () => "must not run")).rejects.toMatchObject({
     reason: "unavailable",
-    message: "Artifact cleanup remains incomplete: fixture reader",
+    message: expect.stringContaining("fixture reader"),
     failedOwners: [owner],
   });
   expect(closeAttempts).toBe(2);

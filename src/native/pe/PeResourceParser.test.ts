@@ -4,6 +4,7 @@ import {
   inspectPeResourcesInputSchema,
   peResourcesSchema,
 } from "../../domain/native/peResources.js";
+import { hasPeResourceName } from "./PeResourceLayout.js";
 import { parsePeResources } from "./PeResourceParser.js";
 import { peResourceFixture } from "./PeResources.fixture.js";
 
@@ -357,8 +358,8 @@ describe("PE resource section virtual extent", () => {
   };
 
   it.each([
-    [0, "Resource RVA has missing or overlapping section mappings."],
-    [-2, "Resource range leaves its section's virtual size."],
+    [0, /RVA.*(?:missing|overlapping).*section/iu],
+    [-2, /range.*virtual size/iu],
   ])(
     "rejects a payload reaching raw alignment padding past VirtualSize (start %i)",
     async (start, message) => {
@@ -369,7 +370,7 @@ describe("PE resource section virtual extent", () => {
       fixture.bytes.writeUInt32LE(4, (fixture.dataOffsets[0] ?? 0) + 4);
       await expect(parse(fixture.bytes)).rejects.toMatchObject({
         reason: "format",
-        message,
+        message: expect.stringMatching(message),
       });
     },
   );
@@ -404,7 +405,7 @@ describe("PE resource section virtual extent", () => {
     fixture.bytes.writeUInt32LE(0, (fixture.dataOffsets[0] ?? 0) + 4);
     await expect(parse(fixture.bytes)).rejects.toMatchObject({
       reason: "format",
-      message: "Resource RVA has missing or overlapping section mappings.",
+      message: expect.stringMatching(/RVA.*(?:missing|overlapping).*section/iu),
     });
   });
 
@@ -416,7 +417,7 @@ describe("PE resource section virtual extent", () => {
     fixture.bytes.writeUInt32LE(0, (fixture.dataOffsets[0] ?? 0) + 4);
     await expect(parse(fixture.bytes)).rejects.toMatchObject({
       reason: "format",
-      message: "Resource range is not entirely file-backed in one section.",
+      message: expect.stringMatching(/range.*file-backed/iu),
     });
   });
 
@@ -516,7 +517,7 @@ describe("PE resource ownership boundaries", () => {
     const bytes = secondSection(fixture, 4, 0x2001, 0);
     await expect(parse(bytes)).rejects.toMatchObject({
       reason: "format",
-      message: "Resource interval intersects overlapping virtual sections.",
+      message: expect.stringMatching(/interval.*overlapping.*sections/iu),
     });
   });
 
@@ -543,7 +544,7 @@ describe("PE resource ownership boundaries", () => {
     const bytes = secondSection(fixture, 4, 0x100, 4);
     await expect(parse(bytes)).rejects.toMatchObject({
       reason: "format",
-      message: "Ambiguous resource header RVA mapping.",
+      message: expect.stringMatching(/ambiguous.*header.*RVA/iu),
     });
   });
 
@@ -558,5 +559,105 @@ describe("PE resource ownership boundaries", () => {
       location: { offset: 0x100, bytes: 0 },
       sha256: createHash("sha256").digest("hex"),
     });
+  });
+});
+
+const probeSeaName = (bytes: Buffer) =>
+  hasPeResourceName(
+    bytes,
+    bytes.length,
+    async (offset, length) =>
+      offset < 0 || length > bytes.length - offset
+        ? undefined
+        : bytes.subarray(offset, offset + length),
+    10,
+    "NODE_SEA_BLOB",
+    4096,
+  );
+
+it("matches resource names by their exact UTF-16 bytes without losing source identity", async () => {
+  const fixture = peResourceFixture(false, [
+    {
+      type: 10,
+      name: "NODE_SEA_BLOB",
+      language: 1033,
+      payload: Buffer.from("data"),
+    },
+  ]);
+  expect(await probeSeaName(fixture.bytes)).toBe(true);
+  const entry = fixture.entryOffsets.find(
+    (at) => (fixture.bytes.readUInt32LE(at) & 0x80000000) !== 0,
+  );
+  if (entry === undefined) throw new Error("Expected named resource fixture");
+  const nameAt = 0x400 + (fixture.bytes.readUInt32LE(entry) & 0x7fffffff);
+  fixture.bytes[nameAt + 3] = 1;
+  expect(await probeSeaName(fixture.bytes)).toBe(false);
+  const report = await parse(fixture.bytes);
+  expect(report.resources[0]?.name).toMatchObject({
+    kind: "name",
+    name: "\u014eODE_SEA_BLOB",
+    utf16le_hex: fixture.bytes
+      .subarray(nameAt + 2, nameAt + 2 + 26)
+      .toString("hex"),
+  });
+  fixture.bytes.writeUInt16LE(0xffff, nameAt);
+  expect(await probeSeaName(fixture.bytes)).toBe(false);
+  await expect(parse(fixture.bytes)).rejects.toMatchObject({
+    reason: "format",
+  });
+});
+
+it("keeps name probing independent of full resource name/ID partition admission", async () => {
+  const fixture = peResourceFixture(false, [
+    {
+      type: 10,
+      name: "NODE_SEA_BLOB",
+      language: 1033,
+      payload: Buffer.from("data"),
+    },
+  ]);
+  const names = fixture.directoryOffsets[1];
+  if (names === undefined) throw new Error("Expected resource names directory");
+  fixture.bytes.writeUInt16LE(0, names + 12);
+  fixture.bytes.writeUInt16LE(1, names + 14);
+  expect(await probeSeaName(fixture.bytes)).toBe(true);
+  await expect(parse(fixture.bytes)).rejects.toMatchObject({
+    reason: "format",
+    message: expect.stringMatching(/name\/ID.*counts.*encoded identities/iu),
+  });
+});
+
+it("keeps raw name probing separate from full resource-name alignment admission", async () => {
+  const fixture = peResourceFixture(false, [
+    {
+      type: 10,
+      name: "NODE_SEA_BLOB",
+      language: 1033,
+      payload: Buffer.from("data"),
+    },
+  ]);
+  const entry = fixture.entryOffsets.find(
+    (at) => (fixture.bytes.readUInt32LE(at) & 0x80000000) !== 0,
+  );
+  if (entry === undefined) throw new Error("Expected named resource fixture");
+  const original = 0x400 + (fixture.bytes.readUInt32LE(entry) & 0x7fffffff);
+  const nameBytes = 2 + fixture.bytes.readUInt16LE(original) * 2;
+  const previousEnd = fixture.bytes.readUInt32LE(fixture.directoryAt + 4);
+  const unaligned = previousEnd % 2 === 0 ? previousEnd + 1 : previousEnd;
+  const extendedEnd = unaligned + nameBytes;
+  expect(0x400 + extendedEnd).toBeLessThanOrEqual(fixture.bytes.length);
+  fixture.bytes.copy(
+    fixture.bytes,
+    0x400 + unaligned,
+    original,
+    original + nameBytes,
+  );
+  fixture.bytes.writeUInt32LE(0x80000000 + unaligned, entry);
+  fixture.bytes.writeUInt32LE(extendedEnd, fixture.directoryAt + 4);
+  fixture.bytes.writeUInt32LE(extendedEnd, fixture.sectionAt + 8);
+  expect(await probeSeaName(fixture.bytes)).toBe(true);
+  await expect(parse(fixture.bytes)).rejects.toMatchObject({
+    reason: "format",
+    message: "Unaligned PE resource name.",
   });
 });

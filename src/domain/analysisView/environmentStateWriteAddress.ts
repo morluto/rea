@@ -1,5 +1,6 @@
 import type { JsonValue } from "../jsonValue.js";
 import {
+  ownMember,
   at,
   requestJson,
   isObject,
@@ -156,7 +157,8 @@ export const addressOf = (
     )
       return { by: "ids", member, kind };
     return value.every(
-      (entry) => isObject(entry) && scalarText(entry[idField]) !== undefined,
+      (entry) =>
+        isObject(entry) && scalarText(ownMember(entry, idField)) !== undefined,
     )
       ? { by: "elements", member }
       : undefined;
@@ -235,7 +237,9 @@ export const namedEntities = (
   )
     return undefined;
   const entries = (
-    address.member === null ? body : (body as JsonObject)[address.member]
+    address.member === null
+      ? body
+      : ownMember(body as JsonObject, address.member)
   ) as JsonValue[];
   const shared =
     address.member === null || !isObject(body)
@@ -246,7 +250,10 @@ export const namedEntities = (
   const named = entries.map((entry) =>
     address.by === "ids"
       ? { id: scalarText(entry)!, body: shared }
-      : { id: scalarText((entry as JsonObject)[idField])!, body: entry },
+      : {
+          id: scalarText(ownMember(entry as JsonObject, idField))!,
+          body: entry,
+        },
   ) as NamedEntity[];
   return new Set(named.map(({ id }) => id)).size === named.length
     ? named

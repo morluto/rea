@@ -9,11 +9,13 @@ import { join } from "node:path";
 import { createPackage, createPackageWithOptions } from "@electron/asar";
 import { expect, it } from "vitest";
 
-import { analyzeJavaScriptApplication } from "../../support/javascriptApplicationScope.js";
+import {
+  analyzeJavaScriptApplication,
+  readJavaScriptArtifactFiles,
+} from "../../support/javascriptApplicationScope.js";
 import { javascriptApplicationAnalysisResultSchema } from "../../../src/domain/javascript/javascriptApplicationAnalysis.js";
 import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
 import { createJavaScriptArtifactReader } from "../../../src/artifacts/javascript/JavaScriptArtifactReader.js";
-import { readJavaScriptArtifactFiles } from "../../support/javascriptApplicationScope.js";
 import { scanCanonicalArtifactInventory } from "../../fixtures/artifactInventory.js";
 import { createStrippedAsarAddon } from "../../fixtures/strippedAsarAddon.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";

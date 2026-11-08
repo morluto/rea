@@ -4,7 +4,7 @@ import type {
 } from "../application/Doctor.js";
 import { parseJebMcpTimeoutMs } from "../config/environment.js";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
-import { parseJebMcpEndpoint } from "./JebMcpEndpoint.js";
+import { parseJebMcpEndpoint } from "../config/jebMcpEndpoint.js";
 
 /** Check selected JEB settings without launching the engine, retaining the validated endpoint independently of readiness. */
 export const inspectJebRegistration = (
@@ -30,7 +30,7 @@ export const inspectJebRegistration = (
             .map(({ setting, constraint }) => `${setting}: ${constraint}`)
             .join("; "),
           remediation:
-            "Fix REA_JEB_MCP_TIMEOUT_MS or unset it to use the default request budget; see docs/jeb-analysis.md.",
+            "Fix REA_JEB_MCP_TIMEOUT_MS or unset it to use the default request budget; see docs/providers/jeb-analysis.md.",
           classification: "config_drift",
         },
       ];
@@ -71,7 +71,7 @@ export const inspectJebRegistration = (
           : `JEB MCP endpoint is invalid: ${endpointConstraint(parsed.error)}.`,
         remediation: valid
           ? null
-          : "Set REA_JEB_MCP_URL to your running JEB MCP endpoint; see docs/jeb-analysis.md.",
+          : "Set REA_JEB_MCP_URL to your running JEB MCP endpoint; see docs/providers/jeb-analysis.md.",
         classification: "config_drift",
       },
       ...timeoutChecks,
