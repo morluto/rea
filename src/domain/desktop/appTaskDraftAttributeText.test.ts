@@ -42,6 +42,19 @@ describe("draftTaskFiles for text an app keeps in an attribute", () => {
         flyer("Summer ", "Fete"),
       ].map((text) => passing(FILE, xml(text), file.suggested)),
     ).toEqual([[false], [true], [true], [true], [false]]);
+    const checks = [...file.suggested, ...file.guards];
+    expect(
+      file.guards.some(
+        (guard) =>
+          "matching" in guard && String(guard.matching).includes("ITEXT"),
+      ),
+    ).toBe(false);
+    expect(
+      passing(FILE, xml(flyer("Summer Fair")), checks).every(Boolean),
+    ).toBe(true);
+    expect(
+      passing(FILE, xml(flyer("Sum", "mer ", "Fair")), checks).every(Boolean),
+    ).toBe(true);
   });
 
   it("keeps a check of a run's formatting the text check does not read, beside it", () => {
@@ -114,5 +127,24 @@ describe("draftTaskFiles for text an app keeps in an attribute", () => {
     // Another save of the same edit gives the node another id and times.
     const solved = map([tent, bags, ["Water filter", "ID_1048576333"]]);
     expect(passing(FILE, xml(solved), added.suggested)).toEqual([true, true]);
+  });
+});
+
+describe("draftTaskFiles for a run's formatting", () => {
+  const flyer = (font: string) =>
+    `<SCRIBUSUTF8NEW><DOCUMENT><PAGEOBJECT ANNAME="Headline" XPOS="10.5" ItemID="3"><StoryText><ITEXT FONT="${font}" CH="Spring "/><ITEXT FONT="Bold" CH="Fair"/></StoryText></PAGEOBJECT><PAGEOBJECT ANNAME="Details" XPOS="10.5" ItemID="4"><StoryText><ITEXT CH="Saturday at 7 PM"/></StoryText></PAGEOBJECT></DOCUMENT></SCRIBUSUTF8NEW>`;
+
+  it("keeps a font change on the run that holds it, rather than joining every run's font into the frame's text", () => {
+    const file = xmlDraft(flyer("Regular"), flyer("Italic"));
+
+    expect(file.suggested).toEqual([
+      {
+        kind: "value_equals",
+        file: FILE,
+        pointer:
+          "/root/children/[name=DOCUMENT]/children/[name=PAGEOBJECT][@ANNAME=Headline]/children/[name=StoryText]/children/[name=ITEXT][@CH=Spring ]/attributes/FONT",
+        value: "Italic",
+      },
+    ]);
   });
 });

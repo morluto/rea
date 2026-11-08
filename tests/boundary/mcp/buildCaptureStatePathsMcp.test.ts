@@ -95,9 +95,9 @@ it("makes a file named in state_paths the app's document, which the draft covers
   const { id, stopped } = await capture(client, { state_paths: [DOCUMENT] });
 
   const calls = (await rea.notes("calls.jsonl")) as { argv: string[] }[];
-  expect(calls[0]?.argv).toEqual(
-    expect.arrayContaining(["--state-path", join(rea.home, DOCUMENT)]),
-  );
+  expect(
+    calls.find(({ argv }) => argv[0] === "capture-desktop-application")?.argv,
+  ).toEqual(expect.arrayContaining(["--state-path", join(rea.home, DOCUMENT)]));
   expect(stopped.draft).toMatchObject({
     files: [{ file: DOCUMENT, role: "document" }],
     task: { checks: [{ kind: "lines_present", file: DOCUMENT }] },
@@ -116,7 +116,11 @@ it("says why a draft has no files when the app's document is not recognized, and
   const { id, stopped } = await capture(client, {});
 
   const calls = (await rea.notes("calls.jsonl")) as { argv: string[] }[];
-  expect(calls[0]?.argv).not.toContain("--state-path");
+  const captureArgs = calls.find(
+    ({ argv }) => argv[0] === "capture-desktop-application",
+  )?.argv;
+  expect(captureArgs).toBeDefined();
+  expect(captureArgs).not.toContain("--state-path");
   expect(stopped.draft?.files).toEqual([]);
   expect(stopped.draft?.notes).toMatchObject([
     {
@@ -162,7 +166,11 @@ it("refuses state_paths outside the home, through '..' or past the limit, and st
   const outside = await start(["/etc/hosts"]);
   expect(outside.error.code).toBe("invalid_request");
   expect(outside.error.message).toContain("/etc/hosts");
-  expect(await rea.notes("calls.jsonl")).toEqual([]);
+  expect(
+    ((await rea.notes("calls.jsonl")) as { argv: string[] }[]).filter(
+      ({ argv }) => argv[0] === "capture-desktop-application",
+    ),
+  ).toEqual([]);
 
   // A refused start leaves no capture behind, so the next one starts.
   await callOk(client, "start_build_capture", {
@@ -170,12 +178,12 @@ it("refuses state_paths outside the home, through '..' or past the limit, and st
     state_paths: [join(rea.home, DOCUMENT)],
   });
   const calls = (await rea.notes("calls.jsonl")) as { argv: string[] }[];
-  expect(calls.map(({ argv }) => argv[0])).toEqual([
-    "capture-desktop-application",
-  ]);
-  expect(calls[0]?.argv).toEqual(
-    expect.arrayContaining(["--state-path", join(rea.home, DOCUMENT)]),
-  );
+  expect(
+    calls.filter(({ argv }) => argv[0] === "capture-desktop-application"),
+  ).toHaveLength(1);
+  expect(
+    calls.find(({ argv }) => argv[0] === "capture-desktop-application")?.argv,
+  ).toEqual(expect.arrayContaining(["--state-path", join(rea.home, DOCUMENT)]));
 });
 
 it("refuses a state path a link leads outside the home or into REA's work folder, existing yet or not, and starts nothing for it", async () => {
@@ -206,7 +214,11 @@ it("refuses a state path a link leads outside the home or into REA's work folder
     expect(error.code, statePath).toBe("invalid_request");
     expect(error.message, statePath).toContain(statePath);
   }
-  expect(await rea.notes("calls.jsonl")).toEqual([]);
+  expect(
+    ((await rea.notes("calls.jsonl")) as { argv: string[] }[]).filter(
+      ({ argv }) => argv[0] === "capture-desktop-application",
+    ),
+  ).toEqual([]);
 
   // A link that stays in the home is followed, and the path passed as named.
   await mkdir(join(rea.home, "settings/MuseScore"), { recursive: true });
@@ -220,7 +232,9 @@ it("refuses a state path a link leads outside the home or into REA's work folder
     state_paths: [".config/MuseScore", ".config/MuseScore/not-yet.ini"],
   });
   const calls = (await rea.notes("calls.jsonl")) as { argv: string[] }[];
-  expect(calls[0]?.argv).toEqual(
+  expect(
+    calls.find(({ argv }) => argv[0] === "capture-desktop-application")?.argv,
+  ).toEqual(
     expect.arrayContaining([
       "--state-path",
       join(rea.home, ".config/MuseScore"),

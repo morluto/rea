@@ -116,9 +116,9 @@ describe("fixed allowance recovery", () => {
         expect(projected.remediation.action).toContain(
           "live output may change between requests",
         );
-      if (kind === "capture")
-        expect(projected.remediation.action).toContain(
-          "Repeating the unchanged request fails the same way.",
+      if (kind === "capture" || kind === "count")
+        expect(projected.remediation.action).toMatch(
+          /unchanged request.*fails/iu,
         );
     },
   );

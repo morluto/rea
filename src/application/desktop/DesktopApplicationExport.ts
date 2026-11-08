@@ -237,6 +237,7 @@ const planExport = (
     seedFiles: [...seeds.keys()].sort(),
     textSeeds,
     seedModes: seedModes(capture, seeds, files, context.seed),
+    stateAliases: stateFiles.stateAliases,
     unseededFiles: unseeded.filter((file) => !isLeftOut(file)),
     ...leftOutSeeds(
       [...locks, ...unseeded.filter(isLeftOut)],
@@ -262,6 +263,14 @@ const planExport = (
     dconf: dconfScrub,
   };
 };
+
+/** The limitation naming files the desktop Trash held at the seed; none when it held none. */
+export const trashedFilesLimitation = (
+  files: readonly string[],
+): string | undefined =>
+  files.length === 0
+    ? undefined
+    : `The desktop Trash held ${String(files.length)} file(s) at the seed checkpoint, which are not seeded: ${files.map((home) => `~/${home}`).join(", ")}. Restore one the task needs and capture again.`;
 
 /** The limitation on where the seed came from: made for the task, or the user's real state, kept local. */
 export const seedLimitation = (syntheticSeed: boolean): string =>
@@ -333,6 +342,7 @@ const exportLimitations = (
   const locks = leftOutLocksLimitation(plan.leftOutLocks);
   const logs = leftOutLogsLimitation(plan.leftOutLogs);
   const recovered = recoveryListLimitation(facts.recovered);
+  const trashed = trashedFilesLimitation(facts.trashed);
   return [
     seedLimitation(plan.syntheticSeed),
     SCRUB_LIMITATION,
@@ -348,11 +358,7 @@ const exportLimitations = (
     ...(recovered === undefined ? [] : [recovered]),
     ...(unowned === undefined ? [] : [unowned]),
     ...(runtime === undefined ? [] : [runtime]),
-    ...(facts.trashed.length === 0
-      ? []
-      : [
-          `The desktop Trash held ${String(facts.trashed.length)} file(s) at the seed checkpoint, which are not seeded: ${facts.trashed.map((home) => `~/${home}`).join(", ")}. Restore one the task needs and capture again.`,
-        ]),
+    ...(trashed === undefined ? [] : [trashed]),
     ...(facts.identity.hostname === null || facts.identity.user === null
       ? [
           "The capture does not record the host's name and user, so only the captured home is removed from the seed; capture again to remove them too.",
@@ -411,7 +417,14 @@ const runExport = async (
         );
   const admitted = await admitDesktopTask(
     request.tasks,
-    { ...plan, files, identity, ends, seedViews },
+    {
+      ...plan,
+      files,
+      identity,
+      ends,
+      seedViews,
+      seeded: new Set(seeds.keys()),
+    },
     signal,
   );
   const { generated, readme } = bundleText(plan, admitted, dconf.holdsIdentity);

@@ -1,7 +1,9 @@
 """Run REA inside an agentenv build computer for REA on the host: capture the app, draft its task and export it.
 
 REA sends this file's source through the computer's ``computer-exec/v1`` route as
-``python3 -I -c <source> <command> <JSON arguments>``; each command prints one JSON line and exits. ``start``
+``python3 -I -c <source> <command> <JSON arguments>``. JSON that would exceed the bytes Linux
+passes as one string travels as several arguments, which this file joins before parsing. Each command prints
+one JSON line and exits. ``start``
 leaves the capture running on its own: its stdin is a FIFO it holds open for reading and writing, so it never
 sees the end of its input, and ``mark`` and ``stop`` write their requests there and wait for the capture's own
 acknowledgement on its progress log. A small shell around the capture writes its exit status to a file, the
@@ -53,10 +55,16 @@ def _apt(work: str, timeout: float) -> dict:
     os.makedirs(os.path.join(lists, "partial"), exist_ok=True)
     os.makedirs(os.path.join(root, "cache", "archives", "partial"), exist_ok=True)
     with open(os.path.join(root, "apt.conf"), "w", encoding="utf-8") as conf:
-        conf.write(f'Dir::State::Lists "{lists}";\nDir::Cache "{root}/cache";\nDebug::NoLocking "true";\n')
+        conf.write(
+            f'Dir::State::Lists "{lists}";\n'
+            f'Dir::Cache "{root}/cache";\n'
+            'Debug::NoLocking "true";\n'
+            'APT::Update::Error-Mode "any";\n'
+        )
     # apt keeps lists compressed as it fetched them, such as *_Packages.lz4 on Ubuntu.
     count = lambda: len([name for name in os.listdir(lists) if re.search(r"_Packages(\.\w+)?$", name)])  # noqa: E731
-    if os.path.exists(updated):
+    # A marker left by an update that fetched nothing is not a success; download again.
+    if os.path.exists(updated) and count() > 0:
         return {"lists": count(), "updated": False}
     log = os.path.join(root, "update.log")
     try:
@@ -65,11 +73,15 @@ def _apt(work: str, timeout: float) -> dict:
                                   stdout=output, stderr=subprocess.STDOUT, timeout=timeout).returncode
     except (OSError, subprocess.TimeoutExpired) as error:
         return {"lists": count(), "updated": True, "error": f"{type(error).__name__}: {error}"}
-    if code == 0:
-        # Only a whole update is kept, so a failed or partial one runs again on the next start.
+    lists_fetched = count()
+    if code == 0 and lists_fetched > 0:
+        # Only a whole update that fetched lists is kept, so a failed or empty one runs again.
         open(updated, "w").close()
-        return {"lists": count(), "updated": True, "exit_code": code}
-    return {"lists": count(), "updated": True, "exit_code": code,
+        return {"lists": lists_fetched, "updated": True, "exit_code": code}
+    if code == 0:
+        return {"lists": lists_fetched, "updated": True, "exit_code": code,
+                "error": "apt-get update exited 0 without a package list"}
+    return {"lists": lists_fetched, "updated": True, "exit_code": code,
             "error": f"apt-get update exited {code}: {_tail(log)[-1500:].strip()}"}
 
 
@@ -178,16 +190,32 @@ def start(arguments: dict) -> int:
         argv += ["--package-file", arguments["package_file"]]
     # Reading and writing, so the capture never reads the end of its input between requests.
     reader = os.open(control, os.O_RDWR)
+    process = None
     try:
-        with open(os.path.join(capture, "capture.out"), "wb") as out, \
-                open(os.path.join(capture, "progress.log"), "wb") as progress:
-            process = subprocess.Popen(
-                ["sh", "-c", 'done=$1; shift; "$@"; code=$?; printf "%s" "$code" > "$done.tmp" && mv "$done.tmp" "$done"',
-                 "sh", os.path.join(capture, "exit"), *argv],
-                cwd=os.path.expanduser("~"), env=_environment(work), stdin=reader, stdout=out, stderr=progress,
-                start_new_session=True)
+        try:
+            with open(os.path.join(capture, "capture.out"), "wb") as out, \
+                    open(os.path.join(capture, "progress.log"), "wb") as progress:
+                process = subprocess.Popen(
+                    ["sh", "-c", 'done=$1; shift; "$@"; code=$?; printf "%s" "$code" > "$done.tmp" && mv "$done.tmp" "$done"',
+                     "sh", os.path.join(capture, "exit"), *argv],
+                    cwd=os.path.expanduser("~"), env=_environment(work), stdin=reader, stdout=out, stderr=progress,
+                    start_new_session=True)
+        except Exception as cause:
+            # Nothing will write exit. Record one and drop the FIFO, so stop does not wait on it.
+            try:
+                with open(os.path.join(capture, "exit"), "w", encoding="utf-8") as handle:
+                    handle.write("1")
+            except OSError:
+                pass
+            try:
+                os.unlink(control)
+            except OSError:
+                pass
+            return _say({"error": f"the capture did not start: {cause}"})
     finally:
         os.close(reader)
+    if process is None:
+        return _say({"error": "the capture did not start"})
     waited = _wait(capture, 0, {"window_open"}, None, arguments.get("timeout_s", 120))
     return _say({"pid": process.pid, "apt": apt, **waited})
 
@@ -246,6 +274,7 @@ def run(arguments: dict) -> int:
     rea = shutil.which("rea")
     if rea is None:
         return _say({"error": "REA is not installed in this computer"})
+    os.makedirs(os.path.dirname(arguments["stdout"]), exist_ok=True)
     for path, text in arguments.get("files", {}).items():
         os.makedirs(os.path.dirname(path), exist_ok=True)
         with open(path, "w", encoding="utf-8") as handle:
@@ -292,4 +321,4 @@ def listing(arguments: dict) -> int:
 COMMANDS = {"start": start, "mark": mark, "stop": stop, "run": run, "list": listing}
 
 if __name__ == "__main__":
-    sys.exit(COMMANDS[sys.argv[1]](json.loads(sys.argv[2])))
+    sys.exit(COMMANDS[sys.argv[1]](json.loads("".join(sys.argv[2:]))))

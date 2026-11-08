@@ -44,6 +44,35 @@ def _selector(token: str):
     return conditions
 
 
+_ISO_STAMP = re.compile(
+    r"^\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}(?::\d{2}(?:[.,]\d+)?)?(?:Z|[+-]\d{2}:?\d{2})?$"
+)
+_ASCTIME_STAMP = re.compile(
+    r"^(?:Mon|Tue|Wed|Thu|Fri|Sat|Sun) (?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec) [ 0-3]?\d \d{2}:\d{2}:\d{2} \d{4}$"
+)
+
+
+def _is_saved_time(text: str) -> bool:
+    stripped = text.strip()
+    return _ISO_STAMP.fullmatch(stripped) is not None or _ASCTIME_STAMP.fullmatch(stripped) is not None
+
+
+def _text_without_stamps(node) -> str:
+    """An element's text with save-time leaves removed, matching the selector that named it."""
+    if isinstance(node, str):
+        return "" if _is_saved_time(node) else node
+    if not _is_element(node):
+        return ""
+    return "".join(_text_without_stamps(child) for child in node["children"])
+
+
+def _condition_text(child) -> str:
+    """A child's text as a condition reads it: whitespace collapsed, without a nested save time unless it is only
+    a time."""
+    plain = _collapse_whitespace(_text_without_stamps(child))
+    return plain if plain else _collapse_whitespace(_element_text(child))
+
+
 def _element_holds(element, steps, value: str) -> bool:
     """Whether an element has a child element named the first step that holds value along the rest: at the last step
     its text, whitespace collapsed, or with NAME@ATTR its attribute ATTR. Each element on the way is visited once."""
@@ -58,7 +87,7 @@ def _element_holds(element, steps, value: str) -> bool:
         elif at:
             if child["attributes"].get(attribute) == value:
                 return True
-        elif _collapse_whitespace(_element_text(child)) == value:
+        elif _condition_text(child) == value:
             return True
     return False
 

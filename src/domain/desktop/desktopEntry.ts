@@ -343,3 +343,23 @@ export const unwrapDesktopCommand = (
     };
   return { kind: "direct", program, environment, index };
 };
+
+/** The first argument after an `env` prefix, the program, and a `flatpak run` id. */
+export const desktopArgumentIndex = (argv: readonly string[]): number => {
+  const command = unwrapDesktopCommand(argv);
+  if (command.kind === "direct") return command.index + 1;
+  let index = 0;
+  if (argv[0]?.split("/").at(-1) === "env") {
+    index = 1;
+    while (/^[A-Za-z_][A-Za-z0-9_]*=/u.test(argv[index] ?? "")) index += 1;
+  }
+  index += 1;
+  if (argv[index] === "run") index += 1;
+  for (; index < argv.length; index += 1) {
+    const token = argv[index] ?? "";
+    if (token === "--") return Math.min(index + 2, argv.length);
+    if (!token.startsWith("-")) return index + 1;
+    if (FLATPAK_RUN_VALUE_OPTIONS.has(token)) index += 1;
+  }
+  return argv.length;
+};

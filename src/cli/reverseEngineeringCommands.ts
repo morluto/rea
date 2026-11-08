@@ -20,6 +20,7 @@ import {
   rizinInputSchema,
 } from "../domain/reverseEngineering.js";
 import { logCliCommand } from "../cliLogging.js";
+import { cliDecimalField } from "./options.js";
 import type { CliInstance } from "./types.js";
 import { withCommandCancellation } from "./commandCancellation.js";
 import { CLI_COMMANDS } from "../cliCommandNames.js";
@@ -218,7 +219,7 @@ export const registerReverseEngineeringCommands = (
         .describe(
           "Follow local DWARF debug links. External debug-file identity is not bound to Evidence.",
         ),
-      commandTimeoutMs: reverseCommandTimeoutSchema,
+      commandTimeoutMs: cliDecimalField(reverseCommandTimeoutSchema),
     }),
     run: ({ args, options }) =>
       withCommandCancellation((signal) =>
@@ -261,7 +262,7 @@ export const registerReverseEngineeringCommands = (
     args: z.object({}),
     options: z.object({
       ...analysisEvidenceDeliveryOptions,
-      commandTimeoutMs: reverseCommandTimeoutSchema,
+      commandTimeoutMs: cliDecimalField(reverseCommandTimeoutSchema),
     }),
     run: ({ options }) =>
       withCommandCancellation((signal) =>
@@ -311,10 +312,10 @@ export const registerReverseEngineeringCommands = (
     }),
     options: z.object({
       asmArch: rizinInputSchema.shape.asm_arch,
-      asmBits: rizinInputSchema.shape.asm_bits,
+      asmBits: cliDecimalField(rizinInputSchema.shape.asm_bits),
       asmCpu: rizinInputSchema.shape.asm_cpu,
       baseAddress: rizinInputSchema.shape.base_address,
-      commandTimeoutMs: reverseCommandTimeoutSchema,
+      commandTimeoutMs: cliDecimalField(reverseCommandTimeoutSchema),
     }),
     run: ({ args, options }) =>
       withCommandCancellation((signal) =>

@@ -26,6 +26,7 @@ export const CHECK_VIEWS: Readonly<Record<string, TaskFileView>> = {
       tags: ["a", "b"],
       "a/b": { "~k": null },
       scale: "1.2500",
+      shaped: { name: "Cell", attributes: {}, children: ["437.8"] },
     },
   },
   ".config/notes/app.ini": {
@@ -192,6 +193,13 @@ export const CHECK_VIEWS: Readonly<Record<string, TaskFileView>> = {
       truncated: false,
     },
   },
+  "Documents/cut-number.xml": {
+    format: "xml",
+    view: {
+      root: element("Cell", {}, ["437.", "8"]),
+      truncated: true,
+    },
+  },
   "Documents/budget.xml": {
     format: "xml",
     view: {
@@ -199,6 +207,30 @@ export const CHECK_VIEWS: Readonly<Record<string, TaskFileView>> = {
         element("Cell", { Row: "2", Col: "3" }, ["437.80000000000001"]),
         element("Cell", { Row: "2", Col: "2" }, ["398.2"]),
         element("Cell", { Row: "3", Col: "3" }, ["174.9"]),
+        element("Cell", { Row: "5", Col: "3" }, [
+          "437.",
+          element("span", {}, ["80"]),
+        ]),
+        element("Cell", { Row: "6", Col: "3" }, ["four hundred"]),
+      ]),
+      truncated: false,
+    },
+  },
+  "Documents/people.xml": {
+    format: "xml",
+    view: {
+      root: element("people", {}, [
+        element("person", {}, [
+          element("details", {}, [
+            "Delphine",
+            element("modified", {}, ["Thu Nov  5 09:20:31 2026"]),
+          ]),
+          element("date", {}, ["2026-11-07T10:12:00Z"]),
+        ]),
+        element("person", {}, [
+          element("details", {}, ["Ada"]),
+          element("date", {}, ["2026-11-08T09:00:00Z"]),
+        ]),
       ]),
       truncated: false,
     },
@@ -700,6 +732,69 @@ const TOLERANCE_CASES: readonly (readonly [DesktopTaskCheckInput, boolean])[] =
       },
       false,
     ],
+    // The cell element, so a split run and an equivalent decimal are the same number.
+    [
+      {
+        kind: "value_equals",
+        file: "Documents/budget.xml",
+        pointer: "/root/children/[name=Cell][@Row=2][@Col=3]",
+        value: 437.8,
+        tolerance: 0.001,
+      },
+      true,
+    ],
+    [
+      {
+        kind: "value_equals",
+        file: "Documents/budget.xml",
+        pointer: "/root/children/[name=Cell][@Row=5][@Col=3]",
+        value: 437.8,
+        tolerance: 0.001,
+      },
+      true,
+    ],
+    [
+      {
+        kind: "value_equals",
+        file: "Documents/budget.xml",
+        pointer: "/root/children/[name=Cell][@Row=5][@Col=3]",
+        value: 437.89,
+        tolerance: 0.001,
+      },
+      false,
+    ],
+    [
+      {
+        kind: "value_equals",
+        file: "Documents/budget.xml",
+        pointer: "/root/children/[name=Cell][@Row=6][@Col=3]",
+        value: 400,
+        tolerance: 0.001,
+      },
+      false,
+    ],
+    // A cut view dropped the text between 437. and 8. The joined numeral is not the file's number.
+    [
+      {
+        kind: "value_equals",
+        file: "Documents/cut-number.xml",
+        pointer: "/root",
+        value: 437.8,
+        tolerance: 0.001,
+      },
+      false,
+    ],
+    // A JSON object shaped like an element is not a cell's text.
+    [
+      {
+        kind: "value_equals",
+        file: settings,
+        pointer: "/shaped",
+        value: 437.8,
+        tolerance: 0.001,
+      },
+      false,
+    ],
   ];
 
 const meeting = "Documents/meeting.xml";
@@ -983,6 +1078,24 @@ const TEXT_CASES: readonly (readonly [DesktopTaskCheckInput, boolean])[] = [
     },
     false,
   ],
+  [
+    {
+      kind: "text_contains",
+      file: "Documents/cut.xml",
+      pointer: "/root/children/2",
+      value: "later",
+    },
+    false,
+  ],
+  [
+    {
+      kind: "text_equals",
+      file: "Documents/listing.zip",
+      pointer: "/entries/1/view/root/children/2",
+      value: "later",
+    },
+    false,
+  ],
 ];
 
 /** Failures a cut view may have caused, which both evaluators fail alike and REA marks undecided. */
@@ -1203,6 +1316,36 @@ const ledger = "Documents/ledger.json";
 /** Members named by a child element's text, its whitespace collapsed, alone or with other conditions. */
 const CHILD_TEXT_CASES: readonly (readonly [DesktopTaskCheckInput, boolean])[] =
   [
+    [
+      {
+        kind: "member_count",
+        file: "Documents/people.xml",
+        pointer: "/root/children",
+        matching: "[>date=2026-11-07T10:12:00Z]",
+        equals: 1,
+      },
+      true,
+    ],
+    [
+      {
+        kind: "member_count",
+        file: "Documents/people.xml",
+        pointer: "/root/children",
+        matching: "[>details=Delphine]",
+        equals: 1,
+      },
+      true,
+    ],
+    [
+      {
+        kind: "member_count",
+        file: "Documents/people.xml",
+        pointer: "/root/children",
+        matching: "[>date=1999-01-01T00:00:00Z]",
+        equals: 1,
+      },
+      false,
+    ],
     [
       {
         kind: "text_equals",

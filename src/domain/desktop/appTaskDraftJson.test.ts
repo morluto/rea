@@ -2,8 +2,9 @@ import { describe, expect, it } from "vitest";
 
 import type { JsonValue } from "../jsonValue.js";
 import { draftOf, pointerOf, statePath } from "./appTaskDraft.fixture.js";
-import { evaluateTaskChecks } from "./appTaskChecks.js";
+import { evaluateTaskChecks, type TaskFileView } from "./appTaskChecks.js";
 import { jsonCounts } from "./appTaskDraftJson.js";
+import { pairRecordsById } from "./jsonRecordPairing.js";
 import type { DesktopTaskCheckInput } from "./appTask.js";
 
 const FILE = "Documents/reading-list.trln";
@@ -605,5 +606,78 @@ describe("jsonCounts over many edited records", () => {
       { kind: "member_count", file: FILE, pointer: "/rows", equals: 1000 },
     ]);
     expect(read).toBe(1);
+  });
+
+  it("does not count a JSON array that was removed, and counts a top-level array", () => {
+    const removed = drafted({ items: ["a", "b"] }, {});
+    expect(
+      removed.suggested.some(
+        (check) => check.kind === "member_count" && check.equals === 0,
+      ),
+    ).toBe(false);
+
+    const added = drafted(
+      [
+        { uid: "a", name: "Ada" },
+        { uid: "b", name: "Lin" },
+      ],
+      [
+        { uid: "a", name: "Ada" },
+        { uid: "b", name: "Lin" },
+        { uid: "c", name: "Kai" },
+      ],
+    );
+    expect(added.suggested).toContainEqual({
+      kind: "member_count",
+      file: FILE,
+      pointer: "",
+      equals: 3,
+    });
+    const graded = (view: TaskFileView["view"]) =>
+      evaluateTaskChecks(
+        added.suggested.map((check, index) => ({
+          ...check,
+          id: `c${String(index)}`,
+        })),
+        new Map([[FILE, { format: "json", view }]]),
+      ).map(({ passed }) => passed);
+    expect(
+      graded([
+        { uid: "a", name: "Ada" },
+        { uid: "b", name: "Lin" },
+      ]),
+    ).toContain(false);
+    expect(
+      graded([
+        { uid: "a", name: "Ada" },
+        { uid: "b", name: "Lin" },
+        { uid: "c", name: "Kai" },
+      ]).every(Boolean),
+    ).toBe(true);
+  });
+
+  it("pairs records by uid when parent_id also names each", () => {
+    const before = [
+      { parent_id: "root", uid: "a", name: "Ada" },
+      { parent_id: "root", uid: "b", name: "Lin" },
+    ];
+    const after = [
+      { parent_id: "moved", uid: "a", name: "Ada" },
+      { parent_id: "root", uid: "b", name: "Lin" },
+    ];
+    const paired = pairRecordsById(after, before);
+
+    expect(paired?.newer.keys).toEqual(["[uid=a]", "[uid=b]"]);
+  });
+
+  it("does not pair records through a field whose name is a selector mark", () => {
+    const records = (name: string) => [
+      { "@record_id": "one", name },
+      { "@record_id": "two", name: "Lin" },
+    ];
+
+    expect(
+      pairRecordsById(records("Ada Lane"), records("Ada")),
+    ).toBeUndefined();
   });
 });

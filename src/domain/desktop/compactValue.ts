@@ -43,6 +43,7 @@ const isArchiveEntry = (value: JsonValue): value is Record<string, JsonValue> =>
 export const compactValue = (
   value: JsonValue | undefined,
   max: number,
+  format: "json" | "xml" | "archive",
 ): JsonValue => {
   if (value === undefined) return null;
   if (typeof value === "string") return cut(value, max);
@@ -55,7 +56,7 @@ export const compactValue = (
     return length <= max;
   };
   const write = (node: JsonValue): boolean => {
-    if (isXmlElement(node)) {
+    if (format === "xml" && isXmlElement(node)) {
       const start = startTag(node);
       if (node.children.length === 0) return push(`${start}/>`);
       return (
@@ -66,7 +67,7 @@ export const compactValue = (
         push(`</${node.name}>`)
       );
     }
-    if (isArchiveEntry(node))
+    if (format === "archive" && isArchiveEntry(node))
       return push(
         JSON.stringify({
           name: node.name,

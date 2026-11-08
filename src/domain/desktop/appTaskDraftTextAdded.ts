@@ -1,4 +1,5 @@
 import type { DesktopTaskCheckInput } from "./appTask.js";
+import { isStamp } from "./appTaskDraftNoise.js";
 
 /** The shortest added text a check looks for: shorter text is too likely to be found elsewhere. */
 const MIN_ADDED_CHARS = 3;
@@ -30,6 +31,7 @@ const keptLines = (head: string, tail: string): string[] => {
       if (
         kept.length < MIN_ADDED_CHARS ||
         !/[\p{L}\d]/u.test(kept) ||
+        isStamp(kept) ||
         seen.has(kept)
       )
         return [];
