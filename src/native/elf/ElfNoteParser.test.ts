@@ -6,6 +6,7 @@ import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
 import { decodeElfSectionNameTable } from "../metadata/ElfSectionNameTable.js";
 import { readElfDirectoryFromBuffer } from "../metadata/NativeSectionDirectory.js";
 import {
+  androidIdentNote,
   compressedElfNoteFixture,
   compressedElfNoteSectionFixture,
   coreAuxvNote,
@@ -315,6 +316,8 @@ it("keeps non-GNU owners as unknown types with descriptor hashes", () => {
     owner: "CORE",
     type_name: "unknown",
     gnu: null,
+    core: null,
+    android: null,
   });
   expect(report.entries[0]?.descriptor.sha256).toBe(
     createHash("sha256").update(payload).digest("hex"),
@@ -1079,4 +1082,224 @@ it("does not spend text budget on malformed or discarded NT_FILE paths", () => {
   });
   const report = parse(bytes);
   expect(report.entries[0]?.core).toBeNull();
+});
+
+it.each([
+  { bits: 64, little: true, machine: 183 },
+  { bits: 64, little: true, machine: 62 },
+  { bits: 32, little: false, machine: 8 },
+  { bits: 64, little: false, machine: 21 },
+] as const)(
+  "decodes Android .note.android.ident 132-byte, 152-byte, and legacy 4-byte descriptors (ELF$bits little=$little machine=$machine)",
+  ({ bits, little, machine }) => {
+    const extendedTail = Buffer.alloc(20, 0xaa);
+    const notes = Buffer.concat([
+      androidIdentNote({
+        androidApi: 24,
+        ndkVersion: "r27c",
+        ndkBuildNumber: "12297006",
+        little,
+      }),
+      androidIdentNote({
+        androidApi: 35,
+        ndkVersion: "r28",
+        ndkBuildNumber: "12479018",
+        extraTail: extendedTail,
+        little,
+      }),
+      androidIdentNote({
+        androidApi: 21,
+        ndkVersion: null,
+        ndkBuildNumber: null,
+        little,
+      }),
+      elfNote("Android", 2, Buffer.from([1, 2, 3, 4]), little),
+    ]);
+    const bytes = elfNoteFixture({
+      bits,
+      little,
+      machine,
+      ownership: "section",
+      sectionName: ".note.android.ident",
+      notes,
+    });
+    const report = parse(bytes);
+    expect(report.tables[0]?.name).toBe(".note.android.ident");
+    expect(report.entries).toHaveLength(4);
+
+    expect(report.entries[0]).toMatchObject({
+      owner: "Android",
+      type: 1,
+      type_name: "android_ident",
+      descsz: 132,
+      gnu: null,
+      core: null,
+      android: {
+        android_api: 24,
+        ndk_version: "r27c",
+        ndk_build_number: "12297006",
+      },
+    });
+    expect(report.entries[1]).toMatchObject({
+      owner: "Android",
+      type: 1,
+      type_name: "android_ident",
+      descsz: 152,
+      gnu: null,
+      core: null,
+      android: {
+        android_api: 35,
+        ndk_version: "r28",
+        ndk_build_number: "12479018",
+      },
+    });
+    expect(report.entries[2]).toMatchObject({
+      owner: "Android",
+      type: 1,
+      type_name: "android_ident",
+      descsz: 4,
+      gnu: null,
+      core: null,
+      descriptor: {
+        bytes: 4,
+        hex: little ? "15000000" : "00000015",
+      },
+      android: {
+        android_api: 21,
+        ndk_version: null,
+        ndk_build_number: null,
+      },
+    });
+    expect(report.entries[3]).toMatchObject({
+      owner: "Android",
+      type: 2,
+      type_name: "unknown",
+      gnu: null,
+      core: null,
+      android: null,
+      descriptor: {
+        bytes: 4,
+        hex: "01020304",
+      },
+    });
+  },
+);
+
+it("degrades truncated, unterminated, or non-printable Android ident notes to null while preserving descriptors", () => {
+  const truncated2 = Buffer.from([0x15, 0x00]);
+  const truncated68 = Buffer.alloc(68);
+  truncated68.writeUInt32LE(24, 0);
+  truncated68.write("r27c\0", 4, "latin1");
+
+  const unterminatedVersion = Buffer.alloc(132);
+  unterminatedVersion.writeUInt32LE(24, 0);
+  unterminatedVersion.fill(0x72, 4, 68);
+  unterminatedVersion.write("12297006\0", 68, "latin1");
+
+  const unterminatedBuild = Buffer.alloc(132);
+  unterminatedBuild.writeUInt32LE(24, 0);
+  unterminatedBuild.write("r27c\0", 4, "latin1");
+  unterminatedBuild.fill(0x39, 68, 132);
+
+  const controlByteSlot = Buffer.alloc(132);
+  controlByteSlot.writeUInt32LE(24, 0);
+  controlByteSlot.set([0x72, 0x07, 0x00], 4);
+  controlByteSlot.write("12297006\0", 68, "latin1");
+
+  const nonZeroPaddingSlot = Buffer.alloc(132);
+  nonZeroPaddingSlot.writeUInt32LE(24, 0);
+  nonZeroPaddingSlot.write("r27c\0", 4, "latin1");
+  nonZeroPaddingSlot[20] = 0x58;
+  nonZeroPaddingSlot.write("12297006\0", 68, "latin1");
+
+  const descriptors = [
+    Buffer.alloc(0),
+    truncated2,
+    truncated68,
+    unterminatedVersion,
+    unterminatedBuild,
+    controlByteSlot,
+    nonZeroPaddingSlot,
+  ];
+  const notes = Buffer.concat(
+    descriptors.map((desc) => elfNote("Android", 1, desc)),
+  );
+  const report = parse(elfNoteFixture({ ownership: "program", notes }));
+  expect(report.entries).toHaveLength(descriptors.length);
+  for (const [index, desc] of descriptors.entries()) {
+    expect(report.entries[index]).toMatchObject({
+      owner: "Android",
+      type: 1,
+      type_name: "android_ident",
+      gnu: null,
+      core: null,
+      android: null,
+      descriptor: {
+        bytes: desc.length,
+        sha256: createHash("sha256").update(desc).digest("hex"),
+        hex: desc.length <= 64 ? desc.toString("hex") : null,
+      },
+    });
+  }
+});
+
+it("charges TextBudget for scanned and retained Android ident strings", () => {
+  // 6 aliased headers over a 552-byte file: 128 scanned once <= 552, and
+  // 6 * (23 owner + 12 retained) = 210 <= 552 (un-cached 6 * 128 = 768 > 552).
+  const typicalIdent = androidIdentNote({
+    androidApi: 24,
+    ndkVersion: "r27c",
+    ndkBuildNumber: "12297006",
+  });
+  const aliased6 = parse(repeatedNotes(6, typicalIdent));
+  expect(aliased6.entries).toHaveLength(6);
+  expect(
+    aliased6.entries.every(
+      (entry) =>
+        entry.android?.ndk_version === "r27c" &&
+        entry.android.ndk_build_number === "12297006",
+    ),
+  ).toBe(true);
+
+  // 6 aliased headers * (23 owner + 126 retained) = 894 bytes > 552-byte file.
+  const maxStrings = androidIdentNote({
+    androidApi: 24,
+    ndkVersion: "v".repeat(63),
+    ndkBuildNumber: "b".repeat(63),
+  });
+  let retainedFailure: unknown;
+  try {
+    parse(repeatedNotes(6, maxStrings));
+  } catch (cause) {
+    retainedFailure = cause;
+  }
+  expect(retainedFailure).toBeInstanceOf(ArtifactReaderFailure);
+  expect(retainedFailure).toMatchObject({
+    reason: "limit",
+    boundary: "memory",
+    message: expect.stringMatching(/byte budget/u),
+  });
+
+  // Two distinct 132-byte Android ident descriptors scan 256 slot bytes.
+  const distinctTwo = Buffer.concat([
+    androidIdentNote({
+      androidApi: 24,
+      ndkVersion: "r26d",
+      ndkBuildNumber: "1",
+    }),
+    androidIdentNote({
+      androidApi: 24,
+      ndkVersion: "r27c",
+      ndkBuildNumber: "2",
+    }),
+  ]);
+  expect(() =>
+    parse(
+      elfNoteFixture({ ownership: "program", notes: distinctTwo }),
+      inspectElfNotesInputSchema.parse({
+        path: defaults.path,
+        max_file_bytes: 200,
+      }),
+    ),
+  ).toThrow(/byte budget/u);
 });

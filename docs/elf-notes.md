@@ -44,6 +44,15 @@ file memory regions and paths (`NT_FILE`), fault signal and code (`NT_SIGINFO`),
 auxiliary vectors (`NT_AUXV`) across 32-bit and 64-bit images. Other owners or unparsed
 notes keep `core` null.
 
+For Android `NT_ANDROID_TYPE_IDENT` (`.note.android.ident`, owner `Android`,
+type `1`) notes, `android.android_api` is decoded from both legacy 4-byte
+descriptors (where `ndk_version` and `ndk_build_number` remain null) and modern
+132-byte or extended NDK descriptors, which also populate `android.ndk_version`
+and `android.ndk_build_number` when their 64-byte slots hold NUL-padded
+printable ASCII. Truncated or non-ASCII Android descriptors degrade `android`
+to null while preserving the raw descriptor digest and preview, and other
+owners keep `android` null.
+
 `PT_NOTE` and `SHT_NOTE` are examined independently. The same file range may
 appear twice when both tables declare it.
 
@@ -54,7 +63,7 @@ the image never carried notes in another container or overlay.
 
 The selected file is limited to 64 MiB by default (512 MiB maximum). At most
 32 note entries are examined by default across every table. Retained note
-names, section names, GNU descriptor text, and core dump string representations share a scan budget based on
+names, section names, GNU descriptor text, core dump string representations, and Android ident strings share a scan budget based on
 the source bytes plus any decoded section-name table, capped at
 `max_file_bytes`. The raw source and decoded table must also fit together
 within that ceiling. If admission fails, the error reports the required

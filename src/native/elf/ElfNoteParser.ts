@@ -20,6 +20,7 @@ import type {
   InspectElfNotesInput,
 } from "../../domain/native/elfNotes.js";
 import {
+  androidNoteTypeName,
   coreNoteTypeName,
   elfObjectTypeName,
   gnuNoteTypeName,
@@ -609,6 +610,77 @@ const decodeCore = (
   return null;
 };
 
+const ANDROID_IDENT_SLOT_BYTES = 64;
+const ANDROID_IDENT_MODERN_MIN_BYTES = 4 + ANDROID_IDENT_SLOT_BYTES * 2;
+
+const scanAndroidIdentSlot = (descriptor: Buffer, start: number): number => {
+  const end = start + ANDROID_IDENT_SLOT_BYTES;
+  for (let i = start; i < end; i += 1) {
+    const byte = descriptor[i]!;
+    if (byte === 0) {
+      const length = i - start;
+      for (let j = i + 1; j < end; j += 1) {
+        if (descriptor[j] !== 0) return -1;
+      }
+      return length;
+    }
+    if (byte < 0x20 || byte > 0x7e) return -1;
+  }
+  return -1;
+};
+
+const decodeAndroid = (
+  owner: string,
+  type: number,
+  descriptor: Buffer,
+  little: boolean,
+  text: TextBudget,
+): ElfNotes["entries"][number]["android"] => {
+  if (owner !== "Android" || type !== 1) return null;
+  const readUInt32 = (offset: number): number =>
+    little ? descriptor.readUInt32LE(offset) : descriptor.readUInt32BE(offset);
+  if (descriptor.length === 4) {
+    return {
+      android_api: readUInt32(0),
+      ndk_version: null,
+      ndk_build_number: null,
+    };
+  }
+  if (descriptor.length < ANDROID_IDENT_MODERN_MIN_BYTES) return null;
+
+  const scanKey = `android:${String(descriptor.byteOffset)}:${String(descriptor.length)}`;
+  let packedLengths = text.scans.get(scanKey);
+  if (packedLengths === -1) return null;
+  if (packedLengths === undefined) {
+    chargeText(text, ANDROID_IDENT_SLOT_BYTES * 2, "scanned");
+    const versionLen = scanAndroidIdentSlot(descriptor, 4);
+    const buildLen =
+      versionLen < 0
+        ? -1
+        : scanAndroidIdentSlot(descriptor, 4 + ANDROID_IDENT_SLOT_BYTES);
+    if (versionLen < 0 || buildLen < 0) {
+      text.scans.set(scanKey, -1);
+      return null;
+    }
+    packedLengths = (versionLen << 8) | buildLen;
+    text.scans.set(scanKey, packedLengths);
+  }
+
+  const versionLen = packedLengths >> 8;
+  const buildLen = packedLengths & 0xff;
+  chargeText(text, versionLen + buildLen);
+
+  return {
+    android_api: readUInt32(0),
+    ndk_version: descriptor.toString("latin1", 4, 4 + versionLen),
+    ndk_build_number: descriptor.toString(
+      "latin1",
+      4 + ANDROID_IDENT_SLOT_BYTES,
+      4 + ANDROID_IDENT_SLOT_BYTES + buildLen,
+    ),
+  };
+};
+
 /** Decode PT_NOTE and SHT_NOTE tables from one in-memory ELF image. */
 export const parseElfNotes = (
   bytes: Buffer,
@@ -870,6 +942,7 @@ const toEntry = (
 ): Omit<ElfNotes["entries"][number], "index"> => {
   const gnuOwner = note.owner === "GNU";
   const coreOwner = note.owner === "CORE";
+  const androidOwner = note.owner === "Android";
   const range = `${String(note.descriptor_offset)}:${String(note.descsz)}`;
   let digest = text.hashes.get(range);
   if (digest === undefined) {
@@ -888,7 +961,9 @@ const toEntry = (
       ? gnuNoteTypeName(note.type)
       : coreOwner
         ? coreNoteTypeName(note.type)
-        : "unknown",
+        : androidOwner
+          ? androidNoteTypeName(note.type)
+          : "unknown",
     owner: note.owner,
     owner_bytes_hex: note.owner_bytes_hex,
     descriptor: {
@@ -908,6 +983,13 @@ const toEntry = (
       little,
       wide,
       machine,
+      text,
+    ),
+    android: decodeAndroid(
+      note.owner,
+      note.type,
+      note.descriptor,
+      little,
       text,
     ),
   };

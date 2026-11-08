@@ -6,8 +6,10 @@ import { createServer } from "../../../src/server/createServer.js";
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import {
+  androidIdentNote,
   elfExtendedSectionCountFixture,
   compressedElfNoteSectionFixture,
+  elfNote,
   elfNoteFixture,
   elfNoteWithUnreadableSectionNameFixture,
 } from "../../../src/native/elf/ElfNotes.fixture.js";
@@ -202,6 +204,54 @@ mcpTest(
       expect(evidence.normalized_result.entries[0]?.gnu?.build_id_hex).toBe(
         "0123456789abcdef0123456789abcdef01234567",
       );
+    } finally {
+      await session.close();
+    }
+  },
+);
+
+mcpTest(
+  "decodes Android .note.android.ident and preserves truncated descriptors over MCP",
+  async ({ mcp }) => {
+    const { client, session } = await connect(mcp);
+    try {
+      const root = await createTestTempDirectory("rea-elf-android-mcp-");
+      const path = join(root, "libnative.so");
+      await writeFile(
+        path,
+        elfNoteFixture({
+          bits: 64,
+          machine: 183,
+          ownership: "section",
+          sectionName: ".note.android.ident",
+          notes: Buffer.concat([
+            androidIdentNote({
+              androidApi: 24,
+              ndkVersion: "r27c",
+              ndkBuildNumber: "12297006",
+            }),
+            elfNote("Android", 1, Buffer.from([0x18, 0x00])),
+          ]),
+        }),
+      );
+      const response = await client.callTool({
+        name: "inspect_elf_notes",
+        arguments: { path },
+      });
+      expect(response.isError, JSON.stringify(response.content)).not.toBe(true);
+      const evidence = toolContract("inspect_elf_notes").outputSchema.parse(
+        response.structuredContent,
+      );
+      expect(evidence.normalized_result.entries[0]?.android).toEqual({
+        android_api: 24,
+        ndk_version: "r27c",
+        ndk_build_number: "12297006",
+      });
+      expect(evidence.normalized_result.entries[1]).toMatchObject({
+        type_name: "android_ident",
+        android: null,
+        descriptor: { hex: "1800" },
+      });
     } finally {
       await session.close();
     }
