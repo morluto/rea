@@ -59,7 +59,9 @@ it.each([
       activeTarget: () => undefined,
       analysisProfile: undefined,
       recordEvidence: record,
-      ...(ownerKnown ? { hasEvidence: (id: string) => ledger.has(id) } : {}),
+      ...(ownerKnown
+        ? { evidenceForAnalysis: (id: string) => ledger.forAnalysis(id) }
+        : {}),
       ...(denyAdmission
         ? {
             admitRecovery: () =>
