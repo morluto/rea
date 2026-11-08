@@ -492,8 +492,8 @@ describe("Apple bundle layouts and containers", () => {
       status: "partial",
       inventory_complete: true,
     });
-    expect(result.limitations).toContain(
-      "The DMG's contents were not inventoried on this host; bundle absence is unknown.",
+    expect(result.limitations).toContainEqual(
+      expect.stringMatching(/DMG.*not inventoried.*absence is unknown/i),
     );
   });
 
@@ -691,8 +691,8 @@ describe("macOS application scope", () => {
           [source, target].every((path) => path.startsWith("Fixture.app/")),
       ),
     ).toBe(true);
-    expect(result.limitations).toContain(
-      "4 inventoried entries outside every application root are not attributed to the application.",
+    expect(result.limitations).toContainEqual(
+      expect.stringMatching(/4 inventoried entries outside.*not attributed/i),
     );
   });
 

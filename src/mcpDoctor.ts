@@ -224,7 +224,7 @@ class OwnedStdioClientTransport extends StdioClientTransport {
 }
 
 /** A valid scope can intentionally omit the target-free session request. */
-export const MCP_DOCTOR_SESSION_SCOPE_DETAIL =
+const MCP_DOCTOR_SESSION_SCOPE_DETAIL =
   "binary_session is outside the selected tool families; include the session family for request-flow and identity checks";
 
 /** Doctor expectations derived from the same environment the child inherits. */
@@ -406,7 +406,7 @@ export const runProductionMcpDoctorCli = async (
 };
 
 /** Compare exact names while retaining actionable mismatch locations. */
-export const compareInventory = (
+const compareInventory = (
   expectedNames: readonly string[],
   observedNames: readonly string[],
 ): InventoryComparison => {

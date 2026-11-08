@@ -110,6 +110,7 @@ export const deliverApplicationEvidence = async (
   const sources = recordEvidenceSources(
     options.recordEvidence,
     execution.sources,
+    { evidence: selected.value },
   );
   if (!sources.ok) return delivery.toCallToolResult(sources, contract);
   const saved = recordApplicationResult(options, parent, unknownKind);

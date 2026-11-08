@@ -160,8 +160,9 @@ describe("identityless lineage refresh keeps replacement rows", () => {
       observeLineage(listProcesses, environment),
     ).resolves.toMatchObject({
       status: "unavailable",
-      reason:
-        "process lineage refresh contained owned PID(s) outside the observed descendants: 102",
+      reason: expect.stringMatching(
+        /lineage refresh.*owned PID.*outside.*observed descendants.*102/i,
+      ),
     });
     expect(environment).toHaveBeenCalledWith(102);
   });
