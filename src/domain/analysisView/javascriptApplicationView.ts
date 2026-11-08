@@ -83,10 +83,20 @@ interface ModuleEntry {
   readonly paths: readonly string[];
 }
 
+/**
+ * Exported symbol bindings reuse the `javascript-module` kind but name one
+ * export of their owning module, not a module unit.
+ */
+const isExportBindingNode = (node: ApplicationNode): boolean =>
+  node.observations.some(
+    ({ properties }) => properties.semantic_role === "export-binding",
+  );
+
 const isModuleNode = (node: ApplicationNode): node is ModuleEntry["node"] =>
-  node.kind === "javascript-asset" ||
-  node.kind === "javascript-module" ||
-  node.kind === "source-module";
+  !isExportBindingNode(node) &&
+  (node.kind === "javascript-asset" ||
+    node.kind === "javascript-module" ||
+    node.kind === "source-module");
 
 /** One owner for the module kinds and path semantics of every module view. */
 function* moduleEntries(
