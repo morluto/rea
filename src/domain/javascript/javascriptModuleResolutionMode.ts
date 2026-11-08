@@ -30,11 +30,21 @@ export const explicitJavaScriptLoaderMode = (
   }
 };
 
+/** Case variants are artifact syntax hints, not recognized loader suffixes. */
+export const hasCaseVariantJavaScriptLoaderSuffix = (
+  path?: string,
+): boolean => {
+  if (path === undefined) return false;
+  const suffix = posix.extname(path);
+  return (
+    /\.(?:js|ts|mjs|cjs|mts|cts)$/iu.test(suffix) &&
+    suffix !== suffix.toLowerCase()
+  );
+};
+
 /** Loader evidence retained for a source-level module reference. */
 export type JavaScriptModuleResolutionMode =
-  | "import"
-  | "require"
-  | "compiler-dependent";
+  "import" | "require" | "compiler-dependent";
 
 /** Derive source mode only when syntax or an explicit source format owns it. */
 export const moduleResolutionModeForJavaScriptReference = (

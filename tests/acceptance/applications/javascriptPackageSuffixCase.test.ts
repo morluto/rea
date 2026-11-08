@@ -14,11 +14,15 @@ cliTest.for(["CLI", "stdio MCP"] as const)(
       "common/package.json": '{"type":"commonjs"}',
       "common/entry.JS": source,
       "common/entry.TS": source,
+      "common/mixed.JS":
+        'import {join} from "node:path"; require("./dep.cjs");',
       "common/lower.js": source,
       "common/dep.cjs": "module.exports = {};",
       "module/package.json": '{"type":"module"}',
       "module/entry.JS": source,
       "module/entry.TS": source,
+      "module/mixed.JS":
+        'import {join} from "node:path"; require("./dep.cjs");',
       "module/ordinary.js": "console.log('module');",
       "module/main.mjs":
         'import {BrowserWindow} from "electron"; import {fileURLToPath} from "node:url"; new BrowserWindow({webPreferences:{sandbox:false,preload:fileURLToPath(new URL("./entry.JS",import.meta.url))}});',
@@ -30,6 +34,8 @@ cliTest.for(["CLI", "stdio MCP"] as const)(
       "common/entry.TS",
       "module/entry.JS",
       "module/entry.TS",
+      "common/mixed.JS",
+      "module/mixed.JS",
     ]) {
       const edges = result.graph.edges.filter(
         ({ relation, properties, evidence }) =>
@@ -45,6 +51,28 @@ cliTest.for(["CLI", "stdio MCP"] as const)(
         expect(edge.properties.resolved_path, source).toBeNull();
         expect(edge.evidence.confidence, source).toBe("low");
       }
+    }
+    for (const source of ["common/mixed.JS", "module/mixed.JS"]) {
+      expect(
+        result.graph.nodes.flatMap(({ observations }) => observations),
+      ).toContainEqual(
+        expect.objectContaining({
+          properties: expect.objectContaining({
+            path: source,
+            module_format: "unknown",
+          }),
+        }),
+      );
+      expect(result.graph.edges).toContainEqual(
+        expect.objectContaining({
+          properties: expect.objectContaining({ specifier: "node:path" }),
+          evidence: expect.objectContaining({
+            location: expect.objectContaining({
+              value: expect.objectContaining({ source }),
+            }),
+          }),
+        }),
+      );
     }
     expect(result.graph.edges).toContainEqual(
       expect.objectContaining({

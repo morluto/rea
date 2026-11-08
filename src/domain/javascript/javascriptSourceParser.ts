@@ -1,7 +1,10 @@
 import { parse, type ParserOptions, type ParserPlugin } from "@babel/parser";
 import * as t from "@babel/types";
 import { javaScriptDefinitionExpression } from "./javascriptAstValues.js";
-import { explicitJavaScriptLoaderMode } from "./javascriptModuleResolutionMode.js";
+import {
+  explicitJavaScriptLoaderMode,
+  hasCaseVariantJavaScriptLoaderSuffix,
+} from "./javascriptModuleResolutionMode.js";
 import {
   hasOnlyInlineTypeExportSpecifiers,
   hasOnlyInlineTypeImportSpecifiers,
@@ -91,13 +94,15 @@ const parseWithRuntimeContext = (
             ? file.program.sourceType === "module"
               ? "module"
               : "commonjs"
-            : file.program.body.some((node) => t.isTSExportAssignment(node))
-              ? // CommonJS isolation does not establish strict ESM semantics.
-                "commonjs"
-              : file.program.sourceType === "module" &&
-                  hasRuntimeModuleDeclaration(file.program)
-                ? "module"
-                : "unknown",
+            : hasCaseVariantJavaScriptLoaderSuffix(sourcePath)
+              ? "unknown"
+              : file.program.body.some((node) => t.isTSExportAssignment(node))
+                ? // CommonJS isolation does not establish strict ESM semantics.
+                  "commonjs"
+                : file.program.sourceType === "module" &&
+                    hasRuntimeModuleDeclaration(file.program)
+                  ? "module"
+                  : "unknown",
   );
   return file;
 };

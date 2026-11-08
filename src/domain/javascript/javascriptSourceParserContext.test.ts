@@ -91,6 +91,33 @@ it("does not derive factory authority from an ambient require in a proven module
 });
 
 it.each([
+  "entry.JS",
+  "entry.MJS",
+  "entry.CJS",
+  "entry.TS",
+  "entry.MTS",
+  "entry.CTS",
+])("retains unknown host authority for mixed module syntax in %s", (path) => {
+  const { file } = parseRecoveredJavaScript(
+    'import {join} from "node:path"; require("./dep.cjs");',
+    path,
+    { plugins: parserPluginsForPath(path) },
+    "module",
+  );
+  expect(javaScriptRuntimeContext(file.program)).toBe("unknown");
+  expect(analyzeParsedJavaScriptSemantics(file).moduleLinks).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({ kind: "import", specifier: "node:path" }),
+      expect.objectContaining({
+        kind: "require",
+        specifier: "./dep.cjs",
+        loaderAuthority: "candidate",
+      }),
+    ]),
+  );
+});
+
+it.each([
   ["without source redeclarations", "", "", true],
   ["with a var redeclaration", "var require;\n", "", true],
   ["after a prior write", "require = custom;\n", "", false],

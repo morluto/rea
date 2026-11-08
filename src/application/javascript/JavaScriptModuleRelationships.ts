@@ -20,6 +20,7 @@ import type {
 } from "../../domain/javascript/javascriptSemanticIr.js";
 import {
   explicitJavaScriptLoaderMode,
+  hasCaseVariantJavaScriptLoaderSuffix,
   isJsonModuleTarget,
   moduleResolutionModeForJavaScriptReference,
 } from "../../domain/javascript/javascriptModuleResolutionMode.js";
@@ -542,6 +543,7 @@ const moduleFormat = (
   const loader = explicitJavaScriptLoaderMode(path);
   if (loader === "module") return "esm";
   if (loader === "commonjs") return "commonjs";
+  if (hasCaseVariantJavaScriptLoaderSuffix(path)) return "unknown";
   const extension = posix.extname(path).toLowerCase();
   if (extension === ".ts" || extension === ".tsx") return "unknown";
   const esm = ir.moduleLinks.some(({ kind }) =>
