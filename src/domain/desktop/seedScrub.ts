@@ -11,7 +11,11 @@ import {
   scrubHostIdentity,
   type HostIdentity,
 } from "./hostIdentity.js";
-import { isTextualFormat, textSyntaxFormat } from "./stateFormats.js";
+import {
+  detectStateFormat,
+  isTextualFormat,
+  textSyntaxFormat,
+} from "./stateFormats.js";
 
 /** What the export ships for one seed. */
 export interface SeedScrub {
@@ -435,9 +439,9 @@ const scrubDocument = (
 };
 
 /**
- * Scrub a seed as `scrubDocument` does; a gzip file's document is scrubbed as
- * the format the state view read it as, then compressed again alike on every
- * host whether or not it changed, so no file name, comment or time in the
+ * Scrub a seed as `scrubDocument` does; a gzip file's document uses its
+ * captured format, or the format detected from decoded bytes when unknown,
+ * then is compressed again alike on every host whether or not it changed, so no file name, comment or time in the
  * captured header ships. One already so ships as captured, as do one that
  * does not decompress within the size decoded and one whose document needs no
  * edit but a member of which has an extra field, where BGZF and dictzip index
@@ -452,7 +456,13 @@ export const scrubSeed = (
   const document = gunzip(bytes, MAX_SCRUBBED_BYTES);
   if (!document.ok)
     return { bytes: undefined, holdsIdentity: holdsIdentity(bytes, identity) };
-  const scrub = scrubDocument(document.value, seed, identity);
+  // The captured gzip may have exceeded the view's expansion-ratio limit;
+  // once decoded for shipping, detect its document format at this boundary.
+  const documentSeed =
+    seed.format === null
+      ? { ...seed, format: detectStateFormat(seed.home, document.value) }
+      : seed;
+  const scrub = scrubDocument(document.value, documentSeed, identity);
   if (scrub.bytes === undefined && hasExtraField(bytes))
     return {
       bytes: undefined,

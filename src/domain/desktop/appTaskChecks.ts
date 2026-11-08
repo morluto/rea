@@ -467,7 +467,8 @@ const memberVerdict = (
     entry?.format === "zip"
       ? zipArrayLeavesOut(read.view, pointer)
       : read.truncated;
-  if (located.kind === "none") return noValue(at, located, cut);
+  if (located.kind === "none")
+    return cut ? undecided(check.file) : noValue(at, located, false);
   const items = located.value;
   if (!Array.isArray(items))
     return fail(`${at} is ${shown(items)}, not an array`);
