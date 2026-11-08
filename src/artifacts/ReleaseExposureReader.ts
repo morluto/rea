@@ -2466,18 +2466,20 @@ const readStreamBounded = async (
       if (signal?.aborted)
         throw new AnalysisCancelledError(OPERATION, { cause: signal.reason });
       const piece = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
-      hash?.update(piece);
-      // Past the allowance only the digest check still reads the bytes.
-      if (overBudget) continue;
       chunks.push(piece);
       total += piece.length;
       state.memberBytesRead += piece.length;
       if (total > budget) {
         overBudget = true;
-        if (hash === undefined) break;
+        break;
       }
+      hash?.update(piece);
     }
+    // The digest covers the whole member, so it is only checked when the
+    // member ended within the allowance. A member past the allowance is never
+    // read further to finish the hash: it stays over_allowance, unverified.
     if (
+      !overBudget &&
       expected !== undefined &&
       hash !== undefined &&
       hash.digest("hex") !== expected.sha256

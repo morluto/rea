@@ -46,6 +46,7 @@ import {
 } from "../domain/releaseExposure.js";
 import { HTML_INLINE_SCRIPT_LOCATION_LIMIT } from "../domain/javascript/htmlArtifactReferences.js";
 import { ReleaseExposureReader } from "./ReleaseExposureReader.js";
+import { AsarArtifactReader } from "./AsarArtifactReader.js";
 import type { AsarHeaderAdmission } from "../config/asarHeaderAdmission.js";
 
 const stableRead = vi.hoisted(() => ({
@@ -782,6 +783,75 @@ describe("ReleaseExposureReader unpacked ASAR members", () => {
       );
     } finally {
       inventoryRead.impl = undefined;
+      await reader.close();
+    }
+  });
+  it("does not read an oversized unpacked ASAR companion past its allowance", async () => {
+    const root = await createTestTempDirectory(
+      "rea-release-exposure-unpacked-large-",
+    );
+    const archive = join(root, "app.asar");
+    const size = 8 * 1024 * 1024;
+    const companion = join(`${archive}.unpacked`, "native", "module.bin");
+    await writeFile(
+      archive,
+      asarHeaderBytes(
+        JSON.stringify({
+          files: {
+            native: {
+              files: { "module.bin": { size, unpacked: true } },
+            },
+          },
+        }),
+      ),
+    );
+    await mkdir(dirname(companion), { recursive: true });
+    await writeFile(companion, Buffer.alloc(size));
+
+    // Count the bytes each scan read pulls once inventory has hashed the
+    // companion, by handing the reader a stream that tallies what it consumes.
+    const actual = await vi.importActual<
+      typeof import("./inventory/ArtifactInventory.js")
+    >("./inventory/ArtifactInventory.js");
+    let scanning = false;
+    inventoryRead.impl = async (...args) => {
+      const inventory = await actual.inventoryArtifactInScope(...args);
+      scanning = true;
+      return inventory;
+    };
+    const pulled: number[] = [];
+    const open = AsarArtifactReader.prototype.open;
+    const spy = vi
+      .spyOn(AsarArtifactReader.prototype, "open")
+      .mockImplementation(async function (this: AsarArtifactReader, ...args) {
+        const stream = await open.apply(this, args);
+        if (!scanning) return stream;
+        const index = pulled.push(0) - 1;
+        const counted = Readable.from(
+          (async function* () {
+            for await (const chunk of stream) {
+              pulled[index] = (pulled[index] ?? 0) + (chunk as Buffer).length;
+              yield chunk as Buffer;
+            }
+          })(),
+          { objectMode: false },
+        );
+        counted.once("close", () => stream.destroy());
+        return counted;
+      });
+    const reader = new ReleaseExposureReader();
+    try {
+      const result = await reader.inspect(
+        { path: archive },
+        undefined,
+        ignoreText,
+      );
+      if (!result.ok) throw result.error;
+      expect(pulled.length).toBeGreaterThan(0);
+      for (const bytes of pulled) expect(bytes).toBeLessThan(1024 * 1024);
+    } finally {
+      inventoryRead.impl = undefined;
+      spy.mockRestore();
       await reader.close();
     }
   });

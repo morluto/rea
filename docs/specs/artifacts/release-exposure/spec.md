@@ -31,6 +31,9 @@ what was observed, so a team can review or gate a release before it ships.
   Text, source-map and packaged-image reads have separate allowances reported
   under `coverage.allowances`; skipped members are listed under
   `coverage.omitted`. An exhausted bound leaves the affected checks `unknown`.
+  An unpacked ASAR companion is compared with its inventoried digest only when
+  it ends within the read allowance; one past the allowance is not read further
+  to finish the digest and stays over its allowance, unverified.
 - Fail toward `unknown`: a read that could not be completed, a file or member
   whose bytes no longer match the inventoried digest, an unresolved or oversized
   source map, or missing metadata never becomes `not_observed`.
@@ -53,7 +56,8 @@ what was observed, so a team can review or gate a release before it ships.
   `data:` maps, HTML and SVG script loading, debug companions, credential markers
   in text members and binary plists, UTF-16 and NUL handling, read allowances,
   same-name package members, packaged native images and changed bytes after
-  inventory, including an unpacked ASAR companion replaced after inventory.
+  inventory, including an unpacked ASAR companion replaced after inventory and
+  an oversized companion that is not read past its allowance.
 - Service tests cover Electron fuse decisions, Go and Rust metadata, partial
   inventory and cancellation with a partial report.
 - CLI and MCP return the same report; `--max-file-bytes` accepts the documented
