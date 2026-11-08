@@ -1077,11 +1077,17 @@ const hasCommonJsModuleSource = (
   >();
   const examined = new WeakSet<object>();
   let additionalStates = 0;
-  // A strict check that exhausts the budget stops following bindings and
-  // calls, then examines the queued sources by their own selected keys. One
-  // may still be a retained module identity.
+  // A strict check that exhausts the budget examines the queued sources by
+  // their own selected keys, breadth first, so a growing alias cannot starve a
+  // sibling. One may still be a retained module identity, possibly behind a
+  // binding or call, so a second budget bounds following those.
   let exhausted = false;
-  for (let next = pending.pop(); next !== undefined; next = pending.pop()) {
+  let drained = 0;
+  for (
+    let next = pending.pop();
+    next !== undefined;
+    next = exhausted ? pending.shift() : pending.pop()
+  ) {
     const value = unwrapJavaScriptExpression(next.node).node;
     const { awaitDepths } = next;
     const byMode =
@@ -1194,7 +1200,7 @@ const hasCommonJsModuleSource = (
       const mode = awaitDepths.includes(path.length)
         ? "awaited-call"
         : "direct-call";
-      if (exhausted) continue;
+      if (exhausted && ++drained > SEMANTIC_ALIAS_SELECTION_LIMIT) continue;
       const returnedResult = returnedLoaderReferences(state, mode)(
         value.callee,
         t.isNewExpression(value) ? undefined : value,
@@ -1332,7 +1338,7 @@ const hasCommonJsModuleSource = (
       if (sources === undefined) return true;
       eligibility = true;
     }
-    if (exhausted) continue;
+    if (exhausted && ++drained > SEMANTIC_ALIAS_SELECTION_LIMIT) continue;
     enqueue(
       ...projectedLoaderSources({ ...next, node: value, path }, sources).map(
         (source) => (eligibility ? { ...source, eligibility } : source),

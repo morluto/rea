@@ -211,7 +211,7 @@ it("keeps electron facts for the same path walk without defineProperty", () => {
 // A strict check that exhausts the budget still examines queued sources by
 // their selected keys, so the result does not depend on branch order.
 const exhaustedWalkWrite = (receiver: string): string =>
-  `function f(n,e,flag){let r=n,i=0;for(;i<e.length;){let k=e[i];Object.prototype.hasOwnProperty.call(r,k)||Object.defineProperty(r,k,{value:{_errors:[]}});let s=r[k];r=s,i++}${receiver}.require=replacement;return r}let h=require("electron");new h.BrowserWindow({});`;
+  `const m=module,g=()=>module;function f(n,e,flag){let r=n,i=0;for(;i<e.length;){let k=e[i];Object.prototype.hasOwnProperty.call(r,k)||Object.defineProperty(r,k,{value:{_errors:[]}});let s=r[k];r=s,i++}${receiver}.require=replacement;return r}let h=require("electron");new h.BrowserWindow({});`;
 
 it.each([
   "(flag?module:r)",
@@ -220,6 +220,10 @@ it.each([
   "(flag?r:(0,module))",
   "(flag?process.mainModule:r)",
   "(flag?r:process.mainModule)",
+  "(flag?m:r)",
+  "(flag?r:m)",
+  "(flag?g():r)",
+  "(flag?r:g())",
 ])(
   "revokes the host delegate through %s after alias selections are exhausted",
   (receiver) => {
