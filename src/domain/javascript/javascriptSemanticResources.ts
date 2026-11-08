@@ -135,11 +135,20 @@ export const collectJavaScriptSemanticResources = (
           state,
         ) ||
         // `Stream` itself extends `EventEmitter`, so a member installed there is
-        // inherited too. Measured on Node 24.22.1 the same way:
-        // `EventEmitter.prototype.start` constructs a handle from `{start:-1}`.
+        // inherited too. Node exposes that constructor at two identities, and the
+        // CommonJS root export *is* the constructor, so
+        // `const EventEmitter = require("node:events")` records its mutation at
+        // `["prototype", …]` rather than under the named slot. Measured on Node
+        // 24.22.1, both spellings construct a handle from `{start:-1}`.
         !builtinModuleSubtreeUnmodified(
           "events",
           ["EventEmitter", "prototype"],
+          candidate.node,
+          state,
+        ) ||
+        !builtinModuleSubtreeUnmodified(
+          "events",
+          ["prototype"],
           candidate.node,
           state,
         ))
@@ -384,11 +393,38 @@ const rejectsStreamOptionsLiteral = (
       context,
       readStream,
       streamEncodingValidatorUnmodified(node, context.state),
+      streamEncodingDecoderUnmodified(node, context.state),
     )
   )
     return true;
   return false;
 };
+
+/**
+ * Whether the lazily loaded read-side decoder still resolves to Node's own export.
+ *
+ * `fs.createReadStream` constructs a `StringDecoder` for the encoding, and the class it
+ * captures comes from the `string_decoder` module at first use. Measured on Node 24.22.1
+ * with a replaced `StringDecoder` and an admitting `Buffer.isEncoding`,
+ * `createReadStream(p, {encoding:"nope"})` returns a handle, while either replacement
+ * alone still throws.
+ */
+const streamEncodingDecoderUnmodified = (
+  node: t.Node,
+  state: JavaScriptSemanticAnalysisState,
+): boolean =>
+  builtinModuleSlotUnmodified(
+    "string_decoder",
+    ["StringDecoder"],
+    node,
+    state,
+  ) &&
+  builtinModuleSubtreeUnmodified(
+    "string_decoder",
+    ["StringDecoder"],
+    node,
+    state,
+  );
 
 /**
  * Stream option admission consults the mutable Buffer predicate.
@@ -508,6 +544,7 @@ const rejectsStreamEncoding = (
   context: DataEffectTraversalContext,
   readStream: boolean,
   validatorUnmodified: boolean,
+  decoderUnmodified: boolean,
 ): boolean => {
   const read = staticObjectProperty(options, "encoding");
   if (read.status !== "explicit") return false;
@@ -518,15 +555,20 @@ const rejectsStreamEncoding = (
     : t.isTemplateLiteral(value) && value.expressions.length === 0
       ? value.quasis[0]?.value.cooked
       : undefined;
-  if (text !== undefined && text !== null)
-    return (
-      (readStream || validatorUnmodified) &&
-      text.length > 0 &&
-      !BUFFER_ENCODINGS.has(text.toLowerCase())
-    );
-  // Read streams also construct a StringDecoder. An invalid literal encoding
-  // still fails there after Buffer.isEncoding is replaced, but a truthy object
-  // can normalize to a valid encoding, so its shape alone proves nothing then.
+  if (text !== undefined && text !== null) {
+    if (text.length === 0 || BUFFER_ENCODINGS.has(text.toLowerCase()))
+      return false;
+    // An unknown encoding throws from whichever gate runs first. A write stream has
+    // only the `Buffer.isEncoding` check, so replacing that predicate lifts it. A read
+    // stream also builds a `StringDecoder`, so it still throws while that decoder is
+    // Node's own. Measured on Node 24.22.1: replaced `Buffer.isEncoding` alone still
+    // throws `ERR_UNKNOWN_ENCODING` for a read stream, and only both replacements
+    // together construct a handle.
+    return readStream
+      ? validatorUnmodified || decoderUnmodified
+      : validatorUnmodified;
+  }
+  // Fail-closed for the truthy shapes below whenever either gate may have changed.
   if (!validatorUnmodified) return false;
   const truthiness = encodingTruthiness(value, context);
   if (truthiness === undefined) return false;

@@ -500,6 +500,69 @@ it.each([
   },
 );
 
+it("retains a read stream mutated through the events root export", () => {
+  // The CommonJS root export of `node:events` *is* the constructor, so
+  // `const EventEmitter = require("node:events")` records its mutation at
+  // `["prototype", …]` rather than under the named slot. Measured on Node 24.22.1, both
+  // spellings construct a handle from `{start:-1}`.
+  const operations = analyzeJavaScriptSemantics(`
+    const EventEmitter = require("node:events");
+    const fs = require("node:fs");
+    Object.defineProperty(EventEmitter.prototype, "start", {
+      get() { return 0; },
+      set() {},
+      configurable: true,
+    });
+    const stream = fs.createReadStream("input", { start: -1 });
+    stream.close();
+  `).resourceOperations;
+  expect(operations).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({
+        kind: "acquire",
+        method: "createReadStream",
+        resolution: "partial",
+      }),
+      expect.objectContaining({ kind: "release", method: "close" }),
+    ]),
+  );
+});
+
+it.each([
+  [
+    "a replaced StringDecoder and an admitting Buffer.isEncoding",
+    `const sd = require("node:string_decoder");
+     sd.StringDecoder = class { write(c) { return String(c); } end() { return ""; } };
+     Buffer.isEncoding = () => true;`,
+    true,
+  ],
+  [
+    "an admitting Buffer.isEncoding only",
+    "Buffer.isEncoding = () => true;",
+    false,
+  ],
+  [
+    "a replaced StringDecoder only",
+    `const sd = require("node:string_decoder");
+     sd.StringDecoder = class { write(c) { return String(c); } end() { return ""; } };`,
+    false,
+  ],
+] as const)(
+  "read stream encoding acceptance with %s",
+  (_label, setup, expectKept) => {
+    // Measured on Node 24.22.1: a read stream throws from whichever gate runs first, so
+    // it still rejects while either the decoder or `Buffer.isEncoding` is Node's own.
+    // Only replacing both lifts the rejection.
+    const operations = analyzeJavaScriptSemantics(`
+      ${setup}
+      const fs = require("node:fs");
+      const stream = fs.createReadStream("input", { encoding: "nope" });
+      stream.close();
+    `).resourceOperations;
+    const acquisitions = operations.filter(({ kind }) => kind === "acquire");
+    expect(acquisitions).toHaveLength(expectKept ? 1 : 0);
+  },
+);
 it.each([
   ["a named Stream import", `import { Stream } from "node:stream";`, "Stream"],
   [
