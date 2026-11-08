@@ -477,6 +477,33 @@ describe("download install scripts", () => {
     );
   });
 
+  it("points an Exec spaced around its = at AppRun and drops a spaced TryExec, as the desktop entry parser reads them", async () => {
+    const root = await stage("rea-appimage-spaced-");
+    const image = join(root, "env/vendor/app.AppImage");
+    await writeFile(
+      image,
+      STUB_APPIMAGE.replace(
+        "'Exec=drawio %U' 'TryExec=drawio'",
+        "'Exec = drawio %U' '  TryExec =drawio'",
+      ),
+    );
+    await chmod(image, 0o755);
+    await runDownloadInstall(
+      renderBuildBundle(appImageRequest("drawio"), localPayload),
+      root,
+    );
+
+    const appRun = join(root, "opt/rea-apps/drawio/squashfs-root/AppRun");
+    expect(
+      await readFile(
+        join(root, "local-share/applications/drawio.desktop"),
+        "utf8",
+      ),
+    ).toBe(
+      `[Desktop Entry]\nName=draw.io\nExec=${appRun} %U\nIcon=drawio\n\n[Desktop Action New]\nExec=${appRun} --new-window\n`,
+    );
+  });
+
   it("unpacks a tarball without xz under its folder and installs the entry REA wrote for its program", async () => {
     const root = await stage("rea-tarball-install-");
     const program = join(root, "src/notes-2.0/bin/notes");

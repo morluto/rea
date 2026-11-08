@@ -52,7 +52,7 @@ Each failed on the unchanged code first:
 - through MCP, an AppImage request's export receives `--download-install`
   with the request's download in a file, and its bundle downloads the image.
 
-After review, three more, each failing on the first version:
+After review, four more, each failing on the first version:
 
 - a URL holding `"`, `\` and `"""` ended the class's docstring and made the
   module invalid Python; now the docstring shows it with those characters
@@ -63,7 +63,11 @@ After review, three more, each failing on the first version:
 - a crafted tarball with an absolute hardlink, then a file of the same name,
   overwrote the outside file through the link as the script ran; with the
   `data` filter it and a symlink out of the folder fail the build, and the
-  outside file keeps its content.
+  outside file keeps its content;
+- an entry's `Exec = drawio %U` and indented `TryExec =drawio`, which the
+  desktop entry parser reads, were left as they were; the script now reads
+  the key and the spaces around its `=` before rewriting `Exec` or dropping
+  `TryExec`.
 
 ## FreeCAD 1.1.4 (AppImage)
 

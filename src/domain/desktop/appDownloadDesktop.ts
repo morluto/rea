@@ -1,11 +1,12 @@
 /** Python used by the offline installer to locate the program in a desktop Exec value.
- * It follows desktopEntry's value unescaping, command quoting and env-prefix rules;
+ * It follows desktopEntry's key spacing, value unescaping, command quoting and env-prefix rules;
  * the original spelling of all other arguments remains intact. */
 export const rewriteAppImageDesktop = String.raw`import re
 import sys
 
 source, destination, app_run = sys.argv[1:]
 escapes = {"s": " ", "n": "\n", "t": "\t", "r": "\r", "\\": "\\"}
+launch_key = re.compile(r"[ \t]*(TryExec|Exec)[ \t]*=[ \t]*")
 
 def program_span(raw):
     # Keep raw offsets while decoding the desktop value, so rewriting preserves
@@ -68,10 +69,11 @@ with open(source, encoding="utf-8") as f:
     lines = f.readlines()
 with open(destination, "w", encoding="utf-8") as f:
     for line in lines:
-        if line.startswith("TryExec="):
+        key = launch_key.match(line)
+        if key and key.group(1) == "TryExec":
             continue
-        if line.startswith("Exec="):
-            raw = line[5:].rstrip("\n")
+        if key:
+            raw = line[key.end():].rstrip("\n")
             start, end = program_span(raw)
             line = "Exec=" + raw[:start] + app_run + raw[end:] + "\n"
         f.write(line)
