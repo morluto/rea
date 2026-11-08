@@ -102,6 +102,7 @@ const PATH_SCOPES = {
     "tests/boundary/providers/RizinTimeoutEvidence.test.ts",
     "tests/boundary/providers/RizinDebugSession*.test.ts",
     "tests/boundary/providers/RizinInferiorTty.test.ts",
+    "tests/boundary/providers/RizinDecoderInputs.test.ts",
     "tests/boundary/providers/RizinTestInferiorTty.ts",
     "tests/boundary/process/ownedDebuggerSession.test.ts",
     "tests/boundary/cli/debuggerOneShotExit.test.ts",

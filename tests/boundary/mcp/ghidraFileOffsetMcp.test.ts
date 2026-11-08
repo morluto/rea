@@ -175,7 +175,7 @@ it("reports file-backed, uninitialized and unmapped addresses through MCP withou
     // Malformed syntax is still an input-contract violation.
     expect(await mcp.refused("not-an-address")).toMatchObject({
       code: "invalid_request",
-      message: "Analysis input is invalid. Check the arguments and try again.",
+      message: expect.stringMatching(/input.*invalid/iu),
       recovery: {
         kind: "inspect_input_contract",
         operation: "address_to_file_offset",

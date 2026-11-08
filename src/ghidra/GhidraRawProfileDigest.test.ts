@@ -8,12 +8,12 @@ import { GhidraProvider } from "./GhidraProvider.js";
 
 // Digests commit to the current shared policy, including the instruction
 // status, load-image relocation-symbol, procedure search, byte-search and
-// bit-field base-type revisions that prevent reuse of snapshots with earlier
+// bit-field base-type and inventory-search revisions that prevent reuse of snapshots with earlier
 // results.
 const RAW_DIGESTS = {
-  "6502": "afb7d1b23c25d91a9109fc0c90a45cc0b17d751ee8cd5989e5bd486e1a9d6d86",
+  "6502": "ec9d5bfef1d0abfa612b0a65edcd0a403f4b914589c073d8a079086ba6c66855",
   "x86-disabled-analyzer":
-    "cf1d2d5b6ac896e727788faed2f3c17f3943fa35e587b1c3d73a800794c1dffd",
+    "f61db0ec96bad96c83b84cdd0f5c9113b0d9bdd16815062049a375afcaad1d8f",
 } as const;
 
 const configFor = (environment: NodeJS.ProcessEnv) => {
@@ -48,9 +48,13 @@ describe("raw-binary analysis profile digest", () => {
       load_image_evidence: "independent-raw-mapping-context-v4",
       load_image_observations:
         "source-mappings-entry-context-relocation-symbol-v3",
-      instruction_status: "unlisted-address-without-decode-v1",
+      instruction_status: "unlisted-and-containing-code-data-v3",
+      inventory_search_projection: "provider-inventory-facts-v1",
       byte_search_boundary: "contiguous-eligible-initialized-blocks-v1",
+      byte_search_coverage: "separate-loaded-overlays-v1",
       data_type_observations: "bit-field-base-and-lookup-v1",
+      instruction_references:
+        "exact-address-incoming-without-synthetic-entry-v3",
       analyzer_preset: "ghidra-default",
     });
   });
@@ -70,6 +74,8 @@ describe("raw-binary analysis profile digest", () => {
       RAW_DIGESTS["x86-disabled-analyzer"],
     );
     expect(resolved.value.profile?.parameters).toMatchObject({
+      inventory_search_projection: "provider-inventory-facts-v1",
+      byte_search_coverage: "separate-loaded-overlays-v1",
       analysis_options: {
         disabled_analyzers: ["Aggressive Instruction Finder"],
       },

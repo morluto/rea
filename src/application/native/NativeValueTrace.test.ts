@@ -164,7 +164,6 @@ describe("native value trace seed admission", () => {
       },
       { procedure: "missing" },
     );
-    expect(result.ok).toBe(false);
     if (result.ok) throw new Error("Expected seed failure");
     expect(result.error).toBe(failure);
     expect(attempted).toEqual([["analyze_function", { procedure: "missing" }]]);

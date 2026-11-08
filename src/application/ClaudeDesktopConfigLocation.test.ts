@@ -21,6 +21,11 @@ const env = {
   LOCALAPPDATA: join(home, "AppData", "Local"),
 };
 const packages = join(env.LOCALAPPDATA, "Packages");
+const migratedDirectory = join(
+  env.LOCALAPPDATA,
+  "Claude-Data",
+  CLAUDE_DESKTOP_PACKAGE_FAMILY.toLowerCase(),
+);
 const appDataConfig = join(env.APPDATA, "Claude", "claude_desktop_config.json");
 const privateConfig = join(
   packages,
@@ -77,6 +82,33 @@ const packagedFileSystem = (
 });
 
 describe("Claude Desktop MSIX process view", () => {
+  it.each([true, false])(
+    "reports migrated storage as unresolved with legacy package storage %s",
+    (hasLegacyStorage) => {
+      const fs = packagedFileSystem((path) => path);
+      expect(
+        resolveWindowsClaudeDesktopLocation(home, env, {
+          ...fs,
+          readdir: (path) =>
+            path === packages && !hasLegacyStorage ? [] : fs.readdir(path),
+          lstat: (path) =>
+            path === migratedDirectory ? folder : fs.lstat(path),
+        }),
+      ).toEqual({
+        ok: false,
+        error: {
+          path: join(migratedDirectory, "claude_desktop_config.json"),
+          message: expect.stringContaining("migrated Claude Desktop storage"),
+          ...(hasLegacyStorage
+            ? {
+                msixPackage: expect.objectContaining({ processView: "direct" }),
+              }
+            : {}),
+        },
+      });
+    },
+  );
+
   it("recognizes a process that sees the private copy at the AppData path", () => {
     const location = resolveWindowsClaudeDesktopLocation(
       home,
@@ -535,7 +567,9 @@ describe("unresolved Claude Desktop package identity", () => {
   ])("does not treat %s as a Claude package family", (name) => {
     const location = resolveWindowsClaudeDesktopLocation(home, env, {
       readdir: () => [name],
-      lstat: () => file,
+      lstat: () => {
+        throw failure("ENOENT");
+      },
       realpath: (path) => path,
     });
     expect(location).toEqual({
@@ -564,8 +598,8 @@ describe("unresolved Claude Desktop package identity", () => {
   it("reports an uninspectable private copy instead of choosing a file", () => {
     const location = resolveWindowsClaudeDesktopLocation(home, env, {
       readdir: () => [CLAUDE_DESKTOP_PACKAGE_FAMILY],
-      lstat: () => {
-        throw failure("EPERM");
+      lstat: (path) => {
+        throw failure(path === privateConfig ? "EPERM" : "ENOENT");
       },
       realpath: (path) => path,
     });

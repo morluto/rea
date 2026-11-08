@@ -503,7 +503,7 @@ it("retains unavailable Ghidra native API observations across provenance and exa
     expect(replay.evidence_id).not.toBe(first.evidence_id);
     expect(replay.limitations).toEqual(
       expect.arrayContaining([
-        expect.stringContaining("Loaded from a local REA analysis snapshot"),
+        expect.stringMatching(/snapshot.*did not re.run the provider/iu),
       ]),
     );
     const warmBundle = session.exportEvidenceBundle();

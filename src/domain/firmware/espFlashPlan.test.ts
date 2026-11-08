@@ -318,6 +318,9 @@ describe("ESP flash layout otadata", () => {
       partitionTable(TWO_OTA_PARTITIONS, { md5: "corrupt" }),
     );
     if (!decoded.ok) throw new Error(decoded.error);
+    expect(decoded.value.limitations).toEqual([
+      expect.stringMatching(/MD5.*0xc0.*does not match.*bootloader rejects/iu),
+    ]);
     const plan = planEspFlashLayout(input({ table: decoded.value }));
     const facts = finishEspFlashLayout(plan, {
       otadataRecords: [otaRecord({ seq: 1 }), Buffer.alloc(32, 0xff)],
@@ -328,8 +331,8 @@ describe("ESP flash layout otadata", () => {
       partition_index: null,
       assumptions: [],
     });
-    expect(facts.limitations).toContain(
-      "The partition table MD5 at 0xc0 does not match the entries before it; ESP-IDF's bootloader rejects the table.",
+    expect(facts.limitations).toEqual(
+      expect.arrayContaining([...decoded.value.limitations]),
     );
   });
 
