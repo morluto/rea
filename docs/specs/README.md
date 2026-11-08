@@ -10,3 +10,8 @@ for the specification lifecycle, roadmap granularity and producer-owned contract
 
 - [Organization](documentation/organization/spec.md)
   ([plan](documentation/organization/plan.md), [tasks](documentation/organization/tasks.md))
+
+## Native
+
+- [Android `.note.android.ident` ELF note decoding](native/android-elf-ident-note/spec.md)
+  ([plan](native/android-elf-ident-note/plan.md), [tasks](native/android-elf-ident-note/tasks.md))

@@ -2,7 +2,7 @@ import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect } from "vitest";
 
-import { toolContract } from "../../src/contracts/toolContracts.js";
+import { BINARY_DIAGNOSTICS_TOOL_CONTRACTS } from "../../src/contracts/native/binaryDiagnosticsToolContracts.js";
 import {
   androidIdentNote,
   elfNote,
@@ -11,6 +11,17 @@ import {
 } from "../../src/native/elf/ElfNotes.fixture.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 import { cliTest } from "../support/cli/cliFixture.js";
+
+const inspectElfNotesContract = BINARY_DIAGNOSTICS_TOOL_CONTRACTS.find(
+  (
+    candidate,
+  ): candidate is Extract<
+    (typeof BINARY_DIAGNOSTICS_TOOL_CONTRACTS)[number],
+    { readonly name: "inspect_elf_notes" }
+  > => candidate.name === "inspect_elf_notes",
+);
+if (inspectElfNotesContract === undefined)
+  throw new Error("Missing inspect_elf_notes contract");
 
 for (const target of [
   {
@@ -62,7 +73,7 @@ for (const target of [
       const mcpOut = await call("inspect_elf_notes", { path });
       expect(mcpOut.isError, JSON.stringify(mcpOut.content)).not.toBe(true);
 
-      const schema = toolContract("inspect_elf_notes").outputSchema;
+      const schema = inspectElfNotesContract.outputSchema;
       const cliReport = schema.parse(cliOut.json).normalized_result;
       const mcpReport = schema.parse(
         mcpOut.structuredContent,

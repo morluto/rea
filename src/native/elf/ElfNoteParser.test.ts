@@ -1280,26 +1280,69 @@ it("charges TextBudget for scanned and retained Android ident strings", () => {
     message: expect.stringMatching(/byte budget/u),
   });
 
-  // Two distinct 132-byte Android ident descriptors scan 256 slot bytes.
-  const distinctTwo = Buffer.concat([
-    androidIdentNote({
-      androidApi: 24,
-      ndkVersion: "r26d",
-      ndkBuildNumber: "1",
-    }),
-    androidIdentNote({
-      androidApi: 24,
-      ndkVersion: "r27c",
-      ndkBuildNumber: "2",
-    }),
+  // Share one 132-byte descriptor range across a GNU gold-version header
+  // (namesz=24) and a nested Android ident header (namesz=8 at +16) so
+  // `hashed` stays 132 (cached by range) and `used` stays 148, while
+  // `scanned` reaches 132 (GNU) + 128 (Android) = 260 bytes.
+  const identDescriptor = Buffer.alloc(132);
+  identDescriptor.writeUInt32LE(24, 0);
+  identDescriptor.write("r27c\0", 4, "latin1");
+  identDescriptor.write("1\0", 68, "latin1");
+  const sharedPayload = Buffer.alloc(36 + identDescriptor.length);
+  sharedPayload.writeUInt32LE(24, 0);
+  sharedPayload.writeUInt32LE(identDescriptor.length, 4);
+  sharedPayload.writeUInt32LE(4, 8);
+  sharedPayload.write("GNU\0", 12, "latin1");
+  sharedPayload.writeUInt32LE(8, 16);
+  sharedPayload.writeUInt32LE(identDescriptor.length, 20);
+  sharedPayload.writeUInt32LE(1, 24);
+  sharedPayload.write("Android\0", 28, "latin1");
+  identDescriptor.copy(sharedPayload, 36);
+  const programHeaders = Buffer.alloc(56 * 2);
+  const payloadOffset = 64 + programHeaders.length;
+  programHeaders.writeUInt32LE(4, 0);
+  programHeaders.writeBigUInt64LE(BigInt(payloadOffset), 8);
+  programHeaders.writeBigUInt64LE(BigInt(sharedPayload.length), 32);
+  programHeaders.writeBigUInt64LE(4n, 48);
+  programHeaders.writeUInt32LE(4, 56);
+  programHeaders.writeBigUInt64LE(BigInt(payloadOffset + 16), 56 + 8);
+  programHeaders.writeBigUInt64LE(BigInt(sharedPayload.length - 16), 56 + 32);
+  programHeaders.writeBigUInt64LE(4n, 56 + 48);
+  const sharedScanImage = Buffer.concat([
+    elf64({ phoff: 64, phnum: 2 }),
+    programHeaders,
+    sharedPayload,
   ]);
-  expect(() =>
+
+  const withinScanBudget = parse(
+    sharedScanImage,
+    inspectElfNotesInputSchema.parse({
+      path: defaults.path,
+      max_file_bytes: 260,
+    }),
+  );
+  expect(withinScanBudget.entries[1]?.android).toEqual({
+    android_api: 24,
+    ndk_version: "r27c",
+    ndk_build_number: "1",
+  });
+
+  let scanFailure: unknown;
+  try {
     parse(
-      elfNoteFixture({ ownership: "program", notes: distinctTwo }),
+      sharedScanImage,
       inspectElfNotesInputSchema.parse({
         path: defaults.path,
-        max_file_bytes: 200,
+        max_file_bytes: 259,
       }),
-    ),
-  ).toThrow(/byte budget/u);
+    );
+  } catch (cause) {
+    scanFailure = cause;
+  }
+  expect(scanFailure).toBeInstanceOf(ArtifactReaderFailure);
+  expect(scanFailure).toMatchObject({
+    reason: "limit",
+    boundary: "memory",
+    message: expect.stringMatching(/259-byte budget/u),
+  });
 });
