@@ -54,7 +54,7 @@ it.skipIf(process.platform === "win32")(
     expect(result.ok).toBe(false);
     if (!result.ok) {
       const projected = projectAnalysisError(result.error);
-      expect(projected.message).toContain("symbolic link");
+      expect(projected.message).toContain("symlink");
       expect(projected.remediation.action).toContain(target);
     }
   },
