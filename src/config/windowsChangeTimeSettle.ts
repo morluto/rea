@@ -68,17 +68,7 @@ export interface WindowsChangeTimeSettleLimits {
   readonly maxPollsSource: "default" | "setting";
 }
 
-export const DEFAULT_WINDOWS_CHANGE_TIME_SETTLE_LIMITS: WindowsChangeTimeSettleLimits =
-  {
-    driftMs: WINDOWS_CHANGE_TIME_DRIFT_MS.defaultValue,
-    driftSource: "default",
-    pollMs: WINDOWS_CHANGE_TIME_SETTLE_POLL_MS.defaultValue,
-    pollSource: "default",
-    maxPolls: WINDOWS_CHANGE_TIME_SETTLE_MAX_POLLS.defaultValue,
-    maxPollsSource: "default",
-  };
-
-export const windowsChangeTimeSettingFailure = (
+const windowsChangeTimeSettingFailure = (
   bound: WindowsChangeTimeBound,
   currentValue: string,
 ): WindowsChangeTimeSettingFailure => ({
@@ -93,7 +83,7 @@ export const windowsChangeTimeSettingFailure = (
 });
 
 /** Name the rejected value, its source, the allowed range, and the required restart. */
-export const windowsChangeTimeSettingMessage = (
+const windowsChangeTimeSettingMessage = (
   failure: WindowsChangeTimeSettingFailure,
 ): string =>
   `The effective ${failure.setting} value is ${failure.currentValue} ${failure.unit} (source ${failure.source}; default ${String(failure.defaultValue)} ${failure.unit}, floor ${String(failure.floor)} ${failure.unit}, maximum ${String(failure.maximum)} ${failure.unit}). Set ${failure.setting} in the environment that starts REA to a positive decimal integer from ${String(failure.floor)} to ${String(failure.maximum)}, then restart REA.`;
@@ -183,17 +173,3 @@ export const resolveWindowsChangeTimeSettle = (
     maxPollsSource: maxPolls === undefined ? "default" : "setting",
   });
 };
-
-/**
- * Describe the effective budget. Admission still returns the last observation
- * when the poll budget runs out; these settings only change how long it waits.
- */
-export const windowsChangeTimeSettleRecovery = (
-  limits: WindowsChangeTimeSettleLimits,
-): string =>
-  [
-    `The effective ${WINDOWS_CHANGE_TIME_DRIFT_MS.setting} value is ${String(limits.driftMs)} ms (source ${limits.driftSource}; default ${String(WINDOWS_CHANGE_TIME_DRIFT_MS.defaultValue)} ms, floor ${String(WINDOWS_CHANGE_TIME_DRIFT_MS.floor)} ms, maximum ${String(WINDOWS_CHANGE_TIME_DRIFT_MS.maximum)} ms).`,
-    `The effective ${WINDOWS_CHANGE_TIME_SETTLE_POLL_MS.setting} value is ${String(limits.pollMs)} ms (source ${limits.pollSource}; default ${String(WINDOWS_CHANGE_TIME_SETTLE_POLL_MS.defaultValue)} ms, floor ${String(WINDOWS_CHANGE_TIME_SETTLE_POLL_MS.floor)} ms, maximum ${String(WINDOWS_CHANGE_TIME_SETTLE_POLL_MS.maximum)} ms).`,
-    `The effective ${WINDOWS_CHANGE_TIME_SETTLE_MAX_POLLS.setting} value is ${String(limits.maxPolls)} polls (source ${limits.maxPollsSource}; default ${String(WINDOWS_CHANGE_TIME_SETTLE_MAX_POLLS.defaultValue)} polls, floor ${String(WINDOWS_CHANGE_TIME_SETTLE_MAX_POLLS.floor)} polls, maximum ${String(WINDOWS_CHANGE_TIME_SETTLE_MAX_POLLS.maximum)} polls).`,
-    "Set them in the environment that starts REA, then restart REA. They do not change Windows ChangeTime itself.",
-  ].join(" ");
