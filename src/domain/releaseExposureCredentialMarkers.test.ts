@@ -61,6 +61,15 @@ describe("release exposure credential marker boundaries", () => {
     expect(ruleIds(token)).toEqual([ruleId]);
   });
 
+  it("reports a full-length GitHub refresh token", () => {
+    const refreshToken = `ghr_${"a".repeat(76)}`;
+    expect(ruleIds(JSON.stringify({ token: refreshToken }))).toEqual([
+      "github.refresh_token",
+    ]);
+    expect(ruleIds(`ghr_${"a".repeat(36)}`)).toEqual([]);
+    expect(ruleIds(`gho_${"a".repeat(36)}`)).toEqual(["github.token"]);
+  });
+
   it("keeps a Google API key to its exact length", () => {
     expect(ruleIds(`${GOOGLE_KEY}-`)).toEqual([]);
     expect(ruleIds(`${GOOGLE_KEY}A`)).toEqual([]);

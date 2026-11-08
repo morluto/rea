@@ -12,7 +12,8 @@ const MARKER_RULES = [
       /-----BEGIN (?:RSA |EC |OPENSSH |PGP )?PRIVATE KEY(?: BLOCK)?-----/u,
   },
   { id: "aws.access_key_id", pattern: /\bAKIA[0-9A-Z]{16}\b/u },
-  { id: "github.token", pattern: /\bgh[opurs]_[A-Za-z0-9]{36}\b/u },
+  { id: "github.token", pattern: /\bgh[opus]_[A-Za-z0-9]{36}\b/u },
+  { id: "github.refresh_token", pattern: /\bghr_[A-Za-z0-9]{76}\b/u },
   {
     id: "github.fine_grained_pat",
     pattern: /\bgithub_pat_[A-Za-z0-9_]{22,}\b/u,
