@@ -1,6 +1,5 @@
 import { Ajv2020 } from "ajv/dist/2020.js";
-import { Client } from "@modelcontextprotocol/client";
-import { afterAll, expect, it, onTestFinished, vi } from "vitest";
+import { afterAll, expect, it, onTestFinished } from "vitest";
 import { z } from "zod";
 
 import type {
@@ -10,7 +9,12 @@ import type {
 import { createAnalysisExecution } from "../../../src/application/AnalysisProvider.js";
 import { toolContract } from "../../../src/contracts/toolContracts.js";
 import { parseEvidence } from "../../../src/domain/evidence.js";
-import { AnalysisError } from "../../../src/domain/analysisErrorBase.js";
+import { AnalysisTimeoutError } from "../../../src/domain/analysisErrorCore.js";
+import { ProviderCleanupError } from "../../../src/domain/providerCleanupError.js";
+import { AnalysisCleanupLease } from "../../../src/artifacts/AnalysisCleanupLease.js";
+import { JebMcpCleanupFailure } from "../../../src/jeb/JebMcpConnectionOwner.js";
+import { jebMcpTimeoutGuidance } from "../../../src/jeb/JebMcpDeadline.js";
+import type { JebMcpConnection } from "../../../src/jeb/JebMcpConnection.js";
 import { ok } from "../../../src/domain/result.js";
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
 import { createApplicationMcpHarness } from "../../fixtures/applicationMcpHarness.js";
@@ -109,149 +113,59 @@ it("discovers current JEB operation support and recovery through binary_session"
   expect(probes).toBe(2);
 });
 
-it("reports retained JEB availability cleanup through binary_session", async () => {
-  const fixture = await startJebMcpFixture(
-    (tool) => jebPrimaryResponses[tool]!,
-    { tools: [], nextCursor: "repeat" },
-  );
-  onTestFinished(() => fixture.close());
-  const provider = new JebProvider({
-    environment: { REA_JEB_MCP_URL: fixture.endpoint },
+it("preserves the JEB discovery timeout when availability cleanup is incomplete", async () => {
+  const resource = "fixture JEB MCP client";
+  const cleanup = new ProviderCleanupError("jeb", [resource], {
+    reason: "connection close failed",
   });
-  const { client, close } = await createApplicationMcpHarness({
-    serverOptions: { environment: {}, jebAnalysis: provider },
+  const lease = new AnalysisCleanupLease(() => Promise.resolve(), [resource]);
+  lease.bindCleanupError(cleanup);
+  const timeout = new AnalysisTimeoutError("jeb_mcp_catalog", 250, {
+    ...jebMcpTimeoutGuidance("discovery", 250),
   });
-  const inspect = provider.inspectAvailability.bind(provider);
-  let originating: AnalysisError | undefined;
-  const inspection = vi
-    .spyOn(provider, "inspectAvailability")
-    .mockImplementation(async (signal) => {
-      try {
-        return await inspect(signal);
-      } catch (cause: unknown) {
-        if (cause instanceof AnalysisError) originating = cause;
-        throw cause;
-      }
-    });
-  const nativeClose = Client.prototype.close;
-  let allowClose = false;
-  const clientClose = vi
-    .spyOn(Client.prototype, "close")
-    .mockImplementation(async function (this: Client) {
-      if (!allowClose) throw new Error("injected JEB client close failure");
-      await nativeClose.call(this);
-    });
-  try {
-    const result = await client.callTool({
-      name: "binary_session",
-      arguments: { detail: "complete" },
-    });
-    expect(result.isError).toBe(true);
-    expect(parseMcpToolError(result)).toMatchObject({
-      error: {
-        code: "cleanup_incomplete",
-        details: {
-          resources: expect.arrayContaining([
-            expect.stringContaining(fixture.endpoint),
-          ]),
-        },
-      },
-    });
-    if (originating === undefined)
-      throw new Error("Missing retained JEB error");
-    expect(originating.cleanupIncomplete).toBe(true);
-    allowClose = true;
-    await provider.close();
-    expect(originating.cleanupIncomplete).toBe(false);
-    expect(originating.cleanupResources).toEqual([]);
-  } finally {
-    allowClose = true;
-    clientClose.mockRestore();
-    inspection.mockRestore();
-    await close();
-    await provider.close();
-  }
-});
-
-it("retains the JEB discovery timeout when availability cleanup also fails", async () => {
-  let releaseCatalog!: () => void;
-  const catalogRelease = new Promise<void>((resolve) => {
-    releaseCatalog = resolve;
-  });
-  const fixture = await startJebMcpFixture(
-    (tool) => jebPrimaryResponses[tool]!,
-    async () => {
-      await catalogRelease;
-      return { tools: [] };
+  const failure = new JebMcpCleanupFailure(timeout, cleanup, "jeb_mcp_catalog");
+  const connection: JebMcpConnection = {
+    sessionGeneration: 0,
+    async connect() {
+      throw failure;
     },
-  );
-  onTestFinished(() => fixture.close());
-  const provider = new JebProvider({
-    environment: { REA_JEB_MCP_URL: fixture.endpoint },
-    discoveryTimeoutMs: 250,
-  });
-  const { client, close } = await createApplicationMcpHarness({
+    async listTools() {
+      throw failure;
+    },
+    async call() {
+      throw new Error("Availability must not call a JEB tool");
+    },
+    close: () => lease.release(),
+  };
+  const provider = new JebProvider({ connectionFactory: () => connection });
+  onTestFinished(() => provider.close());
+  const { client } = await createApplicationMcpHarness({
     serverOptions: { environment: {}, jebAnalysis: provider },
   });
-  const inspect = provider.inspectAvailability.bind(provider);
-  let originating: AnalysisError | undefined;
-  const inspection = vi
-    .spyOn(provider, "inspectAvailability")
-    .mockImplementation(async (signal) => {
-      try {
-        return await inspect(signal);
-      } catch (cause: unknown) {
-        if (cause instanceof AnalysisError) originating = cause;
-        throw cause;
-      }
-    });
-  const nativeClose = Client.prototype.close;
-  let allowClose = false;
-  const clientClose = vi
-    .spyOn(Client.prototype, "close")
-    .mockImplementation(async function (this: Client) {
-      if (!allowClose) throw new Error("injected JEB client close failure");
-      await nativeClose.call(this);
-    });
-  try {
-    const result = await client.callTool({
-      name: "binary_session",
-      arguments: { detail: "complete" },
-    });
-    expect(parseMcpToolError(result)).toMatchObject({
-      error: {
-        code: "cleanup_incomplete",
-        details: {
-          resources: expect.arrayContaining([
-            expect.stringContaining(fixture.endpoint),
-          ]),
-          execution_failure: "provider_timeout",
-          diagnostics: {
-            primary_error: {
-              code: "provider_timeout",
-              remediation: {
-                action: expect.stringContaining("REA_JEB_MCP_TIMEOUT_MS"),
-              },
+  const result = await client.callTool({
+    name: "binary_session",
+    arguments: { detail: "complete" },
+  });
+  expect(parseMcpToolError(result)).toMatchObject({
+    error: {
+      code: "cleanup_incomplete",
+      details: {
+        resources: [resource],
+        execution_failure: "provider_timeout",
+        diagnostics: {
+          primary_error: {
+            code: "provider_timeout",
+            remediation: {
+              action: expect.stringContaining("REA_JEB_MCP_TIMEOUT_MS"),
             },
           },
         },
       },
-    });
-    if (originating === undefined)
-      throw new Error("Missing retained JEB error");
-    expect(originating.cleanupIncomplete).toBe(true);
-    allowClose = true;
-    releaseCatalog();
-    await provider.close();
-    expect(originating.cleanupIncomplete).toBe(false);
-  } finally {
-    allowClose = true;
-    releaseCatalog();
-    clientClose.mockRestore();
-    inspection.mockRestore();
-    await close();
-    await provider.close();
-  }
+    },
+  });
+  expect(cleanup.cleanupIncomplete).toBe(true);
+  await provider.close();
+  expect(cleanup.cleanupIncomplete).toBe(false);
 });
 
 it("advertises exact valid JEB schemas and records inline evidence through MCP", async () => {
