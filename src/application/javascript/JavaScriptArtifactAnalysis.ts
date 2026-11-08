@@ -736,7 +736,8 @@ const findingCount = (analysis: JavaScriptStaticAnalysis): number =>
   analysis.electron.sender_validations.length +
   analysis.electron.utility_processes.length +
   analysis.electron.native_addon_bindings.length +
-  analysis.electron.protocols.length;
+  analysis.electron.protocols.length +
+  (analysis.electron.dynamic_code ?? []).length;
 
 const optionalString = (value: unknown): string | null =>
   typeof value === "string" && value.length > 0 ? value : null;

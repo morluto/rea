@@ -1,6 +1,7 @@
 import * as t from "@babel/types";
 
 import { inspectElectronBrowserNode } from "./electronStaticAnalysisBrowser.js";
+import { deferElectronDynamicCode } from "./electronStaticAnalysisDynamicCode.js";
 import { inspectElectronIpcNode } from "./electronStaticAnalysisIpc.js";
 import { inspectElectronNativeNode } from "./electronStaticAnalysisNative.js";
 import { inspectElectronProtocolNode } from "./electronStaticAnalysisProtocol.js";
@@ -17,6 +18,7 @@ export const inspectElectronStaticNode = (
   inspectElectronBrowserNode(node, context);
   inspectElectronIpcNode(node, context);
   inspectElectronNativeNode(node, context);
+  deferElectronDynamicCode(node, context);
   const path =
     t.isCallExpression(node) || t.isOptionalCallExpression(node)
       ? (electronCalleePath(node.callee, context) ??

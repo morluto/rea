@@ -422,6 +422,13 @@ const graphLimitations = (
           "Native member names are requested by JavaScript syntax and are not verified binary exports in this workflow.",
         ]
       : []),
+    ...(context.analysis.files.some(
+      ({ javascript }) => (javascript?.electron.dynamic_code ?? []).length > 0,
+    )
+      ? [
+          "A node:vm call with cachedData executes compiled bytecode that is not analyzed source; logic inside that snapshot is unknown rather than absent.",
+        ]
+      : []),
     ...(coverage === "complete"
       ? []
       : [
