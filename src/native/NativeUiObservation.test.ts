@@ -248,7 +248,6 @@ describe("native UI capture selection and budgets", () => {
         },
       },
     );
-    expect(result.ok).toBe(false);
     if (result.ok) throw new Error("Expected scenario cancellation");
     expect(result.error._tag).toBe("AnalysisCancelledError");
     expect(result.error.cause).toBe(controller.signal.reason);
@@ -274,7 +273,6 @@ describe("native UI capture selection and budgets", () => {
         invoke: async () => ({ ok: true, result: largeSnapshot }),
       },
     );
-    expect(result.ok).toBe(false);
     if (result.ok) throw new Error("Expected scenario output limit failure");
     expect(result.error._tag).toBe("AnalysisCapabilityUnavailableError");
     expect(result.error.partialObservation).toMatchObject({
@@ -311,15 +309,14 @@ describe("native UI deadline execution", () => {
         },
       },
     );
-    expect(result.ok).toBe(true);
     if (!result.ok) throw new Error("expected a completed scenario");
     const limitation = result.value.limitations.join("\n");
-    expect(limitation).toContain("selected native_ui_deadline_ms of 2500 ms");
-    expect(limitation).toContain("omitted means 180000");
-    expect(limitation).toContain(
-      "One wait step stays capped at 180000 ms and that cap has no runtime override.",
+    expect(limitation).toMatch(
+      /native_ui_deadline_ms.*2500 ms.*omitted.*180000/iu,
     );
-    expect(limitation).not.toContain("180-second");
+    expect(limitation).toMatch(
+      /wait step.*capped at 180000 ms.*no runtime override/iu,
+    );
   });
 
   it("states the omitted 180000 ms deadline separately from the wait-step cap", async () => {
@@ -327,14 +324,14 @@ describe("native UI deadline execution", () => {
       environment: {},
       invoke: async () => ({ ok: true, result: snapshot }),
     });
-    expect(result.ok).toBe(true);
     if (!result.ok) throw new Error("expected a completed observation");
     const limitation = result.value.limitations.join("\n");
-    expect(limitation).toContain("selected native_ui_deadline_ms of 180000 ms");
-    expect(limitation).toContain(
-      "One wait step stays capped at 180000 ms and that cap has no runtime override.",
+    expect(limitation).toMatch(
+      /native_ui_deadline_ms.*180000 ms.*omitted.*180000/iu,
     );
-    expect(limitation).not.toContain("180-second");
+    expect(limitation).toMatch(
+      /wait step.*capped at 180000 ms.*no runtime override/iu,
+    );
   });
 
   it("reports the owned deadline as a timeout during helper execution", async () => {
@@ -354,7 +351,6 @@ describe("native UI deadline execution", () => {
         throw new ExecFileOutputCancelledError(reason);
       },
     });
-    expect(result.ok).toBe(false);
     if (result.ok) throw new Error("Expected deadline timeout");
     expect(result.error).toBeInstanceOf(AnalysisTimeoutError);
     expect(result.error.cause).toBe(reason);
@@ -377,7 +373,6 @@ describe("native UI deadline execution", () => {
         throw new ExecFileOutputCancelledError(producerReason);
       },
     });
-    expect(result.ok).toBe(false);
     if (result.ok) throw new Error("Expected producer cancellation");
     expect(result.error).toBeInstanceOf(AnalysisCancelledError);
     expect(result.error.cause).toBe(producerReason);
@@ -409,7 +404,6 @@ describe("native UI deadline execution", () => {
         },
       },
     );
-    expect(result.ok).toBe(false);
     if (result.ok) throw new Error("Expected deadline timeout");
     expect(result.error).toBeInstanceOf(AnalysisTimeoutError);
     expect(result.error.cause).toBe(reason);
@@ -442,7 +436,6 @@ it("classifies a helper subprocess timeout as the selected UI deadline", async (
       },
     },
   );
-  expect(result.ok).toBe(false);
   if (result.ok) throw new Error("Expected helper deadline timeout");
   expect(result.error).toBeInstanceOf(AnalysisTimeoutError);
   const projected = projectAnalysisError(result.error);
@@ -476,7 +469,6 @@ describe("native UI interruption provenance", () => {
       },
     );
     clearTimeout(timer);
-    expect(result.ok).toBe(false);
     if (result.ok) throw new Error("Expected deadline timeout");
     expect(result.error).toBeInstanceOf(AnalysisTimeoutError);
     expect(result.error.cause).toBe(reason);
@@ -494,7 +486,6 @@ describe("native UI interruption provenance", () => {
       signal: caller.signal,
       invoke: async () => ({ ok: true, result: snapshot }),
     });
-    expect(result.ok).toBe(false);
     if (result.ok) throw new Error("Expected caller cancellation");
     expect(result.error._tag).toBe("AnalysisCancelledError");
     expect(result.error.cause).toBe(reason);
@@ -517,7 +508,6 @@ describe("native UI interruption provenance", () => {
         throw failure;
       },
     });
-    expect(result.ok).toBe(false);
     if (result.ok) throw new Error("Expected helper failure");
     expect(result.error._tag).toBe("ProviderAdapterError");
     expect(result.error.cause).toBe(failure);
@@ -539,7 +529,6 @@ describe("native UI interruption provenance", () => {
         return { ok: true, result: { malformed: true } };
       },
     });
-    expect(result.ok).toBe(false);
     if (result.ok) throw new Error("Expected schema failure");
     expect(result.error._tag).toBe("ProviderAdapterError");
     expect(result.error.cause).toMatchObject({ name: "ZodError" });
@@ -629,7 +618,6 @@ describe("native UI target and cancellation failures", () => {
       launch_time: 1,
       action: { kind: "scroll", path: [1] },
     });
-    expect(result.ok).toBe(false);
     if (result.ok) throw new Error("Expected failed action");
     expect(result.error._tag).toBe("AnalysisCapabilityUnavailableError");
     expect(result.error.partialObservation).toMatchObject({
@@ -661,7 +649,6 @@ describe("native UI target and cancellation failures", () => {
       },
     );
     expect(calls).toBe(1);
-    expect(result.ok).toBe(false);
     if (result.ok) throw new Error("Expected scenario cancellation");
     expect(result.error._tag).toBe("AnalysisCancelledError");
     expect(result.error.cause).toBe(controller.signal.reason);

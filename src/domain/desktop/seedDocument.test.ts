@@ -20,6 +20,31 @@ const reasonOf = ({ opens }: ReturnType<typeof openSeedDocument>): string => {
   return opens.reason;
 };
 
+it("keeps a captured file URL without appending the same document", () => {
+  const url = `file://${HOME}/Documents/poster%20one.svg?mode=edit#page`;
+  const argv = ["inkscape", url];
+  expect(
+    openSeedDocument(argv, {
+      ...AT_HOME,
+      exec: "inkscape %U",
+      documents: ["Documents/poster one.svg"],
+    }),
+  ).toEqual({ argv, opens: { kind: "captured" } });
+});
+
+it("recognizes a captured relative filename containing a colon", () => {
+  const argv = ["app", "Budget:2026.svg"];
+  expect(
+    openSeedDocument(argv, {
+      ...AT_HOME,
+      workingDirectory: `${HOME}/Documents`,
+      exec: "app %U",
+      documents: ["Documents/Budget:2026.svg"],
+      isDocument: (path) => path === "Documents/Budget:2026.svg",
+    }),
+  ).toEqual({ argv, opens: { kind: "captured" } });
+});
+
 describe("openSeedDocument", () => {
   it("appends the seed's one document when Exec takes files, respelled under $HOME by the launch", () => {
     const opened = openSeedDocument(["inkscape"], {

@@ -16,7 +16,10 @@ import {
 import type { ResolvedSessionOpen } from "./binary/BinarySessionOpen.js";
 import { silentLogger } from "../logger.js";
 import type { Logger } from "pino";
-import { withEvidenceCallerInputPath } from "../domain/evidence.js";
+import {
+  tryParseEvidence,
+  withEvidenceCallerInputPath,
+} from "../domain/evidence.js";
 import {
   createImmutableEvidenceBundle,
   type EvidenceBundle,
@@ -26,8 +29,8 @@ import {
   type AnalysisResultWithSources,
 } from "./investigation/recordEvidenceSources.js";
 import {
-  resolveInvestigationEvidenceClosure,
   createInvestigationEvidenceClosureChecker,
+  collectInvestigationEvidenceClosure,
 } from "./investigation/InvestigationEvidence.js";
 import type { Evidence } from "../domain/evidence.js";
 import type { NativeToolName } from "../contracts/native/nativeToolContracts.js";
@@ -102,6 +105,7 @@ type DirectAnalysisTool =
   | "address_to_file_offset"
   | "binary_overview"
   | "procedure_pseudo_code"
+  | "procedure_references"
   | "read_function_instructions"
   | "inspect_native_instruction"
   | "inspect_native_data_type"
@@ -388,12 +392,12 @@ const runAnalysis = async (
     readonly evidenceParameters?: Readonly<Record<string, JsonValue>>;
     readonly onEvidenceBundle?: (bundle: EvidenceBundle) => void;
     readonly createSession?: () => BinarySession | Promise<BinarySession>;
+    readonly includeEvidenceSources?: boolean;
     readonly providerId?: AnalysisProviderSelector;
     readonly formatHint?: ExecutableFormatHint;
     readonly architecture?: BinaryArchitecture;
     readonly entryPoint?: string;
     readonly espFlash?: EspFlashSelection;
-    readonly includeEvidenceSources?: boolean;
   },
 ): Promise<AnalysisResultWithSources<Evidence, JsonValue>> => {
   const { logger, signal, snapshotPath } = options;
@@ -416,23 +420,19 @@ const runAnalysis = async (
     evidence: Evidence,
     supplied: readonly Evidence[] = [],
   ): Result<null, AnalysisError> => {
-    if (options.includeEvidenceSources !== true) return ok(null);
-    const known = new Map(
+    if (!options.includeEvidenceSources) return ok(null);
+    const records = new Map(
       supplied.map((record) => [record.evidence_id, record]),
     );
-    const closure = resolveInvestigationEvidenceClosure(
+    const collected = collectInvestigationEvidenceClosure(
       {
-        evidenceForAnalysis: (id) => {
-          const record = known.get(id) ?? session.evidenceForAnalysis(id);
-          if (record !== undefined) known.set(id, record);
-          return record;
-        },
+        evidenceForAnalysis: (id) =>
+          records.get(id) ?? session.evidenceForAnalysis(id),
       },
       evidence.evidence_links,
     );
-    if (!closure.ok) return closure;
-    sourceEvidence = closure.value.map((id) => known.get(id) as Evidence);
-    return ok(null);
+    sourceEvidence = collected.records;
+    return collected.result;
   };
   const execute = async (): Promise<Result<Evidence, AnalysisError>> => {
     let isDirectory = false;
@@ -518,12 +518,12 @@ const runAnalysis = async (
           });
           if (checkClosure(cached.evidence_links)) {
             const evidence = withEvidenceCallerInputPath(cached, path);
-            const sources = captureSources(
+            const captured = captureSources(
               evidence,
               snapshot.evidence_bundle.records,
             );
-            if (!sources.ok)
-              return err(sources.error.retainPartialObservation(evidence));
+            if (!captured.ok)
+              return err(captured.error.retainPartialObservation(evidence));
             options.onEvidenceBundle?.(snapshot.evidence_bundle);
             return ok(evidence);
           }
@@ -554,20 +554,30 @@ const runAnalysis = async (
       evidenceProfile,
       saveSnapshot: snapshotPath !== undefined,
     });
-    if (!executed.ok) return executed;
+    if (!executed.ok) {
+      if (options.includeEvidenceSources) {
+        const partial = tryParseEvidence(executed.error.partialObservation);
+        if (partial !== undefined) {
+          const captured = captureSources(partial);
+          if (!captured.ok)
+            executed.error.retainSecondaryFailure(captured.error);
+        }
+      }
+      return executed;
+    }
     const { cachePolicy } = executed.value;
     const evidence = withEvidenceCallerInputPath(executed.value.evidence, path);
     // Provider execution may have already recorded the same semantic Evidence
     // without this invocation's request path. Import replaces that metadata
     // while retaining the authenticated result and snapshot binding.
+    const captured = captureSources(evidence);
+    if (!captured.ok)
+      return err(captured.error.retainPartialObservation(evidence));
     const recorded = session.importEvidenceBundle(
       createImmutableEvidenceBundle([evidence]),
     );
     if (!recorded.ok)
       return err(recorded.error.retainPartialObservation(evidence));
-    const sources = captureSources(evidence);
-    if (!sources.ok)
-      return err(sources.error.retainPartialObservation(evidence));
     if (isWorkflowEvidenceTool(tool)) {
       const unknowns = recordWorkflowUnknowns({
         name: tool,
@@ -649,16 +659,15 @@ const runAnalysis = async (
       outcome.cleanupError.retainDiagnostics({
         analysis_snapshot: { ...publishedSnapshot },
       });
-    return err(
-      directAnalysisCleanupFailure(result, outcome.cleanupError, path),
-    );
+    return {
+      ...err(directAnalysisCleanupFailure(result, outcome.cleanupError, path)),
+      ...(sourceEvidence === undefined ? {} : { sourceEvidence }),
+    };
   }
-  return result.ok
-    ? {
-        ...ok(result.value),
-        ...(sourceEvidence === undefined ? {} : { sourceEvidence }),
-      }
-    : err(cliError(result.error, path));
+  return {
+    ...(result.ok ? ok(result.value) : err(cliError(result.error, path))),
+    ...(sourceEvidence === undefined ? {} : { sourceEvidence }),
+  };
 };
 
 const executeAnalysisTool = async (input: {

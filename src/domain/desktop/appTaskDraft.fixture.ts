@@ -2,6 +2,7 @@ import type { JsonValue } from "../jsonValue.js";
 import type { DesktopTaskCheckInput } from "./appTask.js";
 import { evaluateTaskChecks } from "./appTaskChecks.js";
 import { draftTaskFiles, type TaskDraftFile } from "./appTaskDraft.js";
+import { leftOutFiles } from "./appExportUnowned.js";
 import type { DesktopStatePath } from "./desktopState.js";
 import { xmlView } from "./stateFormats.js";
 
@@ -42,7 +43,12 @@ export const draftOf = (
     new Map(Object.entries(files)),
     () => true,
     { seed: 0, end: 1 },
-    { stateDirectories, kept: selected, selected },
+    leftOutFiles(
+      new Map(Object.entries(files)),
+      stateDirectories,
+      selected,
+      selected,
+    ).isLeftOut,
   );
 
 /** An XML text's view, which a test's own text always has. */

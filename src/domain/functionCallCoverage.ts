@@ -1,6 +1,7 @@
 import {
   relationshipCoverageLimitations,
   type RelationshipCoverage,
+  type RelationshipDiscoveryStatus,
 } from "./relationshipCoverage.js";
 import type { FunctionDossier } from "./native/functionDossier.js";
 import { uniqueSorted } from "./canonicalOrdering.js";
@@ -20,7 +21,18 @@ export const combineFunctionRelationshipCoverage = (
   const diagnostics = uniqueSorted(
     reads.flatMap(({ coverage }) => coverage?.diagnostics ?? []),
   );
-  const details = diagnostics.length > 0 ? { diagnostics } : {};
+  const discovery = {
+    ...(callers?.discovery?.callers === undefined
+      ? {}
+      : { callers: callers.discovery.callers }),
+    ...(callees?.discovery?.callees === undefined
+      ? {}
+      : { callees: callees.discovery.callees }),
+  };
+  const details = {
+    ...(diagnostics.length > 0 ? { diagnostics } : {}),
+    ...(Object.keys(discovery).length === 0 ? {} : { discovery }),
+  };
   const callersLimited = callers?.status !== "complete";
   const calleesLimited = callees?.status !== "complete";
   const limited_directions: Extract<
@@ -85,6 +97,10 @@ export interface FunctionCallCoverageAssessment {
   readonly unresolvedCallCaveats: readonly string[];
   /** Provider caveats that remain relevant even with complete coverage. */
   readonly diagnostics: readonly string[];
+  /** Discovery limits do not invalidate comparisons of the observed sets. */
+  readonly discoveryLimitations: readonly string[];
+  /** Whether all requested call discovery directions are established. */
+  readonly discoveryStatus: RelationshipDiscoveryStatus;
 }
 
 /** Keep observed-set blockers separate from descriptive provider caveats. */
@@ -97,6 +113,25 @@ export const assessFunctionCallCoverage = (
       ({ address, reason }) => `Unresolved call at ${address}: ${reason}`,
     ),
   );
+  const missingDiscovery: string[] = [];
+  const discoveryLimitations: string[] = [];
+  let discoveryStatus: RelationshipDiscoveryStatus = "complete";
+  for (const direction of ["callers", "callees"] as const) {
+    const discovery = coverage?.discovery?.[direction];
+    if (discovery?.status === "partial") discoveryStatus = "partial";
+    else if (discovery?.status !== "complete" && discoveryStatus !== "partial")
+      discoveryStatus = "unknown";
+    if (discovery?.status === "complete") continue;
+    if (discovery?.reason === undefined) missingDiscovery.push(direction);
+    else
+      discoveryLimitations.push(
+        `Static direct-call discovery for ${direction} is ${discovery.status}: ${discovery.reason}`,
+      );
+  }
+  if (missingDiscovery.length > 0)
+    discoveryLimitations.push(
+      `Static direct-call discovery is not established for ${missingDiscovery.join(" and ")}.`,
+    );
   return {
     blockers: uniqueSorted([
       ...relationshipCoverageLimitations(coverage),
@@ -104,5 +139,7 @@ export const assessFunctionCallCoverage = (
     ]),
     unresolvedCallCaveats,
     diagnostics: uniqueSorted(coverage?.diagnostics ?? []),
+    discoveryLimitations,
+    discoveryStatus,
   };
 };

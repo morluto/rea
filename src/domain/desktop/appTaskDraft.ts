@@ -1,5 +1,4 @@
 import type { JsonValue } from "../jsonValue.js";
-import { leftOutFiles } from "./appExportUnowned.js";
 import { isTimestamp, type DesktopTaskCheckInput } from "./appTask.js";
 import { isGeneratedUid } from "./attributeRank.js";
 import {
@@ -421,15 +420,6 @@ const netChange = (baseline: Version, final: Version) => {
   };
 };
 
-/** The paths the export decides what it leaves out of the seed by, as `exportedStateFiles` spells them. */
-export interface SeedingPaths {
-  readonly stateDirectories: readonly string[];
-  /** Documents and selected paths, whose logs the seed keeps. */
-  readonly kept: readonly string[];
-  /** Home paths the export selected exactly, whose locks the seed keeps. */
-  readonly selected: readonly string[];
-}
-
 /** One changed file an author writes checks about. */
 export interface TaskDraftFile {
   readonly file: string;
@@ -491,15 +481,10 @@ export const draftTaskFiles = (
   files: ReadonlyMap<string, DesktopStatePath>,
   served: (home: string) => boolean,
   ends: StateEnds,
-  seeding: SeedingPaths,
+  /** The export owner's exclusion decision for each home path. */
+  isLeftOut: (home: string) => boolean,
 ): readonly TaskDraftFile[] => {
   const changed = changedStateFiles(files, ends, served);
-  const { isLeftOut } = leftOutFiles(
-    files,
-    seeding.stateDirectories,
-    seeding.kept,
-    seeding.selected,
-  );
   // A lock the seed leaves out is not the document the user worked on.
   const considered = changed.filter(({ home }) => !isLeftOut(home));
   const role = considered.some(({ path }) => path.role === "document")

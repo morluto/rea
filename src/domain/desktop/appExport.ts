@@ -338,9 +338,9 @@ export const stateFilesByHomePath = (
 /**
  * The state view's files and dconf databases by home path, the paths the app
  * owns, and which home files the seed leaves out as locks the app holds, as
- * the export decides them, with the paths it decides by. A document or a file
- * under a selected path is seeded, except a lock beside its file, which stays
- * out unless that lock was the selected path.
+ * the export decides them. A document or a file under a selected path is
+ * seeded, except a lock beside its file, which stays out unless that lock
+ * was the selected path.
  */
 export const exportedStateFiles = (
   capture: DesktopApplicationCapture,
@@ -381,7 +381,6 @@ export const exportedStateFiles = (
     dconf,
     collisions,
     paths,
-    seeding: { stateDirectories, kept: usersOwn, selected },
     ...leftOut,
   };
 };

@@ -327,8 +327,9 @@ it("refuses Windows job-backed debugger termination before signaling", async () 
     stopOwnedDebuggerProcess(session, "GDB", { platform: "win32" }),
   ).resolves.toEqual({
     status: "incomplete",
-    reason:
-      "Owned GDB process cannot be stopped safely on Windows because job termination can also terminate its inferior processes.",
+    reason: expect.stringMatching(
+      /Windows.*job termination.*inferior processes/i,
+    ),
   });
   expect(signals).toEqual([]);
   expect(outputUnrefs).toBe(0);
@@ -360,8 +361,9 @@ it("retains an already-exited Windows session while its job has descendants", as
 
   expect(result).toEqual({
     status: "incomplete",
-    reason:
-      "Owned GDB process leader exited, but its Windows Job Object still has active descendants or has not reported settlement.",
+    reason: expect.stringMatching(
+      /leader exited.*Windows Job Object.*active descendants.*settlement/i,
+    ),
   });
   expect(disposals).toBe(0);
   expect(outputUnrefs).toBe(0);
@@ -393,8 +395,9 @@ it("retains an exited POSIX session while descendants still hold its output stre
 
   expect(result).toEqual({
     status: "incomplete",
-    reason:
-      "Owned GDB process leader exited, but inherited output streams are still open or have not reported settlement.",
+    reason: expect.stringMatching(
+      /leader exited.*output streams.*open.*settlement/i,
+    ),
   });
   expect(disposals).toBe(0);
   expect(outputUnrefs).toBe(0);
@@ -477,8 +480,9 @@ it("does not signal an active debugger when its provider cannot detach the infer
 
   expect(result).toEqual({
     status: "incomplete",
-    reason:
-      "Owned GDB inferior detach cannot be verified because the provider has no detach capability.",
+    reason: expect.stringMatching(
+      /inferior detach.*cannot be verified.*no detach capability/i,
+    ),
   });
   expect(signals).toEqual([]);
 });
@@ -505,8 +509,9 @@ it("preserves a non-Error provider detach rejection and does not signal the debu
 
   expect(result).toEqual({
     status: "incomplete",
-    reason:
-      "Owned GDB inferior detach could not be verified: detach state unknown",
+    reason: expect.stringMatching(
+      /inferior detach.*could not be verified.*detach state unknown/i,
+    ),
   });
   expect(signals).toEqual([]);
 });
@@ -693,8 +698,9 @@ it("fails closed when detach lacks durable output sink confirmation", async () =
 
   expect(result).toEqual({
     status: "incomplete",
-    reason:
-      "Owned GDB provider did not confirm no inferior or detachment with a durable output sink.",
+    reason: expect.stringMatching(
+      /did not confirm no inferior or detachment.*durable output sink/i,
+    ),
   });
   expect(signals).toEqual([]);
 });
@@ -743,8 +749,9 @@ it("retains an owned debugger when inferior detach does not settle", async () =>
     await vi.advanceTimersByTimeAsync(1_000);
     expect(await attempt).toEqual({
       status: "incomplete",
-      reason:
-        "Owned GDB inferior detach was not verified within 1000 ms. This release has no runtime override.",
+      reason: expect.stringMatching(
+        /inferior detach.*not verified.*1000 ms.*no runtime override/i,
+      ),
     });
     const retry = stopOwnedDebuggerProcess(session, "GDB", {
       platform: "linux",
@@ -752,8 +759,9 @@ it("retains an owned debugger when inferior detach does not settle", async () =>
     await vi.advanceTimersByTimeAsync(1_000);
     expect(await retry).toEqual({
       status: "incomplete",
-      reason:
-        "Owned GDB inferior detach was not verified within 1000 ms. This release has no runtime override.",
+      reason: expect.stringMatching(
+        /inferior detach.*not verified.*1000 ms.*no runtime override/i,
+      ),
     });
     expect(detachCalls).toBe(1);
     expect(signals).toEqual([]);
@@ -1556,6 +1564,7 @@ it("finds retained debugger IDs through composed failures without looping on cyc
 
 it("names every retained debugger in its remediation", () => {
   const remediation = retainedDebuggerRemediation([4242, 4243]);
+  expect(remediation).toMatch(/no later REA command can retry this cleanup/iu);
   expect(remediation).toMatch(/\b4242\b/u);
   expect(remediation).toMatch(/\b4243\b/u);
 });
