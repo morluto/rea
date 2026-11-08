@@ -35,8 +35,6 @@ export interface TextPlacement {
 /** Text checks for the elements whose text changed, and the pointers those checks make redundant: text and whole runs holding text in them, or an element added whole checked itself, not an attribute or name of an element both ends hold, nor an element holding no text, as an image or a break. */
 export interface WholeTextSuggestions {
   readonly suggestions: readonly DesktopTaskCheckInput[];
-  /** Checks that text an addition kept is still there, for an author to add by choice. */
-  readonly guards: readonly DesktopTaskCheckInput[];
   /** Elements whose text changed that no check took, because every place for one held more text than the limit. */
   readonly long: readonly string[];
   readonly covers: (pointer: string) => boolean;
@@ -422,11 +420,10 @@ const textHolder = (
   return { holder: listed ? undefined : kept, listed };
 };
 
-/** A text check, the element it reads as the diff names it, and guards of the text it kept. */
+/** A text check and the element it reads as the diff names it. */
 interface Placed {
   readonly element: string;
   readonly check: DesktopTaskCheckInput;
-  readonly guards: readonly DesktopTaskCheckInput[];
 }
 
 /** What text checks read: the file, its two ends, and where checks go. */
@@ -447,14 +444,11 @@ export const wholeTextCheck = (
   pointer: string,
   now: { readonly value: string; readonly children: readonly JsonValue[] },
   before: string | undefined,
-): Pick<Placed, "check" | "guards"> => {
+): DesktopTaskCheckInput => {
   const { value } = now;
   const numeric = valueEqualsCheck(file, pointer, value, before);
-  if ("tolerance" in numeric) return { check: numeric, guards: [] };
-  return {
-    check: { kind: "text_equals", file, pointer, value },
-    guards: [],
-  };
+  if ("tolerance" in numeric) return numeric;
+  return { kind: "text_equals", file, pointer, value };
 };
 
 /** The element a candidate names in the final view, whole, at the pointer `name` gives it. */
@@ -495,7 +489,7 @@ const textCheck = (
     !holdsSplitDate(context.ends.final, pointer)
     ? {
         element: candidate.element,
-        ...wholeTextCheck(
+        check: wholeTextCheck(
           context.file,
           pointer,
           { value, children: now.children },
@@ -636,7 +630,6 @@ export const wholeTextSuggestions = (
     .slice(0, place.limit.suggestions);
   return {
     suggestions: suggested.map(({ check }) => check),
-    guards: suggested.flatMap(({ guards }) => guards),
     long: [...long],
     covers: (pointer) => {
       if (
