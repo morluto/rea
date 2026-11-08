@@ -810,9 +810,17 @@ const limitNativeSample = (
         (image) => !layouts.some((folder) => inLayout(folder, image.path)),
       ),
     ),
-    ...layouts.flatMap((folder) =>
-      hostsAmong(kept.filter((image) => inLayout(folder, image.path))),
-    ),
+    ...layouts.flatMap((folder) => {
+      const found = hostsAmong(
+        kept.filter((image) => inLayout(folder, image.path)),
+      );
+      // A bundle's framework carries its fuses, so a launcher beside it is
+      // sampled but is not a fuse host.
+      const framework = found.filter((image) =>
+        inMacFramework(folder, image.path),
+      );
+      return framework.length > 0 ? framework : found;
+    }),
   ];
   return {
     electronExecutableIncluded,
@@ -903,11 +911,13 @@ const MAC_ELECTRON_FRAMEWORK = "Frameworks/Electron Framework.framework/";
 const inLayout = (folder: string, path: string): boolean => {
   if (nativeDirname(path) === folder) return true;
   if (macBundleName(folder) === null) return false;
-  return (
-    dirname(path) === `${folder}/MacOS` ||
-    path.startsWith(`${folder}/${MAC_ELECTRON_FRAMEWORK}`)
-  );
+  return dirname(path) === `${folder}/MacOS` || inMacFramework(folder, path);
 };
+
+/** Whether an image is inside a macOS bundle layout's Electron framework. */
+const inMacFramework = (folder: string, path: string): boolean =>
+  macBundleName(folder) !== null &&
+  path.startsWith(`${folder}/${MAC_ELECTRON_FRAMEWORK}`);
 
 const filesystemPath = (value: string | null | undefined): string | null => {
   if (value === null || value === undefined || value.length === 0) return null;

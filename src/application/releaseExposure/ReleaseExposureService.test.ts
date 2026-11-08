@@ -1159,6 +1159,42 @@ describe("ReleaseExposureService macOS bundle layouts", () => {
     );
     expect((await runAsNode(service))?.status).toBe("unknown");
   });
+
+  it("lets a bundle's framework settle its fuses past a launcher with no sentinel", async () => {
+    const framework =
+      "/work/app/App.app/Contents/Frameworks/Electron Framework.framework/Electron Framework";
+    const launcher = "/work/app/App.app/Contents/MacOS/App";
+    const { service, desktop, electronFuses } = owners(
+      directoryScan([framework, launcher]),
+    );
+    const report = electronDesktopReport();
+    desktop.inspect.mockResolvedValue(
+      ok(
+        evidence({
+          ...report,
+          files: [
+            {
+              ...report.files[0],
+              path: "App.app/Contents/Resources/app.asar",
+              local_path: "/work/app/App.app/Contents/Resources/app.asar",
+            },
+          ],
+        }),
+      ),
+    );
+    electronFuses.inspect.mockImplementation(async (input) =>
+      ok(
+        evidence(
+          fuseReport(
+            (input as { path?: string }).path === framework
+              ? [slice(0)]
+              : [slice(0, { sentinels: 0 })],
+          ),
+        ),
+      ),
+    );
+    expect((await runAsNode(service))?.status).toBe("not_observed");
+  });
 });
 
 describe("ReleaseExposureService nested app layouts", () => {
