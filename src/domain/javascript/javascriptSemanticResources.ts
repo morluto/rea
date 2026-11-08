@@ -12,7 +12,6 @@ import type {
 import {
   isNullishJavaScriptSyntax,
   isObjectPrototypeSetter,
-  readExactJavaScriptLiteral,
   semanticStaticPropertyName,
   staticObjectProperty,
   unwrapJavaScriptExpression,
@@ -560,18 +559,7 @@ const rejectsPortValue = (
     const signed = value.operator === "-" ? -operand.value : operand.value;
     return !isUsablePortNumber(signed);
   }
-  // A value spread or hoisted into a binding still reads exactly, so a const
-  // initializer is decided on the same terms as an inline literal.
-  const literal = readExactJavaScriptLiteral(value);
-  if (!literal.found) return false;
-  if (typeof literal.value === "number")
-    return !isUsablePortNumber(literal.value);
-  if (typeof literal.value !== "string") return false;
-  // A string port is coerced, so `""` and whitespace throw while `" 80 "`,
-  // `"0x50"`, `"1e2"` and `"080"` all read as 80.
-  return (
-    literal.value.trim().length === 0 || !isUsablePortString(literal.value)
-  );
+  return false;
 };
 
 /** Whether a string port reads as one Node accepts; Node coerces with `Number`. */
