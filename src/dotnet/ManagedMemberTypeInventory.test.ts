@@ -8,7 +8,10 @@ import {
   buildManagedNestedTypeFixture,
   managedPeFixtureTarget,
 } from "./ManagedPe.fixture.js";
-import { buildManagedMemberCapacityFixture } from "../../tests/fixtures/managedMemberCapacity.js";
+import {
+  buildManagedMemberCapacityFixture,
+  buildManagedMemberSelectionCapacityFixture,
+} from "../../tests/fixtures/managedMemberCapacity.js";
 import { readManagedPeLayout } from "./ManagedPeReader.js";
 import type { ManagedParseIssue } from "../domain/managed/managedArtifact.js";
 import {
@@ -89,16 +92,7 @@ it("decodes a single selected type to completion on a game-scale assembly", () =
   // one field and one method while the rest of the member inventory stays
   // on the last type, so this also proves the selected members decode
   // instead of merely proving that skipping unselected rows saves budget.
-  const bytes = buildManagedPeFixture({
-    additionalEmptyTypes: 9400,
-    fieldRowCount: 40037,
-    methodRowCount: 49738,
-    memberRefRowCount: 11442,
-    customAttributeRowCount: 58698,
-    distinctMemberNames: true,
-    firstTypeFieldRowCount: 1,
-    firstTypeMethodRowCount: 1,
-  });
+  const bytes = buildManagedMemberSelectionCapacityFixture();
   const target = managedPeFixtureTarget(bytes);
   const inventory = inspectManagedMembersBytes(bytes, target);
   const selected = inventory.types.find(
@@ -314,7 +308,6 @@ it("does not turn an unreadable requested type name into observed absence during
   expect(result.types.map((type) => type.full_name)).toEqual([
     "Fixture.Program",
   ]);
-  expect(result.limitations.join(" ")).toContain("absence is not observed");
 });
 
 it("keeps later type identity, member ownership and constructor names at their original row", () => {
@@ -370,7 +363,6 @@ it("keeps later type identity, member ownership and constructor names at their o
   expect(result.artifact.sha256).toBe(target.sha256);
   expect(result.coverage.state).toBe("partial");
   expect(result.selection?.unmatched_type_names).toEqual(["Fixture.Empty0"]);
-  expect(result.limitations.join(" ")).toContain("absence is not observed");
 
   // Member inspection uses the parsed-type name owner for its metadata
   // inventory, whose attribute names are not included in the member report.

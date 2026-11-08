@@ -63,7 +63,6 @@ it("preserves completed prefix and suffix facts when one script times out", asyn
   expect(calls).toEqual(
     captured.scripts.items.map(({ script_key }) => script_key),
   );
-  expect(result.ok).toBe(true);
   if (!result.ok) throw result.error;
   expect(
     result.value.observations.chunks.edges.map(({ specifier }) => specifier),
@@ -114,7 +113,6 @@ it("marks the unstarted suffix when the aggregate deadline expires", async () =>
   expect(calls).toEqual(
     captured.scripts.items.slice(0, 2).map(({ script_key }) => script_key),
   );
-  expect(result.ok).toBe(false);
   if (result.ok) throw new Error("Expected total deadline failure");
   expect(result.error._tag).toBe("AnalysisTimeoutError");
   expect(result.error.partialObservation).toMatchObject({
@@ -176,7 +174,6 @@ it("stops after a middle-script result-capacity failure and retains prefix facts
   expect(calls).toEqual(
     captured.scripts.items.slice(0, 2).map(({ script_key }) => script_key),
   );
-  expect(result.ok).toBe(false);
   if (result.ok) throw new Error("Expected result-capacity failure");
   expect(result.error).toBe(primary);
   expect(result.error.partialObservation).toMatchObject({
@@ -234,7 +231,6 @@ it("carries the exact caller cancellation reason and completed prefix facts", as
   const result = await pending;
   analyzer.releaseReservation();
 
-  expect(result.ok).toBe(false);
   if (result.ok) throw new Error("Expected cancellation");
   expect(result.error._tag).toBe("AnalysisCancelledError");
   expect(result.error.cause).toBe(exactReason);
@@ -276,7 +272,6 @@ it("retains all completed facts when cancellation arrives during worker close", 
   const result = await pending;
   analyzer.releaseReservation();
 
-  expect(result.ok).toBe(false);
   if (result.ok) throw new Error("Expected cancellation during finalization");
   expect(result.error._tag).toBe("AnalysisCancelledError");
   expect(result.error.partialObservation).toMatchObject({
@@ -316,7 +311,6 @@ it("retains cleanup ownership after mixed worker/close failure and resolves it o
   expect((await analyzer.reserve()).ok).toBe(true);
 
   const result = await analyzer.analyze(captured, noSourceMaps, input);
-  expect(result.ok).toBe(false);
   if (result.ok) throw new Error("Expected mixed failure");
   expect(result.error.cleanupIncomplete).toBe(true);
   expect(result.error.cleanupPrimary).toBe(primary);
@@ -347,7 +341,6 @@ it("shares one capture reservation when analyzers use one admission", async () =
   const second = new IsolatedWebBundleAnalyzer(() => inertWorker(), admission);
   expect((await first.reserve()).ok).toBe(true);
   const blocked = await second.reserve();
-  expect(blocked.ok).toBe(false);
   if (blocked.ok) throw new Error("Expected shared admission refusal");
   expect(projectAnalysisError(blocked.error)).toMatchObject({
     code: "resource_constraint",

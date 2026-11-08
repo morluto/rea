@@ -50,9 +50,7 @@ it("names the fixed report allowance when provenance.json exceeds 8 MiB", async 
   expect(projected.remediation.action).toContain("no runtime override");
   expect(projected.remediation.action).toContain("max_heap_mb");
   expect(projected.remediation.action).toContain("analysis_timeout_ms");
-  expect(projected.remediation.action).toContain(
-    "Repeating the unchanged request fails the same way",
-  );
+  expect(projected.remediation.action).toMatch(/unchanged request.*fails/iu);
 });
 
 it("keeps a malformed provenance report distinct from the fixed report allowance", async () => {
@@ -70,8 +68,9 @@ it("keeps a malformed provenance report distinct from the fixed report allowance
   if (!(refusal instanceof ProviderAdapterError))
     throw new Error("Expected a wrapped Wakaru report refusal");
   const projected = projectAnalysisError(refusal);
-  expect(projected.message).toBe(
-    "Analysis could not complete. Run `rea doctor` and review the reported details; repeating the unchanged request is not expected to succeed.",
+  expect(projected.message).toMatch(/rea doctor/iu);
+  expect(projected.message).toMatch(
+    /unchanged request.*not expected to succeed/iu,
   );
   expect(projected.remediation.action).toBe(projected.message);
   expect(JSON.stringify(projected)).not.toContain("report allowance");

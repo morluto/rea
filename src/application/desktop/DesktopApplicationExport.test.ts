@@ -238,6 +238,73 @@ describe("exportDesktopApplication", () => {
   });
 });
 
+describe("exportDesktopApplication and the desktop Trash", () => {
+  it("leaves a file the user moved to the Trash out of the seed and the owned paths, and says so", async () => {
+    const local = capture();
+    const trashed = `${HOME}/.local/share/Trash/files/today.txt`;
+    const info = `${HOME}/.local/share/Trash/info/today.txt.trashinfo`;
+    const infoText = "[Trash Info]\nPath=/home/ada/today.txt\n";
+    const [baseline, edited] = local.state.checkpoints;
+    if (baseline === undefined || edited === undefined)
+      throw new Error("the fixture has two checkpoints");
+    const folder = await writeCaptureFolder(
+      {
+        ...local,
+        state: {
+          ...local.state,
+          checkpoints: [
+            baseline,
+            {
+              ...edited,
+              changes: [
+                ...edited.changes,
+                change(trashed, { after: "milk\n" }),
+                change(info, { after: infoText }),
+              ],
+              retained: [
+                ...edited.retained,
+                retained(trashed, "milk\n"),
+                retained(info, infoText),
+              ],
+            },
+          ],
+        },
+      },
+      undefined,
+      [infoText],
+    );
+    const result = await exportDesktopApplication(
+      {
+        capture: folder,
+        directory: join(
+          await createTestTempDirectory("desktop-export-"),
+          "bundle",
+        ),
+        name: undefined,
+        tasks: [],
+        seedCheckpoint: "edited",
+      },
+      readers,
+    );
+
+    if (result instanceof Error) throw result;
+    expect(result.normalized_result).toMatchObject({
+      paths: [".config/notes", ".local/share/notes", "Documents"],
+      seed_files: [
+        ".config/notes/settings.ini",
+        ".local/share/notes/notes.db",
+        "Documents/today.txt",
+      ],
+    });
+    const warning = result.limitations.find((line) =>
+      line.includes("Trash/files/today.txt"),
+    );
+    expect(warning).toContain("~/.local/share/Trash/info/today.txt.trashinfo");
+    expect(warning).toMatch(/Trash.*2 file.*not seeded/iu);
+    expect(warning).toMatch(/restore.*capture again/iu);
+  });
+});
+
 const TYPORA_SOURCE = "https://downloads.typora.io/linux ./ Packages";
 const TYPORA_KEY = "typora public keyring\n";
 const VERIFIED_KEY: AptRepository["signing_key"] = {
@@ -396,7 +463,7 @@ describe("exportDesktopApplication from a vendor repository", () => {
     );
     expect(module).toContain('"arch": ["amd64"]');
     expect(module).toContain(
-      `command=["sh", "-c", "exec 'typora' '--no-sandbox' \\"$HOME\\"/'Documents/today.txt'"]`,
+      `command=["sh", "-c", "cd \\"$HOME\\" 2>/dev/null; exec 'typora' '--no-sandbox' \\"$HOME\\"/'Documents/today.txt'"]`,
     );
     expect(result.limitations.join("\n")).toContain(
       "Chromium's sandbox is off inside the computer",

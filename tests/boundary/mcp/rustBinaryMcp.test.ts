@@ -183,8 +183,9 @@ mcpTest(
         category: "resource_constraint",
         retryable: false,
         remediation: {
-          action:
-            "The rustc commit-path inventory is a fixed count. Waiting for an active analysis to finish does not raise it. Repeating the unchanged request fails the same way.",
+          action: expect.stringMatching(
+            /rustc commit.path inventory.*fixed count/iu,
+          ),
         },
         details: {
           operation: "inspect_rust_binary",

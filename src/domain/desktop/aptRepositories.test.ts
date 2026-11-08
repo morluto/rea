@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest";
 
-import { GPGV_A_ONLY, VENDOR_A } from "./aptKeys.fixture.js";
+import {
+  A_ARMORED,
+  GPGV_A_ONLY,
+  inlineSignedBy,
+  VENDOR_A,
+} from "./aptKeys.fixture.js";
 import {
   aptListFileName,
   dearmorPublicKeys,
@@ -107,7 +112,7 @@ describe("parseOneLineSources", () => {
         components: [],
         architectures: [],
         signedBy: [],
-        inlineKey: false,
+        inlineKey: null,
       },
     ]);
   });
@@ -150,7 +155,7 @@ describe("parseDeb822Sources", () => {
     });
   });
 
-  it("skips disabled stanzas yet counts them, as apt does, and marks a Signed-By that holds the key itself", () => {
+  it("skips disabled stanzas yet counts them, as apt does, and reads a Signed-By that holds the key itself", () => {
     const stanzas = parseDeb822Sources(
       [
         "# a comment-only paragraph apt does not count",
@@ -180,9 +185,50 @@ describe("parseDeb822Sources", () => {
         uris: ["https://ppa.launchpadcontent.net/a/b/ubuntu"],
         architectures: ["arm64"],
         signedBy: [],
-        inlineKey: true,
+        inlineKey:
+          "-----BEGIN PGP PUBLIC KEY BLOCK-----\n\nmQINBGdummy\n-----END PGP PUBLIC KEY BLOCK-----\n",
       }),
     ]);
+  });
+
+  it("reads the key a PPA's Signed-By holds as add-apt-repository writes it, so it dearmors to the key", () => {
+    const [stanza] = parseDeb822Sources(
+      [
+        "Types: deb",
+        "URIs: https://ppa.launchpadcontent.net/freecad-maintainers/freecad-stable/ubuntu/",
+        "Suites: noble",
+        "Components: main",
+        inlineSignedBy(A_ARMORED),
+        "",
+      ].join("\n"),
+      "/etc/apt/sources.list.d/freecad-maintainers-ubuntu-freecad-stable-noble.sources",
+    );
+
+    expect(stanza).toMatchObject({ signedBy: [], inlineKey: A_ARMORED });
+    expect(
+      dearmorPublicKeys(Buffer.from(stanza?.inlineKey ?? ""))?.equals(
+        VENDOR_A.key,
+      ),
+    ).toBe(true);
+  });
+
+  it("reads a key that starts on the Signed-By line, with tab-indented lines and a field after it", () => {
+    const [stanza] = parseDeb822Sources(
+      [
+        "Types: deb",
+        "URIs: https://ppa.launchpadcontent.net/a/b/ubuntu/",
+        "Suites: noble",
+        `Signed-By: ${A_ARMORED.trimEnd().replaceAll("\n\n", "\n.\n").replaceAll("\n", "\n\t ")}`,
+        "# a comment between fields",
+        "Components: main",
+      ].join("\n"),
+      "a-ubuntu-b-noble.sources",
+    );
+
+    expect(stanza).toMatchObject({
+      components: ["main"],
+      inlineKey: A_ARMORED,
+    });
   });
 
   it("keeps a stanza's URIs and suites as lists and resolves a target's pair from them, without expanding every pair", () => {
