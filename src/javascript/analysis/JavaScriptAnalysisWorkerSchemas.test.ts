@@ -202,3 +202,25 @@ it("preserves scoped IPC receiver provenance and rejects malformed scope metadat
     ).toBe(false);
   }
 });
+
+it("transfers constant-resolved and direct callable contextBridge findings across the worker boundary", () => {
+  const facts = analyzeJavaScriptStaticSource(`
+    const { contextBridge, ipcRenderer } = require("electron");
+    const api = Object.freeze({ ping: () => ipcRenderer.invoke("ping") });
+    const upload = (item) => ipcRenderer.invoke("upload", item);
+    contextBridge.exposeInMainWorld("AppApi", api);
+    contextBridge.exposeInMainWorld("uploadItem", upload);
+    contextBridge.exposeInMainWorld("dynamicApi", makeApi());
+  `);
+  expect(
+    facts.electron.context_bridge_apis.map(({ api_status }) => api_status),
+  ).toEqual(["object-literal", "function", "dynamic"]);
+  expect(
+    facts.electron.context_bridge_apis[0]?.resolution_sources,
+  ).toHaveLength(1);
+  expect(
+    facts.electron.context_bridge_apis[1]?.resolution_sources,
+  ).toHaveLength(1);
+  const serialized = JSON.parse(JSON.stringify(facts)) as unknown;
+  expect(javaScriptWorkerStaticAnalysisSchema.parse(serialized)).toEqual(facts);
+});

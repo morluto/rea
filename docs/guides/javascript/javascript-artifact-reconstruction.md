@@ -393,8 +393,8 @@ Selected bounded text is then parsed as inert data to recover:
   source names and content digests;
 - explicit BrowserWindow options and `webPreferences`, including statically
   resolvable preload entrypoints;
-- `contextBridge.exposeInMainWorld` and `exposeInIsolatedWorld` API keys and
-  bounded literal member paths;
+- `contextBridge.exposeInMainWorld` and `exposeInIsolatedWorld` API keys,
+  bounded literal or constant-bound member paths, and direct callable exposures;
 - renderer and main-process IPC operations, literal or dynamic channels, exact
   handler locations, and conservative pairing status;
 - sender, frame, URL, and origin validation candidates without claiming that a
@@ -557,6 +557,12 @@ location and `resolution_sources` identifies the original object literals in
 the same artifact. Inline option syntax keeps its observed Evidence. This
 does not execute code or establish runtime configuration; popup overrides from
 `setWindowOpenHandler` are not covered by this constant-options resolution.
+`contextBridge` API exposures apply the same lexical and mutation proof to
+local `const` object or function bindings, nested `const` sub-objects, and
+unmodified `Object.freeze(...)` wrappers, recording `resolution_sources` and
+static-inference provenance while keeping inline object or function syntax as
+observed evidence. Mutable, reassigned, escaped, mutated, or cyclic bindings
+remain dynamic with explicit unknown counts.
 
 A hoisted function does not establish initialization timing by declaration order.
 For classic scripts, the shared index also accounts for matching literal global

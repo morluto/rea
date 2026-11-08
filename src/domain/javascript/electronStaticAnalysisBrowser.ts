@@ -37,6 +37,11 @@ import {
   hasElectronOptionObjectCandidate,
   resolveElectronOptionObject,
 } from "./electronStaticOptionObjects.js";
+import {
+  hasContextBridgeResolutionCandidate,
+  needsDeferredContextBridgeApi,
+  resolveContextBridgeApi,
+} from "./electronStaticContextBridge.js";
 
 /** Inspect BrowserWindow, contextBridge, and utility-process syntax. */
 export const inspectElectronBrowserNode = (
@@ -275,9 +280,41 @@ const collectWebPreferences = (
   };
 };
 
+/** Batch deferred contextBridge APIs after the shared mutation index can yield safely. */
+export function* finishElectronContextBridgesSteps(
+  context: JavaScriptFindingContext,
+  index: JavaScriptBindingIndex,
+): Generator<void, void> {
+  const pending = context.accumulator.pendingContextBridgeApis;
+  if (pending.length === 0) return;
+  if (
+    pending.some((node) => {
+      const path = electronCalleePath(node.callee, context);
+      const exposure =
+        path?.length === 2 && path[0] === "contextBridge"
+          ? contextBridgeExposureArguments(path[1] ?? "", node.arguments)
+          : undefined;
+      return (
+        exposure !== undefined &&
+        hasContextBridgeResolutionCandidate(argumentNode(exposure.api), index)
+      );
+    })
+  )
+    yield* index.indexMemberMutationFactsSteps();
+  for (const node of pending) {
+    inspectContextBridge(node, context, index);
+    yield;
+  }
+  context.accumulator.contextBridgeApis.sort(
+    (left, right) => left.offset - right.offset,
+  );
+  pending.length = 0;
+}
+
 const inspectContextBridge = (
   node: t.CallExpression | t.OptionalCallExpression,
   context: JavaScriptFindingContext,
+  index?: JavaScriptBindingIndex,
 ): void => {
   const path = electronCalleePath(node.callee, context);
   const exposure =
@@ -285,10 +322,17 @@ const inspectContextBridge = (
       ? contextBridgeExposureArguments(path[1] ?? "", node.arguments)
       : undefined;
   if (exposure === undefined) return;
-  const keyNode = argumentNode(exposure.apiKey);
   const apiNode = argumentNode(exposure.api);
+  if (index === undefined && needsDeferredContextBridgeApi(apiNode)) {
+    context.accumulator.pendingContextBridgeApis.push(node);
+    return;
+  }
+  const keyNode = argumentNode(exposure.apiKey);
   const key = electronStaticValue(context.source, keyNode);
-  const api = collectContextBridgeMembers(apiNode);
+  const api =
+    index === undefined
+      ? { ...collectContextBridgeMembers(apiNode), resolutionSources: [] }
+      : resolveContextBridgeApi(apiNode, node, index);
   const worldId =
     exposure.worldId === null
       ? null
@@ -311,6 +355,9 @@ const inspectContextBridge = (
     api_status: api.status,
     members: api.members,
     unknown_members: api.unknown,
+    ...(api.resolutionSources.length > 0
+      ? { resolution_sources: api.resolutionSources }
+      : {}),
     module_key: null,
     location: range(node),
   };

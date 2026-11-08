@@ -318,3 +318,167 @@ it("classifies a bundle module by its loader, not by its name", async () => {
   );
   expect(externalUnderKey.electronSemantics).toBe("recovered");
 });
+
+const buildSyntheticContextBridgeGraph = async () => {
+  const mainEntry = await analyzedEntry(
+    `
+      const { BrowserWindow, ipcMain } = require("electron");
+      new BrowserWindow({ webPreferences: { preload: "./preload.js" } });
+      ipcMain.handle("items:upload", (event, payload) =>
+        event.sender.send("items:ack", payload),
+      );
+      ipcMain.on("items:notify", (event, message) =>
+        event.sender.send("items:seen", message),
+      );
+    `,
+    "main.js",
+  );
+  const preloadEntry = await analyzedEntry(
+    `
+      const { contextBridge, ipcRenderer } = require("electron");
+      const subObj = { notify: (msg) => ipcRenderer.send("items:notify", msg) };
+      const desktopApi = Object.freeze({ nested: subObj });
+      const uploadItem = async (payload) => ipcRenderer.invoke("items:upload", payload);
+      contextBridge.exposeInMainWorld("DesktopApi", desktopApi);
+      contextBridge.exposeInMainWorld("uploadItem", uploadItem);
+      contextBridge.exposeInMainWorld("InlineApi", { ready: true });
+    `,
+    "preload.js",
+  );
+  const pkgFile: JavaScriptArtifactFile = {
+    ...fileFor('{"name":"synthetic-app","main":"main.js"}', "package.json"),
+    kind: "package-json",
+  };
+  const analysis: JavaScriptArtifactAnalysis = {
+    jsonDocuments: new JavaScriptJsonDocuments(),
+    files: [mainEntry, preloadEntry],
+    packages: [
+      {
+        path: "package.json",
+        sha256: SHA256,
+        status: "included",
+        name: "synthetic-app",
+        version: "1.0.0",
+        main: "main.js",
+        main_status: "declared",
+        main_entrypoint: "main.js",
+        renderer_declarations: {},
+        renderer_entrypoint: null,
+        limitation: null,
+      },
+    ],
+    json_modules: [],
+    html_scripts: [],
+    html_inline_scripts: [],
+    source_maps: [],
+    visited_ast_nodes: 0,
+    findings: 0,
+    modules: 0,
+    parse_failures: 0,
+    limitations: [],
+  };
+  const fileSet = {
+    files: [mainEntry.file, preloadEntry.file, pkgFile],
+    unavailable_relevant_files: [],
+    containers: [],
+    text_bytes_read: mainEntry.file.bytes + preloadEntry.file.bytes,
+    invalid_utf8_files: 0,
+  };
+  const steps = buildGraph(snapshot, fileSet, analysis);
+  let next = steps.next();
+  while (next.done !== true) next = steps.next();
+  return next.value;
+};
+
+it("projects constant-resolved and callable contextBridge exposures with IPC pairing and provenance", async () => {
+  const { graph, electronSummary } = await buildSyntheticContextBridgeGraph();
+
+  expect(electronSummary).toMatchObject({
+    electron_semantics: "recovered",
+    context_bridge_apis: 3,
+    exposed_api_members: 3,
+    ipc: expect.objectContaining({
+      paired_renderer_transmissions: 2,
+    }),
+  });
+
+  const bridgeNodes = graph.nodes.filter(
+    (node) => node.kind === "context-bridge-api",
+  );
+  const desktopNode = bridgeNodes.find(
+    (node) => node.observations[0]?.label === "DesktopApi",
+  );
+  const uploadNode = bridgeNodes.find(
+    (node) => node.observations[0]?.label === "uploadItem",
+  );
+  const inlineNode = bridgeNodes.find(
+    (node) => node.observations[0]?.label === "InlineApi",
+  );
+
+  expect(desktopNode?.observations[0]).toMatchObject({
+    properties: {
+      api_status: "object-literal",
+      members: ["nested", "nested.notify"],
+      unknown_members: 0,
+      resolution_sources: [
+        expect.objectContaining({ source: "preload.js" }),
+        expect.objectContaining({ source: "preload.js" }),
+      ],
+    },
+    evidence: expect.objectContaining({
+      authority: "static-relationship-inference",
+      state: "inferred",
+      extractor: expect.objectContaining({
+        operation: "resolve-context-bridge-constant-api",
+      }),
+    }),
+  });
+  expect(uploadNode?.observations[0]).toMatchObject({
+    properties: {
+      api_status: "function",
+      members: [],
+      unknown_members: 0,
+      resolution_sources: [expect.objectContaining({ source: "preload.js" })],
+    },
+    evidence: expect.objectContaining({
+      authority: "static-relationship-inference",
+      state: "inferred",
+      extractor: expect.objectContaining({
+        operation: "resolve-context-bridge-constant-api",
+      }),
+    }),
+  });
+  expect(inlineNode?.observations[0]).toMatchObject({
+    properties: {
+      api_status: "object-literal",
+      members: ["ready"],
+      unknown_members: 0,
+    },
+    evidence: expect.objectContaining({
+      authority: "ast-static-analysis",
+      state: "observed",
+      extractor: expect.objectContaining({
+        operation: "observe-context-bridge-api",
+      }),
+    }),
+  });
+  expect(inlineNode?.observations[0]?.properties).not.toHaveProperty(
+    "resolution_sources",
+  );
+
+  const joinedChannels = graph.edges
+    .filter(
+      (edge) =>
+        edge.evidence.extractor.operation === "join-electron-wrapper-paths",
+    )
+    .map((edge) => ({
+      relation: edge.relation,
+      channel: edge.properties.channel,
+    }));
+  expect(joinedChannels).toEqual(
+    expect.arrayContaining([
+      { relation: "invokes", channel: "items:upload" },
+      { relation: "sends", channel: "items:notify" },
+    ]),
+  );
+});

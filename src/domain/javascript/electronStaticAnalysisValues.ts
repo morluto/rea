@@ -5,6 +5,7 @@ import type { ElectronStaticValue } from "./electronStaticAnalysisTypes.js";
 import {
   readExactJavaScriptLiteral,
   semanticStaticPropertyKey,
+  unwrapJavaScriptExpression,
 } from "./javascriptAstValues.js";
 import { electronMemberPath } from "./javascriptElectronMemberWrites.js";
 import { sourceSlice } from "./javascriptStaticAnalysisHelpers.js";
@@ -78,11 +79,26 @@ export function handlerKind(
  */
 export const contextBridgeMemberPathDepth = 8;
 
-/** Collect statically visible dotted keys from one literal contextBridge API object. */
+export type ContextBridgeNestedPropertyResolution =
+  | {
+      readonly kind: "object";
+      readonly object: t.ObjectExpression;
+      readonly activeNodes: ReadonlySet<t.Node>;
+    }
+  | { readonly kind: "leaf" }
+  | { readonly kind: "unknown" };
+
+export type ContextBridgeNestedPropertyResolver = (
+  value: t.Node,
+  activeNodes: ReadonlySet<t.Node>,
+) => ContextBridgeNestedPropertyResolution;
+
+/** Collect statically visible dotted keys or direct callable shape from one contextBridge API argument. */
 export const collectContextBridgeMembers = (
   node: t.Node | null | undefined,
+  resolveNestedProperty?: ContextBridgeNestedPropertyResolver,
 ): {
-  readonly status: "object-literal" | "dynamic" | "missing";
+  readonly status: "object-literal" | "function" | "dynamic" | "missing";
   readonly members: readonly string[];
   readonly unknown: number;
 } => {
@@ -92,7 +108,18 @@ export const collectContextBridgeMembers = (
       members: [],
       unknown: 0,
     };
-  if (!t.isObjectExpression(node))
+  const unwrapped = unwrapJavaScriptExpression(node).node;
+  if (
+    t.isArrowFunctionExpression(unwrapped) ||
+    t.isFunctionExpression(unwrapped) ||
+    t.isFunctionDeclaration(unwrapped)
+  )
+    return {
+      status: "function",
+      members: [],
+      unknown: 0,
+    };
+  if (!t.isObjectExpression(unwrapped))
     return {
       status: "dynamic",
       members: [],
@@ -102,10 +129,16 @@ export const collectContextBridgeMembers = (
     members: [],
     unknown: 0,
   };
-  collectMembersAt(node, [], state);
+  collectMembersAt(
+    unwrapped,
+    [],
+    state,
+    new Set([unwrapped]),
+    resolveNestedProperty,
+  );
   const members = [...new Set(state.members)].sort(compareUnicodeCodePoints);
   return {
-    status: "object-literal",
+    status: state.unknown === 0 ? "object-literal" : "dynamic",
     members,
     unknown: state.unknown,
   };
@@ -115,6 +148,8 @@ const collectMembersAt = (
   object: t.ObjectExpression,
   prefix: readonly string[],
   state: { members: string[]; unknown: number },
+  activeNodes: ReadonlySet<t.Node>,
+  resolveNestedProperty?: ContextBridgeNestedPropertyResolver,
 ): void => {
   if (prefix.length >= contextBridgeMemberPathDepth) {
     state.unknown += 1;
@@ -140,8 +175,26 @@ const collectMembersAt = (
     const segments = [...prefix, name];
     const path = segments.join(".");
     state.members.push(path);
-    if (t.isObjectProperty(property) && t.isObjectExpression(property.value))
-      collectMembersAt(property.value, segments, state);
+    if (!t.isObjectProperty(property)) continue;
+    if (resolveNestedProperty !== undefined) {
+      const nested = resolveNestedProperty(property.value, activeNodes);
+      if (nested.kind === "object")
+        collectMembersAt(
+          nested.object,
+          segments,
+          state,
+          nested.activeNodes,
+          resolveNestedProperty,
+        );
+      else if (nested.kind === "unknown") state.unknown += 1;
+      continue;
+    }
+    const nestedValue = unwrapJavaScriptExpression(property.value).node;
+    if (t.isObjectExpression(nestedValue) && !activeNodes.has(nestedValue)) {
+      const nextActive = new Set(activeNodes);
+      nextActive.add(nestedValue);
+      collectMembersAt(nestedValue, segments, state, nextActive);
+    }
   }
 };
 

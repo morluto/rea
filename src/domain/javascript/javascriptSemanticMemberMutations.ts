@@ -6,6 +6,10 @@ import {
 } from "./javascriptSemanticAmbientWrites.js";
 import { isIntrinsicMapLookup } from "./javascriptSemanticMapOperations.js";
 import {
+  isIntrinsicOrdinaryObjectFreezeCall,
+  unwrapUnmodifiedObjectFreezeArgument,
+} from "./javascriptSemanticObjectFreeze.js";
+import {
   isIntrinsicTypedArrayConstruction,
   isTypedArrayNumericIndex,
 } from "./javascriptSemanticTypedArrays.js";
@@ -234,7 +238,7 @@ const localAccessorMethods = (
           });
       }
     } else {
-      for (const source of branchReferenceValues(node, current.path))
+      for (const source of branchReferenceValues(node, current.path, state))
         pending.push(source);
     }
   }
@@ -1671,26 +1675,28 @@ export function* collectSemanticMemberMutationsSteps(
         t.isOptionalCallExpression(node) ||
         t.isNewExpression(node)
       ) {
-        for (const source of returnedReferences(node.callee).references)
-          markEscaped(source.node, node, source.projection);
-        for (const argument of node.arguments)
-          if (t.isSpreadElement(argument))
-            deferIterable({
-              node: argument.argument,
-              projection: [],
-              path: [null],
-              fallbackPath: [],
-              bindings: new Set(),
-              effect: "escape",
-              mutation: node,
-              originAt: node,
-            });
-          else markEscaped(argument, node);
-        // Constructing a member does not pass its container as `this`.
-        if (!t.isNewExpression(node)) {
-          const mapLookup = isIntrinsicMapLookup(node, state);
-          if (mapLookup === undefined) deferredMapReceivers.add(node);
-          else if (!mapLookup) markReceiver(node.callee, node);
+        if (!isIntrinsicOrdinaryObjectFreezeCall(node, state)) {
+          for (const source of returnedReferences(node.callee).references)
+            markEscaped(source.node, node, source.projection);
+          for (const argument of node.arguments)
+            if (t.isSpreadElement(argument))
+              deferIterable({
+                node: argument.argument,
+                projection: [],
+                path: [null],
+                fallbackPath: [],
+                bindings: new Set(),
+                effect: "escape",
+                mutation: node,
+                originAt: node,
+              });
+            else markEscaped(argument, node);
+          // Constructing a member does not pass its container as `this`.
+          if (!t.isNewExpression(node)) {
+            const mapLookup = isIntrinsicMapLookup(node, state);
+            if (mapLookup === undefined) deferredMapReceivers.add(node);
+            else if (!mapLookup) markReceiver(node.callee, node);
+          }
         }
       } else if (t.isTaggedTemplateExpression(node)) {
         for (const source of returnedReferences(node.tag).references)
@@ -1939,7 +1945,7 @@ const referencedValues = (
       state,
       widenedGetterResult,
     );
-  return branchReferenceValues(node, path);
+  return branchReferenceValues(node, path, state);
 };
 
 const constructedReferenceValues = (
@@ -1974,7 +1980,12 @@ const constructedReferenceValues = (
 const branchReferenceValues = (
   node: t.Node,
   path: PropertyPath,
+  state: JavaScriptSemanticAnalysisState,
 ): readonly ReferencedValue[] => {
+  if (t.isCallExpression(node) || t.isOptionalCallExpression(node)) {
+    const frozen = unwrapUnmodifiedObjectFreezeArgument(node, state);
+    return frozen === undefined ? [] : [{ node: frozen, path }];
+  }
   if (t.isAssignmentExpression(node))
     return node.operator === "||=" || node.operator === "??="
       ? [

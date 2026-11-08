@@ -82,6 +82,10 @@ export interface JavaScriptAnalysisAccumulator {
   readonly browserWindows: LocatedJavaScriptFinding<ElectronBrowserWindowFinding>[];
   readonly pendingBrowserWindows: t.NewExpression[];
   readonly contextBridgeApis: LocatedJavaScriptFinding<ElectronContextBridgeFinding>[];
+  readonly pendingContextBridgeApis: (
+    | t.CallExpression
+    | t.OptionalCallExpression
+  )[];
   readonly ipc: LocatedJavaScriptFinding<ElectronIpcFinding>[];
   readonly senderValidations: LocatedJavaScriptFinding<ElectronSenderValidationFinding>[];
   readonly utilityProcesses: LocatedJavaScriptFinding<ElectronUtilityProcessFinding>[];
@@ -180,6 +184,7 @@ export const createJavaScriptAnalysisAccumulator = (
   browserWindows: [],
   pendingBrowserWindows: [],
   contextBridgeApis: [],
+  pendingContextBridgeApis: [],
   ipc: [],
   senderValidations: [],
   utilityProcesses: [],

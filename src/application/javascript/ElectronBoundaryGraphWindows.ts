@@ -216,15 +216,30 @@ const addContextBridge = (
           api_status: value.api_status,
           members: value.members,
           unknown_members: value.unknown_members,
+          ...(value.resolution_sources === undefined
+            ? {}
+            : {
+                resolution_sources: value.resolution_sources.map(
+                  (location) => ({
+                    source: file.path,
+                    ...location,
+                  }),
+                ),
+              }),
           resolution_basis: value.resolution_basis ?? "direct-syntax",
         },
-        evidence: (value.resolution_basis === "wrapper-substitution"
+        evidence: (value.resolution_basis === "wrapper-substitution" ||
+          value.resolution_sources !== undefined
           ? staticInferenceEvidence
           : astObservationEvidence)({
           sha256: file.sha256,
           path: file.path,
           range: value.location,
-          operation: "observe-context-bridge-api",
+          operation:
+            value.resolution_sources !== undefined &&
+            value.resolution_basis !== "wrapper-substitution"
+              ? "resolve-context-bridge-constant-api"
+              : "observe-context-bridge-api",
           coverage,
         }),
       },
