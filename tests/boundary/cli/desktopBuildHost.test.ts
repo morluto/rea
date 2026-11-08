@@ -6,6 +6,7 @@ import { z } from "zod";
 
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
+import { defaultBuildComputerArchive } from "../../../src/desktop/BuildComputerEnvironment.js";
 
 const checkSchema = z.object({ name: z.string(), ok: z.boolean() }).loose();
 
@@ -46,6 +47,59 @@ const buildHost = async (launcher = "/opt/rea/scripts/rea.mjs") => {
     },
   };
 };
+
+cliTest.skipIf(!["darwin", "linux"].includes(process.platform))(
+  "doctor accepts client paths matching resolved build defaults",
+  { timeout: 60_000 },
+  async ({ cli }) => {
+    const { environment, home } = await buildHost();
+    const bin = join(home, "..", "bin");
+    await writeFile(
+      join(bin, "agent-env"),
+      '#!/bin/sh\necho "agent-env 0.9.1431"\n',
+      { mode: 0o755 },
+    );
+    await writeFile(
+      join(home, ".claude.json"),
+      JSON.stringify({
+        mcpServers: {
+          rea: {
+            command: process.execPath,
+            args: ["/opt/rea/scripts/rea.mjs", "mcp"],
+            env: {
+              REA_DOCKER_COMMAND: join(bin, "docker"),
+              REA_AGENT_ENV_COMMAND: join(bin, "agent-env"),
+              REA_BUILD_COMPUTER_REA_ARCHIVE: defaultBuildComputerArchive(
+                environment,
+                process.platform,
+              ),
+            },
+          },
+        },
+      }),
+    );
+    const result = await cli.run({
+      arguments: [
+        "doctor",
+        "--provider",
+        "desktop_build",
+        "--client",
+        "claude_code",
+        "--json",
+      ],
+      environment,
+      timeoutMs: 45_000,
+    });
+    const report = z
+      .object({ scope_checks: z.array(checkSchema) })
+      .parse(result.json);
+    expect(
+      report.scope_checks.find(
+        ({ name }) => name === "desktop_build-registration",
+      ),
+    ).toMatchObject({ ok: true });
+  },
+);
 
 cliTest.skipIf(!["darwin", "linux"].includes(process.platform))(
   "doctor checks a desktop build host and names settings without their values",

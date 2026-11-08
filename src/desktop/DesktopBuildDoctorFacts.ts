@@ -43,6 +43,27 @@ export const readDesktopBuildFacts = async (
     "REA_AGENT_ENV_COMMAND",
     "agent-env",
   );
+  const archive = await archiveFact(input);
+  const chosenCommand = (
+    name: BuildComputerSetting,
+    command: DesktopBuildCommand,
+  ) =>
+    (environment[name] ?? "") !== ""
+      ? environment[name]
+      : command.status === "found"
+        ? command.path
+        : undefined;
+  const selectedDocker = chosenCommand("REA_DOCKER_COMMAND", docker);
+  const selectedAgentEnv = chosenCommand("REA_AGENT_ENV_COMMAND", agentEnv);
+  const selectedSettings: Partial<Record<BuildComputerSetting, string>> = {
+    ...(selectedDocker === undefined
+      ? {}
+      : { REA_DOCKER_COMMAND: selectedDocker }),
+    ...(selectedAgentEnv === undefined
+      ? {}
+      : { REA_AGENT_ENV_COMMAND: selectedAgentEnv }),
+    REA_BUILD_COMPUTER_REA_ARCHIVE: archive.path,
+  };
   return {
     ps: await psFact(input),
     docker,
@@ -56,8 +77,8 @@ export const readDesktopBuildFacts = async (
       agentEnv.status === "found"
         ? { ...agentEnv, version: await agentEnvVersion(input, agentEnv.path) }
         : agentEnv,
-    archive: await archiveFact(input),
-    registrations: await registrationFacts(input),
+    archive,
+    registrations: await registrationFacts(input, selectedSettings),
     environmentSettings: BUILD_COMPUTER_SETTINGS.filter(
       (name) => (environment[name] ?? "") !== "",
     ),
@@ -239,6 +260,7 @@ const archiveFact = async (
 /** Setting names each considered registration records; values stay in its file. */
 const registrationFacts = async (
   input: DesktopBuildFactsInput,
+  selectedSettings: Partial<Record<BuildComputerSetting, string>>,
 ): Promise<DesktopBuildFacts["registrations"]> => {
   const selected = input.clientIds.length === 0 ? undefined : input.clientIds;
   const statuses = await input.registrations(
@@ -246,7 +268,7 @@ const registrationFacts = async (
     Object.fromEntries(
       BUILD_COMPUTER_SETTINGS.map((name) => [
         name,
-        input.environment[name] ?? "",
+        selectedSettings[name] ?? "",
       ]),
     ),
   );
@@ -256,10 +278,10 @@ const registrationFacts = async (
     const status = registered.find((entry) => entry.client === client);
     const differing = status?.provider_settings?.differing ?? [];
     const compared = differing.filter(
-      (name) => (input.environment[name] ?? "") !== "",
+      (name) => selectedSettings[name as BuildComputerSetting] !== undefined,
     );
     const unchecked = differing.filter(
-      (name) => (input.environment[name] ?? "") === "",
+      (name) => selectedSettings[name as BuildComputerSetting] === undefined,
     );
     return {
       client,
