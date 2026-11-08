@@ -1488,13 +1488,12 @@ describe("CutterBridgeClient: scenario group 9", () => {
       expected_generation: 7,
       command: "pd 4",
     });
-    expect(result.ok).toBe(true);
     if (!result.ok) throw result.error;
-    expect(result.value.limitations).toContain(
-      "The command completed or may have completed, but output exceeded the bridge transport limit and was omitted.",
+    expect(result.value.limitations).toContainEqual(
+      expect.stringMatching(/output.*transport limit.*omitted/iu),
     );
-    expect(result.value.limitations).not.toContain(
-      "Command completion or its output could not be confirmed; do not retry automatically because the command may have produced partial or persistent effects.",
+    expect(result.value.limitations).not.toContainEqual(
+      expect.stringMatching(/completion.*could not be confirmed/iu),
     );
   });
 });

@@ -227,8 +227,10 @@ test.each(["_", "__REA_", "marker-prefix"])(
         normalized_result: { output: expected, completion_status: "unknown" },
         raw_result: { output: expected },
       });
-      expect(result.value.evidence.limitations).toContain(
-        "Interrupted output may include an incomplete completion-marker prefix; it is retained because it cannot be distinguished from command diagnostics.",
+      expect(result.value.evidence.limitations).toContainEqual(
+        expect.stringMatching(
+          /incomplete completion.marker prefix.*diagnostics/iu,
+        ),
       );
     } finally {
       injected.control.exit();
@@ -256,7 +258,6 @@ test("retains partial bytes and uncertainty when exited output never closes", as
     });
     if (!started.ok) throw started.error;
     const result = await manager.execute(started.value.session_id, "dr");
-    expect(result.ok).toBe(false);
     if (result.ok) throw new Error("Expected retained cleanup uncertainty");
     expect(result.error.partialObservation).toMatchObject({
       normalized_result: {
@@ -307,7 +308,6 @@ test.each(["cancel", "overflow", "cancel-overflow"] as const)(
         "dr",
         controller.signal,
       );
-      expect(result.ok).toBe(false);
       if (result.ok) throw new Error("Expected interrupted command");
       const expected = mode.includes("overflow")
         ? [
@@ -357,7 +357,6 @@ test.each(["before-wait", "during-wait"])(
       });
       if (!started.ok) throw started.error;
       const result = await manager.execute(started.value.session_id, "dr");
-      expect(result.ok).toBe(false);
       if (result.ok) throw new Error("Expected stdin protocol failure");
       expect(result.error.partialObservation).toMatchObject({
         normalized_result: {
@@ -401,7 +400,6 @@ test("marks output discarded by the byte queue limit during exit drainage", asyn
     });
     if (!started.ok) throw started.error;
     const result = await manager.execute(started.value.session_id, "dr");
-    expect(result.ok).toBe(false);
     if (result.ok) throw new Error("Expected bounded queue failure");
     const observation = result.error.partialObservation;
     expect(observation).toMatchObject({

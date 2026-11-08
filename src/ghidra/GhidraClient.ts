@@ -739,9 +739,11 @@ export class GhidraClient {
     }
   }
 
-  /** Actual restore source, including a restart within the same REA session. */
-  checkpointRestore(): GhidraPackedProgram | undefined {
-    return this.#checkpointRestore;
+  /** Verified source after startup: null for initial checkpointed analysis; undefined if disabled or unconfirmed. */
+  checkpointRestore(): GhidraPackedProgram | null | undefined {
+    if (this.#checkpoint === undefined || !this.#startupSucceeded())
+      return undefined;
+    return this.#checkpointRestore ?? null;
   }
 
   /** Read completion from the current attempt; no independent readiness flag. */

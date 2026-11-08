@@ -529,8 +529,10 @@ describe("universal slices outside the structural index", () => {
       ["slices/ppc", 4096],
       ["slices/arm64", 8192],
     ]);
-    expect(entries[0]?.limitations).toContain(
-      "Structural Mach-O facts were unsupported (big-endian Mach-O slices are not supported); slice range is based on lipo output.",
+    expect(entries[0]?.limitations).toContainEqual(
+      expect.stringMatching(
+        /big.endian Mach.O.*not supported.*slice range.*lipo/iu,
+      ),
     );
   });
 

@@ -148,7 +148,7 @@ rea inspect-analysis-view /tmp/metadata-query.json --json
 ```
 
 Use the exported Evidence with the CLI's inline Evidence source format described
-in [CLI and Evidence](cli.md#run-a-command). Compact delivery requires
+in [CLI and Evidence](getting-started/cli.md#run-a-command). Compact delivery requires
 `--evidence_output`; existing files are never overwritten. The full export
 preserves every decoded row for subsequent queries without the original file.
 
@@ -482,7 +482,7 @@ Native address queries batch exact 64-bit hexadecimal `addresses` and `states` (
 ## Ghidra function names
 
 The CLI can turn a linked report into a
-[`REA_GHIDRA_SEED_FILE`](installation.md) so Ghidra names every IL2CPP method
+[`REA_GHIDRA_SEED_FILE`](getting-started/installation.md) so Ghidra names every IL2CPP method
 before auto-analysis:
 
 ```bash
@@ -553,7 +553,7 @@ report to 64 MiB, checking row counts before allocation and JSON/UTF-8/base64 ex
 decoding, before serialization. Names and identical literal spans are decoded
 once within one stable file snapshot; no filesystem results are cached across
 inspections. Ownership assignment also yields to cancellation. MCP also applies its
-[response transport budget](mcp-contracts.md); a complete report within the
+[response transport budget](reference/mcp-contracts.md); a complete report within the
 report limit can still require the summary and paging path.
 
 ## Outside this tool
@@ -566,8 +566,8 @@ report limit can still require the summary and paging path.
 - Full method signatures beyond the rendered field, parameter and return type
   names, and type names for metadata version 27.
 - Running Ghidra or another disassembler. `--ghidra-seeds` only writes a seed
-  file for [`REA_GHIDRA_SEED_FILE`](installation.md); use the
-  [native workflow](native-investigation.md) for native code.
+  file for [`REA_GHIDRA_SEED_FILE`](getting-started/installation.md); use the
+  [native workflow](guides/native/native-investigation.md) for native code.
 - Metadata versions other than 24, 27, 29, 31 and 39.
 
 Names come from the metadata file only. They do not establish which methods
