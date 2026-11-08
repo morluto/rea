@@ -28,6 +28,17 @@ const execute = promisify(execFile);
 const program = (path: string, body: string) =>
   writeFile(path, `#!/bin/sh\n${body}\n`, { mode: 0o755 });
 
+const configRunner = (path: string) =>
+  program(
+    path,
+    `
+case "$1 $2" in
+  "config debug") printf '{"search_path":[{"path":"%s","exists":true}]}' "$AGENT_ENV_CONFIG" ;;
+  "config explain") printf '%s' "$FAKE_EXPLANATION" ;;
+  *) echo 'agent-env 0.9.1431' ;;
+esac`,
+  );
+
 const buildHost = async (prefix: string) => {
   const root = await createTestTempDirectory(prefix);
   const bin = join(root, "bin");
@@ -60,16 +71,40 @@ it.skipIf(process.platform === "win32")(
   async () => {
     const root = await createTestTempDirectory("rea-doctor-fifo-config-");
     const fifo = join(root, "config.toml");
+    const runner = join(root, "agent-env");
     await execute("/usr/bin/mkfifo", [fifo]);
+    await configRunner(runner);
     const resources = new ArtifactResourceScope();
     const controller = new AbortController();
     const pending = readDesktopBuildFacts({
-      environment: { HOME: root, PATH: "", AGENT_ENV_CONFIG: fifo },
+      environment: {
+        HOME: root,
+        PATH: "",
+        AGENT_ENV_CONFIG: fifo,
+        REA_AGENT_ENV_COMMAND: runner,
+      },
       platform: process.platform,
       resources,
       signal: controller.signal,
-      run: async () => {
-        throw new Error("unexpected command");
+      run: async (_command, args) => {
+        if (args[0] === "--version")
+          return {
+            stdout: "agent-env 0.9.1431",
+            stderr: "",
+            stdoutBytes: 19,
+            stderrBytes: 0,
+          };
+        if (args[1] !== "debug")
+          throw new Error("config explanation must not run for a FIFO");
+        const stdout = JSON.stringify({
+          search_path: [{ path: fifo, exists: true }],
+        });
+        return {
+          stdout,
+          stderr: "",
+          stdoutBytes: stdout.length,
+          stderrBytes: 0,
+        };
       },
       clientIds: [],
       registrations: async () => [],
@@ -85,7 +120,7 @@ it.skipIf(process.platform === "win32")(
           );
         }),
       ]);
-      expect(facts.solveEndpoint).not.toBe(fifo);
+      expect(facts.solveEndpoint).toBeNull();
     } finally {
       if (timer !== undefined) clearTimeout(timer);
       controller.abort();
@@ -135,13 +170,101 @@ it.skipIf(process.platform === "win32")(
     const root = await createTestTempDirectory("rea-doctor-linked-config-");
     const target = join(root, "model.toml");
     const link = join(root, "config.toml");
-    await writeFile(target, "[model]\nname = 'example'\n");
+    const runner = join(root, "agent-env");
+    await configRunner(runner);
+    await writeFile(target, "[model]\nbase_url = 'http://example.test'\n");
     await symlink(target, link);
     const facts = await readFacts(
-      { HOME: root, PATH: "", AGENT_ENV_CONFIG: link },
+      {
+        HOME: root,
+        PATH: "",
+        AGENT_ENV_CONFIG: link,
+        REA_AGENT_ENV_COMMAND: runner,
+        FAKE_EXPLANATION: JSON.stringify({
+          path: "model.base_url",
+          value: "http://example.test",
+          error: null,
+        }),
+      },
       [],
     );
     expect(facts.solveEndpoint).toBe(link);
+  },
+);
+
+it.skipIf(process.platform === "win32")(
+  "uses the owner's endpoint result and leaves references unknown",
+  async () => {
+    const root = await createTestTempDirectory("rea-doctor-model-config-");
+    const config = join(root, "config.toml");
+    const runner = join(root, "agent-env");
+    await configRunner(runner);
+    await writeFile(config, "[model]\ndefault = 'model-only'\n");
+    const environment = {
+      HOME: root,
+      PATH: "",
+      AGENT_ENV_CONFIG: config,
+      REA_AGENT_ENV_COMMAND: runner,
+    };
+    const explain = (value: unknown) =>
+      JSON.stringify({ path: "model.base_url", value, error: null });
+    expect(
+      (await readFacts({ ...environment, FAKE_EXPLANATION: explain(null) }, []))
+        .solveEndpoint,
+    ).toBeUndefined();
+    expect(
+      (
+        await readFacts(
+          { ...environment, FAKE_EXPLANATION: explain("env:MODEL_BASE") },
+          [],
+        )
+      ).solveEndpoint,
+    ).toBeNull();
+    expect(
+      (
+        await readFacts(
+          { ...environment, FAKE_EXPLANATION: explain("http://endpoint.test") },
+          [],
+        )
+      ).solveEndpoint,
+    ).toBe(config);
+  },
+);
+
+it.skipIf(process.platform === "win32")(
+  "reports an endpoint query timeout as unknown under doctor's owned deadline",
+  async () => {
+    const root = await createTestTempDirectory("rea-doctor-endpoint-timeout-");
+    const runner = join(root, "agent-env");
+    await configRunner(runner);
+    let deadline: number | undefined;
+    let stopSignal: NodeJS.Signals | undefined;
+    const host = systemDoctorHost({
+      environment: { HOME: root, PATH: "", REA_AGENT_ENV_COMMAND: runner },
+      platform: "linux",
+      architecture: "x64",
+      desktopBuildFacts: readDesktopBuildFacts,
+      execFileOutput: async (_command, args, options) => {
+        if (args[0] === "config") {
+          deadline = options?.timeout;
+          stopSignal = options?.stopSignal;
+          throw Object.assign(new Error("timed out"), { code: "ETIMEDOUT" });
+        }
+        return {
+          stdout: "agent-env 0.9.1431",
+          stderr: "",
+          stdoutBytes: 19,
+          stderrBytes: 0,
+        };
+      },
+    });
+    try {
+      expect((await host.desktopBuildFacts!([])).solveEndpoint).toBeNull();
+      expect(deadline).toBe(10_000);
+      expect(stopSignal).toBe("SIGTERM");
+    } finally {
+      await host.close?.();
+    }
   },
 );
 
@@ -229,7 +352,7 @@ it.skipIf(process.platform === "win32")(
     await program(join(bin, "docker"), "exit 1");
     await program(
       join(bin, "agent-env"),
-      'printf x >> "$REA_TEST_RUNNER_LOG"; echo "agent-env 0.9.1431"',
+      'if [ "$1" = "--version" ]; then printf x >> "$REA_TEST_RUNNER_LOG"; fi; echo "agent-env 0.9.1431"',
     );
     const environment = {
       HOME: home,
