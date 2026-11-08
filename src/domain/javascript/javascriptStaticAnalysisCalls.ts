@@ -59,7 +59,6 @@ import { semanticTopLevelEffectFollowsCapture } from "./javascriptSemanticMutati
 import {
   semanticFactoryLoaderMemberAt,
   semanticRequireCallAt,
-  semanticCandidateRequireSpecifier,
   semanticRequireLoaderAt,
   semanticModuleRequireCallAt,
   semanticModuleRequireReceiver,
@@ -325,11 +324,10 @@ const requireCallSpecifier = (
   if (call === undefined || call.loader === "local") return null;
   if (call.loader === "unknown" || !call.sourceRelative) {
     context.accumulator.unknownFindings += 1;
-    const candidate = call.memberUnproven
-      ? undefined
-      : call.loaderAuthority === "candidate"
+    const candidate =
+      !call.memberUnproven && call.loaderAuthority === "candidate"
         ? (argumentValue(call.arguments?.[0]) ?? undefined)
-        : semanticCandidateRequireSpecifier(node, bindings);
+        : undefined;
     return {
       specifier: candidate,
       operation: call.operation,

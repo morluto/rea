@@ -824,13 +824,19 @@ export const semanticRequireCallAt = (
       state,
       factoryBindingIds,
     );
-    if (loader === "unknown")
+    if (loader === "unknown") {
+      const receiver = unwrapJavaScriptExpression(callee.object).node;
+      const candidate =
+        t.isIdentifier(receiver, { name: "require" }) &&
+        isConditionalRequireAt(receiver, node, state);
       return {
         operation: "resolve",
         loader,
-        arguments: undefined,
+        arguments: candidate ? node.arguments : undefined,
         sourceRelative: false,
+        ...(candidate ? { loaderAuthority: "candidate" as const } : {}),
       };
+    }
     // Bundler factory loaders can share the `require` shape, but their
     // `.resolve` member is not Node's module resolver.
     if (loader === "commonjs-loader" || loader === "create-require") {
@@ -1757,25 +1763,6 @@ export const semanticRequireOriginCandidate = (
         },
         call: current,
       };
-};
-
-/** Preserve a literal request without assuming that the host supplied require. */
-export const semanticCandidateRequireSpecifier = (
-  node: t.CallExpression | t.OptionalCallExpression | t.NewExpression,
-  state: JavaScriptSemanticAnalysisState,
-): string | undefined => {
-  const callee = unwrapJavaScriptExpression(node.callee).node;
-  const root =
-    t.isMemberExpression(callee) || t.isOptionalMemberExpression(callee)
-      ? semanticStaticPropertyKey(callee.property, callee.computed) ===
-        "resolve"
-        ? callee.object
-        : undefined
-      : callee;
-  return t.isIdentifier(root, { name: "require" }) &&
-    isConditionalRequireAt(root, node, state)
-    ? stringValue(node.arguments[0])
-    : undefined;
 };
 
 /** Only a proven host loader may establish Node builtin identity. */

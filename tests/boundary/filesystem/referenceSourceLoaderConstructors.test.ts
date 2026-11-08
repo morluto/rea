@@ -44,6 +44,10 @@ it("retains constructor loader requests without inventing host authority", async
       'const box={load:require};box.load.call(null,"./dep.cjs");',
     ),
     writeFile(
+      join(root, "wrapped-receiver.TS"),
+      '(require as any).resolve("./dep.cjs");',
+    ),
+    writeFile(
       join(root, "wrapped-resolve.cts"),
       '(require as any).resolve("./dep.cjs");',
     ),
@@ -99,7 +103,13 @@ it("retains constructor loader requests without inventing host authority", async
       parse_state: "parsed",
     });
   }
-  for (const from_path of ["nested-unknown.MJS", "alias.MJS", ".MJS", ".TS"]) {
+  for (const from_path of [
+    "nested-unknown.MJS",
+    "alias.MJS",
+    ".MJS",
+    ".TS",
+    "wrapped-receiver.TS",
+  ]) {
     expect(result.value.relationships).toContainEqual({
       from_path,
       to: "./dep.cjs",

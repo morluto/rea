@@ -12,21 +12,27 @@ import { parseJavaScriptSource } from "./javascriptSourceParser.js";
 import { referenceSourceRequireCalls } from "../referenceSourceRequireBindings.js";
 import { parseReferenceSourceImports } from "../referenceSourceImportParsing.js";
 
-it("retains unknown-host resolver operation through a TypeScript wrapper", () => {
-  const source = '(require.resolve as any)("./dep.cjs");';
-  const parsed = parseJavaScriptSource(source, "entry.TS");
-  if (parsed === null) throw new Error("Expected TypeScript fixture");
-  expect(
-    analyzeParsedJavaScriptStaticSource(source, parsed).references,
-  ).toContainEqual(
-    expect.objectContaining({
-      kind: "require",
-      specifier: "./dep.cjs",
-      operation: "resolve",
-      loader_authority: "candidate",
-    }),
-  );
-});
+it.each([
+  '(require.resolve as any)("./dep.cjs");',
+  '(require as any).resolve("./dep.cjs");',
+  '(require as any)?.["resolve"]("./dep.cjs");',
+])(
+  "retains an unknown-host resolver through TypeScript wrappers: %s",
+  (source) => {
+    const parsed = parseJavaScriptSource(source, "entry.TS");
+    if (parsed === null) throw new Error("Expected TypeScript fixture");
+    expect(
+      analyzeParsedJavaScriptStaticSource(source, parsed).references,
+    ).toContainEqual(
+      expect.objectContaining({
+        kind: "require",
+        specifier: "./dep.cjs",
+        operation: "resolve",
+        loader_authority: "candidate",
+      }),
+    );
+  },
+);
 
 it.each([
   ["require", "load"],
