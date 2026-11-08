@@ -84,8 +84,10 @@ it.skipIf(process.platform === "win32")(
       const pid = Number(await readFile(pidFile, "utf8"));
       controller.abort(reason);
       await expect(running).rejects.toMatchObject({
-        reason: "cancelled",
-        cancellation: { reason },
+        _tag: "AnalysisCancelledError",
+        operation: "setup",
+        cause: reason,
+        diagnostics: { command_failure: "cancelled" },
       });
       expect(() => process.kill(pid, 0)).toThrow();
       await expect(stat(partial)).rejects.toMatchObject({ code: "ENOENT" });
