@@ -12,6 +12,7 @@ export class SqliteInspectionFailure extends Error {
       | "format"
       | "selection"
       | "column-selection"
+      | "row-offset"
       | "column-evaluation"
       | "row-evaluation"
       | "column-limit"

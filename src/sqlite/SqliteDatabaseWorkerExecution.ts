@@ -94,6 +94,7 @@ const rejectedArgument = {
   unsupported: "path",
   selection: "table",
   "column-selection": "columns",
+  "row-offset": "row_offset",
 } as const;
 
 const rejectedReply = (

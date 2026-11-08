@@ -76,7 +76,8 @@ type SelectedTableFacts = Pick<
   SqliteDatabase["schema"]["tables"][number],
   "name" | "kind" | "columns" | "without_rowid"
 > & {
-  readonly orderKey: RowKeyFacts;
+  /** Absent for a non-ordinary table, whose row facts are never probed. */
+  readonly orderKey?: RowKeyFacts;
 };
 
 class OutputBudget {
@@ -630,7 +631,9 @@ const readSchema = (
             kind: table.kind,
             columns,
             without_rowid: table.without_rowid,
-            orderKey: readRowKeyFacts(db, value.name, encoding),
+            ...(table.kind === "table"
+              ? { orderKey: readRowKeyFacts(db, value.name, encoding) }
+              : {}),
           };
         if (scope !== "inventory") table.columns = columns;
       }
@@ -640,7 +643,9 @@ const readSchema = (
           kind: table.kind,
           columns: table.columns,
           without_rowid: table.without_rowid,
-          orderKey: readRowKeyFacts(db, value.name, encoding),
+          ...(table.kind === "table"
+            ? { orderKey: readRowKeyFacts(db, value.name, encoding) }
+            : {}),
         };
       schema.tables.push(table);
     } else if (value.type === "index") {
@@ -850,18 +855,21 @@ const readRowOrder = (
   table: SelectedTableFacts,
   encoding: DatabaseEncoding,
 ): RowOrder => {
+  const facts = table.orderKey;
+  // A non-ordinary table's keys are not probed, and none of its rows are read.
+  if (facts === undefined) return { order: "unspecified", clause: "" };
   if (!table.without_rowid) {
     // ORDER BY must name an alias SQLite still binds: a declared `rowid` column
     // shadows that spelling and would sort by a stored column that need not be
     // unique. Pick the first spelling the table leaves free.
     const alias = ROWID_ALIASES.find(
-      (spelling) => !table.orderKey.shadowedAliases.has(spelling),
+      (spelling) => !facts.shadowedAliases.has(spelling),
     );
     return alias === undefined
       ? { order: "unspecified", clause: "" }
       : { order: "rowid", clause: ` ORDER BY ${alias}` };
   }
-  const key = table.orderKey.primaryKey;
+  const key = facts.primaryKey;
   if (key.length === 0) return { order: "unspecified", clause: "" };
   const primaryKey = db
     .prepare(
@@ -950,7 +958,7 @@ const readRows = (
   // an arbitrary prefix of an order the reply cannot claim.
   if (offset > 0 && order === "unspecified")
     throw new SqliteInspectionFailure(
-      "selection",
+      "row-offset",
       `row_offset requires a stated row order, but table ${input.table} shadows rowid, _rowid_ and oid and declares no primary key. Read the table without row_offset.`,
     );
   const window = `${source}${clause} LIMIT ? OFFSET ?`;

@@ -953,7 +953,8 @@ it("refuses a row offset when the table shadows rowid and declares no primary ke
     }),
   ).toThrow(
     expect.objectContaining({
-      reason: "selection",
+      // The refusal is about the caller's offset, not the selected table.
+      reason: "row-offset",
       message: expect.stringContaining("row_offset"),
     }),
   );
