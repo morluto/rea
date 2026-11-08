@@ -6,10 +6,13 @@ import type {
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import {
   AnalysisCancelledError,
+  AnalysisCapabilityUnavailableError,
   AnalysisInputError,
   AnalysisOutputError,
+  AnalysisResourceConstraintError,
 } from "../domain/analysisErrorCore.js";
 import {
+  omitUnretainedEvidenceFromError,
   projectAnalysisError,
   type AnalysisErrorProjection,
 } from "../domain/analysisErrorProjection.js";
@@ -20,6 +23,7 @@ import { analysisBookmarkSchema } from "../domain/native/nativeInventory.js";
 import { parseContainingProcedureResolution } from "../domain/native/nativeObservation.js";
 import { nativeAddressCoordinateInputSchema } from "../domain/native/nativeAddress.js";
 import { resolveAnalysisDocument } from "./AnalysisDocument.js";
+import { estimateJsonStorage } from "./JsonAuthenticationHeadroom.js";
 import { err, ok, type Result } from "../domain/result.js";
 
 type Facet =
@@ -30,6 +34,25 @@ type Facet =
       readonly remediation: string;
       readonly error?: AnalysisErrorProjection;
     };
+
+type AddressContext = {
+  readonly address: string;
+  readonly document: string;
+  readonly name: Facet;
+  readonly procedure: Facet;
+  readonly comment: Facet;
+  readonly inline_comment: Facet;
+  readonly bookmarks: Facet;
+};
+
+/** Facets inspected after an explicit or provider-resolved document is known. */
+export const ADDRESS_CONTEXT_FACET_OPERATIONS = [
+  "address_name",
+  "resolve_containing_procedure",
+  "comment",
+  "inline_comment",
+  "list_bookmarks",
+] as const satisfies readonly AnalysisOperation[];
 
 const parameters = (
   document: string | undefined,
@@ -89,12 +112,55 @@ export const getNavigationContext = async (
   });
 };
 
+/** Preserve other facets and smaller partials if unretained Evidence cannot fit. */
+export function* omitContextEvidenceForDelivery(
+  context: AddressContext,
+  limit: {
+    readonly constraint: "receive-buffer" | "string-length";
+    readonly bytesAtLeast: number;
+  },
+  budgetBytes: number,
+): Generator<AddressContext> {
+  const names = [
+    "name",
+    "procedure",
+    "comment",
+    "inline_comment",
+    "bookmarks",
+  ] as const;
+  const candidates = names.flatMap((name) => {
+    const facet = context[name];
+    if (facet.state !== "unavailable" || facet.error === undefined) return [];
+    const compact = omitUnretainedEvidenceFromError(facet.error, limit);
+    if (compact === undefined) return [];
+    const partial = facet.error.details?.partial_observation;
+    const size = estimateJsonStorage(partial, {
+      maximumValueBytes: budgetBytes,
+      includeSerialized: false,
+    }).valueBytes;
+    return [{ name, facet, compact, size }];
+  });
+  candidates.sort((left, right) => right.size - left.size);
+  let current = context;
+  for (const { name, facet, compact } of candidates) {
+    current = {
+      ...current,
+      [name]: {
+        ...facet,
+        remediation: compact.remediation.action,
+        error: compact,
+      },
+    };
+    yield current;
+  }
+}
+
 /** Inspect bounded provider-neutral facets at one explicit reproducible address. */
 export const inspectAddressContext = async (
   analysis: AnalysisOperationPort,
   input: { readonly address: string; readonly document?: string | undefined },
   signal?: AbortSignal,
-): Promise<Result<JsonValue, AnalysisError>> => {
+): Promise<Result<AddressContext, AnalysisError>> => {
   const document = await resolveAnalysisDocument(
     analysis,
     input.document,
@@ -102,13 +168,7 @@ export const inspectAddressContext = async (
   );
   if (!document.ok) return document;
   const args = parameters(document.value, input.address);
-  const operations = [
-    "address_name",
-    "resolve_containing_procedure",
-    "comment",
-    "inline_comment",
-    "list_bookmarks",
-  ] as const satisfies readonly AnalysisOperation[];
+  const operations = ADDRESS_CONTEXT_FACET_OPERATIONS;
   const completed: Result<AnalysisExecution, AnalysisError>[] = [];
   if (signal?.aborted === true)
     return err(
@@ -150,8 +210,12 @@ export const inspectAddressContext = async (
   const procedure: Facet = resolution?.ok
     ? { state: "available", value: resolution.value }
     : unavailableFacet(resolution?.error, operations[1]);
-  const comment = facet(results[2], operations[2]);
-  const inlineComment = facet(results[3], operations[3]);
+  const entry =
+    resolution?.ok && resolution.value.found
+      ? resolution.value.procedure.address
+      : undefined;
+  const comment = commentFacet(results[2], operations[2], entry);
+  const inlineComment = commentFacet(results[3], operations[3], entry);
   const bookmarks = facet(results[4], operations[4]);
   return ok({
     address: input.address,
@@ -170,6 +234,28 @@ export const inspectAddressContext = async (
   });
 };
 
+const commentFacet = (
+  result: Result<AnalysisExecution, AnalysisError> | undefined,
+  operation: "comment" | "inline_comment",
+  entry: string | undefined,
+): Facet => {
+  if (
+    result?.ok === false &&
+    result.error instanceof AnalysisCapabilityUnavailableError &&
+    !result.error.retryable &&
+    result.error.remediationAction === undefined &&
+    result.error.continuingCallerGuidance?.remediationAction === undefined &&
+    entry !== undefined
+  ) {
+    return {
+      state: "unavailable",
+      reason: result.error.message,
+      remediation: `If analyze_function is available for this same document, call it with ${JSON.stringify({ procedure: entry })}; use its summary's parent_evidence_id with inspect_analysis_view's native comments facet. Check facet availability, pagination, and the exact requested address; an omitted comment does not establish absence.`,
+    };
+  }
+  return facet(result, operation);
+};
+
 const facet = (
   result: Result<AnalysisExecution, AnalysisError> | undefined,
   operation: AnalysisOperation,
@@ -182,9 +268,29 @@ const unavailableFacet = (
   error: AnalysisError | undefined,
   operation: AnalysisOperation,
 ): Facet => {
-  if (error instanceof AnalysisInputError) {
+  if (error instanceof AnalysisCapabilityUnavailableError) {
     const projected = projectAnalysisError(error);
-    if (projected.code === "invalid_request")
+    return {
+      state: "unavailable",
+      reason: error.userMessage ?? error.message,
+      remediation:
+        error.retryable ||
+        error.remediationAction !== undefined ||
+        error.fallbackRemediationAction !== undefined ||
+        error.continuingCallerGuidance?.remediationAction !== undefined
+          ? projected.remediation.action
+          : "Review provider availability in binary_session with detail complete and select another supported provider if appropriate. After switching, if a name is known and search_procedures is available, use it to find candidates and verify their identity and coordinates.",
+    };
+  }
+  if (
+    error instanceof AnalysisInputError ||
+    error instanceof AnalysisResourceConstraintError
+  ) {
+    const projected = projectAnalysisError(error);
+    if (
+      projected.code === "invalid_request" ||
+      projected.code === "resource_constraint"
+    )
       return {
         state: "unavailable",
         reason: projected.message,

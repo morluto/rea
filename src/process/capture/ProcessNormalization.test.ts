@@ -205,6 +205,7 @@ it("counts UTF-8 bytes across replacement boundaries like the final JavaScript s
     "/temporary",
     rootPid,
   );
+  expect(expected).toBe("\ude00😀");
   expect(
     createBoundedProcessTextNormalizer(
       emptyPattern,
@@ -237,6 +238,7 @@ it("counts UTF-8 bytes across replacement boundaries like the final JavaScript s
     "/temporary",
     rootPid,
   );
+  expect(loneExpected).toBe("\ud83dy");
   expect(
     createBoundedProcessTextNormalizer(
       loneSurrogate,
@@ -664,4 +666,41 @@ it("shares sampled identifiers before custom patterns in terminal and command no
   expect(normalizeProcessSamples(observed, declared, 100)[1]?.command).toBe(
     "root=selected child=selected other=201",
   );
+});
+
+it("does not alias the temporary-root absence marker in sampled command data", () => {
+  const command = "/usr/bin/node --marker <no-temporary-root>";
+  const selected = [{ ...samples[0]!, command }];
+  const normalized = normalizeProcessSamples(
+    selected,
+    scenario({ pids: false, ports: false, patterns: [] }),
+    rootPid,
+  );
+  expect(normalized[0]?.command).toBe(
+    "<executable> --marker <no-temporary-root>",
+  );
+  expect(selected[0]?.command).toBe(command);
+});
+
+it("preserves literal absence text while normalizing selected paths with and without a temporary root", () => {
+  const selected = scenario({ pids: false, ports: false, patterns: [] });
+  const text =
+    "/usr/bin/node /workspace/file <no-temporary-root> /capture/file";
+  for (const temporaryRoot of [undefined, "/capture"]) {
+    const expected = `<executable> <working-directory>/file <no-temporary-root> ${temporaryRoot === undefined ? "/capture/file" : "<temporary-root>/file"}`;
+    expect(
+      createProcessTextNormalizer(selected, temporaryRoot, rootPid)(text),
+    ).toBe(expected);
+    expect(
+      createBoundedProcessTextNormalizer(
+        selected,
+        temporaryRoot,
+        rootPid,
+      )(text, 1024),
+    ).toEqual({
+      state: "normalized",
+      value: expected,
+      utf8Bytes: Buffer.byteLength(expected),
+    });
+  }
 });

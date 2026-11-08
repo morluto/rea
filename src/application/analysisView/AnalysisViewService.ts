@@ -230,6 +230,7 @@ const projectResolvedAnalysisView = (
     analysisProfile: parent.analysis_profile,
     authority: parent.authority,
     environment: parent.environment,
+    rawResult: parent.raw_result,
     normalizedResult:
       immutableJsonSnapshotMember(parent, "normalized_result") ??
       parent.normalized_result,
@@ -402,6 +403,7 @@ const createAnalysisViewEvidence = (
   const nativeObservationView =
     result.kind === "native-observation" ||
     result.kind === "native-context" ||
+    result.kind === "native-instruction-references" ||
     (result.kind === "summary" &&
       isNativeObservationOperation(result.parent_operation));
   return createEvidence(
@@ -438,6 +440,15 @@ const createAnalysisViewEvidence = (
       locations: [
         ...(result.artifact != null && result.artifact.path.length > 0
           ? [{ kind: "artifact-path" as const, path: result.artifact.path }]
+          : []),
+        // Scalar text has no structured function entry; retain the producer's
+        // authenticated positions without interpreting the caller's selector.
+        ...(parent.operation === "procedure_pseudo_code"
+          ? parent.locations.filter(
+              (location) =>
+                location.kind !== "artifact-path" ||
+                location.path !== result.artifact?.path,
+            )
           : []),
         ...(nativeFunctionView !== undefined &&
         nativeFunctionView.procedure_address !== null &&

@@ -435,6 +435,26 @@ it("reports the closure when an existing output refuses publication", async () =
   expect(await readFile(requested.evidenceOutput, "utf8")).toBe("original");
 });
 
+it("reports result sources when an existing output refuses publication", async () => {
+  const root = await createTestTempDirectory("rea-closure-result-sources-");
+  const held = source("held");
+  const requested = delivery(root);
+  await writeFile(requested.evidenceOutput, "original");
+  const output = await publishCliAnalysisEvidence(
+    { ...ok(observed([held.evidence_id])), sourceEvidence: [held] },
+    requested,
+  );
+  expect(output).toMatchObject({ details: { reason: "exists" } });
+  expect(closureOf(output)).toMatchObject({
+    publication: "not_published",
+    complete: true,
+    omitted_count: 0,
+    omitted: [],
+  });
+  expect(closureOf(output).records).toEqual([held]);
+  expect(await readFile(requested.evidenceOutput, "utf8")).toBe("original");
+});
+
 it("defers to the committed bundle receipt after cancellation wins late", async () => {
   const root = await createTestTempDirectory("rea-closure-committed-");
   const held = source("held");
@@ -568,6 +588,63 @@ it.each(["interrupt", "cleanup-failure", "interrupt-cleanup-failure"] as const)(
         reason: "not_captured",
       })),
     });
+    expect(await readdir(root)).toEqual([]);
+  },
+);
+
+it.each(["interrupt", "cleanup-failure"] as const)(
+  "retains captured source closure when direct finalization fails: %s",
+  async (scenario) => {
+    const workflow = await composedWorkflowFixture();
+    const controller = new AbortController();
+    const close = workflow.session.close.bind(workflow.session);
+    workflow.session.close = async () => {
+      workflow.session.close = close;
+      if (scenario === "interrupt") controller.abort();
+      const closed = await close();
+      if (scenario === "interrupt" || !closed.ok) return closed;
+      return err(
+        new ProviderCleanupError(
+          "fixture",
+          ["owned-root"],
+          { reason: "controlled session close failure" },
+          { operation: "close_binary" },
+        ),
+      );
+    };
+    const root = await createTestTempDirectory("rea-closure-direct-captured-");
+    const complete = await runDirectAnalysis(
+      workflow.dependencies,
+      workflow.path,
+      "binary_overview",
+      {},
+      { signal: controller.signal, includeEvidenceSources: true },
+    );
+    const output = await publishCliAnalysisEvidence(complete, {
+      ...delivery(root),
+      signal: controller.signal,
+    });
+    const failure = output as {
+      code: string;
+      details: { partial_observation: unknown };
+    };
+    expect(failure.code).toBe(
+      scenario === "interrupt" ? "cancelled" : "cleanup_incomplete",
+    );
+    const links = parseEvidence(
+      failure.details.partial_observation,
+    ).evidence_links;
+    expect(links.length).toBeGreaterThan(0);
+    expect(closureOf(output)).toMatchObject({
+      publication: "not_published",
+      complete: true,
+      omitted_count: 0,
+    });
+    expect(
+      closureOf(output)
+        .records.map((record) => record.evidence_id)
+        .sort(),
+    ).toEqual([...links].sort());
     expect(await readdir(root)).toEqual([]);
   },
 );

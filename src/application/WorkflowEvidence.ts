@@ -1,15 +1,17 @@
 import { AnalysisWorkScope } from "./AnalysisWorkScope.js";
 import { compareUnicodeCodePoints } from "../domain/unicodeCodePointOrder.js";
 import { jsonStringByteLength } from "../domain/jsonStringByteLength.js";
+import { createAnalysisExecutionEvidence } from "../domain/analysisObservation.js";
 import { REA_WORKFLOW_PROVIDER } from "../domain/investigationProviders.js";
 import { workflowAnalysisProfile } from "./WorkflowAnalysisProfile.js";
 import type {
   AnalysisOperation,
   AnalysisOperationPort,
 } from "./AnalysisProvider.js";
-import { ok } from "../domain/result.js";
+import { err, ok } from "../domain/result.js";
 import type { EnhancedResult } from "./EnhancedToolTypes.js";
 import type { AnalysisProfileCommitment } from "../domain/analysisProfile.js";
+import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import type { WorkflowSnapshotRecordInput } from "./binary/BinarySessionRecords.js";
 import {
   analysisProfileSchema,
@@ -61,7 +63,7 @@ const DECOMPILE_ALL_LIMITATIONS: ComposedLimitationBudget = {
   perItemOperations: new Set(["procedure_info", "procedure_pseudo_code"]),
   maxDistinct: 8,
   retainedIn:
-    "each function's record in decompile-index.json keeps the caveats of the observations it used",
+    "decompile-index.json keeps the latest record for each function; decompile-journal.jsonl keeps each attempt and its caveats",
 };
 
 /** The caveat budget for a composed workflow, when it has one. */
@@ -101,12 +103,10 @@ export const executeComposedWorkflow = async (
   const observed: AnalysisOperationPort = {
     resourceScope: analysis.resourceScope,
     execute: async (operation, parameters, options) => {
-      const execution = await analysis.execute(operation, parameters, {
+      let execution = await analysis.execute(operation, parameters, {
         ...options,
         workScope,
       });
-      if (execution.ok && execution.value.evidenceId !== undefined)
-        evidenceLinks.add(execution.value.evidenceId);
       if (execution.ok && execution.value.sourceEvidence !== undefined) {
         const recorded = recordEvidenceSources(
           (source) => sourceLedger.record(source),
@@ -114,6 +114,26 @@ export const executeComposedWorkflow = async (
         );
         if (!recorded.ok) return recorded;
       }
+      if (
+        execution.ok &&
+        options?.retainEvidence === true &&
+        execution.value.evidenceId === undefined
+      ) {
+        const source = createAnalysisExecutionEvidence(
+          operation,
+          parameters,
+          execution.value,
+          "observed",
+        );
+        const recorded = recordEvidenceSources(
+          (evidence) => sourceLedger.record(evidence),
+          [source],
+        );
+        if (!recorded.ok) return recorded;
+        execution = ok({ ...execution.value, evidenceId: source.evidence_id });
+      }
+      if (execution.ok && execution.value.evidenceId !== undefined)
+        evidenceLinks.add(execution.value.evidenceId);
       if (execution.ok && execution.value.cachePolicy === "live")
         cachePolicy = "live";
       if (execution.ok)
@@ -184,6 +204,10 @@ export const executeComposedWorkflow = async (
   );
 };
 
+/** Scope of the exact-address reference lookups composed by trace_feature. */
+export const TRACE_FEATURE_REFERENCE_LIMITATION =
+  "Reference queries cover only each matched start address, not interior bytes of strings and procedures. Empty references and truncated: false do not establish complete reference coverage.";
+
 /** Build the shared Evidence record for a successful composed binary workflow. */
 export const createWorkflowEvidence = (input: {
   readonly target: BinaryTarget | undefined;
@@ -212,6 +236,9 @@ export const createWorkflowEvidence = (input: {
       : { evidenceLinks: input.upstreamEvidenceLinks }),
     limitations: [
       "Derived by an REA composed workflow.",
+      ...(input.operation === "trace_feature"
+        ? [TRACE_FEATURE_REFERENCE_LIMITATION]
+        : []),
       ...input.upstreamLimitations,
     ],
     ...(input.operation === "batch_decompile"
@@ -309,6 +336,8 @@ interface WorkflowUnknownInput {
   readonly result: JsonValue;
   readonly evidenceId: string;
   readonly recordUnknown: UnknownRegistryPort["recordUnknown"] | undefined;
+  /** The caller confirmed the completed Evidence is in its investigation. */
+  readonly evidenceRetained?: boolean;
 }
 
 /** Retain residual workflow questions using the shared investigation policy. */
@@ -317,6 +346,7 @@ export const recordWorkflowUnknowns = ({
   result,
   evidenceId,
   recordUnknown,
+  evidenceRetained,
 }: WorkflowUnknownInput):
   | ReturnType<UnknownRegistryPort["recordUnknown"]>
   | { readonly ok: true; readonly value: null } => {
@@ -331,7 +361,27 @@ export const recordWorkflowUnknowns = ({
     !Array.isArray(result.residual_unknowns)
   )
     return { ok: true, value: null };
-  for (const question of result.residual_unknowns) {
+  const questions = result.residual_unknowns;
+  const total = questions.reduce<number>(
+    (count, value) => count + (typeof value === "string" ? 1 : 0),
+    0,
+  );
+  let created = 0;
+  let existing = 0;
+  const stopped = (error: AnalysisError, index: number) =>
+    err(
+      error.retainWorkflowUnknownPublication({
+        evidence_id: evidenceId,
+        evidence_retention:
+          evidenceRetained === true ? "retained" : "unverified",
+        total_questions: total,
+        created_questions: created,
+        existing_questions: existing,
+        next_question_index: index,
+      }),
+    );
+  for (let index = 0; index < questions.length; index += 1) {
+    const question = questions[index];
     if (typeof question !== "string") continue;
     const input = workflowUnknownInput(evidenceId, {
       question,
@@ -351,16 +401,15 @@ export const recordWorkflowUnknowns = ({
       ],
       relationships: [],
     });
-    if (!input.ok) return input;
+    if (!input.ok) return stopped(input.error, index);
     const recorded = recordUnknown(input.value);
-    if (
-      !recorded.ok &&
-      !(
-        recorded.error instanceof UnknownRegistryError &&
-        recorded.error.reason === "already-exists"
-      )
+    if (recorded.ok) created += 1;
+    else if (
+      recorded.error instanceof UnknownRegistryError &&
+      recorded.error.reason === "already-exists"
     )
-      return recorded;
+      existing += 1;
+    else return stopped(recorded.error, index);
   }
   return { ok: true, value: null };
 };

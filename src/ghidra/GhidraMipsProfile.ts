@@ -435,6 +435,7 @@ export const ghidraMipsProfileParameters = (
 export const ghidraMipsProfileMismatchReason = (
   target: BinaryTarget,
   parameters: Readonly<Record<string, unknown>>,
+  existingProject: boolean,
 ): string | null => {
   if (target.architecture !== "mips" || target.mips === undefined) return null;
   const expected = ghidraMipsProfileParameters(target);
@@ -447,6 +448,7 @@ export const ghidraMipsProfileMismatchReason = (
   const expectedBasis =
     committedLane === pspLane ? undefined : expected.mips_abi_basis;
   if (
+    !existingProject &&
     expectedLane !== undefined &&
     (committedLane !== expectedLane ||
       parameters.mips_abi_basis !== expectedBasis)

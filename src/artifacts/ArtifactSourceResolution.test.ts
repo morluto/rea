@@ -72,7 +72,6 @@ it.skipIf(process.platform === "win32")(
         max_entries: 32,
         max_probe_bytes: 4096,
       });
-      expect(invalid.ok).toBe(false);
       if (invalid.ok) throw new Error("expected ENOTDIR refusal");
       expect(projectAnalysisError(invalid.error)).toMatchObject({
         code: "target_unavailable",
@@ -83,7 +82,6 @@ it.skipIf(process.platform === "win32")(
         max_entries: 32,
         max_probe_bytes: 4096,
       });
-      expect(valid.ok).toBe(true);
       if (!valid.ok) throw valid.error;
       expect(
         desktopApplicationSchema
@@ -154,5 +152,37 @@ it.each(["ENOENT", "ENOTDIR", "ELOOP", "ENAMETOOLONG", "EACCES", "EIO"])(
         reason: "integrity",
         cause: failure,
       });
+  },
+);
+
+it.skipIf(process.platform === "win32")(
+  "keeps a rejected symlink without a hint when its resolved target lookup fails",
+  async () => {
+    const root = await createTestTempDirectory("rea-stable-symlink-lookup-");
+    const target = join(root, "target.bin");
+    const selected = join(root, "selected");
+    await writeFile(target, "carrier");
+    await symlink(target, selected);
+    const selectedStats = await lstat(selected, { bigint: true });
+    const failure = Object.assign(new Error("target lookup failed"), {
+      code: "EACCES",
+    });
+
+    await expect(
+      readStableArtifact(selected, 1024, undefined, {
+        lstat: async (path) => {
+          if (path === selected) return selectedStats;
+          throw failure;
+        },
+        realpath: async () => target,
+        open: async () => {
+          throw new Error("A rejected symlink must not be opened");
+        },
+      }),
+    ).rejects.toMatchObject({
+      reason: "path",
+      resolvedPath: undefined,
+      message: `Expected a regular file without a symlink: ${selected}`,
+    });
   },
 );

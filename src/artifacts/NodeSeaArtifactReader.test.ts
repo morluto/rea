@@ -37,6 +37,7 @@ import { elfNote, elfNoteFixture } from "../native/elf/ElfNotes.fixture.js";
 import { peResourceFixture } from "../native/pe/PeResources.fixture.js";
 import { locateNodeSea } from "./nodeSea/NodeSeaLocation.js";
 import { MAX_INSPECT_PE_FILE_BYTES } from "../domain/native/peResources.js";
+import { openRegularFile } from "../filesystem/RegularFile.js";
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
 import { scanCanonicalArtifactInventory } from "../../tests/fixtures/artifactInventory.js";
 
@@ -307,8 +308,7 @@ it.each([false, true])(
         if (sea)
           await expect(located).rejects.toMatchObject({
             reason: "limit",
-            message:
-              "Node SEA PE inspection exceeds the 512 MiB PE parser input ceiling",
+            message: expect.stringMatching(/PE.*512 MiB/iu),
           });
         else await expect(located).resolves.toBeUndefined();
       } finally {
@@ -658,7 +658,7 @@ it("rejects missing Mach-O load commands after a confirmed SEA section", async (
     scanCanonicalArtifactInventory(await writeCarrier("commands", bytes)),
   ).rejects.toMatchObject({
     reason: "format",
-    message: "Node SEA Mach-O load commands are truncated",
+    message: expect.stringMatching(/Mach-O.*load commands.*truncated/iu),
   });
 });
 
@@ -680,6 +680,42 @@ it("rejects forged entries and changed carrier identity, then closes idempotentl
   } finally {
     await reader.close();
     await reader.close();
+  }
+});
+
+it("reports a member that ends after the carrier recheck as an integrity failure", async () => {
+  const path = await writeCarrier("ended", nodeSeaElf());
+  const descriptor = await openRegularFile(path, { symlinks: "reject" });
+  const reader = new NodeSeaArtifactReader(path, descriptor);
+  try {
+    const entries = [];
+    for await (const entry of reader.entries()) entries.push(entry);
+    const entry = entries[0];
+    if (entry === undefined) throw new Error("Missing main script");
+    // open() rechecks the carrier's identity; the file then ends mid-member.
+    const read = descriptor.handle.read.bind(descriptor.handle);
+    let calls = 0;
+    const truncated = vi
+      .spyOn(descriptor.handle, "read")
+      .mockImplementation((...args: unknown[]) => {
+        calls += 1;
+        if (calls > 1)
+          return Promise.resolve({ bytesRead: 0, buffer: args[0] });
+        args[2] = 3;
+        return Reflect.apply(read, descriptor.handle, args);
+      });
+    try {
+      await expect(buffer(await reader.open(entry))).rejects.toMatchObject({
+        reason: "integrity",
+        message: expect.stringContaining("sea.js"),
+      });
+      expect(calls).toBe(2);
+    } finally {
+      truncated.mockRestore();
+    }
+  } finally {
+    await reader.close();
+    await descriptor.handle.close();
   }
 });
 

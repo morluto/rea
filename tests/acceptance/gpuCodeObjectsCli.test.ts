@@ -71,6 +71,42 @@ cliTest(
 );
 
 cliTest(
+  "reports an exhausted ELF symbol string scan as capacity instead of corruption",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-cubin-string-limit-");
+    const bytes = cubinFixture({ name: "k".repeat(65_536) });
+    const path = join(root, "long-symbol.cubin");
+    await writeFile(path, bytes);
+    const response = await runFileCli(cli, {
+      arguments: [
+        "inspect-gpu-code-objects",
+        path,
+        "--analysis",
+        "kernels",
+        "--detail",
+        "complete",
+        "--json",
+      ],
+    });
+    expect(response.exitCode, response.stderr).toBe(0);
+    const evidence = parseEvidence(
+      toolContract("inspect_gpu_code_objects").outputSchema.parse(
+        response.json,
+      ),
+    );
+    const report = gpuCodeObjectsSchema.parse(evidence.normalized_result);
+    expect(report.objects[0]).toMatchObject({
+      kind: "cubin",
+      inspection: "capacity",
+    });
+    expect(report.artifact.sha256).toBe(
+      createHash("sha256").update(bytes).digest("hex"),
+    );
+    expect(report.coverage.payloads).toBe("partial");
+  },
+);
+
+cliTest(
   "inventories a complete CCOB stream containing ordinary CCOB payload text",
   async ({ cli }) => {
     const root = await createTestTempDirectory("rea-ccob-embedded-marker-");
@@ -842,6 +878,36 @@ cliTest(
         },
       });
     }
+  },
+);
+
+cliTest(
+  "publishes and enforces the lowercase --expected_sha256 digest",
+  async ({ cli }) => {
+    const schema = await cli.run({
+      arguments: ["inspect-gpu-code-objects", "--schema", "--json"],
+    });
+    expect(schema.exitCode, schema.stderr).toBe(0);
+    expect(schema.json).toMatchObject({
+      options: {
+        properties: { expected_sha256: { pattern: "^[a-f0-9]{64}$" } },
+      },
+    });
+    // PowerShell's Get-FileHash prints the digest in upper case.
+    const response = await runFileCli(cli, {
+      arguments: [
+        "inspect-gpu-code-objects",
+        "/not-opened-for-invalid-selectors",
+        "--expected_sha256",
+        "AB".repeat(32),
+        "--json",
+      ],
+    });
+    expect(response.exitCode).toBe(1);
+    expect(response.json).toMatchObject({
+      code: "VALIDATION_ERROR",
+      fieldErrors: [expect.objectContaining({ path: "expected_sha256" })],
+    });
   },
 );
 

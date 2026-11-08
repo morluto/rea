@@ -1,6 +1,5 @@
 import { describe, expect, it } from "vitest";
 
-import { managedNativeVerificationInputSchema } from "../domain/managed/managedNativeVerificationSchemas.js";
 import { toolContract } from "./toolContracts.js";
 import { toolInputSchemaWithMetadata } from "./toolSchemaMetadata.js";
 
@@ -10,10 +9,28 @@ import {
   MANAGED_APPLICATION_GRAPH_EXAMPLE,
   MANAGED_MEMBER_COMPARISON_EXAMPLE,
   MANAGED_NATIVE_VERIFICATION_EXAMPLE,
+  MANAGED_RECONSTRUCTION_IMPORT_EXAMPLE,
 } from "./managed/managedWorkflowExamples.js";
+import { parseEvidence } from "../domain/evidence.js";
+import { managedMemberInspectionSchema } from "../domain/managed/managedArtifact.js";
 import { managedApplicationGraphReferenceInputSchema } from "../domain/managed/managedApplicationGraph.js";
 
 describe("workflow input contracts", () => {
+  it("keeps the shared managed example's complete MethodDef scope consistent", () => {
+    const source = MANAGED_APPLICATION_GRAPH_EXAMPLE.managed_members;
+    const members = managedMemberInspectionSchema.parse(
+      source.normalized_result,
+    );
+    expect(members.methods.map((method) => method.token)).toEqual([
+      "0x06000001",
+    ]);
+    expect(members.method_rows).toEqual({ offset: 0, count: 1, total: 1 });
+    expect(members.coverage).toEqual({ state: "complete", issues: [] });
+    expect(members.selection).toBeNull();
+    expect(parseEvidence(source)).toEqual(source);
+    expect(MANAGED_RECONSTRUCTION_IMPORT_EXAMPLE.static_members).toBe(source);
+  });
+
   it("rejects application Evidence ID references and duplicate inline records", () => {
     const query = {
       seed: { kind: "literal" as const, value: "renderer" },
@@ -115,7 +132,6 @@ describe("workflow input contracts", () => {
       };
       const contract = toolContract("verify_managed_native_boundaries");
       for (const schema of [
-        managedNativeVerificationInputSchema,
         contract.inputSchema,
         toolInputSchemaWithMetadata(contract),
       ]) {

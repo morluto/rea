@@ -319,12 +319,51 @@ const decodeName = (
   return { text, attributes };
 };
 
+// RFC 5280 4.1.2.5 and X.690 11.7-11.8: UTC with seconds, a final "Z", and
+// no fractional seconds. UTCTime years 50-99 are 1950-1999, 00-49 are 2000-2049.
+const VALIDITY_TIMES = {
+  0x17: {
+    label: "UTCTime",
+    layout: "YYMMDDHHMMSSZ",
+    form: /^(\d{2})(\d{2})(\d{2})(\d{2})(\d{2})(\d{2})Z$/u,
+  },
+  0x18: {
+    label: "GeneralizedTime",
+    layout: "YYYYMMDDHHMMSSZ",
+    form: /^(\d{4})(\d{2})(\d{2})(\d{2})(\d{2})(\d{2})Z$/u,
+  },
+} as const;
+
+const isCalendarInstant = (
+  year: number,
+  [month = 0, day = 0, hour = 24, minute = 60, second = 60]: number[],
+): boolean => {
+  const leap = year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0);
+  const days = [31, leap ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+  return (
+    day >= 1 &&
+    day <= (days[month - 1] ?? 0) &&
+    hour <= 23 &&
+    minute <= 59 &&
+    second <= 59
+  );
+};
+
 const validityTime = (node: Asn1BerNode, budget: DecodedNameBudget): string => {
   if (node.tag !== 0x17 && node.tag !== 0x18)
     return fail("Validity instant is not UTCTime or GeneralizedTime.");
   // A zero byte becomes "\u0000" (six characters) in the hashed evidence JSON.
   chargeDecodedName(budget, node.content.length * 6);
-  return node.content.toString("utf8");
+  const { label, layout, form } = VALIDITY_TIMES[node.tag];
+  // Latin-1 maps each byte to one character, so no invalid byte can match.
+  const text = node.content.toString("latin1");
+  const [year = 0, ...rest] = form.exec(text)?.slice(1).map(Number) ?? [];
+  if (rest.length === 0)
+    return fail(`${label} validity instant is not ${layout}.`);
+  const fullYear = node.tag === 0x17 ? year + (year < 50 ? 2000 : 1900) : year;
+  if (!isCalendarInstant(fullYear, rest))
+    return fail(`${label} validity instant is not a calendar time.`);
+  return text;
 };
 
 export interface ParsedCertificate {
@@ -350,15 +389,44 @@ const requireSubjectPublicKeyInfo = (node: Asn1BerNode): void => {
   requireBitString(key, "SubjectPublicKeyInfo subjectPublicKey");
 };
 
+// RFC 5280 4.1 and 4.2: an Extension is extnID, an optional critical BOOLEAN
+// and an extnValue OCTET STRING. A certificate MUST NOT repeat an extnID.
+const requireExtensions = (extensions: readonly Asn1BerNode[]): void => {
+  const seen = new Set<string>();
+  for (const extension of extensions) {
+    const fields = sequence(extension, "TBSCertificate extension");
+    const extnId = fields[0];
+    const critical = fields.length === 3 ? fields[1] : undefined;
+    const extnValue = fields[fields.length - 1];
+    if (
+      (fields.length !== 2 && fields.length !== 3) ||
+      extnId?.tag !== 0x06 ||
+      (critical !== undefined &&
+        (critical.tag !== 0x01 || critical.content.length !== 1)) ||
+      extnValue?.tag !== 0x04
+    )
+      return fail(
+        "TBSCertificate extension is not an OID, optional BOOLEAN, and OCTET STRING.",
+      );
+    const oid = decodeOid(extnId.content);
+    if (seen.has(oid)) return fail(`TBSCertificate repeats extension ${oid}.`);
+    seen.add(oid);
+  }
+};
+
 // issuerUniqueID [1], subjectUniqueID [2], and extensions [3] are optional
-// and ordered. Anything else is not a TBSCertificate field.
+// and ordered. Anything else is not a TBSCertificate field. RFC 5280
+// 4.1.2.8-4.1.2.9: unique identifiers need v2 or v3; extensions need v3.
 const finishTbsCertificate = (
   children: readonly Asn1BerNode[],
   start: number,
+  version: number,
 ): void => {
   let cursor = start;
   const issuerUniqueId = children[cursor];
   if (issuerUniqueId?.tag === 0x81) {
+    if (version < 1)
+      return fail("TBSCertificate issuerUniqueID requires version 2 or 3.");
     requireBitStringContent(
       issuerUniqueId.content,
       "TBSCertificate issuerUniqueID",
@@ -367,6 +435,8 @@ const finishTbsCertificate = (
   }
   const subjectUniqueId = children[cursor];
   if (subjectUniqueId?.tag === 0x82) {
+    if (version < 1)
+      return fail("TBSCertificate subjectUniqueID requires version 2 or 3.");
     requireBitStringContent(
       subjectUniqueId.content,
       "TBSCertificate subjectUniqueID",
@@ -375,6 +445,8 @@ const finishTbsCertificate = (
   }
   const extensions = children[cursor];
   if (extensions?.tag === 0xa3) {
+    if (version !== 2)
+      return fail("TBSCertificate extensions require version 3.");
     const body = extensions.children[0];
     if (
       extensions.children.length !== 1 ||
@@ -382,6 +454,7 @@ const finishTbsCertificate = (
       body.tag !== 0x30
     )
       return fail("TBSCertificate extensions are not a SEQUENCE.");
+    requireExtensions(body.children);
     cursor += 1;
   }
   if (cursor !== children.length)
@@ -415,15 +488,22 @@ export const parseCertificate = (
   requireBitString(signatureValue, "Certificate signatureValue");
   const tbsChildren = sequence(tbs, "TBSCertificate");
   let index = 0;
-  const version = tbsChildren[0];
-  if (version?.tag === 0xa0) {
-    const versionNumber = version.children[0];
+  // An omitted version is the DEFAULT v1, encoded as 0.
+  let version = 0;
+  const versionField = tbsChildren[0];
+  if (versionField?.tag === 0xa0) {
+    const versionNumber = versionField.children[0];
     if (
-      version.children.length !== 1 ||
+      versionField.children.length !== 1 ||
       versionNumber === undefined ||
       versionNumber.tag !== 0x02
     )
       return fail("TBSCertificate version is not an INTEGER.");
+    // RFC 5280 4.1.2.1: v1(0), v2(1) or v3(2), one minimal octet each.
+    const [value] = versionNumber.content;
+    if (versionNumber.content.length !== 1 || value === undefined || value > 2)
+      return fail("TBSCertificate version is not v1, v2 or v3.");
+    version = value;
     index = 1;
   }
   const serial = tbsChildren[index];
@@ -445,8 +525,17 @@ export const parseCertificate = (
       "TBSCertificate is missing serial, signature, issuer, validity, subject, or subjectPublicKeyInfo.",
     );
   algorithmOid(tbsSignature);
+  // RFC 5280 4.1.1.2: signatureAlgorithm MUST equal the TBSCertificate
+  // signature field. Compare encodings, parameters included.
+  if (
+    signatureAlgorithm.tag !== tbsSignature.tag ||
+    !signatureAlgorithm.content.equals(tbsSignature.content)
+  )
+    return fail(
+      "Certificate signatureAlgorithm differs from the TBSCertificate signature.",
+    );
   requireSubjectPublicKeyInfo(subjectPublicKeyInfo);
-  finishTbsCertificate(tbsChildren, index + 6);
+  finishTbsCertificate(tbsChildren, index + 6, version);
   const validityChildren = sequence(validity, "Validity");
   const notBefore = validityChildren[0];
   const notAfter = validityChildren[1];
@@ -541,6 +630,16 @@ const parseSigner = (
     sid,
     names,
   );
+  // RFC 5652 5.3: issuerAndSerialNumber requires version 1 and
+  // subjectKeyIdentifier requires version 3.
+  const [expected, identifier] =
+    sid.tag === 0x80
+      ? [3, "subjectKeyIdentifier"]
+      : [1, "issuerAndSerialNumber"];
+  if (version.content.length !== 1 || version.content[0] !== expected)
+    return fail(
+      `SignerInfo version must be ${String(expected)} with ${identifier}.`,
+    );
   let cursor = 3;
   const authenticated = children[cursor]?.tag === 0xa0;
   if (authenticated) {

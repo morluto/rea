@@ -127,7 +127,6 @@ it.each([
       producer,
     );
     const result = await client.execute("list_procedures", {});
-    expect(result.ok).toBe(false);
     if (result.ok) throw new Error("Expected connection failure");
     expect(result.error.diagnostics).toMatchObject({ endpoint: selected });
     expect(JSON.stringify(projectAnalysisError(result.error))).not.toContain(
@@ -162,7 +161,6 @@ it.each([
       producer,
     );
     const result = await client.execute("list_procedures", {});
-    expect(result.ok).toBe(false);
     if (result.ok) throw new Error("Expected connection failure");
     const output = JSON.stringify(projectAnalysisError(result.error));
     expect(output).not.toContain("fixture-secret");
@@ -196,7 +194,6 @@ it.each(["initialize", "transport"])(
     const connect = vi.spyOn(producer, "connect").mockRejectedValue(source);
     for (const requested of ["list_procedures", "list_strings"] as const) {
       const result = await client.execute(requested, {});
-      expect(result.ok).toBe(false);
       if (result.ok) throw new Error("Expected startup failure");
       expect(result.error).toBeInstanceOf(ProviderAdapterError);
       expect(result.error).toMatchObject({
@@ -283,7 +280,9 @@ describe("headless IDA producer pagination", () => {
         classification: null,
         body: {
           available: false,
-          reason: "IDA MCP does not report complete function body ranges.",
+          reason: expect.stringMatching(
+            /does not report complete function body ranges/iu,
+          ),
         },
       },
       native_api: null,
@@ -1212,7 +1211,6 @@ describe("IDA compatibility profile mismatch", () => {
     const { producer, client } = await fixture("attached", 1000, "native");
     producer.tools = [];
     const result = await client.execute("health", {});
-    expect(result.ok).toBe(false);
     if (result.ok) throw new Error("Expected incompatible native catalog");
     expect(projectAnalysisError(result.error).details).toMatchObject({
       diagnostics: {
@@ -2013,7 +2011,6 @@ it.each(["unavailable", "malformed"] as const)(
         throw new Error("inventory unavailable");
     };
     const result = await client.close();
-    expect(result.ok).toBe(false);
     if (result.ok) throw new Error("Expected retained cleanup");
     expect(result.error).not.toHaveProperty("diagnostics.upstream_sessions");
   },
@@ -2081,7 +2078,7 @@ it("binds retained transport diagnostics to the requested operation and recovery
       operation: "list_procedures",
       diagnostics: {
         reason: "upstream closed",
-        recovery: expect.stringContaining("docs/ida-provider.md"),
+        recovery: expect.stringContaining("docs/providers/ida-provider.md"),
       },
       captured_output: { stderr: "IDA diagnostic" },
     },

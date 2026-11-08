@@ -23,7 +23,7 @@ import {
 } from "../javascript/javascriptApplicationGraph.js";
 import {
   createJavaScriptSemanticGraph,
-  createImmutableJavaScriptSemanticGraphSteps,
+  sealTransferredJavaScriptSemanticGraphSteps,
 } from "../javascript/javascriptSemanticGraph.js";
 import { sourceMapReference } from "../javascript/javascriptApplicationGraph.fixture.js";
 import { createArtifactInspection } from "../artifactInspection.js";
@@ -1093,7 +1093,6 @@ it("rejects ambiguous JavaScript module paths with candidate node ids", () => {
     collection: "modules",
     selector: { path: "renderer.js" },
   });
-  expect(result.ok).toBe(false);
   if (result.ok) throw new Error("expected ambiguous path");
   expect(result.error).toMatchObject({
     _tag: "AnalysisInputError",
@@ -1282,7 +1281,7 @@ it("reuses authenticated graphs while rejecting malformed metadata and imported 
   );
   const { graph_id: _semanticId, ...semantic } = analysis.semantic_graph;
   const semanticGraph = complete(
-    createImmutableJavaScriptSemanticGraphSteps({
+    sealTransferredJavaScriptSemanticGraphSteps({
       ...semantic,
       application_graph_id: graph.graph_id,
     }),
@@ -1519,6 +1518,8 @@ it.each(["partial", "unknown"] as const)(
     ] as const) {
       const result = projectAnalysisView(parent, view);
       if (!result.ok) throw result.error;
+      if (result.value.coverage === null)
+        throw new Error("Expected known coverage");
       expect(result.value.coverage.exhausted).toBe(true);
       if (result.value.kind === "javascript")
         expect(result.value.source_coverage).toMatchObject({

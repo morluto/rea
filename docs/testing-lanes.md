@@ -1,6 +1,6 @@
 # Testing lanes and provider verification
 
-For test design and developer commands, see [Testing REA](testing.md).
+For test design and developer commands, see [Testing REA](development/testing.md).
 
 ## Real-toolchain verification lanes
 
@@ -14,6 +14,21 @@ selected TTY. The suite is included in the reverse-tools Vitest and mutation
 typecheck selections; its real-provider assertions skip when Rizin 0.7.4 is
 unavailable. Run the focused command above on a host with that provider for the
 explicit real-provider verification gate.
+
+The decoder and map inputs of `execute_rizin_command` have their own
+real-provider gate. Run
+`npm run test:focused -- tests/boundary/providers/RizinDecoderInputs.test.ts`.
+It calls the tool through MCP with the Rizin on `PATH` and checks the effect of
+`-a`, `-b`, `-e asm.cpu=` and `-n -m` on raw images with Rizin's own `e asm.*`
+and `omlj` output, and that `asm_cpu` changes how an M-profile instruction
+decodes. It also reads bytes below the base address, at it, at the end of the
+image and past it, and checks a call with only `base_address`. Two of the images are ones that Rizin's AVR and
+BIOS loaders claim without `-n`. It also selects an arch that no host uses by
+default, an arch plugin that Rizin does not have, and a bits value that the
+arch lacks. The test names the Rizin version it ran. It skips when no Rizin is
+on `PATH`; to check another build, put its directory first on `PATH`. It has
+passed with Rizin 0.9.1 (Homebrew, macOS arm64) and Rizin 0.7.4 (official static
+build, Linux x86_64).
 
 Each real-toolchain command must require only the host tools needed to prove
 its stated claim. Use a host-native fixture for host/provider acceptance, and
@@ -30,6 +45,7 @@ prove behavior on the verified Ghidra 12.1.4 and JDK 21 build.
 | Ghidra lane                                | Supported runner/target                                                                                          | Additional local tools                                                      |
 | ------------------------------------------ | ---------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------- |
 | `npm run verify:ghidra`                    | Linux x64/arm64 ELF or macOS x64/arm64 Mach-O                                                                    | Host C compiler, Ghidra 12.1.4, and full JDK 21                             |
+| `npm run verify:ghidra:project-coverage`   | POSIX host; selected-project call coverage, real MCP, retained Evidence and an unexecuted host fixture           | Host C compiler, Ghidra 12.1.4, and full JDK 21                             |
 | `npm run verify:ghidra:seeds`              | POSIX; raw x86 fixture; seed ordering, BSS labels, analyzer readback, not-applicable and unknown analyzer names  | Ghidra 12.1.4 and full JDK 21                                               |
 | `npm run verify:ghidra:swift`              | macOS x64/arm64 Mach-O                                                                                           | Host Swift compiler, Ghidra 12.1.4, and full JDK 21                         |
 | `npm run verify:ghidra:riscv`              | Linux/macOS x64/arm64 host; source-owned RV32/RV64 double-float and RV32 ilp32 ELF through CLI and MCP           | RISC-V Clang, LLD, LLVM readelf and objdump, Ghidra 12.1.4, and full JDK 21 |
@@ -190,7 +206,7 @@ fixed public ApiDemos v6.0.18 fixture. Obtain both with the explicit
 kept under ignored `_reference/`. No Gradle build, Android SDK, emulator or
 application execution is required. The lane compares real CLI/MCP package,
 class search, class inventory, method decompilation and incoming references.
-See [Android analysis](android-analysis.md) for boundaries and resource budgets.
+See [Android analysis](guides/android/android-analysis.md) for boundaries and resource budgets.
 
 The **Real Android metadata bridge** workflow compiles the Java bridge and runs
 its metadata regressions against the same checksum-pinned engine and public APK.
@@ -208,7 +224,7 @@ already open, and exercises shared application/provider client inspection, unit 
 and method decompilation. The script records the engine's exact response to
 `open_jeb_project`; the earlier licensed 5.48.0 headless verification did not
 advertise that tool.
-REA does not install or launch JEB; see [JEB analysis](jeb-analysis.md) for
+REA does not install or launch JEB; see [JEB analysis](providers/jeb-analysis.md) for
 the bring-your-own boundary. The earlier licensed build was verified against JEB 5.48.0 serving
 `jeb-mcp-server` 1.3.0 at four scales: a compiled Java class fixture, a
 locally built signed probe APK with a launcher activity (manifest, v1/v2/v3
@@ -227,7 +243,7 @@ CLI/stdio MCP ELF workflows. That audit does not qualify CE Java/Android
 decompilation or GUI project opening, and it does not replace the licensed
 verification above.
 Authenticated IPA and macOS application inventory projection is documented in
-[Apple application analysis](apple-application-analysis.md).
+[Apple application analysis](guides/apple/apple-application-analysis.md).
 
 `npm run verify:harmony` requires no SDK or engine. It projects the pinned
 harmony-next-pipeline 1.0.1 release HAP from an MIT-licensed source repository,
@@ -237,7 +253,7 @@ The lane exercises `inspect_artifact`, projection determinism, Stage-model
 path hints, exact component sets, signing-entry limitations, and CLI/MCP parity.
 The release artifact has no independently established compiler/SDK or
 reproducible source build; the default lane does not verify an installed package.
-See [HarmonyOS package inventory](harmony-analysis.md) for those proof boundaries.
+See [HarmonyOS package inventory](guides/harmony/harmony-analysis.md) for those proof boundaries.
 HarmonyOS `.har` libraries are deliberately not suffix-classified because
 `.har` also names HTTP Archive JSON.
 
@@ -258,7 +274,7 @@ with the reported target identity, apktool.yml metadata projection
 (1.2.3, SDK 24–34), manifest package agreement, and both the default and
 `de` string tables projected through the locale option. Parser goldens in
 `src/apktool/ApktoolDecodeOutput.test.ts` come from the same decode. See
-[Apktool resource analysis](apktool-resource-analysis.md) for boundaries and
+[Apktool resource analysis](guides/android/apktool-resource-analysis.md) for boundaries and
 budgets.
 
 ## Flutter build identification
@@ -288,7 +304,7 @@ documented Gallery APK to assert its pinned digest, hash, exact engine strings
 and per-ABI URI counts. The verifier requires complete structural snapshot
 coverage, reports bounded pool coverage as partial/unverified, and reports
 exact labels/counts on other APKs unverified without an expectations file.
-See [Flutter build identification](flutter-analysis.md) for boundaries and
+See [Flutter build identification](guides/android/flutter-analysis.md) for boundaries and
 budgets.
 
 ## ADB device acquisition
@@ -319,7 +335,7 @@ removal. System-package pulls whose APKs keep non-`base.apk` names report
 the `unknown` role with the file-name basis, verified with
 `com.android.settings` (single 73.9 MB APK). Parser goldens for
 `adb devices -l`, `getprop`, `pm list packages -f`, and `pm path` come from
-the same device. See [ADB device analysis](adb-device-analysis.md) for
+the same device. See [ADB device analysis](guides/android/adb-device-analysis.md) for
 boundaries and budgets.
 
 ## Optional NativeAOT Ghidra analysis
@@ -363,7 +379,7 @@ with `REA_NATIVEAOT_PROOF_CAPTURE_DIR` (absolute paths).
 Keep builds/imports sequential on small hosts; scope `GHIDRA_HEADLESS_MAXMEM`
 (e.g. `768M`) to this command and use CPU affinity if needed. REA does not install
 or upgrade Java, Ghidra, .NET or native toolchains. See
-[the supported layout and provenance](ghidra-nativeaot.md).
+[the supported layout and provenance](providers/ghidra-nativeaot.md).
 
 ## IDA MCP adapter
 
@@ -403,11 +419,11 @@ symbols carry a leading underscore). Before the headless session waited out
 the transient `busy` health a worker can report right after opening, that lane
 failed intermittently on that host. Linux headless, modern attached GUI tools,
 other engine versions and architectures remain unverified; see the
-[provider guide](ida-provider.md).
+[provider guide](providers/ida-provider.md).
 
 Native IDA MCP verification uses `"protocol": "native"` with an already-running native plugin and requires `--second-procedure other_function --second-marker unique_second_body_text` to exercise GUI function switching and a return to the first function. These options remain optional for other profiles. The literal marker must appear in the second function's pseudocode and be absent from the first. Native cloud/widget failures are reported without hidden retries.
 
-The initial Linux x64 IDA Free 9.4 run used native MCP 1.1.2 with a local navigation correction. Windows x64 verification uses **IDA Pro 9.3**, the two-function public fixture, and the shipped Windows `whoami.exe` application. The native plugin was built from upstream `c9d15d98e8a143fc74f6e14037c48f63889b6d6c`, including the merged navigation fix, with a local loopback-listener change. Production CLI/MCP parity, switching, identity and cleanup passed. Correctness and performance measurements are recorded in the [Windows native verification notes](https://github.com/morluto/rea/blob/a2e2c29b59e8775b0e6aedb09a9eb16adf32646b/experiments/analysis-efficiency/ida-native-windows.md). Stock 1.1.2 switching, native macOS, and Windows IDA Free remain unverified. See the [native bridge prerequisites](ida-provider.md#optional-native-ida-mcp-bridge).
+The initial Linux x64 IDA Free 9.4 run used native MCP 1.1.2 with a local navigation correction. Windows x64 verification uses **IDA Pro 9.3**, the two-function public fixture, and the shipped Windows `whoami.exe` application. The native plugin was built from upstream `c9d15d98e8a143fc74f6e14037c48f63889b6d6c`, including the merged navigation fix, with a local loopback-listener change. Production CLI/MCP parity, switching, identity and cleanup passed. Correctness and performance measurements are recorded in the [Windows native verification notes](https://github.com/morluto/rea/blob/a2e2c29b59e8775b0e6aedb09a9eb16adf32646b/experiments/analysis-efficiency/ida-native-windows.md). Stock 1.1.2 switching, native macOS, and Windows IDA Free remain unverified. See the [native bridge prerequisites](providers/ida-provider.md#optional-native-ida-mcp-bridge).
 
 ## Kuna lane
 
@@ -433,7 +449,16 @@ caller-built functions through Ghidra (it refuses to run without `--targets` and
 reports latency, sampled process-tree CPU and peak memory, UTF-8 response size,
 and goto and warning-marker counts. Those counts are not a correctness judgement,
 and model tokens are not measured. Reference timings and response sizes are
-reported separately; reference caches expire when the server closes. `--report PATH` writes the JSON report.
+reported separately; reference caches expire when the server closes. The report's
+`caller_target_selection` retains the selected directory, the original functions
+argument, and each examined binary's requested names matched against `nm` text
+symbols. `symbol_scan_complete` means the scan of non-`.stripped` entries in
+the immediate flavor directories finished; it does not cover other directory
+entries. An `inspection_failed` entry and `symbol_scan_complete: false` retain
+partial discovery when symbol inspection fails. A missing symbol is not proof
+that code is absent, and selection does not establish that a stripped counterpart
+was verified; consult `results` for completed variants. `--report PATH` writes
+the JSON report.
 
 The first matrix run used Kuna 1.833 and Ghidra 12.1.4 with JDK 21 on macOS
 arm64. It covered zlib 1.3.2 `minigzip`, coreutils 9.9 `sort` and the sqlite
@@ -467,14 +492,15 @@ references, timeout recovery, and cleanup. Linux, other hosts, and the larger
 ## DOS Ghidra analysis
 
 `npm run verify:ghidra:dos` requires the supported Ghidra and JDK installation
-on Linux x64 or macOS x64/arm64. It generates a source-owned MZ fixture without
+on Linux x64, macOS x64/arm64, or Windows x64 P0. It generates a source-owned MZ fixture without
 a DOS emulator or compiler, then checks real 16-bit decoding, segment
 relocation, near/far calls, decompilation, disjoint function body ranges,
 stable CLI/MCP observations, unchanged source bytes, and owned process/project
 cleanup. Raw p-code address-space selector tokens are reported separately from
-the stable observation comparison. Linux x64 and macOS arm64 are verified;
-macOS x64 remains unverified. This lane is separate from host-native and optional cross-format
-verification. See [DOS analysis](ghidra-dos.md).
+the stable observation comparison. Linux x64, macOS arm64 and Windows x64 are
+verified; macOS x64 remains unverified. On Windows P0 the lane checks that
+annotation edits are refused instead of exercising them. This lane is separate from host-native and optional cross-format
+verification. See [DOS analysis](providers/ghidra-dos.md).
 
 `npm run verify:ghidra:com` uses a generated headerless fixture with no compiler,
 DOS emulator or game data. It exercises explicit admission, BinaryLoader entry
@@ -511,11 +537,17 @@ has been run on macOS; Linux has not been exercised.
 through the compiled CLI and stdio MCP server. With the same Ghidra/JDK
 prerequisites, it checks preparation and bridge startup, verified load mappings,
 instruction and byte readback, canonical-entry session reuse, replacement when
-the entry changes without `provider_id`, unchanged source bytes, and owned
-cleanup. Six-byte x86 and x86_64 controls also verify supported compiler
+the entry changes without `provider_id`, preservation of a session annotation
+and the target/provider receipt after a rejected open, unchanged source bytes,
+and owned cleanup. Six-byte x86 and x86_64 controls also verify supported compiler
 specifications, independent mappings, unchanged bytes, and decompilation of a
-known return value. AArch64 remains covered by deterministic tests rather than
-this real-provider lane. See [raw binary analysis](raw-binary.md).
+known return value. On a disposable Ghidra project, MCP `search_bytes` also
+checks a manually created loaded `overlay_test` block: an unbounded search lists
+it in `skipped_overlays` and not in `skipped_not_loaded`, and bounds in that
+overlay space find the pattern. This lane does not build an overlapping-load ELF,
+does not call CLI `search-bytes`, and does not page an overlay search across a
+snapshot reopen. AArch64 remains covered by deterministic tests rather than this
+real-provider lane. See [raw binary analysis](providers/raw-binary.md).
 
 `npm run verify:ghidra:address-context` runs on Linux with a caller-installed
 Ghidra, full JDK, and an x86-64 ELF GCC toolchain (`CC` selects another compatible
@@ -946,7 +978,7 @@ status, and Android logcat on success or failure. The emulator is disposable.
 capinfos against a saved capture. Linux verification uses Wireshark 4.6.6
 and captures containing DNS, TLS and HTTP traffic. Native Windows and macOS
 engine behavior remains unverified; process fixtures do not establish it.
-See [Packet capture analysis](pcap-analysis.md) for contracts and budgets.
+See [Packet capture analysis](guides/data/pcap-analysis.md) for contracts and budgets.
 
 ## Apple native metadata and UI
 
@@ -975,7 +1007,7 @@ conformance/vtable fixture.
   allows a host-permission-boundary-only result and explicitly reports
   `positive_e2e: false`; it must not be reported as capture/action proof.
   Both commands reject a changed executable digest and clean up the fixture
-  process and helper. These lanes require an interactive macOS desktop. See [native investigation](native-investigation.md).
+  process and helper. These lanes require an interactive macOS desktop. See [native investigation](guides/native/native-investigation.md).
 
 `npm run verify:native-calls` needs macOS with Command Line Tools (`clang`,
 `lldb`, `codesign`, `nm`) and actual debugger access to the owned fixtures.
@@ -1013,7 +1045,7 @@ unknown chunks, depth limits and extracted child digests. The optional
 `REA_FIRMWARE_VERIFY_EXT4=1` lane requires existing mke2fs/debugfs; the separate
 `REA_FIRMWARE_VERIFY_GHIDRA=1` lane checks a selected host ELF through real Ghidra.
 Neither optional toolchain is a base-lane prerequisite. See
-[firmware analysis](firmware-analysis.md) for limits and unverified formats.
+[firmware analysis](guides/firmware/firmware-analysis.md) for limits and unverified formats.
 
 `npm run verify:esp-images` requires a Clang with the RISC-V target and
 `ld.lld` (`REA_RISCV_CLANG`, `REA_RISCV_LLD`) and a Python that runs esptool
@@ -1081,7 +1113,7 @@ npm run verify:browser:source-maps
 checks an installed package after building the verifier dependencies. The separate
 conditional `real-web-source-map` CI job supplies Chrome and an isolated pinned
 fixture compiler; static/unit checks do not acquire a browser. See
-[the source location guide](web-source-location.md) for the verified decoder profile.
+[the source location guide](guides/web/web-source-location.md) for the verified decoder profile.
 
 ### JavaScript large-output lane
 
@@ -1110,7 +1142,7 @@ An optional entrypoint argument to `scripts/verify-browser-runtime.mjs` runs the
 same checks through an isolated installed package. The conditional
 `real-web-runtime` CI job runs only for relevant changes and needs no fixture
 compiler. Ordinary unit/static gates acquire no browser. See
-[website runtime attribution](web-runtime.md) for effects, resource bounds and
+[website runtime attribution](guides/web/web-runtime.md) for effects, resource bounds and
 coverage limits.
 
 ### Offline binary layout
@@ -1171,9 +1203,10 @@ installed package entrypoint as the script's first argument for package coverage
 
 `npm run verify:agentenv:environment` is the `real-agentenv` lane. It requires
 the host's Docker CLI named by absolute `REA_DOCKER_COMMAND`, Python 3.12 with
-`agentenv-framework==0.9.1334` installed in a virtual environment whose
+`agentenv-framework==0.9.1431` installed in a virtual environment whose
 `agent-env` binary is named by absolute `REA_AGENT_ENV_COMMAND`, and outbound
-network for `pip` on the runner and for `npm` inside the image build. Both
+network for `pip` on the runner, for the framework's image pulls from `ghcr.io`
+and for `npm` inside the image build. Both
 variables are required; neither upstream executable is resolved from `PATH`,
 and the verifier installs nothing. Packing uses the shared npm helper, honoring
 `npm_execpath` from the caller's selected npm. Direct Node invocations without
@@ -1185,11 +1218,12 @@ storage, exports both paths and uses the runner's own Docker; no developer host
 configuration changes. `agent-env run` attempts share one 22-minute budget
 inside the 30-minute job (the first attempt at most 15 minutes), so a hung or
 retried run ends with the verifier's failed receipt rather than the runner's
-kill. The framework builds its gateway and service-db
-images from `public.ecr.aws` on every fresh runner, and hosted runners share
-that registry's anonymous pull quota, so the lane first pulls the base images
-the pinned framework's Dockerfiles name from `mirror.gcr.io`, which serves the
-same Docker official images under the same digests, and names them as those
+kill. The pinned framework pulls its gateway and service-db images from
+`ghcr.io/scaleapi` by the digests its release records and builds one only when
+its pull fails. Those builds start from `public.ecr.aws` base images, and hosted
+runners share that registry's anonymous pull quota, so the lane first pulls the
+base images the gateway and service-db Dockerfiles name from `mirror.gcr.io`,
+which serves the same Docker official images under the same digests, and names them as those
 Dockerfiles do (on Docker's containerd image store, so digest-pinned names
 resolve), as the framework's own CI does. The quota handling below covers
 anything still pulled from that registry. The receipt's `agent_env_run` records the
@@ -1217,19 +1251,25 @@ that served tool count, and that no container exists
 after the run that did not exist before; the container inventory runs even when
 the run fails or times out, so a failed receipt still lists what it left. The one exception is the framework's
 own image-store helper, `agentenv-registry` (or `agentenv-registry-<port>`),
-a `registry:2` container the local provider starts on first use and keeps
-running across runs; a first run on a fresh host creates it, so the receipt
-lists it under `image_store_helpers` instead of counting it as a leak. Images
+a `registry:2` container the local provider starts when it first stores an image
+it built and keeps running across runs. The pinned framework registers its
+published infra images, and a deploy that cannot pull one builds it into the
+host's Docker, so a fresh run does not normally create the helper; if one does,
+the receipt lists it under `image_store_helpers` instead of counting it as a leak. Images
 built by the run remain and are counted in the receipt. Pass an installed
 package entrypoint as the script's first argument for package coverage.
 
 ## Agent evaluation and conformance records
 
+For catalog-loading measurements, use the real Codex
+[MCP catalog evaluation](mcp-catalog-evaluation.md). It separates observed usage
+from advertisement bytes and from completed-task correctness.
+
 `npm run verify:agent` evaluates investigation scenarios through a real local
 Codex CLI. The lane runs sequentially; select scenarios with
 `REA_AGENT_EVAL_SCENARIOS` and choose the installed client/model with
 `REA_CODEX_CLI` and `REA_AGENT_EVAL_MODEL`. The detailed
-[agent evaluation reference](client-verification.md#agent-evaluation-and-conformance-records)
+[agent evaluation reference](development/client-verification.md#agent-evaluation-and-conformance-records)
 contains isolation, authentication cleanup, grading, and conformance boundaries.
 
 The Notes evaluation packages `website/public/examples/notes-electron/`. When

@@ -26,8 +26,17 @@ import { parseArgs, promisify } from "node:util";
 import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import { inspectKunaInstallation } from "../dist/kuna/KunaInstallation.js";
+import {
+  KUNA_RELEASE_VERIFICATION_EXPLANATION,
+  KUNA_UNVERIFIED_VERSION_REMEDIATION,
+  KUNA_VERIFIED_VERSION,
+} from "../dist/kuna/KunaRelease.js";
 import { ArtifactResourceScope } from "../dist/artifacts/ArtifactResourceScope.js";
 import { AnalysisCleanupLease } from "../dist/artifacts/AnalysisCleanupLease.js";
+import {
+  KUNA_XREF_MISSING_NAME_REMEDIATION,
+  missingKunaXrefNameMessage,
+} from "../dist/kuna/KunaSelectorGuidance.js";
 import {
   requireMcpOperationResult,
   requireMcpToolError,
@@ -233,13 +242,13 @@ const openServer = async (provider, kunaSettings = {}) => {
       structured: result.structuredContent,
     };
   };
-  const callError = async (name, arguments_ = {}) => {
-    const result = await client.callTool(
-      { name, arguments: arguments_ },
-      { timeout: 3_600_000 },
+  const callError = async (name, arguments_ = {}) =>
+    requireMcpToolError(
+      await client.callTool(
+        { name, arguments: arguments_ },
+        { timeout: 3_600_000 },
+      ),
     );
-    return requireMcpToolError(result);
-  };
   const close = async (priorFailure) => {
     clearInterval(timer);
     await sample();
@@ -277,6 +286,38 @@ const openServer = async (provider, kunaSettings = {}) => {
       path: provider.path,
       provider_id: provider.id,
     });
+    const session = (await call("binary_session")).value;
+    assert.equal(
+      session.analysis_provider_candidates_observed,
+      "target_selection",
+    );
+    if (provider.id === "kuna") {
+      const binding = session.analysis_provider_binding;
+      const verification = binding.release_verification;
+      assert.equal(verification.basis, "reported_version");
+      assert.equal(verification.verified_version, KUNA_VERIFIED_VERSION);
+      assert.equal(
+        verification.reported_version,
+        binding.analysis_profile.parameters.kuna_version,
+      );
+      assert.equal(
+        verification.status,
+        binding.analysis_profile.parameters.kuna_version ===
+          KUNA_VERIFIED_VERSION
+          ? "verified"
+          : "unverified",
+      );
+      assert.equal(
+        verification.explanation,
+        KUNA_RELEASE_VERIFICATION_EXPLANATION,
+      );
+      if (verification.status === "unverified")
+        assert.equal(
+          verification.remediation,
+          KUNA_UNVERIFIED_VERSION_REMEDIATION,
+        );
+      else assert.equal(verification.remediation, null);
+    }
   } catch (cause) {
     // A rejected connection/target still owns its transport and workspace.
     await close(cause);
@@ -409,6 +450,44 @@ const verifyKuna = async (
       }),
     });
     const listed = await cold.call("list_procedures");
+    if (verifyNamedTrace) {
+      const missing = await cold.callError("xrefs", {
+        address: "rea_missing_xref_inventory_name",
+      });
+      assert.equal(missing.code, "invalid_request");
+      assert.equal(
+        missing.message,
+        missingKunaXrefNameMessage("rea_missing_xref_inventory_name"),
+      );
+      assert.equal(
+        missing.remediation.action,
+        KUNA_XREF_MISSING_NAME_REMEDIATION,
+      );
+      assert.ok(missing.message.includes("rea_missing_xref_inventory_name"));
+      assert.equal(missing.recovery, undefined);
+      const procedure = await cold.callError("procedure_address", {
+        procedure: "rea_missing_procedure_name",
+      });
+      assert.equal(procedure.code, "invalid_request");
+      assert.equal(procedure.recovery, undefined);
+      assert.match(procedure.remediation.action, /search_procedures/u);
+      assert.ok(
+        procedure.details.issues.some(
+          (issue) => issue.observed?.procedure === "rea_missing_procedure_name",
+        ),
+      );
+      const missingAddress = await cold.callError("procedure_address", {
+        procedure: "0x00000001",
+      });
+      assert.equal(missingAddress.code, "invalid_request");
+      assert.equal(missingAddress.recovery, undefined);
+      assert.match(missingAddress.remediation.action, /list_procedures/u);
+      assert.ok(
+        missingAddress.details.issues.some(
+          (issue) => issue.observed?.procedure === "0x00000001",
+        ),
+      );
+    }
     for (const [name, address] of functions) {
       assert.ok(
         listed.value.some((entry) => entry.address === address),
@@ -511,6 +590,30 @@ const verifyKuna = async (
         references,
       });
     }
+    if (functions.length > 0) {
+      const trace = await cold.call("trace_native_values", {
+        procedure: functions[0][1],
+        max_depth: 0,
+        max_functions: 1,
+      });
+      const bundle = await cold.call("get_evidence_bundle", {
+        detail: "complete",
+      });
+      for (const source of [
+        ...trace.value.procedures,
+        ...trace.value.nodes,
+        ...trace.value.edges,
+      ]) {
+        assert.ok(trace.structured.evidence_links.includes(source.evidence_id));
+        assert.equal(
+          bundle.value.records.find(
+            (record) => record.evidence_id === source.evidence_id,
+          )?.operation,
+          "analyze_function",
+          `Missing source Evidence ${source.evidence_id}`,
+        );
+      }
+    }
   } catch (cause) {
     coldFailure = cause;
   } finally {
@@ -571,15 +674,37 @@ const measureGhidra = async (path, functions) => {
   return answers;
 };
 
-/** Symbol-bearing caller binaries with the requested functions, beside their stripped copies. */
-const targetPairs = async (root, names) => {
+const describeFailure = (cause) => ({
+  message: cause instanceof Error ? cause.message : String(cause),
+  ...(cause instanceof AggregateError
+    ? { causes: cause.errors.map(describeFailure) }
+    : {}),
+});
+
+/** Inspect symbol-bearing caller binaries, retaining both selected and unmatched inputs. */
+const targetPairs = async (root, names, selection) => {
   const pairs = [];
   for (const flavor of (await readdir(root)).sort()) {
     const directory = join(root, flavor);
     if (!(await stat(directory)).isDirectory()) continue;
     for (const file of (await readdir(directory)).sort()) {
       if (file.endsWith(".stripped")) continue;
-      const symbols = await symbolAddresses(join(directory, file), names);
+      let symbols;
+      try {
+        symbols = await symbolAddresses(join(directory, file), names);
+      } catch (cause) {
+        selection.examined.push({
+          binary: `${flavor}/${file}`,
+          status: "inspection_failed",
+          error: describeFailure(cause),
+        });
+        throw cause;
+      }
+      selection.examined.push({
+        binary: `${flavor}/${file}`,
+        status: symbols.size > 0 ? "selected" : "no_matching_text_symbols",
+        matched_functions: [...symbols.keys()],
+      });
       if (symbols.size > 0) pairs.push({ flavor, directory, file, symbols });
     }
   }
@@ -600,6 +725,18 @@ const verifyVariant = async ({ flavor, directory, symbols }, variant) => {
 const results = [];
 let timeoutRecovery;
 const failures = [];
+const callerTargetSelection =
+  values.targets === undefined
+    ? undefined
+    : {
+        directory: values.targets,
+        functions_argument: values.functions ?? null,
+        requested_functions: (values.functions ?? "")
+          .split(",")
+          .filter(Boolean),
+        symbol_scan_complete: false,
+        examined: [],
+      };
 let inspectionResourcesClean = true;
 try {
   const installation = await inspectKunaInstallation(
@@ -612,13 +749,18 @@ try {
   );
   kunaVersion = `kuna ${installation.value.version}`;
   let callerPairs = [];
-  if (values.targets !== undefined) {
-    const names = (values.functions ?? "").split(",").filter(Boolean);
+  if (callerTargetSelection !== undefined) {
+    const names = callerTargetSelection.requested_functions;
     assert.ok(names.length > 0, "--targets requires --functions");
-    callerPairs = await targetPairs(values.targets, names);
+    callerPairs = await targetPairs(
+      callerTargetSelection.directory,
+      names,
+      callerTargetSelection,
+    );
+    callerTargetSelection.symbol_scan_complete = true;
     assert.ok(
       callerPairs.length > 0,
-      `No caller-built targets contain the requested functions in ${values.targets}`,
+      `No caller-built targets contain the requested functions in ${callerTargetSelection.directory}`,
     );
     const found = new Set(
       callerPairs.flatMap(({ symbols }) => [...symbols.keys()]),
@@ -706,18 +848,15 @@ if (cleanupComplete)
     cleanupComplete = false;
     failures.push(cause);
   }
-const describeFailure = (cause) => ({
-  message: cause instanceof Error ? cause.message : String(cause),
-  ...(cause instanceof AggregateError
-    ? { causes: cause.errors.map(describeFailure) }
-    : {}),
-});
 const report = {
   lane: "kuna",
   status: failures.length === 0 ? "passed" : "failed",
   kuna_version: kunaVersion,
   platform: `${process.platform}/${process.arch}`,
   verifier_run: lifecycle,
+  ...(callerTargetSelection === undefined
+    ? {}
+    : { caller_target_selection: callerTargetSelection }),
   results,
   ...(timeoutRecovery === undefined
     ? {}

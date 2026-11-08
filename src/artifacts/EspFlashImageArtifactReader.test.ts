@@ -199,7 +199,7 @@ describe("ESP flash layout coverage and selection", () => {
     ).toMatchObject({
       declared_size: 0,
       limitations: [
-        "partitions/ota_1.bin lies outside the dump: the file holds none of its 65536 bytes.",
+        expect.stringMatching(/partitions\/ota_1\.bin.*outside.*65536/iu),
       ],
       format_metadata: {
         index: 5,
@@ -371,6 +371,24 @@ describe("ESP flash layout reader identity", () => {
       await expect(
         reader.entries()[Symbol.asyncIterator]().next(),
       ).rejects.toMatchObject({ reason: "unavailable" });
+    } finally {
+      await reader.close();
+    }
+  });
+
+  it("opens a partition past the end as the empty range at the end of the file", async () => {
+    const cut = DUMP.subarray(0, 0x2_8000);
+    const reader = new EspFlashImageArtifactReader(await writeDump(cut));
+    try {
+      const entry = (await list(reader)).find(
+        ({ path }) => path === "partitions/ota_1.bin",
+      );
+      if (entry === undefined) throw new Error("Missing entry");
+      expect(entry).toMatchObject({ byteOffset: cut.length, declaredSize: 0 });
+      const chunks: Buffer[] = [];
+      for await (const chunk of await reader.open(entry))
+        chunks.push(chunk as Buffer);
+      expect(Buffer.concat(chunks)).toHaveLength(0);
     } finally {
       await reader.close();
     }
