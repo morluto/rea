@@ -118,7 +118,6 @@ it("registers acquisition before a producer can reenter shutdown and attach its 
     expect(fixture.clientCloses).not.toHaveBeenCalled();
     release.resolve();
     const outcome = await opening;
-    expect(outcome.ok).toBe(false);
     if (outcome.ok) throw new Error("Shutdown published a late MCP client");
     expect(outcome.reason).toMatchObject({
       message: expect.stringMatching(/closed/iu),

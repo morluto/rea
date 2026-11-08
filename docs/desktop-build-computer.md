@@ -26,7 +26,7 @@ skill for doing all of it from a request is
 - Node.js at the version in `.nvmrc`, installed with
   [nvm](https://github.com/nvm-sh/nvm) or from
   [nodejs.org](https://nodejs.org/en/download), and REA
-  [run from a checkout](installation.md#run-rea-from-a-checkout).
+  [run from a checkout](getting-started/installation.md#run-rea-from-a-checkout).
 - [Docker Engine](https://docs.docker.com/engine/install/) and its
   [post-install steps](https://docs.docker.com/engine/install/linux-postinstall/):
   add yourself to the `docker` group, then log in again.

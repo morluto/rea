@@ -387,7 +387,6 @@ it("does not discard earlier projections when live heap, not reservations, block
         if (phase === "static") heap.remainingBytes = 192 * 1024 * 1024;
       },
     );
-    expect(second.ok).toBe(false);
     if (second.ok) throw new Error("Expected live heap refusal");
     expect(second.error.error).toMatchObject({
       reportedLimits: { parent_result_budget_exhausted: true },
