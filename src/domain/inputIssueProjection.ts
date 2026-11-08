@@ -137,6 +137,18 @@ export const projectInputIssueGroupsWithinBudget = (
   }
 };
 
+const chargeUnionProjection = (
+  issue: Extract<z.core.$ZodIssue, { code: "invalid_union" }>,
+  charge: (amount: number) => void,
+): void => {
+  for (const branch of issue.errors) charge(32 + 32 * branch.length);
+  if ("options" in issue && Array.isArray(issue.options))
+    for (const value of issue.options)
+      charge(typeof value === "string" ? 6 * value.length + 32 : 32);
+  if ("discriminator" in issue && typeof issue.discriminator === "string")
+    charge(6 * issue.discriminator.length + 16);
+};
+
 const chargeProjection = (
   issue: z.core.$ZodIssue,
   budget: { remaining: number },
@@ -157,12 +169,7 @@ const chargeProjection = (
     charge(cost);
   }
   charge(6 * issue.message.length);
-  if (issue.code === "invalid_union") {
-    for (const branch of issue.errors) charge(32 + 32 * branch.length);
-    if ("options" in issue && Array.isArray(issue.options))
-      for (const value of issue.options)
-        charge(typeof value === "string" ? 6 * value.length + 32 : 32);
-  }
+  if (issue.code === "invalid_union") chargeUnionProjection(issue, charge);
   if (issue.code === "invalid_key") charge(32 * issue.issues.length);
   if (issue.code === "unrecognized_keys")
     for (const key of issue.keys) {
@@ -223,6 +230,180 @@ const projectUnrecognizedKeyIssues = (
     };
   });
 
+const CANDIDATE_DISCRIMINATOR_KEYS: readonly string[] = [
+  "kind",
+  "type",
+  "collection",
+  "projection",
+  "facet",
+  "format",
+  "source",
+];
+
+const candidateDiscriminatorKeys = (targetValue: object): readonly string[] => [
+  ...CANDIDATE_DISCRIMINATOR_KEYS.filter((k) => k in targetValue),
+  ...Object.keys(targetValue).filter(
+    (k) => !(CANDIDATE_DISCRIMINATOR_KEYS as readonly string[]).includes(k),
+  ),
+];
+
+const branchIssuesForRelativeKey = (
+  branchErrors: readonly z.core.$ZodIssue[],
+  key: string,
+): readonly z.core.$ZodIssue[] => {
+  const result: z.core.$ZodIssue[] = [];
+  for (const err of branchErrors) {
+    if (err.path.length === 1 && err.path[0] === key) {
+      result.push(err);
+    } else if (err.code === "invalid_union" && err.path.length === 0) {
+      for (const nestedBranch of err.errors) {
+        result.push(...branchIssuesForRelativeKey(nestedBranch, key));
+      }
+    }
+  }
+  return result;
+};
+
+const extractBranchExpectedValues = (
+  issues: readonly z.core.$ZodIssue[],
+): readonly unknown[] =>
+  issues.flatMap((issue) => {
+    if ("values" in issue && Array.isArray(issue.values)) return issue.values;
+    if ("options" in issue && Array.isArray(issue.options))
+      return issue.options;
+    if ("expected" in issue && issue.expected !== undefined)
+      return [issue.expected];
+    return [];
+  });
+
+const resolveUnionDiscriminatorDiagnostic = (
+  currentErrors: readonly (readonly z.core.$ZodIssue[])[],
+  path: readonly (string | number)[],
+  targetValue: object,
+  budget?: { remaining: number },
+): readonly AnalysisInputIssue[] | undefined => {
+  const candidateKeys = candidateDiscriminatorKeys(targetValue);
+  for (const key of candidateKeys) {
+    const allBranchesRejectWithInvalidValue = currentErrors.every((branch) => {
+      const issues = branchIssuesForRelativeKey(branch, key);
+      return (
+        issues.length > 0 &&
+        issues.every((branchIssue) => branchIssue.code === "invalid_value")
+      );
+    });
+    if (!allBranchesRejectWithInvalidValue) continue;
+    const allKeyIssues = currentErrors.flatMap((branch) =>
+      branchIssuesForRelativeKey(branch, key),
+    );
+    const uniqueExpected = [
+      ...new Set(
+        extractBranchExpectedValues(allKeyIssues).filter(isSafeExpected),
+      ),
+    ];
+    if (uniqueExpected.length === 0) continue;
+    if (budget !== undefined) {
+      budget.remaining -= 32 + 8 * (path.length + 1);
+      for (const item of uniqueExpected) {
+        budget.remaining -=
+          typeof item === "string" ? 6 * item.length + 32 : 32;
+      }
+      if (budget.remaining < 0) throw projectionBudgetExceeded;
+    }
+    return [
+      {
+        path: [...path, key],
+        reason: "invalid_value",
+        expected: uniqueExpected,
+      },
+    ];
+  }
+  return undefined;
+};
+
+const narrowUnionBranches = (
+  errors: readonly (readonly z.core.$ZodIssue[])[],
+  targetValue: object,
+): readonly (readonly z.core.$ZodIssue[])[] => {
+  let currentErrors = errors;
+  const candidateKeys = candidateDiscriminatorKeys(targetValue);
+  for (const key of candidateKeys) {
+    const matchingBranches = currentErrors.filter(
+      (branch) => branchIssuesForRelativeKey(branch, key).length === 0,
+    );
+    if (
+      matchingBranches.length > 0 &&
+      matchingBranches.length < currentErrors.length
+    ) {
+      currentErrors = matchingBranches;
+      if (currentErrors.length === 1) break;
+    }
+  }
+  return currentErrors;
+};
+
+interface UnionProjectionContext {
+  readonly input: unknown;
+  readonly projectChildIssue: (
+    child: z.core.$ZodIssue,
+  ) => readonly AnalysisInputIssue[];
+  readonly budget?: { remaining: number } | undefined;
+}
+
+const projectUnionIssue = (
+  issue: Extract<z.core.$ZodIssue, { code: "invalid_union" }>,
+  path: readonly (string | number)[],
+  context: UnionProjectionContext,
+): readonly AnalysisInputIssue[] => {
+  const { input, projectChildIssue, budget } = context;
+  if (issue.errors.length === 0) {
+    const targetPath =
+      "discriminator" in issue &&
+      typeof issue.discriminator === "string" &&
+      path.at(-1) !== issue.discriminator
+        ? [...path, issue.discriminator]
+        : path;
+    const expected =
+      "options" in issue && Array.isArray(issue.options)
+        ? issue.options.filter(isSafeExpected)
+        : undefined;
+    return [
+      {
+        path: targetPath,
+        reason:
+          valueAtPath(input, targetPath) === undefined
+            ? "missing_argument"
+            : "invalid_value",
+        ...(expected === undefined ? {} : { expected }),
+      },
+    ];
+  }
+
+  const targetValue = valueAtPath(input, path);
+  let activeErrors: readonly (readonly z.core.$ZodIssue[])[] = issue.errors;
+  if (
+    typeof targetValue === "object" &&
+    targetValue !== null &&
+    !Array.isArray(targetValue)
+  ) {
+    const discriminatorDiagnostic = resolveUnionDiscriminatorDiagnostic(
+      issue.errors,
+      path,
+      targetValue,
+      budget,
+    );
+    if (discriminatorDiagnostic !== undefined) return discriminatorDiagnostic;
+    activeErrors = narrowUnionBranches(issue.errors, targetValue);
+  }
+
+  return uniqueIssues(
+    activeErrors.flatMap((branch) =>
+      branch.flatMap((branchIssue) =>
+        projectChildIssue(nestedIssue(issue, branchIssue, budget)),
+      ),
+    ),
+  );
+};
+
 const projectIssue = (
   issue: z.core.$ZodIssue,
   input: unknown,
@@ -235,34 +416,12 @@ const projectIssue = (
   );
   // Branch issue paths are relative to the union; branches often agree.
   if (issue.code === "invalid_union") {
-    // Unmatched discriminators and ambiguous unions have no branch issues.
-    // Keep their outer failure instead of flattening it into an empty list.
-    if (issue.errors.length === 0) {
-      const expected =
-        "options" in issue ? issue.options?.filter(isSafeExpected) : undefined;
-      return [
-        {
-          path,
-          reason:
-            valueAtPath(input, path) === undefined
-              ? "missing_argument"
-              : "invalid_value",
-          ...(expected === undefined ? {} : { expected }),
-        },
-      ];
-    }
-    return uniqueIssues(
-      issue.errors.flatMap((branch) =>
-        branch.flatMap((branchIssue) =>
-          projectIssue(
-            nestedIssue(issue, branchIssue, budget),
-            input,
-            budget,
-            operation,
-          ),
-        ),
-      ),
-    );
+    return projectUnionIssue(issue, path, {
+      input,
+      projectChildIssue: (child) =>
+        projectIssue(child, input, budget, operation),
+      budget,
+    });
   }
   if (issue.code === "invalid_key")
     return issue.issues.flatMap((keyIssue) =>

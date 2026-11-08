@@ -450,3 +450,76 @@ describe("bounded input issue projection", () => {
     ]);
   });
 });
+
+describe("discriminated union input issue projection", () => {
+  it("projects exact discriminator path and options when discriminated union has no errors", () => {
+    const issue: z.core.$ZodIssue = {
+      code: "invalid_union",
+      errors: [],
+      discriminator: "kind",
+      options: ["node-id", "route", "string"],
+      path: ["seed"],
+      message: "Invalid discriminator value",
+    };
+    const input = { seed: { kind: "node" } };
+    const projected = projectInputIssues([issue], input);
+    expect(projected).toEqual([
+      {
+        path: ["seed", "kind"],
+        reason: "invalid_value",
+        expected: ["node-id", "route", "string"],
+      },
+    ]);
+  });
+
+  it("narrows plain union branches when an object matches a candidate discriminator key", () => {
+    const schema = z.union([
+      z.strictObject({
+        kind: z.literal("node-id"),
+        node_id: z.string().optional(),
+        match: z.enum(["exact", "contains"]).default("exact"),
+      }),
+      z.strictObject({
+        kind: z.literal("route"),
+        route: z.string(),
+      }),
+    ]);
+    const input = { kind: "node-id", match: "invalid_match" };
+    const parsed = schema.safeParse(input);
+    if (parsed.success) throw new Error("expected invalid input");
+    const projected = projectInputIssues(parsed.error.issues, input);
+    // Should narrow to node-id branch only, ignoring missing 'route' from branch 2
+    expect(projected).toEqual([
+      {
+        path: ["match"],
+        reason: "invalid_value",
+        expected: ["exact", "contains"],
+      },
+    ]);
+  });
+
+  it("reports a single discriminator diagnostic with all union options when tag matches no branch", () => {
+    const schema = z.union([
+      z.strictObject({
+        kind: z.enum(["node-id", "route", "string"]),
+        value: z.string(),
+      }),
+      z.strictObject({
+        kind: z.literal("api"),
+        endpoint: z.string(),
+      }),
+    ]);
+    const input = { kind: "node", node_id: "jag_node_1" };
+    const parsed = schema.safeParse(input);
+    if (parsed.success) throw new Error("expected invalid input");
+    const projected = projectInputIssues(parsed.error.issues, input);
+    // Should NOT emit missing value, unknown node_id, or missing endpoint from non-matching branches
+    expect(projected).toEqual([
+      {
+        path: ["kind"],
+        reason: "invalid_value",
+        expected: ["node-id", "route", "string", "api"],
+      },
+    ]);
+  });
+});
