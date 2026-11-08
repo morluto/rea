@@ -15,3 +15,5 @@ for the specification lifecycle, roadmap granularity and producer-owned contract
 
 - [Go static string-header literal recovery](native/go-string-literals/spec.md)
   ([plan](native/go-string-literals/plan.md), [tasks](native/go-string-literals/tasks.md))
+- [Native initializers](native/native-initializers/spec.md)
+  ([plan](native/native-initializers/plan.md), [tasks](native/native-initializers/tasks.md))

@@ -1,0 +1,123 @@
+# ELF and Mach-O initializer functions
+
+`inspect_native_initializers` / `inspect-native-initializers` lists the
+functions that one local ELF or Mach-O image declares to run before `main` and
+at exit. It reads the file without executing it and does not need a
+disassembler provider.
+
+```bash
+rea inspect-native-initializers /absolute/path/to/program --json
+rea inspect-native-initializers ./Universal.app/Contents/MacOS/App --architecture arm64 --json
+```
+
+The CLI resolves relative paths against the caller's working directory. MCP
+requires an absolute filesystem path:
+
+```json
+{
+  "name": "inspect_native_initializers",
+  "arguments": { "path": "/artifacts/program", "offset": 0, "limit": 64 }
+}
+```
+
+A universal Mach-O requires `architecture` to select one slice. ELF files and
+thin Mach-O files do not take it.
+
+## Sources
+
+ELF entries are listed in this order:
+
+| Kind            | Source                                                                                |
+| --------------- | ------------------------------------------------------------------------------------- |
+| `preinit_array` | `DT_PREINIT_ARRAY` / `DT_PREINIT_ARRAYSZ`, else `.preinit_array`                      |
+| `init`          | `DT_INIT`                                                                             |
+| `init_array`    | `DT_INIT_ARRAY` / `DT_INIT_ARRAYSZ`, else `SHT_INIT_ARRAY` or `.init_array*` sections |
+| `ctors`         | legacy `.ctors` and `.ctors.*` sections                                               |
+| `fini`          | `DT_FINI`                                                                             |
+| `fini_array`    | `DT_FINI_ARRAY` / `DT_FINI_ARRAYSZ`, else `SHT_FINI_ARRAY` or `.fini_array*` sections |
+| `dtors`         | legacy `.dtors` and `.dtors.*` sections                                               |
+
+Section fallback applies when the dynamic tag is absent, as in static
+executables and relocatable objects. Mach-O entries come from sections typed
+`S_MOD_INIT_FUNC_POINTERS` (`mod_init`), `S_INIT_FUNC_OFFSETS`
+(`init_offsets`) and `S_MOD_TERM_FUNC_POINTERS` (`mod_term`).
+
+## Entries
+
+Each `entries[]` item reports:
+
+- `slot_va`, `slot_file_offset`, `slot_bytes` and `slot_section`: where the
+  pointer or offset is stored. For a universal Mach-O, file offsets are
+  relative to the whole file, not the slice. For `init` and `fini` the slot is
+  the `DT_INIT` / `DT_FINI` value field in the dynamic section. When that field
+  is outside every load segment, `slot_va` and `slot_section` are null and a
+  limitation says so.
+- `value_va`, `value_file_offset` and `section`: the resolved target address,
+  its file offset and its containing section. These are null when the value
+  was not established.
+- `symbol`: a defined symbol whose value equals the target exactly, or the
+  import name of an unresolved symbolic relocation or chained bind.
+- `resolution`: how the value was obtained.
+
+| Resolution          | Meaning                                                              |
+| ------------------- | -------------------------------------------------------------------- |
+| `raw`               | The stored word, used when no relocation or fixup covers it          |
+| `relative_addend`   | An `R_*_RELATIVE` relocation addend (RELA, or the REL in-place word) |
+| `relr`              | A `DT_RELR` packed relative relocation                               |
+| `symbol_addend`     | A section relocation against a defined symbol plus its addend        |
+| `chained_fixup`     | A Mach-O chained-fixup rebase target                                 |
+| `offset_table`      | A 32-bit `__init_offsets` value added to the image base              |
+| `unresolved_import` | A relocation or bind against an undefined symbol                     |
+| `unresolved`        | A slot whose value this inspection cannot establish                  |
+
+Symbol and section names are untrusted file text and carry
+`trust: "observed-untrusted"`.
+
+For PIE executables and shared objects the array slots are usually zero on
+disk. A slot is reported `unresolved`, never as its stored zero, when the
+dynamic relocation tables use an encoding this inspection does not decode
+(for example Android packed relocations or an unsupported machine). Relative
+relocations are decoded for x86-64, i386, AArch64 and 32-bit ARM.
+
+In a relocatable object (`ET_REL`) every section starts at address 0. Slot
+and value addresses are offsets inside the named section, and a limitation
+says so.
+
+`.ctors` and `.dtors` values `0` and `-1` are list sentinels and are omitted.
+`-1` means all ones at the image's pointer width: `0xffffffff` in ELF32 and
+`0xffffffffffffffff` in ELF64. A 64-bit slot holding `0xffffffff` is listed.
+A stored zero in an initializer array is listed, so the array length stays
+visible.
+
+## Paging and limits
+
+`offset` and `limit` page the ordered list (default limit 64, maximum 4096).
+`coverage.examined_entries` counts every slot read, including omitted
+sentinels, and `total_entries` (the listed entries) is set when the inventory
+is complete. At most 65536 slots are examined; beyond that, or when relocation
+coverage is unknown, `status` and `coverage.status` are `incomplete`.
+
+ELF symbol names come from at most 65536 symbols across all `SHT_SYMTAB` and
+`SHT_DYNSYM` tables together, and section `REL` / `RELA` relocations from at
+most 1048576 records across all relocation sections together. Mach-O symbol
+names come from at most 65536 symbols across all `LC_SYMTAB` commands
+together; a repeated `LC_SYMTAB` over the same ranges is ignored with a
+limitation. Reaching any of these budgets makes the report `incomplete` with a
+limitation.
+
+`limitations` lists the standing limitations, then at most 24 distinct
+observations from the image. Reasons a crafted table can repeat per row, such
+as symbol names over the 1024-byte budget or relocation sections with an
+unexpected entry size, are reported once with a count, and observations past
+the 24-note budget are counted in one closing line. The list never exceeds 40
+lines.
+
+The selected file is limited to 64 MiB by default (`max_file_bytes`, 512 MiB
+maximum). Malformed headers, multiple `PT_DYNAMIC` segments and truncated
+dynamic sections fail without partial success.
+
+This inspection does not prove that a listed address runs, and file order is
+not the runtime order: `DT_FINI` is listed before `fini_array`, while the
+dynamic linker runs `fini_array` first, and `.ctors` runs in reverse order. A
+missing tag or section is observed absence of that declaration, not proof that
+no code runs before `main`.

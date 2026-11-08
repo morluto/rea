@@ -449,6 +449,18 @@ The workflow reports note owners, types, descriptor hashes, and GNU build-id
 or ABI-tag fields when those descriptors match. A missing note table is
 observed absence of those declarations. See [ELF note tables](../elf-notes.md).
 
+List ELF and Mach-O initializer and finalizer functions without executing the
+image:
+
+```bash
+rea inspect-native-initializers /absolute/path/to/program --json
+```
+
+The workflow reports `DT_INIT`, init/fini arrays, legacy `.ctors`/`.dtors`, and
+Mach-O `__mod_init_func`, `__init_offsets` and `__mod_term_func` entries with
+their resolved targets. Universal Mach-O files need `--architecture`. See
+[ELF and Mach-O initializer functions](../native-initializers.md).
+
 Inspect an Apple `.ips` crash report without executing a target:
 
 ```bash

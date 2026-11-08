@@ -185,6 +185,20 @@ absence of those declarations, not proof the image never carried notes in
 another container. See
 [ELF note tables](https://github.com/morluto/rea/blob/main/docs/elf-notes.md).
 
+## ELF and Mach-O initializer functions
+
+Use `inspect_native_initializers` for an explicit local ELF or Mach-O image
+when the question is which functions run before `main` or at exit: ELF
+`DT_PREINIT_ARRAY`, `DT_INIT`, `DT_INIT_ARRAY`, `DT_FINI`, `DT_FINI_ARRAY` and
+legacy `.ctors`/`.dtors`, or Mach-O `__mod_init_func`, `__init_offsets` and
+`__mod_term_func`. Pass `architecture` for a universal Mach-O. The CLI
+equivalent is `inspect-native-initializers PATH`. PIE slots are resolved
+through RELATIVE, RELR and section relocations, and Mach-O slots through
+chained fixups. Keep each entry's `resolution`: `unresolved` means the value was
+not established, and `unresolved_import` names an external symbol. Page with
+`offset` and `limit`. See
+[ELF and Mach-O initializer functions](https://github.com/morluto/rea/blob/main/docs/native-initializers.md).
+
 ## Apple IPS crash reports
 
 Use `inspect_apple_ips` for an explicit local Apple `.ips` file when the

@@ -66,6 +66,13 @@ export const KERNEL_MODULE_PROVIDER = Object.freeze({
   version: "1",
 } as const);
 
+/** Provider identity for portable, execution-free ELF and Mach-O initializer and finalizer tables. */
+export const NATIVE_INITIALIZERS_PROVIDER = Object.freeze({
+  id: "rea-native-initializers",
+  name: "REA ELF and Mach-O initializer parser",
+  version: "1",
+} as const);
+
 /** Provider identity for execution-free Shannon byte-entropy profiling. */
 export const BYTE_ENTROPY_PROVIDER = Object.freeze({
   id: "byte-entropy",

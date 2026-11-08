@@ -525,6 +525,11 @@ export const documentationSections = [
       },
       { text: "ELF note tables", source: "elf-notes.md", route: "/elf-notes" },
       {
+        text: "ELF and Mach-O initializer functions",
+        source: "native-initializers.md",
+        route: "/native-initializers",
+      },
+      {
         text: "Erlang BEAM files",
         source: "erlang-beam.md",
         route: "/erlang-beam",

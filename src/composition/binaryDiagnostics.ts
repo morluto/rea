@@ -16,6 +16,8 @@ import { PeImportsService } from "../application/binaryDiagnostics/PeImportsServ
 import { PeImportsProvider } from "../native/pe/PeImportsProvider.js";
 import { ElfNotesService } from "../application/binaryDiagnostics/ElfNotesService.js";
 import { ElfNotesProvider } from "../native/elf/ElfNotesProvider.js";
+import { NativeInitializersService } from "../application/binaryDiagnostics/NativeInitializersService.js";
+import { NativeInitializersProvider } from "../native/initializers/NativeInitializersProvider.js";
 import { AppleIpsService } from "../application/binaryDiagnostics/AppleIpsService.js";
 import { AppleIpsProvider } from "../native/apple/AppleIpsProvider.js";
 import { KernelModuleService } from "../application/binaryDiagnostics/KernelModuleService.js";
@@ -49,6 +51,10 @@ export const createNativeExportsService = (): NativeExportsService =>
 /** Portable ELF note-table inspection with no engine or package catalog. */
 export const createElfNotesService = (): ElfNotesService =>
   new ElfNotesService(new ElfNotesProvider());
+
+/** Portable ELF and Mach-O initializer and finalizer listing with no engine. */
+export const createNativeInitializersService = (): NativeInitializersService =>
+  new NativeInitializersService(new NativeInitializersProvider());
 
 /** Portable Apple .ips inspection with no engine, Xcode or target acquisition. */
 export const createAppleIpsService = (): AppleIpsService =>

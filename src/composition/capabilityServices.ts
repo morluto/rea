@@ -75,6 +75,7 @@ import {
   pwntoolsHostSupported,
   createDevicetreeService,
   createElfNotesService,
+  createNativeInitializersService,
   createAppleIpsService,
   createKernelModuleService,
 } from "./binaryDiagnostics.js";
@@ -341,6 +342,7 @@ const modules = {
   nativeExports: service(() => createNativeExportsService()),
   devicetree: service(() => createDevicetreeService()),
   elfNotes: service(() => createElfNotesService()),
+  nativeInitializers: service(() => createNativeInitializersService()),
   appleIps: service(() => createAppleIpsService()),
   kernelModule: service(() => createKernelModuleService()),
   peLoadConfig: service(() => createPeLoadConfigService()),
