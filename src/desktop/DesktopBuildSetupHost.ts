@@ -7,6 +7,11 @@ import { fileURLToPath } from "node:url";
 import type { DoctorHost } from "../application/Doctor.js";
 import type { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
 import { assertSetupActive } from "../application/SetupCancellation.js";
+import {
+  AnalysisCancelledError,
+  AnalysisOutputError,
+} from "../domain/analysisErrorCore.js";
+import { OwnedCommandFailure } from "../process/OwnedCommand.js";
 import type {
   DesktopBuildSetupFacts,
   DesktopBuildSetupHost,
@@ -60,6 +65,55 @@ const failureReason = (cause: unknown): string => {
   const stderr = execFileOutputFailure(cause)?.stderr.trim() ?? "";
   const message = cause instanceof Error ? cause.message : String(cause);
   return stderr === "" ? message : `${message}: ${stderr.slice(-2000)}`;
+};
+
+/** Keep the owned command's earlier failure and output alongside caller cancellation. */
+const assertCommandActive = (
+  signal: AbortSignal | undefined,
+  cause: unknown,
+): void => {
+  if (!signal?.aborted) return;
+  if (cause instanceof AnalysisCancelledError && cause.cause === signal.reason)
+    throw cause;
+  const first = cause instanceof AggregateError ? cause.errors[0] : cause;
+  const command =
+    first instanceof OwnedCommandFailure
+      ? first
+      : first instanceof Error && first.cause instanceof OwnedCommandFailure
+        ? first.cause
+        : undefined;
+  const snapshot = command?.snapshot;
+  const capturedOutput =
+    snapshot === null || snapshot === undefined
+      ? undefined
+      : {
+          stdout: snapshot.stdout.text,
+          stderr: snapshot.stderr.text,
+          truncated:
+            snapshot.diagnosticTruncated === true ||
+            snapshot.outputIncomplete === true ||
+            snapshot.stdout.bytes < snapshot.stdout.observedBytes ||
+            snapshot.stderr.bytes < snapshot.stderr.observedBytes,
+          stdout_bytes: snapshot.stdout.observedBytes,
+          stderr_bytes: snapshot.stderr.observedBytes,
+          ...(snapshot.exitCode === undefined
+            ? {}
+            : { exit_code: snapshot.exitCode }),
+          ...(snapshot.signal === undefined ? {} : { signal: snapshot.signal }),
+        };
+  const failure = desktopBuildOwnedCommandReason(command ?? cause);
+  const cancelled = new AnalysisCancelledError("setup", {
+    cause: signal.reason,
+    diagnostics: {
+      setup_failure: failure,
+      ...(command === undefined ? {} : { command_failure: command.reason }),
+    },
+    ...(capturedOutput === undefined ? {} : { capturedOutput }),
+  });
+  cancelled.retainSecondaryFailure(
+    new AnalysisOutputError("setup", failure, { cause }),
+  );
+  throw cancelled;
 };
 
 /** Setup's desktop build effects on this host. */
@@ -145,11 +199,17 @@ export const systemDesktopBuildSetupHost = (
                 resource: partial,
                 lease: { release: () => rm(partial, { force: true }) },
               });
-              assertSetupActive(signal);
+              assertCommandActive(
+                signal,
+                new AggregateError(
+                  [cause, cleanup],
+                  "Setup command and partial archive cleanup failed",
+                ),
+              );
               return `${desktopBuildOwnedCommandReason(cause)}; partial archive cleanup failed: ${failureReason(cleanup)}`;
             }
           }
-          assertSetupActive(signal);
+          assertCommandActive(signal, cause);
           return desktopBuildOwnedCommandReason(cause);
         }
       });
@@ -173,7 +233,7 @@ export const systemDesktopBuildSetupHost = (
           });
           return undefined;
         } catch (cause: unknown) {
-          assertSetupActive(signal);
+          assertCommandActive(signal, cause);
           return desktopBuildOwnedCommandReason(cause);
         }
       });
