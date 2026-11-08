@@ -1392,6 +1392,42 @@ const examineTextMember = async (
     noteNestedPackage(state, "asar", member.location);
     return true;
   }
+  return examineLoadedText(
+    state,
+    scriptRoleOfRead(state, member, loaded),
+    loaded,
+    bytesReadBefore,
+  );
+};
+
+/**
+ * A text member's name may not say it is a script: `runner.txt` can start
+ * with a Node shebang. The bytes this read returned decide, so every route
+ * into the text reader gives such a file its JavaScript role.
+ */
+const scriptRoleOfRead = (
+  state: ScanState,
+  member: MemberView,
+  loaded: MemberRead,
+): MemberView => {
+  if (holdsScripts(member)) return member;
+  const header =
+    loaded.kind === "bytes"
+      ? loaded.bytes
+      : loaded.kind === "over_allowance"
+        ? loaded.prefix
+        : null;
+  if (header === null || !hasNodeShebang(header)) return member;
+  state.examinedScripts.add(memberLocationKey(member.location));
+  return { ...member, kind: "javascript" };
+};
+
+const examineLoadedText = (
+  state: ScanState,
+  member: MemberView,
+  loaded: MemberRead,
+  bytesReadBefore: number,
+): boolean => {
   if (loaded.kind === "bytes") {
     const text = decodeMemberText(loaded.bytes);
     scanText(state, member, loaded.bytes.length, text);
@@ -1524,12 +1560,11 @@ const examineProbedText = async (
         ? probe.prefix
         : null;
   if (prefix === null) state.skippedText += 1;
-  else if (hasNodeShebang(prefix)) {
-    state.examinedScripts.add(memberLocationKey(member.location));
-    await examineTextMember(state, { ...member, kind: "javascript" }, context);
-  } else if (
-    prefix.length > 0 &&
-    (!prefix.includes(0) || declaresTextEncoding(prefix))
+  // A Node script is read as text even when its later bytes are not, and the
+  // text reader gives it its JavaScript role.
+  else if (
+    hasNodeShebang(prefix) ||
+    (prefix.length > 0 && (!prefix.includes(0) || declaresTextEncoding(prefix)))
   )
     await examineTextMember(state, member, context);
 };

@@ -3467,6 +3467,25 @@ describe("ReleaseExposureReader Node shebang scripts", () => {
     expect(sourceMapSourcesStatus(await inspect(path))).toBe("exposed");
   });
 
+  it.each(["runner.txt", "runner.md"])(
+    "reads the map of a selected text file %s",
+    async (name) => {
+      const path = join(await shebangRoot(), name);
+      await writeFile(path, script("#!/usr/bin/env node"));
+      const scanned = await inspect(path);
+      expect(scanned.source_maps).toMatchObject({ embedded: 1, skipped: 0 });
+      expect(sourceMapSourcesStatus(scanned)).toBe("exposed");
+    },
+  );
+
+  it("reads the map of a text file in a directory", async () => {
+    const root = await shebangRoot();
+    await writeFile(join(root, "runner.txt"), script("#!/usr/bin/env node"));
+    const scanned = await inspect(root);
+    expect(scanned.source_maps).toMatchObject({ embedded: 1, skipped: 0 });
+    expect(sourceMapSourcesStatus(scanned)).toBe("exposed");
+  });
+
   it.each(["app.js.map", "debug.map"])(
     "keeps a sibling %s a selected file declares unknown",
     async (map) => {
