@@ -30,7 +30,7 @@ rea environment-serve manifest.json --evidence capture.json --port 8765
 ```
 
 The first command inspects the capture; the second projects the
-[environment manifest](web-network-captures.md#environment-manifest) view from
+[environment manifest](guides/web/web-network-captures.md#environment-manifest) view from
 it, where `view.json` wraps the capture Evidence as the inline source:
 
 ```json
@@ -163,7 +163,7 @@ at info level; the report is the only output on stdout:
 
 `coverage` is the state's read views and write plans summarized, and `null`
 when the state is unavailable and the bundle serves replay. The
-[environment coverage](web-network-captures.md#environment-coverage) view
+[environment coverage](guides/web/web-network-captures.md#environment-coverage) view
 reports the same summary for any capture without building, so an agent can
 check it after each recording. The view summarizes the state as derived; it
 does not apply the serve-time admission checks, so for an environment whose
@@ -174,7 +174,7 @@ what to record next; hints never change what is served:
 
 | Reason                | Hint                                                                                                                                                                                                                                             |
 | --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `no-state-target`     | The write's path names no collection or item the capture reads. Read the collection or item it changes.                                                                                                                                          |
+| `no-state-target`     | The write could not be linked to a modelled target. Check the path template and recorded views; record missing reads. Some route forms may not be supported.                                                                                     |
 | `no-call`             | No recorded call of this tool was modelled, for example because every call failed. Record a successful call.                                                                                                                                     |
 | `body-unusable`       | The retained request or response cannot be modelled. Record a successful call with a complete supported request and reproducible response.                                                                                                       |
 | `no-observation`      | Nothing showed the entity or document this write changed. Read a created entity back by id right after the write; for an update or delete the state must already hold the entity, so read it before the write or record the create that made it. |
@@ -235,7 +235,7 @@ name `export_environment_bundle`; the others name their stage as
 ## From a browser scenario
 
 The capture can also come from REA itself: a
-[browser scenario](browser-scenario-contract.md) records a scripted session
+[browser scenario](guides/web/browser-scenario-contract.md) records a scripted session
 in a browser REA launches, and its Evidence is a manifest parent like a HAR
 inspection. Select the `network` event family and response bodies. A replayed
 reply carries up to 256 KiB of a recorded body, but the scenario keeps at most
@@ -321,7 +321,7 @@ declared secret replaced by its redaction marker (a body that redaction had to
 empty replays no body).
 
 To record writes, sign in through the UI and then send the application's API
-calls with [request steps](browser-scenario-contract.md#request-steps): each
+calls with [request steps](guides/web/browser-scenario-contract.md#request-steps): each
 sends one request to the start origin through the page's own `fetch`, with the
 session's cookies, and a header can carry the CSRF cookie or stored token the
 application's own requests send. A write is served only when the capture shows
@@ -406,7 +406,8 @@ returns that record's recorded response. Selection compares the supplied path
 parameters against the record's path segments at the parameter indexes, then
 the supplied query values against the record's query string, and keeps the
 record with the most matches; ties keep manifest order. A query argument accepts
-one string or an array of strings for repeated values; the array is matched
+one string, a number or boolean sent as its JSON text, or an array of strings for
+repeated values; the array is matched
 against every occurrence in captured order. The raw recorded query remains the
 replay evidence. The result reports
 where the answer came from:
@@ -480,7 +481,7 @@ captured text without changing the tool names or schema fields clients use.
 
 Replay answers each call from one recording, so the answers reflect whichever
 moment of the capture recorded them. The
-[environment state](web-network-captures.md#environment-state) view extracts
+[environment state](guides/web/web-network-captures.md#environment-state) view extracts
 instead the data the capture's reads observed before the first related write:
 entity types with an identity field, entities with their recorded values,
 documents for reads that are not entities, and a render plan per read tool,
@@ -502,14 +503,14 @@ see [Serve from the state](#serve-from-the-state).
 
 `--host` and `--port` default to `MCP_HOST` and `MCP_PORT` from the
 environment, then to `127.0.0.1` and an ephemeral port, exactly as
-[`rea mcp --http`](cli.md#serve-mcp-over-streamable-http) resolves them. The
+[`rea mcp --http`](getting-started/cli.md#serve-mcp-over-streamable-http) resolves them. The
 bound MCP URL is written to stderr as one JSON log line
 (`"msg":"MCP transport listening"` with `url`); `REA_LOG_LEVEL` overrides that
 log level. `ENVIRONMENT_NAME` renames the served environment; otherwise the
 manifest's `name` is used, and a set but blank value is refused as
 `configuration_invalid` before binding rather than silently falling back. The
 listener serves one MCP client at a time with the same session, `Host` header
-and shutdown contract as [transports](mcp-contracts.md#transports) describes.
+and shutdown contract as [transports](reference/mcp-contracts.md#transports) describes.
 It runs until SIGINT or SIGTERM, then closes the listener, prints one
 `{"status":"stopped", …}` document whose `state` member says whether it served
 from the state, and exits `130` or `143`.
@@ -584,7 +585,7 @@ names the method and path template, then what the tool returns, one level deep:
 `returns a JSON object with fields …`, `returns a JSON array of objects with
 fields …` or `returns a JSON object whose <member> lists objects with fields …`,
 where a list is an array of objects found by the
-[environment state](web-network-captures.md#environment-state)'s list rule (the
+[environment state](guides/web/web-network-captures.md#environment-state)'s list rule (the
 root array, or the one array of objects an envelope carries). Field and member
 names are written as JSON strings, so a captured name cannot read as more of
 the description; a member name too long to show whole is a quoted prefix marked
@@ -613,8 +614,9 @@ shape and carries no annotations.
 Path parameters are required strings whose
 description names the segment index, the templating rule and the observed
 values (sampled within the list budget above; the manifest keeps them all);
-query parameter names accept an optional string or array of strings (for
-repeated values in captured order); write methods accept an
+query parameter names accept an optional string, number or boolean (a number or
+boolean is sent as its JSON text) or array of strings (for repeated values in
+captured order); write methods accept an
 optional `body` object described by the recorded top-level key types. Each
 input keeps its own argument: a query name equal to a path parameter's name is
 advertised as `query_<name>`, a query name longer than 64 characters as
@@ -639,7 +641,7 @@ rea environment-serve manifest.json --evidence capture.json
 ```
 
 Before it binds, the server derives the
-[environment state](web-network-captures.md#environment-state) the capture
+[environment state](guides/web/web-network-captures.md#environment-state) the capture
 observed: it runs the `environment-state` view on the capture in-process with
 the manifest's `template_rules` in the same order, exactly as
 `inspect-analysis-view` projects it from the same capture, so the state
@@ -721,6 +723,8 @@ and `POST` tools the capture shows only reading (a lookup answering as a `GET`
 did, an RPC tunnel naming read operations, a session renewal), stay served and
 answer from their recordings with the reason `query-body`; they are not write
 tools.
+`HEAD`, `OPTIONS` and `TRACE` tools also replay their captured responses; their
+state views report `method-replay` and coverage counts them as recorded reads.
 
 A line establishes whole-collection membership only from the beginning:
 `offset`, `start`, `_start` and `page` must be zero when present. Positive or
@@ -729,20 +733,20 @@ query model may describe supported paging; an empty later page cannot start
 returning earlier entities merely because it was empty in the capture.
 
 `POST`, `PUT`, `PATCH` and `DELETE` tools are served only when the state's
-[write plan](web-network-captures.md#environment-state) for them is served:
+[write plan](guides/web/web-network-captures.md#environment-state) for them is served:
 the capture's later reads confirmed the effect the plan models. Other write
 tools are not served, so no call claims a change it does not make; each one's
 plan states why in its `reason`. A served write changes the live state, which
 every MCP session and `data/get` then see:
 
-| Effect                    | Call                                                                                                                                                                                                                                                                                                                 |
-| ------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `create`                  | Adds an entity to the collection the path names, built from the observed entity with each ruled field taken from the call or generated, at the plan's `insert` position. A plan tied to its exemplar's collection writes only there.                                                                                 |
-| `update`                  | Sets the sent members on the entity the path names, constants for members accepted only with their recorded value, and the clock, nested clock, increment, slug, stamp, derived, composed, reference, unique and renewed changes the plan models.                                                                    |
-| `update` (action)         | A `POST`, `PUT` or `PATCH` to an item path plus an action segment (`/{type}/{id}/archive`) sets, on the entity before the segment, each scalar the recorded calls showed the action set (`set`), with any sent members; it is served only when a recorded call found those fields already set, so a toggle never is. |
-| `delete`                  | Removes the entity the path names.                                                                                                                                                                                                                                                                                   |
-| bulk `update` or `delete` | A `DELETE`, `PUT` or `PATCH` at a collection, or a `POST` to it plus `delete`, `remove` or `destroy`, applies its effect to every entity the body names, as recorded: an array of ids or of objects carrying the id field, at the root or as the body's one array member (`{"IDs": […], "Read": true}`).             |
-| `document`                | Merges the body into the plan's document object, or replaces it for `PUT`.                                                                                                                                                                                                                                           |
+| Effect                    | Call                                                                                                                                                                                                                                                                                                                                                                                                |
+| ------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `create`                  | Adds an entity to the collection the path names, built from the observed entity with each ruled field taken from the call or generated, at the plan's `insert` position. A plan tied to its exemplar's collection writes only there.                                                                                                                                                                |
+| `update`                  | Sets the sent members on the entity the path names, constants for members accepted only with their recorded value, and the clock, nested clock, increment, slug, stamp, derived, composed, reference, unique and renewed changes the plan models.                                                                                                                                                   |
+| `update` (action)         | A `POST`, `PUT` or `PATCH` to an item path plus an action segment (`/{type}/{id}/archive`) sets, on the entity before the segment, each scalar the recorded calls showed the action set (`set`), or flips each boolean they showed it flipping both ways (`toggle`), with any sent members; it is served only when a recorded call found what it sets already set, or flipped back what it toggles. |
+| `delete`                  | Removes the entity the path names.                                                                                                                                                                                                                                                                                                                                                                  |
+| bulk `update` or `delete` | A `DELETE`, `PUT` or `PATCH` at a collection, or a `POST` to it plus `delete`, `remove` or `destroy`, applies its effect to every entity the body names, as recorded: an array of ids or of objects carrying the id field, at the root or as the body's one array member (`{"IDs": […], "Read": true}`).                                                                                            |
+| `document`                | Merges the body into the plan's document object, or replaces it for `PUT`.                                                                                                                                                                                                                                                                                                                          |
 
 An update's unsent changes follow the plan's rules. A `held-clock` is a clock
 the client sends back as it read it and the application stamps anew (Ghost's
@@ -753,7 +757,9 @@ the entity already names under its `created…by` counterpart into a
 `modified…by` or `updated…by` field. A `derived` field takes a value showing
 the one sent member's text that the entity stores nowhere (a field Ghost
 derives from `html`), only with that member's recorded value. An action's
-`set` rule sets a scalar to the value the recorded calls left it at.
+`set` rule sets a scalar to the value the recorded calls left it at, and its
+`toggle` rule flips a boolean, refusing a call on an entity that holds none
+there (Miniflux's `PUT /v1/entries/{id}/bookmark` stars and unstars).
 
 Its answer has the status and content type of the plan's recorded response,
 with the written entity or its identity rendered in, no body, or the recorded
@@ -768,7 +774,12 @@ sending a `derived` rule's member to an entity that does not hold the value the
 recorded call found, a nested clock on an entity holding no such object, and a
 rendered answer missing a field the recorded response carried, and an update or delete of an entity the state does not hold answers
 the recorded 400, 404 or 410 of the tool or of an item view of the type, if
-any. A refused call leaves the state unchanged. Values a write generates are
+any. A served delete of a type whose item view has a `deleted_flag` (the
+member, `deleted`, `isDeleted` or `is_deleted`, its reads set `true` on a
+record the application soft-deleted, as EspoCRM does) keeps the entity until
+`data/reset` or `data/add`, within the size `data/add` loads, so a read of it by
+id answers its last fields with that flag `true`. A refused call leaves the
+state unchanged. Values a write generates are
 deterministic: the clock starts at `write_clock` and advances one second per
 served write, sequences take one past both the largest held value and the
 largest they generated, and UUIDs and tokens derive from the state Evidence
@@ -1038,8 +1049,9 @@ unknown recorded status stays unknown; it is not borrowed from another
 record). A bundle with no such tool yields a verifier that checks the count
 only and says so. `tasks/smoke.json` deploys the env on the local
 sandbox and runs that verifier against the env's MCP endpoint; the first run
-also builds the framework's own infrastructure, and the run tears everything
-down when it ends.
+also pulls the framework's published infrastructure images from `ghcr.io`,
+building one only if its pull fails, and the run tears everything down when it
+ends.
 
 The README written into the bundle records the capture artifact's SHA-256, the
 capture and manifest Evidence ids, the manifest view digest, the served tool
@@ -1138,7 +1150,12 @@ global conflict involving an equal pair is not used to normalize either pair; th
 
 A step agrees when the statuses and the normalised bodies are equal. The report gives agreement overall, per probe and
 per tool, `agreement_ignoring_order` for steps that differ only in item order, and each step's differences, at most 20,
-with a JSON pointer and both values cut short:
+with a JSON pointer and both values cut short. Each step reports `differences_total` before that cap,
+`differences_omitted`, and `differences_truncated` (true when entries were omitted). Agreement and categories use the
+complete comparison. Omitted entries are not retained, so `--full-output` cannot recover them; inspect the original
+capture and probe Evidence to investigate beyond the returned pointers.
+
+The difference categories are:
 
 | Category        | Meaning                                                                                                      |
 | --------------- | ------------------------------------------------------------------------------------------------------------ |
@@ -1170,7 +1187,7 @@ read, not that the write had no other effect.
 ## Compatibility verification
 
 `npm run verify:agentenv:environment` is the hosted `real-agentenv` lane
-described in [testing](testing.md#exported-environment-bundles). It projects
+described in [testing](development/testing.md#exported-environment-bundles). It projects
 the Grafana-shaped source-owned capture through the built CLI, packs the
 checkout, exports a bundle with `--package-tarball`, runs it with the pinned
 `agentenv-framework` release on the runner's Docker and requires the smoke task

@@ -1,4 +1,4 @@
-import { ProviderInspectionScope } from "../../providers/ProviderInspectionScope.js";
+import { ProviderInspectionScope } from "../ProviderInspectionScope.js";
 import { AnalysisCleanupLease } from "../../artifacts/AnalysisCleanupLease.js";
 import { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
 import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
@@ -11,8 +11,9 @@ import {
   analysisProviderIdSchema,
   analysisProviderSelectorSchema,
   type AnalysisProviderSelector,
-} from "../../contracts/providerSelection.js";
+} from "../../domain/providerSelection.js";
 import type { AnalysisProfileCommitment } from "../../domain/analysisProfile.js";
+import type { ProviderReleaseVerification } from "../../domain/providerReleaseVerification.js";
 import type { BinaryTarget } from "../../domain/binaryTargetTypes.js";
 import {
   AnalysisCancelledError,
@@ -80,6 +81,9 @@ export interface AnalysisProviderBinding {
   readonly identity: ProviderIdentity & { readonly version: string };
   readonly selectionSource: "request" | "environment" | "auto-single-candidate";
   readonly profile: AnalysisProfileCommitment;
+  readonly releaseVerification?: ProviderReleaseVerification;
+
+  readonly refreshAfterRetirement?: true;
   readonly createClient?: AnalysisProviderBoundClientFactory;
   /** The provider's capabilities, attributed to its resolved identity. */
   readonly capabilities: readonly CapabilityDescriptor[];
@@ -831,6 +835,15 @@ const selectedResult = (
       identity: structuredClone(identity),
       selectionSource: source,
       profile: structuredClone(evaluated.profile),
+      ...(evaluated.releaseVerification === undefined
+        ? {}
+        : {
+            releaseVerification: structuredClone(evaluated.releaseVerification),
+          }),
+
+      ...(evaluated.refreshAfterRetirement === undefined
+        ? {}
+        : { refreshAfterRetirement: evaluated.refreshAfterRetirement }),
       ...(evaluated.createClient === undefined
         ? {}
         : { createClient: evaluated.createClient }),
@@ -914,6 +927,7 @@ const selectedRejection = (
   origin,
   code: rejection.code,
   reason: rejection.reason,
+  ...("remediation" in rejection ? { remediation: rejection.remediation } : {}),
   // ProviderSelectionError owns the single defensive diagnostic copy.
   diagnostics: rejection.diagnostics,
 });

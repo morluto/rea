@@ -1,19 +1,66 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import {
   elfExportImage,
+  elfAliasedVersionImage,
   peExportImage,
 } from "../../../tests/fixtures/binaryDiagnostics/nativeExports.js";
-import { nativeExportsSchema } from "../../domain/native/nativeExports.js";
+import * as nativeExportContracts from "../../domain/native/nativeExports.js";
 import {
   BinaryFormatFailure,
   BinaryResourceFailure,
+  BinaryStringReadLimitFailure,
 } from "../metadata/BinaryContainer.js";
-import { parseNativeExports } from "./NativeExportParser.js";
+import {
+  parseNativeExports,
+  parseNativeExportsSteps,
+} from "./NativeExportParser.js";
 
 const artifact = { path: "/fixture/lib", sha256: "a".repeat(64), bytes: 1 };
 const parse = (bytes: Buffer) =>
-  nativeExportsSchema.parse(parseNativeExports(bytes, artifact));
+  nativeExportContracts.nativeExportsSchema.parse(
+    parseNativeExports(bytes, artifact),
+  );
+
+it.each(["requirements", "definitions"] as const)(
+  "bounds aliased GNU version %s work and keeps exports with unknown versions",
+  (kind) => {
+    const bytes = elfAliasedVersionImage(kind, 65_535);
+    const decoded = vi.spyOn(nativeExportContracts, "decodeElfExportName");
+    try {
+      const steps = parseNativeExportsSteps(bytes, artifact);
+      let checkpoint = steps.next(),
+        yields = 0;
+      while (!checkpoint.done) {
+        yields++;
+        checkpoint = steps.next();
+      }
+      const result = nativeExportContracts.nativeExportsSchema.parse(
+        checkpoint.value,
+      );
+      expect(yields).toBeGreaterThan(2);
+      expect(result.coverage.status).toBe("partial");
+      expect(result.exports).toMatchObject([
+        { name: "versioned_export", version: { index: 2, name: null } },
+      ]);
+      expect(result.issues).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            code: "version_unresolved",
+            message: expect.stringContaining("traversal work allowance"),
+          }),
+        ]),
+      );
+      // The cost oracle observes the shared decoding boundary: a long aliased
+      // name must not be decoded for every visit despite tiny retained output.
+      expect(
+        decoded.mock.calls.filter(([name]) => name.length === 65_535),
+      ).toHaveLength(1);
+    } finally {
+      decoded.mockRestore();
+    }
+  },
+);
 
 const peExportNameAcrossSections = (overlapAtRva?: number): Buffer => {
   const bytes = Buffer.concat([
@@ -106,6 +153,47 @@ describe("PE export name coverage", () => {
       exports: 1,
     });
   });
+});
+
+describe("PE forwarder directory bounds", () => {
+  it.each([32, 64] as const)(
+    "requires the complete PE%d forwarder string to remain inside the export directory",
+    (bits) => {
+      const bytes = peExportImage({
+        bits,
+        functions: [{ rva: 0x11fc }, { rva: 0x2000 }],
+        names: [{ name: "Kept", index: 1 }],
+      });
+      // The string starts in .edata's declared export range but its NUL is
+      // outside it. The adjacent section bytes remain mapped and readable.
+      bytes.write("DLL.Target\0", 0x5fc, "latin1");
+      const result = parse(bytes);
+
+      expect(result.exports).toMatchObject([{ name: "Kept", ordinal: 2 }]);
+      expect(result.issues).toMatchObject([
+        { code: "malformed_entry", location: "0x11fc" },
+      ]);
+      expect(result.coverage).toMatchObject({
+        status: "partial",
+        examined_entries: 2,
+        exports: 1,
+      });
+    },
+  );
+
+  it.each([32, 64] as const)(
+    "accepts a PE%d forwarder whose NUL is the final export-directory byte",
+    (bits) => {
+      const bytes = peExportImage({ bits, functions: [{ rva: 0x11f5 }] });
+      bytes.write("DLL.Target\0", 0x5f5, "latin1");
+
+      expect(parse(bytes)).toMatchObject({
+        exports: [{ name: null, ordinal: 1, forwarder: "DLL.Target" }],
+        coverage: { status: "complete", exports: 1 },
+        issues: [],
+      });
+    },
+  );
 });
 
 describe("PE export directories", () => {
@@ -270,7 +358,8 @@ describe("ELF dynamic symbol exports", () => {
     { name: "hidden_fn", visibility: 2 },
     { name: "undefined_fn", section: 0 },
     { name: "local_fn", binding: 0 },
-    { name: "local_version_fn", version: 0 },
+    { name: "local_version_fn", binding: 0, version: 0 },
+    { name: "unversioned_fn", version: 0 },
   ];
 
   it("lists defined default and protected globals with their versions", () => {
@@ -286,23 +375,31 @@ describe("ELF dynamic symbol exports", () => {
       bits: 64,
       byte_order: "little",
       architecture: "amd64",
-      coverage: { status: "complete", examined_entries: 10, exports: 6 },
+      coverage: { status: "complete", examined_entries: 11, exports: 7 },
       issues: [],
     });
     expect(
       result.format === "elf" &&
-        result.exports.map(({ name, type, binding, version }) => ({
+        result.exports.map(({ name, type, binding, visibility, version }) => ({
           name,
           type,
           binding,
+          visibility,
           version,
         })),
     ).toEqual([
-      { name: "plain_fn", type: "function", binding: "global", version: null },
+      {
+        name: "plain_fn",
+        type: "function",
+        binding: "global",
+        visibility: "default",
+        version: null,
+      },
       {
         name: "versioned_fn",
         type: "function",
         binding: "global",
+        visibility: "default",
         version: {
           index: 2,
           name: "VER_1",
@@ -315,6 +412,7 @@ describe("ELF dynamic symbol exports", () => {
         name: "old_fn",
         type: "function",
         binding: "global",
+        visibility: "default",
         version: {
           index: 3,
           name: "VER_0",
@@ -323,12 +421,32 @@ describe("ELF dynamic symbol exports", () => {
           hidden: true,
         },
       },
-      { name: "weak_obj", type: "object", binding: "weak", version: null },
-      { name: "ifunc_sym", type: "ifunc", binding: "global", version: null },
+      {
+        name: "weak_obj",
+        type: "object",
+        binding: "weak",
+        visibility: "default",
+        version: null,
+      },
+      {
+        name: "ifunc_sym",
+        type: "ifunc",
+        binding: "global",
+        visibility: "default",
+        version: null,
+      },
       {
         name: "protected_fn",
         type: "function",
         binding: "global",
+        visibility: "protected",
+        version: null,
+      },
+      {
+        name: "unversioned_fn",
+        type: "function",
+        binding: "global",
+        visibility: "default",
         version: null,
       },
     ]);
@@ -353,6 +471,75 @@ describe("ELF dynamic symbol exports", () => {
   });
 });
 
+describe("ELF version index 0 unversioned exports", () => {
+  it("retains defined global and weak symbols with GNU version index 0 as unversioned exports", () => {
+    const bytes = elfExportImage({
+      symbols: [
+        { name: "global_symbol", version: 0 },
+        { name: "weak_symbol", binding: 2, version: 0 },
+        { name: "plain_symbol", version: 1 },
+        { name: "hidden_symbol", visibility: 2, version: 0 },
+        { name: "undefined_symbol", section: 0, version: 0 },
+        { name: "local_symbol", binding: 0, version: 0 },
+      ],
+    });
+    const result = parse(bytes);
+    expect(result).toMatchObject({
+      format: "elf",
+      coverage: { status: "complete", examined_entries: 6, exports: 3 },
+      issues: [],
+    });
+    expect(
+      result.format === "elf" &&
+        result.exports.map(({ name, binding, version }) => ({
+          name,
+          binding,
+          version,
+        })),
+    ).toEqual([
+      { name: "global_symbol", binding: "global", version: null },
+      { name: "weak_symbol", binding: "weak", version: null },
+      { name: "plain_symbol", binding: "global", version: null },
+    ]);
+  });
+});
+
+describe("historical ELF export evidence", () => {
+  it("normalizes historical ELF export evidence lacking visibility to unknown", () => {
+    const historical = {
+      artifact,
+      format: "elf" as const,
+      architecture: "amd64",
+      bits: 64 as const,
+      byte_order: "little" as const,
+      exports: [
+        {
+          name: "legacy_fn",
+          name_bytes_base64: null,
+          name_utf8_decodable: true,
+          value: "0x1000",
+          size: "16",
+          type: "function" as const,
+          binding: "global" as const,
+          version: null,
+        },
+      ],
+      coverage: {
+        status: "complete" as const,
+        reason: null,
+        examined_entries: 1,
+        exports: 1,
+      },
+      issues: [],
+      limitations: [],
+    };
+    const parsed = nativeExportContracts.nativeExportsSchema.parse(historical);
+    expect(parsed.format).toBe("elf");
+    if (parsed.format !== "elf") throw new Error("Expected ELF result");
+    expect(parsed.exports[0]?.visibility).toBe("unknown");
+  });
+});
+
 describe("ELF export version and name coverage", () => {
   it("marks versions unknown when the version table does not fit", () => {
     const result = parse(
@@ -371,8 +558,9 @@ describe("ELF export version and name coverage", () => {
       status: "partial",
       examined_entries: 2,
       exports: 2,
-      reason:
-        "1 export table issue(s) affect reported rows or metadata; see issues",
+      reason: expect.stringMatching(
+        /1 export table issue.*reported rows or metadata/iu,
+      ),
     });
     expect(result.issues).toMatchObject([{ code: "version_unresolved" }]);
   });
@@ -416,6 +604,17 @@ describe("ELF export version and name coverage", () => {
       }),
     );
 
+    expect(result.exports.map(({ name }) => name)).toEqual(["kept"]);
+    expect(result.issues).toMatchObject([{ code: "name_unreadable" }]);
+    expect(result.coverage.status).toBe("partial");
+  });
+
+  it("keeps unrelated exports when a symbol name exceeds the string scan allowance", () => {
+    const result = parse(
+      elfExportImage({
+        symbols: [{ name: "kept" }, { name: "k".repeat(65_536) }],
+      }),
+    );
     expect(result.exports.map(({ name }) => name)).toEqual(["kept"]);
     expect(result.issues).toMatchObject([{ code: "name_unreadable" }]);
     expect(result.coverage.status).toBe("partial");
@@ -661,10 +860,42 @@ describe("export inventory review regressions", () => {
       status: "partial",
       examined_entries: 1,
       exports: 1,
-      reason:
-        "1 export table issue(s) affect reported rows or metadata; see issues",
+      reason: expect.stringMatching(
+        /1 export table issue.*reported rows or metadata/iu,
+      ),
     });
   });
+
+  it.each([32, 64] as const)(
+    "rejects nonzero reserved fields in the ELF%s null symbol",
+    (bits) => {
+      for (const little of [true, false]) {
+        // ELF32/64 symbol records have no padding: every field in entry zero
+        // is reserved as zero by the ABI, independently of host endianness.
+        const width = bits === 64 ? 24 : 16;
+        for (let byte = 0; byte < width; byte++) {
+          const bytes = elfExportImage({
+            bits,
+            little,
+            symbols: [{ name: "kept_export" }],
+          });
+          bytes[0x100 + byte] = 1;
+          expect(() => parseNativeExports(bytes, artifact)).toThrow(
+            BinaryFormatFailure,
+          );
+        }
+        expect(
+          parse(
+            elfExportImage({
+              bits,
+              little,
+              symbols: [{ name: "kept_export" }],
+            }),
+          ).exports.map(({ name }) => name),
+        ).toEqual(["kept_export"]);
+      }
+    },
+  );
 
   it("rejects a dynamic symbol table without its null entry", () => {
     expect(() =>
@@ -690,7 +921,7 @@ describe("ELF symbol-name text", () => {
         expect(result.issues).toContainEqual(
           expect.objectContaining({
             message: expect.stringContaining(
-              "unterminated or exceeds the string budget",
+              new BinaryStringReadLimitFailure(65_536).message,
             ),
           }),
         );

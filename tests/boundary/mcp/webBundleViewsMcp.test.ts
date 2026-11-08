@@ -1,8 +1,7 @@
-import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { expect, it, onTestFinished } from "vitest";
-import { createServer } from "../../../src/server/createServer.js";
+import { afterAll, expect, it } from "vitest";
+import { createApplicationMcpHarness } from "../../fixtures/applicationMcpHarness.js";
 import { createEvidence, parseEvidence } from "../../../src/domain/evidence.js";
 import {
   webBundlePageViewResultSchema,
@@ -13,6 +12,9 @@ import { createTestBinarySession } from "../../fixtures/binarySession.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 import { advertisedMcpToolSchemas } from "../../fixtures/advertisedMcpTool.js";
+
+const schemaValidation = createMcpSchemaValidation();
+afterAll(() => schemaValidation.clear());
 
 const sampleWebBundleAnalysis = (): WebBundleAnalysis => ({
   capture: {
@@ -124,29 +126,17 @@ const makeParent = () =>
   );
 
 const connect = async () => {
-  const schemaValidation = createMcpSchemaValidation();
   const session = createTestBinarySession(() => {
     throw new Error("selected views must not start a deep provider");
   });
-  const server = createServer(
-    { kind: "session", session },
-    {
+  const { client } = await createApplicationMcpHarness({
+    session,
+    serverOptions: {
       environment: { ...process.env, REA_MCP_INPUT_SCHEMA_PROFILE: "full" },
     },
-  );
-  const client = new Client(
-    { name: "web-bundle-view-mcp", version: "1" },
-    { jsonSchemaValidator: schemaValidation },
-  );
-  onTestFinished(async () => {
-    await client.close();
-    await server.close();
-    await session.close();
+    clientIdentity: { name: "web-bundle-view-mcp", version: "1" },
+    schemaValidator: schemaValidation,
   });
-  const [clientTransport, serverTransport] =
-    InMemoryTransport.createLinkedPair();
-  await server.connect(serverTransport);
-  await client.connect(clientTransport);
   const schemas = await advertisedMcpToolSchemas(
     client,
     "inspect_analysis_view",

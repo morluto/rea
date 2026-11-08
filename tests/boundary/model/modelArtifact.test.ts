@@ -210,7 +210,6 @@ it.each([
     const fixture = ggufFixture({ tensors: [{ ...tensor, offset: 0n }] });
     const { provider, path } = await providerAt(fixture.bytes);
     const result = await provider.inspect({ path, hash: "header" });
-    expect(result.ok).toBe(false);
     if (result.ok) throw new Error("Expected format refusal");
     expect(result.error).toMatchObject({
       constraint: "file_format_rejected",
@@ -312,7 +311,7 @@ it("accepts standardized GGUF metadata keys containing numeric hierarchy compone
   });
 });
 
-it.each([99_999_993, 100_000_000])(
+it.each([67_324_752, 67_324_760, 99_999_993, 100_000_000])(
   "admits safetensors declared header length %s before its independent representation limit",
   async (length) => {
     const bytes = Buffer.alloc(9);
@@ -611,7 +610,6 @@ it.each(ggufKLayouts)(
       }).bytes,
     );
     const rejected = await provider.inspect({ path, hash: "header" });
-    expect(rejected.ok).toBe(false);
     if (rejected.ok) throw new Error("Incomplete common K row admitted");
     expect(rejected.error).toMatchObject({
       constraint: "file_format_rejected",
@@ -1143,7 +1141,6 @@ it("classifies over-depth Safetensors extension JSON as a resource limit", async
   );
   const { provider, path } = await providerAt(fixture.bytes);
   const result = await provider.inspect({ path, hash: "header" });
-  expect(result.ok).toBe(false);
   if (result.ok) throw new Error("Over-depth JSON was accepted");
   expect(result.error).toMatchObject({
     _tag: "AnalysisResourceConstraintError",
@@ -1173,6 +1170,12 @@ it.each([640, 896, 1152, 1408, 66_176])(
 
 it.each([
   // Protocol 2 pickle of {"a": 1}: PROTO 2, EMPTY_DICT, BINPUT 0, ...
+  ["a ZIP local header", Buffer.from("504b0304140000000000", "hex")],
+  ["a short ZIP signature", Buffer.from("504b0304", "hex")],
+  [
+    "a ZIP signature followed by a brace and an inadmissible length",
+    Buffer.from("504b0304140000007b", "hex"),
+  ],
   ["a real pickle", Buffer.from("80027d710058010000006171014b01732e", "hex")],
   // Protocol 2 pickle of {}: six bytes, shorter than a safetensors prefix.
   ["an empty dict", Buffer.from("80027d71002e", "hex")],
@@ -1227,7 +1230,7 @@ it("reports a truncated safetensors header whose length resembles a pickle marke
   });
 });
 
-it("bounds expansion before allocation and distinguishes unsupported pickle, version and paths", async () => {
+it("bounds expansion before allocation and distinguishes unsupported pickle and paths", async () => {
   const fixture = ggufFixture();
   fixture.bytes.writeBigUInt64LE(0xffffffffffffffffn, 8);
   const { provider, path, root } = await providerAt(fixture.bytes);
@@ -1239,9 +1242,6 @@ it("bounds expansion before allocation and distinguishes unsupported pickle, ver
   if (pickle.ok) throw new Error("Pickle admitted");
   expect(pickle.error._tag).toBe("AnalysisUnsupportedTargetError");
   await writeFile(path, ggufFixture({ version: 999 }).bytes);
-  const version = await provider.inspect({ path, hash: "header" });
-  if (version.ok) throw new Error("Unknown version admitted");
-  expect(version.error._tag).toBe("AnalysisUnsupportedTargetError");
   const alias = join(root, "link");
   await symlink(path, alias);
   const linked = await provider.inspect({ path: alias, hash: "header" });

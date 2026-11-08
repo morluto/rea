@@ -1,22 +1,24 @@
 import { join, resolve } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 
+import { decode } from "@toon-format/toon";
 import { describe, expect } from "vitest";
 
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
 import type { TestProcesses } from "../../support/process/processFixture.js";
 
-/** Close after a byte threshold, or acknowledge a complete JSON document. */
+/** Close after a byte threshold, or acknowledge a complete structured document. */
 const runWithClosedReader = async (
   processes: TestProcesses,
   arguments_: readonly string[],
-  bytes: number | "complete-json",
+  bytes: number | "complete-json" | "complete-toon",
 ) => {
+  // Buffered JSON awaits each write; only delegated TOON needs the callback barrier.
   const child = processes.spawn(
     process.execPath,
     [
-      ...(bytes === "complete-json"
+      ...(bytes === "complete-toon"
         ? ["--import", resolve("tests/fixtures/stdoutReadCompletion.mjs")]
         : []),
       resolve("scripts/rea.mjs"),
@@ -26,40 +28,43 @@ const runWithClosedReader = async (
   );
   let received = 0;
   const chunks: Buffer[] = [];
-  let json: unknown;
+  let document: unknown;
   if (bytes === 0) child.stdout.destroy();
   else
     child.stdout.on("data", (chunk: Buffer) => {
       received += chunk.length;
-      if (bytes === "complete-json") {
+      if (typeof bytes === "string") {
         chunks.push(chunk);
         if (chunk.at(-1) !== 10) return;
         try {
-          json = JSON.parse(Buffer.concat(chunks).toString("utf8"));
+          const text = Buffer.concat(chunks).toString("utf8");
+          document =
+            bytes === "complete-json" ? JSON.parse(text) : decode(text);
         } catch {
           return;
         }
-        child.stdout.once("close", () => child.stdin.end("reader closed\n"));
+        if (bytes === "complete-toon")
+          child.stdout.once("close", () => child.stdin.end("reader closed\n"));
         child.stdout.destroy();
       } else if (received >= bytes) child.stdout.destroy();
     });
-  if (bytes !== "complete-json") child.stdin.end();
+  if (bytes !== "complete-toon") child.stdin.end();
   let stderr = "";
   child.stderr.setEncoding("utf8");
   child.stderr.on("data", (chunk: string) => (stderr += chunk));
   const code = await new Promise<number | null>((done) =>
     child.once("close", done),
   );
-  return { code, stderr, received, json };
+  return { code, stderr, received, document };
 };
 
 // Windows reports a closed pipe reader through a different error path.
 describe.skipIf(process.platform === "win32")(
   "CLI with a closed stdout",
   () => {
-    cliTest(
-      "keeps the command status when the reader closes after the complete diagnostic",
-      async ({ processes }) => {
+    cliTest.for(["json", "toon"] as const)(
+      "keeps the command status when the reader closes after the complete %s diagnostic",
+      async (format, { processes }) => {
         const count = 2_048;
         const result = await runWithClosedReader(
           processes,
@@ -67,14 +72,15 @@ describe.skipIf(process.platform === "win32")(
             "demangle-swift",
             "missing",
             ...Array.from({ length: count }, () => "bad\nsymbol"),
-            "--json",
+            "--format",
+            format,
           ],
-          "complete-json",
+          format === "json" ? "complete-json" : "complete-toon",
         );
         expect(result).toMatchObject({
           code: 1,
           stderr: "",
-          json: {
+          document: {
             code: "VALIDATION_ERROR",
             fieldErrors: expect.arrayContaining([
               expect.objectContaining({ path: `symbols.${count - 1}` }),

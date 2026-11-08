@@ -1,3 +1,4 @@
+import { projectCliAnalysisResult } from "../../../src/cli/projectCliAnalysisResult.js";
 import { mkdir, open, readFile, truncate, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { createPackage } from "@electron/asar";
@@ -293,7 +294,9 @@ it("applies the caller-selected environment, not the ambient one, to inventory a
   vi.stubEnv("REA_ASAR_MAX_HEADER_BYTES", "1");
   for (const operation of ["inventory_artifact", "inspect_artifact"] as const) {
     await expect(
-      createDirectAnalysis(lowered).runProviderAnalysis(archive, operation, {}),
+      createDirectAnalysis(lowered)
+        .runProviderAnalysis(archive, operation, {})
+        .then(projectCliAnalysisResult),
     ).resolves.toMatchObject({
       code: "truncated",
       message: recovery,
@@ -304,7 +307,9 @@ it("applies the caller-selected environment, not the ambient one, to inventory a
       },
     });
     await expect(
-      createDirectAnalysis({}).runProviderAnalysis(archive, operation, {}),
+      createDirectAnalysis({})
+        .runProviderAnalysis(archive, operation, {})
+        .then(projectCliAnalysisResult),
     ).resolves.toMatchObject({ operation });
   }
   const refused = await analyzeJavaScriptApplication(
@@ -365,11 +370,9 @@ it("refuses invalid settings at startup validation and at each owner", async () 
   const { archive } = await createFixture();
   const invalid = { REA_ASAR_MAX_HEADER_BYTES: "0" };
   await expect(
-    createDirectAnalysis(invalid).runProviderAnalysis(
-      archive,
-      "inventory_artifact",
-      {},
-    ),
+    createDirectAnalysis(invalid)
+      .runProviderAnalysis(archive, "inventory_artifact", {})
+      .then(projectCliAnalysisResult),
   ).resolves.toMatchObject({ code: "configuration_invalid" });
   const analyzed = await analyzeJavaScriptApplication(
     { input_path: archive },

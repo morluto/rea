@@ -1,3 +1,7 @@
+import {
+  iterateUrlQueryParameters,
+  parseUrlQueryParameterNames,
+} from "../recordedTransportUrl.js";
 import { compareUnicodeCodePoints as compare } from "../unicodeCodePointOrder.js";
 import { ENTRY_BYTES, textBytes } from "./webNetworkRouteTemplates.js";
 import type { LateLine, StatePlan } from "./environmentStateGate.js";
@@ -46,8 +50,11 @@ export const queryValues = (
   query: string | null | undefined,
 ): Map<string, string[]> => {
   const values = new Map<string, string[]>();
-  for (const [name, value] of new URLSearchParams(query ?? ""))
-    values.set(name, [...(values.get(name) ?? []), value]);
+  for (const [name, value] of iterateUrlQueryParameters(query ?? "")) {
+    const previous = values.get(name);
+    if (previous === undefined) values.set(name, [value]);
+    else previous.push(value);
+  }
   return values;
 };
 
@@ -57,7 +64,7 @@ export const shapesOtherwise = (query: string | null | undefined): boolean =>
 
 /** The query names that may change how a line shows its entities: all but paging. */
 const shapingNames = (query: string | null | undefined): string[] =>
-  [...queryValues(query).keys()].filter(
+  [...new Set(parseUrlQueryParameterNames(query ?? ""))].filter(
     (name) => !PAGING.has(name.toLowerCase()),
   );
 

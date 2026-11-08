@@ -1,5 +1,6 @@
 import type { Stats } from "node:fs";
 import type { FileHandle } from "node:fs/promises";
+import { readFileHandleRange } from "../filesystem/readFileHandleRange.js";
 
 import { assertArtifactReadActive } from "./ArtifactFileOperation.js";
 import { ArtifactReaderFailure } from "./ArtifactReader.js";
@@ -394,21 +395,12 @@ export const admitAsarHeader = async (
       "format",
       "ASAR container is not a regular file",
     );
-  const prefix = Buffer.alloc(16);
-  let bytesRead = 0;
-  while (bytesRead < prefix.length) {
-    assertArtifactReadActive(signal);
-    const read = await handle.read(
-      prefix,
-      bytesRead,
-      prefix.length - bytesRead,
-      bytesRead,
-    );
-    assertArtifactReadActive(signal);
-    if (read.bytesRead === 0)
-      throw new ArtifactReaderFailure("format", "Truncated ASAR size pickle");
-    bytesRead += read.bytesRead;
-  }
+  const prefix = await readFileHandleRange(handle, 0, 16, () =>
+    assertArtifactReadActive(signal),
+  );
+  assertArtifactReadActive(signal);
+  if (prefix.length !== 16)
+    throw new ArtifactReaderFailure("format", "Truncated ASAR size pickle");
   const parsed = parseAsarHeaderExtents(prefix, observed.size);
   if (!parsed.ok) throw parsed.error;
   if (parsed.value.headerBytes > admission.maximumBytes)
@@ -429,21 +421,12 @@ export const readAsarHeader = async (
   extents: AsarHeaderExtents,
   signal?: AbortSignal,
 ): Promise<unknown> => {
-  const bytes = Buffer.alloc(extents.jsonBytes);
-  let offset = 0;
-  while (offset < bytes.length) {
-    assertArtifactReadActive(signal);
-    const read = await handle.read(
-      bytes,
-      offset,
-      bytes.length - offset,
-      16 + offset,
-    );
-    assertArtifactReadActive(signal);
-    if (read.bytesRead === 0)
-      throw new ArtifactReaderFailure("format", "Truncated ASAR JSON header");
-    offset += read.bytesRead;
-  }
+  const bytes = await readFileHandleRange(handle, 16, extents.jsonBytes, () =>
+    assertArtifactReadActive(signal),
+  );
+  assertArtifactReadActive(signal);
+  if (bytes.length !== extents.jsonBytes)
+    throw new ArtifactReaderFailure("format", "Truncated ASAR JSON header");
   let json: string;
   try {
     json = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(

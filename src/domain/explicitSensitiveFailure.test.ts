@@ -16,10 +16,7 @@ import { ProviderAdapterError } from "./providerAdapterError.js";
 import { analysisErrorWithCleanupFailure } from "./analysisErrorCleanup.js";
 import { resolvedAnalysisError } from "./analysisErrorBase.js";
 import { createEvidence } from "./evidence.js";
-import {
-  redactExplicitFailure,
-  redactExplicitPointer,
-} from "./explicitSensitiveFailure.js";
+import { redactExplicitFailure } from "./explicitSensitiveFailure.js";
 
 const context = {
   diagnostics: {
@@ -88,6 +85,30 @@ it.each([
   expect(JSON.stringify(projected)).not.toContain("explicit-secret");
 });
 
+it("preserves sanitized capability recovery specificity", () => {
+  for (const [options, expected] of [
+    [{ remediationAction: "Repair explicit-secret" }, "Repair [REDACTED]"],
+    [
+      { fallbackRemediationAction: "Select explicit-secret" },
+      "Select [REDACTED]",
+    ],
+  ] as const) {
+    const error = new AnalysisCapabilityUnavailableError(
+      "provider",
+      "inspect",
+      "unsupported",
+      options,
+    );
+    const sanitized = redactExplicitFailure(error, ["explicit-secret"]);
+    expect(projectAnalysisError(sanitized).remediation.action).toBe(expected);
+    if (!(sanitized instanceof AnalysisCapabilityUnavailableError))
+      throw new Error("expected capability failure");
+    expect(sanitized.remediationAction === undefined).toBe(
+      "fallbackRemediationAction" in options,
+    );
+  }
+});
+
 it.each([
   ["/metadata/private~1~0/numeric", ["private/~"], "/metadata"],
   ["/metadata/private/child", ["private"], "/metadata"],
@@ -95,7 +116,13 @@ it.each([
 ])(
   "preserves a real parent for excluded pointer identities: %s",
   (pointer, values, expected) => {
-    expect(redactExplicitPointer(pointer, values)).toBe(expected);
+    const failure = new AnalysisInputError("inspect", undefined, [
+      { path: ["capture_path", pointer], reason: "invalid_format" },
+    ]);
+    const redacted = redactExplicitFailure(failure, values);
+    if (!(redacted instanceof AnalysisInputError))
+      throw new Error("Expected a redacted input error");
+    expect(redacted.issues[0]?.path).toEqual(["capture_path", expected]);
   },
 );
 
@@ -113,11 +140,15 @@ it("preserves cleanup failure authority and resources while excluding diagnostic
   const projected = projectAnalysisError(
     redactExplicitFailure(error, ["private", "REDACTED"]),
   );
-  expect(projected.code).toBe("cleanup_incomplete");
+  expect(projected).toMatchObject({
+    code: "cleanup_incomplete",
+    details: {
+      resources: expect.arrayContaining(["pid:123"]),
+      diagnostics: { exit_code: 2 },
+    },
+  });
   expect(JSON.stringify(projected)).not.toContain("private");
   expect(JSON.stringify(projected)).not.toContain("REDACTED");
-  expect(JSON.stringify(projected)).toContain("pid:123");
-  expect(JSON.stringify(projected)).toContain('"exit_code":2');
 });
 
 it("redacts cleanup primaries and mirrors the source error's live status", () => {
@@ -272,6 +303,23 @@ it("coarsens ordinary sensitive issue-path segments to their real parent", () =>
     throw new Error("Input error required");
   expect(result.issues[0]?.path).toEqual(["input"]);
   expect(JSON.stringify(projectAnalysisError(result))).not.toContain("secret");
+});
+
+it("retains input retry guidance while redacting marked text", () => {
+  const error = new AnalysisInputError(
+    "inspect_web_network_capture",
+    {
+      userMessage: "Selected private-marker capture is a symlink",
+      remediationAction: "Retry /resolved/private-marker/capture.har",
+      conformsToInputContract: true,
+    },
+    [{ path: ["capture_path"], reason: "invalid_format" }],
+  );
+  const redacted = redactExplicitFailure(error, ["private-marker"]);
+  const projected = projectAnalysisError(redacted);
+  expect(projected.remediation.action).toContain("/resolved/");
+  expect(projected).not.toHaveProperty("recovery");
+  expect(JSON.stringify(projected)).not.toContain("private-marker");
 });
 
 it("does not reinterpret an unknown argument name as a JSON pointer", () => {

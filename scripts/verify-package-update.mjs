@@ -35,13 +35,20 @@ export async function verifyPackageUpdate({
         response.destroy();
         return;
       }
-      response.writeHead(500);
+      response.writeHead(500, {
+        "Content-Type": "text/plain; charset=utf-8",
+        "X-Content-Type-Options": "nosniff",
+      });
       response.end(String(error));
     });
   });
   let registry;
   async function serveRegistry(request, response) {
-    const pathname = new URL(request.url, registry).pathname;
+    // A leading // belongs to an origin-form HTTP path, not a URL authority.
+    const requested = new URL(
+      request.url.startsWith("/") ? `${registry}${request.url}` : request.url,
+    );
+    const { pathname } = requested;
     if (pathname === "/rea-agents") {
       response.setHeader("Content-Type", "application/json");
       response.end(
@@ -65,7 +72,10 @@ export async function verifyPackageUpdate({
       response.setHeader("Content-Type", "application/json");
       response.end("{}");
     } else {
-      const upstream = await fetch(`https://registry.npmjs.org${request.url}`);
+      const upstreamUrl = new URL("https://registry.npmjs.org");
+      upstreamUrl.pathname = pathname;
+      upstreamUrl.search = requested.search;
+      const upstream = await fetch(upstreamUrl);
       const body = Buffer.from(await upstream.arrayBuffer());
       response.writeHead(upstream.status, {
         "Content-Type":

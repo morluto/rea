@@ -1,8 +1,8 @@
 import { createHash } from "node:crypto";
 import { readFile, writeFile, unlink } from "node:fs/promises";
 import { join } from "node:path";
-import { expect, it } from "vitest";
-import { toolContract } from "../../src/contracts/toolContracts.js";
+import { afterAll, expect, it } from "vitest";
+import { INSPECT_MODEL_ARTIFACT_CONTRACT } from "../../src/contracts/model/modelToolContracts.js";
 import {
   modelArtifactSchema,
   type ModelArtifact,
@@ -22,7 +22,19 @@ import {
   safetensorsFixture,
 } from "../fixtures/model/model.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
-import { cliTest } from "../support/cli/cliFixture.js";
+import {
+  cliTest,
+  createSharedMcpSession,
+  runFileCli,
+} from "../support/cli/cliFixture.js";
+
+// Model queries are target-free; share immutable registration and schema setup.
+// Portable export keeps its separate post-CLI connection below.
+const modelMcp = createSharedMcpSession(async (registerCleanup) => {
+  const { call } = await connectLocalToolsMcp({}, registerCleanup);
+  return call;
+});
+afterAll(() => modelMcp.close());
 
 cliTest(
   "preserves lowercase hyphenated GGUF architecture metadata from the published writer",
@@ -60,7 +72,7 @@ cliTest(
       });
       expect(response.exitCode, response.stderr).toBe(0);
       const report = modelArtifactSchema.parse(
-        toolContract("inspect_model_artifact").outputSchema.parse(response.json)
+        INSPECT_MODEL_ARTIFACT_CONTRACT.outputSchema.parse(response.json)
           .normalized_result,
       );
       expect(report.metadata.map(({ key, value }) => ({ key, value }))).toEqual(
@@ -78,7 +90,7 @@ cliTest(
   "preserves unresolved Q8_1 layout through CLI, MCP summaries and retained tensor/type pages",
   async ({ cli }) => {
     const root = await createTestTempDirectory("rea-model-q8-layout-");
-    const { call } = await connectLocalToolsMcp();
+    const call = await modelMcp.session.call();
     for (const blockBytes of [36, 40]) {
       const path = join(root, `blocks-${String(blockBytes)}.gguf`);
       const base = ggufFixture();
@@ -101,7 +113,7 @@ cliTest(
       });
       const bytes = Buffer.concat([fixture.bytes, Buffer.alloc(16)]);
       await writeFile(path, bytes);
-      const cliResult = await cli.run({
+      const cliResult = await runFileCli(cli, {
         arguments: [
           "inspect-model-artifact",
           path,
@@ -305,7 +317,7 @@ cliTest(
   "preserves released K and shifted integer/IQ uncertainty through CLI and retained MCP views",
   async ({ cli }) => {
     const root = await createTestTempDirectory("rea-model-historical-layouts-");
-    const { call } = await connectLocalToolsMcp();
+    const call = await modelMcp.session.call();
     for (const layout of ["legacy", "modern"] as const) {
       const path = join(root, `${layout}.gguf`);
       const base = ggufFixture();
@@ -353,7 +365,7 @@ cliTest(
         tensors,
       });
       await writeFile(path, fixture.bytes);
-      const response = await cli.run({
+      const response = await runFileCli(cli, {
         arguments: [
           "inspect-model-artifact",
           path,
@@ -454,7 +466,7 @@ cliTest(
     });
     expect(result.exitCode, result.stderr).toBe(0);
     const report = modelArtifactSchema.parse(
-      toolContract("inspect_model_artifact").outputSchema.parse(result.json)
+      INSPECT_MODEL_ARTIFACT_CONTRACT.outputSchema.parse(result.json)
         .normalized_result,
     );
     expect(
@@ -487,7 +499,7 @@ cliTest(
     expect(report.artifact.sha256).toBe(
       createHash("sha256").update(fixture.bytes).digest("hex"),
     );
-    const { call } = await connectLocalToolsMcp();
+    const call = await modelMcp.session.call();
     const response = await call("inspect_model_artifact", {
       path,
       detail: "complete",
@@ -545,7 +557,7 @@ it.each(["named", "default", "inventory-only", "absent"] as const)(
             ? [names]
             : [];
     await writeFile(path, ggufFixture({ metadata }).bytes);
-    const { call } = await connectLocalToolsMcp();
+    const call = await modelMcp.session.call();
     const response = await call("inspect_model_artifact", { path });
     expect(response.isError, JSON.stringify(response)).not.toBe(true);
     const summary = modelArtifactSummaryViewResultSchema.parse(
@@ -591,7 +603,7 @@ it("keeps generated headline keys and imported compound metadata out of compact 
       ],
     }).bytes,
   );
-  const { call } = await connectLocalToolsMcp();
+  const call = await modelMcp.session.call();
   const compact = await call("inspect_model_artifact", { path });
   expect(compact.isError, JSON.stringify(compact)).not.toBe(true);
   const summary = modelArtifactSummaryViewResultSchema.parse(
@@ -628,7 +640,7 @@ it("rejects noncanonical imported model indexes and duplicate identities through
   const root = await createTestTempDirectory("rea-model-import-");
   const path = join(root, "model");
   await writeFile(path, ggufFixture().bytes);
-  const { call } = await connectLocalToolsMcp();
+  const call = await modelMcp.session.call();
   const response = await call("inspect_model_artifact", {
     path,
     detail: "complete",
@@ -691,7 +703,7 @@ it("bounds compact model warnings and omits unselected long labels while retaini
       Buffer.alloc(0),
     ).bytes,
   );
-  const { call } = await connectLocalToolsMcp();
+  const call = await modelMcp.session.call();
   const response = await call("inspect_model_artifact", { path });
   expect(response.isError, JSON.stringify(response)).not.toBe(true);
   expect(JSON.stringify(response).length).toBeLessThan(16_000);
@@ -868,7 +880,7 @@ cliTest(
   "shares scoped model facts through real CLI/MCP and pages retained metadata after source removal",
   async ({ cli }) => {
     const root = await createTestTempDirectory("rea-model-cli-");
-    const { call } = await connectLocalToolsMcp();
+    const call = await modelMcp.session.call();
     for (const [format, fixture] of [
       ["gguf", ggufFixture()],
       ["safetensors", safetensorsFixture()],
@@ -892,9 +904,9 @@ cliTest(
         ],
       });
       expect(result.exitCode, result.stderr).toBe(0);
-      const evidence = toolContract(
-        "inspect_model_artifact",
-      ).outputSchema.parse(result.json);
+      const evidence = INSPECT_MODEL_ARTIFACT_CONTRACT.outputSchema.parse(
+        result.json,
+      );
       const report = modelArtifactSchema.parse(evidence.normalized_result);
       expect(report.format).toBe(format);
       expect(report.artifact.sha256).toBeNull();
@@ -965,7 +977,7 @@ cliTest(
   "preserves optional safetensors fields and aligns empty GGUF data in CLI and MCP",
   async ({ cli }) => {
     const root = await createTestTempDirectory("rea-model-boundary-compat-");
-    const { call } = await connectLocalToolsMcp();
+    const call = await modelMcp.session.call();
     const safetensors = safetensorsFixture(
       '{"__metadata__":null,"weight":{"dtype":"F32","shape":[1],"data_offsets":[0,4],"note":{"source":"local","flags":[null,false,-1,1.25]}}}',
       Buffer.alloc(4),
@@ -982,7 +994,7 @@ cliTest(
     ] as const) {
       const path = join(root, name);
       await writeFile(path, bytes);
-      const result = await cli.run({
+      const result = await runFileCli(cli, {
         arguments: [
           "inspect-model-artifact",
           path,
@@ -993,7 +1005,7 @@ cliTest(
       });
       expect(result.exitCode, result.stderr).toBe(0);
       const report = modelArtifactSchema.parse(
-        toolContract("inspect_model_artifact").outputSchema.parse(result.json)
+        INSPECT_MODEL_ARTIFACT_CONTRACT.outputSchema.parse(result.json)
           .normalized_result,
       );
       if (name.endsWith("safetensors")) {
@@ -1030,7 +1042,7 @@ cliTest(
         Buffer.alloc(0),
       ).bytes,
     );
-    const mapCli = await cli.run({
+    const mapCli = await runFileCli(cli, {
       arguments: [
         "inspect-model-artifact",
         mapPath,
@@ -1041,7 +1053,7 @@ cliTest(
     });
     expect(mapCli.exitCode, mapCli.stderr).toBe(0);
     const mapReport = modelArtifactSchema.parse(
-      toolContract("inspect_model_artifact").outputSchema.parse(mapCli.json)
+      INSPECT_MODEL_ARTIFACT_CONTRACT.outputSchema.parse(mapCli.json)
         .normalized_result,
     );
     expect(
@@ -1067,7 +1079,7 @@ cliTest(
         safetensorsFixture(`{"__metadata__":${numeric}}`, Buffer.alloc(0))
           .bytes,
       );
-      const malformedCli = await cli.run({
+      const malformedCli = await runFileCli(cli, {
         arguments: ["inspect-model-artifact", malformedPath, "--json"],
       });
       expect(malformedCli.exitCode).toBe(1);
@@ -1092,7 +1104,7 @@ cliTest(
   "inspects unpadded zero-tensor vocab GGUF through CLI and MCP",
   async ({ cli }) => {
     const root = await createTestTempDirectory("rea-model-vocab-only-");
-    const { call } = await connectLocalToolsMcp();
+    const call = await modelMcp.session.call();
     const base = ggufFixture();
     const vocab = ggufFixture({
       tensors: [],
@@ -1132,9 +1144,8 @@ cliTest(
       });
       expect(cliResult.exitCode, cliResult.stderr).toBe(0);
       const report = modelArtifactSchema.parse(
-        toolContract("inspect_model_artifact").outputSchema.parse(
-          cliResult.json,
-        ).normalized_result,
+        INSPECT_MODEL_ARTIFACT_CONTRACT.outputSchema.parse(cliResult.json)
+          .normalized_result,
       );
       expect(report.metadata.map(({ key, value }) => ({ key, value }))).toEqual(
         [

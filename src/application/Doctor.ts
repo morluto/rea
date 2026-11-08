@@ -57,6 +57,7 @@ import {
   type UnhealthyClientRegistrationStatus,
 } from "./ClientRegistrationStatus.js";
 import type { ProviderRequestBudgetResolver } from "./ClientRegistrationEnvironment.js";
+import { registrationSpelledSettings } from "./SetupRegistrationEnvironment.js";
 import {
   collectDoctorDiagnostics,
   doctorHealthy,
@@ -146,6 +147,7 @@ export interface DoctorHost {
   close?(): Promise<string | undefined>;
   clientRegistrations?(
     selectedClientIds?: readonly string[],
+    providerSettings?: Readonly<Record<string, string>>,
   ): Promise<readonly ClientRegistrationStatus[]>;
   ilspyCmdVersion?(path: string): Promise<string | undefined>;
 }
@@ -276,18 +278,26 @@ const inspectDoctor = async (
     hopperPath,
     providerInspections,
   } = await collectDoctorDiagnostics(target, host);
-  const identity = await collectDoctorIdentity(host, scope);
+  const hopperAvailable =
+    hopperPath !== undefined &&
+    diagnosticChecks
+      .filter(({ name }) => name.startsWith("hopper"))
+      .every(({ ok }) => ok);
+  const selections = providerSettingSelections(
+    providerInspections,
+    hopperAvailable && hopperPath === host.configuredHopperPath
+      ? hopperPath
+      : undefined,
+  );
+  const identity = await collectDoctorIdentity(host, scope, selections);
   const checks = [
     ...diagnosticChecks,
     ...identity.checks,
     ...registrationAdvisoryChecks(identity.value.registrations),
+    ...registrationEnvironmentChecks(identity.value.registrations, selections),
   ];
   const providers = {
-    hopperAvailable:
-      hopperPath !== undefined &&
-      checks
-        .filter(({ name }) => name.startsWith("hopper"))
-        .every(({ ok }) => ok),
+    hopperAvailable,
     hopperConfigured: host.configuredHopperPath !== undefined,
     providerInspections,
   };
@@ -329,6 +339,77 @@ const registrationAdvisoryChecks = (
         ],
   );
 
+/** Settings an available provider's checks in this report relied on. */
+interface ProviderSettingSelection {
+  readonly provider: string;
+  readonly settings: Readonly<Record<string, string>>;
+}
+
+const providerSettingSelections = (
+  inspections: readonly DoctorProviderInspection[] | undefined,
+  configuredHopperPath: string | undefined,
+): readonly ProviderSettingSelection[] => [
+  ...(inspections ?? [])
+    .filter(({ available }) => available)
+    .map(({ id, registrationEnvironment }) => ({
+      provider: id,
+      settings: registrationEnvironment,
+    })),
+  // Startup probes the fixed and renamed locations on its own, so only an
+  // explicit path is something this terminal selected for the server.
+  ...(configuredHopperPath === undefined
+    ? []
+    : [
+        {
+          provider: "hopper",
+          settings: { HOPPER_LAUNCHER_PATH: configuredHopperPath },
+        },
+      ]),
+];
+
+/**
+ * A healthy provider check describes this terminal, not the server a client
+ * starts. Report what the registration's file leaves out without gating health:
+ * the client may still pass the setting on, which doctor cannot observe.
+ */
+const registrationEnvironmentChecks = (
+  registrations: readonly ClientRegistrationStatus[],
+  selections: readonly ProviderSettingSelection[],
+): readonly DoctorCheck[] =>
+  registrations.flatMap(({ client, provider_settings: settings }) => {
+    if (settings === undefined) return [];
+    const { unrecorded, differing, unresolved } = settings;
+    const names = [...unrecorded, ...differing, ...unresolved];
+    return [
+      {
+        name: `registration_environment:${client}`,
+        ok: true,
+        classification: "unknown" as const,
+        detail: [
+          `Provider checks used this terminal's environment; what the server ${client} starts receives is unknown.`,
+          ...(unrecorded.length === 0
+            ? []
+            : [`Its registration does not record ${unrecorded.join(", ")}.`]),
+          ...(differing.length === 0
+            ? []
+            : [`It records other values for ${differing.join(", ")}.`]),
+          ...(unresolved.length === 0
+            ? []
+            : [`REA could not resolve its ${unresolved.join(", ")}.`]),
+        ].join(" "),
+        details: {
+          effective_environment: "unknown",
+          providers: selections
+            .filter(({ settings: selected }) =>
+              names.some((name) => selected[name] !== undefined),
+            )
+            .map(({ provider }) => provider),
+        },
+        remediation: `Preview rea setup --client ${client} --skill=false --dry-run from this terminal, apply it to record these settings and restart the client, or read binary_session result.tool_availability in the client.`,
+      },
+    ];
+  });
+
 const closeDoctorHost = async (
   host: DoctorHost,
 ): Promise<string | AnalysisError | undefined> => {
@@ -369,12 +450,19 @@ const doctorReportWithCleanup = (
 const collectDoctorIdentity = async (
   host: DoctorHost,
   scope: DoctorScopeReport,
+  selections: readonly ProviderSettingSelection[],
 ): Promise<{
   readonly checks: readonly DoctorCheck[];
   readonly value: DoctorIdentity;
 }> => {
   const installationPaths = (await host.installationPaths?.()) ?? [];
-  const registrations = (await host.clientRegistrations?.(scope.clients)) ?? [];
+  const registrations =
+    (await host.clientRegistrations?.(
+      scope.clients,
+      Object.fromEntries(
+        selections.flatMap(({ settings }) => Object.entries(settings)),
+      ),
+    )) ?? [];
   const skillClientIds =
     scope.skill_clients ??
     (scope.clients.length > 0 ? scope.clients : undefined);
@@ -484,7 +572,9 @@ const skillIdentityCheck = (
   return {
     name: "skill:identity",
     ok: false,
-    classification: "config_drift",
+    // An unreadable or unresolved copy is unknown, not proven drift.
+    classification:
+      skillIdentityState(identity) === "unknown" ? "unknown" : "config_drift",
     detail:
       issues !== undefined && issues.length > 0
         ? `Selected skill identity is ${skillIdentityState(identity)}: ${issues.map(({ path }) => path).join(", ")}.`
@@ -784,12 +874,20 @@ export const systemDoctorHost = (
         throw failure;
       }
     },
-    clientRegistrations: (selectedClientIds) =>
+    clientRegistrations: (selectedClientIds, providerSettings) =>
       readClientRegistrationStatuses(homeDirectory, undefined, {
         platform,
         environment,
         resources,
         ...(selectedClientIds === undefined ? {} : { selectedClientIds }),
+        ...(providerSettings === undefined
+          ? {}
+          : {
+              providerSettings: registrationSpelledSettings(
+                providerSettings,
+                environment,
+              ),
+            }),
         ...(resolveProviderRequestBudget === undefined
           ? {}
           : {

@@ -55,6 +55,7 @@ export class WasmArtifactService {
     if (
       !report.success ||
       report.data.artifact.path !== input.value.path ||
+      execution.subject.path !== input.value.path ||
       report.data.tool_profile.timeout_ms !== timeout ||
       !wasmArtifactMatchesSubject(report.data.artifact, execution.subject) ||
       JSON.stringify(report.data.glue.map((item) => item.artifact.path)) !==

@@ -308,6 +308,9 @@ describe("native UI action trace", () => {
       }),
     );
   });
+});
+
+describe("native UI action seed resolution", () => {
   it("accepts an explicit native seed without an authored UI connection", async () => {
     const result = await new EnhancedTools(
       testAnalysis({
@@ -324,6 +327,31 @@ describe("native UI action trace", () => {
       },
     });
   });
+  it.each(["", null, 0, { address: "0x1000" }])(
+    "rejects a malformed provider canonical seed address: %j",
+    async (address) => {
+      let traversed = false;
+      const result = await new EnhancedTools(
+        testAnalysis({
+          procedure_address: () => execution("procedure_address", address),
+          procedure_callees: () => {
+            traversed = true;
+            return execution("procedure_callees", []);
+          },
+        }),
+      ).execute("trace_native_ui_action", { action: "missing-selector" });
+
+      expect(result).toMatchObject({
+        ok: false,
+        error: {
+          _tag: "AnalysisOutputError",
+          operation: "procedure_address",
+          reason: "provider returned no canonical procedure address",
+        },
+      });
+      expect(traversed).toBe(false);
+    },
+  );
   it("builds the evidence path from provider names with declared symbol facts", async () => {
     const tools = new EnhancedTools(
       testAnalysis({

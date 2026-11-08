@@ -1,3 +1,4 @@
+import { projectCliAnalysisResult } from "../../src/cli/projectCliAnalysisResult.js";
 import { parseConfig } from "../../src/config/parseConfig.js";
 import { describe, expect, it } from "vitest";
 import { runDirectAnalysis } from "../../src/application/DirectAnalysis.js";
@@ -114,7 +115,7 @@ describe("direct CLI cross-reference selectors", () => {
       path,
       "xrefs",
       { address: "table_only", extra: true },
-    );
+    ).then(projectCliAnalysisResult);
     expect(result).toMatchObject({
       code: "invalid_request",
       details: { operation: "xrefs", issues },
@@ -132,7 +133,7 @@ describe("direct CLI cross-reference selectors", () => {
       const evidence = parseEvidence(
         await runDirectAnalysis(provider.dependencies, path, "xrefs", {
           address,
-        }),
+        }).then(projectCliAnalysisResult),
       );
       expect(evidence.parameters).toEqual({ address });
       expect(evidence.normalized_result).toEqual(["0x4000"]);
@@ -160,7 +161,7 @@ describe("direct CLI cross-reference selectors", () => {
       const evidence = parseEvidence(
         await runDirectAnalysis(provider.dependencies, path, "xrefs", {
           address,
-        }),
+        }).then(projectCliAnalysisResult),
       );
       expect(evidence.parameters).toEqual({ address });
       expect(evidence.normalized_result).toEqual(["0x4000"]);
@@ -178,7 +179,7 @@ describe("direct CLI cross-reference name resolution", () => {
       const evidence = parseEvidence(
         await runDirectAnalysis(provider.dependencies, path, "xrefs", {
           address,
-        }),
+        }).then(projectCliAnalysisResult),
       );
       expect(evidence.parameters).toEqual({ address });
       expect(evidence.normalized_result).toEqual(["0x4000"]);
@@ -197,7 +198,7 @@ describe("direct CLI cross-reference name resolution", () => {
     const empty = parseEvidence(
       await runDirectAnalysis(provider.dependencies, path, "xrefs", {
         address: "unreferenced",
-      }),
+      }).then(projectCliAnalysisResult),
     );
     expect(empty.normalized_result).toEqual([]);
     const missing = await runDirectAnalysis(
@@ -207,11 +208,15 @@ describe("direct CLI cross-reference name resolution", () => {
       {
         address: "missing_symbol",
       },
-    );
+    ).then(projectCliAnalysisResult);
     expect(missing).toMatchObject({
       code: "invalid_request",
+      remediation: {
+        action: expect.stringContaining("use different address coordinates"),
+      },
       details: { operation: "xrefs", issues: [{ path: ["address"] }] },
     });
+    expect(missing).not.toHaveProperty("recovery");
     expect(JSON.stringify(missing)).toContain("missing_symbol");
     expect(provider.closed()).toBe(2);
   });
@@ -226,8 +231,14 @@ describe("direct CLI cross-reference name resolution", () => {
       {
         address: "ambiguous",
       },
-    );
-    expect(result).toMatchObject({ code: "invalid_request" });
+    ).then(projectCliAnalysisResult);
+    expect(result).toMatchObject({
+      code: "invalid_request",
+      remediation: {
+        action: expect.stringContaining("Select an exact address"),
+      },
+    });
+    expect(result).not.toHaveProperty("recovery");
     expect(JSON.stringify(result)).toContain("0x1000");
     expect(JSON.stringify(result)).toContain("0x2000");
     expect(provider.closed()).toBe(1);
@@ -245,7 +256,7 @@ describe("direct CLI cross-reference name resolution", () => {
     const evidence = parseEvidence(
       await runDirectAnalysis(provider.dependencies, path, "xrefs", {
         address: "table_only",
-      }),
+      }).then(projectCliAnalysisResult),
     );
     expect(evidence.parameters).toEqual({ address: "table_only" });
     expect(evidence.normalized_result).toEqual(["0x4000"]);
@@ -270,7 +281,7 @@ describe("direct CLI cross-reference name resolution", () => {
         {
           address: "table_only",
         },
-      );
+      ).then(projectCliAnalysisResult);
       expect(result).toMatchObject({ code });
       expect(provider.closed()).toBe(1);
     },

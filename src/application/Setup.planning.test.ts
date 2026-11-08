@@ -301,10 +301,13 @@ describe("setup client selection", () => {
       configPath: "/codex.toml",
       format: "toml" as const,
     };
-    host.clients = [codex];
+    host.clients = [
+      codex,
+      { name: "grok_bot", configPath: "/grokbot", format: "unsupported" },
+    ];
     host.availableClients = [
       { name: "cursor", configPath: "/cursor.json" },
-      codex,
+      ...host.clients,
     ];
 
     const result = await runSetup(
@@ -330,6 +333,31 @@ describe("setup client selection", () => {
     expect(host.hopperInstalls).toBe(0);
     expect(host.skillInstalls).toBe(0);
   });
+
+  it.each([undefined, false])(
+    "omits manual clients from automatic readiness while preserving detection (skill: %s)",
+    async (installSkill) => {
+      const host = new FakeSetupHost();
+      host.clients = [
+        { name: "grok_bot", configPath: "/grokbot", format: "unsupported" },
+      ];
+      const result = await runSetup(
+        {
+          ...options(true),
+          allDetectedClients: true,
+          ...(installSkill === undefined ? {} : { installSkill }),
+        },
+        host,
+      );
+      expect(result.status).toBe("ready");
+      expect(result.doctor.scope.clients).toEqual([]);
+      expect(result.clientStates).toMatchObject([
+        { client: { name: "grok_bot" }, detected: true },
+      ]);
+      expect(result.clients).toEqual({});
+      expect(host.configurations).toBe(0);
+    },
+  );
 
   it.each([true, false])(
     "handles repeated clients once in first-selected order (dry run: %s)",

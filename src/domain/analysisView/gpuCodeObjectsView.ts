@@ -4,7 +4,7 @@ import { z } from "zod";
 import {
   gpuCodeObjectsSchema,
   gpuCodeObjectsObjectSchema,
-  gpuCodeObjectsSelectionSchema,
+  gpuCodeObjectsSelectionSchemas,
   gpuObjectSchema,
   gpuKernelSchema,
   gpuTargetSchema,
@@ -12,12 +12,16 @@ import {
   type GpuCodeObjects,
 } from "../gpu/gpuCodeObjects.js";
 import type { AnalysisError } from "../analysisErrorBase.js";
-import type {
-  AnalysisViewParent,
-  AnalysisViewRequest,
-  UnsignedAnalysisView,
-} from "./analysisView.js";
-import { analysisViewInputError } from "./analysisViewErrors.js";
+import type { AnalysisViewParent } from "./analysisViewParent.js";
+import {
+  ownedView,
+  type AdmittedView,
+  type SummaryAnalysisView,
+} from "./analysisViewShape.js";
+import {
+  ANALYSIS_VIEW_PAGE_BUDGET_RECOVERY,
+  analysisViewInputError,
+} from "./analysisViewErrors.js";
 import { createAnalysisViewResultReader } from "./analysisViewParent.js";
 import {
   boundedViewMessages,
@@ -31,16 +35,16 @@ import { AnalysisResourceConstraintError } from "../analysisErrorCore.js";
 export const gpuCodeObjectsViewRequestSchema = z.discriminatedUnion(
   "collection",
   [
-    gpuCodeObjectsSelectionSchema.options[0].extend({
+    gpuCodeObjectsSelectionSchemas.objects.extend({
       kind: z.literal("gpu-code-objects"),
     }),
-    gpuCodeObjectsSelectionSchema.options[1].extend({
+    gpuCodeObjectsSelectionSchemas.kernels.extend({
       kind: z.literal("gpu-code-objects"),
     }),
-    gpuCodeObjectsSelectionSchema.options[2].extend({
+    gpuCodeObjectsSelectionSchemas.ptx.extend({
       kind: z.literal("gpu-code-objects"),
     }),
-    gpuCodeObjectsSelectionSchema.options[3].extend({
+    gpuCodeObjectsSelectionSchemas.targets.extend({
       kind: z.literal("gpu-code-objects"),
     }),
   ],
@@ -58,16 +62,24 @@ export const gpuCodeObjectsSummarySchema = gpuCodeObjectsObjectSchema
   });
 export const gpuCodeObjectsItemsSchema = z.union([
   z.array(
-    gpuObjectSchema.partial().required({
-      id: true,
-      kind: true,
-      target: true,
-      location: true,
-      metadata_location: true,
-      payload_target: true,
-      target_consistency: true,
-      inspection: true,
-    }),
+    gpuObjectSchema
+      .partial()
+      .required({
+        id: true,
+        kind: true,
+        target: true,
+        location: true,
+        metadata_location: true,
+        payload_target: true,
+        target_consistency: true,
+        inspection: true,
+      })
+      .extend({
+        // Source defaults qualify historical full rows, never omitted page columns.
+        amd_target_metadata: gpuObjectSchema.shape.amd_target_metadata
+          .removeDefault()
+          .optional(),
+      }),
   ),
   z.array(
     gpuKernelSchema.partial().required({
@@ -193,10 +205,10 @@ const readGpuFacts = (
     };
     if (reusable) checkedGpu.set(report, checked);
   }
+  const subject = parent.subject;
   if (
-    parent.subject != null &&
-    (parent.subject.local_path !== checked.report.artifact.path ||
-      parent.subject.digest.sha256 !== checked.report.artifact.sha256)
+    subject != null &&
+    subject.digest.sha256 !== checked.report.artifact.sha256
   )
     return err(
       analysisViewInputError([
@@ -211,9 +223,12 @@ const readGpuFacts = (
 };
 export const projectGpuCodeObjectsView = (
   parent: AnalysisViewParent,
-  view: AnalysisViewRequest,
-): Result<UnsignedAnalysisView, AnalysisError> => {
-  if (view.kind !== "summary" && view.kind !== "gpu-code-objects")
+  admitted: AdmittedView,
+) => {
+  const view = ownedView<
+    SummaryAnalysisView | z.output<typeof gpuCodeObjectsViewRequestSchema>
+  >(admitted, "summary", "gpu-code-objects");
+  if (view === undefined)
     return err(
       analysisViewInputError([
         {
@@ -247,7 +262,7 @@ export const projectGpuCodeObjectsView = (
   };
   if (view.kind === "summary") {
     return ok({
-      kind: "summary",
+      kind: "summary" as const,
       view,
       ...shared,
       summary: { ...summary, limitations: shared.limitations },
@@ -297,10 +312,11 @@ export const projectGpuCodeObjectsView = (
           "memory",
           "PTX page exceeds the 1 MiB response budget; lower limit",
           { maximum_page_bytes: 1024 * 1024 },
+          ANALYSIS_VIEW_PAGE_BUDGET_RECOVERY,
         ),
       );
     return ok({
-      kind: "gpu-code-objects",
+      kind: "gpu-code-objects" as const,
       view,
       ...shared,
       source_coverage: report.coverage,
@@ -312,7 +328,7 @@ export const projectGpuCodeObjectsView = (
         byte_length: artifact.byte_length,
         text,
         offset: view.offset,
-        offset_unit: "utf16-code-unit",
+        offset_unit: "utf16-code-unit" as const,
       },
       coverage: pageViewCoverage(
         view.offset,
@@ -403,10 +419,11 @@ export const projectGpuCodeObjectsView = (
         "memory",
         "GPU page exceeds the 1 MiB response budget; select fewer fields or rows",
         { maximum_page_bytes: 1024 * 1024 },
+        ANALYSIS_VIEW_PAGE_BUDGET_RECOVERY,
       ),
     );
   return ok({
-    kind: "gpu-code-objects",
+    kind: "gpu-code-objects" as const,
     view,
     ...shared,
     source_coverage: report.coverage,

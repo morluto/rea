@@ -55,8 +55,95 @@ cliTest(
         parseEvidence(traced.structuredContent).normalized_result,
       );
       expect(trace.summary.total_seed_matches).toBeGreaterThan(0);
-      if (seed.kind === "property")
+      expect(trace.seed).toEqual(seed);
+      expect(trace.seed_node_ids).toHaveLength(
+        trace.summary.total_seed_matches,
+      );
+      const seedNodes = trace.seed_node_ids.map((id) =>
+        trace.nodes.find(({ node_id }) => node_id === id),
+      );
+      if (seed.kind === "event") {
+        expect(seedNodes).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({
+              kind: "event",
+              properties: expect.objectContaining({ event_name: "" }),
+            }),
+            expect.objectContaining({
+              kind: "listener",
+              properties: expect.objectContaining({ event_name: "" }),
+            }),
+          ]),
+        );
+      } else {
         expect(trace.summary.relevant_unknowns).toBeGreaterThan(0);
+        expect(seedNodes).toContainEqual(
+          expect.objectContaining({
+            kind: "expression",
+            properties: expect.objectContaining({
+              property_path: ["speed"],
+              property_slot_resolution: "unresolved",
+            }),
+          }),
+        );
+        const seedUnknown = trace.unknowns.find(
+          ({ node_id }) =>
+            node_id !== null && trace.seed_node_ids.includes(node_id),
+        );
+        expect(seedUnknown).toMatchObject({
+          family: "object-flow",
+          reason: "ambiguous-target",
+        });
+      }
     }
+  },
+);
+
+cliTest(
+  "traces a coercion boundary through its assigned result",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-graph-boundary-result-");
+    await writeFile(
+      join(root, "main.js"),
+      "function parse(raw) { const n = Number(raw); return n; } module.exports = parse;",
+    );
+    const analysis = await cli.run({
+      arguments: ["analyze-javascript-application", root, "--format", "json"],
+    });
+    expect(analysis.exitCode, analysis.stderr).toBe(0);
+    const application = parseEvidence(analysis.json);
+    const graph = javascriptApplicationAnalysisResultSchema.parse(
+      application.normalized_result,
+    ).semantic_graph;
+    if (graph === null) throw new Error("Expected semantic graph");
+    const read = graph.nodes.find((node) =>
+      node.identity.role_key.endsWith("read:n"),
+    );
+    if (read === undefined) throw new Error("Expected result read");
+    const query = {
+      seed: { kind: "boundary-field", field: "Number" },
+      direction: "forward-influence",
+    };
+    const request = join(root, "request.json");
+    await writeFile(request, JSON.stringify({ application, query }));
+    const result = await cli.run({
+      arguments: ["trace-javascript-semantics", request, "--format", "json"],
+    });
+    expect(result.exitCode, result.stderr).toBe(0);
+    const trace = javaScriptSemanticTraceResultSchema.parse(
+      parseEvidence(result.json).normalized_result,
+    );
+    expect(trace.nodes).toContainEqual(read);
+    const call = await cli.sharedMcpCall?.();
+    if (call === undefined) throw new Error("Expected shared MCP session");
+    const mcp = await call("trace_javascript_semantics", {
+      application,
+      query,
+    });
+    expect(mcp.isError, JSON.stringify(mcp.content)).not.toBe(true);
+    const mcpTrace = javaScriptSemanticTraceResultSchema.parse(
+      parseEvidence(mcp.structuredContent).normalized_result,
+    );
+    expect(mcpTrace.nodes).toContainEqual(read);
   },
 );

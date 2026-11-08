@@ -1,3 +1,4 @@
+import { projectCliAnalysisResult } from "../../../src/cli/projectCliAnalysisResult.js";
 import { createHash } from "node:crypto";
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -122,7 +123,6 @@ it("retains cancelled source read ownership until service close retries it", asy
   });
 
   const cancelled = await service.trace(input, { signal: controller.signal });
-  expect(cancelled.ok).toBe(false);
   if (cancelled.ok) throw new Error("Expected cancelled source read");
   const expectedAcquisition: WebArtifactAcquisition = {
     kind: "web-artifact-acquisition",
@@ -150,7 +150,6 @@ it("retains cancelled source read ownership until service close retries it", asy
 
   injected.abortController = undefined;
   const blocked = await service.trace(input);
-  expect(blocked.ok).toBe(false);
   if (blocked.ok) throw new Error("Expected retained cleanup to block load");
   expect(blocked.error.cleanupIncomplete).toBe(true);
   expect(injected.closeAttempts).toBe(2);
@@ -177,7 +176,7 @@ it("retains cancelled source read ownership until service close retries it", asy
     "web-module-artifacts",
     "trace_web_module_imports",
     new AbortController().signal,
-  );
+  ).then(projectCliAnalysisResult);
   expect(finalized).toMatchObject({
     code: "cleanup_incomplete",
     details: { resources: [sourcePath] },
@@ -355,7 +354,9 @@ it("preserves both web cleanup owners' resources, diagnostics and recovery actio
       },
     },
   );
-  const projected = [artifacts, resolver].map(projectAnalysisError);
+  const projected = [artifacts, resolver].map((failure) =>
+    projectAnalysisError(failure),
+  );
   await expect(service.close()).rejects.toMatchObject({
     cleanupResources: ["artifact-root", "shared-resource", "resolver-root"],
     diagnostics: { failures: projected },

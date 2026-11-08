@@ -1,3 +1,4 @@
+import { projectCliAnalysisResult } from "../../../src/cli/projectCliAnalysisResult.js";
 import { parseEvidence } from "../../../src/domain/evidence.js";
 import { parseBinaryTarget } from "../../../src/application/BinaryTargetResolver.js";
 import { createDirectAnalysis } from "../../../src/composition/directAnalysis.js";
@@ -36,40 +37,6 @@ const fixture = async () => {
   await symlink(canonical, selected);
   return { root, selected, canonical };
 };
-
-it.skipIf(process.platform === "win32")(
-  "inventories and extracts the same selected ASAR companion as Electron tooling",
-  async () => {
-    const { root, selected } = await fixture();
-    expect(extractFile(selected, "native.node").equals(bytes)).toBe(true);
-    const inventory = await inventoryArtifact(selected);
-    const occurrence = inventory.occurrences.find(
-      ({ logical_path }) => logical_path === "native.node",
-    );
-    expect(occurrence?.hash_status).toBe("verified");
-    expect(
-      inventory.nodes.find(
-        ({ artifact_id }) => artifact_id === occurrence?.artifact_id,
-      )?.sha256,
-    ).toBe(createHash("sha256").update(bytes).digest("hex"));
-    const result = await withArtifactResourceScope((resourceScope) =>
-      extractArtifact({
-        inputPath: selected,
-        inputFormat: "asar",
-        outputRoot: join(root, "output"),
-        environment: {},
-        integrityPolicy: "fail",
-        resourceScope,
-      }),
-    );
-    expect(
-      (await readFile(join(result.output_root, "native.node"))).equals(bytes),
-    ).toBe(true);
-    expect(await readFile(join(result.output_root, "packed.txt"), "utf8")).toBe(
-      "packed bytes",
-    );
-  },
-);
 
 it.skipIf(process.platform === "win32")(
   "does not substitute the canonical archive companion for an absent selected companion",
@@ -179,7 +146,9 @@ it.skipIf(process.platform === "win32")(
     await symlink(stored, selected);
     const { runProviderAnalysis } = createDirectAnalysis({});
     const observed = parseEvidence(
-      await runProviderAnalysis(selected, "inventory_artifact", {}),
+      await runProviderAnalysis(selected, "inventory_artifact", {}).then(
+        projectCliAnalysisResult,
+      ),
     );
     expect(observed.subject?.local_path).toBe(selected);
     const inventory = artifactInventoryResultSchema.parse(

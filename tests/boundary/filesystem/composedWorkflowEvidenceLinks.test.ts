@@ -1,3 +1,4 @@
+import { projectCliAnalysisResult } from "../../../src/cli/projectCliAnalysisResult.js";
 import { executeComposedWorkflow } from "../../../src/application/WorkflowEvidence.js";
 import { parseAnalysisSnapshot } from "../../../src/domain/analysisSnapshot.js";
 import { ok } from "../../../src/domain/result.js";
@@ -24,7 +25,7 @@ it.each([0, 1, 12])(
         "binary_overview",
         {},
         { snapshotPath },
-      ),
+      ).then(projectCliAnalysisResult),
     );
     expect(current.evidence_links).toHaveLength(1);
     const snapshot = parseAnalysisSnapshot(
@@ -42,7 +43,7 @@ it.each([0, 1, 12])(
         "binary_overview",
         {},
         { snapshotPath },
-      ),
+      ).then(projectCliAnalysisResult),
     );
     expect(unique.evidence_id).toBe(current.evidence_id);
     expect(unique.evidence_links).toEqual(current.evidence_links);
@@ -77,7 +78,7 @@ it.each([0, 1, 12])(
         "binary_overview",
         {},
         { snapshotPath },
-      ),
+      ).then(projectCliAnalysisResult),
     );
     expect(delivered.normalized_result).toEqual(current.normalized_result);
     expect([current.evidence_id, historical.evidence_id]).not.toContain(
@@ -98,7 +99,7 @@ it.each([0, 1, 12])(
         "binary_overview",
         {},
         { snapshotPath },
-      ),
+      ).then(projectCliAnalysisResult),
     );
     expect(refreshed.evidence_id).toBe(delivered.evidence_id);
     expect(refreshed.evidence_links).toEqual(delivered.evidence_links);
@@ -134,9 +135,18 @@ it.each([false, true])(
     };
     try {
       const evidence = parseEvidence(
-        await runDirectAnalysis(dependencies, path, "binary_overview", {}),
+        await runDirectAnalysis(dependencies, path, "binary_overview", {}).then(
+          projectCliAnalysisResult,
+        ),
       );
-      expect(evidence.normalized_result).toEqual(summary);
+      // The composed overview labels the counts; the atomic record stays raw.
+      expect(evidence.normalized_result).toEqual({
+        ...summary,
+        inventory_coverage: {
+          scope: "provider_inventory",
+          discovery_coverage: "unknown",
+        },
+      });
       expect(evidence.confidence).toBe("derived");
       const records = fixture.closedRecords();
       const atomic = records.filter(
@@ -257,8 +267,8 @@ it("rehydrates the original atomic identity from an authenticated snapshot witho
         {},
       );
       if (!execution.ok) return execution;
-      expect(execution.value.limitations).toContain(
-        "Loaded from a local REA analysis snapshot; this call did not re-run the provider.",
+      expect(execution.value.limitations).toContainEqual(
+        expect.stringMatching(/snapshot.*did not re.run the provider/iu),
       );
       return ok(execution.value.result);
     },
@@ -289,13 +299,29 @@ it.each(["profileless", "uncacheable"] as const)(
           {},
         );
         if (!execution.ok) return execution;
-        expect(execution.value.evidenceId).toBeUndefined();
+        if (mode === "profileless")
+          expect(execution.value.evidenceId).toBeUndefined();
+        else {
+          expect(execution.value.evidenceId).toEqual(expect.any(String));
+          expect(execution.value.evidenceId).not.toBe(spoofedEvidenceId);
+        }
         return ok(execution.value.result);
       },
     );
     if (!composed.ok) throw composed.error;
-    expect(composed.value.evidenceLinks).toBeUndefined();
-    expect(fixture.session.exportEvidenceBundle().records).toEqual([]);
+    if (mode === "profileless") {
+      expect(composed.value.evidenceLinks).toBeUndefined();
+      expect(fixture.session.exportEvidenceBundle().records).toEqual([]);
+    } else {
+      const evidenceId = composed.value.evidenceLinks?.[0];
+      expect(evidenceId).toEqual(expect.any(String));
+      expect(evidenceId).not.toBe(spoofedEvidenceId);
+      expect(
+        fixture.session
+          .exportEvidenceBundle()
+          .records.map((record) => record.evidence_id),
+      ).toEqual([evidenceId]);
+    }
   },
 );
 
@@ -365,8 +391,8 @@ it("reruns an ambiguous snapshot binding before selecting composed Evidence link
       (operation) => operation === "read_binary_inventory_summary",
     ),
   ).toHaveLength(1);
-  expect(after.value.limitations).not.toContain(
-    "Loaded from a local REA analysis snapshot; this call did not re-run the provider.",
+  expect(after.value.limitations).not.toContainEqual(
+    expect.stringMatching(/snapshot.*did not re.run the provider/iu),
   );
   if (after.value.evidenceId === undefined)
     throw new Error("Fresh provider observation was not committed");

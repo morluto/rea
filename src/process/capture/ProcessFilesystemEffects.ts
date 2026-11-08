@@ -1,3 +1,4 @@
+import { symlinkTargetIdentity } from "../../domain/process/symlinkTarget.js";
 import type {
   FilesystemCheckpoint,
   ProcessFilesystemSnapshot,
@@ -73,8 +74,35 @@ export const classifyFilesystemEffects = (
       const metadataChanged =
         beforeFile.type !== afterFile.type ||
         beforeFile.mode !== afterFile.mode ||
-        beforeFile.size !== afterFile.size ||
+        beforeFile.size !== afterFile.size;
+      const beforeTarget =
+        beforeFile.type === "symlink"
+          ? symlinkTargetIdentity(beforeFile)
+          : null;
+      const afterTarget =
+        afterFile.type === "symlink" ? symlinkTargetIdentity(afterFile) : null;
+      // Different decoded spellings prove different bytes even when an old
+      // capture cannot recover either target's complete byte identity.
+      const targetTextChanged =
+        beforeFile.type === "symlink" &&
+        afterFile.type === "symlink" &&
+        beforeFile.symlink_target !== null &&
+        afterFile.symlink_target !== null &&
         beforeFile.symlink_target !== afterFile.symlink_target;
+      if (
+        !metadataChanged &&
+        !targetTextChanged &&
+        beforeFile.type === "symlink" &&
+        afterFile.type === "symlink" &&
+        (beforeTarget === null || afterTarget === null)
+      )
+        return {
+          path,
+          status: "unknown",
+          before: beforeFile,
+          after: afterFile,
+          reason: "A legacy symlink target has no unambiguous byte identity.",
+        } as const;
       if (
         !metadataChanged &&
         beforeFile.type === "file" &&
@@ -92,7 +120,10 @@ export const classifyFilesystemEffects = (
       return {
         path,
         status:
-          metadataChanged || beforeFile.sha256 !== afterFile.sha256
+          metadataChanged ||
+          targetTextChanged ||
+          beforeTarget !== afterTarget ||
+          beforeFile.sha256 !== afterFile.sha256
             ? "modified"
             : "unchanged",
         before: beforeFile,

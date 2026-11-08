@@ -53,12 +53,12 @@ const pefileTableDivergence = (
   fileBytes: number,
 ): string | null => {
   const label = `Standard import descriptor ${String(dll.index)}`;
-  if (
-    dll.name === null ||
-    dll.name.length >= PEFILE_MAX_NAME_BYTES ||
-    !PEFILE_DLL_NAME.test(dll.name)
-  )
-    return `${label} DLL name is unreadable or has a length or characters pefile replaces with *invalid*.`;
+  if (dll.name === null)
+    return `${label} DLL name is unreadable; pefile's name selection cannot be matched.`;
+  if (dll.name.length >= PEFILE_MAX_NAME_BYTES)
+    return `${label} DLL name reaches pefile's 512-byte read limit; pefile can hash a truncated name or replace an invalid prefix with *invalid*.`;
+  if (!PEFILE_DLL_NAME.test(dll.name))
+    return `${label} DLL name contains characters pefile replaces with *invalid*.`;
   if (dll.functions.length === 0)
     return `${label} lists no functions; pefile then falls back to the import address table or drops the descriptor.`;
   const width = bits / 8;
@@ -105,10 +105,12 @@ const rowDivergence = (
       return "has an ordinal thunk whose low 31-bit payload exceeds 16 bits; pefile discards the table.";
     return row.ordinal === 0 ? "imports ordinal 0, which pefile omits." : null;
   }
-  return row.name === null ||
-    row.name.length >= PEFILE_MAX_NAME_BYTES ||
-    !PEFILE_FUNCTION_NAME.test(row.name)
-    ? "has a function name with a length or characters pefile treats as invalid and omits."
+  if (row.name === null)
+    return "has an unreadable function name; pefile's name selection cannot be matched.";
+  if (row.name.length >= PEFILE_MAX_NAME_BYTES)
+    return "has a function name reaching pefile's 512-byte read limit; pefile can hash a truncated name or omit an invalid prefix.";
+  return !PEFILE_FUNCTION_NAME.test(row.name)
+    ? "has a function name with characters pefile treats as invalid and omits."
     : null;
 };
 

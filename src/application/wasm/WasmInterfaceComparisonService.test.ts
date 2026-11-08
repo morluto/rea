@@ -1,9 +1,11 @@
-import { expect, it } from "vitest";
+import { expect, it, vi } from "vitest";
 import { setImmediate as nextTurn } from "node:timers/promises";
 import { createEvidence, parseEvidence } from "../../domain/evidence.js";
 import { projectAnalysisError } from "../../domain/analysisErrorProjection.js";
 import { wasmInterfaceComparisonSchema } from "../../contracts/wasm/wasmComparisonContracts.js";
 import { compareWasmInterfaces } from "./WasmInterfaceComparisonService.js";
+import { retainAnalysisResultSources } from "../investigation/recordEvidenceSources.js";
+import { ok } from "../../domain/result.js";
 import {
   WASM_INTERFACE_REPRESENTATION_BYTES,
   wasmInterfaceEntryRepresentationBytes,
@@ -57,7 +59,9 @@ const compare = async (
 ) => {
   const result = await compareWasmInterfaces({ left, right, scope: "both" });
   if (!result.ok) throw result.error;
-  return wasmInterfaceComparisonSchema.parse(result.value.normalized_result);
+  return wasmInterfaceComparisonSchema.parse(
+    result.value.evidence.normalized_result,
+  );
 };
 
 it("reports all five comparison states, including duplicate ambiguity and explicit selected scope", async () => {
@@ -93,7 +97,7 @@ it("reports all five comparison states, including duplicate ambiguity and explic
     scope: "imports",
   });
   if (!selected.ok) throw selected.error;
-  expect(selected.value.normalized_result).toMatchObject({
+  expect(selected.value.evidence.normalized_result).toMatchObject({
     changes: [],
     coverage: "complete-within-inputs",
   });
@@ -131,7 +135,7 @@ it("withholds absence claims for historical or partial inventories and unsupport
   });
 });
 
-it("authenticates semantic Evidence and binds display subject and selection identity", async () => {
+it("authenticates semantic Evidence and rejects altered artifact digests", async () => {
   const left = JSON.parse(JSON.stringify(evidence(facts("f"))));
   left.normalized_result.interface.entries[0].name = "tampered";
   expect(
@@ -142,7 +146,7 @@ it("authenticates semantic Evidence and binds display subject and selection iden
     }),
   ).toMatchObject({ ok: false, error: { _tag: "AnalysisInputError" } });
   const rebound = JSON.parse(JSON.stringify(evidence(facts("f"))));
-  rebound.subject.local_path = "/other.wasm";
+  rebound.subject.digest.sha256 = "b".repeat(64);
   expect(
     await compareWasmInterfaces({
       left: rebound,
@@ -164,6 +168,40 @@ it("requires the producer's file subject format even for authentic Evidence", as
   ).toMatchObject({ ok: false, error: { _tag: "AnalysisInputError" } });
 });
 
+it.each(["left", "right"] as const)(
+  "names the %s argument whose Evidence is rejected",
+  async (side) => {
+    const tampered = JSON.parse(JSON.stringify(evidence(facts("f"))));
+    tampered.normalized_result.interface.entries[0].name = "tampered";
+    const report = wasmArtifactFixture();
+    const otherSelection = createEvidence(
+      {
+        path: report.artifact.path,
+        sha256: report.artifact.sha256,
+        format: "file",
+      },
+      { id: "fixture", name: "typed fixture", version: "1" },
+      {
+        operation: "inspect_wasm_artifact",
+        parameters: { path: "/artifacts/other.wasm" },
+        result: report,
+        confidence: "observed",
+      },
+    );
+    for (const rejected of [tampered, otherSelection])
+      expect(
+        await compareWasmInterfaces({
+          left: side === "left" ? rejected : evidence(facts("f")),
+          right: side === "right" ? rejected : evidence(facts("f")),
+          scope: "both",
+        }),
+      ).toMatchObject({
+        ok: false,
+        error: { issues: [{ path: [side], reason: "invalid_value" }] },
+      });
+  },
+);
+
 it("resolves exact retained references and permits cancellation between comparison batches", async () => {
   const left = evidence(facts("f"));
   const right = evidence(facts("f", "i64"));
@@ -180,7 +218,7 @@ it("resolves exact retained references and permits cancellation between comparis
     id === left.evidence_id ? left : right,
   );
   if (!result.ok) throw result.error;
-  expect(result.value.evidence_links).toEqual([
+  expect(result.value.evidence.evidence_links).toEqual([
     left.evidence_id,
     right.evidence_id,
   ]);
@@ -252,7 +290,6 @@ it("refuses two admitted inventories that together exceed the comparison cap", a
     right: evidence(right),
     scope: "both",
   });
-  expect(combined.ok).toBe(false);
   if (combined.ok) throw new Error("Expected comparison allowance refusal");
   const projected = projectAnalysisError(combined.error);
   expect(projected.retryable).toBe(false);
@@ -315,6 +352,18 @@ it("retains the complete comparison when cancelled at the final handoff", async 
   if (result.ok) throw new Error("Expected cancellation during final handoff");
   expect(result.error).toMatchObject({ _tag: "AnalysisCancelledError" });
   expect(result.error.cause).toBe(reason);
+  expect(result.sourceEvidence).toEqual([left, right]);
+  const retainedSources: string[] = [];
+  const retained = retainAnalysisResultSources(
+    "compare_wasm_interfaces",
+    (source) => {
+      retainedSources.push(source.evidence_id);
+      return ok("added");
+    },
+    result,
+  );
+  expect(retained.ok).toBe(false);
+  expect(retainedSources).toEqual([left.evidence_id, right.evidence_id]);
   const partial = parseEvidence(result.error.partialObservation);
   expect(partial).toMatchObject({
     operation: "compare_wasm_interfaces",
@@ -328,4 +377,24 @@ it("retains the complete comparison when cancelled at the final handoff", async 
     coverage: "complete-within-inputs",
     summary: { changed: 1, added: 0, removed: 0, unchanged: 0, unknown: 0 },
   });
+});
+
+it("does not report unexpected output-construction failures as invalid caller Evidence", async () => {
+  const failure = new Error("comparison output construction failed");
+  const parse = vi
+    .spyOn(wasmInterfaceComparisonSchema, "parse")
+    .mockImplementation(() => {
+      throw failure;
+    });
+  try {
+    await expect(
+      compareWasmInterfaces({
+        left: evidence(facts("f")),
+        right: evidence(facts("f")),
+        scope: "both",
+      }),
+    ).rejects.toBe(failure);
+  } finally {
+    parse.mockRestore();
+  }
 });

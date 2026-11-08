@@ -413,7 +413,6 @@ it.skipIf(process.platform === "win32")(
         outputBytes: 1024 * 1024,
         signal: controller.signal,
       });
-      expect(result.ok).toBe(false);
       if (result.ok) throw new Error("Kuna command unexpectedly ran");
       const originatingError = result.error;
       const originalCause = originatingError.cause;
@@ -473,11 +472,9 @@ it.skipIf(process.platform === "win32")(
       if (first.ok)
         throw new Error("hash descriptor close unexpectedly passed");
       const blocked = await request();
-      expect(blocked.ok).toBe(false);
       if (blocked.ok) throw new Error("Kuna ran with retained hash cleanup");
       expect(blocked.error).toMatchObject({ cleanupIncomplete: true });
       const prepared = await commands.prepare();
-      expect(prepared.ok).toBe(false);
       if (prepared.ok) throw new Error("prepare passed retained hash cleanup");
       expect(prepared.error).toMatchObject({ cleanupIncomplete: true });
 
@@ -535,7 +532,6 @@ it.skipIf(process.platform === "win32")(
       });
 
       const blocked = await request();
-      expect(blocked.ok).toBe(false);
       if (blocked.ok) throw new Error("Kuna ran with retained hash cleanup");
       expect(blocked.error).toMatchObject({ cleanupIncomplete: true });
       expect(injected.closeCalls).toBe(2);
@@ -607,7 +603,6 @@ it.skipIf(process.platform === "win32")(
     injected.releaseCloseFailures = false;
 
     const resolved = await binary.previewTarget(fixture.target);
-    expect(resolved.ok).toBe(false);
     if (resolved.ok) throw new Error("Kuna readiness unexpectedly succeeded");
     expect(resolved.error).toMatchObject({
       cleanupIncomplete: true,
@@ -760,7 +755,7 @@ it.skipIf(process.platform === "win32")(
           reason: expect.stringContaining("injected read fault"),
           diagnostics: {
             version: "1.833",
-            verified: true,
+            verified: false,
             identity_observation_phase: "post_probe",
             identity_observation_failure: "injected read fault",
             before_probe_sha256: beforeProbeFingerprint.sha256,

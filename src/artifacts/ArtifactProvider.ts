@@ -1,3 +1,4 @@
+import type { EspFlashSelection } from "../domain/firmware/espFlashLocation.js";
 import type { AnalysisSettingsReader } from "../domain/analysisSettings.js";
 import { runtimeAsarHeaderAdmission } from "../config/runtimeAnalysisSettings.js";
 import { artifactTargetRefusal } from "../domain/apple/artifactTargetApplicability.js";
@@ -20,6 +21,7 @@ import {
 } from "./apple/KeyedArchiveReader.js";
 import { traceDylibResolution } from "./apple/DylibResolutionReader.js";
 import { dirname } from "node:path";
+import { withArtifactTargetIdentity } from "./withArtifactTargetIdentity.js";
 import { inventoryArtifact } from "./inventory/ArtifactInventory.js";
 import { extractArtifact } from "./extraction/ArtifactExtraction.js";
 import { analyzeInterfaceBuilderBundle } from "./apple/InterfaceBuilderAnalysis.js";
@@ -242,13 +244,21 @@ class ArtifactClient implements AnalysisClient {
       }
       if (operation === "decode_interface_builder") {
         const limits = interfaceBuilderLimitsSchema.parse(parameters);
-        const result = await analyzeInterfaceBuilderBundle({
-          bundlePath: this.target.sourcePath ?? this.target.path,
-          targetSha256: this.target.sha256,
-          limits,
-          resources: this.#resourceScope,
-          ...(options?.signal === undefined ? {} : { signal: options.signal }),
-        });
+        const result = await withArtifactTargetIdentity(
+          this.target,
+          this.#resourceScope,
+          () =>
+            analyzeInterfaceBuilderBundle({
+              bundlePath: this.target.sourcePath ?? this.target.path,
+              targetSha256: this.target.sha256,
+              limits,
+              resources: this.#resourceScope,
+              ...(options?.signal === undefined
+                ? {}
+                : { signal: options.signal }),
+            }),
+          options?.signal,
+        );
         return ok(
           createAnalysisExecution(result, ARTIFACT_GRAPH_PROVIDER, {
             limitations: result.limitations,
@@ -260,8 +270,12 @@ class ArtifactClient implements AnalysisClient {
         );
       }
       if (operation === "inspect_keyed_archive") {
+        // A bundle target reads bundle-relative archives whatever its
+        // executable admitted as; only a plist opened on its own is standalone.
         const standalone =
-          this.target.kind === "artifact" && this.target.format === "plist";
+          this.target.bundleInfoPlist === undefined &&
+          this.target.kind === "artifact" &&
+          this.target.format === "plist";
         const selectedPath = artifactTargetSelectedPath(this.target);
         const result = standalone
           ? await inspectStandaloneKeyedArchive({
@@ -275,16 +289,22 @@ class ArtifactClient implements AnalysisClient {
                 ? {}
                 : { signal: options.signal }),
             })
-          : await inspectBundleKeyedArchive({
-              bundlePath: this.target.sourcePath ?? this.target.path,
-              targetSha256: this.target.sha256,
-              parameters,
-              platform: this.platform,
-              resources: this.#resourceScope,
-              ...(options?.signal === undefined
-                ? {}
-                : { signal: options.signal }),
-            });
+          : await withArtifactTargetIdentity(
+              this.target,
+              this.#resourceScope,
+              () =>
+                inspectBundleKeyedArchive({
+                  bundlePath: this.target.sourcePath ?? this.target.path,
+                  targetSha256: this.target.sha256,
+                  parameters,
+                  platform: this.platform,
+                  resources: this.#resourceScope,
+                  ...(options?.signal === undefined
+                    ? {}
+                    : { signal: options.signal }),
+                }),
+              options?.signal,
+            );
         return ok(
           createAnalysisExecution(result, ARTIFACT_GRAPH_PROVIDER, {
             limitations: result.limitations,
@@ -317,7 +337,11 @@ class ArtifactClient implements AnalysisClient {
                 : undefined,
             selectedPath: this.target.artifactSelectedPath,
             inputFormat: this.target.format,
+            espFlashSelection: espFlashSelection(this.target),
             outputRoot: parsed.output_root,
+            ...(parsed.occurrence_ids === undefined
+              ? {}
+              : { occurrenceIds: parsed.occurrence_ids }),
             environment: this.environment,
             asarHeaderAdmission: runtimeAsarHeaderAdmission(
               this.environment,
@@ -401,14 +425,20 @@ class ArtifactClient implements AnalysisClient {
     options?: ExecutionOptions,
   ) {
     const bundlePath = this.target.sourcePath ?? this.target.path;
-    const result = await analyzeAppleAssetCatalogs({
-      environment: this.environment,
-      bundlePath,
-      resources: this.#resourceScope,
-      targetSha256: this.target.sha256,
-      page: parameters,
-      ...(options?.signal === undefined ? {} : { signal: options.signal }),
-    });
+    const result = await withArtifactTargetIdentity(
+      this.target,
+      this.#resourceScope,
+      () =>
+        analyzeAppleAssetCatalogs({
+          environment: this.environment,
+          bundlePath,
+          resources: this.#resourceScope,
+          targetSha256: this.target.sha256,
+          page: parameters,
+          ...(options?.signal === undefined ? {} : { signal: options.signal }),
+        }),
+      options?.signal,
+    );
     return ok(
       createAnalysisExecution(result, ARTIFACT_GRAPH_PROVIDER, {
         limitations: result.limitations,
@@ -521,11 +551,23 @@ class ArtifactClient implements AnalysisClient {
         this.environment,
         this.settings,
       ),
+      espFlashSelection: espFlashSelection(this.target),
       ...(options?.signal === undefined ? {} : { signal: options.signal }),
       integrity: parsed.integrity_policy,
     });
   }
 }
+
+/** Caller inputs of an explicitly selected ESP flash image, for its readers. */
+const espFlashSelection = (
+  target: BinaryTarget,
+): EspFlashSelection | undefined =>
+  target.format === "esp-flash-image" && target.espFlash.selected
+    ? {
+        flashOffset: target.espFlash.flashOffset ?? undefined,
+        partitionTableOffset: target.espFlash.partitionTableOffset ?? undefined,
+      }
+    : undefined;
 
 const isArtifactOperation = (
   operation: AnalysisOperation,

@@ -35,6 +35,7 @@ import type { OwnedLease } from "../process/OwnedLease.js";
 import {
   downloadHopperPackage,
   HOPPER_DOWNLOAD_BYTES,
+  HOPPER_METADATA_TIMEOUT_MS,
 } from "./HopperDownload.js";
 import {
   HOPPER_LINUX_PRIMARY_FINGERPRINT,
@@ -52,8 +53,6 @@ import { withRegularFile } from "./RegularFileRead.js";
 
 /** Metadata/key inspection budget, independent of the compressed package budget. */
 const RELEASE_METADATA_BYTES = 1024 * 1024;
-/** Small feed/key requests must not consume the full package-download deadline. */
-const RELEASE_METADATA_TIMEOUT_MS = 10_000;
 const cacheRecordSchema = z.object({
   format: z.literal("rea-signed-hopper-release-v1"),
   family: z.enum(["deb", "rpm", "arch"]),
@@ -122,14 +121,14 @@ export class LinuxHopperPublisher {
         const response = await downloadHopperPackage(HOPPER_RELEASES_URL, {
           ...(signal === undefined ? {} : { signal }),
           maxBytes: RELEASE_METADATA_BYTES,
-          timeoutMs: RELEASE_METADATA_TIMEOUT_MS,
+          timeoutMs: HOPPER_METADATA_TIMEOUT_MS,
         });
         if (!response.ok)
-          throw new HopperReleaseError(
-            "release_metadata",
-            "The official Hopper release feed is unavailable.",
-          );
-        const decoded = parseHopperReleaseJson(response.bytes);
+          throw HopperReleaseError.fromDownload("release_metadata", {
+            request: "release_feed",
+            ...response.error,
+          });
+        const decoded = parseHopperReleaseJson(response.value);
         if (!decoded.ok) throw decoded.cause;
         this.#feed = parseLinuxHopperReleases(decoded.value);
       }
@@ -186,14 +185,14 @@ export class LinuxHopperPublisher {
         const response = await downloadHopperPackage(HOPPER_PUBLIC_KEY_URL, {
           ...(signal === undefined ? {} : { signal }),
           maxBytes: RELEASE_METADATA_BYTES,
-          timeoutMs: RELEASE_METADATA_TIMEOUT_MS,
+          timeoutMs: HOPPER_METADATA_TIMEOUT_MS,
         });
         if (!response.ok)
-          throw new HopperReleaseError(
-            "verification_unavailable",
-            "The official Hopper public key is unavailable.",
-          );
-        publicKey = decodeUtf8(response.bytes);
+          throw HopperReleaseError.fromDownload("verification_unavailable", {
+            request: "public_key",
+            ...response.error,
+          });
+        publicKey = decodeUtf8(response.value);
       }
       const packageSha256 = createHash("sha256").update(bytes).digest("hex");
       // Every read still validates file identity, byte bounds and selected metadata.
@@ -306,6 +305,7 @@ export class LinuxHopperPublisher {
       );
       const lease = await this.#acquireCacheLease(
         verified.release.main_exe_hash,
+        resources,
         signal,
       );
       await this.#withOwnedResource(
@@ -412,6 +412,7 @@ export class LinuxHopperPublisher {
 
   async #acquireCacheLease(
     digest: string,
+    resources: ArtifactResourceScope,
     signal?: AbortSignal,
   ): Promise<OwnedLease> {
     const deadline = performance.now() + 120_000;
@@ -423,6 +424,7 @@ export class LinuxHopperPublisher {
         cacheDirectory: this.cacheRoot,
         launcherSha256: digest,
         runId,
+        resources,
       });
       if (acquired.acquired) return acquired.lease;
       const remaining = deadline - performance.now();
@@ -530,12 +532,12 @@ export class LinuxHopperPublisher {
             signal === undefined ? {} : { signal },
           );
           if (!response.ok)
-            throw new HopperReleaseError(
-              "download",
-              "The official Hopper package is unavailable for publisher verification.",
-            );
+            throw HopperReleaseError.fromDownload("download", {
+              request: "package",
+              ...response.error,
+            });
           const archive = join(root, "archive");
-          await writeFile(archive, response.bytes, { flag: "wx", mode: 0o600 });
+          await writeFile(archive, response.value, { flag: "wx", mode: 0o600 });
           const verified = await this.#verifyArchive(
             family,
             selected.value,

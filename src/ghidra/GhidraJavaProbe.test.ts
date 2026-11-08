@@ -1,3 +1,8 @@
+import { EventEmitter } from "node:events";
+import { PassThrough } from "node:stream";
+import type { RetainedResourceScope } from "../application/AnalysisProvider.js";
+import { AnalysisError } from "../domain/analysisErrorBase.js";
+import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
@@ -265,4 +270,82 @@ it("preserves scalar whitespace for architecture and bitness validation", () => 
       unparsedBits: "64 ",
     },
   });
+});
+
+it("preserves each prerequisite cleanup retry outcome until the same owner releases", async () => {
+  const child = Object.assign(new EventEmitter(), {
+    stdout: new PassThrough(),
+    stderr: new PassThrough(),
+    stdin: null,
+    exitCode: null as number | null,
+    signalCode: null,
+    kill: () => false,
+  });
+  let attempt = 0;
+  const outcomes = [
+    { cleaned: false as const, reason: "initial observation denied" },
+    { cleaned: false as const, reason: "retry permission denied" },
+    { cleaned: false as const, reason: "retry identity unreadable" },
+    { cleaned: true as const, signaled: false },
+  ];
+  const retained: Parameters<RetainedResourceScope["retain"]>[0][] = [];
+  const result = await probeGhidraJava(
+    "/selected/bin/java",
+    {},
+    {
+      resourceOwner: {
+        retain: (owner) => {
+          retained.push(owner);
+        },
+        run: (work) => work(),
+      },
+      launcher: async () => {
+        setImmediate(() => {
+          child.stderr.end("java.version = 21\njava.home = /selected/jdk\n");
+          child.stdout.end();
+          child.exitCode = 0;
+          child.emit("exit", 0, null);
+          child.emit("close", 0, null);
+        });
+        return {
+          process: child,
+          ownership: {
+            runId: "probe-retry",
+            leaderPid: 12345,
+            processGroupId: 12345,
+          },
+          cleanup: async () => outcomes[attempt++]!,
+        };
+      },
+    },
+  );
+  if (result.ok || !(result.error instanceof AnalysisError))
+    throw new Error("Expected the probe cleanup failure");
+  expect(result.error.cleanupIncomplete).toBe(true);
+  expect(retained).toHaveLength(1);
+  const failures: ProviderCleanupError[] = [];
+  for (const reason of [
+    "retry permission denied",
+    "retry identity unreadable",
+  ]) {
+    const failure: unknown = await retained[0]!
+      .close()
+      .catch((cause: unknown) => cause);
+    expect(failure).toBeInstanceOf(ProviderCleanupError);
+    if (!(failure instanceof ProviderCleanupError)) throw failure;
+    expect(failure.diagnostics).toMatchObject({
+      reason,
+      process_cleanup: { reason },
+    });
+    expect(failure.cause).toHaveProperty(
+      "cleanupFailure",
+      "initial observation denied",
+    );
+    expect(failure.cleanupIncomplete).toBe(true);
+    failures.push(failure);
+  }
+  await retained[0]!.close();
+  expect(attempt).toBe(4);
+  expect(failures.every((failure) => !failure.cleanupIncomplete)).toBe(true);
+  expect(result.error.cleanupIncomplete).toBe(false);
 });

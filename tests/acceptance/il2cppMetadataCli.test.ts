@@ -23,6 +23,7 @@ import {
 } from "../../src/domain/evidenceBundle.js";
 import { jsonObjectSchema } from "../../src/domain/jsonValue.js";
 import { il2cppMetadataSchema } from "../../src/domain/il2cpp/il2cppMetadata.js";
+import { createEmptyIl2cppMetadataFixture } from "../../src/domain/il2cpp/il2cppMetadata.fixture.js";
 import {
   createIl2cppMetadataFixture,
   createLinkedIl2cppMetadataFixture,
@@ -54,6 +55,135 @@ const parseMetadataSummary = (value: unknown) =>
   il2cppMetadataSummaryViewResultSchema.parse(
     parseEvidence(value).normalized_result,
   );
+
+cliTest(
+  "rejects out-of-range module image references through CLI and MCP",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-il2cpp-module-image-");
+    const path = join(root, "global-metadata.dat");
+    const binaryPath = join(root, "GameAssembly.dylib");
+    await writeFile(
+      path,
+      createLinkedIl2cppMetadataFixture({ version: 39 }).bytes,
+    );
+    await writeFile(binaryPath, createIl2cppBinaryFixture());
+    const produced = await runFileCli(cli, {
+      arguments: [
+        "inspect-il2cpp-metadata",
+        path,
+        "--binary",
+        binaryPath,
+        "--detail",
+        "complete",
+        "--json",
+      ],
+    });
+    expect(produced.exitCode, produced.stderr).toBe(0);
+    const original = parseCliMetadata(produced.json);
+    expect(original.binary!.code_gen_modules.length).toBeGreaterThan(0);
+    const { call } = await connectLocalToolsMcp();
+    for (const image of [
+      0,
+      original.images.length - 1,
+      -1,
+      original.images.length,
+      99,
+    ]) {
+      const report = structuredClone(original);
+      report.binary!.code_gen_modules[0]!.image = image;
+      const evidence = createEvidence(
+        { path, format: "file", sha256: report.artifact.sha256 },
+        { id: "il2cpp-metadata", name: "IL2CPP", version: "1" },
+        {
+          operation: "inspect_il2cpp_metadata",
+          parameters: { path },
+          result: report,
+        },
+      );
+      const request = {
+        source: { kind: "inline", evidence },
+        view: { kind: "il2cpp-metadata", collection: "code_gen_modules" },
+      };
+      const query = join(root, `image-${image}.json`);
+      await writeFile(query, JSON.stringify(request));
+      const result = await runFileCli(cli, {
+        arguments: ["inspect-analysis-view", query, "--json"],
+      });
+      const mcp = await call("inspect_analysis_view", request);
+      if (image >= 0 && image < original.images.length) {
+        expect(result.exitCode, result.stderr).toBe(0);
+        expect(mcp.isError, JSON.stringify(mcp)).not.toBe(true);
+      } else {
+        expect(result.exitCode, `image ${image}`).toBe(1);
+        expect(result.json).toMatchObject({ code: "invalid_request" });
+        expect(parseMcpToolError(mcp).error.code).toBe("invalid_request");
+      }
+    }
+  },
+  30000,
+);
+
+cliTest(
+  "rejects impossible imported metadata owners through CLI and MCP",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-il2cpp-owner-view-");
+    const path = join(root, "metadata.dat");
+    const report = createEmptyIl2cppMetadataFixture();
+    const type = {
+      name: "Type",
+      namespace: "",
+      method_start: -1,
+      method_count: 0,
+      nested_type_start: -1,
+      nested_type_count: 0,
+      declaring_type: -1,
+    };
+    report.types = [type, { ...type, name: "Nested", declaring_type: 0 }];
+    report.methods = [{ name: "Run", declaring_type: 0 }];
+    const { call } = await connectLocalToolsMcp();
+    for (const scenario of [
+      "valid",
+      "self",
+      "cycle",
+      "type-range",
+      "method-range",
+    ] as const) {
+      const value = structuredClone(report);
+      if (scenario === "self") value.types[0]!.declaring_type = 0;
+      if (scenario === "cycle") value.types[0]!.declaring_type = 1;
+      if (scenario === "type-range") value.types[1]!.declaring_type = 999;
+      if (scenario === "method-range") value.methods[0]!.declaring_type = 999;
+      const evidence = createEvidence(
+        { path, format: "file", sha256: value.artifact.sha256 },
+        { id: "il2cpp-metadata", name: "IL2CPP", version: "1" },
+        {
+          operation: "inspect_il2cpp_metadata",
+          parameters: { path },
+          result: value,
+        },
+      );
+      const request = {
+        source: { kind: "inline", evidence },
+        view: { kind: "il2cpp-metadata", collection: "methods" },
+      };
+      const query = join(root, `${scenario}.json`);
+      await writeFile(query, JSON.stringify(request));
+      const cliResult = await runFileCli(cli, {
+        arguments: ["inspect-analysis-view", query, "--json"],
+      });
+      const mcp = await call("inspect_analysis_view", request);
+      if (scenario === "valid") {
+        expect(cliResult.exitCode, cliResult.stderr).toBe(0);
+        expect(mcp.isError, JSON.stringify(mcp)).not.toBe(true);
+      } else {
+        expect(cliResult.exitCode, scenario).toBe(1);
+        expect(cliResult.json).toMatchObject({ code: "invalid_request" });
+        expect(parseMcpToolError(mcp).error.code).toBe("invalid_request");
+      }
+    }
+  },
+  30000,
+);
 
 cliTest(
   "validates generic-container extents before returning CLI or MCP metadata",
@@ -688,7 +818,9 @@ cliTest(
     const evidence = saved.value.records[0];
     if (evidence === undefined)
       throw new Error("Missing exported source Evidence");
-    expect(JSON.stringify(overwrite.json)).toContain(evidence.evidence_id);
+    expect(overwrite.json).toMatchObject({
+      details: { partial_observation: { evidence_id: evidence.evidence_id } },
+    });
     expect(
       il2cppMetadataSchema.parse(evidence.normalized_result).methods,
     ).toEqual(FIXTURE_METHODS);

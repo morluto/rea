@@ -30,6 +30,14 @@ const pointerTokens = (pointer: string): readonly string[] =>
         .split("/")
         .map((token) => token.replaceAll("~1", "/").replaceAll("~0", "~"));
 
+/** Keep unrelated fields usable while marking numbers that cannot be selected exactly. */
+export const parseScenarioValueJson = (text: string) =>
+  safeParseJson(text, (_key, value, context) =>
+    typeof value === "number" && !isExactJsonNumber(value, context?.source)
+      ? Number.NaN
+      : value,
+  );
+
 /** Exact own-property lookup: an absent pointer remains distinct from a non-scalar value. */
 export const responsePointerValue = (
   value: unknown,
@@ -37,9 +45,10 @@ export const responsePointerValue = (
 ): unknown => {
   let current = value;
   for (const key of pointerTokens(pointer)) {
-    if (Array.isArray(current) && /^(?:0|[1-9][0-9]*)$/u.test(key))
+    if (Array.isArray(current)) {
+      if (!/^(?:0|[1-9][0-9]*)(?![\s\S])/u.test(key)) return undefined;
       current = current[Number(key)];
-    else if (
+    } else if (
       typeof current === "object" &&
       current !== null &&
       Object.hasOwn(current, key)
@@ -81,11 +90,7 @@ export const readResponseValues = (
   }
   if (text.length > MAX_SAVED_RESPONSE_CHARACTERS)
     return err(issue("the response is too large to save values from."));
-  const parsed = safeParseJson(text, (_key, value, context) =>
-    typeof value === "number" && !isExactJsonNumber(value, context?.source)
-      ? Number.NaN
-      : value,
-  );
+  const parsed = parseScenarioValueJson(text);
   if (!parsed.ok)
     return err(
       issue("the response is not JSON, so no value can be saved from it."),
@@ -117,6 +122,33 @@ interface ResponseBodySource {
   body(): Promise<Buffer>;
 }
 
+/** DEFLATE decodes at most 1032 bytes per byte it reads (zlib's limit), so a gzip or deflate body's received size bounds its decoded size. */
+const DEFLATE_MAX_EXPANSION = 1032;
+
+/** The most bytes a response decodes to, from the bytes received (or its declared length, for one served from cache) and its content codings; undefined when they cannot bound it. */
+export const decodedBodyBound = (
+  received: number | undefined,
+  headers: Readonly<Record<string, string>>,
+): number | undefined => {
+  const declared = headers["content-length"]?.trim();
+  const bytes =
+    received !== undefined && Number.isSafeInteger(received) && received > 0
+      ? received
+      : declared !== undefined && /^[1-9]\d{0,14}$/u.test(declared)
+        ? Number(declared)
+        : undefined;
+  if (bytes === undefined) return undefined;
+  let bound = bytes;
+  for (const coding of (headers["content-encoding"] ?? "").split(",")) {
+    const name = coding.trim().toLowerCase();
+    if (name === "" || name === "identity") continue;
+    if (name !== "gzip" && name !== "x-gzip" && name !== "deflate")
+      return undefined;
+    bound *= DEFLATE_MAX_EXPANSION;
+  }
+  return bound;
+};
+
 /** The caller owns deadline/cancellation; unknown decoded bounds never request a whole body. */
 export const readBoundedResponseBody = async (
   response: ResponseBodySource,
@@ -129,16 +161,17 @@ export const readBoundedResponseBody = async (
       : (await request.sizes()).responseBodySize;
   if (size !== undefined && size > maxBytes)
     return err(issue("the response is too large to save values from."));
-  const encoding = response.headers()["content-encoding"]?.trim().toLowerCase();
-  if (
-    size === undefined ||
-    !Number.isSafeInteger(size) ||
-    size <= 0 ||
-    (encoding !== undefined && encoding !== "" && encoding !== "identity")
-  )
+  const bound = decodedBodyBound(size, response.headers());
+  if (bound === undefined)
     return err(
       issue(
         "the decoded response size cannot be bounded before reading it; this response body was not read.",
+      ),
+    );
+  if (bound > maxBytes)
+    return err(
+      issue(
+        "the response could decode past the size limit; this response body was not read.",
       ),
     );
   const body = await response.body();

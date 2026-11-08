@@ -18,7 +18,7 @@ import {
 } from "../process/snapshotEnvironment.js";
 import { dshDocument } from "./DshCordisPatch.js";
 import type { McpToolTimeoutInputs } from "../mcpStartupPolicy.js";
-import type { AnalysisProviderSelector } from "../contracts/providerSelection.js";
+import type { AnalysisProviderSelector } from "../domain/providerSelection.js";
 
 export type ProviderRequestBudgetResolver = (
   analysisProvider: AnalysisProviderSelector,
@@ -125,6 +125,62 @@ export const clientRegistrationEnvironmentDetails = (
     platform,
   );
   return validatedDetails(environment, validation, platform);
+};
+
+/** Setting names a registration does not carry as the value selected here. */
+export interface RecordedProviderSettings {
+  /** Selected here and absent from the registration's recorded environment. */
+  readonly unrecorded: readonly string[];
+  /** Recorded with text other than the value selected here. */
+  readonly differing: readonly string[];
+  /** Recorded as an expression, or in a map REA could not read. */
+  readonly unresolved: readonly string[];
+}
+
+/**
+ * Compare settings selected in this process with a registration's own file.
+ * The server's environment also depends on what its client passes on, which is
+ * not observable here, so a gap is never a claim about the effective value.
+ * Returns only names: recorded values stay in the file that owns them.
+ */
+export const recordedProviderSettings = (
+  parsed: ClientConfigurationDocument,
+  selected: Readonly<Record<string, string>>,
+  platform: NodeJS.Platform = process.platform,
+): RecordedProviderSettings | undefined => {
+  const names = Object.keys(selected).sort(compareUnicodeCodePoints);
+  if (names.length === 0) return undefined;
+  const details = clientRegistrationEnvironmentDetails(
+    parsed,
+    {},
+    "fragment",
+    platform,
+  );
+  if (!details.ok) return { unrecorded: [], differing: [], unresolved: names };
+  const recorded = snapshotEnvironment(details.value.values, platform);
+  // Expression names fold like every other environment name on this platform.
+  const expressions = snapshotEnvironment(
+    Object.fromEntries(
+      [...details.value.unresolvedSettings].map((name) => [name, ""]),
+    ),
+    platform,
+  );
+  const facts = {
+    unrecorded: names.filter(
+      (name) => recorded[name] === undefined && expressions[name] === undefined,
+    ),
+    differing: names.filter(
+      (name) =>
+        recorded[name] !== undefined && recorded[name] !== selected[name],
+    ),
+    unresolved: names.filter((name) => expressions[name] !== undefined),
+  };
+  return facts.unrecorded.length +
+    facts.differing.length +
+    facts.unresolved.length ===
+    0
+    ? undefined
+    : facts;
 };
 
 /** Resolve the async provider-specific budget through its retained reader owner. */

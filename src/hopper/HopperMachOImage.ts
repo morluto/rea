@@ -25,6 +25,7 @@ import {
   validateFatSliceIdentity,
   type FatSliceDeclaration,
 } from "../domain/apple/machoContainer.js";
+import { MACHO_CPU_TYPES } from "../domain/apple/machoTargetSelection.js";
 import { machoCpuSubtypeBase } from "../domain/apple/machoCpuIdentity.js";
 import {
   HopperCancelledError,
@@ -366,7 +367,6 @@ const inspectHopperMachOImage = async (
   )
     return invalid("Hopper cannot select the admitted Mach-O architecture");
   const architecture = target.architecture;
-  const cpuTypes = { x86: 7, x86_64: 0x1000007, arm: 12, arm64: 0x100000c };
   const matches = [];
   for (const slice of parsed.slices) {
     if (signal?.aborted)
@@ -393,7 +393,7 @@ const inspectHopperMachOImage = async (
       );
     const identityError = validateFatSliceIdentity(slice, identity);
     if (identityError !== null) return invalid(identityError);
-    if (slice.cpuType === cpuTypes[architecture]) matches.push(slice);
+    if (slice.cpuType === MACHO_CPU_TYPES[architecture]) matches.push(slice);
   }
   if (findOverlappingFatSlices(parsed.slices) !== null)
     return invalid("FAT slices overlap");

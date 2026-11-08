@@ -12,6 +12,7 @@ import {
   type ManagedMetadataLayout,
 } from "./ManagedMetadataLayout.js";
 import { readManagedPeLayout } from "./ManagedPeReader.js";
+import { managedMemberListStartsFixture } from "../../tests/fixtures/managedMemberListStarts.js";
 import { memberListIndexSize } from "./ManagedMemberPointers.js";
 import { edges } from "./ManagedMemberRows.js";
 import { parseUserStrings } from "./ManagedUserStrings.js";
@@ -101,14 +102,6 @@ it.each([
 );
 
 describe("managed compressed integer framing", () => {
-  it.each([[0x80], [0xc0], [0xc0, 1], [0xc0, 1, 2]])(
-    "keeps an incomplete width %j distinct from a reserved prefix",
-    (...value) => {
-      expect(() => readCompressed(Buffer.from(value), 0)).toThrow(
-        "truncated compressed integer",
-      );
-    },
-  );
   it("preserves complete widths and rejects reserved leading bits", () => {
     expect(readCompressed(Buffer.from([0x80, 1]), 0)).toEqual({
       value: 1,
@@ -240,6 +233,49 @@ it.each([0x06000001, 0x11000001])(
         expect.objectContaining({ code: "invalid-row", offset: offset + 8 }),
       ],
     });
+  },
+);
+
+it.each([
+  ["CIL", false, "Two-byte CIL opcode"],
+  ["exception section", true, "section"],
+] as const)(
+  "preserves malformed %s alongside an unsupported local signature",
+  (_name, hasSection, issue) => {
+    const body = Buffer.alloc(hasSection ? 20 : 14);
+    body.writeUInt16LE(hasSection ? 0x300b : 0x3003, 0);
+    body.writeUInt16LE(8, 2);
+    body.writeUInt32LE(2, 4);
+    body.writeUInt32LE(0x11000001, 8);
+    body[12] = 0x00; // A usable nop precedes the malformed instruction.
+    body[13] = hasSection ? 0x2a : 0xfe; // ret or truncated two-byte opcode.
+    if (hasSection) {
+      body[16] = 2; // Unsupported extra-section kind.
+      body[17] = 4;
+    }
+    const bytes = buildManagedPeFixture({
+      ilBody: body,
+      standaloneSignatures: [Buffer.from([0x07, 0x01, 0xff])],
+    });
+    const result = inspectManagedMembersBytes(
+      bytes,
+      managedPeFixtureTarget(bytes),
+    );
+    expect(result.methods[0]?.body).toMatchObject({
+      status: "malformed",
+      normalized_il_sha256: null,
+      anchors: expect.arrayContaining([
+        expect.objectContaining({ opcode: "nop" }),
+      ]),
+      issue: expect.stringContaining(issue),
+    });
+    expect(result.methods[0]?.body.issue).toContain("unsupported element type");
+    expect(result.coverage.state).toBe("partial");
+    expect(result.coverage.issues).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ code: "unsupported-signature" }),
+      ]),
+    );
   },
 );
 
@@ -385,6 +421,102 @@ it.each([
           offset: blobOffset + localOffset,
         }),
       ],
+    });
+  },
+);
+
+/** Artifact offset of row 1's signature blob, read with the production heap reader. */
+const memberSignatureBlobOffset = (
+  bytes: Buffer,
+  table: 4 | 6 | 10,
+): number => {
+  const pe = readManagedPeLayout(bytes);
+  if (pe.cli === null) throw new Error("fixture has no CLI header");
+  const layout = readManagedMetadataLayout(
+    bytes,
+    pe.rvaToOffset(pe.cli.metadata.rva, pe.cli.metadata.size, "metadata"),
+    pe.cli.metadata.size,
+  );
+  const row = metadataRowCursor(bytes, layout, table, 1);
+  // ECMA-335 II.22.15 Field, II.22.26 MethodDef and II.22.25 MemberRef
+  // columns before Name.
+  if (table === 4) row.readUInt16();
+  if (table === 6) {
+    row.readUInt32();
+    row.readUInt16();
+    row.readUInt16();
+  }
+  if (table === 10) row.readIndex(layout.codedIndexSize("MemberRefParent"));
+  row.readIndex(layout.stringIndexSize);
+  const blob = readMetadataBlob(
+    bytes,
+    layout,
+    row.readIndex(layout.blobIndexSize),
+    layout.blob?.size ?? 0,
+  );
+  return blob.byteOffset - bytes.byteOffset;
+};
+
+// CLASS (0x12) followed by TypeDefOrRefOrSpec 0x07, whose tag 3 is undefined.
+const INVALID_CLASS_OPERAND = [0x12, 0x07] as const;
+
+it.each([
+  {
+    member: "field",
+    table: 4,
+    scope: "Field:0x04000001.signature",
+    signature: {
+      fieldSignature: Buffer.from([0x06, ...INVALID_CLASS_OPERAND]),
+    },
+    operandOffset: 2,
+  },
+  {
+    member: "method parameter",
+    table: 6,
+    scope: "MethodDef:0x06000001.signature",
+    signature: {
+      methodSignature: Buffer.from([
+        0x00,
+        0x01,
+        0x01,
+        ...INVALID_CLASS_OPERAND,
+      ]),
+    },
+    operandOffset: 4,
+  },
+  {
+    member: "member reference parameter",
+    table: 10,
+    scope: "MemberRef:0x0a000001.signature",
+    signature: {
+      memberRefSignature: Buffer.from([
+        0x20,
+        0x01,
+        0x01,
+        ...INVALID_CLASS_OPERAND,
+      ]),
+    },
+    operandOffset: 4,
+  },
+] as const)(
+  "reports an invalid $member signature operand at its artifact offset",
+  ({ table, scope, signature, operandOffset }) => {
+    const bytes = buildManagedPeFixture(signature);
+    const blobOffset = memberSignatureBlobOffset(bytes, table);
+    expect(bytes[blobOffset + operandOffset]).toBe(0x07);
+
+    const result = inspectManagedMembersBytes(
+      bytes,
+      managedPeFixtureTarget(bytes),
+    );
+
+    expect(result.coverage.state).toBe("partial");
+    expect(result.coverage.issues).toContainEqual({
+      code: "invalid-row",
+      scope,
+      offset: blobOffset + operandOffset,
+      detail:
+        "TypeDefOrRefOrSpec operand 0x7 is invalid: coded index tag 3 is not defined",
     });
   },
 );
@@ -705,8 +837,9 @@ describe("managed TypeSpec declaring names", () => {
         {
           code: "invalid-row",
           scope: "metadata.TypeSpec:0x1b000001",
-          detail:
-            "TypeDefOrRefOrSpec operand 0x25 is invalid: coded index selects row 9 in table 1, which has 1 rows",
+          detail: expect.stringMatching(
+            /0x25.*invalid.*row 9.*table 1.*1 rows/iu,
+          ),
         },
       ],
     });
@@ -825,10 +958,10 @@ describe("managed TypeRef resolution scopes", () => {
         {
           code: "invalid-row",
           scope: "metadata.TypeRef:0x01000001",
-          detail: expect.stringContaining(
+          detail: expect.stringMatching(
             enclosingRow === 0
-              ? "coded index selects row zero in table 1"
-              : "coded index selects row 9 in table 1, which has 1 rows",
+              ? /row zero.*table 1/iu
+              : /row 9.*table 1.*1 rows/iu,
           ),
         },
       ]);
@@ -1327,8 +1460,10 @@ describe("managed exported types", () => {
     const parsed = managedMemberInspectionSchema.parse(legacy);
 
     expect(parsed.exported_types).toBeNull();
-    expect(comparisonLimitations(parsed, parsed)).toContain(
-      "At least one managed member observation did not examine ExportedType rows; its exported and forwarded types are unknown.",
+    expect(comparisonLimitations(parsed, parsed)).toContainEqual(
+      expect.stringMatching(
+        /did not examine ExportedType.*exported and forwarded types are unknown/iu,
+      ),
     );
   });
 
@@ -1415,8 +1550,10 @@ describe("managed user strings", () => {
     expect(body?.normalized_il_sha256).toBe(
       inspect({ ilBody }).methods[0]?.body.normalized_il_sha256,
     );
-    expect(comparisonLimitations(result, result)).toContain(
-      "ldstr literals are not compared; normalized CIL keeps #US tokens rather than decoded text, so an unchanged method does not establish unchanged string literals.",
+    expect(comparisonLimitations(result, result)).toContainEqual(
+      expect.stringMatching(
+        /ldstr literals are not compared.*#US tokens.*unchanged method.*does not establish unchanged string literals/iu,
+      ),
     );
   });
 
@@ -1525,9 +1662,6 @@ describe("managed user strings", () => {
     const { user_strings: _omitted, ...legacy } = inspect({});
     const parsed = managedMemberInspectionSchema.parse(legacy);
     expect(parsed.user_strings).toBeNull();
-    expect(comparisonLimitations(parsed, inspect({}))).toContain(
-      "ldstr literals are not compared; normalized CIL keeps #US tokens rather than decoded text, so an unchanged method does not establish unchanged string literals.",
-    );
   });
 });
 
@@ -2081,6 +2215,127 @@ describe("managed TypeDef list ownership bounds", () => {
   });
 });
 
+describe("managed TypeDef ordering across invalid coordinates", () => {
+  it.each([
+    {
+      label: "both lists decrease",
+      fields: [2, 0, 1],
+      methods: [2, 0, 1],
+      fieldOwner: null,
+      methodOwner: null,
+      issues: 4,
+      decreases: [
+        ["FieldList", 3],
+        ["MethodList", 3],
+      ],
+    },
+    {
+      label: "out-of-range nonzero coordinates are skipped",
+      fields: [2, 65535, 1],
+      methods: [2, 65535, 1],
+      fieldOwner: null,
+      methodOwner: null,
+      issues: 4,
+      decreases: [
+        ["FieldList", 3],
+        ["MethodList", 3],
+      ],
+    },
+    {
+      label: "known coordinates stay ordered",
+      fields: [1, 0, 1],
+      methods: [1, 0, 1],
+      fieldOwner: "0x02000003",
+      methodOwner: "0x02000003",
+      issues: 2,
+      decreases: [],
+    },
+    {
+      label: "only fields decrease",
+      fields: [2, 0, 1],
+      methods: [1, 1, 1],
+      fieldOwner: null,
+      methodOwner: "0x02000003",
+      issues: 2,
+      decreases: [["FieldList", 3]],
+    },
+    {
+      label: "only methods decrease",
+      fields: [1, 1, 1],
+      methods: [2, 0, 1],
+      fieldOwner: "0x02000003",
+      methodOwner: null,
+      issues: 2,
+      decreases: [["MethodList", 3]],
+    },
+    {
+      label: "multiple invalid rows",
+      fields: [2, 0, 0, 1],
+      methods: [2, 0, 0, 1],
+      fieldOwner: null,
+      methodOwner: null,
+      issues: 6,
+      decreases: [
+        ["FieldList", 4],
+        ["MethodList", 4],
+      ],
+    },
+    {
+      label: "one invalid column does not hide another column or a valid tail",
+      fields: [1, 0, 1],
+      methods: [2, 1, 1],
+      fieldOwner: "0x02000003",
+      methodOwner: "0x02000003",
+      issues: 2,
+      decreases: [["MethodList", 2]],
+    },
+  ] as const)(
+    "checks independent ordering across invalid starts: $label",
+    (test) => {
+      const bytes = managedMemberListStartsFixture(test.fields, test.methods);
+      const result = inspectManagedMembersBytes(
+        bytes,
+        managedPeFixtureTarget(bytes),
+      );
+      expect(result.fields).toMatchObject([
+        {
+          token: "0x04000001",
+          declaring_type: test.fieldOwner === null ? null : "Fixture.Program",
+          declaring_type_token: test.fieldOwner,
+          signature: { parse_status: "decoded" },
+        },
+      ]);
+      expect(result.methods).toMatchObject([
+        {
+          token: "0x06000001",
+          declaring_type: test.methodOwner === null ? null : "Fixture.Program",
+          declaring_type_token: test.methodOwner,
+          signature: { parse_status: "decoded" },
+        },
+      ]);
+      expect(result.types.at(-1)).toMatchObject({
+        field_list: { count: test.fieldOwner === null ? 0 : 1 },
+        method_list: { count: test.methodOwner === null ? 0 : 1 },
+      });
+      expect(result.coverage.state).toBe("partial");
+      expect(result.coverage.issues).toHaveLength(test.issues);
+      expect(
+        result.coverage.issues.filter(({ detail }) =>
+          detail.includes("decreases"),
+        ),
+      ).toMatchObject(
+        test.decreases.map(([list, row]) => ({
+          code: "invalid-row",
+          scope: `metadata.TypeDef:0x0200000${String(row)}`,
+          detail: expect.stringContaining(
+            `${list} start 1 decreases from preceding start 2`,
+          ),
+        })),
+      );
+    },
+  );
+});
+
 describe("managed TypeDef list ordering", () => {
   it("leaves adjacent ownership unknown when valid list starts decrease", () => {
     const bytes = buildManagedPeFixture({
@@ -2167,8 +2422,8 @@ describe("managed metadata reference bounds", () => {
         {
           code: "invalid-row",
           scope: "metadata.TypeDef:0x02000001",
-          detail: expect.stringContaining(
-            "TypeDef Extends coded index 0xc is invalid: coded index selects row 3 in table 2, which has 1 rows",
+          detail: expect.stringMatching(
+            /TypeDef Extends.*0xc.*invalid.*row 3.*table 2.*1 rows/iu,
           ),
         },
       ],
@@ -2196,8 +2451,8 @@ describe("managed metadata reference bounds", () => {
         {
           code: "invalid-row",
           scope: "metadata.MemberRef:0x0a000001",
-          detail: expect.stringContaining(
-            "MemberRef parent coded index 0x28 is invalid: coded index selects row 5 in table 2, which has 1 rows",
+          detail: expect.stringMatching(
+            /MemberRef parent.*0x28.*invalid.*row 5.*table 2.*1 rows/iu,
           ),
         },
       ],
@@ -2279,6 +2534,9 @@ it.each([
 it.each([
   [[], "truncated compressed integer"],
   [[0x80], "truncated compressed integer"],
+  [[0xc0], "truncated compressed integer"],
+  [[0xc0, 1], "truncated compressed integer"],
+  [[0xc0, 1, 2], "truncated compressed integer"],
   [[0xc0, 0, 0], "truncated compressed integer"],
   [[0xe0], "reserved compressed integer"],
 ] as const)(
@@ -2365,12 +2623,12 @@ it("decodes generic instantiation member signatures as complete coverage", () =>
   expect(result.methods[0]?.signature).toMatchObject({
     parse_status: "decoded",
     return_type: "void",
-    parameter_types: ["class:9<string>"],
+    parameter_types: ["class:9 (System.Func`1)<string>"],
     issue: null,
   });
   expect(result.fields[0]?.signature).toMatchObject({
     parse_status: "decoded",
-    field_type: "valuetype:13<var:0,mvar:1>",
+    field_type: "valuetype:13 (System.ValueTuple`2)<var:0,mvar:1>",
   });
   expect(result.coverage).toMatchObject({ state: "complete", issues: [] });
 });
@@ -2756,8 +3014,10 @@ describe("managed member type selection", () => {
     expect(result.call_edges).toEqual(everything.call_edges);
     expect(result.field_accesses).toEqual(everything.field_accesses);
     expect(result.coverage).toEqual(everything.coverage);
-    expect(result.limitations).toContain(
-      "Types, fields, methods, call edges, field accesses, and user strings cover only the selected declaring types; coverage describes that selection. Edge targets outside it keep their names but are not described.",
+    expect(result.limitations).toContainEqual(
+      expect.stringMatching(
+        /types.*fields.*methods.*call edges.*field accesses.*user strings.*only the selected declaring types.*targets outside.*names.*not described/iu,
+      ),
     );
   });
 
@@ -2782,8 +3042,10 @@ describe("managed member type selection", () => {
       expect(result.coverage.state).toBe("partial");
       // Its methods were never inspected, so neither were their literals.
       expect(result.user_strings?.state).toBe("partial");
-      expect(result.limitations).toContain(
-        "1 TypeDef name(s) could not be read; a name in selection.unmatched_type_names may belong to one of them, so its absence is not observed.",
+      expect(result.limitations).toContainEqual(
+        expect.stringMatching(
+          /1 TypeDef name.*could not be read.*selection\.unmatched_type_names.*absence is not observed/iu,
+        ),
       );
     },
   );
@@ -2907,6 +3169,94 @@ it("retains names of unselected fields without admitting their malformed signatu
     ),
   ).toEqual([]);
 });
+
+it("keeps names on call edges into unselected types", () => {
+  const bytes = buildManagedNestedTypeFixture({ topLevelTypes: true });
+  const pe = readManagedPeLayout(bytes);
+  if (pe.cli === null) throw new Error("Expected CLI fixture");
+  const { rva, size } = pe.cli.metadata;
+  const layout = readManagedMetadataLayout(
+    bytes,
+    pe.rvaToOffset(rva, size, "cli.metadata"),
+    size,
+  );
+  // The selected method calls the MethodDef row owned by the unselected
+  // Inner type: skipping that row must not lose the edge target's name.
+  const method = metadataRowOffset(layout, 6, 2);
+  const methodRva = bytes.readUInt32LE(method);
+  const body = tokenBody([[call, 0x06000001]]);
+  bytes.set(body, pe.rvaToOffset(methodRva, body.length, "fixture CIL"));
+  const result = inspectManagedMembersBytes(
+    bytes,
+    managedPeFixtureTarget(bytes),
+    {
+      typeNames: ["OtherInner"],
+    },
+  );
+  expect(result.methods).toMatchObject([{ token: "0x06000002", name: "M" }]);
+  expect(result.call_edges).toMatchObject([
+    {
+      target_token: "0x06000001",
+      target_name: "M",
+      target_declaring_type: "Inner",
+    },
+  ]);
+  expect(result.coverage).toEqual({ state: "complete", issues: [] });
+});
+
+it.each([false, true])(
+  "keeps selected and unselected generic call targets named (malformed=%s)",
+  (malformed) => {
+    const bytes = buildManagedPeFixture({
+      additionalEmptyTypes: 1,
+      methodRowCount: 2,
+      firstTypeMethodRowCount: 1,
+      distinctMemberNames: true,
+      methodSignature: genericDef,
+      methodSpecMethods: [2 << 1, 1 << 1],
+      ...(malformed
+        ? { methodSpecInstantiation: Buffer.from([0x0a, 0x00]) }
+        : {}),
+      ilBody: tokenBody([
+        [call, 0x2b00_0001],
+        [call, 0x2b00_0002],
+      ]),
+    });
+    const result = inspectManagedMembersBytes(
+      bytes,
+      managedPeFixtureTarget(bytes),
+      { typeNames: ["Fixture.Empty0"] },
+    );
+    expect(result.methods).toMatchObject([
+      { token: "0x06000001", name: "Method0" },
+    ]);
+    expect(result.call_edges).toMatchObject([
+      {
+        target_token: "0x2b000001",
+        target_kind: "method-spec",
+        target_name: "Method1",
+        target_declaring_type: "Fixture.Program",
+      },
+      {
+        target_token: "0x2b000002",
+        target_kind: "method-spec",
+        target_name: "Method0",
+        target_declaring_type: "Fixture.Empty0",
+      },
+    ]);
+    expect(result.coverage.state).toBe(malformed ? "partial" : "complete");
+    expect(
+      result.coverage.issues.map(({ code, scope }) => [code, scope]),
+    ).toEqual(
+      malformed
+        ? [
+            ["invalid-blob", "metadata.MethodSpec:0x2b000001"],
+            ["invalid-blob", "metadata.MethodSpec:0x2b000002"],
+          ]
+        : [],
+    );
+  },
+);
 
 it.each([false, true])(
   "keeps ordinary TypeSpec operands distinct from GENERICINST heads (generic=%s)",

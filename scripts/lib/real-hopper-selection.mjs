@@ -1,4 +1,4 @@
-import { HOPPER_PROVIDER_IDENTITY } from "../../dist/hopper/HopperProviderCapabilities.js";
+import { HOPPER_PROVIDER_IDENTITY } from "../../dist/hopper/HopperProviderMetadata.js";
 
 /** Verify the selected Hopper candidate and concrete provider binding. */
 export const requireHopperSelection = (status, expected) => {

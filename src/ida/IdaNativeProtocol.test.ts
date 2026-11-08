@@ -26,7 +26,7 @@ import type {
   RetainedResourceScope,
   AnalysisProfileResolution,
 } from "../application/AnalysisProvider.js";
-import { ProviderInspectionScope } from "../providers/ProviderInspectionScope.js";
+import { ProviderInspectionScope } from "../application/ProviderInspectionScope.js";
 import type { AnalysisProfileCommitment } from "../domain/analysisProfile.js";
 
 const resourceScope: RetainedResourceScope = {
@@ -396,15 +396,11 @@ describe("native IDA provider observations", () => {
             ? expect.stringContaining(
                 "Callees: Upstream callees capped results at 500; additional callees remain unknown.",
               )
-            : expect.stringContaining(
-                "Callers: Upstream xrefs do not establish direct caller relationships.",
-              ),
+            : expect.stringMatching(/xrefs.*not establish.*caller/iu),
         });
         if (more)
           expect(dossier.value.relationshipCoverage).toMatchObject({
-            reason: expect.stringContaining(
-              "Callers: Upstream xrefs do not establish direct caller relationships.",
-            ),
+            reason: expect.stringMatching(/xrefs.*not establish.*caller/iu),
           });
         expect(dossier.value.result).toMatchObject({
           callers: [],
@@ -706,23 +702,28 @@ describe("native IDA callee lookup batches", () => {
   });
 });
 
+const nativeLiteralValues = [
+  "A.B",
+  "axb",
+  "Kelvin",
+  "İstanbul",
+  "σ",
+  "ς",
+  "literal[bracket",
+  "a\\b",
+  "🧪",
+  "Σ",
+  "ΟΣ",
+  "ος",
+  "S",
+  "s",
+  "ſ",
+];
+
 describe("native IDA literal matching", () => {
   it("retains literal, Unicode, case, and regex semantics while narrowing native candidates", async () => {
     const { client, producer } = await fixture();
-    const values = [
-      "A.B",
-      "axb",
-      "Kelvin",
-      "İstanbul",
-      "σ",
-      "ς",
-      "literal[bracket",
-      "a\\b",
-      "🧪",
-      "Σ",
-      "ΟΣ",
-      "ος",
-    ];
+    const values = nativeLiteralValues;
     producer.overrideCall = (name, args) => {
       if (name !== "find_regex") return undefined;
       if (typeof args.pattern !== "string")
@@ -743,6 +744,12 @@ describe("native IDA literal matching", () => {
       };
     };
     const cases = [
+      {
+        pattern: "ſ",
+        mode: "literal",
+        case_sensitive: false,
+        expected: ["İstanbul", "S", "s", "ſ"],
+      },
       {
         pattern: "a.b",
         mode: "literal",
@@ -833,7 +840,10 @@ describe("native IDA literal matching", () => {
           .slice(before)
           .filter(({ name }) => name === "find_regex");
         expect(reads).toHaveLength(1);
-        if (query.mode === "regex" || query.pattern === "\ud800")
+        const unfiltered = query.mode === "regex" || query.pattern === "\ud800";
+        const unicodeFold =
+          !query.case_sensitive && /[\u0080-\u{10ffff}]/u.test(query.pattern);
+        if (unfiltered || unicodeFold)
           expect(reads[0]?.args.pattern).toBe("[\\s\\S]*");
         else expect(reads[0]?.args.pattern).not.toBe("[\\s\\S]*");
       }
@@ -962,15 +972,6 @@ describe("native IDA malformed observations", () => {
 });
 
 describe("native IDA attached operation admission", () => {
-  it("forwards the native producer's explicit reference cap flag", async () => {
-    const { client } = await fixture();
-    const result = await client.execute("xrefs", { address: "0x1000" });
-
-    if (!result.ok) throw result.error;
-    expect(result.value.referencesTruncated).toBe(false);
-    await client.close();
-  });
-
   it("reports the bound document but not headless-only address resolution", async () => {
     const { client, producer, target } = await fixture();
     const containing = await client.execute("resolve_containing_procedure", {

@@ -42,7 +42,9 @@ describe.each(["vscode", "copilot_cli", "opencode", "commandcode"])(
         ).replaceAll("\n", "\r\n")}\r\n`;
         await mkdir(dirname(client.configPath), { recursive: true });
         await writeFile(client.configPath, original);
-        const currentCommandPath = join(home, "rea");
+        const currentCommandPath = CURRENT_ENTRYPOINT_PATH;
+        if (currentCommandPath === undefined)
+          throw new Error("test runner entrypoint is unavailable");
         const command = [process.execPath, currentCommandPath, "mcp"];
         expect(await inspectClientConfiguration(client, {}, command)).toEqual({
           status: "update",
@@ -200,7 +202,7 @@ it.each(["", "\n  \n", "\uFEFF"])(
       throw new Error("missing Antigravity JSON config");
     await mkdir(dirname(client.configPath), { recursive: true });
     await writeFile(client.configPath, original);
-    const command = [join(home, "rea"), "mcp"];
+    const command = ["rea", "mcp"];
 
     expect(await inspectClientConfiguration(client, {}, command)).toEqual({
       status: "update",

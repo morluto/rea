@@ -1,4 +1,5 @@
 import { readFile, writeFile } from "node:fs/promises";
+import { createHash } from "node:crypto";
 import { join } from "node:path";
 
 import {
@@ -18,7 +19,7 @@ import { parseEvidence } from "../../../src/domain/evidence.js";
 import { harmonyApplicationProjectionResultSchema } from "../../../src/domain/harmony/harmonyApplication.js";
 import { connectLocalToolsMcp } from "../../fixtures/localToolsMcp.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
-import { cliTest } from "../../support/cli/cliFixture.js";
+import { cliTest, runFileCli } from "../../support/cli/cliFixture.js";
 
 const harmony = {
   family: "HarmonyOS",
@@ -37,7 +38,22 @@ const harmony = {
   nestedCode: "ets/modules.abc/actual.abc",
   runtimeFamilies: ["ark", "flutter", "javascript", "native"],
   nestedRuntime: "ark",
-  bridgeCount: 1,
+  nestedCategory: "bytecode",
+  fileComponents: {
+    manifests: ["module.json"],
+    bytecode: ["ets/modules.abc"],
+    resources: ["resources.index", "resources/base"],
+    native_libraries: ["libs/arm64-v8a/libflutter.so"],
+    javascript: ["assets/main.js"],
+    signing: ["META-INF/TEST.p7b"],
+  },
+  fileBridges: [
+    {
+      managed_path: "ets/modules.abc",
+      native_path: "libs/arm64-v8a/libflutter.so",
+      basis: "napi-library-convention",
+    },
+  ],
 };
 
 const fixtures = [
@@ -57,7 +73,28 @@ const fixtures = [
     nestedCode: "classes.dex/actual.dex",
     runtimeFamilies: ["dalvik-art", "flutter", "java-kotlin", "native"],
     nestedRuntime: "dalvik-art",
-    bridgeCount: 2,
+    nestedCategory: "dex",
+    fileComponents: {
+      manifests: ["AndroidManifest.xml"],
+      resources: ["resources.arsc"],
+      dex: ["classes.dex"],
+      jvm_classes: ["Main.class"],
+      native_libraries: ["lib/arm64-v8a/libflutter.so"],
+      javascript: [],
+      signing: ["META-INF/TEST.RSA"],
+    },
+    fileBridges: [
+      {
+        managed_path: "classes.dex",
+        native_path: "lib/arm64-v8a/libflutter.so",
+        basis: "flutter-convention",
+      },
+      {
+        managed_path: "Main.class",
+        native_path: "lib/arm64-v8a/libflutter.so",
+        basis: "flutter-convention",
+      },
+    ],
   },
   {
     family: "Apple",
@@ -72,7 +109,25 @@ const fixtures = [
     nestedCode: "Payload/Fixture.app/main.js/actual.js",
     runtimeFamilies: ["javascript", "native"],
     nestedRuntime: "javascript",
-    bridgeCount: 1,
+    nestedCategory: "javascript",
+    fileComponents: {
+      bundle_metadata: ["Payload/Fixture.app/Info.plist"],
+      executables: ["Payload/Fixture.app/libentry.dylib"],
+      frameworks: [],
+      native_libraries: ["Payload/Fixture.app/libentry.dylib"],
+      javascript: ["Payload/Fixture.app/main.js"],
+      signing: [],
+      privileged_helpers: [],
+      launchd_plists: [],
+      helpers: [],
+    },
+    fileBridges: [
+      {
+        source_path: "Payload/Fixture.app/main.js",
+        native_path: "Payload/Fixture.app/libentry.dylib",
+        basis: "javascript-and-native-content",
+      },
+    ],
   },
   harmony,
   {
@@ -91,6 +146,11 @@ cliTest.for(fixtures)(
     const environment = { HOME: root, USERPROFILE: root };
     const { call } = await connectLocalToolsMcp(environment);
     for (const mode of ["directories", "files", "nested"] as const) {
+      // Keep one fresh dispatcher check per family; reuse later commands.
+      const run =
+        mode === "directories"
+          ? cli.run.bind(cli)
+          : runFileCli.bind(undefined, cli);
       const writer = new ZipWriter(new Uint8ArrayWriter());
       for (const path of fixture.paths) {
         if (mode !== "files")
@@ -113,7 +173,7 @@ cliTest.for(fixtures)(
       const path = join(root, `${mode}.${fixture.extension}`);
       await writeFile(path, bytes);
 
-      const inspected = await cli.run({
+      const inspected = await run({
         arguments: ["inspect-artifact", path, "--json"],
         environment,
       });
@@ -139,7 +199,7 @@ cliTest.for(fixtures)(
 
       const input = { inventory_evidence: [inventoryEvidence] };
       const originalInput = JSON.stringify(input);
-      const projected = await cli.run({
+      const projected = await run({
         arguments: [fixture.command, originalInput, "--json"],
         environment,
       });
@@ -165,22 +225,27 @@ cliTest.for(fixtures)(
       const childPackages = fixture.paths.filter((member) =>
         /\.(?:hap|hsp)$/u.test(member),
       );
-      const categories = Object.values(projection.components);
-      for (const category of categories)
-        expect(new Set(category.map(({ path }) => path)).size).toBe(
-          category.length,
-        );
-      const componentPaths = [
-        ...new Set(categories.flat().map((component) => component.path)),
-      ].sort();
-      expect(componentPaths, mode).toEqual(
+      expect(
+        Object.fromEntries(
+          Object.entries(projection.components).map(
+            ([category, components]) => [
+              category,
+              components.map(({ path }) => path),
+            ],
+          ),
+        ),
+        mode,
+      ).toEqual(
         mode === "files"
-          ? fixture.paths
-              .filter((member) => !childPackages.includes(member))
-              .sort()
-          : mode === "nested"
-            ? [fixture.nestedCode]
-            : [],
+          ? fixture.fileComponents
+          : Object.fromEntries(
+              Object.keys(fixture.fileComponents).map((category) => [
+                category,
+                mode === "nested" && category === fixture.nestedCategory
+                  ? [fixture.nestedCode]
+                  : [],
+              ]),
+            ),
       );
       expect(projection.runtime_families, mode).toEqual(
         mode === "files"
@@ -189,8 +254,8 @@ cliTest.for(fixtures)(
             ? [fixture.nestedRuntime]
             : [],
       );
-      expect(projection.bridge_candidates, mode).toHaveLength(
-        mode === "files" ? fixture.bridgeCount : 0,
+      expect(projection.bridge_candidates, mode).toEqual(
+        mode === "files" ? fixture.fileBridges : [],
       );
       expect(projection.source_evidence_ids).toEqual([
         inventoryEvidence.evidence_id,
@@ -200,6 +265,7 @@ cliTest.for(fixtures)(
         inventory_complete: true,
       });
       if ("packaging_model" in projection) {
+        expect(projection.unclassified_components, mode).toEqual([]);
         expect(projection.packaging_model, mode).toBe(
           mode === "files" ? "stage" : "unknown",
         );
@@ -260,6 +326,9 @@ cliTest.for([
     const environment = { HOME: root, USERPROFILE: root };
     const { call } = await connectLocalToolsMcp(environment);
     for (const encrypted of [false, true]) {
+      const run = encrypted
+        ? runFileCli.bind(undefined, cli)
+        : cli.run.bind(cli);
       const writer = new ZipWriter(new Uint8ArrayWriter());
       for (const member of fixture.paths)
         await writer.add(
@@ -270,14 +339,14 @@ cliTest.for([
       const bytes = await writer.close();
       const path = join(root, `${encrypted}.${fixture.extension}`);
       await writeFile(path, bytes);
-      const inspected = await cli.run({
+      const inspected = await run({
         arguments: ["inspect-artifact", path, "--json"],
         environment,
       });
       expect(inspected.exitCode, inspected.stderr).toBe(0);
       const inventory = parseEvidence(inspected.json);
       const input = { inventory_evidence: [inventory] };
-      const projected = await cli.run({
+      const projected = await run({
         arguments: [fixture.command, JSON.stringify(input), "--json"],
         environment,
       });
@@ -347,7 +416,11 @@ cliTest.for([
             expect(child).toMatchObject({ artifact_id: null, sha256: null });
           else {
             expect(child.artifact_id).toMatch(/^art_/u);
-            expect(child.sha256).toMatch(/^[a-f0-9]{64}$/u);
+            expect(child.sha256).toBe(
+              createHash("sha256")
+                .update("opaque fixture content")
+                .digest("hex"),
+            );
           }
       }
       if (encrypted) expect(Object.values(graph.components).flat()).toEqual([]);

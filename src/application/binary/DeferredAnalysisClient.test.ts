@@ -1,4 +1,6 @@
 import { expect, it } from "vitest";
+import { withVerifierCleanup } from "../../../scripts/lib/verifier-cleanup.mjs";
+import { awaitAcknowledgement } from "../../../tests/fixtures/lifecycleAcknowledgement.js";
 import { DeferredAnalysisClient } from "../../providers/DeferredAnalysisClient.js";
 import {
   createAnalysisExecution,
@@ -164,8 +166,12 @@ it("keeps a shared creation alive for an interested peer", async () => {
     reason = { request: "one peer leaves" };
   const first = client.execute("health", {}, { signal: controller.signal });
   const second = client.execute("health", {});
-  try {
-    await entered.promise;
+  await withVerifierCleanup(async () => {
+    await awaitAcknowledgement(
+      entered.promise,
+      first,
+      "shared client creation",
+    );
     controller.abort(reason);
     const cancelled = await first;
     if (cancelled.ok) throw new Error("Expected peer cancellation");
@@ -181,11 +187,17 @@ it("keeps a shared creation alive for an interested peer", async () => {
     expect(creates).toBe(1);
     expect(await client.close()).toEqual(ok(null));
     expect(closes).toBe(1);
-  } finally {
-    loading.resolve(child());
-    await Promise.allSettled([first, second]);
-    await client.close();
-  }
+  }, [
+    () => controller.abort(),
+    () => loading.resolve(child()),
+    async () => {
+      await Promise.allSettled([first, second]);
+    },
+    async () => {
+      const closed = await client.close();
+      if (!closed.ok) throw closed.error;
+    },
+  ]);
 });
 
 it("joins a late acquired client's final cleanup before cancellation settles", async () => {
@@ -207,8 +219,8 @@ it("joins a late acquired client's final cleanup before cancellation settles", a
       settled = true;
       return result;
     });
-  try {
-    await entered.promise;
+  await withVerifierCleanup(async () => {
+    await awaitAcknowledgement(entered.promise, pending, "client creation");
     controller.abort(reason);
     loading.resolve(
       child(async () => {
@@ -218,7 +230,7 @@ it("joins a late acquired client's final cleanup before cancellation settles", a
         return ok(null);
       }),
     );
-    await closeEntered.promise;
+    await awaitAcknowledgement(closeEntered.promise, pending, "client cleanup");
     expect(settled).toBe(false);
     expect(client.operationHealthSnapshot()?.state).toBe("idle");
     expect(client.reuseReadiness()).toBe("blocked");
@@ -229,12 +241,18 @@ it("joins a late acquired client's final cleanup before cancellation settles", a
     expect(result.error.cleanupIncomplete).toBe(false);
     expect(await client.close()).toEqual(ok(null));
     expect(closes).toBe(1);
-  } finally {
-    loading.resolve(child());
-    closing.resolve();
-    await pending;
-    await client.close();
-  }
+  }, [
+    () => controller.abort(),
+    () => loading.resolve(child()),
+    () => closing.resolve(),
+    async () => {
+      await pending;
+    },
+    async () => {
+      const closed = await client.close();
+      if (!closed.ok) throw closed.error;
+    },
+  ]);
 });
 
 it("keeps a producer-authored physical failure primary even when it is the caller's abort reason", async () => {
@@ -256,8 +274,8 @@ it("keeps a producer-authored physical failure primary even when it is the calle
     {},
     { signal: controller.signal },
   );
-  try {
-    await entered.promise;
+  await withVerifierCleanup(async () => {
+    await awaitAcknowledgement(entered.promise, pending, "client creation");
     controller.abort(physical);
     finishing.resolve();
     const result = await pending;
@@ -272,11 +290,17 @@ it("keeps a producer-authored physical failure primary even when it is the calle
     expect(result.error.cause).toBe(physical);
     expect(physical.cause).toBeUndefined();
     expect(projectAnalysisError(result.error).code).toBe("execution_failure");
-  } finally {
-    finishing.resolve();
-    await pending;
-    await client.close();
-  }
+  }, [
+    () => controller.abort(),
+    () => finishing.resolve(),
+    async () => {
+      await pending;
+    },
+    async () => {
+      const closed = await client.close();
+      if (!closed.ok) throw closed.error;
+    },
+  ]);
 });
 
 it("retains a failed late client's exact close owner and restores cancellation after confirmed retry", async () => {
