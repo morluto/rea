@@ -46,7 +46,10 @@ export interface DesktopBuildSetup {
   readonly selected: boolean;
   readonly blocker?: string;
   readonly actions: readonly SetupAction[];
-  /** Settings added to each selected client's registration only. */
+  /**
+   * Settings added to each selected client's registration only; after apply, a
+   * setting whose pack or install failed is left as the client records it.
+   */
   readonly clientEnvironments: Readonly<
     Record<string, SetupProviderEnvironment>
   >;
@@ -100,27 +103,37 @@ export const planDesktopBuild = async (
       : {}),
   };
   const remediation = agentenvRemediation(pinned, install, uv);
+  const failed = new Set<string>();
   return {
     selected: true,
     actions,
-    clientEnvironments: Object.fromEntries(
-      clientIds.map((client) => [
-        client,
-        Object.fromEntries(
-          Object.entries(settings).filter(
-            ([name]) =>
-              facts.selected.includes(name) ||
-              !(facts.recorded[client] ?? []).includes(name),
+    get clientEnvironments() {
+      return Object.fromEntries(
+        clientIds.map((client) => [
+          client,
+          Object.fromEntries(
+            Object.entries(settings).filter(
+              ([name]) =>
+                !failed.has(name) &&
+                (facts.selected.includes(name) ||
+                  !(facts.recorded[client] ?? []).includes(name)),
+            ),
           ),
-        ),
-      ]),
-    ),
+        ]),
+      );
+    },
     ...(remediation === undefined ? {} : { remediation }),
     apply: (appliedActions, onProgress, signal) =>
       applyActions(host, actions, uv?.path, {
         appliedActions,
         onProgress,
         signal,
+        failed: (kind) => {
+          if (kind === "pack_build_runtime")
+            failed.add("REA_BUILD_COMPUTER_REA_ARCHIVE");
+          else if (!facts.selected.includes("REA_AGENT_ENV_COMMAND"))
+            failed.add("REA_AGENT_ENV_COMMAND");
+        },
       }),
     readinessRemediation: (healthy) =>
       healthy
@@ -148,6 +161,8 @@ const applyActions = async (
     readonly appliedActions: string[];
     readonly onProgress?: ((event: SetupProgressEvent) => void) | undefined;
     readonly signal?: AbortSignal | undefined;
+    /** Leave the setting this failed action produces as each client records it. */
+    readonly failed: (kind: SetupAction["kind"]) => void;
   },
 ): Promise<string | undefined> => {
   const failures: string[] = [];
@@ -166,12 +181,13 @@ const applyActions = async (
     });
     if (failure === undefined) progress.appliedActions.push(id);
     assertSetupActive(progress.signal);
-    if (failure !== undefined)
-      failures.push(
-        kind === "install_agentenv"
-          ? `Installing agentenv failed: ${failure} Run ${AGENTENV_INSTALL_COMMAND} yourself, then rerun setup.`
-          : `Packing REA's build-computer runtime failed: ${failure} Fix the reported problem, then rerun setup with --desktop-build.`,
-      );
+    if (failure === undefined) continue;
+    progress.failed(kind);
+    failures.push(
+      kind === "install_agentenv"
+        ? `Installing agentenv failed: ${failure} Run ${AGENTENV_INSTALL_COMMAND} yourself, then rerun setup.`
+        : `Packing REA's build-computer runtime failed: ${failure} Fix the reported problem, then rerun setup with --desktop-build.`,
+    );
   }
   return failures.length === 0 ? undefined : failures.join(" ");
 };

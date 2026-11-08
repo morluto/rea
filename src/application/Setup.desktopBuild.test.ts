@@ -293,3 +293,51 @@ describe("rea setup --desktop-build", () => {
     expect(host.configurations).toBe(0);
   });
 });
+
+describe("desktop setup failures", () => {
+  it.each([
+    {
+      action: "pack",
+      kept: "REA_BUILD_COMPUTER_REA_ARCHIVE",
+      written: "REA_AGENT_ENV_COMMAND",
+      remediation: "Packing REA's build-computer runtime failed",
+    },
+    {
+      action: "install",
+      kept: "REA_AGENT_ENV_COMMAND",
+      written: "REA_BUILD_COMPUTER_REA_ARCHIVE",
+      remediation: "Installing agentenv failed",
+    },
+  ] as const)(
+    "leaves the client's $kept as recorded when $action fails",
+    async ({ action, kept, written, remediation }) => {
+      const { host } = desktopHost({
+        agentEnvVersion: undefined,
+        uv: {
+          path: "/usr/local/bin/uv",
+          agentEnv: "/home/ada/.local/bin/agent-env",
+        },
+      });
+      Object.assign(
+        host.desktopBuild,
+        action === "pack"
+          ? { packRuntime: () => Promise.resolve("ENOSPC") }
+          : { installAgentenv: () => Promise.resolve("uv exited 2") },
+      );
+
+      const result = await runSetup(
+        desktopOptions(true, { installAgentenv: true }),
+        host,
+      );
+
+      expect(result.status).toBe("needs_human");
+      expect(result.remediation).toContain(remediation);
+      expect(host.configuredProviderEnvironments).toHaveLength(1);
+      expect(host.configuredProviderEnvironments[0]).not.toHaveProperty(kept);
+      expect(host.configuredProviderEnvironments[0]).toMatchObject({
+        REA_DOCKER_COMMAND: SETTINGS.REA_DOCKER_COMMAND,
+        [written]: SETTINGS[written],
+      });
+    },
+  );
+});
