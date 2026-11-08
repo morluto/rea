@@ -320,7 +320,11 @@ const addedChecks = (
     !room(collected, collected.values)
   )
     return;
-  if (isXmlElement(value)) elementChecks(collected, pointer, value);
+  if (
+    collected.context.tree.xml(collected.context.ends.final, pointer) &&
+    isXmlElement(value)
+  )
+    elementChecks(collected, pointer, value);
   else if (collected.context.texts.covers(pointer)) return;
   else if (Array.isArray(value) && value.length > 0) {
     const { keys } = pairMembers(value, []).newer;
@@ -377,6 +381,7 @@ const renamedFrom = (collected: Collected, pointer: string) => {
   const before = atSeed(ends, owner);
   const old = isXmlElement(before) ? before.attributes[key] : undefined;
   if (
+    !tree.xml(ends.baseline, owner) ||
     list === undefined ||
     !(owner.split("/").at(-1) ?? "").includes("][@") ||
     !isIdentifyingAttribute(key) ||
@@ -403,7 +408,7 @@ const renamedFrom = (collected: Collected, pointer: string) => {
 const collectChecks = (
   context: CollectContext,
   change: DesktopStateDifference,
-): Collected => {
+): Collected & { readonly runs: ReturnType<typeof readsText> } => {
   const collected: Collected = {
     context,
     elements: [],
@@ -430,7 +435,7 @@ const collectChecks = (
     }
   for (const pointer of change.removed.filter((at) => !runs(at, ends.baseline)))
     removedCheck(collected, pointer);
-  return collected;
+  return { ...collected, runs };
 };
 
 /**
@@ -523,6 +528,7 @@ export const namedDraft = (
         named(view, list) && !tree.arrayLeavesOut(view, list),
       noisy: (pointer) => noise(pointer) !== undefined,
       covered: texts.covers,
+      coveredRun: checks.runs,
     },
     change,
   );

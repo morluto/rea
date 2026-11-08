@@ -38,16 +38,8 @@ const isViewStateValue = (value: string): boolean =>
 const namesElement = (key: string) =>
   isNameLikeKey(key) || /^(?:[^:]*:)?key$/iu.test(key);
 
-/** An attribute an app renumbers as it saves: a generated id such as Gnumeric's `ExprID` or Scribus's `ItemID`, or LibreOffice's `rsid`. */
-export const isRenumberedKey = (key: string): boolean => {
-  const local = key.split(":").at(-1) ?? key;
-  return (
-    !isIdentifyingAttribute(key) &&
-    /(?:[a-z]I[dD]|(?:^|[-_])[rR][sS][iI][dD])$/u.test(local)
-  );
-};
-
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/iu;
+export const isUuid = (value: string): boolean => UUID.test(value);
 /** Seconds since 1970 of 2000-01-01 and 2100-01-01: an epoch time a save stamps falls between. */
 const EPOCH_RANGE = [946_684_800, 4_102_444_800] as const;
 
@@ -63,7 +55,7 @@ export const isVolatileValue = (
   value: string,
   bookkeeping = false,
 ): boolean => {
-  if (UUID.test(value) || ENCODED.test(value.trim())) return true;
+  if (isUuid(value) || ENCODED.test(value.trim())) return true;
   if (!bookkeeping) return false;
   if (!/^\d{10}(?:\d{3})?$/u.test(value)) return false;
   const seconds = Number(value.slice(0, 10));
@@ -623,10 +615,8 @@ const namesLayout = (
 /**
  * Why each pointer into a file is noise, or undefined when it is not: a tag,
  * attribute or name-like attribute value on its way naming view state, as
- * `[@config:name=CursorPositionX]`; an attribute an app renumbers, an
- * identifier it numbers by position, or anything inside an element both ends
- * hold whose renumbered attribute changed, as Gnumeric empties a formula cell
- * whose shared expression it renumbers; a UUID or epoch time, an id
+ * `[@config:name=CursorPositionX]`; an identifier numbered by position;
+ * a UUID or epoch time, an id
  * counter, an id the change gave a new element (`freshIds`), or a duration or
  * count under the document's metadata; a time the app stamps, whole or in
  * parts (`inSplitDate`), or a date under a tag naming bookkeeping; an id
@@ -642,12 +632,6 @@ export const changeNoise = (
   change: Pick<DesktopStateDifference, "added" | "changed" | "removed">,
   ends: Ends,
 ): ((pointer: string) => NoiseReason | undefined) => {
-  const renumbered = change.changed.flatMap((pointer) => {
-    const key = attributeKeyOf(pointer);
-    return key !== undefined && isRenumberedKey(key)
-      ? [ownerOfAttribute(pointer)]
-      : [];
-  });
   const byPosition = positionalRenumbering(ends);
   const fresh = freshIds(change, ends);
   const added = new Set(change.added);
@@ -678,23 +662,9 @@ export const changeNoise = (
     const reason: NoiseReason | undefined =
       elements.some(showsView) || (key !== undefined && isViewStateName(key))
         ? "view_state"
-        : (key !== undefined &&
-              (isRenumberedKey(key) ||
-                (isIdentifyingAttribute(key) && byPosition(pointer, key)))) ||
-            renumbered.some((element) => {
-              if (pointer !== element && !pointer.startsWith(`${element}/`))
-                return false;
-              if (pointer === element) return false;
-              const next = resolvePointer(ends.final, pointer);
-              const text =
-                typeof next === "string"
-                  ? next.trim()
-                  : isXmlElement(next)
-                    ? elementText(next).trim()
-                    : undefined;
-              // Gnumeric clears a shared formula when it renumbers the cell. A formula that still has text was edited.
-              return text === undefined || text === "";
-            })
+        : key !== undefined &&
+            isIdentifyingAttribute(key) &&
+            byPosition(pointer, key)
           ? "renumbered"
           : volatileAt(elements, key, value, freshAt(pointer, key, value))
             ? "volatile"

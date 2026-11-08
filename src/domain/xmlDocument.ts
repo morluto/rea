@@ -29,6 +29,15 @@ const declaresInternalSubset = (declaration: string): boolean =>
 /** XML 1.0's `NameStartChar`, and the further characters `NameChar` allows. */
 const NAME_START = String.raw`:A-Z_a-z\u{C0}-\u{D6}\u{D8}-\u{F6}\u{F8}-\u{2FF}\u{370}-\u{37D}\u{37F}-\u{1FFF}\u{200C}\u{200D}\u{2070}-\u{218F}\u{2C00}-\u{2FEF}\u{3001}-\u{D7FF}\u{F900}-\u{FDCF}\u{FDF0}-\u{FFFD}\u{10000}-\u{EFFFF}`;
 const NAME_MORE = String.raw`\-.0-9\u{B7}\u{300}-\u{36F}\u{203F}\u{2040}`;
+const XML_OPENING = new RegExp(
+  `^<(?:\\?xml\\b|!DOCTYPE\\b|[${NAME_START}][${NAME_START}${NAME_MORE}]*(?=[ \t\r\n]|/?>))`,
+  "u",
+);
+
+/** Whether text begins with a possible XML declaration, DOCTYPE or start tag. */
+export const opensLikeXml = (source: string): boolean =>
+  XML_OPENING.test(source);
+
 /** XML 1.0's `PubidChar` but the apostrophe, which only a double-quoted literal may hold. */
 const PUBID = String.raw`\n\r a-zA-Z0-9\-()+,./:=?;!*#@$_%`;
 const SPACE = String.raw`[ \t\r\n]`;
@@ -120,6 +129,7 @@ export const xmlElementRanges = (
   const ranges: { start: number; end: number }[] = [];
   // Each open element's start, and whether it was picked.
   const open: { start: number; picked: boolean }[] = [];
+  let selectedAncestor = false;
   try {
     checkXmlSyntax(source, policy.doctype, (syntax) => {
       // Saxes reports the opening after reading the name and one character past it, none of which is `<`.
@@ -131,7 +141,7 @@ export const xmlElementRanges = (
       });
       syntax.on("opentag", (tag: SaxesTagNS) => {
         const element = open.at(-1);
-        if (element === undefined || open.some(({ picked }) => picked)) return;
+        if (element === undefined || selectedAncestor) return;
         element.picked = select({
           uri: tag.uri,
           local: tag.local,
@@ -140,11 +150,14 @@ export const xmlElementRanges = (
               (attribute) => attribute.uri === uri && attribute.local === local,
             )?.value,
         });
+        selectedAncestor = element.picked;
       });
       syntax.on("closetag", () => {
         const element = open.pop();
-        if (element?.picked === true)
+        if (element?.picked === true) {
           ranges.push({ start: element.start, end: syntax.position });
+          selectedAncestor = false;
+        }
       });
     });
     return ok(ranges.sort((left, right) => left.start - right.start));
@@ -157,18 +170,21 @@ export const xmlElementRanges = (
   }
 };
 
-/** Source offsets of attribute opening quotes, parsed without reading a DTD. */
-export const xmlAttributeQuoteStarts = (
+/** Inclusive source ranges of attribute quotes, parsed without reading a DTD. */
+export const xmlAttributeQuoteRanges = (
   source: string,
 ): Result<
-  readonly number[],
+  readonly { readonly start: number; readonly end: number }[],
   {
     readonly error: XmlDocumentParseError;
-    readonly starts: readonly number[];
+    readonly ranges: readonly {
+      readonly start: number;
+      readonly end: number;
+    }[];
     readonly examined: number;
   }
 > => {
-  const starts: number[] = [];
+  const ranges: { start: number; end: number }[] = [];
   let reader: SaxesParser<{ xmlns: true }> | undefined;
   try {
     checkXmlSyntax(source, "allow", (syntax) => {
@@ -180,17 +196,17 @@ export const xmlAttributeQuoteStarts = (
           throw new XmlDocumentParseError("malformed");
         const start = source.lastIndexOf(quote, end - 1);
         if (start < 0) throw new XmlDocumentParseError("malformed");
-        starts.push(start);
+        ranges.push({ start, end });
       });
     });
-    return ok(starts);
+    return ok(ranges);
   } catch (cause: unknown) {
     return err({
       error:
         cause instanceof XmlDocumentParseError
           ? cause
           : new XmlDocumentParseError("malformed", cause),
-      starts,
+      ranges,
       examined: Math.max(0, (reader?.position ?? 0) - 1),
     });
   }

@@ -126,6 +126,17 @@ export abstract class BinarySessionRecords {
     return recorded;
   }
 
+  admitRecoveryObservation(
+    input: unknown,
+    operation: string,
+    additional: {
+      readonly valueBytes: number;
+      readonly serializedUtf16Bytes: number;
+    },
+  ): Result<void, AnalysisError> {
+    return this.#records.admitRecoveryObservation(input, operation, additional);
+  }
+
   hasEvidence(evidenceId: string): boolean {
     return this.#records.hasEvidence(evidenceId);
   }
