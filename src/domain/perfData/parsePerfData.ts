@@ -45,6 +45,11 @@ const ATTR_SIZE_MIN = 64;
 /** Bit 10 of the flag word is `freq`: sample_period holds a frequency. */
 const ATTR_FLAG_FREQ = 0x400;
 /**
+ * Entries may share one ids extent, so the per-entry reading asks the whole
+ * file again for each group; the retained list is what bounds the reply.
+ */
+const MAX_RETAINED_IDENTIFIERS = 200_000;
+/**
  * `attr_size` is `sizeof(struct perf_event_attr) + sizeof(perf_file_section)`:
  * each entry ends with the offset/size of that event's id array.
  */
@@ -60,6 +65,8 @@ interface DecodeState {
   diagnosticsSuppressed: boolean;
   /** Identifiers read so far; an unusable section leaves a group's count unknown. */
   identifiers: number;
+  /** Every retained identifier, to bound the total across entries. */
+  readonly identified: number[];
   /** False once any entry's ids section could not be read as declared. */
   identifiersPresent: boolean;
 }
@@ -170,7 +177,11 @@ const readEvents = (
       return;
     }
     const ordinal = state.events.length;
-    const ids = sectionAt(bytes, read, cursor + declared);
+    const ids = sectionAt(
+      bytes,
+      read,
+      cursor + stride - PERF_FILE_SECTION_BYTES,
+    );
     if (ids === null) {
       diagnose(
         state,
@@ -180,6 +191,7 @@ const readEvents = (
       );
     }
     const idsList: number[] = [];
+    let idsTruncated = false;
     if (ids !== null) {
       // The writer places the id arrays outside the attribute entries, so an
       // offset inside the entry is not required; containment in the file is.
@@ -190,22 +202,30 @@ const readEvents = (
           "invalid-ids-section",
           `The entry at ${cursor} declares ids at ${ids.offset} for ${ids.size} bytes, which is not a whole number of in-file identifiers.`,
         );
-      } else
+      } else {
+        // Entries can all point at one large extent, so the retained identifier
+        // count is bounded independently of the file and event allowances.
         for (let at = ids.offset; at < ids.offset + ids.size; at += 8) {
+          if (state.identified.length >= MAX_RETAINED_IDENTIFIERS) {
+            idsTruncated = true;
+            break;
+          }
           const id = read.u64(bytes, at);
           if (id === null) break;
           idsList.push(id);
+          state.identified.push(id);
         }
+      }
       if (ids.size % 8 !== 0 || !ids.within_file)
         state.identifiersPresent = false;
       else state.identifiers += idsList.length;
     }
-    const flags = read.u32(bytes, cursor + ATTR_FLAGS_OFFSET);
+    const flags = read.u64(bytes, cursor + ATTR_FLAGS_OFFSET);
     state.events.push({
       event_id: digest("perf_event", section.offset, cursor),
       ordinal,
       type: read.u32(bytes, cursor + ATTR_TYPE_OFFSET),
-      config: read.u32(bytes, cursor + ATTR_CONFIG_OFFSET),
+      config: read.u64(bytes, cursor + ATTR_CONFIG_OFFSET),
       sample_type:
         stride >= ATTR_SAMPLE_TYPE_OFFSET + 8
           ? read.u64(bytes, cursor + ATTR_SAMPLE_TYPE_OFFSET)
@@ -218,10 +238,12 @@ const readEvents = (
         stride >= ATTR_SAMPLE_PERIOD_OFFSET + 8
           ? read.u64(bytes, cursor + ATTR_SAMPLE_PERIOD_OFFSET)
           : null,
-      sample_freq: (flags & ATTR_FLAG_FREQ) !== 0,
+      sample_freq:
+        flags === null ? null : (flags & ATTR_FLAG_FREQ) !== 0,
       attr_bytes: declared,
       ids_section: ids,
       ids: idsList,
+      ids_truncated: idsTruncated,
       file_offset: cursor,
     });
     cursor += stride;
@@ -304,6 +326,7 @@ export const parsePerfData = (
     eventLimitReported: false,
     diagnosticsSuppressed: false,
     identifiers: 0,
+    identified: [],
     identifiersPresent: true,
   };
   const little = byteOrder(bytes);

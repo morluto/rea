@@ -41,8 +41,8 @@ export const perfEventSchema = z.strictObject({
   ordinal: z.int().nonnegative(),
   /** Attribute type as the entry states it (`PERF_TYPE_*`). */
   type: z.int().nonnegative(),
-  /** `config` value; its meaning depends on `type`. */
-  config: z.int().nonnegative(),
+  /** `config` value; its meaning depends on `type`; null when it exceeds a safe integer. */
+  config: z.int().nonnegative().nullable(),
   /** Declared sample type bitmask; null when the entry is too short. */
   sample_type: z.int().nonnegative().nullable(),
   /** Declared read format bitmask; null when the entry is too short. */
@@ -57,6 +57,8 @@ export const perfEventSchema = z.strictObject({
   ids_section: perfFileSectionSchema.nullable(),
   /** Event identifiers read from `ids_section`, in file order. */
   ids: z.array(z.int().nonnegative()),
+  /** The ids extent held more identifiers than the reply budget admitted. */
+  ids_truncated: z.boolean(),
   /** Byte offset of the attribute entry inside the file. */
   file_offset: z.int().nonnegative(),
 });

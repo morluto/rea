@@ -203,3 +203,36 @@ describe("parsePerfData event attributes", () => {
     );
   });
 });
+
+describe("parsePerfData attribute widths", () => {
+  it("reads the id descriptor at the end of the entry stride", () => {
+    // `attr_size` is the writer's stride; `perf_event_attr.size` may be smaller.
+    const bytes = buildPerfRecording({ attrBytes: 64 });
+    const archive = parsed(bytes);
+    expect(archive.file_header.attribute_bytes).toBe(80);
+    expect(archive.events[0]?.attr_bytes).toBe(64);
+    expect(archive.events[0]?.ids).toEqual([7]);
+    expect(archive.diagnostics).toEqual([]);
+  });
+
+  it("preserves a 64-bit config and the low freq flag on a big-endian recording", () => {
+    const bytes = buildPerfRecording({
+      little: false,
+      entries: [perfEntry({ config: 1, freq: true })],
+    });
+    const archive = parsed(bytes);
+    expect(archive.events[0]).toMatchObject({
+      config: 1,
+      sample_freq: true,
+    });
+  });
+
+  it("reports an unrepresentable 64-bit config as unknown rather than truncated", () => {
+    const bytes = buildPerfRecording();
+    bytes.writeBigUInt64LE(
+      BigInt("18446744073709551615"),
+      PERF_HEADER_BYTES + 0x08,
+    );
+    expect(parsed(bytes).events[0]?.config).toBe(null);
+  });
+});
