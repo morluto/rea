@@ -110,6 +110,7 @@ export const planLaunch = (
       isDocument,
       isCaptured: capturedLaunchPaths(capture, files, homeOf),
       spell: (path) => homeOf(`${host.home}/${path}`) ?? path,
+      mapOutside: homeOf,
     },
   );
   return {

@@ -354,6 +354,62 @@ it.each(["settings/notes", "chosen/notes"])(
   },
 );
 
+it.each([true, false])(
+  "omits only a child alias supplied by its parent (%s)",
+  async (redundant) => {
+    const local = capture();
+    const parent = `${HOME}/.config/notes`;
+    const child = `${parent}/state/notes`;
+    const { result, directory } = await exportCapture({
+      ...local,
+      application: {
+        ...local.application,
+        state_directories: [
+          { path: parent, exists_at_start: true },
+          {
+            path: redundant ? child : `${HOME}/.local/share/separate`,
+            exists_at_start: true,
+          },
+        ],
+      },
+      state: {
+        ...local.state,
+        content_roots: [parent],
+        state_directories: [parent, child],
+        selected_paths: [
+          { path: `${HOME}/settings`, physical: parent, kind: "directory" },
+          {
+            path: `${HOME}/settings/state/notes`,
+            physical: child,
+            kind: "directory",
+          },
+        ],
+        checkpoints: [
+          checkpoint(
+            "baseline",
+            "baseline",
+            [],
+            [retained(`${child}/settings.ini`, "[ui]\nwrap=false\n")],
+          ),
+        ],
+      },
+    });
+    if (result instanceof Error) throw result;
+    const module = await readFile(
+      join(directory, "envs/notes/notes_app.py"),
+      "utf8",
+    );
+    expect(module).toContain('("settings", ".config/notes")');
+    expect(module).not.toContain(
+      '("settings/state/notes", ".config/notes/state/notes")',
+    );
+    if (!redundant)
+      expect(module).toContain(
+        '("settings/state/notes", ".local/share/separate")',
+      );
+  },
+);
+
 describe("exportDesktopApplication and the desktop Trash", () => {
   it("leaves a file the user moved to the Trash out of the seed and the owned paths, and says so", async () => {
     const local = capture();
