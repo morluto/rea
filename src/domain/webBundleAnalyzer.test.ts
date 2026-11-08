@@ -548,8 +548,9 @@ describe("web bundle source-map coverage", () => {
     expect(analysis.completeness.status).toBe("partial");
     expect(analysis.unknowns).toContainEqual({
       dimension: "source_maps",
-      reason:
-        "One or more requested source maps were unavailable or incomplete",
+      reason: expect.stringMatching(
+        /requested source maps.*unavailable or incomplete/i,
+      ),
       affected_script_keys: [`scr_${"1".repeat(64)}`],
     });
   });

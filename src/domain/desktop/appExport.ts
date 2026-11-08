@@ -20,7 +20,8 @@ import type { DesktopApplicationState } from "./desktopState.js";
 import { isWithinAny } from "./desktopStateDiff.js";
 import { SQLITE_SIDECARS } from "./stateFormats.js";
 import { SEED_HOME } from "./hostIdentity.js";
-import type { LaunchDocument } from "./seedDocument.js";
+import { capturedFileUrl, type LaunchDocument } from "./seedDocument.js";
+import { posix } from "node:path";
 import { roleFacts, stateDirectoryOf } from "./stateRoles.js";
 
 /** agentenv-framework release the exported class was checked against. */
@@ -339,12 +340,37 @@ export const launchCommand = (
   capturedHome: string,
   workingDirectory: string,
 ): readonly string[] => {
+  const homeUrl = (value: string): string | undefined => {
+    const parsed = capturedFileUrl(value);
+    if (parsed === undefined) return undefined;
+    const { url, path } = parsed;
+    const root = posix.normalize(capturedHome);
+    if (
+      path !== root &&
+      !(root === "/" ? path.startsWith("/") : path.startsWith(`${root}/`))
+    )
+      return undefined;
+    const segments = url.pathname.split("/");
+    const count = root.split("/").filter(Boolean).length;
+    const encodedSuffix = segments.slice(count + 1).join("/");
+    const suffix =
+      (segments.length > count + 1 ? `/${encodedSuffix}` : "") +
+      url.search +
+      url.hash;
+    // The framework executes this command in a Python environment. Encode the
+    // runtime home as a URL path; shell quoting alone does not escape # or spaces.
+    const encodedHome = `"$(python3 -I -c 'import os,urllib.parse;print(urllib.parse.quote(os.environ["HOME"],safe="/"),end="")')"`;
+    const prefix =
+      /^file:\/\/(?:localhost)?(?=\/)/iu.exec(value)?.[0] ?? "file://";
+    return `${shellQuote(prefix)}${encodedHome}${shellQuote(suffix)}`;
+  };
   const underHome = (path: string) =>
-    path === capturedHome
+    homeUrl(path) ??
+    (path === capturedHome
       ? `"$HOME"`
       : path.startsWith(`${capturedHome}/`)
         ? `"$HOME"/${shellQuote(path.slice(capturedHome.length + 1))}`
-        : undefined;
+        : undefined);
   const respell = (argument: string) => {
     const equals = argument.indexOf("=");
     const value =

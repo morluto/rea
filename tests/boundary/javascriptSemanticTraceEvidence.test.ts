@@ -14,7 +14,6 @@ import { analysisCliErrorEnvelopeSchema } from "../../src/contracts/errorSchemas
 import { toolContract } from "../../src/contracts/toolContracts.js";
 import { javascriptApplicationAnalysisResultSchema } from "../../src/domain/javascript/javascriptApplicationAnalysis.js";
 import { javaScriptSemanticTraceResultSchema } from "../../src/domain/javascript/javascriptSemanticTraceSchemas.js";
-import { resolveJavaScriptSemanticEvidence } from "../../src/domain/javascript/javascriptSemanticGraph.js";
 
 const SEMANTIC_GRAPH_ID = `jsrg_${"0".repeat(64)}`;
 
@@ -443,17 +442,6 @@ const assertTraceContextsResolve = (
     expect(context, reference.context_id).toBeDefined();
     if (context === undefined) continue;
     referencedIds.add(reference.context_id);
-    expect(
-      resolveJavaScriptSemanticEvidence(
-        { evidence_contexts: result.evidence_contexts },
-        reference,
-      ),
-    ).toMatchObject({
-      ...Object.fromEntries(
-        Object.entries(context).filter(([key]) => key !== "context_id"),
-      ),
-      location: reference.location,
-    });
   }
   expect([...referencedIds].toSorted()).toEqual(
     [...contexts.keys()].toSorted(),

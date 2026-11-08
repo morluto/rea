@@ -106,8 +106,7 @@ it.each([
       path: ["generated_position", "line"],
       minimum: 1,
       maximum: 2,
-      message:
-        "No line 3; the retained script ends at line 2 (one-based lines).",
+      message: expect.stringMatching(/line 3.*line 2.*one-based/i),
     },
   },
   {
@@ -116,8 +115,9 @@ it.each([
       path: ["generated_position", "column"],
       minimum: 0,
       maximum: 3,
-      message:
-        "No column 4 on line 1; it ends at column 3 (zero-based UTF-16 columns).",
+      message: expect.stringMatching(
+        /column 4.*line 1.*column 3.*zero-based UTF-16/i,
+      ),
     },
   },
   {

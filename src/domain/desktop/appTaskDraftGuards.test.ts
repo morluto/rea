@@ -13,6 +13,66 @@ import { lineGuards } from "./appTaskDraftLineGuards.js";
 
 const FILE = "Documents/doc.xml";
 
+it("does not guard whole sibling text that contains an unchanged timestamp", () => {
+  const document = (title: string) =>
+    `<doc><item id="a"><title>${title}</title></item><item id="b"><title>Keep</title><modified>2026-11-01T10:12:00Z</modified></item><item id="c"><title>Stable</title></item></doc>`;
+  const baseline = xml(document("Old"));
+  const final = xml(document("New"));
+  const guards = draftGuards(
+    {
+      file: FILE,
+      ends: { baseline, final },
+      named: () => true,
+      noisy: () => false,
+      chars: 2000,
+    },
+    [
+      {
+        kind: "text_equals",
+        file: FILE,
+        pointer: "/root/children/[name=item][@id=a]",
+        value: "New",
+      },
+    ],
+  );
+  expect(guards).toEqual([
+    expect.objectContaining({
+      pointer: "/root/children/[name=item][@id=c]",
+      value: "Stable",
+    }),
+  ]);
+});
+
+it("does not guard whole sibling text that contains an unchanged generated UUID", () => {
+  const document = (title: string) =>
+    `<doc><item id="a"><title>${title}</title></item><item id="b"><title>Keep</title><session>123e4567-e89b-12d3-a456-426614174000</session></item><item id="c"><title>Stable</title></item></doc>`;
+  const baseline = xml(document("Old"));
+  const final = xml(document("New"));
+  const guards = draftGuards(
+    {
+      file: FILE,
+      ends: { baseline, final },
+      named: () => true,
+      noisy: () => false,
+      chars: 2000,
+    },
+    [
+      {
+        kind: "text_equals",
+        file: FILE,
+        pointer: "/root/children/[name=item][@id=a]",
+        value: "New",
+      },
+    ],
+  );
+  expect(guards).toEqual([
+    expect.objectContaining({
+      pointer: "/root/children/[name=item][@id=c]",
+      value: "Stable",
+    }),
+  ]);
+});
+
 describe("draftTaskFiles guards", () => {
   /** A flyer's frames, each named, its text in an attribute, as Scribus saves them. */
   const flyer = (headline: string) =>

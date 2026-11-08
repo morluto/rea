@@ -6,6 +6,85 @@ import { passing, xml, xmlDraft } from "./appTaskDraft.fixture.js";
 
 const FILE = "Documents/doc.xml";
 
+it("does not include a sibling generated UUID when a record field changes", () => {
+  const before =
+    '<doc><record id="one"><value>Old text</value><session>123e4567-e89b-12d3-a456-426614174000</session></record></doc>';
+  const after = before.replace("Old text", "New text");
+  const later = after.replace(
+    "123e4567-e89b-12d3-a456-426614174000",
+    "123e4567-e89b-12d3-a456-426614174001",
+  );
+  const checks = xmlDraft(before, after).suggested;
+  expect(checks.length).toBeGreaterThan(0);
+  expect(JSON.stringify(checks)).not.toContain(
+    "123e4567-e89b-12d3-a456-426614174000",
+  );
+  expect(passing(FILE, xml(later), checks).every(Boolean)).toBe(true);
+});
+
+it("keeps a nested phone number that resembles an epoch timestamp", () => {
+  const before =
+    '<doc><contact name="old"><phone><country>+1</country><number>2125550100</number></phone></contact></doc>';
+  const after =
+    '<doc><contact name="old"><phone><country>+1</country><number>2125550100</number></phone></contact><contact name="new"><phone><country>+1</country><number>2025550123</number></phone></contact></doc>';
+  const file = xmlDraft(before, after);
+  expect(file.suggested).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({ value: "+12025550123" }),
+    ]),
+  );
+});
+
+it("keeps epoch-shaped phone fields and attributes while treating saved metadata as volatile", () => {
+  const before =
+    '<doc><contact name="old" phone="2125550100"><phone>2125550100</phone></contact><meta saved="1793870500"/></doc>';
+  const after =
+    '<doc><contact name="old" phone="2125550100"><phone>2125550100</phone></contact><contact name="new" phone="2025550123"><phone>2025550123</phone></contact><meta saved="1793870600"/></doc>';
+  const file = xmlDraft(before, after);
+  expect(
+    file.suggested.filter(
+      (check) => "value" in check && check.value === "2025550123",
+    ),
+  ).not.toHaveLength(0);
+  expect(file.values).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({
+        note: "volatile",
+        pointer: expect.stringContaining("/attributes/saved"),
+      }),
+    ]),
+  );
+});
+
+it("treats a changed epoch-shaped phone field as an edit", () => {
+  const file = xmlDraft(
+    "<doc><phone>2125550100</phone></doc>",
+    "<doc><phone>2025550123</phone></doc>",
+  );
+  expect(file.suggested.length).toBeGreaterThan(0);
+  expect(file.values.every(({ note }) => note !== "volatile")).toBe(true);
+});
+
+it("omits oversized added attributes while retaining shorter checks and reporting the omitted pointer", () => {
+  const before = '<doc><item name="old" note="old"/></doc>';
+  const after = `<doc><item name="old" note="old"/><item name="new" note="${"x".repeat(100_000)}" wording="edited"/></doc>`;
+  const file = xmlDraft(before, after);
+  expect(JSON.stringify(file.suggested)).not.toContain("x".repeat(2001));
+  expect(file.suggested).toEqual(
+    expect.arrayContaining([expect.objectContaining({ value: "edited" })]),
+  );
+  expect(file.notes).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({
+        code: "long_text",
+        pointers: expect.arrayContaining([
+          expect.stringContaining("/attributes/note"),
+        ]),
+      }),
+    ]),
+  );
+});
+
 describe("draftTaskFiles for elements no attribute names", () => {
   /** A score whose title frame holds untitled texts, as MuseScore 3 saves one. */
   const score = (title: string, composer: string) =>

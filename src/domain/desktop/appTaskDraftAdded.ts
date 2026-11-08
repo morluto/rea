@@ -3,12 +3,18 @@ import type { DesktopTaskCheckInput } from "./appTask.js";
 import { elementText, isXmlElement } from "./appTaskChecks.js";
 import {
   isRenumberedKey,
+  isBookkeeping,
+  isBookkeepingName,
   inSplitDate,
   isStamp,
   isVolatileValue,
 } from "./appTaskDraftNoise.js";
 import { valueEqualsCheck } from "./appTaskDraftScalars.js";
-import { holdsFields, wholeTextCheck } from "./appTaskDraftText.js";
+import {
+  holdsFields,
+  holdsNoisyText,
+  wholeTextCheck,
+} from "./appTaskDraftText.js";
 import {
   isIdentifyingAttribute,
   isViewStateName,
@@ -133,14 +139,21 @@ export const attributeChecks = (
       : [],
   );
   if (copiesSibling(context, pointer, element, own)) return [];
+  const eligible = own.filter(
+    ({ key, value }) =>
+      !isStamp(value) &&
+      !isVolatileValue(
+        value,
+        isBookkeeping(element) || isBookkeepingName(key),
+      ) &&
+      !isViewStateName(key) &&
+      !isRenumberedKey(key),
+  );
+  for (const { key, value } of eligible)
+    if (value.length > context.chars)
+      context.long?.push(`${pointer}/attributes/${escapeToken(key)}`);
   return rankAttributes(
-    own.filter(
-      ({ key, value }) =>
-        !isStamp(value) &&
-        !isVolatileValue(value) &&
-        !isViewStateName(key) &&
-        !isRenumberedKey(key),
-    ),
+    eligible.filter(({ value }) => value.length <= context.chars),
   )
     .slice(0, MAX_ATTRIBUTE_CHECKS)
     .map(({ key, value }) =>
@@ -153,14 +166,17 @@ export const attributeChecks = (
 };
 
 /**
- * A field's text with save-time leaves removed. Joining those leaves into the
- * field would hide the stamp from `isStamp` and make a later save of only
- * that time fail the check.
+ * A field's text with save-time and generated leaves removed, as
+ * `holdsNoisyText` finds them. Joining those leaves into the field would hide
+ * them from `isStamp` and make a later save of only that value fail the check.
  */
-const keptFieldText = (node: JsonValue): string => {
-  if (typeof node === "string") return isStamp(node) ? "" : node;
+const keptFieldText = (node: JsonValue, bookkeeping = false): string => {
+  if (typeof node === "string")
+    return holdsNoisyText(node, bookkeeping) ? "" : node;
   if (!isXmlElement(node)) return "";
-  return node.children.map((child) => keptFieldText(child)).join("");
+  return node.children
+    .map((child) => keptFieldText(child, bookkeeping || isBookkeeping(node)))
+    .join("");
 };
 
 /** The nearest ancestor both ends hold that a check names without a step by position. */
@@ -216,7 +232,7 @@ export const fieldChecks = (
       !/[\p{L}\d]/u.test(text) ||
       seen.includes(text) ||
       isStamp(text) ||
-      isVolatileValue(text)
+      isVolatileValue(text, isBookkeeping(field))
     )
       return;
     if (value.length > context.chars) {
@@ -266,10 +282,12 @@ export const recordChecks = (
       )
         return [];
       const value = elementText(field);
+      if (value.length > context.chars) context.long?.push(at);
       return value.trim() === "" ||
         value.length > context.chars ||
+        holdsNoisyText(field) ||
         isStamp(value) ||
-        isVolatileValue(value)
+        isVolatileValue(value, isBookkeeping(field))
         ? []
         : [
             wholeTextCheck(

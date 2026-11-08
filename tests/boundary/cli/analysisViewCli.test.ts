@@ -554,7 +554,6 @@ cliTest(
           });
           continue;
         }
-        expect(application.ok).toBe(false);
         if (application.ok) throw new Error("Expected an invalid parent");
         expect(application.error.cause).toBeInstanceOf(z.ZodError);
         expect(reply.exitCode).toBe(1);
@@ -590,7 +589,6 @@ cliTest(
       view: { kind: "summary" as const },
     };
     const application = await inspectAnalysisView(request);
-    expect(application.ok).toBe(false);
     if (application.ok) throw new Error("Expected invalid nested Evidence");
     expect(application.error.cause).toMatchObject({
       cause: expect.any(z.ZodError),
