@@ -1194,8 +1194,22 @@ const noteUnreadMap = (
   state.skippedCompanions += 1;
 };
 
-const mayHaveSourceMapPrefix = (prefix: Buffer): boolean =>
-  mayHaveSourceMapText(prefix.toString("utf8"));
+/**
+ * A map's text in the encoding its byte order mark names, or null for one this
+ * reader does not decode, which leaves the map unresolved. Unmarked bytes are
+ * read as UTF-8, as a source map is.
+ */
+const mapText = (bytes: Buffer): string | null => {
+  const encoding = byteOrderMarkEncoding(bytes);
+  if (encoding === null) return bytes.toString("utf8");
+  if (encoding === "utf-32") return null;
+  return new TextDecoder(encoding).decode(bytes);
+};
+
+const mayHaveSourceMapPrefix = (prefix: Buffer): boolean => {
+  const text = mapText(prefix);
+  return text === null || mayHaveSourceMapText(text);
+};
 
 const mayHaveSourceMapText = (decoded: string): boolean => {
   const text = sourceMapJsonText(decoded).trimStart();
@@ -1244,7 +1258,13 @@ const readSourceMap = (
   map: Pick<MemberView, "logical" | "location">,
   bytes: Buffer,
 ): void => {
-  readSourceMapText(state, map, bytes.toString("utf8"));
+  const text = mapText(bytes);
+  if (text !== null) {
+    readSourceMapText(state, map, text);
+    return;
+  }
+  pushSample(state.mapSamples, map.location);
+  state.unparsedMaps += 1;
 };
 
 /** Read map text already decoded by the member's owner, such as a UTF-16 script. */
@@ -2856,8 +2876,10 @@ const classifySiblingMap = async (
 };
 
 const parsesAsSourceMap = (bytes: Buffer): boolean => {
+  const text = mapText(bytes);
+  if (text === null) return false;
   try {
-    inspectSourceMap(bytes.toString("utf8"));
+    inspectSourceMap(text);
     return true;
   } catch {
     return false;

@@ -3425,6 +3425,48 @@ describe("ReleaseExposureReader inline map reads", () => {
   });
 });
 
+describe("ReleaseExposureReader byte-order-marked maps", () => {
+  it.each([
+    ["utf-16le", [0xff, 0xfe]],
+    ["utf-16be", [0xfe, 0xff]],
+  ] as const)(
+    "reads a generic map marked %s as a source map",
+    async (encoding, mark) => {
+      const root = await createTestTempDirectory("rea-release-exposure-bom-");
+      const json = JSON.stringify({
+        version: 3,
+        sources: ["src/app.ts"],
+        sourcesContent: ["export {};"],
+        mappings: "",
+      });
+      const body = Buffer.from(json, "utf16le");
+      if (encoding === "utf-16be") body.swap16();
+      await writeFile(
+        join(root, "symbols.map"),
+        Buffer.concat([Buffer.from(mark), body]),
+      );
+      const scanned = await inspect(root);
+      expect(scanned.source_maps).toMatchObject({ embedded: 1, unparsed: 0 });
+      expect(scanned.debug_companions.paths).toEqual([]);
+      expect(sourceMapSourcesStatus(scanned)).toBe("exposed");
+    },
+  );
+
+  it("keeps a generic map marked utf-32 unresolved", async () => {
+    const root = await createTestTempDirectory("rea-release-exposure-bom-");
+    await writeFile(
+      join(root, "symbols.map"),
+      Buffer.concat([
+        Buffer.from([0xff, 0xfe, 0, 0]),
+        Buffer.from("{\0\0\0", "latin1"),
+      ]),
+    );
+    const scanned = await inspect(root);
+    expect(scanned.source_maps).toMatchObject({ unparsed: 1, embedded: 0 });
+    expect(scanned.debug_companions.paths).toEqual([]);
+  });
+});
+
 describe("ReleaseExposureReader Node shebang scripts", () => {
   const dataUrl = `data:application/json;base64,${Buffer.from(
     JSON.stringify({
