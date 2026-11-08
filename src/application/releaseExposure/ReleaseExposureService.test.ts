@@ -1583,6 +1583,13 @@ describe("ReleaseExposureService Go forwarded linker search paths", () => {
     ["-Wl,-T,$ORIGIN.ld", "$ORIGIN.ld"],
     ["-Xlinker -T -Xlinker ${ORIGIN}/link.ld", "${ORIGIN}/link.ld"],
     ["-Wl,-L,$ORIGIN/lib", "$ORIGIN/lib"],
+    ["-Wl,-L,$ORIGIN -Wl,-rpath,$ORIGIN", "$ORIGIN"],
+    ["-Wl,-L,$ORIGIN,-rpath,$ORIGIN", "$ORIGIN"],
+    [
+      "-Xlinker -L -Xlinker $ORIGIN -Xlinker -rpath -Xlinker $ORIGIN",
+      "$ORIGIN",
+    ],
+    ["-Wl,-rpath=$ORIGIN -Wl,-T,$ORIGIN", "$ORIGIN"],
   ])(
     "keeps a literal path that only a search list would expand in %s",
     async (value, path) => {

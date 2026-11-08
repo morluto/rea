@@ -1093,17 +1093,56 @@ const linkerSearchLists = (flags: string[]): string[] =>
 const compilerPaths = (value: string, format: NativeImageFormat): string[] => {
   const flags = goFlags(value);
   const { compiler, linker } = splitForwardedLinkerFlags(flags);
-  const lists = linkerSearchLists(linker);
-  const whole = new Set(lists);
-  const entries = lists.flatMap((list) => searchListEntries(list, format));
+  const literal = withoutLinkerSearchLists(flags);
   return [
-    ...flagPaths(flags).filter((path) => !whole.has(path)),
+    ...flagPaths(literal),
     ...goRelativeFlagPaths(compiler, GO_COMPILER_PATH_FLAG),
-    ...goRelativeFlagPaths(linker, LINKER_PATH_FLAG).filter(
-      (path) => !whole.has(path),
+    ...goRelativeFlagPaths(
+      splitForwardedLinkerFlags(literal).linker,
+      LINKER_PATH_FLAG,
     ),
-    ...entries,
+    ...linkerSearchLists(linker).flatMap((list) =>
+      searchListEntries(list, format),
+    ),
   ];
+};
+
+/**
+ * The flags without each forwarded `-rpath` or `-rpath-link` option and its
+ * argument. A search list is read entry by entry, so the literal flags are
+ * read with it removed by position: `-Wl,-L,$ORIGIN -Wl,-rpath,$ORIGIN` keeps
+ * the `-L` directory even though its text equals the search list.
+ */
+const withoutLinkerSearchLists = (flags: string[]): string[] => {
+  const kept: string[] = [];
+  let argumentPending = false;
+  // True when the forwarded part is a search list option or its argument.
+  const dropped = (part: string): boolean => {
+    if (argumentPending && !part.startsWith("-")) {
+      argumentPending = false;
+      return true;
+    }
+    argumentPending = false;
+    const match = LINKER_SEARCH_LIST_FLAG.exec(part);
+    if (match === null) return false;
+    argumentPending = part.slice(match[0].length).length === 0;
+    return true;
+  };
+  for (let index = 0; index < flags.length; index += 1) {
+    const flag = flags[index] ?? "";
+    const forwarded = flags[index + 1];
+    if (flag === "-Xlinker" && forwarded !== undefined) {
+      index += 1;
+      if (!dropped(forwarded)) kept.push(flag, forwarded);
+    } else if (flag.startsWith("-Wl,")) {
+      const parts = flag
+        .slice(4)
+        .split(",")
+        .filter((part) => !dropped(part));
+      if (parts.length > 0) kept.push(`-Wl,${parts.join(",")}`);
+    } else kept.push(flag);
+  }
+  return kept;
 };
 
 /**
