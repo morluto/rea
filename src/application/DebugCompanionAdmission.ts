@@ -8,7 +8,9 @@ import type { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.j
 import {
   findOverlappingFatSlices,
   readFatContainerHeader,
+  readMachoHeaderPrefixFacts,
   validateFatSlice,
+  type FatSliceDeclaration,
 } from "../domain/apple/machoContainer.js";
 import { machoCpuSubtypeBase } from "../domain/apple/machoCpuIdentity.js";
 import {
@@ -19,6 +21,7 @@ import type {
   BinaryArchitecture,
   MachODebugCompanion,
   UniversalMachOSlice,
+  UniversalMachOSliceIdentity,
 } from "../domain/binaryTargetTypes.js";
 import { BinaryTargetError } from "../domain/configurationErrors.js";
 import type { JsonValue } from "../domain/jsonValue.js";
@@ -46,8 +49,9 @@ import {
   appendCallerPath,
 } from "../filesystem/callerPath.js";
 import {
+  hasDuplicateMachoCpuSubtype,
   MACHO_ARCHITECTURE_POLICIES,
-  machoSubtypeRank,
+  selectRankedMachoSlice,
 } from "../native/MachoArchitectureSelection.js";
 import {
   RetainedRegularFileCleanupFailure,
@@ -298,22 +302,23 @@ const readThinUuidEntry = async (
   return step.value.ok ? step.value : err(invalidImage(step.value.error));
 };
 
-/**
- * Read every LC_UUID of a Mach-O file with its declaring CPU identity: a thin
- * image from its start, or each slice of a universal container from its table.
- */
-export const readMachoFileUuidEntries = async (
+type ValidatedMachoContainer =
+  | {
+      readonly kind: "thin";
+      readonly prefix: Buffer;
+    }
+  | {
+      readonly kind: "fat";
+      readonly prefix: Buffer;
+      readonly tableEnd: number;
+      readonly slices: readonly FatSliceDeclaration[];
+    };
+
+const readValidatedMachoContainer = async (
   handle: FileHandle,
   fileSize: number,
-  options: {
-    readonly signal?: AbortSignal;
-    readonly ledger?: TraversalLedger;
-  } = {},
-): Promise<Result<SliceUuidEntry[], MachOUuidReadFailure>> => {
-  const context: TraversalContext = {
-    ledger: options.ledger ?? { spent: 0 },
-    signal: options.signal,
-  };
+  context: TraversalContext,
+): Promise<Result<ValidatedMachoContainer, MachOUuidReadFailure>> => {
   const remainingBudget = Math.max(
     0,
     TRAVERSAL_BUDGET_BYTES - context.ledger.spent,
@@ -322,23 +327,8 @@ export const readMachoFileUuidEntries = async (
   const prefix = await readUuidWindow(handle, 0, prefixLength, context);
   if (!prefix.ok) return prefix;
   const container = readFatContainerHeader(prefix.value, fileSize);
-  if (container.state === "not-fat") {
-    const read = await readThinUuidEntry(
-      handle,
-      { offset: 0, length: fileSize },
-      context,
-      prefix.value,
-    );
-    return read.ok
-      ? ok([
-          {
-            cpuType: read.value.cpuType,
-            cpuSubtypeBase: machoCpuSubtypeBase(read.value.cpuSubtype),
-            uuid: read.value.uuid,
-          },
-        ])
-      : read;
-  }
+  if (container.state === "not-fat")
+    return ok({ kind: "thin", prefix: prefix.value });
   if (container.state === "needs-data")
     return err(
       prefixLength < container.requiredBytes
@@ -359,8 +349,55 @@ export const readMachoFileUuidEntries = async (
         `FAT architectures ${overlap[0].index} and ${overlap[1].index} have overlapping slice ranges`,
       ),
     );
+  return ok({
+    kind: "fat",
+    prefix: prefix.value,
+    tableEnd: container.tableEnd,
+    slices: container.slices,
+  });
+};
+
+/**
+ * Read every LC_UUID of a Mach-O file with its declaring CPU identity: a thin
+ * image from its start, or each slice of a universal container from its table.
+ */
+export const readMachoFileUuidEntries = async (
+  handle: FileHandle,
+  fileSize: number,
+  options: {
+    readonly signal?: AbortSignal;
+    readonly ledger?: TraversalLedger;
+  } = {},
+): Promise<Result<SliceUuidEntry[], MachOUuidReadFailure>> => {
+  const context: TraversalContext = {
+    ledger: options.ledger ?? { spent: 0 },
+    signal: options.signal,
+  };
+  const container = await readValidatedMachoContainer(
+    handle,
+    fileSize,
+    context,
+  );
+  if (!container.ok) return container;
+  if (container.value.kind === "thin") {
+    const read = await readThinUuidEntry(
+      handle,
+      { offset: 0, length: fileSize },
+      context,
+      container.value.prefix,
+    );
+    return read.ok
+      ? ok([
+          {
+            cpuType: read.value.cpuType,
+            cpuSubtypeBase: machoCpuSubtypeBase(read.value.cpuSubtype),
+            uuid: read.value.uuid,
+          },
+        ])
+      : read;
+  }
   const entries: SliceUuidEntry[] = [];
-  for (const slice of container.slices) {
+  for (const slice of container.value.slices) {
     throwIfCancelled(context.signal);
     const read = await readThinUuidEntry(
       handle,
@@ -371,7 +408,7 @@ export const readMachoFileUuidEntries = async (
     const idIssue = validateFatSlice(
       slice,
       fileSize,
-      container.tableEnd,
+      container.value.tableEnd,
       read.value,
     );
     if (idIssue !== null) return err(invalidImage(idIssue));
@@ -580,80 +617,269 @@ const enumerateDwarfMembers = async (
   return ok(memberPaths.sort());
 };
 
+const ambiguousTargetSliceRejection = (
+  state: AdmissionState,
+  architecture: BinaryArchitecture,
+): DebugCompanionRejection => ({
+  reason: `the target image declares ambiguous FAT slices for ${architecture}`,
+  diagnostics: {
+    dsym_path: state.dsymPath,
+    architecture,
+    rejection: "ambiguous_target_slice",
+  },
+});
+
+const targetUuidAbsentRejection = (
+  state: AdmissionState,
+  architecture: BinaryArchitecture,
+): DebugCompanionRejection => ({
+  reason: `the target image declares no usable LC_UUID for the selected ${architecture} slice`,
+  diagnostics: {
+    dsym_path: state.dsymPath,
+    architecture,
+    rejection: "target_uuid_absent",
+  },
+});
+
+const validateProvidedTargetSlices = (
+  declarations: readonly UniversalMachOSliceIdentity[],
+  targetSize: number,
+): Result<readonly UniversalMachOSliceIdentity[], MachOUuidReadFailure> => {
+  if (declarations.length === 0)
+    return err(invalidImage("FAT header declares no architectures"));
+  for (const slice of declarations) {
+    if (
+      !Number.isSafeInteger(slice.offset) ||
+      !Number.isSafeInteger(slice.size) ||
+      slice.offset < 0 ||
+      slice.size <= 0 ||
+      slice.offset > targetSize ||
+      slice.size > targetSize - slice.offset
+    )
+      return err(
+        invalidImage(
+          "the universal Mach-O slice range extends beyond the file",
+        ),
+      );
+  }
+  const overlap = findOverlappingFatSlices(declarations);
+  if (overlap !== null)
+    return err(
+      invalidImage("universal Mach-O slices have overlapping byte ranges"),
+    );
+  return ok(declarations);
+};
+
+const inspectTargetContainerForSlice = async (
+  handle: FileHandle,
+  fileSize: number,
+  context: TraversalContext,
+): Promise<
+  Result<
+    | { readonly kind: "thin"; readonly prefix: Buffer }
+    | {
+        readonly kind: "fat";
+        readonly prefix: Buffer;
+        readonly slices: readonly UniversalMachOSliceIdentity[];
+      },
+    MachOUuidReadFailure
+  >
+> => {
+  const container = await readValidatedMachoContainer(
+    handle,
+    fileSize,
+    context,
+  );
+  if (!container.ok) return container;
+  if (container.value.kind === "thin") return container;
+  const validated: UniversalMachOSliceIdentity[] = [];
+  for (const slice of container.value.slices) {
+    throwIfCancelled(context.signal);
+    if (slice.size < 12)
+      return err(
+        invalidImage(
+          `FAT architecture ${slice.index} is shorter than its Mach-O header`,
+        ),
+      );
+    let headerBytes: Buffer;
+    if (slice.offset + 12 <= container.value.prefix.length) {
+      headerBytes = container.value.prefix.subarray(
+        slice.offset,
+        slice.offset + 12,
+      );
+    } else {
+      const headerRead = await readUuidWindow(
+        handle,
+        slice.offset,
+        12,
+        context,
+      );
+      if (!headerRead.ok) return headerRead;
+      headerBytes = headerRead.value;
+    }
+    const facts = readMachoHeaderPrefixFacts(headerBytes);
+    if (facts.identity === null)
+      return err(
+        invalidImage(
+          `FAT architecture ${slice.index} does not start with a complete Mach-O header`,
+        ),
+      );
+    const idIssue = validateFatSlice(
+      slice,
+      fileSize,
+      container.value.tableEnd,
+      facts.identity,
+    );
+    if (idIssue !== null) return err(invalidImage(idIssue));
+    validated.push({
+      offset: slice.offset,
+      size: slice.size,
+      cpuType: slice.cpuType,
+      cpuSubtype: slice.cpuSubtype,
+    });
+  }
+  return ok({
+    kind: "fat",
+    prefix: container.value.prefix,
+    slices: validated,
+  });
+};
+
 const selectTargetSliceUuid = async (
   input: {
     readonly targetHandle: FileHandle;
     readonly targetSize: number;
     readonly architecture: BinaryArchitecture;
     readonly targetSlice?: UniversalMachOSlice;
+    readonly targetSlices?: readonly UniversalMachOSliceIdentity[];
   },
   state: AdmissionState,
 ): Promise<Result<SelectedSliceUuid, DebugCompanionRejection>> => {
-  const targetEntries =
-    input.targetSlice === undefined
-      ? await readMachoFileUuidEntries(input.targetHandle, input.targetSize, {
-          ledger: state.ledger,
-          ...(state.signal === undefined ? {} : { signal: state.signal }),
-        })
-      : await readThinUuidEntry(
-          input.targetHandle,
-          { offset: input.targetSlice.offset, length: input.targetSlice.size },
-          state,
-        ).then((selected) =>
-          selected.ok
-            ? ok([
-                {
-                  cpuType: selected.value.cpuType,
-                  cpuSubtypeBase: machoCpuSubtypeBase(
-                    selected.value.cpuSubtype,
-                  ),
-                  uuid: selected.value.uuid,
-                },
-              ])
-            : selected,
-        );
-  if (!targetEntries.ok) return err(targetEntries.error);
   const policy = MACHO_ARCHITECTURE_POLICIES[input.architecture];
-  let best: SliceUuidEntry | undefined;
-  let bestRank = Number.POSITIVE_INFINITY;
-  let ambiguous = false;
-  if (policy !== undefined) {
-    for (const entry of targetEntries.value) {
-      if (entry.cpuType !== policy.cpuType) continue;
-      const rank = machoSubtypeRank(policy, entry.cpuSubtypeBase);
-      if (best !== undefined && rank >= bestRank) {
-        if (rank === bestRank && entry.cpuSubtypeBase === best.cpuSubtypeBase)
-          ambiguous = true;
-        continue;
+  if (input.targetSlice !== undefined) {
+    let prefix: Buffer | undefined;
+    let declarations: readonly UniversalMachOSliceIdentity[];
+    if (input.targetSlices !== undefined) {
+      const validated = validateProvidedTargetSlices(
+        input.targetSlices,
+        input.targetSize,
+      );
+      if (!validated.ok) return err(validated.error);
+      declarations = validated.value;
+    } else {
+      const inspected = await inspectTargetContainerForSlice(
+        input.targetHandle,
+        input.targetSize,
+        state,
+      );
+      if (!inspected.ok) return err(inspected.error);
+      if (inspected.value.kind === "thin") {
+        if (
+          input.targetSlice.offset !== 0 ||
+          input.targetSlice.size !== input.targetSize
+        )
+          return err(
+            invalidImage(
+              "the selected Mach-O target slice does not match the thin image bounds",
+            ),
+          );
+        const thin = await readThinUuidEntry(
+          input.targetHandle,
+          { offset: 0, length: input.targetSize },
+          state,
+          inspected.value.prefix,
+        );
+        if (!thin.ok) return err(thin.error);
+        if (
+          policy !== undefined &&
+          thin.value.cpuType === policy.cpuType &&
+          usableMachOUuid(thin.value.uuid)
+        )
+          return ok({
+            cpuType: thin.value.cpuType,
+            cpuSubtypeBase: machoCpuSubtypeBase(thin.value.cpuSubtype),
+            uuid: thin.value.uuid,
+          });
+        return err(targetUuidAbsentRejection(state, input.architecture));
       }
-      best = entry;
-      bestRank = rank;
-      ambiguous = false;
+      prefix = inspected.value.prefix;
+      declarations = inspected.value.slices;
     }
-  }
-  if (ambiguous)
-    return err({
-      reason: `the target image declares ambiguous FAT slices for ${input.architecture}`,
-      diagnostics: {
-        dsym_path: state.dsymPath,
-        architecture: input.architecture,
-        rejection: "ambiguous_target_slice",
+    const selectedDeclaration = declarations.find(
+      (slice) =>
+        slice.offset === input.targetSlice?.offset &&
+        slice.size === input.targetSlice?.size,
+    );
+    if (selectedDeclaration === undefined)
+      return err(
+        invalidImage(
+          "the selected Mach-O target slice is absent from the universal container table",
+        ),
+      );
+    if (policy === undefined)
+      return err(targetUuidAbsentRejection(state, input.architecture));
+    if (hasDuplicateMachoCpuSubtype(policy.cpuType, declarations))
+      return err(ambiguousTargetSliceRejection(state, input.architecture));
+    if (selectedDeclaration.cpuType !== policy.cpuType)
+      return err(targetUuidAbsentRejection(state, input.architecture));
+    const slicePrefix =
+      prefix !== undefined && selectedDeclaration.offset < prefix.length
+        ? prefix.subarray(
+            selectedDeclaration.offset,
+            Math.min(
+              prefix.length,
+              selectedDeclaration.offset + selectedDeclaration.size,
+            ),
+          )
+        : undefined;
+    const selected = await readThinUuidEntry(
+      input.targetHandle,
+      {
+        offset: selectedDeclaration.offset,
+        length: selectedDeclaration.size,
       },
-    });
-  if (best !== undefined && usableMachOUuid(best.uuid))
-    return ok({
-      cpuType: best.cpuType,
-      cpuSubtypeBase: best.cpuSubtypeBase,
-      uuid: best.uuid,
-    });
-  return err({
-    reason: `the target image declares no usable LC_UUID for the selected ${input.architecture} slice`,
-    diagnostics: {
-      dsym_path: state.dsymPath,
-      architecture: input.architecture,
-      rejection: "target_uuid_absent",
+      state,
+      slicePrefix,
+    );
+    if (!selected.ok) return err(selected.error);
+    if (
+      selected.value.cpuType !== selectedDeclaration.cpuType ||
+      selected.value.cpuSubtype !== selectedDeclaration.cpuSubtype
+    )
+      return err(
+        invalidImage(
+          "the selected FAT slice CPU type/subtype disagrees with its Mach-O header",
+        ),
+      );
+    return usableMachOUuid(selected.value.uuid)
+      ? ok({
+          cpuType: selected.value.cpuType,
+          cpuSubtypeBase: machoCpuSubtypeBase(selected.value.cpuSubtype),
+          uuid: selected.value.uuid,
+        })
+      : err(targetUuidAbsentRejection(state, input.architecture));
+  }
+  const targetEntries = await readMachoFileUuidEntries(
+    input.targetHandle,
+    input.targetSize,
+    {
+      ledger: state.ledger,
+      ...(state.signal === undefined ? {} : { signal: state.signal }),
     },
-  });
+  );
+  if (!targetEntries.ok) return err(targetEntries.error);
+  if (policy === undefined)
+    return err(targetUuidAbsentRejection(state, input.architecture));
+  if (hasDuplicateMachoCpuSubtype(policy.cpuType, targetEntries.value))
+    return err(ambiguousTargetSliceRejection(state, input.architecture));
+  const selection = selectRankedMachoSlice(policy, targetEntries.value);
+  if (selection.status === "selected" && usableMachOUuid(selection.slice.uuid))
+    return ok({
+      cpuType: selection.slice.cpuType,
+      cpuSubtypeBase: selection.slice.cpuSubtypeBase,
+      uuid: selection.slice.uuid,
+    });
+  return err(targetUuidAbsentRejection(state, input.architecture));
 };
 
 const normalizeMemberCleanupFailure = (
@@ -922,6 +1148,7 @@ export const admitDebugCompanion = async (input: {
   readonly targetSize: number;
   readonly architecture: BinaryArchitecture;
   readonly targetSlice?: UniversalMachOSlice;
+  readonly targetSlices?: readonly UniversalMachOSliceIdentity[];
   readonly resources?: ArtifactResourceScope;
   readonly signal?: AbortSignal;
 }): Promise<DebugCompanionAdmission> => {

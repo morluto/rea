@@ -721,10 +721,11 @@ it("rejects a universal DWARF member with duplicate applicable slices claiming t
   });
 });
 
-it("prefers ranked subtypes and rejects duplicate target slices in direct admitDebugCompanion calls", async () => {
+it("prefers ranked subtypes and rejects duplicate target slices across unsliced, sliced, and resolver admission paths", async () => {
   const root = await createTestTempDirectory("rea-dsym-direct-target-slice-");
   const arm64Uuid = "11111111-2222-3333-4444-555555555555";
   const arm64eUuid = "22222222-2222-3333-4444-555555555555";
+  const thirdUuid = "33333333-2222-3333-4444-555555555555";
   const dsymPath = join(root, "selected.dSYM");
   const dwarfDir = join(dsymPath, "Contents", "Resources", "DWARF");
   await mkdir(dwarfDir, { recursive: true });
@@ -753,12 +754,24 @@ it("prefers ranked subtypes and rejects duplicate target slices in direct admitD
     await rankedHandle.close();
   }
 
+  // First slice matches arm64Member directly, while second slice repeats the
+  // same base subtype under capability bits. Every admission path must reject.
   const ambiguousTarget = join(root, "ambiguous-target");
   const ambiguousBytes = fatContainer([
-    { cpuType: 0x0100000c, cpuSubtype: 0, uuid: arm64eUuid },
     { cpuType: 0x0100000c, cpuSubtype: 0, uuid: arm64Uuid },
+    { cpuType: 0x0100000c, cpuSubtype: 0x80000000, uuid: arm64eUuid },
   ]);
   await writeFile(ambiguousTarget, ambiguousBytes);
+  const expectedAmbiguous = {
+    ok: false,
+    error: {
+      diagnostics: {
+        dsym_path: dsymPath,
+        architecture: "arm64",
+        rejection: "ambiguous_target_slice",
+      },
+    },
+  } as const;
   const ambiguousHandle = await open(ambiguousTarget, "r");
   try {
     expect(
@@ -768,9 +781,48 @@ it("prefers ranked subtypes and rejects duplicate target slices in direct admitD
         targetSize: ambiguousBytes.length,
         architecture: "arm64",
       }),
-    ).toMatchObject({
-      ok: false,
-      error: {
+    ).toMatchObject(expectedAmbiguous);
+    expect(
+      await admitDebugCompanion({
+        dsymPath,
+        targetHandle: ambiguousHandle,
+        targetSize: ambiguousBytes.length,
+        architecture: "arm64",
+        targetSlice: { offset: 4096, size: 56 },
+      }),
+    ).toMatchObject(expectedAmbiguous);
+    expect(
+      await admitDebugCompanion({
+        dsymPath,
+        targetHandle: ambiguousHandle,
+        targetSize: ambiguousBytes.length,
+        architecture: "arm64",
+        targetSlice: { offset: 4096, size: 56 },
+        targetSlices: [
+          { offset: 4096, size: 56, cpuType: 0x0100000c, cpuSubtype: 0 },
+          {
+            offset: 8192,
+            size: 56,
+            cpuType: 0x0100000c,
+            cpuSubtype: 0x80000000,
+          },
+        ],
+      }),
+    ).toMatchObject(expectedAmbiguous);
+  } finally {
+    await ambiguousHandle.close();
+  }
+  const resolvedAmbiguous = await parseBinaryTarget(ambiguousTarget, {
+    dsymPath,
+    hostArchitecture: "arm64",
+  });
+  expect(resolvedAmbiguous.ok).toBe(false);
+  if (!resolvedAmbiguous.ok) {
+    expect(projectAnalysisError(resolvedAmbiguous.error)).toMatchObject({
+      code: "invalid_request",
+      details: {
+        path: ambiguousTarget,
+        constraint: "debug_companion_rejected",
         diagnostics: {
           dsym_path: dsymPath,
           architecture: "arm64",
@@ -778,7 +830,231 @@ it("prefers ranked subtypes and rejects duplicate target slices in direct admitD
         },
       },
     });
+  }
+
+  // Duplicate arm64e base subtypes behind a unique arm64 slice remain ambiguous
+  // for whole-container companion admission.
+  const trailingDuplicateTarget = join(root, "trailing-duplicate-target");
+  const trailingDuplicateBytes = fatContainer([
+    { cpuType: 0x0100000c, cpuSubtype: 0, uuid: arm64Uuid },
+    { cpuType: 0x0100000c, cpuSubtype: 2, uuid: arm64eUuid },
+    { cpuType: 0x0100000c, cpuSubtype: 0x80000002, uuid: thirdUuid },
+  ]);
+  await writeFile(trailingDuplicateTarget, trailingDuplicateBytes);
+  const trailingHandle = await open(trailingDuplicateTarget, "r");
+  try {
+    expect(
+      await admitDebugCompanion({
+        dsymPath,
+        targetHandle: trailingHandle,
+        targetSize: trailingDuplicateBytes.length,
+        architecture: "arm64",
+      }),
+    ).toMatchObject(expectedAmbiguous);
+    expect(
+      await admitDebugCompanion({
+        dsymPath,
+        targetHandle: trailingHandle,
+        targetSize: trailingDuplicateBytes.length,
+        architecture: "arm64",
+        targetSlice: { offset: 4096, size: 56 },
+      }),
+    ).toMatchObject(expectedAmbiguous);
   } finally {
-    await ambiguousHandle.close();
+    await trailingHandle.close();
+  }
+});
+
+it("validates explicit targetSlice declarations, overlap, and sibling FAT header agreement", async () => {
+  const root = await createTestTempDirectory("rea-dsym-target-slice-bounds-");
+  const arm64Uuid = "11111111-2222-3333-4444-555555555555";
+  const secondUuid = "22222222-2222-3333-4444-555555555555";
+  const thirdUuid = "33333333-2222-3333-4444-555555555555";
+  const dsymPath = join(root, "selected.dSYM");
+  const dwarfDir = join(dsymPath, "Contents", "Resources", "DWARF");
+  await mkdir(dwarfDir, { recursive: true });
+  const arm64Member = uuidImage(arm64Uuid);
+  arm64Member.writeUInt32LE(0x0100000c, 4);
+  arm64Member.writeUInt32LE(0, 8);
+  await writeFile(join(dwarfDir, "member"), arm64Member);
+
+  const foreignDuplicateTarget = join(root, "foreign-duplicate-target");
+  const foreignDuplicateBytes = fatContainer([
+    { cpuType: 0x0100000c, cpuSubtype: 0, uuid: arm64Uuid },
+    { cpuType: 0x01000007, cpuSubtype: 3, uuid: secondUuid },
+    { cpuType: 0x01000007, cpuSubtype: 0x80000003, uuid: thirdUuid },
+  ]);
+  await writeFile(foreignDuplicateTarget, foreignDuplicateBytes);
+  const foreignHandle = await open(foreignDuplicateTarget, "r");
+  try {
+    expect(
+      await admitDebugCompanion({
+        dsymPath,
+        targetHandle: foreignHandle,
+        targetSize: foreignDuplicateBytes.length,
+        architecture: "arm64",
+        targetSlice: { offset: 4096, size: 56 },
+      }),
+    ).toMatchObject({ ok: true, value: { uuid: arm64Uuid } });
+    expect(
+      await admitDebugCompanion({
+        dsymPath,
+        targetHandle: foreignHandle,
+        targetSize: foreignDuplicateBytes.length,
+        architecture: "x86_64",
+        targetSlice: { offset: 8192, size: 56 },
+      }),
+    ).toMatchObject({
+      ok: false,
+      error: {
+        diagnostics: {
+          dsym_path: dsymPath,
+          architecture: "x86_64",
+          rejection: "ambiguous_target_slice",
+        },
+      },
+    });
+    expect(
+      await admitDebugCompanion({
+        dsymPath,
+        targetHandle: foreignHandle,
+        targetSize: foreignDuplicateBytes.length,
+        architecture: "arm64",
+        targetSlice: { offset: 4096, size: 52 },
+      }),
+    ).toMatchObject({
+      ok: false,
+      error: {
+        reason: expect.stringContaining("absent from the universal container"),
+      },
+    });
+    expect(
+      await admitDebugCompanion({
+        dsymPath,
+        targetHandle: foreignHandle,
+        targetSize: foreignDuplicateBytes.length,
+        architecture: "arm64",
+        targetSlice: { offset: 4096, size: 4100 },
+        targetSlices: [
+          { offset: 4096, size: 4100, cpuType: 0x0100000c, cpuSubtype: 0 },
+          { offset: 8192, size: 56, cpuType: 0x01000007, cpuSubtype: 3 },
+        ],
+      }),
+    ).toMatchObject({
+      ok: false,
+      error: { reason: expect.stringContaining("overlapping") },
+    });
+    expect(
+      await admitDebugCompanion({
+        dsymPath,
+        targetHandle: foreignHandle,
+        targetSize: foreignDuplicateBytes.length,
+        architecture: "arm64",
+        targetSlice: { offset: 4096, size: 56 },
+        targetSlices: [],
+      }),
+    ).toMatchObject({
+      ok: false,
+      error: {
+        reason: expect.stringContaining("FAT header declares no architectures"),
+      },
+    });
+  } finally {
+    await foreignHandle.close();
+  }
+});
+
+it("validates thin slice bounds, spoofed sibling FAT headers, and overlapping containers", async () => {
+  const root = await createTestTempDirectory("rea-dsym-thin-spoof-overlap-");
+  const arm64Uuid = "11111111-2222-3333-4444-555555555555";
+  const secondUuid = "22222222-2222-3333-4444-555555555555";
+  const dsymPath = join(root, "selected.dSYM");
+  const dwarfDir = join(dsymPath, "Contents", "Resources", "DWARF");
+  await mkdir(dwarfDir, { recursive: true });
+  const arm64Member = uuidImage(arm64Uuid);
+  arm64Member.writeUInt32LE(0x0100000c, 4);
+  arm64Member.writeUInt32LE(0, 8);
+  await writeFile(join(dwarfDir, "member"), arm64Member);
+
+  const thinTarget = join(root, "thin-target");
+  await writeFile(thinTarget, arm64Member);
+  const thinHandle = await open(thinTarget, "r");
+  try {
+    expect(
+      await admitDebugCompanion({
+        dsymPath,
+        targetHandle: thinHandle,
+        targetSize: arm64Member.length,
+        architecture: "arm64",
+        targetSlice: { offset: 0, size: arm64Member.length },
+      }),
+    ).toMatchObject({ ok: true, value: { uuid: arm64Uuid } });
+    expect(
+      await admitDebugCompanion({
+        dsymPath,
+        targetHandle: thinHandle,
+        targetSize: arm64Member.length,
+        architecture: "arm64",
+        targetSlice: { offset: 0, size: arm64Member.length - 4 },
+      }),
+    ).toMatchObject({
+      ok: false,
+      error: {
+        reason: expect.stringContaining("does not match the thin image bounds"),
+      },
+    });
+  } finally {
+    await thinHandle.close();
+  }
+
+  const spoofedSiblingTarget = join(root, "spoofed-sibling-target");
+  const spoofedSiblingBytes = fatContainer([
+    { cpuType: 0x0100000c, cpuSubtype: 0, uuid: arm64Uuid },
+    { cpuType: 0x0100000c, cpuSubtype: 0x80000000, uuid: secondUuid },
+  ]);
+  spoofedSiblingBytes.writeUInt32BE(0x01000007, 8 + 20);
+  spoofedSiblingBytes.writeUInt32BE(3, 8 + 20 + 4);
+  await writeFile(spoofedSiblingTarget, spoofedSiblingBytes);
+  const spoofedHandle = await open(spoofedSiblingTarget, "r");
+  try {
+    expect(
+      await admitDebugCompanion({
+        dsymPath,
+        targetHandle: spoofedHandle,
+        targetSize: spoofedSiblingBytes.length,
+        architecture: "arm64",
+        targetSlice: { offset: 4096, size: 56 },
+      }),
+    ).toMatchObject({
+      ok: false,
+      error: {
+        reason: expect.stringContaining("disagrees with its Mach-O header"),
+      },
+    });
+  } finally {
+    await spoofedHandle.close();
+  }
+
+  const overlappingTarget = join(root, "overlapping-target");
+  const overlappingBytes = fatContainer([
+    { cpuType: 0x0100000c, cpuSubtype: 0, uuid: arm64Uuid },
+    { cpuType: 0x01000007, cpuSubtype: 3, uuid: secondUuid },
+  ]);
+  overlappingBytes.writeUInt32BE(4100, 8 + 12);
+  await writeFile(overlappingTarget, overlappingBytes);
+  const overlappingResolved = await parseBinaryTarget(overlappingTarget, {
+    dsymPath,
+    hostArchitecture: "arm64",
+  });
+  expect(overlappingResolved.ok).toBe(false);
+  if (!overlappingResolved.ok) {
+    expect(projectAnalysisError(overlappingResolved.error)).toMatchObject({
+      code: "invalid_request",
+      details: {
+        path: overlappingTarget,
+        constraint: "debug_companion_rejected",
+      },
+    });
+    expect(overlappingResolved.error.message).toContain("overlapping");
   }
 });

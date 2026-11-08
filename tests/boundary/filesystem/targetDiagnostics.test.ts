@@ -777,11 +777,13 @@ describe("debug companion universal slice selection", () => {
   it("honors a UUID-less first slice over a UUID-bearing same-family sibling", async () => {
     const directory = await createTestTempDirectory("rea-dsym-nouuid-");
     const target = join(directory, "target.macho");
-    // Container: first x86_64-family slice without LC_UUID, then a sibling
-    // with one. The import is the first slice; the sibling must not match.
+    // Container: first x86_64 slice (subtype 3) without LC_UUID, then an
+    // x86_64h sibling (subtype 8) with one. The import is the first slice; the
+    // sibling must not match.
     const filler = Buffer.alloc(28 + 8);
     filler.writeUInt32LE(0xfeedface, 0);
     filler.writeUInt32LE(0x01000007, 4);
+    filler.writeUInt32LE(3, 8);
     filler.writeUInt32LE(1, 16);
     filler.writeUInt32LE(8, 20);
     filler.writeUInt32LE(0x29, 28);
@@ -790,6 +792,7 @@ describe("debug companion universal slice selection", () => {
     const siblingBytes = Buffer.alloc(28 + 24);
     siblingBytes.writeUInt32LE(0xfeedface, 0);
     siblingBytes.writeUInt32LE(0x01000007, 4);
+    siblingBytes.writeUInt32LE(8, 8);
     siblingBytes.writeUInt32LE(1, 16);
     siblingBytes.writeUInt32LE(24, 20);
     siblingBytes.writeUInt32LE(0x1b, 28);
@@ -802,9 +805,11 @@ describe("debug companion universal slice selection", () => {
     container.writeUInt32BE(0xcafebabe, 0);
     container.writeUInt32BE(2, 4);
     container.writeInt32BE(0x01000007, 8);
+    container.writeInt32BE(3, 8 + 4);
     container.writeUInt32BE(headerSize, 8 + 8);
     container.writeUInt32BE(filler.length, 8 + 12);
     container.writeInt32BE(0x01000007, 8 + 20);
+    container.writeInt32BE(8, 8 + 20 + 4);
     container.writeUInt32BE(headerSize + filler.length, 8 + 20 + 8);
     container.writeUInt32BE(siblingBytes.length, 8 + 20 + 12);
     filler.copy(container, headerSize);
@@ -819,8 +824,8 @@ describe("debug companion universal slice selection", () => {
       expect(entries).toEqual({
         ok: true,
         value: [
-          { cpuType: 0x01000007, cpuSubtypeBase: 0, uuid: null },
-          { cpuType: 0x01000007, cpuSubtypeBase: 0, uuid: siblingUuid },
+          { cpuType: 0x01000007, cpuSubtypeBase: 3, uuid: null },
+          { cpuType: 0x01000007, cpuSubtypeBase: 8, uuid: siblingUuid },
         ],
       });
     } finally {
@@ -914,6 +919,82 @@ describe("debug companion universal slice selection", () => {
       });
     },
   );
+});
+
+it("rejects duplicate host-CPU base subtypes through parseBinaryTarget even when the first slice matches", async () => {
+  const directory = await createTestTempDirectory("rea-dsym-dup-host-");
+  const target = join(directory, "dup-x64.macho");
+  const firstUuid = "11111111-2222-3333-4444-555555555555";
+  const secondUuid = "66666666-7777-8888-9999-aaaaaaaaaaaa";
+  const makeThinX64 = (cpuSubtype: number, uuid: string): Buffer => {
+    const bytes = Buffer.alloc(32 + 24);
+    bytes.writeUInt32LE(0xfeedfacf, 0);
+    bytes.writeUInt32LE(0x01000007, 4);
+    bytes.writeUInt32LE(cpuSubtype >>> 0, 8);
+    bytes.writeUInt32LE(2, 12);
+    bytes.writeUInt32LE(1, 16);
+    bytes.writeUInt32LE(24, 20);
+    bytes.writeUInt32LE(0x1b, 32);
+    bytes.writeUInt32LE(24, 36);
+    Buffer.from(uuid.replace(/-/gu, ""), "hex").copy(bytes, 40);
+    return bytes;
+  };
+  const firstSlice = makeThinX64(3, firstUuid);
+  const secondSlice = makeThinX64(0x80000003, secondUuid);
+  const container = Buffer.alloc(4096 * 3);
+  container.writeUInt32BE(0xcafebabe, 0);
+  container.writeUInt32BE(2, 4);
+  container.writeUInt32BE(0x01000007, 8);
+  container.writeUInt32BE(3, 8 + 4);
+  container.writeUInt32BE(4096, 8 + 8);
+  container.writeUInt32BE(firstSlice.length, 8 + 12);
+  container.writeUInt32BE(12, 8 + 16);
+  container.writeUInt32BE(0x01000007, 8 + 20);
+  container.writeUInt32BE(0x80000003, 8 + 20 + 4);
+  container.writeUInt32BE(8192, 8 + 20 + 8);
+  container.writeUInt32BE(secondSlice.length, 8 + 20 + 12);
+  container.writeUInt32BE(12, 8 + 20 + 16);
+  firstSlice.copy(container, 4096);
+  secondSlice.copy(container, 8192);
+  await writeFile(target, container);
+
+  const { mkdir } = await import("node:fs/promises");
+  const bundle = join(directory, "first-slice.dSYM");
+  const dwarfDirectory = join(bundle, "Contents", "Resources", "DWARF");
+  await mkdir(dwarfDirectory, { recursive: true });
+  await writeFile(join(dwarfDirectory, "member"), firstSlice);
+
+  const withoutCompanion = await parseBinaryTarget(target, {
+    hostArchitecture: "x64",
+  });
+  expect(withoutCompanion).toMatchObject({
+    ok: true,
+    value: {
+      format: "mach-o-universal",
+      architecture: "x86_64",
+      universalSlice: { offset: 4096, size: firstSlice.length },
+    },
+  });
+
+  const withCompanion = await parseBinaryTarget(target, {
+    dsymPath: bundle,
+    hostArchitecture: "x64",
+  });
+  if (withCompanion.ok)
+    throw new Error("duplicate host-CPU FAT target admitted a companion");
+  expect(projectAnalysisError(withCompanion.error)).toMatchObject({
+    code: "invalid_request",
+    category: "invalid_input",
+    details: {
+      path: target,
+      constraint: "debug_companion_rejected",
+      diagnostics: {
+        dsym_path: bundle,
+        architecture: "x86_64",
+        rejection: "ambiguous_target_slice",
+      },
+    },
+  });
 });
 
 describe("debug companion slice selection", () => {

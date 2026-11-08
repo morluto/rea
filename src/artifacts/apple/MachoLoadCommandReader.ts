@@ -300,7 +300,7 @@ const rangeValidSlices = (
   header.slices.filter((_, index) => header.rangeIssues[index] === null);
 
 const overlapReason = (
-  overlap: NonNullable<ReturnType<typeof findOverlappingFatSlices>>,
+  overlap: readonly [FatSliceDeclaration, FatSliceDeclaration],
 ): string =>
   `Mach-O slices ${overlap[0].index} and ${overlap[1].index} overlap.`;
 

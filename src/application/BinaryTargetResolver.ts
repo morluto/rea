@@ -644,7 +644,10 @@ const readOpenedBinaryTarget = async (
       targetSize: metadata.size,
       architecture: detected.value.architecture,
       ...(detected.value.format === "mach-o-universal"
-        ? { targetSlice: detected.value.universalSlice }
+        ? {
+            targetSlice: detected.value.universalSlice,
+            targetSlices: detected.value.universalSlices,
+          }
         : {}),
       ...(options.resources === undefined
         ? {}
