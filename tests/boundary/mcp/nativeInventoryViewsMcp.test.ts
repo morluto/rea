@@ -12,6 +12,7 @@ import { createServer } from "../../../src/server/createServer.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
 import { connectGhidraMcp } from "./ghidraMcpHarness.js";
+import { advertisedMcpToolSchemas } from "../../fixtures/advertisedMcpTool.js";
 
 const procedureRows = [
   {
@@ -205,6 +206,89 @@ it("shares complete/summary source identity and advertised contracts across all 
       NATIVE_INVENTORY_OPERATIONS.some((operation) => operation === name),
     ),
   ).toHaveLength(10);
+});
+
+it("pages matched aliases within a retained search row through the MCP schemas", async () => {
+  const aliases = ["secondary-two", "secondary-one", "secondary-🧪"];
+  const first = searchProcedureRows[0]!;
+  const original = [
+    first,
+    { ...first, value: "same_address", matched_aliases: aliases },
+  ];
+  const harness = await connectGhidraMcp("native-alias-pages", () =>
+    Promise.resolve(ok(original)),
+  );
+  onTestFinished(() => harness.close());
+  const parentReply = await harness.mcp.callTool({
+    name: "search_procedures",
+    arguments: { pattern: ".", mode: "regex" },
+  });
+  const parent = parseEvidence(parentReply.structuredContent);
+  const schemas = await advertisedMcpToolSchemas(
+    harness.mcp,
+    "inspect_analysis_view",
+  );
+  const page = async (sourceIndex: number, offset: number) => {
+    const input = {
+      source: { kind: "retained-evidence", evidence_id: parent.evidence_id },
+      view: {
+        kind: "native-inventory-aliases",
+        source_index: sourceIndex,
+        offset,
+        limit: 2,
+      },
+    };
+    expect(schemas.ajv.validate(schemas.inputSchema, input)).toBe(true);
+    const reply = await harness.mcp.callTool({
+      name: "inspect_analysis_view",
+      arguments: input,
+    });
+    expect(
+      schemas.ajv.validate(schemas.outputSchema, reply.structuredContent),
+      JSON.stringify(schemas.ajv.errors),
+    ).toBe(true);
+    return parseEvidence(reply.structuredContent);
+  };
+  const initial = await page(1, 0);
+  expect(initial).toMatchObject({
+    evidence_links: [parent.evidence_id],
+    normalized_result: {
+      procedure: {
+        address: first.address,
+        value: "same_address",
+        source_index: 1,
+      },
+      items: {
+        state: "recorded",
+        aliases: [
+          { alias_index: 0, name: aliases[0] },
+          { alias_index: 1, name: aliases[1] },
+        ],
+      },
+      coverage: { total: 3, next_offset: 2 },
+    },
+  });
+  const view = toolContract("inspect_analysis_view").outputSchema.parse(
+    initial,
+  ).normalized_result;
+  if (
+    view.kind !== "native-inventory-aliases" ||
+    view.coverage?.next_offset == null
+  )
+    throw new Error("Missing alias continuation");
+  expect(
+    (await page(1, view.coverage.next_offset)).normalized_result,
+  ).toMatchObject({
+    items: { aliases: [{ alias_index: 2, name: aliases[2] }] },
+    coverage: { total: 3, exhausted: true, next_offset: null },
+  });
+  expect((await page(0, 0)).normalized_result).toMatchObject({
+    items: { state: "not-recorded", aliases: null },
+    coverage: null,
+  });
+  expect(
+    harness.calls.filter((operation) => operation === "search_procedures"),
+  ).toHaveLength(1);
 });
 
 it("recovers an oversized complete inventory through a working retained page without another provider read", async () => {

@@ -1,7 +1,9 @@
 import { z } from "zod";
 import { analysisStringSchema } from "../native/nativeString.js";
 import { inventoryDiscoveryCoverageSchema } from "../native/inventoryCoverage.js";
-import { jsonValueSchema } from "../jsonValue.js";
+import { jsonValueSchema, type JsonValue } from "../jsonValue.js";
+import { jsonValueByteLength } from "../jsonValueByteLength.js";
+import { AnalysisResourceConstraintError } from "../analysisErrorCore.js";
 import {
   addressedValueSchema,
   isNativeInventoryOperation,
@@ -14,7 +16,10 @@ import {
   type AdmittedView,
   type SummaryAnalysisView,
 } from "./analysisViewShape.js";
-import { analysisViewInputError } from "./analysisViewErrors.js";
+import {
+  ANALYSIS_VIEW_PAGE_BUDGET_RECOVERY,
+  analysisViewInputError,
+} from "./analysisViewErrors.js";
 import { createAnalysisViewResultReader } from "./analysisViewParent.js";
 import {
   boundedViewMessages,
@@ -46,6 +51,23 @@ export const nativeInventoryViewRequestSchema = z.strictObject({
     ),
 });
 
+export const nativeInventoryAliasViewRequestSchema = z.strictObject({
+  kind: z.literal("native-inventory-aliases"),
+  source_index: z.int().nonnegative().describe("Original procedure row index."),
+  offset: z.int().nonnegative().default(0),
+  limit: z.int().positive().max(128).default(32),
+});
+
+export const nativeInventoryAliasItemsSchema = z.discriminatedUnion("state", [
+  z.strictObject({
+    state: z.literal("recorded"),
+    aliases: z.array(
+      z.strictObject({ alias_index: z.int().nonnegative(), name: z.string() }),
+    ),
+  }),
+  z.strictObject({ state: z.literal("not-recorded"), aliases: z.null() }),
+]);
+
 /** Parent Evidence ID plus source_index identifies even same-address alternatives. */
 export const nativeInventoryViewRowSchema = z.strictObject({
   source_index: z.number().int().nonnegative(),
@@ -73,7 +95,9 @@ export const projectNativeInventoryView = (
 ) => {
   if (
     !isNativeInventoryOperation(parent.operation) ||
-    (view.kind !== "summary" && view.kind !== "native-inventory")
+    (view.kind !== "summary" &&
+      view.kind !== "native-inventory" &&
+      view.kind !== "native-inventory-aliases")
   )
     return err(
       analysisViewInputError([
@@ -81,13 +105,28 @@ export const projectNativeInventoryView = (
           path: ["view"],
           reason: "invalid_value",
           message:
-            "Native inventory Evidence supports summary and native-inventory views.",
+            "Use summary or native-inventory for inventory Evidence, or native-inventory-aliases for search_procedures Evidence.",
         },
       ]),
     );
   assertOwnedView<
-    SummaryAnalysisView | z.output<typeof nativeInventoryViewRequestSchema>
-  >(view, "summary", "native-inventory");
+    | SummaryAnalysisView
+    | z.output<typeof nativeInventoryViewRequestSchema>
+    | z.output<typeof nativeInventoryAliasViewRequestSchema>
+  >(view, "summary", "native-inventory", "native-inventory-aliases");
+  if (
+    view.kind === "native-inventory-aliases" &&
+    parent.operation !== "search_procedures"
+  )
+    return err(
+      analysisViewInputError([
+        {
+          path: ["view", "kind"],
+          reason: "invalid_value",
+          message: "Alias pages require search_procedures Evidence.",
+        },
+      ]),
+    );
   const strings =
     parent.operation === "list_strings" ||
     parent.operation === "search_strings";
@@ -131,6 +170,50 @@ export const projectNativeInventoryView = (
       },
       coverage: completeWithinViewCoverage(rows.length, rows.length),
     });
+  if (view.kind === "native-inventory-aliases") {
+    const row = rows[view.source_index];
+    if (row === undefined)
+      return err(
+        analysisViewInputError([
+          {
+            path: ["view", "source_index"],
+            reason: "out_of_range",
+            message: `Select an original row index from the ${rows.length} retained procedure rows.`,
+          },
+        ]),
+      );
+    const page = nativeInventoryAliasPage(row, view);
+    const result = {
+      ...shared,
+      kind: view.kind,
+      parent_operation: "search_procedures" as const,
+      view,
+      procedure: {
+        address: row.address,
+        value: row.value,
+        source_index: view.source_index,
+      },
+      ...page,
+    };
+    // Include source context and reserve space for the final view digest.
+    const pageBytes = 1024 * 1024;
+    if (
+      jsonValueByteLength(
+        { ...result, view_digest: "0".repeat(64) } as JsonValue,
+        pageBytes,
+      ) > pageBytes
+    )
+      return err(
+        new AnalysisResourceConstraintError(
+          "inspect_analysis_view",
+          "transport",
+          "The procedure alias page cannot fit the analysis-view byte allowance.",
+          { parent_evidence_id: parent.evidenceId, limit_bytes: pageBytes },
+          ANALYSIS_VIEW_PAGE_BUDGET_RECOVERY,
+        ),
+      );
+    return ok(result);
+  }
   // Normalize the selection once: repeated caller fields must not multiply
   // work or temporary entries for every retained row. Keep the original view.
   const fields =
@@ -165,4 +248,26 @@ export const projectNativeInventoryView = (
     })),
     coverage: pageViewCoverage(view.offset, selected.length, rows.length),
   });
+};
+
+const nativeInventoryAliasPage = (
+  row: InventoryRecord,
+  view: z.output<typeof nativeInventoryAliasViewRequestSchema>,
+) => {
+  if (row.matched_aliases === undefined)
+    return {
+      items: { state: "not-recorded" as const, aliases: null },
+      coverage: null,
+    };
+  const aliases = row.matched_aliases
+    .slice(view.offset, view.offset + view.limit)
+    .map((name, index) => ({ alias_index: view.offset + index, name }));
+  return {
+    items: { state: "recorded" as const, aliases },
+    coverage: pageViewCoverage(
+      view.offset,
+      aliases.length,
+      row.matched_aliases.length,
+    ),
+  };
 };
