@@ -118,8 +118,7 @@ const clientWithDossier = (relationshipCoverage: unknown) => {
   };
   return {
     callTool: async (request: { readonly name: string }) => {
-      if (request.name === "analyze_function")
-        return { structuredContent };
+      if (request.name === "analyze_function") return { structuredContent };
       return {
         structuredContent: {
           dimensions: [
