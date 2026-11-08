@@ -7,6 +7,7 @@ import { safeParseJson } from "../safeJson.js";
 import {
   declaredDocumentType,
   isWellFormedXml,
+  opensLikeXml,
   parseXmlDocument,
 } from "../xmlDocument.js";
 
@@ -249,7 +250,7 @@ const doctypeOpensSubset = (text: string, from: number): boolean => {
 };
 
 const opensElement = (trimmed: string): boolean => {
-  if (/^<[A-Za-z_:]/u.test(trimmed)) return true;
+  if (!trimmed.startsWith("<!DOCTYPE") && opensLikeXml(trimmed)) return true;
   const declared = /^(?:<\?xml[^>]*>\s*)?<!DOCTYPE\b/u.exec(trimmed);
   if (declared === null) return false;
   let quote = "";
@@ -263,7 +264,7 @@ const opensElement = (trimmed: string): boolean => {
     else if (character === "[") return false;
     else if (character === ">") {
       const rest = trimmed.slice(index + 1).trimStart();
-      return /^<[A-Za-z_:]/u.test(rest);
+      return opensLikeXml(rest);
     }
   }
   return false;
