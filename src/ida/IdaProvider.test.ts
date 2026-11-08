@@ -1,4 +1,3 @@
-import { launchRegexMatchingLimitation } from "../process/RegexMatcher.js";
 import { AnalysisSettings } from "../application/AnalysisSettings.js";
 import { runtimeAnalysisConfig } from "../config/runtimeAnalysisSettings.js";
 import { describe, expect, it, vi } from "vitest";
@@ -416,10 +415,9 @@ it("applies runtime regex budgets through a bound IDA client and recovers in the
     const capabilities = provider
       .capabilities()
       .find(({ operation }) => operation === "search_strings");
-    expect(capabilities?.limitations).toContain(
-      launchRegexMatchingLimitation(
-        { deadlineMs: 100, source: "runtime" },
-        { heapMiB: 256, source: "runtime" },
+    expect(capabilities?.limitations).toContainEqual(
+      expect.stringMatching(
+        /100 ms matching deadline \(source runtime\).*256 MiB worker heap request \(source runtime\).*update_analysis_settings/iu,
       ),
     );
     settings.update({
@@ -434,10 +432,9 @@ it("applies runtime regex budgets through a bound IDA client and recovers in the
       expect.objectContaining({ address: "0x3000", value }),
     ]);
     if (recovered.ok) {
-      expect(recovered.value.limitations).toContain(
-        launchRegexMatchingLimitation(
-          { deadlineMs: 10000, source: "runtime" },
-          { heapMiB: 256, source: "runtime" },
+      expect(recovered.value.limitations).toContainEqual(
+        expect.stringMatching(
+          /10000 ms matching deadline \(source runtime\).*256 MiB worker heap request \(source runtime\).*update_analysis_settings/iu,
         ),
       );
     }

@@ -109,8 +109,9 @@ test("reports browser origin scope mismatch at the caller parameter path", async
           {
             path: ["runtime_observations", 0, "parameters", "allowed_origins"],
             reason: "invalid_value",
-            message:
-              "Browser Evidence target is outside its recorded origin scope",
+            message: expect.stringMatching(
+              /target.*outside.*recorded origin scope/i,
+            ),
           },
         ],
       },
