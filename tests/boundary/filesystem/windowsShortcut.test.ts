@@ -7,6 +7,7 @@ import {
   powershellHiddenIconSpoofShortcut,
   windowsShortcutBytes,
 } from "../../fixtures/binaryDiagnostics/windowsShortcut.js";
+import { awaitAcknowledgement } from "../../fixtures/lifecycleAcknowledgement.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 const { realpathCalls, lstatGate } = vi.hoisted(() => ({
@@ -260,16 +261,25 @@ describe("Windows shortcut parent directory links", () => {
       });
 
       const inspecting = provider.inspect(providerInput(path));
-      await entered;
-      let closed = false;
-      const closing = provider.close().then(() => {
-        closed = true;
-      });
-      await new Promise((resolve) => setTimeout(resolve, 20));
-      expect(closed).toBe(false);
-      release();
-      await closing;
-      await inspecting;
+      let closing: Promise<void> | undefined;
+      try {
+        await awaitAcknowledgement(
+          entered.then(() => undefined),
+          inspecting,
+          "parent walk lstat",
+        );
+        let closed = false;
+        closing = provider.close().then(() => {
+          closed = true;
+        });
+        await new Promise((resolve) => setTimeout(resolve, 20));
+        expect(closed).toBe(false);
+      } finally {
+        lstatGate.hold = undefined;
+        release();
+        await inspecting;
+        await closing;
+      }
 
       const after = await provider.inspect(providerInput(path));
       if (after.ok) throw new Error("Expected a closed provider to refuse");
