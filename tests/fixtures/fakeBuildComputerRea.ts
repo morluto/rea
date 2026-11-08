@@ -95,6 +95,9 @@ elif command == "describe-desktop-application-task":
         sys.stdout.write(handle.read())
 elif command == "export-desktop-application":
     if "--schema" in args:
+        if os.environ.get("FAKE_REA_SCHEMA_TOKEN"):
+            print("runtime output fake-control-token-0123456789abcdef")
+            sys.exit(0 if os.environ["FAKE_REA_SCHEMA_TOKEN"] == "invalid" else 23)
         if os.environ.get("FAKE_REA_SCHEMA_FAILURE"):
             print("runtime cannot load its export command", file=sys.stderr)
             sys.exit(23)

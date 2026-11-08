@@ -229,6 +229,23 @@ it("reports an unsuccessful runtime schema command without diagnosing its cause"
   );
 });
 
+it.each(["failure", "invalid"])(
+  "redacts control tokens in %s schema output",
+  async (mode) => {
+    const { computer, client } = await fakes({
+      env: { FAKE_REA_SCHEMA_TOKEN: mode },
+    });
+    const id = await startBuildComputer(client, REQUEST);
+    const result = await client.callTool({
+      name: "start_build_capture",
+      arguments: { computer_id: id },
+    });
+    expect(result.isError).toBe(true);
+    expectNoToken(computer, result);
+    expect(JSON.stringify(result)).toContain("runtime output");
+  },
+);
+
 it("refuses a task too large for one command argument before the export runs in the computer", async () => {
   const { rea, client } = await fakes();
   const id = await startBuildComputer(client, REQUEST);

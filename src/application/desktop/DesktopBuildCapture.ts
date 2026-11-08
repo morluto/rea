@@ -109,7 +109,7 @@ const checkExportRuntime = async (
       return err(
         schemaCommandError(
           command.exitCode,
-          content.toString("utf8").slice(-2048),
+          computer.redacted(content.toString("utf8")).slice(-2048),
         ),
       );
     const schema = exportOptionsSchema.safeParse(
@@ -137,8 +137,10 @@ const checkExportRuntime = async (
         ? new AnalysisCancelledError(START, { cause: signal.reason })
         : adapterError(
             START,
-            `Could not read the build computer's REA export schema: ${errorText(cause)}`,
-            cause,
+            `Could not read the build computer's REA export schema: ${computer.redacted(errorText(cause))}`,
+            computer.redacted(errorText(cause)) === errorText(cause)
+              ? cause
+              : undefined,
           ),
     );
   }
