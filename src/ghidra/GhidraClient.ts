@@ -1034,36 +1034,49 @@ export class GhidraClient {
       return this.#startupFailure(failure);
     }
     if (this.#options.debugCompanion !== undefined) {
-      try {
-        const staged = await stageGhidraDebugCompanion(
-          this.#options.debugCompanion,
-          this.#runtimeRoot.path,
-          this.#snapshotPath,
-          { signal: deadline.signal, resourceScope: this.#fileResources },
-        );
-        this.#targetAdmission =
-          this.#targetAdmission === undefined
-            ? staged
-            : {
-                ...(this.#targetAdmission as Record<string, JsonValue>),
-                ...(staged as Record<string, JsonValue>),
-              };
-      } catch (cause: unknown) {
-        // Classify the producer's outcome before any later deadline state, so
-        // a real staging failure is never hidden by an unrelated abort.
-        const failure =
-          cause instanceof ArtifactReaderFailure && cause.reason === "cancelled"
-            ? this.#interruptionFailure(
-                deadline,
-                artifactFileCancellationCause(cause),
-              )
-            : this.#failure(
-                "start",
-                "Ghidra debug companion staging failed",
-                cause,
-              );
-        return this.#startupFailure(failure);
+      let companionAdmission: JsonValue;
+      if (packedProgram === undefined) {
+        try {
+          companionAdmission = await stageGhidraDebugCompanion(
+            this.#options.debugCompanion,
+            this.#runtimeRoot.path,
+            this.#snapshotPath,
+            { signal: deadline.signal, resourceScope: this.#fileResources },
+          );
+        } catch (cause: unknown) {
+          // Classify the producer's outcome before any later deadline state, so
+          // a real staging failure is never hidden by an unrelated abort.
+          const failure =
+            cause instanceof ArtifactReaderFailure &&
+            cause.reason === "cancelled"
+              ? this.#interruptionFailure(
+                  deadline,
+                  artifactFileCancellationCause(cause),
+                )
+              : this.#failure(
+                  "start",
+                  "Ghidra debug companion staging failed",
+                  cause,
+                );
+          return this.#startupFailure(failure);
+        }
+      } else {
+        companionAdmission = {
+          dsym: {
+            source_path: this.#options.debugCompanion.sourcePath,
+            member_sha256: this.#options.debugCompanion.memberSha256,
+            uuid: this.#options.debugCompanion.uuid,
+            staged_member: null,
+          },
+        };
       }
+      this.#targetAdmission =
+        this.#targetAdmission === undefined
+          ? companionAdmission
+          : {
+              ...(this.#targetAdmission as Record<string, JsonValue>),
+              ...(companionAdmission as Record<string, JsonValue>),
+            };
     }
     if (deadline.signal.aborted) return this.#startupInterrupted(deadline);
     this.#token = randomBytes(32).toString("hex");

@@ -2,7 +2,8 @@ import { ProviderCleanupError } from "../../../src/domain/providerCleanupError.j
 import { createEvidence } from "../../../src/domain/evidence.js";
 import { ProcessCaptureResourceScope } from "../../../src/process/capture/ProcessCaptureLifecycle.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
-import { readFile, realpath, rm, writeFile } from "node:fs/promises";
+import { advertisedMcpToolSchemas } from "../../fixtures/advertisedMcpTool.js";
+import { mkdir, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import type { CallToolResult } from "@modelcontextprotocol/server";
@@ -800,6 +801,125 @@ describe("json depth bounds over MCP", () => {
     expect(recovered.isError, JSON.stringify(recovered.content)).not.toBe(true);
     expect(recovered.structuredContent).toEqual(baseline.structuredContent);
     expect(createClient).not.toHaveBeenCalled();
+  }, 10_000);
+});
+
+describe("MCP dsym_path companion lifecycle", () => {
+  it("validates dsym_path through open_binary, surfaces debug_companion in binary_session, and persists it to snapshots", async () => {
+    directory = await createTestTempDirectory("rea-mcp-dsym-session-");
+    const { mcp } = await createSessionMcpHarness(
+      directory,
+      provider,
+      resources,
+    );
+    const uuid = "11111111222233334444555555555555";
+    const thinMacho = (): Buffer => {
+      const bytes = Buffer.alloc(56);
+      bytes.writeUInt32LE(0xfeedfacf, 0);
+      bytes.writeUInt32LE(0x01000007, 4);
+      bytes.writeUInt32LE(3, 8);
+      bytes.writeUInt32LE(2, 12);
+      bytes.writeUInt32LE(1, 16);
+      bytes.writeUInt32LE(24, 20);
+      bytes.writeUInt32LE(0x1b, 32);
+      bytes.writeUInt32LE(24, 36);
+      Buffer.from(uuid, "hex").copy(bytes, 40);
+      return bytes;
+    };
+    const targetPath = join(directory, "pair");
+    await writeFile(targetPath, thinMacho());
+    const nonDsym = join(directory, "pair-nosuffix");
+    await mkdir(join(nonDsym, "Contents", "Resources", "DWARF"), {
+      recursive: true,
+    });
+    await writeFile(
+      join(nonDsym, "Contents", "Resources", "DWARF", "pair"),
+      thinMacho(),
+    );
+    const rejected = await mcp.callTool({
+      name: "open_binary",
+      arguments: { path: targetPath, dsym_path: nonDsym },
+    });
+    expect(rejected.isError).toBe(true);
+    expect(parseMcpToolError(rejected)).toMatchObject({
+      error: {
+        code: "invalid_request",
+        details: {
+          constraint: "debug_companion_rejected",
+          diagnostics: {
+            dsym_path: nonDsym,
+            rejection: "not_dsym_bundle",
+          },
+        },
+      },
+    });
+
+    const validBundle = join(directory, "selected.dSYM");
+    await mkdir(join(validBundle, "Contents", "Resources", "DWARF"), {
+      recursive: true,
+    });
+    await writeFile(
+      join(validBundle, "Contents", "Resources", "DWARF", "pair"),
+      thinMacho(),
+    );
+    const openSchemas = await advertisedMcpToolSchemas(mcp, "open_binary");
+    const sessionSchemas = await advertisedMcpToolSchemas(
+      mcp,
+      "binary_session",
+      openSchemas.ajv,
+    );
+    const trailingDsym = `${validBundle}/`;
+    const opened = await mcp.callTool({
+      name: "open_binary",
+      arguments: { path: targetPath, dsym_path: trailingDsym },
+    });
+    expect(opened.isError, JSON.stringify(opened.content)).not.toBe(true);
+    expect(
+      openSchemas.ajv.validate(
+        openSchemas.outputSchema,
+        opened.structuredContent,
+      ),
+    ).toBe(true);
+    const expectedCompanion = {
+      source_path: trailingDsym,
+      uuid: "11111111-2222-3333-4444-555555555555",
+      member_sha256: expect.stringMatching(/^[a-f0-9]{64}$/u),
+    };
+    expect(structured(opened).result).toMatchObject({
+      format: "mach-o",
+      debug_companion: expectedCompanion,
+    });
+
+    const sessionState = await mcp.callTool({
+      name: "binary_session",
+      arguments: {},
+    });
+    expect(sessionState.isError).not.toBe(true);
+    expect(
+      sessionSchemas.ajv.validate(
+        sessionSchemas.outputSchema,
+        sessionState.structuredContent,
+      ),
+    ).toBe(true);
+    expect(structured(sessionState).result).toMatchObject({
+      open: true,
+      format: "mach-o",
+      debug_companion: expectedCompanion,
+    });
+
+    const snapshotPath = join(directory, "companion-snapshot.json");
+    const closed = await mcp.callTool({
+      name: "close_binary",
+      arguments: { snapshot_path: snapshotPath },
+    });
+    expect(closed.isError, JSON.stringify(closed.content)).not.toBe(true);
+    const persisted = parseAnalysisSnapshot(
+      JSON.parse(await readFile(snapshotPath, "utf8")),
+    );
+    expect(persisted.target).toMatchObject({
+      format: "mach-o",
+      debug_companion: expectedCompanion,
+    });
   }, 10_000);
 });
 

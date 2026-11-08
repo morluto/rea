@@ -12,13 +12,14 @@
   target resolution before any provider starts. Reuse the resolver's open target
   handle, enforce normalized `.dSYM` directory naming, enumerate
   `Contents/Resources/DWARF` through `OwnedDirectoryHandle` and
-  `withRegularFileCompletion`, deduplicate `(dev, ino, size)` digests, and
+  `withRegularFileCompletion`, deduplicate non-zero 64-bit
+  `(dev, ino, size, mtimeNs, ctimeNs)` digests, and
   attach `MachODebugCompanion` to Mach-O `BinaryTarget` variants or project
   `debug_companion_rejected` refusals via `src/domain/analysisErrorProjection.ts`
   and `src/domain/analysisErrorPresentation.ts`.
 - `src/contracts/sessionLifecycleInputs.ts`,
-  `src/contracts/sessionToolContracts.ts`, `src/cli/coreNativeCommands.ts`,
-  `src/application/DirectAnalysis.ts`, and
+  `src/server/registerSessionTools.ts`, `src/cli/options.ts`,
+  `src/cli/coreBinaryCommands.ts`, `src/application/DirectAnalysis.ts`, and
   `src/application/binary/BinarySessionOpen.ts`: expose optional absolute
   `dsym_path` / `--dsym-path` across MCP `open_binary` and one-shot native CLI
   commands with contract-level headerless-format pairing rejection.
@@ -28,8 +29,8 @@
   pairing as a `ConfigurationError` (`configuration_invalid`) before headless
   launch, commit `debug_companion` into the Ghidra analysis profile so saved
   Program checkpoints stay isolated from bare imports, stage the verified member
-  beside the private snapshot, and project `dsym` facts into target-admission
-  evidence.
+  beside the private snapshot on fresh imports (skipping redundant staging on
+  checkpoint restore), and project `dsym` facts into target-admission evidence.
 
 ## Incremental work and validation
 
@@ -43,11 +44,12 @@
 3. Thread `dsym_path` / `--dsym-path` through MCP and CLI contracts, session
    open, and direct analysis; regenerate tool catalog projections.
 4. Add private Ghidra staging, `REA_GHIDRA_PROJECT_PATH` refusal,
-   analysis-profile/checkpoint isolation, and target-admission evidence
+   analysis-profile/checkpoint isolation, checkpoint-restore staging skip, and
+   target-admission evidence
    (`tests/boundary/filesystem/ghidraDebugCompanion.test.ts`,
    `tests/process-global/ghidraDebugCompanionStagingLifetime.test.ts`,
    `src/ghidra/GhidraProvider.behavior.test.ts`,
-   `src/ghidra/GhidraCheckpoint.test.ts`).
+   `tests/boundary/providers/ghidra/ghidraCheckpointLifecycle.test.ts`).
 5. Author [provider documentation](../../../providers/dsym.md), register public
    navigation and route entries, and run documentation, route, static, and deep
    verification checks.

@@ -402,7 +402,7 @@ const digestOpenHandle = async (
   }
   const opened = await handle.stat();
   throwIfCancelled(signal);
-  return sameRegularFileState(initial, opened)
+  return position === initial.size && sameRegularFileState(initial, opened)
     ? ok(hash.digest("hex"))
     : err("the dSYM DWARF member changed while being read");
 };
@@ -678,10 +678,13 @@ const normalizeMemberCleanupFailure = (
     if (
       rawCause instanceof AnalysisCancelledError ||
       rawCause instanceof AnalysisArtifactChangedError ||
-      rawCause instanceof BinaryTargetError ||
-      rawCause instanceof RegularFileOperationCancelled
+      rawCause instanceof BinaryTargetError
     )
       primary = rawCause;
+    else if (rawCause instanceof RegularFileOperationCancelled)
+      primary = new AnalysisCancelledError("resolve_binary_target", {
+        cause: rawCause.reason,
+      });
     else if (rawCause instanceof RegularFileChangedError)
       primary = new AnalysisArtifactChangedError(
         "open_binary",
@@ -755,16 +758,17 @@ const readMemberWithBorrowedResources = async (
     );
     if (retried.failure !== undefined) throw retried.failure;
     if (cause.outcome.kind === "failed") {
+      if (normalized.outcome.kind === "failed") throw normalized.outcome.cause;
       const cancellation =
         cause.operationFailure === undefined
-          ? (regularFileCancellation(cause.outcome.cause) ??
-            regularFileCancellation(cause))
+          ? regularFileCancellation(cause)
           : undefined;
       if (cancellation !== undefined)
         throw new AnalysisCancelledError("resolve_binary_target", {
           cause: cancellation.reason,
         });
-      throw cause.outcome.cause;
+      throwIfCancelled(state.signal);
+      return ok(null);
     }
     const completed = cause.outcome.value as Result<
       MachODebugCompanion | null,
@@ -779,6 +783,23 @@ const readMemberWithBorrowedResources = async (
     throwIfCancelled(state.signal);
     return completed;
   }
+};
+
+const memberDigestIdentityKey = async (
+  memberHandle: FileHandle,
+  initial: Stats,
+  signal: AbortSignal | undefined,
+): Promise<string | null> => {
+  throwIfCancelled(signal);
+  const exact = await memberHandle.stat({ bigint: true });
+  throwIfCancelled(signal);
+  if (
+    !exact.isFile() ||
+    exact.ino === 0n ||
+    exact.size !== BigInt(initial.size)
+  )
+    return null;
+  return `${exact.dev.toString()}:${exact.ino.toString()}:${exact.size.toString()}:${exact.mtimeNs.toString()}:${exact.ctimeNs.toString()}`;
 };
 
 const inspectMemberHandle = async (
@@ -815,8 +836,15 @@ const inspectMemberHandle = async (
     });
   if (initial.size > MEMBER_SIZE_LIMIT_BYTES)
     return err(memberSizeLimit(memberPath, initial.size));
-  const identityKey = `${String(initial.dev)}:${String(initial.ino)}:${String(initial.size)}`;
-  let memberSha256Value = state.digestedIdentities.get(identityKey);
+  const identityKey = await memberDigestIdentityKey(
+    memberHandle,
+    initial,
+    state.signal,
+  );
+  let memberSha256Value =
+    identityKey === null
+      ? undefined
+      : state.digestedIdentities.get(identityKey);
   if (memberSha256Value === undefined) {
     if (initial.size > state.digestBudgetBytes)
       return err(aggregateDigestLimit());
@@ -832,7 +860,8 @@ const inspectMemberHandle = async (
         memberSha256.error,
       );
     state.digestBudgetBytes -= initial.size;
-    state.digestedIdentities.set(identityKey, memberSha256.value);
+    if (identityKey !== null)
+      state.digestedIdentities.set(identityKey, memberSha256.value);
     memberSha256Value = memberSha256.value;
   }
   return ok({

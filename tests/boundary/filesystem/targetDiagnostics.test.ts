@@ -48,6 +48,22 @@ const compilePairFixture = async (directory: string, name: string) => {
   return binary;
 };
 
+const thinUuidMacho = (
+  uuidHex = "11111111222233334444555555555555",
+): Buffer => {
+  const bytes = Buffer.alloc(56);
+  bytes.writeUInt32LE(0xfeedfacf, 0);
+  bytes.writeUInt32LE(0x01000007, 4);
+  bytes.writeUInt32LE(3, 8);
+  bytes.writeUInt32LE(2, 12);
+  bytes.writeUInt32LE(1, 16);
+  bytes.writeUInt32LE(24, 20);
+  bytes.writeUInt32LE(0x1b, 32);
+  bytes.writeUInt32LE(24, 36);
+  Buffer.from(uuidHex, "hex").copy(bytes, 40);
+  return bytes;
+};
+
 describe("executable format refusal diagnostics", () => {
   it.each([
     [0x01a6, "0x01a6"],
@@ -473,6 +489,56 @@ describe("debug companion admission diagnostics", () => {
       },
     });
   });
+
+  it("accepts .dSYM paths with trailing slash or dot segments and rejects non-.dSYM directory names", async () => {
+    const directory = await createTestTempDirectory("rea-dsym-naming-");
+    const target = join(directory, "pair");
+    await writeFile(target, thinUuidMacho());
+    const validBundle = join(directory, "selected.dSYM");
+    await mkdir(join(validBundle, "Contents", "Resources", "DWARF"), {
+      recursive: true,
+    });
+    await writeFile(
+      join(validBundle, "Contents", "Resources", "DWARF", "pair"),
+      thinUuidMacho(),
+    );
+    for (const candidate of [`${validBundle}/`, `${validBundle}/.`]) {
+      const admitted = await parseBinaryTarget(target, { dsymPath: candidate });
+      expect(admitted).toMatchObject({
+        ok: true,
+        value: {
+          format: "mach-o",
+          debugCompanion: {
+            sourcePath: candidate,
+            uuid: "11111111-2222-3333-4444-555555555555",
+          },
+        },
+      });
+    }
+    const nonDsymDir = join(directory, "pair-nosuffix");
+    await mkdir(join(nonDsymDir, "Contents", "Resources", "DWARF"), {
+      recursive: true,
+    });
+    await writeFile(
+      join(nonDsymDir, "Contents", "Resources", "DWARF", "pair"),
+      thinUuidMacho(),
+    );
+    const rejected = await parseBinaryTarget(target, { dsymPath: nonDsymDir });
+    if (rejected.ok) throw new Error("non-.dSYM directory was admitted");
+    expect(projectAnalysisError(rejected.error)).toMatchObject({
+      code: "invalid_request",
+      category: "invalid_input",
+      details: {
+        path: target,
+        constraint: "debug_companion_rejected",
+        reason: `dsym_path is not a .dSYM bundle directory: ${nonDsymDir}`,
+        diagnostics: {
+          dsym_path: nonDsymDir,
+          rejection: "not_dsym_bundle",
+        },
+      },
+    });
+  });
 });
 
 describe("debug companion fixture admission", () => {
@@ -627,6 +693,56 @@ describe("debug companion resource limits and mismatch", () => {
     },
   );
 
+  it("rejects distinct matching DWARF members that exceed the 1 GiB aggregate digest budget while deduplicating hard links", async () => {
+    const directory = await createTestTempDirectory("rea-dsym-agg-budget-");
+    const target = join(directory, "pair");
+    await writeFile(target, thinUuidMacho());
+    const dsymPath = join(directory, "pair.dSYM");
+    const dwarfDirectory = join(dsymPath, "Contents", "Resources", "DWARF");
+    await mkdir(dwarfDirectory, { recursive: true });
+    const first = join(dwarfDirectory, "a-first");
+    await writeFile(first, thinUuidMacho());
+    const { link, open, unlink } = await import("node:fs/promises");
+    const hardlink = join(dwarfDirectory, "b-hardlink");
+    await link(first, hardlink);
+    expect(await parseBinaryTarget(target, { dsymPath })).toMatchObject({
+      ok: true,
+    });
+    await unlink(hardlink);
+
+    // A second distinct matching member of exact 1 GiB passes the single-member
+    // size check (<= 1 GiB) and exceeds the remaining cumulative digest budget.
+    const second = join(dwarfDirectory, "b-second");
+    await writeFile(second, thinUuidMacho());
+    const handle = await open(second, "r+");
+    try {
+      await handle.truncate(1024 * 1024 * 1024);
+    } finally {
+      await handle.close();
+    }
+    const rejected = await parseBinaryTarget(target, { dsymPath });
+    if (rejected.ok)
+      throw new Error("aggregate digest budget overflow was admitted");
+    expect(projectAnalysisError(rejected.error)).toMatchObject({
+      code: "invalid_request",
+      remediation: {
+        action: expect.stringContaining("no runtime override"),
+      },
+      details: {
+        path: target,
+        constraint: "debug_companion_rejected",
+        reason: expect.stringContaining("exceed the aggregate digest budget"),
+        diagnostics: {
+          limit: "dsym_aggregate_digest_bytes",
+          maximum_bytes: 1024 * 1024 * 1024,
+          runtime_override: false,
+        },
+      },
+    });
+  });
+});
+
+describe("debug companion UUID mismatch", () => {
   it.skipIf(!onDarwin)(
     "rejects a mismatched dSYM as caller input with structured UUID mismatch facts",
     async () => {

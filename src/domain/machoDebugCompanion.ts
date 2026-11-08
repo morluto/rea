@@ -1,3 +1,5 @@
+import { z } from "zod";
+
 import {
   findOverlappingFatSlices,
   readFatContainerHeader,
@@ -9,7 +11,28 @@ import {
   MachoLoadCommandCursor,
   readMachoLoadCommandTableHeader,
 } from "./apple/machoLoadCommands.js";
+import { digestSchema } from "./digests.js";
+import { localPathStringSchema } from "./localPath.js";
 import { err, ok, type Result } from "./result.js";
+
+/** Canonical uppercase hex LC_UUID formatting emitted by Mach-O decoders. */
+export const MACHO_UUID_PATTERN =
+  /^[0-9A-F]{8}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{12}$/u;
+
+/** Shared wire and persistence shape for an admitted Mach-O dSYM companion. */
+export const machODebugCompanionCommitmentShape = {
+  source_path: localPathStringSchema,
+  uuid: z.string().regex(MACHO_UUID_PATTERN),
+  member_sha256: digestSchema,
+} as const;
+
+/** Strict identity commitment for analysis profiles and persisted snapshots. */
+export const machODebugCompanionCommitmentSchema = z.strictObject(
+  machODebugCompanionCommitmentShape,
+);
+export type MachODebugCompanionCommitment = z.infer<
+  typeof machODebugCompanionCommitmentSchema
+>;
 
 const LC_UUID = 0x1b;
 const UUID_BYTES = 16;

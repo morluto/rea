@@ -1,4 +1,10 @@
-import { mkdir, open, writeFile } from "node:fs/promises";
+import {
+  link,
+  mkdir,
+  open,
+  writeFile,
+  type FileHandle,
+} from "node:fs/promises";
 import { join } from "node:path";
 import { beforeEach, expect, it, vi } from "vitest";
 
@@ -10,6 +16,12 @@ const fault = vi.hoisted(() => ({
   memberReadFailure: undefined as Error | undefined,
   memberCloseFailure: undefined as Error | undefined,
   onMemberClose: undefined as ((attempt: number) => void) | undefined,
+  onOpenHandle: undefined as
+    | ((path: string, handle: FileHandle) => void)
+    | undefined,
+  transformStats: undefined as
+    | (<T extends object>(path: string, stats: T, bigint: boolean) => T)
+    | undefined,
   dirReadFailure: undefined as Error | undefined,
   dirCloseFailure: undefined as Error | undefined,
   onDirClose: undefined as ((attempt: number) => void) | undefined,
@@ -26,12 +38,26 @@ vi.mock("node:fs/promises", async (importOriginal) => {
         fault.controller?.abort(new Error("caller cancelled admission"));
         throw fault.statFailure;
       }
-      return await original.stat(...args);
+      const observed = await original.stat(...args);
+      if (
+        observed !== undefined &&
+        typeof args[0] === "string" &&
+        fault.transformStats !== undefined
+      ) {
+        const bigint =
+          typeof args[1] === "object" &&
+          args[1] !== null &&
+          "bigint" in args[1] &&
+          args[1].bigint === true;
+        return fault.transformStats(args[0], observed, bigint);
+      }
+      return observed;
     },
     open: async (...args: Parameters<typeof original.open>) => {
       if (args[0] === fault.openPath && fault.openFailure !== undefined)
         throw fault.openFailure;
       const handle = await original.open(...args);
+      if (typeof args[0] === "string") fault.onOpenHandle?.(args[0], handle);
       if (
         args[0] === fault.openPath &&
         (fault.memberReadFailure !== undefined ||
@@ -97,6 +123,7 @@ vi.mock("node:fs/promises", async (importOriginal) => {
 
 import { parseBinaryTarget } from "../../src/application/BinaryTargetResolver.js";
 import { admitDebugCompanion } from "../../src/application/DebugCompanionAdmission.js";
+import { RetainedRegularFileCleanupFailure } from "../../src/application/RegularFileRead.js";
 import { AnalysisCleanupLease } from "../../src/artifacts/AnalysisCleanupLease.js";
 import { ArtifactResourceScope } from "../../src/artifacts/ArtifactResourceScope.js";
 import {
@@ -104,7 +131,10 @@ import {
   AnalysisCancelledError,
 } from "../../src/domain/analysisErrorCore.js";
 import { BinaryTargetError } from "../../src/domain/configurationErrors.js";
-import { RegularFileChangedError } from "../../src/filesystem/RegularFile.js";
+import {
+  RegularFileChangedError,
+  RegularFileOperationCancelled,
+} from "../../src/filesystem/RegularFile.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 
 beforeEach(() => {
@@ -115,6 +145,8 @@ beforeEach(() => {
   fault.memberReadFailure = undefined;
   fault.memberCloseFailure = undefined;
   fault.onMemberClose = undefined;
+  fault.onOpenHandle = undefined;
+  fault.transformStats = undefined;
   fault.dirReadFailure = undefined;
   fault.dirCloseFailure = undefined;
   fault.onDirClose = undefined;
@@ -520,4 +552,132 @@ it("preserves a conflicting_matching_members refusal when the conflicting member
     },
   });
   await resources.close();
+});
+
+it("normalizes RegularFileOperationCancelled and read faults across member close failures and succeeded close retries", async () => {
+  const fixture = await admissionFixture();
+  const reason = new Error("cancelled inside regular-file read");
+  fault.openPath = fixture.member;
+  fault.memberReadFailure = new RegularFileOperationCancelled(reason);
+  fault.memberCloseFailure = errno("EIO");
+
+  let caught: unknown;
+  try {
+    await fixture.admit();
+  } catch (error: unknown) {
+    caught = error;
+  }
+  expect(caught).toBeInstanceOf(RetainedRegularFileCleanupFailure);
+  if (!(caught instanceof RetainedRegularFileCleanupFailure)) return;
+  expect(caught.outcome).toMatchObject({
+    kind: "failed",
+    cause: expect.any(AnalysisCancelledError),
+  });
+  if (caught.outcome.kind === "failed")
+    expect((caught.outcome.cause as AnalysisCancelledError).cause).toBe(reason);
+  fault.memberCloseFailure = undefined;
+  await caught.owner.close();
+
+  // With borrowed resources, when initial close fails and retry succeeds after a
+  // read fault, the thrown error must be the normalized BinaryTargetError rather
+  // than the raw EIO fault.
+  const resources = new ArtifactResourceScope();
+  fault.memberReadFailure = errno("EIO");
+  fault.memberCloseFailure = errno("EIO");
+  fault.onMemberClose = (attempt) => {
+    if (attempt === 2) fault.memberCloseFailure = undefined;
+  };
+  const retried = await parseBinaryTarget(fixture.target, {
+    dsymPath: fixture.dsymPath,
+    resources,
+  });
+  expect(retried.ok).toBe(false);
+  if (retried.ok) return;
+  expect(retried.error).toBeInstanceOf(BinaryTargetError);
+  expect(retried.error.message).toContain(
+    "reading the dSYM DWARF member failed with EIO",
+  );
+  await resources.close();
+});
+
+it("deduplicates hard-linked member digests by exact 64-bit inode identity without colliding on zero or >2^53 inodes", async () => {
+  const fixture = await admissionFixture();
+  const hardlink = join(fixture.directory, "member-hardlink");
+  await link(fixture.member, hardlink);
+  let digestReads = 0;
+  fault.onOpenHandle = (openedPath, handle) => {
+    if (openedPath !== fixture.member && openedPath !== hardlink) return;
+    const originalRead = handle.read.bind(handle) as (
+      ...args: unknown[]
+    ) => Promise<unknown>;
+    handle.read = (async (...args: unknown[]) => {
+      // Prefix UUID read requests 56 bytes (clamped to fileSize); digestOpenHandle
+      // passes a 64 KiB buffer at position 0.
+      if (
+        args[0] instanceof Uint8Array &&
+        args[2] === 64 * 1024 &&
+        args[3] === 0
+      )
+        digestReads += 1;
+      return await originalRead(...args);
+    }) as typeof handle.read;
+  };
+  const admitted = await fixture.admit();
+  expect(admitted).toMatchObject({ ok: true });
+  expect(digestReads).toBe(1);
+
+  // Two distinct matching members of identical size (72 bytes) with differing
+  // trailing DWARF bytes must never collide when ino === 0n or when 64-bit inodes
+  // exceed Number.MAX_SAFE_INTEGER (e.g. 2^53 vs 2^53 + 1 on NTFS).
+  for (const mode of ["zero-inode", "ntfs-high-inode"] as const) {
+    const conflictFixture = await admissionFixture();
+    const firstBytes = Buffer.concat([uuidImage(), Buffer.alloc(16, 0xaa)]);
+    const secondBytes = Buffer.concat([uuidImage(), Buffer.alloc(16, 0xbb)]);
+    const secondMember = join(conflictFixture.directory, "member-second");
+    await writeFile(conflictFixture.member, firstBytes);
+    await writeFile(secondMember, secondBytes);
+    fault.transformStats = (statPath, stats, bigint) => {
+      if (statPath !== conflictFixture.member && statPath !== secondMember)
+        return stats;
+      const isSecond = statPath === secondMember;
+      return Object.assign(
+        Object.create(Object.getPrototypeOf(stats)),
+        stats,
+        bigint
+          ? {
+              dev: 1n,
+              ino:
+                mode === "zero-inode"
+                  ? 0n
+                  : isSecond
+                    ? 9007199254740993n
+                    : 9007199254740992n,
+            }
+          : {
+              dev: 1,
+              ino: mode === "zero-inode" ? 0 : 9007199254740992,
+            },
+      );
+    };
+    fault.onOpenHandle = (openedPath, handle) => {
+      if (openedPath !== conflictFixture.member && openedPath !== secondMember)
+        return;
+      const originalStat = handle.stat.bind(handle);
+      handle.stat = (async (options?: { bigint?: boolean }) => {
+        const stats = await originalStat(options as never);
+        return fault.transformStats!(
+          openedPath,
+          stats,
+          options?.bigint === true,
+        );
+      }) as typeof handle.stat;
+    };
+    const rejected = await conflictFixture.admit();
+    expect(rejected).toMatchObject({
+      ok: false,
+      error: {
+        diagnostics: { rejection: "conflicting_matching_members" },
+      },
+    });
+  }
 });

@@ -6,6 +6,7 @@ import {
   RAW_ONLY_ARCHITECTURES,
 } from "./binaryTargetTypes.js";
 import { digestSchema } from "./digests.js";
+import { machODebugCompanionCommitmentShape } from "./machoDebugCompanion.js";
 import {
   binaryArchitectureSchema,
   rawBinaryEntryPointSchema,
@@ -21,11 +22,7 @@ const headerArchitectureSchema = architectureSchema.exclude([
 ]);
 const identity = { path: z.string(), sha256: digestSchema };
 const debugCompanionSchema = z
-  .object({
-    source_path: z.string(),
-    uuid: z.string(),
-    member_sha256: z.string(),
-  })
+  .object(machODebugCompanionCommitmentShape)
   .optional()
   .describe(
     "Caller-selected dSYM companion admitted for this Mach-O target; omitted when none was admitted.",

@@ -44,6 +44,7 @@ import {
 import { digestSchema, prefixedDigestSchema } from "./../domain/digests.js";
 import { canonicalJsonDigestSteps } from "./canonicalJsonDigestSteps.js";
 import { freezeJsonSnapshot } from "./immutableJson.js";
+import { machODebugCompanionCommitmentSchema } from "./machoDebugCompanion.js";
 import {
   binaryArchitectureSchema,
   rawBinaryEntryPointSchema,
@@ -97,25 +98,30 @@ const subjectBaseSchema = z.object({
   sha256: digestSchema,
 });
 const subjectSchema = withEvidenceSubjectDeclaration(subjectBaseSchema);
-/** Companion identity that partitions session and snapshot reuse by dSYM. */
-const debugCompanionSchema = z.object({
-  source_path: z.string(),
-  uuid: z.string(),
-  member_sha256: z.string(),
-});
-
-const targetIdentitySchema = z.object({
+/** Non-Mach-O targets never carry a Mach-O dSYM companion. */
+const nonMachOTargetIdentitySchema = z.object({
   sha256: digestSchema,
   kind: kindSchema,
   architecture: architectureSchema.nullable(),
+  debug_companion: z.null().default(null),
+});
+const machOTargetIdentitySchema = nonMachOTargetIdentitySchema.extend({
   /** Absent in snapshots written before companion admission; null when none. */
-  debug_companion: debugCompanionSchema.nullable().default(null),
+  debug_companion: machODebugCompanionCommitmentSchema.nullable().default(null),
 });
 const targetSchema = z.discriminatedUnion("format", [
-  targetIdentitySchema.extend({
+  machOTargetIdentitySchema.extend({
+    format: z.enum(["mach-o", "mach-o-universal"]),
+    architecture: architectureSchema
+      .exclude([...RAW_ONLY_ARCHITECTURES])
+      .nullable(),
+  }),
+  nonMachOTargetIdentitySchema.extend({
     format: z.enum(
       formatSchema.options.filter(
         (format) =>
+          format !== "mach-o" &&
+          format !== "mach-o-universal" &&
           format !== "raw-binary" &&
           format !== "gamecube-dol" &&
           format !== "esp-flash-image",
@@ -125,20 +131,20 @@ const targetSchema = z.discriminatedUnion("format", [
       .exclude([...RAW_ONLY_ARCHITECTURES])
       .nullable(),
   }),
-  targetIdentitySchema.extend({
+  nonMachOTargetIdentitySchema.extend({
     format: z.literal("raw-binary"),
     kind: z.literal("executable"),
     architecture: binaryArchitectureSchema,
     entry_point: rawBinaryEntryPointSchema,
   }),
-  targetIdentitySchema.extend({
+  nonMachOTargetIdentitySchema.extend({
     format: z.literal("gamecube-dol"),
     kind: z.literal("executable"),
     architecture: z.literal("powerpc"),
     entry_point: rawBinaryEntryPointSchema,
   }),
   // The caller's inputs select how the dump is read, so they are identity.
-  targetIdentitySchema.extend({
+  nonMachOTargetIdentitySchema.extend({
     format: z.literal("esp-flash-image"),
     kind: z.literal("archive"),
     architecture: z.null(),
@@ -446,13 +452,21 @@ export const snapshotTarget = (target: BinaryTarget): AnalysisSnapshotTarget =>
             flash_offset: target.espFlash.flashOffset,
             partition_table_offset: target.espFlash.partitionTableOffset,
           }
-        : {
-            sha256: target.sha256,
-            kind: target.kind,
-            architecture: target.architecture ?? null,
-            debug_companion: machOCompanionIdentity(target),
-            format: target.format,
-          };
+        : target.format === "mach-o" || target.format === "mach-o-universal"
+          ? {
+              sha256: target.sha256,
+              kind: target.kind,
+              architecture: target.architecture,
+              debug_companion: machOCompanionIdentity(target),
+              format: target.format,
+            }
+          : {
+              sha256: target.sha256,
+              kind: target.kind,
+              architecture: target.architecture ?? null,
+              debug_companion: null,
+              format: target.format,
+            };
 
 /** A dSYM change is a different analysis input, not the same target. */
 const machOCompanionIdentity = (

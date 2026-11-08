@@ -13,6 +13,10 @@ import type {
   MachODebugCompanion,
 } from "../domain/binaryTargetTypes.js";
 import {
+  machODebugCompanionCommitmentSchema,
+  type MachODebugCompanionCommitment,
+} from "../domain/machoDebugCompanion.js";
+import {
   AnalysisCancelledError,
   AnalysisUnsupportedTargetError,
 } from "../domain/analysisErrorCore.js";
@@ -418,16 +422,9 @@ export const ghidraTargetDebugCompanion = (
     : undefined;
 
 /** Admitted Mach-O dSYM companion committed into the fresh-import profile. */
-export const ghidraDebugCompanionCommitmentSchema = z.strictObject({
-  source_path: z.string().min(1),
-  uuid: z
-    .string()
-    .regex(/^[0-9A-Fa-f]{8}-(?:[0-9A-Fa-f]{4}-){3}[0-9A-Fa-f]{12}$/u),
-  member_sha256: z.string().regex(/^[a-f0-9]{64}$/u),
-});
-export type GhidraDebugCompanionCommitment = z.infer<
-  typeof ghidraDebugCompanionCommitmentSchema
->;
+export const ghidraDebugCompanionCommitmentSchema =
+  machODebugCompanionCommitmentSchema;
+export type GhidraDebugCompanionCommitment = MachODebugCompanionCommitment;
 
 /** Whether a committed profile and the admitted target select the same companion. */
 export const sameGhidraDebugCompanion = (

@@ -618,9 +618,11 @@ const readOpenedBinaryTarget = async (
       }),
     );
   }
-  let debugCompanion: MachODebugCompanion | undefined;
   if (dsymPath !== undefined) {
-    if (!isMachOFormat(detected.value.format))
+    if (
+      detected.value.format !== "mach-o" &&
+      detected.value.format !== "mach-o-universal"
+    )
       return err(
         new BinaryTargetError(
           path,
@@ -651,15 +653,17 @@ const readOpenedBinaryTarget = async (
     });
     if (!companion.ok)
       return err(debugCompanionRejectedError(path, companion.error));
-    debugCompanion = companion.value;
+    return ok({
+      ...(await identity()),
+      kind: "executable",
+      ...detected.value,
+      debugCompanion: { ...companion.value },
+    });
   }
   return ok({
     ...(await identity()),
     kind: "executable",
     ...detected.value,
-    ...(debugCompanion === undefined
-      ? {}
-      : { debugCompanion: { ...debugCompanion } }),
   });
 };
 

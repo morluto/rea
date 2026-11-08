@@ -48,17 +48,20 @@ and the committed Ghidra analysis profile.
   (`conflicting_matching_members`).
 - **Bounded admission and handle ownership**: examine at most 16 entries in
   `Contents/Resources/DWARF`, cap matched member size and cumulative
-  matching-member digest reads at 1 GiB (deduplicating hard links sharing one
-  `(dev, ino, size)` file identity), and bound incremental header/UUID traversal
+  matching-member digest reads at 1 GiB (deduplicating links sharing one
+  non-zero 64-bit `(dev, ino, size, mtimeNs, ctimeNs)` file identity), and bound
+  incremental header/UUID traversal
   to a 64 KiB read window and 64 MiB total header I/O across target and
   candidates. Preserve refusal diagnostics ahead of final-close cancellation,
   retain failed handles when descriptor or directory close fails, and honor
   cancellation across member reads, staging copies, and cleanup retries.
-- **Private staging and provenance**: stage only the matched DWARF member inside
-  REA's private runtime root at
+- **Private staging and provenance**: on fresh Ghidra imports, stage only the
+  matched DWARF member inside REA's private runtime root at
   `<snapshot>.dSYM/Contents/Resources/DWARF/<snapshot>` via exclusive `0600`
   file creation and post-copy size/SHA-256/file-state verification, leaving the
-  caller's bundle untouched. Record
+  caller's bundle untouched; checkpoint-restored sessions skip redundant member
+  copying (`staged_member: null`) because DWARF symbols and types are already
+  saved in the restored Program archive. Record
   `dsym { source_path, member_sha256, uuid, staged_member }` in target-admission
   evidence and `debug_companion { source_path, uuid, member_sha256 }` in
   `GhidraAnalysisProfile` so companion-selected and bare runs never share an

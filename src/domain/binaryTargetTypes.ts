@@ -233,16 +233,20 @@ export type BinaryTarget =
       readonly universalSlice?: never;
       readonly executableRole?: never;
       readonly managed?: never;
-      /** Carried only when the detected format is mach-o. */
       readonly debugCompanion?: MachODebugCompanion;
     })
   | (ExecutableTarget & {
-      readonly format: "mach-o" | "elf" | "dos-mz" | "dos-com";
+      readonly format: "mach-o";
       readonly universalSlice?: never;
       readonly executableRole?: never;
       readonly managed?: never;
-      /** Carried only when the detected format is mach-o. */
       readonly debugCompanion?: MachODebugCompanion;
+    })
+  | (ExecutableTarget & {
+      readonly format: "elf" | "dos-mz" | "dos-com";
+      readonly universalSlice?: never;
+      readonly executableRole?: never;
+      readonly managed?: never;
     })
   | (ExecutableTarget & {
       readonly format: "mach-o-universal";
@@ -252,7 +256,6 @@ export type BinaryTarget =
       readonly universalSlices?: readonly UniversalMachOSliceIdentity[];
       readonly executableRole?: never;
       readonly managed?: never;
-      /** Carried only when the detected format is mach-o or mach-o-universal. */
       readonly debugCompanion?: MachODebugCompanion;
     })
   | (BinaryTargetIdentity & {
