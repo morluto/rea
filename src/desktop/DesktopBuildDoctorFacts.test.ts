@@ -7,6 +7,7 @@ import { expect, it } from "vitest";
 
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
 import { runDoctor, systemDoctorHost } from "../application/Doctor.js";
+import { DESKTOP_EXPORT_FRAMEWORK_VERSION } from "../domain/desktop/appExport.js";
 import { readDesktopBuildFacts } from "./DesktopBuildDoctorFacts.js";
 import {
   defaultBuildComputerArchive,
@@ -50,7 +51,7 @@ it.skipIf(process.platform === "win32")(
   async () => {
     const { root, bin, home } = await buildHost("rea-desktop-empty-runner-");
     const runner = join(bin, "agent-env");
-    await program(runner, 'echo "agent-env 0.9.1431"');
+    await program(runner, `echo "agent-env ${DESKTOP_EXPORT_FRAMEWORK_VERSION}"`);
     const environment = {
       HOME: home,
       USERPROFILE: home,
@@ -79,7 +80,7 @@ it.skipIf(process.platform === "win32")(
     ).toBe(runner);
     const facts = await readFacts(environment, ["claude_code"]);
     expect(facts.registrations[0]).toMatchObject({
-      runner: { status: "current", version: "0.9.1431" },
+      runner: { status: "current", version: DESKTOP_EXPORT_FRAMEWORK_VERSION },
     });
     expect(facts.registrations[0]?.differing ?? []).not.toContain(
       "REA_AGENT_ENV_COMMAND",
