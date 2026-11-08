@@ -62,7 +62,10 @@ cliTest.skipIf(!["darwin", "linux"].includes(process.platform))(
         "claude_code",
         "--json",
       ],
-      environment,
+      environment: {
+        ...environment,
+        REA_DOCKER_COMMAND: join(environment.HOME, "..", "bin", "docker"),
+      },
       timeoutMs: 45_000,
     });
 
@@ -85,6 +88,7 @@ cliTest.skipIf(!["darwin", "linux"].includes(process.platform))(
     });
     expect(checks.get("desktop_build-registration")).toMatchObject({
       ok: false,
+      detail: expect.stringContaining("REA_DOCKER_COMMAND"),
       details: {
         registrations: [
           {
@@ -93,6 +97,7 @@ cliTest.skipIf(!["darwin", "linux"].includes(process.platform))(
               "REA_AGENT_ENV_COMMAND",
               "REA_BUILD_COMPUTER_REA_ARCHIVE",
             ],
+            differing: ["REA_DOCKER_COMMAND"],
           },
         ],
       },

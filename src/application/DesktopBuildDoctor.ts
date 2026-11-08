@@ -51,6 +51,8 @@ export interface DesktopBuildFacts {
     readonly registered: boolean;
     readonly unrecorded: readonly string[];
     readonly unresolved: readonly string[];
+    readonly differing?: readonly string[];
+    readonly unchecked?: readonly string[];
   }[];
   /** Build settings this terminal's environment sets. */
   readonly environmentSettings: readonly string[];
@@ -276,17 +278,30 @@ const registrationCheck = (
 ): DoctorCheck => {
   const set = new Set(facts.environmentSettings);
   const gaps = facts.registrations.map(
-    ({ client, registered, unrecorded, unresolved }) => ({
+    ({
+      client,
+      registered,
+      unrecorded,
+      unresolved,
+      differing = [],
+      unchecked = [],
+    }) => ({
       client,
       registered,
       missing: unrecorded.filter((name) => !set.has(name)),
       unresolved: [...unresolved],
+      ...(differing.length === 0 ? {} : { differing: [...differing] }),
+      ...(unchecked.length === 0 ? {} : { unchecked: [...unchecked] }),
     }),
   );
   const failing = gaps.filter(
-    ({ registered, missing }) => !registered || missing.length > 0,
+    ({ registered, missing, differing }) =>
+      !registered || missing.length > 0 || (differing?.length ?? 0) > 0,
   );
-  const unknown = gaps.filter(({ unresolved }) => unresolved.length > 0);
+  const unknown = gaps.filter(
+    ({ unresolved, unchecked }) =>
+      unresolved.length > 0 || (unchecked?.length ?? 0) > 0,
+  );
   const repair = failing[0]?.client ?? unknown[0]?.client;
   return result(
     "registration",
@@ -308,14 +323,34 @@ const registrationDetail = (gap: {
   readonly registered: boolean;
   readonly missing: readonly string[];
   readonly unresolved: readonly string[];
-}): string =>
-  !gap.registered
-    ? `${gap.client} does not register REA.`
-    : gap.missing.length > 0
-      ? `${gap.client}'s registration does not record ${gap.missing.join(", ")}, and this environment does not set them.`
-      : gap.unresolved.length > 0
-        ? `REA could not read ${gap.client}'s ${gap.unresolved.join(", ")}.`
-        : `${gap.client}'s registration records the build settings, or this environment sets them.`;
+  readonly differing?: readonly string[];
+  readonly unchecked?: readonly string[];
+}): string => {
+  if (!gap.registered) return `${gap.client} does not register REA.`;
+  const details = [
+    ...(gap.missing.length === 0
+      ? []
+      : [
+          `${gap.client}'s registration does not record ${gap.missing.join(", ")}, and this environment does not set them.`,
+        ]),
+    ...(gap.unresolved.length === 0
+      ? []
+      : [`REA could not read ${gap.client}'s ${gap.unresolved.join(", ")}.`]),
+    ...(gap.differing === undefined
+      ? []
+      : [
+          `${gap.client}'s registration records different values for ${gap.differing.join(", ")}.`,
+        ]),
+    ...(gap.unchecked === undefined
+      ? []
+      : [
+          `REA did not check ${gap.client}'s recorded ${gap.unchecked.join(", ")} against the paths used in this terminal.`,
+        ]),
+  ];
+  return details.length > 0
+    ? details.join(" ")
+    : `${gap.client}'s registration records the build settings, or this environment sets them.`;
+};
 
 const skillCheck = (skill: DesktopBuildContext["skill"]): DoctorCheck =>
   result(
