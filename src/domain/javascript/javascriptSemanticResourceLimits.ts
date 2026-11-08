@@ -13,6 +13,12 @@ export const SEMANTIC_GETTER_EXPANSION_LIMIT = 512;
 export const SEMANTIC_ALIAS_SELECTION_LIMIT = 512;
 /** Bound normalized strings and transient keys independently of transport limits. */
 export const SEMANTIC_PRIMITIVE_JSON_BYTES_LIMIT = 1_048_576;
+/**
+ * Hard bound on distinct candidates considered for sampling. Collections
+ * beyond this retain the explicit resource-limit unknown so adversarial
+ * inflation cannot force unbounded deduplication or sorting work.
+ */
+export const SEMANTIC_PRIMITIVE_SAMPLE_SCOPE_LIMIT = 4_096;
 
 const RESOURCE_LIMIT_REASON: Record<JavaScriptSemanticResourceLimit, string> = {
   "primitive-candidates":

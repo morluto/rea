@@ -54,6 +54,20 @@ export type JavaScriptSemanticValue =
   | {
       readonly status: "union";
       readonly values: readonly JavaScriptSemanticPrimitive[];
+      /**
+       * Present when the distinct candidate count exceeded the candidate
+       * budget and `values` is a deterministic sample rather than the exact
+       * candidate set. Consumers must not treat absent candidates as
+       * disproven when this is present.
+       */
+      readonly sampled?:
+        | {
+            readonly method:
+              | "systematic-candidate-stride-v1"
+              | "grid-product-stride-v1";
+            readonly seenCount: number;
+          }
+        | undefined;
     }
   | JavaScriptSemanticObjectValue
   | JavaScriptSemanticArrayValue
@@ -63,15 +77,8 @@ export type JavaScriptSemanticValue =
       readonly resourceLimit?: JavaScriptSemanticResourceLimit;
     };
 
-/** One statically named own slot in an object or array. */
-export interface JavaScriptSemanticProperty {
+export type JavaScriptSemanticProperty = {
   readonly name: string;
   readonly value: JavaScriptSemanticValue;
-  readonly presence: JavaScriptSemanticSlotPresence;
-}
-
-/** Own-slot presence, independent of its value and sibling coverage. */
-export type JavaScriptSemanticSlotPresence =
-  | "present"
-  | "absent"
-  | "unknown-coverage";
+  readonly presence: "present" | "absent" | "unknown-coverage";
+};
