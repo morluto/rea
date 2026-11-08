@@ -51,8 +51,8 @@ recorded-array with an exact raw_result object-member path to page a provider-re
 array when the producer supplies that path; rows keep their raw meaning and the parent
 retains coverage. For procedure_pseudo_code Evidence, summary reports text availability
 and the original selection; kind native with facet pseudocode pages the original UTF-16
-text. Other native facets require analyze_function. Choose a view compatible with the
-parent operation described below.
+text. Other native facets require completed analyze_function Evidence. Select a view
+compatible with the original parent operation; inspect_analysis_view does not rerun it.
 
 ## inspect_analysis_view: Historical command and capture records
 
@@ -114,13 +114,15 @@ or endpoint loss declarations do not prove retransmission or network loss.
 
 ## inspect_analysis_view: API surface
 
-The api-surface view groups retained HAR requests by method, origin and format-rule path
+The api-surface view groups retained inspect_web_network_capture HAR requests by method,
+origin and format-rule path
 template; templated segments are inferences. It reads no headers or bodies and reports
 no query values.
 
 ## inspect_analysis_view: Environment manifest
 
-The environment-manifest view projects the same HAR requests on the primary origin (most
+The environment-manifest view projects retained inspect_web_network_capture HAR requests
+on the primary origin (most
 JSON-like records) into a replayable tool surface: view {kind: "environment-manifest",
 template_rules: ["after-uid-literal", "opaque-token", "sibling-variance"],
 include_query_parameter_names: true}. Each tool has a deterministic name, a path
@@ -129,22 +131,29 @@ observed query parameter names, a value-free body shape for POST/PUT/PATCH, stat
 content-type sets and record ordinals; records are pointers into the parent, excluded
 groups carry a reason and three fixed unknowns are always stated. Templates, parameters
 and names are inferences; the view copies no header, cookie or body values and refuses
-parents inspected with sensitive values.
+HAR parents whose sensitivity declarations are missing or record sensitive values.
+Do not remove sensitivity declarations to bypass this refusal.
+
+For capture_browser_scenario Evidence, environment-manifest requires
+capture.network.response_body or header_values to have been selected. It projects one
+record per network transaction in request order, relies on capture-time redaction of
+declared secrets, and leaves a transaction whose URL was redacted unrepresented.
 
 ## inspect_analysis_view: Browser scenario captures
 
-A capture_browser_scenario parent also supports summary and browser-scenario
+Retained capture_browser_scenario Evidence supports summary and browser-scenario
 steps/events/transactions/text pages, preserving step_indices, event_kinds,
-transaction_ids and selected artifacts. A capture_browser_scenario parent that selected
-response bodies or header values projects the same way, one record per network
-transaction in request order; it relies on capture-time redaction of declared secrets
-instead of that refusal, and a transaction whose URL was redacted is left unrepresented.
+transaction_ids and selected artifacts. For an environment-manifest projection, search
+for "inspect_analysis_view Environment manifest" and read its section; that projection
+has separate capture selection and redaction requirements.
 
 ## inspect_analysis_view: Environment state
 
-The environment-state view extracts, from the same parents, the initial state the
-recorded reads observed: view {kind: "environment-state", template_rules: [...]} with
-the rules of the manifest it accompanies. It reads response bodies recorded before the
+The environment-state view extracts initial state from retained inspect_web_network_capture
+HAR or capture_browser_scenario Evidence. Use view {kind: "environment-state",
+template_rules: ["after-uid-literal", "opaque-token", "sibling-variance"]}, selecting
+the same optional template_rules as the accompanying environment-manifest. It reads
+response bodies recorded before the
 first related write and reports entity types with an identity field (proved by a path
 parameter or inferred from a field name), entities in collection order with per-view
 values where views differ, documents for non-parameterized reads that are not entities
@@ -156,18 +165,29 @@ reason. It also reports a write plan per state-changing tool (create, update, de
 document, built from its first successful call) and write_clock; a plan is served only
 when replaying the capture shows a later read confirming its effect and none
 contradicting it. Types and identity are inferences; values are recorded data, so it
-refuses parents inspected with sensitive values, and a scenario parent must have
-selected response bodies; its values keep the capture redaction markers, and a write
+refuses HAR parents whose sensitivity declarations are missing or record sensitive
+values. Do not remove sensitivity declarations to bypass this refusal. A scenario
+parent must have selected capture.network.response_body; its values keep the capture
+redaction markers, and a write
 whose URL it redacted ends the state of every type.
 
 ## inspect_analysis_view: Environment coverage
 
-The environment-coverage view, view {kind: "environment-coverage", template_rules:
-[...]}, summarizes that state without its entities: reads.state and reads.recorded count
+The environment-coverage view summarizes initial-state projection from retained
+inspect_web_network_capture HAR or capture_browser_scenario Evidence without returning
+its entities. Use view {kind: "environment-coverage", template_rules:
+["after-uid-literal", "opaque-token", "sibling-variance"]}, selecting the same optional
+template_rules as the accompanying environment-manifest and environment-state views.
+reads.state and reads.recorded count
 read tools answered from the state and replayed (recorded_reasons per view reason),
 writes.served lists the served write tools, and writes.withheld lists each other write
 tool with its reason, plan record, contradicting read and a hint about what to record
-next; it refuses what the environment-state view refuses.
+next. It refuses HAR parents whose sensitivity declarations are missing or record
+sensitive values; do not remove sensitivity declarations to bypass this refusal.
+A scenario parent must have selected capture.network.response_body, and retained
+capture-time redaction markers remain authoritative. For state modelling and write
+confirmation rules, search for "inspect_analysis_view Environment state" and read
+its section.
 
 ## inspect_analysis_view: Sources and summaries
 

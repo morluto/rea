@@ -12,6 +12,7 @@ import {
 } from "../../support/mcp/streamableHttpProcess.js";
 import { processTest } from "../../support/process/processFixture.js";
 import { assertAdvertisedMcpContracts } from "./mcpContractHarness.js";
+import { searchGuidanceOutputSchema } from "../../../src/contracts/guidanceContracts.js";
 
 const HTTP_BOUNDARY_TIMEOUT_MS = 90_000;
 
@@ -46,6 +47,25 @@ const expectIdentity = async ({
   });
 };
 
+/** Use the exact refreshed definition; root-union framing belongs to the SDK. */
+const searchGuidance = async (client: Client, query: string) => {
+  const { toolDefinition } = await advertisedMcpToolSchemas(
+    client,
+    "search_guidance",
+  );
+  const result = await client.callTool(
+    { name: "search_guidance", arguments: { query, limit: 1 } },
+    { toolDefinition },
+  );
+  expect(result.isError).not.toBe(true);
+  const content = result.structuredContent;
+  return searchGuidanceOutputSchema.parse(
+    typeof content === "object" && content !== null && "result" in content
+      ? content.result
+      : content,
+  );
+};
+
 describe("rea mcp --http", () => {
   processTest(
     "keeps hot/cold visibility within its HTTP session and refreshes named contracts",
@@ -70,7 +90,7 @@ describe("rea mcp --http", () => {
       );
       const discovered = await first.client.callTool({
         name: "discover_tools",
-        arguments: { names: ["list_unknowns"] },
+        arguments: { names: ["list_unknowns", "search_guidance"] },
       });
       expect(discovered.isError).not.toBe(true);
       const { toolDefinition } = await advertisedMcpToolSchemas(
@@ -86,12 +106,34 @@ describe("rea mcp --http", () => {
           )
         ).isError,
       ).not.toBe(true);
+      expect(
+        await searchGuidance(first.client, "inspect_analysis_view OpenAPI"),
+      ).toMatchObject({
+        status: "matches",
+        matches: [{ guide: "tools/inspect_analysis_view.md" }],
+      });
+      await first.client.callTool({
+        name: "discover_tools",
+        arguments: { names: ["search_guidance", "list_unknowns"] },
+      });
+      expect(changed).toBe(1);
       await first.transport.terminateSession();
       await first.client.close();
       const second = await openSession(started.url, "hot-cold-second");
       expect(
         (await second.client.listTools()).tools.map(({ name }) => name),
       ).toEqual(initialNames);
+      expect(
+        (
+          await second.client.callTool({
+            name: "discover_tools",
+            arguments: { names: ["search_guidance"] },
+          })
+        ).isError,
+      ).not.toBe(true);
+      expect(
+        (await searchGuidance(second.client, "unmatched_qzxv")).status,
+      ).toBe("no_matches");
       await expectIdentity(second);
       await second.transport.terminateSession();
     },

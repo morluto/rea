@@ -1996,8 +1996,6 @@ check full-profile local-path rules. Compact MCP workflow tests verify canonical
 rejection of invalid inputs before provider work, independent of how much detail
 the selected advertisement retains.
 
-<a id="hotcold-catalog-discovery"></a>
-
 ### Retained-view guidance
 
 `inspect_analysis_view` advertises the shared source, Evidence and paging rules.
@@ -2018,12 +2016,21 @@ its tool-discovery keywords. Full input/output schemas and canonical validation
 remain unchanged; a full-catalog client does not need catalog refresh to use the
 guidance tools.
 
+<a id="hotcold-catalog-discovery"></a>
+
 ### Hot/cold catalog discovery
 
 `REA_MCP_TOOL_CATALOG_PROFILE=hot-cold` opts into per-connection loading for
 clients that refresh `tools/list` after `notifications/tools/list_changed`.
 The default, `full`, retains the complete upfront advertisement. Restart the
 server to change profiles. See [client configuration](../getting-started/client-configuration.md#hotcold-catalogs).
+
+Legacy connections receive list-change notifications unsolicited. On protocol
+revision `2026-07-28`, subscribe to tool-list changes with `subscriptions/listen`;
+the pinned JS SDK exposes `client.listen({toolsListChanged: true})` or the
+`ClientOptions.listChanged.tools` convenience handler. Registering a notification
+handler alone does not open a modern subscription. Refresh `tools/list` after
+the subscribed notification before calling newly loaded tools.
 
 Hot/cold initially advertises `binary_session`, `open_binary`, `close_binary`,
 `get_evidence_bundle`, and the adapter's `discover_tools`.
