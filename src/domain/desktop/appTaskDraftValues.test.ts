@@ -689,6 +689,41 @@ describe("draftTaskFiles for a transaction added to a book, as KMyMoney saves on
   const SPLITS =
     "/root/children/[name=TRANSACTIONS]/children/[name=TRANSACTION][@postdate=2026-11-03]/children/[name=SPLITS]/children";
 
+  it("omits an oversized nested split field while retaining short checks and its note", () => {
+    const large = "x".repeat(100_000);
+    const end = kmy(
+      "3",
+      PAYMENT.replace(
+        'memo="" account="A000001"',
+        `memo="${large}" account="A000001"`,
+      ),
+    );
+    const file = xmlDraft(SEED, end);
+    expect(
+      file.suggested
+        .filter((check) => JSON.stringify(check).length >= 10_000)
+        .map((check) => ({
+          kind: check.kind,
+          pointer: "pointer" in check ? check.pointer.slice(0, 220) : "",
+        })),
+    ).toEqual([]);
+    expect(file.suggested).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ kind: "value_equals", value: "-1749/20" }),
+      ]),
+    );
+    expect(file.notes).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: "long_text",
+          pointers: expect.arrayContaining([
+            `${SPLITS}/[name=SPLIT][@account=A000001]/attributes/memo`,
+          ]),
+        }),
+      ]),
+    );
+  });
+
   it("checks each split of the new transaction by the account it names, its amount and payee, not by the split id every transaction repeats", () => {
     const file = xmlDraft(SEED, END);
 

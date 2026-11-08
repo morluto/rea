@@ -288,7 +288,13 @@ const elementChecks = (
     ...attributeChecks(added, pointer, value),
     ...(records.length > 0 ? records : fieldChecks(added, pointer, value)),
     ...nestedRecordChecks(
-      { file, final: ends.final, named: (at) => added.named(ends.final, at) },
+      {
+        file,
+        final: ends.final,
+        named: (at) => added.named(ends.final, at),
+        chars: added.chars,
+        long: added.long,
+      },
       pointer,
       value,
     ),

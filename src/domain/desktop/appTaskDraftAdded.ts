@@ -51,6 +51,17 @@ export interface AddedContext {
   readonly long?: string[];
 }
 
+/** Record a field omitted because its whole value exceeds the check limit. */
+export const checkFits = (
+  context: Pick<AddedContext, "chars" | "long">,
+  pointer: string,
+  value: string,
+): boolean => {
+  if (value.length <= context.chars) return true;
+  context.long?.push(pointer);
+  return false;
+};
+
 type Element = Extract<JsonValue, Record<string, JsonValue>> & {
   readonly name: string;
   readonly children: JsonValue[];
@@ -194,11 +205,10 @@ export const attributeChecks = (
       ) &&
       !isViewStateName(key),
   );
-  for (const { key, value } of eligible)
-    if (value.length > context.chars)
-      context.long?.push(`${pointer}/attributes/${escapeToken(key)}`);
   return rankAttributes(
-    eligible.filter(({ value }) => value.length <= context.chars),
+    eligible.filter(({ key, value }) =>
+      checkFits(context, `${pointer}/attributes/${escapeToken(key)}`, value),
+    ),
   )
     .toSorted(
       (left, right) =>
