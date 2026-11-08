@@ -112,9 +112,20 @@ const checkExportRuntime = async (
           computer.redacted(content.toString("utf8")).slice(-2048),
         ),
       );
-    const schema = exportOptionsSchema.safeParse(
-      JSON.parse(content.toString("utf8")),
-    );
+    let rawSchema: unknown;
+    try {
+      rawSchema = JSON.parse(content.toString("utf8"));
+    } catch {
+      // Parser errors can quote only a fragment of a credential, which cannot
+      // be removed reliably by exact-token redaction.
+      return err(
+        adapterError(
+          START,
+          "The build computer's REA export schema is invalid JSON.",
+        ),
+      );
+    }
+    const schema = exportOptionsSchema.safeParse(rawSchema);
     if (!schema.success)
       return err(
         adapterError(

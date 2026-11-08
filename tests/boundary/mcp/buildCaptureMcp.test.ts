@@ -242,7 +242,10 @@ it.each(["failure", "invalid"])(
     });
     expect(result.isError).toBe(true);
     expectNoToken(computer, result);
-    expect(JSON.stringify(result)).toContain("runtime output");
+    if (mode === "invalid") {
+      expect(JSON.stringify(result)).not.toContain(computer.token.slice(0, 12));
+      expect(JSON.stringify(result)).toContain("invalid JSON");
+    } else expect(JSON.stringify(result)).toContain("runtime output");
   },
 );
 
