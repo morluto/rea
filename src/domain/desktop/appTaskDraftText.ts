@@ -442,10 +442,9 @@ interface TextContext {
 export const wholeTextCheck = (
   file: string,
   pointer: string,
-  now: { readonly value: string; readonly children: readonly JsonValue[] },
+  value: string,
   before: string | undefined,
 ): DesktopTaskCheckInput => {
-  const { value } = now;
   const numeric = valueEqualsCheck(file, pointer, value, before);
   if ("tolerance" in numeric) return numeric;
   return { kind: "text_equals", file, pointer, value };
@@ -489,12 +488,7 @@ const textCheck = (
     !holdsSplitDate(context.ends.final, pointer)
     ? {
         element: candidate.element,
-        check: wholeTextCheck(
-          context.file,
-          pointer,
-          { value, children: now.children },
-          old,
-        ),
+        check: wholeTextCheck(context.file, pointer, value, old),
       }
     : undefined;
 };

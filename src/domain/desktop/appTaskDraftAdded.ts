@@ -289,14 +289,7 @@ export const recordChecks = (
         isStamp(value) ||
         isVolatileValue(value, isBookkeeping(field))
         ? []
-        : [
-            wholeTextCheck(
-              file,
-              at,
-              { value, children: field.children },
-              undefined,
-            ),
-          ];
+        : [wholeTextCheck(file, at, value, undefined)];
     })
     .slice(0, MAX_FIELD_CHECKS);
 };
