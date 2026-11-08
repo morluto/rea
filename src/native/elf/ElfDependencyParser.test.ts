@@ -648,13 +648,12 @@ it.each([32, 64] as const)(
     // No DT_SYMENT, and a section entry size twice the class width: reading
     // with the declared width would skip every other symbol and pair the rest
     // with the wrong version slots.
-    const report = parse(
-      elfDependencyFixture({
-        bits,
-        omitSymentTag: true,
-        sectionEntrySizes: { ".dynsym": bits === 64 ? 48 : 32 },
-      }),
-    );
+    const bytes = elfDependencyFixture({
+      bits,
+      omitSymentTag: true,
+      sectionEntrySizes: { ".dynsym": bits === 64 ? 48 : 32 },
+    });
+    const report = parse(bytes);
     expect(report.coverage.status).toBe("partial");
     expect(report.imports).toEqual(
       parse(elfDependencyFixture({ bits })).imports,
@@ -662,14 +661,17 @@ it.each([32, 64] as const)(
     expect(report.issues).toContainEqual(
       expect.objectContaining({
         code: "malformed_entry",
-        message: ".dynsym sh_entsize does not match the ELF class symbol size",
+        location: `0x${sectionOffset(bytes, bits, SHT_DYNSYM).toString(16)}`,
       }),
     );
   },
 );
 
-/** The file offset of the little-endian fixture's SHT_GNU_VERSYM section. */
-const versymOffset = (bytes: Buffer, bits: 32 | 64): number => {
+const SHT_DYNSYM = 0xb;
+const SHT_GNU_VERSYM = 0x6fffffff;
+
+/** The file offset of the little-endian fixture's first section of a type. */
+const sectionOffset = (bytes: Buffer, bits: 32 | 64, type: number): number => {
   const wide = bits === 64;
   const shoff = wide
     ? Number(bytes.readBigUInt64LE(0x28))
@@ -678,12 +680,12 @@ const versymOffset = (bytes: Buffer, bits: 32 | 64): number => {
   const count = bytes.readUInt16LE(wide ? 0x3c : 0x30);
   for (let index = 0; index < count; index += 1) {
     const header = shoff + index * width;
-    if (bytes.readUInt32LE(header + 4) !== 0x6fffffff) continue;
+    if (bytes.readUInt32LE(header + 4) !== type) continue;
     return wide
       ? Number(bytes.readBigUInt64LE(header + 24))
       : bytes.readUInt32LE(header + 16);
   }
-  throw new Error("fixture has no .gnu.version section");
+  throw new Error(`fixture has no section of type 0x${type.toString(16)}`);
 };
 
 it.each([32, 64] as const)(
@@ -706,7 +708,7 @@ it.each([32, 64] as const)(
     expect(report.issues).toContainEqual(
       expect.objectContaining({
         code: "table_unavailable",
-        location: `0x${versymOffset(bytes, bits).toString(16)}`,
+        location: `0x${sectionOffset(bytes, bits, SHT_GNU_VERSYM).toString(16)}`,
       }),
     );
   },
