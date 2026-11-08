@@ -34,6 +34,7 @@ import {
 import { setupCleanupError, setupCleanupReason } from "./SetupCleanupOwner.js";
 import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
 import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
+import { jsonValueSchema } from "../domain/jsonValue.js";
 import { assertSetupActive } from "./SetupCancellation.js";
 import type { SetupSkillInstallError } from "./SetupSkill.js";
 import { planDesktopBuild } from "./SetupDesktopBuild.js";
@@ -87,7 +88,7 @@ export const runSetup = async (
   )
     throw new AnalysisCancelledError("setup", {
       cause: options.signal.reason,
-      diagnostics: { applied_actions: [...result.appliedActions] },
+      diagnostics: { setup_result: jsonValueSchema.parse(result) },
     });
   if (cleanup === undefined) return result;
   const cleanupReason = setupCleanupReason(cleanup);

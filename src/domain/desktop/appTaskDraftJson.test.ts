@@ -49,7 +49,7 @@ const passing = (view: JsonValue, checks: readonly DesktopTaskCheckInput[]) =>
     new Map([[FILE, { format: "json" as const, view }]]),
   ).map(({ passed }) => passed);
 
-describe("draftTaskFiles for records in a JSON array, as TreeLine saves its nodes", () => {
+describe("draftTaskFiles for a root JSON array of records", () => {
   it("counts additions to a root array and guards edits to its named members", () => {
     const before = [
       { name: "one", done: false },
@@ -94,7 +94,9 @@ describe("draftTaskFiles for records in a JSON array, as TreeLine saves its node
     ]);
     expect(passing(edited, guard.guards)).toEqual([true]);
   });
+});
 
+describe("draftTaskFiles for records in a JSON array, as TreeLine saves its nodes", () => {
   it("names kept records by name fields of at most 64 kinds, each a pass over the records, and those past them by their uid", () => {
     /** Seventy records with a generated uid, each with a name field of its own key and `done` as `edited` says. */
     const items = (edited: (index: number) => boolean) =>

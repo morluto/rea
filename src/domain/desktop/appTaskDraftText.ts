@@ -603,6 +603,7 @@ const textCheck = (
     !relaidOut &&
     value.length <= context.place.limit.chars &&
     !isStamp(value) &&
+    !holdsNoisyText(now) &&
     !holdsSplitDate(context.ends.final, pointer)
     ? {
         element: candidate.element,
