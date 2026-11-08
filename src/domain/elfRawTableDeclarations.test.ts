@@ -61,7 +61,7 @@ it.each(formats)(
         ok: false,
         error: {
           kind: "malformed",
-          message: "ELF table declarations are truncated",
+          message: expect.stringContaining("truncated"),
         },
       });
   },

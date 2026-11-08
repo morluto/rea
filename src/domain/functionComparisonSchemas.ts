@@ -36,6 +36,12 @@ const functionDimensionContextShape = {
   right_count: z.int().min(0).nullable(),
   evidence_links: z.array(evidenceIdSchema).min(2),
   limitations: z.array(z.string()),
+  discovery_status: z
+    .enum(["complete", "partial", "unknown"])
+    .describe(
+      "Static call discovery coverage for the compared observations; omission means unreported.",
+    )
+    .exactOptional(),
 };
 
 const functionDimensionSchema = z.union([
@@ -76,6 +82,12 @@ const functionMatchSchema = z.union([
     status: z.literal("matched"),
     method: z.literal("same-entry"),
     entry_address: nativeAddressSchema,
+    left_name: z.string(),
+    right_name: z.string(),
+  }),
+  z.object({
+    status: z.literal("matched"),
+    method: z.literal("same-evidence"),
     left_name: z.string(),
     right_name: z.string(),
   }),

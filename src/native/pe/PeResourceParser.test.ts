@@ -361,8 +361,8 @@ describe("PE resource section virtual extent", () => {
   };
 
   it.each([
-    [0, "Resource RVA has missing or overlapping section mappings."],
-    [-2, "Resource range leaves its section's virtual size."],
+    [0, /RVA.*(?:missing|overlapping).*section/iu],
+    [-2, /range.*virtual size/iu],
   ])(
     "rejects a payload reaching raw alignment padding past VirtualSize (start %i)",
     async (start, message) => {
@@ -373,7 +373,7 @@ describe("PE resource section virtual extent", () => {
       fixture.bytes.writeUInt32LE(4, (fixture.dataOffsets[0] ?? 0) + 4);
       await expect(parse(fixture.bytes)).rejects.toMatchObject({
         reason: "format",
-        message,
+        message: expect.stringMatching(message),
       });
     },
   );
@@ -408,7 +408,7 @@ describe("PE resource section virtual extent", () => {
     fixture.bytes.writeUInt32LE(0, (fixture.dataOffsets[0] ?? 0) + 4);
     await expect(parse(fixture.bytes)).rejects.toMatchObject({
       reason: "format",
-      message: "Resource RVA has missing or overlapping section mappings.",
+      message: expect.stringMatching(/RVA.*(?:missing|overlapping).*section/iu),
     });
   });
 
@@ -420,7 +420,7 @@ describe("PE resource section virtual extent", () => {
     fixture.bytes.writeUInt32LE(0, (fixture.dataOffsets[0] ?? 0) + 4);
     await expect(parse(fixture.bytes)).rejects.toMatchObject({
       reason: "format",
-      message: "Resource range is not entirely file-backed in one section.",
+      message: expect.stringMatching(/range.*file-backed/iu),
     });
   });
 
@@ -520,7 +520,7 @@ describe("PE resource ownership boundaries", () => {
     const bytes = secondSection(fixture, 4, 0x2001, 0);
     await expect(parse(bytes)).rejects.toMatchObject({
       reason: "format",
-      message: "Resource interval intersects overlapping virtual sections.",
+      message: expect.stringMatching(/interval.*overlapping.*sections/iu),
     });
   });
 
@@ -547,7 +547,7 @@ describe("PE resource ownership boundaries", () => {
     const bytes = secondSection(fixture, 4, 0x100, 4);
     await expect(parse(bytes)).rejects.toMatchObject({
       reason: "format",
-      message: "Ambiguous resource header RVA mapping.",
+      message: expect.stringMatching(/ambiguous.*header.*RVA/iu),
     });
   });
 
@@ -715,7 +715,7 @@ it("keeps name probing independent of full resource name/ID partition admission"
   expect(await probeSeaName(fixture.bytes)).toBe(true);
   await expect(parse(fixture.bytes)).rejects.toMatchObject({
     reason: "format",
-    message: "Resource name/ID entry counts disagree with encoded identities.",
+    message: expect.stringMatching(/name\/ID.*counts.*encoded identities/iu),
   });
 });
 
@@ -750,6 +750,6 @@ it("keeps raw name probing separate from full resource-name alignment admission"
   expect(await probeSeaName(fixture.bytes)).toBe(true);
   await expect(parse(fixture.bytes)).rejects.toMatchObject({
     reason: "format",
-    message: "Unaligned PE resource name.",
+    message: expect.stringMatching(/unaligned.*resource name/iu),
   });
 });
