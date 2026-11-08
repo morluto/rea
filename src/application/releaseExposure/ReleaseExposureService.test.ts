@@ -987,6 +987,48 @@ describe("ReleaseExposureService Electron host identity", () => {
       path: "/work/app/app.exe",
     });
   });
+
+  it("keeps safe fuses unknown when the sample dropped every host of a second layout", async () => {
+    const { service, desktop, electronFuses } = owners(
+      directoryScan([
+        "/work/app/a/a.exe",
+        "/work/app/a/one.exe",
+        "/work/app/a/two.exe",
+        "/work/app/a/three.exe",
+        "/work/app/b/launcher.exe",
+      ]),
+    );
+    const report = electronDesktopReport();
+    const second = `dsf_${"ab".repeat(32)}`;
+    desktop.inspect.mockResolvedValue(
+      ok(
+        evidence({
+          ...report,
+          files: [
+            {
+              ...report.files[0],
+              path: "a/resources/app.asar",
+              local_path: "/work/app/a/resources/app.asar",
+            },
+            {
+              ...report.files[0],
+              file_id: second,
+              path: "b/resources/app.asar",
+              local_path: "/work/app/b/resources/app.asar",
+            },
+          ],
+          candidates: [
+            { ...report.candidates[0], basis_file_ids: [FILE, second] },
+          ],
+        }),
+      ),
+    );
+    electronFuses.inspect.mockResolvedValue(
+      ok(evidence(fuseReport([slice(0)]))),
+    );
+    expect((await runAsNode(service))?.status).toBe("unknown");
+    expect(electronFuses.inspect).toHaveBeenCalledTimes(4);
+  });
 });
 
 const appScan = scan({

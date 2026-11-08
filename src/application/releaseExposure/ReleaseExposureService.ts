@@ -711,19 +711,35 @@ const limitNativeSample = (
     ...scan.native_images.filter((image) => !preferredPaths.has(image.path)),
   ].slice(0, MAX_RELEASE_EXPOSURE_NATIVE_IMAGES);
   const omittedNative = scan.native_images.length - kept.length;
-  const electronExecutableIncluded =
-    scan.target.kind === "app" ||
-    scan.fuse_candidates.some((candidate) => candidate.role === "app-bundle") ||
-    kept.some(
+  const keptPaths = new Set(kept.map((image) => image.path));
+  const hostRead = (hosts: readonly ReleaseExposureNativeImage[]): boolean =>
+    hosts.some(
       (image) =>
-        image.path === scan.target.selected_path ||
+        keptPaths.has(image.path) &&
         (ranked.get(image.path) ?? ANY_SIBLING_RANK) < ANY_SIBLING_RANK,
     ) ||
     // No name picks the host out, so it counts as read only when every
     // executable it could be was listed and sampled.
     (scan.coverage !== "unknown" &&
-      preferred.length > 0 &&
-      preferred.length <= MAX_RELEASE_EXPOSURE_NATIVE_IMAGES);
+      hosts.length > 0 &&
+      hosts.every((image) => keptPaths.has(image.path)));
+  // Each ASAR layout has its own host, so one read host covers only its own.
+  const layouts = [
+    ...new Set(
+      basisPaths
+        .filter((path) => desktopPathConventions(path).electronArchive)
+        .map((path) => dirname(dirname(path))),
+    ),
+  ];
+  const electronExecutableIncluded =
+    scan.target.kind === "app" ||
+    scan.fuse_candidates.some((candidate) => candidate.role === "app-bundle") ||
+    kept.some((image) => image.path === scan.target.selected_path) ||
+    (layouts.length === 0
+      ? hostRead(preferred)
+      : layouts.every((folder) =>
+          hostRead(preferred.filter((image) => dirname(image.path) === folder)),
+        ));
   const named = kept.filter(
     (image) => (ranked.get(image.path) ?? ANY_SIBLING_RANK) < ANY_SIBLING_RANK,
   );
