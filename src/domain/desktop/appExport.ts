@@ -35,6 +35,7 @@ import { SEED_HOME } from "./hostIdentity.js";
 import { capturedFileUrl, type LaunchDocument } from "./seedDocument.js";
 import { posix } from "node:path";
 import { roleFacts, stateDirectoryOf } from "./stateRoles.js";
+import { shellQuote } from "./shellQuote.js";
 
 /** agentenv-framework release the exported class was checked against. */
 export const DESKTOP_EXPORT_FRAMEWORK_VERSION = "0.9.1431";
@@ -419,10 +420,6 @@ export const exportedStateFiles = (
 
 /** Text safe inside a Python triple-quoted docstring. */
 const docText = (value: string): string => value.replace(/["\\]/gu, "'");
-
-/** A value as one single-quoted shell word. */
-export const shellQuote = (value: string): string =>
-  `'${value.replaceAll("'", `'"'"'`)}'`;
 
 /**
  * The launch command for the computer, through `sh -c` since the declared

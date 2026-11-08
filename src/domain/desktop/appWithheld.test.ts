@@ -1,4 +1,9 @@
 import { describe, expect, it } from "vitest";
+import { execFileSync } from "node:child_process";
+import { mkdir, writeFile } from "node:fs/promises";
+import { join, dirname } from "node:path";
+import { createTestTempDirectory } from "../../../tests/fixtures/temporaryDirectory.js";
+import { withheldNotes } from "./appExportWithheld.js";
 
 import {
   SIGN_IN_END,
@@ -147,5 +152,45 @@ describe("withheld files", () => {
         expect(["pass", "class"]).not.toContain(setting);
       }
     }
+  });
+
+  it("never generates a host-control variable for a withheld file", () => {
+    for (const [app, file, reserved] of [
+      ["agent", ".env-command", "REA_AGENT_ENV_COMMAND"],
+      ["docker", ".command", "REA_DOCKER_COMMAND"],
+      ["build-computer", ".rea-archive", "REA_BUILD_COMPUTER_REA_ARCHIVE"],
+    ] as const) {
+      const [item] = withheldSettings(app, [file]);
+      expect(item?.variable).not.toBe(reserved);
+      expect(item?.variable).toMatch(
+        new RegExp(`^${reserved}_[0-9A-F]{8}$`, "u"),
+      );
+    }
+  });
+
+  it("quotes a withheld path as one shell word without expanding its contents", async () => {
+    const home = await createTestTempDirectory("withheld-shell-");
+    const file = ".config/My App/$(missing)'key";
+    await mkdir(dirname(join(home, file)), { recursive: true });
+    await writeFile(join(home, file), "literal file bytes");
+    const [item] = withheldSettings("notes", [file]);
+    if (item === undefined) throw new Error("missing withheld setting");
+    const notes = withheldNotes({ withheld: [item] });
+    const command = notes
+      .split("\n")
+      .find((line) => line.includes(`export ${item.variable}=`));
+    if (command === undefined) throw new Error("missing setup command");
+    const result = execFileSync(
+      "/bin/sh",
+      [
+        "-c",
+        `${command.replace("base64 -w0", "cat")}\nprintf '%s' \"$${item.variable}\"`,
+      ],
+      {
+        env: { ...process.env, HOME: home },
+        encoding: "utf8",
+      },
+    );
+    expect(result).toBe("literal file bytes");
   });
 });

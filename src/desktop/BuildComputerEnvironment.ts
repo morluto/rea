@@ -5,14 +5,11 @@ import { homeDirectoryFromEnvironment } from "../config/homeDirectory.js";
 import { reaCacheDirectory } from "../config/kunaCacheDirectory.js";
 import { appendCallerPath } from "../filesystem/callerPath.js";
 import { PRODUCT_IDENTITY } from "../identity.js";
+import { BUILD_COMPUTER_SETTINGS } from "../domain/desktop/buildComputerSettings.js";
 import { resolveProgram } from "./ProgramLookup.js";
 
 /** The settings a build computer reads where the REA server starts. */
-export const BUILD_COMPUTER_SETTINGS = [
-  "REA_AGENT_ENV_COMMAND",
-  "REA_DOCKER_COMMAND",
-  "REA_BUILD_COMPUTER_REA_ARCHIVE",
-] as const;
+export { BUILD_COMPUTER_SETTINGS };
 
 /** One of the build computer's settings. */
 export type BuildComputerSetting = (typeof BUILD_COMPUTER_SETTINGS)[number];

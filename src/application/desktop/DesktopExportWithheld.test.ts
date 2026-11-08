@@ -327,7 +327,7 @@ describe("exportDesktopApplication of withheld sign-in state", () => {
     expect(module).toContain("list(WITHHELD.values())");
     const readme = await readFile(join(directory, "README.md"), "utf8");
     expect(readme).toContain(VARIABLE);
-    expect(readme).toContain(`base64 -w0 < ~/${SETTINGS}`);
+    expect(readme).toContain(`base64 -w0 < "$HOME"/'${SETTINGS}'`);
     expect(await exists(join(directory, "consent.json"))).toBe(false);
   });
 

@@ -6,6 +6,7 @@ import { z } from "zod";
 import { err, ok, type Result } from "../result.js";
 import type { DesktopCheckpoint } from "./desktopCapture.js";
 import { isWithinAny } from "./desktopStateDiff.js";
+import { BUILD_COMPUTER_SETTINGS } from "./buildComputerSettings.js";
 
 /** The checkpoints a build marks around a sign-in or a licence's activation; what changes between them is withheld. */
 export const SIGN_IN_START = "pre-sign-in";
@@ -187,7 +188,7 @@ export const withheldSettings = (
   files: readonly string[],
 ): WithheldFile[] => {
   const prefix = `REA_${upper(app).slice(0, 20)}_`;
-  const taken = new Set<string>();
+  const taken = new Set<string>(BUILD_COMPUTER_SETTINGS);
   const settings = new Set<string>();
   return files.map((file) => {
     const hash = createHash("sha256")

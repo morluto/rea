@@ -215,6 +215,25 @@ describe("build bundle install sources", () => {
       false,
     );
     expect(parse({ kind: "bundle", path: "/tmp/bundle" }).success).toBe(true);
+    for (const variable of [
+      "REA_AGENT_ENV_COMMAND",
+      "REA_DOCKER_COMMAND",
+      "REA_BUILD_COMPUTER_REA_ARCHIVE",
+    ])
+      expect(
+        parse({
+          kind: "bundle",
+          path: "/tmp/bundle",
+          settings: { [variable]: "kept-secret" },
+        }).success,
+      ).toBe(false);
+    expect(
+      parse({
+        kind: "bundle",
+        path: "/tmp/bundle",
+        settings: { REA_NOTES_LICENSE: "kept-secret" },
+      }).success,
+    ).toBe(true);
   });
 });
 

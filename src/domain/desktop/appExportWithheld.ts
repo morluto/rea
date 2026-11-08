@@ -1,4 +1,5 @@
 import type { WithheldFile } from "./appWithheld.js";
+import { shellQuote } from "./shellQuote.js";
 
 const homeList = (paths: readonly string[]) =>
   paths.map((path) => `\`~/${path}\``).join(", ");
@@ -44,7 +45,7 @@ export const withheldNotes = ({
   the app; the computer writes it into its home before the app first starts, and \`data/get\` never serves it:${withheld
     .map(
       ({ file, variable }) =>
-        `\n\n      export ${variable}="$(base64 -w0 < ~/${file})"`,
+        `\n\n      export ${variable}="$(base64 -w0 < "$HOME"/${shellQuote(file)})"`,
     )
     .join("")}\n`,
         ]),
