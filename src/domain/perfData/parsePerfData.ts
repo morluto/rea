@@ -211,7 +211,13 @@ const readEvents = (
             break;
           }
           const id = read.u64(bytes, at);
-          if (id === null) break;
+          // An identifier above a safe integer is still an identifier; stopping
+          // here silently would publish a shorter extent as the whole one.
+          if (id === null) {
+            idsTruncated = true;
+            state.identifiersPresent = false;
+            break;
+          }
           idsList.push(id);
           state.identified.push(id);
         }
@@ -343,8 +349,8 @@ export const parsePerfData = (
   const order = little ? "little-endian" : "big-endian";
   const headerBytes = read.u64(bytes, HEADER_SIZE_FIELD);
   if (
-    bytes.length < HEADER_BYTES_WITHOUT_FEATURES ||
     headerBytes === null ||
+    bytes.length < headerBytes ||
     (headerBytes !== HEADER_BYTES_WITHOUT_FEATURES &&
       headerBytes !== HEADER_BYTES_WITH_FEATURES)
   ) {
@@ -354,7 +360,9 @@ export const parsePerfData = (
       "truncated-header",
       headerBytes === null
         ? `The file ends at ${bytes.length} bytes, before the size field of the perf_file_header.`
-        : `The header declares ${headerBytes} bytes; this inventory accepts the ${HEADER_BYTES_WITHOUT_FEATURES}- and ${HEADER_BYTES_WITH_FEATURES}-byte layouts.`,
+        : bytes.length < headerBytes
+          ? `The header declares ${headerBytes} bytes but the file ends at ${bytes.length}, so its sections were not read.`
+          : `The header declares ${headerBytes} bytes; this inventory accepts the ${HEADER_BYTES_WITHOUT_FEATURES}- and ${HEADER_BYTES_WITH_FEATURES}-byte layouts.`,
     );
     return ok(emptyRecording(artifact, state.diagnostics, order));
   }
@@ -372,6 +380,11 @@ export const parsePerfData = (
   }
   const attributeFits =
     attributeSection.within_file &&
+    // The file header precedes the sections; bytes inside it are not attributes.
+    !(
+      attributeSection.size > 0 &&
+      attributeSection.offset < (headerBytes ?? HEADER_BYTES_WITHOUT_FEATURES)
+    ) &&
     !(
       attributeSection.offset <= dataSection.offset &&
       attributeSection.offset + attributeSection.size > dataSection.offset
