@@ -3,6 +3,12 @@
 These source-owned fixtures are compiled at verification time; generated
 binaries and Ghidra projects are never committed.
 
+For the one-shot function bundle handoff, run `npm run build:cached` and then
+`node scripts/verify-real-ghidra-function-bundle.mjs` with `GHIDRA_INSTALL_DIR`
+and `JAVA_HOME` set. The verifier compiles its own target, creates a project
+with a synthetic history report, and exercises complete, summary, and
+no-overwrite CLI delivery. It checks the target and project files for changes.
+
 - `../c/riscv.c` and `riscv-probe.S` produce source-owned RV32/RV64 ELF images
   with double-float ABI declarations and an independently known instruction.
   `../c/riscv-float-abi.c`, `riscv-probe.S` and `riscv-isa-probe.S` produce

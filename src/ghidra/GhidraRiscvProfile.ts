@@ -23,7 +23,7 @@ export type GhidraRiscvCallingConvention =
  * The ABI and prototype of each policy REA applies after analysis.
  * `ReaGhidraRiscvCallingConvention.java` derives each prototype from the
  * pinned language's default `riscv32-fp.cspec` model, which is ilp32d;
- * docs/ghidra-riscv.md states the rules of each ABI.
+ * docs/providers/ghidra-riscv.md states the rules of each ABI.
  */
 export const GHIDRA_RISCV_CALLING_CONVENTIONS: Readonly<
   Record<
@@ -177,7 +177,7 @@ const ghidraRiscvIsaRefusal = (
       ", ",
     )}. Ghidra 12.1.4's generic RV32 language implements only ${[
       ...GHIDRA_RISCV32_DECODED_EXTENSIONS,
-    ].join(", ")} with p-code; see docs/ghidra-riscv.md.`;
+    ].join(", ")} with p-code; see docs/providers/ghidra-riscv.md.`;
   const missing = (lane.requiredExtensions ?? []).filter(
     (extension) => !isa.extensions.includes(extension),
   );
@@ -196,7 +196,7 @@ const ghidraRiscvIsaRefusal = (
     ? null
     : `Tag_RISCV_arch declares ${isa.arch} with ${excluded.join(", ")}: ${
         exclusion.reason
-      }; see docs/ghidra-riscv.md.`;
+      }; see docs/providers/ghidra-riscv.md.`;
 };
 
 /**
@@ -346,7 +346,7 @@ export const ghidraRiscvCallingConventionFailure = (
       ? "The Ghidra session reported a RISC-V calling-convention policy that the profile did not commit."
       : `The Ghidra session did not report the committed RISC-V calling-convention policy ${expected}.`
     : report !== undefined && "refused" in report
-      ? `RISC-V calling-convention policy ${report.policy} refused this image, so REA does not serve its analysis: ${report.refused} See docs/ghidra-riscv.md.`
+      ? `RISC-V calling-convention policy ${report.policy} refused this image, so REA does not serve its analysis: ${report.refused} See docs/providers/ghidra-riscv.md.`
       : undefined;
 
 /**
@@ -372,7 +372,7 @@ export const ghidraRiscvCallingConventionLimitations = (
   if (expected === undefined) return [];
   const { abi, prototype } = GHIDRA_RISCV_CALLING_CONVENTIONS[expected];
   return [
-    `RISC-V ${abi}: Ghidra's generic RV32 compiler specification models ilp32d. After analysis REA installs a program-specific \`${prototype}\` prototype, derived from the default prototype by policy ${expected} (docs/ghidra-riscv.md), and assigns it with dynamic storage to every function, external function and function definition. Thunks follow their targets.`,
+    `RISC-V ${abi}: Ghidra's generic RV32 compiler specification models ilp32d. After analysis REA installs a program-specific \`${prototype}\` prototype, derived from the default prototype by policy ${expected} (docs/providers/ghidra-riscv.md), and assigns it with dynamic storage to every function, external function and function definition. Thunks follow their targets.`,
     ...(report === undefined || "refused" in report
       ? []
       : [
