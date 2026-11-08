@@ -365,11 +365,9 @@ after a sign-in, are not found. The agent's own shell on the build host can
 read the folder, so a client that should never see a secret also denies its
 tools that folder, for example with Claude Code's permission rules.
 
-Every build tool's result also shows a credential REA finds by its shape,
-such as a PEM or base64 DER private key, a JWT or a cloud token, as
-`<credential:<kind>>`, the task draft included; and `export_build_environment`
-refuses a bundle whose seed holds one, naming the file and its kind, unless
-the person consented to seed it.
+REA does not infer secrets from token-shaped text or file names. Explicitly
+withhold files containing other sensitive state; only known handle values are
+searched in bundle contents.
 
 ### Sign-in and licence state
 

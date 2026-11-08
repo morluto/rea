@@ -15,10 +15,6 @@ import {
   redactSecretsInJson,
   type KnownSecret,
 } from "../../domain/desktop/buildSecrets.js";
-import {
-  redactCredentials,
-  redactCredentialsInJson,
-} from "../../domain/desktop/credentialPatterns.js";
 import type { JsonValue } from "../../domain/jsonValue.js";
 import { ProviderAdapterError } from "../../domain/providerAdapterError.js";
 import { err, ok, type Result } from "../../domain/result.js";
@@ -50,9 +46,9 @@ export class DesktopBuildSecrets {
       AGENTENV_PROVIDER,
       "build_secret_file",
       {
-        userMessage: "Could not close retained build secret files.",
+        userMessage: "Could not clean up retained build secret files.",
         cleanup: {
-          reason: "Secret file close failed.",
+          reason: "Secret file cleanup failed.",
           resources: cause.cleanup?.resources ?? [],
         },
       },
@@ -153,15 +149,13 @@ export class DesktopBuildSecrets {
     );
   }
 
-  /** Text with each typed secret's value replaced by its handle, and each credential found by its shape by its kind. */
+  /** Text with each known secret's value replaced by its handle. */
   readonly redact = (text: string): string =>
-    redactCredentials(
-      this.#seen.size === 0 ? text : redactSecrets(text, this.#known()),
-    );
+    this.#seen.size === 0 ? text : redactSecrets(text, this.#known());
 
   /** A JSON value redacted as `redact` redacts text. */
   readonly redactJson = (value: JsonValue): JsonValue =>
-    redactCredentialsInJson(redactSecretsInJson(value, this.#known()));
+    redactSecretsInJson(value, this.#known());
 
   /** Every secret no bundle may hold: each value typed or kept here, then each the folder holds now, readable by others or not. */
   async all(): Promise<KnownSecret[]> {

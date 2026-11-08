@@ -78,9 +78,8 @@ the handle of the secret REA keeps its bytes in; a check may not name one.
 The export refuses a seed file holding a withheld file's exact bytes, such as
 a `.bak` copy, but a backup that differs from it is not caught: trash backups
 before `seed`.
-When an export refuses a seed for a credential it found by its shape, such
-as a private key the app generated, withhold that file too, or seed it only
-with the person's consent as above.
+Explicitly withhold any other files the person identifies as sensitive;
+REA does not infer secrecy from a value's shape or a file name.
 
 ## Choose the install
 

@@ -18,7 +18,6 @@ import {
   secretsIn,
   type KnownSecret,
 } from "../../domain/desktop/buildSecrets.js";
-import { credentialsInBytes } from "../../domain/desktop/credentialPatterns.js";
 import { jsonValueSchema, type JsonValue } from "../../domain/jsonValue.js";
 import { err, ok, type Result } from "../../domain/result.js";
 import { AGENTENV_PROVIDER } from "../../desktop/AgentEnvComputerHelper.js";
@@ -95,23 +94,18 @@ export type ExportedBuild = {
   readonly consented_files: string[];
 };
 
-/** What the bundle may not hold: secrets by value, anywhere, and, in seed files the person did not consent to, credentials by shape. */
+/** Explicitly supplied secrets the bundle may not hold. */
 interface BundleGuard {
   readonly secrets: readonly KnownSecret[];
-  readonly seed: string;
-  readonly consented: ReadonlySet<string>;
 }
 
-/** Why a fetched file is held back: the secrets it holds, the credentials a seed file holds, and whether it is a gzip file too large to check inside. */
+/** Why a fetched file is held back: known secrets or an unchecked gzip. */
 const heldBack = (
   file: { readonly path: string; readonly bytes: Buffer },
   guard: BundleGuard,
 ) => {
-  const seeded = file.path.startsWith(guard.seed)
-    ? file.path.slice(guard.seed.length)
-    : undefined;
-  // A gzip file is decompressed once, for all three checks.
-  const inner = gzipInside(file.bytes);
+  // A gzip file is decompressed once for the secret checks.
+  const inner = guard.secrets.length === 0 ? undefined : gzipInside(file.bytes);
   return {
     handles: [
       ...new Set([
@@ -119,34 +113,19 @@ const heldBack = (
         ...secretsIn(file.bytes, guard.secrets, inner),
       ]),
     ],
-    credentials:
-      seeded === undefined || guard.consented.has(seeded)
-        ? []
-        : credentialsInBytes(file.bytes, inner),
-    unchecked: isUncheckedGzip(file.bytes, inner),
+    unchecked: guard.secrets.length > 0 && isUncheckedGzip(file.bytes, inner),
   };
 };
 
-/** The refusal of gzip files too large for REA to check inside for secrets and credentials, naming each. */
+/** The refusal of gzip files too large for REA to check for known secrets. */
 const uncheckedRefusal = (
   holding: readonly { readonly path: string }[],
   directory: string,
 ) =>
   refused(
     EXPORT,
-    `REA could not check inside ${counted(holding.map(({ path }) => path))}: each is a gzip file that expands past ${String(MAX_GUNZIPPED_BYTES / 1024 / 1024)} MiB, the most REA decompresses to look for secrets and credentials, so REA wrote none of the bundle to ${directory}.`,
+    `REA could not check inside ${counted(holding.map(({ path }) => path))}: each is a gzip file that expands past ${String(MAX_GUNZIPPED_BYTES / 1024 / 1024)} MiB, the most REA decompresses to look for known secrets, so REA wrote none of the bundle to ${directory}.`,
     "Keep each such file out of the seed: delete it in the app before marking seed, or capture again on a new build computer without it, then export again.",
-  );
-
-/** The refusal of seed files holding credentials found by their shape: each file and the kinds, never the values. */
-const credentialsRefusal = (
-  holding: readonly { readonly path: string; readonly credentials: string[] }[],
-  directory: string,
-) =>
-  refused(
-    EXPORT,
-    `The bundle's seed holds credentials REA finds by their shape: ${counted(holding.map(({ path, credentials }) => `${path} (${credentials.join(", ")})`))}, so REA wrote none of it to ${directory}.`,
-    "Withhold each such file with export_build_environment's withhold, so the deploy takes it from the environment, or, if the person consents to ship it, withhold it, record their consent with record_build_consent, kind seed_sign_in, and export with seed_sign_in.",
   );
 
 /** The refusal of a bundle whose files hold secrets: each secret's handle and the files, the values in their names redacted. */
@@ -184,7 +163,6 @@ const writeBundle = async (
   const holding: {
     path: string;
     handles: string[];
-    credentials: string[];
     unchecked: boolean;
   }[] = [];
   const unclosed = await writeOutputTree(
@@ -195,13 +173,9 @@ const writeBundle = async (
         bundle,
         {
           file: async (file) => {
-            // A file holding a secret or a credential, or one REA could not check, is kept back, and the bundle refused once all are read.
+            // Keep back known secrets and files REA could not check.
             const held = heldBack(file, guard);
-            if (
-              held.handles.length > 0 ||
-              held.credentials.length > 0 ||
-              held.unchecked
-            ) {
+            if (held.handles.length > 0 || held.unchecked) {
               holding.push({ path: file.path, ...held });
               return;
             }
@@ -220,7 +194,6 @@ const writeBundle = async (
         throw secretsRefusal(secret, guard.secrets, directory);
       const unchecked = holding.filter((held) => held.unchecked);
       if (unchecked.length > 0) throw uncheckedRefusal(unchecked, directory);
-      if (holding.length > 0) throw credentialsRefusal(holding, directory);
     },
     { operation: EXPORT, field: "directory" },
     signal,
@@ -386,8 +359,6 @@ export const exportBuild = async (
         directory: request.directory,
         guard: {
           secrets: capture.secrets,
-          seed: `envs/${result.environment}/seed/`,
-          consented: new Set(result.consented_files),
         },
       },
       signal,

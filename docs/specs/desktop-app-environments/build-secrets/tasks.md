@@ -24,9 +24,8 @@
 - [x] Keep withheld files as secrets on the host, supply a bundle's settings
       to its witness and record consent (withheld state, witness, consent;
       `buildWithheldMcp.test.ts`).
-- [x] Find credentials by their shape, redact them in results and refuse a
-      seed holding one (credentials by shape; `credentialPatterns.test.ts`,
-      `buildWithheldMcp.test.ts`).
+- [x] Preserve unmarked token-shaped values and scan declared handles.
+
 - [x] Run the KeePassXC and Typora withheld-state builds and record them in
       `verification.md`.
 - [x] Fix the review's gaps: refuse a sign-in window a walk may have missed a

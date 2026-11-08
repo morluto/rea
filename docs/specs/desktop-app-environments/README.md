@@ -53,7 +53,7 @@ The work lands as one PR per step:
     person keeps in a file on the build host, typed by its handle, which no
     result, log, record or exported bundle holds; sign-in and licence state
     withheld from the seed and supplied at run time, seeded only with the
-    person's recorded consent; and credentials found by their shape.
+    person's recorded consent; known handle values are checked explicitly.
 
 Version 1 covers Linux with X11, applications whose state lives in files or
 SQLite under the home directory, and real applications from public packages.

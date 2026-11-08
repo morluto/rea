@@ -285,7 +285,7 @@ it("refuses an export when only one sign-in checkpoint was marked", async () => 
   expect(parseMcpToolError(result).error.message).toContain("post-sign-in");
 });
 
-it("refuses a bundle whose seed holds a credential by its shape, naming the file and its kind but not the value", async () => {
+it("preserves unmarked key-shaped seed content", async () => {
   const { client } = await buildCaptureFakes({
     recorded: recordedWith(KEY_INI),
     extraContent: [KEY_INI],
@@ -293,14 +293,13 @@ it("refuses a bundle whose seed holds a credential by its shape, naming the file
   const id = await startBuildComputer(client, REQUEST);
   await captureThrough(client, id, ["seed", "end"]);
   const { result, directory } = await exportTo(client, id);
-  const { error } = parseMcpToolError(result);
-  expect(error.message).toContain(`envs/notes/seed/${SETTINGS}`);
-  expect(error.message).toContain("private-key");
-  expect(JSON.stringify(result)).not.toContain(FAKE_KEY_BODY);
-  expect(await readdir(directory).catch(() => [])).toEqual([]);
+  expect(result.isError, JSON.stringify(result)).not.toBe(true);
+  expect(
+    await readFile(join(directory, "envs/notes/seed", SETTINGS), "utf8"),
+  ).toBe(KEY_INI);
 });
 
-it("shows a credential in the draft by its kind, never its value", async () => {
+it("preserves unmarked key-shaped draft content", async () => {
   const { client } = await buildCaptureFakes({
     recorded: recordedWith("[ui]\nwrap=false\n", [], KEY_INI),
     extraContent: [KEY_INI],
@@ -309,6 +308,5 @@ it("shows a credential in the draft by its kind, never its value", async () => {
   const id = await startBuildComputer(client, REQUEST);
   const stopped = await captureThrough(client, id, ["seed", "end"]);
   const drafted = JSON.stringify(stopped.draft);
-  expect(drafted).toContain("<credential:private-key>");
-  expect(drafted).not.toContain(FAKE_KEY_BODY);
+  expect(drafted).toContain(FAKE_KEY_BODY);
 });

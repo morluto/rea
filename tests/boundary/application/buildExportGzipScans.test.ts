@@ -36,7 +36,7 @@ vi.mock(
   },
 );
 
-it("decompresses a gzip seed file once to check it for secrets, credentials and its size", async () => {
+it("decompresses a gzip seed file once to check it for known secrets and its size", async () => {
   // A secret the folder holds, so the export scans every file for it too.
   const config = await createTestTempDirectory("xdg-config-");
   const folder = join(config, "rea", "build-secrets");
@@ -53,15 +53,7 @@ it("decompresses a gzip seed file once to check it for secrets, credentials and 
   await callOk(client, "stop_build_capture", { computer_id: id });
   const seed = join(outputs.bundle, "envs/notes/seed/Documents");
   await mkdir(seed, { recursive: true });
-  // An unsigned JWT, built from its parts so secret scanners do not flag the file.
-  const token = [
-    JSON.stringify({ alg: "none" }),
-    JSON.stringify({ sub: "rea-test" }),
-    "fake-signature",
-  ]
-    .map((part) => Buffer.from(part).toString("base64url"))
-    .join(".");
-  const compressed = gzipSync(Buffer.from(`token=${token}\n`));
+  const compressed = gzipSync(Buffer.from(`setting=${VALUE}\n`));
   await writeFile(join(seed, "credential.txt.gz"), compressed);
   const directory = join(await createTestTempDirectory("build-out-"), "notes");
   gunzipped.length = 0;
@@ -71,8 +63,9 @@ it("decompresses a gzip seed file once to check it for secrets, credentials and 
   });
   const { error } = parseMcpToolError(refused as CallToolResult);
   expect(error.code).toBe("invalid_request");
-  // The credential is only inside the gzip file, so the shared decompression found it.
-  expect(error.message).toContain("credential.txt.gz (jwt)");
+  // The known secret is only inside the gzip file.
+  expect(error.message).toContain("credential.txt.gz");
+  expect(error.message).toContain("master");
   expect(
     gunzipped.filter((bytes) => Buffer.from(bytes).equals(compressed)),
   ).toHaveLength(1);

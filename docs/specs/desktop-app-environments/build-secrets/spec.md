@@ -9,7 +9,7 @@ REA types its value into the build computer. No tool result, action log,
 witness record or exported bundle holds the value, and an export refuses a
 bundle that does. The sign-in or licence state the app writes is withheld
 from the bundle and supplied by whoever runs it, unless the person consents
-to seed it, and a credential REA finds by its shape never ships unasked.
+to seed it. REA does not infer secrecy from a value or name.
 
 ## Requirements
 
@@ -54,8 +54,7 @@ to seed it, and a credential REA finds by its shape never ships unasked.
   a gzip file, decompressed up to 64 MiB. A bundle holding one is refused as
   an invalid request naming each secret's handle and the files, each value
   in a file's name shown as `<secret:<handle>>`, and nothing is written to
-  the folder. A gzip file that expands past 64 MiB, which neither this scan
-  nor the credential scan can see inside, is refused the same way, by name.
+  the folder. A gzip file that expands past 64 MiB, which the scan cannot see inside, is refused by name when known secrets are checked.
 - The skill asks the person for a secret's file instead of the secret, types
   it only into a masked field, and stops when an export finds a secret.
 - Withheld state: files under the owned paths that changed after checkpoint
@@ -93,15 +92,6 @@ to seed it, and a credential REA finds by its shape never ships unasked.
   every consent into the bundle's `consent.json`. `seed_sign_in: true` seeds
   the withheld files instead, refused unless a `seed_sign_in` consent was
   recorded; the CLI refuses `--seed-withheld` without one in `--consent`.
-- Credentials by shape: PEM private keys and DER ones, in base64 or raw, in
-  PKCS#8 (plain or encrypted), PKCS#1 or SEC1, URL user info, `sk-` keys,
-  GitHub, AWS, Slack, Google and Hugging Face tokens, and JWTs. An encrypted
-  key counts only under a password-based encryption scheme with at least 48
-  bytes of encrypted data, the smallest key's size, so NSS's `key4.db`
-  password check is not one. Every build tool result shows each as
-  `<credential:<kind>>`, the draft included. The export refuses a bundle
-  whose seed holds one, also in UTF-16 or inside a gzip file, unless the file
-  was seeded with consent, naming each file and kind, never the value.
 
 ## Non-goals
 

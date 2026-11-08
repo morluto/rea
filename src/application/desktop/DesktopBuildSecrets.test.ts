@@ -22,6 +22,16 @@ const writeSecret = async (directory: string, handle: string, text: string) => {
 };
 
 describe("build secrets of one server", () => {
+  it("preserves unmarked token-shaped text and member names", async () => {
+    const secrets = new DesktopBuildSecrets(await folder());
+    const example =
+      "eyJhbGciOiJub25lIn0.eyJzdWIiOiJyZWEtdGVzdCJ9.ZmFrZS1zaWduYXR1cmU";
+    expect(secrets.redact(example)).toBe(example);
+    expect(secrets.redactJson({ [example]: example })).toEqual({
+      [example]: example,
+    });
+    await secrets.close();
+  });
   it("keeps every value a handle held, after the person changes it", async () => {
     const directory = await folder();
     const secrets = new DesktopBuildSecrets(directory);

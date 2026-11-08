@@ -239,7 +239,7 @@ it("refuses to write a bundle that holds a handle's value, naming the files but 
   expect(await readdir(directory).catch(() => [])).toEqual([]);
 });
 
-it("refuses UTF-16 credentials in seeded files and gzip content", async () => {
+it("preserves unmarked token-shaped data in seeded UTF-16 and gzip files", async () => {
   const { client, outputs } = await buildCaptureFakes();
   const id = await startBuildComputer(client, REQUEST);
   await callOk(client, "start_build_capture", { computer_id: id });
@@ -258,17 +258,22 @@ it("refuses UTF-16 credentials in seeded files and gzip content", async () => {
     name: "export_build_environment",
     arguments: { computer_id: id, task: TASK, directory },
   });
-  const { error } = parseMcpToolError(refused as CallToolResult);
-  expect(error.code).toBe("invalid_request");
-  expect(error.message).toContain("credential.txt");
-  expect(error.message).toContain("credential.txt.gz");
-  expect(error.message).toContain("jwt");
-  expect(JSON.stringify(refused)).not.toContain(token);
-  expect(await readdir(directory).catch(() => [])).toEqual([]);
+  expect(refused.isError, JSON.stringify(refused)).not.toBe(true);
+  expect(
+    await readFile(join(directory, "envs/notes/seed/Documents/credential.txt")),
+  ).toEqual(bytes);
+  expect(
+    await readFile(
+      join(directory, "envs/notes/seed/Documents/credential.txt.gz"),
+    ),
+  ).toEqual(gzipSync(bytes));
 });
 
-it("refuses a gzip file that expands past what REA checks, though a credential opens it", async () => {
-  const { client, outputs } = await buildCaptureFakes();
+it("refuses a gzip file that expands past what REA checks for known secrets", async () => {
+  const config = await secretsConfig({ master: { text: VALUE } });
+  const { client, outputs } = await buildCaptureFakes({
+    serverEnv: { XDG_CONFIG_HOME: config },
+  });
   const id = await startBuildComputer(client, REQUEST);
   await callOk(client, "start_build_capture", { computer_id: id });
   for (const name of ["seed", "end"])

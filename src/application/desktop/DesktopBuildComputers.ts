@@ -339,7 +339,7 @@ export class DesktopBuildComputers {
     this.#shared = { settle, secrets: this.#secrets };
   }
 
-  /** How results show the secrets typed on this server's computers, and credentials by their shape. */
+  /** How results show the secrets typed on this server's computers. */
   get redaction(): Pick<DesktopBuildSecrets, "redact" | "redactJson"> {
     return this.#secrets;
   }

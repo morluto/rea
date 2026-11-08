@@ -60,7 +60,10 @@ password.
   either computer's `docker logs` or any file in either container. A probe
   file holding the password's hex and UTF-16 was found by the same scan.
 
-## Withheld state, consent and credentials
+## Withheld state and consent
+
+The real-provider observations below predate removal of shape-based credential
+classification. They describe that earlier build and do not verify current behavior.
 
 ### Tests
 
@@ -70,10 +73,6 @@ password.
   settings, variables and handles, a long path hashed and like paths kept
   apart, and settings that are neither Python keywords nor alike in any
   order.
-- `src/domain/desktop/credentialPatterns.test.ts`: KeePassXC's KeeShare key
-  shape with a made-up key, PEM, JWT, URL user info and tokens found and
-  redacted; ordinary settings, digests, ids and images not; a gzip file's
-  inside read.
 - `src/application/desktop/DesktopExportWithheld.test.ts`: a withheld file
   left out of the seed, declared a secret setting from `env:`, copied aside
   and named in the README; seeding it refused without a consent and done with
@@ -85,7 +84,7 @@ password.
 - `src/desktop/BuildSecretFiles.concurrent.test.ts`: an export never given
   the handle of another whose different bytes are still being written.
 - `tests/boundary/application/buildExportGzipScans.test.ts`: a gzip seed
-  file decompressed once for its secret, credential and size checks.
+  file decompressed once for its known-secret and size checks.
 - `src/desktop/ExportedAppPython.test.ts`: `_write_withheld` writes the
   decoded bytes `0600` and `_views` leaves the file out.
 - `tests/boundary/mcp/buildWithheldMcp.test.ts`: the named file's bytes kept
@@ -93,8 +92,7 @@ password.
   other than `REA_*` refused; a later build's bytes kept under a handle of
   their own, an earlier build's secret left as it was; consent recorded and
   required for `seed_sign_in`, and the sign-in window passed to the draft and
-  the export; one sign-in checkpoint alone refused; a seed holding a key
-  refused by file and kind; the draft showing `<credential:private-key>`.
+  the export; one sign-in checkpoint alone refused.
 
 Each of these failed against the code before the change.
 

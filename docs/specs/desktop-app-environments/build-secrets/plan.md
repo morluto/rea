@@ -25,5 +25,5 @@
    consents to the draft and the export, keeps the withheld files as
    secrets, and supplies a bundle's settings at its start;
    `record_build_consent` records the person's words.
-9. Credentials: `credentialPatterns.ts` finds and redacts them; the build
-   tools' results redact them and the export refuses a seed that holds one.
+9. Preserve values without inferring secrecy from their shape; only declared
+   handles and transport credentials are redacted.
