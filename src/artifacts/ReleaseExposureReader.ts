@@ -797,8 +797,8 @@ interface ScanState {
   scriptTargetBytes: number;
   mapTargetBytes: number;
   /**
-   * A declared map target was refused by the allowance. A later `.map` may be
-   * that target, so it can no longer settle as a linker map.
+   * A declared map or script target was refused by its allowance. A later
+   * `.map` may be that target, so it can no longer settle as a linker map.
    */
   mapTargetsDiscarded: boolean;
   /** Members already examined as a script. */
@@ -1600,9 +1600,10 @@ const noteScriptTarget = (state: ScanState, location: string): void => {
     return;
   }
   state.scriptTargetBytes += Buffer.byteLength(target);
-  if (state.scriptTargetBytes > MAX_RELEASE_EXPOSURE_SCRIPT_TARGET_BYTES)
+  if (state.scriptTargetBytes > MAX_RELEASE_EXPOSURE_SCRIPT_TARGET_BYTES) {
     state.skippedMaps += 1;
-  else state.scriptTargets.add(target);
+    state.mapTargetsDiscarded = true;
+  } else state.scriptTargets.add(target);
 };
 
 const examineInlineMaps = (
@@ -1719,7 +1720,7 @@ const memberLocationKey = (location: string): string =>
   logicalPathNfc(resolve(location));
 
 const noteLinkerMapGuess = (state: ScanState, location: string): void => {
-  // Once a declaration was discarded, this map may be its target.
+  // Once a map or script declaration was discarded, this map may be its target.
   if (state.mapTargetsDiscarded) {
     state.skippedMaps += 1;
     state.skippedCompanions += 1;

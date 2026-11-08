@@ -3629,6 +3629,24 @@ describe("ReleaseExposureReader map target allowance", () => {
     expect(debugCompanionsStatus(scanned)).toBe("unknown");
     expect(scanned.source_maps.skipped).toBeGreaterThan(0);
   });
+
+  it("does not read a .map script past the target allowance as a linker map", async () => {
+    const baseBytes = 64 * 1024;
+    const references = Array.from(
+      { length: MAX_RELEASE_EXPOSURE_SCRIPT_TARGET_BYTES / baseBytes + 1 },
+      (_, index) => `<script src="s${String(index)}"></script>`,
+    );
+    const root = await createTestTempDirectory("rea-release-exposure-maps-");
+    await writeFile(
+      join(root, "a.html"),
+      `<base href="/${"a".repeat(baseBytes)}/">${references.join("")}`,
+    );
+    await writeFile(join(root, "b.html"), '<script src="boot.map"></script>');
+    await writeFile(join(root, "boot.map"), "run();\n");
+    const scanned = await inspect(root);
+    expect(scanned.debug_companions.paths).toEqual([]);
+    expect(debugCompanionsStatus(scanned)).toBe("unknown");
+  });
 });
 
 describe("ReleaseExposureReader script roles over a .map name", () => {
