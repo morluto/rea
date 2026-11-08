@@ -49,11 +49,27 @@ cliTest(
         field: "capturePath",
       },
       {
-        arguments: ["trace-web-source-location", "", "0", "map", "url", "1", "0"],
+        arguments: [
+          "trace-web-source-location",
+          "",
+          "0",
+          "map",
+          "url",
+          "1",
+          "0",
+        ],
         field: "manifestPath",
       },
       {
-        arguments: ["trace-web-source-location", "manifest", "0", "", "url", "1", "0"],
+        arguments: [
+          "trace-web-source-location",
+          "manifest",
+          "0",
+          "",
+          "url",
+          "1",
+          "0",
+        ],
         field: "sourceMapPath",
       },
       {
