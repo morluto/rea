@@ -303,6 +303,7 @@
     "test:sqlite:run": "node scripts/run-exact-tests.mjs run tests/acceptance/sqliteDatabaseCli.test.ts tests/boundary/mcp/serverLifecycleMcp.test.ts && vitest run src/application/sqlite/ tests/boundary/sqlite/",
     "build:windows-native": "node scripts/build-windows-native.mjs",
     "verify:windows-native:artifact": "node scripts/verify-windows-native-artifact.mjs",
+    "verify:packed-bridge": "node scripts/verify-packed-bridge.mjs",
     "prepublishOnly": "npm run verify:windows-native:artifact",
     "verify:cutter": "npm run build:cached && node scripts/verify-real-cutter.mjs",
     "verify:windows-native": "node scripts/verify-windows-native.mjs",
