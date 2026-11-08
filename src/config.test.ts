@@ -38,7 +38,6 @@ it.each([
       REA_GHIDRA_CHECKPOINT_DIR: "/tmp/checkpoints",
       [setting]: value,
     });
-    expect(result.ok).toBe(false);
     if (result.ok) throw new Error("conflicting inputs accepted");
     expect(result.error.message).toContain("checkpoints");
     expect(result.error).toMatchObject({
@@ -70,7 +69,6 @@ it.each([
       parseEnvironmentValues(environment),
       parseConfig(environment),
     ]) {
-      expect(result.ok).toBe(false);
       if (result.ok) throw new Error("Expected invalid environment");
       expect(result.error.settings).toHaveLength(1);
       expect(result.error.settings[0]?.constraint).toContain("NUL");

@@ -131,7 +131,6 @@ it.skipIf(process.platform === "win32")(
 
     try {
       const trace = await tracer.trace(request);
-      expect(trace.ok).toBe(false);
       if (trace.ok) throw new Error("Expected incomplete cleanup");
       expect(trace.error).toBeInstanceOf(ProviderCleanupError);
       if (!(trace.error instanceof ProviderCleanupError)) return;
@@ -167,7 +166,6 @@ it.skipIf(process.platform === "win32")(
       },
     );
     const result = await cancelledTracer.trace(request, controller.signal);
-    expect(result.ok).toBe(false);
     if (result.ok) throw new Error("Expected cancelled trace");
     expect(result.error).toBeInstanceOf(AnalysisCancelledError);
     expect((await cancelledTracer.close()).ok).toBe(true);
@@ -193,7 +191,6 @@ it.skipIf(process.platform === "win32")(
 
     try {
       const trace = await tracer.trace(request);
-      expect(trace.ok).toBe(false);
       if (trace.ok) throw new Error("Expected unverified target cleanup");
       expect(trace.error).toBeInstanceOf(ProviderCleanupError);
       if (!(trace.error instanceof ProviderCleanupError)) return;
@@ -236,7 +233,6 @@ it.skipIf(process.platform === "win32")(
 
     try {
       const trace = await tracer.trace(request);
-      expect(trace.ok).toBe(false);
       if (trace.ok) throw new Error("Expected malformed PID cleanup failure");
       expect(trace.error).toBeInstanceOf(ProviderCleanupError);
       if (!(trace.error instanceof ProviderCleanupError)) return;

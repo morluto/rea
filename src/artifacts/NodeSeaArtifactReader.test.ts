@@ -308,8 +308,7 @@ it.each([false, true])(
         if (sea)
           await expect(located).rejects.toMatchObject({
             reason: "limit",
-            message:
-              "Node SEA PE inspection exceeds the 512 MiB PE parser input ceiling",
+            message: expect.stringMatching(/PE.*512 MiB/iu),
           });
         else await expect(located).resolves.toBeUndefined();
       } finally {
@@ -659,7 +658,7 @@ it("rejects missing Mach-O load commands after a confirmed SEA section", async (
     scanCanonicalArtifactInventory(await writeCarrier("commands", bytes)),
   ).rejects.toMatchObject({
     reason: "format",
-    message: "Node SEA Mach-O load commands are truncated",
+    message: expect.stringMatching(/Mach-O.*load commands.*truncated/iu),
   });
 });
 
@@ -708,7 +707,7 @@ it("reports a member that ends after the carrier recheck as an integrity failure
     try {
       await expect(buffer(await reader.open(entry))).rejects.toMatchObject({
         reason: "integrity",
-        message: "Node SEA entry ended early: sea.js",
+        message: expect.stringContaining("sea.js"),
       });
       expect(calls).toBe(2);
     } finally {

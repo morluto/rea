@@ -297,24 +297,38 @@ const functionFindings = (
   >,
 ): Finding[] => {
   const { evidence, result } = comparison;
-  return result.dimensions.flatMap((dimension) =>
-    dimension.status === "unchanged"
-      ? []
-      : [
-          makeFinding({
-            evidence,
-            dimension: dimension.dimension,
-            scope: "static_candidate",
-            status: dimension.status,
-            classification:
-              dimension.status === "unknown"
-                ? "unresolved_branch"
-                : dimension.conclusion_kind,
-            limitations: dimension.limitations,
-            links: dimension.evidence_links,
-          }),
-        ],
-  );
+  return result.dimensions.flatMap((dimension) => {
+    const finding = (status: "changed" | "unknown") =>
+      makeFinding({
+        evidence,
+        dimension: dimension.dimension,
+        scope: "static_candidate",
+        status,
+        classification:
+          status === "unknown"
+            ? "unresolved_branch"
+            : dimension.conclusion_kind,
+        limitations:
+          status === "unknown" &&
+          dimension.dimension === "calls" &&
+          dimension.discovery_status === undefined
+            ? [
+                ...dimension.limitations,
+                "Static call discovery coverage was not recorded in the comparison.",
+              ]
+            : dimension.limitations,
+        links: dimension.evidence_links,
+      });
+    const findings =
+      dimension.status === "unchanged" ? [] : [finding(dimension.status)];
+    if (
+      dimension.dimension === "calls" &&
+      dimension.status !== "unknown" &&
+      dimension.discovery_status !== "complete"
+    )
+      findings.push(finding("unknown"));
+    return findings;
+  });
 };
 
 const artifactFindings = (

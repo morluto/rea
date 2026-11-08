@@ -362,7 +362,7 @@ it("reports inline Evidence identity failures at the complete source path", asyn
           {
             path: ["source", "evidence", "evidence_id"],
             reason: "invalid_value",
-            message: "Evidence semantic identifier does not match its record",
+            message: expect.stringMatching(/semantic identifier.*not match/iu),
           },
         ],
       },

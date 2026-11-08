@@ -5,6 +5,7 @@ import {
   NATIVE_OBSERVATION_OPERATIONS,
 } from "../native/nativeObservation.js";
 import { projectNativeObservationView } from "./nativeObservationView.js";
+import { projectRecordedArrayView } from "./recordedArrayView.js";
 import { projectNativeInstructionReferencesView } from "./nativeInstructionReferencesView.js";
 import { projectNativeValueTraceView } from "./nativeValueTraceView.js";
 import { projectDevicetreeView } from "./devicetreeView.js";
@@ -497,6 +498,9 @@ export const projectAnalysisView = (
         },
       ]),
     );
+  if (view.kind === "recorded-array") {
+    return sealProjected(projectRecordedArrayView(parent, view));
+  }
   if (view.kind === "javascript-routes") {
     const projected = projectJavaScriptRoutesView(parent, view);
     return sealProjected(projected);

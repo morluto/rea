@@ -44,7 +44,10 @@ import {
   AnalysisResourceConstraintError,
   type AnalysisInputIssue,
 } from "../domain/analysisErrorCore.js";
-import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
+import {
+  projectAnalysisError,
+  projectAnalysisErrorWithoutPartialObservation,
+} from "../domain/analysisErrorProjection.js";
 import { projectInputIssueGroupsWithinBudget } from "../domain/inputIssueProjection.js";
 import type { z } from "zod";
 import { createEvidence } from "../domain/evidence.js";
@@ -936,7 +939,11 @@ class ErrorEvidenceTransport implements Transport {
             }
           : { retention: recorded === undefined ? "unavailable" : "failed" }),
         ...(recorded !== undefined && !recorded.ok
-          ? { retention_error: projectAnalysisError(recorded.error) }
+          ? {
+              retention_error: projectAnalysisErrorWithoutPartialObservation(
+                recorded.error,
+              ),
+            }
           : {}),
       },
       targetContent,
@@ -1032,9 +1039,12 @@ class ErrorEvidenceTransport implements Transport {
         "The MCP tool arguments exceed the configured input element allowance; schema validation and tool execution did not start.",
         { max_input_elements: this.maximumInputElements },
         {
-          remediationAction: this.evidenceReferenceAlternatives.has(tool)
-            ? 'If the source Evidence is retained, use {"kind":"retained-evidence","evidence_id":"ev_..."} for declared Evidence fields; use a summary\'s parent_evidence_id for its complete source. Otherwise import the originating Evidence bundle when available. Reduce the arguments, or restart REA with a larger REA_MCP_MAX_INPUT_ELEMENTS allowance.'
-            : "Reduce the combined array elements and object members in the arguments, or restart REA with a larger REA_MCP_MAX_INPUT_ELEMENTS allowance for this workload.",
+          remediationAction:
+            tool === "inspect_analysis_view"
+              ? 'If using inline Evidence, save the Evidence record as a local JSON file and use source {"kind":"evidence-file","path":"..."}; if it is retained, use its retained-evidence ID. Otherwise reduce the combined array elements and object members, or restart REA with a larger REA_MCP_MAX_INPUT_ELEMENTS allowance.'
+              : this.evidenceReferenceAlternatives.has(tool)
+                ? 'If the source Evidence is retained, use {"kind":"retained-evidence","evidence_id":"ev_..."} for declared Evidence fields; use a summary\'s parent_evidence_id for its complete source. Otherwise import the originating Evidence bundle when available. Reduce the arguments, or restart REA with a larger REA_MCP_MAX_INPUT_ELEMENTS allowance.'
+                : "Reduce the combined array elements and object members in the arguments, or restart REA with a larger REA_MCP_MAX_INPUT_ELEMENTS allowance for this workload.",
         },
       );
       const result = this.delivery.toErrorToolResult(error, targetContent);

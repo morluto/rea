@@ -217,7 +217,6 @@ it("refuses other declared trace versions with verified archive identity", async
     const result = await new PlaywrightTraceDecoder(resources).inspect(
       fixture.path,
     );
-    expect(result.ok).toBe(false);
     if (result.ok) throw new Error("Expected version refusal");
     expect(result.error._tag).toBe("AnalysisUnsupportedTargetError");
     expect(
@@ -239,7 +238,6 @@ it("preserves opaque pre-cancellation without reading or claiming a source snaps
       "/unused.zip",
       controller.signal,
     );
-    expect(result.ok).toBe(false);
     if (result.ok) throw new Error("Expected cancellation");
     expect(result.error._tag).toBe("AnalysisCancelledError");
     expect(result.error.cause).toBe(reason);
@@ -307,7 +305,6 @@ it("refuses oversized physical lines before parsing their representation", async
     const result = await new PlaywrightTraceDecoder(resources).inspect(
       fixture.path,
     );
-    expect(result.ok).toBe(false);
     if (result.ok) throw new Error("Expected line capacity refusal");
     expect(result.error._tag).toBe("AnalysisResourceConstraintError");
     expect(resources.hasPending).toBe(false);
@@ -329,7 +326,6 @@ it("never promotes facts from a stream whose ZIP CRC fails", async () => {
     const result = await new PlaywrightTraceDecoder(resources).inspect(
       fixture.path,
     );
-    expect(result.ok).toBe(false);
     if (result.ok) throw new Error("Expected CRC refusal");
     expect(result.error._tag).toBe("AnalysisInputError");
     const partial = playwrightTraceSchema.parse(
@@ -354,7 +350,6 @@ it("rejects a sparse over-budget archive before hashing or expansion", async () 
     const result = await new PlaywrightTraceDecoder(resources).inspect(
       fixture.path,
     );
-    expect(result.ok).toBe(false);
     if (result.ok) throw new Error("Expected archive admission refusal");
     expect(result.error._tag).toBe("AnalysisResourceConstraintError");
     expect(result.error.partialObservation).toBeUndefined();
@@ -378,7 +373,6 @@ it("bounds JSON node expansion even when many tokens fit inside a small physical
     const result = await new PlaywrightTraceDecoder(resources).inspect(
       fixture.path,
     );
-    expect(result.ok).toBe(false);
     if (result.ok) throw new Error("Expected node admission refusal");
     expect(result.error._tag).toBe("AnalysisResourceConstraintError");
     expect(resources.hasPending).toBe(false);
