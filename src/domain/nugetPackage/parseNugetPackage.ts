@@ -180,20 +180,41 @@ const repositoryOf = (metadata: Element): NugetNuspec["repository"] => {
   };
 };
 
+/**
+ * An attribute the document did not write stays null; one written as the empty
+ * string is the empty string. `|| null` conflates the two, and the declaration
+ * contract keeps them apart.
+ */
+const declaredAttribute = (element: Element, name: string): string | null => {
+  const value = element.getAttribute(name);
+  return value === null ? null : value;
+};
+
+const dependenciesOf = (
+  parent: Element,
+): NugetNuspec["dependency_groups"][number]["dependencies"] =>
+  childrenNamed(parent, "dependency").map((dependency) => ({
+    name: dependency.getAttribute("id") ?? "",
+    version_range: declaredAttribute(dependency, "version"),
+    exclude: declaredAttribute(dependency, "exclude"),
+    include: declaredAttribute(dependency, "include"),
+  }));
+
 const dependencyGroupsOf = (
   metadata: Element,
 ): NugetNuspec["dependency_groups"] => {
   const dependencies = childrenNamed(metadata, "dependencies")[0];
   if (dependencies === undefined) return [];
-  return childrenNamed(dependencies, "group").map((group) => ({
-    target_framework: group.getAttribute("targetFramework") || null,
-    dependencies: childrenNamed(group, "dependency").map((dependency) => ({
-      name: dependency.getAttribute("id") ?? "",
-      version_range: dependency.getAttribute("version") || null,
-      exclude: dependency.getAttribute("exclude") || null,
-      include: dependency.getAttribute("include") || null,
-    })),
+  const groups = childrenNamed(dependencies, "group").map((group) => ({
+    target_framework: declaredAttribute(group, "targetFramework"),
+    dependencies: dependenciesOf(group),
   }));
+  // NuGet also writes <dependencies> with no <group>, listing the declarations
+  // directly. That is the untargeted group, not an empty declaration set.
+  const untargeted = dependenciesOf(dependencies);
+  return untargeted.length === 0
+    ? groups
+    : [{ target_framework: null, dependencies: untargeted }, ...groups];
 };
 
 const nuspecOf = (

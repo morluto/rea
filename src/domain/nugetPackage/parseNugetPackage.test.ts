@@ -128,6 +128,57 @@ describe("parseNugetPackage: nuspec metadata", () => {
     );
     expect(package_.source_coverage.network).toBe("not-contacted");
   });
+
+  it("keeps a dependency empty attribute distinct from an absent one", () => {
+    const nuspec = NUSPEC.replace(
+      '<dependency id="System.Text.Json" version="8.0.0" />',
+      '<dependency id="System.Text.Json" version="8.0.0" include="" exclude="" />',
+    );
+    const nuspecs = parsed(
+      parse([
+        member("Example.Package.nuspec", {
+          bytes: nuspec.length,
+          text: nuspec,
+        }),
+      ]),
+    ).nuspecs;
+    const group = nuspecs[0]?.dependency_groups[0];
+    if (group === undefined) throw new Error("Expected one group");
+    expect(group.dependencies[1]).toEqual({
+      name: "System.Text.Json",
+      version_range: "8.0.0",
+      include: "",
+      exclude: "",
+    });
+  });
+
+  it("reads dependencies written directly under <dependencies> as the untargeted group", () => {
+    const nuspec = NUSPEC.replace(
+      /<dependencies>[\s\S]*<\/dependencies>/,
+      '<dependencies><dependency id="Example.Flat" version="1.0.0" /></dependencies>',
+    );
+    const nuspecs = parsed(
+      parse([
+        member("Example.Package.nuspec", {
+          bytes: nuspec.length,
+          text: nuspec,
+        }),
+      ]),
+    ).nuspecs;
+    expect(nuspecs[0]?.dependency_groups).toEqual([
+      {
+        target_framework: null,
+        dependencies: [
+          {
+            name: "Example.Flat",
+            version_range: "1.0.0",
+            include: null,
+            exclude: null,
+          },
+        ],
+      },
+    ]);
+  });
 });
 
 describe("parseNugetPackage: asset layout", () => {
