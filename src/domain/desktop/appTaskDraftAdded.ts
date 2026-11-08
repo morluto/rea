@@ -1,7 +1,6 @@
 import type { JsonValue } from "../jsonValue.js";
 import { collapseWhitespace, type DesktopTaskCheckInput } from "./appTask.js";
 import {
-  isRenumberedKey,
   isBookkeeping,
   isBookkeepingName,
   inSplitDate,
@@ -193,8 +192,7 @@ export const attributeChecks = (
         value,
         isBookkeeping(element) || isBookkeepingName(key),
       ) &&
-      !isViewStateName(key) &&
-      !isRenumberedKey(key),
+      !isViewStateName(key),
   );
   for (const { key, value } of eligible)
     if (value.length > context.chars)

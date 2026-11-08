@@ -2,7 +2,6 @@ import type { JsonValue } from "../jsonValue.js";
 import type { DesktopTaskCheckInput } from "./appTask.js";
 import {
   isBookkeepingName,
-  isRenumberedKey,
   isStamp,
   isVolatileValue,
 } from "./appTaskDraftNoise.js";
@@ -163,7 +162,6 @@ const checkedKeys = (
       isStamp(value) ||
       isVolatileValue(value, isBookkeepingName(key)) ||
       isViewStateName(key) ||
-      isRenumberedKey(key) ||
       new Set(all).size < 2 ||
       keys.some((earlier) =>
         likes.every(
