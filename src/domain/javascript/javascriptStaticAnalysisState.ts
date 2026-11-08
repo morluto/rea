@@ -93,10 +93,7 @@ export interface JavaScriptAnalysisAccumulator {
   )[];
   readonly protocols: LocatedJavaScriptFinding<ElectronProtocolFinding>[];
   readonly dynamicCode: LocatedJavaScriptFinding<ElectronDynamicCodeFinding>[];
-  readonly pendingDynamicCode: (
-    | t.NewExpression
-    | t.CallExpression
-  )[];
+  readonly pendingDynamicCode: (t.NewExpression | t.CallExpression)[];
   readonly moduleRangeIndex: JavaScriptModuleRangeIndex;
   /** Binding identities proven as third-parameter loaders of recovered factories. */
   readonly factoryRequireBindingIds: Set<string>;
