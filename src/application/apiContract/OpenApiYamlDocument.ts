@@ -1,4 +1,13 @@
-import { isCollection, isMap, parseDocument, visit } from "yaml";
+import {
+  isAlias,
+  isCollection,
+  isMap,
+  isNode,
+  isScalar,
+  LineCounter,
+  parseDocument,
+  type Node,
+} from "yaml";
 
 import {
   AnalysisInputError,
@@ -12,6 +21,26 @@ import type { AnalysisError } from "../../domain/analysisErrorBase.js";
 
 const YAML_ALIAS_LIMIT = 100;
 
+/**
+ * Walk the composed node tree without recursion. `yaml`'s own `visit` helper
+ * descends recursively, so a document that nests deeper than the remaining
+ * stack would throw `RangeError` instead of returning the typed refusal this
+ * decoder owes its callers.
+ */
+function* yamlNodes(root: unknown): Generator<Node> {
+  const pending: Node[] = [];
+  if (isNode(root)) pending.push(root);
+  for (let current = pending.pop(); current !== undefined;) {
+    yield current;
+    if (isMap<unknown, unknown>(current))
+      for (const pair of current.items)
+        pending.push(pair.key as Node, pair.value as Node);
+    else if (isCollection(current))
+      for (const item of current.items) if (isNode(item)) pending.push(item);
+    current = pending.pop();
+  }
+}
+
 const invalidDocument = (path: string, message: string): AnalysisError =>
   new AnalysisInputError(
     API_CONTRACT_OPERATION,
@@ -19,10 +48,19 @@ const invalidDocument = (path: string, message: string): AnalysisError =>
       remediationAction:
         "Save the OpenAPI document as JSON, or correct the YAML syntax and select it with --contractFormat openapi-yaml.",
     },
-    [{ path: ["path"], reason: "invalid_format", message: `${message} (${path})` }],
+    [
+      {
+        path: ["path"],
+        reason: "invalid_format",
+        message: `${message} (${path})`,
+      },
+    ],
   );
 
-const duplicateKeyDiagnostic = (path: string, line: number | undefined): AnalysisError =>
+const duplicateKeyDiagnostic = (
+  path: string,
+  line: number | undefined,
+): AnalysisError =>
   new AnalysisInputError(
     API_CONTRACT_OPERATION,
     {
@@ -84,12 +122,14 @@ export const decodeOpenApiYaml = (
       ),
     );
   }
+  const lineCounter = new LineCounter();
   const document = parseDocument(text, {
     // Comments, styles and YAML 1.1 scalar dialects stay unread; the document
     // is composed to the same JSON-compatible shape the JSON profile parses.
     prettyErrors: false,
     // A repeated key cannot express the JSON profile's last-value-wins member.
     uniqueKeys: true,
+    lineCounter,
   });
   const duplicate = document.errors.find(
     (error) => error.code === "DUPLICATE_KEY",
@@ -109,19 +149,48 @@ export const decodeOpenApiYaml = (
   // would become a property name no source document wrote, and two distinct
   // keys could collapse onto one member. The JSON profile only accepts string
   // member names, so refuse the document instead of inventing one.
-  let complexKeyFound = false;
-  visit(document, (_key, node) => {
-    if (!isMap(node)) return;
-    for (const pair of node.items)
-      if (isCollection(pair.key)) complexKeyFound = true;
-  });
-  if (complexKeyFound)
-    return err(
-      invalidDocument(
-        path,
-        "OpenAPI YAML uses a non-scalar mapping key; the JSON profile can only express string member names",
-      ),
-    );
+  for (const node of yamlNodes(document.contents)) {
+    if (!isMap<unknown, unknown>(node)) continue;
+    const projected = new Set<string>();
+    for (const pair of node.items) {
+      const key = pair.key as Node;
+      if (isCollection(key))
+        return err(
+          invalidDocument(
+            path,
+            "OpenAPI YAML uses a non-scalar mapping key; the JSON profile can only express string member names",
+          ),
+        );
+      // A source alias whose anchor is a collection resolves to one here.
+      const resolved = isAlias(key) ? key.resolve(document) : key;
+      if (
+        resolved === undefined ||
+        !isScalar(resolved) ||
+        isCollection(resolved)
+      )
+        return err(
+          invalidDocument(
+            path,
+            "OpenAPI YAML uses a non-scalar mapping key; the JSON profile can only express string member names",
+          ),
+        );
+      // Distinct source keys can share one projected member name: `1` and
+      // `"1"` both become the property `"1"`, and an alias key can name one a
+      // literal already names. `uniqueKeys` compares source nodes, so it
+      // accepts both and `toJS` keeps only the later value.
+      const member = String(resolved.value);
+      if (projected.has(member))
+        return err(
+          duplicateKeyDiagnostic(
+            path,
+            key.range?.[0] === undefined
+              ? undefined
+              : lineCounter.linePos(key.range[0]).line - 1,
+          ),
+        );
+      projected.add(member);
+    }
+  }
   let value: unknown;
   try {
     value = document.toJS({ maxAliasCount: YAML_ALIAS_LIMIT });

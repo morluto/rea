@@ -124,14 +124,21 @@ it("records YAML anchors, aliases, tags and comments without changing the facts"
 });
 
 it("rejects YAML that the decoder cannot compose, without inventing declarations", async () => {
-  const malformed = contractError(
-    await importText(
-      "broken.yaml",
-      "openapi: 3.0.4\npaths: [\n",
-      "openapi-yaml",
-    ),
+  const malformedResult = await importText(
+    "broken.yaml",
+    "openapi: 3.0.4\npaths: [\n",
+    "openapi-yaml",
   );
-  expect(malformed).toContain("OpenAPI YAML could not be parsed");
+  expect(contractError(malformedResult)).toContain(
+    "OpenAPI YAML could not be parsed",
+  );
+  // A refused read still names the file it read, so the caller can key the
+  // refusal to the snapshot it observed.
+  if (malformedResult.ok) throw new Error("expected a refusal");
+  expect(malformedResult.error).toMatchObject({
+    issues: [{ path: ["path"], reason: "invalid_format" }],
+    partialObservation: { kind: "file-snapshot-hash" },
+  });
 
   const repeated = contractError(
     await importText(
@@ -257,6 +264,68 @@ it("keeps collection-valued sequence items and names the selected format in pars
   expect(unsupportedVersionResult.error._tag).toBe(
     "AnalysisUnsupportedTargetError",
   );
+});
+
+it("refuses keys that only collide after they are projected to member names", async () => {
+  // `uniqueKeys` compares the source nodes, so both spellings of one member
+  // pass it and `toJS` keeps only the later value.
+  const coerced = await importText(
+    "coerced.yaml",
+    [
+      "openapi: 3.0.4",
+      'info: {title: Owned API, version: "1"}',
+      "paths:",
+      "  1: {get: {operationId: first}}",
+      '  "1": {get: {operationId: second}}',
+    ].join("\n"),
+    "openapi-yaml",
+  );
+  expect(contractError(coerced)).toContain("repeats a mapping key");
+  if (coerced.ok) throw new Error("expected a refusal");
+  expect(coerced.error).toMatchObject({
+    issues: [{ path: ["path"], reason: "invalid_format" }],
+    partialObservation: { kind: "file-snapshot-hash" },
+  });
+
+  const aliasKey = await importText(
+    "alias-key.yaml",
+    [
+      "openapi: 3.0.4",
+      'info: {title: Owned API, version: "1"}',
+      "anchor: &pets /pets",
+      "paths:",
+      "  *pets : {get: {operationId: aliased}}",
+      "  /pets: {post: {operationId: literal}}",
+    ].join("\n"),
+    "openapi-yaml",
+  );
+  expect(contractError(aliasKey)).toContain("repeats a mapping key");
+  expect(
+    contractError(
+      await importText(
+        "alias-collection-key.yaml",
+        [
+          "openapi: 3.0.4",
+          'info: {title: Owned API, version: "1"}',
+          "anchor: &pets [/pets]",
+          "paths:",
+          "  *pets : {get: {operationId: aliased}}",
+        ].join("\n"),
+        "openapi-yaml",
+      ),
+    ),
+  ).toContain("non-scalar mapping key");
+});
+
+it("returns a typed refusal for nesting deeper than the decoder's own stack", async () => {
+  const depth = 2000;
+  const nested = `openapi: "3.0.4"\npaths: ${"[".repeat(depth)}1${"]".repeat(depth)}\n`;
+  const refused = await importText("nested.yaml", nested, "openapi-yaml");
+  expect(refused.ok).toBe(false);
+  if (refused.ok) throw new Error("expected a refusal");
+  // The decoder traverses iteratively, so the refusal is an input error about
+  // the document rather than an escaping stack overflow.
+  expect(refused.error._tag).toBe("AnalysisInputError");
 });
 
 const contractError = (
