@@ -1,4 +1,4 @@
-import { xmlAttributeQuoteStarts } from "../xmlDocument.js";
+import { xmlAttributeQuoteRanges } from "../xmlDocument.js";
 import type { DesktopTaskCheckInput } from "./appTask.js";
 import {
   isBookkeepingName,
@@ -108,10 +108,14 @@ export const lineGuards = (
 const TOKEN = /[\p{L}\d_-]+/gu;
 
 /** Where a line's first identifiable generated time or id starts; -1 when it holds none. */
-const volatileAt = (line: string, xmlQuotes: ReadonlySet<number>): number => {
+const volatileAt = (
+  line: string,
+  xmlQuotes: ReadonlySet<number>,
+  enclosingQuote: string | undefined,
+): number => {
   let end = 0;
-  let quote: string | undefined;
-  let xmlAttribute = false;
+  let quote = enclosingQuote;
+  let xmlAttribute = enclosingQuote !== undefined;
   let previous: string | undefined;
   let previousOutside = false;
   for (const { 0: token, index } of line.matchAll(TOKEN)) {
@@ -173,22 +177,26 @@ export const addedLineChecks = (
     all.filter((line) => line.includes(text)).length;
   const isXml = textOpensXml(lines.after);
   const source = isXml ? lines.after.join("\n") : "";
-  const parsed = isXml ? xmlAttributeQuoteStarts(source) : undefined;
-  const offsets =
-    parsed === undefined ? [] : parsed.ok ? parsed.value : parsed.error.starts;
+  const parsed = isXml ? xmlAttributeQuoteRanges(source) : undefined;
+  const ranges =
+    parsed === undefined ? [] : parsed.ok ? parsed.value : parsed.error.ranges;
   const examined = parsed?.ok === false ? parsed.error.examined : source.length;
   const addedSet = new Set(added);
   const classifications = new Map<string, number>();
   const unexamined = new Set<string>();
   let lineStart = 0;
-  let nextOffset = 0;
+  let nextRange = 0;
   for (const line of lines.after) {
     const quoteStarts = new Set<number>();
     const lineEnd = lineStart + line.length;
-    while (nextOffset < offsets.length && offsets[nextOffset]! < lineEnd) {
-      const offset = offsets[nextOffset]!;
-      if (offset >= lineStart) quoteStarts.add(offset - lineStart);
-      nextOffset += 1;
+    while (nextRange < ranges.length && ranges[nextRange]!.end < lineStart)
+      nextRange += 1;
+    let enclosingQuote: string | undefined;
+    for (let index = nextRange; index < ranges.length; index += 1) {
+      const range = ranges[index]!;
+      if (range.start >= lineEnd) break;
+      if (range.start < lineStart) enclosingQuote = source[range.start];
+      else quoteStarts.add(range.start - lineStart);
     }
     if (addedSet.has(line)) {
       if (parsed?.ok === false && lineEnd > examined) {
@@ -196,7 +204,7 @@ export const addedLineChecks = (
         lineStart = lineEnd + 1;
         continue;
       }
-      const at = volatileAt(line, quoteStarts);
+      const at = volatileAt(line, quoteStarts, enclosingQuote);
       const previous = classifications.get(line);
       if (
         previous === undefined ||

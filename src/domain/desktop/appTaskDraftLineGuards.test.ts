@@ -96,6 +96,38 @@ describe("draftTaskFiles for XML text views", () => {
     expect(results.map(({ passed }) => passed)).toEqual([false]);
   });
 
+  it("keeps requested text inside a multiline XML attribute exact", () => {
+    const opening = '<!DOCTYPE map [<!ENTITY title "Map">]>\n<map>\n';
+    const text = 'created=2025550123 and save"/>';
+    const file = drafted(
+      `${opening}</map>`,
+      `${opening}<node TEXT="Set\n${text}\n</map>`,
+    );
+    expect(file.suggested).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          kind: "lines_present",
+          lines: expect.arrayContaining([text]),
+        }),
+      ]),
+    );
+    const result = evaluateTaskChecks(
+      file.suggested.map((check, index) => ({ ...check, id: `c${index}` })),
+      new Map([
+        [
+          FILE,
+          {
+            format: "text" as const,
+            view: textView(
+              `${opening}<node TEXT="Set\n${text.replace("2025550123", "WRONG")}\n</map>`,
+            ),
+          },
+        ],
+      ]),
+    );
+    expect(result.some(({ passed }) => !passed)).toBe(true);
+  });
+
   it("recognizes an attribute on a later line of an XML tag", () => {
     const opening = '<!DOCTYPE map [<!ENTITY title "Map">]>\n<map>\n<node\n';
     const attribute = 'TEXT="C:\\work\\" CREATED="1793955250671"/>';

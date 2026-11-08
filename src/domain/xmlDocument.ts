@@ -170,18 +170,21 @@ export const xmlElementRanges = (
   }
 };
 
-/** Source offsets of attribute opening quotes, parsed without reading a DTD. */
-export const xmlAttributeQuoteStarts = (
+/** Inclusive source ranges of attribute quotes, parsed without reading a DTD. */
+export const xmlAttributeQuoteRanges = (
   source: string,
 ): Result<
-  readonly number[],
+  readonly { readonly start: number; readonly end: number }[],
   {
     readonly error: XmlDocumentParseError;
-    readonly starts: readonly number[];
+    readonly ranges: readonly {
+      readonly start: number;
+      readonly end: number;
+    }[];
     readonly examined: number;
   }
 > => {
-  const starts: number[] = [];
+  const ranges: { start: number; end: number }[] = [];
   let reader: SaxesParser<{ xmlns: true }> | undefined;
   try {
     checkXmlSyntax(source, "allow", (syntax) => {
@@ -193,17 +196,17 @@ export const xmlAttributeQuoteStarts = (
           throw new XmlDocumentParseError("malformed");
         const start = source.lastIndexOf(quote, end - 1);
         if (start < 0) throw new XmlDocumentParseError("malformed");
-        starts.push(start);
+        ranges.push({ start, end });
       });
     });
-    return ok(starts);
+    return ok(ranges);
   } catch (cause: unknown) {
     return err({
       error:
         cause instanceof XmlDocumentParseError
           ? cause
           : new XmlDocumentParseError("malformed", cause),
-      starts,
+      ranges,
       examined: Math.max(0, (reader?.position ?? 0) - 1),
     });
   }
