@@ -88,7 +88,7 @@ try {
     }
     if (missing.length > 0 || selected.size === 0)
       throw new Error(
-        `Selected test files were not discovered: ${missing.join(", ")}`,
+        `Selected test files were not discovered from ${process.cwd()}: ${missing.join(", ")}. Check each path and pass a test file or directory relative to the current working directory.`,
       );
     if (shutdownSignal === undefined)
       await vitest.runTestSpecifications([...selected]);
