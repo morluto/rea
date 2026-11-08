@@ -2,7 +2,9 @@
 
 REA imports one target into an ephemeral Ghidra database. Linux/macOS support
 read-only analysis and atomic function-name/entry-comment edits; Windows P0 is
-read-only. GUI controls and writes to caller-selected source databases are unavailable.
+read-only, as is a Linux/macOS session that selects the
+[loopback bridge transport](installation.md#ghidra-bridge-transport). GUI
+controls and writes to caller-selected source databases are unavailable.
 Executable bytes remain unchanged.
 
 An opt-in [owned Program checkpoint](../getting-started/installation.md#automatically-checkpoint-an-owned-ghidra-program)
@@ -13,6 +15,8 @@ packed Program's digest is reported with restored observations. Initial analysis
 keeps one stable generation through its first save; later saved states bind their
 content digest in profile identity. Restoration does not turn prior
 database state into a fresh discovery. The default remains ephemeral.
+Checkpoint mode requires the Unix socket bridge and cannot be combined with
+`REA_GHIDRA_BRIDGE_TRANSPORT=authenticated-loopback-tcp`.
 
 Use [installation](../getting-started/installation.md#ghidra) for supported hosts, prerequisites,
 configuration, startup deadlines, resource controls, and cleanup recovery.

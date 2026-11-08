@@ -1,6 +1,7 @@
 import { access, lstat } from "node:fs/promises";
 import { join } from "node:path";
 import { z } from "zod";
+import { ghidraBridgeTransportSchema } from "../config/ghidraBridgeTransport.js";
 import { PrivateRuntimeRoot } from "../process/PrivateRuntimeRoot.js";
 import { readWindowsPrivateRuntimeFile } from "../windows/WindowsPrivateRuntime.js";
 import { err, ok, type Result } from "../domain/result.js";
@@ -22,13 +23,38 @@ import {
 } from "./GhidraSessionError.js";
 
 /** Local bridge transports used by the current Ghidra session. */
-export type GhidraTransportKind = "unix-socket" | "authenticated-loopback-tcp";
+export type GhidraTransportKind = z.infer<typeof ghidraBridgeTransportSchema>;
 
 /** Private runtime coordinate used to discover one bridge listener. */
 export interface GhidraEndpoint {
   readonly transport: GhidraTransportKind;
   readonly path: string;
 }
+
+/**
+ * Effective bridge transport for a host. Windows P0 serves only the
+ * authenticated loopback bridge; a POSIX host keeps the current-user Unix
+ * socket unless the environment selects loopback for a host that refuses
+ * AF_UNIX.
+ */
+export const resolveGhidraTransport = (
+  platform: NodeJS.Platform,
+  configured: GhidraTransportKind | undefined,
+): GhidraTransportKind =>
+  platform === "win32"
+    ? "authenticated-loopback-tcp"
+    : (configured ?? "unix-socket");
+
+/**
+ * Analysis extensions load executable code into the Ghidra process and are
+ * admitted only over the current-user Unix socket. Every other transport
+ * withholds them, matching ReaGhidraBridge's refusal before it opens the
+ * listener: committing an extension the transport cannot serve would abort the
+ * whole session, not just the extension.
+ */
+export const transportAdmitsAnalysisExtensions = (
+  transport: GhidraTransportKind,
+): boolean => transport === "unix-socket";
 
 /** Allocate an endpoint that fits the host's Unix sockaddr without moving the project. */
 export const createGhidraEndpoint = async (
