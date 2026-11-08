@@ -9,7 +9,15 @@ import {
 } from "../../fixtures/binaryDiagnostics/windowsShortcut.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
-const { realpathCalls } = vi.hoisted(() => ({ realpathCalls: vi.fn() }));
+const { realpathCalls, lstatGate } = vi.hoisted(() => ({
+  realpathCalls: vi.fn(),
+  // When set, the next lstat reports its path and waits for the gate.
+  lstatGate: {} as {
+    hold?:
+      | { entered: (path: string) => void; release: Promise<void> }
+      | undefined;
+  },
+}));
 
 vi.mock("node:fs/promises", async (importOriginal) => {
   const actual = await importOriginal<typeof import("node:fs/promises")>();
@@ -19,6 +27,15 @@ vi.mock("node:fs/promises", async (importOriginal) => {
       realpathCalls(...args);
       return actual.realpath(...args);
     }) as typeof actual.realpath,
+    lstat: (async (...args: Parameters<typeof actual.lstat>) => {
+      const hold = lstatGate.hold;
+      if (hold !== undefined) {
+        lstatGate.hold = undefined;
+        hold.entered(String(args[0]));
+        await hold.release;
+      }
+      return actual.lstat(...args);
+    }) as typeof actual.lstat,
   };
 });
 
@@ -222,4 +239,60 @@ describe("Windows shortcut parent directory links", () => {
       ).toMatchObject({ ok: true });
     },
   );
+
+  it.skipIf(process.platform === "win32")(
+    "admits the parent walk so close waits for it and a later call is refused",
+    async () => {
+      const root = await createTestTempDirectory(
+        "rea-windows-shortcut-parent-close-",
+      );
+      const path = join(root, "shortcut.lnk");
+      await writeFile(path, powershellHiddenIconSpoofShortcut());
+      const provider = new WindowsShortcutProvider("win32");
+      let release!: () => void;
+      const entered = new Promise<string>((resolve) => {
+        lstatGate.hold = {
+          entered: resolve,
+          release: new Promise<void>((done) => {
+            release = done;
+          }),
+        };
+      });
+
+      const inspecting = provider.inspect(providerInput(path));
+      await entered;
+      let closed = false;
+      const closing = provider.close().then(() => {
+        closed = true;
+      });
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      expect(closed).toBe(false);
+      release();
+      await closing;
+      await inspecting;
+
+      const after = await provider.inspect(providerInput(path));
+      if (after.ok) throw new Error("Expected a closed provider to refuse");
+      expect(after.error._tag).not.toBe("AnalysisInputError");
+    },
+  );
+
+  it("checks the caller's signal before walking parents", async () => {
+    const root = await createTestTempDirectory(
+      "rea-windows-shortcut-parent-abort-",
+    );
+    const path = join(root, "shortcut.lnk");
+    await writeFile(path, powershellHiddenIconSpoofShortcut());
+    const entered = vi.fn();
+    lstatGate.hold = { entered, release: Promise.resolve() };
+
+    const result = await new WindowsShortcutProvider("win32").inspect(
+      providerInput(path),
+      { signal: AbortSignal.abort() },
+    );
+    lstatGate.hold = undefined;
+    if (result.ok) throw new Error("Expected cancellation");
+    expect(result.error._tag).toBe("AnalysisCancelledError");
+    expect(entered).not.toHaveBeenCalled();
+  });
 });

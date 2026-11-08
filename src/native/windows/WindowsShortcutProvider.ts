@@ -81,9 +81,11 @@ const WINDOWS_PATH_ROOT = /^(?:[\\/]{2}[?.][\\/])?(?:[A-Za-z]:)?[\\/]*/u;
  * junction, walked from the root down. Each `lstat` reaches only directories
  * already checked, so a link to a UNC path is found before anything follows it.
  * An ancestor that cannot be read ends the walk and leaves the error to the reader.
+ * The caller's signal is checked before each read.
  */
 const linkedWindowsAncestor = async (
   path: string,
+  signal: AbortSignal | undefined,
 ): Promise<string | undefined> => {
   const start = WINDOWS_PATH_ROOT.exec(path)?.[0].length ?? 0;
   for (let index = start; index < path.length; index += 1) {
@@ -92,6 +94,7 @@ const linkedWindowsAncestor = async (
     const previous = path[index - 1];
     if (previous === "\\" || previous === "/") continue;
     const ancestor = path.slice(0, index);
+    assertArtifactReadActive(signal);
     try {
       if ((await LINK_BLIND_FILE_SYSTEM.lstat(ancestor)).isSymbolicLink())
         return ancestor;
@@ -135,23 +138,24 @@ export class WindowsShortcutProvider implements WindowsShortcutPort {
           },
         ]),
       );
-    const linkedAncestor =
-      this.platform === "win32"
-        ? await linkedWindowsAncestor(input.path)
-        : undefined;
-    if (linkedAncestor !== undefined)
-      return err(
-        new AnalysisInputError(OPERATION, {}, [
-          {
-            path: ["path"],
-            reason: "invalid_value",
-            message: `Selected shortcut path passes through a directory link or junction, which this offline operation does not follow: ${linkedAncestor}. Select the shortcut by a path without links.`,
-          },
-        ]),
-      );
     let completed: StableArtifactSnapshot | undefined;
     try {
       return await this.#resources.run(async () => {
+        // Inside the admission, so close() waits for the walk's reads too.
+        const linkedAncestor =
+          this.platform === "win32"
+            ? await linkedWindowsAncestor(input.path, options?.signal)
+            : undefined;
+        if (linkedAncestor !== undefined)
+          return err(
+            new AnalysisInputError(OPERATION, {}, [
+              {
+                path: ["path"],
+                reason: "invalid_value",
+                message: `Selected shortcut path passes through a directory link or junction, which this offline operation does not follow: ${linkedAncestor}. Select the shortcut by a path without links.`,
+              },
+            ]),
+          );
         const snapshot = await readStableArtifact(
           input.path,
           input.max_file_bytes,
