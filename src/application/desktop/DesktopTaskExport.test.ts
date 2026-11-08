@@ -518,9 +518,9 @@ describe("exportDesktopApplication with a task's readers", () => {
       arguments: string[];
     };
     expect(shippedReader.arguments.length).toBeGreaterThan(0);
-    expect(shippedReader.arguments.every((part) => typeof part === "string")).toBe(
-      true,
-    );
+    expect(
+      shippedReader.arguments.every((part) => typeof part === "string"),
+    ).toBe(true);
     expect(JSON.parse(shippedReader.arguments.join(""))).toMatchObject({
       id: "version",
       path: DATABASE,
