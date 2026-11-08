@@ -180,7 +180,7 @@ const applyActions = async (
       ...(failure === undefined ? {} : { detail: failure }),
     });
     if (failure === undefined) progress.appliedActions.push(id);
-    assertSetupActive(progress.signal);
+    assertSetupActive(progress.signal, failure);
     if (failure === undefined) continue;
     progress.failed(kind);
     failures.push(
