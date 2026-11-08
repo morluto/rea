@@ -353,9 +353,3 @@ export const javaScriptThisOwner = (
     ? "global"
     : "isolated";
 };
-
-export const javaScriptTopLevelThisMayBeGlobal = (
-  node: t.ThisExpression,
-  program: t.Program,
-  parents: WeakMap<t.Node, t.Node>,
-): boolean => javaScriptThisOwner(node, program, parents) === "global";

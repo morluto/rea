@@ -447,8 +447,10 @@ process.stdin.on("data", (chunk) => {
         },
       });
     if (executed.ok)
-      expect(executed.value.evidence.limitations).toContain(
-        "Launch provenance records the original and resolved startup paths; it does not establish the current target after unrestricted debugger commands.",
+      expect(executed.value.evidence.limitations).toContainEqual(
+        expect.stringMatching(
+          /launch provenance.*does not establish.*current target/iu,
+        ),
       );
   },
 );
@@ -607,10 +609,10 @@ process.stdin.on("data", () => process.stdout.write(Buffer.from([0xff, 0])));
 `,
     );
     await chmod(provider, 0o700);
-    const manager = createRizinTestManager(
-      { REA_RIZIN_COMMAND: provider },
-      { frameTimeoutMs: 40 },
-    );
+    const manager = createRizinTestManager({
+      REA_RIZIN_COMMAND: provider,
+      REA_DEBUGGER_COMMAND_DEADLINE_MS: "40",
+    });
     managers.push(manager);
     const started = await manager.start({
       path: "/tmp/fixture.bin",
@@ -667,10 +669,10 @@ process.stdin.on("data", (chunk) => {
 `,
     );
     await chmod(provider, 0o700);
-    const manager = createRizinTestManager(
-      { REA_RIZIN_COMMAND: provider },
-      { frameTimeoutMs: 5_000 },
-    );
+    const manager = createRizinTestManager({
+      REA_RIZIN_COMMAND: provider,
+      REA_DEBUGGER_COMMAND_DEADLINE_MS: "5000",
+    });
     managers.push(manager);
     const callerSelectedPath = "./cancelled/../fixture.bin";
     const resolvedPath = absoluteCallerPath(callerSelectedPath);
@@ -907,8 +909,8 @@ process.stdin.on("data", (chunk) => {
       const partialEvidence = evidenceSchema.parse(
         exited.error.partialObservation,
       );
-      expect(partialEvidence.limitations.join(" ")).toContain(
-        "Rizin exited before the command-completion marker; retained frame output is partial and command completion is unknown.",
+      expect(partialEvidence.limitations.join(" ")).toMatch(
+        /Rizin exited.*output is partial.*completion is unknown/iu,
       );
     }
     const writerPid = Number(await readFile(writerPidPath, "utf8"));

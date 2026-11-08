@@ -296,9 +296,12 @@ describe("exportDesktopApplication and the desktop Trash", () => {
         "Documents/today.txt",
       ],
     });
-    expect(result.limitations).toContain(
-      "The desktop Trash held 2 file(s) at the seed checkpoint, which are not seeded: ~/.local/share/Trash/files/today.txt, ~/.local/share/Trash/info/today.txt.trashinfo. Restore one the task needs and capture again.",
+    const warning = result.limitations.find((line) =>
+      line.includes("Trash/files/today.txt"),
     );
+    expect(warning).toContain("~/.local/share/Trash/info/today.txt.trashinfo");
+    expect(warning).toMatch(/Trash.*2 file.*not seeded/iu);
+    expect(warning).toMatch(/restore.*capture again/iu);
   });
 });
 

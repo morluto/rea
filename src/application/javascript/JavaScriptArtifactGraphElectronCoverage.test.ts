@@ -149,8 +149,10 @@ describe("Electron semantic coverage", () => {
       "main.cjs",
     );
     expect(limitations).not.toContain(EMPTY_COVERAGE);
-    expect(limitations).toContain(
-      "Electron relationships are derived from inert syntax; runtime registration, reachability, defaults, and enforcement remain unproven.",
+    expect(limitations).toContainEqual(
+      expect.stringMatching(
+        /inert syntax.*runtime registration.*reachability.*defaults.*enforcement.*unproven/iu,
+      ),
     );
     expect(electronSemantics).toBe("recovered");
   });

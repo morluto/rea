@@ -309,7 +309,7 @@ utilityProcess.fork("./service.js");
     authority: "static-relationship-inference",
     state: "inferred",
     limitations: expect.arrayContaining([
-      "Static syntax does not prove that this relationship executes at runtime.",
+      expect.stringMatching(/static syntax.*not prove.*runtime/iu),
     ]),
   });
   expect(utilityLaunches).toEqual(

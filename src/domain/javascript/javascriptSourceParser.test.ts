@@ -7,7 +7,7 @@ import {
   parserPluginsForPath,
   javaScriptRuntimeContext,
   javaScriptProgramStrictness,
-  javaScriptTopLevelThisMayBeGlobal,
+  javaScriptThisOwner,
 } from "./javascriptSourceParser.js";
 import { traverseJavaScriptAst } from "./javascriptSemanticTraversal.js";
 import { analyzeParsedJavaScriptStaticSource } from "./javascriptStaticAnalysis.js";
@@ -39,7 +39,7 @@ it.each([
     });
     if (selected === undefined) throw new Error("Missing this fixture");
     expect(
-      javaScriptTopLevelThisMayBeGlobal(selected, parsed.program, parents),
+      javaScriptThisOwner(selected, parsed.program, parents) === "global",
     ).toBe(expected);
   },
 );

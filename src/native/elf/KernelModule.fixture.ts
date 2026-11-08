@@ -98,10 +98,11 @@ export interface KernelModuleFixtureOptions {
   readonly signature?: Buffer | null;
   /** Declare a second `.modinfo` section with the same bytes. */
   readonly repeatModinfo?: boolean;
-  /** Extra empty file-backed sections that share one name-table string. */
+  /** Extra file-backed sections that share one name-table string; empty by default. */
   readonly sharedNameSections?: {
     readonly name: string;
     readonly count: number;
+    readonly body?: Buffer;
   };
 }
 
@@ -169,7 +170,11 @@ export const kernelModuleFixture = (
   const shared = options.sharedNameSections;
   if (shared !== undefined)
     for (let index = 0; index < shared.count; index++)
-      bodies.push({ name: shared.name, type: 1, body: Buffer.alloc(0) });
+      bodies.push({
+        name: shared.name,
+        type: 1,
+        body: shared.body ?? Buffer.alloc(0),
+      });
   const labels = [
     ...new Set([...bodies.map((section) => section.name), ".shstrtab"]),
   ];
