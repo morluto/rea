@@ -115,11 +115,14 @@ const registerSetupCommand = (
     }),
     alias: { yes: "y" },
     run: ({ options, formatExplicit }) =>
-      logCliCommand(
-        logger,
-        CLI_COMMANDS.setup,
-        () => runSetupCommand({ options, formatExplicit }, environment),
-        isSetupFailure,
+      withCommandCancellation((signal) =>
+        logCliCommand(
+          logger,
+          CLI_COMMANDS.setup,
+          () =>
+            runSetupCommand({ options, formatExplicit }, environment, signal),
+          isSetupFailure,
+        ),
       ),
   });
 };
@@ -241,6 +244,7 @@ const runSetupCommand = async (
     readonly formatExplicit: boolean;
   },
   environment: Readonly<NodeJS.ProcessEnv>,
+  signal: AbortSignal,
 ) => {
   const { options } = input;
   const interactive = setupIsInteractive(options, input.formatExplicit);
@@ -252,11 +256,11 @@ const runSetupCommand = async (
       import("../doctorRuntime.js"),
     ]);
   const result = await runSetup(
-    setupRunOptions(input, interactive, hasExplicitScope),
-    systemSetupHost(createSystemDoctorHost(environment), environment),
+    { ...setupRunOptions(input, interactive, hasExplicitScope), signal },
+    systemSetupHost(createSystemDoctorHost(environment, signal), environment),
     interactive
       ? (actions, context) =>
-          confirmInteractiveSetup(actions, options.accessible, context)
+          confirmInteractiveSetup(actions, options.accessible, context, signal)
       : undefined,
   );
   if (interactive) renderInteractiveSetupResult(result, environment);

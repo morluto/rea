@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 
 import type { DoctorHost } from "../application/Doctor.js";
 import type { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
+import { assertSetupActive } from "../application/SetupCancellation.js";
 import type {
   DesktopBuildSetupFacts,
   DesktopBuildSetupHost,
@@ -90,11 +91,12 @@ export const systemDesktopBuildSetupHost = (
         },
         clientIds,
       ),
-    async packRuntime(archive) {
+    async packRuntime(archive, signal) {
       const partial = join(dirname(archive), `.rea-${randomUUID()}.tar.xz`);
       let commandFinished = false;
       return resources.run(async () => {
         try {
+          assertSetupActive(signal);
           await mkdir(dirname(archive), { recursive: true });
           const workspace = await mkdtemp(join(tmpdir(), "rea-desktop-pack-"));
           await runDesktopBuildOwnedCommand({
@@ -105,6 +107,7 @@ export const systemDesktopBuildSetupHost = (
             resources,
             partialPath: partial,
             workspace,
+            ...(signal === undefined ? {} : { signal }),
             environment: {
               ...environment,
               TMPDIR: workspace,
@@ -129,6 +132,7 @@ export const systemDesktopBuildSetupHost = (
             });
             throw cause;
           }
+          assertSetupActive(signal);
           await rename(partial, archive);
           return undefined;
         } catch (cause: unknown) {
@@ -141,16 +145,19 @@ export const systemDesktopBuildSetupHost = (
                 resource: partial,
                 lease: { release: () => rm(partial, { force: true }) },
               });
+              assertSetupActive(signal);
               return `${desktopBuildOwnedCommandReason(cause)}; partial archive cleanup failed: ${failureReason(cleanup)}`;
             }
           }
+          assertSetupActive(signal);
           return desktopBuildOwnedCommandReason(cause);
         }
       });
     },
-    async installAgentenv(uv) {
+    async installAgentenv(uv, signal) {
       return resources.run(async () => {
         try {
+          assertSetupActive(signal);
           await runDesktopBuildOwnedCommand({
             command: uv,
             arguments: [
@@ -162,9 +169,11 @@ export const systemDesktopBuildSetupHost = (
             maxOutputBytes: INSTALL.maxBuffer,
             resources,
             environment,
+            ...(signal === undefined ? {} : { signal }),
           });
           return undefined;
         } catch (cause: unknown) {
+          assertSetupActive(signal);
           return desktopBuildOwnedCommandReason(cause);
         }
       });
