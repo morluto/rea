@@ -33,6 +33,7 @@ import {
 } from "../domain/analysisErrorBase.js";
 import { setupCleanupError, setupCleanupReason } from "./SetupCleanupOwner.js";
 import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
+import { assertSetupActive } from "./SetupCancellation.js";
 import type { SetupSkillInstallError } from "./SetupSkill.js";
 import { planDesktopBuild } from "./SetupDesktopBuild.js";
 import { DESKTOP_BUILD_PROVIDER_ID } from "./DoctorProviderIds.js";
@@ -103,6 +104,7 @@ const runSetupWorkflow = async (
   host: SetupHost,
   confirm?: SetupConfirmation,
 ): Promise<SetupResult> => {
+  assertSetupActive(options.signal);
   const appliedActions: string[] = [];
   let plannedActions: readonly SetupAction[] = [];
   const clients: Record<string, ClientConfigurationResult> = {};
@@ -191,6 +193,7 @@ const runSetupWorkflow = async (
       selectedClientIds: discovery.defaultClientIds,
       clientSelectionAllowed,
     });
+    assertSetupActive(options.signal);
     if (isSetupDecisionCancelled(decision))
       return setupCancelled(
         selectionActions.plannedActions,
@@ -302,6 +305,7 @@ const runSetupWorkflow = async (
       selectedClientIds,
       clientSelectionAllowed: false,
     });
+    assertSetupActive(options.signal);
     if (decision !== undefined) {
       if (isSetupDecisionCancelled(decision))
         return setupCancelled(
@@ -337,10 +341,13 @@ const runSetupWorkflow = async (
     );
     if (!admission.ok) return failSkill(admission.error);
   }
+  assertSetupActive(options.signal);
   const desktopFailure = await desktop.apply(
     appliedActions,
     options.onProgress,
+    options.signal,
   );
+  assertSetupActive(options.signal);
   let selectedClients: readonly SetupClient[] =
     planSelection.clientsToConfigure;
   let hopperWarning: string | undefined;
@@ -368,6 +375,7 @@ const runSetupWorkflow = async (
         warning: hopperWarning,
       } = install);
   }
+  assertSetupActive(options.signal);
   const clientFailure = await configureDetectedClients({
     host,
     detectedClients: selectedClients,
@@ -376,10 +384,12 @@ const runSetupWorkflow = async (
     command: host.registrationCommand,
     clients,
     appliedActions,
+    signal: options.signal,
     ...(options.onProgress === undefined
       ? {}
       : { onProgress: options.onProgress }),
   });
+  assertSetupActive(options.signal);
   // A later failure must not hide a failed Hopper install: keep its repair
   // steps, and its code when the later failure carries none.
   const withHopperFailure = (result: SetupResult): SetupResult =>
@@ -510,6 +520,7 @@ const installSkillAction = async (
     state: "started",
   });
   const skill = await host.installSkill(skillClientIds);
+  assertSetupActive(options.signal);
   if (!skill.ok) {
     emitProgress(options, {
       actionId: "install_skill",

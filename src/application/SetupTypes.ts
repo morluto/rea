@@ -238,6 +238,8 @@ export interface SetupAction {
 
 /** Explicit authorization supplied by an interactive or unattended CLI adapter. */
 export interface SetupOptions {
+  /** Caller cancellation, carried through approved effects and cleanup. */
+  readonly signal?: AbortSignal;
   readonly approved: boolean;
   readonly installHopper: boolean;
   readonly structured: boolean;
