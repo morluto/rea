@@ -5,7 +5,7 @@ import { expect } from "vitest";
 import { analysisViewResultSchema } from "../../../src/domain/analysisView/analysisView.js";
 import { parseEvidence } from "../../../src/domain/evidence.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
-import { cliTest } from "../../support/cli/cliFixture.js";
+import { cliTest, runFileCli } from "../../support/cli/cliFixture.js";
 
 cliTest(
   "pages only module units for a CommonJS file that exports symbols",
@@ -22,7 +22,7 @@ cliTest(
         "exports.beta = function beta() { return 2; };",
       ].join("\n"),
     );
-    const analyzed = await cli.run({
+    const analyzed = await runFileCli(cli, {
       arguments: ["analyze-javascript-application", root, "--format", "json"],
     });
     expect(analyzed.exitCode, analyzed.stdout + analyzed.stderr).toBe(0);
@@ -54,7 +54,7 @@ cliTest(
           view,
         }),
       );
-      const result = await cli.run({
+      const result = await runFileCli(cli, {
         arguments: ["inspect-analysis-view", queryPath, "--json"],
       });
       expect(result.exitCode, result.stdout + result.stderr).toBe(0);
