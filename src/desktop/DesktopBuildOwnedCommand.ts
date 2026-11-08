@@ -31,12 +31,18 @@ export const runDesktopBuildOwnedCommand = async (input: {
   const paths = [input.partialPath, input.workspace].filter(
     (path): path is string => path !== undefined,
   );
+  const remainingPaths = new Set(paths);
   const removeOwnedPaths = async () => {
+    const attempted = [...remainingPaths];
     const outcomes = await Promise.allSettled(
-      paths.map((path) =>
+      attempted.map((path) =>
         rm(path, { recursive: path === input.workspace, force: true }),
       ),
     );
+    outcomes.forEach((outcome, index) => {
+      if (outcome.status === "fulfilled")
+        remainingPaths.delete(attempted[index]!);
+    });
     const failures = outcomes.flatMap((outcome) =>
       outcome.status === "rejected" ? [outcome.reason] : [],
     );
@@ -62,20 +68,32 @@ export const runDesktopBuildOwnedCommand = async (input: {
         retainCleanup: (owner, result) => {
           retained = true;
           cleanupReason = result.reason;
+          const process = `setup process ${owner.launch.ownership?.runId ?? "unknown"}`;
+          let processPending = true;
           input.resources.retain({
             kind: "lease",
             resource:
               input.partialPath ??
               `setup process ${owner.launch.ownership?.runId ?? "unknown"}`,
-            lease: new AnalysisCleanupLease(async () => {
-              const stopped = await owner.stop();
-              if (stopped.status === "incomplete")
-                throw new Error(stopped.reason);
-              await removeOwnedPaths();
-            }, [
-              ...paths,
-              `setup process ${owner.launch.ownership?.runId ?? "unknown"}`,
-            ]),
+            lease: new AnalysisCleanupLease(
+              async () => {
+                if (processPending) {
+                  const stopped = await owner.stop();
+                  if (stopped.status === "incomplete")
+                    throw new Error(stopped.reason);
+                  processPending = false;
+                }
+                await removeOwnedPaths();
+              },
+              {
+                get cleanupResources() {
+                  return [
+                    ...remainingPaths,
+                    ...(processPending ? [process] : []),
+                  ];
+                },
+              },
+            ),
           });
         },
       },
@@ -105,7 +123,11 @@ export const runDesktopBuildOwnedCommand = async (input: {
         input.resources.retain({
           kind: "lease",
           resource: paths[0]!,
-          lease: new AnalysisCleanupLease(removeOwnedPaths, paths),
+          lease: new AnalysisCleanupLease(removeOwnedPaths, {
+            get cleanupResources() {
+              return [...remainingPaths];
+            },
+          }),
         });
         failure = new AggregateError(
           [cause, cleanup],

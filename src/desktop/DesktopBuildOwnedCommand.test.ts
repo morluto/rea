@@ -1,4 +1,4 @@
-import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
+import { chmod, mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect, it, vi } from "vitest";
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
@@ -8,6 +8,66 @@ import { runDesktopBuildOwnedCommand } from "./DesktopBuildOwnedCommand.js";
 import { systemDesktopBuildSetupHost } from "./DesktopBuildSetupHost.js";
 import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
 import { awaitAcknowledgement } from "../../tests/fixtures/lifecycleAcknowledgement.js";
+
+it
+  .skipIf(process.platform === "win32" || process.getuid?.() === 0)
+  .each([true, false])(
+  "reports only remaining setup resources after partial cleanup (process retained: %s)",
+  async (processRetained) => {
+    const root = await createTestTempDirectory("rea-pack-live-cleanup-");
+    const partial = join(root, "partial.tar.xz");
+    const parent = join(root, "protected");
+    const workspace = join(parent, "work");
+    await mkdir(workspace, { recursive: true });
+    await writeFile(partial, "partial");
+    await chmod(parent, 0o500);
+    const resources = new ArtifactResourceScope();
+    const stop = vi.fn().mockResolvedValue({ status: "terminated" });
+    const command = vi
+      .spyOn(owned, "runOwnedCommand")
+      .mockImplementation(async (_spawn, _limits, options) => {
+        if (processRetained)
+          options?.retainCleanup?.(
+            { stop, launch: { ownership: { runId: "pack" } } } as never,
+            { status: "incomplete", reason: "still running" },
+          );
+        throw new owned.OwnedCommandFailure("timeout", "command timed out");
+      });
+    try {
+      await expect(
+        runDesktopBuildOwnedCommand({
+          command: "fixture",
+          arguments: [],
+          environment: {},
+          timeoutMs: 1,
+          maxOutputBytes: 1024,
+          resources,
+          partialPath: partial,
+          workspace,
+        }),
+      ).rejects.toThrow();
+      if (processRetained) {
+        expect(resources.cleanupResources).toEqual([
+          partial,
+          workspace,
+          "setup process pack",
+        ]);
+        await expect(resources.retryCleanup()).rejects.toThrow();
+      }
+      expect(resources.cleanupResources).toEqual([workspace]);
+      await expect(stat(partial)).rejects.toMatchObject({ code: "ENOENT" });
+      await chmod(parent, 0o700);
+      await resources.retryCleanup();
+      expect(resources.cleanupResources).toEqual([]);
+      expect(stop).toHaveBeenCalledTimes(processRetained ? 1 : 0);
+      await expect(stat(workspace)).rejects.toMatchObject({ code: "ENOENT" });
+    } finally {
+      await chmod(parent, 0o700);
+      await resources.close();
+      command.mockRestore();
+    }
+  },
+);
 
 it("retains a failed cleanup and its partial archive until the same owner succeeds", async () => {
   const root = await createTestTempDirectory("rea-pack-cleanup-retry-");

@@ -1,5 +1,5 @@
 import { constants } from "node:fs";
-import { access, readFile, stat, statfs } from "node:fs/promises";
+import { access, stat, statfs } from "node:fs/promises";
 import { dirname, isAbsolute, join } from "node:path";
 
 import { parse as parseToml } from "smol-toml";
@@ -11,6 +11,10 @@ import type {
 } from "../application/DesktopBuildDoctor.js";
 import { homeDirectoryFromEnvironment } from "../config/homeDirectory.js";
 import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
+import {
+  readRegularFileText,
+  RetainedRegularFileCleanupFailure,
+} from "../application/RegularFileRead.js";
 import { DESKTOP_EXPORT_FRAMEWORK_VERSION } from "../domain/desktop/appExport.js";
 import { PRODUCT_IDENTITY } from "../identity.js";
 import { execFileOutputFailure } from "../process/ExecFileOutput.js";
@@ -92,7 +96,7 @@ export const readDesktopBuildFacts = async (
     environmentSettings: BUILD_COMPUTER_SETTINGS.filter(
       (name) => (environment[name] ?? "") !== "",
     ),
-    solveEndpoint: await solveEndpoint(environment, input.platform),
+    solveEndpoint: await solveEndpoint(input),
     leftoverContainers:
       docker.status === "found" && daemon.status === "reachable"
         ? await leftoverContainers(input, docker.path)
@@ -358,9 +362,9 @@ const registrationFacts = async (
 };
 
 const solveEndpoint = async (
-  environment: Readonly<NodeJS.ProcessEnv>,
-  platform: NodeJS.Platform,
+  input: DesktopBuildFactsInput,
 ): Promise<string | undefined> => {
+  const { environment, platform } = input;
   if (
     (environment.LITELLM_BASE_URL ?? "") !== "" &&
     (environment.LITELLM_API_KEY ?? "") !== ""
@@ -372,17 +376,47 @@ const solveEndpoint = async (
     join(process.cwd(), ".agentenv/config.toml"),
     join(home, ".agentenv/config.toml"),
   ])
-    if (path !== undefined && path !== "" && (await hasModelTable(path)))
+    if (path !== undefined && path !== "" && (await hasModelTable(path, input)))
       return path;
   return undefined;
 };
 
-const hasModelTable = async (path: string): Promise<boolean> => {
+const hasModelTable = async (
+  path: string,
+  input: DesktopBuildFactsInput,
+): Promise<boolean> => {
   try {
-    if ((await stat(path)).size > CONFIG_BYTES) return false;
-    const model: unknown = parseToml(await readFile(path, "utf8")).model;
+    if (input.signal.aborted)
+      throw new AnalysisCancelledError("doctor", {
+        cause: input.signal.reason,
+      });
+    const candidate = await stat(path);
+    if (input.signal.aborted)
+      throw new AnalysisCancelledError("doctor", {
+        cause: input.signal.reason,
+      });
+    if (!candidate.isFile() || candidate.size > CONFIG_BYTES) return false;
+    const text = await readRegularFileText(path, {
+      signal: input.signal,
+      admit: (state) => {
+        if (state.size > CONFIG_BYTES)
+          throw new Error("Configuration exceeds the read limit");
+      },
+      cancellationFailure: (reason) =>
+        new AnalysisCancelledError("doctor", { cause: reason }),
+    });
+    const model: unknown = parseToml(text).model;
     return typeof model === "object" && model !== null;
-  } catch {
+  } catch (cause: unknown) {
+    if (cause instanceof RetainedRegularFileCleanupFailure) {
+      input.resources.retain(cause.cleanupOwner);
+      throw cause;
+    }
+    if (cause instanceof AnalysisCancelledError) throw cause;
+    if (input.signal.aborted)
+      throw new AnalysisCancelledError("doctor", {
+        cause: input.signal.reason,
+      });
     return false;
   }
 };
