@@ -146,7 +146,7 @@ const binaryPlistContainerRecord = (
   return record;
 };
 
-/** Exact added offset-table representation size, shared with preflight. */
+/** Select a width that can address the appended clone records and table. */
 export const binaryPlistCloneOffsetWidth = (
   currentWidth: number,
   firstCloneOffset: number,
@@ -268,13 +268,19 @@ export const scanBinaryPlistScalars = (
   const capacity = Math.floor((trailer - offsetTable) / offsetWidth);
   if (countRaw > BigInt(capacity)) return result(true);
   const count = Number(countRaw);
+  const tableEnd = offsetTable + count * offsetWidth;
   if (referenceWidth < 1) return result(true);
   const objectOffsets: number[] = [];
   let incomplete = false;
   for (let index = 0; index < count; index += 1) {
     const rawOffset = sourceLayout.objectOffset(index);
     const offset = rawOffset > safeMaximum ? undefined : Number(rawOffset);
-    if (offset === undefined || offset < 8 || offset >= offsetTable) {
+    if (
+      offset === undefined ||
+      offset < 8 ||
+      (offset >= offsetTable && offset < tableEnd) ||
+      offset >= trailer
+    ) {
       incomplete = true;
       continue;
     }
@@ -324,6 +330,7 @@ export const scanBinaryPlistScalars = (
     const marker = bytes[offset] ?? 0;
     const type = marker >> 4;
     if (type === 3 && marker === 0x33) {
+      if (offset + 9 > offsetTable) incomplete = true;
       continue;
     }
     if (type !== 1 && type !== 2) continue;
@@ -461,31 +468,31 @@ const cloneBinaryPlistObjects = (
   const trailerOffset = sourceLayout.trailerOffset;
   const offsetSize = sourceLayout.offsetWidth;
   const objectCount = Number(sourceLayout.objectCount);
-  const oldTableOffset = Number(sourceLayout.offsetTable);
   const offsets = [...sourceLayout.objectOffsets()];
   const cloneEntries = [...replacements.entries()];
   const replacementLengths = cloneEntries.map(([, record]) => record.length);
   const newOffsetSize =
     normalizedOffsetSize ??
-    binaryPlistCloneOffsetWidth(offsetSize, oldTableOffset, replacementLengths);
+    binaryPlistCloneOffsetWidth(offsetSize, trailerOffset, replacementLengths);
   if (newOffsetSize === undefined)
     throw new RangeError(
       "binary plist cloned scalar offset exceeds supported width",
     );
-  const cloneStart = oldTableOffset;
+  // Preserve every source offset, including objects after the old table. The
+  // decoder copy keeps the old table as inert bytes and appends a new one.
+  const cloneStart = trailerOffset;
   const cloneBytes = replacementLengths.reduce(
     (sum, length) => sum + length,
     0,
   );
   const newTableOffset = cloneStart + cloneBytes;
-  const newLength =
-    bytes.length + cloneBytes + objectCount * (newOffsetSize - offsetSize);
+  const newLength = bytes.length + cloneBytes + objectCount * newOffsetSize;
   if (!Number.isSafeInteger(newLength))
     throw new RangeError(
       "binary plist cloned scalar representation is too large",
     );
   const compatible = Buffer.alloc(newLength);
-  bytes.copy(compatible, 0, 0, oldTableOffset);
+  bytes.copy(compatible, 0, 0, trailerOffset);
   const cloneOffsetBySource = new Map<number, bigint>();
   let cloneCursor = cloneStart;
   cloneEntries.forEach(([sourceOffset, replacement]) => {
@@ -496,8 +503,6 @@ const cloneBinaryPlistObjects = (
   });
   const tableStart = newTableOffset;
   const tableEnd = tableStart + objectCount * newOffsetSize;
-  const oldTableEnd = oldTableOffset + objectCount * offsetSize;
-  const padding = bytes.subarray(oldTableEnd, trailerOffset);
   offsets.forEach((sourceOffset, index) => {
     const sourceNumber =
       sourceOffset <= BigInt(Number.MAX_SAFE_INTEGER)
@@ -519,7 +524,6 @@ const cloneBinaryPlistObjects = (
   if (normalizedReferenceSize !== undefined)
     trailer[7] = normalizedReferenceSize;
   trailer.writeBigUInt64BE(BigInt(newTableOffset), 24);
-  padding.copy(compatible, tableEnd);
-  trailer.copy(compatible, tableEnd + padding.length);
+  trailer.copy(compatible, tableEnd);
   return compatible;
 };

@@ -38,6 +38,25 @@ export class Il2cppMetadataFormatFailure extends Error {
   }
 }
 
+/** Validate a section against a known serialized record width once. */
+export const checkedSectionCount = (
+  section: Il2cppMetadataSection,
+  recordBytes: number,
+): number => {
+  if (section.size % recordBytes !== 0)
+    throw new Il2cppMetadataFormatFailure(
+      "record-size-mismatch",
+      `section ${section.name} size ${section.size} is not a whole multiple of its ${recordBytes}-byte records`,
+    );
+  const count = section.size / recordBytes;
+  if (section.count !== null && count !== section.count)
+    throw new Il2cppMetadataFormatFailure(
+      "record-size-mismatch",
+      `section ${section.name} size ${section.size} does not hold ${section.count} ${recordBytes}-byte records`,
+    );
+  return count;
+};
+
 export const checkRange = (
   label: string,
   start: number,
@@ -64,3 +83,4 @@ export const readIndex = (bytes: Buffer, offset: number, width: 1 | 2 | 4) => {
   }
   return bytes.readInt32LE(offset);
 };
+import type { Il2cppMetadataSection } from "../domain/il2cpp/il2cppMetadata.js";

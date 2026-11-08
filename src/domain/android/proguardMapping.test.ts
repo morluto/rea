@@ -7,7 +7,6 @@ import {
   parseProguardMapping,
   PROGUARD_MAPPING_LIMITS,
   type ProguardMapping,
-  residualDexType,
   resolveProguardClass,
   resolveProguardField,
   resolveProguardMethod,
@@ -306,7 +305,7 @@ it("disambiguates overloads collapsed to one name and caps reported candidates",
   });
 });
 
-it("translates original types to residual DEX types", () => {
+it("matches original field types against observed residual DEX types", () => {
   const renamed = parse(
     [
       "com.example.Outer$Inner -> a.b$c:",
@@ -314,15 +313,38 @@ it("translates original types to residual DEX types", () => {
       "com.example.Twice -> a.u:",
       "com.example.Duplicate -> a.d:",
       "com.example.Duplicate -> a.d:",
+      "Owner -> owner:",
+      "    int[][] primitiveArray -> a",
+      "    com.example.Outer$Inner[] nestedArray -> b",
+      "    java.util.List external -> c",
+      "    com.example.Twice conflicting -> d",
+      "    com.example.Duplicate duplicate -> e",
     ].join("\n"),
   );
-  expect(residualDexType(renamed, "int[][]")).toBe("[[I");
-  expect(residualDexType(renamed, "com.example.Outer$Inner[]")).toBe(
-    "[La/b$c;",
-  );
-  expect(residualDexType(renamed, "java.util.List")).toBe("Ljava/util/List;");
-  expect(residualDexType(renamed, "com.example.Twice")).toBeUndefined();
-  expect(residualDexType(renamed, "com.example.Duplicate")).toBe("La/d;");
+  for (const [name, type, originalName] of [
+    ["a", "[[I", "primitiveArray"],
+    ["b", "[La/b$c;", "nestedArray"],
+    ["c", "Ljava/util/List;", "external"],
+    ["e", "La/d;", "duplicate"],
+  ] as const) {
+    expect(
+      resolveProguardField(renamed, { className: "owner", name, type }),
+    ).toMatchObject({
+      status: "mapped",
+      mapped: { class: "Owner", name: originalName },
+      verified_by: "type",
+    });
+  }
+  for (const type of ["La/t;", "La/u;"]) {
+    expect(
+      resolveProguardField(renamed, { className: "owner", name: "d", type }),
+    ).toMatchObject({
+      status: "ambiguous",
+      reason: "type-mismatch",
+      candidate_count: 1,
+      candidates: [{ class: "Owner", name: "conflicting" }],
+    });
+  }
 });
 
 it.each([
@@ -440,9 +462,19 @@ it("keeps a conflicting alias unknown even after many later agreeing records", (
       "T -> x:",
       "T -> y:",
       ...Array.from({ length: 100 }, () => "T -> x:"),
+      "Owner -> owner:",
+      "    T field -> a",
     ].join("\n"),
   );
-  expect(residualDexType(conflict, "T")).toBeUndefined();
+  for (const type of ["Lx;", "Ly;"]) {
+    expect(
+      resolveProguardField(conflict, { className: "owner", name: "a", type }),
+    ).toMatchObject({
+      status: "ambiguous",
+      reason: "type-mismatch",
+      candidate_count: 1,
+    });
+  }
 });
 
 it("indexes many distinct residual signatures without merging away late candidates", () => {

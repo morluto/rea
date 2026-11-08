@@ -1,13 +1,15 @@
 import { describe, expect, it } from "vitest";
 
 import { projectManagedApplicationGraphEvidence } from "../../../src/application/managed/ManagedApplicationGraphService.js";
-import { managedApplicationGraphReferenceInputSchema } from "../../../src/contracts/managed/managedWorkflowToolContracts.js";
+import {
+  managedApplicationGraphReferenceInputSchema,
+  managedApplicationGraphResultSchema,
+} from "../../../src/domain/managed/managedApplicationGraph.js";
 import { MANAGED_APPLICATION_GRAPH_EXAMPLE } from "../../../src/contracts/managed/managedWorkflowExamples.js";
 import { traceApplicationFeatureEvidence } from "../../../src/application/javascript/JavaScriptApplicationWorkflowService.js";
 import { MANAGED_STATIC_PROVIDER } from "../../../src/domain/investigationProviders.js";
 import { createEvidence, parseEvidence } from "../../../src/domain/evidence.js";
 import { parseJavaScriptApplicationGraph } from "../../../src/domain/javascript/javascriptApplicationGraph.js";
-import { managedApplicationGraphResultSchema } from "../../../src/domain/managed/managedApplicationGraph.js";
 import {
   managedMemberInspectionSchema,
   managedNativeBoundaryInspectionSchema,
@@ -218,9 +220,11 @@ describe("managed application graph projection", () => {
     expect(observedEvidenceIds("managed-pinvoke-import")).toEqual([
       boundaryEvidence.evidence_id,
     ]);
-    for (const edge of graph.edges.filter(
+    const containmentEdges = graph.edges.filter(
       ({ relation }) => relation === "contains",
-    ))
+    );
+    expect(containmentEdges.length).toBeGreaterThan(0);
+    for (const edge of containmentEdges)
       expect(edge.evidence.evidence_ids).toEqual(allEvidenceIds);
     const method = graph.nodes.find(
       ({ kind, observations }) =>
@@ -307,7 +311,6 @@ describe("managed application graph coverage", () => {
     const rejected = projectManagedApplicationGraphEvidence({
       managed_members: mismatched,
     });
-    expect(rejected.ok).toBe(false);
     if (rejected.ok) throw new Error("mismatched managed Evidence accepted");
     expect(JSON.stringify(rejected.error)).toContain(
       `Managed Evidence inspect_managed_members (${mismatched.evidence_id}) subject SHA-256 ${binary.sha256} does not match normalized artifact SHA-256 ${"b".repeat(64)}`,
@@ -526,7 +529,6 @@ describe("managed application graph module identity consistency", () => {
       managed_members: memberEvidence,
       managed_native_boundaries: conflictingBoundaries,
     });
-    expect(projected.ok).toBe(false);
     if (projected.ok) throw new Error("conflicting MVIDs were accepted");
     expect(JSON.stringify(projected.error)).toContain(
       "conflicting known module MVIDs or token scopes",

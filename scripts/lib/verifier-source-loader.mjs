@@ -1,5 +1,5 @@
 import { statSync } from "node:fs";
-import { registerHooks, stripTypeScriptTypes } from "node:module";
+import * as nodeModule from "node:module";
 import { extname, isAbsolute, relative, sep } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
@@ -95,7 +95,7 @@ const loadSource = (url, context, nextLoad) => {
   return {
     ...loaded,
     format,
-    source: stripTypeScriptTypes(source, {
+    source: nodeModule.stripTypeScriptTypes(source, {
       mode: "transform",
       sourceMap: true,
       sourceUrl: url,
@@ -109,6 +109,16 @@ const loadSource = (url, context, nextLoad) => {
  * graph across owners. No transformed output is cached across Node versions.
  */
 export const importVerifierSource = async (url, parent) => {
-  hooks ??= registerHooks({ resolve: resolveSource, load: loadSource });
+  if (
+    typeof nodeModule.registerHooks !== "function" ||
+    typeof nodeModule.stripTypeScriptTypes !== "function"
+  )
+    throw new Error(
+      "This REA source loader requires the Node.js version pinned in .nvmrc; run nvm use and invoke source build and verifier scripts with node and npm. Installed REA packages have separate runtime support.",
+    );
+  hooks ??= nodeModule.registerHooks({
+    resolve: resolveSource,
+    load: loadSource,
+  });
   return import(new URL(url, parent).href);
 };

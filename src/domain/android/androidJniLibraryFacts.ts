@@ -72,9 +72,6 @@ export type AndroidJniLibraryFacts = z.infer<
 >;
 export type AndroidJniTableEntry = z.infer<typeof androidJniTableEntrySchema>;
 export type AndroidJniTableSlot = z.infer<typeof androidJniTableSlotSchema>;
-export type AndroidJniRelocationSource = z.infer<
-  typeof androidJniRelocationSourceSchema
->;
 export type AndroidJniLibraryFailure = {
   readonly kind: "malformed" | "unsupported" | "capacity" | "cancelled";
   readonly message: string;

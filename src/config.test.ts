@@ -11,6 +11,41 @@ import {
 } from "./config/environment.js";
 import { projectAnalysisError } from "./domain/analysisErrorProjection.js";
 
+it("keeps the caller's opt-in Ghidra checkpoint directory and leaves it disabled by default", () => {
+  const selected = parseConfig({
+    REA_GHIDRA_CHECKPOINT_DIR: "/tmp/checkpoints with spaces",
+  });
+  expect(selected.ok && selected.value.ghidraCheckpointDirectory).toBe(
+    "/tmp/checkpoints with spaces",
+  );
+  const defaults = parseConfig({});
+  expect(
+    defaults.ok && defaults.value.ghidraCheckpointDirectory,
+  ).toBeUndefined();
+  expect(parseConfig({ REA_GHIDRA_CHECKPOINT_DIR: "relative" }).ok).toBe(false);
+});
+
+it.each([
+  ["REA_GHIDRA_PROJECT_PATH", "/tmp/selected.gpr"],
+  ["REA_GHIDRA_SEED_FILE", "/tmp/seeds.json"],
+  ["REA_GHIDRA_LANGUAGE_ID", "x86:LE:64:default"],
+  ["REA_GHIDRA_NATIVEAOT_JAR", "/tmp/extension.jar"],
+  ["REA_GHIDRA_DISABLED_ANALYZERS", "Stack"],
+])(
+  "refuses %s with checkpoints rather than silently dropping the selected input",
+  (setting, value) => {
+    const result = parseConfig({
+      REA_GHIDRA_CHECKPOINT_DIR: "/tmp/checkpoints",
+      [setting]: value,
+    });
+    if (result.ok) throw new Error("conflicting inputs accepted");
+    expect(result.error.message).toContain("checkpoints");
+    expect(result.error).toMatchObject({
+      settings: [expect.objectContaining({ setting })],
+    });
+  },
+);
+
 it("reports a configuration failure for a NUL in Hopper loader arguments", () => {
   const result = parseConfig({
     HOPPER_LOADER_ARGS_JSON: JSON.stringify(["--option", "value\0suffix"]),
@@ -34,7 +69,6 @@ it.each([
       parseEnvironmentValues(environment),
       parseConfig(environment),
     ]) {
-      expect(result.ok).toBe(false);
       if (result.ok) throw new Error("Expected invalid environment");
       expect(result.error.settings).toHaveLength(1);
       expect(result.error.settings[0]?.constraint).toContain("NUL");
@@ -56,6 +90,24 @@ it("accepts ordinary custom environment strings and omitted values", () => {
 });
 
 describe("runtime configuration", () => {
+  it("preserves a selected MCP input allowance for deferred startup and refuses disabling values", () => {
+    expect(parseConfig({ REA_MCP_MAX_INPUT_ELEMENTS: "8192" })).toMatchObject({
+      ok: true,
+      value: { mcpMaxInputElements: 8192 },
+    });
+    const invalid = parseConfig({ REA_MCP_MAX_INPUT_ELEMENTS: "Infinity" });
+    expect(invalid.ok).toBe(false);
+    if (invalid.ok)
+      throw new Error(
+        "Infinite MCP input allowance must not be accepted from the environment",
+      );
+    expect(invalid.error.settings).toEqual([
+      {
+        setting: "REA_MCP_MAX_INPUT_ELEMENTS",
+        constraint: expect.stringContaining("positive decimal safe integer"),
+      },
+    ]);
+  });
   it("allows target-free startup and applies runtime defaults", () => {
     const empty = parseConfig({});
     expect(empty.ok).toBe(true);
@@ -341,6 +393,12 @@ describe("configuration failure diagnostics", () => {
   it.each(["1", "90000", "2147483647"])(
     "accepts Swift compile deadline %s without changing Hopper's deadline",
     (value) => {
+      expect(
+        parseEnvironmentValues({ REA_SWIFTC_COMPILE_TIMEOUT_MS: value }),
+      ).toMatchObject({
+        ok: true,
+        value: { REA_SWIFTC_COMPILE_TIMEOUT_MS: Number(value) },
+      });
       expect(
         parseConfig({ REA_SWIFTC_COMPILE_TIMEOUT_MS: value }),
       ).toMatchObject({

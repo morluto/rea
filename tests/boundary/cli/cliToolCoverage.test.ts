@@ -8,6 +8,7 @@ import { CLI_COMMAND_NAMES } from "../../../src/cliCommandNames.js";
 /** Canonical MCP operations reached by CLI commands with different names. */
 const CLI_COMMAND_TOOL_ALIASES = Object.freeze({
   "environment-build": ["export_environment_bundle"],
+  guidance: ["search_guidance", "read_guidance_section"],
   analyze: ["binary_overview"],
   inspect: ["binary_overview"],
   decompile: ["procedure_pseudo_code"],
@@ -49,7 +50,6 @@ const MCP_TOOLS_WITHOUT_DEDICATED_CLI = Object.freeze([
   "procedure_callees",
   "procedure_callers",
   "procedure_info",
-  "procedure_references",
   "resolve_containing_procedure",
   "set_address_name",
   "set_addresses_names",
@@ -66,10 +66,11 @@ const MCP_TOOLS_WITHOUT_DEDICATED_CLI = Object.freeze([
   "trace_call_path",
   "open_binary",
   "close_binary",
+  // Investigation reset acts on the long-lived MCP server's retained history.
+  "reset_investigation",
   "binary_session",
   "export_evidence_bundle",
   "import_evidence_bundle",
-  "compare_artifacts",
   "compare_functions",
   "find_changed_behavior",
   "build_call_path",
@@ -94,6 +95,15 @@ const MCP_TOOLS_WITHOUT_DEDICATED_CLI = Object.freeze([
   "unload_frida_script",
   "frida_session_status",
   "close_frida_session",
+  // Build computers are held by the long-lived MCP server between actions.
+  "start_build_computer",
+  "act_on_build_computer",
+  "close_build_computer",
+  "start_build_capture",
+  "mark_build_checkpoint",
+  "stop_build_capture",
+  "export_build_environment",
+  "check_build_task",
 ]);
 
 describe("CLI canonical tool coverage", () => {

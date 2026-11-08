@@ -29,7 +29,7 @@ it.skipIf(process.platform === "win32")(
     );
     await writeFile(
       runner,
-      "#!/usr/bin/env node\nprocess.stdout.write('agent-env 0.9.1334\\n');\n",
+      "#!/usr/bin/env node\nprocess.stdout.write('agent-env 0.9.1431\\n');\n",
       { mode: 0o755 },
     );
     await writeFile(docker, "#!/usr/bin/env node\nprocess.exit(0);\n", {
@@ -70,8 +70,8 @@ it.skipIf(process.platform === "win32")(
 // The local framework and these executable shebang fixtures target POSIX hosts.
 it.skipIf(process.platform === "win32").each([
   ["agent-env 0.9.9999", false],
-  ["other-runner 0.9.1334", false],
-  ["agent-env 0.9.1334", true],
+  ["other-runner 0.9.1431", false],
+  ["agent-env 0.9.1431", true],
 ] as const)(
   "admits the observed executable identity %s before Docker: %s",
   async (version, accepted) => {

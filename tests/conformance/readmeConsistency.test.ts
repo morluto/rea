@@ -2,7 +2,6 @@ import { readFile, readdir, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
 
 import { describe, expect, it } from "vitest";
-import { PRODUCT_IDENTITY } from "../../src/identity.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 import { processTest } from "../support/process/processFixture.js";
 
@@ -18,8 +17,11 @@ const shellExamples = (content: string): string[] =>
 
 describe("onboarding documentation product facts", () => {
   it.each([
-    ["docs/native-investigation.md", "raw-binary.md#nmos-6502"],
-    ["docs/ghidra-riscv.md", "raw-binary.md"],
+    [
+      "docs/guides/native/native-investigation.md",
+      "../../providers/raw-binary.md#nmos-6502",
+    ],
+    ["docs/providers/ghidra-riscv.md", "raw-binary.md"],
   ])(
     "routes raw admission guidance in %s to the owning guide",
     async (path, target) => {
@@ -31,14 +33,17 @@ describe("onboarding documentation product facts", () => {
     },
   );
 
-  it("keeps the installation MCP example aligned with the package registration command", async () => {
-    const content = await readFile(resolve("docs/installation.md"), "utf8");
+  it("documents manual MCP registration with an absolute runtime and entry script", async () => {
+    const content = await readFile(
+      resolve("docs/getting-started/installation.md"),
+      "utf8",
+    );
     expect(jsonExamples(content)).toContainEqual(
       expect.objectContaining({
         mcpServers: expect.objectContaining({
           rea: expect.objectContaining({
-            command: "npx",
-            args: ["-y", PRODUCT_IDENTITY.registrationPackageSpecifier, "mcp"],
+            command: "/absolute/path/to/node",
+            args: ["/absolute/path/to/rea/scripts/rea.mjs", "mcp"],
           }),
         }),
       }),

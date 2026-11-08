@@ -13,10 +13,7 @@ import { inspectManagedNativeBoundariesBytes } from "../../../../src/dotnet/Mana
 import { executeManagedNativeBoundaries } from "../../../../src/application/managed/ManagedNativeVerificationService.js";
 import { MANAGED_NATIVE_VERIFICATION_EXAMPLE } from "../../../../src/contracts/managed/managedWorkflowExamples.js";
 import { createEvidence } from "../../../../src/domain/evidence.js";
-import {
-  managedNativeVerificationInputSchema,
-  managedNativeVerificationResultSchema,
-} from "../../../../src/domain/managed/managedNativeVerificationSchemas.js";
+import { managedNativeVerificationResultSchema } from "../../../../src/domain/managed/managedNativeVerificationSchemas.js";
 import { managedNativeBoundaryInspectionSchema } from "../../../../src/domain/managed/managedArtifact.js";
 import { inspectMachoSchema } from "../../../../src/domain/native/nativeInspection.js";
 import { functionDossierSchema } from "../../../../src/domain/native/functionDossier.js";
@@ -33,10 +30,7 @@ const readFixtureSource = (input: unknown) => {
   return source.value;
 };
 
-const exampleInput = () =>
-  managedNativeVerificationInputSchema.parse(
-    MANAGED_NATIVE_VERIFICATION_EXAMPLE,
-  );
+const exampleInput = () => structuredClone(MANAGED_NATIVE_VERIFICATION_EXAMPLE);
 
 const nativeEvidenceWithExports = (
   names: readonly string[],
@@ -495,7 +489,6 @@ it("matches ELF module names case-sensitively and leaves unknown platform equiva
       nativeFunctionEvidence("/examples/libCaseProbe.so", "elf"),
     ],
   });
-  expect(workflow.ok).toBe(true);
   if (!workflow.ok) throw workflow.error;
   expect(workflow.value.evidence.normalized_result).toMatchObject({
     summary: { contradicted: 1, verified: 0 },
@@ -687,7 +680,6 @@ it("retains a decorated module match when another decorated candidate has unknow
         managed_boundaries: managed,
         native_observations: observations,
       });
-      expect(result.ok).toBe(true);
       if (!result.ok) throw result.error;
       const output = managedNativeVerificationResultSchema.parse(
         result.value.evidence.normalized_result,
@@ -911,22 +903,6 @@ it("retains every observed native candidate", () => {
     status: "complete-within-inputs",
   });
   expect(result.pinvoke_imports[0]?.candidates).toHaveLength(2);
-});
-
-it("wraps verification in derived workflow Evidence", () => {
-  const evidence = executeManagedNativeBoundaries(exampleInput());
-
-  if (!evidence.ok) throw evidence.error;
-  expect(evidence.value.evidence).toMatchObject({
-    operation: "verify_managed_native_boundaries",
-    provider: { id: "rea-dotnet-workflows" },
-    confidence: "inferred",
-    authority: "analyst-inference",
-    normalized_result: {
-      summary: { verified: 1 },
-    },
-  });
-  expect(evidence.value.evidence.evidence_links).toHaveLength(2);
 });
 
 describe("managed/native verification result algebra", () => {

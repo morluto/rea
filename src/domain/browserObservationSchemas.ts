@@ -3,7 +3,8 @@ import { utcDateTimeSchema } from "./offsetDateTime.js";
 
 import { browserCompletenessSchema } from "./browserCompleteness.js";
 import {
-  cdpDomNodeSchema,
+  cdpDomSnapshotSchema,
+  cdpResourceColumnSchema,
   cdpScriptSourceSchema,
   cdpScriptMetadataSchema,
 } from "./cdpObservationSchemas.js";
@@ -125,7 +126,7 @@ const browserNetworkRequestSchema = z.object({
     type: z.string(),
     url: z.string().nullable(),
     line: z.int().min(0).nullable(),
-    column: z.int().min(0).nullable(),
+    column: cdpResourceColumnSchema.nullable(),
   }),
   body_shapes: z.object({
     status: z.enum(["not_approved", "included", "partial", "unavailable"]),
@@ -149,7 +150,7 @@ const browserConsoleEventSchema = z.object({
     ),
   url: z.string().nullable(),
   line: z.int().min(0).nullable(),
-  column: z.int().min(0).nullable(),
+  column: cdpResourceColumnSchema.nullable(),
   text_capture: z.object({
     status: z.enum(["not_approved", "included", "unavailable"]),
     values: z.array(
@@ -273,10 +274,7 @@ export const webPageInspectionSchema = z.object({
   }),
   completeness: browserCompletenessSchema,
   frames: z.array(browserFrameSchema),
-  dom: z.object({
-    total_nodes: z.int().min(0),
-    nodes: z.array(cdpDomNodeSchema),
-  }),
+  dom: cdpDomSnapshotSchema,
   accessibility: z.object({
     total_nodes: z.int().min(0),
     text_capture: z.object({

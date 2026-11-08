@@ -748,19 +748,6 @@ const residualType = (
   return { dimensions, element: alias ?? element, className: true };
 };
 
-/** Translate one original Java type to its residual DEX type, if verifiable. */
-export const residualDexType = (
-  mapping: ProguardMapping,
-  type: string,
-): string | undefined => {
-  const resolved = residualType(mapping, type);
-  if (resolved === undefined) return undefined;
-  const dimensions = "[".repeat(resolved.dimensions);
-  return resolved.className
-    ? `${dimensions}L${resolved.element.replaceAll(".", "/")};`
-    : dimensions + resolved.element;
-};
-
 /** Match directly within the caller's descriptor without expanding alias strings. */
 const matchResidualType = (
   mapping: ProguardMapping,

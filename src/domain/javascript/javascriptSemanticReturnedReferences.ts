@@ -390,11 +390,7 @@ export const createSemanticReturnedReferences = (
           result.precision = "widened";
           if (sourceGenericInvocation) result.unresolvedInvocation = true;
         }
-        const selected = semanticBindingAtRead(
-          binding,
-          node,
-          state.parentsByNode,
-        ).binding;
+        const selected = semanticBindingAtRead(binding, node, state).binding;
         for (const initializer of [
           ...selected.initializers,
           ...selected.referenceInitializers,

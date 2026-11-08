@@ -240,7 +240,7 @@ try {
     "output schema invalid",
   );
 
-  /** CLI and MCP must return identical, schema-valid Evidence. */
+  /** CLI and MCP share schema-valid Evidence, with CLI-only caller spelling. */
   const inspectBoth = async (path) => {
     const cliValue = await inspectCli(path);
     assert.equal(
@@ -262,7 +262,10 @@ try {
       JSON.stringify(ajv.errors),
     );
     const mcp = parseEvidence(requireMcpOutput(reply, "inspect_apk_signature"));
-    assert.deepEqual(cli, mcp, "CLI and MCP evidence differ");
+    const { caller_input_path: callerInputPath, ...cliShared } = cli;
+    assert.equal(callerInputPath, path);
+    assert.equal(Object.hasOwn(mcp, "caller_input_path"), false);
+    assert.deepEqual(cliShared, mcp, "CLI and MCP evidence differ");
     cases += 2;
     return mcp.normalized_result;
   };
