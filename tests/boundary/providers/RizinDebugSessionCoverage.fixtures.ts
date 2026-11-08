@@ -233,8 +233,12 @@ export const createRizinCoverageHarness = (
   const start = async (
     provider: string,
     options: RizinTestManagerOptions = {},
+    environment: Readonly<NodeJS.ProcessEnv> = {},
   ): Promise<{ manager: RizinDebugSessionManager; sessionId: string }> => {
-    const manager = createManager({ REA_RIZIN_COMMAND: provider }, options);
+    const manager = createManager(
+      { REA_RIZIN_COMMAND: provider, ...environment },
+      options,
+    );
     const result = await manager.start({
       path: "/tmp/coverage-target",
       inferior_tty: await rizinTestInferiorTty(),
@@ -245,9 +249,10 @@ export const createRizinCoverageHarness = (
   const startInjected = async (
     spawnProcess: InjectedSpawnProcess,
     options: RizinTestManagerOptions = {},
+    environment: Readonly<NodeJS.ProcessEnv> = {},
   ) => {
     const manager = createManager(
-      { REA_RIZIN_COMMAND: "injected-rizin" },
+      { REA_RIZIN_COMMAND: "injected-rizin", ...environment },
       { ...options, spawnProcess },
     );
     const started = await manager.start({
