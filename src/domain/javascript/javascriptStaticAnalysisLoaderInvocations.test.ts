@@ -71,6 +71,28 @@ it.each([
 );
 
 const imported = "import {createRequire as make} from 'node:module';";
+it.each([
+  ["call", 'null,"./valid.cjs"', 'null,"./invented.cjs"'],
+  ["apply", 'null,["./valid.cjs"]', 'null,["./invented.cjs"]'],
+])(
+  "distinguishes nested loader-%s replacement from a child property write",
+  (method, valid, invented) => {
+    const references = (source: string) =>
+      analyzeCommonJsStaticFixture(source).references.map(
+        ({ operation, specifier }) => ({ operation, specifier }),
+      );
+    expect(
+      references(
+        `const box={load:require};box.load.${method}.extra=1;box.load.${method}(${valid});`,
+      ),
+    ).toContainEqual({ operation: "load", specifier: "./valid.cjs" });
+    expect(
+      references(
+        `const box={load:require};box.load.${method}=custom;box.load.${method}(${invented});`,
+      ),
+    ).not.toContainEqual({ operation: "load", specifier: "./invented.cjs" });
+  },
+);
 it("preserves a native resolver before a later loader receiver escape", () => {
   const references = (source: string) =>
     analyzeCommonJsStaticFixture(source).references.map(

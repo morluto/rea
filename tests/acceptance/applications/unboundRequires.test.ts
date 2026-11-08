@@ -193,12 +193,18 @@ cliTest.for(["CLI", "stdio MCP"] as const)(
         'require.call.extra = 1; require.call(null, "./call-dep.cjs");',
       "consecutive-methods.cjs":
         'require.resolve.paths = custom; require.resolve("./benign-dep.cjs"); require.call.extra = 1; require.call(null, "./call-dep.cjs");',
+      "nested-loader.cjs":
+        'const box = {load: require}; box.load.call = () => 0; box.load.call(null, "./nested-false.cjs");',
+      "nested-child.cjs":
+        'const box = {load: require}; box.load.call.extra = 1; box.load.call(null, "./nested-valid.cjs");',
       "wrapped-call.cts":
         'require.call = () => 0; (require.call as any)(null, "./false-dep.cjs");',
       "alias-dep.cjs": "module.exports = 1;",
       "benign-dep.cjs": "module.exports = 2;",
       "call-dep.cjs": "module.exports = 3;",
       "false-dep.cjs": "module.exports = 4;",
+      "nested-false.cjs": "module.exports = 5;",
+      "nested-valid.cjs": "module.exports = 6;",
       "upper-wrapper.CJS": source,
       "lower-module.mjs": source,
       "lower-wrapper.cjs": source,
@@ -250,6 +256,12 @@ cliTest.for(["CLI", "stdio MCP"] as const)(
       .toBeDefined();
     expect
       .soft(loaderEdge("consecutive-methods.cjs", "./call-dep.cjs"))
+      .toBeDefined();
+    expect
+      .soft(loaderEdge("nested-loader.cjs", "./nested-false.cjs"))
+      .toBeUndefined();
+    expect
+      .soft(loaderEdge("nested-child.cjs", "./nested-valid.cjs"))
       .toBeDefined();
     expect
       .soft(loaderEdge("wrapped-call.cts", "./false-dep.cjs"))

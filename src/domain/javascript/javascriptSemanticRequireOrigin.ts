@@ -745,11 +745,29 @@ export const semanticRequireCallAt = (
       t.isOptionalMemberExpression(member)
     ) {
       const key = semanticStaticPropertyKey(member.property, member.computed);
-      if (
-        (key === "call" || key === "apply" || key === "resolve") &&
-        requireLoaderValueAt(member.object, node, state, factoryBindingIds) !==
-          "local"
-      ) {
+      if (key === "call" || key === "apply" || key === "resolve") {
+        const loader = requireLoaderValueAt(
+          member.object,
+          node,
+          state,
+          factoryBindingIds,
+        );
+        const selected =
+          loader === "local"
+            ? selectedRequireSourcesAt(
+                member.object,
+                node,
+                state,
+                factoryBindingIds,
+              )
+            : undefined;
+        if (
+          loader === "local" &&
+          (selected === undefined || selected.loader === "local")
+        ) {
+          member = unwrapJavaScriptExpression(member.object).node;
+          continue;
+        }
         const effects = index.effectsForReferenceAt(node, member);
         const targetDepth = semanticMemberChain(member)?.members.length;
         if (
