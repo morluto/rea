@@ -29,7 +29,9 @@ cliTest(
     const evidence = parseEvidence(analyzed.json);
     const nodeIds = (
       evidence.normalized_result as {
-        graph: { nodes: { node_id: string; observations: { properties: unknown }[] }[] };
+        graph: {
+          nodes: { node_id: string; observations: { properties: unknown }[] }[];
+        };
       }
     ).graph.nodes;
     const exportBindingIds = nodeIds
