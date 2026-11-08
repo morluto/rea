@@ -286,7 +286,7 @@ explicit path or endpoint and do not need it.
   checksum reproduces the key. Product IDs are not tool or Visual Studio names.
   A missing record is observed absence, not proof of a non-Microsoft toolchain.
   See the
-  [PE Rich header guide](https://github.com/morluto/rea/blob/main/docs/pe-rich-header.md).
+  [PE Rich header guide](https://github.com/morluto/rea/blob/main/docs/guides/native/pe-rich-header.md).
 - ELF, PE, and Mach-O hardening: `inspect_binary_hardening` with the explicit
   local file. This built-in target-free inspection requires no pwntools or other
   host tool. One image per Mach-O slice. Each property is `enabled`, `disabled`,

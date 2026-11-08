@@ -45,5 +45,5 @@ change.
 
 ## References
 
-- [PE Rich header guide](../../../pe-rich-header.md)
+- [PE Rich header guide](../../../guides/native/pe-rich-header.md)
 - [2026-11-04 verification record](../../../verification/pe-rich-header-2026-11-04.md)

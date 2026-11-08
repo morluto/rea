@@ -83,8 +83,8 @@ files and directories, then compares key and entries with pefile's
 difference fails the run, as does a file only REA rejects or a run that
 compares no file. Set
 `REA_PEFILE_PYTHON` to a Python that imports pefile 2024.8.26. See the
-[2026-11-04 verification record](verification/pe-rich-header-2026-11-04.md).
+[2026-11-04 verification record](../../verification/pe-rich-header-2026-11-04.md).
 
-The [feature specification](specs/native/pe-rich-header/spec.md) records the
-requirements, with its [plan](specs/native/pe-rich-header/plan.md) and
-[tasks](specs/native/pe-rich-header/tasks.md).
+The [feature specification](../../specs/native/pe-rich-header/spec.md) records
+the requirements, with its [plan](../../specs/native/pe-rich-header/plan.md) and
+[tasks](../../specs/native/pe-rich-header/tasks.md).

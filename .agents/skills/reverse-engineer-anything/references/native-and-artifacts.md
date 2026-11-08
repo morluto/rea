@@ -165,7 +165,7 @@ SHA-256, the record's file range, the key, and each product ID, build and use
 count. `checksum.matches` compares the stored key with the linker checksum over
 the DOS header, stub and entries; a mismatch does not show which bytes changed.
 Product IDs are not mapped to tool names. See
-[PE Rich header](https://github.com/morluto/rea/blob/main/docs/pe-rich-header.md).
+[PE Rich header](https://github.com/morluto/rea/blob/main/docs/guides/native/pe-rich-header.md).
 
 ## Binary hardening
 

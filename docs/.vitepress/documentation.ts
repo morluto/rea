@@ -48,6 +48,11 @@ export const documentationSections = [
         source: "guides/native/recorded-crashes.md",
         route: "/recorded-crashes",
       },
+      {
+        text: "PE Rich header",
+        source: "guides/native/pe-rich-header.md",
+        route: "/pe-rich-header",
+      },
     ],
   },
   {
@@ -604,11 +609,6 @@ export const documentationSections = [
         text: "PE TLS callbacks and load configuration",
         source: "pe-load-config.md",
         route: "/pe-load-config",
-      },
-      {
-        text: "PE Rich header",
-        source: "pe-rich-header.md",
-        route: "/pe-rich-header",
       },
       {
         text: "Python packaged applications",

@@ -17,6 +17,7 @@ product pages. The VitePress documentation source is this `docs/` tree.
 - [Go binary build metadata](guides/native/go-binaries.md)
 - [Offline binary diagnostics](guides/native/binary-diagnostics.md)
 - [Recorded crash evidence](guides/native/recorded-crashes.md)
+- [PE Rich header](guides/native/pe-rich-header.md)
 
 ## JavaScript and Electron
 
@@ -186,7 +187,6 @@ the exact commit messages and references from the release they describe.
 - [PE Authenticode certificate tables](pe-certificates.md)
 - [PE import and delay-load tables](pe-imports.md)
 - [PE TLS callbacks and load configuration](pe-load-config.md)
-- [PE Rich header](pe-rich-header.md)
 - [Python packaged applications](python-packaged-applications.md)
 - [CPython pyc inspection](python-pyc.md)
 - [Reconstruction coverage](reconstruction-coverage.md)
