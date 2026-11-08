@@ -101,6 +101,7 @@ it("preserves sibling operations, sibling reasons, and remediation action when r
     {
       userMessage: "Export failed",
       remediationAction: "Retry without project requirement",
+      fallbackRemediationAction: "Review provider choices",
       siblingOperations: ["procedure_assembly", "analyze_function"],
       siblingReasons: {
         analyze_function: "analyze_function export failed",
@@ -126,6 +127,7 @@ it("preserves sibling operations, sibling reasons, and remediation action when r
   expect(attributed.remediationAction).toBe(
     "Retry without project requirement",
   );
+  expect(attributed.fallbackRemediationAction).toBe("Review provider choices");
   expect(attributed.userMessage).toBe("Export failed");
   expect(attributed.retryable).toBe(true);
 });

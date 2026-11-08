@@ -1,5 +1,5 @@
 import type { JsonValue } from "../jsonValue.js";
-import { collapseWhitespace } from "./appTask.js";
+import { collapseWhitespace, isTimestamp } from "./appTask.js";
 import { bracketed, selectorOf, type Condition } from "./viewSelector.js";
 
 /** The arrays a pointer stepped into, each as the pointer to it. */
@@ -82,15 +82,23 @@ const fieldOf = (member: JsonValue, { prefix, key }: Condition) => {
   return typeof value === "string" ? value : undefined;
 };
 
+/** An element's text with save-time leaves removed, so a name around a timestamp still matches after the time changes. */
+const textWithoutStamps = (node: JsonValue): string => {
+  if (typeof node === "string") return isTimestamp(node) ? "" : node;
+  if (!isRecord(node) || !Array.isArray(node.children)) return "";
+  return node.children.map((child) => textWithoutStamps(child)).join("");
+};
+
 /** Whether an element has a child element named `key` whose text, its whitespace collapsed, is `value`. */
 const hasChildText = (member: JsonValue, { key, value }: Condition) =>
   isXmlElement(member) &&
-  member.children.some(
-    (child) =>
-      isXmlElement(child) &&
-      child.name === key &&
-      collapseWhitespace(elementText(child)) === value,
-  );
+  member.children.some((child) => {
+    if (!isXmlElement(child) || child.name !== key) return false;
+    // A nested save time is not part of the name. A child that is only a time still matches that time.
+    const plain = collapseWhitespace(textWithoutStamps(child));
+    const text = plain === "" ? collapseWhitespace(elementText(child)) : plain;
+    return text === value;
+  });
 
 /** Whether an array member meets every condition; selectors compare strings only. */
 const selects = (member: JsonValue, conditions: readonly Condition[]) =>
@@ -156,6 +164,8 @@ export const locatePointer = (
   view: JsonValue | null,
   pointer: string,
 ): Located => {
+  if (pointer === "")
+    return { kind: "value", value: view, searched: [], byPosition: [] };
   let current: JsonValue = view;
   const segments = pointer.slice(1).split("/");
   const steps = { searched: [] as string[], byPosition: [] as string[] };

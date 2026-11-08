@@ -104,6 +104,12 @@ export type DesktopCaptureProgress = z.infer<
   typeof desktopCaptureProgressSchema
 >;
 
+/** The capture event in one progress line, when that line carries one. */
+export const captureProgressEvent = (
+  line: string,
+): DesktopCaptureEvent | undefined =>
+  desktopCaptureProgressSchema.parse(JSON.parse(line)).rea_progress.event;
+
 /**
  * The acknowledgement of a taken checkpoint, from what it recorded, naming
  * changed files relative to the home: first those an application window's
@@ -365,6 +371,8 @@ export const desktopApplicationCaptureSchema = z.strictObject({
         z.strictObject({
           path: z.string().min(1),
           physical: z.string().min(1),
+          /** Whether the walked path is a directory; absent from captures written before it was recorded. */
+          kind: z.enum(["file", "directory"]).optional(),
         }),
       )
       .optional(),

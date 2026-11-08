@@ -1,8 +1,13 @@
 import type { JsonValue } from "../jsonValue.js";
 import { collapseWhitespace, type DesktopTaskCheckInput } from "./appTask.js";
-import { holdsSplitDate, isStamp } from "./appTaskDraftNoise.js";
-import { valueEqualsCheck } from "./appTaskDraftScalars.js";
+import {
+  holdsSplitDate,
+  isBookkeeping,
+  isStamp,
+  isVolatileValue,
+} from "./appTaskDraftNoise.js";
 import { isPlacedItem, placedItemCheck } from "./appTaskDraftItems.js";
+import { valueEqualsCheck } from "./appTaskDraftScalars.js";
 import { addedTextChecks } from "./appTaskDraftTextAdded.js";
 import { rankAttributes } from "./attributeRank.js";
 import type { DesktopStateDifference } from "./stateChanges.js";
@@ -93,11 +98,15 @@ const namedByIdentifier = (pointer: string) => {
   return key !== undefined && isIdentifier(key);
 };
 
-/** Whether an end holds an element at a pointer whose text a check reads as nothing, as an image or a break. */
+/**
+ * Whether an end holds an element whose text a check reads as nothing, as an
+ * image or a break. A run of only whitespace is text the paragraph check
+ * already reads, so it stays covered.
+ */
 const textlessAt = (pointer: string, ends: Ends) =>
   [ends.baseline, ends.final].some((view) => {
     const value = resolvePointer(view, pointer);
-    return isXmlElement(value) && isWhitespace(elementText(value));
+    return isXmlElement(value) && elementText(value) === "";
   });
 
 /** Whether both ends hold an element at a pointer. */
@@ -193,6 +202,50 @@ const isField = (pointer: string, ends: Ends) => {
 
 /** How far a text check climbs from an element no attribute names to an ancestor its tag names. */
 const MAX_TAG_CLIMB = 3;
+/** A formatting run a later save may split, merge, or drop while keeping the paragraph. */
+const RUN_TAG = /^(?:a|b|c|em|i|span|strong|tspan|u)$/u;
+
+/** The tag a diff pointer's last step names, without a namespace prefix. */
+const tagOf = (pointer: string) =>
+  (
+    /\[name=(?<name>[^\][]+)/u.exec(pointer.split("/").at(-1) ?? "")?.groups
+      ?.name ?? ""
+  )
+    .split(":")
+    .at(-1) ?? "";
+
+/**
+ * Clean places for a text check, innermost first. A formatting run is left
+ * out when a paragraph or other element remains, so the check does not depend
+ * on a run a later save can drop.
+ */
+const withoutRuns = (
+  chain: readonly string[],
+  noisy: (element: string) => boolean,
+): string[] => {
+  const clean = chain.filter((element) => !noisy(element));
+  const content = clean.filter((element) => !RUN_TAG.test(tagOf(element)));
+  return content.length > 0 ? content : clean;
+};
+
+/** Whether an element's text, or a descendant's, is a time or a value the app makes anew. */
+export const holdsNoisyText = (
+  value: JsonValue | undefined,
+  bookkeeping = false,
+): boolean => {
+  if (typeof value === "string") {
+    const text = value.trim();
+    return (
+      text.length > 0 && (isStamp(text) || isVolatileValue(text, bookkeeping))
+    );
+  }
+  return (
+    isXmlElement(value) &&
+    value.children.some((child) =>
+      holdsNoisyText(child, bookkeeping || isBookkeeping(value)),
+    )
+  );
+};
 
 /**
  * Where a text check goes for an element whose text changed, best first, so
@@ -224,12 +277,50 @@ const outsideRuns = (pointer: string, ends: Ends): readonly Candidate[] => {
   let named = current;
   while (!namedByAttribute(named)) {
     const parent = parentBelowRoot(named);
-    if (parent === undefined)
+    if (parent === undefined) {
+      const stopped = parentOf(named);
+      const chain = [...passed, named].filter(
+        (element, index, all) => all.indexOf(element) === index,
+      );
+      // A record directly under the document can still hold a save time. Leave a formatting run out when the paragraph remains.
+      if (
+        stopped !== undefined &&
+        holdsNoisyText(resolvePointer(ends.final, stopped))
+      ) {
+        const narrower = withoutRuns(chain, (element) =>
+          holdsNoisyText(resolvePointer(ends.final, element)),
+        );
+        if (narrower.length > 0)
+          return narrower.map((element) => ({
+            element,
+            pointer: element,
+            identifier: false,
+          }));
+      }
       return [current, ...[...passed.slice(1), named].slice(0, MAX_TAG_CLIMB)]
         .filter((element, index, all) => all.indexOf(element) === index)
         .map((element) => ({ element, pointer: element, identifier: false }));
+    }
     passed.push(named);
     named = parent;
+  }
+  const noisy = (element: string) =>
+    holdsNoisyText(resolvePointer(ends.final, element));
+  // An ancestor whose text joins a timestamp fails a later save that only restamps it.
+  if (noisy(named)) {
+    const narrower = withoutRuns(
+      [...passed].filter(
+        (element, index, all) =>
+          all.indexOf(element) === index && element !== named,
+      ),
+      noisy,
+    );
+    if (narrower.length > 0)
+      return narrower.map((element) => ({
+        element,
+        pointer: element,
+        identifier: false,
+      }));
   }
   const ranked = [
     { element: named, pointer: named, identifier: namedByIdentifier(named) },
@@ -448,12 +539,14 @@ export const wholeTextCheck = (
   now: { readonly value: string; readonly children: readonly JsonValue[] },
   before: string | undefined,
 ): Pick<Placed, "check" | "guards"> => {
-  const { value, children } = now;
-  const [only] = children;
-  if (children.length === 1 && typeof only === "string") {
-    const check = valueEqualsCheck(file, `${pointer}/children/0`, only, before);
-    if ("tolerance" in check) return { check, guards: [] };
-  }
+  const { value } = now;
+  // A line between breaks is still that line. Trim it before the decimal test so `\\n437.8\\n` stays a number within tolerance.
+  const comparable = isLaidOutLine(value) ? value.trim() : value;
+  const earlier =
+    before !== undefined && isLaidOutLine(before) ? before.trim() : before;
+  // The element's joined text, not its first text node. A later save may split `437.8` into `437.` and a run holding `8`. When that text is a decimal, compare the number within the usual tolerance, so `437.80` and a long float still match.
+  const numeric = valueEqualsCheck(file, pointer, comparable, earlier);
+  if ("tolerance" in numeric) return { check: numeric, guards: [] };
   // One line the app lays out between line breaks, as KmPlot's formula before its next element, compares with its whitespace collapsed.
   const laidOut = isLaidOutLine(value)
     ? { value: collapseWhitespace(value), normalize_whitespace: true }
@@ -498,6 +591,8 @@ const textCheck = (
   const { pointer, now } = found;
   const before = resolvePointer(context.ends.baseline, pointer);
   if (!added && !isXmlElement(before)) return undefined;
+  // A timestamp between other text is not part of the check. Joining across it asks for text the file never contains.
+  if (holdsNoisyText(now)) return undefined;
   const value = elementText(now);
   const old = isXmlElement(before) ? elementText(before) : undefined;
   const relaidOut =

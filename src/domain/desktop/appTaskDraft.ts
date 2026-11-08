@@ -1,6 +1,6 @@
 import type { JsonValue } from "../jsonValue.js";
-import { isTimestamp, type DesktopTaskCheckInput } from "./appTask.js";
 import { leftOutFiles } from "./appExportUnowned.js";
+import { isTimestamp, type DesktopTaskCheckInput } from "./appTask.js";
 import { isGeneratedUid } from "./attributeRank.js";
 import {
   decisive,
@@ -133,9 +133,25 @@ const textSuggestions = (
         )
       : { checks: [], notes: [] };
   suggestions.push(...gained.checks);
+  const formatNotes = readAsTextNotes(file, linesOf(final));
+  const unreadableAttributes = gained.notes.find(
+    ({ code }) => code === "read_as_text",
+  );
   const result = {
     suggestions,
-    notes: [...gained.notes, ...readAsTextNotes(file, linesOf(final))],
+    notes: [
+      ...gained.notes.filter(({ code }) => code !== "read_as_text"),
+      ...(unreadableAttributes !== undefined && formatNotes.length === 0
+        ? [unreadableAttributes]
+        : formatNotes.map((note) =>
+            unreadableAttributes === undefined
+              ? note
+              : {
+                  ...note,
+                  message: `${note.message} ${unreadableAttributes.message}`,
+                },
+          )),
+    ],
   };
   if (truncated) return result;
   if (gone.length > 0 && gone.length <= MAX_SUGGESTIONS)
@@ -206,6 +222,8 @@ const plainValues = (
     ends: versions(baseline, final),
     listed: () => true,
     noise: () => undefined,
+    format: () => "json",
+    referenceRoots: () => [],
   });
 
 /**
@@ -451,16 +469,21 @@ export const draftTaskFiles = (
   files: ReadonlyMap<string, DesktopStatePath>,
   served: (home: string) => boolean,
   ends: StateEnds,
+  /** Home paths the export selected exactly, as `exportedStateFiles` spells them. */
+  selected: readonly string[] = [],
 ): readonly TaskDraftFile[] => {
   const changed = changedStateFiles(files, ends, served);
-  const role = changed.some(({ path }) => path.role === "document")
+  const { isLeftOut } = leftOutFiles(files, [], selected, selected);
+  // A lock the seed leaves out is not the document the user worked on.
+  const considered = changed.filter(({ home }) => !isLeftOut(home));
+  const role = considered.some(({ path }) => path.role === "document")
     ? "document"
     : "application_state";
-  // The app's logs, which the export leaves out of the seed, never hold a check.
-  const { isLeftOutLog } = leftOutFiles(files, [], []);
+  // A file absent from the seed cannot supply a useful check. The same owner
+  // keeps explicitly selected files, including a selected lock.
   return withinDraftBudget(
     changed.map(({ home, path, baseline, final, change }) => {
-      const drafted = path.role === role && !isLeftOutLog(home);
+      const drafted = path.role === role && !isLeftOut(home);
       const draft: FileDraft = drafted
         ? suggestedChecks(home, baseline, final, role === "document")
         : { suggested: [], ...NO_VALUES };

@@ -1,5 +1,5 @@
 import type { JsonValue } from "../jsonValue.js";
-import { isIdentifyingAttribute, isNameLikeKey } from "./attributeRank.js";
+import { isNameLikeKey } from "./attributeRank.js";
 import type { DesktopStateDifference } from "./stateChanges.js";
 import { elementText, isXmlElement, resolvePointer } from "./viewPointer.js";
 import { selectorOf } from "./viewSelector.js";
@@ -66,13 +66,47 @@ export const mirrorsOf = (
         ),
       );
       return (sources ?? []).some(
-        ({ pointer, key }) => pointer !== mirror.pointer && shown.has(key),
+        ({ pointer, key }) =>
+          pointer !== mirror.pointer &&
+          shown.has(key) &&
+          sameRecord(mirror.element, pointer),
       )
         ? [mirror.pointer]
         : [];
     }),
   );
   return (pointer: string) => mirrored.has(pointer);
+};
+
+/** An attribute that identifies a record, not a `name` two independent lists can share. */
+const isRecordId = (key: string) =>
+  /^(?:[^:]*:)?(?:id|uid|uuid|guid|xid)$/iu.test(key);
+
+/** The tag a selector step names, as `element` for `[name=element][@uuid={1}]`. */
+const stepTag = (token: string) => /\[name=([^\][]+)/u.exec(token)?.[1];
+
+/**
+ * Whether two pointers stay in one record. They may diverge into different
+ * parts of that record. Two different members of the same list, such as two
+ * components, are not one record.
+ */
+const sameRecord = (left: string, right: string) => {
+  const first = left.split("/");
+  const second = right.split("/");
+  let index = 0;
+  while (
+    index < first.length &&
+    index < second.length &&
+    first[index] === second[index]
+  )
+    index += 1;
+  if (index >= first.length || index >= second.length) return true;
+  if (first[index - 1] !== "children") return true;
+  const leftTag = stepTag(first[index] ?? "");
+  const rightTag = stepTag(second[index] ?? "");
+  return (
+    leftTag === undefined || rightTag === undefined || leftTag !== rightTag
+  );
 };
 
 /** Whether an element holds nothing but one identifier, as Parley's lesson membership `<entry id="6"/>`. */
@@ -82,7 +116,7 @@ export const isIdReference = (element: JsonValue | undefined): boolean => {
   return (
     key !== undefined &&
     more.length === 0 &&
-    isIdentifyingAttribute(key) &&
+    isRecordId(key) &&
     element.children.every(
       (child) => typeof child === "string" && child.trim() === "",
     )

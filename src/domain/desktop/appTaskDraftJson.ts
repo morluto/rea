@@ -22,12 +22,12 @@ const isRecord = (
 ): value is Record<string, JsonValue> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
 
-/** The array a member pointer sits in, when its parent is one in a view. */
+/** The array a member pointer sits in, when its parent is one in a view. The empty pointer is the view itself, as a file whose top level is an array. */
 const arrayOf = (view: JsonValue | null, pointer: string) => {
   const list = pointer.replace(/\/[^/]+$/u, "");
-  return list !== pointer && Array.isArray(resolvePointer(view, list))
-    ? list
-    : undefined;
+  if (list === pointer) return undefined;
+  const items = list === "" ? view : resolvePointer(view, list);
+  return Array.isArray(items) ? list : undefined;
 };
 
 /** A counted array, and the kind field and value its counted members share, when they carry one. */
@@ -50,7 +50,7 @@ const kindOf = (member: JsonValue | undefined, items: readonly JsonValue[]) => {
 };
 
 const membersOf = (view: JsonValue | null, { list, kind }: Counted) => {
-  const items = resolvePointer(view, list);
+  const items = list === "" ? view : resolvePointer(view, list);
   return (Array.isArray(items) ? items : []).filter(
     (item) =>
       kind === undefined || (isRecord(item) && item[kind.key] === kind.value),
@@ -94,8 +94,15 @@ export const jsonCounts = (
   const note = (pointer: string, view: JsonValue | null) => {
     const list = arrayOf(view, pointer);
     const items = list === undefined ? [] : resolvePointer(view, list);
+    const atEnd =
+      list === undefined
+        ? undefined
+        : list === ""
+          ? ends.final
+          : resolvePointer(ends.final, list);
     if (
       list === undefined ||
+      !Array.isArray(atEnd) ||
       !named(list, ends.baseline) ||
       !named(list, ends.final)
     )
@@ -126,13 +133,14 @@ export const jsonCounts = (
   const tried = new Set<string>();
   for (const pointer of change.changed) {
     const segments = pointer.split("/");
-    for (let index = segments.length - 1; index > 1; index -= 1) {
+    for (let index = segments.length - 1; index > 0; index -= 1) {
       const list = segments.slice(0, index).join("/");
       const counted = { list };
       if (tried.has(list)) continue;
       tried.add(list);
+      const items = list === "" ? ends.final : resolvePointer(ends.final, list);
       if (
-        Array.isArray(resolvePointer(ends.final, list)) &&
+        Array.isArray(items) &&
         !lists.has(JSON.stringify(counted)) &&
         named(list, ends.baseline) &&
         named(list, ends.final) &&
