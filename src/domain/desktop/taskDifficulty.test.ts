@@ -19,6 +19,7 @@ const solve = (
   seconds: 60,
   failed_checks: outcome === "scored below 1" ? ["year"] : [],
   instance_id: null,
+  error: null,
   ...fields,
 });
 const pass = solve("passed");

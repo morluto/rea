@@ -161,8 +161,8 @@ it("measures a task in fresh computers: 1 of 3 asks for 2 more, 2 of 5 keeps it,
   expect(readme).toContain(`\`set-year\`: ${MODEL} passed 2 of 5, in the band`);
 });
 
-it("stops at 3 of 3 as too easy, running an unfinished solve again without counting it", async () => {
-  const { runner, call } = await measure([
+it("stops at 3 of 3 as too easy, running an unfinished solve again without counting it and keeping why it failed", async () => {
+  const { runner, bundle, call } = await measure([
     { outcome: "failed", checks: {}, turns: 3, usd: 0.1 },
     passed(),
     passed(),
@@ -179,6 +179,18 @@ it("stops at 3 of 3 as too easy, running an unfinished solve again without count
     passes: 3,
     unfinished: 1,
   });
+  expect(measured.solves.map((solve) => solve.error)).toEqual([
+    "RuntimeError: deploy",
+    null,
+    null,
+    null,
+  ]);
+  const recorded = JSON.parse(
+    await readFile(join(bundle, "difficulty.json"), "utf8"),
+  ) as { tasks: Record<string, { solves: { error: unknown }[] }> };
+  expect(recorded.tasks["set-year"]?.solves[0]?.error).toBe(
+    "RuntimeError: deploy",
+  );
   expect(await runner.notes("solves.jsonl")).toHaveLength(4);
 });
 

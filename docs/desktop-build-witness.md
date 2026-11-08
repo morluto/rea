@@ -337,9 +337,10 @@ The result and `difficulty.json`, at the bundle's root, keep per task: the
 model, agent and time; the band and why it stopped; `k`, the finished solves,
 the passes and unfinished solves; the cost in all and the budget; each
 finished solve's turns; `failures_per_check`, how many finished solves failed
-each check; each solve's outcome, turns, cost, seconds, failed checks and
-instance id; `task_sha256`, the SHA-256 of the task's steps file followed by
-its verifier, so a record whose task changed since shows it is stale; and
+each check; each solve's outcome, turns, cost, seconds, failed checks,
+instance id and the error agentenv reported for it; `task_sha256`, the
+SHA-256 of the task's steps file followed by its verifier, so a record whose
+task changed since shows it is stale; and
 REA's and agentenv's versions. Measuring a task again replaces its record and
 keeps the others. A `difficulty.json` or README REA cannot read or parse is refused
 before any solve and left as it is, and measures of one bundle write one at a

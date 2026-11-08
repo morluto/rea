@@ -15,6 +15,8 @@ export type SolveRecord = {
   /** The checks that failed, for a solve that finished. */
   readonly failed_checks: string[];
   readonly instance_id: string | null;
+  /** The error agentenv reported for the run, such as why it did not finish. */
+  readonly error: string | null;
 };
 
 /** Completed paid solves retained when measurement stops before publication. */

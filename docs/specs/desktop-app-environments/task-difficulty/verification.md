@@ -16,7 +16,10 @@
   and the README record it with the task's digest; 3 of 3 stops as too easy
   after running an unfinished solve again; the budget stops before a third
   solve; a task the bundle lacks is refused before any solve. All of them
-  failed before the change: the module and the tool did not exist.
+  failed before the change: the module and the tool did not exist. After
+  review, the unfinished solve's error, `RuntimeError: deploy`, is kept in
+  the result and `difficulty.json`; that test failed first, since the record
+  dropped every solve's error.
 
 ## TreeLine, arm64
 

@@ -23,6 +23,12 @@ const solve = z.strictObject({
   seconds: z.number().nonnegative(),
   failed_checks: strings,
   instance_id: z.string().nullable(),
+  error: z
+    .string()
+    .nullable()
+    .describe(
+      "The error agentenv reported for the run, such as why it failed to deploy, solve or verify; null when it reported none.",
+    ),
 });
 
 /** The tool that runs a bundle's task in fresh computers and records how hard it is. */

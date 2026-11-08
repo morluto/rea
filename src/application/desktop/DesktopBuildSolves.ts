@@ -128,6 +128,7 @@ const solveRecord = (
       ? report.checks.filter((check) => !check.passed).map((check) => check.id)
       : [],
   instance_id: report.instance_id,
+  error: report.error,
 });
 
 /** Write a file of the bundle whole: a partial one is renamed over it only once written. */
