@@ -258,10 +258,12 @@ const upkeepOf = (
   change: Pick<DesktopStateDifference, "added" | "changed" | "removed">,
   ends: Ends,
   noise: (pointer: string) => NoiseReason | undefined,
+  xml: (view: JsonValue | null, pointer: string) => boolean,
 ) => {
   const added = new Set(change.added);
   const gained = (pointer: string) =>
     added.has(pointer) &&
+    xml(ends.final, pointer) &&
     attributeKeyOf(pointer) !== undefined &&
     [ends.baseline, ends.final].every((view) =>
       isXmlElement(resolvePointer(view, ownerOfAttribute(pointer))),
@@ -316,10 +318,11 @@ const upkeepOf = (
 export const changeNoise = (
   change: Pick<DesktopStateDifference, "added" | "changed" | "removed">,
   ends: Ends,
+  xml: (view: JsonValue | null, pointer: string) => boolean,
 ): ((pointer: string) => NoiseReason | undefined) => {
   const renumbered = change.changed.flatMap((pointer) => {
     const key = attributeKeyOf(pointer);
-    return key !== undefined && isRenumberedKey(key)
+    return xml(ends.final, pointer) && key !== undefined && isRenumberedKey(key)
       ? [ownerOfAttribute(pointer)]
       : [];
   });
@@ -331,8 +334,9 @@ export const changeNoise = (
       resolvePointer(ends.final, pointer) === undefined
         ? ends.baseline
         : ends.final;
-    const key = attributeKeyOf(pointer);
-    const elements = elementsAlong(view, pointer);
+    const isXml = xml(view, pointer);
+    const key = isXml ? attributeKeyOf(pointer) : undefined;
+    const elements = isXml ? elementsAlong(view, pointer) : [];
     const value = resolvePointer(view, pointer);
     const reason: NoiseReason | undefined =
       elements.some(showsView) || (key !== undefined && isViewStateName(key))
@@ -369,6 +373,6 @@ export const changeNoise = (
     known.set(pointer, reason);
     return reason;
   };
-  const upkeep = upkeepOf(change, ends, base);
+  const upkeep = upkeepOf(change, ends, base, xml);
   return (pointer) => base(pointer) ?? (upkeep(pointer) ? "upkeep" : undefined);
 };

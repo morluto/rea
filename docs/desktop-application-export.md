@@ -169,9 +169,11 @@ The class declares:
   Files the capture recorded under a symlinked state directory's physical
   spelling are mapped back to the innermost such directory's home spelling,
   unless that spelling is outside the captured home, as when the home itself is
-  a symbolic link. When two files map to one home path, the export uses the one
-  present before the capture, else the first by path, and a limitation names
-  the other.
+  a symbolic link. When a selected link names an application state directory,
+  the bundle seeds the application's state path and restores the selected
+  alias at boot. Selections nested under that alias are seeded under the same
+  state path. An existing incompatible alias stops setup without replacing it. When two files map to one home path, the export uses the one present
+  before the capture, else the first by path, and a limitation names the other.
 - Data hooks, because declaring any hook switches off agentenv's default data
   plane: the class seeds the home once per boot and keeps it as the initial
   state with `keep_initial`, `data/add` and `data/reset` call agentenv's `add`
@@ -215,7 +217,7 @@ refuse every save, and VYM's `plan.vym.lock` (a project's `Gemfile.lock`
 beside its `Gemfile` has no extension to its file, so it is seeded), and
 `*.lock` or `*.lck` directly in the home, as wxWidgets' single-instance
 `~/poedit.lock`, or directly in one of the application's state directories;
-a lone `notes.lck` or `.notes.lock` elsewhere is seeded. A lock or a log (below)
+a lone `notes.lck` or `.notes.lock` elsewhere is seeded. A lock
 never makes a path the application's own, so `~/poedit.lock` is neither owned
 nor named among the folders the bundle does not own.
 Elsewhere such a file may be a project's own, such as `Cargo.lock` or
@@ -233,21 +235,11 @@ other than `0644` in `SEED_MODES`, and the first boot sets them when it copies
 the seed. A file the capture never saw change has no recorded mode and is
 written `0644`.
 
-The app's logs are left out of the seed the same way, since they record facts
-about the capture host that the host scrub does not catch, such as Freeplane's
-`os_version` with the host's kernel, or QElectroTech's CPU model, memory and
-disk sizes, and no app needs its old log to start. A log is a file named
-`*.log` or `log.<n>`, with the `.lck` or `.lock` beside such a file, that is
-in the app's own state: application state in the state view, or under one of
-its state directories. Other files under a `logs` folder are seeded, since
-apps keep the user's data there, such as Pidgin's conversations or fldigi's
-logbook. A document, or a path named by `--state-path` or a file under one, is
-seeded even when it ends in `.log`, since a user's own log may be the
-document, and so is a database's journal of saved writes: a `*.log` in WebKit
-or Chromium storage (such as `Local Storage/leveldb/000003.log`), under a
-`leveldb` folder, or numbered (`000005.log`) beside a LevelDB database's
-`CURRENT` or `MANIFEST-*`. A limitation and the README list the logs left out
-apart from the lock files, after "Left out of the seed".
+Files in app state are retained regardless of a `.log` extension or `log.<n>`
+name. They can hold conversation history or database writes as well as
+diagnostics. The normal host-identity scrub applies to retained text; filenames
+alone do not identify disposable diagnostics. Locks beside these files follow
+the lock rules above.
 
 Other seed files the app keeps for its own
 running are seeded as captured and named, collapsed to the folder that holds

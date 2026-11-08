@@ -68,12 +68,15 @@ export interface DesktopAppExportPlan {
   readonly textSeeds: readonly string[];
   /** Seed files' permission bits at the seed where the capture recorded them and they are not the 0644 a written file gets. */
   readonly seedModes: Readonly<Record<string, number>>;
+  /** Home-relative selected aliases that resolve to an app state path. */
+  readonly stateAliases?: readonly {
+    readonly alias: string;
+    readonly target: string;
+  }[];
   /** Files under the owned paths that existed before the capture but whose bytes were not retained. */
   readonly unseededFiles: readonly string[];
   /** Lock files under the owned paths at the seed, left out of it so a stale one cannot keep the app from starting. */
   readonly leftOutLocks: readonly string[];
-  /** The app's logs in its own state, left out of the seed since they record facts about the capture host. */
-  readonly leftOutLogs: readonly string[];
   /** Folders under the home where files changed during the capture that the bundle neither owns nor seeds. */
   readonly unownedFolders: readonly string[];
   /** Seed files the app keeps for its own running: web engine storage and caches. */
@@ -165,9 +168,7 @@ export const ownedPaths = (
 };
 
 /** A captured path's home-relative path, in the innermost walked state directory's own spelling unless that leaves the home. */
-export const capturedHomePath = (
-  capture: DesktopApplicationCapture,
-): ((path: string) => string | null) => {
+const capturedHomePlan = (capture: DesktopApplicationCapture) => {
   const { home } = capture.host;
   const relative = (path: string) =>
     path.startsWith(`${home}/`) ? path.slice(home.length + 1) : null;
@@ -177,12 +178,22 @@ export const capturedHomePath = (
   const renamed = (walked.length === logical.length ? walked : [])
     .flatMap((physical, index) => {
       const path = logical[index]?.path;
-      return path === undefined || path === physical
-        ? []
-        : [{ physical, logical: path }];
+      return path === undefined ? [] : [{ physical, logical: path }];
     })
     .sort((left, right) => right.physical.length - left.physical.length);
   const selections = [...(capture.state.selected_paths ?? [])];
+  const stateAliases = capturedStateAliases(capture);
+  const aliasPaths = [...stateAliases].sort(
+    (left, right) => right.alias.length - left.alias.length,
+  );
+  const selectedSpelling = (path: string) => {
+    for (const { alias, target } of aliasPaths) {
+      const prefix = `${home}/${alias}`;
+      if (isWithinAny(path, [prefix]))
+        return `${home}/${target}${path.slice(prefix.length)}`;
+    }
+    return path;
+  };
   const recorded = [
     ...(capture.state.content_roots ?? []),
     ...(capture.state.state_directories ?? []),
@@ -215,8 +226,11 @@ export const capturedHomePath = (
   // settings folder. A broad selection of ~/settings must not hide
   // ~/.config/notes when that folder was walked at ~/settings/notes.
   const spellings = [
-    ...selections.map(({ physical, path: logical }) => ({ physical, logical })),
     ...renamed,
+    ...selections.map(({ physical, path }) => ({
+      physical,
+      logical: selectedSpelling(path),
+    })),
   ].sort((left, right) => right.physical.length - left.physical.length);
   const spell = (path: string) => {
     for (const { physical, logical } of spellings) {
@@ -227,7 +241,7 @@ export const capturedHomePath = (
     const plain = relative(path);
     return plain === null ? undefined : { spelled: plain, specificity: 0 };
   };
-  return (path) => {
+  const homePath = (path: string) => {
     const own = spell(path);
     // A database log follows the database only when that database's mapping is
     // more specific than the log file's own. A selected file whose name ends
@@ -250,6 +264,30 @@ export const capturedHomePath = (
     }
     return own?.spelled ?? null;
   };
+  return { homePath, stateAliases };
+};
+
+/** A captured path's home-relative spelling in the shared export plan. */
+export const capturedHomePath = (capture: DesktopApplicationCapture) =>
+  capturedHomePlan(capture).homePath;
+
+/** Selected links to an app state root must keep both the app's name and the selected name. */
+const capturedStateAliases = (capture: DesktopApplicationCapture) => {
+  const { home } = capture.host;
+  const walked = capture.state.state_directories ?? [];
+  const roots = capture.application.state_directories;
+  if (walked.length !== roots.length) return [];
+  const relative = (path: string) =>
+    path.startsWith(`${home}/`) ? path.slice(home.length + 1) : null;
+  return (capture.state.selected_paths ?? []).flatMap(({ path, physical }) => {
+    const index = walked.indexOf(physical);
+    const state = index < 0 ? undefined : roots[index]?.path;
+    const alias = relative(path);
+    const target = state === undefined ? null : relative(state);
+    return alias === null || target === null || alias === target
+      ? []
+      : [{ alias, target }];
+  });
 };
 
 type StatePath = DesktopApplicationState["paths"][number];
@@ -306,7 +344,7 @@ export const exportedStateFiles = (
   capture: DesktopApplicationCapture,
   state: DesktopApplicationState,
 ) => {
-  const homePath = capturedHomePath(capture);
+  const { homePath, stateAliases } = capturedHomePlan(capture);
   const homePaths = (paths: readonly string[]) =>
     paths.map(homePath).filter((path): path is string => path !== null);
   const { files, dconf, collisions } = stateFilesByHomePath(
@@ -320,21 +358,29 @@ export const exportedStateFiles = (
     ...(capture.state.state_directories ?? []),
   ]);
   const selected = homePaths(roleFacts(capture).selectedRoots);
-  const usersOwn = [...withRole("document"), ...selected];
-  const leftOut = leftOutFiles(files, stateDirectories, usersOwn, selected);
-  // A lock or log directly in the home or a shared folder must not own that path, as Poedit's `~/poedit.lock` would. One inside the app's own folder still marks the folder, so settings beside the log stay seeded.
+  const isLeftOut = leftOutFiles(files, stateDirectories, selected);
+  // A lock directly in the home or a shared folder must not own that path, as Poedit's `~/poedit.lock` would. One inside the app's own folder still marks the folder, so settings beside the lock stay seeded.
   const marksFolder = (home: string) => {
     const folder = home.split("/").slice(0, -1).join("/");
     return !SHARED_FOLDERS.has(folder);
   };
   const paths = ownedPaths(
     withRole("application_state").filter(
-      (home) => !leftOut.isLeftOut(home) || marksFolder(home),
+      (home) => !isLeftOut(home) || marksFolder(home),
     ),
     withRole("document"),
     stateDirectories,
   );
-  return { homePath, files, dconf, collisions, paths, selected, ...leftOut };
+  return {
+    homePath,
+    stateAliases,
+    files,
+    dconf,
+    collisions,
+    paths,
+    selected,
+    isLeftOut,
+  };
 };
 
 /** Text safe inside a Python triple-quoted docstring. */
@@ -440,6 +486,7 @@ const classBody = (plan: DesktopAppExportPlan): string => {
         if not INITIAL.exists():
             _seed_home(Path.home())
             _load_dconf(Path.home())
+        _ensure_state_aliases(Path.home())
         keep_initial(self.paths)
 ${PYTHON_DATA_HOOKS}${PYTHON_READY_CHECK}`;
   if (plan.dconf.length > 0)
@@ -535,6 +582,7 @@ TEXT_SEEDS = frozenset(${pyList(plan.textSeeds)})
 SEED_MODES = {${Object.entries(plan.seedModes)
     .map(([home, mode]) => `${py(home)}: 0o${mode.toString(8)}`)
     .join(", ")}}
+STATE_ALIASES = [${(plan.stateAliases ?? []).map(({ alias, target }) => `(${py(alias)}, ${py(target)})`).join(", ")}]
 WINDOW_CLASS = ${py(plan.windowClass)}
 ${PYTHON_HELPERS}
 
@@ -717,7 +765,7 @@ ${DESKTOP_EXPORT_FRAMEWORK_VERSION}.
       : `
 - Not seeded, because the capture did not retain their bytes at the seed: ${homeList(plan.unseededFiles)}.
   Capture again with \`--state-path\` naming them, or a larger \`--max-file-bytes\`, to include them.`
-  }${unownedReadmeNotes(plan.unownedFolders, plan.runtimeSeeds, { locks: plan.leftOutLocks, logs: plan.leftOutLogs })}
+  }${unownedReadmeNotes(plan.unownedFolders, plan.runtimeSeeds, plan.leftOutLocks)}
 - \`tasks/smoke.json\` deploys the app.
 
 ${taskSection.length === 0 ? "Run it with `agent-env run <this folder>`." : "Run the task with `agent-env run <this folder>`, or only the deploy with `--task smoke`."}

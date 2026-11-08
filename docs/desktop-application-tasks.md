@@ -69,7 +69,9 @@ operation `describe_desktop_application_task` and predicate type
   or SQLite file's change and suggestions already carry its lines and rows.
 - `task`: a draft with the name `change`, a placeholder prompt the export
   refuses, and suggested checks derived from the net change of the files with
-  role `document`, or of the app's own state files when no document changed.
+  role `document`, or of the app's own state files when no document changed,
+  excluding locks the export leaves out of the seed. App state files ending
+  in `.log` remain eligible for checks.
   A text file gains `lines_present` for its new lines and `lines_absent` for
   lines it lost (when either is at most ten), and `line_count` for each line
   holding a letter whose count changed; JSON and key files gain
