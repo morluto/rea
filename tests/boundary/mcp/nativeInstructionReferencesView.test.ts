@@ -34,8 +34,9 @@ const row = {
 };
 const referenceRows = Array.from({ length: 500 }, (_, index) => ({
   ...row,
-  // Keep one duplicate to prove that paging preserves distinct row identities.
-  source_address: `0x${(0x2000 + Math.max(0, index - 1)).toString(16)}`,
+  // Separate duplicate matches so their filtered offsets differ from their source indices.
+  source_address:
+    index === 200 ? row.source_address : `0x${(0x2000 + index).toString(16)}`,
 }));
 const instruction = (
   incoming: "rows" | "empty" | "unavailable" | "not-recorded",
@@ -143,35 +144,45 @@ const checkFilteredReference = async (
   schema: Readonly<Record<string, unknown>>,
   source: { kind: "retained-evidence"; evidence_id: string },
 ) => {
-  const filtered = await client.callTool({
-    name: "inspect_analysis_view",
-    arguments: {
-      source,
-      view: {
-        kind: "native-instruction-references",
-        collection: "incoming_references",
-        source_address: "0x2000",
-        target_address: "0x1000",
-        offset: 1,
-        limit: 1,
+  let offset: number | null = 0;
+  for (const sourceIndex of [0, 200]) {
+    if (offset === null)
+      throw new Error("Filtered page ended before both matches");
+    const filtered = await client.callTool({
+      name: "inspect_analysis_view",
+      arguments: {
+        source,
+        view: {
+          kind: "native-instruction-references",
+          collection: "incoming_references",
+          source_address: "0x2000",
+          target_address: "0x1000",
+          offset,
+          limit: 1,
+        },
       },
-    },
-  });
-  expect(filtered.isError, JSON.stringify(filtered.content)).not.toBe(true);
-  expect(
-    validation.assertions.validate(schema, filtered.structuredContent),
-    JSON.stringify(validation.assertions.errors),
-  ).toBe(true);
-  expect(
-    parseEvidence(filtered.structuredContent).normalized_result,
-  ).toMatchObject({
-    parent_evidence_id: source.evidence_id,
-    items: {
-      state: "available",
-      rows: [{ source_index: 1, value: row }],
-    },
-    coverage: { total: 2, next_offset: null, exhausted: true },
-  });
+    });
+    expect(filtered.isError, JSON.stringify(filtered.content)).not.toBe(true);
+    expect(
+      validation.assertions.validate(schema, filtered.structuredContent),
+      JSON.stringify(validation.assertions.errors),
+    ).toBe(true);
+    const page = analysisViewResultSchema.parse(
+      parseEvidence(filtered.structuredContent).normalized_result,
+    );
+    if (page.kind !== "native-instruction-references" || page.coverage === null)
+      throw new Error("Expected a filtered instruction reference page");
+    expect(page).toMatchObject({
+      parent_evidence_id: source.evidence_id,
+      items: {
+        state: "available",
+        rows: [{ source_index: sourceIndex, value: row }],
+      },
+      coverage: { total: 2, examined: 1 },
+    });
+    offset = page.coverage.next_offset;
+    expect(offset).toBe(sourceIndex === 0 ? 1 : null);
+  }
 };
 
 it.each(["full", "compact"] as const)(
@@ -302,7 +313,7 @@ it.each(["full", "compact"] as const)(
           expect(page).toMatchObject({
             items: {
               state: "available",
-              rows: [{ source_index: 1, value: row }],
+              rows: [{ source_index: 1, value: referenceRows[1] }],
             },
             coverage: { total: 500, next_offset: 2 },
           });
