@@ -1015,9 +1015,10 @@ it("refuses to launch an executable replaced after the target was opened", async
   await run(client, "procedure_pseudo_code", { procedure: "main" });
 
   await appendFile(kuna, "\n// replaced mid-session\n");
-  expect(
-    await client.execute("procedure_pseudo_code", { procedure: "parse" }),
-  ).toMatchObject({
+  const replaced = await client.execute("procedure_pseudo_code", {
+    procedure: "parse",
+  });
+  expect(replaced).toMatchObject({
     ok: false,
     error: {
       _tag: "ProviderAdapterError",
@@ -1026,6 +1027,10 @@ it("refuses to launch an executable replaced after the target was opened", async
       ),
     },
   });
+  if (!replaced.ok)
+    expect(projectAnalysisError(replaced.error).remediation.action).toContain(
+      "reopen the target",
+    );
   await client.close();
 });
 
