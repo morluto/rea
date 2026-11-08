@@ -1,9 +1,47 @@
 import { describe, expect, it } from "vitest";
 
 import { draftOf, statePath, xml, xmlDraft } from "./appTaskDraft.fixture.js";
-import { draftValues } from "./appTaskDraftValues.js";
+import { compactValue, draftValues } from "./appTaskDraftValues.js";
 import { resolvePointer } from "./viewPointer.js";
 import { zipEntry, zipView } from "./zipView.js";
+
+it("cuts XML previews after escaping, including entity and surrogate boundaries", () => {
+  const element = {
+    name: "n",
+    attributes: { value: '😀&<"' },
+    children: ["a&<😀"],
+  };
+  const complete = '<n value="😀&amp;&lt;&quot;">a&amp;&lt;😀</n>';
+  for (const limit of [
+    0,
+    1,
+    10,
+    11,
+    12,
+    17,
+    25,
+    complete.length,
+    complete.length + 1,
+  ])
+    expect(compactValue(element, "xml", limit)).toBe(
+      complete.length > limit ? `${complete.slice(0, limit)}…` : complete,
+    );
+  expect(
+    compactValue(
+      { name: "n", attributes: { value: "&".repeat(1_000_000) }, children: [] },
+      "xml",
+    ),
+  ).toBe(`${('<n value="' + "&amp;".repeat(120)).slice(0, 600)}…`);
+});
+
+it("cuts JSON previews after escaping keys and values", () => {
+  const value = { '😀"\n': ["a\n😀\\\ud800"] };
+  const complete = JSON.stringify(value);
+  for (let limit = 0; limit <= complete.length + 1; limit += 1)
+    expect(compactValue(value, "json", limit)).toBe(
+      complete.length > limit ? `${complete.slice(0, limit)}…` : complete,
+    );
+});
 
 /** A household book: accounts, payees and categories by key, and operations naming them. */
 const book = (operations: string, note = "Draft", tags = '<tag name="old"/>') =>
