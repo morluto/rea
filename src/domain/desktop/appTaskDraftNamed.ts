@@ -408,7 +408,7 @@ const renamedFrom = (collected: Collected, pointer: string) => {
 const collectChecks = (
   context: CollectContext,
   change: DesktopStateDifference,
-): Collected => {
+): Collected & { readonly runs: ReturnType<typeof readsText> } => {
   const collected: Collected = {
     context,
     elements: [],
@@ -435,7 +435,7 @@ const collectChecks = (
     }
   for (const pointer of change.removed.filter((at) => !runs(at, ends.baseline)))
     removedCheck(collected, pointer);
-  return collected;
+  return { ...collected, runs };
 };
 
 /**
@@ -528,6 +528,7 @@ export const namedDraft = (
         named(view, list) && !tree.arrayLeavesOut(view, list),
       noisy: (pointer) => noise(pointer) !== undefined,
       covered: texts.covers,
+      coveredRun: checks.runs,
     },
     change,
   );
