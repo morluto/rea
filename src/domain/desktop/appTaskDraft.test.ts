@@ -7,6 +7,7 @@ import type { JsonValue } from "../jsonValue.js";
 import type { DesktopTaskCheck } from "./appTask.js";
 import { evaluateTaskChecks } from "./appTaskChecks.js";
 import { draftTaskFiles, type TaskDraftFile } from "./appTaskDraft.js";
+import { leftOutFiles } from "./appExportUnowned.js";
 import type { DesktopStatePath } from "./desktopState.js";
 import { xmlView } from "./stateFormats.js";
 import { locatePointer } from "./viewPointer.js";
@@ -54,6 +55,7 @@ const draft = (files: Record<string, DesktopStatePath>) =>
     new Map(Object.entries(files)),
     (home) => home !== "elsewhere",
     { seed: 0, end: 1 },
+    leftOutFiles(new Map(Object.entries(files)), [], []).isLeftOut,
   );
 
 it("omits checks for a lock left out of a selected folder but retains an explicitly selected lock", () => {
@@ -69,7 +71,12 @@ it("omits checks for a lock left out of a selected folder but retains an explici
     }),
   );
   const ends = { seed: 0, end: 1 };
-  const fromFolder = draftTaskFiles(files, () => true, ends, ["Documents"]);
+  const fromFolder = draftTaskFiles(
+    files,
+    () => true,
+    ends,
+    leftOutFiles(files, [], ["Documents"], ["Documents"]).isLeftOut,
+  );
   expect(
     fromFolder.find(({ file }) => file === "Documents/plan.vym")?.suggested
       .length,
@@ -77,9 +84,17 @@ it("omits checks for a lock left out of a selected folder but retains an explici
   expect(
     fromFolder.find(({ file }) => file === "Documents/plan.vym.lock"),
   ).toMatchObject({ suggested: [], values: [], guards: [] });
-  const explicit = draftTaskFiles(files, () => true, ends, [
-    "Documents/plan.vym.lock",
-  ]);
+  const explicit = draftTaskFiles(
+    files,
+    () => true,
+    ends,
+    leftOutFiles(
+      files,
+      [],
+      ["Documents/plan.vym.lock"],
+      ["Documents/plan.vym.lock"],
+    ).isLeftOut,
+  );
   expect(
     explicit.find(({ file }) => file === "Documents/plan.vym.lock")?.suggested
       .length,
