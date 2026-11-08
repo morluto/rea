@@ -945,6 +945,8 @@ export const systemDoctorHost = (
             readFacts({
               environment,
               platform,
+              signal: inspectionSignal,
+              resources,
               run: hostExecFileOutput,
               clientIds,
               registrations: host.clientRegistrations!,

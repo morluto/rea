@@ -1,5 +1,6 @@
 import { DESKTOP_EXPORT_FRAMEWORK_VERSION } from "../domain/desktop/appExport.js";
 import type { execFileOutput } from "../process/ExecFileOutput.js";
+import type { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
 import type { ClientRegistrationStatus } from "./ClientRegistrationStatus.js";
 import type { DoctorCheck, DoctorHost, DoctorSkillState } from "./Doctor.js";
 import { nodeCheck } from "./DoctorDiagnostics.js";
@@ -69,6 +70,8 @@ export interface DesktopBuildFacts {
 
 /** What a facts reader gets from doctor: its environment, bounded runner and registration reader. */
 export interface DesktopBuildFactsInput {
+  readonly signal: AbortSignal;
+  readonly resources: ArtifactResourceScope;
   readonly environment: Readonly<NodeJS.ProcessEnv>;
   readonly platform: NodeJS.Platform;
   readonly run: typeof execFileOutput;
