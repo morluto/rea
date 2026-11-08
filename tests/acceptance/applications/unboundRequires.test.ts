@@ -186,6 +186,17 @@ cliTest.for(["CLI", "stdio MCP"] as const)(
         'require.call=custom;require.call.call(require,"./receiver.cjs","./invented.node");',
       "nested-mutated.cjs":
         'require.call=custom;require.call.apply(require,["./receiver.cjs","./invented.node"]);',
+      "candidate-alias.MJS": 'const load = require; load("./alias-dep.cjs");',
+      "benign-resolve.cjs":
+        'require.resolve.paths = custom; require.resolve("./benign-dep.cjs");',
+      "benign-call.cjs":
+        'require.call.extra = 1; require.call(null, "./call-dep.cjs");',
+      "wrapped-call.cts":
+        'require.call = () => 0; (require.call as any)(null, "./false-dep.cjs");',
+      "alias-dep.cjs": "module.exports = 1;",
+      "benign-dep.cjs": "module.exports = 2;",
+      "call-dep.cjs": "module.exports = 3;",
+      "false-dep.cjs": "module.exports = 4;",
       "upper-wrapper.CJS": source,
       "lower-module.mjs": source,
       "lower-wrapper.cjs": source,
@@ -214,6 +225,27 @@ cliTest.for(["CLI", "stdio MCP"] as const)(
         ),
       ).toBe(false);
     }
+    const loaderEdge = (file: string, specifier: string) =>
+      result.graph.edges.find(
+        ({ properties, evidence }) =>
+          properties.specifier === specifier &&
+          evidence.location.available &&
+          evidence.location.value.kind === "source-range" &&
+          evidence.location.value.source === file,
+      );
+    expect
+      .soft(
+        loaderEdge("candidate-alias.MJS", "./alias-dep.cjs")?.properties
+          .loader_authority,
+      )
+      .toBe("candidate");
+    expect
+      .soft(loaderEdge("benign-resolve.cjs", "./benign-dep.cjs"))
+      .toBeDefined();
+    expect.soft(loaderEdge("benign-call.cjs", "./call-dep.cjs")).toBeDefined();
+    expect
+      .soft(loaderEdge("wrapped-call.cts", "./false-dep.cjs"))
+      .toBeUndefined();
     const modules = result.graph.nodes
       .filter((node) => node.kind === "javascript-module")
       .flatMap((node) =>

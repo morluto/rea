@@ -66,9 +66,7 @@ import {
 } from "./javascriptSemanticRequireOrigin.js";
 
 type JavaScriptCallLike =
-  | t.CallExpression
-  | t.OptionalCallExpression
-  | t.NewExpression;
+  t.CallExpression | t.OptionalCallExpression | t.NewExpression;
 
 /** Inspect one call or new expression for references, endpoints, storage, and roles. */
 export const inspectCall = (
@@ -87,12 +85,15 @@ export const inspectCall = (
       bindings,
       accumulator.factoryRequireBindingIds,
     ) !== "local";
+  const unwrappedCallee = unwrapJavaScriptExpression(node.callee).node;
   const invocationMember =
-    (t.isMemberExpression(node.callee) ||
-      t.isOptionalMemberExpression(node.callee)) &&
+    (t.isMemberExpression(unwrappedCallee) ||
+      t.isOptionalMemberExpression(unwrappedCallee)) &&
     ["call", "apply"].includes(
-      semanticStaticPropertyKey(node.callee.property, node.callee.computed) ??
-        "",
+      semanticStaticPropertyKey(
+        unwrappedCallee.property,
+        unwrappedCallee.computed,
+      ) ?? "",
     );
   const deferredModuleRequire =
     semanticModuleRequireReceiver(node) !== undefined ||
@@ -468,9 +469,7 @@ const isExplicitDefaultArgument = (
 };
 
 type ViteMapDepsFunction =
-  | t.FunctionDeclaration
-  | t.FunctionExpression
-  | t.ArrowFunctionExpression;
+  t.FunctionDeclaration | t.FunctionExpression | t.ArrowFunctionExpression;
 
 /** Index the canonical Vite helper's cache initializer from parsed syntax. */
 export const indexVitePreloadDependencyTable = (

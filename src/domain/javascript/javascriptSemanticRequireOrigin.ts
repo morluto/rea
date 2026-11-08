@@ -380,13 +380,14 @@ const selectedRequireSourcesAt = (
 ):
   | Pick<
       JavaScriptRequireCallFact,
-      "loader" | "sourceRelative" | "sourceRelativePath"
+      "loader" | "sourceRelative" | "sourceRelativePath" | "loaderAuthority"
     >
   | undefined => {
   const pending: ModuleObjectSource[] = [{ node: root, path: [] }];
   const seen = new WeakMap<t.Node, Set<string>>();
   let count = 0;
   let found = false;
+  let candidate = false;
   let loaderBinding = false;
   let selectedLoader: JavaScriptRequireLoaderFact | undefined;
   let unknown = false;
@@ -436,6 +437,10 @@ const selectedRequireSourcesAt = (
               ? commonJsLoaderAt(site, state)
               : captured;
           found = true;
+          candidate ||=
+            invoked === "unknown" &&
+            t.isIdentifier(node, { name: "require" }) &&
+            isConditionalRequireAt(node, node, state);
           unknown ||=
             invoked === "unknown" ||
             (selectedLoader !== undefined && selectedLoader !== invoked);
@@ -659,6 +664,7 @@ const selectedRequireSourcesAt = (
               ? (selectedLoader ?? "unknown")
               : "local",
         sourceRelative: found && sourceRelative && !unknown,
+        ...(candidate ? { loaderAuthority: "candidate" as const } : {}),
         ...(found &&
         !unknown &&
         sourceRelative &&
@@ -702,8 +708,7 @@ export interface JavaScriptRequireCallFact {
   readonly operation: "load" | "resolve";
   readonly loader: JavaScriptRequireLoaderFact;
   readonly arguments:
-    | readonly t.CallExpression["arguments"][number][]
-    | undefined;
+    readonly t.CallExpression["arguments"][number][] | undefined;
   readonly sourceRelative: boolean;
   readonly loaderAuthority?: "candidate";
   readonly memberUnproven?: true;
@@ -745,13 +750,18 @@ export const semanticRequireCallAt = (
         requireLoaderValueAt(member.object, node, state, factoryBindingIds) !==
           "local"
       ) {
-        const effects = index.effectsForReferenceAt(node, member.object, [key]);
+        const effects = index.effectsForReferenceAt(node, member);
+        const targetDepth = semanticMemberChain(member)?.members.length;
         if (
           !effects.memberEffectsIndexed ||
           effects.effects.some(
-            ({ kind, timing }) =>
+            ({ kind, timing, path }) =>
               timing !== "after" &&
-              (kind === "member-write" || kind === "escape"),
+              (kind === "escape" ||
+                (kind === "member-write" &&
+                  (targetDepth === undefined ||
+                    path === undefined ||
+                    path.length <= targetDepth))),
           )
         )
           return {
@@ -871,6 +881,7 @@ export const semanticRequireCallAt = (
           "require-loader",
           selected.loader,
           selected.sourceRelative ? "relative" : "unknown",
+          ...(selected.loaderAuthority === "candidate" ? ["candidate"] : []),
         ];
       return interop.intrinsicPath(callee);
     });
@@ -991,8 +1002,7 @@ type ModuleObjectSource = {
   readonly eligibility?: true;
   readonly readAt?: t.Node | undefined;
   readonly capturedSelections?:
-    | readonly SemanticCapturedSelection[]
-    | undefined;
+    readonly SemanticCapturedSelection[] | undefined;
 };
 
 /** Both loader queries retain the same read and shallow-copy selection owner. */
@@ -1621,7 +1631,7 @@ export const semanticGlobalProcessPathOrigin = (
 /** Check one unknown-host wrapper candidate at its source-ordered read. */
 const isConditionalRequireAt = (
   root: t.Identifier,
-  node: t.CallExpression | t.OptionalCallExpression,
+  node: t.Node,
   state: JavaScriptSemanticAnalysisState,
   allowAmbientModule = false,
 ): boolean => {
@@ -1640,7 +1650,12 @@ const isConditionalRequireAt = (
       binding.declarationKinds.size !== 1 ||
       !binding.declarationKinds.has("var") ||
       (semanticBindingHasPriorValueWrite(node, binding, state) &&
-        !isWrapperRequireInitializerCall(binding, node, state)))
+        !(
+          (t.isCallExpression(node) ||
+            t.isOptionalCallExpression(node) ||
+            t.isNewExpression(node)) &&
+          isWrapperRequireInitializerCall(binding, node, state)
+        )))
   )
     return false;
   return !(state.ambientBindingWrites.get("require") ?? []).some(

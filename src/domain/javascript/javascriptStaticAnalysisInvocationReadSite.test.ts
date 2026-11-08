@@ -65,3 +65,23 @@ it("retains conditional coverage for an inline Electron factory export", () => {
     }),
   );
 });
+
+it("keeps captured unknown-host loader authority without promoting shadowed values", () => {
+  const cases = [
+    ['const load=require;load("./candidate.cjs");', true],
+    ['const load=require;require=()=>0;load("./candidate.cjs");', true],
+    ['const require=()=>0;const load=require;load("./candidate.cjs");', false],
+    ['require=()=>0;const load=require;load("./candidate.cjs");', false],
+  ] as const;
+  for (const [source, candidate] of cases) {
+    const result = analyzeJavaScriptStaticSource(source);
+    expect(
+      result.references.some(
+        (reference) =>
+          reference.specifier === "./candidate.cjs" &&
+          reference.loader_authority === "candidate",
+      ),
+      source,
+    ).toBe(candidate);
+  }
+});
