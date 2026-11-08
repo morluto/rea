@@ -893,19 +893,27 @@ const holdsScripts = (member: MemberRole): boolean =>
 const canDeclareMap = (member: MemberRole): boolean =>
   holdsScripts(member) || isCssMember(member);
 
+/** Bun loaders whose module contents a compiled executable ships as JavaScript. */
+const BUN_SCRIPT_LOADERS = new Set(["js", "jsx", "ts", "tsx"]);
+
 /**
  * The role a package reader states for its entry, or null when it states none.
- * A Bun sourcemap region is named `.bunmap`, and a SEA entry's code path need
- * not name a script, so their names alone do not say what they are.
+ * A Bun sourcemap region is named `.bunmap`, a Bun module such as
+ * `$bunfs/root/release` need not name a script, and a SEA entry's code path
+ * need not either, so their names alone do not say what they are.
  */
 const ownerStatedKind = (
   metadata: ArtifactOccurrence["format_metadata"],
 ): string | null => {
-  if (
-    metadata?.kind === "bun-standalone-entry" &&
-    metadata.region === "sourcemap"
-  )
-    return "source-map";
+  if (metadata?.kind === "bun-standalone-entry") {
+    if (metadata.region === "sourcemap") return "source-map";
+    if (
+      metadata.region === "contents" &&
+      BUN_SCRIPT_LOADERS.has(metadata.loader_name ?? "")
+    )
+      return "javascript";
+    return null;
+  }
   if (metadata?.kind === "node-sea-entry" && metadata.role === "main-script")
     return "javascript";
   return null;

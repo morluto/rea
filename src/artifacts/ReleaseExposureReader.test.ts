@@ -3425,6 +3425,46 @@ describe("ReleaseExposureReader inline map reads", () => {
   });
 });
 
+describe("ReleaseExposureReader Bun module loaders", () => {
+  const inlineMap = Buffer.from(
+    JSON.stringify({
+      version: 3,
+      sources: ["src/app.ts"],
+      sourcesContent: ["export {};"],
+      mappings: "",
+    }),
+  ).toString("base64");
+
+  it.each([
+    ["js", 1, "exposed"],
+    ["text", 13, "not_observed"],
+  ] as const)(
+    "reads an extensionless Bun module with the %s loader by its loader",
+    async (_, loader, status) => {
+      const root = await createTestTempDirectory("rea-release-exposure-bun-");
+      await writeFile(
+        join(root, "server"),
+        elfBunSection(
+          bunPrefixedPayload(
+            bunModuleGraphPayload({
+              modules: [
+                {
+                  name: "/$bunfs/root/release",
+                  loader,
+                  contents: Buffer.from(
+                    `run();\n//# sourceMappingURL=data:application/json;base64,${inlineMap}\n`,
+                  ),
+                },
+              ],
+            }),
+          ),
+        ),
+      );
+      expect(sourceMapSourcesStatus(await inspect(root))).toBe(status);
+    },
+  );
+});
+
 describe("ReleaseExposureReader byte-order-marked maps", () => {
   it.each([
     ["utf-16le", [0xff, 0xfe]],
