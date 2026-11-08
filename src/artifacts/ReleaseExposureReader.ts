@@ -2923,6 +2923,8 @@ const classifySiblingMap = async (
     ) !== null
   )
     return;
+  // A Node shebang names a script, as it does for a member's `.map`.
+  if (prefix !== null && hasNodeShebang(prefix)) return;
   if (prefix === null || mayHaveSourceMapPrefix(prefix))
     state.skippedCompanions += 1;
   else noteLinkerMapGuess(state, sibling);

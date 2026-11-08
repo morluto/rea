@@ -1307,6 +1307,18 @@ describe("ReleaseExposureReader sibling map identity", () => {
     expect(scanned.debug_companions).toEqual({ paths: [], skipped: 0 });
     expect(debugCompanionsStatus(scanned)).not.toBe("exposed");
   });
+
+  it("does not report a Node script beside a selected file as a linker map", async () => {
+    const root = await createTestTempDirectory("rea-release-sibling-shebang-");
+    await writeFile(
+      join(root, "runner.map"),
+      "#!/usr/bin/env node\nrequire('./main');\n",
+    );
+    await writeFile(join(root, "app"), "plain file");
+    const scanned = await inspect(join(root, "app"));
+    expect(scanned.debug_companions).toEqual({ paths: [], skipped: 0 });
+    expect(debugCompanionsStatus(scanned)).not.toBe("exposed");
+  });
 });
 
 describe("ReleaseExposureReader acquisition and sibling review regressions", () => {
