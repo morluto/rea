@@ -207,8 +207,8 @@ unneeded rows out of agent context without discarding the source Evidence.
 
 `binary_path` names the native binary built with the metadata: macOS
 `GameAssembly.dylib` (Mach-O), Windows `GameAssembly.dll` (64-bit PE),
-Android `libil2cpp.so` (64-bit ELF, AArch64 or x86-64) or an uncompressed Unity
-WebGL module (wasm32, below). A
+Android `libil2cpp.so` (64-bit ELF, AArch64 or x86-64, or 32-bit ARM
+`armeabi-v7a`, below) or an uncompressed Unity WebGL module (wasm32, below). A
 universal Mach-O needs `binary_architecture` (`arm64` or `amd64`); a thin binary
 rejects it. The file is read, never loaded or executed.
 
@@ -334,6 +334,19 @@ Dyld pointer ownership comes from the parsed bind stream, as in Apple's
 [dyld analyzer](https://github.com/apple-oss-distributions/dyld/blob/dyld-1165.3/common/MachOAnalyzer.cpp#L1508-L1511), rather than the slot's placeholder word.
 The padding, zero-fill-tail and unresolved-type cases have authored regression
 fixtures; they do not add real Unity-build verification to the checks above.
+
+### Android armeabi-v7a (32-bit ARM)
+
+A 32-bit ARM `libil2cpp.so` links the same way at four-byte pointer width. Its
+pointer slots keep their `R_ARM_RELATIVE` addends in place (`DT_REL`), so the
+shared ELF relocation reader resolves them before the search. Unity builds this
+library in ARM state: a method pointer with bit 0 set (Thumb) is refused as
+`unsupported-pointer-encoding`, and an ARM-state pointer that is not 4-byte
+aligned as `invalid-method-pointer`. `generic_instances` is refused for 32-bit
+images. Checked on an armeabi-v7a build of Unity 2022.3.62f3 (metadata version
+31): all 10,057 linked code rows sit at the address of the debug symbol in the
+matching `libil2cpp.sym.so` whose name starts with the IL2CPP method name, and
+no method pointer had bit 0 set. Other Unity versions are unchecked.
 
 ### Unity WebGL (wasm32)
 

@@ -40,6 +40,8 @@ import {
   type Il2cppBinaryFixtureOptions,
   createWasmFixture,
   FIXTURE_WASM_METHODS,
+  ARM_FIXTURE_METHOD_ADDRESSES,
+  createArmElfFixture,
 } from "../../fixtures/il2cpp/binary.js";
 import {
   createIl2cppMetadataFixture,
@@ -2094,6 +2096,91 @@ it("builds a wasm fixture that the engine itself accepts", () => {
     }
   ).WebAssembly;
   expect(engine.validate(createWasmFixture())).toBe(true);
+});
+
+it("links a 32-bit ARM ELF with REL relocations through 4-byte pointers", () => {
+  const linked = link(createArmElfFixture());
+  expect(linked).toMatchObject({
+    format: "elf",
+    architecture: "arm",
+    image_base: 0n,
+    code_gen_modules_field: 0x600n,
+    code_gen_modules_array: 0x500n,
+    code_gen_modules: [
+      {
+        image: 0,
+        address: 0x400n,
+        method_pointer_count: 3,
+        method_pointers: 0x300n,
+      },
+      {
+        image: 1,
+        address: 0x440n,
+        method_pointer_count: 2,
+        method_pointers: 0x30cn,
+      },
+    ],
+    types_field: 0x818n,
+    types_count: 4,
+  });
+  expect(linked.method_addresses).toEqual(
+    ARM_FIXTURE_METHOD_ADDRESSES.map((value) =>
+      typeof value === "bigint"
+        ? {
+            state: "code",
+            address: `0x${value.toString(16)}`,
+            rva: `0x${value.toString(16)}`,
+          }
+        : { state: value, address: null, rva: null },
+    ),
+  );
+  expect(linked.return_types).toEqual(
+    Array.from({ length: 5 }, () => ({
+      type: 0,
+      name: FIXTURE_RETURN_TYPE_NAME,
+    })),
+  );
+});
+
+it.each([
+  ["a 32-bit x86 ELF", { machine: 3 }, "unsupported-container", "unsupported"],
+  [
+    "a Thumb-state method pointer",
+    { thumb: true },
+    "unsupported-pointer-encoding",
+    "unsupported",
+  ],
+  [
+    "an ARM-state method pointer that is not 4-byte aligned",
+    { firstCode: 0x216 },
+    "invalid-method-pointer",
+    "malformed",
+  ],
+  [
+    "no CodeRegistration module table",
+    { codeRegistration: false },
+    "code-registration-not-found",
+    "malformed",
+  ],
+] as const)("refuses %s among 32-bit images", (_, options, reason, kind) => {
+  expect(failure(createArmElfFixture(options))).toEqual({ reason, kind });
+});
+
+it("refuses generic instances for a 32-bit ARM image", () => {
+  const generic = genericFacts(31);
+  expect(
+    refusal(() =>
+      linkIl2cppBinary(
+        createArmElfFixture(),
+        generic.metadata,
+        generic.link,
+        undefined,
+        {
+          genericInstances: true,
+        },
+      ),
+    ),
+  ).toEqual({ reason: "generic-methods-unsupported", kind: "unsupported" });
 });
 
 it("refuses a wasm module that imports its memory", () => {

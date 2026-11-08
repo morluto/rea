@@ -107,6 +107,11 @@ export function* linkIl2cppBinarySteps(
     );
   yield;
   const image = yield* openImageSteps(bytes, architecture);
+  if (options.genericInstances === true && image.pointerSize !== 8)
+    throw new Il2cppBinaryFormatFailure(
+      "generic-methods-unsupported",
+      "generic method instances are not decoded for 32-bit images",
+    );
   const modules = yield* findModules(image, metadata);
   const registration_ = yield* findCodeRegistration(image, modules);
   const methodImage = new Int32Array(metadata.methods.length).fill(-1);
@@ -174,6 +179,21 @@ export function* linkIl2cppBinarySteps(
       // An imported function has no body in this module.
       if (fn < image.wasmTable.importedFunctionCount) return "unknown";
       return { table_index: slot, function_index: fn };
+    }
+    if (image.container.architecture === "arm") {
+      // ARM interworking: bit 0 of a code pointer selects Thumb state, which
+      // no checked Unity armeabi-v7a build uses.
+      if ((address & 1n) === 1n)
+        throw new Il2cppBinaryFormatFailure(
+          "unsupported-pointer-encoding",
+          `method ${index} points to Thumb-state code at 0x${address.toString(16)}; only ARM-state methods are linked`,
+        );
+      // An ARM-state instruction is 4-byte aligned; bit 1 contradicts the mode.
+      if ((address & 2n) === 2n)
+        throw new Il2cppBinaryFormatFailure(
+          "invalid-method-pointer",
+          `method ${index} points to ARM-state address 0x${address.toString(16)}, which is not 4-byte aligned`,
+        );
     }
     if (!isExecutable(image, address))
       throw new Il2cppBinaryFormatFailure(
