@@ -702,7 +702,10 @@ the [experimental P0 boundary](../providers/windows-ghidra-p0.md).
 
 Bazzite uses RPM packages, but REA does not install Hopper automatically on it.
 Setup skips the Hopper offer because Bazzite is outside the supported host list,
-regardless of whether Xvfb is installed. Bazzite documents
+regardless of whether Xvfb is installed. When setup needs a provider, it reports
+the detected distribution and architecture with the available alternatives.
+The dry-run JSON includes this diagnosis under `hopperInstallUnavailable`.
+Bazzite documents
 [containers for installing Linux packages](https://docs.bazzite.gg/Installing_and_Managing_Software/Containers/).
 If using a container, check its distribution and architecture against the list
 above. Install REA and Hopper in that container, give it access to the files you

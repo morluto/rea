@@ -13,6 +13,7 @@ import type {
   SetupAction,
   SetupClientState,
   SetupHost,
+  SetupHopperInstallUnavailable,
   SetupProviderEnvironment,
 } from "./SetupTypes.js";
 import {
@@ -42,6 +43,7 @@ export interface SetupDiscovery {
   readonly initialDoctor: Awaited<ReturnType<SetupHost["doctor"]>>;
   readonly installHopper: boolean;
   readonly hopperInstall: HopperInstallEligibility;
+  readonly hopperInstallUnavailable?: SetupHopperInstallUnavailable;
   readonly clients: readonly SetupClient[];
   readonly detectedClientIds: readonly string[];
   readonly defaultClientIds: readonly string[];
@@ -78,11 +80,26 @@ export const discoverSetupState = async (input: {
       : undefined,
     linuxDistribution,
   );
+  const hopperNeeded = !input.providerConfigured || linuxHopperRepairNeeded;
   const installHopper =
     input.forceHopperInstall ||
-    (hopperInstall.supported !== false &&
-      input.proposeHopper &&
-      (!input.providerConfigured || linuxHopperRepairNeeded));
+    (hopperInstall.supported !== false && input.proposeHopper && hopperNeeded);
+  const hopperInstallUnavailable =
+    input.host.platform === "linux" &&
+    hopperInstall.supported === false &&
+    (hopperNeeded || input.forceHopperInstall)
+      ? {
+          architecture: input.host.architecture,
+          distribution:
+            linuxDistribution === undefined
+              ? null
+              : {
+                  id: linuxDistribution.id,
+                  version: linuxDistribution.versionId ?? null,
+                },
+          remediation: hopperInstall.remediation,
+        }
+      : undefined;
   const [clients, detectedClients] = await Promise.all([
     input.host.supportedClients(),
     input.host.detectedClients(),
@@ -138,6 +155,9 @@ export const discoverSetupState = async (input: {
     initialDoctor,
     installHopper,
     hopperInstall,
+    ...(hopperInstallUnavailable === undefined
+      ? {}
+      : { hopperInstallUnavailable }),
     clients,
     detectedClientIds: detectedClients
       .filter(({ format }) => format !== "unsupported")

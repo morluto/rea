@@ -246,7 +246,7 @@ const runSetupCommand = async (
     !input.formatExplicit &&
     hasInteractiveTerminal()
   ) {
-    if (result.status === "planned") renderSetupDryRun(result.plannedActions);
+    if (result.status === "planned") renderSetupDryRun(result);
     else renderInteractiveSetupResult(result, environment);
   }
   return result;

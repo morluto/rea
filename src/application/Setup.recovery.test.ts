@@ -527,6 +527,7 @@ describe("setup scoped readiness", () => {
     );
 
     expect(result.status).toBe("ready");
+    expect(result.hopperInstallUnavailable).toBeUndefined();
     expect(host.hopperInstalls).toBe(0);
     expect(host.configuredProviderEnvironments).toContainEqual({
       GHIDRA_INSTALL_DIR: "/opt/ghidra_12.1.4_PUBLIC",
@@ -588,6 +589,30 @@ const proposesHopper = async (host: FakeSetupHost) =>
       host,
     )
   ).plannedActions.some(({ kind }) => kind === "install_hopper");
+
+it("explains a skipped Bazzite offer in a structured dry run", async () => {
+  const host = new FakeSetupHost("linux");
+  host.distribution = parseLinuxDistribution(
+    'ID=bazzite\nID_LIKE="fedora"\nVERSION_ID=43',
+    "x64",
+  );
+  const result = await runSetup(
+    { ...options(false), dryRun: true, clientIds: [], installSkill: false },
+    host,
+  );
+
+  expect(result).toMatchObject({
+    status: "planned",
+    plannedActions: [],
+    appliedActions: [],
+    hopperInstallUnavailable: {
+      distribution: { id: "bazzite", version: "43" },
+      architecture: "x64",
+      remediation: unsupportedLinux,
+    },
+  });
+  expect(host.hopperInstalls).toBe(0);
+});
 
 describe("setup Hopper install eligibility", () => {
   it.each([
