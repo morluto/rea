@@ -1,6 +1,8 @@
 import { PYTHON_JSON_READER } from "./appExportPythonJson.js";
 import { PYTHON_XML_READER } from "./appExportPythonXml.js";
 import { PYTHON_ZIP_HELPERS } from "./appExportPythonZip.js";
+import { ZIP_SIGNATURES } from "../zipPackageFormat.js";
+import { ZIP_EOCD_BYTES } from "../zipEndOfCentralDirectory.js";
 
 /** The generated module's imports. */
 /** The class method that holds readiness until the app's own window shows, not a splash screen with its class. */
@@ -46,6 +48,8 @@ LINE_BREAK = re.compile(r"\r?\n")
 SQLITE_HEADER = b"SQLite format 3\x00"
 GVDB_HEADER = b"GVariant"
 ZIP_HEADER = b"PK\x03\x04"
+ZIP_SIGNATURES = (${ZIP_SIGNATURES.map((signature) => `bytes(${JSON.stringify(signature)})`).join(", ")})
+ZIP_EOCD_BYTES = ${String(ZIP_EOCD_BYTES)}
 XML_SPACE = "xml:space"
 MAX_VIEW_BYTES = 64 * 1024 * 1024
 MAX_SAFE_INTEGER = 2**53 - 1
@@ -272,6 +276,11 @@ def _text_view(name: str, text: str, size: int) -> dict:
     return _text(text)
 
 
+def _is_zip(data: bytes) -> bool:
+    """Known ZIP storage signatures, including empty archives; the reader owns directory validity."""
+    return data.startswith(ZIP_HEADER) or (len(data) >= ZIP_EOCD_BYTES and data.startswith(ZIP_SIGNATURES))
+
+
 def _view(path: Path) -> dict:
     """A typed JSON view of one file in the shapes of REA's state view; truncated says the view is partial."""
     too_large = {"format": None, "view": None, "error": "larger than 64 MiB, the most the view reads"}
@@ -283,7 +292,7 @@ def _view(path: Path) -> dict:
         data += file.read(MAX_VIEW_BYTES + 1 - len(data)) if whole else b""
     if data.startswith(SQLITE_HEADER):
         return _sqlite(path)
-    if data.startswith(ZIP_HEADER):
+    if _is_zip(data):
         return _zip(path)
     if len(data) > MAX_VIEW_BYTES:
         return too_large

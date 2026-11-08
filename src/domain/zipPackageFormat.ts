@@ -23,15 +23,20 @@ export const isZipPackageFormat = (
 ): format is ZipPackageFormat =>
   ZIP_PACKAGE_FORMATS.some((candidate) => candidate === format);
 
-/** Recognize local-header, classic/Zip64 empty-archive, or split ZIP signatures, not validity. */
+/** Local-header, classic/Zip64 empty-archive, and split ZIP signatures. */
+export const ZIP_SIGNATURES = [
+  [0x50, 0x4b, 0x03, 0x04],
+  [0x50, 0x4b, 0x05, 0x06],
+  [0x50, 0x4b, 0x06, 0x06],
+  [0x50, 0x4b, 0x07, 0x08],
+] as const;
+
+/** Recognize a ZIP signature, not directory validity or supported storage. */
 export const hasZipSignature = (bytes: Uint8Array): boolean =>
   bytes.length >= 4 &&
-  bytes[0] === 0x50 &&
-  bytes[1] === 0x4b &&
-  ((bytes[2] === 0x03 && bytes[3] === 0x04) ||
-    (bytes[2] === 0x05 && bytes[3] === 0x06) ||
-    (bytes[2] === 0x06 && bytes[3] === 0x06) ||
-    (bytes[2] === 0x07 && bytes[3] === 0x08));
+  ZIP_SIGNATURES.some((signature) =>
+    signature.every((byte, index) => bytes[index] === byte),
+  );
 
 const CENTRAL_DIRECTORY_HEADER = 0x02014b50;
 const LOCAL_FILE_HEADER = 0x04034b50;
