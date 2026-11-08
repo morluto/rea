@@ -6,6 +6,7 @@ import { expect, it, vi } from "vitest";
 
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
 import { DesktopBuildSecrets } from "../application/desktop/DesktopBuildSecrets.js";
+import { awaitAcknowledgement } from "../../tests/fixtures/lifecycleAcknowledgement.js";
 
 // A made-up value, never a real credential.
 const FIRST = "e-Plum7-Kite-Throwaway-42";
@@ -57,20 +58,24 @@ it("never gives one export's handle to another whose bytes differ while the firs
     }),
   };
   const first = secrets.keep("rea-app", Buffer.from(FIRST));
-  await writing;
-  // A second export keeps an empty withheld file while the first's bytes are not yet written.
-  const second = await secrets.keep("rea-app", Buffer.alloc(0));
-  release();
-  const kept = await first;
-  expect(kept).not.toBe(second);
-  expect(await secrets.resolve(second, "setting")).toEqual({
-    ok: true,
-    value: "",
-  });
-  expect(await secrets.resolve(kept, "setting")).toEqual({
-    ok: true,
-    value: Buffer.from(FIRST).toString("base64"),
-  });
-  expect((await readdir(directory)).sort()).toEqual([kept, second].sort());
-  await secrets.close();
+  try {
+    await awaitAcknowledgement(writing, first, "first secret write");
+    const second = await secrets.keep("rea-app", Buffer.alloc(0));
+    release();
+    const kept = await first;
+    expect(kept).not.toBe(second);
+    expect(await secrets.resolve(second, "setting")).toEqual({
+      ok: true,
+      value: "",
+    });
+    expect(await secrets.resolve(kept, "setting")).toEqual({
+      ok: true,
+      value: Buffer.from(FIRST).toString("base64"),
+    });
+    expect((await readdir(directory)).sort()).toEqual([kept, second].sort());
+  } finally {
+    release();
+    await Promise.allSettled([first]);
+    await secrets.close();
+  }
 });

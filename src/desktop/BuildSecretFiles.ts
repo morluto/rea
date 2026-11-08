@@ -17,9 +17,13 @@ import {
   bindArtifactFileCleanup,
   withArtifactFileHandle,
 } from "../artifacts/ArtifactFileOperation.js";
-import type { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
+import type {
+  ArtifactResourceScope,
+  ArtifactResourceOwner,
+} from "../artifacts/ArtifactResourceScope.js";
 import { homeDirectoryFromEnvironment } from "../config/homeDirectory.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
+import { AnalysisError } from "../domain/analysisErrorBase.js";
 import {
   buildSecretHandleSchema,
   MAX_SECRET_CHARACTERS,
@@ -203,7 +207,7 @@ export const writeBuildSecretFile = async (
   directory: string,
   handle: string,
   value: string,
-  resources?: ArtifactResourceScope,
+  resources: ArtifactResourceScope,
 ): Promise<boolean> => {
   await mkdir(directory, { recursive: true, mode: 0o700 });
   const refusal = await folderRefusal(directory);
@@ -218,7 +222,14 @@ export const writeBuildSecretFile = async (
       constants.O_NOFOLLOW,
     0o600,
   );
-  let linked: boolean;
+  const temporary: ArtifactResourceOwner = {
+    kind: "lease",
+    resource: pending,
+    lease: { release: () => unlink(pending) },
+  };
+  let linked = false;
+  let failure: unknown;
+  let failed = false;
   try {
     await withArtifactFileHandle(
       pending,
@@ -238,12 +249,41 @@ export const writeBuildSecretFile = async (
       },
     );
   } catch (cause: unknown) {
-    await unlink(pending).catch(() => undefined);
-    if (cause instanceof ArtifactFileCleanupFailure)
-      throw secretFileCleanupFailure(pending, cause);
-    throw cause;
+    failed = true;
+    failure = cause;
   }
-  await unlink(pending);
+  const removed = await resources.release(temporary);
+  if (removed.kind === "failed") {
+    const cleanup = resources.cleanupFailure(
+      failed ? { kind: "failed", cause: failure } : { kind: "completed" },
+      [removed],
+    );
+    const code = errorCode(failure);
+    const error = new ProviderAdapterError("rea-desktop", "build_secret_file", {
+      userMessage:
+        failure instanceof ArtifactFileCleanupFailure
+          ? (secretFileCleanupFailure(pending, failure).userMessage ??
+            "The secret file operation failed.")
+          : failure instanceof AnalysisError
+            ? (failure.userMessage ?? "The secret file operation failed.")
+            : typeof code === "string" && /^E[A-Z0-9]{1,15}$/u.test(code)
+              ? `The secret file operation failed (${code}).`
+              : linked
+                ? `The secret was published as ${handle}, but its temporary file could not be removed.`
+                : "The temporary secret file could not be removed.",
+      ...(linked ? { diagnostics: { published_handle: handle } } : {}),
+      cleanup: {
+        reason: "Temporary secret file removal failed.",
+        resources: cleanup.cleanup?.resources ?? [pending],
+      },
+    });
+    bindArtifactFileCleanup(cleanup, error);
+    throw error;
+  }
+  if (failed)
+    throw failure instanceof ArtifactFileCleanupFailure
+      ? secretFileCleanupFailure(pending, failure)
+      : failure;
   if (linked) await chmod(directory, 0o700);
   return linked;
 };

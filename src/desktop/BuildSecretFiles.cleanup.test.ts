@@ -1,4 +1,4 @@
-import { chmod, mkdir, writeFile } from "node:fs/promises";
+import { chmod, mkdir, readdir, writeFile } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -16,12 +16,27 @@ const injection = vi.hoisted(() => ({
   path: "",
   remaining: 0,
   failWrite: false,
+  unlinkFailures: 0,
   opened: [] as { close(): Promise<void> }[],
 }));
 vi.mock("node:fs/promises", async (importOriginal) => {
   const actual = await importOriginal<typeof import("node:fs/promises")>();
   return {
     ...actual,
+    unlink: async (...args: Parameters<typeof actual.unlink>) => {
+      if (
+        typeof args[0] === "string" &&
+        injection.path !== "" &&
+        args[0].startsWith(
+          join(dirname(injection.path), `.${basename(injection.path)}.`),
+        ) &&
+        injection.unlinkFailures > 0
+      ) {
+        injection.unlinkFailures--;
+        throw Object.assign(new Error("unlink refused"), { code: "EACCES" });
+      }
+      return actual.unlink(...args);
+    },
     open: async (...args: Parameters<typeof actual.open>) => {
       const file = await actual.open(...args);
       // The secret's file, or the one its bytes are written to before it takes the secret's name.
@@ -55,6 +70,7 @@ afterEach(async () => {
   injection.path = "";
   injection.remaining = 0;
   injection.failWrite = false;
+  injection.unlinkFailures = 0;
   await Promise.all(injection.opened.splice(0).map((file) => file.close()));
   vi.restoreAllMocks();
 });
@@ -151,6 +167,64 @@ it("preserves a safe write failure reason when close also fails", async () => {
   expect(JSON.stringify(projectAnalysisError(failure))).not.toContain(FIRST);
   await secrets.close();
   expect(failure.cleanupIncomplete).toBe(false);
+});
+
+it.each([false, true])(
+  "retains temporary secret cleanup after publication or a write failure (write fails: %s)",
+  async (failWrite) => {
+    const directory = await folder();
+    const secrets = new DesktopBuildSecrets(directory);
+    failCloses(directory, 0);
+    injection.failWrite = failWrite;
+    injection.unlinkFailures = 2;
+    let failure: unknown;
+    try {
+      await secrets.keep("master", Buffer.from(FIRST));
+    } catch (cause) {
+      failure = cause;
+    }
+    expect(failure).toBeInstanceOf(AnalysisError);
+    if (!(failure instanceof AnalysisError))
+      throw new Error("expected cleanup failure");
+    expect(failure.cleanupIncomplete).toBe(true);
+    expect(failure.cleanupResources).toHaveLength(1);
+    if (failWrite) expect(failure.userMessage).toContain("EIO");
+    else
+      expect(failure.diagnostics).toMatchObject({ published_handle: "master" });
+    expect(JSON.stringify(projectAnalysisError(failure))).not.toContain(FIRST);
+    expect(
+      (await readdir(directory)).some((name) => name.startsWith(".master.")),
+    ).toBe(true);
+    await expect(secrets.close()).rejects.toBeInstanceOf(AnalysisError);
+    await secrets.close();
+    expect(failure.cleanupIncomplete).toBe(false);
+    expect(
+      (await readdir(directory)).some((name) => name.startsWith(".master.")),
+    ).toBe(false);
+    expect((await readdir(directory)).includes("master")).toBe(!failWrite);
+  },
+);
+
+it("retains both descriptor and temporary-name cleanup after a failed write", async () => {
+  const directory = await folder();
+  const secrets = new DesktopBuildSecrets(directory);
+  failCloses(directory, 1);
+  injection.failWrite = true;
+  injection.unlinkFailures = 1;
+  let failure: unknown;
+  try {
+    await secrets.keep("master", Buffer.from(FIRST));
+  } catch (cause) {
+    failure = cause;
+  }
+  expect(failure).toBeInstanceOf(AnalysisError);
+  if (!(failure instanceof AnalysisError))
+    throw new Error("expected cleanup failure");
+  expect(failure.cleanupIncomplete).toBe(true);
+  expect(failure.userMessage).toContain("EIO");
+  await secrets.close();
+  expect(failure.cleanupIncomplete).toBe(false);
+  expect(await readdir(directory)).toEqual([]);
 });
 
 const folder = async () => {
