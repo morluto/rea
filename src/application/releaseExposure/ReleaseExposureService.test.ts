@@ -1114,6 +1114,53 @@ describe("ReleaseExposureService Electron host identity", () => {
   });
 });
 
+describe("ReleaseExposureService macOS bundle layouts", () => {
+  it("keeps one bundle's safe fuses from settling another bundle in a directory", async () => {
+    const framework = (bundle: string) =>
+      `/work/app/${bundle}.app/Contents/Frameworks/Electron Framework.framework/Electron Framework`;
+    const { service, desktop, electronFuses } = owners(
+      directoryScan([framework("A"), framework("B")]),
+    );
+    const report = electronDesktopReport();
+    const second = `dsf_${"ab".repeat(32)}`;
+    desktop.inspect.mockResolvedValue(
+      ok(
+        evidence({
+          ...report,
+          files: [
+            {
+              ...report.files[0],
+              path: "A.app/Contents/Resources/app.asar",
+              local_path: "/work/app/A.app/Contents/Resources/app.asar",
+            },
+            {
+              ...report.files[0],
+              file_id: second,
+              path: "B.app/Contents/Resources/app.asar",
+              local_path: "/work/app/B.app/Contents/Resources/app.asar",
+            },
+          ],
+          candidates: [
+            { ...report.candidates[0], basis_file_ids: [FILE, second] },
+          ],
+        }),
+      ),
+    );
+    electronFuses.inspect.mockImplementation(async (input) =>
+      ok(
+        evidence(
+          fuseReport(
+            (input as { path?: string }).path === framework("A")
+              ? [slice(0)]
+              : [slice(0, { sentinels: 0 })],
+          ),
+        ),
+      ),
+    );
+    expect((await runAsNode(service))?.status).toBe("unknown");
+  });
+});
+
 describe("ReleaseExposureService nested app layouts", () => {
   it("settles the bundle's own layout when the owner resolved the selected path", async () => {
     const images = [
@@ -1162,17 +1209,18 @@ describe("ReleaseExposureService nested app layouts", () => {
     ["the outer bundle", "/work/App.app/Contents/MacOS/App", "not_observed"],
     [
       "a nested Electron app",
-      "/work/App.app/Contents/Resources/Inner.app/Contents/MacOS/Inner",
+      "/work/App.app/Contents/Resources/Inner.app/Contents/MacOS/Helper",
       "unknown",
     ],
   ])(
     "lets an app bundle read settle only its own layout (second layout host: %s)",
     async (_, nestedHost, expected) => {
+      // Four named outer hosts fill the sample ahead of the nested helper.
       const outer = [
+        "/work/App.app/Contents/Frameworks/Electron Framework.framework/Electron Framework",
         "/work/App.app/Contents/MacOS/App",
         "/work/App.app/Contents/MacOS/one",
         "/work/App.app/Contents/MacOS/two",
-        "/work/App.app/Contents/MacOS/three",
       ];
       const images = [...new Set([...outer, nestedHost])].map((path) => ({
         path,

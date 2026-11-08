@@ -789,9 +789,7 @@ const limitNativeSample = (
       : layouts.every(
           (folder) =>
             settledLayouts.has(folder) ||
-            hostRead(
-              preferred.filter((image) => nativeDirname(image.path) === folder),
-            ),
+            hostRead(preferred.filter((image) => inLayout(folder, image.path))),
         );
   // With no named host, any sampled sibling could be it, so none settles alone.
   const hostsAmong = (
@@ -806,13 +804,14 @@ const limitNativeSample = (
       : images.filter((image) => ranked.has(image.path));
   };
   // A named host settles only its own layout, so each layout chooses its hosts.
-  const layoutFolders = new Set(layouts);
   const hosts = [
     ...hostsAmong(
-      kept.filter((image) => !layoutFolders.has(nativeDirname(image.path))),
+      kept.filter(
+        (image) => !layouts.some((folder) => inLayout(folder, image.path)),
+      ),
     ),
     ...layouts.flatMap((folder) =>
-      hostsAmong(kept.filter((image) => nativeDirname(image.path) === folder)),
+      hostsAmong(kept.filter((image) => inLayout(folder, image.path))),
     ),
   ];
   return {
@@ -867,13 +866,16 @@ const electronExecutableRank = (
     if (imagePaths.has(basis.path)) remember(basis.path, 0);
     if (!basis.electronArchive) continue;
     const folder = nativeDirname(nativeDirname(basis.path));
-    const folderName = nativeBasename(folder).toLowerCase();
+    const bundle = macBundleName(folder);
+    const folderName = (bundle ?? nativeBasename(folder)).toLowerCase();
     for (const image of images) {
-      if (nativeDirname(image.path) !== folder) continue;
+      if (!inLayout(folder, image.path)) continue;
       const name = nativeBasename(image.path);
       const lower = name.toLowerCase();
       let score = 3;
-      if (lower === folderName || lower === `${folderName}.exe`) score = 0;
+      // The framework binary carries a bundle's fuses.
+      if (bundle !== null && lower === "electron framework") score = 0;
+      else if (lower === folderName || lower === `${folderName}.exe`) score = 0;
       else if (lower === "electron" || lower === "electron.exe") score = 1;
       else if (lower.endsWith(".exe") || !name.includes("."))
         score = ANY_SIBLING_RANK;
@@ -881,6 +883,30 @@ const electronExecutableRank = (
     }
   }
   return ranked;
+};
+
+/**
+ * A macOS bundle's ASAR layout resolves to its `Contents` folder, while its
+ * hosts are `Contents/MacOS/*` and the Electron framework binary under
+ * `Contents/Frameworks`. Its name is the bundle's, without `.app`.
+ */
+const macBundleName = (folder: string): string | null => {
+  if (WINDOWS_ABSOLUTE_PATH.test(folder) || basename(folder) !== "Contents")
+    return null;
+  const bundle = basename(dirname(folder));
+  return bundle.toLowerCase().endsWith(".app") ? bundle.slice(0, -4) : null;
+};
+
+const MAC_ELECTRON_FRAMEWORK = "Frameworks/Electron Framework.framework/";
+
+/** Whether an image is one of the hosts an ASAR layout's folder can have. */
+const inLayout = (folder: string, path: string): boolean => {
+  if (nativeDirname(path) === folder) return true;
+  if (macBundleName(folder) === null) return false;
+  return (
+    dirname(path) === `${folder}/MacOS` ||
+    path.startsWith(`${folder}/${MAC_ELECTRON_FRAMEWORK}`)
+  );
 };
 
 const filesystemPath = (value: string | null | undefined): string | null => {
