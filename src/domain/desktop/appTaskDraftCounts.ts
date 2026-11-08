@@ -24,6 +24,7 @@ export interface CountContext {
   readonly whole: (view: JsonValue | null, list: string) => boolean;
   readonly noisy: (pointer: string) => boolean;
   readonly covered: (pointer: string) => boolean;
+  readonly coveredRun: (pointer: string, view: JsonValue | null) => boolean;
 }
 
 /** A list of members of one tag a count reads, and of one kind when the members changed are (`kindOf`). */
@@ -186,6 +187,7 @@ export const draftCounts = (
       list === undefined ||
       !isXmlElement(value) ||
       context.noisy(pointer) ||
+      context.coveredRun(pointer, view) ||
       context.covered(list.slice(0, -"/children".length))
     )
       return;

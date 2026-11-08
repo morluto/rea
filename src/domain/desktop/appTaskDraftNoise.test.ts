@@ -45,10 +45,15 @@ const EDITED = {
 } as const;
 
 describe("draftTaskFiles noise", () => {
-  it("leaves view state, renumbered ids, volatile values and times out of a document's suggestions when an edit is there, noting each in values", () => {
+  it("leaves view state, volatile values and times out while retaining unproven ids", () => {
     const file = xmlDraft(workbook(SEED), workbook(EDITED));
 
-    expect(file.suggested.map(pointerOf)).toEqual([`${CELLS}[@Col=3][@Row=2]`]);
+    expect(file.suggested.map(pointerOf)).toEqual(
+      expect.arrayContaining([
+        `${CELLS}[@Col=3][@Row=2]`,
+        `${CELLS}[@Col=3][@Row=5]/attributes/ExprID`,
+      ]),
+    );
     const noted = (note: string) =>
       file.values
         .filter((value) => value.note === note)
@@ -62,15 +67,8 @@ describe("draftTaskFiles noise", () => {
         `${SELECTIONS}/children/[name=Selection]/attributes/startCol`,
       ].toSorted(),
     );
-    // The emptied formula text goes with the renumbered id of its cell.
-    expect(noted("renumbered")).toEqual(
-      [
-        `${CELLS}[@Col=3][@Row=5]/attributes/ExprID`,
-        `${CELLS}[@Col=3][@Row=5]/children/0`,
-        `${CELLS}[@Col=4][@Row=5]/attributes/ExprID`,
-        `${CELLS}[@Col=4][@Row=5]/children/0`,
-      ].toSorted(),
-    );
+    // The attribute name alone does not prove its value is generated.
+    expect(noted("renumbered")).toEqual([]);
     expect(noted("volatile")).toEqual([
       "/root/children/[name=meta]/attributes/saved",
       "/root/children/[name=meta]/attributes/session",
@@ -81,6 +79,28 @@ describe("draftTaskFiles noise", () => {
     // The edit leads, noise last.
     expect(file.values[0]?.note).toBeUndefined();
     expect(file.notes).toEqual([]);
+  });
+
+  it("keeps a changed relationship id alongside another edit", () => {
+    const expense = (account: string, description: string) =>
+      `<doc><expense id="one" accountId="${account}" description="${description}"/></doc>`;
+    const file = xmlDraft(expense("A1", "old"), expense("A2", "new"));
+    const account = file.values.find(({ pointer }) =>
+      pointer.endsWith("/attributes/accountId"),
+    );
+    expect(account?.note).toBeUndefined();
+    expect(file.suggested).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          kind: "value_equals",
+          pointer: expect.stringContaining("/attributes/accountId"),
+          value: "A2",
+        }),
+      ]),
+    );
+    expect(passing(FILE, xml(expense("A1", "new")), file.suggested)).toContain(
+      false,
+    );
   });
 
   it("keeps a formula edit when the cell's ExprID changes too", () => {
@@ -96,12 +116,9 @@ describe("draftTaskFiles noise", () => {
 
     expect(shown).toContain("=sum(C2:C5)");
     expect(
-      file.values
-        .filter(({ note }) => note === "renumbered")
-        .map(({ pointer }) => pointer),
-    ).toEqual([
-      "/root/children/[name=Sheet]/children/[name=Cells]/children/[name=Cell][@Row=5]/attributes/ExprID",
-    ]);
+      file.values.find(({ pointer }) => pointer.endsWith("/attributes/ExprID"))
+        ?.note,
+    ).toBeUndefined();
   });
 
   it("keeps an edit that follows more noise than a file has room for checks", () => {
