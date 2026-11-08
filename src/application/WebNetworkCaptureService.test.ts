@@ -142,6 +142,9 @@ it("projects the unknown-subject explanation before generating its Evidence ID",
   });
   if (!result.ok) throw result.error;
   expect(result.value.subject).toBeNull();
+  expect(result.value.limitations).toContainEqual(
+    expect.stringMatching(/digest.*unknown.*Evidence/u),
+  );
   expect(result.value.limitations.every((text) => !text.includes("a"))).toBe(
     true,
   );
@@ -212,7 +215,6 @@ it("projects completed raw capture facts on failure through the caller's selecti
     record_ordinals: [0],
     sensitive_values: ["private-marker"],
   });
-  expect(result.ok).toBe(false);
   if (result.ok) throw new Error("Cancellation must remain the primary result");
   expect(result.error._tag).toBe("AnalysisCancelledError");
   expect(result.error.cause).toBe(reason);
@@ -270,7 +272,6 @@ it("keeps a redacted cleanup error linked to its live owner through service clos
     format: "har",
     sensitive_values: ["private-marker"],
   });
-  expect(result.ok).toBe(false);
   if (result.ok) throw new Error("Retained cleanup must remain a failure");
   const returnedError = result.error;
   expect(returnedError.cleanupIncomplete).toBe(true);

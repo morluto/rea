@@ -1,7 +1,7 @@
 import { join } from "node:path";
 import { expect } from "vitest";
+import { z } from "zod";
 
-import { GHIDRA_PACKED_PROGRAM_RECOVERY } from "../../../src/config/ghidraExistingProject.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
 
@@ -14,24 +14,33 @@ cliTest(
       environment: { REA_GHIDRA_PROJECT_PATH: join(root, "program.gzf") },
     });
     expect(result.exitCode).toBe(1);
-    expect(result.json).toMatchObject({
-      healthy: false,
-      scope_checks: expect.arrayContaining([
-        expect.objectContaining({
-          name: "runtime-configuration:REA_GHIDRA_PROJECT_PATH",
-          ok: false,
-          classification: "config_drift",
-          detail: `REA_GHIDRA_PROJECT_PATH: ${GHIDRA_PACKED_PROGRAM_RECOVERY}`,
-        }),
-      ]),
-    });
-    for (const required of [
+    const report = z
+      .object({
+        healthy: z.boolean(),
+        scope_checks: z.array(
+          z.object({
+            name: z.string(),
+            ok: z.boolean().optional(),
+            classification: z.string().optional(),
+            detail: z.string().optional(),
+          }),
+        ),
+      })
+      .parse(result.json);
+    expect(report.healthy).toBe(false);
+    const check = report.scope_checks.find(
+      ({ name }) => name === "runtime-configuration:REA_GHIDRA_PROJECT_PATH",
+    );
+    expect(check).toMatchObject({ ok: false, classification: "config_drift" });
+    for (const fact of [
+      "REA_GHIDRA_PROJECT_PATH",
+      ".gzf",
+      ".gpr",
       "analyzeHeadless",
       "-import",
       "-noanalysis",
-      ".gpr",
       "REA_GHIDRA_PROGRAM_NAME",
     ])
-      expect(GHIDRA_PACKED_PROGRAM_RECOVERY).toContain(required);
+      expect(check?.detail).toContain(fact);
   },
 );

@@ -1,11 +1,11 @@
 import { expect } from "vitest";
-import type { AnalysisError } from "../domain/analysisErrorBase.js";
+import type { AnalysisError } from "../../src/domain/analysisErrorBase.js";
 import {
   AnalysisCancelledError,
   AnalysisOutputError,
-} from "../domain/analysisErrorCore.js";
-import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
-import type { Result } from "../domain/result.js";
+} from "../../src/domain/analysisErrorCore.js";
+import { projectAnalysisError } from "../../src/domain/analysisErrorProjection.js";
+import type { Result } from "../../src/domain/result.js";
 
 /** Assert the service returned the same owner error and its cause. */
 export const expectOwnerError = <T>(
