@@ -78,7 +78,7 @@ const instanceFieldReferences = (
   propertyName: string | null,
   path: PropertyPath,
   state: JavaScriptSemanticAnalysisState,
-  initializedBefore?: t.ClassProperty,
+  initializedBefore?: t.ClassProperty | t.StaticBlock,
 ): {
   readonly references: readonly JavaScriptSemanticObjectReference[];
   readonly definiteNames: ReadonlySet<string>;
@@ -144,7 +144,7 @@ interface ClassPropertyLookup {
   readonly receiver?: t.ClassDeclaration | t.ClassExpression;
   readonly kind: "instance" | "static" | "prototype";
   readonly fieldsOnly?: true;
-  readonly initializedBefore?: t.ClassProperty;
+  readonly initializedBefore?: t.ClassProperty | t.StaticBlock;
 }
 
 const classPropertyDescriptors = (
@@ -152,7 +152,7 @@ const classPropertyDescriptors = (
   propertyName: string | null,
   kind: ClassPropertyLookup["kind"],
   state: JavaScriptSemanticAnalysisState,
-  initializedBefore?: t.ClassProperty,
+  initializedBefore?: t.ClassProperty | t.StaticBlock,
   accessor: "get" | "set" = "get",
 ) => {
   const isStatic = kind === "static";
@@ -340,6 +340,9 @@ class ClassReferenceWalk {
         getter,
         owner: klass,
         receiver: this.lookup.receiver ?? this.lookup.owner,
+        ...(this.lookup.initializedBefore === undefined
+          ? {}
+          : { initializedBefore: this.lookup.initializedBefore }),
       },
       this.#path,
       this.context.escapes,
@@ -579,7 +582,16 @@ const getterMethodCalls = (
       member.kind === "method" &&
       member.static === isStatic &&
       member.key.id.name === (callee.property as t.PrivateName).id.name
-        ? [{ getter: member, owner, receiver }]
+        ? [
+            {
+              getter: member,
+              owner,
+              receiver,
+              ...(invocation.initializedBefore === undefined
+                ? {}
+                : { initializedBefore: invocation.initializedBefore }),
+            },
+          ]
         : [],
     );
   }
@@ -607,9 +619,17 @@ const getterMethodCalls = (
       name,
       isStatic ? "static" : "prototype",
       state,
+      invocation.initializedBefore,
     );
     for (const method of descriptors.methods)
-      calls.push({ getter: method, owner: klass, receiver });
+      calls.push({
+        getter: method,
+        owner: klass,
+        receiver,
+        ...(invocation.initializedBefore === undefined
+          ? {}
+          : { initializedBefore: invocation.initializedBefore }),
+      });
     if (descriptors.inherits && klass.superClass != null)
       pending.push(...semanticClassCandidates(klass.superClass, state));
   }
@@ -623,7 +643,17 @@ const expandGetterResult = (
   const state = query.state;
   expandSemanticGetterResult(job, query, {
     classReferences: (lookup, path, escapes) =>
-      classPropertyReferences(lookup, path, state, { query, escapes }),
+      classPropertyReferences(
+        {
+          ...lookup,
+          ...(job.invocation.initializedBefore === undefined
+            ? {}
+            : { initializedBefore: job.invocation.initializedBefore }),
+        },
+        path,
+        state,
+        { query, escapes },
+      ),
     objectReferences: (receiver, path) =>
       objectReceiverReference(receiver, path, state),
     privateReceiver: (receiver, owner, path, isStatic) =>

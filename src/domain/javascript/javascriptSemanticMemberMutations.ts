@@ -723,6 +723,19 @@ export function* collectSemanticMemberMutationsSteps(
     definiteReceiver = true,
     selection?: MutationSelectionContext,
   ): void => {
+    let ancestor = mutation;
+    let initializedBefore: t.ClassProperty | t.StaticBlock | undefined;
+    while (ancestor !== undefined) {
+      if (t.isFunction(ancestor)) break;
+      if (
+        (t.isClassProperty(ancestor) && ancestor.static) ||
+        t.isStaticBlock(ancestor)
+      ) {
+        initializedBefore = ancestor;
+        break;
+      }
+      ancestor = state.parentsByNode.get(ancestor);
+    }
     type JoinedProjection = {
       readonly path: PropertyPath;
       readonly definiteReceiver: boolean;
@@ -1311,8 +1324,15 @@ export function* collectSemanticMemberMutationsSteps(
                 expression,
                 current.path,
                 widenedGetterResult,
+                initializedBefore,
               )
-            : expandedValues(expression, current.path, effect);
+            : expandedValues(
+                expression,
+                current.path,
+                effect,
+                false,
+                initializedBefore,
+              );
         for (const value of references) {
           if (
             value.inherited &&
@@ -1411,6 +1431,7 @@ export function* collectSemanticMemberMutationsSteps(
     path: PropertyPath,
     effect: ValueEffect,
     widenedGetterResult = false,
+    initializedBefore?: t.ClassProperty | t.StaticBlock,
   ): readonly ReferencedValue[] {
     if (
       t.isArrayExpression(expression) &&
@@ -1428,6 +1449,7 @@ export function* collectSemanticMemberMutationsSteps(
       effect,
       state,
       widenedGetterResult,
+      initializedBefore,
     );
     return widenedGetterResult
       ? references.map((reference) => ({
@@ -1450,15 +1472,29 @@ export function* collectSemanticMemberMutationsSteps(
     root: t.Node,
     rootPath: PropertyPath,
     widenedGetterResult: boolean,
+    initializedBefore?: t.ClassProperty | t.StaticBlock,
   ): readonly ReferencedValue[] {
     // Parser recovery can leave an argument hole, which expands to nothing.
     if (!t.isNode(root)) return [];
-    const rootKey = JSON.stringify([rootPath, widenedGetterResult]);
+    const rootKey = JSON.stringify([
+      rootPath,
+      widenedGetterResult,
+      initializedBefore?.start,
+    ]);
     const cached = escapedLeaves.get(root)?.get(rootKey);
     if (cached !== undefined) return cached;
-    const leaves = collectEscapedLeaves([
-      ...expandedValues(root, rootPath, "escape", widenedGetterResult),
-    ]);
+    const leaves = collectEscapedLeaves(
+      [
+        ...expandedValues(
+          root,
+          rootPath,
+          "escape",
+          widenedGetterResult,
+          initializedBefore,
+        ),
+      ],
+      initializedBefore,
+    );
     const byPath = escapedLeaves.get(root) ?? new Map();
     byPath.set(rootKey, leaves);
     escapedLeaves.set(root, byPath);
@@ -1496,6 +1532,7 @@ export function* collectSemanticMemberMutationsSteps(
   }
   function collectEscapedLeaves(
     pending: ReferencedValue[],
+    initializedBefore?: t.ClassProperty | t.StaticBlock,
   ): readonly ReferencedValue[] {
     const leaves: ReferencedValue[] = [];
     const identities = new Set<string>();
@@ -1519,6 +1556,7 @@ export function* collectSemanticMemberMutationsSteps(
         value.path,
         "escape",
         value.widenedGetterResult === true,
+        initializedBefore,
       ))
         pending.push(reference);
     }
@@ -1918,6 +1956,7 @@ const referencedValues = (
   effect: ValueEffect,
   state: JavaScriptSemanticAnalysisState,
   widenedGetterResult = false,
+  initializedBefore?: t.ClassProperty | t.StaticBlock,
 ): readonly ReferencedValue[] => {
   if (effect === "escape" && t.isFunction(node))
     return semanticCallableResultExpressions(node).flatMap(
@@ -1938,6 +1977,7 @@ const referencedValues = (
       effect,
       state,
       widenedGetterResult,
+      initializedBefore,
     );
   return branchReferenceValues(node, path);
 };
@@ -1948,6 +1988,7 @@ const constructedReferenceValues = (
   effect: ValueEffect,
   state: JavaScriptSemanticAnalysisState,
   widenedGetterResult: boolean,
+  initializedBefore?: t.ClassProperty | t.StaticBlock,
 ): readonly ReferencedValue[] => {
   // Exposing a constructed receiver also exposes its retained field references,
   // just as exposing an object literal exposes its children. Widened results
@@ -1964,7 +2005,11 @@ const constructedReferenceValues = (
     : semanticClassCandidates(node.callee, state);
   return classes.flatMap((owner) =>
     semanticClassPropertyReferences(
-      { owner, kind: t.isClass(node) ? "static" : "instance" },
+      {
+        owner,
+        kind: t.isClass(node) ? "static" : "instance",
+        ...(initializedBefore === undefined ? {} : { initializedBefore }),
+      },
       [key, ...remaining],
       state,
     ),

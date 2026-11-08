@@ -8,6 +8,8 @@ export interface GetterInvocation {
   readonly getter: t.ObjectMethod | t.ClassMethod | t.ClassPrivateMethod;
   readonly owner: t.ObjectExpression | t.ClassDeclaration | t.ClassExpression;
   readonly receiver?: GetterInvocation["owner"];
+  /** Static field whose initializer is executing, if this query runs during class initialization. */
+  readonly initializedBefore?: t.ClassProperty | t.StaticBlock;
 }
 
 interface GetterAncestor {
@@ -98,7 +100,11 @@ export class SemanticGetterQuery {
     const receiver = invocation.receiver ?? invocation.owner;
     const receivers = this.#memo.get(invocation.getter);
     const paths = receivers?.get(receiver);
-    const key = JSON.stringify([path, escapes]);
+    const key = JSON.stringify([
+      path,
+      escapes,
+      invocation.initializedBefore?.start,
+    ]);
     if (paths?.has(key)) return true;
     if (!this.reserveResult()) return true;
     const selections = paths ?? new Set<string>();

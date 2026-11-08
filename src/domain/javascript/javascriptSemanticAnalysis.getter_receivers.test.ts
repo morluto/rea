@@ -766,6 +766,71 @@ describe("instance field calls through widened getters", () => {
 });
 
 describe("static field calls through widened getters", () => {
+  it("retains a method during an earlier static initializer before its field is installed", () => {
+    expect(
+      resultValue(`
+      const shared = { x: 1 };
+      class B {
+        static early = (B.a.x = 2);
+        static method = () => ({});
+        static method() { return { y: { x: shared } }; }
+        static get s() { return this.method(); }
+        static get a() { return this[k1].x; }
+        static get b() { return this[k2].y; }
+      }
+      return shared.x;
+    `)?.status,
+    ).toBe("unknown");
+  });
+  it("retains a method during an earlier static block before its field is installed", () => {
+    expect(
+      resultValue(`
+      const shared = { x: 1 };
+      class B {
+        static { B.a.x = 2; }
+        static method = () => ({});
+        static method() { return { y: { x: shared } }; }
+        static get s() { return this.method(); }
+        static get a() { return this[k1].x; }
+        static get b() { return this[k2].y; }
+      }
+      return shared.x;
+    `)?.status,
+    ).toBe("unknown");
+  });
+  it("retains methods reachable through a call made during static initialization", () => {
+    expect(
+      resultValue(`
+      const shared = { x: 1 };
+      class B {
+        static early = B.touch();
+        static touch() { B.a.x = 2; }
+        static method = () => ({});
+        static method() { return { y: { x: shared } }; }
+        static get s() { return this.method(); }
+        static get a() { return this[k1].x; }
+        static get b() { return this[k2].y; }
+      }
+      return shared.x;
+    `)?.status,
+    ).toBe("unknown");
+  });
+  it("uses the field once an earlier static initializer has installed it", () => {
+    expect(
+      resultValue(`
+      const shared = { x: 1 };
+      class B {
+        static method = () => ({});
+        static early = (B.a.x = 2);
+        static method() { return { y: { x: shared } }; }
+        static get s() { return this.method(); }
+        static get a() { return this[k1].x; }
+        static get b() { return this[k2].y; }
+      }
+      return shared.x;
+    `),
+    ).toMatchObject({ status: "literal", value: 1 });
+  });
   it.each([
     "static method = () => ({}); static method() { return shared; }",
     "static method() { return shared; } static method = () => ({});",

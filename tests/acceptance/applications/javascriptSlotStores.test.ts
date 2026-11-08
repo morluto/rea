@@ -53,6 +53,8 @@ const source = [
   "export function arrayRestOffset() { const child = {x: 1}; const skip = {x: 3}; const items = [skip, child]; const o = {}; let ignored; [ignored, ...o.a] = items; o.a[0].x = 2; return {child: child.x, skip: items[0].x}; }",
   "export function selectedSibling() { const shared = {x: 1}; const { selected } = {selected: {}, unrelated: shared}; class R { child = selected; get a() { return this[k1].x; } get b() { return this[k2].y; } } new R().a.x = 2; return shared.x; }",
   "export function selectedInstance() { const shared = {x: 1}; class Child { get container() { return {alias: shared}; } } const { selected } = {selected: new Child()}; class R { child = selected; get a() { return this[k1].alias; } get b() { return this[k2].container; } } new R().a.x = 2; return shared.x; }",
+  "export function initializingStatic() { const shared = {x: 1}; class B { static early = (B.a.x = 2); static method = () => ({}); static method() { return {y: {x: shared}}; } static get s() { return this.method(); } static get a() { return this[k1].x; } static get b() { return this[k2].y; } } return shared.x; }",
+  "export function initializedStatic() { const shared = {x: 1}; class B { static method = () => ({}); static early = (B.a.x = 2); static method() { return {y: {x: shared}}; } static get s() { return this.method(); } static get a() { return this[k1].x; } static get b() { return this[k2].y; } } return shared.x; }",
 ].join("\n");
 
 const assertReturns = (fields: JavaScriptReturnFields): void => {
@@ -71,11 +73,15 @@ const assertReturns = (fields: JavaScriptReturnFields): void => {
     copiedArrayScalar: 1,
     unrelated: 9,
     selectedSibling: 1,
+    initializedStatic: 1,
   }))
     expect(fields(name), name).toContainEqual(
       expect.objectContaining({ path: "", state: "literal", value }),
     );
   expect(fields("selectedInstance")).toContainEqual(
+    expect.objectContaining({ path: "", state: "unknown" }),
+  );
+  expect(fields("initializingStatic")).toContainEqual(
     expect.objectContaining({ path: "", state: "unknown" }),
   );
   const child = fields("copiedChild").find(({ path }) => path === "/child");
