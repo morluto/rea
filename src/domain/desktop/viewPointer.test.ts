@@ -31,19 +31,22 @@ describe("locatePointer", () => {
       locatePointer(
         VIEW,
         "/root/children/[name=Object][@name=Hole]/attributes/type",
+        "xml",
       ),
     ).toMatchObject({ kind: "value", value: "Part::Cylinder" });
     expect(
-      locatePointer(VIEW, "/root/children/[@name=Pad]/name"),
+      locatePointer(VIEW, "/root/children/[@name=Pad]/name", "xml"),
     ).toMatchObject({
       kind: "value",
       value: "Object",
     });
-    expect(locatePointer(VIEW, "/entries/[name=a~1b.xml]/size")).toMatchObject({
+    expect(
+      locatePointer(VIEW, "/entries/[name=a~1b.xml]/size", "xml"),
+    ).toMatchObject({
       kind: "value",
       value: 1,
     });
-    expect(locatePointer(VIEW, "/root/children/0")).toMatchObject({
+    expect(locatePointer(VIEW, "/root/children/0", "xml")).toMatchObject({
       kind: "value",
       value: "text between",
     });
@@ -54,61 +57,68 @@ describe("locatePointer", () => {
       locatePointer(
         VIEW,
         "/root/children/[name=Object][@name=Hole]/attributes/type",
+        "xml",
       ),
     ).toMatchObject({ searched: ["/root/children"], byPosition: [] });
-    expect(locatePointer(VIEW, "/root/children/1/name")).toMatchObject({
+    expect(locatePointer(VIEW, "/root/children/1/name", "xml")).toMatchObject({
       searched: [],
       byPosition: ["/root/children"],
     });
-    expect(locatePointer(VIEW, "/root/children/0")).toMatchObject({
+    expect(locatePointer(VIEW, "/root/children/0", "xml")).toMatchObject({
       byPosition: [],
     });
     expect(
-      locatePointer(VIEW, "/root/children/[@type=Part::Box]"),
+      locatePointer(VIEW, "/root/children/[@type=Part::Box]", "xml"),
     ).toMatchObject({ kind: "unresolved", searched: ["/root/children"] });
   });
 
   it("names no value when the last selector matches nothing, and is unresolved otherwise", () => {
     expect(
-      locatePointer(VIEW, "/root/children/[name=Object][@name=Gone]"),
+      locatePointer(VIEW, "/root/children/[name=Object][@name=Gone]", "xml"),
     ).toMatchObject({
       kind: "none",
       reason: "[name=Object][@name=Gone] matches no member",
     });
     expect(
-      locatePointer(VIEW, "/root/children/[name=Object][@name=Gone]/name"),
+      locatePointer(
+        VIEW,
+        "/root/children/[name=Object][@name=Gone]/name",
+        "xml",
+      ),
     ).toMatchObject({
       kind: "unresolved",
       problem: "[name=Object][@name=Gone] matches no member",
     });
     expect(
-      locatePointer(VIEW, "/root/children/[@type=Part::Box]"),
+      locatePointer(VIEW, "/root/children/[@type=Part::Box]", "xml"),
     ).toMatchObject({
       kind: "unresolved",
       problem: "[@type=Part::Box] matches 2 members, not one",
     });
-    expect(locatePointer(VIEW, "/root/children/[Object]")).toMatchObject({
-      kind: "unresolved",
-      problem: "[Object] is not a selector of the form [KEY=VALUE]",
-    });
-    expect(locatePointer(VIEW, "/root/children/[=x]")).toMatchObject({
+    expect(locatePointer(VIEW, "/root/children/[Object]", "xml")).toMatchObject(
+      {
+        kind: "unresolved",
+        problem: "[Object] is not a selector of the form [KEY=VALUE]",
+      },
+    );
+    expect(locatePointer(VIEW, "/root/children/[=x]", "xml")).toMatchObject({
       kind: "unresolved",
     });
   });
 
   it("compares strings only and keeps an ordinary key on an object", () => {
-    expect(locatePointer(VIEW, "/entries/[name=3]")).toMatchObject({
+    expect(locatePointer(VIEW, "/entries/[name=3]", "xml")).toMatchObject({
       kind: "none",
       reason: "[name=3] matches no member",
     });
-    expect(locatePointer({ "[a=b]": 1 }, "/[a=b]")).toMatchObject({
+    expect(locatePointer({ "[a=b]": 1 }, "/[a=b]", "xml")).toMatchObject({
       kind: "value",
       value: 1,
     });
-    expect(locatePointer(VIEW, "/root/children/01")).toMatchObject({
+    expect(locatePointer(VIEW, "/root/children/01", "xml")).toMatchObject({
       kind: "none",
     });
-    expect(locatePointer(null, "/x")).toMatchObject({ kind: "none" });
+    expect(locatePointer(null, "/x", "xml")).toMatchObject({ kind: "none" });
   });
 
   it("names a member by a child element's text, its whitespace collapsed, alike in locatePointer and memberLookup", () => {
@@ -125,8 +135,8 @@ describe("locatePointer", () => {
       element("group", {}, [element("first", {}, ["Bob"])]),
     ];
     const named = (token: string) => [
-      locatePointer({ members }, `/members/${token}`),
-      memberLookup(members, [token])(token),
+      locatePointer({ members }, `/members/${token}`, "xml"),
+      memberLookup(members, [token], "xml")(token),
     ];
 
     expect(named("[>first=Ann Lee]")).toEqual([
@@ -151,55 +161,54 @@ describe("locatePointer", () => {
 });
 
 describe("locatePointer and memberLookup by a path inside a member", () => {
-  it("names a member by a path of up to three steps inside it: a JSON record's string, an element's descendant text or a child's attribute, alike in locatePointer and memberLookup", () => {
-    const book = (title: JsonValue, year: JsonValue = "2015") => ({
-      data: { Title: title, Year: year },
+  const named = (
+    members: JsonValue[],
+    format: "json" | "xml",
+    selector: string,
+  ) => {
+    const pointer = `/members/${selector.replaceAll("~", "~0").replaceAll("/", "~1")}`;
+    const located = locatePointer({ members }, pointer, format);
+    const looked = memberLookup(members, [selector], format)(selector);
+    return located.kind === "value" && located.value === looked
+      ? looked
+      : [located.kind, looked];
+  };
+  it("reads paths in JSON records", () => {
+    const silk = {
+      data: { Title: "The Silk Roads", Year: "2015" },
       format: "BOOK",
-    });
-    const silk = book("The Silk Roads");
-    const spqr = book("SPQR", 2015);
+    };
+    const spqr = { data: { Title: "SPQR", Year: 2015 }, format: "BOOK" };
+    const nested = {
+      data: { Title: { text: "SPQR" }, Year: "1999" },
+      format: "BOOK",
+    };
+    const members: JsonValue[] = [silk, spqr, nested];
+    const find = (selector: string) => named(members, "json", selector);
+    expect(find("[format=BOOK][>data/Title=The Silk Roads]")).toBe(silk);
+    expect(find("[>data/Year=2015]")).toBe(silk);
+    expect(find("[>data/Title/text=SPQR]")).toBe(nested);
+    expect(find("[>format=BOOK][>data/Title=SPQR]")).toBe(spqr);
+    expect(find("[>data/Title=Missing]")).toEqual(["none", undefined]);
+    expect(find("[>data/Title/text/x=SPQR]")).toEqual([
+      "unresolved",
+      undefined,
+    ]);
+    expect(find("[>data//Title=SPQR]")).toEqual(["unresolved", undefined]);
+  });
+  it("reads XML child text and attributes", () => {
     const button = (id: string, label: string) =>
       element("child", {}, [
         element("object", { id }, [element("property", {}, [label])]),
       ]);
-    const [submit, cancel] = [
-      button("submit_button", "\n Send "),
-      button("cancel_button", "Cancel"),
-    ];
-    const members: JsonValue[] = [
-      "The Silk Roads",
-      silk,
-      spqr,
-      book({ text: "SPQR" }, "1999"),
-      submit,
-      cancel,
-    ];
-    const named = (selector: string) => {
-      const located = locatePointer(
-        { members },
-        `/members/${selector.replaceAll("~", "~0").replaceAll("/", "~1")}`,
-      );
-      const looked = memberLookup(members, [selector])(selector);
-      return located.kind === "value" && located.value === looked
-        ? looked
-        : [located.kind, looked];
-    };
-
-    expect(named("[format=BOOK][>data/Title=The Silk Roads]")).toBe(silk);
-    expect(named("[>data/Year=2015]")).toBe(silk);
-    expect(named("[>data/Title/text=SPQR]")).toBe(members[3]);
-    expect(named("[>format=BOOK][>data/Title=SPQR]")).toBe(spqr);
-    expect(named("[>object@id=submit_button]")).toBe(submit);
-    expect(named("[>object/property=Send]")).toBe(submit);
-    expect(named("[name=child][>object/property=Cancel]")).toBe(cancel);
-    expect(named("[>data/Title=Missing]")).toEqual(["none", undefined]);
-    expect(named("[>object@id/property=Cancel]")).toEqual(["none", undefined]);
-    expect(named("[>object/property@id=x]")).toEqual(["none", undefined]);
-    expect(named("[>data/Title/text/x=SPQR]")).toEqual([
-      "unresolved",
-      undefined,
-    ]);
-    expect(named("[>data//Title=SPQR]")).toEqual(["unresolved", undefined]);
+    const submit = button("submit_button", "\n Send ");
+    const cancel = button("cancel_button", "Cancel");
+    const find = (selector: string) => named([submit, cancel], "xml", selector);
+    expect(find("[>object@id=submit_button]")).toBe(submit);
+    expect(find("[>object/property=Send]")).toBe(submit);
+    expect(find("[name=child][>object/property=Cancel]")).toBe(cancel);
+    expect(find("[>object@id/property=Cancel]")).toEqual(["none", undefined]);
+    expect(find("[>object/property@id=x]")).toEqual(["none", undefined]);
   });
 });
 
@@ -209,14 +218,14 @@ describe("pairMembers", () => {
       .children;
     const entries = (VIEW as { entries: JsonValue[] }).entries;
 
-    expect(pairMembers(children, []).newer.keys).toEqual([
+    expect(pairMembers(children, [], undefined, "xml").newer.keys).toEqual([
       "0",
       "[name=Object][@name=Plate]",
       "[name=Object][@name=Hole]",
       "[name=Object][@name=Pad]",
       "[name=Note]",
     ]);
-    expect(pairMembers(entries, []).newer.keys).toEqual([
+    expect(pairMembers(entries, [], undefined, "xml").newer.keys).toEqual([
       "[name=a/b.xml]",
       "1",
       "2",
@@ -231,6 +240,8 @@ describe("pairMembers", () => {
       pairMembers(
         [item({ b: "y" }), item({ a: "x" })],
         [item({ a: "x", b: "y" })],
+        undefined,
+        "xml",
       ),
     ).toEqual({
       newer: { keys: ["[name=item][@b=y]", "1"], partners: [0, undefined] },
@@ -245,6 +256,8 @@ describe("pairMembers", () => {
         element("Object", { name: "Hole" }),
       ],
       [element("Object", { name: "Plate" })],
+      undefined,
+      "xml",
     );
 
     expect(pairing).toEqual({
@@ -266,6 +279,8 @@ describe("pairMembers", () => {
         element("item", { color: "red", id: "1" }),
         element("item", { id: "2" }),
       ],
+      undefined,
+      "xml",
     );
 
     const keys = ["[name=item][@id=1]", "[name=item][@id=2]"];
@@ -282,7 +297,12 @@ describe("pairMembers", () => {
 
     const keys = ["[name=g][@inkscape:label=note]", "[name=g][@id=layer]"];
     expect(
-      pairMembers([note("scale(2)"), layer], [note("scale(1)"), layer]),
+      pairMembers(
+        [note("scale(2)"), layer],
+        [note("scale(1)"), layer],
+        undefined,
+        "xml",
+      ),
     ).toEqual({
       newer: { keys, partners: [0, 1] },
       older: { keys, partners: [0, 1] },
@@ -298,6 +318,8 @@ describe("pairMembers", () => {
       pairMembers(
         [plate, object("Hole001", "3")],
         [plate, object("Hole", "2")],
+        undefined,
+        "xml",
       ),
     ).toEqual({
       newer: {
@@ -312,7 +334,7 @@ describe("pairMembers", () => {
   });
 
   it("pairs members no selector names by position", () => {
-    expect(pairMembers(["a", "b", "c"], ["a", "x"])).toEqual({
+    expect(pairMembers(["a", "b", "c"], ["a", "x"], undefined, "xml")).toEqual({
       newer: { keys: ["0", "1", "2"], partners: [0, 1, undefined] },
       older: { keys: ["0", "1"], partners: [0, 1] },
     });
@@ -326,6 +348,8 @@ describe("pairMembers", () => {
           element("Save", { at: "2026-11-04T10:13:00Z", id: "2" }),
         ],
         [],
+        undefined,
+        "xml",
       ).newer.keys,
     ).toEqual(["[name=Save][@id=1]", "[name=Save][@id=2]"]);
   });
@@ -342,6 +366,8 @@ describe("pairMembers by ranked attributes", () => {
     const pairing = pairMembers(
       [later("2", "3"), later("2", "4"), later("3", "3"), later("3", "4")],
       [cell("3", "4"), cell("2", "4"), cell("2", "3"), cell("3", "3")],
+      undefined,
+      "xml",
     );
 
     expect(pairing.newer).toEqual({
@@ -370,7 +396,7 @@ describe("pairMembers by ranked attributes", () => {
       cell("2", "2"),
     ];
 
-    expect(pairMembers(cells, cells).newer.keys).toEqual([
+    expect(pairMembers(cells, cells, undefined, "xml").newer.keys).toEqual([
       "[name=Cell][@id=x]",
       // Its pair is the identified cell's too, so position keys it.
       "1",
@@ -379,7 +405,12 @@ describe("pairMembers by ranked attributes", () => {
       "[name=Cell][@Col=2][@Row=2]",
     ]);
     // The cell at row 2, column 2 moved to column 3: no longer the same pair.
-    const moved = pairMembers([...cells.slice(0, 4), cell("2", "3")], cells);
+    const moved = pairMembers(
+      [...cells.slice(0, 4), cell("2", "3")],
+      cells,
+      undefined,
+      "xml",
+    );
     expect(moved.newer.partners[4]).toBeUndefined();
     expect(moved.newer.keys[4]).toBe("[name=Cell][@Col=3]");
   });
@@ -399,13 +430,13 @@ describe("pairMembers by ranked attributes", () => {
     const plain = element("Cell", { Row: "1", Col: "1", X: "12.75" });
     const cells = [plain, styled];
 
-    const { newer } = pairMembers(cells, cells);
+    const { newer } = pairMembers(cells, cells, undefined, "xml");
     expect(newer).toEqual({
       keys: ["[name=Cell][@X=12.75]", "[name=Cell][@Font=Sans]"],
       partners: [0, 1],
     });
     for (const [index, key] of newer.keys.entries())
-      expect(locatePointer(cells, `/${key}`)).toMatchObject({
+      expect(locatePointer(cells, `/${key}`, "xml")).toMatchObject({
         kind: "value",
         value: cells[index],
       });
@@ -415,7 +446,8 @@ describe("pairMembers by ranked attributes", () => {
       element("Cell", { Row: "2", Col: "1" }),
     ];
     expect(
-      pairMembers([plain, ...others], [styled, ...others]).newer.keys[0],
+      pairMembers([plain, ...others], [styled, ...others], undefined, "xml")
+        .newer.keys[0],
     ).toBe("[name=Cell][@X=12.75]");
   });
 
@@ -424,8 +456,12 @@ describe("pairMembers by ranked attributes", () => {
       element("PAGEOBJECT", { XPOS: x, YPOS: "12.5", ANNAME: name });
 
     expect(
-      pairMembers([frame("146.83", "Headline"), frame("20.5", "Details")], [])
-        .newer.keys,
+      pairMembers(
+        [frame("146.83", "Headline"), frame("20.5", "Details")],
+        [],
+        undefined,
+        "xml",
+      ).newer.keys,
     ).toEqual([
       "[name=PAGEOBJECT][@ANNAME=Headline]",
       "[name=PAGEOBJECT][@ANNAME=Details]",

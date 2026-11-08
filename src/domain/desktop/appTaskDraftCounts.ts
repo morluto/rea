@@ -24,6 +24,7 @@ export interface CountContext {
   readonly whole: (view: JsonValue | null, list: string) => boolean;
   readonly noisy: (pointer: string) => boolean;
   readonly covered: (pointer: string) => boolean;
+  readonly coveredRun: (pointer: string, view: JsonValue | null) => boolean;
 }
 
 /** A list of members of one tag a count reads, and of one kind when the members changed are (`kindOf`). */
@@ -39,7 +40,7 @@ const listOf = (pointer: string): string | undefined =>
 
 /** The members of a tag, and kind, in a list, in a view. */
 const membersOf = (view: JsonValue | null, { list, tag, kind }: Counted) => {
-  const items = resolvePointer(view, list);
+  const items = resolvePointer(view, list, "xml");
   return Array.isArray(items)
     ? items.filter(
         (item) =>
@@ -82,7 +83,11 @@ const keyOf = ({ list, tag, kind }: Counted) =>
 /** Whether a list's element holds text of its own at either end, so its elements are runs of that text. */
 const mixed = ({ ends }: CountContext, list: string) =>
   [ends.baseline, ends.final].some((view) => {
-    const owner = resolvePointer(view, list.slice(0, -"/children".length));
+    const owner = resolvePointer(
+      view,
+      list.slice(0, -"/children".length),
+      "xml",
+    );
     return (
       isXmlElement(owner) &&
       owner.children.some(
@@ -135,7 +140,7 @@ const editedList = (
   for (const [index, step] of steps.entries()) {
     const { list } = step;
     const at = `${list}/${step.member}`;
-    const member = resolvePointer(ends.final, at);
+    const member = resolvePointer(ends.final, at, "xml");
     const local = isXmlElement(member)
       ? (member.name.split(":").at(-1) ?? member.name)
       : "";
@@ -148,8 +153,8 @@ const editedList = (
       continue;
     const kind = kindOf(
       member,
-      resolvePointer(ends.final, list) ?? null,
-      resolvePointer(ends.baseline, at) ?? null,
+      resolvePointer(ends.final, list, "xml") ?? null,
+      resolvePointer(ends.baseline, at, "xml") ?? null,
     );
     const counted = { list, tag: member.name, ...(kind && { kind }) };
     if (
@@ -180,16 +185,17 @@ export const draftCounts = (
   const changed = new Map<string, Counted>();
   const note = (pointer: string, view: JsonValue | null) => {
     const list = listOf(pointer);
-    const value = resolvePointer(view, pointer);
+    const value = resolvePointer(view, pointer, "xml");
     // A member of an element a text check reads is a run of that text.
     if (
       list === undefined ||
       !isXmlElement(value) ||
       context.noisy(pointer) ||
+      context.coveredRun(pointer, view) ||
       context.covered(list.slice(0, -"/children".length))
     )
       return;
-    const kind = kindOf(value, resolvePointer(view, list) ?? null);
+    const kind = kindOf(value, resolvePointer(view, list, "xml") ?? null);
     const counted = { list, tag: value.name, ...(kind && { kind }) };
     changed.set(keyOf(counted), counted);
   };

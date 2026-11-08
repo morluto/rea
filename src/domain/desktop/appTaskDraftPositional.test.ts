@@ -9,7 +9,7 @@ const FILE = "Documents/doc.xml";
 
 /** The members of the array at a pointer into an XML text's view. */
 const membersAt = (text: string, pointer: string): JsonValue[] => {
-  const members = resolvePointer(xml(text), pointer);
+  const members = resolvePointer(xml(text), pointer, "xml");
   if (!Array.isArray(members)) throw new Error(`no array at ${pointer}`);
   return members;
 };
@@ -114,6 +114,8 @@ describe("identifiers an app numbers by position", () => {
     const pairing = pairMembers(
       tasksOf(plan(...INSERTED)),
       tasksOf(plan(...SEED)),
+      undefined,
+      "xml",
     );
 
     expect(pairing.newer.keys).toEqual([
@@ -179,6 +181,8 @@ describe("identifiers an app numbers by position", () => {
       pairMembers(
         membersAt(after, "/root/children"),
         membersAt(before, "/root/children"),
+        undefined,
+        "xml",
       ),
     ).toEqual({
       newer: {
@@ -211,7 +215,8 @@ describe("identifiers an app numbers by position", () => {
     const items = (text: string) => membersAt(text, "/root/children");
 
     expect(
-      pairMembers(items(stable(1, 3)), items(stable(1, 2, 3))).newer.keys,
+      pairMembers(items(stable(1, 3)), items(stable(1, 2, 3)), undefined, "xml")
+        .newer.keys,
     ).toEqual(["[name=item][@id=1]", "[name=item][@id=3]"]);
   });
 });
@@ -248,7 +253,12 @@ describe("an element renamed", () => {
     const layers = (top: string) =>
       membersAt(stack(top, { numbered: false }), "/root/children/0/children");
 
-    const pairing = pairMembers(layers("Sun"), layers("Untitled"));
+    const pairing = pairMembers(
+      layers("Sun"),
+      layers("Untitled"),
+      undefined,
+      "xml",
+    );
 
     const keys = [
       "[name=layer][@src=data/sun.png]",
@@ -265,7 +275,12 @@ describe("an element renamed", () => {
     const layers = (top: string) =>
       membersAt(stack(top), "/root/children/0/children");
 
-    const pairing = pairMembers(layers("Sun"), layers("Untitled"));
+    const pairing = pairMembers(
+      layers("Sun"),
+      layers("Untitled"),
+      undefined,
+      "xml",
+    );
 
     expect(pairing.newer.keys[0]).toBe("[name=layer][@name=Sun]");
     expect(pairing.older.keys[0]).toBe("[name=layer][@name=Untitled]");
@@ -356,6 +371,8 @@ describe("members named by a child's text or a generated id", () => {
         map(node("ID_1749680464", "Tent")),
         "/root/children/0/children",
       ),
+      undefined,
+      "xml",
     );
 
     expect(pairing.newer.keys).toEqual([

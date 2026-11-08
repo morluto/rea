@@ -12,7 +12,16 @@ import { valueEqualsCheck } from "./appTaskDraftScalars.js";
 import { KIND_FIELD } from "./jsonRecordPairing.js";
 import { pairMembers } from "./memberPairing.js";
 import type { DesktopStateDifference } from "./stateChanges.js";
-import { escapeToken, locatePointer, resolvePointer } from "./viewPointer.js";
+import {
+  escapeToken,
+  locatePointer as locateView,
+  resolvePointer as resolveView,
+} from "./viewPointer.js";
+
+const locatePointer = (view: JsonValue | null, pointer: string) =>
+  locateView(view, pointer, "json");
+const resolvePointer = (view: JsonValue | null, pointer: string) =>
+  resolveView(view, pointer, "json");
 import { selectorOf, spellCondition } from "./viewSelector.js";
 
 type Suggestion = DesktopTaskCheckInput;
@@ -353,7 +362,7 @@ export const recordGuards = (
       const items = resolvePointer(view, list);
       return Array.isArray(items) ? items : [];
     });
-    const pairing = pairMembers(newer, older);
+    const pairing = pairMembers(newer, older, undefined, "json");
     pairings.set(list, pairing);
     return pairing;
   };
