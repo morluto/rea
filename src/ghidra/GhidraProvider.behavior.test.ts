@@ -1315,6 +1315,8 @@ describe("Ghidra result projection", () => {
     ["invalid_request", "AnalysisInputError"],
     ["not_found", "AnalysisInputError"],
     ["ambiguous", "AnalysisInputError"],
+    ["file_offset_ambiguous", "AnalysisInputError"],
+    ["procedure_ambiguous", "AnalysisInputError"],
     ["method_unavailable", "AnalysisCapabilityUnavailableError"],
   ] as const)(
     "projects remote %s without losing its typed meaning",
@@ -2482,7 +2484,6 @@ it.each([
     const detail = await client.execute("inspect_native_data_type", {
       address,
     });
-    expect(detail.ok).toBe(true);
     if (!detail.ok) throw detail.error;
     expect(detail.value.result).toMatchObject({ address: resolvedAddress });
     if (expectedTable === null) {
@@ -3680,13 +3681,19 @@ describe("Ghidra empty instruction reference facets", () => {
     ...compactInstruction(outgoing),
     incoming_references: incoming,
   });
-  const nonDecoded = (status: JsonValue, incoming: JsonValue[]) => ({
+  const definedData = (incoming: JsonValue[]) => ({
     ...compactInstruction(),
-    status,
+    status: "data",
     bytes: null,
     length: null,
     mnemonic: null,
     raw_disassembly: null,
+    containing_data: {
+      address: "0x401000",
+      length: 1,
+      type_id: "/undefined1",
+      provenance: "ghidra-listing",
+    },
     incoming_references: incoming,
   });
   const executeInspect = async (
@@ -3737,15 +3744,13 @@ describe("Ghidra empty instruction reference facets", () => {
   });
 
   it("keeps only the address caveat when a data address resolves no incoming references", async () => {
-    const limitations = await executeInspect(nonDecoded("data", []));
+    const limitations = await executeInspect(definedData([]));
     expect(limitations).toContain(ghidraEmptyXrefsLimitation);
     expect(limitations).not.toContain(ghidraEmptyInstructionOutgoingLimitation);
   });
 
   it("adds no caveat for a data address whose incoming references were observed", async () => {
-    const limitations = await executeInspect(
-      nonDecoded("data", [compactReference()]),
-    );
+    const limitations = await executeInspect(definedData([compactReference()]));
     expect(limitations).not.toContain(ghidraEmptyXrefsLimitation);
     expect(limitations).not.toContain(ghidraEmptyInstructionOutgoingLimitation);
   });
@@ -6382,7 +6387,18 @@ it.each(["search_procedures", "search_strings"] as const)(
       { address: "0x1001", value: "SOURCE" },
       { address: "0x1002", value: "İource" },
       { address: "0x1003", value: "unrelated" },
-    ];
+    ].map((row) => ({
+      ...row,
+      ...(operation === "search_procedures"
+        ? { procedure: { external: false, thunk: false, thunk_target: null } }
+        : {
+            string: {
+              encoding: "UTF-8",
+              termination: "present_or_not_required",
+              byte_length: Buffer.byteLength(row.value, "utf8") + 1,
+            },
+          }),
+    }));
     const ghidra = provider(installationHost(), () => ({
       start: () => Promise.resolve(ok(sessionInfo())),
       callTool: () => Promise.resolve(ok(jsonValueSchema.parse(rows))),

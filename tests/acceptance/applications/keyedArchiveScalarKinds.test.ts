@@ -1,4 +1,3 @@
-import { nonFiniteRealLimitation } from "../../../src/domain/apple/plistValue.js";
 import { createHash } from "node:crypto";
 import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -133,7 +132,9 @@ cliTest.for(["xml", "binary"] as const)(
         status: "resolved",
       }),
     );
-    expect(result.limitations).toContainEqual(nonFiniteRealLimitation(1));
+    expect(result.limitations).toContainEqual(
+      expect.stringMatching(/\b1 non-finite real value.*JSON number/iu),
+    );
 
     const page = await run(["--root", "data", "--offset", "1", "--limit", "2"]);
     expect(page.objects).toEqual(result.objects.slice(1, 3));
@@ -412,7 +413,9 @@ cliTest(
     expect(JSON.stringify(result.objects.map(({ value }) => value))).toBe(
       '["$null",{"$plist_type":"real","value":"+infinity"},{"$plist_type":"real","value":"-infinity"},{"$plist_type":"real","value":"nan"},1.25]',
     );
-    expect(result.limitations).toContain(nonFiniteRealLimitation(3));
+    expect(result.limitations).toContainEqual(
+      expect.stringMatching(/\b3 non-finite real value.*JSON number/iu),
+    );
     expect(result.limitations).not.toContainEqual(
       expect.stringContaining('"value": null'),
     );

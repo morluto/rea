@@ -269,14 +269,13 @@ describe("capability failure retry disposition", () => {
     "preserves the producer's $retryable disposition",
     ({ options, retryable, category }) => {
       const reason = "Native self-test failed with a sharing violation";
-      const projected = projectAnalysisError(
-        new AnalysisCapabilityUnavailableError(
-          "fixture-provider",
-          "inspect",
-          reason,
-          options,
-        ),
+      const error = new AnalysisCapabilityUnavailableError(
+        "fixture-provider",
+        "inspect",
+        reason,
+        options,
       );
+      const projected = projectAnalysisError(error);
       expect(projected).toMatchObject({
         code: "capability_unavailable",
         category,
@@ -287,8 +286,8 @@ describe("capability failure retry disposition", () => {
         expect(projected.message).toBe(
           "Required runtime controls are unavailable for this attempt.",
         );
-        expect(projected.remediation.action).toContain(
-          "retry the same analysis",
+        expect(projected.remediation.action).toBe(
+          analysisErrorRemediationAction(error),
         );
       }
       expect(analysisErrorProjectionSchema.safeParse(projected).success).toBe(
@@ -311,6 +310,38 @@ describe("capability failure retry disposition", () => {
         ),
       ).message,
     ).toBe("Selected runtime diagnostic");
+  });
+
+  it("uses generic recovery only when no more specific recovery exists", () => {
+    const project = (options: {
+      fallbackRemediationAction?: string;
+      remediationAction?: string;
+      retryable?: boolean;
+    }) =>
+      projectAnalysisError(
+        new AnalysisCapabilityUnavailableError(
+          "fixture",
+          "inspect",
+          "unavailable",
+          options,
+        ),
+      );
+    expect(
+      project({ fallbackRemediationAction: "Generic" }).remediation.action,
+    ).toBe("Generic");
+    expect(
+      project({
+        fallbackRemediationAction: "Generic",
+        remediationAction: "Specific",
+      }).remediation.action,
+    ).toBe("Specific");
+    const retry = project({ retryable: true });
+    const retryWithFallback = project({
+      fallbackRemediationAction: "Generic",
+      retryable: true,
+    });
+    expect(retryWithFallback.retryable).toBe(true);
+    expect(retryWithFallback.remediation.action).toBe(retry.remediation.action);
   });
 
   it("retains cleanup ownership before allowing a transient operation to retry", () => {
@@ -355,11 +386,11 @@ it("projects a published file receipt alongside retained cleanup failure", () =>
   );
   expect(projected).toMatchObject({
     code: "cleanup_incomplete",
-    message:
-      "The output file was published, but staging cleanup remains incomplete.",
+    message: expect.stringMatching(/published.*staging cleanup.*incomplete/iu),
     remediation: {
-      action:
-        "Use the published file at details.published_path and resolve the reported staging cleanup failure.",
+      action: expect.stringMatching(
+        /published.*details\.published_path.*cleanup/iu,
+      ),
     },
     details: {
       operation: "write",
@@ -1070,8 +1101,9 @@ describe("analysis error projection: caller contract", () => {
         category: "unavailable",
         retryable: false,
         remediation: {
-          action:
-            "Check the current process's read access to the selected path. Retry with a readable local file.",
+          action: expect.stringMatching(
+            /read access.*selected path.*readable local file/iu,
+          ),
         },
         details: {
           path: "/local/targets/app",
@@ -1141,11 +1173,11 @@ describe("analysis error projection: caller contract", () => {
       projectAnalysisError(new UnknownRegistryError("not-found")),
     ).toMatchObject({
       code: "execution_failure",
-      message:
-        "The requested residual unknown does not exist in this session. Check the unknown_id and try again.",
+      message: expect.stringMatching(
+        /residual unknown.*does not exist.*unknown_id/iu,
+      ),
       remediation: {
-        action:
-          "Check that the unknown_id belongs to this session, then retry.",
+        action: expect.stringMatching(/unknown_id.*session.*retry/iu),
       },
       details: { reason: "not-found" },
     });

@@ -126,7 +126,6 @@ it.each(["288", "309 "])(
       identity,
       inspect: () => Promise.resolve(ok(malformed)),
     }).inspect({ path: report.artifact.path });
-    expect(result.ok).toBe(false);
     if (result.ok) throw new Error("Expected unsupported provider crash kind");
     expect(result.error._tag).toBe("AnalysisOutputError");
   },

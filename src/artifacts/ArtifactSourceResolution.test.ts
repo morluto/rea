@@ -72,7 +72,6 @@ it.skipIf(process.platform === "win32")(
         max_entries: 32,
         max_probe_bytes: 4096,
       });
-      expect(invalid.ok).toBe(false);
       if (invalid.ok) throw new Error("expected ENOTDIR refusal");
       expect(projectAnalysisError(invalid.error)).toMatchObject({
         code: "target_unavailable",
@@ -83,7 +82,6 @@ it.skipIf(process.platform === "win32")(
         max_entries: 32,
         max_probe_bytes: 4096,
       });
-      expect(valid.ok).toBe(true);
       if (!valid.ok) throw valid.error;
       expect(
         desktopApplicationSchema
