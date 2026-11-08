@@ -708,3 +708,62 @@ describe("setup tool family scope", () => {
     );
   });
 });
+
+describe("setup python runner configuration", () => {
+  it("clears REA_PWNTOOLS_PYTHON and sets REA_PYTHON_RUNNER to none when pythonRunner is none", async () => {
+    const host = new FakeSetupHost();
+    host.doctorHealthy = true;
+    host.skill = "unchanged";
+    host.clients = [{ name: "cursor", configPath: "/cursor.json" }];
+
+    const originalInitialSetupState = host.initialSetupState;
+    host.initialSetupState = async (scope) => {
+      const state = await originalInitialSetupState(scope);
+      return {
+        ...state,
+        providerEnvironment: {
+          ...state.providerEnvironment,
+          REA_PWNTOOLS_PYTHON: "/usr/bin/python3",
+        },
+      };
+    };
+
+    const applied = await runSetup(
+      {
+        ...options(true),
+        clientIds: ["cursor"],
+        pythonRunner: "none",
+      },
+      host,
+    );
+
+    expect(applied.status).toBe("ready");
+    expect(host.configuredProviderEnvironments).toHaveLength(1);
+    const configured = host.configuredProviderEnvironments[0];
+    expect(configured?.REA_PYTHON_RUNNER).toBe("none");
+    expect(configured?.REA_PWNTOOLS_PYTHON).toBeUndefined();
+  });
+
+  it("sets REA_PYTHON_RUNNER to uv and populates REA_PWNTOOLS_PYTHON when uvPythonPath is provided", async () => {
+    const host = new FakeSetupHost();
+    host.doctorHealthy = true;
+    host.skill = "unchanged";
+    host.clients = [{ name: "cursor", configPath: "/cursor.json" }];
+
+    const applied = await runSetup(
+      {
+        ...options(true),
+        clientIds: ["cursor"],
+        pythonRunner: "uv",
+        uvPythonPath: "/path/to/uv/python",
+      },
+      host,
+    );
+
+    expect(applied.status).toBe("ready");
+    expect(host.configuredProviderEnvironments).toHaveLength(1);
+    const configured = host.configuredProviderEnvironments[0];
+    expect(configured?.REA_PYTHON_RUNNER).toBe("uv");
+    expect(configured?.REA_PWNTOOLS_PYTHON).toBe("/path/to/uv/python");
+  });
+});

@@ -68,20 +68,35 @@ export const promptSetupPreferences = async (
       cancel("Setup cancelled. No changes were made.", promptStreams);
       return undefined;
     }
-    const useUv = await confirm({
+    const connectPython = await confirm({
       ...promptStreams,
-      message: "Connect Python analysis tools via uv + ruff?",
-      initialValue: false,
+      message: "Connect Python analysis tools for agent registrations?",
+      initialValue: true,
       vertical: true,
     });
-    if (isCancel(useUv)) {
+    if (isCancel(connectPython)) {
       cancel("Setup cancelled. No changes were made.", promptStreams);
       return undefined;
+    }
+    let pythonRunner: "standard" | "uv" | "none" = "none";
+    if (connectPython) {
+      const useUv = await confirm({
+        ...promptStreams,
+        message:
+          "Connect Python analysis tools via uv + ruff instead of standard Python?",
+        initialValue: false,
+        vertical: true,
+      });
+      if (isCancel(useUv)) {
+        cancel("Setup cancelled. No changes were made.", promptStreams);
+        return undefined;
+      }
+      pythonRunner = useUv ? "uv" : "standard";
     }
     return {
       mode: "custom",
       runtime: useBun ? "bun" : "node",
-      pythonRunner: useUv ? "uv" : "standard",
+      pythonRunner,
     };
   }
 

@@ -148,6 +148,14 @@ const runSetupWorkflow = async (
         ? { REA_PWNTOOLS_PYTHON: options.uvPythonPath }
         : {}),
     };
+  else if (options.pythonRunner === "none") {
+    const { REA_PWNTOOLS_PYTHON: _omittedPython, ...rest } =
+      providerEnvironment;
+    providerEnvironment = {
+      ...rest,
+      REA_PYTHON_RUNNER: "none",
+    };
+  }
   clientStates = discovery.clientStates;
   const clientSelectionAllowed =
     options.clientIds === undefined &&
