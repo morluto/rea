@@ -175,18 +175,29 @@ const registerCapabilityCommands = (
   logger: Logger,
   { runSessionStatus }: Pick<DirectAnalysis, "runSessionStatus">,
 ): void => {
-  for (const command of [
-    CLI_COMMANDS.capabilities,
-    CLI_COMMANDS.providers,
-  ] as const) {
-    cli.command(command, {
-      description:
-        command === "capabilities"
-          ? "List provider capabilities and side effects"
-          : "List configured analysis providers",
-      run: () => logCliCommand(logger, command, () => runSessionStatus(logger)),
-    });
-  }
+  cli.command(CLI_COMMANDS.capabilities, {
+    description: "List provider capabilities and side effects",
+    options: z.object({
+      operation: z
+        .string()
+        .min(1)
+        .optional()
+        .describe(
+          "Compare deep-provider candidates for one tool, such as search_bytes; does not select or open a provider",
+        ),
+    }),
+    run: ({ options: { operation } }) =>
+      logCliCommand(logger, CLI_COMMANDS.capabilities, () =>
+        runSessionStatus(logger, operation === undefined ? {} : { operation }),
+      ),
+  });
+  cli.command(CLI_COMMANDS.providers, {
+    description: "List configured analysis providers",
+    run: () =>
+      logCliCommand(logger, CLI_COMMANDS.providers, () =>
+        runSessionStatus(logger),
+      ),
+  });
 };
 
 const registerNativeCommands = (

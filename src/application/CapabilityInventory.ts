@@ -235,6 +235,46 @@ const ENHANCED_REQUIREMENTS: ReadonlyMap<string, ProviderComposition> = new Map(
   } satisfies Readonly<Record<EnhancedContractName, ProviderComposition>>),
 );
 
+/**
+ * Provider operations one tool needs, from the same compositions that decide
+ * its availability. A direct tool without such a composition needs its own
+ * operation. Each requirement is one operation or a group satisfied by any one
+ * of its operations.
+ */
+export type ToolProviderRequirements =
+  | {
+      readonly kind: "operations";
+      readonly requirements: readonly (string | readonly string[])[];
+    }
+  | {
+      readonly kind: "modes";
+      readonly defaultMode: string | null;
+      readonly modes: readonly {
+        readonly name: string;
+        readonly requirements: readonly (string | readonly string[])[];
+      }[];
+    };
+
+/** Return undefined for an unknown tool or an enhanced tool without a declared composition. */
+export const toolProviderRequirements = (
+  name: string,
+): ToolProviderRequirements | undefined => {
+  const contract = TOOL_CONTRACTS.find((candidate) => candidate.name === name);
+  if (contract === undefined) return undefined;
+  const composition = availabilityComposition(name);
+  if (composition === undefined)
+    return contract.kind === "enhanced"
+      ? undefined
+      : { kind: "operations", requirements: [name] };
+  return "modes" in composition
+    ? {
+        kind: "modes",
+        defaultMode: composition.defaultMode ?? null,
+        modes: composition.modes,
+      }
+    : { kind: "operations", requirements: composition };
+};
+
 /** Native contracts defined only for an active Mach-O executable. */
 const MACHO_TARGET_OPERATIONS: ReadonlySet<string> = new Set([
   "inspect_signature",
@@ -259,6 +299,23 @@ const NAVIGATION_CONTEXT_MODES = [
     requirements: ["current_address", "resolve_containing_procedure"],
   },
 ] as const;
+
+const NAVIGATION_CONTEXT_COMPOSITION: ModeComposition = {
+  defaultMode: "current_selection",
+  modes: NAVIGATION_CONTEXT_MODES,
+};
+
+/**
+ * The provider composition that decides a tool's availability: an enhanced
+ * workflow's declared requirements, or a direct tool whose availability is
+ * composed from provider operations instead of its own name.
+ */
+const availabilityComposition = (
+  name: string,
+): ProviderComposition | undefined =>
+  name === "get_navigation_context"
+    ? NAVIGATION_CONTEXT_COMPOSITION
+    : ENHANCED_REQUIREMENTS.get(name);
 
 const ADDRESS_CONTEXT_EFFECT_COMPOSITION: ModeComposition = {
   modes: [
@@ -465,12 +522,11 @@ const availabilityFor = (context: AvailabilityContext): Availability => {
         })),
       };
     }
-    const modes = availabilityForModes(
-      NAVIGATION_CONTEXT_MODES,
-      "current_selection",
+    return availabilityForModes(
+      NAVIGATION_CONTEXT_COMPOSITION.modes,
+      NAVIGATION_CONTEXT_COMPOSITION.defaultMode,
       context.descriptors,
     );
-    return modes;
   }
   const javascriptApplication = javascriptApplicationAvailability(context);
   if (javascriptApplication !== null) return javascriptApplication;
@@ -1172,11 +1228,9 @@ const composedEffects = (
   descriptors: readonly ProviderDescriptor[],
 ): ToolEffects => {
   const composition: ProviderComposition | undefined =
-    name === "get_navigation_context"
-      ? { modes: NAVIGATION_CONTEXT_MODES }
-      : name === "inspect_address_context"
-        ? ADDRESS_CONTEXT_EFFECT_COMPOSITION
-        : ENHANCED_REQUIREMENTS.get(name);
+    name === "inspect_address_context"
+      ? ADDRESS_CONTEXT_EFFECT_COMPOSITION
+      : availabilityComposition(name);
   const byOperation = new Map(
     descriptors.map((descriptor) => [descriptor.operation, descriptor]),
   );

@@ -345,6 +345,12 @@ type CapabilityAvailability =
        * unavailable. Static capability facts omit it.
        */
       readonly remediation?: string;
+      /**
+       * Set by the provider owner when this declared operation is unavailable
+       * only because the provider itself is not ready; its reason and code
+       * repeat that readiness rejection. Operation-specific limits omit it.
+       */
+      readonly readinessGated?: true;
     };
 
 export type CapabilityDescriptor = CapabilityAvailability & {

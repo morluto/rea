@@ -6,15 +6,20 @@ import type {
   ProviderIdentity,
 } from "../AnalysisProvider.js";
 import { z } from "zod";
+import { AnalysisInputError } from "../../domain/analysisErrorCore.js";
+import type { ProviderRejectionCode } from "../../domain/providerSelection.js";
 import {
   analysisProviderCandidate,
   analysisProviderCandidateSummary,
   expandProviderCapabilities,
   expandToolAvailability,
+  operationProviderCandidate,
+  operationRequirements,
   sessionProviderFacts,
   type ProviderCapabilitySet,
 } from "../../contracts/toolOutputSchemaPrimitives.js";
 import { compareUnicodeCodePoints } from "../../domain/unicodeCodePointOrder.js";
+import type { ResolvedAppBundleResourceRoot } from "../AppBundleExecutable.js";
 import type { AnalysisProviderCandidateStatus } from "./AnalysisProviderRegistry.js";
 import type {
   SessionProviderRoute,
@@ -76,9 +81,7 @@ type DescriptorOptions = {
   | {
       readonly available: false;
       readonly reason?: string;
-      readonly availabilityCode?:
-        | "architecture_unsupported"
-        | "unsupported_host";
+      readonly availabilityCode?: ProviderRejectionCode;
     }
 );
 
@@ -161,7 +164,10 @@ const projectStatus = async (
       { readonly reason: string }
     >;
     readonly target?: BinaryTarget;
-    readonly detail?: "summary" | "complete";
+    readonly detail?: "summary" | "complete" | "operation";
+    readonly operation?: string;
+    readonly deepOperations?: readonly string[];
+    readonly bundleResourceRoot?: ResolvedAppBundleResourceRoot;
   } = {},
 ) => {
   const route: SessionProviderRoute = {
@@ -176,8 +182,18 @@ const projectStatus = async (
     ),
     binding: null,
   };
-  const router: Pick<SessionProviderRouter, "candidateStatuses"> = {
+  const router: Pick<
+    SessionProviderRouter,
+    "candidateStatuses" | "deepOperations"
+  > = {
     candidateStatuses: async () => candidates,
+    deepOperations: () =>
+      new Set(
+        options.deepOperations ??
+          candidates.flatMap(({ capabilities }) =>
+            capabilities.map(({ operation }) => operation),
+          ),
+      ),
   };
   return binarySessionStatus({
     investigation: {
@@ -196,6 +212,12 @@ const projectStatus = async (
     runtimeLineageSnapshots: [],
     requestActivitySnapshots: [],
     ...(options.detail === undefined ? {} : { detail: options.detail }),
+    ...(options.operation === undefined
+      ? {}
+      : { operation: options.operation }),
+    ...(options.bundleResourceRoot === undefined
+      ? {}
+      : { bundleResourceRoot: options.bundleResourceRoot }),
   });
 };
 
@@ -974,4 +996,500 @@ it("preserves an unsupported resolver host alongside unavailable value flow", as
   expect(item).toMatchObject({ available: false, reason: "unsupported_host" });
   expect(item?.remediation).toContain("No value flow.");
   expect(item?.remediation).toContain("Use a supported resolver host.");
+});
+
+const providerC: ProviderIdentity = {
+  id: "provider-c",
+  name: "Provider C",
+  version: null,
+};
+const operationStatusSchema = z.object({
+  capabilities: sessionProviderFacts.shape.capabilities,
+  operation: z.string(),
+  operation_requirements: operationRequirements,
+  operation_candidates: z.array(operationProviderCandidate),
+});
+const searchCandidates = (): AnalysisProviderCandidateStatus[] => [
+  candidate(providerA, [descriptor(providerA, "search_bytes", [])]),
+  {
+    ...candidate(providerB, [
+      descriptor(providerB, "search_bytes", [], {
+        available: false,
+        reason: "Masked byte search has not been verified for Provider B.",
+      }),
+    ]),
+    availability: {
+      status: "unavailable",
+      code: "unsupported_host",
+      reason: "Provider B does not run on this host.",
+      remediation: "Use a supported host.",
+      diagnostics: { platform: "win32" },
+    },
+    selected: false,
+  },
+  {
+    ...candidate(providerC, [descriptor(providerC, "xrefs", [])]),
+    targetSupport: {
+      status: "unsupported",
+      code: "target_format_unsupported",
+      reason: "Provider C cannot read this format.",
+      diagnostics: {},
+    },
+    selected: false,
+  },
+];
+
+describe("binary session operation projection", () => {
+  it("keeps readiness, target support, selection and declaration separate for one operation", async () => {
+    const candidates = searchCandidates();
+    const before = structuredClone(candidates);
+    const raw = await projectStatus(selectedCapabilities, candidates, {
+      detail: "operation",
+      operation: "search_bytes",
+    });
+    const view = operationStatusSchema.parse(raw);
+
+    expect(candidates).toEqual(before);
+    expect(raw).not.toHaveProperty("analysis_provider_candidates");
+    expect(JSON.stringify(raw)).not.toContain("diagnostics");
+    expect(JSON.stringify(raw)).not.toContain("Use a supported host.");
+    expect(view.operation).toBe("search_bytes");
+    expect(view.operation_requirements).toEqual({
+      kind: "operations",
+      requirements: ["search_bytes"],
+    });
+    expect(view.operation_candidates).toEqual([
+      {
+        provider: providerA,
+        selected: true,
+        availability: { status: "available", code: null, reason: null },
+        // Unknown stays unknown; it is not reported as unsupported.
+        target_support: {
+          status: "unknown",
+          code: null,
+          reason: "No target is open.",
+        },
+        declaration: {
+          status: "available",
+          missing_operations: [],
+          operations: [{ operation: "search_bytes", status: "available" }],
+        },
+      },
+      {
+        provider: providerB,
+        selected: false,
+        availability: {
+          status: "unavailable",
+          code: "unsupported_host",
+          reason: "Provider B does not run on this host.",
+        },
+        target_support: {
+          status: "unknown",
+          code: null,
+          reason: "No target is open.",
+        },
+        declaration: {
+          status: "unavailable",
+          missing_operations: ["search_bytes"],
+          operations: [
+            {
+              operation: "search_bytes",
+              status: "unavailable",
+              reason:
+                "Masked byte search has not been verified for Provider B.",
+              availability_code: null,
+            },
+          ],
+        },
+      },
+      {
+        provider: providerC,
+        selected: false,
+        availability: { status: "available", code: null, reason: null },
+        target_support: {
+          status: "unsupported",
+          code: "target_format_unsupported",
+          reason: "Provider C cannot read this format.",
+        },
+        declaration: {
+          status: "not_declared",
+          missing_operations: ["search_bytes"],
+          operations: [{ operation: "search_bytes", status: "not_declared" }],
+        },
+      },
+    ]);
+    // Route capabilities stay those of the current route, as in summary.
+    const summary = summaryStatusSchema.parse(
+      await projectStatus(selectedCapabilities, candidates, {
+        detail: "summary",
+      }),
+    );
+    expect(view.capabilities).toEqual(summary.capabilities);
+  });
+
+  it("reports no alternative without inventing one", async () => {
+    const [, unavailable, undeclared] = searchCandidates();
+    const view = operationStatusSchema.parse(
+      await projectStatus(
+        selectedCapabilities,
+        [candidate(providerA, selectedCapabilities), unavailable!, undeclared!],
+        {
+          detail: "operation",
+          operation: "search_bytes",
+          deepOperations: ["search_bytes", "xrefs", "procedure_info"],
+        },
+      ),
+    );
+    expect(
+      view.operation_candidates.map(({ provider, declaration }) => [
+        provider.id,
+        declaration.status,
+      ]),
+    ).toEqual([
+      ["provider-a", "not_declared"],
+      ["provider-b", "unavailable"],
+      ["provider-c", "not_declared"],
+    ]);
+  });
+});
+
+describe("binary session composed operation projection", () => {
+  it("reports mode-dependent declarations and the default mode separately", async () => {
+    const view = operationStatusSchema.parse(
+      await projectStatus(
+        selectedCapabilities,
+        [
+          candidate(providerA, [
+            descriptor(providerA, "procedure_address", []),
+            descriptor(providerA, "procedure_callers", []),
+          ]),
+        ],
+        {
+          detail: "operation",
+          operation: "get_call_graph",
+          deepOperations: [
+            "procedure_address",
+            "procedure_callers",
+            "procedure_callees",
+          ],
+        },
+      ),
+    );
+    expect(view.operation_requirements).toEqual({
+      kind: "modes",
+      default_mode: "forward",
+      modes: [
+        {
+          name: "forward",
+          requirements: ["procedure_address", "procedure_callees"],
+        },
+        {
+          name: "backward",
+          requirements: ["procedure_address", "procedure_callers"],
+        },
+      ],
+    });
+    expect(view.operation_candidates[0]?.declaration).toEqual({
+      status: "available",
+      missing_operations: ["procedure_callees"],
+      operations: [
+        { operation: "procedure_address", status: "available" },
+        { operation: "procedure_callees", status: "not_declared" },
+        { operation: "procedure_callers", status: "available" },
+      ],
+      default_mode_available: false,
+      modes: [
+        {
+          name: "forward",
+          status: "unavailable",
+          missing_operations: ["procedure_callees"],
+        },
+        { name: "backward", status: "available", missing_operations: [] },
+      ],
+    });
+  });
+
+  it("reports a partially declared composed tool with its missing operations", async () => {
+    const view = operationStatusSchema.parse(
+      await projectStatus(
+        selectedCapabilities,
+        [candidate(providerA, [descriptor(providerA, "analyze_function", [])])],
+        {
+          detail: "operation",
+          operation: "trace_native_values",
+          deepOperations: ["analyze_function", "resolve_native_call_targets"],
+        },
+      ),
+    );
+    expect(view.operation_candidates[0]?.declaration).toEqual({
+      status: "unavailable",
+      missing_operations: ["resolve_native_call_targets"],
+      operations: [
+        { operation: "analyze_function", status: "available" },
+        { operation: "resolve_native_call_targets", status: "not_declared" },
+      ],
+    });
+  });
+
+  it.each([
+    ["operation view without operation", { detail: "operation" as const }],
+    [
+      "operation with another view",
+      { detail: "summary" as const, operation: "search_bytes" },
+    ],
+    [
+      "unknown tool",
+      { detail: "operation" as const, operation: "no_such_tool" },
+    ],
+    [
+      "tool served outside deep providers",
+      { detail: "operation" as const, operation: "inspect_macho" },
+    ],
+  ])("rejects %s before candidate discovery", async (_name, view) => {
+    let discovered = false;
+    const route: SessionProviderRoute = {
+      identity: providerA,
+      profile: null,
+      selection: undefined,
+      createClient: () => {
+        throw new Error("Projection does not create clients");
+      },
+      capabilities: new Map(),
+      binding: null,
+    };
+    await expect(
+      binarySessionStatus({
+        investigation: {
+          evidence_records: 0,
+          unknown_revisions: 0,
+          unknown_heads: 0,
+          retained_representation_bytes: 0,
+          maximum_representation_bytes: 0,
+          persistence: "memory",
+        },
+        target: undefined,
+        route,
+        router: {
+          candidateStatuses: async () => {
+            discovered = true;
+            return searchCandidates();
+          },
+          deepOperations: () => new Set(["search_bytes", "xrefs"]),
+        },
+        runtimeUnavailability: new Map(),
+        runId: undefined,
+        runtimeLineageSnapshots: [],
+        requestActivitySnapshots: [],
+        ...view,
+      }),
+    ).rejects.toBeInstanceOf(AnalysisInputError);
+    expect(discovered).toBe(false);
+  });
+});
+
+describe("binary session direct composed operation projection", () => {
+  it("uses the modes that decide a direct composed tool's availability", async () => {
+    const capabilities = [
+      descriptor(providerA, "current_address", []),
+      descriptor(providerA, "resolve_containing_procedure", []),
+    ];
+    const view = operationStatusSchema.parse(
+      await projectStatus(capabilities, [candidate(providerA, capabilities)], {
+        detail: "operation",
+        operation: "get_navigation_context",
+        deepOperations: [
+          "current_document",
+          "current_address",
+          "resolve_containing_procedure",
+        ],
+      }),
+    );
+    expect(view.operation_requirements).toEqual({
+      kind: "modes",
+      default_mode: "current_selection",
+      modes: [
+        {
+          name: "current_selection",
+          requirements: [
+            "current_document",
+            "current_address",
+            "resolve_containing_procedure",
+          ],
+        },
+        {
+          name: "explicit_document",
+          requirements: ["current_address", "resolve_containing_procedure"],
+        },
+      ],
+    });
+    expect(view.operation_candidates[0]?.declaration).toMatchObject({
+      status: "available",
+      missing_operations: ["current_document"],
+      default_mode_available: false,
+      modes: [
+        {
+          name: "current_selection",
+          status: "unavailable",
+          missing_operations: ["current_document"],
+        },
+        { name: "explicit_document", status: "available" },
+      ],
+    });
+    // The same composition decides the tool's reported availability.
+    const availability = buildCapabilityInventory(
+      await projectStatus(capabilities, []),
+      { processCaptureEnabled: false },
+    ).find(({ name }) => name === "get_navigation_context");
+    expect(availability?.modes?.map(({ name }) => name)).toEqual([
+      "current_selection",
+      "explicit_document",
+    ]);
+    expect(availability?.default_mode_available).toBe(false);
+  });
+});
+
+describe("binary session operation projection in a resource-only session", () => {
+  const resourceRoot: ResolvedAppBundleResourceRoot = {
+    callerPath: "/fixture/Probe.app",
+    canonicalPath: "/fixture/Probe.app",
+    infoPlistPath: "/fixture/Probe.app/Contents/Info.plist",
+    layout: "contents",
+    executableSha256: null,
+  };
+
+  it("reports target-free candidates instead of an empty list", async () => {
+    const candidates = searchCandidates();
+    const view = operationStatusSchema.parse(
+      await projectStatus([], candidates, {
+        detail: "operation",
+        operation: "search_bytes",
+        bundleResourceRoot: resourceRoot,
+      }),
+    );
+    expect(
+      view.operation_candidates.map(({ provider }) => provider.id),
+    ).toEqual(["provider-a", "provider-b", "provider-c"]);
+    expect(view.operation_candidates[0]).toMatchObject({
+      target_support: { status: "unknown" },
+      declaration: { status: "available" },
+    });
+  });
+
+  it("keeps summary and complete candidates unchanged in a resource-only session", async () => {
+    for (const detail of ["summary", "complete"] as const) {
+      const status = await projectStatus([], searchCandidates(), {
+        detail,
+        bundleResourceRoot: resourceRoot,
+      });
+      expect(status).toMatchObject({ analysis_provider_candidates: [] });
+    }
+  });
+});
+
+/** Mark an unavailable fixture capability as its provider owner would. */
+const markReadinessGated = (
+  capability: CapabilityDescriptor,
+): CapabilityDescriptor =>
+  capability.available ? capability : { ...capability, readinessGated: true };
+
+describe("binary session operation declarations under provider readiness", () => {
+  const unready = (
+    provider: ProviderIdentity,
+    capabilities: readonly CapabilityDescriptor[],
+  ): AnalysisProviderCandidateStatus => ({
+    ...candidate(provider, capabilities),
+    availability: {
+      status: "unavailable",
+      code: "not_configured",
+      reason: "Set the provider configuration.",
+      remediation: "Configure the provider.",
+      diagnostics: {},
+    },
+    selected: false,
+  });
+  const declarationsOf = async (
+    candidates: readonly AnalysisProviderCandidateStatus[],
+  ) =>
+    operationStatusSchema
+      .parse(
+        await projectStatus([], candidates, {
+          detail: "operation",
+          operation: "search_strings",
+          deepOperations: ["search_strings"],
+        }),
+      )
+      .operation_candidates.map(({ provider, availability, declaration }) => [
+        provider.id,
+        availability.code,
+        declaration.operations,
+      ]);
+
+  it("does not report an unconfigured provider's declared operation as missing", async () => {
+    // The provider owner marks the operation readiness-gated, as IDA, Kuna
+    // and Ghidra's Windows readiness path do while the provider is not ready.
+    const gated = markReadinessGated(
+      descriptor(providerA, "search_strings", [], {
+        available: false,
+        reason: "Set the provider configuration.",
+        availabilityCode: "not_configured",
+      }),
+    );
+    expect(await declarationsOf([unready(providerA, [gated])])).toEqual([
+      [
+        "provider-a",
+        "not_configured",
+        [{ operation: "search_strings", status: "available" }],
+      ],
+    ]);
+  });
+
+  it.each([
+    ["an operation-specific limitation", undefined, false, false],
+    [
+      "a different rejection than the provider's",
+      "runtime_unavailable",
+      false,
+      false,
+    ],
+    // A limit can share the provider's code, as Ghidra's Windows edit ban does.
+    [
+      "the provider's own code without the owner's mark",
+      "not_configured",
+      false,
+      false,
+    ],
+    [
+      "a marked operation while the provider is ready",
+      "not_configured",
+      true,
+      true,
+    ],
+  ] as const)(
+    "keeps %s as an unavailable declaration",
+    async (_name, availabilityCode, providerReady, marked) => {
+      const unmarked = descriptor(providerB, "search_strings", [], {
+        available: false,
+        reason: "Search is limited for Provider B.",
+        ...(availabilityCode === undefined ? {} : { availabilityCode }),
+      });
+      const limited = marked ? markReadinessGated(unmarked) : unmarked;
+      const status = providerReady
+        ? candidate(providerB, [limited])
+        : unready(providerB, [limited]);
+      expect(await declarationsOf([status])).toEqual([
+        [
+          "provider-b",
+          providerReady ? null : "not_configured",
+          [
+            {
+              operation: "search_strings",
+              status: "unavailable",
+              reason: "Search is limited for Provider B.",
+              availability_code: availabilityCode ?? null,
+            },
+          ],
+        ],
+      ]);
+    },
+  );
 });

@@ -10,3 +10,8 @@ for the specification lifecycle, roadmap granularity and producer-owned contract
 
 - [Organization](documentation/organization/spec.md)
   ([plan](documentation/organization/plan.md), [tasks](documentation/organization/tasks.md))
+
+## Providers
+
+- [Operation-focused provider discovery](providers/operation-provider-discovery/spec.md)
+  ([plan](providers/operation-provider-discovery/plan.md), [tasks](providers/operation-provider-discovery/tasks.md))

@@ -35,7 +35,10 @@ import { ProviderCleanupError } from "../../../src/domain/providerCleanupError.j
 import { existingProjectCapabilities } from "../../../src/ghidra/GhidraProviderCapabilities.js";
 import { silentLogger } from "../../../src/logger.js";
 import { createServer } from "../../../src/server/createServer.js";
-import { BINARY_SESSION_SUMMARY_OMITTED_FIELDS } from "../../../src/contracts/sessionStatusContract.js";
+import {
+  BINARY_SESSION_OPERATION_OMITTED_FIELDS,
+  BINARY_SESSION_SUMMARY_OMITTED_FIELDS,
+} from "../../../src/contracts/sessionStatusContract.js";
 import {
   toolContract,
   TOOL_CONTRACTS,
@@ -44,6 +47,7 @@ import {
   analysisProviderCandidate,
   analysisProviderCandidateSummary,
   expandToolAvailability,
+  operationProviderCandidate,
   toolAvailabilityInventory,
   toolAvailabilitySummaryInventory,
 } from "../../../src/contracts/toolOutputSchemaPrimitives.js";
@@ -477,7 +481,10 @@ const expectSummaryKeepsDecisionFacts = (
   );
 };
 
-const connectDetailFixture = async (starts: string[]) => {
+const connectDetailFixture = async (
+  starts: string[],
+  environment?: Readonly<Record<string, string>>,
+) => {
   const session = composeBinarySession(
     new AnalysisProviderRegistry([
       candidate("alpha", starts),
@@ -486,7 +493,10 @@ const connectDetailFixture = async (starts: string[]) => {
   );
   const server = createServer(
     { kind: "session", session },
-    { logger: silentLogger },
+    {
+      logger: silentLogger,
+      ...(environment === undefined ? {} : { environment }),
+    },
   );
   const mcp = new Client({ name: "session-detail", version: "1.0.0" });
   const [clientTransport, serverTransport] =
@@ -561,6 +571,14 @@ describe("binary_session detail over MCP", () => {
     );
     const canonical = toolContract("binary_session").outputSchema;
     const { omitted_fields: _omitted, ...summaryWithoutOmissions } = summary;
+    const operation = (
+      await sessionStatusOf(mcp, {
+        detail: "operation",
+        operation: "address_name",
+      })
+    ).raw.result;
+    const { omitted_fields: _operationOmitted, ...operationWithoutOmissions } =
+      operation;
     const cases = {
       summary,
       complete,
@@ -587,9 +605,22 @@ describe("binary_session detail over MCP", () => {
         ...complete,
         tool_availability: summary.tool_availability,
       },
+      operation,
+      "operation labelled summary": { ...operation, detail: "summary" },
+      "summary labelled operation": { ...summary, detail: "operation" },
+      "operation with candidate list": {
+        ...operation,
+        analysis_provider_candidates: summary.analysis_provider_candidates,
+      },
+      "summary with operation candidates": {
+        ...summary,
+        operation_candidates: operation.operation_candidates,
+      },
+      "operation without omitted_fields": operationWithoutOmissions,
     };
     for (const [name, result] of Object.entries(cases)) {
-      const valid = name === "summary" || name === "complete";
+      const valid =
+        name === "summary" || name === "complete" || name === "operation";
       expect(canonical.safeParse({ result }).success, name).toBe(valid);
       expect(validate({ result }).valid, name).toBe(valid);
     }
@@ -604,6 +635,168 @@ describe("binary_session detail over MCP", () => {
     });
     expect(rejected.isError).toBe(true);
     expect(starts).toEqual([]);
+  });
+});
+
+describe("binary_session operation view over MCP", () => {
+  it("answers one tool's candidate question without opening, selecting or switching a provider", async () => {
+    const directory = await createTestTempDirectory(
+      "rea-session-operation-mcp-",
+    );
+    const target = join(directory, "fixture.hop");
+    await writeFile(target, "fixture");
+    const starts: string[] = [];
+    const mcp = await connectDetailFixture(starts);
+    const operationView = { detail: "operation", operation: "address_name" };
+
+    for (const open of [false, true]) {
+      if (open) {
+        const opened = await mcp.callTool({
+          name: "open_binary",
+          arguments: { path: target, provider_id: "alpha" },
+        });
+        expect(opened.isError).not.toBe(true);
+      }
+      const startsBefore = [...starts];
+      const before = await sessionStatusOf(mcp, {});
+      const view = await sessionStatusOf(mcp, operationView);
+      const complete = await sessionStatusOf(mcp, { detail: "complete" });
+      const after = await sessionStatusOf(mcp, {});
+
+      expect(view.parsed).toMatchObject({
+        open,
+        detail: "operation",
+        operation: "address_name",
+        omitted_fields: [...BINARY_SESSION_OPERATION_OMITTED_FIELDS],
+        operation_requirements: {
+          kind: "operations",
+          requirements: ["address_name"],
+        },
+      });
+      expect(Object.hasOwn(view.parsed, "analysis_provider_candidates")).toBe(
+        false,
+      );
+      expect(JSON.stringify(view.parsed)).not.toContain('"diagnostics"');
+      expect(
+        operationProviderCandidate
+          .array()
+          .parse(view.parsed.operation_candidates),
+      ).toEqual([
+        {
+          // The selected route resolves its concrete version after open.
+          provider: {
+            id: "alpha",
+            name: "alpha provider",
+            version: open ? "1" : null,
+          },
+          selected: open,
+          availability: { status: "available", code: null, reason: null },
+          target_support: open
+            ? { status: "supported", code: null, reason: null }
+            : expect.objectContaining({ status: "unknown", code: null }),
+          declaration: {
+            status: "available",
+            missing_operations: [],
+            operations: [{ operation: "address_name", status: "available" }],
+          },
+        },
+        {
+          // Declared but not ready: both facts stay visible.
+          provider: { id: "beta", name: "beta provider", version: null },
+          selected: false,
+          availability: {
+            status: "unavailable",
+            code: "not_configured",
+            reason: "beta is not configured",
+          },
+          target_support: open
+            ? { status: "supported", code: null, reason: null }
+            : expect.objectContaining({ status: "unknown", code: null }),
+          declaration: {
+            status: "available",
+            missing_operations: [],
+            operations: [{ operation: "address_name", status: "available" }],
+          },
+        },
+      ]);
+      // Same facts as the candidates in complete detail.
+      expect(
+        view.parsed.operation_candidates?.map(
+          ({ provider, selected, availability, target_support }) => ({
+            provider,
+            selected,
+            availability,
+            target_support,
+          }),
+        ),
+      ).toEqual(candidateStatus(complete.parsed.analysis_provider_candidates));
+      // Only the requested tool's availability entry remains.
+      const tools = toolAvailabilitySummaryInventory.parse(
+        view.parsed.tool_availability,
+      );
+      expect(toolStatus(tools)).toEqual(
+        toolStatus(
+          toolAvailabilityInventory.parse(complete.parsed.tool_availability),
+        ).filter(({ name }) => name === "address_name"),
+      );
+      // The query changes neither the binding, the target nor retained Evidence.
+      expect(view.parsed.capabilities).toEqual(before.parsed.capabilities);
+      for (const status of [view, after])
+        for (const field of [
+          "analysis_provider_binding",
+          "investigation",
+          "sha256",
+          "path",
+        ] as const)
+          expect(status.parsed[field]).toEqual(before.parsed[field]);
+      expect(starts).toEqual(startsBefore);
+      // Byte size only; not a token or latency measurement.
+      expect(view.bytes * 2).toBeLessThanOrEqual(complete.bytes);
+    }
+    // Opening binds lazily; no status view starts a provider client.
+    expect(starts).toEqual([]);
+  });
+});
+
+describe("binary_session operation view refusals over MCP", () => {
+  it.each([
+    ["operation view without operation", { detail: "operation" }],
+    ["operation with the default summary", { operation: "address_name" }],
+    [
+      "operation with complete detail",
+      { detail: "complete", operation: "address_name" },
+    ],
+    ["unknown tool", { detail: "operation", operation: "no_such_tool" }],
+    [
+      "tool outside deep providers",
+      { detail: "operation", operation: "inspect_macho" },
+    ],
+  ])("rejects %s without starting a provider", async (_name, arguments_) => {
+    const starts: string[] = [];
+    const mcp = await connectDetailFixture(starts);
+    const rejected = await mcp.callTool({
+      name: "binary_session",
+      arguments: arguments_,
+    });
+    expect(rejected.isError).toBe(true);
+    expect(parseMcpToolError(rejected)).toMatchObject({
+      error: { category: "invalid_input" },
+    });
+    expect(starts).toEqual([]);
+  });
+
+  it("does not describe a tool hidden by the registered families", async () => {
+    const mcp = await connectDetailFixture([], {
+      REA_MCP_TOOL_FAMILIES: "session",
+    });
+    const rejected = await mcp.callTool({
+      name: "binary_session",
+      arguments: { detail: "operation", operation: "address_name" },
+    });
+    expect(rejected.isError).toBe(true);
+    expect(JSON.stringify(parseMcpToolError(rejected))).toContain(
+      "not advertised by this server's tool families",
+    );
   });
 });
 

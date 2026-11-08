@@ -125,6 +125,7 @@ export const kunaCapabilities = (
           reason: availability.reason,
           availabilityCode: availability.code,
           remediation: availability.remediation,
+          readinessGated: true,
         } as const)),
     // Text can change when the export finishes. References own bounded session
     // reuse; generic snapshot replay must not bypass that lifecycle.

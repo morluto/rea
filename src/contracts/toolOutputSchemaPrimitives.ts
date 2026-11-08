@@ -25,7 +25,10 @@ import {
   objcClassDiscoveryCoverageSchema,
   objcClassImportIdentitySchema,
 } from "../domain/native/objcSwiftMetadata.js";
-import { BINARY_SESSION_SUMMARY_OMITTED_FIELDS } from "./sessionStatusContract.js";
+import {
+  BINARY_SESSION_OPERATION_OMITTED_FIELDS,
+  BINARY_SESSION_SUMMARY_OMITTED_FIELDS,
+} from "./sessionStatusContract.js";
 
 /** Specialize the single normalized result inside a complete Evidence record. */
 export const evidenceResultOf = <Schema extends z.ZodType>(schema: Schema) =>
@@ -370,6 +373,78 @@ export const analysisProviderCandidateSummary = z.strictObject({
   selected: z.boolean(),
 });
 
+const operationDeclaration = z.discriminatedUnion("status", [
+  z.strictObject({
+    operation: z.string().min(1),
+    status: z.literal("available"),
+  }),
+  z.strictObject({
+    operation: z.string().min(1),
+    status: z.literal("unavailable"),
+    reason: z.string().min(1),
+    availability_code: z.enum(PROVIDER_REJECTION_CODES).nullable(),
+  }),
+  z.strictObject({
+    operation: z.string().min(1),
+    status: z.literal("not_declared"),
+  }),
+]);
+
+const operationDeclarationStatus = z.enum([
+  "available",
+  "unavailable",
+  "not_declared",
+]);
+
+const operationRequirementList = z.array(
+  z.union([z.string().min(1), z.array(z.string().min(1)).min(1)]),
+);
+
+/** Requirements of the requested tool, each one operation or an any-of group. */
+export const operationRequirements = z.discriminatedUnion("kind", [
+  z.strictObject({
+    kind: z.literal("operations"),
+    requirements: operationRequirementList,
+  }),
+  z.strictObject({
+    kind: z.literal("modes"),
+    default_mode: z.string().nullable(),
+    modes: z.array(
+      z.strictObject({
+        name: z.string().min(1),
+        requirements: operationRequirementList,
+      }),
+    ),
+  }),
+]);
+
+/**
+ * One candidate in the operation view. Readiness, target support, selection
+ * and the provider's declaration of the required operations stay separate;
+ * none of them implies the others.
+ */
+export const operationProviderCandidate = z.strictObject({
+  provider: providerIdentity,
+  selected: z.boolean(),
+  availability: analysisProviderCandidateSummary.shape.availability,
+  target_support: analysisProviderCandidateSummary.shape.target_support,
+  declaration: z.strictObject({
+    status: operationDeclarationStatus,
+    missing_operations: z.array(z.string().min(1)),
+    operations: z.array(operationDeclaration).min(1),
+    default_mode_available: z.boolean().optional(),
+    modes: z
+      .array(
+        z.strictObject({
+          name: z.string().min(1),
+          status: operationDeclarationStatus,
+          missing_operations: z.array(z.string().min(1)),
+        }),
+      )
+      .optional(),
+  }),
+});
+
 const clientFeatureNameSchema = z.enum([
   "elicitation_form",
   "elicitation_url",
@@ -674,13 +749,30 @@ export const sessionStatusDetailShapes = [
       .array(z.enum(BINARY_SESSION_SUMMARY_OMITTED_FIELDS))
       .min(1),
     analysis_provider_candidates: z.array(analysisProviderCandidateSummary),
+    operation: z.never().optional(),
+    operation_requirements: z.never().optional(),
+    operation_candidates: z.never().optional(),
     tool_availability: toolAvailabilitySummaryInventory,
   },
   {
     detail: z.literal("complete"),
     omitted_fields: z.never().optional(),
     analysis_provider_candidates: z.array(analysisProviderCandidate),
+    operation: z.never().optional(),
+    operation_requirements: z.never().optional(),
+    operation_candidates: z.never().optional(),
     tool_availability: toolAvailabilityInventory,
+  },
+  {
+    detail: z.literal("operation"),
+    omitted_fields: z
+      .array(z.enum(BINARY_SESSION_OPERATION_OMITTED_FIELDS))
+      .min(1),
+    analysis_provider_candidates: z.never().optional(),
+    operation: z.string().min(1),
+    operation_requirements: operationRequirements,
+    operation_candidates: z.array(operationProviderCandidate),
+    tool_availability: toolAvailabilitySummaryInventory,
   },
 ] as const;
 

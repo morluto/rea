@@ -1,8 +1,10 @@
 import type { CapabilityAvailabilityProbes } from "../application/CapabilityAvailability.js";
 import {
+  BINARY_SESSION_OPERATION_OMITTED_FIELDS,
   BINARY_SESSION_SUMMARY_OMITTED_FIELDS,
   type BinarySessionDetail,
 } from "../contracts/sessionStatusContract.js";
+import { AnalysisInputError } from "../domain/analysisErrorCore.js";
 import type { EvidenceMcpServer } from "./EvidenceMcpServer.js";
 
 import type { BinarySessionPort } from "../application/binary/BinarySessionPort.js";
@@ -14,7 +16,7 @@ import {
   compactToolAvailability,
 } from "../application/CapabilityInventory.js";
 import { restrictAdvertisedCapabilities } from "../application/binary/BinarySessionStatus.js";
-import { toolContract } from "../contracts/toolContracts.js";
+import { TOOL_CONTRACTS, toolContract } from "../contracts/toolContracts.js";
 import type { ToolFamilyId } from "../contracts/toolFamilyIds.js";
 import type {
   ClientFeatureAvailability,
@@ -27,6 +29,30 @@ import type { AvailabilityPolicy } from "../application/CapabilityInventory.js";
 import { toolRegistrationOptions } from "./toolRegistrationOptions.js";
 import { err } from "../domain/result.js";
 import { CURRENT_ENTRYPOINT_PATH } from "../process/CurrentEntrypointPath.js";
+
+const toolContractNames: ReadonlySet<string> = new Set(
+  TOOL_CONTRACTS.map(({ name }) => name),
+);
+
+/**
+ * A registration that hides a tool family must not describe its tools as
+ * candidates for this server. Unknown names are left to the session owner.
+ */
+const hiddenOperationRefusal = (
+  server: EvidenceMcpServer,
+  operation: string | undefined,
+): AnalysisInputError | undefined =>
+  operation !== undefined &&
+  server.advertisedToolFamilies !== undefined &&
+  toolContractNames.has(operation) &&
+  !server.advertisesTool(operation)
+    ? new AnalysisInputError("binary_session", {
+        userMessage: `${operation} is not advertised by this server's tool families.`,
+        remediationAction:
+          "Choose an advertised tool, or enable its family in the server configuration and restart MCP.",
+        conformsToInputContract: true,
+      })
+    : undefined;
 
 /** Inputs required to register the binary session status tool. */
 export interface SessionStatusToolOptions extends CapabilityAvailabilityProbes {
@@ -90,20 +116,28 @@ export const registerSessionStatusTool = (
         context,
         server.server,
       );
+      const hidden = hiddenOperationRefusal(server, input.operation);
+      if (hidden !== undefined)
+        return server.delivery.toCallToolResult(err(hidden), contract);
       let availabilityResults: Awaited<
         ReturnType<typeof probeSessionAvailability>
       >;
       let status: JsonValue;
       try {
+        // Session status owns input admission for the requested view, so an
+        // invalid operation is refused before any family availability probe.
+        status = await session.status({
+          signal: context.mcpReq.signal,
+          detail: input.detail,
+          ...(input.operation === undefined
+            ? {}
+            : { operation: input.operation }),
+        });
         availabilityResults = await probeSessionAvailability(
           options,
           context.mcpReq.signal,
           (family) => server.advertisesFamily(family),
         );
-        status = await session.status({
-          signal: context.mcpReq.signal,
-          detail: input.detail,
-        });
       } catch (cause) {
         if (!(cause instanceof AnalysisError)) throw cause;
         return server.delivery.toCallToolResult(err(cause), contract);
@@ -160,6 +194,9 @@ export const registerSessionStatusTool = (
                     server.advertisesTool(operation),
                   ),
             toolAvailability,
+            ...(input.operation === undefined
+              ? {}
+              : { operation: input.operation }),
             serverIdentity,
             clientFeatures,
           }),
@@ -176,6 +213,7 @@ const projectSessionStatus = (options: {
     Record<string, import("../domain/jsonValue.js").JsonValue>
   >;
   readonly toolAvailability: readonly ToolAvailability[];
+  readonly operation?: string;
   readonly serverIdentity: ReturnType<typeof createServerIdentity>;
   readonly clientFeatures: ClientFeatureAvailability;
 }) =>
@@ -184,11 +222,20 @@ const projectSessionStatus = (options: {
     detail: options.detail,
     ...(options.detail === "summary"
       ? { omitted_fields: [...BINARY_SESSION_SUMMARY_OMITTED_FIELDS] }
-      : {}),
-    tool_availability: compactToolAvailability(
-      options.toolAvailability,
-      options.detail,
-    ),
+      : options.detail === "operation"
+        ? { omitted_fields: [...BINARY_SESSION_OPERATION_OMITTED_FIELDS] }
+        : {}),
+    // The operation view keeps only the requested tool's availability entry,
+    // in summary grouping, so its modes and remediation stay inline.
+    tool_availability:
+      options.detail === "operation"
+        ? compactToolAvailability(
+            options.toolAvailability.filter(
+              ({ name }) => name === options.operation,
+            ),
+            "summary",
+          )
+        : compactToolAvailability(options.toolAvailability, options.detail),
     client_features: options.clientFeatures,
     server_identity: options.serverIdentity,
   });
