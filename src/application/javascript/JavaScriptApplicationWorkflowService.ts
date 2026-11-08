@@ -132,6 +132,13 @@ export const traceApplicationFeatureEvidence = (
     direction: input.direction,
   });
   const evidence = createApplicationFeatureTraceEvidence(
+    source.evidence.subject === null
+      ? undefined
+      : {
+          path: source.evidence.subject.local_path,
+          sha256: source.evidence.subject.digest.sha256,
+          format: source.evidence.subject.format,
+        },
     {
       application_evidence_id: source.evidence.evidence_id,
       native_evidence_ids: nativeEvidence.map(({ evidence_id: id }) => id),

@@ -54,6 +54,7 @@ it("resolves feature native arrays without changing source identity or unknowns"
     input.application.evidence_id,
     native.evidence_id,
   ]);
+  expect(retained.value.evidence.subject).toEqual(input.application.subject);
   expect(lookup).toHaveBeenCalledTimes(2);
 });
 
@@ -158,6 +159,7 @@ it("preserves semantic-trace unknown coverage through retained sources", () => {
   if (!retained.ok) throw retained.error;
   expect(retained.value.result).toEqual(inline.value.result);
   expect(retained.value.sources).toEqual([application]);
+  expect(retained.value.evidence.subject).toEqual(application.subject);
 });
 
 it("reports missing nested references before reconciliation without guessing a source", () => {

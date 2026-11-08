@@ -12,10 +12,11 @@ import { JAVASCRIPT_APPLICATION_WORKFLOW_PROVIDER } from "../../domain/investiga
 
 /** Create derived Evidence for one bounded application-graph feature trace. */
 export const createApplicationFeatureTraceEvidence = (
+  subject: Parameters<typeof createEvidence>[0],
   parameters: EvidenceObservation["parameters"],
   result: ApplicationFeatureTraceResult,
 ): Evidence =>
-  createEvidence(undefined, JAVASCRIPT_APPLICATION_WORKFLOW_PROVIDER, {
+  createEvidence(subject, JAVASCRIPT_APPLICATION_WORKFLOW_PROVIDER, {
     predicateType: "rea.application-feature-trace",
     operation: "trace_application_feature",
     parameters,
@@ -30,10 +31,11 @@ export const createApplicationFeatureTraceEvidence = (
 
 /** Create derived Evidence for one bounded JavaScript semantic trace. */
 export const createJavaScriptSemanticTraceEvidence = (
+  subject: Parameters<typeof createEvidence>[0],
   parameters: EvidenceObservation["parameters"],
   result: JavaScriptSemanticTraceResult,
 ): Evidence =>
-  createEvidence(undefined, JAVASCRIPT_APPLICATION_WORKFLOW_PROVIDER, {
+  createEvidence(subject, JAVASCRIPT_APPLICATION_WORKFLOW_PROVIDER, {
     predicateType: "rea.javascript-semantic-trace",
     operation: "trace_javascript_semantics",
     parameters,

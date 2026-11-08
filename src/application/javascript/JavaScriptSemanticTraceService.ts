@@ -63,6 +63,13 @@ export const traceJavaScriptSemanticsEvidence = (
   };
   const { allowed_relations, ...queryParameters } = input.query;
   const evidence = createJavaScriptSemanticTraceEvidence(
+    source.evidence.subject === null
+      ? undefined
+      : {
+          path: source.evidence.subject.local_path,
+          sha256: source.evidence.subject.digest.sha256,
+          format: source.evidence.subject.format,
+        },
     {
       application_evidence_id: source.evidence.evidence_id,
       query:
