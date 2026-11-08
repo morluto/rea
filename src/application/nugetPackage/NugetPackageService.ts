@@ -234,6 +234,7 @@ const inventoryMembers = async (
       encrypted: entry.encrypted || entry.kind === "symlink",
       text: read?.kind === "text" ? read.text : undefined,
       oversized: read?.kind === "oversized",
+      limitations: entry.limitations,
     });
   }
   return members;

@@ -27,6 +27,8 @@ export interface NugetArchiveMember {
   readonly text?: string | undefined;
   /** A `.nuspec` that exceeds the read allowance, which is not the same as unreadable. */
   readonly oversized?: boolean | undefined;
+  /** Reader uncertainty about the member itself, such as an undecoded stored name. */
+  readonly limitations?: readonly string[] | undefined;
 }
 
 export interface ParseNugetPackageOptions {
@@ -85,13 +87,17 @@ const assembleKind = (path: string): AssetKind => {
 const frameworkSegment = (segment: string | undefined): string | null =>
   segment === undefined || segment.length === 0 ? null : segment;
 
-const targetFramework = (path: string): string | null => {
+const targetFramework = (path: string, directory: boolean): string | null => {
   const segments = path.split("/");
   if (segments.length < 3) return null;
   if (segments[0] === "lib" || segments[0] === "ref")
     return frameworkSegment(segments[1]);
+  // A file's fourth segment is only a framework folder when another segment
+  // follows it; otherwise it is the filename.
   if (segments[0] === "runtimes" && segments[2] === "lib")
-    return frameworkSegment(segments[3]);
+    return directory || segments.length >= 5
+      ? frameworkSegment(segments[3])
+      : null;
   return null;
 };
 
@@ -134,13 +140,26 @@ const childrenNamed = (parent: Element, localName: string): Element[] => {
 
 class DiagnosticBudget {
   readonly diagnostics: NugetDiagnostic[] = [];
+  readonly #packageWide: NugetDiagnostic[] = [];
   #exhausted = false;
 
+  /** Package-level failures are reserved so per-entry growth cannot hide them. */
   add(
     path: string | null,
     code: NugetDiagnostic["code"],
     message: string,
+    scope: "entry" | "package" = "entry",
   ): void {
+    const diagnostic = {
+      diagnostic_id: digest("nuget_diagnostic", code, path ?? "", message),
+      path,
+      code,
+      message,
+    };
+    if (scope === "package") {
+      this.#packageWide.push(diagnostic);
+      return;
+    }
     if (this.#exhausted) return;
     if (this.diagnostics.length >= NUGET_PACKAGE_MAX_DIAGNOSTICS) {
       this.#exhausted = true;
@@ -152,12 +171,12 @@ class DiagnosticBudget {
       });
       return;
     }
-    this.diagnostics.push({
-      diagnostic_id: digest("nuget_diagnostic", code, path ?? "", message),
-      path,
-      code,
-      message,
-    });
+    this.diagnostics.push(diagnostic);
+  }
+
+  /** Per-entry diagnostics first, then the package-level ones that summary relies on. */
+  report(): NugetDiagnostic[] {
+    return [...this.diagnostics, ...this.#packageWide];
   }
 }
 
@@ -306,7 +325,7 @@ const assetOf = (member: NugetArchiveMember): NugetAsset => {
     path,
     bytes: member.bytes,
     kind: assembleKind(path),
-    target_framework: targetFramework(path),
+    target_framework: targetFramework(path, member.directory),
     runtime_identifier: runtimeIdentifier(path, member.directory),
     directory: member.directory,
   };
@@ -330,12 +349,15 @@ export const parseNugetPackage = (
   const assets: NugetAsset[] = [];
   let nuspecMembers = 0;
   let truncated = false;
+  const nameLimitations = new Set<string>();
 
   for (const member of members) {
     if (assets.length + nuspecs.length >= options.maxEntries) {
       truncated = true;
       break;
     }
+    for (const limitation of member.limitations ?? [])
+      nameLimitations.add(limitation);
     const path = normalisePath(member.path);
     if (!isSafeMemberPath(path)) {
       budget.add(
@@ -362,28 +384,31 @@ export const parseNugetPackage = (
     assets.push(assetOf(member));
   }
 
+  const packageWide = (code: NugetDiagnostic["code"], message: string) =>
+    budget.add(null, code, message, "package");
   if (truncated)
-    budget.add(
-      null,
+    packageWide(
       "entry-limit-reached",
       `Stopped after ${String(options.maxEntries)} inventoried members; the archive continues beyond this allowance.`,
     );
   if (nuspecs.length === 0)
-    budget.add(
-      null,
+    packageWide(
       "no-nuspec",
       "No readable .nuspec member was found, so package identity and declared dependencies are unknown.",
     );
   if (nuspecMembers > 1)
-    budget.add(
-      null,
+    packageWide(
       "duplicate-nuspec",
       `${String(nuspecMembers)} .nuspec members were found; each is reported separately rather than choosing one.`,
     );
 
+  const diagnostics = budget.report();
+  // An undecoded stored name leaves the member path uncertain even though the
+  // entry itself was read, so coverage is partial and the uncertainty is published.
   const partial =
     truncated ||
-    budget.diagnostics.some((entry) => entry.code !== "duplicate-nuspec");
+    nameLimitations.size > 0 ||
+    diagnostics.some((entry) => entry.code !== "duplicate-nuspec");
 
   return ok({
     package_id: digest("nuget_package", artifact.sha256),
@@ -391,12 +416,12 @@ export const parseNugetPackage = (
     artifact,
     nuspecs,
     assets,
-    diagnostics: budget.diagnostics,
+    diagnostics,
     summary: {
       nuspecs: nuspecs.length,
       assets: assets.length,
       assemblies: assets.filter((asset) => asset.kind === "assemblies").length,
-      diagnostics: budget.diagnostics.length,
+      diagnostics: diagnostics.length,
     },
     source_coverage: {
       scope: "package-contents",
@@ -412,6 +437,7 @@ export const parseNugetPackage = (
       "Assets are listed by their archive paths. NuGet's restore-time selection for a target framework is not applied, so a listed asset is not a claim that a consumer receives it.",
       "Dependency groups and version ranges are declarations; packages are not restored and feeds are not contacted.",
       "Package signatures and the archive's member checksums beyond the ZIP reader's own verification are not evaluated.",
+      ...nameLimitations,
     ],
   });
 };

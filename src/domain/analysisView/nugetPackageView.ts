@@ -103,6 +103,11 @@ export const projectNugetPackageView = (
     },
     coverage: completeWithinViewCoverage(1, 1),
     limitations: [...parent.limitations].sort(),
-    unknowns: [],
+    unknowns:
+      report.source_coverage.status === "partial"
+        ? [
+            "Package coverage is partial; package identity, declared dependencies or some members are unobserved. The diagnostics on the parent Evidence name each reason.",
+          ]
+        : [],
   });
 };

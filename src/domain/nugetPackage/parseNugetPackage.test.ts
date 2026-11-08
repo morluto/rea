@@ -294,6 +294,27 @@ describe("parseNugetPackage: framework folder edge cases", () => {
     expect(byPath.get("lib//Example.dll")?.target_framework).toBe(null);
     expect(byPath.get("runtimes/win-x64/lib/")?.target_framework).toBe(null);
   });
+
+  it("does not read a RID lib filename as a framework folder", () => {
+    const byPath = new Map(
+      parsed(
+        parse([
+          member("runtimes/win-x64/lib/readme.txt"),
+          member("runtimes/win-x64/lib/net8.0/Example.dll"),
+          member("runtimes/win-x64/lib/net8.0/", { directory: true }),
+        ]),
+      ).assets.map((asset) => [asset.path, asset]),
+    );
+    expect(
+      byPath.get("runtimes/win-x64/lib/readme.txt")?.target_framework,
+    ).toBe(null);
+    expect(
+      byPath.get("runtimes/win-x64/lib/net8.0/Example.dll")?.target_framework,
+    ).toBe("net8.0");
+    expect(byPath.get("runtimes/win-x64/lib/net8.0/")?.target_framework).toBe(
+      "net8.0",
+    );
+  });
 });
 
 describe("parseNugetPackage: coverage and refusals", () => {
@@ -391,7 +412,9 @@ describe("parseNugetPackage: coverage and refusals", () => {
       commit: null,
     });
   });
+});
 
+describe("parseNugetPackage: runtime folders and bounded reads", () => {
   it("reports no runtime identifier for a file directly under runtimes", () => {
     const package_ = parsed(
       parse([
@@ -478,12 +501,47 @@ describe("parseNugetPackage: coverage and refusals", () => {
         ),
       ),
     );
-    expect(package_.diagnostics).toHaveLength(
+    const codes = package_.diagnostics.map((entry) => entry.code);
+    expect(codes.filter((code) => code !== "no-nuspec")).toHaveLength(
       NUGET_PACKAGE_MAX_DIAGNOSTICS + 1,
     );
-    expect(package_.diagnostics.at(-1)?.code).toBe("diagnostic-limit-reached");
+    expect(codes).toContain("diagnostic-limit-reached");
   });
 
+  it("keeps the missing-nuspec reason when per-entry diagnostics exhaust the budget", () => {
+    const package_ = parsed(
+      parse(
+        Array.from({ length: NUGET_PACKAGE_MAX_DIAGNOSTICS + 5 }, (_, index) =>
+          member(`../${index}.dll`),
+        ),
+      ),
+    );
+    expect(package_.diagnostics.at(-1)).toMatchObject({
+      path: null,
+      code: "no-nuspec",
+    });
+    expect(package_.source_coverage.status).toBe("partial");
+  });
+
+  it("carries a reader's stored-name uncertainty into coverage and limitations", () => {
+    const package_ = parsed(
+      parse([
+        member("Example.Package.nuspec", { text: NUSPEC }),
+        member("lib/net8.0/Ex\\xe4mple.dll", {
+          limitations: [
+            "ZIP name uses CP437 fallback; source encoding unverified; raw hex: 4578e46d706c652e646c6c.",
+          ],
+        }),
+      ]),
+    );
+    expect(package_.limitations).toContain(
+      "ZIP name uses CP437 fallback; source encoding unverified; raw hex: 4578e46d706c652e646c6c.",
+    );
+    expect(package_.source_coverage.status).toBe("partial");
+  });
+});
+
+describe("parseNugetPackage: stable identities", () => {
   it("gives identical packages identical identifiers", () => {
     const first = parsed(parse([member("a.dll"), member("b.dll")]));
     const second = parsed(parse([member("a.dll"), member("b.dll")]));

@@ -1,5 +1,6 @@
 import { expect, it } from "vitest";
 import { freezeJsonSnapshot } from "../immutableJson.js";
+import type { NugetAsset, NugetPackage } from "../nugetPackage/nugetPackage.js";
 import {
   analysisViewRequestSchema,
   projectAnalysisView,
@@ -39,7 +40,7 @@ const nuspec = (path: string, id: string) => ({
   ],
 });
 
-const asset = (path: string, kind: string) => ({
+const asset = (path: string, kind: NugetAsset["kind"]) => ({
   asset_id: `nuget_asset_${"2".repeat(64)}`,
   path,
   bytes: 128,
@@ -49,7 +50,7 @@ const asset = (path: string, kind: string) => ({
   directory: false,
 });
 
-const report = () => ({
+const report = (): NugetPackage => ({
   package_id: `nuget_package_${"3".repeat(64)}`,
   format: "nupkg" as const,
   artifact,
@@ -112,6 +113,22 @@ it("projects a package summary with per-kind counts and every diagnostic", () =>
   // The declaration identity survives; per-target dependency detail does not.
   expect(summary.nuspecs[0]).toMatchObject({ id: "Example.Package" });
   expect(summary.nuspecs[0]).not.toHaveProperty("dependency_groups");
+});
+
+it("surfaces partial package coverage as a residual unknown", () => {
+  const partial = report();
+  partial.source_coverage.status = "partial";
+  const projected = projectAnalysisView(
+    {
+      ...parent(),
+      normalizedResult: freezeJsonSnapshot(partial),
+    },
+    analysisViewRequestSchema.parse({ kind: "summary" }),
+  );
+  if (!projected.ok) throw projected.error;
+  expect(projected.value.unknowns).toEqual([
+    "Package coverage is partial; package identity, declared dependencies or some members are unobserved. The diagnostics on the parent Evidence name each reason.",
+  ]);
 });
 
 it("refuses a view the package Evidence does not model", () => {
