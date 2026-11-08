@@ -52,7 +52,7 @@ import {
 import {
   RetainedRegularFileCleanupFailure,
   retryRegularFileCleanup,
-  withRegularFile,
+  withRegularFileCompletion,
 } from "./RegularFileRead.js";
 
 const DSYM_DWARF_DIRECTORY = "Contents/Resources/DWARF";
@@ -575,8 +575,9 @@ const enumerateDwarfMembers = async (
     rejection,
   });
   if (failure !== undefined) throw failure;
+  if (rejection !== undefined) return err(rejection);
   throwIfCancelled(state.signal);
-  return rejection !== undefined ? err(rejection) : ok(memberPaths.sort());
+  return ok(memberPaths.sort());
 };
 
 const selectTargetSliceUuid = async (
@@ -706,13 +707,16 @@ const normalizeMemberCleanupFailure = (
         });
     }
   }
-  return new RegularFileCleanupFailure({
+  const rebuilt = new RegularFileCleanupFailure({
     ...failure,
     outcome:
       primary === undefined
         ? { kind: "completed", value: undefined }
         : { kind: "failed", cause: primary },
   });
+  return failure instanceof RetainedRegularFileCleanupFailure
+    ? new RetainedRegularFileCleanupFailure(rebuilt, failure)
+    : rebuilt;
 };
 
 const readMemberWithBorrowedResources = async (
@@ -724,15 +728,26 @@ const readMemberWithBorrowedResources = async (
   ) => Promise<Result<MachODebugCompanion | null, DebugCompanionRejection>>,
 ): Promise<Result<MachODebugCompanion | null, DebugCompanionRejection>> => {
   try {
-    return await withRegularFile(memberPath, read, {
+    const completion = await withRegularFileCompletion(memberPath, read, {
       symlinks: "follow",
       ...(state.signal === undefined ? {} : { signal: state.signal }),
     });
+    if (!completion.value.ok) return completion.value;
+    if (completion.cancellation !== undefined)
+      throw new AnalysisCancelledError("resolve_binary_target", {
+        cause: completion.cancellation.reason,
+      });
+    throwIfCancelled(state.signal);
+    return completion.value;
   } catch (cause: unknown) {
+    if (state.signal?.aborted === true && cause === state.signal.reason)
+      throw new AnalysisCancelledError("resolve_binary_target", { cause });
     if (!(cause instanceof RegularFileCleanupFailure)) throw cause;
     const normalized = normalizeMemberCleanupFailure(cause, memberPath, state);
     if (state.resources === undefined)
-      throw new RetainedRegularFileCleanupFailure(normalized);
+      throw normalized instanceof RetainedRegularFileCleanupFailure
+        ? normalized
+        : new RetainedRegularFileCleanupFailure(normalized);
     const retried = await retryRegularFileCleanup(
       normalized,
       state.resources,
@@ -751,16 +766,18 @@ const readMemberWithBorrowedResources = async (
         });
       throw cause.outcome.cause;
     }
+    const completed = cause.outcome.value as Result<
+      MachODebugCompanion | null,
+      DebugCompanionRejection
+    >;
+    if (!completed.ok) return completed;
     const cancellation = regularFileCancellation(cause);
     if (cancellation !== undefined)
       throw new AnalysisCancelledError("resolve_binary_target", {
         cause: cancellation.reason,
       });
     throwIfCancelled(state.signal);
-    return cause.outcome.value as Result<
-      MachODebugCompanion | null,
-      DebugCompanionRejection
-    >;
+    return completed;
   }
 };
 
@@ -905,33 +922,35 @@ export const admitDebugCompanion = async (input: {
       const candidate = await readMemberWithBorrowedResources(
         memberPath,
         state,
-        (handle, initial) =>
-          inspectMemberHandle(
+        async (handle, initial) => {
+          const inspected = await inspectMemberHandle(
             memberPath,
             { handle, initial },
             selected.value,
             state,
-          ),
+          );
+          if (
+            inspected.ok &&
+            inspected.value !== null &&
+            admitted !== undefined &&
+            (admitted.memberSha256 !== inspected.value.memberSha256 ||
+              admitted.memberSizeBytes !== inspected.value.memberSizeBytes)
+          )
+            return err({
+              reason:
+                "dsym_path contains conflicting DWARF members for the selected target UUID",
+              diagnostics: {
+                dsym_path: state.dsymPath,
+                architecture: input.architecture,
+                target_uuid: selected.value.uuid,
+                rejection: "conflicting_matching_members",
+              },
+            });
+          return inspected;
+        },
       );
       if (!candidate.ok) return candidate;
-      if (candidate.value !== null) {
-        if (
-          admitted !== undefined &&
-          (admitted.memberSha256 !== candidate.value.memberSha256 ||
-            admitted.memberSizeBytes !== candidate.value.memberSizeBytes)
-        )
-          return err({
-            reason:
-              "dsym_path contains conflicting DWARF members for the selected target UUID",
-            diagnostics: {
-              dsym_path: state.dsymPath,
-              architecture: input.architecture,
-              target_uuid: selected.value.uuid,
-              rejection: "conflicting_matching_members",
-            },
-          });
-        admitted ??= candidate.value;
-      }
+      if (candidate.value !== null) admitted ??= candidate.value;
     } catch (cause: unknown) {
       if (
         cause instanceof RegularFileCleanupFailure ||

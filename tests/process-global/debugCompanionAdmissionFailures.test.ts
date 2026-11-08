@@ -394,3 +394,130 @@ it("preserves an earlier DWARF directory refusal over cancellation during a fail
     "Artifact cleanup remains incomplete",
   );
 });
+
+it("preserves an earlier DWARF directory refusal over cancellation during a succeeding directory close", async () => {
+  const fixture = await admissionFixture();
+  const emptyDsym = join(fixture.dsymPath, "..", "empty-ok-close.dSYM");
+  const emptyDwarf = join(emptyDsym, "Contents", "Resources", "DWARF");
+  await mkdir(emptyDwarf, { recursive: true });
+  const resources = new ArtifactResourceScope();
+  const controller = new AbortController();
+  fault.onDirClose = (attempt) => {
+    if (attempt === 1)
+      controller.abort(
+        new Error("cancelled during succeeding directory close"),
+      );
+  };
+  const resolved = await parseBinaryTarget(fixture.target, {
+    dsymPath: emptyDsym,
+    resources,
+    signal: controller.signal,
+  });
+  expect(resolved).toMatchObject({
+    ok: false,
+    error: {
+      constraint: "debug_companion_rejected",
+      message: expect.stringContaining("contains no DWARF member file"),
+    },
+  });
+  await resources.close();
+});
+
+const duplicateSliceMember = (): Buffer => {
+  const first = uuidImage();
+  Buffer.from(
+    "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee".replaceAll("-", ""),
+    "hex",
+  ).copy(first, 40);
+  const second = uuidImage();
+  const container = Buffer.alloc(128 + first.length + second.length);
+  container.writeUInt32BE(0xcafebabe, 0);
+  container.writeUInt32BE(2, 4);
+  container.writeInt32BE(0x01000007, 8);
+  container.writeInt32BE(3, 12);
+  container.writeUInt32BE(64, 16);
+  container.writeUInt32BE(first.length, 20);
+  container.writeUInt32BE(3, 24);
+  container.writeInt32BE(0x01000007, 28);
+  container.writeInt32BE(3, 32);
+  container.writeUInt32BE(128, 36);
+  container.writeUInt32BE(second.length, 40);
+  container.writeUInt32BE(3, 44);
+  first.copy(container, 64);
+  second.copy(container, 128);
+  return container;
+};
+
+it.each(["none", "initial", "both"] as const)(
+  "preserves a member refusal over final-close cancellation (close failure=%s)",
+  async (failMode) => {
+    const fixture = await admissionFixture();
+    await writeFile(fixture.member, duplicateSliceMember());
+    const resources = new ArtifactResourceScope();
+    const controller = new AbortController();
+    fault.openPath = fixture.member;
+    if (failMode !== "none") fault.memberCloseFailure = errno("EIO");
+    fault.onMemberClose = (attempt) => {
+      if (attempt === 1)
+        controller.abort(
+          new Error(`cancelled during member close (${failMode})`),
+        );
+      if (failMode === "initial" && attempt === 2)
+        fault.memberCloseFailure = undefined;
+    };
+    const resolved = await parseBinaryTarget(fixture.target, {
+      dsymPath: fixture.dsymPath,
+      resources,
+      signal: controller.signal,
+    });
+    expect(resolved.ok).toBe(false);
+    if (resolved.ok) return;
+    expect(resolved.error).toBeInstanceOf(BinaryTargetError);
+    if (failMode === "both") {
+      expect(resolved.error.cleanupPrimary).toBeInstanceOf(BinaryTargetError);
+      expect(resolved.error.cleanupPrimary).toMatchObject({
+        constraint: "debug_companion_rejected",
+        diagnostics: { rejection: "ambiguous_member_slice" },
+      });
+      expect(resolved.error.cleanupIncomplete).toBe(true);
+      fault.memberCloseFailure = undefined;
+      await resources.close();
+      expect(resolved.error.cleanupIncomplete).toBe(false);
+      return;
+    }
+    expect(resolved.error).toMatchObject({
+      constraint: "debug_companion_rejected",
+      diagnostics: { rejection: "ambiguous_member_slice" },
+    });
+    await resources.close();
+  },
+);
+
+it("preserves a conflicting_matching_members refusal when the conflicting member cancels during close", async () => {
+  const fixture = await admissionFixture();
+  const conflicting = join(fixture.directory, "zz-conflicting");
+  await writeFile(
+    conflicting,
+    Buffer.concat([uuidImage(), Buffer.alloc(16, 0x90)]),
+  );
+  const resources = new ArtifactResourceScope();
+  const controller = new AbortController();
+  fault.openPath = conflicting;
+  fault.onMemberClose = (attempt) => {
+    if (attempt === 1)
+      controller.abort(new Error("cancelled closing conflicting member"));
+  };
+  const resolved = await parseBinaryTarget(fixture.target, {
+    dsymPath: fixture.dsymPath,
+    resources,
+    signal: controller.signal,
+  });
+  expect(resolved).toMatchObject({
+    ok: false,
+    error: {
+      constraint: "debug_companion_rejected",
+      diagnostics: { rejection: "conflicting_matching_members" },
+    },
+  });
+  await resources.close();
+});
