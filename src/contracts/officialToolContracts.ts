@@ -73,7 +73,7 @@ export const OFFICIAL_TOOL_CONTRACTS = [
   ),
   official(
     "inspect_native_instruction",
-    "Inspect one exact code or data address: decoded bytes, mnemonic, ordered operand tokens, flow, outgoing instruction references and typed incoming references where available. Incoming references preserve source, access kind, operand index and analysis provenance even at data addresses; they do not prove runtime access. Page retained references with inspect_analysis_view kind native-instruction-references; null coverage means the selected collection was unavailable or not recorded. Memory addressing decomposition is unavailable when the provider supplies only tokens. Ghidra reports in-memory addresses without a listed instruction or defined data as not-in-listing, without attempting a decode.",
+    "Inspect one exact code or data address: decoded bytes, mnemonic, ordered operand tokens, flow, outgoing instruction references and typed incoming references where available. For a byte inside a listed instruction or defined data, Ghidra reports the containing instruction or data object separately, preserving the query and address space. Inspect the starting address of a data object with inspect_native_data_type for its layout; a containing object does not select a field or union member. Incoming references preserve source, access kind, operand index and analysis provenance even at data addresses; they do not prove runtime access. Page retained references with inspect_analysis_view kind native-instruction-references; null coverage means the selected collection was unavailable or not recorded. Memory addressing decomposition is unavailable when the provider supplies only tokens. Ghidra reports in-memory addresses without a listed instruction or defined data as not-in-listing, without attempting a decode.",
     nativeInstructionInputSchema,
   ),
   official(
@@ -205,12 +205,14 @@ export const OFFICIAL_TOOL_CONTRACTS = [
   ),
   official(
     "procedure_references",
-    "Return every raw incoming or outgoing reference edge for one procedure. Endpoint procedures are resolved only from provider containment. Ghidra preserves detailed reference flags. Hopper preserves native CallReference classifications and exact endpoints while leaving unavailable detailed flags explicit.",
+    "Return incoming or outgoing reference edges for one procedure. Ghidra preserves detailed reference flags; Hopper preserves native CallReference classifications and exact endpoints. Select detail summary to retain complete Evidence and page references or unresolved calls using inspect_analysis_view kind native-procedure-references. Page coverage describes retained observations, not complete discovery or proof the target ran.",
     z.object({
       procedure,
       direction: z.enum(["incoming", "outgoing"]).default("outgoing"),
       document,
+      detail: analysisDetailSchema,
     }),
+    { evidenceParameters: "omit-detail" },
   ),
   official(
     "procedure_pseudo_code",

@@ -51,11 +51,11 @@ it("imports real v10 recorder text with per-stream identity and resource presenc
     expect(
       report.events.find((row) => row.method === "click")?.selector,
     ).toContain("Load value");
-    expect(
-      report.events
-        .flatMap((row) => row.resource_references)
-        .every((row) => row.state === "present-unread"),
-    ).toBe(true);
+    const references = report.events.flatMap((row) => row.resource_references);
+    expect(references).toHaveLength(8);
+    expect(references.every((row) => row.state === "present-unread")).toBe(
+      true,
+    );
     expect((await readFile(fixture.path)).equals(bytes)).toBe(true);
   } finally {
     await resources.close();
@@ -128,10 +128,14 @@ it("keeps missing resource references explicit without turning page exhaustion i
     if (!result.ok) throw result.error;
     expect(result.value.summary.unavailable_references).toBe(8);
     expect(result.value.source_coverage.interpretation).toBe("partial");
+    const references = result.value.events.flatMap(
+      (row) => row.resource_references,
+    );
+    expect(references).toHaveLength(8);
     expect(
-      result.value.events
-        .flatMap((row) => row.resource_references)
-        .every((row) => row.state === "missing" && row.matching_members === 0),
+      references.every(
+        (row) => row.state === "missing" && row.matching_members === 0,
+      ),
     ).toBe(true);
   } finally {
     await resources.close();
@@ -197,6 +201,7 @@ it.each([
       if (!result.ok) throw result.error;
       expect(result.value.events).toHaveLength(events);
       expect(result.value.source_coverage.interpretation).toBe("partial");
+      expect(result.value.streams.length).toBeGreaterThan(0);
       expect(
         result.value.streams.every((stream) => stream.state === "unknown"),
       ).toBe(true);

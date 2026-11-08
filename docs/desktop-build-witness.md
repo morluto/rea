@@ -18,6 +18,12 @@ grades the witness with the same checks the exported verifier runs.
 Like the computer tools, these are MCP-only and act on a `computer_id` from
 `start_build_computer`.
 
+REA's skill walks an agent from a request such as "build me an Inkscape
+environment where the agent changes a poster's headline" to a witnessed
+bundle with these tools: the questions it asks first, when it stops for the
+person, the install, the seed, the task, the witness and its final report.
+See [desktop builds](https://github.com/morluto/rea/blob/main/.agents/skills/reverse-engineer-anything/references/desktop-build.md).
+
 ## Build
 
 1. `start_build_computer` from a request. REA is installed in the computer.
@@ -137,14 +143,17 @@ SQLite file locked past the reader's wait, or because what it looks for may
 lie in what its view cut, is `undecided` in its result: it shows nothing
 about the task. That covers a line `lines_present` misses in a text view cut
 at 5,000 lines, a row `row_present` misses in a table whose view keeps only
-its first rows, a `value_equals` pointer that names nothing in a truncated
-view or past a cut zip listing, and the absence checks and counts on a cut
-view. A check that passes on what the view kept stays decided, and so does a
-value found there that differs from the one expected. The result's `passed`
-and description are the exported verifier's, which has no undecided results.
-A stage that only undecided checks would settle, such as a near miss whose
-one failing check could not read its file, files nothing and is refused;
-check it again once the files read whole.
+its first rows, a `value_equals` or text check pointer that names nothing
+in a truncated view or past a cut zip listing, the absence checks and counts
+on a cut view, and `text_equals` or `text_contains` of an element on one,
+even where the element's kept text holds the value, since the cut may have
+dropped text from between its runs. Any other check that passes on what the
+view kept stays decided, and so does a value found there that differs from
+the one expected.
+The result's `passed` and description are the exported verifier's, which has
+no undecided results. A stage that only undecided checks would settle, such
+as a near miss whose one failing check could not read its file, files nothing
+and is refused; check it again once the files read whole.
 
 A stage whose checks do not show what it must ends the witness, and so does
 `after_reset`. REA then ends the recording, fetches its segments through

@@ -371,6 +371,28 @@ const providerSettingSelections = (
       ]),
 ];
 
+/** Render what the registration comparison established without inferring its effective environment. */
+export const registrationEnvironmentDetail = (
+  client: string,
+  {
+    unrecorded,
+    differing,
+    unresolved,
+  }: NonNullable<ClientRegistrationStatus["provider_settings"]>,
+): string =>
+  [
+    `Provider checks used this terminal's environment; what the server ${client} starts receives is unknown.`,
+    ...(unrecorded.length === 0
+      ? []
+      : [`Its registration does not record ${unrecorded.join(", ")}.`]),
+    ...(differing.length === 0
+      ? []
+      : [`It records other values for ${differing.join(", ")}.`]),
+    ...(unresolved.length === 0
+      ? []
+      : [`REA could not resolve its ${unresolved.join(", ")}.`]),
+  ].join(" ");
+
 /**
  * Report what the registration's file leaves out without gating health:
  * doctor cannot observe the environment the client actually passes on.
@@ -388,18 +410,7 @@ const registrationEnvironmentChecks = (
         name: `registration_environment:${client}`,
         ok: true,
         classification: "unknown" as const,
-        detail: [
-          `The effective environment is unverified: what the server ${client} starts receives is unknown.`,
-          ...(unrecorded.length === 0
-            ? []
-            : [`Its registration does not record ${unrecorded.join(", ")}.`]),
-          ...(differing.length === 0
-            ? []
-            : [`It records other values for ${differing.join(", ")}.`]),
-          ...(unresolved.length === 0
-            ? []
-            : [`REA could not resolve its ${unresolved.join(", ")}.`]),
-        ].join(" "),
+        detail: registrationEnvironmentDetail(client, settings),
         details: {
           effective_environment: "unknown",
           providers: selections
