@@ -8,6 +8,8 @@ import {
 import { topLevelBinding } from "./javascriptSemanticAnalysis.fixture.js";
 import { parseJavaScriptSource } from "./javascriptSourceParser.js";
 import { readExactJavaScriptLiteral } from "./javascriptAstValues.js";
+import { semanticPrimitiveSet } from "./javascriptSemanticPrimitives.js";
+import { SEMANTIC_PRIMITIVE_SAMPLE_SCOPE_LIMIT } from "./javascriptSemanticResourceLimits.js";
 
 const conditionalCandidates = [
   '"one"',
@@ -336,22 +338,24 @@ describe("semantic primitive allocation and binding reuse", () => {
     },
   );
 
-  it("returns an explicit unknown before expanding a large addition product", () => {
+  it("returns a deterministic sample for a large addition product", () => {
     const term = '(choice ? "a" : "b")';
     const expression = Array.from({ length: 20 }, () => term).join(" + ");
     const value = valueOf(expression);
-    expect(value).toMatchObject({
-      status: "unknown",
-      resourceLimit: "primitive-candidates",
-      reason: expect.stringMatching(/primitive candidate budget exceeded/i),
-    });
+    expect(value.status).toBe("union");
+    if (value.status !== "union") throw new Error("Expected sampled union");
+    expect(value.values).toHaveLength(256);
     expect(
-      analyzeJavaScriptSemantics(`const answer = ${expression};`).coverage,
-    ).toMatchObject({
-      status: "partial",
-      omittedCount: null,
-      resourceLimits: ["primitive-candidates"],
-    });
+      value.values.every((candidate) =>
+        /^a+$|^[ab]+$|^b+$/u.test(String(candidate)),
+      ),
+    ).toBe(true);
+    expect(value.sampled?.method).toBe("grid-product-stride-v1");
+    expect(value.sampled?.seenCount).toBe(2 ** 20);
+    expect(
+      analyzeJavaScriptSemantics(`const answer = ${expression};`).coverage
+        .resourceLimits ?? [],
+    ).toEqual([]);
   });
 
   it("bounds derived single-string growth before concatenation or key serialization", () => {
@@ -444,6 +448,92 @@ describe("semantic primitive allocation and binding reuse", () => {
       value.values.every(
         (candidate) =>
           typeof candidate === "string" && candidate.length === 1_190,
+      ),
+    ).toBe(true);
+  });
+});
+
+describe("primitive candidate sampling past the candidate budget", () => {
+  const candidates = (count: number) =>
+    Array.from({ length: count }, (_, index) => `candidate-${String(index)}`);
+
+  it("retains a deterministic sample with provenance instead of dropping to unknown", () => {
+    const value = semanticPrimitiveSet(candidates(300));
+    expect(value.status).toBe("union");
+    if (value.status !== "union") throw new Error("Expected sampled union");
+    expect(value.values).toHaveLength(256);
+    expect(new Set(value.values).size).toBe(256);
+    expect(value.sampled).toEqual({
+      method: "systematic-candidate-stride-v1",
+      seenCount: 300,
+    });
+  });
+
+  it("keeps the same sample regardless of candidate arrival order", () => {
+    const forward = semanticPrimitiveSet(candidates(300));
+    const backward = semanticPrimitiveSet([...candidates(300)].reverse());
+    if (forward.status !== "union" || backward.status !== "union")
+      throw new Error("Expected sampled unions");
+    expect([...forward.values].sort()).toEqual([...backward.values].sort());
+    expect(forward.sampled).toEqual(backward.sampled);
+  });
+
+  it("keeps the explicit unknown past the hard sample scope", () => {
+    expect(
+      semanticPrimitiveSet(
+        candidates(SEMANTIC_PRIMITIVE_SAMPLE_SCOPE_LIMIT + 1),
+      ),
+    ).toMatchObject({
+      status: "unknown",
+      resourceLimit: "primitive-candidates",
+    });
+  });
+
+  it("does not record a resource limit when analysis returns a sampled union", () => {
+    // Two shallow conditional chains stay below SEMANTIC_EXPRESSION_DEPTH_LIMIT
+    // (256); merging them at the top exceeds the 256-candidate budget.
+    const chain = (prefix: string, count: number) => {
+      let expression = JSON.stringify(`${prefix}${String(count)}`);
+      for (let index = count - 1; index >= 0; index -= 1)
+        expression = `(choice${prefix}${String(index)} ? ${JSON.stringify(`${prefix}${String(index)}`)} : ${expression})`;
+      return expression;
+    };
+    const seenCount = 2 * 201;
+    const ir = analyzeJavaScriptSemantics(
+      `const answer = (pick ? ${chain("a", 200)} : ${chain("b", 200)});`,
+    );
+    const value = topLevelBinding(ir, "answer").value;
+    expect(value.status).toBe("union");
+    if (value.status !== "union") throw new Error("Expected sampled union");
+    expect(value.values).toHaveLength(256);
+    expect(value.sampled).toEqual({
+      method: "systematic-candidate-stride-v1",
+      seenCount,
+    });
+    expect(ir.coverage.resourceLimits ?? []).toEqual([]);
+  });
+
+  it("samples template interpolation products past the candidate budget", () => {
+    const spread = (prefix: string, count: number) =>
+      Array.from(
+        { length: count },
+        (_, index) =>
+          `(choice${prefix}${String(index)} ? "${prefix}${String(index)}" : "${prefix}x${String(index)}")`,
+      ).join(" + ");
+    // Nine pairwise choices give 2^9 = 512 distinct interpolated suffixes.
+    const expression = "`pre_${" + spread("a", 9) + "}_post`";
+    const value = valueOf(expression);
+    expect(value.status).toBe("union");
+    if (value.status !== "union") throw new Error("Expected sampled union");
+    expect(value.values).toHaveLength(256);
+    expect(value.sampled?.method).toBe("systematic-candidate-stride-v1");
+    expect(value.sampled?.seenCount).toBe(512);
+    expect(
+      value.values.every(
+        (candidate) =>
+          typeof candidate === "string" &&
+          candidate.startsWith("pre_a") &&
+          candidate.endsWith("_post"),
       ),
     ).toBe(true);
   });

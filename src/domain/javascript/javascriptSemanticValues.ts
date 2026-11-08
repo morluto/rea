@@ -57,7 +57,9 @@ import {
   uniqueSemanticOrigins,
 } from "./javascriptSemanticProvenance.js";
 import {
+  semanticPrimitiveCandidateCount as primitiveCandidateCount,
   semanticPrimitiveCandidates as primitiveCandidates,
+  semanticPrimitiveSampledProduct as primitiveSampledProduct,
   semanticPrimitiveSet as primitiveSet,
 } from "./javascriptSemanticPrimitives.js";
 import {
@@ -738,6 +740,13 @@ const evaluateTemplate = (
   context: EvaluationContext,
 ): JavaScriptSemanticValue => {
   let candidates = [""];
+  // Distinct-candidate scope of `candidates`, tracked across sampled
+  // interpolations so later products keep honest overflow accounting even
+  // though only the retained sample is carried forward.
+  let candidatesSeenCount = 1;
+  // Set once an interpolation overflows into sampling; the final result is
+  // then re-tagged because primitiveSet cannot know the true scope.
+  let sampledInterpolation = false;
   for (let index = 0; index < node.quasis.length; index += 1) {
     const quasi = node.quasis[index];
     const text = quasi?.value.cooked;
@@ -760,16 +769,43 @@ const evaluateTemplate = (
         reason: "Template expression is not a bounded primitive.",
       };
     }
-    if (candidates.length > SEMANTIC_PRIMITIVE_CANDIDATE_LIMIT / values.length)
-      return semanticResourceLimitUnknown("primitive-candidates");
     const suffixes = values.map((value) => String(value));
+    const suffixesSeenCount = primitiveCandidateCount(evaluated);
+    if (
+      suffixesSeenCount !== null &&
+      candidatesSeenCount * suffixesSeenCount >
+        SEMANTIC_PRIMITIVE_CANDIDATE_LIMIT
+    ) {
+      const sampled = primitiveSampledProduct({
+        left: candidates,
+        right: suffixes,
+        combine: (prefix, suffix) => `${String(prefix)}${String(suffix)}`,
+        leftSeenCount: candidatesSeenCount,
+        rightSeenCount: suffixesSeenCount,
+      });
+      if (sampled.status !== "union") return sampled;
+      candidates = sampled.values.map(String);
+      candidatesSeenCount = sampled.sampled?.seenCount ?? candidates.length;
+      sampledInterpolation = true;
+      continue;
+    }
     if (exceedsSemanticTemplateByteBudget(candidates, suffixes))
       return semanticResourceLimitUnknown("primitive-bytes");
     candidates = candidates.flatMap((prefix) =>
       suffixes.map((suffix) => `${prefix}${suffix}`),
     );
+    candidatesSeenCount *= suffixesSeenCount ?? suffixes.length;
   }
-  return primitiveSet(candidates);
+  const result = primitiveSet(candidates);
+  if (result.status === "union" && sampledInterpolation)
+    return {
+      ...result,
+      sampled: {
+        method: "systematic-candidate-stride-v1",
+        seenCount: candidatesSeenCount,
+      },
+    };
+  return result;
 };
 
 /**
@@ -1049,16 +1085,31 @@ const addPrimitiveValues = (
     if (isSemanticResourceLimit(rightValue)) return rightValue;
     return { status: "unknown", reason: "Non-primitive addition." };
   }
-  if (left.length > SEMANTIC_PRIMITIVE_CANDIDATE_LIMIT / right.length)
-    return semanticResourceLimitUnknown("primitive-candidates");
+  const combine = (
+    left: string | number | boolean | null,
+    right: string | number | boolean | null,
+  ): string | number =>
+    typeof left === "string" || typeof right === "string"
+      ? `${String(left)}${String(right)}`
+      : Number(left) + Number(right);
+  const leftSeenCount = primitiveCandidateCount(leftValue);
+  const rightSeenCount = primitiveCandidateCount(rightValue);
+  if (
+    leftSeenCount !== null &&
+    rightSeenCount !== null &&
+    leftSeenCount * rightSeenCount > SEMANTIC_PRIMITIVE_CANDIDATE_LIMIT
+  )
+    return primitiveSampledProduct({
+      left,
+      right,
+      combine,
+      leftSeenCount,
+      rightSeenCount,
+    });
   if (exceedsSemanticPrimitiveAdditionByteBudget(left, right))
     return semanticResourceLimitUnknown("primitive-bytes");
-  const values = left.flatMap((leftValue) =>
-    right.map((rightValue) =>
-      typeof leftValue === "string" || typeof rightValue === "string"
-        ? `${String(leftValue)}${String(rightValue)}`
-        : Number(leftValue) + Number(rightValue),
-    ),
+  const values = left.flatMap((leftOne) =>
+    right.map((rightOne) => combine(leftOne, rightOne)),
   );
   return primitiveSet(values);
 };
