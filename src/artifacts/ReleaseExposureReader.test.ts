@@ -1004,6 +1004,52 @@ describe("ReleaseExposureReader package cleanup", () => {
   );
 });
 
+describe("ReleaseExposureReader replaced native images", () => {
+  it("rejects a native image replaced after inventory before clearing its package probe", async () => {
+    const root = await createTestTempDirectory(
+      "rea-release-exposure-replaced-image-",
+    );
+    const image = join(root, "app");
+    const executable = cArchiveExecutable({
+      carrier: "elf",
+      layout: "2.1",
+      pythonVersion: 310,
+      members: [
+        {
+          name: "app.js.map",
+          typeCode: "x",
+          compress: true,
+          payload: embeddedSourceMap(),
+        },
+      ],
+    });
+    await writeFile(image, executable);
+    const actual = await vi.importActual<
+      typeof import("./inventory/ArtifactInventory.js")
+    >("./inventory/ArtifactInventory.js");
+    inventoryRead.impl = async (...args) => {
+      const inventory = await actual.inventoryArtifactInScope(...args);
+      // The same ELF header with no appended archive: a probe of it alone
+      // finds no package.
+      await writeFile(image, executable.subarray(0, 64));
+      return inventory;
+    };
+    const reader = new ReleaseExposureReader();
+    try {
+      const result = await reader.inspect(
+        { path: root },
+        undefined,
+        ignoreText,
+      );
+      if (result.ok) throw new Error("Expected a failed audit.");
+      expect(result.error).toBeInstanceOf(AnalysisArtifactChangedError);
+    } finally {
+      inventoryRead.impl = undefined;
+      await reader.close();
+    }
+  });
+});
+
 describe("ReleaseExposureReader package allowances", () => {
   it("stops opening embedded packages after the container allowance", async () => {
     const root = await createTestTempDirectory(

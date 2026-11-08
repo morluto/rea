@@ -43,6 +43,7 @@ import { ArtifactTraversalObservation } from "./ArtifactTraversalObservation.js"
 import { classifyEmbeddedExecutablePackage } from "./inventory/classify.js";
 import { inventoryArtifactInScope } from "./inventory/ArtifactInventory.js";
 import {
+  hashStableRootArtifactHandle,
   openRootArtifact,
   releaseRootArtifact,
 } from "./inventory/hashStableRootArtifact.js";
@@ -2163,6 +2164,7 @@ const embeddedPackageFormat = async (
   state: ScanState,
   context: ScanContext,
   location = filePath,
+  expectedSha256?: string,
 ): Promise<EmbeddedPackageProbe> => {
   try {
     return await withMemberDescriptor(filePath, context, async (source) => {
@@ -2183,9 +2185,25 @@ const embeddedPackageFormat = async (
         nativeFormat,
         context.signal,
       );
-      return classified === undefined
-        ? { kind: "absent" }
-        : { kind: "package", format: classified.format };
+      if (classified !== undefined)
+        return { kind: "package", format: classified.format };
+      // A negative probe clears member coverage, so it only stands for the
+      // image inventory hashed: a replacement is a changed member, not an
+      // image without a package.
+      if (expectedSha256 !== undefined) {
+        const digest = await hashStableRootArtifactHandle(
+          filePath,
+          source.handle,
+          source.initial,
+          context.signal,
+        );
+        if (digest.sha256 !== expectedSha256)
+          throw new ArtifactReaderFailure(
+            "integrity",
+            `Member changed during acquisition: ${filePath}`,
+          );
+      }
+      return { kind: "absent" };
     });
   } catch (cause) {
     rethrowReadFailure(cause);
@@ -2311,6 +2329,8 @@ const scanEmbeddedPackage = async (
     nativeFormat,
     state,
     input,
+    filePath,
+    state.nativeDigests.get(filePath),
   );
   if (probe.kind === "unreadable") {
     noteUnexaminedPackage(state);
