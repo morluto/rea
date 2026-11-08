@@ -391,10 +391,15 @@ export const parsePlistBinary = (
         maximumDepth: MAX_NATIVE_PLIST_NESTING_DEPTH,
       },
     );
-    const decoded = decodeBinaryPropertyList(bytes, expansion);
+    const decoded = decodeBinaryPropertyList(bytes, expansion, undefined, {
+      exactIntegers: true,
+    });
+    let decodedExactIntegers = 0;
     const projected = projectPlistValue(
       decoded.value,
-      undefined,
+      (wrapped) => {
+        if (wrapped.$plist_type === "integer") decodedExactIntegers += 1;
+      },
       MAX_NATIVE_PLIST_NESTING_DEPTH,
     );
     const numbers = createPlistNumberProjection(decoded.numberLiterals);
@@ -411,7 +416,7 @@ export const parsePlistBinary = (
                 expansion.datePrecisionOverlapCount,
               ),
             ]),
-        ...numbers.limitations(),
+        ...numbers.limitations(decodedExactIntegers),
         ...plistDuplicateKeyLimitations(decoded.duplicateKeys),
       ],
     });

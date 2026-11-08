@@ -117,17 +117,18 @@ export const createPlistNumberProjection = (literals: PlistNumberLiterals) => {
   };
   return {
     project: map,
-    limitations: () => [
+    /** `decodedExactIntegers` counts integers already decoded exactly from their source objects. */
+    limitations: (decodedExactIntegers = 0) => [
       ...(literals.incomplete ? [incompletePlistNumberLimitation] : []),
       ...(literals.unsafeIntegerLiterals === 0
         ? []
         : [
             `${String(literals.unsafeIntegerLiterals)} observed integer literal(s) in the original archive exceed the exact range of a JSON number. Decoded numbers may lose integer precision unless represented as { "$plist_type": "integer", "decimal": "<exact digits>" }; the original archive bytes retain those literals.`,
           ]),
-      ...(exactIntegerCount === 0
+      ...(exactIntegerCount + decodedExactIntegers === 0
         ? []
         : [
-            `${String(exactIntegerCount)} unambiguous integer value(s) are reported with exact decimal text as { "$plist_type": "integer", "decimal": "<exact digits>" }.`,
+            `${String(exactIntegerCount + decodedExactIntegers)} unambiguous integer value(s) are reported with exact decimal text as { "$plist_type": "integer", "decimal": "<exact digits>" }.`,
           ]),
       ...(ambiguousNumberCount === 0
         ? []
