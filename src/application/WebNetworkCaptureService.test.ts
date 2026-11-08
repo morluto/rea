@@ -142,6 +142,9 @@ it("projects the unknown-subject explanation before generating its Evidence ID",
   });
   if (!result.ok) throw result.error;
   expect(result.value.subject).toBeNull();
+  expect(result.value.limitations).toContainEqual(
+    expect.stringMatching(/digest.*unknown.*Evidence/u),
+  );
   expect(result.value.limitations.every((text) => !text.includes("a"))).toBe(
     true,
   );

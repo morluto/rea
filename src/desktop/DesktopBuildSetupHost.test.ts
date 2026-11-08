@@ -1,4 +1,4 @@
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { expect, it } from "vitest";
@@ -7,9 +7,37 @@ import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory
 import { systemDoctorHost } from "../application/Doctor.js";
 import { PRODUCT_IDENTITY } from "../identity.js";
 import { systemDesktopBuildSetupHost } from "./DesktopBuildSetupHost.js";
+import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
+import { DESKTOP_EXPORT_FRAMEWORK_VERSION } from "../domain/desktop/appExport.js";
 
 const program = (path: string, body: string) =>
   writeFile(path, `#!/bin/sh\n${body}\n`, { mode: 0o755 });
+
+it.skipIf(process.platform === "win32")(
+  "runs the requested pinned installer as an owned command",
+  async () => {
+    const root = await createTestTempDirectory("rea-owned-agentenv-install-");
+    const uv = join(root, "uv");
+    const log = join(root, "arguments");
+    await program(uv, 'printf "%s\\n" "$@" > "$REA_TEST_UV_LOG"');
+    const resources = new ArtifactResourceScope();
+    try {
+      const host = systemDesktopBuildSetupHost(
+        { ...process.env, REA_TEST_UV_LOG: log },
+        process.platform,
+        undefined,
+        resources,
+      );
+      expect(await host.installAgentenv(uv)).toBeUndefined();
+      expect(await readFile(log, "utf8")).toBe(
+        `tool\ninstall\nagentenv-framework==${DESKTOP_EXPORT_FRAMEWORK_VERSION}\n`,
+      );
+      expect(resources.hasPending).toBe(false);
+    } finally {
+      await resources.close();
+    }
+  },
+);
 
 it.skipIf(process.platform === "win32").each([
   ["an archive setup packed for another version", false, true],
@@ -63,6 +91,7 @@ it.skipIf(process.platform === "win32").each([
         environment,
         "linux",
         doctor.clientRegistrations,
+        new ArtifactResourceScope(),
       ).facts(["claude_code"]);
 
       expect(facts).toMatchObject({
@@ -128,6 +157,7 @@ it.skipIf(process.platform === "win32")(
         environment,
         "linux",
         doctor.clientRegistrations,
+        new ArtifactResourceScope(),
       ).facts(["claude_code"]);
 
       expect(facts.settings).not.toHaveProperty("REA_AGENT_ENV_COMMAND");

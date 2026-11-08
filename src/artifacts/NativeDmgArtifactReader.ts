@@ -32,7 +32,7 @@ import {
 } from "./NativeDmgOwnership.js";
 const HDIUTIL_COMMAND_TIMEOUT_MS = 120_000;
 /** Conditional recovery guidance; a path match never grants attachment ownership. */
-export const DMG_EXISTING_ATTACHMENT_RECOVERY =
+const DMG_EXISTING_ATTACHMENT_RECOVERY =
   "hdiutil refused a private read-only DMG attachment after listing an existing attachment of this image path. If it is still attached, ask its owner to release it when safe, then retry. REA does not borrow or detach existing attachments.";
 const DMG_CHECKSUM_ABSENT_LIMITATION =
   "hdiutil verify found no stored checksum in this disk image, so its integrity was not verified; the root SHA-256 identifies the inventoried bytes.";

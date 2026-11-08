@@ -121,7 +121,7 @@ const textOpening = (lines: readonly string[]): string => {
 };
 
 const opensXml = (opening: string): boolean =>
-  /^<(?:\?xml|!DOCTYPE|[A-Za-z_:])/u.test(opening);
+  /^<(?:\?xml\b|!DOCTYPE\b|[A-Za-z_:][\w:.-]*(?=\s|\/?>))/u.test(opening);
 
 /** Text views can preserve XML that the structured reader cannot admit. */
 export const textOpensXml = (lines: readonly string[]): boolean =>

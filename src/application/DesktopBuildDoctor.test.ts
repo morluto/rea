@@ -236,6 +236,108 @@ describe("desktop build tool checks", () => {
 });
 
 describe("desktop build registration checks", () => {
+  it("checks every selected client runner without exposing its path", async () => {
+    const report = await diagnose(
+      buildHost({
+        registrations: [
+          {
+            client: "claude_code",
+            registered: true,
+            unrecorded: [],
+            unresolved: [],
+            runner: { status: "current" },
+          },
+          {
+            client: "cursor",
+            registered: true,
+            unrecorded: [],
+            unresolved: [],
+            runner: { status: "stale", version: "0.0.1" },
+          },
+        ],
+      }),
+    );
+    const check = report.scope_checks.find(
+      ({ name }) => name === "desktop_build-agent-env",
+    );
+    expect(check).toMatchObject({
+      ok: false,
+      detail: expect.stringContaining("cursor's runner is stale"),
+    });
+  });
+  it("keeps an unresolved client runner unknown even when the terminal runner works", async () => {
+    const report = await diagnose(
+      buildHost({
+        registrations: [
+          {
+            client: "claude_code",
+            registered: true,
+            unrecorded: [],
+            unresolved: ["REA_AGENT_ENV_COMMAND"],
+          },
+        ],
+      }),
+    );
+    expect(
+      report.scope_checks.find(
+        ({ name }) => name === "desktop_build-agent-env",
+      ),
+    ).toMatchObject({
+      ok: false,
+      classification: "unknown",
+      detail: expect.stringContaining("runner is unknown"),
+    });
+  });
+  it("accepts a verified client runner while reporting its difference from the terminal", async () => {
+    const report = await diagnose(
+      buildHost({
+        registrations: [
+          {
+            client: "claude_code",
+            registered: true,
+            unrecorded: [],
+            unresolved: [],
+            differing: ["REA_AGENT_ENV_COMMAND"],
+            runner: { status: "current" },
+          },
+        ],
+      }),
+    );
+    expect(
+      report.scope_checks.find(
+        ({ name }) => name === "desktop_build-registration",
+      ),
+    ).toMatchObject({
+      ok: true,
+      detail: expect.stringContaining("REA_AGENT_ENV_COMMAND"),
+    });
+  });
+});
+
+describe("desktop build registration settings", () => {
+  it("reports differing or unchecked recorded paths instead of healthy", async () => {
+    for (const fact of [
+      { differing: ["REA_AGENT_ENV_COMMAND"] },
+      { unchecked: ["REA_BUILD_COMPUTER_REA_ARCHIVE"] },
+    ]) {
+      const check = await failed(
+        buildHost({
+          registrations: [
+            {
+              client: "claude_code",
+              registered: true,
+              unrecorded: [],
+              unresolved: [],
+              ...fact,
+            },
+          ],
+        }),
+        "desktop_build-registration",
+      );
+      expect(check.detail).toContain(Object.values(fact)[0]![0]);
+      expect(check.details).toMatchObject({ registrations: [fact] });
+    }
+  });
   it("names the registration's missing settings, never their values", async () => {
     const check = await failed(
       buildHost({
