@@ -116,6 +116,7 @@
 * **ghidra:** checkpoint owned Programs across sessions ([c07ab4b](https://github.com/morluto/rea/commit/c07ab4b994b017170b27b07b2c0361aeb44fc53f))
 * **ghidra:** identify containing code and data ([#8777](https://github.com/morluto/rea/issues/8777)) ([015a02d](https://github.com/morluto/rea/commit/015a02d57b567bc9a1ed792d1e4b3ec083fa0ae3))
 * **ghidra:** reuse existing projects through verified copies ([#7236](https://github.com/morluto/rea/issues/7236)) ([1944751](https://github.com/morluto/rea/commit/19447516a4bdbc9437d112ebd3f12a5fd062db83))
+* **go:** recover bounded Go string literals from (ptr, len) headers ([#9206](https://github.com/morluto/rea/issues/9206)) ([94182f3](https://github.com/morluto/rea/commit/94182f331e3181dc8b2a36347a2dca39b587ca6c))
 * **guidance:** distinguish focused matches from broad parent sections ([#8305](https://github.com/morluto/rea/issues/8305)) ([41e7333](https://github.com/morluto/rea/commit/41e7333cb5e0a755b7fd07d6dd6e7148a38a5658))
 * **guidance:** search installed workflow sections ([#6996](https://github.com/morluto/rea/issues/6996)) ([c88e1b0](https://github.com/morluto/rea/commit/c88e1b0b4355a29ef6ab5c88d393a3bfbcfc1d22))
 * **harmony:** disclose the unread pkgContextInfo.json declaration ([#9096](https://github.com/morluto/rea/issues/9096)) ([c7b0e0d](https://github.com/morluto/rea/commit/c7b0e0dec6547829541b39011cebdce486640206))
