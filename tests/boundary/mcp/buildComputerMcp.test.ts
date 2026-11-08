@@ -1,84 +1,37 @@
-import { chmod, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import {
+  chmod,
+  mkdir,
+  readFile,
+  readdir,
+  rm,
+  writeFile,
+} from "node:fs/promises";
 import { join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 
-import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
+import type { Client } from "@modelcontextprotocol/client";
 import type { CallToolResult } from "@modelcontextprotocol/server";
-import { expect, it, onTestFinished } from "vitest";
+import { expect, it, vi } from "vitest";
 import { z } from "zod";
 
 import { toolContract } from "../../../src/contracts/toolContracts.js";
-import { createServer } from "../../../src/server/createServer.js";
-import { createTestBinarySession } from "../../fixtures/binarySession.js";
+import {
+  buildComputerFakes as fakes,
+  bundleFolder,
+  callOk,
+  connectBuildServer as connect,
+  expectNoToken,
+  startBuildComputer,
+} from "../../fixtures/buildComputerMcp.js";
 import {
   FAKE_FRAME_PNG,
-  fakeAgentEnvRunner,
-  startFakeComputer,
+  type FakeApp,
   type FakeComputer,
-  type FakeComputerOptions,
 } from "../../fixtures/fakeAgentEnvComputer.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
-import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
-
-/** The host's environment without the settings the opt-in real test exports, which would reach past these fakes. */
-const hostEnvironment = Object.fromEntries(
-  Object.entries(process.env).filter(
-    ([name]) =>
-      ![
-        "REA_AGENT_ENV_COMMAND",
-        "REA_DOCKER_COMMAND",
-        "REA_BUILD_COMPUTER_REA_ARCHIVE",
-      ].includes(name),
-  ),
-);
-
-const connect = async (environment: Readonly<Record<string, string>>) => {
-  const session = createTestBinarySession(() => {
-    throw new Error("build computers must not start a deep provider");
-  });
-  const server = createServer(
-    { kind: "session", session },
-    {
-      environment: {
-        ...hostEnvironment,
-        REA_MCP_INPUT_SCHEMA_PROFILE: "full",
-        ...environment,
-      },
-    },
-  );
-  const client = new Client({ name: "build-computer-mcp", version: "1" });
-  onTestFinished(async () => {
-    await client.close();
-    await server.close();
-    await session.close();
-  });
-  const [clientTransport, serverTransport] =
-    InMemoryTransport.createLinkedPair();
-  await server.connect(serverTransport);
-  await client.connect(clientTransport);
-  return client;
-};
-
-const fakes = async (options: FakeComputerOptions = {}) => {
-  const computer = await startFakeComputer(options);
-  onTestFinished(() => computer.close());
-  const runner = await fakeAgentEnvRunner(computer);
-  return { computer, runner };
-};
-
-const bundleFolder = async (): Promise<string> => {
-  const bundle = await createTestTempDirectory("exported-bundle-");
-  await mkdir(join(bundle, "tasks"));
-  await writeFile(join(bundle, "tasks", "smoke.json"), "[]\n");
-  return bundle;
-};
 
 const images = (result: CallToolResult) =>
   result.content.filter((block) => block.type === "image");
-
-/** No delivered text, success or failure, may hold the control token. */
-const expectNoToken = (computer: FakeComputer, result: CallToolResult) =>
-  expect(JSON.stringify(result)).not.toContain(computer.token);
 
 const startFromBundle = async (client: Client, computer: FakeComputer) => {
   const started = await client.callTool({
@@ -319,10 +272,84 @@ it("takes the first screenshot with the caller's options", async () => {
     },
   });
   expect(started.isError, JSON.stringify(started)).not.toBe(true);
-  expect(computer.calls[0]).toEqual({
-    name: "computer_screenshot",
-    arguments: { region: [0, 0, 640, 400], format: "jpeg", quality: 40 },
+  // The region crops the drawn frame REA waited for.
+  expect(computer.calls).toEqual([
+    { name: "computer_screenshot", arguments: {} },
+    {
+      name: "computer_screenshot",
+      arguments: { region: [0, 0, 640, 400], format: "jpeg", quality: 40 },
+    },
+  ]);
+});
+
+it("waits for the desktop to draw before it returns the first screenshot", async () => {
+  const { computer, runner } = await fakes({ blankFrames: 2 });
+  const client = await connect(runner.environment);
+  const { started } = await startFromBundle(client, computer);
+
+  expect(images(started)).toEqual([
+    { type: "image", data: FAKE_FRAME_PNG, mimeType: "image/png" },
+  ]);
+  expect(computer.calls).toEqual(
+    Array.from({ length: 3 }, () => ({
+      name: "computer_screenshot",
+      arguments: {},
+    })),
+  );
+});
+
+it("returns the latest frame when a retried screenshot outlasts the wait for the desktop, sending progress meanwhile", async () => {
+  // The third screenshot would answer a minute later, well past the 10 s wait.
+  const { computer, runner } = await fakes({
+    blankFrames: 10_000,
+    screenshotDelaysMs: [0, 0, 60_000],
   });
+  const client = await connect(runner.environment);
+  const progress: { message?: string | undefined }[] = [];
+  const startedAt = Date.now();
+  const started = await client.callTool(
+    {
+      name: "start_build_computer",
+      arguments: { source: { kind: "bundle", path: await bundleFolder() } },
+    },
+    { onprogress: (update) => progress.push(update) },
+  );
+
+  expect(started.isError, JSON.stringify(started)).not.toBe(true);
+  expect(Date.now() - startedAt).toBeLessThan(20_000);
+  expect(computer.calls).toHaveLength(3);
+  expect(images(started)).toHaveLength(1);
+  expect(progress.map(({ message }) => message)).toContainEqual(
+    expect.stringContaining("waiting for the desktop to draw"),
+  );
+}, 40_000);
+
+it("leaves the bundle folder's files as they were when it starts a computer from it", async () => {
+  const { runner } = await fakes();
+  // Python caches bytecode unless told not to; this host does not tell it.
+  const client = await connect({
+    ...runner.environment,
+    PYTHONDONTWRITEBYTECODE: "",
+  });
+  const bundle = await bundleFolder();
+  await mkdir(join(bundle, "envs", "notes"), { recursive: true });
+  await writeFile(
+    join(bundle, "envs", "notes", "notes_app.py"),
+    "class Notes:\n    pass\n",
+  );
+  const files = async () => (await readdir(bundle, { recursive: true })).sort();
+  const before = await files();
+
+  const id = await startBuildComputer(client, { kind: "bundle", path: bundle });
+  await callOk(client, "close_build_computer", { computer_id: id });
+
+  expect(
+    await readFile(
+      join(runner.state, "bundle", "envs", "notes", "notes_app.py"),
+      "utf8",
+    ),
+  ).toContain("class Notes");
+  expect(await files()).toEqual(before);
 });
 
 it("refuses to start without an absolute agentenv runner", async () => {
@@ -428,4 +455,149 @@ it("stops the helper when the caller cancels a start", async () => {
     await delay(50);
   }
   expect(await runner.notes("interrupted.jsonl")).toHaveLength(1);
+});
+
+/** An app whose reset keeps the computer unready for `polls` readiness polls, 500 ms apart. */
+const slowApp = (polls: number): FakeApp => ({
+  name: "notes",
+  state: {},
+  seed: {},
+  methods: [],
+  unreadyAfterReset: polls,
+});
+
+it.each([
+  {
+    failure: "refuses",
+    fail: (computer: FakeComputer) =>
+      computer.refuseNext("computer_screenshot", "no display to capture"),
+    message: "no display to capture",
+  },
+  {
+    failure: "loses the reply to",
+    fail: (computer: FakeComputer) => computer.loseNext("computer_screenshot"),
+    message: expect.stringMatching(/\S/),
+  },
+])(
+  "keeps a reset applied when the computer $failure the screenshot after it",
+  async ({ fail, message }) => {
+    const app = slowApp(0);
+    const { computer, runner } = await fakes({ app });
+    const client = await connect(runner.environment);
+    const id = await startBuildComputer(client, {
+      kind: "bundle",
+      path: await bundleFolder(),
+    });
+    fail(computer);
+    const reset = await callOk(client, "act_on_build_computer", {
+      computer_id: id,
+      action: "reset",
+      screenshot: true,
+    });
+    const { result } = toolContract("act_on_build_computer").outputSchema.parse(
+      reset.structuredContent,
+    );
+    expect(result).toEqual({
+      reset: true,
+      ready_ms: expect.any(Number),
+      screenshot_error: message,
+    });
+    expect(images(reset)).toEqual([]);
+    expect(app.methods).toEqual(["data/reset"]);
+    expect(computer.calls.map(({ name }) => name).at(-1)).toBe(
+      "computer_screenshot",
+    );
+  },
+);
+
+it("runs one computer's calls in the order they arrive and another computer's beside them", async () => {
+  const app = slowApp(4);
+  const { runner } = await fakes({ app });
+  const other = await fakes();
+  const client = await connect(runner.environment);
+  const first = await startBuildComputer(client, {
+    kind: "bundle",
+    path: await bundleFolder(),
+  });
+  const second = await startBuildComputer(client, {
+    kind: "bundle",
+    path: await bundleFolder(other.computer),
+  });
+  const act = (id: string, action: string) =>
+    callOk(client, "act_on_build_computer", { computer_id: id, action });
+  const order: string[] = [];
+  const reset = act(first, "reset").then(() => order.push("reset"));
+  await vi.waitFor(() => expect(app.methods).toEqual(["data/reset"]));
+  const behind = act(first, "screenshot").then(() =>
+    order.push("screenshot behind the reset"),
+  );
+  await act(second, "screenshot");
+  order.push("other computer's screenshot");
+  await Promise.all([reset, behind]);
+  expect(order).toEqual([
+    "other computer's screenshot",
+    "reset",
+    "screenshot behind the reset",
+  ]);
+}, 30_000);
+
+it("sends progress while an action waits for the call before it on its computer", async () => {
+  const app = slowApp(14);
+  const { runner } = await fakes({ app });
+  const client = await connect(runner.environment);
+  const id = await startBuildComputer(client, {
+    kind: "bundle",
+    path: await bundleFolder(),
+  });
+  const reset = callOk(client, "act_on_build_computer", {
+    computer_id: id,
+    action: "reset",
+  });
+  await vi.waitFor(() => expect(app.methods).toEqual(["data/reset"]));
+  const progress: unknown[] = [];
+  const waited = await client.callTool(
+    {
+      name: "act_on_build_computer",
+      arguments: { computer_id: id, action: "screenshot" },
+    },
+    { onprogress: (update) => progress.push(update) },
+  );
+  expect(waited.isError, JSON.stringify(waited)).not.toBe(true);
+  expect(progress.length).toBeGreaterThan(0);
+  await reset;
+}, 30_000);
+
+it("cancels a computer's call in progress on close and refuses the calls waiting behind it", async () => {
+  const app = slowApp(600);
+  const { computer, runner } = await fakes({ app });
+  const client = await connect(runner.environment);
+  const id = await startBuildComputer(client, {
+    kind: "bundle",
+    path: await bundleFolder(),
+  });
+  const calls = computer.calls.length;
+  const call = (name: string, fields: Record<string, unknown> = {}) =>
+    client.callTool({ name, arguments: { computer_id: id, ...fields } });
+  const reset = call("act_on_build_computer", { action: "reset" });
+  await vi.waitFor(() => expect(app.methods).toEqual(["data/reset"]));
+  const waiting = [
+    call("act_on_build_computer", { action: "screenshot" }),
+    call("stop_build_capture"),
+  ];
+  const closed = await callOk(client, "close_build_computer", {
+    computer_id: id,
+  });
+  expect(closed.structuredContent).toEqual({
+    computer_id: id,
+    teardown: "agentenv",
+  });
+  for (const result of await Promise.all([reset, ...waiting]))
+    expect(parseMcpToolError(result).error.code).toBe("cancelled");
+  expect(computer.calls).toHaveLength(calls);
+  expect(app.methods).toEqual(["data/reset"]);
+  expect(await runner.notes("teardowns.jsonl")).toHaveLength(1);
+  expect(
+    parseMcpToolError(await call("act_on_build_computer", { action: "wait" }))
+      .error.message,
+  ).toContain("start_build_computer");
 });

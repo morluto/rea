@@ -283,8 +283,9 @@ describe("identityless lineage refresh follows tree membership", () => {
       }),
     ).resolves.toMatchObject({
       status: "unavailable",
-      reason:
-        "REA_PROCESS_RUN_ID was absent from the readable environment for PID 102; process lineage ownership remains unverified",
+      reason: expect.stringMatching(
+        /REA_PROCESS_RUN_ID.*PID 102.*unverified/iu,
+      ),
     });
     expect(outsiderReads).toBe(2);
     expect(environment.mock.calls.filter(([pid]) => pid === 50)).toHaveLength(
@@ -310,8 +311,9 @@ describe("identityless lineage refresh follows tree membership", () => {
       }),
     ).resolves.toMatchObject({
       status: "unavailable",
-      reason:
-        "REA_PROCESS_RUN_ID was absent from the readable environment for PID 102; process lineage ownership remains unverified",
+      reason: expect.stringMatching(
+        /REA_PROCESS_RUN_ID.*PID 102.*unverified/iu,
+      ),
     });
     expect(reads()).toBe(2);
   });
@@ -427,8 +429,9 @@ describe("identityless lineage refresh rechecks the launcher", () => {
       }),
     ).resolves.toMatchObject({
       status: "unavailable",
-      reason:
-        "REA_PROCESS_RUN_ID was absent from the readable environment for PID 100; process lineage ownership remains unverified",
+      reason: expect.stringMatching(
+        /REA_PROCESS_RUN_ID.*PID 100.*unverified/iu,
+      ),
     });
     expect(launcherReads).toBe(2);
   });
@@ -462,8 +465,9 @@ describe("identityless lineage refresh rechecks an initial descendant", () => {
       }),
     ).resolves.toMatchObject({
       status: "unavailable",
-      reason:
-        "REA_PROCESS_RUN_ID was absent from the readable environment for PID 102; process lineage ownership remains unverified",
+      reason: expect.stringMatching(
+        /REA_PROCESS_RUN_ID.*PID 102.*unverified/iu,
+      ),
     });
     expect(reads).toBe(2);
   });

@@ -85,7 +85,6 @@ it("updates bounded frontmatter without changing Markdown examples or comments",
     '\n# Instructions\n\n```yaml\nmetadata:\n  version: "body-only"\n  tool_count: 99\n```\n';
   const content = manifest("  version: '49' # keep version comment\n", body);
   const generated = addSkillManifestToolCount(content, 7);
-  expect(generated.ok).toBe(true);
   if (!generated.ok) throw generated.error;
   expect(generated.value.endsWith(body)).toBe(true);
   expect(generated.value).toContain("version: '49' # keep version comment");

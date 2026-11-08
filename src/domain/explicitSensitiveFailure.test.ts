@@ -16,10 +16,7 @@ import { ProviderAdapterError } from "./providerAdapterError.js";
 import { analysisErrorWithCleanupFailure } from "./analysisErrorCleanup.js";
 import { resolvedAnalysisError } from "./analysisErrorBase.js";
 import { createEvidence } from "./evidence.js";
-import {
-  redactExplicitFailure,
-  redactExplicitPointer,
-} from "./explicitSensitiveFailure.js";
+import { redactExplicitFailure } from "./explicitSensitiveFailure.js";
 
 const context = {
   diagnostics: {
@@ -88,6 +85,30 @@ it.each([
   expect(JSON.stringify(projected)).not.toContain("explicit-secret");
 });
 
+it("preserves sanitized capability recovery specificity", () => {
+  for (const [options, expected] of [
+    [{ remediationAction: "Repair explicit-secret" }, "Repair [REDACTED]"],
+    [
+      { fallbackRemediationAction: "Select explicit-secret" },
+      "Select [REDACTED]",
+    ],
+  ] as const) {
+    const error = new AnalysisCapabilityUnavailableError(
+      "provider",
+      "inspect",
+      "unsupported",
+      options,
+    );
+    const sanitized = redactExplicitFailure(error, ["explicit-secret"]);
+    expect(projectAnalysisError(sanitized).remediation.action).toBe(expected);
+    if (!(sanitized instanceof AnalysisCapabilityUnavailableError))
+      throw new Error("expected capability failure");
+    expect(sanitized.remediationAction === undefined).toBe(
+      "fallbackRemediationAction" in options,
+    );
+  }
+});
+
 it.each([
   ["/metadata/private~1~0/numeric", ["private/~"], "/metadata"],
   ["/metadata/private/child", ["private"], "/metadata"],
@@ -95,7 +116,13 @@ it.each([
 ])(
   "preserves a real parent for excluded pointer identities: %s",
   (pointer, values, expected) => {
-    expect(redactExplicitPointer(pointer, values)).toBe(expected);
+    const failure = new AnalysisInputError("inspect", undefined, [
+      { path: ["capture_path", pointer], reason: "invalid_format" },
+    ]);
+    const redacted = redactExplicitFailure(failure, values);
+    if (!(redacted instanceof AnalysisInputError))
+      throw new Error("Expected a redacted input error");
+    expect(redacted.issues[0]?.path).toEqual(["capture_path", expected]);
   },
 );
 

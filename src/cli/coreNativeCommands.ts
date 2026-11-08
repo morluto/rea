@@ -51,15 +51,26 @@ export const registerCoreNativeCommands = (
 ): void => {
   registerAnnotationCommand(cli, logger, runDirectAnalysis);
   cli.command(CLI_COMMANDS.searchBytes, {
-    description: "Find masked byte patterns in initialized provider memory",
+    description:
+      "Find masked bytes; unbounded searches skip unloaded blocks and overlays",
     args: z.object({
       path: localPathStringSchema.describe("Local executable path"),
       pattern: bytePatternFields.pattern,
     }),
     options: z.object({
       mask: bytePatternFields.mask,
-      start: z.string().optional().describe("Inclusive start address"),
-      end: z.string().optional().describe("Inclusive end address"),
+      start: z
+        .string()
+        .optional()
+        .describe(
+          "Inclusive start address; use an overlay address space to search it",
+        ),
+      end: z
+        .string()
+        .optional()
+        .describe(
+          "Inclusive end address; use an overlay address space to search it",
+        ),
       cursor: z
         .string()
         .optional()
@@ -137,6 +148,68 @@ export const registerCoreNativeCommands = (
             { ...directAnalysisOptionsFromCli(logger, options), signal },
           );
           return publishCliAnalysisEvidence(complete, delivery);
+        }),
+      ),
+  });
+  cli.command(CLI_COMMANDS.procedureReferences, {
+    description: `Inspect incoming or outgoing references for one native procedure. ${addressOrProcedureGuidance} ${equalSelectorGuidance}`,
+    args: z.object({
+      path: localPathStringSchema.describe("Local executable path"),
+      procedure: z
+        .string()
+        .min(1)
+        .optional()
+        .describe(
+          `Procedure name or provider address. ${addressOrProcedureGuidance}`,
+        ),
+    }),
+    options: z.object({
+      procedure: z
+        .string()
+        .min(1)
+        .optional()
+        .describe(
+          `Procedure name or provider address; use --procedure=<value> for leading dashes. ${addressOrProcedureGuidance}`,
+        ),
+      direction: z
+        .enum(["incoming", "outgoing"])
+        .default("outgoing")
+        .describe("Reference direction. Defaults to outgoing."),
+      snapshot: snapshotSelectionOption,
+      ...analysisEvidenceDeliveryOptions,
+      ...nativeOpenOptionFields,
+    }),
+    run: ({ args, options }) =>
+      withCommandCancellation((signal) =>
+        logCliCommand(logger, CLI_COMMANDS.procedureReferences, async () => {
+          const delivery = {
+            providerId: "auto",
+            operation: "procedure_references",
+            signal,
+            detail: options.detail,
+            evidenceOutput: options.evidence_output,
+          };
+          const invalid = cliEvidenceDeliveryInputError(delivery);
+          if (invalid !== undefined) return projectAnalysisError(invalid);
+          const result = await runDirectAnalysis(
+            args.path,
+            "procedure_references",
+            {
+              procedure: resolveCliAnalysisSelector(
+                args.procedure,
+                options.procedure,
+                "procedure",
+                "procedure_references",
+              ),
+              direction: options.direction,
+            },
+            {
+              ...directAnalysisOptionsFromCli(logger, options),
+              signal,
+              includeEvidenceSources: options.evidence_output !== undefined,
+            },
+          );
+          return publishCliAnalysisEvidence(result, delivery);
         }),
       ),
   });
@@ -312,7 +385,7 @@ export const registerCoreNativeCommands = (
     cli.command(command, {
       description:
         operation === "inspect_native_instruction"
-          ? "Inspect one native instruction with decoded operand facts"
+          ? "Inspect a code or data address, its containing Ghidra listing object, and typed incoming references where supported"
           : "Resolve one static native call site",
       args: z.object({
         path: localPathStringSchema.describe(
@@ -482,7 +555,9 @@ const registerAnnotationCommand = (
       path: localPathStringSchema.describe("Local executable path"),
       procedure: z
         .string()
-        .describe("Exact function entry address or unique name"),
+        .describe(
+          "Function name or address; Ghidra resolves interior addresses to the containing function and edits its entry",
+        ),
     }),
     options: z.object({
       name: z.string().min(1).optional().describe("Analyst function name"),
