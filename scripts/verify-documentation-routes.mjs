@@ -32,6 +32,15 @@ const documentation = resolve(
 );
 const output = resolve(documentation, ".vitepress/dist");
 const origin = "https://documentation.invalid";
+try {
+  await stat(output);
+} catch (error) {
+  if (error?.code === "ENOENT")
+    throw new Error(
+      `Documentation output is missing at ${output}; run \"npm run docs:build\" before verifying routes`,
+    );
+  throw error;
+}
 const checked = new Set();
 let internalTargets = 0;
 let sourceLinks = 0;
