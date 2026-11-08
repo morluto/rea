@@ -143,6 +143,7 @@
 * **native:** page retained feature traces ([#8585](https://github.com/morluto/rea/issues/8585)) ([f1622fc](https://github.com/morluto/rea/commit/f1622fc8b4e4de1e32189baab78007a9585f3430))
 * **native:** page retained load-image observations ([#7134](https://github.com/morluto/rea/issues/7134)) ([f69c52a](https://github.com/morluto/rea/commit/f69c52a1cf3940ed1999fcc0859a75dbb913d684))
 * **native:** page retained observations and source context ([#7146](https://github.com/morluto/rea/issues/7146)) ([4c8647a](https://github.com/morluto/rea/commit/4c8647a706694665c881e5d8e3d50bfe70239db7))
+* **native:** page retained procedure references ([#8588](https://github.com/morluto/rea/issues/8588)) ([b81da90](https://github.com/morluto/rea/commit/b81da90354e3ce4c1e01c5e5a06f4794f15f436a))
 * **native:** report binary hardening for ELF, PE and Mach-O ([#8524](https://github.com/morluto/rea/issues/8524)) ([560674e](https://github.com/morluto/rea/commit/560674e2de851cec3f670be8297d28835009247a))
 * **native:** retain decompile export source facts ([#8805](https://github.com/morluto/rea/issues/8805)) ([b970238](https://github.com/morluto/rea/commit/b97023809f7990e798fa27fc1f20a8c824dd9a30))
 * **native:** retain LLDB source coordinates and verify Pascal calls ([#2800](https://github.com/morluto/rea/issues/2800)) ([3e8a5f7](https://github.com/morluto/rea/commit/3e8a5f76d058b2dc687252a4709228f47de54d71))
