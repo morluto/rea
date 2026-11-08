@@ -11,6 +11,35 @@ const file = (physical: string, role: StatePath["role"]): StatePath =>
   ({ path: physical, role }) as StatePath;
 
 describe("planLaunch captured paths", () => {
+  it("opens the selected document spelling when its captured file URL names the physical path", () => {
+    const physical = `${HOME}/data/A budget.svg`;
+    const capture = {
+      host: { home: HOME },
+      application: {
+        argv: [
+          "editor",
+          `file://localhost${HOME}/data/%41%20budget.svg?mode=edit#page`,
+        ],
+        working_directory: HOME,
+        desktop_entry: { exec: "editor %U" },
+        state_directories: [],
+      },
+      state: {
+        state_directories: [],
+        selected_paths: [{ path: `${HOME}/Documents/A budget.svg`, physical }],
+      },
+    } as unknown as DesktopApplicationCapture;
+    const files = new Map([
+      ["Documents/A budget.svg", file(physical, "document")],
+    ]);
+    const command = planLaunch(capture, false, new Map(), files).command.join(
+      " ",
+    );
+    expect(command).toContain("file://localhost");
+    expect(command).toContain("/Documents/%41%20budget.svg?mode=edit#page");
+    expect(command).not.toContain("/data/%41%20budget.svg");
+  });
+
   it("rewrites a nested settings folder and leaves a numeric option", () => {
     const profile = `${HOME}/settings/geany/profiles/work/geany.conf`;
     const files = new Map<string, StatePath>([

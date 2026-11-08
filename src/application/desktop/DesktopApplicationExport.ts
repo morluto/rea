@@ -192,7 +192,8 @@ const planExport = (
   );
   const electron = application.executable.electron_markers.length > 0;
   const stateFiles = exportedStateFiles(capture, state);
-  const { homePath, files, collisions, paths, isLeftOut } = stateFiles;
+  const { homePath, stateAliases, files, collisions, paths, isLeftOut } =
+    stateFiles;
   const { text: dconf, ...dconfScrub } = seedDconf(
     state,
     context.seed,
@@ -237,6 +238,7 @@ const planExport = (
     seedFiles: [...seeds.keys()].sort(),
     textSeeds,
     seedModes: seedModes(capture, seeds, files, context.seed),
+    stateAliases,
     unseededFiles: unseeded.filter((file) => !isLeftOut(file)),
     ...leftOutSeeds(
       [...locks, ...unseeded.filter(isLeftOut)],

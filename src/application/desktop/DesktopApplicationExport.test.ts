@@ -252,6 +252,109 @@ describe("exportDesktopApplication", () => {
   });
 });
 
+it("seeds the app's state at its own path and retains a selected alias", async () => {
+  const local = capture();
+  const physical = `${HOME}/.config/notes`;
+  const { result, directory } = await exportCapture({
+    ...local,
+    state: {
+      ...local.state,
+      content_roots: [physical],
+      state_directories: [physical, `${HOME}/.local/share/notes`],
+      selected_paths: [
+        { path: `${HOME}/settings`, physical, kind: "directory" },
+        {
+          path: `${HOME}/settings/profiles/work`,
+          physical: `${physical}/profiles/work`,
+          kind: "directory",
+        },
+      ],
+      checkpoints: [
+        checkpoint(
+          "baseline",
+          "baseline",
+          [],
+          [
+            retained(`${physical}/settings.ini`, "[ui]\nwrap=false\n"),
+            retained(`${physical}/profiles/work/profile.ini`, "milk\n"),
+          ],
+        ),
+      ],
+    },
+  });
+  if (result instanceof Error) throw result;
+  expect(result.normalized_result).toMatchObject({
+    paths: [".config/notes"],
+    seed_files: [
+      ".config/notes/profiles/work/profile.ini",
+      ".config/notes/settings.ini",
+    ],
+  });
+  expect(
+    await readFile(
+      join(directory, "envs/notes/seed/.config/notes/settings.ini"),
+      "utf8",
+    ),
+  ).toBe("[ui]\nwrap=false\n");
+  expect(
+    await readFile(
+      join(
+        directory,
+        "envs/notes/seed/.config/notes/profiles/work/profile.ini",
+      ),
+      "utf8",
+    ),
+  ).toBe("milk\n");
+  const module = await readFile(
+    join(directory, "envs/notes/notes_app.py"),
+    "utf8",
+  );
+  expect(module).toContain('("settings", ".config/notes")');
+});
+
+it.each(["settings/notes", "chosen/notes"])(
+  "restores the selected %s spelling alongside the app's walked state path",
+  async (selected) => {
+    const local = capture();
+    const physical = `${HOME}/settings/notes`;
+    const { result, directory } = await exportCapture({
+      ...local,
+      state: {
+        ...local.state,
+        roots: [HOME],
+        content_roots: [physical],
+        state_directories: [physical, `${HOME}/.local/share/notes`],
+        selected_paths: [
+          { path: `${HOME}/${selected}`, physical, kind: "directory" },
+        ],
+        checkpoints: [
+          checkpoint(
+            "baseline",
+            "baseline",
+            [],
+            [retained(`${physical}/settings.ini`, "[ui]\nwrap=false\n")],
+          ),
+        ],
+      },
+    });
+    if (result instanceof Error) throw result;
+    expect(result.normalized_result).toMatchObject({
+      seed_files: expect.arrayContaining([".config/notes/settings.ini"]),
+    });
+    expect(
+      await readFile(
+        join(directory, "envs/notes/seed/.config/notes/settings.ini"),
+        "utf8",
+      ),
+    ).toBe("[ui]\nwrap=false\n");
+    const module = await readFile(
+      join(directory, "envs/notes/notes_app.py"),
+      "utf8",
+    );
+    expect(module).toContain(`("${selected}", ".config/notes")`);
+  },
+);
+
 describe("exportDesktopApplication and the desktop Trash", () => {
   it("leaves a file the user moved to the Trash out of the seed and the owned paths, and says so", async () => {
     const local = capture();

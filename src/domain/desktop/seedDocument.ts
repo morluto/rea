@@ -111,39 +111,52 @@ export const openSeedDocument = (
       ? undefined
       : `${home}/${seedPath}`;
   };
-  const spelledArgument = (absolute: string, url: URL | undefined) => {
-    if (url === undefined) return absolute;
-    const retargeted = new URL(url);
-    retargeted.pathname = pathToFileURL(absolute, { windows: false }).pathname;
-    return retargeted.href;
+  const retargetValue = (value: string): string => {
+    const parsed = homePathOf(
+      value,
+      home,
+      facts.workingDirectory,
+      namesCaptured,
+    );
+    if (parsed === undefined) return value;
+    const absolute = absoluteSeed(parsed.path);
+    if (absolute === undefined) return value;
+    if (parsed.url === undefined) return absolute;
+    const encoded = pathToFileURL(absolute, { windows: false }).pathname.split(
+      "/",
+    );
+    const original = parsed.url.pathname.split("/");
+    const oldParts = `${home}/${parsed.path}`.split("/");
+    const newParts = absolute.split("/");
+    // Preserve the caller's encoded spelling for unchanged path segments.
+    let first = 0;
+    while (first < oldParts.length && oldParts[first] === newParts[first]) {
+      encoded[first] = original[first] ?? encoded[first]!;
+      first += 1;
+    }
+    let oldEnd = oldParts.length - 1;
+    let newEnd = newParts.length - 1;
+    while (
+      oldEnd >= first &&
+      newEnd >= first &&
+      oldParts[oldEnd] === newParts[newEnd]
+    ) {
+      encoded[newEnd] = original[oldEnd] ?? encoded[newEnd]!;
+      oldEnd -= 1;
+      newEnd -= 1;
+    }
+    const prefix =
+      /^file:(?:\/\/(?:localhost)?)?/iu.exec(value)?.[0] ?? "file://";
+    const suffix = /[?#].*$/su.exec(value)?.[0] ?? "";
+    return `${prefix}${encoded.join("/")}${suffix}`;
   };
   const retarget = (argument: string) => {
     const equals = argument.indexOf("=");
     if (argument.startsWith("-") && equals > 0) {
       const value = argument.slice(equals + 1);
-      const parsed = homePathOf(
-        value,
-        home,
-        facts.workingDirectory,
-        namesCaptured,
-      );
-      const absolute =
-        parsed === undefined ? undefined : absoluteSeed(parsed.path);
-      return absolute === undefined
-        ? argument
-        : `${argument.slice(0, equals + 1)}${spelledArgument(absolute, parsed?.url)}`;
+      return `${argument.slice(0, equals + 1)}${retargetValue(value)}`;
     }
-    const parsed = homePathOf(
-      argument,
-      home,
-      facts.workingDirectory,
-      namesCaptured,
-    );
-    if (parsed === undefined) return argument;
-    const absolute = absoluteSeed(parsed.path);
-    return absolute === undefined
-      ? argument
-      : spelledArgument(absolute, parsed.url);
+    return retargetValue(argument);
   };
   const command = unwrapDesktopCommand(argv);
   const firstArgument = desktopArgumentIndex(argv);
@@ -151,17 +164,7 @@ export const openSeedDocument = (
     if (!/^[A-Za-z_][A-Za-z0-9_]*=/u.test(argument)) return argument;
     const split = argument.indexOf("=");
     const value = argument.slice(split + 1);
-    const parsed = homePathOf(
-      value,
-      home,
-      facts.workingDirectory,
-      namesCaptured,
-    );
-    const absolute =
-      parsed === undefined ? undefined : absoluteSeed(parsed.path);
-    return absolute === undefined
-      ? argument
-      : `${argument.slice(0, split + 1)}${spelledArgument(absolute, parsed?.url)}`;
+    return `${argument.slice(0, split + 1)}${retargetValue(value)}`;
   };
   const argvSpelled = argv.map((argument, index) => {
     if (index === 0 || (command.kind === "direct" && index === command.index))
