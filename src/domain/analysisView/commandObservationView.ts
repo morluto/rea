@@ -33,7 +33,7 @@ export const objdumpOutputViewRequestSchema = z.strictObject({
   kind: z.literal("objdump-output"),
   stream: z.enum(["stdout", "stderr"]),
   offset: z.int().nonnegative().default(0),
-  limit: z.int().positive().max(16_384).default(2_048),
+  limit: z.int().positive().default(2_048),
 });
 
 export const objdumpOutputCaptureSchema = commandObservationSchema

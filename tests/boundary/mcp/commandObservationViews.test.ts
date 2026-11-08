@@ -437,3 +437,34 @@ it("reassembles exact Unicode text while preserving incomplete producer coverage
     ],
   });
 });
+
+it("honors a larger caller-selected objdump text page that fits delivery", async () => {
+  const stdout = "x".repeat(65_536);
+  const parent = createEvidence(
+    undefined,
+    { id: "fixture", name: "Fixture", version: null },
+    {
+      operation: "inspect_with_objdump",
+      parameters: { operation: "architectures" },
+      result: {
+        stdout,
+        stderr: "",
+        exit_code: 0,
+        signal: null,
+        output_truncated: false,
+        completion_status: "complete",
+        artifact_sha256_after: null,
+        artifact_changed: null,
+      },
+    },
+  );
+  const page = await inspectAnalysisView({
+    source: { kind: "inline", evidence: parent },
+    view: { kind: "objdump-output", stream: "stdout", limit: stdout.length },
+  });
+  if (!page.ok) throw page.error;
+  expect(page.value.normalized_result).toMatchObject({
+    item: { text: stdout },
+    coverage: { total: stdout.length, exhausted: true },
+  });
+});
