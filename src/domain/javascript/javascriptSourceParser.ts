@@ -19,10 +19,7 @@ export type ParsedJavaScriptSource = ReturnType<typeof parse>;
 type JavaScriptRuntimeContext = "module" | "commonjs" | "unknown";
 /** Package scope observed inside a source inventory; missing scope is unknown. */
 export type JavaScriptPackageType =
-  | "module"
-  | "commonjs"
-  | "unspecified"
-  | "unknown";
+  "module" | "commonjs" | "unspecified" | "unknown";
 
 const runtimeContextByProgram = new WeakMap<
   t.Program,
@@ -90,7 +87,7 @@ const parseWithRuntimeContext = (
         ? "module"
         : packageContext === "module" || packageContext === "commonjs"
           ? packageContext
-          : packageContext === "unspecified" && /\.js$/iu.test(sourcePath ?? "")
+          : packageContext === "unspecified" && /\.js$/u.test(sourcePath ?? "")
             ? file.program.sourceType === "module"
               ? "module"
               : "commonjs"
@@ -160,8 +157,7 @@ const packageContextForPath = (
   sourcePath: string | undefined,
   observedPackageType: JavaScriptPackageType | undefined,
 ): JavaScriptPackageType | undefined =>
-  /\.(?:js|ts)$/iu.test(sourcePath ?? "") &&
-  !/\.d\.ts$/iu.test(sourcePath ?? "")
+  /\.(?:js|ts)$/u.test(sourcePath ?? "") && !/\.d\.ts$/iu.test(sourcePath ?? "")
     ? observedPackageType
     : undefined;
 
@@ -191,7 +187,7 @@ export const parseRecoveredJavaScript = (
       ? filenameType
       : packageContext === "module"
         ? "module"
-        : packageContext === "commonjs" && /\.js$/iu.test(sourcePath ?? "")
+        : packageContext === "commonjs" && /\.js$/u.test(sourcePath ?? "")
           ? "commonjs"
           : "unambiguous";
   if (sourceType !== "unambiguous") {

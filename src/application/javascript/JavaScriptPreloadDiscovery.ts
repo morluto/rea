@@ -41,7 +41,7 @@ export const discoverJavaScriptPreloadPaths = async (
       (file) =>
         file.kind === "javascript" &&
         file.text.included &&
-        /\.js$/iu.test(file.path) &&
+        /\.js$/u.test(file.path) &&
         packageTypeFor(file) === "module",
     )
   )
