@@ -15,6 +15,11 @@ import {
   apiContractViewItemsSchema,
 } from "./apiContractView.js";
 import {
+  procedureReferenceViewRequests,
+  procedureReferenceViewItems,
+  procedureReferenceSummarySchema,
+} from "./nativeProcedureReferencesView.js";
+import {
   analysisViewCoverageSchema,
   nullableCollectionViewCoverageSchema,
 } from "./analysisViewCoverage.js";
@@ -389,6 +394,7 @@ const viewResultBase = {
     ...NATIVE_OBSERVATION_OPERATIONS,
     "trace_native_values",
     "match_native_functions",
+    "procedure_references",
   ]),
   parent_digest: digestSchema,
   view_digest: digestSchema,
@@ -923,6 +929,39 @@ const nativeFeatureTracePageViewResultSchema = z
       nativeFeatureTracePage("unknowns"),
     ]),
   );
+export const nativeProcedureReferencesSummaryViewResultSchema = z.strictObject({
+  ...summaryViewResultBase,
+  ...nativeViewSourceContext,
+  parent_operation: z.literal("procedure_references"),
+  artifact: artifactSchema.nullable(),
+  summary: procedureReferenceSummarySchema,
+});
+
+const procedureReferencePage = <
+  Collection extends keyof typeof procedureReferenceViewRequests,
+>(
+  collection: Collection,
+) =>
+  z.strictObject({
+    ...viewResultBase,
+    ...nativeViewSourceContext,
+    kind: z.literal("native-procedure-references"),
+    parent_operation: z.literal("procedure_references"),
+    artifact: artifactSchema.nullable(),
+    view: procedureReferenceViewRequests[collection],
+    summary: procedureReferenceSummarySchema,
+    items: procedureReferenceViewItems[collection],
+    byte_limited: z.boolean(),
+  });
+const procedureReferencePageViewResultSchema = z
+  .object({ kind: z.literal("native-procedure-references") })
+  .passthrough()
+  .pipe(
+    z.union([
+      procedureReferencePage("references"),
+      procedureReferencePage("unresolved_calls"),
+    ]),
+  );
 
 /** Compact provider load observations retain the independent verification state. */
 export const nativeLoadImageSummaryViewResultSchema = z.strictObject({
@@ -1330,6 +1369,7 @@ export const analysisViewResultSchema = z.discriminatedUnion("kind", [
     gpuCodeObjectsSummaryViewResultSchema,
     nativeInventorySummaryViewResultSchema,
     nativeFeatureTraceSummaryViewResultSchema,
+    nativeProcedureReferencesSummaryViewResultSchema,
     nativeLoadImageSummaryViewResultSchema,
     nativeFunctionMatchingSummaryViewResultSchema,
     nativeFunctionSummaryViewResultSchema,
@@ -1369,6 +1409,7 @@ export const analysisViewResultSchema = z.discriminatedUnion("kind", [
     rows: z.array(nativeInventoryViewRowSchema),
   }),
   nativeFeatureTracePageViewResultSchema,
+  procedureReferencePageViewResultSchema,
   z.strictObject({
     ...viewResultBase,
     kind: z.literal("native-load-image"),

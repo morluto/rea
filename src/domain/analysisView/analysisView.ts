@@ -1,3 +1,4 @@
+import { projectNativeProcedureReferencesView } from "./nativeProcedureReferencesView.js";
 import { projectPlaywrightTraceView } from "./playwrightTraceView.js";
 import { projectApiContractView } from "./apiContractView.js";
 import {
@@ -154,6 +155,7 @@ import {
   il2cppMetadataSummaryViewResultSchema,
   nativeInventorySummaryViewResultSchema,
   nativeFeatureTraceSummaryViewResultSchema,
+  nativeProcedureReferencesSummaryViewResultSchema,
   nativeLoadImageSummaryViewResultSchema,
   nativeFunctionMatchingSummaryViewResultSchema,
   nativeFunctionSummaryViewResultSchema,
@@ -230,6 +232,7 @@ export {
   modelArtifactPageViewResultSchema,
   il2cppMetadataSummaryViewResultSchema,
   nativeInventorySummaryViewResultSchema,
+  nativeProcedureReferencesSummaryViewResultSchema,
   nativeLoadImageSummaryViewResultSchema,
   nativeFunctionMatchingSummaryViewResultSchema,
   nativeFunctionSummaryViewResultSchema,
@@ -336,6 +339,7 @@ const retainedViewProjectors = new Map<string, RetainedViewProjector>([
   ...NATIVE_OBSERVATION_OPERATIONS.map((operation) =>
     retain(operation, projectNativeObservationView),
   ),
+  retain("procedure_references", projectNativeProcedureReferencesView),
   retain("trace_native_values", projectNativeValueTraceView),
   retain("inspect_erlang_beam", projectErlangBeamView),
   retain("inspect_devicetree", projectDevicetreeView),
@@ -476,6 +480,7 @@ export const projectAnalysisView = (
     parent.operation === "match_native_functions"
       ? NATIVE_FUNCTION_MATCHING_PREDICATE
       : parent.operation === "analyze_function" ||
+          parent.operation === "procedure_references" ||
           parent.operation === "procedure_pseudo_code" ||
           parent.operation === "inspect_native_instruction" ||
           parent.operation === "trace_feature" ||
