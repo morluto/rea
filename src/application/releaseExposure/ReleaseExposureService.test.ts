@@ -2017,6 +2017,25 @@ describe("ReleaseExposureService Go relative flag paths", () => {
   });
 });
 
+describe("ReleaseExposureService Go linker file operands", () => {
+  it.each([
+    [
+      "-s -w -extldflags=-Wl,--version-script=private-versions.map",
+      "private-versions.map",
+    ],
+    [
+      "-extldflags '-Wl,--version-script,private-versions.map'",
+      "private-versions.map",
+    ],
+    ["-extldflags '-Wl,--dynamic-list=exports.list'", "exports.list"],
+  ])("reads the linker file operand in %s as a path", async (value, path) => {
+    const report = await goReport(goModule([{ key: "-ldflags", value }]));
+    const check = report.checks.find((item) => item.id === "go.build_paths");
+    expect(check?.status).toBe("exposed");
+    expect(check?.observation.samples).toEqual([path]);
+  });
+});
+
 describe("ReleaseExposureService Go profile path", () => {
   it.each([
     ["private-training.pgo", ["private-training.pgo"]],
