@@ -1635,6 +1635,11 @@ const MUTABLE_BUILTIN_DEFAULTS = new Set([
   "url",
   "buffer",
   "stream",
+  // `Stream` extends `EventEmitter`, so a member installed on that ancestor is inherited
+  // by every fs stream. Measured on Node 24.22.1, defining `start` on
+  // `EventEmitter.prototype` makes `createReadStream(p, {start:-1})` return a handle
+  // while the unmutated call throws `ERR_OUT_OF_RANGE`.
+  "events",
 ]);
 
 /** Mutable default/object selections share CommonJS identity; namespace slots do not. */
@@ -1661,8 +1666,15 @@ export const semanticMutableBuiltinOrigin = <Key = never>(
         path[0] === "FileReadStream" ||
         path[0] === "FileWriteStream")) ||
       (specifier === "buffer" && path[0] === "Buffer") ||
+      // `Stream` is the ancestor both fs stream classes extend, so a member installed
+      // through a named `Stream` import reaches them. Measured on Node 24.22.1, the
+      // named-import form constructs a handle from `{start:-1}` exactly like the
+      // CommonJS form.
       (specifier === "stream" &&
-        (path[0] === "Readable" || path[0] === "Writable")))
+        (path[0] === "Readable" ||
+          path[0] === "Writable" ||
+          path[0] === "Stream")) ||
+      (specifier === "events" && path[0] === "EventEmitter"))
   )
     return { specifier, path };
   if (specifier === "process" && (path[0] === "env" || path[0] === "argv"))

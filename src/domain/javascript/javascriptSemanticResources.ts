@@ -133,6 +133,15 @@ export const collectJavaScriptSemanticResources = (
           ["Stream", "prototype"],
           candidate.node,
           state,
+        ) ||
+        // `Stream` itself extends `EventEmitter`, so a member installed there is
+        // inherited too. Measured on Node 24.22.1 the same way:
+        // `EventEmitter.prototype.start` constructs a handle from `{start:-1}`.
+        !builtinModuleSubtreeUnmodified(
+          "events",
+          ["EventEmitter", "prototype"],
+          candidate.node,
+          state,
         ))
         ? { ...candidate, constructorUncertain: true }
         : candidate,

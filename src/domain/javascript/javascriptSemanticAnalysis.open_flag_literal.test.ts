@@ -500,6 +500,44 @@ it.each([
   },
 );
 
+it.each([
+  ["a named Stream import", `import { Stream } from "node:stream";`, "Stream"],
+  [
+    "a named EventEmitter import",
+    `import { EventEmitter } from "node:events";`,
+    "EventEmitter",
+  ],
+] as const)(
+  "retains a read stream mutated through %s",
+  (_label, importLine, ancestor) => {
+    // `Readable` and `Writable` extend `Stream`, which extends `EventEmitter`, so a
+    // member installed on either ancestor is inherited by the stream Node builds.
+    // Measured on Node 24.22.1, defining `start` on either prototype makes
+    // `createReadStream(p, {start:-1})` return a handle while the unmutated call
+    // throws `ERR_OUT_OF_RANGE`.
+    const operations = analyzeJavaScriptSemantics(`
+      ${importLine}
+      import fs from "node:fs";
+      Object.defineProperty(${ancestor}.prototype, "start", {
+        get() { return 0; },
+        set() {},
+        configurable: true,
+      });
+      const stream = fs.createReadStream("input", { start: -1 });
+      stream.close();
+    `).resourceOperations;
+    expect(operations).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          kind: "acquire",
+          method: "createReadStream",
+          resolution: "partial",
+        }),
+        expect.objectContaining({ kind: "release", method: "close" }),
+      ]),
+    );
+  },
+);
 it("retains a write stream when Buffer is mutated through its prototype constructor", () => {
   // `Buffer.prototype.constructor` is `Buffer`, so a write through that route replaces
   // the same predicate the encoding check calls. Measured on Node 24.22.1, with a named
