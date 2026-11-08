@@ -929,6 +929,46 @@ describe("ReleaseExposureService packaged native images", () => {
   });
 });
 
+describe("ReleaseExposureService Electron layout paths", () => {
+  it.each([
+    ["Windows", "C:\\ship\\App", "\\"],
+    ["POSIX", "/ship/App", "/"],
+  ])(
+    "keeps a %s named host without a sentinel unknown beside a safe helper",
+    async (_, folder, separator) => {
+      const host = `${folder}${separator}App.exe`;
+      const { service, desktop, electronFuses } = owners(
+        directoryScan([host, `${folder}${separator}helper.exe`]),
+      );
+      const report = electronDesktopReport();
+      desktop.inspect.mockResolvedValue(
+        ok(
+          evidence({
+            ...report,
+            files: [
+              {
+                ...report.files[0],
+                path: "resources/app.asar",
+                local_path: [folder, "resources", "app.asar"].join(separator),
+              },
+            ],
+          }),
+        ),
+      );
+      electronFuses.inspect.mockImplementation(async (input) =>
+        ok(
+          evidence(
+            fuseReport(
+              (input as { path?: string }).path === host ? [] : [slice(0)],
+            ),
+          ),
+        ),
+      );
+      expect((await runAsNode(service))?.status).toBe("unknown");
+    },
+  );
+});
+
 describe("ReleaseExposureService Electron host identity", () => {
   it("keeps safe fuses decided when inventory stopped after the named executable", async () => {
     const { service, desktop, electronFuses } = owners({

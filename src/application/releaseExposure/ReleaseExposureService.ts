@@ -1,4 +1,4 @@
-import { basename, dirname } from "node:path";
+import { basename, dirname, win32 } from "node:path";
 
 import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
 import type { ExecutionOptions } from "../AnalysisProvider.js";
@@ -613,10 +613,21 @@ const failedMetadata = (reason: string, path?: string): MetadataImageFact => ({
   ...(path === undefined ? {} : { path }),
 });
 
+/**
+ * A file an Electron candidate rests on: its native path, and whether the
+ * desktop owner's slash-separated path for it is an ASAR layout. A Windows
+ * native path such as `C:\\ship\\App\\resources\\app.asar` does not split
+ * on `/`, so the layout is read from the owner's path.
+ */
+interface ArchiveBasis {
+  readonly path: string;
+  readonly electronArchive: boolean;
+}
+
 interface DesktopFamilyFact {
   readonly family: ReleaseExposureOwnerFacts["electron_family"];
   readonly reason: string | null;
-  readonly archivePaths: readonly string[];
+  readonly archivePaths: readonly ArchiveBasis[];
 }
 
 /**
@@ -640,14 +651,22 @@ const desktopFamily = (
   );
   if (electron !== undefined) {
     const files = new Map(
-      report.data.files.map((file) => [file.file_id, file.local_path]),
+      report.data.files.map((file) => [file.file_id, file]),
     );
     return {
       family: "electron",
       reason: null,
       archivePaths: electron.basis_file_ids.flatMap((id) => {
-        const path = files.get(id);
-        return path === undefined ? [] : [path];
+        const file = files.get(id);
+        return file === undefined
+          ? []
+          : [
+              {
+                path: file.local_path,
+                electronArchive: desktopPathConventions(file.path)
+                  .electronArchive,
+              },
+            ];
       }),
     };
   }
@@ -690,9 +709,16 @@ const fuseImagesRuleOutElectron = (
     (image) => image.kind === "report" && image.implications?.length === 0,
   );
 
+/** A Windows absolute path is read with Windows separators on any host. */
+const WINDOWS_ABSOLUTE_PATH = /^(?:[A-Za-z]:[\\/]|\\\\)/u;
+const nativeDirname = (path: string): string =>
+  WINDOWS_ABSOLUTE_PATH.test(path) ? win32.dirname(path) : dirname(path);
+const nativeBasename = (path: string): string =>
+  WINDOWS_ABSOLUTE_PATH.test(path) ? win32.basename(path) : basename(path);
+
 const limitNativeSample = (
   scan: ReleaseExposureScan,
-  basisPaths: readonly string[],
+  basisPaths: readonly ArchiveBasis[],
 ): {
   readonly scan: ReleaseExposureScan;
   readonly electronExecutableIncluded: boolean;
@@ -727,8 +753,8 @@ const limitNativeSample = (
   const layouts = [
     ...new Set(
       basisPaths
-        .filter((path) => desktopPathConventions(path).electronArchive)
-        .map((path) => dirname(dirname(path))),
+        .filter((basis) => basis.electronArchive)
+        .map((basis) => nativeDirname(nativeDirname(basis.path))),
     ),
   ];
   const electronExecutableIncluded =
@@ -738,7 +764,9 @@ const limitNativeSample = (
     (layouts.length === 0
       ? hostRead(preferred)
       : layouts.every((folder) =>
-          hostRead(preferred.filter((image) => dirname(image.path) === folder)),
+          hostRead(
+            preferred.filter((image) => nativeDirname(image.path) === folder),
+          ),
         ));
   // With no named host, any sampled sibling could be it, so none settles alone.
   const hostsAmong = (
@@ -756,10 +784,10 @@ const limitNativeSample = (
   const layoutFolders = new Set(layouts);
   const hosts = [
     ...hostsAmong(
-      kept.filter((image) => !layoutFolders.has(dirname(image.path))),
+      kept.filter((image) => !layoutFolders.has(nativeDirname(image.path))),
     ),
     ...layouts.flatMap((folder) =>
-      hostsAmong(kept.filter((image) => dirname(image.path) === folder)),
+      hostsAmong(kept.filter((image) => nativeDirname(image.path) === folder)),
     ),
   ];
   return {
@@ -802,7 +830,7 @@ const ANY_SIBLING_RANK = 2;
 
 const electronExecutableRank = (
   images: readonly ReleaseExposureNativeImage[],
-  basisPaths: readonly string[],
+  basisPaths: readonly ArchiveBasis[],
 ): Map<string, number> => {
   const imagePaths = new Set(images.map((image) => image.path));
   const ranked = new Map<string, number>();
@@ -811,13 +839,13 @@ const electronExecutableRank = (
     if (previous === undefined || score < previous) ranked.set(path, score);
   };
   for (const basis of basisPaths) {
-    if (imagePaths.has(basis)) remember(basis, 0);
-    if (!desktopPathConventions(basis).electronArchive) continue;
-    const folder = dirname(dirname(basis));
-    const folderName = basename(folder).toLowerCase();
+    if (imagePaths.has(basis.path)) remember(basis.path, 0);
+    if (!basis.electronArchive) continue;
+    const folder = nativeDirname(nativeDirname(basis.path));
+    const folderName = nativeBasename(folder).toLowerCase();
     for (const image of images) {
-      if (dirname(image.path) !== folder) continue;
-      const name = basename(image.path);
+      if (nativeDirname(image.path) !== folder) continue;
+      const name = nativeBasename(image.path);
       const lower = name.toLowerCase();
       let score = 3;
       if (lower === folderName || lower === `${folderName}.exe`) score = 0;
