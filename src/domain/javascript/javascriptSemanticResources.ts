@@ -134,6 +134,16 @@ export const collectJavaScriptSemanticResources = (
           candidate.node,
           state,
         ) ||
+        // The CommonJS root export *is* the constructor, so
+        // `const Stream = require("node:stream")` records its mutation at
+        // `["prototype", …]` rather than under the named slot. Measured on Node
+        // 24.22.1, both spellings construct a handle from `{start:-1}`.
+        !builtinModuleSubtreeUnmodified(
+          "stream",
+          ["prototype"],
+          candidate.node,
+          state,
+        ) ||
         // `Stream` itself extends `EventEmitter`, so a member installed there is
         // inherited too. Node exposes that constructor at two identities, and the
         // CommonJS root export *is* the constructor, so

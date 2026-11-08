@@ -553,6 +553,31 @@ it.each([
     expect(operations.filter(({ kind }) => kind === "acquire")).toHaveLength(1);
   },
 );
+it("retains a read stream mutated through the stream root export", () => {
+  // The CommonJS root export of `node:stream` *is* the constructor, so
+  // `const Stream = require("node:stream")` records its mutation at `["prototype", …]`
+  // rather than under the named slot. Measured on Node 24.22.1, both spellings construct
+  // a handle from `{start:-1}` while the unmutated call throws `ERR_OUT_OF_RANGE`.
+  const operations = analyzeJavaScriptSemantics(`
+    const Stream = require("node:stream");
+    const fs = require("node:fs");
+    Object.defineProperty(Stream.prototype, "start", {
+      get() { return 0; },
+      set() {},
+      configurable: true,
+    });
+    const stream = fs.createReadStream("input", { start: -1 });
+    stream.close();
+  `).resourceOperations;
+  expect(operations.filter(({ kind }) => kind === "acquire")).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({
+        method: "createReadStream",
+        resolution: "partial",
+      }),
+    ]),
+  );
+});
 it("retains a read stream mutated through the events root export", () => {
   // The CommonJS root export of `node:events` *is* the constructor, so
   // `const EventEmitter = require("node:events")` records its mutation at
