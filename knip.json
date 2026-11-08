@@ -41,5 +41,9 @@
     "nsTypes": "error",
     "enumMembers": "error",
     "duplicates": "error"
-  }
+  },
+  "ignoreUnresolved": [
+    "^#web-bundle-analysis-worker$",
+    "^#javascript-analysis-worker$"
+  ]
 }
