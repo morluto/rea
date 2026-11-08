@@ -476,6 +476,15 @@ const semanticValue: z.ZodType<JavaScriptSemanticValue> = z.lazy(() =>
       z.strictObject({
         status: z.literal("union"),
         values: z.array(primitive),
+        sampled: z
+          .strictObject({
+            method: z.enum([
+              "systematic-candidate-stride-v1",
+              "grid-product-stride-v1",
+            ]),
+            seenCount: z.number().int().positive(),
+          })
+          .optional(),
       }),
       z.discriminatedUnion("unknownProperties", [
         z.strictObject({
