@@ -2,12 +2,18 @@ import type { JsonValue } from "../jsonValue.js";
 import type { DesktopTaskCheckInput } from "./appTask.js";
 import {
   isRenumberedKey,
+  isBookkeeping,
+  isBookkeepingName,
   inSplitDate,
   isStamp,
   isVolatileValue,
 } from "./appTaskDraftNoise.js";
 import { valueEqualsCheck } from "./appTaskDraftScalars.js";
-import { holdsFields, wholeTextCheck } from "./appTaskDraftText.js";
+import {
+  holdsFields,
+  holdsNoisyText,
+  wholeTextCheck,
+} from "./appTaskDraftText.js";
 import {
   isIdentifyingAttribute,
   isViewStateName,
@@ -138,14 +144,21 @@ export const attributeChecks = (
       : [],
   );
   if (copiesSibling(context, pointer, element, own)) return [];
+  const eligible = own.filter(
+    ({ key, value }) =>
+      !isStamp(value) &&
+      !isVolatileValue(
+        value,
+        isBookkeeping(element) || isBookkeepingName(key),
+      ) &&
+      !isViewStateName(key) &&
+      !isRenumberedKey(key),
+  );
+  for (const { key, value } of eligible)
+    if (value.length > context.chars)
+      context.long?.push(`${pointer}/attributes/${escapeToken(key)}`);
   return rankAttributes(
-    own.filter(
-      ({ key, value }) =>
-        !isStamp(value) &&
-        !isVolatileValue(value) &&
-        !isViewStateName(key) &&
-        !isRenumberedKey(key),
-    ),
+    eligible.filter(({ value }) => value.length <= context.chars),
   )
     .slice(0, MAX_ATTRIBUTE_CHECKS)
     .map(({ key, value }) =>
@@ -162,9 +175,13 @@ export const attributeChecks = (
  * between them. `Delphine` and `Moreau` around a save time stay two checks;
  * joining them would look for text the file never contains.
  */
-const keptFieldPieces = (node: JsonValue): string[] => {
-  if (typeof node === "string") return isStamp(node) ? [] : [node];
+const keptFieldPieces = (node: JsonValue, bookkeeping = false): string[] => {
+  if (typeof node === "string")
+    return isStamp(node) || isVolatileValue(node.trim(), bookkeeping)
+      ? []
+      : [node];
   if (!isXmlElement(node)) return [];
+  const inBookkeeping = bookkeeping || isBookkeeping(node);
   const pieces: string[] = [];
   let run = "";
   const flush = () => {
@@ -173,7 +190,8 @@ const keptFieldPieces = (node: JsonValue): string[] => {
   };
   for (const child of node.children) {
     if (typeof child === "string") {
-      if (isStamp(child)) flush();
+      if (isStamp(child) || isVolatileValue(child.trim(), inBookkeeping))
+        flush();
       else run += child;
       continue;
     }
@@ -182,7 +200,7 @@ const keptFieldPieces = (node: JsonValue): string[] => {
       flush();
       continue;
     }
-    const nested = keptFieldPieces(child);
+    const nested = keptFieldPieces(child, inBookkeeping);
     if (nested.length !== 1) {
       flush();
       pieces.push(...nested);
@@ -260,7 +278,7 @@ export const fieldChecks = (
         text.length < MIN_FIELD_CHARS ||
         !/[\p{L}\d]/u.test(text) ||
         isStamp(text) ||
-        isVolatileValue(text)
+        isVolatileValue(text, isBookkeeping(field))
       )
         continue;
       if (seen.includes(text)) {
@@ -331,7 +349,7 @@ export const recordChecks = (
     return [];
   const { keys } = pairMembers(element.children, []).newer;
   return element.children
-    .flatMap((field, index) => {
+    .flatMap<Suggestion>((field, index) => {
       const key = keys[index] ?? "";
       const at = `${pointer}/children/${escapeToken(key)}`;
       if (
@@ -343,10 +361,28 @@ export const recordChecks = (
       )
         return [];
       const value = elementText(field);
+      if (holdsNoisyText(field))
+        return keptFieldPieces(field).flatMap((piece) => {
+          const text = piece.trim();
+          return text.length < MIN_FIELD_CHARS ||
+            text.length > context.chars ||
+            !/[\p{L}\d]/u.test(text) ||
+            isStamp(text) ||
+            isVolatileValue(text, isBookkeeping(field))
+            ? []
+            : [
+                {
+                  kind: "text_contains" as const,
+                  file,
+                  pointer: at,
+                  value: text,
+                },
+              ];
+        });
       return value.trim() === "" ||
         value.length > context.chars ||
         isStamp(value) ||
-        isVolatileValue(value)
+        isVolatileValue(value, isBookkeeping(field))
         ? []
         : [
             wholeTextCheck(

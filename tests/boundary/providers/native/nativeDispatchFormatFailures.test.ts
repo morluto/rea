@@ -71,7 +71,6 @@ it.each(sectionCases)(
     bytes.write(section, 104);
     bytes.writeBigUInt64LE(BigInt(size), 144);
     const { path, result } = await inspect(bytes);
-    expect(result.ok).toBe(false);
     if (result.ok) throw new Error("Expected malformed target refusal");
     expect(projectAnalysisError(result.error)).toMatchObject({
       code: "unsupported_target",
@@ -87,7 +86,6 @@ it("keeps an unsupported big-endian CPU declaration distinct from provider failu
   bytes.writeUInt32BE(0x0100000c, 4);
   bytes.writeUInt32BE(2, 12);
   const { path, result } = await inspect(bytes);
-  expect(result.ok).toBe(false);
   if (result.ok) throw new Error("Expected unsupported target refusal");
   expect(projectAnalysisError(result.error)).toMatchObject({
     code: "unsupported_target",
@@ -98,7 +96,6 @@ it("keeps an unsupported big-endian CPU declaration distinct from provider failu
 
 it("continues decoding the well-formed eight-byte class-list control", async () => {
   const { result } = await inspect(objcRecordBudgetMacho("class"));
-  expect(result.ok).toBe(true);
   if (!result.ok) throw result.error;
   expect(result.value.result).toMatchObject({
     result: {
@@ -112,7 +109,6 @@ it.each([1n, 20001n])(
   async (count) => {
     const bytes = objcAdoptedProtocolCountMacho(count);
     const { result } = await inspect(bytes);
-    expect(result.ok).toBe(true);
     if (!result.ok) throw result.error;
     const report = nativeDispatchMetadataResultSchema.parse(
       result.value.result,

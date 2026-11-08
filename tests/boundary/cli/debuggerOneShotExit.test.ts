@@ -216,10 +216,15 @@ const expectRetainedOutcome = (
   result: ProcessResult,
   pid: number,
 ): void => {
-  expect(JSON.parse(result.stdout)).toMatchObject({
+  const output = JSON.parse(result.stdout) as {
+    remediation: { action: string };
+  };
+  expect(output).toMatchObject({
     code: "cleanup_incomplete",
     retryable: false,
-    remediation: { action: retainedDebuggerRemediation([pid]) },
+    remediation: {
+      action: retainedDebuggerRemediation([pid]),
+    },
     details: {
       operation: debuggers[name].operation,
       cleanup: "incomplete",
@@ -229,7 +234,7 @@ const expectRetainedOutcome = (
       },
     },
   });
-  expectNamesProcess(retainedDebuggerRemediation([pid]), pid);
+  expectNamesProcess(output.remediation.action, pid);
   expect(result.stdout).toContain(`"retained_debugger_pids":[${String(pid)}]`);
 };
 
@@ -400,10 +405,14 @@ describe.skipIf(process.platform === "win32")(
           .toBe(1);
         const pid = await launch.debuggerPid();
         // Nothing else reports these once the server has exited.
+        const guidance = () =>
+          stderr()
+            .split("\n")
+            .find((line) => line === retainedDebuggerRemediation([pid]));
         await expect
-          .poll(stderr, { timeout: EXIT_DEADLINE_MS })
-          .toContain(`${retainedDebuggerRemediation([pid])}\n`);
-        expectNamesProcess(retainedDebuggerRemediation([pid]), pid);
+          .poll(guidance, { timeout: EXIT_DEADLINE_MS })
+          .toBeDefined();
+        expectNamesProcess(guidance()!, pid);
         const logs = stderr()
           .split("\n")
           .filter((line) => line.startsWith("{"))

@@ -146,7 +146,6 @@ it("keeps cancellation output and primary reason while exact command cleanup is 
       client.close(),
       client.close(),
     ]);
-    expect(rootFailure.ok).toBe(false);
     if (rootFailure.ok) throw new Error("Expected workspace cleanup failure");
     expect(result.error.cleanupIncomplete).toBe(true);
     expect(result.error.cleanupResources).toEqual([workspace.path]);

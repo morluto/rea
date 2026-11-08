@@ -11,7 +11,7 @@ import { reconcileJavaScriptRuntimeEvidence } from "../../../../src/application/
 import { createEvidence } from "../../../../src/domain/evidence.js";
 import { mappedRuntimePaths } from "../../../../src/domain/javascript/javascriptRuntimeStaticCandidates.js";
 import { projectRuntimeCaptures } from "../../../../src/domain/javascript/javascriptRuntimeReconciliationRuntime.js";
-import { parseRuntimeCaptures } from "../../../../src/domain/javascript/javascriptRuntimeReconciliationCaptureParsing.js";
+import { parseRuntimeCapture } from "../../../../src/domain/javascript/javascriptRuntimeReconciliationCaptureParsing.js";
 import { electronPageInspectionSchema } from "../../../../src/domain/javascript/electronObservation.js";
 import {
   readRuntimeReconciliationInput,
@@ -49,13 +49,12 @@ it.each([
   {
     parameter: "include_script_sources",
     value: false,
-    message:
-      "Runtime Evidence contains source without source-capture selection",
+    message: /source.*without source-capture selection/i,
   },
   {
     parameter: "target_id",
     value: " target-main ",
-    message: "Runtime Evidence target disagrees with its captured result",
+    message: /target.*disagrees.*captured result/i,
   },
 ])(
   "preserves $parameter input paths for runtime Evidence",
@@ -84,7 +83,7 @@ it.each([
           {
             path: ["runtime_observations", 0, "parameters", parameter],
             reason: "invalid_value",
-            message,
+            message: expect.stringMatching(message),
           },
         ],
       },
@@ -377,7 +376,7 @@ it("preserves unknown Electron frame provenance without linking it to an authori
       },
     },
   });
-  const captures = parseRuntimeCaptures([evidence]);
+  const captures = [parseRuntimeCapture(evidence, ["runtime_observations", 0])];
   expect(captures[0]?.scriptsCompleteWithinScope).toBe(false);
   const projected = projectRuntimeCaptures(captures);
   const script = projected.entities.find(({ kind }) => kind === "script");

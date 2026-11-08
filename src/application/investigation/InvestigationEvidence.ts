@@ -3,7 +3,7 @@ import type { EvidenceReader } from "./InvestigationRecordPort.js";
 import { uniqueSorted } from "../../domain/canonicalOrdering.js";
 import type { EvidenceIntegrityError } from "../../domain/evidenceErrors.js";
 import type { Evidence } from "../../domain/evidence.js";
-import { ok, type Result } from "../../domain/result.js";
+import { err, ok, type Result } from "../../domain/result.js";
 
 type Lookup = (id: string) => Evidence | undefined;
 
@@ -12,8 +12,10 @@ const visitClosure = (
   lookup: Lookup,
   seedIds: readonly string[],
   knownComplete?: ReadonlySet<string>,
+  collect?: (record: Evidence) => void,
 ): Result<Set<string>, EvidenceIntegrityError> => {
   const visited = new Set<string>();
+  let failure: EvidenceIntegrityError | undefined;
   const pending = [...seedIds];
   while (pending.length > 0) {
     const evidenceId = pending.pop();
@@ -28,12 +30,36 @@ const visitClosure = (
       lookup,
       "retained-closure",
     );
-    if (!evidence.ok) return evidence;
+    if (!evidence.ok) {
+      if (collect === undefined) return evidence;
+      failure ??= evidence.error;
+      visited.add(evidenceId);
+      continue;
+    }
     visited.add(evidenceId);
+    collect?.(evidence.value);
     for (const linkedId of evidence.value.evidence_links)
       pending.push(linkedId);
   }
-  return ok(visited);
+  return failure === undefined ? ok(visited) : err(failure);
+};
+
+/** Gather every reachable authenticated record while retaining the first failure. */
+export const collectInvestigationEvidenceClosure = (
+  reader: Pick<EvidenceReader, "evidenceForAnalysis">,
+  seedIds: readonly string[],
+): {
+  readonly records: Evidence[];
+  readonly result: Result<null, EvidenceIntegrityError>;
+} => {
+  const records: Evidence[] = [];
+  const visited = visitClosure(
+    (id) => reader.evidenceForAnalysis(id),
+    seedIds,
+    undefined,
+    (record) => records.push(record),
+  );
+  return { records, result: visited.ok ? ok(null) : visited };
 };
 
 /** Follow exact session references without exporting unrelated records or Unknowns. */
