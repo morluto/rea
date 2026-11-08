@@ -266,10 +266,13 @@ describe("parsePerfData section accounting", () => {
 
 describe("parsePerfData attribute widths", () => {
   it("reads the id descriptor at the end of the entry stride", () => {
-    // `attr_size` is the writer's stride; `perf_event_attr.size` may be smaller.
-    const bytes = buildPerfRecording({ attrBytes: 64 });
+    // Keep the normal stride and shrink only the declared `perf_event_attr.size`.
+    // Shrinking `attrBytes` shrinks the stride with it, so the descriptor sits at
+    // the same offset either way and the case cannot tell the two apart.
+    const bytes = buildPerfRecording();
+    bytes.writeUInt32LE(64, PERF_HEADER_BYTES + 0x04);
     const archive = parsed(bytes);
-    expect(archive.file_header.attribute_bytes).toBe(80);
+    expect(archive.file_header.attribute_bytes).toBe(PERF_STRIDE);
     expect(archive.events[0]?.attr_bytes).toBe(64);
     expect(archive.events[0]?.ids).toEqual([7]);
     expect(archive.diagnostics).toEqual([]);
