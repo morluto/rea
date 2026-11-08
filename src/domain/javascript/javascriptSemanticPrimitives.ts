@@ -137,7 +137,9 @@ const sampledUnionOrByteLimit = (
         status: "unknown",
         reason: "Nonfinite numbers are outside the JSON primitive lattice.",
       };
-    if (typeof value === "string") {
+    // Charge the byte budget only for values that survive deduplication;
+    // repeated samples of one string must not exhaust the budget on their own.
+    if (typeof value === "string" && !uniqueRetained.has(value)) {
       stringBytes += value.length * 6 + 2;
       if (stringBytes > SEMANTIC_PRIMITIVE_JSON_BYTES_LIMIT)
         return semanticResourceLimitUnknown("primitive-bytes");
@@ -167,24 +169,42 @@ export const semanticPrimitiveSampledProduct = (options: {
   rightSeenCount: number;
 }): JavaScriptSemanticValue => {
   const { left, right, combine, leftSeenCount, rightSeenCount } = options;
-  // The reported scope and the grid math stay finite no matter how large the
+  // Keep the reported scope and the grid math finite no matter how large the
   // true product grows; deeply chained products saturate instead of producing
-  // nonfinite positions the worker schema would reject.
-  const total = Math.min(
-    leftSeenCount * rightSeenCount,
-    Number.MAX_SAFE_INTEGER,
-  );
+  // nonfinite positions the worker schema would reject. The reported scope is
+  // the true product while it fits in a safe integer, then saturates.
+  const exactTotal = leftSeenCount * rightSeenCount;
+  const reported = Math.min(exactTotal, Number.MAX_SAFE_INTEGER);
   const retained: JavaScriptSemanticPrimitive[] = [];
   for (let index = 0; index < SEMANTIC_PRIMITIVE_CANDIDATE_LIMIT; index += 1) {
-    const flat = Math.floor(
-      (index * total) / SEMANTIC_PRIMITIVE_CANDIDATE_LIMIT,
-    );
-    const leftScope = Math.floor(flat / rightSeenCount);
-    const rightScope = flat % rightSeenCount;
+    let leftScope: number;
+    let rightScope: number;
+    if (exactTotal <= Number.MAX_SAFE_INTEGER) {
+      // Exact grid: one flat stride over the true product, decomposed into
+      // per-axis scopes. With an exact total this covers both axes evenly.
+      const flat = Math.floor(
+        (index * exactTotal) / SEMANTIC_PRIMITIVE_CANDIDATE_LIMIT,
+      );
+      leftScope = Math.floor(flat / rightSeenCount);
+      rightScope = flat % rightSeenCount;
+    } else {
+      // Saturated product: a flat stride collapses onto a single axis (the
+      // division floor pins one scope to zero). Stride each axis
+      // independently instead, so both operands stay represented even when
+      // one side dwarfs the other.
+      leftScope = Math.floor(
+        (index * leftSeenCount) / SEMANTIC_PRIMITIVE_CANDIDATE_LIMIT,
+      );
+      rightScope = Math.floor(
+        (index * rightSeenCount) / SEMANTIC_PRIMITIVE_CANDIDATE_LIMIT,
+      );
+    }
     // Scope positions may exceed the retained sample when an operand was
     // itself sampled; rescale into the retained array without clamping bias.
     const leftIndex = Math.floor((leftScope * left.length) / leftSeenCount);
-    const rightIndex = Math.floor((rightScope * right.length) / rightSeenCount);
+    const rightIndex = Math.floor(
+      (rightScope * right.length) / rightSeenCount,
+    );
     const leftValue = left[leftIndex];
     const rightValue = right[rightIndex];
     if (leftValue !== undefined && rightValue !== undefined)
@@ -192,7 +212,7 @@ export const semanticPrimitiveSampledProduct = (options: {
   }
   return sampledUnionOrByteLimit(
     retained,
-    total,
+    reported,
     SEMANTIC_PRIMITIVE_PRODUCT_SAMPLE_METHOD,
   );
 };
