@@ -1358,6 +1358,15 @@ Native call tracing and process capture retain available observations in
 `details.partial_observation` on failure, including when cleanup succeeds.
 The observation reports its partial coverage; cleanup details describe host
 state separately from the execution failure.
+When a completed observation cannot be published because recording a source
+failed, the original source failure remains the error. `partial_observation`
+can carry the failed source and `completed_observation` carries the completed
+result, with `source_closure: "not-established"`. A retained reference is
+reported only when its owning ledger confirms it; an inline result with
+`retention: "unknown"` makes no claim about ledger membership. If an
+observation cannot fit the MCP response, its corresponding `_omitted` detail
+reports the delivery limit. Cleanup failure and other completed source failures
+remain visible separately.
 For these tools, cancellation observed during result finalization or owned
 cleanup also returns typed cancellation with the available observations.
 A normal target exit does not establish request completion. Incomplete cleanup
@@ -1672,7 +1681,7 @@ procedure resolution returns typed unreadable output; provider errors never
 become absence from their message text. `inspect_address_context` requires an explicit address and
 returns name, procedure, comment, inline-comment, and bookmark facets;
 unsupported facets are local `unavailable` outcomes. A facet rejected for
-invalid input or a resource constraint includes its canonical `error`
+invalid input, source Evidence integrity or a resource constraint includes its canonical `error`
 projection, including structured issues or reported limits and recovery,
 alongside the other facet outcomes. Use `current_document`,
 `current_address`, and `current_procedure` for direct single-field lookups; use
