@@ -246,6 +246,13 @@ const readEvents = (
         for (let at = ids.offset; at < ids.offset + ids.size; at += 8) {
           if (state.identified.length >= MAX_RETAINED_IDENTIFIERS) {
             idsTruncated = true;
+            state.identifiersPresent = false;
+            diagnose(
+              state,
+              ordinal,
+              "identifier-inventory-truncated",
+              `The retained identifier inventory reached its ${String(MAX_RETAINED_IDENTIFIERS)}-identifier allowance, so this and later identifiers in the extent were not retained.`,
+            );
             break;
           }
           const id = read.u64(bytes, at);
@@ -426,7 +433,10 @@ export const parsePerfData = (
     );
     return ok(emptyRecording(artifact, state.diagnostics, order));
   }
-  const stride = read.u64(bytes, ATTR_SIZE_FIELD) ?? 0;
+  const rawStride = read.u64(bytes, ATTR_SIZE_FIELD);
+  // A present-but-unrepresentable field stays unknown instead of becoming the
+  // zero-byte stride a different diagnostic would report.
+  const stride = rawStride ?? 0;
   const attributeSection = sectionAt(bytes, read, ATTRS_SECTION_FIELD);
   const dataSection = sectionAt(bytes, read, DATA_SECTION_FIELD);
   if (attributeSection === null || dataSection === null) {
@@ -438,13 +448,13 @@ export const parsePerfData = (
     );
     return ok(emptyRecording(artifact, state.diagnostics, order));
   }
+  const attributeInHeader =
+    attributeSection.size > 0 &&
+    attributeSection.offset < (headerBytes ?? HEADER_BYTES_WITHOUT_FEATURES);
   const attributeFits =
     attributeSection.within_file &&
     // The file header precedes the sections; bytes inside it are not attributes.
-    !(
-      attributeSection.size > 0 &&
-      attributeSection.offset < (headerBytes ?? HEADER_BYTES_WITHOUT_FEATURES)
-    ) &&
+    !attributeInHeader &&
     !(
       attributeSection.offset <= dataSection.offset &&
       attributeSection.offset + attributeSection.size > dataSection.offset
@@ -460,6 +470,13 @@ export const parsePerfData = (
       "invalid-attribute-section",
       `The attribute section declares bytes ${attributeSection.offset}..${attributeSection.offset + attributeSection.size}, past the ${bytes.length}-byte file.`,
     );
+  else if (attributeInHeader)
+    diagnose(
+      state,
+      null,
+      "header-attribute-overlap",
+      `The attribute section declares bytes ${attributeSection.offset}..${attributeSection.offset + attributeSection.size} inside the ${String(headerBytes)}-byte file header, so the attribute extent is not trusted.`,
+    );
   else if (!attributeFits)
     diagnose(
       state,
@@ -473,6 +490,13 @@ export const parsePerfData = (
       null,
       "empty-attribute-section",
       "The attribute section is empty; the recording states no events.",
+    );
+  else if (rawStride === null)
+    diagnose(
+      state,
+      null,
+      "unsafe-attribute-size",
+      `The attribute entry stride exceeds Number.MAX_SAFE_INTEGER, so the recorded value cannot be represented and the events were not read.`,
     );
   else if (stride <= 0 || stride < ATTR_SIZE_MIN + PERF_FILE_SECTION_BYTES)
     diagnose(
@@ -496,7 +520,7 @@ export const parsePerfData = (
       magic: "PERFILE2",
       byte_order: order,
       header_bytes: headerBytes,
-      attribute_bytes: stride,
+      attribute_bytes: rawStride,
       feature_bitmap:
         headerBytes === HEADER_BYTES_WITH_FEATURES ? "present" : "absent",
     },

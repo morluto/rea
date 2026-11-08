@@ -224,6 +224,44 @@ describe("parsePerfData event attributes", () => {
   });
 });
 
+describe("parsePerfData section accounting", () => {
+  it("reports a header overlap as the header's fault, not the data extent's", () => {
+    const bytes = buildPerfRecording();
+    // Point the attribute extent at bytes inside the file header while the data
+    // extent stays disjoint: only the header rule is broken.
+    bytes.writeBigUInt64LE(BigInt(PERF_HEADER_BYTES - 8), 0x18);
+    const archive = parsed(bytes);
+    expect(archive.diagnostics).toEqual([
+      expect.objectContaining({ code: "header-attribute-overlap" }),
+    ]);
+    expect(archive.diagnostics.map(({ code }) => code)).not.toContain(
+      "attribute-section-overlap",
+    );
+  });
+
+  it("keeps an unrepresentable attribute stride unknown instead of zero", () => {
+    const bytes = buildPerfRecording();
+    bytes.writeBigUInt64LE(0xffffffffffffffffn, 0x10);
+    const archive = parsed(bytes);
+    expect(archive.file_header.attribute_bytes).toBeNull();
+    expect(archive.events).toEqual([]);
+    expect(archive.diagnostics).toEqual([
+      expect.objectContaining({ code: "unsafe-attribute-size" }),
+    ]);
+  });
+
+  it("marks the identifier inventory incomplete when its allowance truncates it", () => {
+    const ids = Array.from({ length: 200_001 }, (_unused, index) => index + 1);
+    const archive = parsed(buildPerfRecording({ entries: [perfEntry({ ids })] }));
+    expect(archive.events[0]?.ids_truncated).toBe(true);
+    expect(archive.summary.identifiers_present).toBe(false);
+    expect(archive.diagnostics).toEqual([
+      expect.objectContaining({ code: "identifier-inventory-truncated" }),
+    ]);
+    expect(archive.source_coverage.status).not.toBe("complete-within-scope");
+  });
+});
+
 describe("parsePerfData attribute widths", () => {
   it("reads the id descriptor at the end of the entry stride", () => {
     // `attr_size` is the writer's stride; `perf_event_attr.size` may be smaller.

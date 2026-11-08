@@ -77,9 +77,12 @@ export const perfDiagnosticSchema = z.strictObject({
     "unsupported-attribute-size",
     "truncated-event-attribute",
     "invalid-ids-section",
+    "identifier-inventory-truncated",
     "unsafe-identifier",
     "event-limit-reached",
     "diagnostic-limit-reached",
+    "header-attribute-overlap",
+    "unsafe-attribute-size",
   ]),
   message: z.string(),
 });
@@ -93,8 +96,11 @@ export const perfDataSchema = z.strictObject({
     byte_order: z.enum(["little-endian", "big-endian"]),
     /** Header extent the file states in its own `size` field. */
     header_bytes: z.int().nonnegative(),
-    /** Per-attribute entry stride the writer used (`attr_size`). */
-    attribute_bytes: z.int().nonnegative(),
+    /**
+     * Per-attribute entry stride the writer used (`attr_size`); null when the
+     * recorded value exceeds Number.MAX_SAFE_INTEGER and cannot be represented.
+     */
+    attribute_bytes: z.int().nonnegative().nullable(),
     /** Whether this file states the feature bitmap the newest writers append. */
     feature_bitmap: z.literal("present").or(z.literal("absent")),
   }),
