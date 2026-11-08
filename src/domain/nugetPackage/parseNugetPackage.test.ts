@@ -399,6 +399,20 @@ describe("parseNugetPackage: coverage and refusals", () => {
     }
   });
 
+  it("rejects a package root in a foreign namespace", () => {
+    const foreign = `<?xml version="1.0"?><x:package xmlns:x="urn:not-nuspec"><x:metadata><x:id>X</x:id></x:metadata></x:package>`;
+    const package_ = parsed(
+      parse([member("Example.nuspec", { text: foreign })]),
+    );
+    expect(package_.nuspecs).toEqual([]);
+    expect(package_.diagnostics).toContainEqual(
+      expect.objectContaining({
+        code: "invalid-nuspec",
+        message: expect.stringContaining("urn:not-nuspec"),
+      }),
+    );
+  });
+
   it("keeps an explicitly empty repository attribute distinct from an omission", () => {
     const text = NUSPEC.replace(
       /<repository[^>]*\/>/u,

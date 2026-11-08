@@ -116,6 +116,14 @@ const runtimeIdentifier = (path: string, directory: boolean): string | null => {
   return !directory && segments.length < 3 ? null : rid;
 };
 
+/** Namespaces NuGet has published for the manifest root; a foreign one is not a nuspec. */
+const NUSPEC_NAMESPACES: ReadonlySet<string> = new Set([
+  "http://schemas.microsoft.com/packaging/2010/07/nuspec.xsd",
+  "http://schemas.microsoft.com/packaging/2011/08/nuspec.xsd",
+  "http://schemas.microsoft.com/packaging/2012/06/nuspec.xsd",
+  "http://schemas.microsoft.com/packaging/2013/05/nuspec.xsd",
+]);
+
 /** Read the text of the first descendant with the given local name. */
 const textOf = (parent: Element, localName: string): string | null => {
   for (let i = 0; i < parent.childNodes.length; i += 1) {
@@ -285,11 +293,21 @@ const nuspecOf = (
   // accept a nested or unrelated `<metadata>`, turning arbitrary XML into the
   // observed package identity, so require both the root and the direct child.
   const root = parsed.value.documentElement;
+  // A foreign namespace with a <package> local name is not a NuGet manifest,
+  // and the local-name lookups below would otherwise read its elements.
   if (root === null || root.localName !== "package") {
     budget.add(
       member.path,
       "invalid-nuspec",
       "The document element is not <package>.",
+    );
+    return;
+  }
+  if (root.namespaceURI !== null && !NUSPEC_NAMESPACES.has(root.namespaceURI)) {
+    budget.add(
+      member.path,
+      "invalid-nuspec",
+      `The document element is <package> in ${root.namespaceURI}, which is not a nuspec namespace.`,
     );
     return;
   }
@@ -356,8 +374,12 @@ export const parseNugetPackage = (
       truncated = true;
       break;
     }
+    // A known `./` spelling was normalised without missing or misreading a
+    // member, so it is published as a limitation but does not make coverage
+    // partial the way an undecoded stored name does.
     for (const limitation of member.limitations ?? [])
-      nameLimitations.add(limitation);
+      if (!limitation.includes("leading current-directory prefix"))
+        nameLimitations.add(limitation);
     const path = normalisePath(member.path);
     if (!isSafeMemberPath(path)) {
       budget.add(
