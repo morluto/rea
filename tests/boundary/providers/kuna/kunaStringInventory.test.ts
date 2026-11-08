@@ -155,7 +155,6 @@ it("indexes canonical u64 addresses and keeps each encoding at the same address"
     wire({ ...document(), count: rows.length, strings: rows }),
     3,
   );
-  expect(result.ok).toBe(true);
   if (!result.ok) throw result.error;
   expect(result.value.items.map(({ address }) => address)).toEqual([
     "0x0",
@@ -192,7 +191,6 @@ it("indexes canonical u64 addresses and keeps each encoding at the same address"
 
 it("looks up an empty validated inventory", async () => {
   const { result } = await read(wire({ ...document(), count: 0, strings: [] }));
-  expect(result.ok).toBe(true);
   if (!result.ok) throw result.error;
   expect(kunaStringsAtAddress(result.value, "0x0")).toEqual([]);
 });

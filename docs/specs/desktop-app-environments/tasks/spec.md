@@ -26,7 +26,10 @@ never runs code the agent wrote.
   and 1 to 32 `checks`, parsed by a zod schema in `src/domain/desktop/`. Check
   kinds: `file_present`, `file_absent`, `lines_present`, `lines_absent`,
   `line_count` (`exact` or `contains`; `equals`, `at_least` or `at_most`),
-  `value_equals` and `value_absent` (RFC 6901 pointer), `row_present`,
+  `value_equals` (optional numeric `tolerance`) and `value_absent` (RFC 6901
+  pointer, with selectors on arrays), `text_equals` and `text_contains` (an
+  XML element's whole text at a pointer, optional `normalize_whitespace`; see
+  [XML text checks](../xml-text-checks/spec.md)), `row_present`,
   `row_absent` and `row_count` (SQLite table, `where` by column). Ids default
   to `check-N` and must be unique.
 - Semantics: an absent file reads as empty; a file without a view fails every
@@ -37,10 +40,11 @@ never runs code the agent wrote.
   regular expressions: a pattern run on agent-written text can stall the
   verifier, and the two evaluators would read some differently.
 - Refusals, each naming the check: a file outside the owned paths or not
-  spelled as a home path; the empty pointer; a pointer not starting with `/`,
-  into text, or into XML using namespaces; a repeated line; a value that names the
-  captured home or looks like an ISO 8601 date and time; the draft's
-  placeholder prompt.
+  spelled as a home path; the empty pointer; a pointer not starting with `/`
+  or into text; a repeated line; a `tolerance` whose value is not a number; a
+  value that names the captured home or looks like a date and time (ISO
+  8601, or C's `asctime` form);
+  the draft's placeholder prompt.
 - `export-desktop-application --task FILE` evaluates the checks on the state
   view's first versions (the seed) and last versions (the end), refuses a
   task whose every check passes on the seed and a check that fails at the end,
@@ -62,6 +66,6 @@ never runs code the agent wrote.
   gives the `agent-env run` recipe.
 - No checks over dconf keys, which `data/get` serves as binary, or over files
   outside the owned paths.
-- No timestamp detection beyond ISO 8601 date-times; other volatile values
+- No timestamp detection beyond ISO 8601 and `asctime` date-times; other volatile values
   are left to the author.
 - No more than one task per capture.

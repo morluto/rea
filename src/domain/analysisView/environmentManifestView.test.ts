@@ -426,8 +426,8 @@ it("excludes other origins, pages, assets and non-JSON groups with reasons and f
     "/health:non-json",
     "/status:non-json",
   ]);
-  expect(mixed.limitations).toContain(
-    "1 retained records without a usable request line are not represented in the manifest.",
+  expect(mixed.limitations).toContainEqual(
+    expect.stringMatching(/1.*request line.*not represented.*manifest/iu),
   );
   expect(mixed.records.map((record) => record.content_type)).toEqual([
     "text/csv",

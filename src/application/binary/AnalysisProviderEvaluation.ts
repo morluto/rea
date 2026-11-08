@@ -17,6 +17,11 @@ import type {
 } from "../AnalysisProvider.js";
 import type { AnalysisProviderCandidateStatus } from "./AnalysisProviderRegistry.js";
 import { ProviderAdapterError } from "../../domain/providerAdapterError.js";
+import {
+  providerReleaseVerificationSchema,
+  type ProviderReleaseVerification,
+} from "../../domain/providerReleaseVerification.js";
+
 import { analysisErrorRemediationAction } from "../../domain/analysisErrorPresentation.js";
 
 /** Profile-resolution truth for one discovered provider candidate. */
@@ -24,7 +29,9 @@ export interface AnalysisProviderCandidateEvaluation {
   readonly candidate: AnalysisProviderCandidate;
   readonly status: AnalysisProviderCandidateStatus;
   readonly profile?: AnalysisProfileCommitment;
+  readonly refreshAfterRetirement?: true;
   readonly createClient?: AnalysisProviderBoundClientFactory;
+  readonly releaseVerification?: ProviderReleaseVerification;
   readonly profileError?: AnalysisError;
 }
 
@@ -114,10 +121,32 @@ export const evaluateAnalysisProviderCandidate = async (
           remediation: PROFILE_REMEDIATION,
         }),
       );
+    const verification =
+      resolved.value.releaseVerification === undefined
+        ? undefined
+        : providerReleaseVerificationSchema.safeParse(
+            resolved.value.releaseVerification,
+          );
+    if (verification?.success === false)
+      return ok(
+        rejectedProfile(candidate, status, {
+          reason: "Provider returned invalid release verification",
+          remediation: PROFILE_REMEDIATION,
+        }),
+      );
     return ok({
       candidate,
       status,
       profile,
+      ...(verification === undefined
+        ? {}
+        : {
+            releaseVerification: verification.data,
+          }),
+
+      ...(resolved.value.refreshAfterRetirement === undefined
+        ? {}
+        : { refreshAfterRetirement: resolved.value.refreshAfterRetirement }),
       ...(resolved.value.createClient === undefined
         ? {}
         : { createClient: resolved.value.createClient }),
