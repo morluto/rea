@@ -1077,8 +1077,9 @@ const hasCommonJsModuleSource = (
   >();
   const examined = new WeakSet<object>();
   let additionalStates = 0;
-  // A strict check that exhausts the budget stops expanding, then examines
-  // the sources already queued. One may still be a retained module identity.
+  // A strict check that exhausts the budget stops following bindings and
+  // calls, then examines the queued sources by their own selected keys. One
+  // may still be a retained module identity.
   let exhausted = false;
   for (let next = pending.pop(); next !== undefined; next = pending.pop()) {
     const value = unwrapJavaScriptExpression(next.node).node;
@@ -1093,10 +1094,12 @@ const hasCommonJsModuleSource = (
       byMode.set(modeKey, context);
       contexts.set(value, byMode);
     }
-    const path = selections.normalize(context, next.path);
+    let path = exhausted ? next.path : selections.normalize(context, next.path);
     if (selections.limited && !exhausted) {
       if (includeUnknown) return true;
       exhausted = true;
+      // The limiter widens every key after exhaustion. Keep the selected keys.
+      path = next.path;
     }
     const pathKey = JSON.stringify(path);
     let identity = context.identities.get(pathKey);
@@ -1123,7 +1126,6 @@ const hasCommonJsModuleSource = (
       depths: readonly number[],
       ...sources: ModuleObjectSource[]
     ) => {
-      if (exhausted) return;
       pending.push(
         ...inheritLoaderSourceContext(next, sources).map((source) => ({
           ...source,
@@ -1192,6 +1194,7 @@ const hasCommonJsModuleSource = (
       const mode = awaitDepths.includes(path.length)
         ? "awaited-call"
         : "direct-call";
+      if (exhausted) continue;
       const returnedResult = returnedLoaderReferences(state, mode)(
         value.callee,
         t.isNewExpression(value) ? undefined : value,
@@ -1329,6 +1332,7 @@ const hasCommonJsModuleSource = (
       if (sources === undefined) return true;
       eligibility = true;
     }
+    if (exhausted) continue;
     enqueue(
       ...projectedLoaderSources({ ...next, node: value, path }, sources).map(
         (source) => (eligibility ? { ...source, eligibility } : source),

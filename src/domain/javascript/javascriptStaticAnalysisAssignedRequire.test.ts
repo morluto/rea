@@ -208,18 +208,39 @@ it("keeps electron facts for the same path walk without defineProperty", () => {
   expectElectronProbe(loopAliasedPropertyWalk(false));
 });
 
-// A strict check that exhausts the budget still examines queued sources, so a
-// module branch beside the growing alias revokes in either branch order.
-it.each(["(flag?module:r)", "(flag?r:module)"])(
+// A strict check that exhausts the budget still examines queued sources by
+// their selected keys, so the result does not depend on branch order.
+const exhaustedWalkWrite = (receiver: string): string =>
+  `function f(n,e,flag){let r=n,i=0;for(;i<e.length;){let k=e[i];Object.prototype.hasOwnProperty.call(r,k)||Object.defineProperty(r,k,{value:{_errors:[]}});let s=r[k];r=s,i++}${receiver}.require=replacement;return r}let h=require("electron");new h.BrowserWindow({});`;
+
+it.each([
+  "(flag?module:r)",
+  "(flag?r:module)",
+  "(flag?(0,module):r)",
+  "(flag?r:(0,module))",
+  "(flag?process.mainModule:r)",
+  "(flag?r:process.mainModule)",
+])(
   "revokes the host delegate through %s after alias selections are exhausted",
   (receiver) => {
     const analysis = analyzeJavaScriptStaticSource(
-      `function f(n,e,flag){let r=n,i=0;for(;i<e.length;){let k=e[i];Object.prototype.hasOwnProperty.call(r,k)||Object.defineProperty(r,k,{value:{_errors:[]}});let s=r[k];r=s,i++}${receiver}.require=replacement;return r}let h=require("electron");new h.BrowserWindow({});`,
+      exhaustedWalkWrite(receiver),
     );
     expect(analysis.parse_error_count).toBe(0);
     expect(analysis.electron.browser_windows).toHaveLength(0);
     expect(analysis.references).toEqual([
       expect.objectContaining({ kind: "require", specifier: null }),
     ]);
+  },
+);
+
+it.each(["(flag?process.foo:r)", "(flag?r:process.foo)"])(
+  "keeps the host delegate through %s after alias selections are exhausted",
+  (receiver) => {
+    const analysis = analyzeJavaScriptStaticSource(
+      exhaustedWalkWrite(receiver),
+    );
+    expect(analysis.parse_error_count).toBe(0);
+    expect(analysis.electron.browser_windows).toHaveLength(1);
   },
 );
