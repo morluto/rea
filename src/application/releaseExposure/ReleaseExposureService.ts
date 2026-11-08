@@ -1,4 +1,4 @@
-import { basename, dirname, win32 } from "node:path";
+import { basename, dirname, join, win32 } from "node:path";
 
 import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
 import type { ExecutionOptions } from "../AnalysisProvider.js";
@@ -715,6 +715,10 @@ const nativeDirname = (path: string): string =>
   WINDOWS_ABSOLUTE_PATH.test(path) ? win32.dirname(path) : dirname(path);
 const nativeBasename = (path: string): string =>
   WINDOWS_ABSOLUTE_PATH.test(path) ? win32.basename(path) : basename(path);
+const nativeJoin = (path: string, child: string): string =>
+  WINDOWS_ABSOLUTE_PATH.test(path)
+    ? win32.join(path, child)
+    : join(path, child);
 
 const limitNativeSample = (
   scan: ReleaseExposureScan,
@@ -757,17 +761,31 @@ const limitNativeSample = (
         .map((basis) => nativeDirname(nativeDirname(basis.path))),
     ),
   ];
+  // A bundle or selected-executable read settles only its own layout: an app
+  // that embeds another Electron app still needs that app's host read.
+  const selectedRead = kept.some(
+    (image) => image.path === scan.target.selected_path,
+  );
+  const bundles = [
+    ...(scan.target.kind === "app" ? [scan.target.selected_path] : []),
+    ...scan.fuse_candidates
+      .filter((candidate) => candidate.role === "app-bundle")
+      .map((candidate) => candidate.path),
+  ];
+  const settledLayouts = new Set([
+    ...bundles.map((bundle) => nativeJoin(bundle, "Contents")),
+    ...(selectedRead ? [nativeDirname(scan.target.selected_path)] : []),
+  ]);
   const electronExecutableIncluded =
-    scan.target.kind === "app" ||
-    scan.fuse_candidates.some((candidate) => candidate.role === "app-bundle") ||
-    kept.some((image) => image.path === scan.target.selected_path) ||
-    (layouts.length === 0
-      ? hostRead(preferred)
-      : layouts.every((folder) =>
-          hostRead(
-            preferred.filter((image) => nativeDirname(image.path) === folder),
-          ),
-        ));
+    layouts.length === 0
+      ? bundles.length > 0 || selectedRead || hostRead(preferred)
+      : layouts.every(
+          (folder) =>
+            settledLayouts.has(folder) ||
+            hostRead(
+              preferred.filter((image) => nativeDirname(image.path) === folder),
+            ),
+        );
   // With no named host, any sampled sibling could be it, so none settles alone.
   const hostsAmong = (
     images: readonly ReleaseExposureNativeImage[],

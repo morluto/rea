@@ -1114,6 +1114,82 @@ describe("ReleaseExposureService Electron host identity", () => {
   });
 });
 
+describe("ReleaseExposureService nested app layouts", () => {
+  it.each([
+    ["the outer bundle", "/work/App.app/Contents/MacOS/App", "not_observed"],
+    [
+      "a nested Electron app",
+      "/work/App.app/Contents/Resources/Inner.app/Contents/MacOS/Inner",
+      "unknown",
+    ],
+  ])(
+    "lets an app bundle read settle only its own layout (second layout host: %s)",
+    async (_, nestedHost, expected) => {
+      const outer = [
+        "/work/App.app/Contents/MacOS/App",
+        "/work/App.app/Contents/MacOS/one",
+        "/work/App.app/Contents/MacOS/two",
+        "/work/App.app/Contents/MacOS/three",
+      ];
+      const images = [...new Set([...outer, nestedHost])].map((path) => ({
+        path,
+        format: "elf" as const,
+      }));
+      const { service, desktop, electronFuses } = owners({
+        ...appScan,
+        native_images: images,
+        fuse_candidates: [
+          ...appScan.fuse_candidates,
+          ...images.map((image) => ({
+            path: image.path,
+            role: "native-image" as const,
+          })),
+        ],
+      });
+      const report = electronDesktopReport();
+      const second = `dsf_${"ab".repeat(32)}`;
+      const nested = nestedHost.includes("/Inner.app/");
+      desktop.inspect.mockResolvedValue(
+        ok(
+          evidence({
+            ...report,
+            files: [
+              {
+                ...report.files[0],
+                path: "Contents/Resources/app.asar",
+                local_path: "/work/App.app/Contents/Resources/app.asar",
+              },
+              ...(nested
+                ? [
+                    {
+                      ...report.files[0],
+                      file_id: second,
+                      path: "Contents/Resources/Inner.app/Contents/Resources/app.asar",
+                      local_path:
+                        "/work/App.app/Contents/Resources/Inner.app/Contents/Resources/app.asar",
+                    },
+                  ]
+                : []),
+            ],
+            candidates: [
+              {
+                ...report.candidates[0],
+                basis_file_ids: nested ? [FILE, second] : [FILE],
+              },
+            ],
+          }),
+        ),
+      );
+      electronFuses.inspect.mockResolvedValue(
+        ok(evidence(fuseReport([slice(0)]))),
+      );
+      expect((await runAsNode(service, "/work/App.app"))?.status).toBe(
+        expected,
+      );
+    },
+  );
+});
+
 const appScan = scan({
   target: {
     selected_path: "/work/App.app",
