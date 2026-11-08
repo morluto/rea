@@ -34,10 +34,13 @@ const unwrapSchema = (field: { unwrap: () => unknown }): z.ZodType =>
   field.unwrap() as z.ZodType;
 
 /**
- * Incur advertises Zod's output view. Publish the input view so the decimal
- * token guard survives `--schema` and other SDK conversions.
+ * Incur advertises Zod's output view. Publish the input view so a token
+ * grammar that transforms argv text survives `--schema` and other SDK
+ * conversions.
  */
-const publishDecimalInput = (field: z.ZodType): z.ZodType => {
+export const publishDecimalInput = <Field extends z.ZodType>(
+  field: Field,
+): Field => {
   const { $schema: _dialect, ...inputSchema } = z.toJSONSchema(field, {
     io: "input",
   });
