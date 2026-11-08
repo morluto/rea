@@ -285,6 +285,22 @@ describe("parsePerfData attribute widths", () => {
     expect(truncated("a".repeat(64))).not.toBe(truncated("b".repeat(64)));
   });
 
+  it("binds a diagnostic id to the allowance it was produced under", () => {
+    const idAt = (maxEvents: number) => {
+      const archive = parsed(
+        buildPerfRecording({
+          entries: [perfEntry({ ids: [1] }), perfEntry({ ids: [2] })],
+        }),
+        { maxEvents },
+      );
+      return archive.diagnostics[0]?.diagnostic_id;
+    };
+    expect(idAt(1)).toBeTruthy();
+    // Both runs report the same code at index 0, so the allowance is what
+    // keeps the two query-specific facts from sharing an id.
+    expect(idAt(1)).not.toBe(idAt(2));
+  });
+
   it("reports an unrepresentable 64-bit config as unknown rather than truncated", () => {
     const bytes = buildPerfRecording();
     bytes.writeBigUInt64LE(

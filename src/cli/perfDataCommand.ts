@@ -42,6 +42,12 @@ export const registerPerfDataCommand = (
     }),
     options: z.object({
       ...analysisEvidenceDeliveryOptions,
+      // This operation has no summary reader, so the shared enum would advertise
+      // a --detail summary request that only fails after the recording is read.
+      detail: z
+        .literal("complete")
+        .default("complete")
+        .describe("Deliver the complete Evidence bundle"),
       // Decimal tokens only: numeric coercion would read "0x10" as 16 and
       // "1e3" as 1000. The shared fields keep their bounds and defaults.
       maxFileBytes: cliDecimalField(perfDataFileBytesSchema),

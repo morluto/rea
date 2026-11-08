@@ -320,7 +320,7 @@ const emptyRecording = (
   attribute_section: { offset: 0, size: 0, within_file: false },
   data_section: { offset: 0, size: 0, within_file: false },
   events: [],
-  diagnostics: withIds(diagnostics, artifact.sha256),
+  diagnostics: withIds(diagnostics, artifact.sha256, 0),
   summary: {
     events: 0,
     identifiers: 0,
@@ -337,10 +337,20 @@ const emptyRecording = (
  * event layout at the same offsets — so hashing offsets alone would give
  * their events the same id and alias unrelated facts across artifacts.
  */
-const withIds = (diagnostics: readonly Diagnostic[], recording: string) =>
+const withIds = (
+  diagnostics: readonly Diagnostic[],
+  recording: string,
+  allowance: number,
+) =>
   diagnostics.map((entry, index) => ({
     ...entry,
-    diagnostic_id: digest("perf_diagnostic", recording, index, entry.code),
+    diagnostic_id: digest(
+      "perf_diagnostic",
+      recording,
+      allowance,
+      index,
+      entry.code,
+    ),
   }));
 
 /**
@@ -478,7 +488,7 @@ export const parsePerfData = (
     attribute_section: attributeSection,
     data_section: dataSection,
     events: state.events,
-    diagnostics: withIds(state.diagnostics, artifact.sha256),
+    diagnostics: withIds(state.diagnostics, artifact.sha256, options.maxEvents),
     summary: {
       events: state.events.length,
       identifiers: state.identifiers,

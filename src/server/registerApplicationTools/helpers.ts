@@ -69,15 +69,30 @@ export const deliverApplicationEvidence = async (
     const interrupted = new AnalysisCancelledError(contract.name, {
       cause: signal.reason,
     });
-    const cancelled =
-      view === undefined
-        ? interrupted.retainPartialObservation(parent)
-        : interrupted;
-    return delivery.toPartialErrorToolResult(
-      cancelled,
+    if (view !== undefined)
+      return delivery.toPartialErrorToolResult(
+        interrupted,
+        contract.returnsTargetContent,
+        options.recordEvidence,
+      );
+    // The parent is committed, so the source records it links to have to be
+    // committed first; otherwise the retained result names Evidence the session
+    // never saved and later closure or export resolution fails as missing.
+    const sources = recordEvidenceSources(
+      options.recordEvidence,
+      execution.sources,
+    );
+    if (!sources.ok) return delivery.toCallToolResult(sources, contract);
+    const retained = delivery.toPartialErrorToolResult(
+      interrupted.retainPartialObservation(parent),
       contract.returnsTargetContent,
       options.recordEvidence,
     );
+    // The retained parent carries an open unknown on ordinary completion, so a
+    // cancelled run registers the same unknown rather than dropping it.
+    if (unknownKind !== undefined)
+      recordApplicationResult(options, parent, unknownKind);
+    return retained;
   }
   if (!selected.ok) return delivery.toCallToolResult(selected, contract);
   const sources = recordEvidenceSources(
