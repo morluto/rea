@@ -81,6 +81,46 @@ const omissionRejected = (schema: z.ZodObject | undefined): string[] =>
 const acceptsOmittedKey = (key: string, field: z.ZodType): boolean =>
   z.object({ [key]: field }).safeParse({}).success;
 
+/** Whether an advertised property admits a JSON integer or number anywhere. */
+const advertisesNumber = (schema: unknown): boolean =>
+  JSON.stringify(schema).includes('"type":"integer"') ||
+  JSON.stringify(schema).includes('"type":"number"');
+
+/** Every advertised `minimum`, so a probe can start inside the field's range. */
+const advertisedMinimums = (schema: unknown): number[] => {
+  if (schema === null || typeof schema !== "object") return [];
+  const own = Reflect.get(schema, "minimum");
+  return [
+    ...(typeof own === "number" ? [own] : []),
+    ...Object.values(schema).flatMap(advertisedMinimums),
+  ];
+};
+
+/**
+ * Find a decimal argv token the parser accepts as a number. A repeated option
+ * parses each token as one array item, so the token is wrapped to match.
+ */
+const decimalProbe = (
+  field: z.ZodType,
+  schema: unknown,
+):
+  | { readonly value: number; readonly token: (text: string) => unknown }
+  | undefined => {
+  for (const value of new Set([1, ...advertisedMinimums(schema)])) {
+    if (!Number.isSafeInteger(value) || value < 0) continue;
+    for (const repeated of [false, true]) {
+      const token = (text: string): unknown => (repeated ? [text] : text);
+      const parsed = field.safeParse(token(String(value)));
+      if (!parsed.success) continue;
+      const item: unknown = Array.isArray(parsed.data)
+        ? parsed.data[0]
+        : parsed.data;
+      if (item === value) return { value, token };
+    }
+  }
+  return undefined;
+};
+
 const registerParserAdvertisementInventoryTests = (): void => {
   it("require exactly the inputs whose omission the parser rejects", async () => {
     const cli = createCli({});
@@ -132,27 +172,23 @@ const registerParserAdvertisementInventoryTests = (): void => {
       for (const group of INPUT_GROUPS) {
         const parser = parserSchema(cli, command, group);
         for (const [key, field] of Object.entries(parser?.shape ?? {})) {
-          // A repeated option parses each argv token as one array item.
-          const list = (field as z.ZodType).safeParse(["1"]);
-          const repeated = list.success && Array.isArray(list.data);
-          const token = (value: string): unknown =>
-            repeated ? [value] : value;
-          const parsed = (field as z.ZodType).safeParse(token("1"));
-          const item: unknown =
-            parsed.success && Array.isArray(parsed.data)
-              ? parsed.data[0]
-              : parsed.data;
-          if (!parsed.success || typeof item !== "number") continue;
-          checked += 1;
           const schema = advertised[group]?.properties[key];
-          if (schema === undefined) continue;
+          if (schema === undefined || !advertisesNumber(schema)) continue;
+          const label = `${command} ${group}.${key}`;
+          const probe = decimalProbe(field as z.ZodType, schema);
+          if (probe === undefined) {
+            mismatches.push(`${label}: no in-range decimal token parses`);
+            continue;
+          }
+          checked += 1;
+          const { value, token } = probe;
           const validate = ajv.compile(schema as object);
-          if (!validate(token("1")))
-            mismatches.push(`${command} ${group}.${key}: rejects token "1"`);
-          for (const value of ["0x1", "1e0"])
-            if (validate(token(value)))
+          if (!validate(token(String(value))))
+            mismatches.push(`${label}: rejects token "${String(value)}"`);
+          for (const spelling of [`0x${value.toString(16)}`, `${value}e0`])
+            if (validate(token(spelling)))
               mismatches.push(
-                `${command} ${group}.${key}: admits token ${JSON.stringify(value)}`,
+                `${label}: admits token ${JSON.stringify(spelling)}`,
               );
         }
       }
