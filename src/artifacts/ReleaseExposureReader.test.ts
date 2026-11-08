@@ -1308,6 +1308,20 @@ describe("ReleaseExposureReader sibling map identity", () => {
     expect(debugCompanionsStatus(scanned)).not.toBe("exposed");
   });
 
+  it("keeps a large PE beside a selected file with a late header unknown", async () => {
+    const root = await createTestTempDirectory("rea-release-sibling-pe-");
+    // The PE signature sits past the 4 KiB probe of a map past its allowance.
+    const image = Buffer.alloc(2 * 1024 * 1024);
+    image.write("MZ", 0, "latin1");
+    image.writeUInt32LE(8192, 60);
+    image.write("PE\0\0", 8192, "latin1");
+    await writeFile(join(root, "payload.map"), image);
+    await writeFile(join(root, "app"), "plain file");
+    const scanned = await inspect(join(root, "app"));
+    expect(scanned.debug_companions).toEqual({ paths: [], skipped: 1 });
+    expect(debugCompanionsStatus(scanned)).not.toBe("exposed");
+  });
+
   it("does not report a Node script beside a selected file as a linker map", async () => {
     const root = await createTestTempDirectory("rea-release-sibling-shebang-");
     await writeFile(

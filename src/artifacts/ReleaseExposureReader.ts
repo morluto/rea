@@ -2016,18 +2016,22 @@ const examinePackagedBinary = async (
  * the image stays unexamined by the on-disk readers, and it may carry a
  * package that nothing here can clear. Returns whether the header was undecided.
  */
+/** An `MZ` header whose PE signature lies past the bytes read, so it may be native. */
+const isUndecidedPeHeader = (header: Buffer): boolean => {
+  if (header.toString("latin1", 0, 2) !== "MZ") return false;
+  const windows = observeMzWindowsHeader(header);
+  return (
+    windows.state === "signature-needed" ||
+    (windows.state === "candidate" && windows.signature === "unobserved")
+  );
+};
+
 const noteUndecidedPe = (
   state: ScanState,
   member: Pick<MemberView, "location">,
   header: Buffer,
 ): boolean => {
-  if (header.toString("latin1", 0, 2) !== "MZ") return false;
-  const windows = observeMzWindowsHeader(header);
-  if (
-    windows.state !== "signature-needed" &&
-    !(windows.state === "candidate" && windows.signature === "unobserved")
-  )
-    return false;
+  if (!isUndecidedPeHeader(header)) return false;
   state.packagedNative += 1;
   notePeNotExamined(state, member.location);
   noteUnexaminedPackage(state);
@@ -2976,7 +2980,12 @@ const classifySiblingMap = async (
     return;
   // A Node shebang names a script, as it does for a member's `.map`.
   if (prefix !== null && hasNodeShebang(prefix)) return;
-  if (prefix === null || mayHaveSourceMapPrefix(prefix))
+  // An undecided PE header may be native, so it is no linker-map evidence.
+  if (
+    prefix === null ||
+    isUndecidedPeHeader(prefix) ||
+    mayHaveSourceMapPrefix(prefix)
+  )
     state.skippedCompanions += 1;
   else noteLinkerMapGuess(state, sibling);
 };
