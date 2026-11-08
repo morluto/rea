@@ -140,6 +140,9 @@ describe("draftTaskFiles for XML text views", () => {
     ]);
   });
 
+});
+
+describe("draftTaskFiles for markup boundaries and incomplete XML", () => {
   it("keeps quoted text after a Markdown autolink", () => {
     const line =
       '<https://example.test> msgstr "Set \\\"created=2025550123 and save"';
