@@ -121,11 +121,10 @@ operation `describe_desktop_application_task` and predicate type
     no text that is added or removed there, such as an image or a line break,
     keeps its own, since the text check never reads it. A decimal that is an
     element's only text, such as a spreadsheet cell's, is checked by its
-    number instead. Text that grew by whole lines and kept the rest, as a note
-    gaining `olive oil` on a line of its own, gets a `text_contains` of the
-    added lines instead, so a correct edit with a blank line after it or the
-    line elsewhere still passes, and guards that the kept text is still there;
-    text replaced, or grown inside a line, keeps `text_equals`. A record added
+    number instead. Free text that gains a line, such as a shopping list,
+    uses `text_equals` on the whole text: the current XML checks cannot
+    compare an unstructured line as a whole item. This can reject a correct
+    edit that puts the item elsewhere or changes spacing. A record added
     or removed whole, an element holding only elements, its fields, such as
     Tellico's `<entry>` or a record of repeated `<field>` elements, never
     makes the list holding records of its kind a check, whose text would hold
@@ -192,8 +191,7 @@ operation `describe_desktop_application_task` and predicate type
   too: the check's own field where like siblings hold different values in
   it, and otherwise one that varies among them, as Planner's `work` rather
   than the `type="normal"` every task shares; never through a sibling only
-  position or a renumbered id pairs. Text that grew by lines gets a
-  `text_contains` of what it kept, and a text file a `lines_present` of the
+  position or a renumbered id pairs. A text file gets a `lines_present` of the
   unchanged list items beside its first new line with the same marker, as
   Zim's other `[ ]` action items, or else its nearest lines with words in
   them. At most four a file. They pass on the seed, which the export allows,
