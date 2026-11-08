@@ -829,6 +829,28 @@ it("orders a WITHOUT ROWID table by its primary key, including DESC direction an
   ]);
 });
 
+it("keeps repeated primary-key terms in the order the index states them", async () => {
+  // PRIMARY KEY(a COLLATE BINARY, a COLLATE NOCASE DESC) is a valid composite
+  // key; collapsing the two terms to one column would advertise a unique order
+  // the key does not establish and read the offset window out of order.
+  const path = await createDatabase(`
+    CREATE TABLE repeated(a TEXT, PRIMARY KEY(a COLLATE BINARY, a COLLATE NOCASE DESC)) WITHOUT ROWID;
+    INSERT INTO repeated VALUES ('A'), ('a'), ('B');`);
+  const result = inspectSqliteDatabaseSnapshot(path, {
+    path,
+    table: "repeated",
+    row_limit: 20,
+  });
+  expect(result.rows).toMatchObject({ order: "primary_key" });
+  // BINARY order over the whole key: A (65), B (66), then a (97). Dropping the
+  // first term would sort by NOCASE DESC instead and put B first.
+  expect(
+    result.rows?.values.map((row) =>
+      row.map((cell) => ("value" in cell ? cell.value : cell.type)),
+    ),
+  ).toEqual([["A"], ["B"], ["a"]]);
+});
+
 it("orders by the first rowid spelling the table leaves unshadowed", async () => {
   // Declaring `rowid` makes that spelling resolve to the stored column, so
   // ORDER BY rowid would sort by a non-unique value instead of the row id.

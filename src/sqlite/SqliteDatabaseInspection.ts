@@ -869,29 +869,37 @@ const readRowOrder = (
     )
     .get(table.name) as { readonly name: unknown } | undefined;
   if (primaryKey === undefined) return { order: "unspecified", clause: "" };
-  const details = new Map<
+  // A WITHOUT ROWID key may repeat a column at different collations or
+  // directions — `PRIMARY KEY(a COLLATE BINARY, a COLLATE NOCASE DESC)` is
+  // valid — so the terms must follow the index's own sequence. Keying these
+  // by column name would collapse the repetition and advertise an order the
+  // actual key does not establish.
+  const ordered = new Map<
     string,
     { readonly desc: boolean; readonly coll: string }
   >();
+  const terms: string[] = [];
   for (const raw of db
     .prepare(
-      'SELECT CAST(name AS BLOB) AS name, "desc", CAST(coll AS BLOB) AS coll FROM temp.pragma_index_xinfo(CAST(? AS BLOB)) WHERE key = 1',
+      'SELECT CAST(name AS BLOB) AS name, "desc", CAST(coll AS BLOB) AS coll FROM temp.pragma_index_xinfo(CAST(? AS BLOB)) WHERE key = 1 ORDER BY seqno',
     )
     .iterate(primaryKey.name as Uint8Array) as Iterable<unknown>) {
     const { name, desc, coll } = indexKeyRow.parse(raw);
-    details.set(decodeSchemaText(name, encoding, "index column"), {
+    const column = decodeSchemaText(name, encoding, "index column");
+    const detail = {
       desc: desc === 1n || desc === 1,
       coll: decodeSchemaText(coll, encoding, "collation"),
-    });
+    };
+    ordered.set(column, detail);
+    // The declared collation keeps NOCASE/RTRIM keys in index order; spelling
+    // it explicitly also prevents a caller column's own collation from
+    // re-sorting.
+    terms.push(
+      `${quoteIdentifier(column)} COLLATE ${quoteIdentifier(detail.coll)}${detail.desc ? " DESC" : ""}`,
+    );
   }
-  // The declared collation keeps NOCASE/RTRIM keys in index order; spelling it
-  // explicitly also prevents a caller column's own collation from re-sorting.
-  const terms = key.map((column) => {
-    const detail = details.get(column.name);
-    const collation =
-      detail === undefined ? "" : ` COLLATE ${quoteIdentifier(detail.coll)}`;
-    return `${quoteIdentifier(column.name)}${collation}${detail !== undefined && detail.desc ? " DESC" : ""}`;
-  });
+  for (const column of key)
+    if (!ordered.has(column.name)) return { order: "unspecified", clause: "" };
   return { order: "primary_key", clause: ` ORDER BY ${terms.join(", ")}` };
 };
 
