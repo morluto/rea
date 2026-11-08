@@ -15,6 +15,11 @@ export const ghidraFixturePath = fileURLToPath(
 );
 
 type FixtureMode =
+  | "checkpoint"
+  | "checkpoint_fail_close"
+  | "checkpoint_hold_startup"
+  | "checkpoint_hold_close"
+  | "unicode_search"
   | "reject_first_connection"
   | "reject_all_connections"
   | "success"
@@ -26,6 +31,11 @@ type FixtureMode =
   | "future_id"
   | "analysis_timeout"
   | "remote_error"
+  | "decompile_timed_out"
+  | "remote_startup_error"
+  | "import_identity_unavailable"
+  | "import_identity_mismatch"
+  | "late_identity_failure"
   | "shutdown_error"
   | "invalid_shutdown_ack"
   | "hang_after_start"
@@ -34,6 +44,14 @@ type FixtureMode =
   | "silent"
   | "exit"
   | "old_oom_then_malformed"
+  | "prefix_cut_identifier_exit_tools"
+  | "oom_exit_tools"
+  | "sigkill_tools"
+  | "sigkill_after_first_tool"
+  | "flood_then_oom_exit_tools"
+  | "flood_then_exit_tools"
+  | "flood_then_malformed"
+  | "flood_silent"
   | "diagnostic_output";
 
 export class GhidraFixtureLauncher implements GhidraLauncher {
@@ -46,10 +64,16 @@ export class GhidraFixtureLauncher implements GhidraLauncher {
   readonly tokens: string[] = [];
   readonly processes: ChildProcess[] = [];
   readonly requests: string[] = [];
+  readonly packedPrograms: GhidraLaunchSession["packedProgram"][] = [];
+  #notifyCheckpointHeld: (() => void) | undefined;
+  readonly checkpointHeld = new Promise<void>((resolve) => {
+    this.#notifyCheckpointHeld = resolve;
+  });
 
   constructor(readonly mode: FixtureMode = "success") {}
 
   async launch(session: GhidraLaunchSession) {
+    this.packedPrograms.push(session.packedProgram);
     this.runtimeRoots.push(session.runtimeRoot);
     this.endpointPaths.push(session.endpointPath);
     this.tokens.push(session.token);
@@ -72,6 +96,13 @@ export class GhidraFixtureLauncher implements GhidraLauncher {
       },
     });
     process_.on("message", (value: unknown) => {
+      if (
+        typeof value === "object" &&
+        value !== null &&
+        "event" in value &&
+        value.event === "checkpoint-held"
+      )
+        this.#notifyCheckpointHeld?.();
       if (
         typeof value === "object" &&
         value !== null &&

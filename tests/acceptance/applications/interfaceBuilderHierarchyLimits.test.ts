@@ -10,7 +10,7 @@ import { parseEvidence } from "../../../src/domain/evidence.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
 import { createTestMcp } from "../../support/mcp/mcpFixture.js";
-import { openArtifactTarget } from "../../support/mcp/artifactSession.js";
+import { openBundleResourcesTarget } from "../../support/mcp/artifactSession.js";
 
 const verifyMcpParity = async (
   app: string,
@@ -18,7 +18,7 @@ const verifyMcpParity = async (
 ): Promise<void> => {
   const mcp = createTestMcp();
   onTestFinished(async () => mcp.close());
-  const client = await openArtifactTarget(mcp, onTestFinished, app);
+  const client = await openBundleResourcesTarget(mcp, onTestFinished, app);
   const complete = await client.callTool({
     name: "decode_interface_builder",
     arguments: { max_objects: 2 },
@@ -79,14 +79,42 @@ const cases = [
     omittedEdges: 0,
     unresolvedEdge: true,
   },
+  {
+    name: "a marker-bearing connection source is omitted without losing hierarchy coverage",
+    archives: [
+      [
+        "Connection.nib",
+        build({
+          "com.apple.ibtool.document.objects": {
+            kept: { class: "UIView" },
+          },
+          "com.apple.ibtool.document.hierarchy": [{ objectID: "kept" }],
+          "com.apple.ibtool.document.connections": {
+            "missing:hierarchy:source": [
+              { type: "outlet", label: "view", destinationId: "kept" },
+            ],
+          },
+        }),
+      ],
+    ] as const,
+    hierarchyComplete: [true],
+    document: "Connection.nib",
+    omittedEdges: 0,
+    unresolvedEdge: false,
+    omittedConnections: 2,
+  },
 ];
 
 cliTest.for(cases)(
-  "reports partial hierarchy through the CLI when $name",
-  async (
-    { archives, hierarchyComplete, document, omittedEdges, unresolvedEdge },
-    { cli },
-  ) => {
+  "preserves hierarchy and connection coverage through the CLI when $name",
+  async (testCase, { cli }) => {
+    const {
+      archives,
+      hierarchyComplete,
+      document,
+      omittedEdges,
+      unresolvedEdge,
+    } = testCase;
     const root = await createTestTempDirectory("rea-ib-hierarchy-limits-");
     const app = join(root, "Fixture.app");
     const contents = join(app, "Contents");
@@ -129,12 +157,20 @@ cliTest.for(cases)(
     expect(report.graph.coverage).toContainEqual(
       expect.objectContaining({
         facet: `hierarchy:Contents/Resources/${document}`,
-        status: "partial",
-        reason: "graph_limit_reached",
+        status: hierarchyComplete.every(Boolean) ? "complete" : "partial",
+        reason: hierarchyComplete.every(Boolean) ? null : "graph_limit_reached",
         examined: 1,
         omitted: omittedEdges,
       }),
     );
+    if ("omittedConnections" in testCase)
+      expect(report.graph.coverage).toContainEqual({
+        facet: `connections:Contents/Resources/${document}`,
+        status: "partial",
+        reason: "object_limit_reached",
+        examined: 1,
+        omitted: testCase.omittedConnections,
+      });
     if (unresolvedEdge)
       expect(report.graph.edges[0]).toMatchObject({
         relation: "contains",

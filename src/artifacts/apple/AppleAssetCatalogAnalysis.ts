@@ -1,18 +1,43 @@
+import {
+  AnalysisError,
+  type AnalysisCapturedOutput,
+} from "../../domain/analysisErrorBase.js";
+import {
+  AnalysisOutputError,
+  AnalysisTimeoutError,
+  AnalysisCapabilityUnavailableError,
+  AnalysisResourceConstraintError,
+} from "../../domain/analysisErrorCore.js";
+import { fixedAllowanceOptions } from "../../domain/fixedAllowanceRemediation.js";
 import { createHash } from "node:crypto";
 import { lstat } from "node:fs/promises";
+import { streamChunkToBuffer } from "../StreamBytes.js";
 import { DirectoryArtifactReader } from "../DirectoryArtifactReader.js";
+import { ArtifactResourceScope } from "../ArtifactResourceScope.js";
+import { translateArtifactFailure } from "../ArtifactOperationFailure.js";
+import { analysisErrorWithCleanupFailure } from "../../domain/analysisErrorCleanup.js";
+import { ArtifactTraversalObservation } from "../ArtifactTraversalObservation.js";
 import {
   ArtifactReaderFailure,
   sameArtifactSourceIdentity,
+  type ArtifactEntry,
+  type ArtifactReaderTraversal,
 } from "../ArtifactReader.js";
+import { ArtifactOperationError } from "../../domain/artifactOperationError.js";
 import { analyzeInterfaceBuilderBundle } from "./InterfaceBuilderAnalysis.js";
 import {
   appleAssetCatalogInputSchema,
   appleResourceKeyFields,
   parseAppleAssetCatalogRecords,
   projectAppleAssetCatalogPage,
+  type AppleAssetAnalysisCoverage,
 } from "../../domain/apple/appleAssetCatalog.js";
-import { execFileOutput } from "../../process/ExecFileOutput.js";
+import {
+  ExecFileOutputCancelledError,
+  execFileOutput,
+  execFileOutputFailure,
+  execFileFailureCapturedOutput,
+} from "../../process/ExecFileOutput.js";
 
 const ASSETUTIL = "/usr/bin/assetutil";
 const MAX_CATALOG_BYTES = 64 * 1024 * 1024;
@@ -21,10 +46,12 @@ const MAX_TOTAL_METADATA_BYTES = 64 * 1024 * 1024;
 /** Inspect compiled asset catalog metadata without extracting rendition bytes. */
 export const analyzeAppleAssetCatalogs = async (input: {
   readonly bundlePath: string;
-  readonly targetSha256: string;
+  readonly targetSha256: string | null;
+  readonly resourceRoot?: import("../../domain/apple/bundleResourceRoot.js").BundleResourceRoot;
   readonly environment: Readonly<NodeJS.ProcessEnv>;
   readonly page?: unknown;
   readonly signal?: AbortSignal;
+  readonly resources?: ArtifactResourceScope;
   readonly runAssetUtil?: (
     path: string,
     signal?: AbortSignal,
@@ -37,6 +64,7 @@ export const analyzeAppleAssetCatalogs = async (input: {
       "Apple asset catalog inspection requires macOS assetutil",
     );
   const page = appleAssetCatalogInputSchema.parse(input.page ?? {});
+  const resources = input.resources ?? new ArtifactResourceScope();
   // The Interface Builder graph only supplies resource keys for the join. Its
   // bundle walk is independent of the catalog walk, so both run together; a
   // catalog failure cancels it and is reported as the sequential order would.
@@ -46,6 +74,10 @@ export const analyzeAppleAssetCatalogs = async (input: {
   )({
     bundlePath: input.bundlePath,
     targetSha256: input.targetSha256,
+    resources,
+    ...(input.resourceRoot === undefined
+      ? {}
+      : { resourceRoot: input.resourceRoot }),
     signal:
       input.signal === undefined
         ? interfaceBuilderCancel.signal
@@ -56,11 +88,38 @@ export const analyzeAppleAssetCatalogs = async (input: {
   );
   let catalogs: Awaited<ReturnType<typeof collectAssetCatalogs>>["catalogs"];
   let uninspected: readonly string[];
+  let traversal: ArtifactReaderTraversal;
+  let catalogCoverage: AppleAssetAnalysisCoverage;
   try {
-    ({ catalogs, uninspected } = await collectAssetCatalogs(input));
+    ({
+      catalogs,
+      uninspected,
+      traversal,
+      coverage: catalogCoverage,
+    } = await resources.run(() =>
+      collectAssetCatalogs({ ...input, resources }),
+    ));
   } catch (cause: unknown) {
     interfaceBuilderCancel.abort();
-    await interfaceBuilderAnalysis;
+    const joined = await interfaceBuilderAnalysis;
+    if (
+      !joined.ok &&
+      ((joined.error instanceof ArtifactReaderFailure &&
+        joined.error.cleanup !== undefined) ||
+        (joined.error instanceof AnalysisError &&
+          joined.error.cleanupIncomplete))
+    ) {
+      const primary = translateArtifactFailure("inspect_asset_catalog", cause);
+      const cleanup = translateArtifactFailure(
+        "inspect_asset_catalog",
+        joined.error,
+      );
+      throw analysisErrorWithCleanupFailure(
+        primary,
+        cleanup,
+        "inspect_asset_catalog",
+      ).bindCleanupDependencies([primary, cleanup]);
+    }
     throw cause;
   }
   const analyzed = await interfaceBuilderAnalysis;
@@ -69,9 +128,27 @@ export const analyzeAppleAssetCatalogs = async (input: {
   const resourceReferences = collectInterfaceBuilderResourceKeys(
     interfaceBuilder.graph.nodes,
   );
+  const resourceObjectsIncomplete = interfaceBuilder.graph.coverage.some(
+    ({ facet, status }) =>
+      (facet === "archive_object_decode" ||
+        facet === "documents" ||
+        facet.startsWith("objects:")) &&
+      status !== "complete",
+  );
   const result = projectAppleAssetCatalogPage({
     targetSha256: input.targetSha256,
+    ...(input.resourceRoot === undefined
+      ? {}
+      : { resourceRoot: input.resourceRoot }),
     catalogs,
+    inventoryCoverage: { scope: "container-entries", status: traversal.status },
+    catalogCoverage,
+    resourceKeyCoverage:
+      catalogCoverage.status !== "complete"
+        ? catalogCoverage
+        : resourceObjectsIncomplete
+          ? { status: "partial", reason: "interface_builder_graph_incomplete" }
+          : { status: "complete", reason: null },
     offset: page.offset,
     limit: page.limit,
     resourceReferences,
@@ -80,6 +157,7 @@ export const analyzeAppleAssetCatalogs = async (input: {
     ...result,
     limitations: [
       ...result.limitations,
+      ...traversal.limitations,
       // An app without a compiled catalog is an observed empty inventory, not
       // a missing host tool.
       ...(catalogs.length === 0
@@ -93,9 +171,9 @@ export const analyzeAppleAssetCatalogs = async (input: {
             `Asset catalog entries that are not regular files were not inspected, so resource keys reported as unmatched may resolve there: ${uninspected.join(", ")}`,
           ]),
       "Exact resource-key joins use only recognized image or asset key fields on decoded Interface Builder resource objects; other archive resource references are not inferred.",
-      ...(interfaceBuilder.graph.truncated
+      ...(resourceObjectsIncomplete
         ? [
-            "Interface Builder resource-key joins may be incomplete because the decoded UI graph was truncated.",
+            "Interface Builder resource-key joins may be incomplete because the decoded object inventory is incomplete.",
           ]
         : []),
     ],
@@ -107,6 +185,7 @@ const collectAssetCatalogs = async (input: {
   readonly bundlePath: string;
   readonly environment: Readonly<NodeJS.ProcessEnv>;
   readonly signal?: AbortSignal;
+  readonly resources: ArtifactResourceScope;
   readonly runAssetUtil?: (
     path: string,
     signal?: AbortSignal,
@@ -119,9 +198,30 @@ const collectAssetCatalogs = async (input: {
     records: ReturnType<typeof parseAppleAssetCatalogRecords>;
   }[] = [];
   const uninspected: string[] = [];
+  const traversal = new ArtifactTraversalObservation();
+  let symlinks = 0;
+  let firstSymlink: string | undefined;
   let totalMetadataBytes = 0;
+  let outcome: { kind: "completed" } | { kind: "failed"; cause: unknown } = {
+    kind: "completed",
+  };
   try {
-    for await (const entry of reader.entries(input.signal)) {
+    for await (const entry of reader.entries(input.signal, {
+      onCoverage: traversal.onCoverage,
+      onOmission: (omission) => {
+        traversal.onOmission(omission);
+        const { path, kind } = omission;
+        if (path.split("/").at(-1) === "Assets.car")
+          uninspected.push(`${path} (${kind})`);
+      },
+    })) {
+      if (
+        entry.kind === "symlink" &&
+        entry.path.split("/").at(-1) !== "Assets.car"
+      ) {
+        symlinks += 1;
+        firstSymlink ??= entry.path;
+      }
       // Reader paths are `/`-separated; only an entry named exactly
       // Assets.car is a compiled catalog, not e.g. NotAssets.car.
       if (entry.path.split("/").at(-1) !== "Assets.car") continue;
@@ -145,9 +245,38 @@ const collectAssetCatalogs = async (input: {
         );
       catalogs.push(inspected.catalog);
     }
-  } finally {
-    await reader.close();
+  } catch (cause: unknown) {
+    outcome = { kind: "failed", cause };
   }
+  const released = await input.resources.release({
+    kind: "reader",
+    reader,
+    resource: input.bundlePath,
+  });
+  if (released.kind === "failed") {
+    if (outcome.kind === "failed" && outcome.cause instanceof AnalysisError) {
+      const cleanup = translateArtifactFailure(
+        "inspect_asset_catalog",
+        input.resources.cleanupFailure({ kind: "completed" }, [released]),
+      );
+      throw analysisErrorWithCleanupFailure(
+        outcome.cause,
+        cleanup,
+        "inspect_asset_catalog",
+      ).bindCleanupDependencies([outcome.cause, cleanup]);
+    }
+    throw input.resources.cleanupFailure(outcome, [released]);
+  }
+  if (outcome.kind === "failed") throw outcome.cause;
+  if (symlinks > 0)
+    traversal.onCoverage({
+      // Source entries are represented even when their link targets were not
+      // inspected. Keep that inventory scope separate from catalog discovery.
+      status: "complete",
+      limitations: [
+        `Asset catalog discovery did not follow ${symlinks} symlink(s); catalogs beneath them may remain uninspected. First path: ${JSON.stringify(firstSymlink)}.`,
+      ],
+    });
   // Without any readable catalog, unmatched resource keys would overstate an
   // absence that a skipped catalog entry may contradict.
   if (catalogs.length === 0 && uninspected.length > 0)
@@ -155,12 +284,21 @@ const collectAssetCatalogs = async (input: {
       "path",
       `Asset catalog entries are not regular files and were not inspected: ${uninspected.join(", ")}`,
     );
-  return { catalogs, uninspected };
+  const coverage: AppleAssetAnalysisCoverage =
+    traversal.snapshot().status === "unknown" || symlinks > 0
+      ? {
+          status: "unknown",
+          reason: "source_names_or_symlink_targets_unexamined",
+        }
+      : uninspected.length > 0
+        ? { status: "partial", reason: "catalog_entries_uninspected" }
+        : { status: "complete", reason: null };
+  return { catalogs, uninspected, traversal: traversal.snapshot(), coverage };
 };
 
 const inspectAssetCatalogEntry = async (input: {
   readonly reader: DirectoryArtifactReader;
-  readonly entry: import("../ArtifactReader.js").ArtifactEntry;
+  readonly entry: ArtifactEntry;
   readonly runAssetUtil: (
     path: string,
     signal?: AbortSignal,
@@ -178,7 +316,12 @@ const inspectAssetCatalogEntry = async (input: {
       "integrity",
       `Asset catalog changed before inspection: ${entry.path}`,
     );
-  const output = await input.runAssetUtil(entry.adapterKey, signal);
+  let output: string;
+  try {
+    output = await input.runAssetUtil(entry.adapterKey, signal);
+  } catch (cause) {
+    throw assetUtilFailure(cause, entry);
+  }
   const after = await lstat(entry.adapterKey, { bigint: true });
   if (
     !after.isFile() ||
@@ -189,14 +332,23 @@ const inspectAssetCatalogEntry = async (input: {
       "integrity",
       `Asset catalog changed during inspection: ${entry.path}`,
     );
+  const capturedOutput: AnalysisCapturedOutput = {
+    stdout: output,
+    stderr: "",
+    truncated: false,
+    stdout_bytes: Buffer.byteLength(output),
+    exit_code: 0,
+    signal: null,
+  };
+  const diagnostics = { catalog_path: entry.path };
   let parsed: unknown;
   try {
     parsed = JSON.parse(output);
   } catch (cause: unknown) {
-    throw new ArtifactReaderFailure(
-      "format",
+    throw new AnalysisOutputError(
+      "inspect_asset_catalog",
       `assetutil returned invalid JSON for ${entry.path}`,
-      { cause },
+      { cause, capturedOutput, diagnostics },
     );
   }
   try {
@@ -209,10 +361,11 @@ const inspectAssetCatalogEntry = async (input: {
       metadataBytes: Buffer.byteLength(output, "utf8"),
     };
   } catch (cause: unknown) {
-    throw new ArtifactReaderFailure(
-      "format",
-      `assetutil returned an unsupported record for ${entry.path}`,
-      { cause },
+    if (!(cause instanceof AnalysisOutputError)) throw cause;
+    throw new AnalysisOutputError(
+      "inspect_asset_catalog",
+      `${cause.reason} for ${entry.path}`,
+      { cause, capturedOutput, diagnostics },
     );
   }
 };
@@ -253,36 +406,98 @@ const runAssetUtil = async (
   path: string,
   environment: Readonly<NodeJS.ProcessEnv>,
   signal?: AbortSignal,
-): Promise<string> => {
-  try {
-    return (
-      await execFileOutput(ASSETUTIL, ["--info", path], {
-        env: environment,
-        timeout: 60_000,
-        maxBuffer: MAX_CATALOG_BYTES,
-        ...(signal === undefined ? {} : { signal }),
-      })
-    ).stdout;
-  } catch (cause: unknown) {
-    if (signal?.aborted === true)
-      throw new ArtifactReaderFailure(
-        "cancelled",
-        "Asset catalog inspection cancelled",
+): Promise<string> =>
+  (
+    await execFileOutput(ASSETUTIL, ["--info", path], {
+      env: environment,
+      timeout: 60_000,
+      maxBuffer: MAX_CATALOG_BYTES,
+      stopSignal: "SIGTERM",
+      ...(signal === undefined ? {} : { signal }),
+    })
+  ).stdout;
+
+/** Preserve the command owner's failure and captured output before artifact adaptation. */
+const assetUtilFailure = (cause: unknown, entry: ArtifactEntry): unknown => {
+  if (cause instanceof AnalysisError) return cause;
+  if (cause instanceof ExecFileOutputCancelledError)
+    return new ArtifactReaderFailure(
+      "cancelled",
+      "Asset catalog inspection cancelled",
+      { cause: cause.cause },
+    );
+  const output = execFileOutputFailure(cause);
+  const code =
+    cause instanceof Error && "code" in cause ? cause.code : undefined;
+  const capturedOutput: AnalysisCapturedOutput | undefined =
+    output === undefined ? undefined : execFileFailureCapturedOutput(output);
+  const options = {
+    cause,
+    capturedOutput,
+    diagnostics: { catalog_path: entry.path },
+  };
+  if (code === "ETIMEDOUT")
+    return new AnalysisTimeoutError("inspect_asset_catalog", 60_000, options);
+  if (code === "ENOENT")
+    return new AnalysisCapabilityUnavailableError(
+      "artifact",
+      "inspect_asset_catalog",
+      "macOS assetutil is unavailable",
+      options,
+    );
+  if (code === "ERR_CHILD_PROCESS_STDIO_MAXBUFFER")
+    return new AnalysisResourceConstraintError(
+      "inspect_asset_catalog",
+      "transport",
+      "assetutil output exceeds the 64 MiB capture allowance",
+      { maximum_output_bytes: MAX_CATALOG_BYTES },
+      {
+        ...options,
+        ...fixedAllowanceOptions(
+          "the fixed 64 MiB assetutil capture allowance",
+          "capture",
+        ),
+      },
+    );
+  if (output !== undefined) {
+    // assetutil's explicit input rejection is distinct from unusable tool
+    // output. Match its complete diagnostic for this exact selected path;
+    // other text, interrupted runs and incomplete captures establish no cause.
+    const rejectsCatalog = [
+      `carutil: error:\n    ${entry.adapterKey} is not a valid AssetCatalog`,
+      `carutil: error:\n\t${entry.adapterKey} is not a valid AssetCatalog`,
+      `assetutil: file error error exiting: 'can't read from: '${entry.adapterKey}' Undefined error: 0' invalid file`,
+    ].some((rejection) => {
+      const offset = output.stderr.indexOf(rejection);
+      const end = offset + rejection.length;
+      return (
+        offset >= 0 &&
+        (offset === 0 || output.stderr[offset - 1] === "\n") &&
+        (end === output.stderr.length || output.stderr[end] === "\n")
       );
-    const code =
-      typeof cause === "object" && cause !== null && "code" in cause
-        ? cause.code
-        : undefined;
-    throw new ArtifactReaderFailure(
-      code === "ENOENT"
-        ? "unavailable"
-        : code === "ETIMEDOUT" || code === "ERR_CHILD_PROCESS_STDIO_MAXBUFFER"
-          ? "limit"
-          : "io",
-      `assetutil failed${code === undefined ? "" : ` (${String(code)})`}`,
-      { cause },
+    });
+    if (
+      output.code === 1 &&
+      output.signal === null &&
+      !output.killed &&
+      !output.outputTruncated &&
+      output.collectionFailure !== true &&
+      rejectsCatalog
+    )
+      return new ArtifactOperationError(
+        "inspect_asset_catalog",
+        "format",
+        undefined,
+        `assetutil rejected ${entry.path} as an invalid asset catalog`,
+        options,
+      );
+    return new AnalysisOutputError(
+      "inspect_asset_catalog",
+      `assetutil did not produce usable catalog metadata for ${entry.path}`,
+      options,
     );
   }
+  return cause;
 };
 
 const digestBounded = async (
@@ -303,8 +518,9 @@ const digestBounded = async (
       throw new ArtifactReaderFailure(
         "cancelled",
         "Asset catalog inspection cancelled",
+        { cause: signal.reason },
       );
-    const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+    const bytes = streamChunkToBuffer(chunk);
     length += bytes.length;
     if (length > MAX_CATALOG_BYTES)
       throw new ArtifactReaderFailure(

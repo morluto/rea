@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { resolveArtifactPathByContext } from "./JavaScriptArtifactPathResolution.js";
+import { JavaScriptJsonDocuments } from "./JavaScriptJsonDocuments.js";
 import type { JavaScriptArtifactFile } from "../../domain/javascript/javascriptArtifactFiles.js";
 const paths = [
   "renderer/index.html",
@@ -24,6 +25,7 @@ const files = new Map<string, JavaScriptArtifactFile>(
     },
   ]),
 );
+const jsonDocuments = new JavaScriptJsonDocuments();
 const resolve = (declaredPath: string, htmlBaseHref: string) =>
   resolveArtifactPathByContext({
     declaredPath,
@@ -31,6 +33,7 @@ const resolve = (declaredPath: string, htmlBaseHref: string) =>
     sourcePath: "renderer/index.html",
     context: "html-reference",
     files,
+    jsonDocuments,
   });
 const documentUrl = "https://artifact.test/renderer/index.html";
 describe("HTML base href URL components", () => {
@@ -105,6 +108,23 @@ describe("HTML base href dot segments", () => {
       });
     },
   );
+  it.each([
+    ["app.js/", "/assets/", "assets/app.js"],
+    ["app.js/.", "/assets/", "assets/app.js"],
+    ["?cache=1", "/assets/app.js/", "assets/app.js"],
+  ])(
+    "keeps directory-form HTML reference %s with base %s distinct from %s",
+    (declared, base, directory) => {
+      expect(resolve(declared, base)).toMatchObject({
+        declared_path: declared,
+        resolution_status: "not-found",
+        resolved_path: null,
+        limitations: [
+          `The HTML reference resolves to directory ${directory}, not an exact selected application file.`,
+        ],
+      });
+    },
+  );
 });
 describe("HTML base href empty segments", () => {
   it("lets the script reference remove an empty segment from the base", () => {
@@ -120,9 +140,7 @@ describe("HTML base href empty segments", () => {
   it("keeps an above-root base escape when the reference also climbs", () => {
     expect(resolve("../app.js", "../../")).toMatchObject({
       resolution_status: "rejected",
-      limitations: [
-        "The resolved candidate escapes the canonical artifact root.",
-      ],
+      limitations: [expect.stringMatching(/escapes.*artifact root/iu)],
     });
   });
 });
@@ -140,9 +158,7 @@ describe("HTML base href path syntax", () => {
   it("still confines a base href that escapes the artifact root", () => {
     expect(resolve("app.js", "/a/../../secret/")).toMatchObject({
       resolution_status: "rejected",
-      limitations: [
-        "The resolved candidate escapes the canonical artifact root.",
-      ],
+      limitations: [expect.stringMatching(/escapes.*artifact root/iu)],
     });
   });
   it("reports an external base href as external rather than malformed", () => {

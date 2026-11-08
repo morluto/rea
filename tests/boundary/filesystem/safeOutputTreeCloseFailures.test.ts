@@ -184,11 +184,12 @@ it.skipIf(process.platform === "win32").each([false, true])(
     const output = join(root, "published");
     const writer = new ZipWriter(new Uint8ArrayWriter());
     await writer.add("payload.txt", new TextReader("committed bytes"));
-    await writeFile(source, await writer.close());
+    const bytes = await writer.close();
+    await writeFile(source, bytes);
     const client = new ArtifactProvider(process.env).createClient({
       path: source,
       sourcePath: source,
-      sha256: "0".repeat(64),
+      sha256: createHash("sha256").update(bytes).digest("hex"),
       kind: "archive",
       format: "zip",
     });

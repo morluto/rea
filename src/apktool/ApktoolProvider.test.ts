@@ -14,6 +14,10 @@ import { join } from "node:path";
 import { describe, expect, onTestFinished, test, vi } from "vitest";
 
 import { ApktoolProvider } from "./ApktoolProvider.js";
+import {
+  LinuxOwnedProcessPrerequisiteError,
+  systemProcessOwnershipHost,
+} from "../process/ProcessOwnershipObservation.js";
 import { ApktoolWorkspace } from "./ApktoolWorkspace.js";
 import { ApktoolResourceAnalysisService } from "../application/apktool/ApktoolResourceAnalysisService.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
@@ -93,7 +97,6 @@ const refusedBy = async (
   request: ApktoolRequest,
 ): Promise<ReturnType<typeof projectAnalysisError>> => {
   const result = await provider.execute(request);
-  expect(result.ok).toBe(false);
   if (result.ok) throw new Error("expected a refusal");
   return projectAnalysisError(result.error);
 };
@@ -108,6 +111,7 @@ const decodeStub = (
     readonly manifestFile?: string;
     readonly stringsFile?: string;
     readonly stringsXml?: string;
+    readonly version?: string;
     readonly extraValuesDirectories?: readonly string[];
   } = {},
 ): ((root: string) => string) => {
@@ -133,7 +137,11 @@ const decodeStub = (
         `printf '%s\\n' '<resources><string name="wrong">Wrong</string></resources>' > "$5/res/values-${name}/strings.xml"`,
     )
     .join("\n  ");
-  return () => `if [ "$1" = "--version" ]; then ${VERSION_BLOCK}; exit 0; fi
+  const versionBlock =
+    options.version === undefined
+      ? VERSION_BLOCK
+      : `printf '%s\\n' '${options.version.replace(/'/gu, "'\\''")}'`;
+  return () => `if [ "$1" = "--version" ]; then ${versionBlock}; exit 0; fi
 if [ "$1" = "d" ]; then
   ${
     options.failDecode === true
@@ -199,6 +207,53 @@ it("returns table-only facts for a single selected primary table", async () => {
       ],
     },
   });
+});
+
+it("publishes Apktool 3 producer-escaped metadata through the shared evidence workflow", async () => {
+  const { command, root } = await writeApktoolStub((path) =>
+    decodeStub({
+      ymlFile: join(path, "producer.yml"),
+      version: "3.0.3",
+    })(path),
+  );
+  // A synthetic decoded workspace using the released 3.0.3 writer's format;
+  // this exercises the production provider, not a real Apktool decoder.
+  await writeFile(
+    join(root, "producer.yml"),
+    String.raw`version: 3.0.3
+versionInfo:
+  versionCode: 7
+  versionName: 1.0 #beta \\ \uD83D\uDE80 \\u0041
+sdkInfo:
+  minSdkVersion: 24
+  targetSdkVersion: 35
+`,
+  );
+  const apk = await apkFixture(root);
+  const original = await readFile(apk.path);
+  const provider = providerOver(command);
+  onTestFinished(() => provider.close());
+  const outcome = await new ApktoolResourceAnalysisService(provider).execute(
+    "decode_android_resources",
+    { path: apk.path },
+  );
+  if (!outcome.ok) throw outcome.error;
+  expect(outcome.value).toMatchObject({
+    parameters: { path: apk.path },
+    subject: { digest: { sha256: apk.sha256 } },
+    normalized_result: {
+      client: { apktool_version: "3.0.3" },
+      target: { path: apk.path, sha256: apk.sha256, bytes: apk.bytes },
+      metadata: {
+        version_name: String.raw`1.0 #beta \ 🚀 \u0041`,
+        version_code: "7",
+        min_sdk_version: "24",
+        target_sdk_version: "35",
+      },
+      coverage: "complete",
+    },
+  });
+  expect(Buffer.compare(await readFile(apk.path), original)).toBe(0);
 });
 
 it.each([
@@ -527,7 +582,6 @@ it("still refuses invalid UTF-8 bytes in decoded strings", async () => {
     operation: "decode_android_resources",
     input: { path: apk.path, include_strings: true },
   });
-  expect(result.ok).toBe(false);
   if (result.ok) throw new Error("expected a refusal");
   expect(projectAnalysisError(result.error)).toMatchObject({
     code: "unreadable_output",
@@ -730,8 +784,8 @@ it("uses an owned APK snapshot and framework cache and resolves regional locales
     format: "apk",
     digest: { sha256: apk.sha256 },
   });
-  expect(observation.value.limitations).not.toContain(
-    "Artifact identity is unavailable for this observation.",
+  expect(observation.value.limitations).not.toContainEqual(
+    expect.stringMatching(/artifact identity.*unavailable/iu),
   );
   expect(await readFile(apk.path, "utf8")).toBe("changed original");
   const result = apktoolResultSchemas.decode_android_resources.parse(
@@ -1658,3 +1712,36 @@ it.each([
     }
   },
 );
+
+it("reports the owned-process prerequisite as Apktool unavailability, not a probe failure", async () => {
+  const { command } = await writeApktoolStub(() => VERSION_BLOCK);
+  vi.spyOn(systemProcessOwnershipHost, "prepare").mockImplementation(
+    async () => {
+      throw new LinuxOwnedProcessPrerequisiteError(
+        new Error("spawn ps ENOENT"),
+      );
+    },
+  );
+  onTestFinished(() => {
+    vi.restoreAllMocks();
+  });
+
+  const availability = await providerOver(command).inspectAvailability();
+  expect(availability).toMatchObject({
+    status: "unavailable",
+    code: "runtime_unavailable",
+    reason: expect.stringContaining("spawn ps ENOENT") as unknown,
+    diagnostics: { stage: "ownership_preparation" },
+  });
+  expect(availability.reason).toContain("procps");
+
+  const projected = await refusedBy(providerOver(command), {
+    operation: "inspect_apktool_client",
+    input: {},
+  });
+  expect(projected).toMatchObject({ code: "capability_unavailable" });
+  expect(projected.details).toMatchObject({
+    provider_id: "process-ownership",
+    reason: expect.stringContaining("spawn ps ENOENT") as unknown,
+  });
+});

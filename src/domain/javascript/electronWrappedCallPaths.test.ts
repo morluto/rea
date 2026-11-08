@@ -1,6 +1,239 @@
 import { describe, expect, it } from "vitest";
 import { analyzeJavaScriptStaticSource } from "./javascriptStaticAnalysis.js";
 
+it("retains switch selection on a direct bridge exposure", () => {
+  const result = analyzeJavaScriptStaticSource(`
+    const { contextBridge, ipcRenderer } = require("electron");
+    switch (process.platform) {
+      case "win32":
+        contextBridge.exposeInMainWorld("api", { ping: () => ipcRenderer.invoke("ping") });
+    }
+  `);
+  expect(result.electron.call_paths?.[0]?.conditions).toEqual([
+    expect.objectContaining({
+      expression: '((process.platform) === ("win32"))',
+    }),
+  ]);
+});
+
+it("retains a conservative selection for stacked and fallthrough cases", () => {
+  const result = analyzeJavaScriptStaticSource(`
+    const { contextBridge, ipcRenderer } = require("electron");
+    switch (platform) {
+      case "first": work();
+      case "second":
+        contextBridge.exposeInMainWorld("api", { ping: () => ipcRenderer.invoke("ping") });
+    }
+  `);
+  expect(result.electron.call_paths?.[0]?.conditions).toEqual([
+    expect.objectContaining({
+      expression: '((platform) === ("first")) || ((platform) === ("second"))',
+    }),
+  ]);
+  expect(result.parse_status).toBe("partial");
+});
+
+it("includes the default selection when an earlier default can fall through", () => {
+  const result = analyzeJavaScriptStaticSource(`
+    const { contextBridge, ipcRenderer } = require("electron");
+    switch (platform) {
+      default: work();
+      case "second":
+        contextBridge.exposeInMainWorld("api", { ping: () => ipcRenderer.invoke("ping") });
+    }
+  `);
+  expect(result.electron.call_paths?.[0]?.conditions).toEqual([
+    expect.objectContaining({
+      expression: '((platform) === ("second")) || ((platform) !== ("second"))',
+    }),
+  ]);
+  expect(result.parse_status).toBe("partial");
+});
+
+it("retains switch conditions in a traced bridge wrapper", () => {
+  const result = analyzeJavaScriptStaticSource(`
+    const { contextBridge, ipcRenderer } = require("electron");
+    contextBridge.exposeInMainWorld("api", {
+      ping() { switch (process.platform) { case "win32": return ipcRenderer.invoke("ping"); } }
+    });
+  `);
+  expect(result.electron.call_paths?.[0]?.conditions).toEqual([
+    expect.objectContaining({
+      expression: '((process.platform) === ("win32"))',
+    }),
+  ]);
+});
+
+it.each(["direct", "wrapped"] as const)(
+  "retains the selected case near the end of a switch on a %s path",
+  (kind) => {
+    const exposure = `contextBridge.exposeInMainWorld("api", { ping: () => ipcRenderer.invoke("ping") });`;
+    const cases = Array.from(
+      { length: 8 },
+      (_, index) => `case ${index}:`,
+    ).join("\n");
+    const selected = `${cases}\ncase 8: ${kind === "direct" ? exposure : 'return ipcRenderer.invoke("ping");'}`;
+    const body =
+      kind === "direct"
+        ? `switch (platform) { ${selected} }`
+        : `contextBridge.exposeInMainWorld("api", { ping() { switch (platform) { ${selected} } } });`;
+    const result = analyzeJavaScriptStaticSource(`
+      const { contextBridge, ipcRenderer } = require("electron");
+      ${body}
+    `);
+    expect(
+      result.electron.call_paths?.[0]?.conditions[0]?.expression,
+    ).toContain("((platform) === (8))");
+  },
+);
+
+it("does not invent a selection predicate for dynamic case expressions", () => {
+  const result = analyzeJavaScriptStaticSource(`
+    const { contextBridge, ipcRenderer } = require("electron");
+    switch (platform) {
+      case mutatePlatform():
+        contextBridge.exposeInMainWorld("api", { ping: () => ipcRenderer.invoke("ping") });
+    }
+  `);
+  expect(result.electron.call_paths?.[0]?.conditions).toEqual([]);
+  expect(result.parse_status).toBe("partial");
+});
+
+it("retains the continuing predicate after a break to an enclosing label", () => {
+  const result = analyzeJavaScriptStaticSource(`const e=require("electron");
+    guard: {
+      if (!ready) break guard;
+      e.ipcMain.on("guarded", event => event.sender.copy());
+    }
+  `);
+  expect(
+    result.electron.call_paths?.map(({ conditions }) =>
+      conditions.map(({ expression }) => expression),
+    ),
+  ).toEqual([["!(!ready)"], ["!(!ready)"]]);
+});
+
+it("retains a labelled-break guard on preload bridge paths", () => {
+  const result = analyzeJavaScriptStaticSource(`
+    const { contextBridge, ipcRenderer } = require("electron");
+    const ready = process.env.APP_READY;
+    guard: {
+      if (!ready) break guard;
+      contextBridge.exposeInMainWorld("api", { ping: () => ipcRenderer.invoke("ping") });
+    }
+  `);
+  expect(
+    result.electron.call_paths?.map(({ conditions }) =>
+      conditions.map(({ expression }) => expression),
+    ),
+  ).toEqual([["!(!ready)"]]);
+});
+
+it("does not treat a break to an inner label as an exit from its outer block", () => {
+  const result = analyzeJavaScriptStaticSource(`const e=require("electron");
+    outer: {
+      inner: { if (stop) break inner; }
+      e.ipcMain.on("after", event => event.sender.copy());
+    }
+  `);
+  expect(result.electron.call_paths).toHaveLength(1);
+  expect(result.electron.call_paths?.[0]?.conditions).toEqual([]);
+});
+
+it("preserves every direct observation in a long flat sibling block", () => {
+  const channels = Array.from({ length: 256 }, (_, index) => `flat:${index}`);
+  const result = analyzeJavaScriptStaticSource(`const e=require("electron"); {
+    ${channels.map((channel) => `e.ipcRenderer.send("${channel}");`).join("\n")}
+  }`);
+  expect(result.electron.ipc.map(({ channel }) => channel)).toEqual(channels);
+  expect(result.electron.call_paths ?? []).toEqual([]);
+  expect(result.parse_status).toBe("complete");
+});
+
+it("keeps sibling guards, definite exits and nested shadowing separate", () => {
+  const result = analyzeJavaScriptStaticSource(`const e=require("electron"); {
+    if (stop) throw new Error("stop");
+    e.ipcMain.on("guarded", event => event.sender.copy());
+    {
+      const e = {ipcMain: {on() {}}};
+      e.ipcMain.on("shadowed", event => event.sender.copy());
+    }
+    if (true) throw new Error("end");
+    e.ipcMain.on("unreachable", event => event.sender.copy());
+  }`);
+  expect(
+    result.electron.call_paths?.map(
+      ({ entry, terminal, steps, conditions }) => ({
+        entry,
+        terminal,
+        terminalStart: steps.at(-1)?.location.start,
+        conditions: conditions.map(({ expression }) => expression),
+      }),
+    ),
+  ).toEqual([
+    {
+      entry: "guarded",
+      terminal: "electron.ipcMain.on",
+      terminalStart: { line: 3, column: 4 },
+      conditions: ["!(stop)"],
+    },
+    {
+      entry: "guarded",
+      terminal: "ipc-event.sender.copy",
+      terminalStart: { line: 3, column: 37 },
+      conditions: ["!(stop)"],
+    },
+  ]);
+  // Raw syntax after a definite exit remains an observation, not a reachable
+  // callback path. The shadowed ordinary object provides no Electron identity.
+  expect(result.electron.ipc.map(({ channel }) => channel)).toEqual([
+    "guarded",
+    "unreachable",
+  ]);
+});
+
+it("evaluates shared return syntax separately for each invocation environment", () => {
+  const result = analyzeJavaScriptStaticSource(`const e=require("electron");
+    function install(channel, enabled) {
+      if (!enabled) return;
+      e.ipcMain.on(channel, event => event.sender.copy());
+    }
+    install("enabled", true);
+    install("disabled", false);
+    install("uncertain", externalFlag);
+  `);
+  expect(
+    result.electron.call_paths?.map(
+      ({ entry, terminal, steps, conditions }) => ({
+        entry,
+        terminal,
+        invocationStart: steps[0]?.location.start,
+        conditions: conditions.map(({ expression }) => expression),
+      }),
+    ),
+  ).toEqual([
+    {
+      entry: "enabled",
+      terminal: "ipc-event.sender.copy",
+      invocationStart: { line: 6, column: 4 },
+      conditions: [],
+    },
+    {
+      entry: "uncertain",
+      terminal: "electron.ipcMain.on",
+      invocationStart: { line: 8, column: 4 },
+      conditions: ["!(!enabled)"],
+    },
+    {
+      entry: "uncertain",
+      terminal: "ipc-event.sender.copy",
+      invocationStart: { line: 8, column: 4 },
+      conditions: ["!(!enabled)"],
+    },
+  ]);
+  expect(result.parse_status).toBe("partial");
+});
+
 const bundle = (entry: string) => `(() => {
  const modules = {
   2(module) { module.exports = require("electron"); },
@@ -236,6 +469,138 @@ describe("wrapped contextBridge exposure methods", () => {
   });
 });
 
+describe("contextBridge helper invocations", () => {
+  const exposures = (source: string) => {
+    const result = analyzeJavaScriptStaticSource(`
+      const { contextBridge, ipcRenderer } = require("electron");
+      ${source}`);
+    return {
+      result,
+      apis: result.electron.context_bridge_apis.map(
+        ({
+          api_key,
+          api_key_expression,
+          world_id,
+          members,
+          unknown_members,
+        }) => ({
+          api_key,
+          api_key_expression,
+          world_id,
+          members,
+          unknown_members,
+        }),
+      ),
+    };
+  };
+  const literalKey = { api_key_expression: null, world_id: null };
+
+  it("binds a site-literal object to each invocation's key", () => {
+    const { apis } = exposures(`
+      function expose(key) { contextBridge.exposeInMainWorld(key, { ping() {} }); }
+      expose("one"); expose("two");`);
+    expect(apis).toEqual([
+      { api_key: "one", ...literalKey, members: ["ping"], unknown_members: 0 },
+      { api_key: "two", ...literalKey, members: ["ping"], unknown_members: 0 },
+    ]);
+  });
+
+  it("counts a repeated identical invocation once", () => {
+    const { apis } = exposures(`
+      function expose(key, api) { contextBridge.exposeInMainWorld(key, api); }
+      const api = { ping() {} };
+      expose("one", api); expose("one", api);`);
+    expect(apis).toEqual([
+      { api_key: "one", ...literalKey, members: ["ping"], unknown_members: 0 },
+    ]);
+  });
+
+  it("describes one key's alternative objects as one exposure", () => {
+    const { apis } = exposures(`
+      function expose(key, api) { contextBridge.exposeInMainWorld(key, api); }
+      expose("api", { a() {} });
+      expose("api", { ...globalThis.extra, b: { c() {} } });`);
+    expect(apis).toEqual([
+      {
+        api_key: "api",
+        ...literalKey,
+        members: ["a", "b", "b.c"],
+        unknown_members: 1,
+      },
+    ]);
+  });
+
+  it("keeps one key's differing world ids unknown", () => {
+    const { apis, result } = exposures(`
+      function expose(key, id, api) { contextBridge.exposeInIsolatedWorld(id, key, api); }
+      expose("api", 1, { a() {} }); expose("api", 2, { b() {} });`);
+    expect(apis).toEqual([
+      {
+        api_key: "api",
+        api_key_expression: null,
+        world_id: { status: "dynamic", value: null, expression: "id" },
+        members: ["a", "b"],
+        unknown_members: 0,
+      },
+    ]);
+    expect(result.parse_status).toBe("partial");
+  });
+
+  it("bounds nested member paths at the direct syntax depth", () => {
+    const deep = `{ a: { b: { c: { d: { e: { f: { g: { h: { i: {} } } } } } } } } }`;
+    const { apis } = exposures(`
+      function expose(key, api) { contextBridge.exposeInMainWorld(key, api); }
+      expose("helper", ${deep});
+      contextBridge.exposeInMainWorld("direct", ${deep});`);
+    const paths = ["a", "a.b", "a.b.c", "a.b.c.d", "a.b.c.d.e"];
+    const members = [
+      ...paths,
+      "a.b.c.d.e.f",
+      "a.b.c.d.e.f.g",
+      "a.b.c.d.e.f.g.h",
+    ];
+    expect(apis).toEqual([
+      { api_key: "helper", ...literalKey, members, unknown_members: 1 },
+      { api_key: "direct", ...literalKey, members, unknown_members: 1 },
+    ]);
+  });
+
+  it("keeps the site observation for a guarded invocation", () => {
+    const { apis } = exposures(`
+      function expose(key, api) { contextBridge.exposeInMainWorld(key, api); }
+      expose("one", { ping() {} });
+      if (globalThis.flag) expose("two", { pong() {} });`);
+    expect(apis).toEqual([
+      {
+        api_key: null,
+        api_key_expression: "key",
+        world_id: null,
+        members: [],
+        unknown_members: 1,
+      },
+      { api_key: "one", ...literalKey, members: ["ping"], unknown_members: 0 },
+    ]);
+  });
+
+  it("keeps a site-literal key singular beside a guarded invocation", () => {
+    const { apis } = exposures(`
+      function expose(api) { contextBridge.exposeInMainWorld("fixed", api); }
+      function relay(label, api) { expose(api); }
+      relay("label", { ping() {} });
+      if (globalThis.flag) relay("label", { pong() {} });`);
+    // The site's own scope leaves the API unknown; the guarded object is not
+    // recorded as an unconditional member.
+    expect(apis).toEqual([
+      {
+        api_key: "fixed",
+        ...literalKey,
+        members: ["ping"],
+        unknown_members: 1,
+      },
+    ]);
+  });
+});
+
 it("connects exposed closures to IPC sends and text clipboard calls", () => {
   const result = analyzeJavaScriptStaticSource(
     bundle(`
@@ -383,6 +748,407 @@ it("keeps a directly observed renderer operation singular when tracing its expos
   expect(result.electron.call_paths).toContainEqual(
     expect.objectContaining({ entry: "desktop.ping", channel: "ping" }),
   );
+});
+it("resolves a site-determined constant channel in place of its dynamic observation", () => {
+  const result = analyzeJavaScriptStaticSource(`
+    const {contextBridge,ipcRenderer}=require("electron");
+    const PING = "ping";
+    contextBridge.exposeInMainWorld("desktop",{ping:()=>ipcRenderer.send(PING)});
+  `);
+  expect(result.electron.ipc).toEqual([
+    expect.objectContaining({
+      side: "renderer",
+      operation: "send",
+      channel: "ping",
+      resolution_basis: "wrapper-substitution",
+    }),
+  ]);
+  expect(result.electron.call_paths).toContainEqual(
+    expect.objectContaining({ entry: "desktop.ping", channel: "ping" }),
+  );
+  // The syntax pass's unknown channel is resolved, not left as partial.
+  expect(result.parse_status).toBe("complete");
+});
+it("resolves a site-determined registration whose handler is a named local", () => {
+  const result = analyzeJavaScriptStaticSource(`
+    const {contextBridge,ipcRenderer}=require("electron");
+    const CH = "ch";
+    const handler = () => {};
+    contextBridge.exposeInMainWorld("desktop",{on:()=>ipcRenderer.on(CH, handler)});
+  `);
+  expect(result.electron.ipc).toEqual([
+    expect.objectContaining({
+      side: "renderer",
+      mode: "listen",
+      channel: "ch",
+      handler_kind: "inline-function",
+    }),
+  ]);
+  expect(result.parse_status).toBe("complete");
+});
+it("keeps an argument-supplied channel unresolved beside its resolved candidates", () => {
+  const result = analyzeJavaScriptStaticSource(`
+    const {contextBridge,ipcRenderer}=require("electron");
+    const forward = channel => ipcRenderer.send(channel);
+    contextBridge.exposeInMainWorld("desktop",{
+      a:()=>forward("a"),
+      b:()=>forward("b"),
+      any:name=>forward(name),
+    });
+  `);
+  const sends = result.electron.ipc.filter(
+    ({ side, operation }) => side === "renderer" && operation === "send",
+  );
+  expect(sends.map(({ channel }) => channel).sort()).toEqual(["a", "b", null]);
+  expect(
+    new Set(sends.map(({ location }) => JSON.stringify(location))).size,
+  ).toBe(1);
+});
+it.each([
+  [
+    "an exposed member",
+    `const forward = (channel, callback) => ipcRenderer.on(channel, callback);
+     contextBridge.exposeInMainWorld("desktop",{on:()=>forward("pong",()=>{})});`,
+  ],
+  [
+    "an enclosing local call",
+    `const forward = (channel, callback) => ipcRenderer.on(channel, callback);
+     const notify = kind => forward("pong", () => {});
+     notify("ready");`,
+  ],
+])(
+  "keeps one invocation of a wrapper call also reached through %s",
+  (_, entry) => {
+    const result = analyzeJavaScriptStaticSource(`
+      const {contextBridge,ipcRenderer}=require("electron");
+      ${entry}
+    `);
+    expect(
+      result.electron.ipc.filter(({ channel }) => channel === "pong"),
+    ).toHaveLength(1);
+  },
+);
+it("keeps distinct handlers that separate outer calls pass through one wrapper call", () => {
+  const result = analyzeJavaScriptStaticSource(`
+    const e = require("electron");
+    function register(channel, handler) { e.ipcMain.on(channel, handler); }
+    function setup(tag, handler) { register("same", handler); }
+    setup("first", () => 1);
+    setup("second", () => 2);
+  `);
+  const registrations = result.electron.ipc.filter(
+    ({ channel }) => channel === "same",
+  );
+  // The wrapper call traced alone has an unresolved handler; each outer call
+  // supplies its own concrete handler.
+  expect(registrations.map(({ handler_kind }) => handler_kind).sort()).toEqual([
+    "dynamic-expression",
+    "inline-function",
+    "inline-function",
+  ]);
+  expect(
+    new Set(
+      registrations.map(({ handler_location }) =>
+        JSON.stringify(handler_location),
+      ),
+    ).size,
+  ).toBe(3);
+});
+it("keeps the source registration when only its channel is site-determined", () => {
+  const result = analyzeJavaScriptStaticSource(`
+    const { ipcMain } = require("electron");
+    const CH = "ch";
+    function register(seed, handler) { ipcMain.on(CH, handler); }
+    register("seed", () => 1);
+  `);
+  expect(
+    result.electron.ipc.map(({ channel, handler_kind, resolution_basis }) => [
+      channel,
+      handler_kind,
+      resolution_basis ?? "direct",
+    ]),
+  ).toEqual([
+    [null, "identifier", "direct"],
+    ["ch", "inline-function", "wrapper-substitution"],
+  ]);
+});
+it.each([
+  [
+    "a closure over a wrapper parameter",
+    `function register(seed) {
+       const handler = () => ipcRenderer.send(seed);
+       ipcRenderer.on(CH, handler);
+     }`,
+  ],
+  [
+    "an arrow function reading its wrapper's arguments",
+    `function register(seed) {
+       const handler = () => arguments[0];
+       ipcRenderer.on(CH, handler);
+     }`,
+  ],
+  [
+    "an arrow function reading its wrapper's new.target",
+    `function register(seed) {
+       const handler = () => new.target;
+       ipcRenderer.on(CH, handler);
+     }`,
+  ],
+  [
+    "a closure returned from a factory of a wrapper parameter",
+    `const make = value => () => value;
+     function register(seed) {
+       const handler = make(seed);
+       ipcRenderer.on(CH, handler);
+     }`,
+  ],
+])("keeps distinct listeners when one handler node is %s", (_, wrapper) => {
+  const result = analyzeJavaScriptStaticSource(`
+      const { contextBridge, ipcRenderer } = require("electron");
+      const CH = "ch", A = "a", B = "b";
+      ${wrapper}
+      contextBridge.exposeInMainWorld("first", { on: () => register(A) });
+      contextBridge.exposeInMainWorld("second", { on: () => register(B) });
+    `);
+  // Each invocation installs its own closure; the direct source observation
+  // stays for callers this pass does not trace.
+  expect(
+    result.electron.ipc
+      .filter(({ mode }) => mode === "listen")
+      .map(({ channel, resolution_basis }) => [
+        channel,
+        resolution_basis ?? "direct",
+      ]),
+  ).toEqual([
+    [null, "direct"],
+    ["ch", "wrapper-substitution"],
+    ["ch", "wrapper-substitution"],
+  ]);
+  expect(
+    (result.electron.call_paths ?? [])
+      .filter(({ channel }) => channel === "ch")
+      .map(({ entry }) => entry)
+      .sort(),
+  ).toEqual(["first.on", "second.on"]);
+});
+it("resolves a bundle module's handler in place as one shared listener", () => {
+  const result = analyzeJavaScriptStaticSource(
+    bundle(`const CH = "ch";
+      const handler = () => electron.ipcRenderer.send("reply");
+      electron.contextBridge.exposeInMainWorld("api", {
+        on: () => electron.ipcRenderer.on(CH, handler),
+      });`),
+  );
+  expect(
+    result.electron.ipc
+      .filter(({ mode, module_key }) => mode === "listen" && module_key === "9")
+      .map(({ channel, resolution_basis }) => [
+        channel,
+        resolution_basis ?? "direct",
+      ]),
+  ).toEqual([["ch", "wrapper-substitution"]]);
+});
+it("resolves an arrow handler in place when its inherited this is module scope", () => {
+  const result = analyzeJavaScriptStaticSource(`
+    const { contextBridge, ipcRenderer } = require("electron");
+    const CH = "ch";
+    const register = () => {
+      const handler = () => this;
+      ipcRenderer.on(CH, handler);
+    };
+    contextBridge.exposeInMainWorld("api", { on: () => register() });
+  `);
+  expect(
+    result.electron.ipc
+      .filter(({ mode }) => mode === "listen")
+      .map(({ channel, resolution_basis }) => [
+        channel,
+        resolution_basis ?? "direct",
+      ]),
+  ).toEqual([["ch", "wrapper-substitution"]]);
+});
+it.each(["interface Shape { marker(): void }", "type Shape = typeof marker;"])(
+  "does not give a handler invocation identity through erased syntax: %s",
+  (declaration) => {
+    const result = analyzeJavaScriptStaticSource(`
+    const { contextBridge, ipcRenderer } = require("electron");
+    const CH = "ch";
+    function register(marker) {
+      const handler = () => { ${declaration} };
+      ipcRenderer.on(CH, handler);
+    }
+    contextBridge.exposeInMainWorld("api", { on: () => register("unused") });
+  `);
+    expect(
+      result.electron.ipc
+        .filter(({ mode }) => mode === "listen")
+        .map(({ channel, resolution_basis }) => [
+          channel,
+          resolution_basis ?? "direct",
+        ]),
+    ).toEqual([["ch", "wrapper-substitution"]]);
+    expect(result.parse_status).toBe("complete");
+  },
+);
+it("resolves a handler a module-level factory call created once in place", () => {
+  const result = analyzeJavaScriptStaticSource(`
+    const { ipcMain } = require("electron");
+    const CH = "ch";
+    const make = () => { const value = Math.random(); return () => value; };
+    const handler = make();
+    function register(seed) { ipcMain.on(CH, handler); }
+    register("x");
+  `);
+  expect(
+    result.electron.ipc.map(({ channel, resolution_basis }) => [
+      channel,
+      resolution_basis ?? "direct",
+    ]),
+  ).toEqual([["ch", "wrapper-substitution"]]);
+  expect(result.parse_status).toBe("complete");
+});
+it("keeps separate outer calls that pass one shared handler through a wrapper", () => {
+  const result = analyzeJavaScriptStaticSource(`
+    const { ipcMain } = require("electron");
+    const copy = () => {};
+    function register(ch, handler) { ipcMain.on(ch, handler); }
+    function setup(tag) { register("same", copy); }
+    setup("first");
+    setup("second");
+  `);
+  const registrations = result.electron.ipc.filter(
+    ({ channel }) => channel === "same",
+  );
+  // The shorter entry traced the same wrapper call alone; both outer calls
+  // supersede it as distinct invocations.
+  expect(registrations).toHaveLength(2);
+  expect(
+    new Set(
+      registrations.map(({ invocation_location }) =>
+        JSON.stringify(invocation_location),
+      ),
+    ).size,
+  ).toBe(2);
+});
+it("keeps a parameterless factory's closure as a per-invocation handler", () => {
+  const result = analyzeJavaScriptStaticSource(`
+    const { contextBridge, ipcRenderer } = require("electron");
+    const CH = "ch";
+    const make = () => { const value = Math.random(); return () => value; };
+    function register() {
+      const handler = make();
+      ipcRenderer.on(CH, handler);
+    }
+    contextBridge.exposeInMainWorld("api", { on: () => register() });
+  `);
+  expect(
+    result.electron.ipc
+      .filter(({ mode }) => mode === "listen")
+      .map(({ resolution_basis }) => resolution_basis ?? "direct"),
+  ).toEqual(["direct", "wrapper-substitution"]);
+});
+it("resolves a module-level handler in place when the entry binds an unused parameter", () => {
+  const result = analyzeJavaScriptStaticSource(`
+    const { contextBridge, ipcRenderer } = require("electron");
+    const CH = "ch";
+    const handler = () => {};
+    contextBridge.exposeInMainWorld("api", {
+      on: unused => ipcRenderer.on(CH, handler),
+    });
+  `);
+  expect(result.electron.ipc).toEqual([
+    expect.objectContaining({
+      mode: "listen",
+      channel: "ch",
+      resolution_basis: "wrapper-substitution",
+    }),
+  ]);
+  expect(result.parse_status).toBe("complete");
+});
+it.each([
+  ["a named local", 'const handler = () => tag; register("same", handler);'],
+  ["an inline argument", 'register("same", () => tag);'],
+  [
+    "a nested helper",
+    'const inner = () => register("same", () => tag); inner();',
+  ],
+])("keeps closures that separate outer calls create through %s", (_, body) => {
+  const result = analyzeJavaScriptStaticSource(`
+      const { ipcMain } = require("electron");
+      function register(ch, handler) { ipcMain.on(ch, handler); }
+      function setup(tag) { ${body} }
+      setup("first");
+      setup("second");
+    `);
+  const invocations = result.electron.ipc
+    .filter(
+      ({ channel, resolution_basis }) =>
+        channel === "same" && resolution_basis === "wrapper-substitution",
+    )
+    .map(({ invocation_location }) => JSON.stringify(invocation_location));
+  // Both outer calls stay, beside the shorter entry that traced the same
+  // wrapper call without either caller's value.
+  expect(new Set(invocations).size).toBe(3);
+});
+it("counts one exposed renderer listener callsite once and retains its bridge path", () => {
+  const result = analyzeJavaScriptStaticSource(`
+    const {contextBridge,ipcRenderer}=require("electron");
+    contextBridge.exposeInMainWorld("desktop", {
+      onPong: callback => ipcRenderer.on("pong", callback),
+    });
+  `);
+  expect(
+    result.electron.ipc.filter(
+      ({ side, mode, channel }) =>
+        side === "renderer" && mode === "listen" && channel === "pong",
+    ),
+  ).toHaveLength(1);
+  expect(result.electron.call_paths).toContainEqual(
+    expect.objectContaining({
+      entry: "desktop.onPong",
+      channel: "pong",
+      terminal: "electron.ipcRenderer.on",
+    }),
+  );
+});
+it("keeps separate bridge callers while counting their shared listener callsite once", () => {
+  const result = analyzeJavaScriptStaticSource(`
+    const {contextBridge,ipcRenderer}=require("electron");
+    const subscribe = callback => ipcRenderer.once("pong", callback);
+    contextBridge.exposeInMainWorld("desktop", {
+      onPong: subscribe,
+      onPongAgain: subscribe,
+    });
+  `);
+  const listeners = result.electron.ipc.filter(
+    ({ side, mode, channel }) =>
+      side === "renderer" && mode === "listen" && channel === "pong",
+  );
+  expect(listeners).toHaveLength(1);
+  expect(listeners[0]?.operation).toBe("once");
+  expect(
+    result.electron.call_paths
+      ?.filter(({ channel }) => channel === "pong")
+      .map(({ entry }) => entry),
+  ).toEqual(["desktop.onPong", "desktop.onPongAgain"]);
+});
+it("keeps distinct exposed renderer listener callsites distinct", () => {
+  const result = analyzeJavaScriptStaticSource(`
+    const {contextBridge,ipcRenderer}=require("electron");
+    contextBridge.exposeInMainWorld("desktop", {
+      onPong: callback => ipcRenderer.on("pong", callback),
+      onPongAgain: callback => ipcRenderer.on("pong", callback),
+    });
+  `);
+  expect(
+    result.electron.ipc.filter(
+      ({ side, mode, channel }) =>
+        side === "renderer" && mode === "listen" && channel === "pong",
+    ),
+  ).toHaveLength(2);
+  expect(
+    result.electron.call_paths?.filter(({ channel }) => channel === "pong"),
+  ).toHaveLength(2);
 });
 it("does not identify overwritten Electron namespaces or shadowed require", () => {
   for (const source of [

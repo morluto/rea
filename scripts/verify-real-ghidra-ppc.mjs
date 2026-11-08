@@ -18,7 +18,7 @@ import {
 } from "../tests/conformance/ghidra/ppc-checks.mjs";
 import { parseEvidence } from "../dist/domain/evidence.js";
 import { parseAnalysisSnapshot } from "../dist/domain/analysisSnapshot.js";
-import { functionDossierSchema } from "../dist/domain/hopperValues.js";
+import { functionDossierSchema } from "../dist/domain/native/functionDossier.js";
 import { inspectVerifierGhidraInstallation } from "./lib/ghidra-installation-inspection.mjs";
 import { buildPowerPcFixture } from "../tests/conformance/ghidra/ppc-fixture.mjs";
 import { requireMcpOperationResult } from "./lib/mcp-verifier-results.mjs";
@@ -110,6 +110,39 @@ try {
       // the plain loader would have chosen e500 for this header.
       const image = await call("inspect_native_load_image");
       assertPowerPcLoadedImage(image.observations, fixture.sha256);
+      const names = await call("list_names");
+      const bitsName = names.find((item) => item.value === "rea_ppc_bits");
+      assert.ok(bitsName, "Big-endian bit-field fixture is missing");
+      const bitsBytes = await call("read_bytes", {
+        address: bitsName.address,
+        length: 4,
+      });
+      assert.equal(bitsBytes.bytes_hex, "22000000");
+      const bits = await call("inspect_native_data_type", {
+        address: bitsName.address,
+      });
+      assert.equal(bits.kind, "struct");
+      const bitFields = bits.fields.filter((field) => field.bit_field);
+      assert.deepEqual(
+        bitFields.map((field) => [
+          field.name,
+          field.bit_size,
+          field.bit_offset,
+        ]),
+        [
+          ["first", 3, 5],
+          ["second", 5, 0],
+        ],
+      );
+      for (const field of bitFields) {
+        assert.equal(field.bit_field.component_type_lookup, "not-found");
+        assert.equal(field.bit_field.base_type_lookup, "equivalent");
+        assert.equal(field.bit_field.declared_bit_size, field.bit_size);
+        const base = await call("inspect_native_data_type", {
+          type: field.bit_field.base_type_id,
+        });
+        assert.equal(base.status, "available");
+      }
       const procedures = await call("list_procedures");
       const entry = procedures.find((p) => p.value === "rea_ppc_entry");
       const leaf = procedures.find((p) => p.value === "rea_ppc_leaf");
@@ -161,7 +194,10 @@ try {
       });
       assert.ok(assembly.trim().length > 0);
       const dossier = functionDossierSchema.parse(
-        await call("analyze_function", { procedure: entry.address }),
+        await call("analyze_function", {
+          procedure: entry.address,
+          detail: "complete",
+        }),
       );
       assert.ok(dossier.pseudocode.trim().length > 0);
       const mapping = await call("address_to_file_offset", {
@@ -242,6 +278,7 @@ try {
           "fixed instruction bytes and immediate",
           "conditional branch destination",
           "global word and marker bytes",
+          "big-endian bit-field storage and base type handoff",
           "CLI/MCP and snapshot identity",
         ],
         procedures: procedures.length,

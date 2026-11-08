@@ -1,3 +1,4 @@
+import { rustBinarySchema } from "../../../src/domain/rust/rustBinary.js";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect } from "vitest";
@@ -43,7 +44,10 @@ mcpTest(
       const evidence = toolContract("inspect_rust_binary").outputSchema.parse(
         response.structuredContent,
       );
-      expect(evidence.normalized_result.auditable_metadata?.packages).toEqual([
+      expect(
+        rustBinarySchema.parse(evidence.normalized_result).auditable_metadata
+          ?.packages,
+      ).toEqual([
         expect.objectContaining({ name: "itoa", version: "1.0.18" }),
         expect.objectContaining({
           name: "sample",
@@ -64,7 +68,10 @@ mcpTest(
       const absentEvidence = toolContract(
         "inspect_rust_binary",
       ).outputSchema.parse(absent.structuredContent);
-      expect(absentEvidence.normalized_result.auditable_metadata).toBeNull();
+      expect(
+        rustBinarySchema.parse(absentEvidence.normalized_result)
+          .auditable_metadata,
+      ).toBeNull();
     } finally {
       await session.close();
     }
@@ -106,6 +113,13 @@ mcpTest(
       expect(response.isError).toBe(true);
       expect(parseMcpToolError(response).error).toMatchObject({
         code: "resource_constraint",
+        category: "resource_constraint",
+        retryable: false,
+        remediation: {
+          action: expect.stringMatching(
+            /rustc commit.path inventory.*fixed count/iu,
+          ),
+        },
         details: {
           operation: "inspect_rust_binary",
           resource: "capacity",

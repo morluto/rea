@@ -11,40 +11,57 @@ import {
   type OwnedProcessGroup,
 } from "../../../src/process/ProcessOwnership.js";
 
-cliTest.skipIf(!["darwin", "linux"].includes(process.platform)).for([
-  ["SIGINT", 130],
-  ["SIGTERM", 143],
-] as const)(
-  "doctor preserves %s after logging and joined prerequisite cleanup",
-  async ([signal, expected], { processes }) => {
+cliTest.skipIf(!["darwin", "linux"].includes(process.platform)).for(
+  (["jadx", "kuna"] as const).flatMap((provider) =>
+    (
+      [
+        ["SIGINT", 130],
+        ["SIGTERM", 143],
+      ] as const
+    ).map(([signal, expected]) => ({
+      provider,
+      signal,
+      expected,
+    })),
+  ),
+)(
+  "doctor preserves $signal for $provider after logging and joined prerequisite cleanup",
+  async ({ provider, signal, expected }, { processes }) => {
     const root = await createTestTempDirectory("rea-doctor-cancel-");
     const jdk = join(root, "jdk");
     const jar = join(root, "engine.jar");
     const ready = join(root, "ready.json");
+    const release = join(root, "release");
     await mkdir(join(jdk, "bin"), { recursive: true });
     await mkdir(join(root, "home"));
     await writeJadxJarInventory(jar);
-    // No JVM/engine runs. Announce only the selected JADX module-listing probe;
-    // informational Ghidra checks can call the same configured executable first.
+    // No real provider runs. Announce only the selected prerequisite probe;
+    // informational Ghidra checks can call the same configured Java first.
+    const executable =
+      provider === "kuna" ? join(root, "kuna") : join(jdk, "bin", "java");
+    const probeArgument = provider === "kuna" ? "--version" : "--list-modules";
     await writeFile(
-      join(jdk, "bin", "java"),
+      executable,
       `#!${process.execPath}
-if (!process.argv.slice(2).includes("--list-modules")) process.exit(7);
+if (!process.argv.slice(2).includes(${JSON.stringify(probeArgument)})) process.exit(7);
 require("node:fs").writeFileSync(${JSON.stringify(ready)}, JSON.stringify({pid: process.pid, runId: process.env.REA_PROCESS_RUN_ID}));
 process.on("SIGTERM", () => {});
+setInterval(() => { if (require("node:fs").existsSync(${JSON.stringify(release)})) process.exit(0); }, 25).unref();
 setTimeout(() => process.exit(99), 20000);
 `,
       { mode: 0o700 },
     );
     const child = processes.spawn(
       process.execPath,
-      [resolve("scripts/rea.mjs"), "doctor", "--provider", "jadx", "--json"],
+      [resolve("scripts/rea.mjs"), "doctor", "--provider", provider, "--json"],
       {
         env: {
           PATH: process.env.PATH,
           HOME: join(root, "home"),
-          JAVA_HOME: jdk,
-          REA_JADX_MCP_JAR: jar,
+          JAVA_HOME: provider === "jadx" ? jdk : join(root, "missing-jdk"),
+          ...(provider === "jadx"
+            ? { REA_JADX_MCP_JAR: jar }
+            : { REA_KUNA_COMMAND: executable }),
           GHIDRA_INSTALL_DIR: join(root, "missing-ghidra"),
           REA_LOG_LEVEL: "silent",
         },
@@ -77,30 +94,54 @@ setTimeout(() => process.exit(99), 20000);
           { timeout: 10_000 },
         )
         .toBe(true);
-      const observed = z
-        .strictObject({
-          pid: z.number().int().positive(),
-          runId: z.string().uuid(),
-        })
-        .parse(JSON.parse(await readFile(ready, "utf8")));
-      ownership = {
-        leaderPid: observed.pid,
-        processGroupId: observed.pid,
-        runId: observed.runId,
-      };
+      const readyRecord: unknown = JSON.parse(await readFile(ready, "utf8"));
+      // JADX publishes a UUID. Kuna publishes an opaque
+      // `rea-kuna-version-<uuid>` token. Both are required: JSON.stringify
+      // drops an undefined REA_PROCESS_RUN_ID, and that omission must fail.
+      const observed =
+        provider === "jadx"
+          ? z
+              .strictObject({
+                pid: z.number().int().positive(),
+                runId: z.string().uuid(),
+              })
+              .parse(readyRecord)
+          : z
+              .strictObject({
+                pid: z.number().int().positive(),
+                runId: z.string().min(1),
+              })
+              .parse(readyRecord);
+      if (provider === "jadx") {
+        ownership = {
+          leaderPid: observed.pid,
+          processGroupId: observed.pid,
+          runId: observed.runId,
+        };
+      }
       child.kill(signal);
       await expect
         .poll(() => child.exitCode, { timeout: 10_000 })
         .not.toBeNull();
       const result = await closed;
       expect(JSON.parse(stdout)).toMatchObject({ code: "cancelled" });
-      const groups = await observeOwnedProcessGroups(ownership.runId, [
-        ownership.processGroupId,
-      ]);
-      expect(groups.get(ownership.processGroupId)).toEqual({ state: "empty" });
+      if (ownership !== undefined) {
+        const groups = await observeOwnedProcessGroups(ownership.runId, [
+          ownership.processGroupId,
+        ]);
+        expect(groups.get(ownership.processGroupId)).toEqual({
+          state: "empty",
+        });
+      } else {
+        // Do not invent a group owner from the probe PID.
+        expect(() => process.kill(observed.pid, 0)).toThrowError(
+          expect.objectContaining({ code: "ESRCH" }),
+        );
+      }
       expect(result, stderr).toEqual({ code: expected, signal: null });
     } finally {
       try {
+        await writeFile(release, "release");
         if (ownership !== undefined)
           expect((await cleanupOwnedProcessGroup(ownership)).cleaned).toBe(
             true,

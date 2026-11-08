@@ -186,7 +186,7 @@ export const projectElectronActiveCapture = (
       "IPC payloads are represented by value shapes; payload values are never retained.",
       ...(observations.observedEventFamilies.includes("ipc-observation-gap")
         ? [
-            "IPC observation gaps have unobserved callback arguments and execution. Available ipc-observation-gap timeline records identify the custom-apply or listener-chain boundary and registered channel; dropped gap records are counted by retention. Listener-chain gaps describe registration uncertainty, not proof of IPC delivery.",
+            "IPC observation gaps have unobserved callback arguments and execution. Available ipc-observation-gap timeline records identify the callable, registration or removal boundary and channel where known; dropped gap records are counted by retention. Registration gaps do not prove IPC delivery, and removal gaps do not confirm which registration was removed.",
           ]
         : []),
       "IPC direction and sender/receiver identifiers are observed only where Electron exposes them at the hooked boundary.",
@@ -205,7 +205,7 @@ export const projectElectronActiveCapture = (
       "Process metrics are an Electron API snapshot and do not prove hostile-local-user isolation.",
       ...(hookSnapshot.dropped > 0
         ? [
-            `The active hook retained ${hookSnapshot.retained} of ${hookSnapshot.observed} observed events within a ${hookSnapshot.retention_budget_bytes}-byte retained-data budget; ${hookSnapshot.dropped} events were dropped (${hookSnapshot.dropped_ipc} IPC, ${hookSnapshot.dropped_runtime} runtime).`,
+            `The active hook retained ${hookSnapshot.retained} of ${hookSnapshot.observed} observed events within a ${hookSnapshot.retention_budget_bytes}-byte (${String(hookSnapshot.retention_budget_bytes / (1024 * 1024))} MiB) retained-data budget; ${hookSnapshot.dropped} events were dropped (${hookSnapshot.dropped_ipc} IPC, ${hookSnapshot.dropped_runtime} runtime). This release has no runtime override.`,
           ]
         : []),
       "External shell opens, external navigation, permission grants, downloads, popup windows, updater relaunches, and OS integration are blocked and recorded by the active hook; other application filesystem and network behavior is not sandboxed by this provider.",

@@ -79,8 +79,7 @@ export const validateExceptionRegionRanges = (
   const boundaries = new Set([...instructionOffsets, ilSize]);
   for (const region of parsed.regions) {
     const issue = clauseIssue(region, ilSize, boundaries);
-    if (issue !== null)
-      return { status: "malformed", regions: parsed.regions, issue };
+    if (issue !== null) return { ...parsed, status: "malformed", issue };
   }
   return parsed;
 };

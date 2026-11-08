@@ -55,7 +55,6 @@ it("preserves the exact native UI admission cancellation reason", async () => {
     signal: controller.signal,
     invoke,
   });
-  expect(result.ok).toBe(false);
   if (result.ok) throw new Error("Expected cancellation");
   expect(result.error._tag).toBe("AnalysisCancelledError");
   expect(result.error.cause).toBe(reason);
@@ -70,7 +69,6 @@ it("uses the command owner's cancellation fact without guessing from ambient sig
       throw new ExecFileOutputCancelledError(reason);
     },
   });
-  expect(result.ok).toBe(false);
   if (result.ok) throw new Error("Expected command cancellation");
   expect(result.error._tag).toBe("AnalysisCancelledError");
   expect(result.error.cause).toBe(reason);
@@ -86,7 +84,6 @@ it("preserves malformed helper output when a later abort is already visible", as
       return { ok: true, result: {} };
     },
   });
-  expect(result.ok).toBe(false);
   if (result.ok) throw new Error("Expected invalid output");
   expect(result.error._tag).toBe("ProviderAdapterError");
   expect(result.error.cause).toMatchObject({ name: "ZodError" });
@@ -113,7 +110,6 @@ it("retains native UI facts and caller reason when cancellation arrives during f
   const result = await client.execute("observe_native_ui", input, {
     signal: controller.signal,
   });
-  expect(result.ok).toBe(false);
   if (result.ok) throw new Error("Expected finalization cancellation");
   expect(result.error._tag).toBe("AnalysisCancelledError");
   expect(result.error.cause).toBe(reason);
@@ -144,14 +140,12 @@ it("resolves every native UI cleanup error only after its exact runtime releases
     factory.mockRestore();
   });
   const observed = await client.execute("observe_native_ui", input);
-  expect(observed.ok).toBe(false);
   if (observed.ok) throw new Error("Expected cleanup failure");
   expect(observed.error.cleanupIncomplete).toBe(true);
   expect(observed.error.partialObservation).toMatchObject({
     initial: snapshot,
   });
   const blocked = await client.execute("observe_native_ui", input);
-  expect(blocked.ok).toBe(false);
   if (blocked.ok) throw new Error("Expected retained admission blocker");
   expect(runtime.invoke).toHaveBeenCalledTimes(1);
   const retry = await client.close();
@@ -230,7 +224,6 @@ it("preserves a physical helper failure and all cleanup facts across a late abor
   const result = await client.execute("observe_native_ui", input, {
     signal: controller.signal,
   });
-  expect(result.ok).toBe(false);
   if (result.ok) throw new Error("Expected helper and cleanup failures");
   expect(result.error.cleanupIncomplete).toBe(true);
   expect(result.error.cleanupPrimary?._tag).toBe("ProviderAdapterError");
@@ -265,12 +258,11 @@ it.each([false, true])(
       factory.mockRestore();
     });
     const result = await client.execute("observe_native_ui", input);
-    expect(result.ok).toBe(false);
-    if (result.ok) throw new Error("Expected owned deadline cancellation");
+    if (result.ok) throw new Error("Expected owned deadline timeout");
     const primary = resolvedAnalysisError(
       result.error.cleanupPrimary ?? result.error,
     );
-    expect(primary._tag).toBe("AnalysisCancelledError");
+    expect(primary._tag).toBe("AnalysisTimeoutError");
     expect(primary.cause).toBe(reason);
     expect(result.error.partialObservation).toMatchObject({
       initial: snapshot,
@@ -311,7 +303,6 @@ it.each(["physical", "cancelled"] as const)(
         },
       },
     );
-    expect(result.ok).toBe(false);
     if (result.ok) throw new Error("Expected typed scenario failure");
     expect(result.error._tag).toBe(
       outcome === "cancelled"

@@ -8,6 +8,35 @@ import { managedTokenScopesMatch } from "./managedInspectionEvidence.js";
 
 type ManagedCoverageState = "complete" | "partial" | "unavailable";
 
+/** Why a call site did not become a `calls` edge. */
+export type OmittedCallReason =
+  | "member-ref"
+  | "method-spec"
+  | "unknown-target"
+  | "method-reference"
+  | "absent-node"
+  | "self-call";
+
+/** Why a field-access site did not become an `accesses` edge. */
+export type OmittedFieldAccessReason = "member-ref" | "absent-node";
+
+/** Member-Evidence sites the projection counted but did not turn into edges. */
+export interface ManagedRelationOmissions {
+  readonly callSites: Readonly<Record<OmittedCallReason, number>>;
+  readonly fieldAccessSites: Readonly<Record<OmittedFieldAccessReason, number>>;
+}
+
+/** Total sites counted but not projected. */
+export const omittedRelationSites = (
+  omissions: ManagedRelationOmissions | null,
+): number =>
+  omissions === null
+    ? 0
+    : [
+        ...Object.values(omissions.callSites),
+        ...Object.values(omissions.fieldAccessSites),
+      ].reduce((total, count) => total + count, 0);
+
 /** Source observations used to derive managed graph coverage. */
 export interface ManagedGraphCoverageSources {
   readonly artifact: ManagedArtifactInspection | null;
@@ -21,12 +50,21 @@ export interface ManagedGraphProjectionOmissions {
   readonly unscopedTokenRelationships: boolean;
   /** Declaring types the member Evidence selected; null when it inspected every type. */
   readonly selectedTypes: readonly string[] | null;
+  /** Undefined when all MethodDef rows were examined or member Evidence is absent. */
+  readonly methodRows: ManagedMemberInspection["method_rows"] | undefined;
+  /** Counted call and field-access sites without edges; null without member Evidence. */
+  readonly relations: ManagedRelationOmissions | null;
 }
 
-const omitsAny = (omissions: ManagedGraphProjectionOmissions): boolean =>
+/** Omissions whose size is unknown, unlike counted relation sites. */
+const omitsUncounted = (omissions: ManagedGraphProjectionOmissions): boolean =>
   omissions.partialInput ||
   omissions.unscopedTokenRelationships ||
-  omissions.selectedTypes !== null;
+  omissions.selectedTypes !== null ||
+  omissions.methodRows !== undefined;
+
+const omitsAny = (omissions: ManagedGraphProjectionOmissions): boolean =>
+  omitsUncounted(omissions) || omittedRelationSites(omissions.relations) > 0;
 
 const completeCoverage = (): ApplicationGraphEvidence["coverage"] => ({
   status: "complete",
@@ -51,7 +89,9 @@ export const managedSourceCoverage = (
 /** Determine whether any supplied managed inspection was partial. */
 export const assessManagedGraphOmissions = (
   sources: ManagedGraphCoverageSources,
+  relations: ManagedRelationOmissions | null,
 ): ManagedGraphProjectionOmissions => ({
+  relations,
   unscopedTokenRelationships:
     sources.members !== null &&
     sources.boundaries !== null &&
@@ -69,6 +109,13 @@ export const assessManagedGraphOmissions = (
     sources.artifact?.coverage.state,
   ].some((state) => state !== undefined && state !== "complete"),
   selectedTypes: sources.members?.selection?.type_names ?? null,
+  methodRows:
+    sources.members === null ||
+    (sources.members.method_rows !== null &&
+      sources.members.method_rows.offset === 0 &&
+      sources.members.method_rows.count === sources.members.method_rows.total)
+      ? undefined
+      : sources.members.method_rows,
 });
 
 /** Derive graph coverage solely from the coverage of supplied source evidence. */
@@ -79,7 +126,9 @@ export const managedGraphEvidenceCoverage = (
     ? {
         status: "partial",
         truncated: false,
-        omitted_count: null,
+        omitted_count: omitsUncounted(omissions)
+          ? null
+          : omittedRelationSites(omissions.relations),
         limits: [],
       }
     : completeCoverage();

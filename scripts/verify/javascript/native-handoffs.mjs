@@ -16,11 +16,13 @@ import {
   OwnedCommandFailure,
   runOwnedCommand,
 } from "../../../dist/process/OwnedCommand.js";
-import { closeVerifierResources } from "../../lib/verifier-cleanup.mjs";
-import {
-  matchesStructuredScopeExpectation,
-  structuredScopeExpectationsSchema,
-} from "../../lib/javascript-file-scope-oracle.mjs";
+import { withVerifierCleanup } from "../../lib/verifier-cleanup.mjs";
+import { importVerifierSource } from "../../lib/verifier-source-loader.mjs";
+
+const { matchesStructuredScopeExpectation, structuredScopeExpectationsSchema } =
+  await importVerifierSource(
+    new URL("../../lib/javascript-file-scope-oracle.mts", import.meta.url).href,
+  );
 
 const { values } = parseArgs({
   options: {
@@ -122,7 +124,6 @@ const simulatedNativeEvidence = (path, sha256) =>
     },
   );
 let temporary;
-let primaryError;
 let retainTemporary = false;
 let report;
 const ownedCommand = async (command, arguments_, timeoutMs = 60_000) => {
@@ -145,7 +146,7 @@ const ownedCommand = async (command, arguments_, timeoutMs = 60_000) => {
     throw cause;
   }
 };
-try {
+await withVerifierCleanup(async () => {
   const archiveSha256 = await fileDigest(values.artifact);
   const companion = join(`${values.artifact}.unpacked`, values["addon-path"]);
   let companionSha256 = null;
@@ -460,23 +461,15 @@ print(json.dumps(dict(tokenizer='cl100k_base',tiktoken_version=tiktoken.__versio
     assert.ok(safeIdentity, "Native identity/linkage oracle failed");
     assert.ok(safeApplicability, "File analysis applicability oracle failed");
   }
-} catch (cause) {
-  primaryError = cause;
-  throw cause;
-} finally {
-  await closeVerifierResources(
-    [
-      () => client.close(),
-      () => transport.close(),
-      async () => {
-        if (retainTemporary)
-          throw new Error(
-            `Command cleanup incomplete; retaining owned inputs at ${temporary?.path}.`,
-          );
-        await temporary?.close();
-      },
-    ],
-    primaryError,
-  );
-}
+}, [
+  () => client.close(),
+  () => transport.close(),
+  async () => {
+    if (retainTemporary)
+      throw new Error(
+        `Command cleanup incomplete; retaining owned inputs at ${temporary?.path}.`,
+      );
+    await temporary?.close();
+  },
+]);
 console.log(serialize(report));

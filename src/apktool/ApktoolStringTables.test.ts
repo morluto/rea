@@ -46,7 +46,7 @@ it("charges table-only output without reserving a duplicate primary copy", async
   expect(outcome.value.coverage).toBe("complete");
 });
 
-describe("physical Apktool string facts", () => {
+describe("Apktool locale alias table selection", () => {
   it.each([false, true])(
     "reads one physical table for two caller-selected aliases (table-only: %s)",
     async (tablesOnly) => {
@@ -79,6 +79,42 @@ describe("physical Apktool string facts", () => {
     },
   );
 
+  it.each([
+    ["es-419", "b+es+419"],
+    ["en-001", "b+en+001"],
+    ["ar-015", "b+ar+015"],
+  ])(
+    "reads the three-digit region %s from the b+ table Apktool writes",
+    async (locale, table) => {
+      const paths: string[] = [];
+      const outcome = await projectApktoolStringTables(
+        {
+          async readText(path) {
+            paths.push(path);
+            return textRead(xml(1));
+          },
+        },
+        "decoded",
+        { include_strings: true, locale, locales: [table] },
+      );
+      if (!outcome.ok) throw outcome.error.cause;
+      const result = outcome.value;
+      expect(paths).toEqual([
+        join("decoded", "res", `values-${table}`, "strings.xml"),
+      ]);
+      expect(result.tables.map((entry) => entry.locale)).toEqual([
+        locale,
+        table,
+      ]);
+      expect(result.tables.map((entry) => entry.status)).toEqual([
+        "present",
+        "present",
+      ]);
+    },
+  );
+});
+
+describe("physical Apktool string facts", () => {
   it("counts complete source entries beyond the retained table prefix", async () => {
     const outcome = await projectApktoolStringTables(
       {

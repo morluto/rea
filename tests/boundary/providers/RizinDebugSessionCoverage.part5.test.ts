@@ -27,11 +27,15 @@ process.stdin.on("data", (chunk) => {
     });
     const result = await manager.execute(sessionId, "many");
     expect(result.ok).toBe(true);
-    if (result.ok)
+    if (result.ok) {
       expect(result.value.result).toMatchObject({
         output_truncated: true,
         completion_status: "unknown",
       });
+      const limitations = result.value.evidence.limitations.join("\n");
+      expect(limitations).toContain("4096 frame command limit");
+      expect(limitations).not.toContain("16777216");
+    }
   },
 );
 

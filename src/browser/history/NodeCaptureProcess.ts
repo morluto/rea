@@ -62,7 +62,8 @@ const main = async (): Promise<void> => {
     text = JSON.stringify({
       ok: false,
       reason: "limit",
-      message: "Capture reply exceeds the complete-evidence output budget.",
+      message:
+        "Capture reply exceeds the complete-evidence output budget. This release has no runtime override.",
       pointer: "",
     });
   await writeFile(request.reply_path, text, { flag: "wx", mode: 0o600 });

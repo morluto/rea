@@ -1,19 +1,23 @@
 import { AnalysisCleanupLease } from "../artifacts/AnalysisCleanupLease.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
 import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
-import { firmwareFailure } from "./FirmwareFailures.js";
+import {
+  firmwareFailure,
+  firmwarePhaseInterruption,
+} from "./FirmwareFailures.js";
 import { createHash } from "node:crypto";
 import { join } from "node:path";
 import type { z } from "zod";
 import { SafeOutputTree } from "../artifacts/SafeOutputTree.js";
+import { outputDirectoryAdmissionRefusal } from "../artifacts/SafeOutputTreeAdmission.js";
 import { SafeOutputTreeCreationFailure } from "../artifacts/SafeOutputTreeCreationFailure.js";
-import {
-  AnalysisOutputError,
-  AnalysisCancelledError,
-} from "../domain/analysisErrorCore.js";
+import { AnalysisOutputError } from "../domain/analysisErrorCore.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { jsonValueSchema } from "../domain/jsonValue.js";
-import { firmwareResultSchemas } from "../domain/firmware/firmwareAnalysis.js";
+import {
+  firmwareResultSchemas,
+  MAX_FIRMWARE_EXTRACTION_DEPTH,
+} from "../domain/firmware/firmwareAnalysis.js";
 import type { FirmwareFileAccess, FirmwareEntry } from "./FirmwareFiles.js";
 import type { normalizeUnblobReport } from "./FirmwareReports.js";
 import type { extractionGap } from "../domain/firmware/firmwareAnalysis.js";
@@ -26,12 +30,13 @@ const GAP_CONTINUATIONS: Record<ExtractionGap["kind"], string> = {
     "REA installs nothing. Add the named dependency to your own environment and rerun extract_firmware on the same immutable input with a fresh output_directory to re-evaluate the affected region; otherwise it stays unextracted.",
   "unknown-chunk-handler":
     "If Binwalk is configured with REA_BINWALK_COMMAND, run inspect_firmware_regions on the same input for signature hypotheses. Without configured Binwalk that inspection is unavailable. Alternatively, select a materially narrower range with extract_firmware and a fresh output_directory; the region is not decoded content.",
+  "unclassified-range":
+    "The producer reported no chunk covering these bytes. Their format and extraction status remain unknown. If Binwalk is configured, inspect_firmware_regions can supply signature hypotheses; otherwise retain this range as unexamined.",
   "encrypted-chunk":
     "No static extraction continues past encryption; treat the region as unexamined rather than empty or corrupt.",
   "extractor-failure":
     "The producer retained this chunk's extraction problem in diagnostics. Review the reported failure, then rerun extract_firmware on the same immutable input with a fresh output_directory; the region is not decoded content.",
-  "depth-limited":
-    "Rerun extract_firmware with a higher max_depth (up to 10) and a fresh output_directory to descend into this path.",
+  "depth-limited": `Rerun extract_firmware with a higher max_depth (up to ${MAX_FIRMWARE_EXTRACTION_DEPTH}) and a fresh output_directory to descend into this path.`,
   "unpublished-entry":
     "The entry is retained as metadata; only regular files are published, without executable permission bits.",
 };
@@ -40,15 +45,13 @@ const UNNAMED_DEPENDENCY_CONTINUATION =
   "The producer reported a missing extractor dependency without naming it; its identity is unavailable in this evidence. No specific installation or rerun can be prescribed from this report. Retain the gap as unextracted unless additional provider evidence establishes the dependency. REA installs nothing.";
 
 import { FIRMWARE_LIMITS } from "./FirmwareRelease.js";
-
-/** The depth ceiling cannot be raised past the input schema maximum. */
-const MAX_EXTRACTION_DEPTH = 10;
+import type { FirmwareDeadline } from "./FirmwareDeadline.js";
 
 const depthContinuation = (
   maxDepth: number,
   publishedChildPaths: readonly string[],
 ): string =>
-  maxDepth < MAX_EXTRACTION_DEPTH
+  maxDepth < MAX_FIRMWARE_EXTRACTION_DEPTH
     ? GAP_CONTINUATIONS["depth-limited"]
     : publishedChildPaths.length > 0
       ? `This extraction already ran at the lane's maximum depth. To continue, rerun extract_firmware with path set to any eligible published child below this path and a fresh output directory; each child listed here restarts the depth budget: ${publishedChildPaths.map((path) => JSON.stringify(path)).join(", ")}.`
@@ -89,7 +92,8 @@ const gapSortKey = (gap: ExtractionGap): string =>
 export const publishFirmwareExtraction = async (context: {
   files: FirmwareFileAccess;
   workspacePath: string;
-  deadline: AbortSignal;
+  deadline: FirmwareDeadline;
+  analysisTimeoutMs: number;
   outputDirectory: string;
   entries: readonly FirmwareEntry[];
   normalized: ReturnType<typeof normalizeUnblobReport>;
@@ -108,12 +112,20 @@ export const publishFirmwareExtraction = async (context: {
   let result:
     | z.infer<typeof firmwareResultSchemas.extract_firmware>
     | undefined;
+  const files: z.infer<typeof firmwareResultSchemas.extract_firmware>["files"] =
+    [];
+  let totalFiles = 0;
+  const progress = () => ({
+    output_directory: context.outputDirectory,
+    verified_files: files.length,
+    total_files: totalFiles,
+  });
   try {
-    const materialized = new Set(
-      context.entries
-        .filter((entry) => entry.kind === "file")
-        .map((entry) => `$output/${entry.relativePath}`),
-    );
+    const materialized = new Set<string>();
+    for (const entry of context.entries)
+      if (entry.kind === "file")
+        materialized.add(`$output/${entry.relativePath}`);
+    totalFiles = materialized.size;
     for (const path of context.normalized.files.keys()) {
       if (path !== "$input" && !materialized.has(path))
         throw new AnalysisOutputError(
@@ -121,7 +133,6 @@ export const publishFirmwareExtraction = async (context: {
           `Reported regular file is absent from materialized output: ${path}`,
         );
     }
-    const files = [];
     const unpublished = [];
     tree = await SafeOutputTree.create(context.outputDirectory);
     for (const entry of context.entries) {
@@ -130,6 +141,9 @@ export const publishFirmwareExtraction = async (context: {
           relative_path: entry.relativePath,
           kind: entry.kind,
           link_target: entry.linkTarget,
+          ...(entry.linkTargetHex === undefined
+            ? {}
+            : { link_target_hex: entry.linkTargetHex }),
         });
         continue;
       }
@@ -147,10 +161,15 @@ export const publishFirmwareExtraction = async (context: {
           "extract_firmware",
           `Extracted bytes disagree with provider report: ${entry.relativePath}`,
         );
-      await context.files.publish(entry, sha256, tree, context.signal);
+      const written = await context.files.publish(
+        entry,
+        sha256,
+        tree,
+        context.signal,
+      );
       files.push({
         relative_path: entry.relativePath,
-        path: join(tree.outputRoot, entry.relativePath),
+        path: join(tree.outputRoot, written.relativePath),
         size: entry.size,
         sha256,
         reported_sha256: reported?.sha256 ?? null,
@@ -161,6 +180,7 @@ export const publishFirmwareExtraction = async (context: {
       });
     }
     result = firmwareResultSchemas.extract_firmware.parse({
+      analysis_timeout_ms: context.analysisTimeoutMs,
       engine: context.engine,
       selection: context.selection,
       output_directory: tree.outputRoot,
@@ -168,7 +188,12 @@ export const publishFirmwareExtraction = async (context: {
         unpublished.length > 0 ? "partial" : context.normalized.coverage,
       files,
       unpublished_entries: unpublished,
-      chunks: context.normalized.chunks,
+      chunks: context.normalized.chunks.map(
+        ({ extraction_failure_kinds, ...chunk }) => ({
+          ...chunk,
+          extraction_failed: extraction_failure_kinds.length > 0,
+        }),
+      ),
       derivations: context.normalized.derivations,
       depth_limited_paths: context.normalized.depth_limited_paths,
       diagnostics: context.normalized.diagnostics,
@@ -180,10 +205,13 @@ export const publishFirmwareExtraction = async (context: {
       ),
       published_bytes: files.reduce((sum, file) => sum + file.size, 0),
     });
-    if (context.signal.aborted)
-      throw new AnalysisCancelledError("extract_firmware", {
-        cause: context.signal.reason,
-      });
+    const interruption = firmwarePhaseInterruption(
+      "extract_firmware",
+      context.signal,
+      context.deadline,
+      progress(),
+    );
+    if (interruption !== undefined) throw interruption;
     await tree.commit(context.signal);
     return result;
   } catch (cause: unknown) {
@@ -196,11 +224,18 @@ export const publishFirmwareExtraction = async (context: {
             await ownedTree.rollback();
           });
     const primary = firmwareFailure(
-      cause,
-      "unblob",
-      "extract_firmware",
-      context.deadline,
-      treeLease,
+      outputDirectoryAdmissionRefusal(
+        "extract_firmware",
+        "output_directory",
+        cause,
+      ),
+      {
+        engine: "unblob",
+        operation: "extract_firmware",
+        deadline: context.deadline,
+        treeCleanupLease: treeLease,
+        publication: progress(),
+      },
     );
     try {
       await treeLease?.release();
@@ -377,18 +412,11 @@ const extractionGaps = (
           ? nestedContinuationId(chunk.input_path)
           : continuation(GAP_CONTINUATIONS[kind]),
     }));
-  // Chunks whose failure a dependency row already covers stay out of the
-  // generic extractor-failure emission.
-  const dependencyChunkKeys = new Set(
-    normalized.chunk_missing_dependencies.map(({ input_path, provider_id }) =>
-      JSON.stringify([input_path, provider_id]),
-    ),
-  );
   // A depth ceiling can only be re-rooted through a published child that a
   // fresh firmware input could actually accept; the index is only needed
   // when a depth row will actually consult it.
   const ceilingReached =
-    maxDepth >= MAX_EXTRACTION_DEPTH &&
+    maxDepth >= MAX_FIRMWARE_EXTRACTION_DEPTH &&
     normalized.depth_limited_paths.length > 0;
   const reRootablePaths = new Map<string, Set<string>>();
   if (ceilingReached)
@@ -423,6 +451,14 @@ const extractionGaps = (
   };
   const gaps: ExtractionGap[] = [
     ...dependencyGaps,
+    ...normalized.unclassified_ranges.map((unclassified): ExtractionGap => ({
+      ...emptyGap,
+      ...unclassified,
+      kind: "unclassified-range",
+      continuation_id: unclassified.input_path.startsWith("$output/")
+        ? nestedContinuationId(unclassified.input_path)
+        : continuation(GAP_CONTINUATIONS["unclassified-range"]),
+    })),
     ...normalized.failed_extraction_stages
       .filter(({ kind }) => kind === "extractor-failure")
       .map(({ input_path, provider_id, handler }): ExtractionGap => ({
@@ -438,17 +474,8 @@ const extractionGaps = (
       })),
     ...chunkGaps("unknown-chunk-handler", (chunk) => chunk.handler === null),
     ...chunkGaps("encrypted-chunk", (chunk) => chunk.encrypted === true),
-    ...chunkGaps(
-      "extractor-failure",
-      (chunk) =>
-        chunk.extraction_failed === true &&
-        chunk.handler !== null &&
-        chunk.encrypted !== true &&
-        // The chunk's own dependency row already carries its recovery; a
-        // task-wide dependency names no region and replaces nothing.
-        !dependencyChunkKeys.has(
-          JSON.stringify([chunk.input_path, chunk.provider_id]),
-        ),
+    ...chunkGaps("extractor-failure", (chunk) =>
+      chunk.extraction_failure_kinds.includes("extractor-failure"),
     ),
     ...normalized.depth_limited_paths.map((input_path): ExtractionGap => ({
       kind: "depth-limited",

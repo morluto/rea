@@ -4,6 +4,7 @@ import {
   findMappedNonFunction,
 } from "./lib/ida-feature-trace.mjs";
 import { requireMcpToolError } from "./lib/mcp-verifier-results.mjs";
+import { withVerifierResourceOwner } from "./lib/verifier-file-resources.mjs";
 
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
@@ -30,7 +31,7 @@ const { values } = parseArgs({
 });
 if (values.target === undefined || process.env.REA_IDA_MCP_CONFIG === undefined)
   throw new Error(
-    "IDA verification requires --target and REA_IDA_MCP_CONFIG; see docs/ida-provider.md. No toolchain is installed by this lane.",
+    "IDA verification requires --target and REA_IDA_MCP_CONFIG; see docs/providers/ida-provider.md. No toolchain is installed by this lane.",
   );
 if (
   (values["second-procedure"] === undefined) !==
@@ -53,27 +54,32 @@ const [
   { toolContract },
   { evidenceSchema },
   { functionDossierSchema },
-  { readIdaConfiguration },
+  { readIdaConfiguration, idaCompatibilityProfile },
   { createIdaMcpConnection },
   { idaAddressSchema },
 ] = await Promise.all([
   importBuilt("contracts/toolContracts.js"),
   importBuilt("domain/evidence.js"),
-  importBuilt("domain/hopperValues.js"),
+  importBuilt("domain/native/functionDossier.js"),
   importBuilt("ida/IdaConfiguration.js"),
   importBuilt("ida/IdaMcpConnection.js"),
   importBuilt("ida/IdaProtocolValues.js"),
 ]);
-const registration = readIdaConfiguration(process.env.REA_IDA_MCP_CONFIG);
-if (!registration.ok) throw registration.error;
-const config = registration.value;
+const config = await withVerifierResourceOwner(async (resourceScope) => {
+  const registration = await readIdaConfiguration(
+    process.env.REA_IDA_MCP_CONFIG,
+    { resourceScope },
+  );
+  if (!registration.ok) throw registration.error;
+  return registration.value;
+});
 if (
   config.protocol === "native" &&
   (values["second-procedure"] === undefined ||
     values["second-marker"] === undefined)
 )
   throw new Error(
-    "Native IDA verification requires --second-procedure and --second-marker to verify distinct-function switching; see docs/ida-provider.md.",
+    "Native IDA verification requires --second-procedure and --second-marker to verify distinct-function switching; see docs/providers/ida-provider.md.",
   );
 const environment = Object.fromEntries(
   Object.entries({
@@ -85,8 +91,7 @@ const environment = Object.fromEntries(
 const report = {
   passed: false,
   mode: config.mode,
-  protocol:
-    config.protocol ?? (config.mode === "attached" ? "legacy" : "modern"),
+  protocol: idaCompatibilityProfile(config).protocol,
   checks: [],
   observations: [],
   unverified: [],
@@ -181,6 +186,7 @@ const mcp = async (cliDossier) => {
     opened = true;
     const analyzed = await call("analyze_function", {
       procedure: values.procedure,
+      detail: "complete",
     });
     const dossier = functionDossierSchema.parse(observe(analyzed));
     assert.deepEqual(dossier.procedure, cliDossier.procedure);

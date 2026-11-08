@@ -1,6 +1,6 @@
 import type { EvidenceProvider } from "../../domain/evidence.js";
 import type {
-  ObjdumpInput,
+  ObjdumpSelection,
   RizinInput,
 } from "../../domain/reverseEngineering.js";
 
@@ -9,11 +9,13 @@ export interface ReverseEngineeringProviderCommand {
   readonly executable: string;
   readonly arguments: readonly string[];
   readonly identity: EvidenceProvider;
+  /** What the provider cannot attest about the arguments it built. */
+  readonly limitations?: readonly string[];
   readonly environmentOverrides?: Readonly<NodeJS.ProcessEnv>;
 }
 
 /** Provider-specific command construction stays outside the application layer. */
 export interface ReverseEngineeringCommandPort {
-  objdump(input: ObjdumpInput): ReverseEngineeringProviderCommand;
+  objdump(input: ObjdumpSelection): ReverseEngineeringProviderCommand;
   rizin(input: RizinInput): ReverseEngineeringProviderCommand;
 }

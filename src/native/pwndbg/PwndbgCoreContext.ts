@@ -2,6 +2,7 @@ import {
   bindArtifactFileCleanup,
   artifactFileCancellationCause,
 } from "../../artifacts/ArtifactFileOperation.js";
+import { safeParseUtf8Json } from "../../domain/safeJson.js";
 import { access, mkdir, stat, writeFile } from "node:fs/promises";
 import { constants } from "node:fs";
 import { randomUUID } from "node:crypto";
@@ -20,10 +21,15 @@ import {
   recordedCrashDebuggerSchema,
   type RecordedCrash,
 } from "../../domain/native/recordedCrash.js";
-import { readStableArtifact } from "../../artifacts/readStableArtifact.js";
+import {
+  completedStableArtifact,
+  readStableArtifact,
+} from "../../artifacts/readStableArtifact.js";
 import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
 import type { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
+import { analysisErrorWithCleanupFailure } from "../../domain/analysisErrorCleanup.js";
+import { ProviderCleanupError } from "../../domain/providerCleanupError.js";
 import {
   capturedPwntoolsOutput,
   pwntoolsDecoderFailure,
@@ -48,6 +54,12 @@ const replySchema = z.discriminatedUnion("ok", [
   }),
 ]);
 
+/** Completed debugger observations stay separate from their reply descriptor's close. */
+export interface PwndbgCoreInspection {
+  readonly context: Extract<RecordedCrash["debugger"], { status: "available" }>;
+  readonly finalization: AnalysisError | undefined;
+}
+
 /** Add mapping candidates from an owned core-only debugger, using the existing snapshot. */
 export const inspectPwndbgCore = async ({
   environment,
@@ -57,6 +69,7 @@ export const inspectPwndbgCore = async ({
   diagnostics,
   options,
   runCommand,
+  timeoutMs,
   probePath,
 }: {
   readonly environment: Readonly<NodeJS.ProcessEnv>;
@@ -66,12 +79,14 @@ export const inspectPwndbgCore = async ({
   readonly diagnostics: AnalysisCapturedOutput;
   readonly options: ExecutionOptions | undefined;
   readonly runCommand: PwntoolsCommand;
+  /** Effective `pwntools_timeout_ms` for this debugger command. */
+  readonly timeoutMs: number;
   readonly probePath?: (
     path: string,
     kind: "file" | "directory",
     mode: number,
   ) => Promise<void>;
-}): Promise<RecordedCrash["debugger"]> => {
+}): Promise<PwndbgCoreInspection> => {
   const gdb = environment.REA_PWNDBG_GDB ?? "/usr/bin/gdb";
   const entry = environment.REA_PWNDBG_GDBINIT ?? "";
   const venv = environment.REA_PWNDBG_VENV_PATH ?? "";
@@ -142,6 +157,7 @@ export const inspectPwndbgCore = async ({
     operation: OPERATION,
     providerId: "pwndbg-core",
     precedingOutput: diagnostics,
+    timeoutMs,
   };
   const failure = (cause: unknown) =>
     pwntoolsDecoderFailure(
@@ -185,15 +201,33 @@ export const inspectPwndbgCore = async ({
     );
     output = capturedPwntoolsOutput(execution);
     let reply: z.output<typeof replySchema>;
+    let finalization: AnalysisError | undefined;
     try {
-      const raw = await readStableArtifact(
-        replyPath,
-        PWNTOOLS_LIMITS.outputBytes,
-        options?.signal,
-        undefined,
-        resources,
-      );
-      reply = replySchema.parse(JSON.parse(raw.bytes.toString("utf8")));
+      let raw;
+      try {
+        raw = await readStableArtifact(
+          replyPath,
+          PWNTOOLS_LIMITS.outputBytes,
+          options?.signal,
+          undefined,
+          resources,
+        );
+      } catch (cause: unknown) {
+        const completed = completedStableArtifact(cause);
+        if (
+          !(cause instanceof ArtifactReaderFailure) ||
+          completed === undefined
+        )
+          throw cause;
+        finalization = completedReplyFailure(
+          cause,
+          recordedCrashStageOutput(diagnostics, output),
+        );
+        raw = completed;
+      }
+      const decoded = safeParseUtf8Json(raw.bytes);
+      if (!decoded.ok) throw decoded.cause;
+      reply = replySchema.parse(decoded.value);
     } catch (cause: unknown) {
       if (
         cause instanceof ArtifactReaderFailure &&
@@ -208,7 +242,7 @@ export const inspectPwndbgCore = async ({
             : {}),
         });
         bindArtifactFileCleanup(cause, error);
-        throw error;
+        throw pwndbgContextFinalizationFailure(error, finalization);
       }
       const error = new AnalysisOutputError(
         OPERATION,
@@ -222,38 +256,52 @@ export const inspectPwndbgCore = async ({
         },
       );
       bindArtifactFileCleanup(cause, error);
-      throw error;
+      throw pwndbgContextFinalizationFailure(error, finalization);
     }
     if (!reply.ok) {
       if (reply.reason === "unavailable" || reply.reason === "unsupported")
-        throw new AnalysisCapabilityUnavailableError(
-          "pwndbg-core",
-          OPERATION,
-          reply.message,
-          {
-            userMessage: reply.message,
-            capturedOutput: recordedCrashStageOutput(diagnostics, output),
-          },
+        throw pwndbgContextFinalizationFailure(
+          new AnalysisCapabilityUnavailableError(
+            "pwndbg-core",
+            OPERATION,
+            reply.message,
+            {
+              userMessage: reply.message,
+              capturedOutput: recordedCrashStageOutput(diagnostics, output),
+            },
+          ),
+          finalization,
         );
       if (reply.reason === "format" || reply.reason === "output-limit")
-        throw new AnalysisOutputError(OPERATION, reply.message, {
-          capturedOutput: recordedCrashStageOutput(diagnostics, output),
-        });
-      throw new ProviderAdapterError("pwndbg-core", OPERATION, {
-        diagnostics: {
-          stage: "debugger",
-          reason: reply.message,
-          captured_output: { ...recordedCrashStageOutput(diagnostics, output) },
-        },
-      });
+        throw pwndbgContextFinalizationFailure(
+          new AnalysisOutputError(OPERATION, reply.message, {
+            capturedOutput: recordedCrashStageOutput(diagnostics, output),
+          }),
+          finalization,
+        );
+      throw pwndbgContextFinalizationFailure(
+        new ProviderAdapterError("pwndbg-core", OPERATION, {
+          diagnostics: {
+            stage: "debugger",
+            reason: reply.message,
+            captured_output: {
+              ...recordedCrashStageOutput(diagnostics, output),
+            },
+          },
+        }),
+        finalization,
+      );
     }
     if (reply.value.status !== "available")
-      throw new AnalysisOutputError(
-        OPERATION,
-        "Requested debugger context returned no core evidence.",
-        { capturedOutput: recordedCrashStageOutput(diagnostics, output) },
+      throw pwndbgContextFinalizationFailure(
+        new AnalysisOutputError(
+          OPERATION,
+          "Requested debugger context returned no core evidence.",
+          { capturedOutput: recordedCrashStageOutput(diagnostics, output) },
+        ),
+        finalization,
       );
-    return { ...reply.value, diagnostics: output };
+    return { context: { ...reply.value, diagnostics: output }, finalization };
   } catch (cause: unknown) {
     if (cause instanceof AnalysisError && cause.cleanupIncomplete) throw cause;
     const primary = pwntoolsDecoderFailure(
@@ -267,6 +315,51 @@ export const inspectPwndbgCore = async ({
     throw primary;
   }
 };
+
+const completedReplyFailure = (
+  cause: ArtifactReaderFailure,
+  capturedOutput: AnalysisCapturedOutput,
+): AnalysisError => {
+  const cancellation =
+    cause.reason === "cancelled"
+      ? new AnalysisCancelledError(OPERATION, {
+          cause: artifactFileCancellationCause(cause),
+          capturedOutput,
+        })
+      : undefined;
+  if (cause.cleanup === undefined) {
+    if (cancellation !== undefined) return cancellation;
+    return new AnalysisOutputError(OPERATION, cause.message, {
+      cause,
+      capturedOutput,
+    });
+  }
+  const cleanup = new ProviderCleanupError(
+    "pwndbg-core",
+    cause.cleanup.resources,
+    { stage: "debugger_reply_descriptor_close", reason: cause.cleanup.reason },
+    { operation: OPERATION, cause, capturedOutput },
+  );
+  bindArtifactFileCleanup(cause, cleanup);
+  return cancellation === undefined
+    ? cleanup
+    : pwndbgContextFinalizationFailure(cancellation, cleanup);
+};
+
+/** A rejected/malformed context stays primary over its descriptor finalization. */
+export const pwndbgContextFinalizationFailure = (
+  primary: AnalysisError,
+  finalization: AnalysisError | undefined,
+): AnalysisError =>
+  finalization === undefined
+    ? primary
+    : finalization.cleanupIncomplete
+      ? analysisErrorWithCleanupFailure(
+          primary,
+          finalization,
+          OPERATION,
+        ).bindCleanupDependencies([primary, finalization])
+      : primary.retainSecondaryFailure(finalization);
 
 /** Preserve both stages' exact text and their independently observed truncation state. */
 export const recordedCrashStageOutput = (

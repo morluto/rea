@@ -77,7 +77,8 @@ it("retains exported constant evidence through a type-only satisfies expression"
 
 it("resolves erased wrappers through the composed application graph", async () => {
   const source = `
-    const dependency = require("./dependency.ts")["value" as const] satisfies number;
+    import * as dependencyModule from "./dependency.ts";
+    const dependency = dependencyModule["value" as const] satisfies number;
     export { dependency };
     function render<T>() { return "ready"; }
     export const specialized = render<string> satisfies () => string;
@@ -124,6 +125,41 @@ it("resolves erased wrappers through the composed application graph", async () =
   );
   expect(parseJavaScriptSource(source, "app.mts")?.errors).toEqual([]);
 });
+
+it.each([
+  {
+    name: "earlier",
+    source: 'export const target = () => "ready", result = target();',
+    resolved: true,
+  },
+  {
+    name: "later",
+    source: 'export const result = target(), target = () => "ready";',
+    resolved: false,
+  },
+])(
+  "orders $name exported declarator reads in the composed application graph",
+  async ({ source, resolved }) => {
+    const analysis = await analyzeFiles(new Map([["app.mts", source]]));
+    const calls = analysis.semantic_graph.relations.filter(
+      ({ relation }) => relation === "calls",
+    );
+    if (resolved) {
+      expect(calls).toEqual([
+        expect.objectContaining({ resolution: "resolved" }),
+      ]);
+    } else {
+      expect(calls.some(({ resolution }) => resolution === "resolved")).toBe(
+        false,
+      );
+      expect(analysis.semantic_graph.unknowns).toContainEqual(
+        expect.objectContaining({
+          relation_kinds: expect.arrayContaining(["calls"]),
+        }),
+      );
+    }
+  },
+);
 
 it.each([
   {

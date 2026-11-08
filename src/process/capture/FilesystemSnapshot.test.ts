@@ -16,6 +16,7 @@ import { join } from "node:path";
 import { expect, it } from "vitest";
 
 import { hashFile } from "./FilesystemSnapshot.js";
+import { ProcessCaptureReadFailure } from "./ProcessCaptureRead.js";
 
 const countOpenDescriptorsFor = async (path: string): Promise<number> => {
   const directory = process.platform === "linux" ? "/proc/self/fd" : "/dev/fd";
@@ -170,7 +171,18 @@ it.skipIf(process.platform === "win32")(
       });
       controller.abort(reason);
 
-      await expect(hashing).rejects.toBe(reason);
+      let failure: unknown;
+      try {
+        await hashing;
+      } catch (cause: unknown) {
+        failure = cause;
+      }
+      expect(failure).toBeInstanceOf(ProcessCaptureReadFailure);
+      expect(failure).toMatchObject({
+        cause: reason,
+        userCategory: "cancelled",
+        outcome: { kind: "failed" },
+      });
       expect(await countOpenDescriptorsFor(path)).toBe(0);
     } finally {
       await rm(directory, { recursive: true, force: true });

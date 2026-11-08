@@ -8,6 +8,7 @@ import type {
 } from "./javascriptSemanticIr.js";
 import { compareUnicodeCodePoints } from "../unicodeCodePointOrder.js";
 import {
+  javaScriptExpressionWrapperTarget,
   readExactJavaScriptLiteral,
   semanticStaticPropertyKey,
   semanticStaticPropertyName,
@@ -21,7 +22,10 @@ import {
   type JavaScriptSemanticAnalysisState,
   type JavaScriptSemanticBindingState,
 } from "./javascriptSemanticState.js";
-import { semanticBindingAtRead } from "./javascriptSemanticMutationInitializers.js";
+import {
+  semanticBindingAtRead,
+  semanticEffectTiming,
+} from "./javascriptSemanticMutationInitializers.js";
 import {
   builtinDataEffectMethod as builtinMethod,
   dataEffectArgumentBindingId as argumentBindingId,
@@ -34,6 +38,7 @@ import {
   traverseDataEffects as traverseWithContext,
   type DataEffectTraversalContext as TraversalContext,
 } from "./javascriptSemanticDataEffectHelpers.js";
+import { isUnmodifiedGlobalReference } from "./javascriptSemanticAmbientWrites.js";
 import { range } from "./javascriptStaticAnalysisHelpers.js";
 import { semanticPrimitiveSet } from "./javascriptSemanticPrimitives.js";
 import type { JavaScriptSemanticValue } from "./javascriptSemanticValueTypes.js";
@@ -119,11 +124,16 @@ const configurationDetails = (
   }
   if (!t.isCallExpression(node) && !t.isOptionalCallExpression(node))
     return null;
-  const fileMethod = builtinMethod(node.callee, context.state, [
-    "fs",
-    "node:fs",
-  ]);
-  return fileMethod === "readFile" || fileMethod === "readFileSync"
+  const fsMethod = builtinMethod(node.callee, context.state, ["fs", "node:fs"]);
+  const isFileRead =
+    fsMethod === "readFile" ||
+    fsMethod === "readFileSync" ||
+    (fsMethod === null &&
+      builtinMethod(node.callee, context.state, [
+        "fs/promises",
+        "node:fs/promises",
+      ]) === "readFile");
+  return isFileRead
     ? {
         kind: "file",
         key: literalString(node.arguments[0]),
@@ -219,6 +229,17 @@ const collectRequests = (
     const method = requestMethod(node, context.state);
     if (method === null) return;
     const endpoint = requestEndpoint(node);
+    // `http.get`/`http.request` parse a string target with `new URL` before the
+    // request exists, so a literal that is not an absolute URL throws
+    // `ERR_INVALID_URL` synchronously — an options object cannot rescue it.
+    // `fetch` and `WebSocket` are host globals a browser resolves against the
+    // document URL, so their spellings stay as reported.
+    if (
+      endpoint !== null &&
+      (method === "get" || method === "request") &&
+      !URL.canParse(endpoint)
+    )
+      return;
     output.push({
       node,
       operation: {
@@ -254,11 +275,53 @@ const soleWriteReachesRead = (
   binding: JavaScriptSemanticBindingState | undefined,
   read: t.Node,
   context: TraversalContext,
-): boolean =>
-  binding?.initializers.length === 1 &&
-  (semanticStableInitializer(binding, context.state) !== undefined ||
-    semanticBindingAtRead(binding, read, context.state.parentsByNode)
-      .hasDefiniteInitializer);
+  request: t.Node | undefined,
+): boolean => {
+  if (binding === undefined || request === undefined) return false;
+  const snapshot = semanticBindingAtRead(binding, read, context.state);
+  const initializers = snapshot.binding.initializers.filter(
+    ({ node }) => semanticEffectTiming(read, node, context.state) !== "after",
+  );
+  const [initializer] = initializers;
+  if (initializers.length !== 1 || initializer === undefined) return false;
+  // The result itself must be this request. Containing a request in a branch
+  // or child allocation does not prove the entire initializer is its response.
+  let source = unwrapJavaScriptExpression(initializer.node).node;
+  while (t.isAwaitExpression(source))
+    source = unwrapJavaScriptExpression(source.argument).node;
+  return (
+    source === request &&
+    !snapshot.binding.referenceInitializers.some(
+      ({ assignment, node }) =>
+        assignment &&
+        semanticEffectTiming(read, node, context.state) !== "after",
+    ) &&
+    (semanticStableInitializer(binding, context.state) !== undefined ||
+      snapshot.hasDefiniteInitializer)
+  );
+};
+
+/**
+ * Only `fetch` resolves to a `Response`, and only once its promise settles.
+ * `http.request`/`http.get` return a `ClientRequest` and `new WebSocket` a
+ * socket, neither of which has `json`/`text`/`arrayBuffer`; an un-awaited
+ * `fetch` returns a `Promise`. In all of those the call throws at the call site
+ * instead of reading a body, so it is not a response consumer at all.
+ */
+const settlesToResponse = (
+  request: RequestCandidate,
+  context: TraversalContext,
+): boolean => {
+  if (request.operation.method !== "fetch") return false;
+  let node: t.Node = request.node;
+  for (;;) {
+    const parent = context.state.parentsByNode.get(node);
+    if (parent === undefined) return false;
+    if (t.isAwaitExpression(parent)) return true;
+    if (javaScriptExpressionWrapperTarget(parent) !== node) return false;
+    node = parent;
+  }
+};
 
 const collectResponseConsumers = (
   program: t.Program,
@@ -294,11 +357,20 @@ const collectResponseConsumers = (
       member.object,
       member.object.name,
     );
-    const linked =
+    const candidates =
       binding === undefined
         ? []
         : (requestsByBinding.get(binding.bindingId) ?? []);
+    // A body reader only exists on a settled fetch Response. Requests of any
+    // other kind throw at this call site instead, so they link nothing; if no
+    // candidate survives, the call is not a response consumer at all.
+    const linked = candidates.filter((request) =>
+      settlesToResponse(request, context),
+    );
     if (linked.length === 0) return;
+    // A binding that also receives a request kind without a body reader leaves
+    // this reader a candidate, not a proven consumer of the fetch response.
+    const otherKinds = candidates.length !== linked.length;
     // A consumer of exactly one request through its own result binding
     // reads that request's response, so it keeps the request's endpoint.
     const uniqueRequest =
@@ -308,7 +380,12 @@ const collectResponseConsumers = (
       )
         ? linked[0]
         : undefined;
-    const soleWrite = soleWriteReachesRead(binding, member.object, context);
+    const soleWrite = soleWriteReachesRead(
+      binding,
+      member.object,
+      context,
+      uniqueRequest?.node,
+    );
     output.push({
       requestId: `response:${String(node.start ?? -1)}:${String(node.end ?? -1)}`,
       kind: "response-consumer",
@@ -328,7 +405,8 @@ const collectResponseConsumers = (
         .sort(compareUnicodeCodePoints),
       endpoint: soleWrite ? (uniqueRequest?.operation.endpoint ?? null) : null,
       fields: [],
-      resolution: uniqueRequest === undefined ? "partial" : "complete",
+      resolution:
+        uniqueRequest === undefined || otherKinds ? "partial" : "complete",
     });
   });
   return output;
@@ -372,7 +450,10 @@ const boundaryDetails = (
       !semanticResolutionBlocked(state, node.callee, name);
     if (
       unbound &&
-      ["String", "Number", "Boolean", "parseInt", "parseFloat"].includes(name)
+      ["String", "Number", "Boolean", "parseInt", "parseFloat"].includes(
+        name,
+      ) &&
+      isUnmodifiedGlobalReference(node.callee, state, name)
     )
       return { kind: "coerce", method: name, resolution: "complete" };
   }
@@ -383,7 +464,8 @@ const boundaryDetails = (
     method === "parse" &&
     t.isIdentifier(member.object, { name: "JSON" }) &&
     resolveSemanticBindingState(state, member.object, "JSON") === undefined &&
-    !semanticResolutionBlocked(state, member.object, "JSON")
+    !semanticResolutionBlocked(state, member.object, "JSON") &&
+    isUnmodifiedGlobalReference(node.callee, state, ["JSON", "parse"])
   )
     return { kind: "parse", method: "JSON.parse", resolution: "complete" };
   if (method === "parse" || method === "safeParse")
@@ -402,9 +484,13 @@ const requestMethod = (
     const unbound =
       resolveSemanticBindingState(state, node.callee, name) === undefined &&
       !semanticResolutionBlocked(state, node.callee, name);
-    if (!t.isNewExpression(node) && unbound && name === "fetch") return "fetch";
-    if (t.isNewExpression(node) && unbound && name === "WebSocket")
-      return "WebSocket";
+    const global = t.isNewExpression(node) ? "WebSocket" : "fetch";
+    if (
+      unbound &&
+      name === global &&
+      isUnmodifiedGlobalReference(node.callee, state, name)
+    )
+      return global;
   }
   const method = builtinMethod(node.callee, state, [
     "http",

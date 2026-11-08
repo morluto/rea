@@ -1,6 +1,4 @@
-import { createHash } from "node:crypto";
-
-import canonicalize from "canonicalize";
+import { digestCanonicalValue } from "./canonicalDigest.js";
 
 import { compareUnicodeCodePoints } from "./unicodeCodePointOrder.js";
 
@@ -30,13 +28,30 @@ export type WebResourceReconciliation =
   | { readonly status: "ambiguous"; readonly candidate_resource_keys: string[] }
   | { readonly status: "unmatched"; readonly reason: "no_exact_sanitized_url" };
 
+/**
+ * Comparison identity excludes optional size evidence while preserving the
+ * source inventory key.
+ */
+export const webResourceComparisonIdentity = (
+  resource: WebInventoryResourceInput,
+): string =>
+  `resg_${digestCanonicalValue(
+    {
+      url: resource.url,
+      origin: resource.origin,
+      type: resource.type,
+      mime_type: resource.mime_type,
+    },
+    "Web resource comparison identity",
+  )}`;
+
 /** Assign deterministic identities to a bounded resource inventory. */
 export const stableWebResources = (
   resources: readonly WebInventoryResourceInput[],
 ): StableWebResource[] => {
   const keyed = resources.map((resource) => ({
     ...resource,
-    resource_key: `res_${digest(resource)}`,
+    resource_key: `res_${digestCanonicalValue(resource, "Web inventory")}`,
   }));
   return [
     ...new Map(
@@ -47,24 +62,6 @@ export const stableWebResources = (
       compareUnicodeCodePoints(left.resource_key, right.resource_key) ||
       compareUnicodeCodePoints(left.url, right.url),
   );
-};
-
-/** Reconcile one script with resource-tree observations without fuzzy matching. */
-export const reconcileWebScript = (
-  script: WebInventoryScriptInput,
-  resources: readonly StableWebResource[],
-): WebResourceReconciliation => {
-  const candidates = resources.filter(
-    (resource) => resource.url === script.url,
-  );
-  if (candidates.length === 1)
-    return { status: "exact", resource_key: candidates[0]?.resource_key ?? "" };
-  if (candidates.length > 1)
-    return {
-      status: "ambiguous",
-      candidate_resource_keys: uniqueResourceKeys(candidates),
-    };
-  return { status: "unmatched", reason: "no_exact_sanitized_url" };
 };
 
 /** Index one capture's observations without merging duplicate raw URLs. */
@@ -114,23 +111,14 @@ export const createCapturedWebScriptReconciler = (
 
 /** Stable script identity excludes target IDs, CDP script IDs, and timestamps. */
 export const stableWebScriptKey = (script: WebInventoryScriptInput): string =>
-  `scr_${digest({
-    url: script.url,
-    cdp_hash: script.cdp_hash,
-    length: script.length,
-    is_module: script.is_module,
-    language: script.language,
-    source_map_url: script.source_map_url,
-  })}`;
-
-const uniqueResourceKeys = (
-  resources: readonly StableWebResource[],
-): string[] =>
-  [...new Set(resources.map(({ resource_key }) => resource_key))].sort();
-
-const digest = (value: unknown): string => {
-  const encoded = canonicalize(value);
-  if (encoded === undefined)
-    throw new TypeError("Web inventory value is not canonical JSON");
-  return createHash("sha256").update(encoded).digest("hex");
-};
+  `scr_${digestCanonicalValue(
+    {
+      url: script.url,
+      cdp_hash: script.cdp_hash,
+      length: script.length,
+      is_module: script.is_module,
+      language: script.language,
+      source_map_url: script.source_map_url,
+    },
+    "Web inventory",
+  )}`;

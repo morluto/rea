@@ -59,17 +59,28 @@ export interface FridaScriptObservation {
   readonly scriptId: string;
   readonly sourceKind: "inline" | "file";
   readonly sourcePath: string | null;
+  /** Digest of selected file bytes, or the inline source encoded as UTF-8. */
   readonly sourceSha256: string;
+  readonly sourceRepresentation?: {
+    readonly encoding: "utf8";
+    readonly decoding: "replacement";
+    readonly loadedSourceSha256: string;
+  };
   readonly messages: readonly JsonValue[];
   readonly messagesTruncated: boolean;
 }
 
 export class FridaScriptLoadCancelledError extends AnalysisCancelledError {
+  readonly scriptHandleAcquired: boolean;
+
   constructor(
     readonly script: FridaScriptObservation,
-    options?: AnalysisErrorOptions,
+    options?: AnalysisErrorOptions & {
+      readonly scriptHandleAcquired?: boolean;
+    },
   ) {
     super("load_frida_script", options);
+    this.scriptHandleAcquired = options?.scriptHandleAcquired ?? true;
   }
 }
 

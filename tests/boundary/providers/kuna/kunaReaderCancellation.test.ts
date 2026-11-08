@@ -84,12 +84,17 @@ it.each([
     const other = run(client, "procedure_assembly", { procedure: "parse" });
     try {
       await expect.poll(() => held.streams.length).toBe(1);
-      controller.abort();
+      const reason = Object.freeze({ requested: "reader-stop", operation });
+      controller.abort(reason);
       await expect.poll(() => finished, { timeout: 1000 }).toBe(true);
-      expect(await cancelled).toMatchObject({
+      const cancelledResult = await cancelled;
+      expect(cancelledResult).toMatchObject({
         ok: false,
         error: { _tag: "AnalysisCancelledError" },
       });
+      expect(cancelledResult.ok ? undefined : cancelledResult.error.cause).toBe(
+        reason,
+      );
       expect(held.streams[0]?.destroyed).toBe(false);
       expect((await run(client, "health")).result).toBeDefined();
       held.streams[0]?.end(bytes);

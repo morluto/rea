@@ -8,6 +8,7 @@ import { fileURLToPath } from "node:url";
 import { SWIFTC_INTERRUPT } from "../process/DarwinProcessRunTokenReader.js";
 import { execFileOutput } from "../process/ExecFileOutput.js";
 import { safeParseJson } from "../domain/safeJson.js";
+import { DEFAULT_NATIVE_UI_DEADLINE_MS } from "../domain/native/nativeDeadlines.js";
 import type { NativeUiHelper } from "./NativeUiObservation.js";
 import { NATIVE_UI_HELPER_MAX_BUFFER } from "./NativeUiOutputBudget.js";
 
@@ -15,6 +16,8 @@ export interface NativeUiHelperRuntime {
   readonly invoke: NativeUiHelper;
   readonly cleanupLease: AnalysisCleanupLease;
   readonly signal: AbortSignal;
+  /** Omitted by test doubles; production runtimes always set the selected deadline. */
+  readonly deadlineMs?: number;
   close(): Promise<void>;
   resources(): readonly string[];
 }
@@ -22,10 +25,13 @@ export interface NativeUiHelperRuntime {
 /** Lazily compile one owned helper per observation/scenario and remove its compiler cache. */
 export const createNativeUiHelperRuntime = (
   environment: Readonly<NodeJS.ProcessEnv>,
+  deadlineMs = DEFAULT_NATIVE_UI_DEADLINE_MS,
 ): NativeUiHelperRuntime => {
   const selectedEnvironment = snapshotEnvironment(environment);
-  const deadlineSignal = AbortSignal.timeout(180_000);
+  const deadlineSignal = AbortSignal.timeout(deadlineMs);
   const operations = new ArtifactResourceScope();
+  // Both helper stages share the selected deadline. A shorter fixed exec
+  // timeout would fail the subprocess before that deadline and hide it.
   let root: string | undefined;
   let preparation: Promise<string> | undefined;
   const cleanupLease = new AnalysisCleanupLease(async () => {
@@ -61,12 +67,15 @@ export const createNativeUiHelperRuntime = (
             import.meta.url,
           ),
         ),
+        fileURLToPath(
+          new URL("../../bridge/native/NativeUIValues.swift", import.meta.url),
+        ),
         main,
         "-o",
         output,
       ],
       {
-        timeout: 60_000,
+        timeout: deadlineMs,
         maxBuffer: 1024 * 1024,
         stopSignal: SWIFTC_INTERRUPT,
         env: { ...selectedEnvironment, TMPDIR: compilerTemporary },
@@ -87,7 +96,7 @@ export const createNativeUiHelperRuntime = (
         executable,
         [JSON.stringify(parameters)],
         {
-          timeout: 30_000,
+          timeout: deadlineMs,
           maxBuffer: NATIVE_UI_HELPER_MAX_BUFFER,
           stopSignal: "SIGTERM",
           env: selectedEnvironment,
@@ -108,6 +117,7 @@ export const createNativeUiHelperRuntime = (
     invoke,
     cleanupLease,
     signal: deadlineSignal,
+    deadlineMs,
     close: () => cleanupLease.release(),
     resources: () => (root === undefined ? [] : [root]),
   };

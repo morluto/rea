@@ -1,11 +1,17 @@
 import * as t from "@babel/types";
 import {
+  staticObjectPropertyReader,
+  readExactJavaScriptLiteral,
+  isObjectPrototypeSetter,
+  objectDataPropertyValue,
   semanticStaticPropertyKey,
   semanticWriteSiteTarget,
   semanticWriteTargets,
   runtimeFunctionParameters,
   unwrapJavaScriptExpression,
 } from "./javascriptAstValues.js";
+import { createSemanticExpressionShapeResolver } from "./javascriptSemanticExpressionShapes.js";
+import { createGlobalReferenceReader } from "./javascriptSemanticAmbientWrites.js";
 import { javascriptBootstrapAt } from "./javascriptBootstrap.js";
 import { ELECTRON_MODULE } from "./javascriptElectronMemberWrites.js";
 import {
@@ -59,15 +65,9 @@ interface SymbolicReadBoundary {
 }
 type SymbolicNamespace = Extract<SymbolicValue, { kind: "namespace" }>;
 
+const SYMBOLIC_DEPTH_LIMIT = 128;
+
 const emptyEnvironment: SymbolicEnvironment = { values: new Map() };
-const isObjectPrototypeSetter = (
-  property: t.ObjectMethod | t.ObjectProperty,
-  name: string,
-): boolean =>
-  t.isObjectProperty(property) &&
-  !property.computed &&
-  !property.shorthand &&
-  name === "__proto__";
 
 const containsOwnedReturn = (root: t.Node): boolean => {
   let found = false;
@@ -111,6 +111,7 @@ export class JavaScriptSymbolicBindings {
   readonly #mutated = new Set<string>();
   readonly #electronIdentity: JavaScriptElectronIdentity;
   readonly #namespaceOwners = new Map<string, t.Function>();
+  readonly #moduleFactories = new WeakSet<t.Function>();
   readonly #unsafeExports = new Set<string>();
   readonly #aliasesByBinding = new Map<string, string[]>();
   readonly #bootstrapTables: Array<{
@@ -130,6 +131,11 @@ export class JavaScriptSymbolicBindings {
     ),
   ) {
     this.#electronIdentity = electronIdentity;
+    const shapes = createSemanticExpressionShapeResolver(state);
+    const defineProperty = createGlobalReferenceReader(state, [
+      "Object",
+      "defineProperty",
+    ]);
     this.#indexBindingAliases();
     traverseJavaScriptAst(program, {
       enter: (node) => {
@@ -140,35 +146,60 @@ export class JavaScriptSymbolicBindings {
       enter: (node) => {
         const target = semanticWriteSiteTarget(node);
         if (target !== null) this.#indexWriteSite(target, node);
-        if (
-          t.isCallExpression(node) &&
-          t.isMemberExpression(node.callee) &&
-          t.isIdentifier(node.callee.object, { name: "Object" }) &&
-          !resolveSemanticBindingState(state, node.callee.object, "Object") &&
-          semanticStaticPropertyKey(
-            node.callee.property,
-            node.callee.computed,
-          ) === "defineProperty"
-        ) {
+        if (t.isCallExpression(node) && t.isMemberExpression(node.callee)) {
+          const intrinsic = defineProperty(node.callee);
+          if (intrinsic.status === "unrelated") return;
           const [target, key, descriptor] = node.arguments;
           if (
             t.isIdentifier(target) &&
             t.isStringLiteral(key) &&
-            t.isObjectExpression(descriptor)
+            descriptor !== undefined
           ) {
-            const value = descriptor.properties.find(
-              (p) =>
-                t.isObjectProperty(p) &&
-                semanticStaticPropertyKey(p.key, p.computed) === "value",
+            if (intrinsic.status !== "unmodified") {
+              const replacement =
+                intrinsic.status === "replacement"
+                  ? unwrapJavaScriptExpression(intrinsic.value).node
+                  : undefined;
+              const unchanged =
+                (t.isFunctionExpression(replacement) ||
+                  t.isArrowFunctionExpression(replacement)) &&
+                (t.isBlockStatement(replacement.body)
+                  ? replacement.body.body.length === 0
+                  : readExactJavaScriptLiteral(replacement.body).found) &&
+                runtimeFunctionParameters(replacement).every(
+                  (parameter) =>
+                    t.isIdentifier(parameter) ||
+                    (t.isRestElement(parameter) &&
+                      t.isIdentifier(parameter.argument)),
+                );
+              if (!unchanged) this.#addWrite(target, [key.value], node, node);
+              return;
+            }
+            const properties = staticObjectPropertyReader(
+              unwrapJavaScriptExpression(descriptor).node,
+              shapes.isNullish,
             );
-            if (t.isObjectProperty(value))
+            const value = properties("value");
+            const hasAccessor =
+              properties("get").status !== "missing" ||
+              properties("set").status !== "missing";
+            if (value.status === "explicit" && !hasAccessor)
               this.#addWrite(target, [key.value], value.value, node);
+            else if (value.status !== "missing" || hasAccessor)
+              // Unknown values, accessor replacements and invalid mixed
+              // descriptors cannot preserve an earlier data export.
+              this.#addWrite(target, [key.value], node, node);
           }
         }
       },
     });
     for (const table of this.#bootstrapTables)
       this.#invalidateBootstrapTable(table.tableAliases, table.modules);
+  }
+
+  /** Whether a function is a recognized bundle module factory, which runs once per module load. */
+  isModuleFactory(node: t.Node): boolean {
+    return t.isFunction(node) && this.#moduleFactories.has(node);
   }
 
   environmentAt(node: t.Node): SymbolicEnvironment {
@@ -181,15 +212,25 @@ export class JavaScriptSymbolicBindings {
     return emptyEnvironment;
   }
 
+  /** Shared admission; cache hits keep their existing depth-free fast path. */
+  #admitEvaluation(): boolean {
+    if (
+      --this.#remainingEvaluations < 0 ||
+      this.#depth >= SYMBOLIC_DEPTH_LIMIT
+    ) {
+      this.truncated = true;
+      return false;
+    }
+    return true;
+  }
+
   evaluate(
     input: t.Node | null | undefined,
     environment?: SymbolicEnvironment,
   ): SymbolicValue {
     if (!input) return { kind: "literal", value: undefined };
-    if (--this.#remainingEvaluations < 0 || this.#depth >= 128) {
-      this.truncated = true;
+    if (!this.#admitEvaluation())
       return symbolicUnknown("symbolic resource limit");
-    }
     const node = unwrapJavaScriptExpression(input).node;
     const env = environment ?? this.environmentAt(node);
     const cache = this.#cache.get(env) ?? new WeakMap<t.Node, SymbolicValue>();
@@ -249,14 +290,21 @@ export class JavaScriptSymbolicBindings {
     key: string,
     read?: SymbolicPropertyRead,
   ): SymbolicValue {
-    let result: SymbolicValue;
-    if (value.kind === "union")
-      result = symbolicUnion([
-        ...this.#commonProperty(value.values, key, read),
-        ...value.values.map((variant) => this.property(variant, key, read)),
-      ]);
-    else result = this.#property(value, key, read);
-    return this.#withConditions(result, value);
+    if (!this.#admitEvaluation())
+      return symbolicUnknown("symbolic resource limit");
+    this.#depth += 1;
+    try {
+      let result: SymbolicValue;
+      if (value.kind === "union")
+        result = symbolicUnion([
+          ...this.#commonProperty(value.values, key, read),
+          ...value.values.map((variant) => this.property(variant, key, read)),
+        ]);
+      else result = this.#property(value, key, read);
+      return this.#withConditions(result, value);
+    } finally {
+      this.#depth -= 1;
+    }
   }
 
   #commonProperty(
@@ -381,7 +429,7 @@ export class JavaScriptSymbolicBindings {
               (candidate): candidate is t.ObjectMethod | t.ObjectProperty =>
                 !t.isSpreadElement(candidate),
             )
-            .find((candidate) => isObjectPrototypeSetter(candidate, key));
+            .find((candidate) => isObjectPrototypeSetter(candidate));
           if (prototypeSetter !== undefined)
             return this.#objectPropertyValue(
               prototypeSetter,
@@ -425,12 +473,10 @@ export class JavaScriptSymbolicBindings {
     property: t.ObjectMethod | t.ObjectProperty,
     environment: SymbolicEnvironment,
   ): SymbolicValue {
-    return t.isObjectMethod(property) && property.kind !== "method"
+    const value = objectDataPropertyValue(property);
+    return value === undefined
       ? symbolicUnknown("accessor property")
-      : this.evaluate(
-          t.isObjectProperty(property) ? property.value : property,
-          environment,
-        );
+      : this.evaluate(value, environment);
   }
 
   members(
@@ -438,40 +484,51 @@ export class JavaScriptSymbolicBindings {
     active = new Set<SymbolicValue>(),
   ): readonly string[] {
     if (active.has(value)) return [];
+    if (!this.#admitEvaluation()) return [];
     active.add(value);
-    if (value.kind === "union")
-      return [...new Set(value.values.flatMap((v) => this.members(v, active)))];
-    if (value.kind === "record") return [...value.values.keys()];
-    if (value.kind === "namespace") {
-      const available = this.#namespaceWrites(value);
-      if (available === undefined) return [];
-      const replacement = available.findLast(
-        (write) => write.path.length === 0,
-      );
-      return replacement
-        ? this.members(
-            this.evaluate(replacement.value, value.environment),
-            active,
-          )
-        : [
-            ...new Set(
-              available.flatMap((w) => (w.path.length === 1 ? w.path : [])),
-            ),
-          ];
-    }
-    if (value.kind !== "object") return [];
-    return [
-      ...new Set(
-        value.node.properties.flatMap((p) =>
-          t.isSpreadElement(p)
-            ? this.members(this.evaluate(p.argument, value.environment), active)
-            : [semanticStaticPropertyKey(p.key, p.computed)].filter(
-                (k): k is string =>
-                  k !== null && !isObjectPrototypeSetter(p, k),
+    this.#depth += 1;
+    try {
+      if (value.kind === "union")
+        return [
+          ...new Set(value.values.flatMap((v) => this.members(v, active))),
+        ];
+      if (value.kind === "record") return [...value.values.keys()];
+      if (value.kind === "namespace") {
+        const available = this.#namespaceWrites(value);
+        if (available === undefined) return [];
+        const replacement = available.findLast(
+          (write) => write.path.length === 0,
+        );
+        return replacement
+          ? this.members(
+              this.evaluate(replacement.value, value.environment),
+              active,
+            )
+          : [
+              ...new Set(
+                available.flatMap((w) => (w.path.length === 1 ? w.path : [])),
               ),
+            ];
+      }
+      if (value.kind !== "object") return [];
+      return [
+        ...new Set(
+          value.node.properties.flatMap((p) =>
+            t.isSpreadElement(p)
+              ? this.members(
+                  this.evaluate(p.argument, value.environment),
+                  active,
+                )
+              : [semanticStaticPropertyKey(p.key, p.computed)].filter(
+                  (k): k is string =>
+                    k !== null && !isObjectPrototypeSetter(p, k),
+                ),
+          ),
         ),
-      ),
-    ];
+      ];
+    } finally {
+      this.#depth -= 1;
+    }
   }
 
   unknownMembers(
@@ -479,39 +536,45 @@ export class JavaScriptSymbolicBindings {
     active = new Set<SymbolicValue>(),
   ): number {
     if (active.has(value)) return 1;
+    if (!this.#admitEvaluation()) return 1;
     active.add(value);
-    if (value.kind === "union")
-      return value.values.reduce(
-        (sum, v) => sum + this.unknownMembers(v, active),
+    this.#depth += 1;
+    try {
+      if (value.kind === "union")
+        return value.values.reduce(
+          (sum, v) => sum + this.unknownMembers(v, active),
+          0,
+        );
+      if (value.kind === "record") return 0;
+      if (value.kind === "namespace") {
+        if (this.#mutated.has(value.bindingId)) return 1;
+        const available = this.#namespaceWrites(value);
+        if (available === undefined) return 1;
+        const replacement = available.findLast(
+          (write) => write.path.length === 0,
+        );
+        return replacement
+          ? this.unknownMembers(
+              this.evaluate(replacement.value, value.environment),
+              active,
+            )
+          : 0;
+      }
+      if (value.kind !== "object") return 1;
+      return value.node.properties.reduce(
+        (sum, p) =>
+          sum +
+          (t.isSpreadElement(p)
+            ? this.unknownMembers(
+                this.evaluate(p.argument, value.environment),
+                new Set(active),
+              )
+            : Number(semanticStaticPropertyKey(p.key, p.computed) === null)),
         0,
       );
-    if (value.kind === "record") return 0;
-    if (value.kind === "namespace") {
-      if (this.#mutated.has(value.bindingId)) return 1;
-      const available = this.#namespaceWrites(value);
-      if (available === undefined) return 1;
-      const replacement = available.findLast(
-        (write) => write.path.length === 0,
-      );
-      return replacement
-        ? this.unknownMembers(
-            this.evaluate(replacement.value, value.environment),
-            active,
-          )
-        : 0;
+    } finally {
+      this.#depth -= 1;
     }
-    if (value.kind !== "object") return 1;
-    return value.node.properties.reduce(
-      (sum, p) =>
-        sum +
-        (t.isSpreadElement(p)
-          ? this.unknownMembers(
-              this.evaluate(p.argument, value.environment),
-              new Set(active),
-            )
-          : Number(semanticStaticPropertyKey(p.key, p.computed) === null)),
-      0,
-    );
   }
 
   /** Calling a generator creates an iterator; advancing it is not modeled. */
@@ -1313,6 +1376,7 @@ export class JavaScriptSymbolicBindings {
     for (const property of bootstrap.table.properties) {
       const factory = moduleFactory(property);
       if (!factory) continue;
+      this.#moduleFactories.add(factory);
       const moduleKey = modulePropertyName(property);
       const values = new Map<string, SymbolicValue>();
       const environment: SymbolicEnvironment = {
