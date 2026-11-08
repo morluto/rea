@@ -548,6 +548,41 @@ it("keeps binary plist source values lost by XML conversion", () => {
   );
 });
 
+const binaryCollidingIntegers = (): Buffer => {
+  // Two int64 objects whose values round to the same JSON number, as in Apple's
+  // AGXMetal*.bundle performance-counter plists.
+  const bytes = Buffer.from(buildBinary({ first: 1.5, second: 2.5 }));
+  for (const [real, exact] of [
+    [1.5, 3458783209544750624n],
+    [2.5, 3458783209544750632n],
+  ] as const) {
+    const source = Buffer.alloc(9);
+    source[0] = 0x23;
+    source.writeDoubleBE(real, 1);
+    const offset = bytes.indexOf(source);
+    if (offset < 0) throw new Error("binary plist fixture lost its real");
+    bytes[offset] = 0x13;
+    bytes.writeBigInt64BE(exact, offset + 1);
+  }
+  return bytes;
+};
+
+it("keeps distinct binary integers exact when they round to the same number", () => {
+  expect(Number(3458783209544750624n)).toBe(Number(3458783209544750632n));
+  const parsed = parsePlistBinary(binaryCollidingIntegers());
+  if (!parsed.ok) throw parsed.error;
+  expect(parsed.value.value).toEqual({
+    first: { $plist_type: "integer", decimal: "3458783209544750624" },
+    second: { $plist_type: "integer", decimal: "3458783209544750632" },
+  });
+  expect(parsed.value.limitations).toContainEqual(
+    expect.stringContaining("2 unambiguous integer value(s)"),
+  );
+  expect(parsed.value.limitations).not.toContainEqual(
+    expect.stringContaining("cannot be associated unambiguously"),
+  );
+});
+
 it("rejects a truncated binary plist source", () => {
   const parsed = parsePlistBinary(Buffer.from("bplist00bad"));
   if (parsed.ok) throw new Error("Expected malformed binary plist");

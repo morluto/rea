@@ -382,10 +382,15 @@ export const parsePlistBinary = (
       },
     );
     const scalarMetadata = scanBinaryPlistScalars(bytes, expansion);
-    const decoded = decodeBinaryPlistValue(bytes, expansion, scalarMetadata);
+    const decoded = decodeBinaryPlistValue(bytes, expansion, scalarMetadata, {
+      exactIntegers: true,
+    });
+    let decodedExactIntegers = 0;
     const projected = projectPlistValue(
       decoded,
-      undefined,
+      (wrapped) => {
+        if (wrapped.$plist_type === "integer") decodedExactIntegers += 1;
+      },
       MAX_NATIVE_PLIST_NESTING_DEPTH,
     );
     const numbers = createPlistNumberProjection(scalarMetadata.literals);
@@ -402,7 +407,7 @@ export const parsePlistBinary = (
                 expansion.datePrecisionOverlapCount,
               ),
             ]),
-        ...numbers.limitations(),
+        ...numbers.limitations(decodedExactIntegers),
       ],
     });
   } catch (cause: unknown) {
