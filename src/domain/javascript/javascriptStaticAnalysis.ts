@@ -81,6 +81,71 @@ import {
   javaScriptStaticParseStatus,
   type JavaScriptStaticCoverage,
 } from "./javascriptStaticCoverage.js";
+import type { JavaScriptModuleResolutionMode } from "./javascriptModuleResolutionMode.js";
+import type {
+  JavaScriptElectronIdentity,
+  JavaScriptReceiverIndex,
+} from "./javascriptSemanticAnalysis.js";
+
+interface JavaScriptStaticAnalysisWithBindings {
+  readonly analysis: JavaScriptStaticAnalysis;
+  readonly bindings: JavaScriptReceiverIndex;
+}
+
+function* prepareStaticFindingContextSteps(
+  source: string,
+  file: ParsedJavaScriptSource,
+  staticImportResolutionMode: JavaScriptModuleResolutionMode,
+  includeVitePreloadTable: boolean,
+): Generator<
+  void,
+  {
+    readonly accumulator: AnalysisAccumulator;
+    readonly index: JavaScriptReceiverIndex;
+    readonly electronIdentity: JavaScriptElectronIdentity;
+    readonly findings: JavaScriptFindingContext;
+  }
+> {
+  const accumulator = createJavaScriptAnalysisAccumulator(source.length);
+  // One definitions pass serves receiver classification and binding lookup.
+  const index = yield* indexJavaScriptBindingsWithReceiversSteps(
+    file.program,
+    undefined,
+    staticImportResolutionMode,
+  );
+  const { bindings, receivers } = index;
+  yield* index.indexAmbientWritesSteps();
+  if (hasPossibleCommonJsDelegateWrite(bindings))
+    yield* index.indexMemberMutationFactsSteps();
+  const electronIdentity = yield* indexJavaScriptElectronIdentitySteps(
+    file.program,
+    bindings,
+  );
+  const findings: JavaScriptFindingContext = {
+    xhrOpenRequest: createXhrOpenRequestQuery(index),
+    pathIntrinsics: createStaticPathIntrinsicQuery(index),
+    browserWindowReceiver: (node, site, suffix) =>
+      resolveElectronBrowserWindowReceiver(node, site, suffix, findings, index),
+    rendererLoad: (callee, site) =>
+      isElectronRendererLoad(callee, site, findings, index),
+    source,
+    accumulator,
+    vitePreloadDependencyTable: includeVitePreloadTable
+      ? indexVitePreloadDependencyTable(
+          file.program,
+          bindings.erasedSyntaxNodes,
+        )
+      : [],
+    openReceiverFacts: receivers.openReceivers,
+    electronBindings: electronIdentity.bindings,
+    electronExportIntact: electronIdentity.intactExport,
+    electronInvocationPath: electronIdentity.invocationPath,
+    electronAppPathChangePossible: electronIdentity.mayChangeAppPath,
+    rpcScan: createJavaScriptRpcScan(source, receivers.rpcClientRoots, index),
+    expressionShapes: createSemanticExpressionShapeResolver(bindings),
+  };
+  return { accumulator, index, electronIdentity, findings };
+}
 
 /** Parse one JavaScript artifact and recover static structure only. */
 export const analyzeJavaScriptStaticSource = (
@@ -104,38 +169,29 @@ export function* analyzeParsedJavaScriptStaticSourceSteps(
   source: string,
   file: ParsedJavaScriptSource,
 ): Generator<void, JavaScriptStaticAnalysis> {
-  const accumulator = createJavaScriptAnalysisAccumulator(source.length);
-  // One definitions pass serves receiver classification and binding lookup.
-  const index = yield* indexJavaScriptBindingsWithReceiversSteps(file.program);
-  const { bindings, receivers } = index;
-  yield* index.indexAmbientWritesSteps();
-  if (hasPossibleCommonJsDelegateWrite(bindings))
-    yield* index.indexMemberMutationFactsSteps();
-  const electronIdentity = yield* indexJavaScriptElectronIdentitySteps(
-    file.program,
-    bindings,
-  );
-  const findings: JavaScriptFindingContext = {
-    xhrOpenRequest: createXhrOpenRequestQuery(index),
-    pathIntrinsics: createStaticPathIntrinsicQuery(index),
-    browserWindowReceiver: (node, site, suffix) =>
-      resolveElectronBrowserWindowReceiver(node, site, suffix, findings, index),
-    rendererLoad: (callee, site) =>
-      isElectronRendererLoad(callee, site, findings, index),
+  return (yield* analyzeParsedJavaScriptStaticSourceWithBindingsSteps(
     source,
-    accumulator,
-    vitePreloadDependencyTable: indexVitePreloadDependencyTable(
-      file.program,
-      bindings.erasedSyntaxNodes,
-    ),
-    openReceiverFacts: receivers.openReceivers,
-    electronBindings: electronIdentity.bindings,
-    electronExportIntact: electronIdentity.intactExport,
-    electronInvocationPath: electronIdentity.invocationPath,
-    electronAppPathChangePossible: electronIdentity.mayChangeAppPath,
-    rpcScan: createJavaScriptRpcScan(source, receivers.rpcClientRoots, index),
-    expressionShapes: createSemanticExpressionShapeResolver(bindings),
-  };
+    file,
+  )).analysis;
+}
+
+/**
+ * Static analysis retaining the shared lexical receiver index so a sequential
+ * worker pass on the same unmodified AST can reuse definitions and mutations.
+ */
+export function* analyzeParsedJavaScriptStaticSourceWithBindingsSteps(
+  source: string,
+  file: ParsedJavaScriptSource,
+  staticImportResolutionMode: JavaScriptModuleResolutionMode = "import",
+): Generator<void, JavaScriptStaticAnalysisWithBindings> {
+  const { accumulator, index, electronIdentity, findings } =
+    yield* prepareStaticFindingContextSteps(
+      source,
+      file,
+      staticImportResolutionMode,
+      true,
+    );
+  const { bindings } = index;
   const routeScan = yield* JavaScriptRouteScan.createSteps(
     file,
     index,
@@ -168,7 +224,98 @@ export function* analyzeParsedJavaScriptStaticSourceSteps(
     electronIdentity,
   );
   addSourceMapDirectives(source, file.comments ?? [], accumulator);
-  return finalizeStaticAnalysis(source, file, accumulator, bindings, routes);
+  return {
+    analysis: finalizeStaticAnalysis(
+      source,
+      file,
+      accumulator,
+      bindings,
+      routes,
+    ),
+    bindings: index,
+  };
+}
+
+/**
+ * Recover only Electron BrowserWindow declarations for preliminary preload
+ * discovery, skipping sources that cannot construct an Electron BrowserWindow.
+ */
+export function* discoverParsedJavaScriptBrowserWindowsSteps(
+  source: string,
+  file: ParsedJavaScriptSource,
+): Generator<void, JavaScriptStaticAnalysis> {
+  const empty = failedJavaScriptStaticAnalysis();
+  const candidate = yield* mayConstructElectronBrowserWindowSteps(file);
+  if (!candidate.eligible)
+    return {
+      ...empty,
+      parse_status: file.errors.length === 0 ? "complete" : "partial",
+      parse_error_count: file.errors.length,
+      visited_ast_nodes: candidate.visitedNodes,
+    };
+  const { accumulator, index, findings } =
+    yield* prepareStaticFindingContextSteps(source, file, "import", false);
+  const { bindings } = index;
+  yield* traverseJavaScriptAstSteps(file, {
+    skip: (node) => accumulator.unusedFactoryDefaults.has(node),
+    enter: (node) => {
+      accumulator.visitedNodes += 1;
+      if (bindings.erasedSyntaxNodes.has(node)) return undefined;
+      if (t.isCallExpression(node)) {
+        inspectBundlerBootstrap(source, node, accumulator, bindings);
+        inspectBundlerRegistration(source, node, accumulator, bindings);
+        inspectEsbuildWrapper(source, node, accumulator, bindings);
+      } else if (t.isNewExpression(node)) {
+        inspectElectronStaticNode(node, findings);
+      }
+      return undefined;
+    },
+  });
+  yield* finishElectronBrowserWindowsSteps(findings, index);
+  return {
+    ...empty,
+    parse_status: file.errors.length === 0 ? "complete" : "partial",
+    parse_error_count: file.errors.length,
+    visited_ast_nodes: accumulator.visitedNodes,
+    electron: {
+      ...empty.electron,
+      browser_windows: finalizeLocatedFindings(
+        accumulator.browserWindows,
+        accumulator.moduleRangeIndex,
+      ),
+    },
+  };
+}
+
+function* mayConstructElectronBrowserWindowSteps(
+  file: ParsedJavaScriptSource,
+): Generator<
+  void,
+  { readonly eligible: boolean; readonly visitedNodes: number }
+> {
+  let hasNewExpression = false;
+  let hasElectronModuleLiteral = false;
+  let visitedNodes = 0;
+  yield* traverseJavaScriptAstSteps(file, {
+    skip: () => hasNewExpression && hasElectronModuleLiteral,
+    enter: (node) => {
+      visitedNodes += 1;
+      if (t.isNewExpression(node)) hasNewExpression = true;
+      else if (t.isStringLiteral(node) && ELECTRON_MODULE.test(node.value))
+        hasElectronModuleLiteral = true;
+      else if (
+        t.isTemplateLiteral(node) &&
+        node.expressions.length === 0 &&
+        ELECTRON_MODULE.test(node.quasis[0]?.value.cooked ?? "")
+      )
+        hasElectronModuleLiteral = true;
+      return undefined;
+    },
+  });
+  return {
+    eligible: hasNewExpression && hasElectronModuleLiteral,
+    visitedNodes,
+  };
 }
 
 function* traverseStaticSourceSteps(

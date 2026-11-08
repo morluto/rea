@@ -125,6 +125,7 @@ import {
 import { indexCommonJsExportReceiversSteps } from "./javascriptCommonJsExportReceivers.js";
 import { createSemanticElectronAppPathChangeQuery } from "./javascriptElectronAppPathChanges.js";
 import type { JavaScriptModuleResolutionMode } from "./javascriptModuleResolutionMode.js";
+import type { JavaScriptSemanticResourceLimit } from "./javascriptSemanticValueTypes.js";
 
 interface BindPatternInput {
   readonly iterationSources?: JavaScriptSemanticBindingState["initializers"][number]["iterationSources"];
@@ -194,26 +195,91 @@ export const analyzeParsedJavaScriptReferences = (
   return collectSemanticReferences(file.program, state, name);
 };
 
+interface SharedIndexingLimits {
+  readonly valueResourceLimits: Set<JavaScriptSemanticResourceLimit>;
+  readonly getterResourceLimits: Set<JavaScriptSemanticResourceLimit>;
+  readonly returnedReferenceWidenings: Set<t.Node>;
+}
+
 const indexedAmbientWriteStates =
   new WeakSet<JavaScriptSemanticAnalysisState>();
 const indexedMemberMutationStates =
   new WeakSet<JavaScriptSemanticAnalysisState>();
+const sharedIndexingLimitsByState = new WeakMap<
+  JavaScriptSemanticAnalysisState,
+  SharedIndexingLimits
+>();
+const consumedSemanticBindingIndices = new WeakSet<JavaScriptReceiverIndex>();
+
+const ensureSharedIndexingLimits = (
+  state: JavaScriptSemanticAnalysisState,
+): SharedIndexingLimits => {
+  let shared = sharedIndexingLimitsByState.get(state);
+  if (shared === undefined) {
+    shared = {
+      valueResourceLimits: new Set(state.valueResourceLimits),
+      getterResourceLimits: new Set(state.getterResourceLimits),
+      returnedReferenceWidenings: new Set(state.returnedReferenceWidenings),
+    };
+    sharedIndexingLimitsByState.set(state, shared);
+  }
+  return shared;
+};
+
+function* runWithSharedIndexingLimitsSteps(
+  state: JavaScriptSemanticAnalysisState,
+  steps: () => Generator<void, void>,
+): Generator<void, void> {
+  const shared = ensureSharedIndexingLimits(state);
+  const priorValueLimits = new Set(state.valueResourceLimits);
+  const priorGetterLimits = new Set(state.getterResourceLimits);
+  const priorWidenings = new Set(state.returnedReferenceWidenings);
+  state.valueResourceLimits.clear();
+  state.getterResourceLimits.clear();
+  state.returnedReferenceWidenings.clear();
+  clearSemanticValueCaches(state);
+  invalidateSemanticRequireDelegateWrites(state);
+  try {
+    yield* steps();
+  } finally {
+    for (const limit of state.valueResourceLimits)
+      shared.valueResourceLimits.add(limit);
+    for (const limit of state.getterResourceLimits)
+      shared.getterResourceLimits.add(limit);
+    for (const node of state.returnedReferenceWidenings)
+      shared.returnedReferenceWidenings.add(node);
+    for (const limit of priorValueLimits) state.valueResourceLimits.add(limit);
+    for (const limit of shared.valueResourceLimits)
+      state.valueResourceLimits.add(limit);
+    for (const limit of priorGetterLimits)
+      state.getterResourceLimits.add(limit);
+    for (const limit of shared.getterResourceLimits)
+      state.getterResourceLimits.add(limit);
+    for (const node of priorWidenings)
+      state.returnedReferenceWidenings.add(node);
+    for (const node of shared.returnedReferenceWidenings)
+      state.returnedReferenceWidenings.add(node);
+  }
+}
 
 function* indexSemanticAmbientWritesSteps(
   state: JavaScriptSemanticAnalysisState,
 ): Generator<void, void> {
   if (indexedAmbientWriteStates.has(state)) return;
-  yield* indexJavaScriptAmbientWritesSteps(
-    state.program,
-    state,
-    createSemanticOpaqueGlobalObserver(state, {
-      createAmbientPathResolver,
-      createSemanticModuleInterop,
-    }),
-    (node) => observePossibleCommonJsDelegateWrite(node, state),
-  );
+  yield* runWithSharedIndexingLimitsSteps(state, function* () {
+    yield* indexJavaScriptAmbientWritesSteps(
+      state.program,
+      state,
+      createSemanticOpaqueGlobalObserver(state, {
+        createAmbientPathResolver,
+        createSemanticModuleInterop,
+      }),
+      (node) => observePossibleCommonJsDelegateWrite(node, state),
+    );
+  });
   if (state.opaqueEffects.globalSites.length > 0)
     clearSemanticValueCaches(state);
+  invalidateSemanticRequireDelegateWrites(state);
   indexedAmbientWriteStates.add(state);
 }
 
@@ -223,12 +289,14 @@ function* indexSemanticMemberMutationFactsSteps(
 ): Generator<void, void> {
   if (indexedMemberMutationStates.has(state)) return;
   yield* indexSemanticAmbientWritesSteps(state);
-  yield* collectSemanticMemberMutationsSteps(
-    state.program,
-    state,
-    (site, reference, path) =>
-      referenceEffectsMayHaveChanged(state, site, reference, path),
-  );
+  yield* runWithSharedIndexingLimitsSteps(state, function* () {
+    yield* collectSemanticMemberMutationsSteps(
+      state.program,
+      state,
+      (site, reference, path) =>
+        referenceEffectsMayHaveChanged(state, site, reference, path),
+    );
+  });
   state.memberMutationFactsComplete = true;
   indexedMemberMutationStates.add(state);
   invalidateSemanticRequireDelegateWrites(state);
@@ -427,17 +495,50 @@ export function* analyzeParsedJavaScriptSemanticsSteps(
   file: ParsedJavaScriptSource,
   staticImportResolutionMode: JavaScriptModuleResolutionMode = "import",
   expressionNodeBudget?: number,
+  preparedBindings?: JavaScriptReceiverIndex,
 ): Generator<void, JavaScriptSemanticIr> {
-  const state = createState(file.program, staticImportResolutionMode);
-  yield* collectDefinitionsSteps(file.program, state);
-  yield* indexSemanticAmbientWritesSteps(state);
-  yield* indexSemanticMemberMutationFactsSteps(state);
+  const canReusePreparedBindings =
+    preparedBindings !== undefined &&
+    !consumedSemanticBindingIndices.has(preparedBindings) &&
+    preparedBindings.bindings.program === file.program &&
+    preparedBindings.bindings.staticImportResolutionMode ===
+      staticImportResolutionMode &&
+    ![...preparedBindings.bindings.bindingsById.values()].some(
+      ({ hostOrigin }) => hostOrigin === "commonjs-wrapper",
+    );
+  let state: JavaScriptSemanticAnalysisState;
+  if (canReusePreparedBindings) {
+    consumedSemanticBindingIndices.add(preparedBindings);
+    state = preparedBindings.bindings;
+    yield* preparedBindings.indexAmbientWritesSteps();
+    yield* preparedBindings.indexMemberMutationFactsSteps();
+    const shared = sharedIndexingLimitsByState.get(state);
+    state.valueResourceLimits.clear();
+    state.getterResourceLimits.clear();
+    state.returnedReferenceWidenings.clear();
+    for (const limit of shared?.valueResourceLimits ?? [])
+      state.valueResourceLimits.add(limit);
+    for (const limit of shared?.getterResourceLimits ?? [])
+      state.getterResourceLimits.add(limit);
+    for (const node of shared?.returnedReferenceWidenings ?? [])
+      state.returnedReferenceWidenings.add(node);
+    clearSemanticValueCaches(state);
+    invalidateSemanticRequireDelegateWrites(state);
+  } else {
+    state = createState(file.program, staticImportResolutionMode);
+    yield* collectDefinitionsSteps(file.program, state);
+    ensureSharedIndexingLimits(state);
+    yield* indexSemanticAmbientWritesSteps(state);
+    yield* indexSemanticMemberMutationFactsSteps(state);
+  }
   const commonJsReceivers = yield* indexCommonJsExportReceiversSteps(state);
   yield* traverseJavaScriptAstSteps(file.program, {
     enter: (node) => collectSemanticModuleLink(node, state, commonJsReceivers),
   });
   yield;
-  const references = yield* collectSemanticReferencesSteps(file.program, state);
+  const references = canReusePreparedBindings
+    ? yield* preparedBindings.referencesSteps()
+    : yield* collectSemanticReferencesSteps(file.program, state);
   const parserPartial = file.errors.length > 0;
   const bindings = immutableSemanticBindings(state);
   yield;
@@ -532,8 +633,9 @@ export interface JavaScriptReceiverIndex extends JavaScriptBindingIndex {
 export function* indexJavaScriptBindingsWithReceiversSteps(
   program: t.Program,
   hostContext?: "commonjs-wrapper",
+  staticImportResolutionMode: JavaScriptModuleResolutionMode = "import",
 ): Generator<void, JavaScriptReceiverIndex> {
-  const state = createState(program);
+  const state = createState(program, staticImportResolutionMode);
   if (hostContext === "commonjs-wrapper") {
     const scope = currentSemanticScope(state.scopes);
     const binding: JavaScriptSemanticBindingState = {
@@ -544,6 +646,7 @@ export function* indexJavaScriptBindingsWithReceiversSteps(
     state.bindingsById.set(binding.bindingId, binding);
   }
   yield* collectDefinitionsSteps(program, state);
+  ensureSharedIndexingLimits(state);
   const receivers = yield* classifyDefinitionReceiversSteps(program, state);
   let references: readonly JavaScriptSemanticReference[] | undefined;
   return {

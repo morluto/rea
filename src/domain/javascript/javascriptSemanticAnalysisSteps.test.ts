@@ -7,6 +7,12 @@ import {
   indexJavaScriptElectronIdentitySteps,
   indexJavaScriptBindingsWithReceiversSteps,
 } from "./javascriptSemanticAnalysis.js";
+import {
+  analyzeParsedJavaScriptStaticSourceSteps,
+  analyzeParsedJavaScriptStaticSourceWithBindingsSteps,
+  discoverParsedJavaScriptBrowserWindowsSteps,
+} from "./javascriptStaticAnalysis.js";
+import { moduleResolutionModeForJavaScriptReference } from "./javascriptModuleResolutionMode.js";
 import * as semanticProjection from "./javascriptSemanticProjection.js";
 import { parseJavaScriptSource } from "./javascriptSourceParser.js";
 import { createJavaScriptGraphqlScan } from "./javascriptGraphqlOperations.js";
@@ -300,4 +306,158 @@ it("reuses the lexical references during stepped child-argument analysis", () =>
   } finally {
     collector.mockRestore();
   }
+});
+
+it("reuses static lexical state in semantic analysis with exact IR parity across module modes and resource limits", () => {
+  const deepExpression = `${"(".repeat(80)}{ serviceName: "svc" }${")".repeat(80)}`;
+  const cases: readonly {
+    readonly path: string;
+    readonly packageType: "module" | "commonjs" | "unspecified";
+    readonly budget?: number;
+    readonly text: string;
+  }[] = [
+    {
+      path: "main.ts",
+      packageType: "module",
+      text: `
+import { utilityProcess } from "electron";
+import { helper } from "./helper.js";
+utilityProcess.fork("./worker.js", ${deepExpression});
+export function run(input: string) {
+  return helper(input);
+}
+`,
+    },
+    {
+      path: "legacy.cjs",
+      packageType: "commonjs",
+      text: `
+const shared = { count: 1 };
+function pick(flag) {
+  const alt = { count: 2 };
+  return flag ? shared : alt;
+}
+function mutatePicked(flag) {
+  const target = pick(flag);
+  target.count = 3;
+}
+mutatePicked(true);
+globalThis.process = { mainModule: { require: () => ({}) } };
+module.exports = { pick, shared };
+`,
+    },
+    {
+      path: "bounded.mjs",
+      packageType: "module",
+      budget: 1,
+      text: `
+import { createHash } from "node:crypto";
+export function digest(a, b, c) {
+  const merged = String(a) + String(b) + String(c);
+  return createHash("sha256").update(merged).digest("hex");
+}
+`,
+    },
+  ];
+
+  for (const { path, packageType, budget, text } of cases) {
+    const mode = moduleResolutionModeForJavaScriptReference(
+      path,
+      "static-import",
+    );
+    const standaloneStaticParsed = parseJavaScriptSource(
+      text,
+      path,
+      packageType,
+    );
+    const standaloneSemanticParsed = parseJavaScriptSource(
+      text,
+      path,
+      packageType,
+    );
+    const sharedParsed = parseJavaScriptSource(text, path, packageType);
+    if (
+      standaloneStaticParsed === null ||
+      standaloneSemanticParsed === null ||
+      sharedParsed === null
+    )
+      throw new Error(`Expected parsed source for ${path}`);
+
+    const standaloneStatic = completeSemanticSteps(
+      analyzeParsedJavaScriptStaticSourceSteps(text, standaloneStaticParsed),
+    );
+    const standaloneIr = completeSemanticSteps(
+      analyzeParsedJavaScriptSemanticsSteps(
+        standaloneSemanticParsed,
+        mode,
+        budget,
+      ),
+    );
+
+    const sharedStatic = completeSemanticSteps(
+      analyzeParsedJavaScriptStaticSourceWithBindingsSteps(
+        text,
+        sharedParsed,
+        mode,
+      ),
+    );
+    const sharedIr = completeSemanticSteps(
+      analyzeParsedJavaScriptSemanticsSteps(
+        sharedParsed,
+        mode,
+        budget,
+        sharedStatic.bindings,
+      ),
+    );
+
+    expect(sharedStatic.analysis).toEqual(standaloneStatic);
+    expect(sharedIr).toEqual(standaloneIr);
+  }
+});
+
+it("discovers BrowserWindow preload declarations identically while fast-pathing non-Electron sources", () => {
+  const electronSource = `
+import { BrowserWindow } from "electron";
+import { fileURLToPath } from "node:url";
+const webPreferences = {
+  contextIsolation: true,
+  sandbox: false,
+  preload: fileURLToPath(new URL("./preload.js", import.meta.url)),
+};
+export function openMain() {
+  return new BrowserWindow({ webPreferences });
+}
+`;
+  const parsedA = parseJavaScriptSource(electronSource, "main.mjs", "module");
+  const parsedB = parseJavaScriptSource(electronSource, "main.mjs", "module");
+  if (parsedA === null || parsedB === null)
+    throw new Error("Expected parsed ESM source");
+  const full = completeSemanticSteps(
+    analyzeParsedJavaScriptStaticSourceSteps(electronSource, parsedA),
+  );
+  const discovered = completeSemanticSteps(
+    discoverParsedJavaScriptBrowserWindowsSteps(electronSource, parsedB),
+  );
+  expect(discovered.electron.browser_windows).toEqual(
+    full.electron.browser_windows,
+  );
+
+  const rendererSource = `
+export class RendererView {
+  render() {
+    return new URL("/health", "https://example.invalid").href;
+  }
+}
+`;
+  const rendererParsed = parseJavaScriptSource(
+    rendererSource,
+    "renderer.js",
+    "module",
+  );
+  if (rendererParsed === null) throw new Error("Expected parsed renderer");
+  const rendererDiscovery = completeSemanticSteps(
+    discoverParsedJavaScriptBrowserWindowsSteps(rendererSource, rendererParsed),
+  );
+  expect(rendererDiscovery.electron.browser_windows).toEqual([]);
+  expect(rendererDiscovery.parse_status).toBe("complete");
 });

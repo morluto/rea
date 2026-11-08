@@ -1,7 +1,13 @@
 import { moduleResolutionModeForJavaScriptReference } from "../domain/javascript/javascriptModuleResolutionMode.js";
 import { parseJavaScriptSource } from "../domain/javascript/javascriptSourceParser.js";
-import { analyzeParsedJavaScriptStaticSourceSteps } from "../domain/javascript/javascriptStaticAnalysis.js";
-import { analyzeParsedJavaScriptSemanticsSteps } from "../domain/javascript/javascriptSemanticAnalysis.js";
+import {
+  analyzeParsedJavaScriptStaticSourceWithBindingsSteps,
+  discoverParsedJavaScriptBrowserWindowsSteps,
+} from "../domain/javascript/javascriptStaticAnalysis.js";
+import {
+  analyzeParsedJavaScriptSemanticsSteps,
+  type JavaScriptReceiverIndex,
+} from "../domain/javascript/javascriptSemanticAnalysis.js";
 import { failedJavaScriptStaticAnalysis } from "../domain/javascript/javascriptStaticAnalysisHelpers.js";
 import { projectJavaScriptModuleSemantics } from "../domain/javascript/javascriptModuleSemanticIr.js";
 import {
@@ -32,47 +38,54 @@ const analyze: JavaScriptSourceWorkerAnalyzer = async (
     return null;
   }
   await callbacks.phase("static");
-  const facts = await completeJavaScriptAnalysisSteps(
-    analyzeParsedJavaScriptStaticSourceSteps(file.text.value, parsed),
-  );
   if (purpose === "preload-discovery") {
     // Only declarations cross this preliminary pass. The normal pass owns
     // full static/semantic facts and their result reservations.
-    const empty = failedJavaScriptStaticAnalysis();
-    await callbacks.checkpoint({
-      ...empty,
-      parse_status: facts.parse_status,
-      parse_error_count: facts.parse_error_count,
-      ...(facts.analysis_coverage === undefined
-        ? {}
-        : { analysis_coverage: facts.analysis_coverage }),
-      visited_ast_nodes: facts.visited_ast_nodes,
-      limitations: facts.limitations,
-      electron: {
-        ...empty.electron,
-        browser_windows: facts.electron.browser_windows,
-      },
-    });
+    const facts = await completeJavaScriptAnalysisSteps(
+      discoverParsedJavaScriptBrowserWindowsSteps(file.text.value, parsed),
+    );
+    await callbacks.checkpoint(facts);
     return null;
   }
+  const staticImportResolutionMode = moduleResolutionModeForJavaScriptReference(
+    file.path,
+    "static-import",
+  );
+  let sharedBindings: JavaScriptReceiverIndex | null;
+  const staticResult = await completeJavaScriptAnalysisSteps(
+    analyzeParsedJavaScriptStaticSourceWithBindingsSteps(
+      file.text.value,
+      parsed,
+      staticImportResolutionMode,
+    ),
+  );
+  const facts = staticResult.analysis;
+  sharedBindings = staticResult.bindings;
   const resultBudgetBytes = await callbacks.checkpoint(facts);
-  if (facts.parse_status === "failed") return null;
-  if (resultBudgetBytes === 0)
+  if (facts.parse_status === "failed") {
+    sharedBindings = null;
+    return null;
+  }
+  if (resultBudgetBytes === 0) {
+    sharedBindings = null;
     throw new AnalysisResourceConstraintError(
       "analyze_javascript_application",
       "memory",
       `The parent reserved its remaining result capacity for static observations; semantic analysis of ${file.path} was not started`,
       { semantic_result_budget_bytes: 0 },
     );
+  }
   await callbacks.phase("semantic");
   const ir = await completeJavaScriptAnalysisSteps(
     analyzeParsedJavaScriptSemanticsSteps(
       parsed,
-      moduleResolutionModeForJavaScriptReference(file.path, "static-import"),
+      staticImportResolutionMode,
       capacity.nodes,
+      sharedBindings,
     ),
   );
   parsed = null;
+  sharedBindings = null;
   const module = projectJavaScriptModuleSemantics(ir);
   const measured = measureJavaScriptModuleTransfer(
     module,

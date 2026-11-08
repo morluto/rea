@@ -8,7 +8,11 @@ import type {
   JavaScriptArtifactFile,
   JavaScriptArtifactFileSet,
 } from "../../../src/domain/javascript/javascriptArtifactFiles.js";
-import { analyzeParsedJavaScriptStaticSource } from "../../../src/domain/javascript/javascriptStaticAnalysis.js";
+import {
+  analyzeParsedJavaScriptStaticSource,
+  discoverParsedJavaScriptBrowserWindowsSteps,
+} from "../../../src/domain/javascript/javascriptStaticAnalysis.js";
+import { completeSemanticSteps } from "../../../src/domain/javascript/javascriptSemanticTraversal.js";
 import { parseJavaScriptSource } from "../../../src/domain/javascript/javascriptSourceParser.js";
 import { ok, err } from "../../../src/domain/result.js";
 import { discoverJavaScriptPreloadPaths } from "../../../src/application/javascript/JavaScriptPreloadDiscovery.js";
@@ -55,17 +59,17 @@ const analyze = vi.fn(
     _signal: AbortSignal | undefined,
     _phase: unknown,
     packageType: "module" | "commonjs" | "unknown" | "unspecified",
+    purpose?: "analysis" | "preload-discovery",
   ) => {
-    const parsed = parseJavaScriptSource(
-      source.text.included ? source.text.value : "",
-      source.path,
-      packageType,
-    )!;
+    const text = source.text.included ? source.text.value : "";
+    const parsed = parseJavaScriptSource(text, source.path, packageType)!;
     return ok({
-      javascript: analyzeParsedJavaScriptStaticSource(
-        source.text.included ? source.text.value : "",
-        parsed,
-      ),
+      javascript:
+        purpose === "preload-discovery"
+          ? completeSemanticSteps(
+              discoverParsedJavaScriptBrowserWindowsSteps(text, parsed),
+            )
+          : analyzeParsedJavaScriptStaticSource(text, parsed),
       module: null,
       projection: null,
     });
@@ -205,4 +209,67 @@ it("retains a failed close and the original cancellation until scope cleanup ret
   await scope.retryCleanup();
   expect(scope.hasPending).toBe(false);
   expect(close).toHaveBeenCalledTimes(2);
+});
+it("skips preload discovery when only node_modules dependencies use module package scope", async () => {
+  const result = await discoverJavaScriptPreloadPaths(
+    {
+      files: [
+        file("package.json", '{"name":"cjs-app","main":"main.js"}'),
+        file(
+          "main.js",
+          'const { BrowserWindow } = require("electron"); new BrowserWindow({webPreferences:{preload:"preload.js"}});',
+        ),
+        file("preload.js", 'require("./helper.cjs");'),
+        file("node_modules/esm-dep/package.json", '{"type":"module"}'),
+        file("node_modules/esm-dep/index.js", "export const x = 1;"),
+      ],
+      unavailable_relevant_files: [],
+      containers: [],
+      text_bytes_read: 0,
+      invalid_utf8_files: 0,
+    },
+    limits,
+    new ArtifactResourceScope(),
+  );
+  expect(result).toEqual({ paths: new Set(), limitations: [] });
+  expect(acquire).not.toHaveBeenCalled();
+});
+it("scopes preload discovery in mixed ESM + CJS workspaces to application module containers and excludes node_modules", async () => {
+  const otherContainer = "c".repeat(64);
+  const cjsMain =
+    'const { BrowserWindow } = require("electron"); const path = require("node:path"); new BrowserWindow({webPreferences:{preload:path.join(__dirname, "preload.js")}});';
+  const result = await discoverJavaScriptPreloadPaths(
+    {
+      files: [
+        file("package.json", '{"type":"module"}'),
+        file("main.cjs", cjsMain),
+        file("preload.js", 'require("./helper.cjs");'),
+        file("renderer.js", "export const view = 1;"),
+        file("node_modules/esm-dep/package.json", '{"type":"module"}'),
+        file("node_modules/esm-dep/index.js", "export const dep = 2;"),
+        file("package.json", '{"type":"commonjs"}', otherContainer),
+        file("other.js", "module.exports = 3;", otherContainer),
+      ],
+      unavailable_relevant_files: [],
+      containers: [],
+      text_bytes_read: 0,
+      invalid_utf8_files: 0,
+    },
+    limits,
+    new ArtifactResourceScope(),
+  );
+  expect(result).toEqual({
+    paths: new Set(["a".repeat(64) + ":preload.js"]),
+    limitations: [],
+  });
+  expect(acquire).toHaveBeenCalledWith(
+    limits,
+    3,
+    expect.objectContaining({ scope: expect.any(ArtifactResourceScope) }),
+  );
+  expect(analyze.mock.calls.map(([source]) => source.path)).toEqual([
+    "main.cjs",
+    "preload.js",
+    "renderer.js",
+  ]);
 });

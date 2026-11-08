@@ -597,3 +597,124 @@ it.each(["native-error", "analysis-error", "abort-reason"] as const)(
     }
   },
 );
+
+it("preserves deterministic Evidence across mixed CJS and ESM apps with ESM node_modules and cancels in javascript_worker_semantic", async () => {
+  const cjsRoot = await createTestTempDirectory("rea-js-mixed-cjs-esm-dep-");
+  const esmRoot = await createTestTempDirectory("rea-js-mixed-esm-app-");
+  await mkdir(join(cjsRoot, "node_modules", "esm-only"), { recursive: true });
+  await mkdir(join(esmRoot, "node_modules", "esm-only"), { recursive: true });
+  await Promise.all([
+    writeFile(
+      join(cjsRoot, "package.json"),
+      JSON.stringify({ name: "cjs-electron-app", main: "main.js" }),
+    ),
+    writeFile(
+      join(cjsRoot, "main.js"),
+      [
+        'const { BrowserWindow, ipcMain } = require("electron");',
+        'const path = require("node:path");',
+        'ipcMain.handle("app:ping", async () => "pong");',
+        'new BrowserWindow({ webPreferences: { preload: path.join(__dirname, "preload.js") } });',
+      ].join("\n"),
+    ),
+    writeFile(
+      join(cjsRoot, "preload.js"),
+      'const { contextBridge, ipcRenderer } = require("electron"); contextBridge.exposeInMainWorld("api", { ping: () => ipcRenderer.invoke("app:ping") });',
+    ),
+    writeFile(
+      join(cjsRoot, "node_modules", "esm-only", "package.json"),
+      JSON.stringify({ name: "esm-only", version: "1.0.0", type: "module" }),
+    ),
+    writeFile(
+      join(cjsRoot, "node_modules", "esm-only", "index.js"),
+      "export const trimValue = (v) => String(v).trim();\n",
+    ),
+    writeFile(
+      join(esmRoot, "package.json"),
+      JSON.stringify({
+        name: "esm-electron-app",
+        type: "module",
+        main: "main.mjs",
+      }),
+    ),
+    writeFile(
+      join(esmRoot, "main.mjs"),
+      [
+        'import { BrowserWindow, ipcMain } from "electron";',
+        'import { fileURLToPath } from "node:url";',
+        'ipcMain.handle("app:ping", async () => "pong");',
+        'new BrowserWindow({ webPreferences: { sandbox: false, preload: fileURLToPath(new URL("./preload.js", import.meta.url)) } });',
+      ].join("\n"),
+    ),
+    writeFile(
+      join(esmRoot, "preload.js"),
+      'const { contextBridge, ipcRenderer } = require("electron"); contextBridge.exposeInMainWorld("api", { ping: () => ipcRenderer.invoke("app:ping") });',
+    ),
+    writeFile(
+      join(esmRoot, "node_modules", "esm-only", "package.json"),
+      JSON.stringify({ name: "esm-only", version: "1.0.0", type: "module" }),
+    ),
+    writeFile(
+      join(esmRoot, "node_modules", "esm-only", "index.js"),
+      "export const trimValue = (v) => String(v).trim();\n",
+    ),
+  ]);
+
+  const first = await analyzeJavaScriptApplication({
+    input_path: cjsRoot,
+    format: "directory",
+  });
+  const second = await analyzeJavaScriptApplication({
+    input_path: cjsRoot,
+    format: "directory",
+  });
+  const esmAnalyzed = await analyzeJavaScriptApplication({
+    input_path: esmRoot,
+    format: "directory",
+  });
+  if (!first.ok) throw first.error;
+  if (!second.ok) throw second.error;
+  if (!esmAnalyzed.ok) throw esmAnalyzed.error;
+  expect(second.value.evidence_id).toBe(first.value.evidence_id);
+  expect(
+    javascriptApplicationAnalysisResultSchema.parse(
+      first.value.normalized_result,
+    ).summary,
+  ).toMatchObject({
+    browser_windows: 1,
+    preload_entrypoints: 1,
+    ipc: { paired_renderer_transmissions: 1 },
+  });
+  expect(
+    javascriptApplicationAnalysisResultSchema.parse(
+      esmAnalyzed.value.normalized_result,
+    ).summary,
+  ).toMatchObject({
+    browser_windows: 1,
+    preload_entrypoints: 1,
+    ipc: { paired_renderer_transmissions: 1 },
+  });
+
+  const controller = new AbortController();
+  const reason = { request: "cancel during worker semantic phase" };
+  let sawWorkerPhase = false;
+  const cancelled = await analyzeJavaScriptApplication(
+    { input_path: cjsRoot, format: "directory" },
+    {
+      signal: controller.signal,
+      progress: {
+        async report(event) {
+          if (event.phase === "javascript_worker_semantic") {
+            sawWorkerPhase = true;
+            controller.abort(reason);
+          }
+        },
+      },
+    },
+  );
+  expect(sawWorkerPhase).toBe(true);
+  if (cancelled.ok) throw new Error("Expected semantic-phase cancellation");
+  expect(projectAnalysisError(cancelled.error)).toMatchObject({
+    code: "cancelled",
+  });
+});

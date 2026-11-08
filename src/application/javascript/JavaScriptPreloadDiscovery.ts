@@ -10,6 +10,7 @@ import type { JavaScriptSourceAnalysisLimits } from "../../domain/javascript/jav
 import type { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
 import { createJavaScriptSourceAnalysis } from "../../artifacts/javascript/JavaScriptSourceAnalysis.js";
 import { createJavaScriptPackageTypeLookup } from "./JavaScriptArtifactAnalysis.js";
+import { dependencyManifest } from "./JavaScriptArtifactGraphContext.js";
 import { JavaScriptJsonDocuments } from "./JavaScriptJsonDocuments.js";
 import { resolveArtifactPathByContext } from "./JavaScriptArtifactPathResolution.js";
 
@@ -36,20 +37,38 @@ export const discoverJavaScriptPreloadPaths = async (
     fileSet,
     jsonDocuments,
   );
-  if (
-    !fileSet.files.some(
-      (file) =>
-        file.kind === "javascript" &&
-        file.text.included &&
-        /\.js$/iu.test(file.path) &&
-        packageTypeFor(file) === "module",
-    )
-  )
-    return { paths, limitations };
-  const sources = fileSet.files.filter(
-    (file) => file.kind === "javascript" && file.text.included,
+  const moduleJsContainers = new Set(
+    fileSet.files.flatMap((file) =>
+      file.kind === "javascript" &&
+      file.text.included &&
+      !dependencyManifest(file.path) &&
+      /\.js$/iu.test(file.path) &&
+      packageTypeFor(file) === "module"
+        ? [file.container_sha256]
+        : [],
+    ),
   );
-  const files = new Map(fileSet.files.map((file) => [file.path, file]));
+  if (moduleJsContainers.size === 0) return { paths, limitations };
+  const sources = fileSet.files.filter(
+    (file) =>
+      file.kind === "javascript" &&
+      file.text.included &&
+      !dependencyManifest(file.path) &&
+      moduleJsContainers.has(file.container_sha256),
+  );
+  const filesByContainer = new Map<
+    string,
+    Map<string, (typeof fileSet.files)[number]>
+  >();
+  for (const file of fileSet.files) {
+    if (!moduleJsContainers.has(file.container_sha256)) continue;
+    let containerFiles = filesByContainer.get(file.container_sha256);
+    if (containerFiles === undefined) {
+      containerFiles = new Map();
+      filesByContainer.set(file.container_sha256, containerFiles);
+    }
+    containerFiles.set(file.path, file);
+  }
   const worker = await createJavaScriptSourceAnalysis(limits, sources.length, {
     scope,
   });
@@ -86,6 +105,7 @@ export const discoverJavaScriptPreloadPaths = async (
         if (skipped) continue;
         break;
       }
+      const files = filesByContainer.get(file.container_sha256) ?? new Map();
       for (const window of result.value.javascript.electron.browser_windows) {
         if (window.preload_path === null) continue;
         const resolution = resolveArtifactPathByContext({

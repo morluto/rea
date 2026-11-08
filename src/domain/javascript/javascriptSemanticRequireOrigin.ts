@@ -108,6 +108,7 @@ export const hasPossibleCommonJsDelegateWrite = (
 export const invalidateSemanticRequireDelegateWrites = (
   state: JavaScriptSemanticAnalysisState,
 ): void => {
+  globalProcessReplacements.delete(state);
   moduleRequireWrites.delete(state);
   moduleReturnedReferences.delete(state);
 };
