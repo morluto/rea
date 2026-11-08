@@ -1,14 +1,17 @@
 import { execFile } from "node:child_process";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { promisify } from "node:util";
 
 import { expect, it } from "vitest";
 
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
-import { systemDoctorHost } from "../application/Doctor.js";
+import { runDoctor, systemDoctorHost } from "../application/Doctor.js";
 import { readDesktopBuildFacts } from "./DesktopBuildDoctorFacts.js";
-import { defaultBuildComputerArchive } from "./BuildComputerEnvironment.js";
+import {
+  defaultBuildComputerArchive,
+  resolveBuildComputerEnvironment,
+} from "./BuildComputerEnvironment.js";
 
 const execute = promisify(execFile);
 
@@ -41,6 +44,83 @@ const readFacts = async (
     await host.close?.();
   }
 };
+
+it.skipIf(process.platform === "win32")(
+  "uses the runtime PATH fallback for a registered empty runner",
+  async () => {
+    const { root, bin, home } = await buildHost("rea-desktop-empty-runner-");
+    const runner = join(bin, "agent-env");
+    await program(runner, 'echo "agent-env 0.9.1431"');
+    const environment = {
+      HOME: home,
+      USERPROFILE: home,
+      PATH: `${bin}:/usr/bin:/bin`,
+      XDG_CACHE_HOME: join(root, "cache"),
+    };
+    await writeFile(
+      join(home, ".claude.json"),
+      JSON.stringify({
+        mcpServers: {
+          rea: {
+            command: process.execPath,
+            args: ["/opt/rea/scripts/rea.mjs", "mcp"],
+            env: { REA_AGENT_ENV_COMMAND: "" },
+          },
+        },
+      }),
+    );
+    expect(
+      (
+        await resolveBuildComputerEnvironment(
+          { ...environment, REA_AGENT_ENV_COMMAND: "" },
+          "linux",
+        )
+      ).REA_AGENT_ENV_COMMAND,
+    ).toBe(runner);
+    const facts = await readFacts(environment, ["claude_code"]);
+    expect(facts.registrations[0]).toMatchObject({
+      runner: { status: "current", version: "0.9.1431" },
+    });
+    expect(facts.registrations[0]?.differing ?? []).not.toContain(
+      "REA_AGENT_ENV_COMMAND",
+    );
+    expect(
+      (
+        await readFacts(
+          { ...environment, REA_AGENT_ENV_COMMAND: "/different/agent-env" },
+          ["claude_code"],
+        )
+      ).registrations[0]?.differing,
+    ).toContain("REA_AGENT_ENV_COMMAND");
+    const host = systemDoctorHost({
+      environment,
+      platform: "linux",
+      architecture: "x64",
+      desktopBuildFacts: readDesktopBuildFacts,
+    });
+    try {
+      const report = await runDoctor(undefined, host, {
+        providers: ["desktop_build"],
+        clients: ["claude_code"],
+      });
+      expect(
+        report.scope_checks.find(
+          ({ name }) => name === "desktop_build-agent-env",
+        ),
+      ).toMatchObject({ ok: true });
+    } finally {
+      await host.close?.();
+    }
+    await program(runner, 'echo "agent-env 0.9.1400"');
+    expect(
+      (await readFacts(environment, ["claude_code"])).registrations[0],
+    ).toMatchObject({ runner: { status: "stale", version: "0.9.1400" } });
+    await rm(runner);
+    expect(
+      (await readFacts(environment, ["claude_code"])).registrations[0],
+    ).toMatchObject({ runner: { status: "invalid" } });
+  },
+);
 
 it.skipIf(process.platform === "win32")(
   "compares registrations to resolved defaults when the terminal has no overrides",
