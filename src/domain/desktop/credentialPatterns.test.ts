@@ -19,7 +19,14 @@ Own="<?xml version=\\"1.0\\"?><KeeShare><PrivateKey>MIIEvgIBADANBgkqhkiG9w0BAQEF
 QuietSuccess=true
 `;
 const PEM = `-----BEGIN PRIVATE KEY-----\n${FAKE_DER_BODY}\n-----END PRIVATE KEY-----`;
-const JWT = "eyJhbGciOiJub25lIn0.eyJzdWIiOiJyZWEtdGVzdCJ9.ZmFrZS1zaWduYXR1cmU";
+/** An unsigned JWT, built from its parts so secret scanners do not flag the file. */
+const JWT = [
+  JSON.stringify({ alg: "none" }),
+  JSON.stringify({ sub: "rea-test" }),
+  "fake-signature",
+]
+  .map((part) => Buffer.from(part).toString("base64url"))
+  .join(".");
 
 /** Keys generated for the test run, never stored anywhere, each as base64 DER in the encodings apps keep them in. */
 const generatedKeys = () => {
@@ -120,7 +127,9 @@ it("finds and redacts every key in a long run while preserving separators", () =
   const key = generateKeyPairSync("ed25519", {
     privateKeyEncoding: { type: "pkcs8", format: "der" },
     publicKeyEncoding: { type: "spki", format: "der" },
-  }).privateKey.toString("base64").replace(/=+$/u, "");
+  })
+    .privateKey.toString("base64")
+    .replace(/=+$/u, "");
   const keys = Array.from({ length: 2000 }, (_, index) =>
     index % 2 === 0 ? key : lines(key, "\\n"),
   );
