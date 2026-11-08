@@ -156,6 +156,7 @@
 * **rizin:** select the decoder and map address for one-shot commands ([#8991](https://github.com/morluto/rea/issues/8991)) ([81f9f71](https://github.com/morluto/rea/commit/81f9f71f6d7d564456381bf7c7d278f0335ea31b))
 * **setup:** register LM Studio during setup ([#8611](https://github.com/morluto/rea/issues/8611)) ([398eb0d](https://github.com/morluto/rea/commit/398eb0d1f16b410b64a96615c6463fbf2ab2f38d))
 * **setup:** support CodeBuddy as a setup client ([#2492](https://github.com/morluto/rea/issues/2492)) ([fb841a9](https://github.com/morluto/rea/commit/fb841a9596f5195f52f1946a2ee42e109c30cdaf))
+* **skills:** build a computer-app environment from a request ([#9049](https://github.com/morluto/rea/issues/9049)) ([03a3fcb](https://github.com/morluto/rea/commit/03a3fcbcea87d6cb7485bffaee77d0338a0ab635))
 * **web:** page retained bundle endpoint observations and inferences ([#7259](https://github.com/morluto/rea/issues/7259)) ([6d5532a](https://github.com/morluto/rea/commit/6d5532a204b338a6c770fcbae61e0d55bda70793))
 * **website:** publish agent discovery and Markdown responses ([eef8f44](https://github.com/morluto/rea/commit/eef8f44003e6bf781baf4f885f84d03b31ea6c3a))
 * **workflows:** expose guided prompts through CLI and MCP ([#6995](https://github.com/morluto/rea/issues/6995)) ([5ae7765](https://github.com/morluto/rea/commit/5ae77656e7c4b9c40e84566a445660af34a23ad4))
