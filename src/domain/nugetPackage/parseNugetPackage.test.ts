@@ -257,7 +257,7 @@ describe("parseNugetPackage: asset layout", () => {
       runtime_identifier: "win-x64",
     });
     expect(byPath.get("runtimes/win-x64/native/example.so")).toMatchObject({
-      kind: "runtime",
+      kind: "native",
       target_framework: null,
       runtime_identifier: "win-x64",
     });
@@ -313,6 +313,34 @@ describe("parseNugetPackage: framework folder edge cases", () => {
     ).toBe("net8.0");
     expect(byPath.get("runtimes/win-x64/lib/net8.0/")?.target_framework).toBe(
       "net8.0",
+    );
+  });
+  it("reads the framework from build and contentFiles layouts", () => {
+    const byPath = new Map(
+      parsed(
+        parse([
+          member("build/net8.0/Example.targets"),
+          member("build/net8.0/", { directory: true }),
+          member("build/Example.targets"),
+          member("contentFiles/cs/net8.0/readme.txt"),
+          member("contentFiles/cs/net8.0/", { directory: true }),
+          member("contentFiles/cs/readme.txt"),
+        ]),
+      ).assets.map((asset) => [asset.path, asset]),
+    );
+    expect(byPath.get("build/net8.0/Example.targets")?.target_framework).toBe(
+      "net8.0",
+    );
+    expect(byPath.get("build/net8.0/")?.target_framework).toBe("net8.0");
+    expect(byPath.get("build/Example.targets")?.target_framework).toBe(null);
+    expect(
+      byPath.get("contentFiles/cs/net8.0/readme.txt")?.target_framework,
+    ).toBe("net8.0");
+    expect(byPath.get("contentFiles/cs/net8.0/")?.target_framework).toBe(
+      "net8.0",
+    );
+    expect(byPath.get("contentFiles/cs/readme.txt")?.target_framework).toBe(
+      null,
     );
   });
 });
@@ -411,6 +439,21 @@ describe("parseNugetPackage: coverage and refusals", () => {
         message: expect.stringContaining("urn:not-nuspec"),
       }),
     );
+  });
+
+  it("accepts the packaging namespaces NuGet published before 2012", () => {
+    for (const namespace of [
+      "http://schemas.microsoft.com/packaging/2011/10/nuspec.xsd",
+      "http://schemas.microsoft.com/packaging/2013/01/nuspec.xsd",
+    ]) {
+      const text = NUSPEC.replace(
+        /<package[^>]*>/u,
+        `<package xmlns="${namespace}">`,
+      );
+      const package_ = parsed(parse([member("Example.nuspec", { text })]));
+      expect(package_.diagnostics).toEqual([]);
+      expect(package_.nuspecs[0]?.id).toBe("Example.Package");
+    }
   });
 
   it("keeps an explicitly empty repository attribute distinct from an omission", () => {
@@ -552,6 +595,19 @@ describe("parseNugetPackage: runtime folders and bounded reads", () => {
       "ZIP name uses CP437 fallback; source encoding unverified; raw hex: 4578e46d706c652e646c6c.",
     );
     expect(package_.source_coverage.status).toBe("partial");
+  });
+
+  it("keeps a harmless name normalisation without reducing coverage", () => {
+    const note =
+      'ZIP member name "./lib/net8.0/Example.dll" has a leading current-directory prefix omitted from its logical path.';
+    const package_ = parsed(
+      parse([
+        member("Example.Package.nuspec", { text: NUSPEC }),
+        member("lib/net8.0/Example.dll", { limitations: [note] }),
+      ]),
+    );
+    expect(package_.limitations).toContain(note);
+    expect(package_.source_coverage.status).toBe("complete-within-scope");
   });
 });
 

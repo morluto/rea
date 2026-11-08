@@ -55,7 +55,6 @@ const ASSET_PREFIXES = [
   ["resources/", "resources"],
   ["docs/", "docs"],
 ] as const;
-
 type AssetKind = NugetAsset["kind"];
 
 /**
@@ -74,6 +73,9 @@ export const isSafeMemberPath = (path: string): boolean =>
 const normalisePath = (path: string): string => path.replace(/\\/gu, "/");
 
 const assembleKind = (path: string): AssetKind => {
+  // NuGet ships native assets under runtimes/<rid>/native/, so that subtree has
+  // to be classified before the broader runtimes/ rule claims it as runtime.
+  if (/^runtimes\/[^/]+\/native\//u.test(path)) return "native";
   for (const [prefix, kind] of ASSET_PREFIXES)
     if (path.startsWith(prefix)) return kind;
   return "other";
@@ -92,6 +94,16 @@ const targetFramework = (path: string, directory: boolean): string | null => {
   if (segments.length < 3) return null;
   if (segments[0] === "lib" || segments[0] === "ref")
     return frameworkSegment(segments[1]);
+  // build/ and contentFiles/ qualify their framework in the second segment:
+  // build/<tfm>/<file|folder> and contentFiles/<codeLanguage>/<tfm>/<file|folder>.
+  if (segments[0] === "build")
+    return directory || segments.length >= 3
+      ? frameworkSegment(segments[1])
+      : null;
+  if (segments[0] === "contentFiles")
+    return directory || segments.length >= 4
+      ? frameworkSegment(segments[2])
+      : null;
   // A file's fourth segment is only a framework folder when another segment
   // follows it; otherwise it is the filename.
   if (segments[0] === "runtimes" && segments[2] === "lib")
@@ -120,7 +132,9 @@ const runtimeIdentifier = (path: string, directory: boolean): string | null => {
 const NUSPEC_NAMESPACES: ReadonlySet<string> = new Set([
   "http://schemas.microsoft.com/packaging/2010/07/nuspec.xsd",
   "http://schemas.microsoft.com/packaging/2011/08/nuspec.xsd",
+  "http://schemas.microsoft.com/packaging/2011/10/nuspec.xsd",
   "http://schemas.microsoft.com/packaging/2012/06/nuspec.xsd",
+  "http://schemas.microsoft.com/packaging/2013/01/nuspec.xsd",
   "http://schemas.microsoft.com/packaging/2013/05/nuspec.xsd",
 ]);
 
@@ -368,18 +382,19 @@ export const parseNugetPackage = (
   let nuspecMembers = 0;
   let truncated = false;
   const nameLimitations = new Set<string>();
+  // Normalisation is recorded but never reduces coverage, so it needs its own
+  // set: a fully read package with a `./` member is not a partial package.
+  const normalisations = new Set<string>();
 
   for (const member of members) {
     if (assets.length + nuspecs.length >= options.maxEntries) {
       truncated = true;
       break;
     }
-    // A known `./` spelling was normalised without missing or misreading a
-    // member, so it is published as a limitation but does not make coverage
-    // partial the way an undecoded stored name does.
     for (const limitation of member.limitations ?? [])
-      if (!limitation.includes("leading current-directory prefix"))
-        nameLimitations.add(limitation);
+      if (limitation.includes("leading current-directory prefix"))
+        normalisations.add(limitation);
+      else nameLimitations.add(limitation);
     const path = normalisePath(member.path);
     if (!isSafeMemberPath(path)) {
       budget.add(
@@ -460,6 +475,7 @@ export const parseNugetPackage = (
       "Dependency groups and version ranges are declarations; packages are not restored and feeds are not contacted.",
       "Package signatures and the archive's member checksums beyond the ZIP reader's own verification are not evaluated.",
       ...nameLimitations,
+      ...normalisations,
     ],
   });
 };
