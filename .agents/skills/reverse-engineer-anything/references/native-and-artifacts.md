@@ -1,4 +1,45 @@
-# Native, managed, and packaged artifacts
+# Native and managed analysis
+
+Read the section matching the supplied artifact; other sections are optional.
+
+- [Apple app resources](#apple-app-resources)
+- [Desktop installation directories](#desktop-installation-directories)
+- [Go build metadata](#go-build-metadata)
+- [Model files](#model-files)
+- [IL2CPP metadata](#il2cpp-metadata)
+- [Rust dependency metadata](#rust-dependency-metadata)
+- [PE Authenticode certificate tables](#pe-authenticode-certificate-tables)
+- [PE import and delay-load tables](#pe-import-and-delay-load-tables)
+- [PE TLS callbacks and load configuration](#pe-tls-callbacks-and-load-configuration)
+- [Binary hardening](#binary-hardening)
+- [ELF note tables](#elf-note-tables)
+- [Apple IPS crash reports](#apple-ips-crash-reports)
+- [Linux kernel modules](#linux-kernel-modules)
+- [CPython pyc files](#cpython-pyc-files)
+- [Erlang BEAM files](#erlang-beam-files)
+- [SQLite snapshots](#sqlite-snapshots)
+- [Recorded Linux crashes](#recorded-linux-crashes)
+- [Offline ELF layout](#offline-elf-layout)
+- [Offline WASM](#offline-wasm)
+- [Offline APK signatures](#offline-apk-signatures)
+- [Native targets](#native-targets)
+- [Continue editable Ghidra analysis across processes](#continue-editable-ghidra-analysis-across-processes)
+- [Reuse caller-selected Ghidra analysis](#reuse-caller-selected-ghidra-analysis)
+- [Ghidra startup deadline recovery](#ghidra-startup-deadline-recovery)
+- [Bridge request ceiling](#bridge-request-ceiling)
+- [Selected native facts and call graphs](#selected-native-facts-and-call-graphs)
+- [Static memory and original file bytes](#static-memory-and-original-file-bytes)
+- [DOS MZ with Ghidra](#dos-mz-with-ghidra)
+- [Managed PE/CLI](#managed-pecli)
+- [Packages and extraction](#packages-and-extraction)
+- [DOS COM loader interpretation](#dos-com-loader-interpretation)
+- [Function annotations in Ghidra](#function-annotations-in-ghidra)
+- [Offline PE resource inventory](#offline-pe-resource-inventory)
+- [Offline PE and ELF export tables](#offline-pe-and-elf-export-tables)
+- [Godot PCK](#godot-pck)
+- [ESP images](#esp-images)
+- [ESP flash images](#esp-flash-images)
+- [Bun standalone executables](#bun-standalone-executables)
 
 For release comparisons on one MCP connection, retain `list_procedures` Evidence
 from each target and reuse its exact IDs after target switches or `close_binary`.
@@ -64,252 +105,75 @@ See [desktop installations](https://github.com/morluto/rea/blob/main/docs/deskto
 
 ## Go build metadata
 
-Use `inspect_go_binary` for an explicit local ELF, PE or Mach-O (universal
-files need `architecture`) when the
-question concerns the embedded compiler version, module/dependency versions,
-local replacements or build settings. No `open_binary`, Go installation or
-target execution is required. The CLI equivalent is `inspect-go-binary PATH`.
-Preserve artifact SHA-256, original file ranges, framed module bytes and every
-unparsed module-text line. A missing record is an unknown, not proof of a
-non-Go binary; observed metadata does not authenticate its claims. Function,
-source and type recovery remain a separate native-analysis question.
+Read [Go build metadata](format-inspectors.md#go-build-metadata).
 
 ## Model files
 
-Use `inspect_model_artifact` (`inspect-model-artifact PATH`) for local GGUF v2/v3
-and safetensors declarations without a model runtime. Header-only mode does not
-read weights or establish full-file identity. `hash: "full"` explicitly streams
-all bytes. Retained `model-artifact` views page `metadata`, `tensors` and derived
-`types`, with exact batch filters and selected fields. Arrays retain typed counts
-and eight-element previews; omitted values, unknown types and runtime behavior
-stay explicit. See [model files](https://github.com/morluto/rea/blob/main/docs/model-artifacts.md).
+Read [Model files](format-inspectors.md#model-files).
 
 ## IL2CPP metadata
 
-Use `inspect_il2cpp_metadata` for an explicit local Unity `global-metadata.dat`
-(versions 24, 27, 29, 31 and 39) when the question concerns assembly images,
-names, member owners, string literals, namespaces or index ranges. No `open_binary`, Unity installation or target
-execution is required. The CLI equivalent is `inspect-il2cpp-metadata PATH`.
-MCP defaults to counts with complete retained Evidence. Query `sections`,
-`images`, `types`, `methods`, `fields`, `properties`, `events`, `parameters` or
-`string_literals` through `inspect_analysis_view`; use exact names,
-batch indices and selected fields. Row indices are scoped by artifact SHA-256
-and collection; page offsets count filtered matches. Parameters support batch
-`method_indices` to read one method's parameters directly. Historical reports
-without member collections retain unknown counts rather than empty inventories. Preserve
-artifact SHA-256 and index widths. Unrecognized magic may mean encryption and
-is unsupported, not decrypted. Linking names to `GameAssembly` or
-`UnityFramework` code addresses remains a separate native-analysis question.
-See [IL2CPP metadata](https://github.com/morluto/rea/blob/main/docs/il2cpp-metadata.md).
+Read [IL2CPP metadata](format-inspectors.md#il2cpp-metadata).
 
 ## Rust dependency metadata
 
-Use `inspect_rust_binary` for an explicit local ELF, PE, or Mach-O (universal
-files need `architecture`) when
-the question concerns the cargo-auditable crate list embedded in `.dep-v0`
-(Mach-O: `__DATA,.dep-v0`). No `open_binary`, Rust installation, or target
-execution is required. The CLI equivalent is `inspect-rust-binary PATH`.
-Preserve artifact SHA-256, package order, dependency indices, and the section
-file range. A missing section is null metadata, not proof the binary has no
-dependencies. An omitted package kind stays null. A rustc commit hash is
-inferred from a read-only `/rustc/<40-hex>/` path and does not by itself
-identify the compiler. See [Rust binaries](https://github.com/morluto/rea/blob/main/docs/rust-binaries.md).
+Read [Rust dependency metadata](format-inspectors.md#rust-dependency-metadata).
 
 ## PE Authenticode certificate tables
 
-Use `inspect_pe_certificates` for an explicit local PE32/PE32+ image when the
-question concerns the Authenticode certificate table, WIN_CERTIFICATE types, or
-embedded PKCS#7 signer and X.509 identity fields. No `open_binary`, Windows SDK,
-or target execution is required. The CLI equivalent is
-`inspect-pe-certificates PATH`. Preserve artifact SHA-256, table file ranges,
-payload hashes, original validity-time spellings, and
-`subject_key_identifier_hex` when the signer uses that form. A missing
-`IMAGE_DIRECTORY_ENTRY_SECURITY` directory is observed absence of that table,
-not proof the image is unsigned in every catalog or overlay sense. Signatures,
-chains, timestamps, and Authenticode digest coverage remain unobserved. See
-[PE Authenticode certificate tables](https://github.com/morluto/rea/blob/main/docs/pe-certificates.md).
+Read [PE Authenticode certificate tables](format-inspectors.md#pe-authenticode-certificate-tables).
 
 ## PE import and delay-load tables
 
-Use `inspect_pe_imports` for an explicit local PE32/PE32+ image when the
-question concerns imported DLL and function names, ordinals, delay-load
-descriptors, or the pefile import hash. No `open_binary`, Windows SDK, or
-target execution is required. The CLI equivalent is `inspect-pe-imports PATH`.
-Preserve artifact SHA-256, directory file ranges, original DLL spellings, and
-ILT/IAT RVAs. A missing `IMAGE_DIRECTORY_ENTRY_IMPORT` directory is observed
-absence of that table, not proof the image never imported APIs through another
-table or overlay. Bound snapshots, loaded IAT contents, and export-forward
-resolution remain unobserved. See
-[PE import and delay-load tables](https://github.com/morluto/rea/blob/main/docs/pe-imports.md).
+Read [PE import and delay-load tables](format-inspectors.md#pe-import-and-delay-load-tables).
 
 ## PE TLS callbacks and load configuration
 
-Use `inspect_pe_load_config` for an explicit local PE32/PE32+ image when the
-question concerns code that runs before the entry point through TLS callbacks,
-or the security cookie, SafeSEH, CFG, EH-continuation and XFG declarations in
-the load configuration. No `open_binary`, Windows SDK, or target execution is
-required. The CLI equivalent is `inspect-pe-load-config PATH`. Preserve artifact
-SHA-256, directory and callback-array file ranges, and callback VAs as
-hexadecimal strings. Fields outside the declared `Size` are `null`. Guard-flag
-mitigations carry `evidence_kind: "inferred"`; enforcement remains unobserved.
-See
-[PE TLS callbacks and load configuration](https://github.com/morluto/rea/blob/main/docs/pe-load-config.md).
+Read [PE TLS callbacks and load configuration](format-inspectors.md#pe-tls-callbacks-and-load-configuration).
 
 ## Binary hardening
 
-Use `inspect_binary_hardening` for an explicit local ELF, PE, or Mach-O file
-when the question concerns PIE or ASLR, NX, RELRO, stack-protector or FORTIFY
-signs, control-flow flags, or stripped state. No `open_binary`, pwntools, or
-target execution is required. The CLI equivalent is
-`inspect-binary-hardening PATH`. Universal Mach-O files return one image per
-slice. A missing import is `unknown`, not proof the protection was omitted.
-Authenticode and Mach-O code-signature rows report presence, not validity.
-`hardened_runtime` stays unknown and names `inspect_signature`. See
-[binary hardening](https://github.com/morluto/rea/blob/main/docs/binary-hardening.md).
+Read [Binary hardening](format-inspectors.md#binary-hardening).
 
 ## ELF note tables
 
-Use `inspect_elf_notes` for an explicit local ELF32/ELF64 image when the
-question concerns PT_NOTE/SHT_NOTE owners, GNU build-id, or GNU ABI-tag
-fields. No `open_binary` or target execution is required. The CLI equivalent
-is `inspect-elf-notes PATH`. Preserve artifact SHA-256, table file ranges,
-descriptor hashes, and original owner spellings. A missing table is observed
-absence of those declarations, not proof the image never carried notes in
-another container. See
-[ELF note tables](https://github.com/morluto/rea/blob/main/docs/elf-notes.md).
+Read [ELF note tables](format-inspectors.md#elf-note-tables).
 
 ## Apple IPS crash reports
 
-Use `inspect_apple_ips` for an explicit local Apple `.ips` file when the
-question concerns crash metadata, exception and termination facts, threads,
-usedImages, lossless registers, or documented crash classes. No `open_binary`,
-Xcode, atos, or target execution is required. The CLI equivalent is
-`inspect-apple-ips PATH`. Preserve artifact SHA-256, `bug_type` as a string,
-uppercase image UUIDs, and integer literals that exceed IEEE-754 range. Only
-`bug_type` `"309"` yields a crash body; other DiagnosticReports types return
-no crash result. Opened Mach-O and dSYM UUID joins remain unobserved. See
-[Apple IPS crash reports](https://github.com/morluto/rea/blob/main/docs/apple-ips.md).
+Read [Apple IPS crash reports](format-inspectors.md#apple-ips-crash-reports).
 
 ## Linux kernel modules
 
-Use `inspect_kernel_module` for an explicit local ELF32/ELF64 relocatable
-object when the question concerns `.modinfo` license, vermagic, alias,
-depends, or parm strings, the `__versions` symbol CRCs, or an appended module
-signature trailer. No `open_binary`, Linux host, or `modinfo` program is
-required. The CLI equivalent is `inspect-kernel-module PATH`. Preserve
-artifact SHA-256, key order, duplicate keys, CRC hex, and section file ranges.
-A missing section is observed absence when section names are known, not proof
-the module never carried that metadata. `.gnu.linkonce.this_module` is reported
-as present or absent; `struct module` stays unknown because its layout changes
-with the kernel version. `__ksymtab` records are not decoded. The PKCS#7 range
-and its SHA-256 are observed; certificate, signer, and digest coverage remain
-unvalidated. An absent trailer is not proof the module is unsigned in another
-container. gzip, xz, and zstd whole-file containers are unsupported and name
-`external_decompression` as the next probe: use an external codec utility to
-decompress into a separate file, then call `inspect_kernel_module` on that file. See
-[Linux kernel modules](https://github.com/morluto/rea/blob/main/docs/kernel-modules.md).
+Read [Linux kernel modules](format-inspectors.md#linux-kernel-modules).
 
 ## CPython pyc files
 
-Use `inspect_python_pyc` for an explicit local CPython 3.7–3.13 `.pyc` when the
-question concerns the header magic, PEP 552 source hash or timestamp, nested
-code-object names, or bytecode identity. No `open_binary`, Python installation,
-or target execution is required. The CLI equivalent is `inspect-python-pyc PATH`.
-Preserve artifact SHA-256, the 16-byte header fields, nested code names, and
-bytecode SHA-256. Bytecode is not decompiled. A decoded header does not prove
-the matching `.py` is present. See [CPython pyc inspection](https://github.com/morluto/rea/blob/main/docs/python-pyc.md).
+Read [CPython pyc files](format-inspectors.md#cpython-pyc-files).
 
 ## Erlang BEAM files
 
-Use `inspect_erlang_beam` for an explicit local `FOR1`/`BEAM` file when the
-question concerns IFF chunks, atom names, exports, imports, lambdas, or the
-Code header. No `open_binary`, Erlang installation, or bytecode execution is
-required. The CLI equivalent is `inspect-erlang-beam PATH`. Preserve artifact
-SHA-256, chunk file ranges, 1-based atom indices, and original atom spellings.
-Missing optional tables stay null. For a few facts, use `detail: "summary"` with
-a `beam` view selecting a collection, exact names/indices and fields; read later
-pages from `parent_evidence_id` or the complete Evidence bundle. Same-name
-exports retain every arity and original atom index. CLI summary delivery requires
-`--evidence_output`. Null table counts remain distinct from decoded empty tables. See
-[Erlang BEAM files](https://github.com/morluto/rea/blob/main/docs/erlang-beam.md).
+Read [Erlang BEAM files](format-inspectors.md#erlang-beam-files).
 
 ## SQLite snapshots
 
-Use `inspect_sqlite_database` with an explicit local database snapshot for its
-schema and optional rows from one exact ordinary table. It requires Node.js
-24.x >=24.15 or 26+ with the native `DatabaseSync.limits` API. It also consumes the
-existing sibling `-wal`; retain both original digests when citing its result.
-Default output is a compact inventory; a selected table expands only its own
-schema and samples 20 rows. Select `columns` to avoid irrelevant or large cells,
-and request `schema_scope: "database"` only for complete schema details.
-Choose `row_limit` when a finite sample is useful and keep truncation and
-unspecified row order explicit. Virtual tables, shadow tables and views are
-schema facts, not row-read targets. REA inspects private copies and leaves
-the source files untouched; obtain a coherent quiescent database/WAL snapshot
-before inspection. See [SQLite snapshots](https://github.com/morluto/rea/blob/main/docs/guides/data/sqlite-databases.md).
+Read [SQLite snapshots](format-inspectors.md#sqlite-snapshots).
 
 ## Recorded Linux crashes
 
-Use `inspect_recorded_crash` with an explicit Linux x86-64 ELF core path to
-inspect historical thread registers, signals, raw notes and original file
-ranges. It is independent of the active disassembler target. Source-bound
-register values and note bytes are observations; missing notes, signal-thread
-association and current executable/library identity remain unknown. PIDs are
-historical metadata and never authorize live attach or control.
-
-The optional `include_debugger_context` facet adds mapping candidates through
-caller-supplied GDB/pwndbg in an owned core-only session. Display names do not
-establish current file identity; zero reported flags leave permissions unknown.
-Requested unavailable context fails with setup guidance. See
-[recorded crashes](https://github.com/morluto/rea/blob/main/docs/guides/native/recorded-crashes.md)
-for exact upstream profiles, bounds and verification coverage.
+Read [Recorded Linux crashes](format-inspectors.md#recorded-linux-crashes).
 
 ## Offline ELF layout
 
-Use `inspect_binary_layout` with an explicit local ELF path for file-backed
-sections, symbols, relocations, linkage names, and static mitigation inferences
-without opening a disassembler target. When that complete record is already
-retained, call `inspect_analysis_view` for a summary, mitigations or linkage
-facet, one section or symbol, or a stable page. Do not re-run the decoder to
-read a single object.
+Read [Offline ELF layout](format-inspectors.md#offline-elf-layout).
 
 ## Offline WASM
 
-Use `inspect_wasm_artifact` with caller-supplied WABT for selected local bytes.
-For counts, validation and WAT identity, select `detail: "summary"` on the first
-MCP call. The complete original Evidence stays retained; use
-`normalized_result.parent_evidence_id` for exact exports or text pages. Omitted
-or complete detail keeps the existing complete result.
-For a completed result, use `inspect_analysis_view` with its reported retained
-reference for a summary or `view: {kind: "wasm", facet: "exports", offset: 0, limit: 32}`.
-Facets also include sections, imports, candidates, glue, WAT, headers, details
-and tool profile. Text offsets count UTF-16 code units; follow `next_offset`.
-The complete source remains retained after an oversized MCP reply. No target
-execution or network acquisition is implied, and WAT is decoded representation.
+Read [Offline WASM](format-inspectors.md#offline-wasm).
 
 ## Offline APK signatures
 
-Use `inspect_apk_signature` for a selected local APK/ZIP/AAB. Default MCP summaries
-retain complete Evidence. Select `view.collection: signers/digests/lineage`,
-with scheme or ID batches, fields and paging; use `inspect_analysis_view` kind
-`apk-signature` for retained reads after deletion. IDs retain artifact/scheme
-scope and signer links; `fields: []` keeps identity links. Empty pages preserve
-partial decoding reasons and unknown authenticity. CLI compact delivery needs
-`--evidence_output` to preserve the complete parent.
-It reads the APK
-Signing Block (v2/v3/v3.1) and v1 `META-INF` signing without executing anything,
-and reports each signer's certificate facts (for v1, the certificate the PKCS#7
-block's SignerInfo names), the declared v3 rotation lineage,
-the declared source-stamp certificate and, for SHA-256/SHA-512 digests, whether
-the declared content digest matches the current bytes. That match is not a
-signature verification: anyone who changes the bytes can recompute the digest.
-`posture` summarises v1-only signing (which cannot tell a v1-only APK from one
-whose v2/v3 block was removed), observed signer agreement across schemes,
-whether the v1 signer equals the block-scheme signer (`false` is notable),
-whether every differing signer appears in a declared (unverified) rotation
-lineage, and the strongest scheme.
-It never claims authenticity: no signature or lineage is cryptographically
-verified.
+Read [Offline APK signatures](format-inspectors.md#offline-apk-signatures).
 
 ## Native targets
 
@@ -608,79 +472,19 @@ no database mutation authority.
 
 ## Packages and extraction
 
-Use `inspect_artifact` for application bundles, archives, ZIP/APK/IPA/MSIX/AppX,
-ASAR, or DMG inputs when the artifact graph and findings help answer the
-question. It returns the complete artifact graph inline. Cite graph manifest
-IDs when using them.
+Read [Packages and extraction](packages-and-archives.md#packages-and-extraction).
 
-For an IPA or a macOS `.app`, ZIP, or DMG, pass the inventory Evidence to
-`project_apple_application_graph`. It reports application roots and nested
-bundles by path convention: app extensions, XPC services, frameworks, login
-items, system and driver extensions, and plug-ins. It also lists privileged
-helpers, launchd plists, symlinks, and each bundle's `info_plist_path` and
-executable candidates. Roles are path conventions, not parsed plists; read the
-listed plists with `inspect_plist`.
+For headerless firmware and address-bearing containers, read
+[raw images](firmware-and-raw-images.md#headerless-raw-images-and-firmware-containers).
 
-After `open_binary` on a `.app` or Mach-O, use `trace_dylib_resolution` to see
-which file each `@rpath`, `@loader_path` and `@executable_path` load reaches for
-every executable in the bundle. It also lists missing or weak loads and earlier
-`@rpath` candidates that are absent. Narrow large bundles with `roots` or
-`architecture`. System paths stay undetermined because the dyld shared cache
-provides them.
-
-Use `extract_artifact` when materialized files from a supported format are needed.
-It extracts the active target and accepts optional `integrity_policy`; see the [MCP contracts](https://github.com/morluto/rea/blob/main/docs/reference/mcp-contracts.md).
-It materializes all regular files into a fresh temporary directory chosen by
-REA. Symlinks and encrypted entries are inventory facts, not extractable files.
-The result reports the materialized directory; callers do not choose the
-destination. No separate permission grant is needed.
-
-For classic iNES cartridges, `open_binary` recognizes the byte signature without
-an executable architecture. `inspect_artifact` retains header facts and each
-PRG/CHR file unit's offset, length and SHA-256; its nested inventory's
-`ines.reconstruction` verifies the actual ordered region bytes against the
-whole-file digest. Extraction includes the original header, optional trainer
-and uninterpreted trailing bytes. These file units are not mapper/CPU bank
-maps. NES 2.0, UNIF, dirty legacy headers and truncated payloads are explicitly
-refused. No emulator or 6502 analysis is performed. See the
-[iNES guide](https://github.com/morluto/rea/blob/main/docs/ines-containers.md).
-
-Native DMG traversal automatically uses a read-only mount on supported macOS
-hosts, with an owned temporary mount directory and cleanup. It needs no approval
-flag. Unsupported hosts or mount failures remain explicit limitations; do not
-claim child inventory when only root identity is available. DMG extraction is
-unavailable through `extract_artifact`. To access DMG files on macOS, create a
-read-only mount with your own tools, select files from that mount for analysis,
-and detach the mount you created when finished. REA's inspection mount is
-temporary, not a retained export of the image's contents.
+## DOS COM loader interpretation
 
 For headerless DOS COM, explicitly open with `format: "dos-com"` (CLI
 `--target-format dos-com`). Inspect the load image before trusting function
 analysis: the entry is `0x10100`, file offset zero, with imposed real-mode segment
 context. PSP/stack/device state remains unmodeled. See [DOS guide](https://github.com/morluto/rea/blob/main/docs/providers/ghidra-dos.md).
 
-Use `inspect_byte_entropy` to triage high- and low-entropy ranges before extraction.
-
-For other headerless images (embedded firmware without ELF/Mach-O/PE/MZ
-headers), open with `format: "raw-binary"`, `architecture` (`x86`, `x86_64`,
-`arm`, `arm64`, `6502`, or `m68k`), and `entry_point` (`0x` hex). File offset 0 is mapped at
-that address. Hopper and IDA refuse this interpretation; Ghidra uses
-`BinaryLoader` with a generic language: big-endian for `m68k`, little-endian
-otherwise. Big-endian ARM, Thumb-only, and Cortex-M variants are unsupported.
-`6502` selects NMOS 6502; the entry and complete file mapping must fit within
-`0x0000..0xffff`. 65C02, 65816, cartridge containers, bank switching, and mapper
-semantics are unsupported. `m68k` requires an even entry and decodes the 68040
-superset of the 68000 family; Amiga/Atari containers and vector-table entry
-discovery are unsupported. Windows Ghidra P0 admits raw images only for `6502`. See [raw binary guide](https://github.com/morluto/rea/blob/main/docs/providers/raw-binary.md).
-
-Intel HEX, S-record, UF2 and DfuSe files are containers, not raw images:
-`inspect_artifact` lists address regions (UF2 per familyID, DfuSe per element
-with its alternate setting), and `extract_artifact` writes each region. Open an
-extracted region as `raw-binary` with its start address as `entry_point`. UF2
-numbering gaps leave coverage unknown; a DfuSe suffix CRC mismatch follows
-`integrity_policy`. See [UF2 and DfuSe](https://github.com/morluto/rea/blob/main/docs/uf2-dfuse.md).
-
-### Function annotations in Ghidra
+## Function annotations in Ghidra
 
 Fresh-import sessions admit annotations; existing-project reuse is read-only.
 Use `annotate_native_function` for one function name and/or entry comments, with at least one explicit change. Review its annotation readback and refreshed dossier inline. Changes are atomic; empty comments clear them, omitted fields preserve them. Later MCP calls observe edits. Normal close saves them when owned Program checkpoint mode is enabled; ephemeral mode discards them. CLI `annotate-native-function` follows the same setting when closing after its updated result. Select the [checkpoint workflow](#continue-editable-ghidra-analysis-across-processes) before edits that must survive a later process. Original executable bytes are unchanged; edits invalidate immutable snapshots. Windows P0 does not admit database mutations. For naming only, `set_address_name` / `set_addresses_names` also work with Ghidra: they name function entries or data addresses (primary labels) and return compact per-address success booleans instead of a dossier. Ghidra rejects batch addresses that request the same name or a name another selected address holds; `raw_result.failures` gives each failure's reason.
@@ -702,137 +506,24 @@ source Evidence and coverage when the match remains ambiguous.
 
 ## Offline PE resource inventory
 
-Use `inspect_pe_resources` with an absolute `path`, or
-`rea inspect-pe-resources ./selected.exe --json`, for portable PE32/PE32+
-resource inspection without opening a native target. Preserve returned Evidence:
-type/name/language IDs and UTF-16 names, original directory/data/payload ranges,
-code pages, payload hashes and static icon-group references. Same-language icon
-resolution is explicit; missing references and size mismatch remain visible.
-Other payloads are opaque, and this operation does not decode images or simulate
-Windows resource loading. Consult the budgets and supported tree profile in
-[offline binary diagnostics](https://github.com/morluto/rea/blob/main/docs/guides/native/binary-diagnostics.md).
+Read [Offline PE resource inventory](format-inspectors.md#offline-pe-resource-inventory).
 
 ## Offline PE and ELF export tables
 
-Use `inspect_native_exports` with an absolute `path`, or
-`rea inspect-native-exports ./libexample.so --json`, to read a PE export
-directory or ELF dynamic symbol table on any host without opening a native
-target. Ordinal-only, forwarded and hidden-version exports stay distinct;
-partial or unsupported coverage means the inventory is incomplete, not that
-exports are absent. Use `inspect_macho` for Mach-O. See
-[offline binary diagnostics](https://github.com/morluto/rea/blob/main/docs/guides/native/binary-diagnostics.md).
-
-For exact core-module import/export differences, use `compare_wasm_interfaces`
-with two complete inspection Evidence records (or current-session retained
-references) and explicit scope. Preserve unknown types/duplicate names; static
-interface equality is not runtime compatibility. CLI accepts complete inline
-Evidence in `rea compare-wasm-interfaces input.json --json`, or exact references
-with `--evidence-bundle /absolute/path/evidence.json`. Use the complete parent
-ID when the inspection returned a summary.
+Read [Offline PE and ELF export tables](format-inspectors.md#offline-pe-and-elf-export-tables).
 
 ## Godot PCK
 
-For a standalone PCK, `open_binary` then `inspect_artifact` with
-`detail: "summary"` retains the complete static inventory. Use the returned
-`parent_evidence_id` with `inspect_analysis_view` inventory occurrences filtered
-by exact `logical_paths` or `occurrence_ids`, and join `artifact_id` to nodes
-filtered by `artifact_ids`. Select only needed fields; identity links remain.
-Prefer `inspect-artifact --detail summary --evidence_output PATH` for CLI tasks;
-the same CLI discovers embedded packs via their EOF trailer without opening a
-native analysis provider. Normal native opening remains unchanged.
-
-Distinguish declared MD5 from observed SHA-256 and graph/page completeness from
-`source_coverage`. Encrypted directories and sparse bundles have unknown entry
-coverage; encrypted members have unknown content identity. An empty filtered
-page cannot prove absence in unknown coverage. Retained views are historical,
-not fresh filesystem checks. No decryption, Godot resource decoding, GDScript
-decompilation or target execution is provided. See
-[Godot PCK](https://github.com/morluto/rea/blob/main/docs/godot-pck.md).
-
-UnityFS AssetBundle containers (`.bundle`, `.ab`, YooAsset packages and other
-byte-identified files) list `CAB-*` SerializedFiles and `.resS` members with
-header and node facts; none/LZ4/LZ4HC member blocks stream on demand. Bundles
-declaring asset-bundle encryption keep header facts with unknown directory
-coverage; LZMA member bytes retain named occurrences with unavailable hashes.
-Virtual member offsets are not physical carrier locations. Format 6–8 readers
-cache one decoded block and support retained filtered/paged views. No
-decryption or SerializedFile object decoding is provided. See
-[UnityFS](https://github.com/morluto/rea/blob/main/docs/unityfs.md).
-
-WeChat mini-program packages (`.wxapkg` files with `0xBE`/`0xED` marks) list
-members with declared names and absolute carrier offsets; member bytes are
-stored verbatim. `V1MMWX` PC-client packages report `encrypted` directory
-status with unknown coverage and are refused on extraction; no decryption is
-attempted. See
-[wxapkg](https://github.com/morluto/rea/blob/main/docs/wxapkg.md).
-
-U-Boot legacy uImages use the same inspection/extraction workflows. Prefer a
-retained summary and selected inventory views for header facts or component
-IDs. Header addresses/CPU/OS are declarations; payloads remain as stored.
-Multi-file components retain their aligned physical ranges; the full payload
-is also materialized. Unknown name text retains its original 32 bytes. See
-[U-Boot uImage](https://github.com/morluto/rea/blob/main/docs/uimage.md).
+Read [Godot PCK](packages-and-archives.md#godot-pck).
 
 ## ESP images
 
-For an ESP32-family app or bootloader image, `open_binary` then
-`inspect_artifact` with `detail: "summary"`. `root_format_metadata` holds the
-observed `header` and `descriptor` (its `kind` is the app or bootloader role)
-and the derived `chip`, `checksum`, `appended_sha256` and
-`undescribed_trailing` ranges. Segment rows (`segment-NN.bin`) carry
-`load_addr`, `classification` (`mapped`, `loaded`, `not-loaded` or `unknown`,
-per ESP-IDF `should_map`/`should_load`; RAM ranges are not checked) and
-`source_location`; select them with `inspect_analysis_view` and
-`logical_paths`. Signature blocks are `unverified`; `public_key_sha256`
-matches eFuse key digests.
-
-Unknown `source_coverage` means truncation or undescribed trailing bytes, such
-as the flash segments of a `--ram-only-header` image; do not infer absence
-from it. Erased flash is described. Integrity mismatches are facts, not
-refusals. ESP8266 images are refused, and flash-encrypted images are not
-recognized. Segments are not disassembled, and RISC-V or Xtensa segments
-cannot be opened as raw-binary. See
-[ESP images](https://github.com/morluto/rea/blob/main/docs/esp-image.md).
+Read [ESP images](firmware-and-raw-images.md#esp-images).
 
 ## ESP flash images
 
-A whole-flash dump opens as `esp-flash-image`. `root_format_metadata` holds
-`partition_table` (its `method`: `default`, `caller` or a derived
-`scan`), `bootloader` and `apps` ESP image facts, the `otadata` records,
-`partitions_outside_dump` and `boot_selection`. Every table has a
-`boot_selection`: its `basis` names the bootloader's branch (`no-otadata`
-without otadata, `none` when the bootloader rejects the table, `unknown`
-when a record is missing), and it lists its `assumptions`;
-`running_partition` is always `unknown`. Each image names its entry
-`path`. With `detail: "summary"` the root kind is `esp-flash-image-summary`
-and each image is a compact `summary` (chip, entry point, segment count,
-classified load ranges, signature block count, descriptor identity,
-integrity); complete detail keeps every segment. Partition rows
-(`partitions/<label>.bin`) carry the declared `type`, `subtype`, names,
-`flash_address`, `size` and flags; `encrypted` is a storage flag, not
-proof of ciphertext. `written_offset`/`written_end` bound the bytes that
-are not erased: an app slot whose facts say `erased` can still hold an older
-image, and a limitation says so. For a dump read from another flash address, call
-`open_binary` with `format: "esp-flash-image"` and `flash_offset`; an
-`esp-image` whose `flash_dump` is set names that offset in a next probe; a
-relocated table can be named with `partition_table_offset`. No table found
-means unknown, often flash encryption. Extraction writes `nvs_keys` as
-ordinary data. See
-[ESP flash images](https://github.com/morluto/rea/blob/main/docs/esp-flash-image.md).
+Read [ESP flash images](firmware-and-raw-images.md#esp-flash-images).
 
 ## Bun standalone executables
 
-A `bun build --compile` executable stores its module graph in Mach-O
-`__BUN,__bun`, a PE or ELF `.bun` section, or an appended trailer.
-`open_binary` then `inspect_artifact` reports root format `bun-standalone` with
-the carrier, structural layout, module count, entry point, raw flags and
-compile exec-argv; each module keeps its `/$bunfs/...` source name, loader,
-encoding, sizes and SHA-256, with sourcemap, bytecode and module-info regions as
-separate children. Use summary root metadata `entry_point_logical_path` as the
-exact inventory `logical_paths` selector, then read the selected content node by
-its artifact ID; the reader owns virtual-name normalization and indexed fallback. `extract-artifact` writes stored contents through the safe
-output tree; route extracted JavaScript to `analyze_javascript_application`.
-Layout labels describe record shapes, not a detected compiler version; unknown
-or ambiguous layouts are unsupported. Bytecode is retained, not decoded, and the
-executable is never run. See
-[Bun standalone executables](https://github.com/morluto/rea/blob/main/docs/bun-standalone.md).
+Read [Bun standalone executables](packages-and-archives.md#bun-standalone-executables).

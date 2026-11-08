@@ -34,6 +34,9 @@ export const MANAGED_SKILL_FILES = [
   "references/runtime-observation.md",
   "references/evidence-workflows.md",
   "references/environments.md",
+  "references/firmware-and-raw-images.md",
+  "references/packages-and-archives.md",
+  "references/format-inspectors.md",
 ] as const;
 
 export const isManagedSkillManifest = (content: string): boolean =>

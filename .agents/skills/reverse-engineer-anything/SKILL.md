@@ -2,7 +2,7 @@
 name: reverse-engineer-anything
 description: Reverse engineer native, managed, Electron/JavaScript, packaged, firmware, and browser targets with REA, and build agent environments (AgentEnv bundles) of web applications from a live instance or a capture. Use shipped-artifact or requested runtime evidence to explain features, compare versions, decompile code, or guide a reconstruction. Skip REA for ordinary source-repository architecture analysis.
 metadata:
-  version: "60"
+  version: "61"
 ---
 
 # REA
@@ -110,7 +110,7 @@ explicit path or endpoint and do not need it.
   absolute output directory. These tools use caller-supplied Binwalk/Unblob on
   Linux; see the [firmware guide](https://github.com/morluto/rea/blob/main/docs/guides/firmware/firmware-analysis.md).
 - ESP32-family app or bootloader image (`0xE9` magic): `inspect_artifact`
-  without a provider; see the ESP section of `references/native-and-artifacts.md`.
+  without a provider; read [ESP images](references/firmware-and-raw-images.md#esp-images).
 - .NET NativeAOT PE/ELF: native Ghidra analysis. Native code can yield pseudocode;
   consult the NativeAOT workflow in `references/native-and-artifacts.md` for
   optional metadata recovery and its supported host/layout boundary.
@@ -523,8 +523,14 @@ as complete while required questions remain open.
 
 ## Read only the relevant guide
 
-- Native binaries, managed assemblies, archives, and extraction:
+- Native binaries and managed assemblies:
   [references/native-and-artifacts.md](references/native-and-artifacts.md)
+- Firmware, headerless images, ESP images, and address-bearing containers:
+  [references/firmware-and-raw-images.md](references/firmware-and-raw-images.md)
+- Archive inventory, extraction, Godot PCK, UnityFS, wxapkg, and Bun:
+  [references/packages-and-archives.md](references/packages-and-archives.md)
+- Offline format headers, metadata, signatures, and database snapshots:
+  [references/format-inspectors.md](references/format-inspectors.md)
 - ASARs, extracted JavaScript, feature tracing, and version comparison:
   [references/javascript-applications.md](references/javascript-applications.md)
 - Android APK declarations, classes, methods, and static references:

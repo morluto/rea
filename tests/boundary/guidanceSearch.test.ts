@@ -101,3 +101,51 @@ it("finds focused installed guidance for switching providers with annotations", 
     await resources.close();
   }
 });
+
+it.each([
+  {
+    query: "raw-binary Cortex-M",
+    guide: "references/firmware-and-raw-images.md",
+    fact: "Cortex-M variants are unsupported",
+  },
+  {
+    query: "ESP images",
+    guide: "references/firmware-and-raw-images.md",
+    fact: "ESP8266 images are refused",
+  },
+  {
+    query: "Bun standalone executables",
+    guide: "references/packages-and-archives.md",
+    fact: "executable is never run",
+  },
+  {
+    query: "PE import delay-load tables",
+    guide: "references/format-inspectors.md",
+    fact: "inspect_pe_imports",
+  },
+])(
+  "retrieves moved $query guidance from the installed bundle",
+  async ({ query, guide, fact }) => {
+    const resources = new ArtifactResourceScope();
+    try {
+      const found = await searchGuidance({ query, limit: 20 }, resources);
+      if (!found.ok) throw found.error;
+      if (found.value.status !== "matches")
+        throw new Error("Expected guidance matches");
+      const match = found.value.matches.find((item) => item.guide === guide);
+      if (match === undefined)
+        throw new Error(`Missing focused guide for ${query}`);
+      const read = await readGuidanceSection(
+        { locator: match.locator },
+        resources,
+      );
+      if (!read.ok) throw read.error;
+      expect(read.value).toMatchObject({ status: "section", guide });
+      if (read.value.status !== "section")
+        throw new Error("Expected readable section");
+      expect(read.value.content.replace(/\s+/gu, " ")).toContain(fact);
+    } finally {
+      await resources.close();
+    }
+  },
+);
