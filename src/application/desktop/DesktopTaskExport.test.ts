@@ -167,7 +167,7 @@ const loggedCapture = () => {
 };
 
 describe("exportDesktopApplication with the seed it ships", () => {
-  it("checks the seed the bundle ships, without the app's log it leaves out", async () => {
+  it("checks a retained application log against the seed the bundle ships", async () => {
     const scratch = await createTestTempDirectory("desktop-task-");
     const path = join(scratch, "task.json");
     await writeFile(
@@ -201,11 +201,13 @@ describe("exportDesktopApplication with the seed it ships", () => {
       readers,
     );
 
-    expect(result).toBeInstanceOf(AnalysisInputError);
-    expect((result as AnalysisInputError).userMessage).toContain(
-      "Every check already passes on the seed",
-    );
-    expect(await exists(directory)).toBe(false);
+    if (result instanceof Error) throw result;
+    expect(
+      await readFile(
+        join(directory, "envs/notes/seed/.config/notes/notes.log"),
+        "utf8",
+      ),
+    ).toBe("error A\n");
   });
 });
 
