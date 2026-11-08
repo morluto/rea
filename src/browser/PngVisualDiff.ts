@@ -11,6 +11,7 @@ import {
 } from "../domain/analysisErrorCore.js";
 import { decodeCanonicalBase64 } from "../domain/webScreenshot.js";
 import { hasPngSignature, readPngIhdrFacts } from "../domain/pngHeader.js";
+import { nodeCodecResult } from "../compression/NodeCodecResult.js";
 
 interface DecodedPng {
   readonly width: number;
@@ -350,16 +351,25 @@ const pngWorkingMemoryError = (
 
 const inflatePng = (compressed: Buffer, maxOutputLength: number): Buffer => {
   try {
-    return inflateSync(compressed, {
-      maxOutputLength,
-      chunkSize: PNG_INFLATE_CHUNK_BYTES,
-    });
+    const result = nodeCodecResult(
+      inflateSync(compressed, {
+        info: true,
+        maxOutputLength,
+        chunkSize: PNG_INFLATE_CHUNK_BYTES,
+      }),
+    );
+    if (result.consumedBytes !== compressed.length)
+      throw new TypeError(
+        "PNG image data contains bytes after its zlib stream",
+      );
+    return result.buffer;
   } catch (cause: unknown) {
     if (
       cause instanceof Error &&
       "code" in cause &&
       (cause.code === "Z_DATA_ERROR" ||
         cause.code === "Z_BUF_ERROR" ||
+        cause.code === "Z_NEED_DICT" ||
         cause.code === "ERR_BUFFER_TOO_LARGE")
     )
       throw new TypeError("Invalid PNG image data", { cause });

@@ -135,6 +135,11 @@ estimated and maximum working-set bytes. Invalid PNG structure remains
 malformed input; encodings outside supported pixel-comparison coverage remain
 unsupported-target errors.
 
+PNG image data must contain one complete zlib stream across its consecutive
+IDAT chunks. Trailing bytes, an additional stream, or a preset dictionary are
+malformed input. Splitting the stream across IDAT chunks, including empty
+chunks, is supported.
+
 The conservative estimate includes the two decoder-owned decoded input
 buffers, the current image's concatenated IDAT buffer, Node zlib's default
 16 KiB output chunk backing rounded up for retained chunks, the concatenated
