@@ -30,6 +30,20 @@ export interface TaskFileView {
   readonly error?: string | null;
 }
 
+/** The format owns selector interpretation, including inside archive entries. */
+const selectorFormat = (
+  entry: TaskFileView | undefined,
+  pointer: string,
+): string | null | undefined => {
+  if (entry?.format !== "zip") return entry?.format;
+  const member = zipEntryAt(entry.view, pointer);
+  return typeof member === "object" &&
+    member !== null &&
+    typeof member.format === "string"
+    ? member.format
+    : "zip";
+};
+
 /**
  * How one check came out against one set of views. `undecided` marks a failure
  * that shows nothing about the task: its file or table could not be read, or
@@ -285,7 +299,13 @@ const valueVerdict = (
   const read = viewOf(check, entry, undefined);
   if ("passed" in read) return read;
   const located =
-    entry === undefined ? NOTHING : locatePointer(read.view, check.pointer);
+    entry === undefined
+      ? NOTHING
+      : locatePointer(
+          read.view,
+          check.pointer,
+          selectorFormat(entry, check.pointer),
+        );
   const at = `${check.file} at ${check.pointer}`;
   const unknown = unreadOrPartial(check, entry?.format, read, located);
   if (unknown !== undefined) return unknown;
@@ -387,7 +407,11 @@ const textVerdict = (
   const zip = entry.format === "zip";
   if (!zip && entry.format !== "xml")
     return fail(`${check.file} is read as ${String(entry.format)}, not xml`);
-  const located = locatePointer(read.view, check.pointer);
+  const located = locatePointer(
+    read.view,
+    check.pointer,
+    selectorFormat(entry, check.pointer),
+  );
   const unknown = unreadOrPartial(check, entry.format, read, located);
   if (unknown !== undefined) return unknown;
   const problem = zip ? notXmlEntry(check, read.view) : undefined;
@@ -431,7 +455,9 @@ const memberVerdict = (
   const read = viewOf(check, entry, undefined);
   if ("passed" in read) return read;
   const located: Located =
-    entry === undefined ? NOTHING : locatePointer(read.view, pointer);
+    entry === undefined
+      ? NOTHING
+      : locatePointer(read.view, pointer, selectorFormat(entry, pointer));
   const at = pointer === "" ? check.file : `${check.file} at ${pointer}`;
   const unknown = unreadOrPartial(check, entry?.format, read, located);
   if (unknown !== undefined) return unknown;
@@ -450,7 +476,8 @@ const memberVerdict = (
   const meets =
     matching === undefined
       ? () => true
-      : (selectorTest(matching) ?? (() => false));
+      : (selectorTest(matching, selectorFormat(entry, pointer)) ??
+        (() => false));
   return compared(
     check,
     items.filter(meets).length,

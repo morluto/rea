@@ -143,7 +143,14 @@ export const presenceValues = (
   const from = created
     ? { baseline: tree.empty, final: ends.final }
     : { baseline: ends.baseline, final: tree.empty };
-  const change = oneEnd(diffNamedMembers(from.baseline, from.final), created);
+  const change = oneEnd(
+    diffNamedMembers(
+      from.baseline,
+      from.final,
+      tree === ARCHIVE ? "zip" : "xml",
+    ),
+    created,
+  );
   return draftValues(change, {
     ends: from,
     listed: tree.listed,

@@ -201,7 +201,8 @@ const plainChange = (
   baseline: Version,
   final: Version,
 ) => {
-  if (format === "json") return diffNamedMembers(baseline.view, final.view);
+  if (format === "json")
+    return diffNamedMembers(baseline.view, final.view, "json");
   const change = diffStateViews(format, baseline.view, final.view);
   const pointers = keyPointers([baseline.view, final.view]);
   const at = (entries: readonly string[]) =>

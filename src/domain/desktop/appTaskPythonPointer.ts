@@ -92,12 +92,12 @@ def _element_holds(element, steps, value: str) -> bool:
     return False
 
 
-def _holds_inside(member, path: str, value: str) -> bool:
+def _holds_inside(member, path: str, value: str, form=None) -> bool:
     """Whether a >PATH condition's path inside a member holds value: in an XML element as _element_holds reads it, in
     a JSON record the string at those keys."""
     steps = path.split("/")
-    if _is_element(member):
-        return _element_holds(member, steps, value)
+    if form == "xml" or (form is None and _is_element(member)):
+        return _is_element(member) and _element_holds(member, steps, value)
     found = member
     for step in steps:
         if not isinstance(found, dict) or step not in found:
@@ -106,13 +106,13 @@ def _holds_inside(member, path: str, value: str) -> bool:
     return isinstance(found, str) and found == value
 
 
-def _selects(member, conditions) -> bool:
+def _selects(member, conditions, form=None) -> bool:
     """Whether an array member meets every condition; selectors compare strings only."""
     if not isinstance(member, dict):
         return False
     for prefix, key, value in conditions:
         if prefix == ">":
-            if not _holds_inside(member, key, value):
+            if not _holds_inside(member, key, value, form):
                 return False
             continue
         fields = member.get("attributes") if prefix == "@" else member
@@ -121,7 +121,7 @@ def _selects(member, conditions) -> bool:
     return True
 
 
-def _step(items: list, token: str, last: bool):
+def _step(items: list, token: str, last: bool, form=None):
     """One step into an array, by index or by a selector that must match one member, or none when it is the last."""
     if INDEX.fullmatch(token):
         # A canonical decimal longer than the array length cannot name a member.
@@ -133,7 +133,7 @@ def _step(items: list, token: str, last: bool):
     if conditions is None:
         return ("unresolved", f"{token} is not a selector of the form [KEY=VALUE]") if _bracketed(token) else (
             "none", None)
-    matched = [item for item in items if _selects(item, conditions)]
+    matched = [item for item in items if _selects(item, conditions, form)]
     if len(matched) == 1:
         return "member", matched[0]
     if len(matched) > 1:
@@ -141,7 +141,7 @@ def _step(items: list, token: str, last: bool):
     return ("none" if last else "unresolved"), f"{token} matches no member"
 
 
-def _locate(view, pointer: str):
+def _locate(view, pointer: str, form=None):
     """Where a pointer leads: ("value", value), ("none", why or None) or ("unresolved", problem), with the pointers
     to the arrays a selector searched on the way."""
     current, searched = view, []
@@ -151,7 +151,7 @@ def _locate(view, pointer: str):
         if isinstance(current, list):
             if not INDEX.fullmatch(token) and _selector(token) is not None:
                 searched.append("".join("/" + part for part in segments[:position]))
-            kind, found = _step(current, token, position == len(segments) - 1)
+            kind, found = _step(current, token, position == len(segments) - 1, form)
             if kind != "member":
                 return kind, found, searched
             current = found

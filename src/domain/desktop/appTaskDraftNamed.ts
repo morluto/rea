@@ -40,6 +40,7 @@ import {
   resolvePointer,
 } from "./viewPointer.js";
 import {
+  ARCHIVE,
   referenceRoots,
   valueFormat,
   type CheckTree,
@@ -503,7 +504,11 @@ export const namedDraft = (
   tree: CheckTree,
   options: NamedOptions,
 ): NamedDraft => {
-  const change = diffNamedMembers(ends.baseline, ends.final);
+  const change = diffNamedMembers(
+    ends.baseline,
+    ends.final,
+    tree === ARCHIVE ? "zip" : "xml",
+  );
   const noise = changeNoise(change, ends);
   const named = (view: JsonValue | null, pointer: string) =>
     byName(view, pointer, tree) && !tree.leavesOut(view, pointer);

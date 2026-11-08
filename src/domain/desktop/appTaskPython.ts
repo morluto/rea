@@ -107,6 +107,16 @@ def _truncated(form, view) -> bool:
         for table in (tables.values() if isinstance(tables, dict) else []))
 
 
+def _selector_format(entry, view, pointer):
+    if not isinstance(entry, dict) or entry.get("format") != "zip":
+        return None if entry is None else entry.get("format")
+    parts = pointer[1:].split("/")
+    if len(parts) < 2 or parts[0] != "entries":
+        return "zip"
+    kind, item, _ = _locate(view, "/entries/" + parts[1], "zip")
+    return item.get("format", "zip") if kind == "value" and isinstance(item, dict) else "zip"
+
+
 def _view_of(check, entry, form):
     """The view, whether it is truncated, and why the check cannot read it; an absent file reads as empty."""
     if entry is None:
@@ -189,7 +199,7 @@ def _value(check, entry):
     view, truncated, problem = _view_of(check, entry, None)
     if problem is not None:
         return False, problem
-    kind, found, searched = ("none", None, []) if entry is None else _locate(view, check["pointer"])
+    kind, found, searched = ("none", None, []) if entry is None else _locate(view, check["pointer"], _selector_format(entry, view, check["pointer"]))
     at = f"{check['file']} at {check['pointer']}"
     viewless = _viewless_entry(view, check["pointer"]) if entry is not None and entry.get("format") == "zip" else None
     if viewless is not None:
@@ -263,7 +273,7 @@ def _whole_text(check, entry):
     form = entry.get("format")
     if form not in ("xml", "zip"):
         return False, f"{check['file']} is read as {form}, not xml"
-    kind, found, searched = _locate(view, check["pointer"])
+    kind, found, searched = _locate(view, check["pointer"], _selector_format(entry, view, check["pointer"]))
     viewless = _viewless_entry(view, check["pointer"]) if form == "zip" else None
     if viewless is not None:
         return False, f"{check['file']} entry {viewless[0]} {viewless[1]}"
@@ -318,7 +328,7 @@ def _members(check, entry):
     form = None if entry is None else entry.get("format")
     # The empty pointer names the whole view, as a JSON file whose top level is an array.
     kind, found, searched = (("none", None, []) if entry is None else ("value", view, []) if pointer == ""
-                             else _locate(view, pointer))
+                             else _locate(view, pointer, _selector_format(entry, view, pointer)))
     at = check["file"] if pointer == "" else f"{check['file']} at {pointer}"
     viewless = _viewless_entry(view, pointer) if form == "zip" else None
     if viewless is not None:
@@ -336,7 +346,7 @@ def _members(check, entry):
         return _undecided(check)
     # The parser refuses a matching that is no selector.
     conditions = None if matching is None else _selector(matching)
-    n = len(found) if matching is None else sum(1 for item in found if conditions and _selects(item, conditions))
+    n = len(found) if matching is None else sum(1 for item in found if conditions and _selects(item, conditions, _selector_format(entry, view, pointer)))
     return _compared(check, n, f"member(s) of {at}" + ("" if matching is None else f" matching {matching}"))
 
 
