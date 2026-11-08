@@ -7,6 +7,7 @@ import { fileURLToPath } from "node:url";
 import type { DoctorHost } from "../application/Doctor.js";
 import type { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
 import { assertSetupActive } from "../application/SetupCancellation.js";
+import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
 import type {
   DesktopBuildSetupFacts,
   DesktopBuildSetupHost,
@@ -145,11 +146,16 @@ export const systemDesktopBuildSetupHost = (
                 resource: partial,
                 lease: { release: () => rm(partial, { force: true }) },
               });
-              assertSetupActive(signal);
+              if (cause instanceof AnalysisCancelledError) throw cause;
+              assertSetupActive(
+                signal,
+                `${desktopBuildOwnedCommandReason(cause)}; partial archive cleanup failed: ${failureReason(cleanup)}`,
+              );
               return `${desktopBuildOwnedCommandReason(cause)}; partial archive cleanup failed: ${failureReason(cleanup)}`;
             }
           }
-          assertSetupActive(signal);
+          if (cause instanceof AnalysisCancelledError) throw cause;
+          assertSetupActive(signal, desktopBuildOwnedCommandReason(cause));
           return desktopBuildOwnedCommandReason(cause);
         }
       });
@@ -173,7 +179,8 @@ export const systemDesktopBuildSetupHost = (
           });
           return undefined;
         } catch (cause: unknown) {
-          assertSetupActive(signal);
+          if (cause instanceof AnalysisCancelledError) throw cause;
+          assertSetupActive(signal, desktopBuildOwnedCommandReason(cause));
           return desktopBuildOwnedCommandReason(cause);
         }
       });
