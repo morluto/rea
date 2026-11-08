@@ -47,6 +47,7 @@ import {
 } from "./DesktopBuildExport.js";
 import {
   summarizeCapture,
+  secretDraftRefusal,
   type StoppedCapture,
 } from "./DesktopBuildSummary.js";
 
@@ -487,7 +488,11 @@ export class DesktopBuildCapture {
         : err(unreleasedError(STOP, run, undefined));
     if (run === undefined || run.status === "released")
       return err(refused(STOP, ...NOT_RUNNING));
-    if (run.stopped !== undefined) return ok(run.stopped);
+    if (run.stopped !== undefined) {
+      if (this.secrets.hasDeclaredSecret)
+        run.stopped = { ...run.stopped, ...secretDraftRefusal };
+      return ok(run.stopped);
+    }
     try {
       if (run.outputBytes === undefined) {
         const answer = await controller(
@@ -504,7 +509,7 @@ export class DesktopBuildCapture {
       const summary = await summarizeCapture(
         this.computer,
         { folder: run.folder, outputBytes: run.outputBytes },
-        this.secrets.hasDeclaredSecret,
+        () => this.secrets.hasDeclaredSecret,
         signal,
       );
       if (!summary.ok) {
@@ -513,8 +518,10 @@ export class DesktopBuildCapture {
       }
       run.checkpoints = summary.value.checkpoints;
       run.packageFile = summary.value.packageFile;
-      run.stopped = summary.value.stopped;
-      return ok(summary.value.stopped);
+      run.stopped = this.secrets.hasDeclaredSecret
+        ? { ...summary.value.stopped, ...secretDraftRefusal }
+        : summary.value.stopped;
+      return ok(run.stopped);
     } catch (cause: unknown) {
       return err(
         cause instanceof AnalysisError

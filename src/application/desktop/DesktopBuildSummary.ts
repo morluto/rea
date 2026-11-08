@@ -169,20 +169,22 @@ export type StoppedCapture = {
   readonly draft_refusal?: string;
 };
 
+/** A draft cannot safely be handed off after this server has used a secret. */
+export const secretDraftRefusal = {
+  draft: null,
+  draft_refusal:
+    "Automatic task drafting is unavailable after this server used a declared secret. The capture remains available; write the task manually and export it.",
+} as const;
+
 /** The task draft between `seed` and `end`, or why there is none. */
 const draftTask = async (
   computer: ControlledComputer,
   folder: string,
   checkpoints: ReadonlySet<string>,
-  hasDeclaredSecret: boolean,
+  hasDeclaredSecret: () => boolean,
   signal: AbortSignal,
 ): Promise<Pick<StoppedCapture, "draft" | "draft_refusal">> => {
-  if (hasDeclaredSecret)
-    return {
-      draft: null,
-      draft_refusal:
-        "Automatic task drafting is unavailable after this server used a declared secret. The capture remains available; write the task manually and export it.",
-    };
+  if (hasDeclaredSecret()) return secretDraftRefusal;
   const missing = [SEED_CHECKPOINT, END_CHECKPOINT].filter(
     (name) => !checkpoints.has(name),
   );
@@ -192,20 +194,38 @@ const draftTask = async (
       draft_refusal: `No draft: the capture has no ${missing.join(" or ")} checkpoint; capture again and mark ${SEED_CHECKPOINT} once the seed is saved and ${END_CHECKPOINT} once the edit is.`,
     };
   const stdout = `${folder}/draft.json`;
-  const { stdoutBytes: bytes } = await runRea(
-    computer,
-    [
-      "describe-desktop-application-task",
-      `${folder}/capture`,
-      ...ENDS,
-      ...(checkpoints.has(SIGN_IN_START) && checkpoints.has(SIGN_IN_END)
-        ? ["--withhold-from", SIGN_IN_START, "--withhold-to", SIGN_IN_END]
-        : []),
-      "--json",
-    ],
-    { stdout, signal },
-  );
+  const withheld = Symbol("secret draft withheld");
+  let bytes: number;
+  try {
+    const result = await runRea(
+      {
+        exec: (argv, timeout, requestSignal) => {
+          if (hasDeclaredSecret()) return Promise.reject(withheld);
+          return computer.exec(argv, timeout, requestSignal);
+        },
+        homeFiles: computer.homeFiles.bind(computer),
+        redacted: computer.redacted.bind(computer),
+      },
+      [
+        "describe-desktop-application-task",
+        `${folder}/capture`,
+        ...ENDS,
+        ...(checkpoints.has(SIGN_IN_START) && checkpoints.has(SIGN_IN_END)
+          ? ["--withhold-from", SIGN_IN_START, "--withhold-to", SIGN_IN_END]
+          : []),
+        "--json",
+      ],
+      { stdout, signal },
+    );
+    bytes = result.stdoutBytes;
+  } catch (cause: unknown) {
+    if (cause === withheld) return secretDraftRefusal;
+    if (hasDeclaredSecret() && !signal.aborted) return secretDraftRefusal;
+    throw cause;
+  }
+  if (hasDeclaredSecret()) return secretDraftRefusal;
   const output = await readOutput(computer, stdout, bytes, signal);
+  if (hasDeclaredSecret()) return secretDraftRefusal;
   if (output.kind === "failure")
     return { draft: null, draft_refusal: output.failure.message };
   const draft = draftResultSchema.parse(output.result);
@@ -242,7 +262,7 @@ const draftTask = async (
 export const summarizeCapture = async (
   computer: ControlledComputer,
   capture: { readonly folder: string; readonly outputBytes: number },
-  hasDeclaredSecret: boolean,
+  hasDeclaredSecret: () => boolean,
   signal: AbortSignal,
 ): Promise<
   Result<

@@ -284,6 +284,17 @@ export const writeBuildSecretFile = async (
     throw failure instanceof ArtifactFileCleanupFailure
       ? secretFileCleanupFailure(pending, failure)
       : failure;
-  if (linked) await chmod(directory, 0o700);
+  if (linked) {
+    try {
+      await chmod(directory, 0o700);
+    } catch (cause: unknown) {
+      const code = errorCode(cause);
+      throw new ProviderAdapterError("rea-desktop", "build_secret_file", {
+        userMessage: `The secret was published as ${handle}, but its directory permissions could not be updated${typeof code === "string" && /^E[A-Z0-9]{1,15}$/u.test(code) ? ` (${code})` : ""}.`,
+        remediationAction: `Check the permissions of ${directory} before using the secret.`,
+        diagnostics: { published_handle: handle },
+      });
+    }
+  }
   return linked;
 };

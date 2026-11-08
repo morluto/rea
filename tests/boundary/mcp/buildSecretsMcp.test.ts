@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { gzipSync } from "node:zlib";
 
 import type { CallToolResult } from "@modelcontextprotocol/server";
-import { expect, it } from "vitest";
+import { expect, it, vi } from "vitest";
 
 import { isPortableBundleName } from "../../../src/application/environment/environmentBundle.js";
 import { toolContract } from "../../../src/contracts/toolContracts.js";
@@ -28,6 +28,9 @@ import {
 import type { FakeApp } from "../../fixtures/fakeAgentEnvComputer.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+import { awaitAcknowledgement } from "../../fixtures/lifecycleAcknowledgement.js";
+import { AgentEnvComputer } from "../../../src/desktop/AgentEnvComputer.js";
+import { DesktopBuildSecrets } from "../../../src/application/desktop/DesktopBuildSecrets.js";
 
 // Made-up values, never real credentials.
 const VALUE = "e-Plum7-Kite-Throwaway-42";
@@ -346,4 +349,158 @@ it("withholds the automatic draft before running it after a declared secret", as
     arguments: { computer_id: id, task: TASK, directory },
   });
   expect(exported.isError, JSON.stringify(exported)).not.toBe(true);
+});
+
+it("withholds a cached draft after the server later uses a secret", async () => {
+  const config = await secretsConfig({ master: { text: VALUE } });
+  const { client } = await buildCaptureFakes({
+    serverEnv: { XDG_CONFIG_HOME: config },
+  });
+  const id = await startBuildComputer(client, REQUEST);
+  await callOk(client, "start_build_capture", { computer_id: id });
+  await callOk(client, "mark_build_checkpoint", {
+    computer_id: id,
+    name: "seed",
+  });
+  await callOk(client, "mark_build_checkpoint", {
+    computer_id: id,
+    name: "end",
+  });
+  const before = await callOk(client, "stop_build_capture", {
+    computer_id: id,
+  });
+  expect(before.structuredContent).toMatchObject({ draft: expect.any(Object) });
+  await callOk(client, "act_on_build_computer", {
+    computer_id: id,
+    action: "type_secret",
+    secret: "master",
+  });
+  const after = await callOk(client, "stop_build_capture", { computer_id: id });
+  expect(after.structuredContent).toMatchObject({
+    draft: null,
+    draft_refusal: expect.stringContaining("write the task manually"),
+  });
+});
+
+it.each([
+  "capture-output",
+  "draft-command",
+  "draft-output",
+  "draft-failure",
+] as const)("rechecks shared secret state during %s", async (phase) => {
+  const config = await secretsConfig({ master: { text: VALUE } });
+  const { client, rea } = await buildCaptureFakes({
+    serverEnv: { XDG_CONFIG_HOME: config },
+  });
+  const first = await startBuildComputer(client, REQUEST);
+  let secrets: DesktopBuildSecrets | undefined;
+  const resolve = DesktopBuildSecrets.prototype.resolve;
+  const secretSpy = vi
+    .spyOn(DesktopBuildSecrets.prototype, "resolve")
+    .mockImplementation(function (this: DesktopBuildSecrets, ...args) {
+      secrets = this;
+      return resolve.apply(this, args);
+    });
+  const absent = await client.callTool({
+    name: "act_on_build_computer",
+    arguments: {
+      computer_id: first,
+      action: "type_secret",
+      secret: "absent",
+    },
+  });
+  expect(absent.isError).toBe(true);
+  if (secrets === undefined) throw new Error("secret owner was not reached");
+  await callOk(client, "start_build_capture", { computer_id: first });
+  await callOk(client, "mark_build_checkpoint", {
+    computer_id: first,
+    name: "seed",
+  });
+  await callOk(client, "mark_build_checkpoint", {
+    computer_id: first,
+    name: "end",
+  });
+  let entered = () => {};
+  const acknowledged = new Promise<void>((resolve) => {
+    entered = resolve;
+  });
+  let release = () => {};
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const original = AgentEnvComputer.prototype.homeFiles;
+  const spy = vi
+    .spyOn(AgentEnvComputer.prototype, "homeFiles")
+    .mockImplementation(async function (
+      this: AgentEnvComputer,
+      paths,
+      bytes,
+      signal,
+    ) {
+      if (
+        paths.some((path) =>
+          path.endsWith(
+            phase === "capture-output"
+              ? "/capture.out"
+              : phase === "draft-output"
+                ? "/draft.json"
+                : "/never-match",
+          ),
+        )
+      ) {
+        entered();
+        await gate;
+      }
+      return original.call(this, paths, bytes, signal);
+    });
+  const originalExec = AgentEnvComputer.prototype.exec;
+  const execSpy = vi
+    .spyOn(AgentEnvComputer.prototype, "exec")
+    .mockImplementation(async function (
+      this: AgentEnvComputer,
+      argv,
+      timeout,
+      signal,
+    ) {
+      if (
+        (phase === "draft-command" || phase === "draft-failure") &&
+        argv.some((arg) => arg.includes("describe-desktop-application-task"))
+      ) {
+        entered();
+        await gate;
+        if (phase === "draft-failure") throw new Error(VALUE.slice(0, 10));
+      }
+      return originalExec.call(this, argv, timeout, signal);
+    });
+  const stopping = callOk(client, "stop_build_capture", {
+    computer_id: first,
+  });
+  try {
+    await awaitAcknowledgement(acknowledged, stopping, "capture output read");
+    expect(await secrets.resolve("master")).toEqual({
+      ok: true,
+      value: VALUE,
+    });
+    release();
+    const stopped = await stopping;
+    expect(stopped.structuredContent).toMatchObject({
+      draft: null,
+      draft_refusal: expect.stringContaining("write the task manually"),
+    });
+    const calls = (await rea.notes("calls.jsonl")) as { argv: string[] }[];
+    expect(
+      calls.some(({ argv }) =>
+        argv.includes("describe-desktop-application-task"),
+      ),
+    ).toBe(phase !== "capture-output" && phase !== "draft-failure");
+    if (phase === "draft-failure") {
+      expect(JSON.stringify(stopped)).not.toContain(VALUE.slice(0, 10));
+    }
+  } finally {
+    release();
+    await Promise.allSettled([stopping]);
+    spy.mockRestore();
+    execSpy.mockRestore();
+    secretSpy.mockRestore();
+  }
 });

@@ -17,12 +17,20 @@ const injection = vi.hoisted(() => ({
   remaining: 0,
   failWrite: false,
   unlinkFailures: 0,
+  chmodFailure: false,
   opened: [] as { close(): Promise<void> }[],
 }));
 vi.mock("node:fs/promises", async (importOriginal) => {
   const actual = await importOriginal<typeof import("node:fs/promises")>();
   return {
     ...actual,
+    chmod: async (...args: Parameters<typeof actual.chmod>) => {
+      if (injection.chmodFailure && args[0] === dirname(injection.path)) {
+        injection.chmodFailure = false;
+        throw Object.assign(new Error("chmod refused"), { code: "EACCES" });
+      }
+      return actual.chmod(...args);
+    },
     unlink: async (...args: Parameters<typeof actual.unlink>) => {
       if (
         typeof args[0] === "string" &&
@@ -71,6 +79,7 @@ afterEach(async () => {
   injection.remaining = 0;
   injection.failWrite = false;
   injection.unlinkFailures = 0;
+  injection.chmodFailure = false;
   await Promise.all(injection.opened.splice(0).map((file) => file.close()));
   vi.restoreAllMocks();
 });
@@ -225,6 +234,25 @@ it("retains both descriptor and temporary-name cleanup after a failed write", as
   await secrets.close();
   expect(failure.cleanupIncomplete).toBe(false);
   expect(await readdir(directory)).toEqual([]);
+});
+
+it("reports the published handle if directory permissions cannot be updated", async () => {
+  const directory = await folder();
+  const secrets = new DesktopBuildSecrets(directory);
+  failCloses(directory, 0);
+  injection.chmodFailure = true;
+  let failure: unknown;
+  try {
+    await secrets.keep("master", Buffer.from(FIRST));
+  } catch (cause) {
+    failure = cause;
+  }
+  expect(failure).toBeInstanceOf(AnalysisError);
+  if (!(failure instanceof AnalysisError)) throw new Error("expected failure");
+  expect(failure.diagnostics).toMatchObject({ published_handle: "master" });
+  expect(await readdir(directory)).toEqual(["master"]);
+  expect(JSON.stringify(projectAnalysisError(failure))).not.toContain(FIRST);
+  await secrets.close();
 });
 
 const folder = async () => {
