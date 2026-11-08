@@ -244,6 +244,19 @@ describe("parseNugetPackage: coverage and refusals", () => {
     expect(package_.source_coverage.status).toBe("complete-within-scope");
   });
 
+  it("reports a .nuspec past the read allowance as oversized, not malformed", () => {
+    const package_ = parsed(
+      parse([
+        member("Huge.nuspec", { oversized: true }),
+        member("lib/net8.0/Example.dll"),
+      ]),
+    );
+    expect(package_.diagnostics.map((entry) => entry.code)).toEqual([
+      "nuspec-too-large",
+      "no-nuspec",
+    ]);
+  });
+
   it("refuses a member path that leaves the package root", () => {
     const package_ = parsed(
       parse([

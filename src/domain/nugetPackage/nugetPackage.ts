@@ -119,6 +119,7 @@ export const nugetDiagnosticSchema = z.strictObject({
     "no-nuspec",
     "duplicate-nuspec",
     "invalid-nuspec",
+    "nuspec-too-large",
     "unsupported-nuspec-doctype",
     "entry-limit-reached",
     "diagnostic-limit-reached",

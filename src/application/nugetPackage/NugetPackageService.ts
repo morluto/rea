@@ -149,28 +149,37 @@ const readArchive = async (
 /**
  * Drain one member into a bounded buffer. `.nuspec` text is the only member
  * this step interprets; every other member is inventoried from the directory
- * alone and never decompressed.
+ * alone and never decompressed. A member past the read allowance is reported as
+ * oversized rather than as unreadable.
  */
+type MemberText =
+  | { readonly kind: "text"; readonly text: string }
+  | { readonly kind: "oversized" }
+  | { readonly kind: "unreadable" };
+
 const readMemberText = async (
   reader: ZipArtifactReader,
   entry: Parameters<ZipArtifactReader["open"]>[0],
   signal?: AbortSignal,
-): Promise<string | undefined> => {
+): Promise<MemberText> => {
   if ((entry.declaredSize ?? 0) > NUGET_PACKAGE_MAX_NUSPEC_BYTES)
-    return undefined;
+    return { kind: "oversized" };
   const stream = await reader.open(entry, signal);
   const chunks: Buffer[] = [];
   let length = 0;
   for await (const chunk of stream) {
-    if (!Buffer.isBuffer(chunk)) return undefined;
+    if (!Buffer.isBuffer(chunk)) return { kind: "unreadable" };
     length += chunk.length;
     if (length > NUGET_PACKAGE_MAX_NUSPEC_BYTES) {
       stream.destroy();
-      return undefined;
+      return { kind: "oversized" };
     }
     chunks.push(chunk);
   }
-  return Buffer.concat(chunks, length).toString("utf8");
+  return {
+    kind: "text",
+    text: Buffer.concat(chunks, length).toString("utf8"),
+  };
 };
 
 const isNuspec = (path: string): boolean =>
@@ -184,7 +193,7 @@ const inventoryMembers = async (
   const members: NugetArchiveMember[] = [];
   for await (const entry of reader.entries(signal)) {
     if (members.length >= input.max_entries) break;
-    const text =
+    const read =
       entry.kind === "file" && !entry.encrypted && isNuspec(entry.path)
         ? await readMemberText(reader, entry, signal)
         : undefined;
@@ -193,7 +202,8 @@ const inventoryMembers = async (
       bytes: entry.declaredSize,
       directory: entry.kind === "directory",
       encrypted: entry.encrypted || entry.kind === "symlink",
-      text,
+      text: read?.kind === "text" ? read.text : undefined,
+      oversized: read?.kind === "oversized",
     });
   }
   return members;

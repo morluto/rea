@@ -4,6 +4,7 @@ import { parseXmlDocument } from "../xmlDocument.js";
 import { err, ok, type Result } from "../result.js";
 import {
   NUGET_PACKAGE_MAX_DIAGNOSTICS,
+  NUGET_PACKAGE_MAX_NUSPEC_BYTES,
   type NugetAsset,
   type NugetDiagnostic,
   type NugetNuspec,
@@ -24,6 +25,8 @@ export interface NugetArchiveMember {
   readonly encrypted: boolean;
   /** The decoded text of a `.nuspec` member; absent for every other member. */
   readonly text?: string | undefined;
+  /** A `.nuspec` that exceeds the read allowance, which is not the same as unreadable. */
+  readonly oversized?: boolean | undefined;
 }
 
 export interface ParseNugetPackageOptions {
@@ -199,6 +202,14 @@ const nuspecOf = (
   budget: DiagnosticBudget,
 ): void => {
   const source = member.text;
+  if (member.oversized === true) {
+    budget.add(
+      member.path,
+      "nuspec-too-large",
+      `The .nuspec member exceeds the ${String(NUGET_PACKAGE_MAX_NUSPEC_BYTES)}-byte read allowance and was not parsed.`,
+    );
+    return;
+  }
   if (source === undefined) {
     budget.add(
       member.path,
