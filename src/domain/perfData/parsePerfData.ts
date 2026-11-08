@@ -42,8 +42,8 @@ const ATTR_FLAGS_OFFSET = 0x28;
  * describe an event, and no later version shortened it.
  */
 const ATTR_SIZE_MIN = 64;
-/** Bit 10 of the flag word is `freq`: sample_period holds a frequency. */
-const ATTR_FLAG_FREQ = 0x400;
+/** Bit 10 of the little-endian flag word is `freq`: sample_period is a frequency. */
+const ATTR_FLAG_FREQ = 0x400n;
 /**
  * Entries may share one ids extent, so the per-entry reading asks the whole
  * file again for each group; the retained list is what bounds the reply.
@@ -58,6 +58,8 @@ const PERF_FILE_SECTION_BYTES = 16;
 type Diagnostic = Omit<PerfData["diagnostics"][number], "diagnostic_id">;
 
 interface DecodeState {
+  /** Binds every derived fact id to the recording it was read from. */
+  readonly recording: string;
   readonly events: PerfEvent[];
   readonly diagnostics: Diagnostic[];
   readonly maxEvents: number;
@@ -94,6 +96,8 @@ const diagnose = (
 interface Reader {
   readonly little: boolean;
   u64(bytes: Buffer, offset: number): number | null;
+  /** The flag word itself, which can exceed a safe integer and is never numeric. */
+  u64Bits(bytes: Buffer, offset: number): bigint | null;
   u32(bytes: Buffer, offset: number): number;
 }
 
@@ -106,11 +110,36 @@ const readerFor = (little: boolean): Reader => ({
       : bytes.readBigUInt64BE(offset);
     return value > BigInt(Number.MAX_SAFE_INTEGER) ? null : Number(value);
   },
+  u64Bits(bytes, offset) {
+    if (offset + 8 > bytes.length) return null;
+    return little
+      ? bytes.readBigUInt64LE(offset)
+      : bytes.readBigUInt64BE(offset);
+  },
   u32(bytes, offset) {
     if (offset + 4 > bytes.length) return 0;
     return little ? bytes.readUInt32LE(offset) : bytes.readUInt32BE(offset);
   },
 });
+
+/**
+ * `perf_event_attr` stores `freq` and its siblings in a C bitfield. A
+ * big-endian host allocates those bits from the high end of the 64-bit word
+ * and `perf` reorders them with `swap_bitfield` on read, so bit 10 is `freq`
+ * only in the little-endian word the on-disk layout is defined around. The raw
+ * big-endian word has to be mirrored before the same mask applies.
+ */
+const flagBitSet = (flags: bigint, little: boolean): boolean => {
+  const word = little ? flags : swapBitfield(flags);
+  return (word & ATTR_FLAG_FREQ) !== 0n;
+};
+
+const swapBitfield = (word: bigint): bigint => {
+  let swapped = 0n;
+  for (let bit = 0n; bit < 64n; bit += 1n)
+    if (((word >> bit) & 1n) === 1n) swapped |= 1n << (63n - bit);
+  return swapped;
+};
 
 interface Section {
   readonly offset: number;
@@ -226,9 +255,9 @@ const readEvents = (
         state.identifiersPresent = false;
       else state.identifiers += idsList.length;
     }
-    const flags = read.u64(bytes, cursor + ATTR_FLAGS_OFFSET);
+    const flags = read.u64Bits(bytes, cursor + ATTR_FLAGS_OFFSET);
     state.events.push({
-      event_id: digest("perf_event", section.offset, cursor),
+      event_id: digest("perf_event", state.recording, section.offset, cursor),
       ordinal,
       type: read.u32(bytes, cursor + ATTR_TYPE_OFFSET),
       config: read.u64(bytes, cursor + ATTR_CONFIG_OFFSET),
@@ -244,7 +273,7 @@ const readEvents = (
         stride >= ATTR_SAMPLE_PERIOD_OFFSET + 8
           ? read.u64(bytes, cursor + ATTR_SAMPLE_PERIOD_OFFSET)
           : null,
-      sample_freq: flags === null ? null : (flags & ATTR_FLAG_FREQ) !== 0,
+      sample_freq: flags === null ? null : flagBitSet(flags, read.little),
       attr_bytes: declared,
       ids_section: ids,
       ids: idsList,
@@ -291,7 +320,7 @@ const emptyRecording = (
   attribute_section: { offset: 0, size: 0, within_file: false },
   data_section: { offset: 0, size: 0, within_file: false },
   events: [],
-  diagnostics: withIds(diagnostics),
+  diagnostics: withIds(diagnostics, artifact.sha256),
   summary: {
     events: 0,
     identifiers: 0,
@@ -302,10 +331,16 @@ const emptyRecording = (
   limitations: LIMITATIONS,
 });
 
-const withIds = (diagnostics: readonly Diagnostic[]) =>
+/**
+ * Every fact id is bound to the recording it was read from. Two different
+ * recordings can hold identical attribute sections — the same ordinary
+ * event layout at the same offsets — so hashing offsets alone would give
+ * their events the same id and alias unrelated facts across artifacts.
+ */
+const withIds = (diagnostics: readonly Diagnostic[], recording: string) =>
   diagnostics.map((entry, index) => ({
     ...entry,
-    diagnostic_id: digest("perf_diagnostic", index, entry.code),
+    diagnostic_id: digest("perf_diagnostic", recording, index, entry.code),
   }));
 
 /**
@@ -325,6 +360,7 @@ export const parsePerfData = (
   options: { readonly maxEvents: number },
 ): Result<PerfData, never> => {
   const state: DecodeState = {
+    recording: artifact.sha256,
     events: [],
     diagnostics: [],
     maxEvents: options.maxEvents,
@@ -442,7 +478,7 @@ export const parsePerfData = (
     attribute_section: attributeSection,
     data_section: dataSection,
     events: state.events,
-    diagnostics: withIds(state.diagnostics),
+    diagnostics: withIds(state.diagnostics, artifact.sha256),
     summary: {
       events: state.events.length,
       identifiers: state.identifiers,

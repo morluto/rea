@@ -227,6 +227,64 @@ describe("parsePerfData attribute widths", () => {
     });
   });
 
+  it("reads the freq bit where a big-endian writer puts it, not where the little-endian layout does", () => {
+    // `freq` is a C bitfield. A big-endian host writes it at numeric bit 53
+    // (0x0020000000000000) and `perf` reorders it with swap_bitfield on read;
+    // masking the raw word with 0x400 finds nothing there. The fixture writes
+    // the flag bytes verbatim, because its `freq` option encodes the
+    // little-endian bit position the parser used to assume.
+    const bytes = buildPerfRecording({ little: false });
+    bytes.writeBigUInt64BE(0x0020000000000000n, PERF_HEADER_BYTES + 0x28);
+    expect(parsed(bytes).events[0]?.sample_freq).toBe(true);
+  });
+
+  it("does not mistake the little-endian freq bit for one on a big-endian recording", () => {
+    // The mirror image of the case above: a word that sets bit 10 in the
+    // big-endian sense leaves the field clear.
+    const bytes = buildPerfRecording({ little: false });
+    bytes.writeBigUInt64BE(0x0000_0000_0000_0400n, PERF_HEADER_BYTES + 0x28);
+    expect(parsed(bytes).events[0]?.sample_freq).toBe(false);
+  });
+
+  it("binds an event id to its recording, not only to the attribute offsets", () => {
+    // Two recordings can hold the same ordinary attribute layout at the same
+    // offsets while being different files, so offsets alone alias their facts.
+    const one = buildPerfRecording();
+    const other = buildPerfRecording();
+    const first = parsePerfData(
+      one,
+      { ...artifact, sha256: "a".repeat(64), bytes: one.length },
+      { maxEvents: 100 },
+    );
+    const second = parsePerfData(
+      other,
+      { ...artifact, sha256: "b".repeat(64), bytes: other.length },
+      { maxEvents: 100 },
+    );
+    if (!first.ok || !second.ok) throw new Error("expected parsed recordings");
+    expect(first.value.events[0]?.file_offset).toBe(
+      second.value.events[0]?.file_offset,
+    );
+    expect(first.value.events[0]?.event_id).not.toBe(
+      second.value.events[0]?.event_id,
+    );
+  });
+
+  it("binds a diagnostic id to its recording as well", () => {
+    const truncated = (sha256: string) => {
+      const bytes = buildPerfRecording().subarray(0, 16);
+      const result = parsePerfData(
+        bytes,
+        { ...artifact, sha256, bytes: bytes.length },
+        { maxEvents: 100 },
+      );
+      if (!result.ok) throw new Error("expected a parsed recording");
+      return result.value.diagnostics[0]?.diagnostic_id;
+    };
+    expect(truncated("a".repeat(64))).toBeTruthy();
+    expect(truncated("a".repeat(64))).not.toBe(truncated("b".repeat(64)));
+  });
+
   it("reports an unrepresentable 64-bit config as unknown rather than truncated", () => {
     const bytes = buildPerfRecording();
     bytes.writeBigUInt64LE(

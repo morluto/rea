@@ -10,6 +10,21 @@ export const PERF_HEADER_BYTES = 0x68;
 export const PERF_HEADER_BYTES_WITHOUT_FEATURES = 0x48;
 export const PERF_ATTR_FLAG_FREQ = 0x400;
 
+/**
+ * `perf_event_attr` stores `freq` in a C bitfield, which a big-endian host
+ * writes from the high end of the 64-bit word: the flag that sits at bit 10
+ * in the little-endian layout lands at bit 53 on disk there. `perf` undoes
+ * this with `swap_bitfield` on read, so a fixture that wrote the same numeric
+ * word in both byte orders would encode the little-endian assumption rather
+ * than the file a big-endian recorder produces.
+ */
+const bigEndianFlags = (flags: bigint): bigint => {
+  let swapped = 0n;
+  for (let bit = 0n; bit < 64n; bit += 1n)
+    if (((flags >> bit) & 1n) === 1n) swapped |= 1n << (63n - bit);
+  return swapped;
+};
+
 export interface PerfEntry {
   readonly type: number;
   readonly config: number;
@@ -55,7 +70,8 @@ const entry = (
   u64(BigInt(fields.samplePeriod), little).copy(bytes, 0x10);
   u64(BigInt(fields.sampleType), little).copy(bytes, 0x18);
   u64(BigInt(fields.readFormat), little).copy(bytes, 0x20);
-  u64(fields.freq ? BigInt(PERF_ATTR_FLAG_FREQ) : 0n, little).copy(bytes, 0x28);
+  const flags = fields.freq ? BigInt(PERF_ATTR_FLAG_FREQ) : 0n;
+  u64(little ? flags : bigEndianFlags(flags), little).copy(bytes, 0x28);
   u64(BigInt(idsAt), little).copy(bytes, attrBytes);
   return bytes;
 };
