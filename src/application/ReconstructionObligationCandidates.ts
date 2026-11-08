@@ -56,7 +56,12 @@ export const deriveReconstructionObligationCandidates = (
     deriveApplicationCandidates(evidence, records, candidates, limitations);
     deriveProcessCandidate(evidence, candidates, limitations);
   }
-  for (const obligation of request.reviewedObligations)
+  // Reviewed records merge in a canonical order so competing definitions of
+  // one ID do not depend on the order the caller listed them.
+  const reviewed = [...request.reviewedObligations].sort((left, right) =>
+    compareUnicodeCodePoints(reviewedOrderKey(left), reviewedOrderKey(right)),
+  );
+  for (const obligation of reviewed)
     addCandidate(candidates, reviewedCandidate(obligation, records));
   return {
     candidates: [...candidates.values()].sort((left, right) =>
@@ -463,11 +468,15 @@ const addCandidate = (
   }
   // A retiring reviewed record that names a generated ID reviews that
   // generated claim: its disposition, reason, and next steps apply to the
-  // generated definition, which is kept rather than redefined.
+  // generated definition, which is kept rather than redefined. A second
+  // retiring record, or one for another obligation version, competes with
+  // the definition instead of overwriting the first review.
   const retiresGenerated =
     current.origin === "generated" &&
     candidate.origin === "reviewed" &&
-    retiresObligation(candidate.disposition);
+    retiresObligation(candidate.disposition) &&
+    !retiresObligation(current.disposition) &&
+    candidate.obligation_version === current.obligation_version;
   candidates.set(candidate.obligation_id, {
     ...current,
     ...(retiresGenerated
@@ -485,10 +494,14 @@ const addCandidate = (
       [...current.observed_cases, ...candidate.observed_cases],
       (item) => `${item.kind}:${item.evidence_id}:${item.location}`,
     ),
-    source_state: sourceState([
-      ...current.authority_references,
-      ...candidate.authority_references,
-    ]),
+    // Review Evidence is attached but never upgrades the generated claim's
+    // source state: retiring a claim cannot make it look observed.
+    source_state: retiresGenerated
+      ? current.source_state
+      : sourceState([
+          ...current.authority_references,
+          ...candidate.authority_references,
+        ]),
     residual_unknown_ids: uniqueSorted([
       ...current.residual_unknown_ids,
       ...candidate.residual_unknown_ids,
@@ -514,6 +527,11 @@ const addCandidate = (
         : current.definitionCount + candidate.definitionCount,
   });
 };
+
+const reviewedOrderKey = (
+  obligation: ReviewedReconstructionObligation,
+): string =>
+  `${obligation.obligation_id}:${digestCanonicalValue(obligation, "Reviewed reconstruction obligation")}`;
 
 const sourceState = (
   references: ReconstructionObligation["authority_references"],

@@ -8,6 +8,7 @@ import {
 import {
   build,
   deriveCandidates,
+  processEvidence,
   proofEvidence,
   request,
   reviewedObligation,
@@ -251,11 +252,34 @@ const overgeneration = (ledger: ReconstructionObligationLedger) =>
   ledger.limitations.filter((limitation) =>
     limitation.startsWith("obligation-overgeneration:"),
   );
+/** Generated, unbound claims that still need runtime authority. */
 const staticUnbound = (ledger: ReconstructionObligationLedger) =>
   ledger.obligations.filter(
-    ({ origin, binding, source_state: sourceState }) =>
-      origin === "generated" && binding === null && sourceState !== "observed",
+    ({
+      origin,
+      binding,
+      source_state: sourceState,
+      required_original_authority: originalAuthority,
+    }) =>
+      origin === "generated" &&
+      binding === null &&
+      sourceState !== "observed" &&
+      originalAuthority !== "static",
   ).length;
+/** Families the limitation names: static-authority families are not counted. */
+const countedFamilies = (ledger: ReconstructionObligationLedger) =>
+  [
+    ...new Set(
+      ledger.obligations
+        .filter(
+          ({ required_original_authority: authority }) =>
+            authority !== "static",
+        )
+        .map(({ family }) => family),
+    ),
+  ]
+    .sort()
+    .join(", ");
 
 describe("reconstruction obligation over-generation", () => {
   it("reports one artifact-level limitation only above the threshold and keeps every candidate", () => {
@@ -289,7 +313,7 @@ describe("reconstruction obligation over-generation", () => {
       base.obligations.length + flooded.unknownNodes.length,
     );
     expect(overgeneration(ledger)).toEqual([
-      `obligation-overgeneration: artifact ${APPLICATION_GRAPH_DIGESTS.asar} has ${String(OBLIGATION_OVERGENERATION_THRESHOLD + 1)} generated obligations with no runtime authority and no manifest binding (families: ${[...new Set(ledger.obligations.map(({ family }) => family))].sort().join(", ")}), above the threshold of ${String(OBLIGATION_OVERGENERATION_THRESHOLD)}; ${String(OBLIGATION_OVERGENERATION_THRESHOLD + 1)} still unreviewed, 0 retired by reviewed disposition. Stop: do not write fixtures or verifiers for these candidates; obtain runtime authority for the artifact or record a reviewed disposition for each still-unreviewed decoy first.`,
+      `obligation-overgeneration: artifact ${APPLICATION_GRAPH_DIGESTS.asar} has ${String(OBLIGATION_OVERGENERATION_THRESHOLD + 1)} generated obligations with no runtime authority and no manifest binding (families: ${countedFamilies(ledger)}), above the threshold of ${String(OBLIGATION_OVERGENERATION_THRESHOLD)}; ${String(OBLIGATION_OVERGENERATION_THRESHOLD + 1)} still unreviewed, 0 retired by reviewed disposition. Stop: do not write fixtures or verifiers for these candidates; obtain runtime authority for the artifact or record a reviewed disposition for each still-unreviewed decoy first.`,
     ]);
     expect(ledger.status).toBe("unknown");
     expect(ledger.coverage.status).toBe("partial");
@@ -400,6 +424,87 @@ describe("reconstruction obligation over-generation", () => {
     expect(overgeneration(ledger)[0]).toContain(
       `; 0 still unreviewed, ${String(unbound)} retired by reviewed disposition.`,
     );
+  });
+});
+
+describe("reconstruction obligation over-generation group", () => {
+  it("keeps the generated source state when a retiring review cites observed process Evidence", () => {
+    const flooded = decoyApplication(OBLIGATION_OVERGENERATION_THRESHOLD);
+    const capture = processEvidence();
+    const open = build(request([...flooded.records, capture]));
+    const decoys = open.obligations.filter(({ target }) =>
+      flooded.unknownNodes.some(
+        ({ node_id: nodeId }) => target.application_node_id === nodeId,
+      ),
+    );
+    // The observed process obligation is under another artifact and never
+    // counts, so this is the flooded artifact's group.
+    const total = staticUnbound(open);
+    const ledger = build(
+      request([...flooded.records, capture], {
+        reviewed_obligations: decoys.map(({ obligation_id: obligationId }) => ({
+          ...reviewedObligation(obligationId, capture.evidence_id),
+          disposition: "not-applicable" as const,
+          disposition_reason: "Decoy channel in dead code.",
+        })),
+      }),
+    );
+
+    // The observed process capture is attached as review Evidence but does
+    // not make the decoys look observed, so they stay in the count.
+    for (const decoy of decoys) {
+      const retiredDecoy = ledger.obligations.find(
+        ({ obligation_id: id }) => id === decoy.obligation_id,
+      );
+      expect(retiredDecoy).toMatchObject({
+        status: "out-of-scope",
+        source_state: decoy.source_state,
+      });
+      expect(retiredDecoy?.source_state).not.toBe("observed");
+      expect(
+        retiredDecoy?.authority_references.map(({ evidence_id: id }) => id),
+      ).toContain(capture.evidence_id);
+    }
+    expect(overgeneration(ledger)).toHaveLength(1);
+    expect(overgeneration(ledger)[0]).toContain(
+      `artifact ${APPLICATION_GRAPH_DIGESTS.asar} has ${String(total)} generated obligations`,
+    );
+    expect(overgeneration(ledger)[0]).toContain(
+      `; ${String(total - decoys.length)} still unreviewed, ${String(decoys.length)} retired by reviewed disposition.`,
+    );
+    expect(ledger.status).toBe("unknown");
+  });
+
+  it("does not count static-authority native families as lacking runtime authority", () => {
+    const flooded = applicationWithUnknowns(
+      Array.from({ length: 25 }, (_, index) => `export-${String(index)}`),
+      { kind: "native-export", label: "decoy:export" },
+    );
+    const ledger = build(request(flooded.records));
+    const natives = ledger.obligations.filter(({ target }) =>
+      flooded.unknownNodes.some(
+        ({ node_id: nodeId }) => target.application_node_id === nodeId,
+      ),
+    );
+
+    expect(natives).toHaveLength(25);
+    for (const native of natives)
+      expect(native).toMatchObject({
+        origin: "generated",
+        family: "native-export",
+        binding: null,
+        source_state: "candidate",
+        required_original_authority: "static",
+      });
+    // Static-authority claims never need runtime authority, so they cannot
+    // be told to obtain it: the artifact is not reported as over-generated.
+    expect(natives.length + staticUnbound(ledger)).toBeGreaterThan(
+      OBLIGATION_OVERGENERATION_THRESHOLD,
+    );
+    expect(staticUnbound(ledger)).toBeLessThanOrEqual(
+      OBLIGATION_OVERGENERATION_THRESHOLD,
+    );
+    expect(overgeneration(ledger)).toEqual([]);
   });
 });
 

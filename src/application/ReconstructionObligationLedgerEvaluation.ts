@@ -45,6 +45,13 @@ import { compareUnicodeCodePoints } from "../domain/unicodeCodePointOrder.js";
 type Diagnostic = ReconstructionObligation["diagnostics"][number];
 type Binding = NonNullable<ReconstructionObligation["binding"]>;
 
+/** Binding diagnostics a retired claim keeps: supplied proof that failed. */
+const RETIRED_PROOF_FAILURES: readonly Diagnostic["code"][] = [
+  "fixture-failed",
+  "verifier-failed",
+  "contradiction",
+];
+
 /**
  * Generated obligations in one artifact that have neither runtime authority
  * nor a manifest binding. Above this count the artifact is reported as
@@ -201,6 +208,8 @@ const ledgerLimitations = (
  * One artifact-level limitation per over-generated artifact. Every candidate
  * stays in the ledger; the limitation tells agents to stop fixture work on
  * static-only, unbound claims until authority or review narrows them.
+ * Families whose original authority is static (native boundaries) are
+ * characterized without runtime authority, so they are not counted.
  */
 const overgenerationLimitations = (
   obligations: readonly ReconstructionObligation[],
@@ -212,7 +221,8 @@ const overgenerationLimitations = (
       sha256 === null ||
       obligation.origin !== "generated" ||
       obligation.binding !== null ||
-      obligation.source_state === "observed"
+      obligation.source_state === "observed" ||
+      obligation.required_original_authority === "static"
     )
       continue;
     unboundByArtifact.set(sha256, [
@@ -260,8 +270,18 @@ const evaluateObligation = (
       "ambiguous-owner",
       "Multiple reconstruction manifest bindings claim this obligation.",
     );
-  if (binding !== null && !retired)
-    evaluateBinding(candidate, binding, context, diagnostics);
+  if (binding !== null) {
+    if (retired) {
+      // Supplied proof is still checked: a failing fixture or verifier stays
+      // visible on a retired claim, while diagnostics that would demand more
+      // fixtures, a verifier, or authority are dropped.
+      const checked: Diagnostic[] = [];
+      evaluateBinding(candidate, binding, context, checked);
+      diagnostics.push(
+        ...checked.filter(({ code }) => RETIRED_PROOF_FAILURES.includes(code)),
+      );
+    } else evaluateBinding(candidate, binding, context, diagnostics);
+  }
   if (!retired) {
     diagnostics.push(
       ...originalCaseDiagnostics(candidate, originalCases, context.evidence),

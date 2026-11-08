@@ -242,7 +242,13 @@ instead of competing with it: the generated definition is kept, no
 required and must not be blank; it is rejected as caller input otherwise. The
 record's own `required` value does not override the generated definition's:
 the generated `required` value is kept, so a retired required obligation stays
-required.
+required. The generated `source_state` is kept too: review Evidence is
+attached, but an observed process or service record cited by the review does
+not make the generated claim `observed`. The record must name the generated
+`obligation_version`, and only one retiring record may review a generated ID;
+a second retiring record, or one for another version, is a competing
+definition reported as `duplicate-definition` rather than a retirement, and
+the result does not depend on the order the records are listed.
 
 ```json
 {
@@ -386,9 +392,11 @@ with its `required` value unchanged and status `out-of-scope`; its reason is
 carried in the `out-of-scope` or `not-applicable` diagnostic detail. It demands
 no owner, fixture, original case, or authority, but a required retired
 obligation still counts toward `required_open` and keeps the ledger `open`:
-retiring claims never makes a ledger `ready`. Contradictions, residual
-unknowns, unavailable authority, and competing reviewed definitions remain
-visible on it.
+retiring claims never makes a ledger `ready`. Proof that was supplied for a
+retired obligation is still checked: a failing fixture or verifier proof on
+its binding reports `fixture-failed` or `verifier-failed` and fails the
+ledger. Contradictions, residual unknowns, unavailable authority, and
+competing reviewed definitions remain visible on it.
 
 ### Over-generation
 
@@ -398,8 +406,11 @@ than 20 generated obligations in one artifact have neither runtime authority
 nor a manifest binding, the ledger adds one `obligation-overgeneration:`
 limitation for that artifact naming the count and families, and how many of
 those obligations are still unreviewed versus retired by a reviewed
-disposition. Retired obligations stay in the count, so retiring decoys does not
-erase the signal; only runtime authority or manifest bindings narrow it. A
+disposition. Families whose `required_original_authority` is `static`, such
+as native exports and addons, are characterized without runtime authority and
+are not counted. Retired obligations stay in the count with their generated
+`source_state`, so retiring decoys does not erase the signal; only runtime
+authority or manifest bindings narrow it. A
 fully retired artifact never reaches `ready`: it stays flagged by this
 limitation until runtime authority or manifest bindings exist for the
 artifact, so retiring every decoy does not close the ledger. Every

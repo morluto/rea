@@ -6,6 +6,7 @@ import type {
   ReviewedReconstructionObligation,
 } from "../domain/reconstructionObligationLedgerSchemas.js";
 import {
+  boundProofEvidence,
   build,
   processEvidence,
   proofEvidence,
@@ -173,6 +174,151 @@ describe("reconstruction obligation analyst disposition", () => {
     // The retired generated obligation stays required too.
     expect(ledger.summary).toMatchObject({ required: 2, required_open: 2 });
     expect(ledger.status).toBe("open");
+  });
+});
+
+describe("reconstruction obligation retired claim proof", () => {
+  it.each([
+    ["failing", false, "failed", ["fixture-failed", "not-applicable"]],
+    ["passing", true, "open", ["not-applicable"]],
+  ] as const)(
+    "still checks a %s fixture proof supplied for a retired claim",
+    (_, passed, ledgerStatus, codes) => {
+      const capture = processEvidence();
+      const generated = build(request([capture])).obligations[0];
+      if (generated === undefined)
+        throw new Error("Expected process obligation");
+      const proof = boundProofEvidence("retired-proof", {
+        bindings: [
+          {
+            obligation_id: generated.obligation_id,
+            obligation_version: generated.obligation_version,
+            owner_sha256: "7".repeat(64),
+            fixtures: [
+              {
+                fixture_id: "packaged.positive",
+                case_kind: "positive",
+                passed,
+              },
+            ],
+            verifiers: [],
+          },
+        ],
+      });
+      const ledger = build(
+        request([capture, proof], {
+          reviewed_obligations: [
+            retired(
+              generated.obligation_id,
+              proof.evidence_id,
+              "not-applicable",
+            ),
+          ],
+          manifest: {
+            bindings: [
+              {
+                ...fixturelessBinding(generated.obligation_id),
+                fixtures: [
+                  {
+                    fixture_id: "packaged.positive",
+                    case_kind: "positive",
+                    authority: "packaged-process",
+                    evidence_ids: [proof.evidence_id],
+                  },
+                ],
+              },
+            ],
+            contradictions: [],
+          },
+        }),
+      );
+
+      // Missing cases and the missing verifier are not demanded of a retired
+      // claim, but a proof that was supplied and failed stays visible.
+      expect(ledger.obligations[0]).toMatchObject({
+        origin: "generated",
+        required: true,
+        status: "out-of-scope",
+      });
+      expect(
+        ledger.obligations[0]?.diagnostics.map(({ code }) => code),
+      ).toEqual(codes);
+      expect(ledger.reports.missing_verifier_obligation_ids).toEqual([]);
+      expect(ledger.status).toBe(ledgerStatus);
+    },
+  );
+});
+
+describe("reconstruction obligation competing retirements", () => {
+  it("reports two retiring records for one generated ID as competing definitions in any order", () => {
+    const capture = processEvidence();
+    const review = proofEvidence("double-review");
+    const generated = build(request([capture])).obligations[0];
+    if (generated === undefined) throw new Error("Expected process obligation");
+    const first = retired(
+      generated.obligation_id,
+      review.evidence_id,
+      "out-of-scope",
+      "First sweep.",
+    );
+    const second = retired(
+      generated.obligation_id,
+      review.evidence_id,
+      "not-applicable",
+      "Second sweep.",
+    );
+    const forward = build(
+      request([capture, review], { reviewed_obligations: [first, second] }),
+    );
+    const reversed = build(
+      request([capture, review], { reviewed_obligations: [second, first] }),
+    );
+
+    expect(forward).toEqual(reversed);
+    expect(forward.obligations).toHaveLength(1);
+    expect(forward.obligations[0]).toMatchObject({
+      origin: "generated",
+      required: true,
+      status: "out-of-scope",
+    });
+    expect(
+      forward.obligations[0]?.diagnostics.map(({ code }) => code),
+    ).toContain("duplicate-definition");
+    expect(forward.summary).toMatchObject({ required: 1, required_open: 1 });
+  });
+
+  it("does not retire a generated claim with a reviewed record for another version", () => {
+    const capture = processEvidence();
+    const review = proofEvidence("version-review");
+    const generated = build(request([capture])).obligations[0];
+    if (generated === undefined) throw new Error("Expected process obligation");
+    expect(generated.obligation_version).toBe(1);
+    const ledger = build(
+      request([capture, review], {
+        reviewed_obligations: [
+          {
+            ...retired(
+              generated.obligation_id,
+              review.evidence_id,
+              "not-applicable",
+            ),
+            obligation_version: 2,
+          },
+        ],
+      }),
+    );
+
+    expect(ledger.obligations).toHaveLength(1);
+    expect(ledger.obligations[0]).toMatchObject({
+      origin: "generated",
+      obligation_version: 1,
+      required: true,
+      status: "unknown",
+    });
+    const codes = ledger.obligations[0]?.diagnostics.map(({ code }) => code);
+    expect(codes).toContain("duplicate-definition");
+    expect(codes).not.toContain("not-applicable");
+    expect(ledger.status).toBe("unknown");
   });
 });
 
