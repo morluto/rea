@@ -12,6 +12,7 @@ import {
 import {
   unknownSemanticEvidence,
   candidateBuiltinSemanticEvidence,
+  builtinSemanticRelation,
 } from "./JavaScriptSemanticGraphEvidence.js";
 import {
   projectSemanticResultBindings,
@@ -191,19 +192,20 @@ const projectTimerSchedule = (
   operation: JavaScriptSemanticTimerOperation,
   timerNodes: ReadonlyMap<string, JavaScriptSemanticGraphNode>,
 ): void => {
-  const candidateEvidence =
-    operation.builtinAuthority === "candidate"
-      ? candidateBuiltinSemanticEvidence(context.file, operation.location)
-      : undefined;
+  const authority = builtinSemanticRelation(
+    context.file,
+    operation,
+    "resolved",
+  );
+  const candidateEvidence = authority.evidence;
   addSemanticGraphRelation(context.state, {
     source: context.callSiteAt(operation.location),
     target: timerNodes.get(operation.timerId),
     relation: "schedules-timer",
-    resolution: candidateEvidence === undefined ? "resolved" : "candidate",
+    ...authority,
     ...(candidateEvidence === undefined
       ? {}
       : {
-          evidence: candidateEvidence,
           properties: { builtin_authority: "candidate" },
         }),
   });
@@ -231,10 +233,12 @@ const projectTimerCancellation = (
   timerNodes: ReadonlyMap<string, JavaScriptSemanticGraphNode>,
 ): void => {
   const callSite = context.callSiteAt(operation.location);
-  const candidateEvidence =
-    operation.builtinAuthority === "candidate"
-      ? candidateBuiltinSemanticEvidence(context.file, operation.location)
-      : undefined;
+  const authority = builtinSemanticRelation(
+    context.file,
+    operation,
+    operation.resolution === "complete" ? "resolved" : "candidate",
+  );
+  const candidateEvidence = authority.evidence;
   const target =
     operation.linkedTimerId === null
       ? undefined
@@ -243,14 +247,10 @@ const projectTimerCancellation = (
     source: callSite,
     target,
     relation: "cancels-timer",
-    resolution:
-      candidateEvidence === undefined && operation.resolution === "complete"
-        ? "resolved"
-        : "candidate",
+    ...authority,
     ...(candidateEvidence === undefined
       ? {}
       : {
-          evidence: candidateEvidence,
           properties: { builtin_authority: "candidate" },
         }),
   });

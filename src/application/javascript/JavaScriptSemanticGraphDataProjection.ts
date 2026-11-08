@@ -10,6 +10,7 @@ import {
   addSemanticGraphUnknown,
 } from "./JavaScriptSemanticGraphConstruction.js";
 import {
+  builtinSemanticRelation,
   candidateBuiltinSemanticEvidence,
   unknownSemanticEvidence,
 } from "./JavaScriptSemanticGraphEvidence.js";
@@ -41,38 +42,22 @@ export const projectSemanticConfiguration = (
       source: config,
       target,
       relation: configurationRelation(operation),
-      resolution:
-        operation.builtinAuthority !== "candidate" &&
-        operation.resolution === "complete"
-          ? "resolved"
-          : "candidate",
-      ...(operation.builtinAuthority === "candidate"
-        ? {
-            evidence: candidateBuiltinSemanticEvidence(
-              context.file,
-              operation.location,
-            ),
-          }
-        : {}),
+      ...builtinSemanticRelation(
+        context.file,
+        operation,
+        operation.resolution === "complete" ? "resolved" : "candidate",
+      ),
     });
     if (operation.kind === "default" && operation.sourceConfigId !== null)
       addSemanticGraphRelation(context.state, {
         source: configNodes.get(operation.sourceConfigId),
         target: config,
         relation: "overrides",
-        resolution:
-          operation.builtinAuthority !== "candidate" &&
-          operation.resolution === "complete"
-            ? "resolved"
-            : "candidate",
-        ...(operation.builtinAuthority === "candidate"
-          ? {
-              evidence: candidateBuiltinSemanticEvidence(
-                context.file,
-                operation.location,
-              ),
-            }
-          : {}),
+        ...builtinSemanticRelation(
+          context.file,
+          operation,
+          operation.resolution === "complete" ? "resolved" : "candidate",
+        ),
       });
     if (operation.resolution !== "complete")
       addDataUnknown({
@@ -227,19 +212,11 @@ const projectRequestConstruction = (
     source: callSite,
     target: request,
     relation: "constructs-request",
-    resolution:
-      operation.builtinAuthority !== "candidate" &&
-      operation.resolution === "complete"
-        ? "resolved"
-        : "candidate",
-    ...(operation.builtinAuthority === "candidate"
-      ? {
-          evidence: candidateBuiltinSemanticEvidence(
-            context.file,
-            operation.location,
-          ),
-        }
-      : {}),
+    ...builtinSemanticRelation(
+      context.file,
+      operation,
+      operation.resolution === "complete" ? "resolved" : "candidate",
+    ),
   });
   projectSemanticResultBindings(
     context,
@@ -257,19 +234,11 @@ const projectRequestConstruction = (
           : context.bindingNodes.get(field.sourceBindingId),
       target: request,
       relation: "supplies-request-field",
-      resolution:
-        operation.builtinAuthority === "candidate" ||
-        field.sourceBindingId === null
-          ? "candidate"
-          : "resolved",
-      ...(operation.builtinAuthority === "candidate"
-        ? {
-            evidence: candidateBuiltinSemanticEvidence(
-              context.file,
-              operation.location,
-            ),
-          }
-        : {}),
+      ...builtinSemanticRelation(
+        context.file,
+        operation,
+        field.sourceBindingId === null ? "candidate" : "resolved",
+      ),
       properties: { field: field.name },
     });
 };
@@ -283,19 +252,11 @@ const projectResponseConsumer = (
     source: response,
     target: context.callSiteAt(operation.location),
     relation: "consumed-by",
-    resolution:
-      operation.builtinAuthority !== "candidate" &&
-      operation.resolution === "complete"
-        ? "resolved"
-        : "candidate",
-    ...(operation.builtinAuthority === "candidate"
-      ? {
-          evidence: candidateBuiltinSemanticEvidence(
-            context.file,
-            operation.location,
-          ),
-        }
-      : {}),
+    ...builtinSemanticRelation(
+      context.file,
+      operation,
+      operation.resolution === "complete" ? "resolved" : "candidate",
+    ),
     properties: { method: operation.method },
   });
 };

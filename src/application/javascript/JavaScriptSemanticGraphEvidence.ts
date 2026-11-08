@@ -80,6 +80,25 @@ export const candidateBuiltinSemanticEvidence = (
   };
 };
 
+/** Keep conditional built-in authority and relation resolution together. */
+export const builtinSemanticRelation = (
+  file: JavaScriptArtifactFile,
+  operation: {
+    readonly builtinAuthority?: "candidate" | undefined;
+    readonly location: JavaScriptSourceRange;
+  },
+  resolution: "resolved" | "candidate",
+): {
+  readonly resolution: "resolved" | "candidate";
+  readonly evidence?: ApplicationGraphEvidence;
+} =>
+  operation.builtinAuthority === "candidate"
+    ? {
+        resolution: "candidate",
+        evidence: candidateBuiltinSemanticEvidence(file, operation.location),
+      }
+    : { resolution };
+
 /** Explicit absence of semantic syntax for an artifact-level fallback root. */
 export const unavailableSemanticRootEvidence = (
   rootArtifactSha256: string,

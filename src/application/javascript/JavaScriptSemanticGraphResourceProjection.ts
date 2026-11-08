@@ -6,6 +6,7 @@ import {
   addSemanticGraphUnknown,
 } from "./JavaScriptSemanticGraphConstruction.js";
 import {
+  builtinSemanticRelation,
   candidateBuiltinSemanticEvidence,
   unknownSemanticEvidence,
 } from "./JavaScriptSemanticGraphEvidence.js";
@@ -28,16 +29,7 @@ export const projectSemanticResources = (
         source: context.callSiteAt(operation.location),
         target: resourceNodes.get(operation.resourceId),
         relation: "acquires",
-        resolution:
-          operation.builtinAuthority === "candidate" ? "candidate" : "resolved",
-        ...(operation.builtinAuthority === "candidate"
-          ? {
-              evidence: candidateBuiltinSemanticEvidence(
-                context.file,
-                operation.location,
-              ),
-            }
-          : {}),
+        ...builtinSemanticRelation(context.file, operation, "resolved"),
       });
     else projectRelease(context, operation, resourceNodes);
 };
@@ -87,19 +79,11 @@ const projectRelease = (
       source: callSite,
       target: resource,
       relation: "releases",
-      resolution:
-        operation.builtinAuthority !== "candidate" &&
-        operation.resolution === "complete"
-          ? "resolved"
-          : "candidate",
-      ...(operation.builtinAuthority === "candidate"
-        ? {
-            evidence: candidateBuiltinSemanticEvidence(
-              context.file,
-              operation.location,
-            ),
-          }
-        : {}),
+      ...builtinSemanticRelation(
+        context.file,
+        operation,
+        operation.resolution === "complete" ? "resolved" : "candidate",
+      ),
     });
   if (operation.resolution === "complete") return;
   addSemanticGraphUnknown(context.state, {

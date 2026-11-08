@@ -11,6 +11,7 @@ import {
 import {
   unknownSemanticEvidence,
   candidateBuiltinSemanticEvidence,
+  builtinSemanticRelation,
 } from "./JavaScriptSemanticGraphEvidence.js";
 import {
   projectSemanticResultBindings,
@@ -91,22 +92,20 @@ const projectSpawn = (
   child: JavaScriptSemanticGraphNode,
 ): void => {
   const callSite = context.callSiteAt(spawn.location);
-  const candidateEvidence =
-    spawn.builtinAuthority === "candidate"
-      ? candidateBuiltinSemanticEvidence(context.file, spawn.location)
-      : undefined;
+  const authority = builtinSemanticRelation(
+    context.file,
+    spawn,
+    spawn.resolution === "complete" ? "resolved" : "candidate",
+  );
+  const candidateEvidence = authority.evidence;
   addSemanticGraphRelation(context.state, {
     source: callSite,
     target: child,
     relation: "spawns",
-    resolution:
-      candidateEvidence === undefined && spawn.resolution === "complete"
-        ? "resolved"
-        : "candidate",
+    ...authority,
     ...(candidateEvidence === undefined
       ? {}
       : {
-          evidence: candidateEvidence,
           properties: { builtin_authority: "candidate" },
         }),
   });
@@ -211,10 +210,12 @@ const projectInteraction = (
   interaction: JavaScriptSemanticChildProcessInteraction,
   processNodes: ReadonlyMap<string, JavaScriptSemanticGraphNode>,
 ): void => {
-  const candidateEvidence =
-    interaction.builtinAuthority === "candidate"
-      ? candidateBuiltinSemanticEvidence(context.file, interaction.location)
-      : undefined;
+  const authority = builtinSemanticRelation(
+    context.file,
+    interaction,
+    interaction.resolution === "complete" ? "resolved" : "candidate",
+  );
+  const candidateEvidence = authority.evidence;
   const children = interaction.linkedProcessIds.flatMap((identifier) => {
     const child = processNodes.get(identifier);
     return child === undefined ? [] : [child];
@@ -233,14 +234,10 @@ const projectInteraction = (
           : interaction.eventName === "exit"
             ? "listens-exit"
             : "listens-error",
-      resolution:
-        candidateEvidence === undefined && interaction.resolution === "complete"
-          ? "resolved"
-          : "candidate",
+      ...authority,
       ...(candidateEvidence === undefined
         ? {}
         : {
-            evidence: candidateEvidence,
             properties: { builtin_authority: "candidate" },
           }),
     });

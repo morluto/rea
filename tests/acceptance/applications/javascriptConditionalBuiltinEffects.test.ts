@@ -74,21 +74,35 @@ cliTest.for(["CLI", "stdio MCP"] as const)(
         ({ source_node_id, target_node_id }) =>
           ids.has(source_node_id) || ids.has(target_node_id),
       );
-      expect(relations.map(({ relation }) => relation)).toEqual(
-        expect.arrayContaining([
-          "reads-config",
-          "reads-environment",
-          "acquires",
-          "releases",
-          "constructs-request",
-          "spawns",
-          "schedules-timer",
-        ]),
-      );
-      if (candidate)
+      for (const relation of [
+        "reads-config",
+        "reads-environment",
+        "acquires",
+        "releases",
+        "constructs-request",
+        "spawns",
+        "schedules-timer",
+      ])
+        expect(relations).toContainEqual(
+          expect.objectContaining({
+            relation,
+            resolution: candidate ? "candidate" : "resolved",
+          }),
+        );
+      if (candidate) {
         expect(
           relations.every(({ resolution }) => resolution !== "resolved"),
         ).toBe(true);
+        for (const relation of relations) {
+          const evidence = graph.evidence_contexts.find(
+            ({ context_id }) => context_id === relation.evidence.context_id,
+          );
+          expect(evidence).toMatchObject({
+            state: "inferred",
+            confidence: "low",
+          });
+        }
+      }
     }
     const conditionalMutation = graph.nodes.find(
       (node) =>
