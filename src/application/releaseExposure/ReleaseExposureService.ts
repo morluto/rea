@@ -919,13 +919,14 @@ const goFields = (value: string): string[] =>
 
 /**
  * A field's flags. A quoted field that begins with a flag, after any package
- * selector, can hold several, so it splits before each later one. Any other
- * field is one argument, such as the directory in `-L "/tmp/a - b"`, and is
- * kept whole.
+ * selector, can hold several, so it splits before each later flag. A dash
+ * alone is not a flag, so `-L=/tmp/private - sdk` stays one argument. Any
+ * other field is one argument, such as the directory in `-L "/tmp/a - b"`,
+ * and is kept whole.
  */
 const splitGoField = (field: string): string[] =>
   field.replace(GO_PACKAGE_SELECTOR, "").startsWith("-")
-    ? field.split(/\s+(?=-)/u)
+    ? field.split(/\s+(?=-\S)/u)
     : [field];
 
 /** Flags in one value. */

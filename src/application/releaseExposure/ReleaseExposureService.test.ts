@@ -1724,6 +1724,8 @@ describe("ReleaseExposureService Go relative flag paths", () => {
     ["-L=private-sdk -s -w", "private-sdk"],
     [`-L "private - sdk" -s -w`, "private - sdk"],
     [`-L "/tmp/private - sdk" -s -w`, "/tmp/private - sdk"],
+    [`-s "-L=/tmp/private - sdk" -w`, "/tmp/private - sdk"],
+    [`"-L=private - sdk -s -w"`, "private - sdk"],
     ["-X main.version=1 -L private-sdk", "private-sdk"],
   ])("keeps the relative linker directory in %s", async (value, path) => {
     const report = await goReport(
