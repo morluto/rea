@@ -7,6 +7,7 @@
 
 ### ⚠ BREAKING CHANGES
 
+* **ghidra:** Byte search results require skipped_overlays; loaded overlays no longer appear in skipped_not_loaded. The Ghidra profile changes so prior snapshots are not replayed.
 * **ghidra:** identify containing code and data ([#8777](https://github.com/morluto/rea/issues/8777))
 * **native:** recognize identical function evidence ([#8442](https://github.com/morluto/rea/issues/8442))
 * **ghidra:** Ghidra snapshots made before the search projection profile revision no longer match. Run fresh analysis and save a new snapshot.
@@ -534,6 +535,7 @@
 * **ghidra:** compare the DOS verifier's CLI window before its own rename ([#8339](https://github.com/morluto/rea/issues/8339)) ([d54a466](https://github.com/morluto/rea/commit/d54a4661da20382ad8456564a08569fdd24131c5)), closes [#8189](https://github.com/morluto/rea/issues/8189)
 * **ghidra:** decide batch names independently of request order ([#8306](https://github.com/morluto/rea/issues/8306)) ([7c9ed94](https://github.com/morluto/rea/commit/7c9ed94259fef560fdbec0c9b640348c5d54c391))
 * **ghidra:** discover installed versioned Homebrew JDKs ([#8853](https://github.com/morluto/rea/issues/8853)) ([1998e65](https://github.com/morluto/rea/commit/1998e65705afd04dee078724932fa98d446248b9))
+* **ghidra:** distinguish skipped overlays in byte search ([#8608](https://github.com/morluto/rea/issues/8608)) ([887b998](https://github.com/morluto/rea/commit/887b99888e54122accdc721737e5cafe39838f5f))
 * **ghidra:** distinguish unlisted instruction addresses ([#7823](https://github.com/morluto/rea/issues/7823)) ([bd687bb](https://github.com/morluto/rea/commit/bd687bbc40daf47d93f2b4c65b72004eb8f87c83))
 * **ghidra:** explain literal search candidate evidence ([#8816](https://github.com/morluto/rea/issues/8816)) ([cbd4bd4](https://github.com/morluto/rea/commit/cbd4bd4a66f2520ff04eeb8bd404b8235df50e8b))
 * **ghidra:** explain read-only project edit refusals ([#8413](https://github.com/morluto/rea/issues/8413)) ([810cebc](https://github.com/morluto/rea/commit/810cebcba07d1a793b8657a7f3a5c14fe5995206))
