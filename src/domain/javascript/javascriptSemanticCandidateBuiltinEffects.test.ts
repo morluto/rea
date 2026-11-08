@@ -90,3 +90,34 @@ it("does not equate mixed alternatives with different identities or replaced met
     ).toEqual([]);
   }
 });
+
+it("retains a conditional built-in reached through a nested receiver", () => {
+  const source =
+    'import * as builtin from "node:fs"; const alternate = require("fs"); const selected = globalThis.flag ? builtin : alternate; selected.promises.readFile("config.json");';
+  const parsed = parseJavaScriptSource(source, "entry.MJS");
+  if (parsed === null) throw new Error("fixture did not parse");
+  expect(
+    analyzeParsedJavaScriptSemantics(parsed).configurationOperations,
+  ).toContainEqual(
+    expect.objectContaining({
+      kind: "file",
+      key: "config.json",
+      builtinAuthority: "candidate",
+    }),
+  );
+});
+
+it("does not retain a nested built-in after replacing either the object or its method", () => {
+  for (const mutation of [
+    "alternate.promises = globalThis.replacement;",
+    "alternate.promises.readFile = globalThis.replacement;",
+    "selected.promises.readFile = globalThis.replacement;",
+  ]) {
+    const source = `import * as builtin from "node:fs"; const alternate = require("fs"); const selected = globalThis.flag ? builtin : alternate; ${mutation} selected.promises.readFile("config.json");`;
+    const parsed = parseJavaScriptSource(source, "entry.MJS");
+    if (parsed === null) throw new Error("fixture did not parse");
+    expect(
+      analyzeParsedJavaScriptSemantics(parsed).configurationOperations,
+    ).toEqual([]);
+  }
+});

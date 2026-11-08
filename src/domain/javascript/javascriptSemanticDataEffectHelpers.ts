@@ -278,19 +278,14 @@ const builtinDataEffectCallablePathWithAuthority = (
     const receiver = semanticBoundMemberPath(callee.object, state);
     if (method !== null && receiver !== undefined) {
       const provenance = evaluateSemanticProvenance(receiver.binding, state);
-      if (
-        provenance.status === "module" ||
-        (allowCandidate &&
-          provenance.status === "ambiguous" &&
-          provenance.origins.length === 1 &&
-          provenance.origins[0]?.loaderAuthority === "candidate")
-      ) {
+      const sourceOrigin = builtinProvenanceOrigin(provenance, allowCandidate, [
+        ...receiver.path,
+        method,
+      ]);
+      if (sourceOrigin !== undefined) {
         const origin = builtinNamespaceOrigin({
-          ...provenance.origins[0],
-          importedPath: [
-            ...provenance.origins[0].importedPath,
-            ...receiver.path,
-          ],
+          ...sourceOrigin,
+          importedPath: [...sourceOrigin.importedPath, ...receiver.path],
         });
         if (
           specifiers.some(
@@ -955,9 +950,9 @@ const computeOriginalBuiltinReceiver = (
   const callee = unwrapJavaScriptExpression(node.callee).node;
   if (!t.isMemberExpression(callee) && !t.isOptionalMemberExpression(callee))
     return false;
-  const receiver = t.isIdentifier(callee.object)
-    ? resolveSemanticBindingState(state, callee.object, callee.object.name)
-    : undefined;
+  const boundReceiver = semanticBoundMemberPath(callee.object, state);
+  const receiver = boundReceiver?.binding;
+  const receiverPath = boundReceiver?.path ?? [];
   const provenance =
     receiver === undefined
       ? undefined
@@ -966,12 +961,20 @@ const computeOriginalBuiltinReceiver = (
     callee.property,
     callee.computed,
   );
-  const sourceOrigin =
-    (provenance === undefined || receiverMethod === null
+  const boundOrigin =
+    provenance === undefined || receiverMethod === null
       ? undefined
       : builtinProvenanceOrigin(provenance, allowCandidate, [
+          ...receiverPath,
           receiverMethod,
-        ])) ??
+        ]);
+  const sourceOrigin =
+    (boundOrigin === undefined
+      ? undefined
+      : {
+          ...boundOrigin,
+          importedPath: [...boundOrigin.importedPath, ...receiverPath],
+        }) ??
     semanticExpressionModuleOrigin(
       callee.object,
       state,
@@ -994,7 +997,12 @@ const computeOriginalBuiltinReceiver = (
   // ESM namespace/named exports are snapshots, whereas the default object and
   // CommonJS exports share mutable slots with require().
   const sources =
-    provenance === undefined ? [sourceOrigin] : provenance.origins;
+    provenance === undefined || boundOrigin === undefined
+      ? [sourceOrigin]
+      : provenance.origins.map((source) => ({
+          ...source,
+          importedPath: [...source.importedPath, ...receiverPath],
+        }));
   if (
     method === null ||
     !BUILTIN_RECEIVER_METHODS[
@@ -1002,7 +1010,7 @@ const computeOriginalBuiltinReceiver = (
     ]?.has(method) ||
     receiver?.memberWrites.some(
       ({ path, node: write }) =>
-        affectsBuiltinPath(path, [method]) &&
+        affectsBuiltinPath(path, [...receiverPath, method]) &&
         !semanticTopLevelEffectFollowsCapture(node, write, state.parentsByNode),
     ) ||
     sources.some((source) => {
