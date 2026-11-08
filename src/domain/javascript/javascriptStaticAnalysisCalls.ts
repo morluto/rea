@@ -66,7 +66,9 @@ import {
 } from "./javascriptSemanticRequireOrigin.js";
 
 type JavaScriptCallLike =
-  t.CallExpression | t.OptionalCallExpression | t.NewExpression;
+  | t.CallExpression
+  | t.OptionalCallExpression
+  | t.NewExpression;
 
 /** Inspect one call or new expression for references, endpoints, storage, and roles. */
 export const inspectCall = (
@@ -466,7 +468,9 @@ const isExplicitDefaultArgument = (
 };
 
 type ViteMapDepsFunction =
-  t.FunctionDeclaration | t.FunctionExpression | t.ArrowFunctionExpression;
+  | t.FunctionDeclaration
+  | t.FunctionExpression
+  | t.ArrowFunctionExpression;
 
 /** Index the canonical Vite helper's cache initializer from parsed syntax. */
 export const indexVitePreloadDependencyTable = (

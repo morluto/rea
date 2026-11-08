@@ -708,7 +708,8 @@ export interface JavaScriptRequireCallFact {
   readonly operation: "load" | "resolve";
   readonly loader: JavaScriptRequireLoaderFact;
   readonly arguments:
-    readonly t.CallExpression["arguments"][number][] | undefined;
+    | readonly t.CallExpression["arguments"][number][]
+    | undefined;
   readonly sourceRelative: boolean;
   readonly loaderAuthority?: "candidate";
   readonly memberUnproven?: true;
@@ -1032,7 +1033,8 @@ type ModuleObjectSource = {
   readonly eligibility?: true;
   readonly readAt?: t.Node | undefined;
   readonly capturedSelections?:
-    readonly SemanticCapturedSelection[] | undefined;
+    | readonly SemanticCapturedSelection[]
+    | undefined;
 };
 
 /** Both loader queries retain the same read and shallow-copy selection owner. */

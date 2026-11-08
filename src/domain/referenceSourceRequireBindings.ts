@@ -39,7 +39,9 @@ export interface ReferenceSourceRequireCall {
 }
 
 export type ReferenceSourceRequireInvocation =
-  t.CallExpression | t.OptionalCallExpression | t.NewExpression;
+  | t.CallExpression
+  | t.OptionalCallExpression
+  | t.NewExpression;
 
 /** Identify exact calls through a source-owned Node loader and their resolver base. */
 export const referenceSourceRequireCalls = (

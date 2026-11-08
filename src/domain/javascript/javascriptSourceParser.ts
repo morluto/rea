@@ -22,7 +22,10 @@ export type ParsedJavaScriptSource = ReturnType<typeof parse>;
 type JavaScriptRuntimeContext = "module" | "commonjs" | "unknown";
 /** Package scope observed inside a source inventory; missing scope is unknown. */
 export type JavaScriptPackageType =
-  "module" | "commonjs" | "unspecified" | "unknown";
+  | "module"
+  | "commonjs"
+  | "unspecified"
+  | "unknown";
 
 const runtimeContextByProgram = new WeakMap<
   t.Program,

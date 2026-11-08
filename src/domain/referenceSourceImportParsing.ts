@@ -28,10 +28,16 @@ import {
 } from "@babel/types";
 
 type ReferenceSourceImportKind =
-  "imports" | "requires" | "references" | "declares-module";
+  | "imports"
+  | "requires"
+  | "references"
+  | "declares-module";
 
 type ReferenceSourceImportResolution =
-  "internal" | "external" | "unresolved" | "unknown";
+  | "internal"
+  | "external"
+  | "unresolved"
+  | "unknown";
 
 type ReferenceSourceImportParseState = "parsed" | "partial" | "unknown";
 

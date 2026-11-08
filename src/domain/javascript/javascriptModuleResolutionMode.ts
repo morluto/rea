@@ -41,7 +41,9 @@ export const hasCaseVariantJavaScriptLoaderSuffix = (
 
 /** Loader evidence retained for a source-level module reference. */
 export type JavaScriptModuleResolutionMode =
-  "import" | "require" | "compiler-dependent";
+  | "import"
+  | "require"
+  | "compiler-dependent";
 
 /** Derive source mode only when syntax or an explicit source format owns it. */
 export const moduleResolutionModeForJavaScriptReference = (
