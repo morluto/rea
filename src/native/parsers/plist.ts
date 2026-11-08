@@ -24,6 +24,7 @@ import {
   incompletePlistNumberLimitation,
   createPlistNumberProjection,
   resolvePlistNumberSource,
+  withoutDecodedPlistIntegers,
   type PlistNumberLiterals,
 } from "../../domain/apple/plistNumbers.js";
 import {
@@ -385,15 +386,21 @@ export const parsePlistBinary = (
     const decoded = decodeBinaryPlistValue(bytes, expansion, scalarMetadata, {
       exactIntegers: true,
     });
-    let decodedExactIntegers = 0;
+    const decodedIntegers: string[] = [];
     const projected = projectPlistValue(
       decoded,
       (wrapped) => {
-        if (wrapped.$plist_type === "integer") decodedExactIntegers += 1;
+        if (
+          wrapped.$plist_type === "integer" &&
+          typeof wrapped.decimal === "string"
+        )
+          decodedIntegers.push(wrapped.decimal);
       },
       MAX_NATIVE_PLIST_NESTING_DEPTH,
     );
-    const numbers = createPlistNumberProjection(scalarMetadata.literals);
+    const numbers = createPlistNumberProjection(
+      withoutDecodedPlistIntegers(scalarMetadata.literals, decodedIntegers),
+    );
     const value = numbers.project(projected.value);
     return ok({
       value,
@@ -407,7 +414,7 @@ export const parsePlistBinary = (
                 expansion.datePrecisionOverlapCount,
               ),
             ]),
-        ...numbers.limitations(decodedExactIntegers),
+        ...numbers.limitations(decodedIntegers.length),
       ],
     });
   } catch (cause: unknown) {

@@ -548,28 +548,38 @@ it("keeps binary plist source values lost by XML conversion", () => {
   );
 });
 
-const binaryCollidingIntegers = (): Buffer => {
-  // Two int64 objects whose values round to the same JSON number, as in Apple's
-  // AGXMetal*.bundle performance-counter plists.
+/** `{ first, second }` with each bigint stored as an int64 object and each number as a real. */
+const binaryNumbers = (
+  first: bigint | number,
+  second: bigint | number,
+): Buffer => {
   const bytes = Buffer.from(buildBinary({ first: 1.5, second: 2.5 }));
-  for (const [real, exact] of [
-    [1.5, 3458783209544750624n],
-    [2.5, 3458783209544750632n],
+  for (const [real, value] of [
+    [1.5, first],
+    [2.5, second],
   ] as const) {
     const source = Buffer.alloc(9);
     source[0] = 0x23;
     source.writeDoubleBE(real, 1);
     const offset = bytes.indexOf(source);
     if (offset < 0) throw new Error("binary plist fixture lost its real");
+    if (typeof value === "number") {
+      bytes.writeDoubleBE(value, offset + 1);
+      continue;
+    }
     bytes[offset] = 0x13;
-    bytes.writeBigInt64BE(exact, offset + 1);
+    bytes.writeBigInt64BE(value, offset + 1);
   }
   return bytes;
 };
 
 it("keeps distinct binary integers exact when they round to the same number", () => {
+  // Two int64 objects whose values round to the same JSON number, as in Apple's
+  // AGXMetal*.bundle performance-counter plists.
   expect(Number(3458783209544750624n)).toBe(Number(3458783209544750632n));
-  const parsed = parsePlistBinary(binaryCollidingIntegers());
+  const parsed = parsePlistBinary(
+    binaryNumbers(3458783209544750624n, 3458783209544750632n),
+  );
   if (!parsed.ok) throw parsed.error;
   expect(parsed.value.value).toEqual({
     first: { $plist_type: "integer", decimal: "3458783209544750624" },
@@ -577,6 +587,22 @@ it("keeps distinct binary integers exact when they round to the same number", ()
   });
   expect(parsed.value.limitations).toContainEqual(
     expect.stringContaining("2 unambiguous integer value(s)"),
+  );
+  expect(parsed.value.limitations).not.toContainEqual(
+    expect.stringContaining("cannot be associated unambiguously"),
+  );
+});
+
+it("classifies an integral real that rounds like an exactly decoded binary integer", () => {
+  const exact = 3458783209544750624n;
+  const parsed = parsePlistBinary(binaryNumbers(exact, Number(exact)));
+  if (!parsed.ok) throw parsed.error;
+  expect(parsed.value.value).toEqual({
+    first: { $plist_type: "integer", decimal: "3458783209544750624" },
+    second: Number(exact),
+  });
+  expect(parsed.value.limitations).toContainEqual(
+    expect.stringContaining("1 unambiguous integer value(s)"),
   );
   expect(parsed.value.limitations).not.toContainEqual(
     expect.stringContaining("cannot be associated unambiguously"),
