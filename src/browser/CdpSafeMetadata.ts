@@ -227,7 +227,7 @@ const parseLinks = (
   const response = safeDestination(responseUrl, responseUrl, allowedOrigins);
   // Quoted delimiters belong to one field line.
   for (const line of lines ?? []) {
-    for (const entry of splitLinkHeader(line)) {
+    for (const entry of splitHeaderValues(line, ",", "link")) {
       const match = /^[\t ]*<([^>]*)>(.*)$/u.exec(entry);
       if (match === null) continue;
       const parameters = linkParameters(match[2] ?? "");
@@ -271,26 +271,35 @@ const parseLinks = (
   return links;
 };
 
-const splitLinkHeader = (
+const splitHeaderValues = (
   value: string,
   delimiter: "," | ";" = ",",
+  syntax: "link" | "structured" = "structured",
 ): string[] => {
   const entries: string[] = [];
   let start = 0;
   let quoted = false;
   let escaped = false;
+  let displayString = false;
   let target = false;
   for (let index = 0; index < value.length; index += 1) {
     const character = value[index];
     if (quoted) {
-      if (escaped) escaped = false;
+      // RFC 9651 display strings use percent encoding, not backslash escapes.
+      if (displayString) {
+        if (character === '"') quoted = false;
+      } else if (escaped) escaped = false;
       else if (character === "\\") escaped = true;
       else if (character === '"') quoted = false;
       continue;
     }
-    if (character === '"' && !target) quoted = true;
-    else if (delimiter === "," && character === "<") target = true;
-    else if (delimiter === "," && character === ">") target = false;
+    if (character === '"' && !target) {
+      quoted = true;
+      displayString = syntax === "structured" && value[index - 1] === "%";
+    } else if (syntax === "link" && delimiter === "," && character === "<")
+      target = true;
+    else if (syntax === "link" && delimiter === "," && character === ">")
+      target = false;
     else if (character === delimiter && !target) {
       entries.push(value.slice(start, index));
       start = index + 1;
@@ -306,7 +315,7 @@ const trimHttpWhitespace = (value: string): string =>
 
 const linkParameters = (value: string): readonly LinkParameter[] => {
   const parameters: LinkParameter[] = [];
-  for (const raw of splitLinkHeader(value, ";").slice(1)) {
+  for (const raw of splitHeaderValues(value, ";", "link").slice(1)) {
     const separator = raw.indexOf("=");
     const name = trimHttpWhitespace(
       separator < 0 ? raw : raw.slice(0, separator),
@@ -364,8 +373,7 @@ const safeDestination = (
 const permissionFeatures = (value: string | undefined): string[] =>
   [
     ...new Set(
-      (value ?? "")
-        .split(",")
+      splitHeaderValues(value ?? "")
         .map((entry) =>
           trimHttpWhitespace(entry.split("=", 1)[0] ?? "").toLowerCase(),
         )
