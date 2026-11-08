@@ -258,6 +258,7 @@
     "verify:harmony": "npm run build:cached && node scripts/verify/harmony/analysis.mjs",
     "fixtures:harmony": "node scripts/fixtures/harmony/fetch.mjs",
     "verify:agent": "npm run build:cached && node scripts/verify-agent-experience.mjs",
+    "verify:repository-skill": "node scripts/verify-repository-skill.mjs",
     "verify:hopper:linux": "npm run verify:fixtures && npm run build:cached && node scripts/verify-real-hopper-linux.mjs",
     "verify:setup:linux": "npm run verify:fixtures && npm run build:cached && node scripts/verify-linux-setup-e2e.mjs",
     "build:fixtures": "node scripts/build-conformance-fixtures.mjs",
