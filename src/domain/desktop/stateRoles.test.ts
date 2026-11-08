@@ -168,6 +168,23 @@ describe("stateReasons", () => {
     ).toBe(true);
   });
 
+  it("matches the selected symlink spelling when the window names it", () => {
+    const physical = "/home/ada/Music/blob.mscz";
+    const selected = "/home/ada/.scores/current.mscz";
+    const facts: DesktopRoleFacts = {
+      home: "/home/ada",
+      stateDirectories: [],
+      stateTails: [],
+      selectedRoots: [physical],
+      selections: [{ path: selected, physical }],
+      titles: ["current.mscz - MuseScore"],
+      openedFiles: new Set(),
+    };
+    const reasons = stateReasons(facts, physical, [], false);
+    expect(reasons).toContain("named_in_window_title");
+    expect(stateRole(reasons, ".scores/current.mscz")).toBe("document");
+  });
+
   it("marks the desktop Trash, where a file the user deleted keeps its name", () => {
     const facts: DesktopRoleFacts = {
       home: "/home/ada",

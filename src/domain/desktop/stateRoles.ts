@@ -266,7 +266,18 @@ export const stateReasons = (
     facts.openedFiles.has(path)
   )
     reasons.push("opened_by_application");
-  if (namedInTitles(path, facts.home, facts.titles))
+  if (
+    namedInTitles(path, facts.home, facts.titles) ||
+    facts.selections.some(
+      ({ path: selected, physical }) =>
+        isWithinAny(path, [physical]) &&
+        namedInTitles(
+          `${selected}${path.slice(physical.length)}`,
+          facts.home,
+          facts.titles,
+        ),
+    )
+  )
     reasons.push("named_in_window_title");
   if (isWithinAny(path, facts.selectedRoots)) reasons.push("selected_path");
   if (dconfApplicationKeys) reasons.push("dconf_application_keys");
