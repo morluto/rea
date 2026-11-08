@@ -247,6 +247,62 @@ describe("reconstruction obligation retired claim proof", () => {
       expect(ledger.status).toBe(ledgerStatus);
     },
   );
+
+  it.each([
+    [
+      "an authenticated contradiction",
+      true,
+      "failed",
+      ["contradiction", "out-of-scope"],
+    ],
+    ["no contradiction", false, "open", ["out-of-scope"]],
+  ] as const)(
+    "fails the ledger when a retired claim carries %s",
+    (_, contradicted, ledgerStatus, codes) => {
+      const capture = processEvidence();
+      const review = proofEvidence("contradicted-review");
+      const generated = build(request([capture])).obligations[0];
+      if (generated === undefined)
+        throw new Error("Expected process obligation");
+      const ledger = build(
+        request([capture, review], {
+          reviewed_obligations: [
+            retired(
+              generated.obligation_id,
+              review.evidence_id,
+              "out-of-scope",
+            ),
+          ],
+          manifest: {
+            bindings: [],
+            contradictions: contradicted
+              ? [
+                  {
+                    obligation_id: generated.obligation_id,
+                    evidence_ids: [capture.evidence_id, review.evidence_id],
+                  },
+                ]
+              : [],
+          },
+        }),
+      );
+
+      // Retiring does not hide the contradiction, so the ledger cannot stay
+      // merely open: contradicted required work fails closure.
+      expect(ledger.obligations[0]).toMatchObject({
+        origin: "generated",
+        required: true,
+        status: "out-of-scope",
+      });
+      expect(
+        ledger.obligations[0]?.diagnostics.map(({ code }) => code),
+      ).toEqual(codes);
+      expect(ledger.reports.contradicted_obligation_ids).toEqual(
+        contradicted ? [generated.obligation_id] : [],
+      );
+      expect(ledger.status).toBe(ledgerStatus);
+    },
+  );
 });
 
 describe("reconstruction obligation competing retirements", () => {

@@ -70,10 +70,13 @@ export const reconstructionObligationLedgerStatus = (
   const requiredOpen = obligations.filter(
     ({ required, status }) => required && status !== "verified",
   );
+  // A retired claim reports its disposition status, not "contradicted", yet
+  // its authenticated contradiction stays visible and still fails closure.
   if (
     requiredOpen.some(
       ({ status, diagnostics }) =>
         status === "contradicted" ||
+        hasReconstructionObligationDiagnostic(diagnostics, "contradiction") ||
         hasReconstructionObligationDiagnostic(diagnostics, "verifier-failed") ||
         hasReconstructionObligationDiagnostic(diagnostics, "fixture-failed"),
     )

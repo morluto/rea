@@ -58,10 +58,10 @@ export const deriveReconstructionObligationCandidates = (
   }
   // Reviewed records merge in a canonical order so competing definitions of
   // one ID do not depend on the order the caller listed them.
-  const reviewed = [...request.reviewedObligations].sort((left, right) =>
-    compareUnicodeCodePoints(reviewedOrderKey(left), reviewedOrderKey(right)),
-  );
-  for (const obligation of reviewed)
+  const reviewed = request.reviewedObligations
+    .map((obligation) => ({ key: reviewedOrderKey(obligation), obligation }))
+    .sort((left, right) => compareUnicodeCodePoints(left.key, right.key));
+  for (const { obligation } of reviewed)
     addCandidate(candidates, reviewedCandidate(obligation, records));
   return {
     candidates: [...candidates.values()].sort((left, right) =>
