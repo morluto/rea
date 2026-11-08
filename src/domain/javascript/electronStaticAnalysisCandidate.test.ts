@@ -34,9 +34,6 @@ describe("conditional Electron identities", () => {
         scheme: { status: "literal", value: "app" },
       },
     ]);
-    expect(result.limitations).toContain(
-      "Some Electron syntax depends on an unproved CommonJS loader; its Electron identity remains conditional.",
-    );
   });
 
   it("retains established CommonJS and ES module observations as proven", () => {

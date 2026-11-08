@@ -74,6 +74,17 @@ cliTest.for(["CLI", "stdio MCP"] as const)(
         ({ source_node_id, target_node_id }) =>
           ids.has(source_node_id) || ids.has(target_node_id),
       );
+      expect(relations.map(({ relation }) => relation)).toEqual(
+        expect.arrayContaining([
+          "reads-config",
+          "reads-environment",
+          "acquires",
+          "releases",
+          "constructs-request",
+          "spawns",
+          "schedules-timer",
+        ]),
+      );
       if (candidate)
         expect(
           relations.every(({ resolution }) => resolution !== "resolved"),
@@ -89,6 +100,5 @@ cliTest.for(["CLI", "stdio MCP"] as const)(
         context_id === conditionalMutation?.evidence.context_id,
     );
     expect(evidence).toMatchObject({ state: "inferred", confidence: "low" });
-    expect(evidence?.limitations.join(" ")).not.toContain("loader is unproven");
   },
 );

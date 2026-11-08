@@ -160,6 +160,57 @@ const expectUnknownLoaderCandidates = (
   );
 };
 
+const expectSelectedLoaderEdges = (
+  graph: ReturnType<
+    typeof javascriptApplicationAnalysisResultSchema.parse
+  >["graph"],
+): void => {
+  const loaderEdge = (file: string, specifier: string) =>
+    graph.edges.find(
+      ({ properties, evidence }) =>
+        properties.specifier === specifier &&
+        evidence.location.available &&
+        evidence.location.value.kind === "source-range" &&
+        evidence.location.value.source === file,
+    );
+  expect
+    .soft(
+      loaderEdge("candidate-alias.MJS", "./alias-dep.cjs")?.properties
+        .loader_authority,
+    )
+    .toBe("candidate");
+  for (const source of ["candidate-new.MJS", "candidate-new-alias.MJS"]) {
+    expect
+      .soft(loaderEdge(source, "./alias-dep.cjs")?.properties.loader_authority)
+      .toBe("candidate");
+  }
+  for (const source of [
+    "candidate-new-shadow.MJS",
+    "candidate-new-replaced.MJS",
+  ]) {
+    expect.soft(loaderEdge(source, "./alias-dep.cjs")).toBeUndefined();
+  }
+  expect
+    .soft(loaderEdge("benign-resolve.cjs", "./benign-dep.cjs"))
+    .toBeDefined();
+  expect.soft(loaderEdge("benign-call.cjs", "./call-dep.cjs")).toBeDefined();
+  expect
+    .soft(loaderEdge("consecutive-methods.cjs", "./benign-dep.cjs"))
+    .toBeDefined();
+  expect
+    .soft(loaderEdge("consecutive-methods.cjs", "./call-dep.cjs"))
+    .toBeDefined();
+  expect
+    .soft(loaderEdge("nested-loader.cjs", "./nested-false.cjs"))
+    .toBeUndefined();
+  expect
+    .soft(loaderEdge("nested-child.cjs", "./nested-valid.cjs"))
+    .toBeDefined();
+  expect
+    .soft(loaderEdge("wrapped-call.cts", "./false-dep.cjs"))
+    .toBeUndefined();
+};
+
 cliTest.for(["CLI", "stdio MCP"] as const)(
   "distinguishes exact loader suffixes from uppercase artifact names through %s",
   async (surface, { cli }) => {
@@ -187,6 +238,13 @@ cliTest.for(["CLI", "stdio MCP"] as const)(
       "nested-mutated.cjs":
         'require.call=custom;require.call.apply(require,["./receiver.cjs","./invented.node"]);',
       "candidate-alias.MJS": 'const load = require; load("./alias-dep.cjs");',
+      "candidate-new.MJS": 'new require("./alias-dep.cjs");',
+      "candidate-new-alias.MJS":
+        'const load = require; new load("./alias-dep.cjs");',
+      "candidate-new-shadow.MJS":
+        'const require = function() {}; new require("./alias-dep.cjs");',
+      "candidate-new-replaced.MJS":
+        'require = function() {}; const load = require; new load("./alias-dep.cjs");',
       "benign-resolve.cjs":
         'require.resolve.paths = custom; require.resolve("./benign-dep.cjs");',
       "benign-call.cjs":
@@ -233,39 +291,7 @@ cliTest.for(["CLI", "stdio MCP"] as const)(
         ),
       ).toBe(false);
     }
-    const loaderEdge = (file: string, specifier: string) =>
-      result.graph.edges.find(
-        ({ properties, evidence }) =>
-          properties.specifier === specifier &&
-          evidence.location.available &&
-          evidence.location.value.kind === "source-range" &&
-          evidence.location.value.source === file,
-      );
-    expect
-      .soft(
-        loaderEdge("candidate-alias.MJS", "./alias-dep.cjs")?.properties
-          .loader_authority,
-      )
-      .toBe("candidate");
-    expect
-      .soft(loaderEdge("benign-resolve.cjs", "./benign-dep.cjs"))
-      .toBeDefined();
-    expect.soft(loaderEdge("benign-call.cjs", "./call-dep.cjs")).toBeDefined();
-    expect
-      .soft(loaderEdge("consecutive-methods.cjs", "./benign-dep.cjs"))
-      .toBeDefined();
-    expect
-      .soft(loaderEdge("consecutive-methods.cjs", "./call-dep.cjs"))
-      .toBeDefined();
-    expect
-      .soft(loaderEdge("nested-loader.cjs", "./nested-false.cjs"))
-      .toBeUndefined();
-    expect
-      .soft(loaderEdge("nested-child.cjs", "./nested-valid.cjs"))
-      .toBeDefined();
-    expect
-      .soft(loaderEdge("wrapped-call.cts", "./false-dep.cjs"))
-      .toBeUndefined();
+    expectSelectedLoaderEdges(result.graph);
     const modules = result.graph.nodes
       .filter((node) => node.kind === "javascript-module")
       .flatMap((node) =>

@@ -861,6 +861,9 @@ export const semanticRequireCallAt = (
         loader: selected?.loader ?? loader,
         arguments: node.arguments,
         sourceRelative: selected?.sourceRelative ?? loader !== "create-require",
+        ...(selected?.loaderAuthority === "candidate"
+          ? { loaderAuthority: "candidate" as const }
+          : {}),
         ...(selected?.sourceRelativePath === undefined
           ? {}
           : { sourceRelativePath: selected.sourceRelativePath }),
@@ -1750,7 +1753,6 @@ export const semanticCandidateRequireSpecifier = (
   node: t.CallExpression | t.OptionalCallExpression | t.NewExpression,
   state: JavaScriptSemanticAnalysisState,
 ): string | undefined => {
-  if (t.isNewExpression(node)) return undefined;
   const callee = unwrapJavaScriptExpression(node.callee).node;
   const root =
     t.isMemberExpression(callee) || t.isOptionalMemberExpression(callee)
