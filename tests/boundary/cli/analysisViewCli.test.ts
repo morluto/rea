@@ -91,6 +91,100 @@ cliTest(
 );
 
 cliTest(
+  "finds exact outgoing instruction targets in a saved Evidence file",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-instruction-filters-cli-");
+    const path = join(root, "instruction.json");
+    const reference = {
+      target_address: "ram:0x2000",
+      type: "DATA",
+      call: false,
+      jump: false,
+      indirect: false,
+      computed: false,
+      operand_index: 0,
+    };
+    const parent = createEvidence(
+      undefined,
+      { id: "fixture", name: "Fixture", version: "1" },
+      {
+        operation: "inspect_native_instruction",
+        parameters: { address: "0x1000" },
+        result: {
+          address: "0x1000",
+          status: "decoded",
+          procedure: null,
+          architecture: "fixture",
+          mode: "fixture",
+          bytes: "90",
+          length: 1,
+          mnemonic: "nop",
+          raw_disassembly: "nop",
+          operands: [],
+          flow: {
+            kind: "fallthrough",
+            conditional: false,
+            computed: false,
+            direct_destinations: [],
+          },
+          references: [
+            { ...reference, target_address: "other:0x2000" },
+            { ...reference, source_address: null },
+            { ...reference, source_address: "0x1000" },
+          ],
+          limitations: [],
+        },
+      },
+    );
+    await writeFile(path, JSON.stringify(parent));
+    const query = (selectors: Record<string, string | number>) =>
+      cli.run({
+        arguments: [
+          "inspect-analysis-view",
+          JSON.stringify({
+            source: { kind: "evidence-file", path },
+            view: {
+              kind: "native-instruction-references",
+              collection: "references",
+              ...selectors,
+            },
+          }),
+          "--json",
+        ],
+      });
+
+    const filtered = await query({ target_address: "ram:0x2000", limit: 1 });
+    expect(filtered.exitCode, filtered.stderr).toBe(0);
+    expect(parseEvidence(filtered.json)).toMatchObject({
+      evidence_links: [parent.evidence_id],
+      normalized_result: {
+        items: { rows: [{ source_index: 1, value: { source_address: null } }] },
+        coverage: { total: 2, next_offset: 1 },
+      },
+    });
+
+    const exact = await query({
+      target_address: "ram:0x2000",
+      source_address: "0x1000",
+    });
+    expect(exact.exitCode, exact.stderr).toBe(0);
+    expect(parseEvidence(exact.json).normalized_result).toMatchObject({
+      items: {
+        rows: [{ source_index: 2, value: { source_address: "0x1000" } }],
+      },
+      coverage: { total: 1, exhausted: true },
+    });
+
+    const none = await query({ target_address: "0x2000" });
+    expect(none.exitCode, none.stderr).toBe(0);
+    expect(parseEvidence(none.json).normalized_result).toMatchObject({
+      items: { state: "available", rows: [] },
+      coverage: { total: 0, exhausted: true },
+    });
+  },
+);
+
+cliTest(
   "reads selected batch rows and one body from a saved bundle without a provider",
   async ({ cli }) => {
     const root = await createTestTempDirectory("rea-batch-view-cli-");

@@ -18,6 +18,16 @@ import { assertOwnedView, type AdmittedView } from "./analysisViewShape.js";
 export const nativeInstructionReferencesRequestSchema = z.strictObject({
   kind: z.literal("native-instruction-references"),
   collection: z.enum(["references", "incoming_references"]),
+  source_address: z
+    .string()
+    .min(1)
+    .optional()
+    .describe("Match an exact retained source address."),
+  target_address: z
+    .string()
+    .min(1)
+    .optional()
+    .describe("Match an exact retained target address."),
   offset: z.int().nonnegative().default(0),
   limit: z.int().positive().default(64),
 });
@@ -144,33 +154,66 @@ export const projectNativeInstructionReferencesView = (
     },
     byte_limited: false,
   };
-  let bytes =
+  const bytes =
     DIGEST_BYTES +
     jsonValueByteLength(header as JsonValue, PAGE_BYTES - DIGEST_BYTES);
   if (bytes > PAGE_BYTES) return tooLarge();
-  const rows: z.infer<typeof rowSchema>[] = [];
+  const page = pageInstructionReferences(values, view, bytes);
+  if (page === null) return tooLarge();
+  return ok({
+    ...common,
+    items: { state: "available" as const, rows: page.rows },
+    coverage: page.coverage,
+    byte_limited: page.byteLimited,
+  });
+};
+
+/** Count all matches while serializing only the requested page. */
+const pageInstructionReferences = (
+  values: readonly z.output<typeof rowSchema>["value"][],
+  view: z.output<typeof nativeInstructionReferencesRequestSchema>,
+  headerBytes: number,
+) => {
+  const rows: z.output<typeof rowSchema>[] = [];
   let byteLimited = false;
+  let bytes = headerBytes;
+  const filtered =
+    view.source_address !== undefined || view.target_address !== undefined;
+  let total = filtered ? 0 : values.length;
   for (
-    let index = view.offset;
-    index < values.length && rows.length < view.limit;
+    let index = filtered ? 0 : view.offset;
+    index < values.length &&
+    (filtered || (!byteLimited && rows.length < view.limit));
     index++
   ) {
-    const row = { source_index: index, value: values[index]! };
+    const value = values[index]!;
+    if (filtered) {
+      if (
+        (view.source_address !== undefined &&
+          value.source_address !== view.source_address) ||
+        (view.target_address !== undefined &&
+          value.target_address !== view.target_address)
+      )
+        continue;
+      total++;
+      if (total <= view.offset || byteLimited || rows.length === view.limit)
+        continue;
+    }
+    const row = { source_index: index, value };
     const size =
       jsonValueByteLength(row as JsonValue, PAGE_BYTES - bytes) +
       (rows.length === 0 ? 0 : 1);
     if (bytes + size > PAGE_BYTES) {
+      if (rows.length === 0) return null;
       byteLimited = true;
-      break;
+      continue;
     }
     bytes += size;
     rows.push(row);
   }
-  if (byteLimited && rows.length === 0) return tooLarge();
-  return ok({
-    ...common,
-    items: { state: "available" as const, rows },
-    coverage: pageViewCoverage(view.offset, rows.length, values.length),
-    byte_limited: byteLimited,
-  });
+  return {
+    rows,
+    coverage: pageViewCoverage(view.offset, rows.length, total),
+    byteLimited,
+  };
 };
