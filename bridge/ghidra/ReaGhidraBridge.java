@@ -878,6 +878,7 @@ public final class ReaGhidraBridge extends HeadlessScript {
         JsonArray blocks = new JsonArray();
         JsonArray skipped = new JsonArray();
         JsonArray notLoaded = new JsonArray();
+        JsonArray overlays = new JsonArray();
         List<ByteSearchBlock> eligible = new ArrayList<>();
         for (MemoryBlock block : ordered) {
             monitor.checkCancelled();
@@ -885,8 +886,14 @@ public final class ReaGhidraBridge extends HeadlessScript {
             Address high = block.getEnd();
             Address bound = start == null ? end : start;
             if (bound != null && !bound.getAddressSpace().equals(low.getAddressSpace())) continue;
-            if (bound == null && (!block.isLoaded() || block.isOverlay())) {
+            // Without bounds, search loaded non-overlay memory. Unloaded file
+            // parts and loaded overlays stay reachable through explicit bounds.
+            if (bound == null && !block.isLoaded()) {
                 notLoaded.add(byteSearchCoverage(block, low, high));
+                continue;
+            }
+            if (bound == null && block.isOverlay()) {
+                overlays.add(byteSearchCoverage(block, low, high));
                 continue;
             }
             if (start != null && low.compareTo(start) < 0) low = start;
@@ -962,6 +969,7 @@ public final class ReaGhidraBridge extends HeadlessScript {
         searched.addProperty("bytes", covered);
         searched.add("skipped_uninitialized", skipped);
         searched.add("skipped_not_loaded", notLoaded);
+        searched.add("skipped_overlays", overlays);
         JsonObject result = new JsonObject();
         result.add("matches", matches);
         result.add("searched", searched);
@@ -1952,6 +1960,9 @@ public final class ReaGhidraBridge extends HeadlessScript {
         );
         limitations.add(
             "Def-use links do not cross function boundaries and may omit memory aliasing, call side effects, or unresolved indirect flow."
+        );
+        limitations.add(
+            "Memory read/write effects cover high-p-code LOAD and STORE operations only; direct memory address varnodes in other operations are not included. An empty effect list does not establish that no memory is accessed. Recorded instruction references may provide complementary evidence."
         );
         limitations.add(
             "Memory read/write effects include stack and temporary memory operations; they do not identify persistent state or business meaning."

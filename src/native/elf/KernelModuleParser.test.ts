@@ -309,22 +309,21 @@ it.each(["gzip", "xz", "zstd"] as const)(
 );
 
 it("fails closed when the combined entry budget is exhausted", () => {
-  expect(() => parse(kernelModuleFixture(), { max_entries: 7 })).toThrow(
-    ArtifactReaderFailure,
-  );
+  let failure: unknown;
   try {
     parse(kernelModuleFixture(), { max_entries: 7 });
   } catch (error) {
-    expect(error).toBeInstanceOf(ArtifactReaderFailure);
-    expect(error).toMatchObject({ reason: "limit", boundary: "capacity" });
+    failure = error;
   }
+  expect(failure).toBeInstanceOf(ArtifactReaderFailure);
+  expect(failure).toMatchObject({ reason: "limit", boundary: "capacity" });
 });
 
 it("examines the first of two .modinfo sections and records the duplicate", () => {
   const report = parse(kernelModuleFixture({ repeatModinfo: true }));
   expect(report.modinfo?.entries).toHaveLength(6);
-  expect(report.limitations.join("\n")).toContain(
-    "Multiple .modinfo sections are declared; the first is examined.",
+  expect(report.limitations).toContainEqual(
+    expect.stringMatching(/multiple.*\.modinfo.*first.*examined/iu),
   );
 });
 
@@ -418,8 +417,10 @@ it("names a non-file-backed __ksymtab section without dropping the module", () =
   bytes.writeUInt32LE(8, 64 + 64 * 4 + 4);
   const report = parse(bytes);
   expect(report.ksymtab?.sections).toEqual([]);
-  expect(report.limitations.join("\n")).toContain(
-    "1 __ksymtab* section(s) are declared but not file-backed",
+  expect(report.limitations).toContainEqual(
+    expect.stringMatching(
+      /1 __ksymtab\*.*not file-backed.*ranges are unknown/iu,
+    ),
   );
   expect(report.modinfo?.entries[0]?.key).toBe("license");
 });

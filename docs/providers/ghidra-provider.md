@@ -363,10 +363,17 @@ must be constrained.
 
 Optional `start` and `end` addresses are inclusive and select one address space.
 A match must end at or before `end`, so `end` set inside a match excludes it.
-Without bounds, loaded memory blocks are eligible, in Ghidra address order.
-Blocks that are not loaded (file parts such as `.symtab`) and overlay blocks are
-listed in `searched.skipped_not_loaded` and are not searched; pass `start` or
-`end` in their address space to search them.
+Without bounds, loaded non-overlay memory blocks are eligible, in Ghidra address
+order, including across adjacent initialized blocks. Blocks that are not loaded
+(file parts such as `.symtab`) are listed in `searched.skipped_not_loaded`;
+loaded overlay blocks are listed separately in `searched.skipped_overlays`.
+Neither is searched by default; pass `start` or `end` in its address space to
+search it. A block that is both unloaded and an overlay is listed once under
+`skipped_not_loaded`.
+The separate overlay field changes the byte-search result contract and the
+Ghidra analysis profile. Refresh cached MCP schemas; snapshots from the older
+profile are not replayed. Previously exported Evidence remains importable as
+historical data with its original result shape.
 Overlapping matches are included, including across adjacent eligible initialized
 blocks in the same address space. Gaps and excluded or uninitialized blocks break
 a search run. Each match reports its address, starting segment, unique source file

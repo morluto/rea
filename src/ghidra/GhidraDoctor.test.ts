@@ -18,7 +18,6 @@ import {
   inspectSystemGhidraProvider,
   projectGhidraDoctorInspection,
 } from "./GhidraDoctor.js";
-import { GHIDRA_RESTRICTED_TEMP_REMEDIATION } from "./GhidraTemporaryDirectory.js";
 
 let inspectionResources = createInspectionResources();
 afterEach(async () => {
@@ -423,11 +422,16 @@ describe("Windows Ghidra temporary directory check", () => {
       ok: false,
       code: "temp_directory_unwritable",
       classification: "runtime_failure",
-      remediation: GHIDRA_RESTRICTED_TEMP_REMEDIATION,
+      remediation: expect.stringMatching(
+        /TMP and TEMP.*allowed tree.*no dot-prefixed element.*restart REA/iu,
+      ),
       details: { directory: "C:\\sandbox\\tmp", system_code: "EPERM" },
     });
     expect(check?.detail).toContain("C:\\sandbox\\tmp");
     expect(check?.detail).not.toMatch(/antivirus|DACL/iu);
+    expect(check?.remediation).toMatch(
+      /java_home\.save.*creating that file in advance does not help/iu,
+    );
   });
 
   it("reports a retained probe file whose cleanup doctor retries", async () => {
