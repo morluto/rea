@@ -86,22 +86,77 @@ const isRecord = (
 const cut = (text: string, max: number) =>
   text.length > max ? `${text.slice(0, max)}…` : text;
 
-const escapeText = (text: string) =>
-  text.replaceAll("&", "&amp;").replaceAll("<", "&lt;");
-const escapeAttribute = (text: string) =>
-  escapeText(text).replaceAll('"', "&quot;");
-
 /** An element's attributes; none for a value that holds none. */
 const attributesOf = (element: Record<string, JsonValue>) => {
   const { attributes } = element;
   return isRecord(attributes) ? attributes : {};
 };
 
-/** An element's start tag with its attributes. */
-const startTag = (element: Record<string, JsonValue> & { name: string }) =>
-  `<${element.name}${Object.entries(attributesOf(element))
-    .map(([key, value]) => ` ${key}="${escapeAttribute(String(value))}"`)
-    .join("")}`;
+/** Keep one character past the limit to distinguish an exact fit from a cut. */
+const previewWriter = (max: number) => {
+  const parts: string[] = [];
+  let length = 0;
+  const push = (text: string): boolean => {
+    const kept = text.slice(0, Math.max(0, max + 1 - length));
+    parts.push(kept);
+    length += kept.length;
+    return length <= max;
+  };
+  const escaped = (text: string, attribute = false): boolean => {
+    for (let index = 0; index < text.length; index += 1) {
+      const char = text[index] ?? "";
+      if (
+        !push(
+          char === "&"
+            ? "&amp;"
+            : char === "<"
+              ? "&lt;"
+              : attribute && char === '"'
+                ? "&quot;"
+                : char,
+        )
+      )
+        return false;
+    }
+    return true;
+  };
+  const jsonString = (text: string): boolean => {
+    if (!push('"')) return false;
+    for (let index = 0; index < text.length; index += 1) {
+      const code = text.codePointAt(index);
+      const width = code !== undefined && code > 0xffff ? 2 : 1;
+      const encoded = JSON.stringify(text.slice(index, index + width));
+      if (!push(encoded.slice(1, -1))) return false;
+      index += width - 1;
+    }
+    return push('"');
+  };
+  const startTag = (
+    element: Record<string, JsonValue> & { name: string },
+  ): boolean => {
+    if (!push("<") || !push(element.name)) return false;
+    const attributes = attributesOf(element);
+    for (const key in attributes) {
+      if (!Object.hasOwn(attributes, key)) continue;
+      if (
+        !push(" ") ||
+        !push(key) ||
+        !push('="') ||
+        !escaped(String(attributes[key]), true) ||
+        !push('"')
+      )
+        return false;
+    }
+    return true;
+  };
+  return {
+    push,
+    escaped,
+    jsonString,
+    startTag,
+    result: () => cut(parts.join(""), max),
+  };
+};
 
 /** An archive entry's own fields, without its view. */
 const isArchiveEntry = (value: JsonValue): value is Record<string, JsonValue> =>
@@ -123,33 +178,27 @@ export const compactValue = (
   if (value === undefined) return null;
   if (typeof value === "string") return cut(value, max);
   if (value === null || typeof value !== "object") return value;
-  const parts: string[] = [];
-  let length = 0;
-  const push = (text: string) => {
-    parts.push(text);
-    length += text.length;
-    return length <= max;
-  };
+  const { push, escaped, jsonString, startTag, result } = previewWriter(max);
   const write = (node: JsonValue): boolean => {
     if (format === "xml" && isXmlElement(node)) {
-      const start = startTag(node);
-      if (node.children.length === 0) return push(`${start}/>`);
+      if (!startTag(node)) return false;
+      if (node.children.length === 0) return push("/>");
       return (
-        push(`${start}>`) &&
+        push(">") &&
         node.children.every((child) =>
-          typeof child === "string" ? push(escapeText(child)) : write(child),
+          typeof child === "string" ? escaped(child) : write(child),
         ) &&
-        push(`</${node.name}>`)
+        push("</") &&
+        push(node.name) &&
+        push(">")
       );
     }
     if (format === "archive" && isArchiveEntry(node))
-      return push(
-        JSON.stringify({
-          name: node.name,
-          format: node.format ?? null,
-          size: node.size ?? null,
-        }),
-      );
+      return write({
+        ...(node.name === undefined ? {} : { name: node.name }),
+        format: node.format ?? null,
+        size: node.size ?? null,
+      });
     if (Array.isArray(node))
       return (
         push("[") &&
@@ -158,21 +207,28 @@ export const compactValue = (
         ) &&
         push("]")
       );
-    if (isRecord(node))
-      return (
-        push("{") &&
-        Object.entries(node).every(
-          ([key, item], index) =>
-            (index === 0 || push(",")) &&
-            push(`${JSON.stringify(key)}:`) &&
-            write(item),
-        ) &&
-        push("}")
-      );
-    return push(JSON.stringify(node));
+    if (isRecord(node)) {
+      if (!push("{")) return false;
+      let first = true;
+      for (const key in node) {
+        if (!Object.hasOwn(node, key)) continue;
+        if (
+          (!first && !push(",")) ||
+          !jsonString(key) ||
+          !push(":") ||
+          !write(node[key] ?? null)
+        )
+          return false;
+        first = false;
+      }
+      return push("}");
+    }
+    return typeof node === "string"
+      ? jsonString(node)
+      : push(JSON.stringify(node));
   };
   write(value);
-  return cut(parts.join(""), max);
+  return result();
 };
 
 /** The longest value a reference is resolved from. */
@@ -267,14 +323,24 @@ const referencesFrom = (
       ? {
           ...(attribute === undefined ? {} : { attribute }),
           value,
-          element: cut(
-            `${startTag(element)}${element.children.length === 0 ? "/>" : ">…"}`,
-            VALUE_LIMITS.chars,
-          ),
+          element: referenceTag(element),
         }
       : undefined;
   };
   return resolve;
+};
+
+const referenceTag = (
+  element: Record<string, JsonValue> & { name: string },
+): string => {
+  const writer = previewWriter(VALUE_LIMITS.chars);
+  if (writer.startTag(element))
+    writer.push(
+      element.children instanceof Array && element.children.length === 0
+        ? "/>"
+        : ">…",
+    );
+  return writer.result();
 };
 
 /** What a values list reads: a file's two ends and how it treats each pointer. */

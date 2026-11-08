@@ -291,6 +291,15 @@ Write `{"name", "prompt", "checks"}` from the draft and what you did.
   `/root/children/[name=DOCUMENT]/children/[name=PAGEOBJECT][@ANNAME=Headline]/children/[name=StoryText]/children/[name=ITEXT]/attributes/CH`.
   A partial edit the app restyles splits the text into several runs and
   fails that check; list it in the report's limitations.
+- When the draft shows no values or no checks, a scratch export can expose
+  `envs/<env>/seed/` only after the task has at least one valid check: it must
+  pass on the captured end state and fail on the seed. Before the first
+  successful export, use `act_on_build_computer` to open the saved file in an
+  available GUI text editor or viewer and inspect its actual representation
+  without changing it. Use the visible saved content and the task's edit to
+  write a check; an export refusal can also name the end state's value, such
+  as `is "44", not "1"`. If the file cannot be inspected or expressed by a
+  supported check, report the limitation instead of guessing a check.
 - Where easy, add one check that the rest is untouched, such as another
   text's value the edit must leave alone. `draft.guards` offers them at
   their seed values, which the end holds too: a field on the nearest like

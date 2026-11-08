@@ -197,7 +197,7 @@ const planExport = (
     request.packageUrl,
   );
   const electron = application.executable.electron_markers.length > 0;
-  const { homePath, files, collisions, paths, isLeftOutLock } =
+  const { homePath, stateAliases, files, collisions, paths, isLeftOutLock } =
     exportedStateFiles(capture, state);
   const { text: dconf, ...dconfScrub } = seedDconf(
     state,
@@ -239,6 +239,7 @@ const planExport = (
     syntheticSeed: request.syntheticSeed === true,
     seedFiles: [...seeds.keys()].sort(),
     textSeeds,
+    stateAliases,
     unseededFiles: unseeded.filter((file) => !isLeftOutLock(file)),
     leftOutLocks: [
       ...new Set([...locks, ...unseeded.filter(isLeftOutLock)]),
