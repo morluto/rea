@@ -30,6 +30,20 @@ export interface TaskFileView {
   readonly error?: string | null;
 }
 
+/** The format owns selector interpretation, including inside archive entries. */
+const selectorFormat = (
+  entry: TaskFileView | undefined,
+  pointer: string,
+): string | null | undefined => {
+  if (entry?.format !== "zip") return entry?.format;
+  const member = zipEntryAt(entry.view, pointer);
+  return typeof member === "object" &&
+    member !== null &&
+    typeof member.format === "string"
+    ? member.format
+    : "zip";
+};
+
 /**
  * How one check came out against one set of views. `undecided` marks a failure
  * that shows nothing about the task: its file or table could not be read, or
@@ -285,7 +299,9 @@ const valueVerdict = (
   const read = viewOf(check, entry, undefined);
   if ("passed" in read) return read;
   const located =
-    entry === undefined ? NOTHING : locatePointer(read.view, check.pointer);
+    entry === undefined
+      ? NOTHING
+      : locatePointer(read.view, check.pointer, entry.format);
   const at = `${check.file} at ${check.pointer}`;
   const unknown = unreadOrPartial(check, entry?.format, read, located);
   if (unknown !== undefined) return unknown;
@@ -329,11 +345,15 @@ const valueVerdict = (
  * element's `children` (a text node) or `attributes` (an attribute's value),
  * rather than an element's name or a field of the DOCTYPE.
  */
-const isTextAt = (view: JsonValue | null, pointer: string): boolean => {
+const isTextAt = (
+  view: JsonValue | null,
+  pointer: string,
+  format: string | null,
+): boolean => {
   const segments = pointer.split("/");
   const field = segments.at(-2);
   if (field !== "children" && field !== "attributes") return false;
-  const owner = locatePointer(view, segments.slice(0, -2).join("/"));
+  const owner = locatePointer(view, segments.slice(0, -2).join("/"), format);
   return owner.kind === "value" && isXmlElement(owner.value);
 };
 
@@ -387,7 +407,7 @@ const textVerdict = (
   const zip = entry.format === "zip";
   if (!zip && entry.format !== "xml")
     return fail(`${check.file} is read as ${String(entry.format)}, not xml`);
-  const located = locatePointer(read.view, check.pointer);
+  const located = locatePointer(read.view, check.pointer, entry.format);
   const unknown = unreadOrPartial(check, entry.format, read, located);
   if (unknown !== undefined) return unknown;
   const problem = zip ? notXmlEntry(check, read.view) : undefined;
@@ -410,7 +430,8 @@ const textVerdict = (
   const attribute = check.text_attribute;
   if (
     typeof found === "string"
-      ? attribute !== undefined || !isTextAt(read.view, check.pointer)
+      ? attribute !== undefined ||
+        !isTextAt(read.view, check.pointer, entry.format)
       : !isXmlElement(found)
   )
     return fail(
@@ -431,7 +452,9 @@ const memberVerdict = (
   const read = viewOf(check, entry, undefined);
   if ("passed" in read) return read;
   const located: Located =
-    entry === undefined ? NOTHING : locatePointer(read.view, pointer);
+    entry === undefined
+      ? NOTHING
+      : locatePointer(read.view, pointer, entry.format);
   const at = pointer === "" ? check.file : `${check.file} at ${pointer}`;
   const unknown = unreadOrPartial(check, entry?.format, read, located);
   if (unknown !== undefined) return unknown;
@@ -450,7 +473,8 @@ const memberVerdict = (
   const meets =
     matching === undefined
       ? () => true
-      : (selectorTest(matching) ?? (() => false));
+      : (selectorTest(matching, selectorFormat(entry, pointer)) ??
+        (() => false));
   return compared(
     check,
     items.filter(meets).length,

@@ -672,6 +672,28 @@ describe("jsonCounts over many edited records", () => {
     expect(paired?.newer.keys).toEqual(["[uid=a]", "[uid=b]"]);
   });
 
+  it("pairs XML-shaped JSON records by their JSON ids", () => {
+    const records = (title: string) => [
+      {
+        uid: "one",
+        name: "node",
+        attributes: {},
+        children: [],
+        data: { Title: title },
+      },
+      {
+        uid: "two",
+        name: "node",
+        attributes: {},
+        children: [],
+        data: { Title: "Other" },
+      },
+    ];
+    const paired = pairRecordsById(records("New"), records("Old"));
+    expect(paired?.newer.keys).toEqual(["[uid=one]", "[uid=two]"]);
+    expect(paired?.newer.partners).toEqual([0, 1]);
+  });
+
   it("does not pair records through a field whose name is a selector mark", () => {
     const records = (name: string) => [
       { "@record_id": "one", name },

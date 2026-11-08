@@ -2,7 +2,6 @@ import type { JsonValue } from "../jsonValue.js";
 import type { DesktopTaskCheckInput } from "./appTask.js";
 import {
   isBookkeepingName,
-  isRenumberedKey,
   isStamp,
   isVolatileValue,
 } from "./appTaskDraftNoise.js";
@@ -84,7 +83,9 @@ const cousinsOf = (
 ): Element[] =>
   likes.flatMap((like) =>
     recordsIn(
-      steps.length === 0 ? like : resolvePointer(like, `/${steps.join("/")}`),
+      steps.length === 0
+        ? like
+        : resolvePointer(like, `/${steps.join("/")}`, "xml"),
     ).filter((record) => record.name === tag),
   );
 
@@ -163,7 +164,6 @@ const checkedKeys = (
       isStamp(value) ||
       isVolatileValue(value, isBookkeepingName(key)) ||
       isViewStateName(key) ||
-      isRenumberedKey(key) ||
       new Set(all).size < 2 ||
       keys.some((earlier) =>
         likes.every(
@@ -199,7 +199,11 @@ export const nestedRecordChecks = (
   element: JsonValue,
 ): DesktopTaskCheckInput[] => {
   if (!isXmlElement(element)) return [];
-  const list = resolvePointer(context.final, pointer.replace(/\/[^/]+$/u, ""));
+  const list = resolvePointer(
+    context.final,
+    pointer.replace(/\/[^/]+$/u, ""),
+    "xml",
+  );
   const likes = (Array.isArray(list) ? list : []).filter(
     (item) =>
       item !== element && isXmlElement(item) && item.name === element.name,

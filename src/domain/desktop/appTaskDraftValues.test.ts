@@ -37,8 +37,12 @@ describe("draftTaskFiles values", () => {
     expect(removed).toMatchObject({ before: '<tag name="old"/>', after: null });
     // A scalar's before and after are what its pointer reads at each end.
     expect(changed).toMatchObject({ before: "Draft", after: "Final" });
-    expect(resolvePointer(xml(before), changed?.pointer ?? "")).toBe("Draft");
-    expect(resolvePointer(xml(after), changed?.pointer ?? "")).toBe("Final");
+    expect(resolvePointer(xml(before), changed?.pointer ?? "", "xml")).toBe(
+      "Draft",
+    );
+    expect(resolvePointer(xml(after), changed?.pointer ?? "", "xml")).toBe(
+      "Final",
+    );
   });
 
   it("resolves a value that is another element's key, by the attribute's stem where several share it", () => {
@@ -722,6 +726,7 @@ describe("draftTaskFiles values' other pointers", () => {
       resolvePointer(
         xml(poster("Jazz Festival")),
         changed?.alternatives?.[0] ?? "",
+        "xml",
       ),
     ).toBe("Jazz Festival");
   });

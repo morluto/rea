@@ -58,7 +58,7 @@ def _viewless_entry(view, pointer: str):
     parts = pointer[1:].split("/")
     if len(parts) < 3 or parts[0] != "entries" or parts[2] != "view":
         return None
-    kind, item, _ = _locate(view, "/entries/" + parts[1])
+    kind, item, _ = _locate(view, "/entries/" + parts[1], "zip")
     if kind != "value" or not isinstance(item, dict):
         return None
     if isinstance(item.get("view_error"), str):
@@ -88,7 +88,7 @@ def _zip_leaves_out(view, pointer: str) -> bool:
         return False
     parts = pointer[1:].split("/")
     if parts[0] == "entries" and len(parts) > 1:
-        kind, entry, _ = _locate(view, "/entries/" + parts[1])
+        kind, entry, _ = _locate(view, "/entries/" + parts[1], "zip")
         return _entry_leaves_out(entry) if kind == "value" else view.get("truncated") is True
     entries = view.get("entries") if isinstance(view.get("entries"), list) else []
     return view.get("truncated") is True or any(_entry_leaves_out(entry) for entry in entries)
@@ -105,6 +105,16 @@ def _truncated(form, view) -> bool:
     return view.get("tables_truncated") is True or any(
         isinstance(table, dict) and (table.get("truncated") is True or isinstance(table.get("error"), str))
         for table in (tables.values() if isinstance(tables, dict) else []))
+
+
+def _selector_format(entry, view, pointer):
+    if not isinstance(entry, dict) or entry.get("format") != "zip":
+        return None if entry is None else entry.get("format")
+    parts = pointer[1:].split("/")
+    if len(parts) < 2 or parts[0] != "entries":
+        return "zip"
+    kind, item, _ = _locate(view, "/entries/" + parts[1], "zip")
+    return item.get("format", "zip") if kind == "value" and isinstance(item, dict) else "zip"
 
 
 def _view_of(check, entry, form):
@@ -168,7 +178,7 @@ def _xml_text(entry, view, pointer: str, found) -> bool:
     parts = pointer[1:].split("/")
     if len(parts) < 2 or parts[0] != "entries":
         return False
-    kind, item, _ = _locate(view, "/entries/" + parts[1])
+    kind, item, _ = _locate(view, "/entries/" + parts[1], "zip")
     return kind == "value" and isinstance(item, dict) and item.get("format") == "xml"
 
 
@@ -189,7 +199,7 @@ def _value(check, entry):
     view, truncated, problem = _view_of(check, entry, None)
     if problem is not None:
         return False, problem
-    kind, found, searched = ("none", None, []) if entry is None else _locate(view, check["pointer"])
+    kind, found, searched = ("none", None, []) if entry is None else _locate(view, check["pointer"], entry.get("format"))
     at = f"{check['file']} at {check['pointer']}"
     viewless = _viewless_entry(view, check["pointer"]) if entry is not None and entry.get("format") == "zip" else None
     if viewless is not None:
@@ -226,13 +236,13 @@ def _collapse_whitespace(text: str) -> str:
     return WHITESPACE_RUN.sub(" ", text).strip(" ")
 
 
-def _text_at(view, pointer: str) -> bool:
+def _text_at(view, pointer: str, form) -> bool:
     """Whether a string a pointer reaches is text of the document: a member of an element's children (a text node)
     or attributes (an attribute's value), rather than an element's name or a field of the DOCTYPE."""
     segments = pointer.split("/")
     if len(segments) < 3 or segments[-2] not in ("children", "attributes"):
         return False
-    kind, owner, _ = _locate(view, "/".join(segments[:-2]))
+    kind, owner, _ = _locate(view, "/".join(segments[:-2]), form)
     return kind == "value" and _is_element(owner)
 
 
@@ -244,7 +254,7 @@ def _not_xml_entry(check, view):
         return f"{check['file']} at {check['pointer']} does not point into an entry's view"
     if parts[1] != "entries":
         return None
-    kind, item, _ = _locate(view, "/entries/" + parts[2])
+    kind, item, _ = _locate(view, "/entries/" + parts[2], "zip")
     if kind != "value" or not isinstance(item, dict) or item.get("format") == "xml":
         return None
     # An entry without a view failed before this, so its format is one with a view.
@@ -263,7 +273,7 @@ def _whole_text(check, entry):
     form = entry.get("format")
     if form not in ("xml", "zip"):
         return False, f"{check['file']} is read as {form}, not xml"
-    kind, found, searched = _locate(view, check["pointer"])
+    kind, found, searched = _locate(view, check["pointer"], entry.get("format"))
     viewless = _viewless_entry(view, check["pointer"]) if form == "zip" else None
     if viewless is not None:
         return False, f"{check['file']} entry {viewless[0]} {viewless[1]}"
@@ -282,7 +292,7 @@ def _whole_text(check, entry):
         return False, f"{at} has no value" if found is None else f"{at}: {found}"
     # Only an element has attributes of its own and of its descendants to join.
     attribute = check.get("text_attribute")
-    if not ((attribute is None and _text_at(view, check["pointer"])) if isinstance(found, str) else _is_element(found)):
+    if not ((attribute is None and _text_at(view, check["pointer"], entry.get("format"))) if isinstance(found, str) else _is_element(found)):
         what = "an element, a text node or an attribute value" if attribute is None else "an element"
         return False, f"{at} is {_shown(found)}, not {what}"
     # A text node is whole. An element's text in a cut view may lack what the cut dropped from its middle.
@@ -318,7 +328,7 @@ def _members(check, entry):
     form = None if entry is None else entry.get("format")
     # The empty pointer names the whole view, as a JSON file whose top level is an array.
     kind, found, searched = (("none", None, []) if entry is None else ("value", view, []) if pointer == ""
-                             else _locate(view, pointer))
+                             else _locate(view, pointer, form))
     at = check["file"] if pointer == "" else f"{check['file']} at {pointer}"
     viewless = _viewless_entry(view, pointer) if form == "zip" else None
     if viewless is not None:
@@ -336,7 +346,8 @@ def _members(check, entry):
         return _undecided(check)
     # The parser refuses a matching that is no selector.
     conditions = None if matching is None else _selector(matching)
-    n = len(found) if matching is None else sum(1 for item in found if conditions and _selects(item, conditions))
+    matching_form = _selector_format(entry, view, pointer) if matching is not None else None
+    n = len(found) if matching is None else sum(1 for item in found if conditions and _selects(item, conditions, matching_form))
     return _compared(check, n, f"member(s) of {at}" + ("" if matching is None else f" matching {matching}"))
 
 

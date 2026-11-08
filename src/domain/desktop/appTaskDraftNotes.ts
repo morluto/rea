@@ -3,7 +3,11 @@ import { z } from "zod";
 import { changedStateFiles, type TaskDraftFile } from "./appTaskDraft.js";
 import { FILE_NOTE_CODES, type FileNote } from "./appTaskDraftFileNotes.js";
 import { STATE_PATH_INPUTS } from "./buildCapture.js";
-import type { DesktopStatePath, StateEnds } from "./desktopState.js";
+import {
+  versionAt,
+  type DesktopStatePath,
+  type StateEnds,
+} from "./desktopState.js";
 import { diffStateViews } from "./stateChanges.js";
 
 /** Why a task draft holds no files, one code per reason; a new reason adds its code. */
@@ -176,6 +180,23 @@ export const draftNotes = (
     else if (keys !== undefined)
       unread.push({ file: home, role: path.role, error: keys.error });
   }
+  const unresolvedFileChanges = [
+    ...files.values(),
+    ...facts.dconf.values(),
+  ].some((path) => {
+    const baseline = versionAt(path, facts.ends.seed);
+    const final = versionAt(path, facts.ends.end);
+    if (baseline === undefined || final === undefined) return true;
+    if (baseline.checkpoint_index === final.checkpoint_index) return false;
+    if (!baseline.present && !final.present) return false;
+    if (baseline.present !== final.present) return true;
+    return (
+      baseline.sha256 === null ||
+      final.sha256 === null ||
+      baseline.sha256 !== final.sha256 ||
+      final.format === "sqlite"
+    );
+  });
   const notes: EmptyDraftNote[] = [];
   if (!facts.observed)
     notes.push({
@@ -186,11 +207,23 @@ export const draftNotes = (
     facts.observed &&
     changed.length === 0 &&
     settings.length === 0 &&
-    unread.length === 0
+    unread.length === 0 &&
+    !unresolvedFileChanges
   )
     notes.push({
       code: "no_change",
       message: `No file under the home changed between checkpoints ${seed} and ${end}: save the change in the app before taking ${end}.`,
+    });
+  if (
+    facts.observed &&
+    unresolvedFileChanges &&
+    changed.length === 0 &&
+    settings.length === 0 &&
+    unread.length === 0
+  )
+    notes.push({
+      code: "uncheckable_changes",
+      message: `File identities changed or could not be compared between ${seed} and ${end}, but the captured values do not yield a draftable change. Inspect the files and write an appropriate check.`,
     });
   if (changed.length > 0) {
     const listed = changed.slice(0, MAX_NOTED_FILES);

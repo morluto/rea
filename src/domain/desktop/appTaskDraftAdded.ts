@@ -1,7 +1,6 @@
 import type { JsonValue } from "../jsonValue.js";
 import { collapseWhitespace, type DesktopTaskCheckInput } from "./appTask.js";
 import {
-  isRenumberedKey,
   isBookkeeping,
   isBookkeepingName,
   inSplitDate,
@@ -71,7 +70,7 @@ const parentElementOf = (pointer: string): string | undefined =>
 
 /** How many elements with a tag the list a member sits in holds, in a view. */
 const likeCount = (view: JsonValue | null, pointer: string, tag: string) => {
-  const list = resolvePointer(view, listOf(pointer));
+  const list = resolvePointer(view, listOf(pointer), "xml");
   return Array.isArray(list)
     ? list.filter((item) => isXmlElement(item) && item.name === tag).length
     : 0;
@@ -86,7 +85,7 @@ const copiesSibling = (
 ) =>
   attributes.length >= MIN_COPIED &&
   [ends.baseline, ends.final].some((view) => {
-    const list = resolvePointer(view, listOf(pointer));
+    const list = resolvePointer(view, listOf(pointer), "xml");
     return (
       Array.isArray(list) &&
       list.some(
@@ -175,7 +174,7 @@ export const attributeChecks = (
   }
   // A record's data is in its fields; an attribute every like record holds alike, as GnuCash's `version`, is its format's.
   const nested = element.children.some(isXmlElement);
-  const list = resolvePointer(ends.final, listOf(pointer));
+  const list = resolvePointer(ends.final, listOf(pointer), "xml");
   const likes = (Array.isArray(list) ? list : []).filter(
     (item) =>
       item !== element && isXmlElement(item) && item.name === element.name,
@@ -196,8 +195,7 @@ export const attributeChecks = (
         value,
         isBookkeeping(element) || isBookkeepingName(key),
       ) &&
-      !isViewStateName(key) &&
-      !isRenumberedKey(key),
+      !isViewStateName(key),
   );
   for (const { key, value } of eligible)
     if (value.length > context.chars)
@@ -284,8 +282,8 @@ const keptNamedAncestor = (context: AddedContext, pointer: string) => {
   )
     if (
       context.named(ends.final, at) &&
-      isXmlElement(resolvePointer(ends.baseline, at)) &&
-      isXmlElement(resolvePointer(ends.final, at))
+      isXmlElement(resolvePointer(ends.baseline, at, "xml")) &&
+      isXmlElement(resolvePointer(ends.final, at, "xml"))
     )
       return at;
   return undefined;
@@ -320,8 +318,8 @@ export const fieldChecks = (
   const onRecord = context.named(ends.final, pointer);
   const seen = onRecord
     ? ""
-    : elementText(resolvePointer(ends.baseline, at) ?? null);
-  const { keys } = pairMembers(element.children, []).newer;
+    : elementText(resolvePointer(ends.baseline, at, "xml") ?? null);
+  const { keys } = pairMembers(element.children, [], undefined, "xml").newer;
   const texts: string[] = [];
   let alreadySeen = false;
   element.children.forEach((field, index) => {
@@ -363,8 +361,8 @@ export const fieldChecks = (
     }));
   if (onRecord) return [];
   // Every new field repeats text the seed already has. The list's text shows the record was added, when it fits and holds no save time. A save time stays out of the check: the new record's own text has to be there, and the seed's text has to remain.
-  const holder = resolvePointer(ends.final, at);
-  const before = resolvePointer(ends.baseline, at);
+  const holder = resolvePointer(ends.final, at, "xml");
+  const before = resolvePointer(ends.baseline, at, "xml");
   const now = elementText(holder ?? null);
   const plain = plainText(holder ?? null);
   const seedPlain = plainText(before ?? null);
@@ -393,7 +391,7 @@ const sharedFields = (
   pointer: string,
   element: Element,
 ) => {
-  const list = resolvePointer(ends.final, listOf(pointer));
+  const list = resolvePointer(ends.final, listOf(pointer), "xml");
   const likes = (Array.isArray(list) ? list : []).filter(
     (item) =>
       item !== element && isXmlElement(item) && item.name === element.name,
@@ -486,7 +484,7 @@ const fieldsOf = (
   { nested, selector = false }: { nested: boolean; selector?: boolean },
 ): Suggestion[] => {
   const { ends, file } = context;
-  const { keys } = pairMembers(element.children, []).newer;
+  const { keys } = pairMembers(element.children, [], undefined, "xml").newer;
   const skipped = new Set([
     ...sharedFields(context, pointer, element),
     ...(selector ? [] : selectorFields(pointer)),
@@ -507,7 +505,8 @@ const fieldsOf = (
     )
       return [];
     if (nested && recordList(field)) {
-      const records = pairMembers(field.children, []).newer.keys;
+      const records = pairMembers(field.children, [], undefined, "xml").newer
+        .keys;
       return field.children.flatMap((record, place) =>
         isXmlElement(record)
           ? fieldsOf(

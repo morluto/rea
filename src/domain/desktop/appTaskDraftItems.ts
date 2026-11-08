@@ -31,14 +31,16 @@ export const isPlacedItem = (
   view: JsonValue | null,
   pointer: string,
 ): boolean => {
-  const element = resolvePointer(view, pointer);
+  const element = resolvePointer(view, pointer, "xml");
   const local = isXmlElement(element)
     ? (element.name.split(":").at(-1) ?? element.name)
     : "";
   if (TEXT_RUN.test(local)) return false;
   const owner = placeOf(pointer);
   const list =
-    owner === undefined ? undefined : resolvePointer(view, `${owner}/children`);
+    owner === undefined
+      ? undefined
+      : resolvePointer(view, `${owner}/children`, "xml");
   return (
     isXmlElement(element) &&
     placed(element) &&
@@ -70,7 +72,7 @@ const siblingTexts = (
   owner: string,
   item: JsonValue & { readonly name: string },
 ) => {
-  const list = resolvePointer(view, `${owner}/children`);
+  const list = resolvePointer(view, `${owner}/children`, "xml");
   return (Array.isArray(list) ? list : []).flatMap((sibling, index) =>
     sibling !== item && isXmlElement(sibling) && sibling.name === item.name
       ? [{ text: elementText(sibling).trim(), index }]
@@ -98,9 +100,10 @@ export const placedItemCheck = (
   const { ends, file } = context;
   const owner = placeOf(pointer);
   const at = owner === undefined ? undefined : context.name(owner);
-  const item = resolvePointer(ends.final, pointer);
+  const item = resolvePointer(ends.final, pointer, "xml");
   const value = isXmlElement(item) ? elementText(item).trim() : "";
-  const seed = at === undefined ? undefined : resolvePointer(ends.baseline, at);
+  const seed =
+    at === undefined ? undefined : resolvePointer(ends.baseline, at, "xml");
   if (
     owner === undefined ||
     at === undefined ||
@@ -115,7 +118,7 @@ export const placedItemCheck = (
   const kept = new Set(
     siblingTexts(ends.baseline, owner, item).map(({ text }) => text),
   );
-  const list = resolvePointer(ends.final, `${owner}/children`);
+  const list = resolvePointer(ends.final, `${owner}/children`, "xml");
   const here = Array.isArray(list) ? list.indexOf(item) : 0;
   const guards = siblingTexts(ends.final, owner, item)
     .filter(({ text }) => text.length >= MIN_TEXT && kept.has(text))

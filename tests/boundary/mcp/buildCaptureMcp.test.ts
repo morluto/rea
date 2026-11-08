@@ -336,6 +336,26 @@ it("reports an unsuccessful runtime schema command without diagnosing its cause"
   );
 });
 
+it.each(["failure", "invalid"])(
+  "redacts control tokens in %s schema output",
+  async (mode) => {
+    const { computer, client } = await fakes({
+      env: { FAKE_REA_SCHEMA_TOKEN: mode },
+    });
+    const id = await startBuildComputer(client, REQUEST);
+    const result = await client.callTool({
+      name: "start_build_capture",
+      arguments: { computer_id: id },
+    });
+    expect(result.isError).toBe(true);
+    expectNoToken(computer, result);
+    if (mode === "invalid") {
+      expect(JSON.stringify(result)).not.toContain(computer.token.slice(0, 12));
+      expect(JSON.stringify(result)).toContain("invalid JSON");
+    } else expect(JSON.stringify(result)).toContain("runtime output");
+  },
+);
+
 it("exports a task larger than the old 96 KiB refusal and keeps its prompt", async () => {
   const { rea, client } = await fakes();
   const id = await startBuildComputer(client, REQUEST);
