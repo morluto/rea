@@ -334,6 +334,30 @@ export function createAgentEvaluationCommands({
     }
   }
 
+  const readVersion = async (
+    command,
+    arguments_,
+    env,
+    label = command,
+  ) => {
+    const result = await execute(
+      command,
+      arguments_,
+      repositoryRoot,
+      env,
+      { timeoutMs: 10_000, diagnosticBytes: 8192 },
+      `${label} --version timed out`,
+    );
+    if (result.exitCode !== 0)
+      throw new Error(
+        `${label} --version failed with ${String(result.exitCode)}: ${result.stderr.text}`,
+      );
+    const version = result.stdout.text.trim();
+    if (version.length === 0)
+      throw new Error(`${label} --version returned empty output`);
+    return version;
+  };
+
   return {
     async runCodex(prompt, approvedTools) {
       const arguments_ = [
@@ -437,7 +461,7 @@ export function createAgentEvaluationCommands({
     },
 
     async readCommandVersion(command, env = process.env) {
-      return readAgentVersion(command, env, ["--version"]);
+      return readVersion(command, ["--version"], env);
     },
 
     async readAgentVersion(client, env = evaluationEnvironment, arguments_ = ["--version"]) {
@@ -445,22 +469,7 @@ export function createAgentEvaluationCommands({
         client === "gemini-cli"
           ? launchGemini(arguments_)
           : [client === "claude-code" ? claude : codex, arguments_];
-      const result = await execute(
-        command,
-        args,
-        repositoryRoot,
-        env,
-        { timeoutMs: 10_000, diagnosticBytes: 8192 },
-        `${client} --version timed out`,
-      );
-      if (result.exitCode !== 0)
-        throw new Error(
-          `${client} --version failed with ${String(result.exitCode)}: ${result.stderr.text}`,
-        );
-      const version = result.stdout.text.trim();
-      if (version.length === 0)
-        throw new Error(`${client} --version returned empty output`);
-      return version;
+      return readVersion(command, args, env, client);
     },
 
     close: () => resources.close(),
