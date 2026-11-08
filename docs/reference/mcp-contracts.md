@@ -1921,7 +1921,11 @@ When an unpacked PE companion already mismatches and removing
 checksum) restores the declared SHA-256, the contradiction records a
 `signing_explanation` with `kind: "signed-after-packing"`, `platform:
 "pe-authenticode"`, the unsigned digest, certificate-table size, and signer
-subjects when PKCS#7 decoding supplies them. Observed bytes stay
+subjects when PKCS#7 decoding supplies a unique issuer-and-serial match. Exact
+encoded issuer identity is required; unmatched or ambiguous signers are not
+named. `signer_subjects_complete: false` indicates unresolved signers, incomplete
+certificate coverage, or a decoding limit. This does not verify a signature or
+certificate chain. Observed bytes stay
 `observed-untrusted` and `hash_status` remains `mismatched`; the explanation is
 additive evidence, not a trust upgrade. Mach-O code-signature growth is not
 classified yet. A mismatch that does not restore the declared digest stays an

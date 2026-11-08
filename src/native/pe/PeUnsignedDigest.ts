@@ -4,6 +4,7 @@ import type { SignedAfterPackingExplanation } from "../../domain/artifactIntegri
 import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
 import { parsePeCertificates } from "./PeCertificateParser.js";
 import { readPeHeaders } from "./PeResourceLayout.js";
+import { PeCertificateAsn1Failure } from "./PeCertificateAsn1.js";
 
 /** Bound second-pass PE reads used only after an unpacked integrity mismatch. */
 export const MAX_SIGNED_AFTER_PACKING_PE_BYTES = 67_108_864;
@@ -66,7 +67,15 @@ export const rebuildPeBytesWithoutCertificateTable = (
   return { bytes: rebuilt, certificateTableBytes: tableSize };
 };
 
-const signerSubjectsFromCertificateTable = (bytes: Buffer): string[] => {
+const signerSubjectsFromCertificateTable = (
+  bytes: Buffer,
+): {
+  readonly subjects: string[];
+  readonly complete: boolean;
+} => {
+  const subjects: string[] = [];
+  const seen = new Set<string>();
+  let complete = true;
   try {
     const report = parsePeCertificates(
       bytes,
@@ -80,27 +89,29 @@ const signerSubjectsFromCertificateTable = (bytes: Buffer): string[] => {
         max_file_bytes: bytes.length,
         max_entries: 64,
       },
+      (subject) => {
+        if (subject === undefined) {
+          complete = false;
+          return;
+        }
+        if (!seen.has(subject)) {
+          seen.add(subject);
+          subjects.push(subject);
+        }
+      },
     );
-    const subjects: string[] = [];
-    const seen = new Set<string>();
-    for (const entry of report.entries) {
-      if (entry.pkcs7 === null) continue;
-      for (const signer of entry.pkcs7.signers) {
-        const matched =
-          signer.serial_hex === null
-            ? undefined
-            : entry.pkcs7.certificates.find(
-                (certificate) => certificate.serial_hex === signer.serial_hex,
-              );
-        const text = matched?.subject.text;
-        if (text === undefined || seen.has(text)) continue;
-        seen.add(text);
-        subjects.push(text);
-      }
-    }
-    return subjects;
+    if (
+      report.coverage.status !== "complete" ||
+      report.entries.some(({ pkcs7 }) => pkcs7 === null)
+    )
+      complete = false;
+    return { subjects, complete };
   } catch (cause) {
-    if (cause instanceof ArtifactReaderFailure) return [];
+    if (
+      cause instanceof ArtifactReaderFailure ||
+      cause instanceof PeCertificateAsn1Failure
+    )
+      return { subjects, complete: false };
     throw cause;
   }
 };
@@ -119,11 +130,13 @@ export const explainPeSignedAfterPacking = (
   if (rebuilt === null) return null;
   const unsignedSha256 = sha256Hex(rebuilt.bytes);
   if (unsignedSha256 !== declaredSha256) return null;
+  const signers = signerSubjectsFromCertificateTable(bytes);
   return {
     kind: "signed-after-packing",
     platform: "pe-authenticode",
     unsigned_sha256: unsignedSha256,
     certificate_table_bytes: rebuilt.certificateTableBytes,
-    signer_subjects: signerSubjectsFromCertificateTable(bytes),
+    signer_subjects: signers.subjects,
+    signer_subjects_complete: signers.complete,
   };
 };

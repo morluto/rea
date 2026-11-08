@@ -6,9 +6,9 @@ import { createPackageWithOptions } from "@electron/asar";
 
 import {
   peCertificateFixture,
+  peWithoutCertificateTableFixture,
   pkcs7SignedDataFixture,
 } from "../../src/native/pe/PeCertificates.fixture.js";
-import { rebuildPeBytesWithoutCertificateTable } from "../../src/native/pe/PeUnsignedDigest.js";
 import { createTestTempDirectory } from "./temporaryDirectory.js";
 
 /** ASAR whose unpacked PE companion was Authenticode-signed after packing. */
@@ -20,9 +20,9 @@ export const createSignedAfterPackingAsarAddon = async () => {
   const addonPath = join(source, "node_modules", "device", "binding.node");
   const signed = peCertificateFixture(false, pkcs7SignedDataFixture());
   signed.writeUInt32LE(0xfeedface, 0x98 + 64);
-  const rebuilt = rebuildPeBytesWithoutCertificateTable(signed);
-  if (rebuilt === null) throw new Error("expected unsigned PE reconstruction");
-  const original = rebuilt.bytes;
+  const original = peWithoutCertificateTableFixture();
+  // This fixture has an available (but empty) security directory before signing.
+  original.writeUInt32LE(16, 0x98 + 92);
   await mkdir(join(source, "node_modules", "device"), { recursive: true });
   await writeFile(join(source, "main.js"), "module.exports = 'observed';\n");
   await writeFile(addonPath, original);

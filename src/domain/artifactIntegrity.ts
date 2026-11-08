@@ -87,6 +87,8 @@ export const signedAfterPackingExplanationSchema = z.strictObject({
     .nonnegative()
     .max(Number.MAX_SAFE_INTEGER),
   signer_subjects: z.array(z.string()),
+  /** False when a signer identity or certificate table could not be resolved. */
+  signer_subjects_complete: z.boolean(),
 });
 export type SignedAfterPackingExplanation = z.infer<
   typeof signedAfterPackingExplanationSchema

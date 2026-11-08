@@ -816,14 +816,16 @@
                     "signer_subjects": {
                       "type": "array",
                       "items": { "type": "string" }
-                    }
+                    },
+                    "signer_subjects_complete": { "type": "boolean" }
                   },
                   "required": [
                     "kind",
                     "platform",
                     "unsigned_sha256",
                     "certificate_table_bytes",
-                    "signer_subjects"
+                    "signer_subjects",
+                    "signer_subjects_complete"
                   ],
                   "additionalProperties": false
                 }

@@ -56,6 +56,7 @@ export const parsePeCertificates = (
   bytes: Buffer,
   artifact: PeCertificates["artifact"],
   input: InspectPeCertificatesInput,
+  onSignerSubject?: (subject: string | undefined) => void,
 ): PeCertificates => {
   const { machine, format, dataDirectories, headerSize, optionalHeaderOffset } =
     readPeHeaders(bytes);
@@ -127,6 +128,27 @@ export const parsePeCertificates = (
           fail("WIN_CERTIFICATE has invalid PKCS#7 alignment padding.");
         payload = entryPayload.subarray(0, root.end);
         const parsed = parsePkcs7SignedData(root);
+        if (onSignerSubject !== undefined) {
+          for (const signer of parsed.signers) {
+            const issuer = signer.issuer;
+            const matches =
+              issuer === null || signer.serial_hex === null
+                ? []
+                : parsed.certificates.filter(
+                    (certificate) =>
+                      certificate.serial_hex === signer.serial_hex &&
+                      payload
+                        .subarray(
+                          certificate.issuer.start,
+                          certificate.issuer.end,
+                        )
+                        .equals(payload.subarray(issuer.start, issuer.end)),
+                  );
+            onSignerSubject(
+              matches.length === 1 ? matches[0]?.subject.text : undefined,
+            );
+          }
+        }
         teletexStringCompatibilityUsed ||=
           parsed.teletexStringCompatibilityUsed;
         unsignedAttributesPresent ||= parsed.signers.some(

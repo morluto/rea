@@ -288,6 +288,9 @@ const decodeName = (
 ): {
   readonly text: string;
   readonly attributes: readonly Attribute[];
+  /** Exact encoded Name coordinates within the certificate table payload. */
+  readonly start: number;
+  readonly end: number;
 } => {
   const attributes: Attribute[] = [];
   for (const rdn of sequence(node, "Name")) {
@@ -319,7 +322,7 @@ const decodeName = (
       return `${key}=${attribute.value}`;
     })
     .join(", ");
-  return { text, attributes };
+  return { text, attributes, start: node.start, end: node.end };
 };
 
 // RFC 5280 4.1.2.5 and X.690 11.7-11.8: UTC with seconds, a final "Z", and

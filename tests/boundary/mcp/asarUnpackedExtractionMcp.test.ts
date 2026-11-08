@@ -11,6 +11,8 @@ import { createServer } from "../../../src/server/createServer.js";
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { createStrippedAsarAddon } from "../../fixtures/strippedAsarAddon.js";
+import { createSignedAfterPackingAsarAddon } from "../../fixtures/signedAfterPackingAsarAddon.js";
+import { advertisedMcpToolSchemas } from "../../fixtures/advertisedMcpTool.js";
 
 const openArchive = async (archive: string): Promise<Client> => {
   const session = createTestBinarySession(new ArtifactProvider(process.env));
@@ -30,6 +32,43 @@ const openArchive = async (archive: string): Promise<Client> => {
   expect(opened.isError).not.toBe(true);
   return client;
 };
+
+it("publishes signed companion evidence through the advertised JavaScript analysis schema", async () => {
+  const { archive, addon, declaredSha256 } =
+    await createSignedAfterPackingAsarAddon();
+  const client = await openArchive(archive);
+  const schemas = await advertisedMcpToolSchemas(
+    client,
+    "analyze_javascript_application",
+  );
+  const response = await client.callTool({
+    name: "analyze_javascript_application",
+    arguments: { input_path: archive, integrity_policy: "record-and-continue" },
+  });
+  expect(response.isError, JSON.stringify(response)).not.toBe(true);
+  expect(
+    schemas.ajv.validate(schemas.outputSchema, response.structuredContent),
+    JSON.stringify(schemas.ajv.errors),
+  ).toBe(true);
+  expect(response.structuredContent).toMatchObject({
+    normalized_result: {
+      integrity_contradictions: expect.arrayContaining([
+        expect.objectContaining({
+          logical_path: addon,
+          signing_explanation: expect.objectContaining({
+            kind: "signed-after-packing",
+            platform: "pe-authenticode",
+            unsigned_sha256: declaredSha256,
+            signer_subjects: [
+              expect.stringContaining("commonName=REA Fixture"),
+            ],
+            signer_subjects_complete: true,
+          }),
+        }),
+      ]),
+    },
+  });
+});
 
 it("extracts a rewritten unpacked companion only when the caller records the mismatch", async () => {
   const { archive, addon, stripped } = await createStrippedAsarAddon();

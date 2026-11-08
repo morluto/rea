@@ -416,6 +416,7 @@ const digestArtifactEntry = async (
         }
       : classifyArtifactContent(logicalPath, digest, digest.bytes);
   let signingExplanation: SignedAfterPackingExplanation | undefined;
+  let explanationFailure: unknown;
   if (
     mismatched &&
     claim !== null &&
@@ -424,21 +425,62 @@ const digestArtifactEntry = async (
     claim.algorithm === "sha256" &&
     classified.contentFormat === "pe"
   ) {
-    signingExplanation =
-      (await explainUnpackedPeSignedAfterPacking({
-        reader: currentReader,
-        entry,
-        observedBytes: digest.bytes,
-        declaredSha256: claim.digest,
-        signal: context.signal,
-      })) ?? undefined;
+    try {
+      signingExplanation =
+        (await explainUnpackedPeSignedAfterPacking({
+          reader: currentReader,
+          entry,
+          observedBytes: digest.bytes,
+          observedSha256: digest.sha256,
+          declaredSha256: claim.digest,
+          signal: context.signal,
+        })) ?? undefined;
+    } catch (cause: unknown) {
+      if (
+        cause instanceof ArtifactReaderFailure &&
+        (cause.cleanup !== undefined || (cause.cleanupLeases?.length ?? 0) > 0)
+      ) {
+        if (context.signal?.aborted === true)
+          throw ArtifactReaderFailure.withCleanup(
+            new ArtifactReaderFailure(
+              "cancelled",
+              "Artifact inventory cancelled",
+              { cause: context.signal.reason },
+            ),
+            ArtifactReaderFailure.cleanupObservation(
+              cause,
+              `signing explanation for ${logicalPath}`,
+            ),
+            cause.partialObservation,
+            cause.cleanupLeases,
+          );
+        throw cause;
+      }
+      abortIfNeeded(context.signal);
+      if (
+        !(cause instanceof ArtifactEntryContentUnavailable) &&
+        !(cause instanceof DirectoryArtifactEntryAccessDenied) &&
+        !(
+          cause instanceof ArtifactReaderFailure &&
+          (cause.reason === "io" || cause.reason === "unavailable")
+        )
+      )
+        throw cause;
+      if (cause.cancellation !== undefined) throw cause;
+      explanationFailure = cause;
+      occurrence.limitations.push(
+        `Signing explanation unavailable: ${cause instanceof ArtifactEntryContentUnavailable ? cause.limitation : cause.message}`,
+      );
+    }
   }
   if (mismatched && claim !== null && observed !== undefined) {
     if (context.integrity === "fail")
       throw new ArtifactReaderFailure(
         "integrity",
         `Artifact integrity metadata disagrees with content: ${logicalPath}`,
-        undefined,
+        explanationFailure === undefined
+          ? undefined
+          : { cause: explanationFailure },
         artifactIntegrityDetails(
           logicalPath,
           claim,
@@ -472,10 +514,18 @@ const explainUnpackedPeSignedAfterPacking = async (input: {
   readonly reader: ArtifactReader;
   readonly entry: ArtifactEntry;
   readonly observedBytes: number;
+  readonly observedSha256: string;
   readonly declaredSha256: string;
   readonly signal: AbortSignal | undefined;
 }): Promise<SignedAfterPackingExplanation | null> => {
-  const { reader, entry, observedBytes, declaredSha256, signal } = input;
+  const {
+    reader,
+    entry,
+    observedBytes,
+    observedSha256,
+    declaredSha256,
+    signal,
+  } = input;
   if (
     !Number.isSafeInteger(observedBytes) ||
     observedBytes <= 0 ||
@@ -484,15 +534,18 @@ const explainUnpackedPeSignedAfterPacking = async (input: {
     return null;
   const stream = await reader.open(entry, signal);
   const chunks: Buffer[] = [];
+  const hash = createHash("sha256");
   let total = 0;
   for await (const raw of stream) {
     abortIfNeeded(signal);
     const chunk = streamChunkToBuffer(raw);
     total += chunk.length;
     if (total > observedBytes) return null;
+    hash.update(chunk);
     chunks.push(chunk);
   }
-  if (total !== observedBytes) return null;
+  if (total !== observedBytes || hash.digest("hex") !== observedSha256)
+    return null;
   return explainPeSignedAfterPacking(
     Buffer.concat(chunks, total),
     declaredSha256,
