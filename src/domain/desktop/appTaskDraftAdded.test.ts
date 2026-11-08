@@ -936,6 +936,24 @@ describe("draftTaskFiles for a transaction appended to a Grisbi file", () => {
 });
 
 describe("draftTaskFiles for decimals near a seed the evaluator reads as a number", () => {
+  it.each([
+    ["element text", (value: string) => `<doc><total>${value}</total></doc>`],
+    ["attribute", (value: string) => `<doc><total amount="${value}"/></doc>`],
+  ])(
+    "retains an exact check when %s has a whitespace-padded seed within tolerance",
+    (_kind, document) => {
+      const before = document(" 10 ");
+      const after = document("10.0005");
+      const draft = xmlDraft(before, after);
+      expect(draft.suggested).not.toEqual([]);
+      expect(draft.suggested.some((check) => "tolerance" in check)).toBe(false);
+      expect(passing(FILE, xml(before), draft.suggested)).not.toContain(true);
+      expect(passing(FILE, xml(after), draft.suggested).every(Boolean)).toBe(
+        true,
+      );
+    },
+  );
+
   it("suggests no check by number that the seed's value, as `10` or `1e1`, already passes", () => {
     for (const seed of ["10", "1e1"]) {
       const value = (text: string) =>

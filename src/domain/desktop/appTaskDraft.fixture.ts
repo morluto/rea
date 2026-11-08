@@ -45,8 +45,7 @@ export const draftOf = (
       seed: 0,
       end: 1,
     },
-    leftOutFiles(new Map(Object.entries(files)), [], selected, selected)
-      .isLeftOut,
+    leftOutFiles(new Map(Object.entries(files)), [], selected),
   );
 
 /** An XML text's view, which a test's own text always has. */
