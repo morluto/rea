@@ -1766,6 +1766,47 @@ describe("ReleaseExposureReader undecided PE members", () => {
   );
 });
 
+describe("ReleaseExposureReader undecided PE text", () => {
+  it("still scans the text of a small undecided PE map member", async () => {
+    const root = await createTestTempDirectory("rea-release-exposure-pe-");
+    // `MZ`, then ASCII whose bytes 60-63 point past the end of the member.
+    const payload = Buffer.from(
+      `MZ${"a".repeat(80)}\n-----BEGIN PRIVATE KEY-----\n${PLANTED_KEY}\n-----END PRIVATE KEY-----\n`,
+      "latin1",
+    );
+    const target = join(root, "app.exe");
+    await writeFile(
+      target,
+      cArchiveExecutable({
+        carrier: "pe",
+        layout: "2.1",
+        pythonVersion: 310,
+        members: [
+          { name: "payload.map", typeCode: "x", compress: false, payload },
+        ],
+      }),
+    );
+    const reader = new ReleaseExposureReader();
+    try {
+      const texts: string[] = [];
+      const result = await reader.inspect(
+        { path: target },
+        undefined,
+        (text) => {
+          texts.push(text);
+        },
+      );
+      if (!result.ok) throw result.error;
+      expect(result.value.coverage).toBe("unknown");
+      expect(texts.some((text) => text.includes("BEGIN PRIVATE KEY"))).toBe(
+        true,
+      );
+    } finally {
+      await reader.close();
+    }
+  });
+});
+
 describe("ReleaseExposureReader source-map count", () => {
   it.each([
     [

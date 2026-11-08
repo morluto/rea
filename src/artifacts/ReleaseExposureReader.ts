@@ -1122,8 +1122,17 @@ const examineMapMember = async (
     member.packageFormat !== null &&
     !member.kindStated &&
     noteUndecidedPe(state, member, header)
-  )
+  ) {
+    // Bytes read in full are still text, so their credential markers count.
+    if (read?.loaded.kind === "bytes")
+      scanText(
+        state,
+        member,
+        read.loaded.bytes.length,
+        decodeMemberText(read.loaded.bytes),
+      );
     return true;
+  }
   if (read !== null) settleMapRead(state, declared, read);
   const loaded = read?.loaded ?? null;
   if (loaded?.kind === "bytes")
