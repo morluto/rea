@@ -1,6 +1,7 @@
 import { expect, it as test } from "vitest";
 
 import { functionDossierSchema } from "../../../../src/domain/native/functionDossier.js";
+import { projectAnalysisError } from "../../../../src/domain/analysisErrorProjection.js";
 import { fakeKunaCalls } from "./fakeKuna.js";
 import {
   MACHO_FUNCTIONS,
@@ -160,6 +161,77 @@ it("resolves a data symbol's name for xrefs, which accept data addresses", async
     expect(
       (await fakeKunaCalls(kuna)).find(({ argv }) => argv[0] === "xrefs")?.argv,
     ).toContain("0x100008000");
+  } finally {
+    expect(await client.close()).toEqual({ ok: true, value: null });
+  }
+});
+
+it("guides valid ambiguous and missing procedure selectors without schema repair", async () => {
+  const { open } = await machoSession("rea-kuna-procedure-recovery-");
+  const client = open();
+  try {
+    for (const [procedure, expected] of [
+      ["puts", "address"],
+      ["missing_procedure", "search_procedures"],
+      ["0x00000001", "list_procedures"],
+    ] as const) {
+      const result = await client.execute("procedure_address", { procedure });
+      expect(result.ok).toBe(false);
+      if (result.ok) throw new Error("Expected unresolved procedure");
+      const projected = projectAnalysisError(result.error);
+      expect(projected.recovery).toBeUndefined();
+      expect(projected.remediation.action).toContain(expected);
+      expect(projected.details?.issues).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ observed: { procedure } }),
+        ]),
+      );
+      if (procedure === "puts") {
+        expect(projected.message).toContain("0x100000480");
+        expect(projected.message).toContain("0x100004000");
+      }
+    }
+    expect(
+      (await run(client, "procedure_address", { procedure: "helper" })).result,
+    ).toBe("0x100000440");
+  } finally {
+    expect(await client.close()).toEqual({ ok: true, value: null });
+  }
+});
+
+it("reports missing and ambiguous xref names within Kuna's inventory", async () => {
+  const { open } = await machoSession("rea-kuna-macho-xref-recovery-");
+  const client = open();
+  try {
+    const missing = await client.execute("xrefs", { address: "missing_data" });
+    expect(missing.ok).toBe(false);
+    if (missing.ok) throw new Error("Expected missing inventory name");
+    const missingProjection = projectAnalysisError(missing.error);
+    expect(missingProjection).toMatchObject({
+      code: "invalid_request",
+      message: expect.stringMatching(/no inventory entry.*missing_data/iu),
+      remediation: {
+        action: expect.stringMatching(
+          /symbols or exports.*xrefs.*address.*does not establish absence/iu,
+        ),
+      },
+    });
+    expect(missingProjection.recovery).toBeUndefined();
+
+    const ambiguous = await client.execute("xrefs", { address: "puts" });
+    expect(ambiguous.ok).toBe(false);
+    if (ambiguous.ok) throw new Error("Expected ambiguous inventory name");
+    const ambiguousProjection = projectAnalysisError(ambiguous.error);
+    expect(ambiguousProjection).toMatchObject({
+      code: "invalid_request",
+      message: expect.stringMatching(/puts.*2 Kuna entries/iu),
+      remediation: {
+        action: expect.stringMatching(/select.*addresses.*xrefs/iu),
+      },
+    });
+    expect(ambiguousProjection.message).toContain("0x100000480");
+    expect(ambiguousProjection.message).toContain("0x100004000");
+    expect(ambiguousProjection.recovery).toBeUndefined();
   } finally {
     expect(await client.close()).toEqual({ ok: true, value: null });
   }

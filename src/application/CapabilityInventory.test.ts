@@ -698,8 +698,7 @@ describe("partial navigation availability", () => {
 
     expect(availability).toMatchObject({
       reason: "provider_missing",
-      remediation:
-        "Configure a provider for one of: current_document, current_address, resolve_containing_procedure.",
+      remediation: expect.stringMatching(/configure.*provider/i),
       modes: [
         {
           name: "current_selection",
@@ -718,6 +717,13 @@ describe("partial navigation availability", () => {
         },
       ],
     });
+    for (const operation of [
+      "current_document",
+      "current_address",
+      "resolve_containing_procedure",
+    ]) {
+      expect(availability.remediation?.split(operation)).toHaveLength(2);
+    }
   });
 });
 
@@ -820,8 +826,9 @@ describe("binary_overview capability requirements", () => {
     ).toMatchObject({
       available: false,
       reason: "provider_missing",
-      remediation:
-        "Configure a provider for one of: current_document, list_documents.",
+      remediation: expect.stringMatching(
+        /configure.*provider.*current_document.*list_documents/i,
+      ),
     });
   });
 

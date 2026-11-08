@@ -315,7 +315,6 @@ it.each([true, false, null])(
       source: { kind: "inline", evidence: parent },
       view: { kind: "summary" },
     });
-    expect(selected.ok).toBe(true);
     if (!selected.ok) throw selected.error;
     expect(selected.value.normalized_result).toMatchObject({ summary: report });
     if (changed !== null) {
