@@ -132,16 +132,16 @@ const checkExportRuntime = async (
       );
     return ok(undefined);
   } catch (cause: unknown) {
+    if (signal.aborted)
+      return err(new AnalysisCancelledError(START, { cause: signal.reason }));
+    const message = errorText(cause);
+    const redacted = computer.redacted(message);
     return err(
-      signal.aborted
-        ? new AnalysisCancelledError(START, { cause: signal.reason })
-        : adapterError(
-            START,
-            `Could not read the build computer's REA export schema: ${computer.redacted(errorText(cause))}`,
-            computer.redacted(errorText(cause)) === errorText(cause)
-              ? cause
-              : undefined,
-          ),
+      adapterError(
+        START,
+        `Could not read the build computer's REA export schema: ${redacted}`,
+        redacted === message ? cause : undefined,
+      ),
     );
   }
 };
