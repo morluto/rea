@@ -1,8 +1,8 @@
 import type {
   JavaScriptSourceAnalysisLimits,
   JavaScriptSourceAnalysisPort,
+  JavaScriptSourceAdmission,
 } from "../../domain/javascript/javascriptSourceAnalysis.js";
-import type { JavaScriptArtifactFile } from "../../domain/javascript/javascriptArtifactFiles.js";
 import { JavaScriptAnalysisWorker } from "../../javascript/analysis/JavaScriptAnalysisWorker.js";
 import type { spawnOwnedProviderProcess } from "../../process/ProviderProcess.js";
 import { WorkerCleanupRegistry } from "../../process/OwnedWorkerRuntime.js";
@@ -45,7 +45,7 @@ export interface JavaScriptSourceAnalysisAcquisition {
 /** Construct the inert artifact analyzer; resources are acquired on the first source. */
 export const createJavaScriptSourceAnalysis = (
   limits: JavaScriptSourceAnalysisLimits,
-  sources: number | readonly Pick<JavaScriptArtifactFile, "bytes">[],
+  sources: number | readonly JavaScriptSourceAdmission[],
   acquisition: JavaScriptSourceAnalysisAcquisition = {},
 ): Promise<JavaScriptSourceAnalysisPort> => {
   if (acquisition.scope === undefined)
@@ -63,7 +63,7 @@ export const createJavaScriptSourceAnalysis = (
 const checkoutJavaScriptSourceAnalysis = async (
   scope: ArtifactResourceScope,
   limits: JavaScriptSourceAnalysisLimits,
-  sources: number | readonly Pick<JavaScriptArtifactFile, "bytes">[],
+  sources: number | readonly JavaScriptSourceAdmission[],
   launcher: typeof spawnOwnedProviderProcess | undefined,
 ): Promise<JavaScriptSourceAnalysisPort> => {
   registerJavaScriptSourceAnalysisClose(scope);

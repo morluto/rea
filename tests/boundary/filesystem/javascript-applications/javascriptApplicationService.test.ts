@@ -18,6 +18,7 @@ import {
 } from "../../../support/javascriptApplicationScope.js";
 import { createJavaScriptArtifactReader } from "../../../../src/artifacts/javascript/JavaScriptArtifactReader.js";
 import { createJavaScriptSourceAnalysis } from "../../../../src/artifacts/javascript/JavaScriptSourceAnalysis.js";
+import { semanticModuleRootBytes } from "../../../../src/application/javascript/JavaScriptSemanticGraphBuilder.js";
 import { analyzeAndAdoptJavaScriptArtifactFiles } from "../../../../src/application/javascript/JavaScriptArtifactAnalysis.js";
 import { createJavaScriptSemanticGraphProjection } from "../../../../src/application/javascript/JavaScriptSemanticGraphBuilder.js";
 import { immutableArtifactGraph } from "../../../fixtures/javascriptArtifactGraph.js";
@@ -44,7 +45,12 @@ describe("JavaScript source selection cancellation boundary", () => {
       );
       const worker = await createJavaScriptSourceAnalysis(
         { heapMb: 512, timeoutMs: 30_000 },
-        files.files.filter(({ path }) => sourcePaths.includes(path)),
+        files.files
+          .filter(({ path }) => sourcePaths.includes(path))
+          .map((file) => ({
+            bytes: file.bytes,
+            rootBytes: semanticModuleRootBytes(file),
+          })),
       );
       let outcome: Awaited<
         ReturnType<typeof analyzeAndAdoptJavaScriptArtifactFiles>

@@ -48,7 +48,10 @@ import { readJavaScriptArtifactFiles } from "../../artifacts/javascript/JavaScri
 import { buildImmutableJavaScriptArtifactGraphSteps } from "./JavaScriptArtifactGraphBuilder.js";
 import { scanCanonicalArtifactInventoryInScope } from "../../artifacts/inventory/scanCanonical.js";
 import { createJavaScriptNextAppContext } from "./JavaScriptNextAppContext.js";
-import { createJavaScriptSemanticGraphProjection } from "./JavaScriptSemanticGraphBuilder.js";
+import {
+  createJavaScriptSemanticGraphProjection,
+  semanticModuleRootBytes,
+} from "./JavaScriptSemanticGraphBuilder.js";
 import type { ProgressReporter } from "../ProgressReporter.js";
 import {
   checkpointJavaScriptAnalysis,
@@ -186,11 +189,24 @@ export const reconstructJavaScriptArtifact = async (
         scope,
         signal,
       );
+      const admissions = await completeJavaScriptAnalysisSteps(
+        (function* () {
+          const measured: { bytes: number; rootBytes: number }[] = [];
+          for (const file of files.files) {
+            yield;
+            if (file.kind === "javascript" && file.text.included)
+              measured.push({
+                bytes: file.bytes,
+                rootBytes: semanticModuleRootBytes(file),
+              });
+          }
+          return measured;
+        })(),
+        signal,
+      );
       const worker = await createJavaScriptSourceAnalysis(
         sourceLimits,
-        files.files.filter(
-          (file) => file.kind === "javascript" && file.text.included,
-        ),
+        admissions,
         { scope },
       );
       const semanticProjection = createJavaScriptSemanticGraphProjection(

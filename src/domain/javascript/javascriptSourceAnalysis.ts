@@ -43,6 +43,31 @@ export interface JavaScriptSourceAnalysisLimits {
   readonly timeoutMs: number;
 }
 
+/** Admission costs measured for a selected source before analysis starts. */
+export interface JavaScriptSourceAdmission {
+  readonly bytes: number;
+  readonly rootBytes: number;
+}
+
+/** Give the current source its root and a share of capacity left after later roots. */
+export const semanticSourceBudget = (input: {
+  readonly remaining: number;
+  readonly rootBytes: number;
+  readonly laterRootBytes: number;
+  readonly sourceBytes: number;
+  readonly sourceBytesRemaining: number;
+  readonly laterSources: number | undefined;
+}): number => {
+  if (input.laterSources === 0) return input.remaining;
+  const root = Math.min(input.rootBytes, input.remaining);
+  const surplus = Math.max(0, input.remaining - root - input.laterRootBytes);
+  const share =
+    input.sourceBytesRemaining === 0
+      ? Math.floor(surplus / ((input.laterSources ?? 0) + 1))
+      : Math.floor((surplus * input.sourceBytes) / input.sourceBytesRemaining);
+  return root + share;
+};
+
 /** One owner for serialized Evidence capacity shared with final projection. */
 export interface JavaScriptEvidenceAdmission {
   remainingBytes(): number;

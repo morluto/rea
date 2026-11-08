@@ -8,6 +8,7 @@ import { withVerifierCleanup } from "../../../scripts/lib/verifier-cleanup.mjs";
 import { awaitAcknowledgement } from "../../fixtures/lifecycleAcknowledgement.js";
 import { JavaScriptAnalysisWorker } from "../../../src/javascript/analysis/JavaScriptAnalysisWorker.js";
 import { createJavaScriptSourceAnalysis } from "../../../src/artifacts/javascript/JavaScriptSourceAnalysis.js";
+import { semanticModuleRootBytes } from "../../../src/application/javascript/JavaScriptSemanticGraphBuilder.js";
 import { ArtifactResourceScope } from "../../../src/artifacts/ArtifactResourceScope.js";
 import { cleanupOwnedProcessGroup } from "../../../src/process/ProcessOwnership.js";
 import { ProcessOwnershipEvidenceOwner } from "../../../src/process/ProcessOwnershipEvidence.js";
@@ -196,9 +197,18 @@ it("keeps Evidence admission with its analysis when a worker is reused", async (
   const firstFile = source("first-budget.mjs", "export const value = 1;");
   const secondFile = source("second-budget.mjs", "export const value = 2;");
   try {
-    const first = await createJavaScriptSourceAnalysis(limits, [firstFile], {
-      scope,
-    });
+    const first = await createJavaScriptSourceAnalysis(
+      limits,
+      [
+        {
+          bytes: firstFile.bytes,
+          rootBytes: semanticModuleRootBytes(firstFile),
+        },
+      ],
+      {
+        scope,
+      },
+    );
     const firstResult = await first.analyze(firstFile, {
       nodes: 100,
       unknowns: 100,
@@ -208,9 +218,18 @@ it("keeps Evidence admission with its analysis when a worker is reused", async (
     const beforeRelease = firstBudget.remainingBytes();
     await first.close();
 
-    const second = await createJavaScriptSourceAnalysis(limits, [secondFile], {
-      scope,
-    });
+    const second = await createJavaScriptSourceAnalysis(
+      limits,
+      [
+        {
+          bytes: secondFile.bytes,
+          rootBytes: semanticModuleRootBytes(secondFile),
+        },
+      ],
+      {
+        scope,
+      },
+    );
     try {
       const secondResult = await second.analyze(secondFile, {
         nodes: 100,
@@ -228,6 +247,36 @@ it("keeps Evidence admission with its analysis when a worker is reused", async (
     }
   } finally {
     await scope.close();
+  }
+});
+
+it("projects the roots of both selected sources through a shared worker", async () => {
+  const files = [
+    source("first.mjs", "export const a = 1;"),
+    source("second-source.mjs", "export const b = 2;"),
+  ];
+  const worker = await createJavaScriptSourceAnalysis(
+    { heapMb: 128, timeoutMs: 30_000 },
+    files.map((file) => ({
+      bytes: file.bytes,
+      rootBytes: semanticModuleRootBytes(file),
+    })),
+  );
+  try {
+    for (const file of files) {
+      const result = await worker.analyze(file, { nodes: 100, unknowns: 100 });
+      if (!result.ok) throw result.error.error;
+      expect(result.value.projection?.roots).toHaveLength(1);
+      expect(result.value.projection?.nodes).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            identity: expect.objectContaining({ module_path: file.path }),
+          }),
+        ]),
+      );
+    }
+  } finally {
+    await worker.close();
   }
 });
 

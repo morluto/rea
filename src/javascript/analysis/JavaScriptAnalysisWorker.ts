@@ -28,8 +28,10 @@ import type {
   JavaScriptEvidenceAdmission,
   JavaScriptSourceAnalysisFailure,
   JavaScriptSourceAnalysisLimits,
+  JavaScriptSourceAdmission,
   JavaScriptRevokedStaticProjection,
 } from "../../domain/javascript/javascriptSourceAnalysis.js";
+import { semanticSourceBudget } from "../../domain/javascript/javascriptSourceAnalysis.js";
 import type { JavaScriptPackageType } from "../../domain/javascript/javascriptSourceParser.js";
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
 import {
@@ -151,6 +153,8 @@ export class JavaScriptAnalysisWorker {
   #sourcesRemaining: number | undefined;
   /** Source bytes of every file not yet analyzed; semantic facts grow with them. */
   #sourceBytesRemaining: number;
+  #sourceRoots: readonly number[] = [];
+  #sourceRootBytesRemaining = 0;
   #evidenceLedger = new JavaScriptEvidenceLedger();
   get evidenceLedger(): JavaScriptEvidenceLedger {
     return this.#evidenceLedger;
@@ -205,7 +209,7 @@ export class JavaScriptAnalysisWorker {
   constructor(
     readonly limits: JavaScriptSourceAnalysisLimits = DEFAULTS,
     readonly launcher: typeof spawnOwnedProviderProcess = spawnOwnedProviderProcess,
-    sources?: number | readonly Pick<JavaScriptArtifactFile, "bytes">[],
+    sources?: number | readonly JavaScriptSourceAdmission[],
     workerCleanup: WorkerCleanupRegistry = processWorkerCleanup,
   ) {
     this.#workerCleanup = workerCleanup;
@@ -237,6 +241,14 @@ export class JavaScriptAnalysisWorker {
       typeof sources === "number"
         ? 0
         : (sources?.reduce((total, { bytes }) => total + bytes, 0) ?? 0);
+    this.#sourceRoots =
+      typeof sources === "number"
+        ? []
+        : (sources?.map(({ rootBytes }) => rootBytes) ?? []);
+    this.#sourceRootBytesRemaining = this.#sourceRoots.reduce(
+      (total, bytes) => total + bytes,
+      0,
+    );
     this.#processMemoryLimitBytes = javaScriptWorkerMemoryLimitBytes(
       limits.heapMb,
     );
@@ -266,7 +278,7 @@ export class JavaScriptAnalysisWorker {
    * stays the one selected at launch; callers must not reuse across limits.
    */
   prepareForAnotherAnalysis(
-    sources: number | readonly Pick<JavaScriptArtifactFile, "bytes">[],
+    sources: number | readonly JavaScriptSourceAdmission[],
   ): boolean {
     if (!this.canReuse()) return false;
     const sourceCount = typeof sources === "number" ? sources : sources.length;
@@ -279,6 +291,14 @@ export class JavaScriptAnalysisWorker {
       typeof sources === "number"
         ? 0
         : sources.reduce((total, { bytes }) => total + bytes, 0);
+    this.#sourceRoots =
+      typeof sources === "number"
+        ? []
+        : sources.map(({ rootBytes }) => rootBytes);
+    this.#sourceRootBytesRemaining = this.#sourceRoots.reduce(
+      (total, bytes) => total + bytes,
+      0,
+    );
     this.#evidenceLedger = new JavaScriptEvidenceLedger();
     this.#estimatedRetainedBytes = 0;
     this.#staticProjectionReservations = [];
@@ -330,6 +350,7 @@ export class JavaScriptAnalysisWorker {
     let projection: JavaScriptSemanticFileProjection | null = null;
     const id = randomUUID();
     const sourceIndex = this.#nextSourceIndex++;
+    this.#sourceRootBytesRemaining -= this.#sourceRoots[sourceIndex] ?? 0;
     this.#applicationProjectionFailure = undefined;
     this.#parentCapacityExhaustion = undefined;
     this.#revokedStaticProjections = [];
@@ -1037,12 +1058,14 @@ export class JavaScriptAnalysisWorker {
     sourceBytesRemaining: number,
     rootBytes: number,
   ): number {
-    const remaining = this.evidenceBudget.remainingBytes();
-    if (sourceBytesRemaining <= bytes) return remaining;
-    const root = Math.min(rootBytes, remaining);
-    return (
-      root + Math.floor(((remaining - root) * bytes) / sourceBytesRemaining)
-    );
+    return semanticSourceBudget({
+      remaining: this.evidenceBudget.remainingBytes(),
+      rootBytes,
+      laterRootBytes: this.#sourceRootBytesRemaining,
+      sourceBytes: bytes,
+      sourceBytesRemaining,
+      laterSources: this.#sourcesRemaining,
+    });
   }
 
   #parentCapacityFailure(
