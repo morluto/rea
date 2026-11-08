@@ -24,7 +24,7 @@ export const READER_RUNNER_SLACK_S = 30;
  */
 export const PYTHON_READER_RUNNER = String.raw`"""REA's reader runner: one task reader, an app's own headless command, run on a private copy of a file.
 
-It takes one JSON argument and prints one JSON line: {"view": ...}, {"absent": true} when the file is not there, or
+It joins its JSON argument chunks and prints one JSON line: {"view": ...}, {"absent": true} when the file is not there, or
 {"error": ...}. The command runs in a temporary folder with a fresh home, without the desktop's display (unless the
 reader asks for it), the session bus or the computer's AGENTENV_ variables, so it reads none of the user's settings,
 cannot hand the file to the running app and holds no control token; it can change only its copy, which goes with the
@@ -186,7 +186,7 @@ def main(arguments: dict) -> int:
 
 
 if __name__ == "__main__":
-    sys.exit(main(json.loads(sys.argv[1])))
+    sys.exit(main(json.loads("".join(sys.argv[1:]))))
 `;
 
 /**
@@ -203,7 +203,7 @@ export const readerCommand = (
   "-I",
   "-c",
   PYTHON_READER_RUNNER,
-  readerArguments(reader, path, work),
+  ...readerArgumentChunks(reader, path, work),
 ];
 
 /** The runner's one argument for a reader, as JSON. */
@@ -223,6 +223,19 @@ export const readerArguments = (
     display: reader.display ?? false,
     ...(work === undefined ? {} : { work }),
   });
+
+/** Keep every argument below Linux's 128 KiB per-string limit, including four-byte UTF-8 characters. */
+const readerArgumentChunks = (
+  reader: DesktopTaskReader,
+  path: string | undefined,
+  work?: string,
+): string[] => {
+  const characters = Array.from(readerArguments(reader, path, work));
+  const chunks: string[] = [];
+  for (let index = 0; index < characters.length; index += 8192)
+    chunks.push(characters.slice(index, index + 8192).join(""));
+  return chunks;
+};
 
 /** The seconds a reader may run. */
 export const readerTimeout = (reader: DesktopTaskReader): number =>
@@ -282,7 +295,7 @@ async def _reader_views(env_url, card):
         raise RuntimeError(f"the computer at {env_url} offers no {EXEC}, which runs the task's readers")
     views = {}
     for reader in READERS:
-        params = {"argv": ["python3", "-I", "-c", READER_RUNNER, reader["arguments"]],
+        params = {"argv": ["python3", "-I", "-c", READER_RUNNER, *reader["arguments"]],
                   "request_id": f"rea-reader-{reader['id']}-{uuid.uuid4().hex}",
                   "timeout_s": reader["timeout_s"] + RUNNER_SLACK_S}
         answer = await protocol.invoke_extension(env_url, card, EXEC, params, method="run",
@@ -330,6 +343,6 @@ RUNNER_SLACK_S = ${String(READER_RUNNER_SLACK_S)}
 #: REA's reader runner, which runs each reader on a private copy of its file in a fresh home.
 READER_RUNNER = ${JSON.stringify(PYTHON_READER_RUNNER)}
 READERS = [
-${readers.map((reader) => `    {"id": ${JSON.stringify(reader.id)}, "arguments": ${JSON.stringify(readerArguments(reader, undefined))}, "timeout_s": ${String(readerTimeout(reader))}},`).join("\n")}
+${readers.map((reader) => `    {"id": ${JSON.stringify(reader.id)}, "arguments": ${JSON.stringify(readerArgumentChunks(reader, undefined))}, "timeout_s": ${String(readerTimeout(reader))}},`).join("\n")}
 ]
 `;

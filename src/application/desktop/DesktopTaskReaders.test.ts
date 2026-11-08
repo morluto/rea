@@ -42,7 +42,10 @@ it("retains a reader process and its files after cleanup fails and retries befor
   ];
   let folder = "";
   const run = vi.fn(async (argv: readonly string[]) => {
-    const args = JSON.parse(argv.at(-1)!) as { id: string; work: string };
+    const args = JSON.parse(argv.slice(4).join("")) as {
+      id: string;
+      work: string;
+    };
     if (args.id === "second") {
       folder = args.work;
       throw commandFailure;

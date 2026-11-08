@@ -96,6 +96,22 @@ it("runs the reader on a private copy of the file in a fresh home, without the d
   await expect(access(dirname(dirname(copy)))).rejects.toThrow();
 });
 
+it("passes maximum-length Unicode stdin through bounded arguments to the real reader", async () => {
+  const { home, app } = await computer();
+  const input = "é".repeat(8190) + "😀" + "é".repeat(57344);
+  const reader = reporting(app, { stdin: input });
+  const command = readerCommand(reader, undefined);
+  expect(Buffer.byteLength(command.slice(4).join(""))).toBeGreaterThan(131072);
+  expect(
+    Math.max(...command.slice(4).map((part) => Buffer.byteLength(part))),
+  ).toBeLessThan(131072);
+  const report = readerAnswerView(await run(home, reader))?.view as Record<
+    string,
+    unknown
+  >;
+  expect(report.stdin).toBe(input);
+});
+
 it("keeps the display for a reader that asks for it, still without the control token", async () => {
   const { home, app } = await computer();
   const report = readerAnswerView(
@@ -202,7 +218,7 @@ it.each([
       await run(home, {
         id: "broken",
         file: NOTE,
-        argv,
+        argv: argv as string[],
         output: output as "json" | "lines",
       }),
     );

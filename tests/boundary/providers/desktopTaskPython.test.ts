@@ -65,7 +65,7 @@ async def get_card(url, **_):
 
 async def invoke_extension(url, card, uri, params=None, timeout=30, verify=True, *, method=None, headers=None):
     execs.append({"url": url, "uri": uri, "method": method, "timeout": timeout, **params})
-    answer = answers[json.loads(params["argv"][-1])["id"]]
+    answer = answers[json.loads("".join(params["argv"][4:]))["id"]]
     stdout = answer if isinstance(answer, str) else "Python noise\n" + json.dumps(answer) + "\n"
     return {"exit_code": 0, "stdout": stdout, "stderr": "", "truncated": False, "timed_out": False}
 
@@ -393,6 +393,15 @@ const READER_CHECKS: DesktopTaskCheck[] = [
     lines: ["layer"],
   },
 ];
+
+it("sends large reader input in the same bounded arguments as the witness", async () => {
+  const reader = { ...READERS[0]!, stdin: "é".repeat(65536) };
+  const output = await runVerifier(READER_CHECKS, [[0, CHECK_VIEWS]], [], {
+    readers: [reader],
+    answers: ANSWERS,
+  });
+  expect(output.execs[0]?.argv).toEqual(readerCommand(reader, undefined));
+});
 
 it("reads each reader's view through the computer's computer-exec and grades it as REA does", async () => {
   const output = await runVerifier(READER_CHECKS, [[0, CHECK_VIEWS]], [], {
