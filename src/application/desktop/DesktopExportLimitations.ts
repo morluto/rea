@@ -6,7 +6,6 @@ import { launchDocumentLimitation } from "../../domain/desktop/appExport.js";
 import {
   heldOpenLimitation,
   leftOutLocksLimitation,
-  leftOutLogsLimitation,
   runtimeSeedsLimitation,
   unownedFoldersLimitation,
 } from "../../domain/desktop/appExportUnowned.js";
@@ -54,7 +53,6 @@ export const exportLimitations = (
   const unowned = unownedFoldersLimitation(plan.unownedFolders);
   const runtime = runtimeSeedsLimitation(plan.runtimeSeeds);
   const locks = leftOutLocksLimitation(plan.leftOutLocks);
-  const logs = leftOutLogsLimitation(plan.leftOutLogs);
   const recovered = recoveryListLimitation(facts.recovered);
   const trashed = trashedFilesLimitation(facts.trashed);
   return [
@@ -68,7 +66,6 @@ export const exportLimitations = (
           `${String(plan.unseededFiles.length)} file(s) under the owned paths existed at the seed but were not retained, so they are not seeded.`,
         ]),
     ...(locks === undefined ? [] : [locks]),
-    ...(logs === undefined ? [] : [logs]),
     ...(recovered === undefined ? [] : [recovered]),
     ...(unowned === undefined ? [] : [unowned]),
     ...(runtime === undefined ? [] : [runtime]),

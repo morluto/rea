@@ -15,9 +15,7 @@ import { holdsFields, isRecordAt } from "./appTaskDraftText.js";
 import {
   attributesOf,
   compactValue,
-  cut,
-  escapeText,
-  startTag,
+  previewWriter,
 } from "./compactValue.js";
 import { pairMembers, pairedAtSeed } from "./memberPairing.js";
 import {
@@ -194,17 +192,34 @@ const leafText = (node: JsonValue): string | undefined => {
 const referenceTag = (
   element: Record<string, JsonValue> & { name: string },
 ) => {
+  const writer = previewWriter(VALUE_LIMITS.chars);
+  if (!writer.startTag(element)) return writer.result();
   const children = isXmlElement(element) ? element.children : [];
+  if (children.length === 0) {
+    writer.push("/>");
+    return writer.result();
+  }
+  if (!writer.push(">")) return writer.result();
   const named = children.find(
     (child) =>
       isXmlElement(child) &&
       /^(?:name|title|label)$/iu.test(localOf(child.name)) &&
       leafText(child) !== undefined,
   );
-  const shown = isXmlElement(named)
-    ? `<${named.name}>${escapeText(leafText(named) ?? "")}</${named.name}>`
-    : "";
-  return `${startTag(element)}${children.length === 0 ? "/>" : `>${shown}…`}`;
+  if (isXmlElement(named)) {
+    if (
+      !writer.push("<") ||
+      !writer.push(named.name) ||
+      !writer.push(">") ||
+      !writer.escaped(leafText(named) ?? "") ||
+      !writer.push("</") ||
+      !writer.push(named.name) ||
+      !writer.push(">")
+    )
+      return writer.result();
+  }
+  writer.push("…");
+  return writer.result();
 };
 
 /** Whether an attribute's name and an element's tag share a stem, as HomeBank's `payee` and `<pay>`. */
@@ -262,7 +277,7 @@ const referencesFrom = (
       ? {
           ...(attribute === undefined ? {} : { attribute }),
           value,
-          element: cut(referenceTag(element), VALUE_LIMITS.chars),
+          element: referenceTag(element),
         }
       : undefined;
   };

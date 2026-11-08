@@ -17,7 +17,6 @@ import {
 import { INSTALL_SCRIPT } from "../../domain/desktop/appExportInstall.js";
 import type { WithheldFile } from "../../domain/desktop/appWithheld.js";
 import {
-  leftOutSeeds,
   trashedFiles,
   runtimeSeeds,
   unownedChangedFolders,
@@ -208,7 +207,8 @@ const planExport = async (
   );
   const electron = application.executable.electron_markers.length > 0;
   const stateFiles = exportedStateFiles(capture, state);
-  const { homePath, files, collisions, paths, isLeftOut } = stateFiles;
+  const { homePath, stateAliases, files, collisions, paths, isLeftOut } =
+    stateFiles;
   const { text: dconf, ...dconfScrub } = seedDconf(
     state,
     context.seed,
@@ -256,12 +256,11 @@ const planExport = async (
     seedFiles: [...seeds.keys()].sort(),
     textSeeds,
     seedModes: seedModes(capture, seeds, files, context.seed),
-    stateAliases: stateFiles.stateAliases,
+    stateAliases,
     unseededFiles: unseeded.filter((file) => !isLeftOut(file)),
-    ...leftOutSeeds(
-      [...locks, ...unseeded.filter(isLeftOut)],
-      stateFiles.isLeftOutLog,
-    ),
+    leftOutLocks: [
+      ...new Set([...locks, ...unseeded.filter(isLeftOut)]),
+    ].sort(),
     unownedFolders: unownedChangedFolders(files, paths, isLeftOut),
     runtimeSeeds: runtimeSeeds([...seeds.keys()]),
     dconf,

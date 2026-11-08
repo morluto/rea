@@ -139,7 +139,6 @@ describe("draftTaskFiles for XML text views", () => {
       }),
     ]);
   });
-
 });
 
 describe("draftTaskFiles for markup boundaries and incomplete XML", () => {
@@ -447,7 +446,23 @@ describe("draftTaskFiles guards of lines with no text of their own", () => {
 });
 
 describe("draftTaskFiles for the app's log beside its journal", () => {
-  it("drafts no check or guard on a log the export leaves out of the seed, and notes a text file that opens like XML but is not", () => {
+  it("drafts a changed unselected conversation history in app state", () => {
+    const [file] = draftOf({
+      ".config/app/history.log": statePath(
+        "application_state",
+        "text",
+        textView("Ada: Hello"),
+        textView("Ada: Hello\nLin: Welcome"),
+      ),
+    });
+    expect(file?.suggested).toContainEqual({
+      kind: "lines_present",
+      file: ".config/app/history.log",
+      lines: ["Lin: Welcome"],
+    });
+  });
+
+  it("drafts an app log and notes a text file that opens like XML but is not", () => {
     const lines = (...text: string[]) => textView(text.join("\n"));
     const files = draftOf({
       ".rednotebook/data/2026-10.txt": statePath(
@@ -474,10 +489,9 @@ describe("draftTaskFiles for the app's log beside its journal", () => {
     });
 
     const byFile = new Map(files.map((file) => [file.file, file]));
-    expect(byFile.get(".rednotebook/rednotebook.log")).toMatchObject({
-      suggested: [],
-      guards: [],
-    });
+    expect(byFile.get(".rednotebook/rednotebook.log")?.suggested).not.toEqual(
+      [],
+    );
     expect(byFile.get(".rednotebook/data/2026-10.txt")?.suggested).not.toEqual(
       [],
     );
