@@ -39,6 +39,7 @@ const homePathOf = (
   home: string,
   workingDirectory: string,
   known: (path: string) => boolean,
+  mapOutside?: (path: string) => string | null,
 ): string | undefined => {
   // An empty value is not a relative path. Resolving it would name the working directory.
   if (argument === "" || argument.startsWith("-")) return undefined;
@@ -54,7 +55,11 @@ const homePathOf = (
     input = parsed.path;
   }
   const path = posix.resolve(workingDirectory, input);
-  return path.startsWith(`${home}/`) ? path.slice(home.length + 1) : undefined;
+  if (path.startsWith(`${home}/`)) return path.slice(home.length + 1);
+  const mapped = mapOutside?.(path);
+  return mapped !== null && mapped !== undefined && known(mapped)
+    ? mapped
+    : undefined;
 };
 
 /**
@@ -78,6 +83,8 @@ export const openSeedDocument = (
     readonly launchDirectory?: string;
     /** A home path the capture holds as a file or a settings directory. */
     readonly isCaptured?: (homePath: string) => boolean;
+    /** The seed spelling of a captured absolute path outside the home. */
+    readonly mapOutside?: (absolutePath: string) => string | null;
   },
 ): { readonly argv: readonly string[]; readonly opens: LaunchDocument } => {
   const { home, exec, documents } = facts;
@@ -98,12 +105,12 @@ export const openSeedDocument = (
       facts.isCaptured?.(seedPath) === true
     );
   };
-  const absoluteSeed = (path: string) => {
+  const absoluteSeed = (path: string, outside = false) => {
     if (!namesCaptured(path)) return undefined;
     const seedPath = spelled(path);
     // A relative file was resolved in the captured directory. Once that
     // directory moves, the same relative word would name a different file.
-    return seedPath === path && !directoryMoved
+    return seedPath === path && !directoryMoved && !outside
       ? undefined
       : `${home}/${seedPath}`;
   };
@@ -115,10 +122,11 @@ export const openSeedDocument = (
         home,
         facts.workingDirectory,
         namesCaptured,
+        facts.mapOutside,
       );
       if (path === undefined || !namesCaptured(path)) return value;
       const seedPath = spelled(path);
-      if (seedPath === path) return value;
+      if (seedPath === path && url.path.startsWith(`${home}/`)) return value;
       const encoded = pathToFileURL(`${home}/${seedPath}`, {
         windows: false,
       }).pathname.split("/");
@@ -147,8 +155,17 @@ export const openSeedDocument = (
       const suffix = /[?#].*$/su.exec(value)?.[0] ?? "";
       return `${prefix}${encoded.join("/")}${suffix}`;
     }
-    const path = homePathOf(value, home, facts.workingDirectory, namesCaptured);
-    return path === undefined ? value : (absoluteSeed(path) ?? value);
+    const path = homePathOf(
+      value,
+      home,
+      facts.workingDirectory,
+      namesCaptured,
+      facts.mapOutside,
+    );
+    const outside = !posix
+      .resolve(facts.workingDirectory, value)
+      .startsWith(`${home}/`);
+    return path === undefined ? value : (absoluteSeed(path, outside) ?? value);
   };
   const retarget = (argument: string) => {
     const equals = argument.indexOf("=");
@@ -181,7 +198,13 @@ export const openSeedDocument = (
         argument.startsWith("-") && equals > 0
           ? argument.slice(equals + 1)
           : argument;
-      return homePathOf(value, home, facts.workingDirectory, facts.isDocument);
+      return homePathOf(
+        value,
+        home,
+        facts.workingDirectory,
+        namesCaptured,
+        facts.mapOutside,
+      );
     })
     .map((path) => (path === undefined ? undefined : spelled(path)));
   if (named.some((path) => path !== undefined && facts.isDocument(path)))
