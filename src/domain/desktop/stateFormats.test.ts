@@ -41,6 +41,18 @@ describe("detectStateFormat", () => {
     ).toBe("binary");
   });
 
+  it("reads Unicode XML names in unnamed formats and rejects malformed XML", () => {
+    for (const [text, format] of [
+      ['<地图 名称="甲"><节点/></地图>', "xml"],
+      ['<!DOCTYPE 地图 SYSTEM "map.dtd"><地图/>', "xml"],
+      ["<地图><节点></地图>", "text"],
+      ["<ada@example.test>\nBuy milk", "text"],
+    ] as const) {
+      expect(detectStateFormat("map.dat", bytes(text))).toBe(format);
+      expect(textSyntaxFormat("map.dat", text)).toBe(format);
+    }
+  });
+
   it("tells JSON, XML, key files and plain text apart", () => {
     expect(detectStateFormat("/h/a.json", bytes('{"a":1}'))).toBe("json");
     expect(detectStateFormat("/h/notes", bytes("{not json"))).toBe("text");
