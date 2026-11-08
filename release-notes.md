@@ -2,7 +2,7 @@
 ---
 
 
-## [6.9.0](https://github.com/morluto/rea/compare/rea-agents-6.8.0...rea-agents-6.9.0) (2026-11-07)
+## [6.9.0](https://github.com/morluto/rea/compare/rea-agents-6.8.0...rea-agents-6.9.0) (2026-11-08)
 
 
 ### ⚠ BREAKING CHANGES
@@ -146,6 +146,7 @@
 * **native:** retain LLDB source coordinates and verify Pascal calls ([#2800](https://github.com/morluto/rea/issues/2800)) ([3e8a5f7](https://github.com/morluto/rea/commit/3e8a5f76d058b2dc687252a4709228f47de54d71))
 * **native:** retry failed directory decompiles independently ([#8811](https://github.com/morluto/rea/issues/8811)) ([e47bb15](https://github.com/morluto/rea/commit/e47bb152c2ee64d4b082792678f064552807d1d5))
 * **native:** select retained batch decompile results through analysis views ([#8629](https://github.com/morluto/rea/issues/8629)) ([dec8d2d](https://github.com/morluto/rea/commit/dec8d2d58898c71abb17a37c338935f32bd14210))
+* page recorded Evidence arrays ([#8863](https://github.com/morluto/rea/issues/8863)) ([b40b0b8](https://github.com/morluto/rea/commit/b40b0b8665aed3961273b3f0062c7ea69be4b894))
 * **plugins:** make Claude Code and Codex installs self-contained ([#7514](https://github.com/morluto/rea/issues/7514)) ([0cd7ef4](https://github.com/morluto/rea/commit/0cd7ef456bf960da265e04b341e82a24b1e377d5))
 * **process:** add a non-executing dry run to capture_process_scenario ([#8469](https://github.com/morluto/rea/issues/8469)) ([6c08320](https://github.com/morluto/rea/commit/6c08320654818fb2f83969d63819d143d0532d90))
 * **python:** qualify a recognized 3.14/3.15 pyc header ([#8927](https://github.com/morluto/rea/issues/8927)) ([fe9797b](https://github.com/morluto/rea/commit/fe9797b48734e0742dc703893a16615809af6092))
@@ -548,6 +549,7 @@
 * **ghidra:** preserve configured seed path traversal ([01d6a95](https://github.com/morluto/rea/commit/01d6a95fd7df6065562b8f087082f5d2062cb468))
 * **ghidra:** preserve facts in inventory searches ([#8376](https://github.com/morluto/rea/issues/8376)) ([c06b536](https://github.com/morluto/rea/commit/c06b53644bbd85b19f91b98a8d218f641976b0b0))
 * **ghidra:** preserve project access failures ([6979c58](https://github.com/morluto/rea/commit/6979c589b06dcef6525e125c2c61ea2735715285))
+* **ghidra:** qualify selected project call coverage ([#8391](https://github.com/morluto/rea/issues/8391)) ([1a0e2c7](https://github.com/morluto/rea/commit/1a0e2c77f208bfb8d102dc68d75af3cc6f1a5a75))
 * **ghidra:** reject uncommitted handshake reports before the first query ([#8630](https://github.com/morluto/rea/issues/8630)) ([aba56df](https://github.com/morluto/rea/commit/aba56df689380f5bcd66e4858b778ba1e3115e90)), closes [#8612](https://github.com/morluto/rea/issues/8612)
 * **ghidra:** report a missing existing-project program as a configuration error ([#8222](https://github.com/morluto/rea/issues/8222)) ([1dc97d8](https://github.com/morluto/rea/commit/1dc97d8cece2eb68c0e72feb56c7a2821f23237c))
 * **ghidra:** report restricted-host temp write denial on Windows ([#8889](https://github.com/morluto/rea/issues/8889)) ([08a923f](https://github.com/morluto/rea/commit/08a923f722a23fd1773f5a4cbe03d1c5edba1fbd))
