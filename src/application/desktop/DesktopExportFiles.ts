@@ -116,8 +116,8 @@ const shippedSeed = (
 };
 
 /**
- * The view of each text seed the scrub rewrites, as the bundle ships it, for
- * a task's checks on the seed: the computer starts from these bytes.
+ * The view of each rewritten text seed, including a formerly unreadable gzip
+ * seed, as the bundle ships it: the computer starts from these bytes.
  */
 export const shippedSeedViews = async (
   content: RetainedContent,
@@ -128,7 +128,11 @@ export const shippedSeedViews = async (
   const views = new Map<string, TaskFileView>();
   for (const copy of copies) {
     const seed = copy.seed;
-    if (seed === undefined || !isTextualFormat(seed.format)) continue;
+    if (
+      seed === undefined ||
+      (seed.format !== null && !isTextualFormat(seed.format))
+    )
+      continue;
     const bytes = await retainedBytes(content, copy, signal);
     const shipped = shippedSeed(bytes, seed, identity).bytes;
     if (shipped === undefined) continue;

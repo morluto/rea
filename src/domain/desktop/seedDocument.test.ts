@@ -123,7 +123,6 @@ describe("openSeedDocument", () => {
 
     expect(new Set(reasons).size).toBe(reasons.length);
   });
-
 });
 
 describe("openSeedDocument captured document spelling", () => {

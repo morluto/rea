@@ -7,7 +7,6 @@ import {
   isVolatileValue,
 } from "./appTaskDraftNoise.js";
 import { valueEqualsCheck } from "./appTaskDraftScalars.js";
-import { addedTextChecks } from "./appTaskDraftTextAdded.js";
 import { rankAttributes } from "./attributeRank.js";
 import type { DesktopStateDifference } from "./stateChanges.js";
 import { elementText, isXmlElement, resolvePointer } from "./viewPointer.js";
@@ -455,9 +454,8 @@ interface TextContext {
 /**
  * The check of an element's whole text: a decimal held as the element's one
  * text node, as a spreadsheet keeps a cell's number, by its value within a
- * tolerance, so another spelling of the number still passes; text that grew
- * by whole lines by those lines, with guards of what it kept; any other text
- * whole.
+ * tolerance, so another spelling of the number still passes; other text
+ * is compared whole.
  */
 export const wholeTextCheck = (
   file: string,
@@ -466,17 +464,12 @@ export const wholeTextCheck = (
   before: string | undefined,
 ): Pick<Placed, "check" | "guards"> => {
   const { value } = now;
-  // The element's joined text, not its first text node. A later save may split `437.8` into `437.` and a run holding `8`. When that text is a decimal, compare the number within the usual tolerance, so `437.80` and a long float still match.
   const numeric = valueEqualsCheck(file, pointer, value, before);
   if ("tolerance" in numeric) return { check: numeric, guards: [] };
-  return (
-    (before === undefined
-      ? undefined
-      : addedTextChecks(file, pointer, before, value)) ?? {
-      check: { kind: "text_equals", file, pointer, value },
-      guards: [],
-    }
-  );
+  return {
+    check: { kind: "text_equals", file, pointer, value },
+    guards: [],
+  };
 };
 
 /** The element a candidate names in the final view, whole, at the pointer `name` gives it. */

@@ -11,6 +11,95 @@ const file = (physical: string, role: StatePath["role"]): StatePath =>
   ({ path: physical, role }) as StatePath;
 
 describe("planLaunch captured paths", () => {
+  it.each([
+    ["/mnt/data/books.db", "/mnt/data/books.db"],
+    ["file:///mnt/data/books.db?mode=edit#page", "/mnt/data/books.db"],
+  ])("retargets selected outside-home argument %s", (argument, physical) => {
+    const capture = {
+      host: { home: HOME },
+      application: {
+        argv: ["editor", argument],
+        working_directory: HOME,
+        desktop_entry: { exec: "editor %U" },
+        state_directories: [],
+      },
+      state: {
+        state_directories: [],
+        selected_paths: [
+          { path: `${HOME}/Documents/books.db`, physical, kind: "file" },
+        ],
+      },
+    } as unknown as DesktopApplicationCapture;
+    const files = new Map([["Documents/books.db", file(physical, "document")]]);
+    const seeds = new Map([
+      ["Documents/books.db", { sha256: "a".repeat(64), format: "text" }],
+    ]);
+    const launch = planLaunch(capture, false, seeds, files);
+    expect(launch.opens).toEqual({ kind: "captured" });
+    expect(launch.command.join(" ")).toContain("Documents/books.db");
+    expect(launch.command.join(" ")).not.toContain("/mnt/data/books.db");
+    if (argument.startsWith("file:"))
+      expect(launch.command.join(" ")).toContain("?mode=edit#page");
+  });
+
+  it("leaves an unrelated outside-home argument untouched", () => {
+    const capture = {
+      host: { home: HOME },
+      application: {
+        argv: ["editor", "/mnt/other/unselected.db"],
+        working_directory: HOME,
+        desktop_entry: { exec: "editor %U" },
+        state_directories: [],
+      },
+      state: {
+        state_directories: [],
+        selected_paths: [
+          {
+            path: `${HOME}/Documents/books.db`,
+            physical: "/mnt/data/books.db",
+            kind: "file",
+          },
+        ],
+      },
+    } as unknown as DesktopApplicationCapture;
+    const files = new Map([
+      ["Documents/books.db", file("/mnt/data/books.db", "document")],
+    ]);
+    const command = planLaunch(capture, false, new Map(), files).command.join(
+      " ",
+    );
+    expect(command).toContain("/mnt/other/unselected.db");
+  });
+});
+
+describe("planLaunch URL and argument spelling", () => {
+  it("keeps an encoded filename when a file URL has repeated separators", () => {
+    const physical = `${HOME}/data/A budget.svg`;
+    const capture = {
+      host: { home: HOME },
+      application: {
+        argv: [
+          "editor",
+          `file://localhost${HOME}//data//%41%20budget.svg?mode=edit#page`,
+        ],
+        working_directory: HOME,
+        desktop_entry: { exec: "editor %U" },
+        state_directories: [],
+      },
+      state: {
+        state_directories: [],
+        selected_paths: [{ path: `${HOME}/Documents/A budget.svg`, physical }],
+      },
+    } as unknown as DesktopApplicationCapture;
+    const files = new Map([
+      ["Documents/A budget.svg", file(physical, "document")],
+    ]);
+    const command = planLaunch(capture, false, new Map(), files).command.join(
+      " ",
+    );
+    expect(command).toContain("/Documents/%41%20budget.svg?mode=edit#page");
+  });
+
   it("opens the selected document spelling when its captured file URL names the physical path", () => {
     const physical = `${HOME}/data/A budget.svg`;
     const capture = {
