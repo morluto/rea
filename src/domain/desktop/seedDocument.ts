@@ -1,5 +1,5 @@
 import { posix } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 import {
   desktopArgumentIndex,
@@ -107,24 +107,56 @@ export const openSeedDocument = (
       ? undefined
       : `${home}/${seedPath}`;
   };
-  // A file URL keeps its form; the export rewrites its home at launch.
-  const homePath = (value: string) =>
-    capturedFileUrl(value) === undefined
-      ? homePathOf(value, home, facts.workingDirectory, namesCaptured)
-      : undefined;
+  const retargetValue = (value: string): string => {
+    const url = capturedFileUrl(value);
+    if (url !== undefined) {
+      const path = homePathOf(
+        value,
+        home,
+        facts.workingDirectory,
+        namesCaptured,
+      );
+      if (path === undefined || !namesCaptured(path)) return value;
+      const seedPath = spelled(path);
+      if (seedPath === path) return value;
+      const encoded = pathToFileURL(`${home}/${seedPath}`, {
+        windows: false,
+      }).pathname.split("/");
+      const original = url.url.pathname.split("/");
+      const oldParts = url.path.split("/");
+      const newParts = `${home}/${seedPath}`.split("/");
+      // Preserve the caller's encoded spelling for unchanged path segments.
+      let first = 0;
+      while (first < oldParts.length && oldParts[first] === newParts[first]) {
+        encoded[first] = original[first] ?? encoded[first]!;
+        first += 1;
+      }
+      let oldEnd = oldParts.length - 1;
+      let newEnd = newParts.length - 1;
+      while (
+        oldEnd >= first &&
+        newEnd >= first &&
+        oldParts[oldEnd] === newParts[newEnd]
+      ) {
+        encoded[newEnd] = original[oldEnd] ?? encoded[newEnd]!;
+        oldEnd -= 1;
+        newEnd -= 1;
+      }
+      const prefix =
+        /^file:(?:\/\/(?:localhost)?)?/iu.exec(value)?.[0] ?? "file://";
+      const suffix = /[?#].*$/su.exec(value)?.[0] ?? "";
+      return `${prefix}${encoded.join("/")}${suffix}`;
+    }
+    const path = homePathOf(value, home, facts.workingDirectory, namesCaptured);
+    return path === undefined ? value : (absoluteSeed(path) ?? value);
+  };
   const retarget = (argument: string) => {
     const equals = argument.indexOf("=");
     if (argument.startsWith("-") && equals > 0) {
       const value = argument.slice(equals + 1);
-      const path = homePath(value);
-      const absolute = path === undefined ? undefined : absoluteSeed(path);
-      return absolute === undefined
-        ? argument
-        : `${argument.slice(0, equals + 1)}${absolute}`;
+      return `${argument.slice(0, equals + 1)}${retargetValue(value)}`;
     }
-    const path = homePath(argument);
-    if (path === undefined) return argument;
-    return absoluteSeed(path) ?? argument;
+    return retargetValue(argument);
   };
   const command = unwrapDesktopCommand(argv);
   const firstArgument = desktopArgumentIndex(argv);
@@ -132,11 +164,7 @@ export const openSeedDocument = (
     if (!/^[A-Za-z_][A-Za-z0-9_]*=/u.test(argument)) return argument;
     const split = argument.indexOf("=");
     const value = argument.slice(split + 1);
-    const path = homePath(value);
-    const absolute = path === undefined ? undefined : absoluteSeed(path);
-    return absolute === undefined
-      ? argument
-      : `${argument.slice(0, split + 1)}${absolute}`;
+    return `${argument.slice(0, split + 1)}${retargetValue(value)}`;
   };
   const argvSpelled = argv.map((argument, index) => {
     if (index === 0 || (command.kind === "direct" && index === command.index))
