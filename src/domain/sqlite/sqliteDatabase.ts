@@ -241,7 +241,9 @@ export const sqliteDatabaseSchema = z
         rows.returned_rows > rows.row_limit ||
         rows.values.some((row) => row.length !== rows.columns.length) ||
         rows.next_row_offset !==
-          (rows.truncated ? rows.row_offset + rows.returned_rows : null))
+          (rows.truncated && rows.order !== "unspecified"
+            ? rows.row_offset + rows.returned_rows
+            : null))
     )
       context.addIssue({
         code: "custom",

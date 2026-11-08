@@ -1213,6 +1213,37 @@ it.each(["UTF-8", "UTF-16le", "UTF-16be"] as const)(
   },
 );
 
+it("returns the first sample of a truncated rowid-shadowing table without a next offset", async () => {
+  const workspace = await createTestWorkspace("rea-sqlite-shadowed-");
+  onTestFinished(() => removeTestWorkspace(workspace.root));
+  const path = workspace.path("shadowed.db");
+  const writer = new DatabaseSync(path);
+  writer.exec(
+    `CREATE TABLE shadowed(rowid TEXT, _rowid_ TEXT, oid TEXT);
+     INSERT INTO shadowed VALUES ('a', 'a', 'a'), ('b', 'b', 'b');`,
+  );
+  writer.close();
+  const provider = createProvider();
+  onTestFinished(() => provider.close());
+  const result = await provider.inspect({
+    path,
+    table: "shadowed",
+    row_limit: 1,
+  });
+  if (!result.ok) throw result.error;
+  expect(result.value.result).toMatchObject({
+    rows: {
+      table: "shadowed",
+      order: "unspecified",
+      row_limit: 1,
+      returned_rows: 1,
+      truncated: true,
+      row_offset: 0,
+      next_row_offset: null,
+    },
+  });
+});
+
 it("retains an unavailable virtual module definition without executing it", async () => {
   const workspace = await createTestWorkspace("rea-sqlite-virtual-");
   onTestFinished(() => removeTestWorkspace(workspace.root));
