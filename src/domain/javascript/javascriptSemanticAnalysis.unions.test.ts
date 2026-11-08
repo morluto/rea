@@ -456,6 +456,15 @@ describe("semantic primitive allocation and binding reuse", () => {
 describe("primitive candidate sampling past the candidate budget", () => {
   const candidates = (count: number) =>
     Array.from({ length: count }, (_, index) => `candidate-${String(index)}`);
+  // A 200-leaf conditional chain stays under the expression-depth budget; two
+  // of them merged at the top give a sampled union with a 402-candidate scope.
+  const chain = (prefix: string, count: number) => {
+    let expression = JSON.stringify(`${prefix}${String(count)}`);
+    for (let index = count - 1; index >= 0; index -= 1)
+      expression = `(choice${prefix}${String(index)} ? ${JSON.stringify(`${prefix}${String(index)}`)} : ${expression})`;
+    return expression;
+  };
+  const sampledScopeExpression = `(pick ? ${chain("a", 200)} : ${chain("b", 200)})`;
 
   it("retains a deterministic sample with provenance instead of dropping to unknown", () => {
     const value = semanticPrimitiveSet(candidates(300));
@@ -490,17 +499,9 @@ describe("primitive candidate sampling past the candidate budget", () => {
   });
 
   it("does not record a resource limit when analysis returns a sampled union", () => {
-    // Two shallow conditional chains stay below SEMANTIC_EXPRESSION_DEPTH_LIMIT
-    // (256); merging them at the top exceeds the 256-candidate budget.
-    const chain = (prefix: string, count: number) => {
-      let expression = JSON.stringify(`${prefix}${String(count)}`);
-      for (let index = count - 1; index >= 0; index -= 1)
-        expression = `(choice${prefix}${String(index)} ? ${JSON.stringify(`${prefix}${String(index)}`)} : ${expression})`;
-      return expression;
-    };
     const seenCount = 2 * 201;
     const ir = analyzeJavaScriptSemantics(
-      `const answer = (pick ? ${chain("a", 200)} : ${chain("b", 200)});`,
+      `const answer = ${sampledScopeExpression};`,
     );
     const value = topLevelBinding(ir, "answer").value;
     expect(value.status).toBe("union");
@@ -536,6 +537,67 @@ describe("primitive candidate sampling past the candidate budget", () => {
           candidate.endsWith("_post"),
       ),
     ).toBe(true);
+  });
+
+  it("does not let a sampled union decide a conditional branch", () => {
+    // Every retained sample value is truthy, but omitted candidates could be
+    // falsy, so both branches must survive.
+    const value = valueOf(`${sampledScopeExpression} ? "x" : "y"`);
+    expect(value).toEqual({ status: "union", values: ["x", "y"] });
+  });
+
+  it("keeps sampled provenance when a unary collapses the sample", () => {
+    const value = valueOf(`!${sampledScopeExpression}`);
+    expect(value).toMatchObject({
+      status: "literal",
+      value: false,
+      sampled: { method: "systematic-candidate-stride-v1", seenCount: 402 },
+    });
+  });
+
+  it("keeps honest scope accounting across repeated sampled interpolations", () => {
+    const pairs = (prefix: string) =>
+      Array.from(
+        { length: 9 },
+        (_, index) =>
+          `(choice${prefix}${String(index)} ? "${prefix}${String(index)}" : "${prefix}x${String(index)}")`,
+      ).join(" + ");
+    // Two sampled interpolations: 2^9 * 2^9 = 262144 observed candidates.
+    const value = valueOf("`${" + pairs("a") + "}_${" + pairs("b") + "}`");
+    expect(value.status).toBe("union");
+    if (value.status !== "union") throw new Error("Expected sampled union");
+    expect(value.values).toHaveLength(256);
+    expect(value.sampled).toEqual({
+      method: "systematic-candidate-stride-v1",
+      seenCount: 262_144,
+    });
+  });
+
+  it("rejects nonfinite sampled sums like the exact path", () => {
+    // Seventeen distinct finite magnitudes per side give 289 pairs, so the
+    // addition samples its product; every sum overflows to Infinity.
+    const numbers = (prefix: string) => {
+      let expression = "1.16e308";
+      for (let index = 15; index >= 0; index -= 1)
+        expression = `(choice${prefix}${String(index)} ? ${(1 + index / 100).toFixed(2)}e308 : ${expression})`;
+      return expression;
+    };
+    const value = valueOf(`${numbers("l")} + ${numbers("r")}`);
+    expect(value.status).toBe("unknown");
+    expect(value).toMatchObject({
+      reason: expect.stringMatching(/Nonfinite/i),
+    });
+  });
+
+  it("bounds sampled template output before retaining it", () => {
+    // The static prefix alone sits just under the byte budget; one combined
+    // sampled string exceeds it, so no sampled evidence is retained.
+    const prefix = "p".repeat(174_762);
+    const value = valueOf("`" + prefix + "${" + sampledScopeExpression + "}`");
+    expect(value).toMatchObject({
+      status: "unknown",
+      resourceLimit: "primitive-bytes",
+    });
   });
 });
 
