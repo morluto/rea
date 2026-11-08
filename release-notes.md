@@ -306,6 +306,7 @@
 * **ci:** align tests with current evidence contracts ([ec34109](https://github.com/morluto/rea/commit/ec3410998b70290847f930538e57d0af0ac1bffb))
 * **ci:** await website worker tests and format Wrangler config ([9ebbe67](https://github.com/morluto/rea/commit/9ebbe67e05af08b567e215340da993c08dae378f))
 * **ci:** consolidate shared timer limit export ([ebfef27](https://github.com/morluto/rea/commit/ebfef27b4682ed6ed47843bad641a6200bc1942b))
+* **ci:** consume owned command failure output in verifiers ([#9334](https://github.com/morluto/rea/issues/9334)) ([c818ca9](https://github.com/morluto/rea/commit/c818ca9042dae02a8e572c546aa95ee5767a26fc))
 * **ci:** enforce architecture guards before dependency setup ([#8027](https://github.com/morluto/rea/issues/8027)) ([cac6e06](https://github.com/morluto/rea/commit/cac6e0613e314238999ce4cc0249107ae936e8d3))
 * **ci:** include hidden VitePress configuration in CodeQL ([#8486](https://github.com/morluto/rea/issues/8486)) ([e5e0dc5](https://github.com/morluto/rea/commit/e5e0dc5542f6a63b790881ac906dc9fcd6d46659))
 * **ci:** own source-map captures and honor browser startup budget ([9031adf](https://github.com/morluto/rea/commit/9031adf0b06cd2f02f4ef813d2e97a51375c3dad))
