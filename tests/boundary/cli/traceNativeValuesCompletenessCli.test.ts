@@ -1,4 +1,4 @@
-import { writeFile } from "node:fs/promises";
+import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { Cli } from "incur";
 import pino from "pino";
@@ -25,6 +25,7 @@ import { parseConfig } from "../../../src/config/parseConfig.js";
 import { AnalysisCapabilityUnavailableError } from "../../../src/domain/analysisErrorCore.js";
 import { createAnalysisProfile } from "../../../src/domain/analysisProfile.js";
 import { parseEvidence } from "../../../src/domain/evidence.js";
+import { parseEvidenceBundle } from "../../../src/domain/evidenceBundle.js";
 import { nativeValueTraceSchema } from "../../../src/domain/native/nativeValueTrace.js";
 import { ProviderCleanupError } from "../../../src/domain/providerCleanupError.js";
 import { err, ok } from "../../../src/domain/result.js";
@@ -45,6 +46,7 @@ const effects = {
 const serveTraceCli = async (
   port: AnalysisOperationPort,
   close: AnalysisClient["close"] = async () => ok(null),
+  cachePolicy: "live" | "snapshot" = "live",
 ) => {
   const directory = await createTestTempDirectory("rea-value-trace-cli-");
   const path = join(directory, "fixture.hop");
@@ -58,7 +60,7 @@ const serveTraceCli = async (
           operation,
           available: true,
           reason: null,
-          cachePolicy: "live",
+          cachePolicy,
           limitations: [],
           effects,
         }),
@@ -162,6 +164,59 @@ it("reports the CLI last page and its observed node budget separately", async ()
     address: null,
     reason: "Node budget reached",
   });
+});
+
+it("reuses eligible native value observations and exports their original Evidence", async () => {
+  const directory = await createTestTempDirectory("rea-trace-cli-snapshot-");
+  const snapshot = join(directory, "analysis.json");
+  const bundle = join(directory, "replayed.json");
+  const { port, reads } = failingValueTraceReads(
+    valueTraceDiamond({ sessionSubject: true }).port,
+    {},
+  );
+  const run = await serveTraceCli(port, undefined, "snapshot");
+  const selection = ["--snapshot", snapshot, "--json"];
+  const fresh = await run(selection);
+  expect(fresh.output).toMatchObject({ operation: "trace_native_values" });
+  const original = nativeValueTraceSchema.parse(
+    parseEvidence(fresh.output).normalized_result,
+  );
+  expect(reads).toEqual(VALUE_TRACE_DIAMOND_READS);
+  reads.length = 0;
+
+  const replay = await run([
+    ...selection,
+    "--limit",
+    "3",
+    "--evidence_output",
+    bundle,
+  ]);
+  const replayedEvidence = parseEvidence(replay.output);
+  const replayed = nativeValueTraceSchema.parse(
+    replayedEvidence.normalized_result,
+  );
+  expect(replayed.procedures).toEqual(original.procedures);
+  expect(replayedEvidence.limitations).toEqual(
+    expect.arrayContaining([expect.stringContaining("snapshot")]),
+  );
+  expect(reads).not.toContain("analyze_function:0x1000");
+  const exported = parseEvidenceBundle(
+    JSON.parse(await readFile(bundle, "utf8")),
+  );
+  expect(exported.records.map((record) => record.evidence_id)).toEqual(
+    expect.arrayContaining(
+      original.procedures.map((procedure) => procedure.evidence_id),
+    ),
+  );
+
+  reads.length = 0;
+  await writeFile(fresh.path, "different synthetic analysis database");
+  const mismatch = await run(selection);
+  expect(mismatch.output).toMatchObject({
+    code: "evidence_integrity_mismatch",
+    details: { binding_mismatch: { target: expect.any(Object) } },
+  });
+  expect(reads).toEqual([]);
 });
 
 it.each([

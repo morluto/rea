@@ -534,10 +534,17 @@ observation's identity; the trace also reports that replay occurred. Older
 cached value traces are not replayed under the revised workflow profile, while
 their historical Evidence remains available.
 
-The one-shot CLI accepts `--evidence_output <new-path>` to save the trace and
-the transitive source Evidence closure named by its links. The destination is
-never overwritten. `--detail summary` requires `--evidence_output`; the bundle
-still retains the complete trace and source Evidence.
+Use `--snapshot <path>` to load and update a compatible local analysis snapshot
+when running the one-shot CLI. REA can reuse eligible source observations from
+that snapshot and preserve their original Evidence IDs. See
+[analysis snapshot selection](../../getting-started/cli.md#save-and-reuse-analysis-snapshots)
+for compatibility and replay rules.
+
+Use `--evidence_output <new-path>` to save the trace and the transitive source
+Evidence closure named by its links. Give the bundle a separate destination
+from the snapshot. REA creates the bundle only at a new path. `--detail summary`
+requires `--evidence_output`; the bundle still retains the complete trace and
+source Evidence.
 
 Within one value trace, each exact procedure selector is attempted at most once,
 including failed analyses. A failed seed returns the provider's original typed

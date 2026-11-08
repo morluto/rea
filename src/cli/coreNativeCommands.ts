@@ -288,6 +288,7 @@ export const registerCoreNativeCommands = (
       limit: cliDecimalField(nativeValueTraceInputSchema.shape.limit).describe(
         "Maximum nodes on this page",
       ),
+      snapshot: snapshotSelectionOption,
       ...analysisEvidenceDeliveryOptions,
       ...nativeOpenOptionFields,
     }),
