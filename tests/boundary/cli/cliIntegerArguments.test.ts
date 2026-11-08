@@ -267,6 +267,12 @@ describe("pyc and BEAM limit options", () => {
       "maxStringLiterals",
       ["", "0x10", "1e2"],
     ],
+    [
+      "inspect-rust-binary",
+      "--max-inferred-crates",
+      "maxInferredCrates",
+      ["0x10", "1e2", "0"],
+    ],
   ] as const) {
     cliTest.for(values)(
       `rejects %j as ${command} ${flag}`,

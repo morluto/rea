@@ -247,15 +247,24 @@ explicit path or endpoint and do not need it.
   other versions are unsupported. Optional matching `binary_path` enables static native addresses and type references; query `method_addresses` with indices or addresses/states, preserving every shared-body method and both artifact identities. Without a linked binary native counts remain unknown. Byte-pattern fallback is inferred; no runtime behavior or same-build pairing is proved. See the
   [IL2CPP metadata guide](https://github.com/morluto/rea/blob/main/docs/il2cpp-metadata.md).
 - Embedded cargo-auditable Rust dependency metadata: `inspect_rust_binary`
-  with the explicit local ELF, PE, or thin Mach-O file. This built-in
+  with the explicit local ELF, PE, or thin Mach-O file (or universal Mach-O with
+  `architecture`). This built-in
   target-free inspection requires no Rust installation or disassembler. Preserve
   package order, dependency indices, and the section file range. A missing
   `.dep-v0` section is null metadata, not proof the binary has no dependencies.
   A rustc commit hash is an inference from a read-only `/rustc/<40-hex>/` path.
+  When `.dep-v0` or `/rustc/<40-hex>/` paths are absent, pass
+  `include_inferred_crates: true` (optional `max_inferred_crates`, CLI
+  `--include-inferred-crates` / `--max-inferred-crates`) to recover inferred
+  Cargo registry/git source-path crates (`inferred_crates`) and `rustc` version
+  banners (`rustc_versions`) from read-only and ELF `.comment` bytes without
+  claiming lockfile completeness.
   For selected crates, use `view: {collection: "packages", names: [...],
-  fields: ["name", "version", "source"]}` on the first call; explicitly include
+  fields: ["name", "version", "source"]}` (or `collection: "inferred_crates"`
+  with `include_inferred_crates: true`) on the first call; explicitly include
   `dependencies` for direct index references. Use `detail: "summary"` for counts
-  and ranges, or retained `inspect_analysis_view` Rust package/edge pages for
+  and ranges, or retained `inspect_analysis_view` Rust `packages`, `edges`, or
+  `inferred_crates` pages for
   subsequent filters. Keep the complete parent Evidence accessible; CLI compact
   delivery requires `--evidence_output`.
   See the

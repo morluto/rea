@@ -114,13 +114,22 @@ See [IL2CPP metadata](https://github.com/morluto/rea/blob/main/docs/il2cpp-metad
 Use `inspect_rust_binary` for an explicit local ELF, PE, or Mach-O (universal
 files need `architecture`) when
 the question concerns the cargo-auditable crate list embedded in `.dep-v0`
-(Mach-O: `__DATA,.dep-v0`). No `open_binary`, Rust installation, or target
+(Mach-O: `__DATA,.dep-v0`) or surviving Cargo crate/toolchain fingerprints. No
+`open_binary`, Rust installation, or target
 execution is required. The CLI equivalent is `inspect-rust-binary PATH`.
 Preserve artifact SHA-256, package order, dependency indices, and the section
 file range. A missing section is null metadata, not proof the binary has no
 dependencies. An omitted package kind stays null. A rustc commit hash is
 inferred from a read-only `/rustc/<40-hex>/` path and does not by itself
-identify the compiler. See [Rust binaries](https://github.com/morluto/rea/blob/main/docs/rust-binaries.md).
+identify the compiler. When `.dep-v0` is absent or `/rustc/<40-hex>/` was
+remapped, opt in with `include_inferred_crates: true` (CLI
+`--include-inferred-crates`, optional `max_inferred_crates` /
+`--max-inferred-crates` `1..10000`, default `1000`) to recover deduplicated Cargo
+registry and git checkout crates (`inferred_crates`) plus `rustc` version
+banners (`rustc_versions`) from read-only and ELF `.comment` sections, and page
+them through `inspect_analysis_view` `kind: "rust"`, `collection: "inferred_crates"`.
+Path-inferred crates reflect panic/debug path strings rather than a complete
+lockfile graph. See [Rust binaries](https://github.com/morluto/rea/blob/main/docs/rust-binaries.md).
 
 ## PE Authenticode certificate tables
 

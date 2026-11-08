@@ -59,9 +59,16 @@ export const createRustImage = (options: {
   readonly payload?: Buffer;
   readonly omitSection?: boolean;
   readonly includeRustc?: boolean;
+  readonly readOnlyBytes?: Buffer;
+  readonly elfComment?: Buffer;
 }): Buffer => {
   const payload = options.payload ?? rustDependencyPayload();
-  const rustc = options.includeRustc === false ? null : Buffer.from(RUSTC_PATH);
+  const rustc =
+    options.readOnlyBytes !== undefined
+      ? options.readOnlyBytes
+      : options.includeRustc === false
+        ? null
+        : Buffer.from(RUSTC_PATH);
   const bytes = Buffer.alloc(4096);
   const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
   const little = (offset: number, value: number, width: 16 | 32 | 64) => {
@@ -75,6 +82,7 @@ export const createRustImage = (options: {
     payload,
     omitSection: options.omitSection === true,
     rustc,
+    elfComment: options.elfComment ?? null,
   };
   if (options.format === "elf") writeElf(image);
   else if (options.format === "pe") writePe(image);
@@ -100,6 +108,7 @@ interface RustImageWrite {
   readonly payload: Buffer;
   readonly omitSection: boolean;
   readonly rustc: Buffer | null;
+  readonly elfComment: Buffer | null;
 }
 
 const writeElf = ({
@@ -108,6 +117,7 @@ const writeElf = ({
   payload,
   omitSection,
   rustc,
+  elfComment,
 }: RustImageWrite): void => {
   bytes.set([0x7f, 0x45, 0x4c, 0x46, 2, 1, 1]);
   little(16, 2, 16);
@@ -119,17 +129,28 @@ const writeElf = ({
   little(54, 56, 16);
   little(56, 1, 16);
   little(58, 64, 16);
-  const names = omitSection
-    ? Buffer.from("\0.shstrtab\0.rodata\0")
-    : Buffer.from("\0.shstrtab\0.dep-v0\0.rodata\0");
-  little(60, rustc === null && omitSection ? 0 : omitSection ? 3 : 4, 16);
-  little(62, rustc === null && omitSection ? 0 : 1, 16);
+  const baseNames = omitSection
+    ? "\0.shstrtab\0.rodata\0"
+    : "\0.shstrtab\0.dep-v0\0.rodata\0";
+  const commentNameOffset = baseNames.length;
+  const names = Buffer.from(
+    elfComment === null ? baseNames : `${baseNames}.comment\0`,
+  );
+  const noSections = rustc === null && omitSection && elfComment === null;
+  const sectionCount = noSections
+    ? 0
+    : 2 +
+      Number(!omitSection) +
+      Number(rustc !== null) +
+      Number(elfComment !== null);
+  little(60, sectionCount, 16);
+  little(62, noSections ? 0 : 1, 16);
   little(128, 1, 32);
   little(132, 6, 32);
   little(144, 0x400000, 64);
   little(160, bytes.length, 64);
   little(168, bytes.length, 64);
-  if (rustc === null && omitSection) return;
+  if (noSections) return;
   names.copy(bytes, 768);
   const shstr = 320;
   little(shstr, 1, 32);
@@ -154,6 +175,15 @@ const writeElf = ({
     little(next + 24, 2048, 64);
     little(next + 32, rustc.length, 64);
     rustc.copy(bytes, 2048);
+    next += 64;
+  }
+  if (elfComment !== null) {
+    little(next, commentNameOffset, 32);
+    little(next + 4, 1, 32); // SHT_PROGBITS
+    little(next + 8, 0x30, 64); // SHF_MERGE | SHF_STRINGS (non-alloc)
+    little(next + 24, 3328, 64);
+    little(next + 32, elfComment.length, 64);
+    elfComment.copy(bytes, 3328);
   }
 };
 
@@ -377,4 +407,43 @@ export const createRustImageWithGoSection = (
     }
   }
   return bytes;
+};
+
+/** Build a two-slice (`x86_64` at 4096, `arm64` at 8192) universal Mach-O image. */
+export const createUniversalRustMachoImage = (options: {
+  readonly x86_64ReadOnly: Buffer;
+  readonly arm64ReadOnly: Buffer;
+}): Buffer => {
+  const x64Slice = createRustImage({
+    format: "macho",
+    omitSection: true,
+    readOnlyBytes: options.x86_64ReadOnly,
+  });
+  x64Slice.writeUInt32LE(0x01000007, 4); // CPU_TYPE_X86_64
+  x64Slice.writeUInt32LE(3, 8);
+  const arm64Slice = createRustImage({
+    format: "macho",
+    omitSection: true,
+    readOnlyBytes: options.arm64ReadOnly,
+  });
+
+  const universal = Buffer.alloc(12288);
+  universal.writeUInt32BE(0xcafebabe, 0);
+  universal.writeUInt32BE(2, 4);
+
+  universal.writeUInt32BE(0x01000007, 8);
+  universal.writeUInt32BE(3, 12);
+  universal.writeUInt32BE(4096, 16);
+  universal.writeUInt32BE(4096, 20);
+  universal.writeUInt32BE(12, 24);
+  x64Slice.copy(universal, 4096);
+
+  universal.writeUInt32BE(0x0100000c, 28);
+  universal.writeUInt32BE(0, 32);
+  universal.writeUInt32BE(8192, 36);
+  universal.writeUInt32BE(4096, 40);
+  universal.writeUInt32BE(12, 44);
+  arm64Slice.copy(universal, 8192);
+
+  return universal;
 };

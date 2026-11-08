@@ -5,6 +5,7 @@ import {
   rustBinarySchema,
   rustAuditableMetadataSchema,
   rustcCommitSchema,
+  rustMaxInferredCratesSchema,
   type RustBinary,
 } from "../rust/rustBinary.js";
 import { err, ok } from "../result.js";
@@ -52,12 +53,32 @@ export const rustBinarySummarySchema = z.strictObject({
     .omit({ hashes: true })
     .extend({ hashes_count: count })
     .nullable(),
+  inferred_crates: z
+    .strictObject({
+      evidence_kind: z.literal("inferred"),
+      available_count: count,
+      discovered_count: count,
+      registry_count: count,
+      git_count: count,
+      max_items: rustMaxInferredCratesSchema,
+      truncated: z.boolean(),
+    })
+    .exactOptional(),
+  rustc_versions: z
+    .strictObject({
+      evidence_kind: z.literal("inferred"),
+      available_count: count,
+      discovered_count: count,
+      truncated: z.boolean(),
+    })
+    .exactOptional(),
 });
 export const rustBinaryViewContextSchema = z.strictObject({
   source_coverage: z.strictObject({
     auditable_metadata_available: z.boolean(),
     embedded_records: z.enum(["complete", "unknown"]),
     runtime_dependencies: z.literal("unknown"),
+    inferred_crates: z.enum(["not-requested", "complete", "truncated"]),
   }),
 });
 
@@ -70,6 +91,8 @@ const summarize = (
     artifact,
     auditable_metadata: metadata,
     rustc_commit: compiler,
+    inferred_crates: crates,
+    rustc_versions: versions,
   } = report;
   const section =
     metadata === null
@@ -88,6 +111,12 @@ const summarize = (
             cyclic_packages: metadata.cyclic_dependency_indices.length,
           },
         };
+  let registryCount = 0;
+  let gitCount = 0;
+  for (const item of crates?.items ?? []) {
+    if (item.source_kind === "registry") registryCount += 1;
+    else gitCount += 1;
+  }
   return {
     format: report.format,
     architecture: report.architecture,
@@ -105,6 +134,29 @@ const summarize = (
             evidence_kind: compiler.evidence_kind,
             hashes_count: compiler.hashes.length,
           },
+    ...(crates === undefined
+      ? {}
+      : {
+          inferred_crates: {
+            evidence_kind: crates.evidence_kind,
+            available_count: crates.items.length,
+            discovered_count: crates.discovered_count,
+            registry_count: registryCount,
+            git_count: gitCount,
+            max_items: crates.max_items,
+            truncated: crates.truncated,
+          },
+        }),
+    ...(versions === undefined
+      ? {}
+      : {
+          rustc_versions: {
+            evidence_kind: versions.evidence_kind,
+            available_count: versions.items.length,
+            discovered_count: versions.discovered_count,
+            truncated: versions.truncated,
+          },
+        }),
   };
 };
 
@@ -148,6 +200,8 @@ export const projectRustBinaryView = (
       ]),
     );
   const metadata = report.auditable_metadata;
+  const inferredCrates = report.inferred_crates;
+  const rustcVersions = report.rustc_versions;
   const unknown =
     "Embedded dependency records do not authenticate build provenance or establish complete runtime dependencies or target behavior.";
   const shared = {
@@ -160,6 +214,12 @@ export const projectRustBinaryView = (
       embedded_records:
         metadata === null ? ("unknown" as const) : ("complete" as const),
       runtime_dependencies: "unknown" as const,
+      inferred_crates:
+        inferredCrates === undefined
+          ? ("not-requested" as const)
+          : inferredCrates.truncated
+            ? ("truncated" as const)
+            : ("complete" as const),
     },
     limitations: boundedViewMessages(
       [...parent.limitations, ...report.limitations],
@@ -174,6 +234,16 @@ export const projectRustBinaryView = (
               "No cargo-auditable metadata was observed; missing metadata does not establish an empty dependency set.",
             ]
           : []),
+        ...(inferredCrates === undefined
+          ? []
+          : [
+              "Path-inferred Cargo crates reflect panic and debug path strings in read-only data rather than a complete lockfile dependency graph.",
+              ...(inferredCrates.truncated || rustcVersions?.truncated === true
+                ? [
+                    "Inferred Cargo crates or rustc version banners were truncated by item or scan budgets; additional candidates remain uninspected.",
+                  ]
+                : []),
+            ]),
       ],
       parent.evidenceId,
       "unknowns",
@@ -193,6 +263,63 @@ export const projectRustBinaryView = (
     view.indices === undefined ? undefined : new Set(view.indices);
   const fields =
     view.fields === undefined ? undefined : new Set<string>(view.fields);
+  if (view.collection === "inferred_crates") {
+    if (inferredCrates === undefined)
+      return err(
+        analysisViewInputError([
+          {
+            path: ["view", "collection"],
+            reason: "invalid_value",
+            message:
+              "Parent Rust Evidence did not collect inferred_crates; re-run inspect_rust_binary with include_inferred_crates: true.",
+          },
+        ]),
+      );
+    const names = view.names === undefined ? undefined : new Set(view.names);
+    const exactName = view.name;
+    const needle = view.contains;
+    const sourceKind = view.source_kind;
+    const selected = selectViewRows(
+      inferredCrates.items,
+      view,
+      (row, index) =>
+        (indices?.has(index) ?? true) &&
+        (exactName === undefined || row.name === exactName) &&
+        (names?.has(row.name) ?? true) &&
+        (needle === undefined || row.name.includes(needle)) &&
+        (sourceKind === undefined || row.source_kind === sourceKind),
+      (row, index) => ({
+        index,
+        ...((fields?.has("name") ?? true) && { name: row.name }),
+        ...((fields?.has("version") ?? true) && { version: row.version }),
+        ...((fields?.has("source_kind") ?? true) && {
+          source_kind: row.source_kind,
+        }),
+        ...((fields?.has("registry_index") ?? true) && {
+          registry_index: row.registry_index,
+        }),
+        ...((fields?.has("revision") ?? true) && { revision: row.revision }),
+        ...((fields?.has("first_file_offset") ?? true) && {
+          first_file_offset: row.first_file_offset,
+        }),
+        ...((fields?.has("reference_count") ?? true) && {
+          reference_count: row.reference_count,
+        }),
+      }),
+    );
+    return ok({
+      kind: "rust" as const,
+      view,
+      ...shared,
+      rust: summary,
+      page: { collection: "inferred_crates" as const, rows: selected.rows },
+      coverage: pageViewCoverage(
+        view.offset,
+        selected.rows.length,
+        selected.total,
+      ),
+    });
+  }
   if (view.collection === "packages") {
     const names = view.names === undefined ? undefined : new Set(view.names);
     const versions =

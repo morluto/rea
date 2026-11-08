@@ -13,6 +13,7 @@ import {
   createRustHashOverflowImage,
   createRustImage,
   createRustImageWithGoSection,
+  createUniversalRustMachoImage,
   RUSTC_HASH,
   rustDependencyPayload,
 } from "../fixtures/rust/image.js";
@@ -713,4 +714,260 @@ cliTest(
       },
     });
   },
+);
+
+cliTest(
+  "recovers opt-in Cargo crate and rustc banner fingerprints across ELF, PE, and thin Mach-O with CLI/MCP parity",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-rust-cli-inferred-");
+    const { client, call } = await connectLocalToolsMcp();
+
+    const rodataCrates = Buffer.from(
+      [
+        "/cargo/registry/src/index.crates.io-6f17d22bba15001f/tokio-util-0.7.13/src/codec/framed.rs",
+        "/.cargo/registry/src/index.crates.io-6f17d22bba15001f/futures-channel-0.3.31/src/mpsc/mod.rs",
+        "C:\\workspace\\.cargo\\registry\\src\\index.crates.io-6f17d22bba15001f\\x86_64-0.15.2\\src\\lib.rs",
+        "\\cargo\\registry\\src\\github.com-1ecc6299db9ec823\\rand_chacha-0.3.1\\src\\guts.rs",
+        "/cargo/registry/src/index.crates.io-6f17d22bba15001f/serde-1.0.217-alpha.1/src/lib.rs",
+        "/cargo/git/checkouts/quinn-0123456789abcdef/a1b2c3d/src/endpoint.rs",
+        "rustc 1.84.0 (9fc6b4312 2025-01-07)",
+      ].join("\0") + "\0",
+      "latin1",
+    );
+
+    for (const format of ["elf", "pe", "macho"] as const) {
+      const path = join(root, `stripped.${format}`);
+      await writeFile(
+        path,
+        createRustImage({
+          format,
+          omitSection: true,
+          readOnlyBytes: rodataCrates,
+          ...(format === "elf"
+            ? {
+                elfComment: Buffer.from(
+                  "\0rustc version 1.85.0 (4d91de4e4 2025-02-17)\0",
+                  "latin1",
+                ),
+              }
+            : {}),
+        }),
+      );
+
+      const defaultCli = await cli.run({
+        arguments: ["inspect-rust-binary", path, "--json"],
+      });
+      expect(defaultCli.exitCode, defaultCli.stderr).toBe(0);
+      const defaultEvidence = toolContract(
+        "inspect_rust_binary",
+      ).outputSchema.parse(defaultCli.json);
+      expect(defaultEvidence.parameters).toEqual({ path });
+      expect(defaultEvidence.normalized_result).not.toHaveProperty(
+        "inferred_crates",
+      );
+      expect(defaultEvidence.normalized_result).not.toHaveProperty(
+        "rustc_versions",
+      );
+      const defaultMcp = await call("inspect_rust_binary", { path });
+      expect(defaultMcp.isError, JSON.stringify(defaultMcp)).not.toBe(true);
+      expectCliMcpEvidenceParity(
+        defaultEvidence,
+        defaultMcp.structuredContent,
+        path,
+      );
+
+      const optedCli = await cli.run({
+        arguments: [
+          "inspect-rust-binary",
+          path,
+          "--include-inferred-crates",
+          "--json",
+        ],
+      });
+      expect(optedCli.exitCode, optedCli.stderr).toBe(0);
+      const optedEvidence = toolContract(
+        "inspect_rust_binary",
+      ).outputSchema.parse(optedCli.json);
+      const report = rustBinarySchema.parse(optedEvidence.normalized_result);
+      expect(
+        report.inferred_crates?.items.map(({ name, version, source_kind }) => ({
+          name,
+          version,
+          source_kind,
+        })),
+      ).toEqual([
+        { name: "tokio-util", version: "0.7.13", source_kind: "registry" },
+        {
+          name: "futures-channel",
+          version: "0.3.31",
+          source_kind: "registry",
+        },
+        { name: "x86_64", version: "0.15.2", source_kind: "registry" },
+        { name: "rand_chacha", version: "0.3.1", source_kind: "registry" },
+        {
+          name: "serde",
+          version: "1.0.217-alpha.1",
+          source_kind: "registry",
+        },
+        { name: "quinn", version: null, source_kind: "git" },
+      ]);
+      expect(report.rustc_versions?.items.map((item) => item.version)).toEqual(
+        format === "elf" ? ["1.84.0", "1.85.0"] : ["1.84.0"],
+      );
+      const optedMcp = await call("inspect_rust_binary", {
+        path,
+        include_inferred_crates: true,
+      });
+      expect(optedMcp.isError, JSON.stringify(optedMcp)).not.toBe(true);
+      expectCliMcpEvidenceParity(
+        optedEvidence,
+        optedMcp.structuredContent,
+        path,
+      );
+    }
+
+    await client.ping();
+  },
+  60000,
+);
+
+cliTest(
+  "rebases universal Mach-O slice offsets, supports compact inferred_crates views, and enforces option dependencies",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-rust-cli-universal-");
+    const { client, call } = await connectLocalToolsMcp();
+
+    const universalPath = join(root, "universal.macho");
+    await writeFile(
+      universalPath,
+      createUniversalRustMachoImage({
+        x86_64ReadOnly: Buffer.from(
+          "/cargo/registry/src/index.crates.io-6f17d22bba15001f/x86_only-1.0.0/src/lib.rs\0",
+          "latin1",
+        ),
+        arm64ReadOnly: Buffer.from(
+          "/cargo/registry/src/index.crates.io-6f17d22bba15001f/tokio-util-0.7.13/src/lib.rs\0rustc 1.85.0 (4d91de4e4 2025-02-17)\0",
+          "latin1",
+        ),
+      }),
+    );
+    const universalCli = await cli.run({
+      arguments: [
+        "inspect-rust-binary",
+        universalPath,
+        "--architecture",
+        "arm64",
+        "--include-inferred-crates",
+        "--json",
+      ],
+    });
+    expect(universalCli.exitCode, universalCli.stderr).toBe(0);
+    const universalEvidence = toolContract(
+      "inspect_rust_binary",
+    ).outputSchema.parse(universalCli.json);
+    const universalReport = rustBinarySchema.parse(
+      universalEvidence.normalized_result,
+    );
+    expect(universalReport.selected_slice).toMatchObject({
+      kind: "macho-selected-image-v1",
+      container: "fat",
+      offset: 8192,
+      byte_length: 4096,
+      cpu_type: 0x0100000c,
+    });
+    expect(universalReport.inferred_crates?.items).toEqual([
+      {
+        name: "tokio-util",
+        version: "0.7.13",
+        source_kind: "registry",
+        registry_index: "index.crates.io-6f17d22bba15001f",
+        revision: null,
+        first_file_offset: 8192 + 2049,
+        reference_count: 1,
+      },
+    ]);
+    expect(
+      universalReport.rustc_versions?.items[0]?.first_file_offset,
+    ).toBeGreaterThan(8192 + 2048);
+    const universalMcp = await call("inspect_rust_binary", {
+      path: universalPath,
+      architecture: "arm64",
+      include_inferred_crates: true,
+    });
+    expect(universalMcp.isError, JSON.stringify(universalMcp)).not.toBe(true);
+    expectCliMcpEvidenceParity(
+      universalEvidence,
+      universalMcp.structuredContent,
+      universalPath,
+    );
+
+    const elfPath = join(root, "stripped.elf");
+    await writeFile(
+      elfPath,
+      createRustImage({
+        format: "elf",
+        omitSection: true,
+        readOnlyBytes: Buffer.from(
+          [
+            "/cargo/registry/src/index.crates.io-6f17d22bba15001f/tokio-util-0.7.13/src/lib.rs",
+            "/cargo/registry/src/index.crates.io-6f17d22bba15001f/serde-1.0.217/src/lib.rs",
+            "/cargo/registry/src/index.crates.io-6f17d22bba15001f/quinn-0.11.6/src/lib.rs",
+          ].join("\0") + "\0",
+          "latin1",
+        ),
+      }),
+    );
+    const bundleOutput = join(root, "truncated-bundle.json");
+    const compactCli = await cli.run({
+      arguments: [
+        "inspect-rust-binary",
+        elfPath,
+        "--include-inferred-crates",
+        "--max-inferred-crates",
+        "2",
+        "--view",
+        '{"collection":"inferred_crates","contains":"tokio","fields":["name","version"]}',
+        "--evidence_output",
+        bundleOutput,
+        "--json",
+      ],
+    });
+    expect(compactCli.exitCode, compactCli.stderr).toBe(0);
+    expect(compactCli.json).toMatchObject({
+      summary: {
+        normalized_result: {
+          kind: "rust",
+          source_coverage: { inferred_crates: "truncated" },
+          rust: {
+            inferred_crates: {
+              available_count: 2,
+              discovered_count: 3,
+              max_items: 2,
+              truncated: true,
+            },
+          },
+          page: {
+            collection: "inferred_crates",
+            rows: [{ index: 0, name: "tokio-util", version: "0.7.13" }],
+          },
+        },
+      },
+    });
+
+    const missingFlag = await cli.run({
+      arguments: [
+        "inspect-rust-binary",
+        join(root, "never-created"),
+        "--max-inferred-crates",
+        "5",
+        "--json",
+      ],
+    });
+    expect(missingFlag.exitCode).toBe(1);
+    expect(missingFlag.json).toMatchObject({ code: "invalid_request" });
+    expect(JSON.stringify(missingFlag.json)).not.toContain("ENOENT");
+
+    await client.ping();
+  },
+  60000,
 );

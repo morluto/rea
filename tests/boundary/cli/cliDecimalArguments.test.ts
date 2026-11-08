@@ -64,6 +64,7 @@ const REQUIRED_NUMERIC_FIELDS = [
   "compare-web-screenshots options.channelThreshold",
   "inspect-byte-entropy options.blockSize",
   "inspect-elf-notes options.maxFileBytes",
+  "inspect-rust-binary options.maxInferredCrates",
   "inspect-web-page options.observationMs",
   "observe-web-execution options.observationMs",
   "extract-firmware options.maxDepth",

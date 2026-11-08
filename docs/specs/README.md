@@ -15,3 +15,5 @@ for the specification lifecycle, roadmap granularity and producer-owned contract
 
 - [Go static string-header literal recovery](native/go-string-literals/spec.md)
   ([plan](native/go-string-literals/plan.md), [tasks](native/go-string-literals/tasks.md))
+- [Rust inferred crate and rustc version fingerprints](native/rust-inferred-crates/spec.md)
+  ([plan](native/rust-inferred-crates/plan.md), [tasks](native/rust-inferred-crates/tasks.md))
