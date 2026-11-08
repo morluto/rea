@@ -244,8 +244,7 @@ const readEvents = (
         stride >= ATTR_SAMPLE_PERIOD_OFFSET + 8
           ? read.u64(bytes, cursor + ATTR_SAMPLE_PERIOD_OFFSET)
           : null,
-      sample_freq:
-        flags === null ? null : (flags & ATTR_FLAG_FREQ) !== 0,
+      sample_freq: flags === null ? null : (flags & ATTR_FLAG_FREQ) !== 0,
       attr_bytes: declared,
       ids_section: ids,
       ids: idsList,
