@@ -26,6 +26,56 @@ const {
 afterEach(cleanup);
 
 it.skipIf(process.platform === "win32")(
+  "releases failed-start capacity after automatic cleanup recovery",
+  async () => {
+    const failed = createInjectedProcess({
+      startup: (control) => control.stdinError(),
+    });
+    const replacement = createInjectedProcess();
+    let launches = 0;
+    let allowCleanup = false;
+    const manager = createManager(
+      { REA_RIZIN_COMMAND: "injected-rizin" },
+      {
+        maxSessions: 1,
+        spawnProcess: (options) =>
+          (++launches === 1 ? failed : replacement).spawnProcess(options),
+        stopProcess: async (session) => {
+          if (!allowCleanup)
+            return { status: "incomplete", reason: "startup cleanup pending" };
+          if (session.exited) return { status: "already_exited" };
+          (launches === 1 ? failed : replacement).control.exit();
+          return { status: "stopped" };
+        },
+      },
+    );
+    const input = {
+      path: "/tmp/fixture.bin",
+      inferior_tty: await rizinTestInferiorTty(),
+    };
+    try {
+      const first = await manager.start(input);
+      expect(first.ok).toBe(false);
+      if (first.ok) throw new Error("Expected failed startup");
+      expect(first.error.cleanupIncomplete).toBe(true);
+      expect((await manager.start(input)).ok).toBe(false);
+      allowCleanup = true;
+      expect(await manager.retryCleanupFailures()).toEqual({
+        ok: true,
+        value: null,
+      });
+      expect(first.error.cleanupIncomplete).toBe(false);
+      const retried = await manager.start(input);
+      expect(retried.ok).toBe(true);
+      if (retried.ok)
+        expect((await manager.close(retried.value.session_id)).ok).toBe(true);
+    } finally {
+      allowCleanup = true;
+    }
+  },
+);
+
+it.skipIf(process.platform === "win32")(
   "rejects unsupported, pre-cancelled, and failed startup requests",
   async () => {
     const windows = createManager({}, { platform: "win32" });

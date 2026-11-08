@@ -182,9 +182,7 @@ it.skipIf(process.platform === "win32")(
         name: "rizin_debug_command",
         arguments: { session_id: sessionId, command: "noisy" },
       });
-      expect(parseMcpToolError(first).error.code).toBe(
-        "capability_unavailable",
-      );
+      expect(parseMcpToolError(first).error.code).toBe("cleanup_incomplete");
       expect(stopAttempts).toBe(1);
 
       const later = await client.callTool({

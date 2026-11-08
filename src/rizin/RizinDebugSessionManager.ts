@@ -214,6 +214,7 @@ interface RizinDebugSession {
   frameChunks: Buffer[];
   bufferedFrameBytes: number;
   ready: boolean;
+  startupSucceeded: boolean;
   exited: boolean;
   commandTail: Promise<void>;
   protocolError: string | undefined;
@@ -550,6 +551,7 @@ export class RizinDebugSessionManager {
       frameChunks: [],
       bufferedFrameBytes: 0,
       ready: false,
+      startupSucceeded: false,
       exited: false,
       commandTail: Promise.resolve(),
       protocolError: undefined,
@@ -593,6 +595,7 @@ export class RizinDebugSessionManager {
       if (session.protocolError !== undefined)
         throw new Error(session.protocolError);
       session.ready = true;
+      session.startupSucceeded = true;
       return ok({ session_id: id, backend: input.backend ?? null });
     } catch (caught) {
       const protocolFailure = session.protocolError;
@@ -1080,7 +1083,8 @@ export class RizinDebugSessionManager {
               stopped.reason,
             ),
         );
-      if (session.closedReason === undefined) this.#sessions.delete(session.id);
+      if (!session.startupSucceeded || session.closedReason === undefined)
+        this.#sessions.delete(session.id);
     }
     return ok(null);
   }
