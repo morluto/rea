@@ -238,7 +238,7 @@ const createManager = (
   environment: Readonly<NodeJS.ProcessEnv> = {},
 ): RizinDebugSessionManager => {
   const manager = new RizinDebugSessionManager(
-    { ...process.env, ...environment, REA_RIZIN_COMMAND: launcher },
+    { PATH: process.env.PATH, ...environment, REA_RIZIN_COMMAND: launcher },
     options,
   );
   onTestFinished(() => manager.closeAll().catch(() => undefined));

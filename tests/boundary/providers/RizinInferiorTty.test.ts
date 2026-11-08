@@ -568,7 +568,7 @@ process.stdin.on("data", (chunk) => {
   let providerStderr = "";
   manager = new RizinDebugSessionManager(
     {
-      ...process.env,
+      PATH: process.env.PATH,
       ...(options.maxCommandOutputBytes === undefined
         ? {}
         : {
