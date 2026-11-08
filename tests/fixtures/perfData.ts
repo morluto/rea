@@ -6,8 +6,8 @@
 export const PERF_ATTR_BYTES = 128;
 /** `attr_size` is `sizeof(perf_event_attr) + sizeof(perf_file_section)`. */
 export const PERF_STRIDE = PERF_ATTR_BYTES + 16;
-export const PERF_HEADER_BYTES = 0x70;
-export const PERF_HEADER_BYTES_WITHOUT_FEATURES = 0x68;
+export const PERF_HEADER_BYTES = 0x68;
+export const PERF_HEADER_BYTES_WITHOUT_FEATURES = 0x48;
 export const PERF_ATTR_FLAG_FREQ = 0x400;
 
 export interface PerfEntry {

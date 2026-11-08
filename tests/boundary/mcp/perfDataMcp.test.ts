@@ -26,7 +26,12 @@ it.each(["full", "compact"] as const)(
     const path = join(root, "perf.data");
     await writeFile(path, bytes);
     const harness = await createApplicationMcpHarness({
-      serverOptions: { environment: {} },
+      serverOptions: {
+        environment: {
+          REA_MCP_INPUT_SCHEMA_PROFILE: profile,
+          REA_MCP_OUTPUT_SCHEMA_PROFILE: profile,
+        },
+      },
     });
     try {
       const listed = await harness.client.listTools();

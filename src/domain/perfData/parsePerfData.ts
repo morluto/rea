@@ -19,9 +19,9 @@ const MAGIC = "PERFILE2";
 /** Offset of `size`; the header extent is the writer's own `sizeof(header)`. */
 const HEADER_SIZE_FIELD = 0x08;
 /** `sizeof(perf_file_header)` up to (not including) `adds_features`. */
-const HEADER_BYTES_WITHOUT_FEATURES = 0x68;
+const HEADER_BYTES_WITHOUT_FEATURES = 0x48;
 /** `sizeof(perf_file_header)` with a 256-bit feature bitmap. */
-const HEADER_BYTES_WITH_FEATURES = 0x70;
+const HEADER_BYTES_WITH_FEATURES = 0x68;
 const ATTR_SIZE_FIELD = 0x10;
 const ATTRS_SECTION_FIELD = 0x18;
 const DATA_SECTION_FIELD = 0x28;
