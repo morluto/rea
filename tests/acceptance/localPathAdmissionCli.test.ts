@@ -27,6 +27,7 @@ const fileCommands = [
   "inspect-rust-binary",
   "inspect-gpu-code-objects",
   "inspect-il2cpp-metadata",
+  "inspect-native-data-type",
 ] as const;
 
 cliTest(
