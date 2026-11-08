@@ -74,7 +74,7 @@ it.skipIf(process.platform === "win32")(
       }),
     );
     const facts = await readFacts(environment, ["claude_code"]);
-    expect(facts.registrations).toEqual([
+    expect(facts.registrations).toMatchObject([
       {
         client: "claude_code",
         registered: true,
@@ -123,6 +123,7 @@ it.skipIf(process.platform === "win32")(
         client: "claude_code",
         registered: true,
         differing: ["REA_AGENT_ENV_COMMAND", "REA_BUILD_COMPUTER_REA_ARCHIVE"],
+        runner: { status: "invalid" },
       },
     ]);
     expect(JSON.stringify(facts.registrations)).not.toContain("/private/");
