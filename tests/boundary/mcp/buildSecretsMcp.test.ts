@@ -257,14 +257,14 @@ it("preserves unmarked token-shaped data in seeded UTF-16 and gzip files", async
     arguments: { computer_id: id, task: TASK, directory },
   });
   expect(refused.isError, JSON.stringify(refused)).not.toBe(true);
-  expect(
-    await readFile(join(directory, "envs/notes/seed/Documents/credential.txt")),
-  ).toEqual(bytes);
-  expect(
-    await readFile(
-      join(directory, "envs/notes/seed/Documents/credential.txt.gz"),
-    ),
-  ).toEqual(gzipSync(bytes));
+  const plain = await readFile(
+    join(directory, "envs/notes/seed/Documents/credential.txt"),
+  );
+  const compressed = await readFile(
+    join(directory, "envs/notes/seed/Documents/credential.txt.gz"),
+  );
+  expect(plain.equals(bytes)).toBe(true);
+  expect(compressed.equals(gzipSync(bytes))).toBe(true);
 });
 
 it("refuses a gzip file that expands past what REA checks for known secrets", async () => {
