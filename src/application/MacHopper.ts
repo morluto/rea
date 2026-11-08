@@ -293,11 +293,14 @@ export const installMacHopper = async (
         "darwin",
       );
       let openFailure: string | undefined;
-      try {
-        await host.openApplication(destination);
-      } catch (cause: unknown) {
-        openFailure = failureMessage(cause);
-      }
+      if (options.signal?.aborted === true)
+        openFailure = "Setup was cancelled before Hopper was opened";
+      else
+        try {
+          await host.openApplication(destination);
+        } catch (cause: unknown) {
+          openFailure = failureMessage(cause);
+        }
       return {
         status: "installed",
         launcherPath,
