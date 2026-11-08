@@ -1295,6 +1295,48 @@ const readSourceMap = (
   }
 };
 
+/**
+ * A script role says how a member is loaded, not what its bytes are. A `.map`
+ * or script target whose text parses as a source map is read as one, so a
+ * page that loads `main.map` as a script cannot hide the sources it ships.
+ */
+const scriptHoldsMap = (
+  state: ScanState,
+  member: MemberView,
+  text: string,
+): boolean => {
+  if (!isJavaScriptMember(member)) return false;
+  if (
+    !member.logical.toLowerCase().endsWith(".map") &&
+    !state.scriptTargets.has(memberLocationKey(member.location))
+  )
+    return false;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(sourceMapJsonText(text));
+  } catch {
+    return false;
+  }
+  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed))
+    return false;
+  return (
+    "version" in parsed &&
+    ("mappings" in parsed || "sources" in parsed || "sections" in parsed)
+  );
+};
+
+/** Read a script member's bytes as the source map they hold. */
+const readScriptAsMap = (
+  state: ScanState,
+  member: MemberView,
+  bytes: Buffer,
+): void => {
+  const { hasSlot } = chargeMapRead(state);
+  if (hasSlot && bytes.length <= MAX_RELEASE_EXPOSURE_SOURCE_MAP_BYTES)
+    readSourceMap(state, member, bytes);
+  else state.skippedMaps += 1;
+};
+
 const examineTextMember = async (
   state: ScanState,
   member: MemberView,
@@ -1329,6 +1371,8 @@ const examineTextMember = async (
     scanText(state, member, loaded.bytes.length, text);
     if (holdsScripts(member)) {
       if (text === null) state.skippedMaps += 1;
+      else if (scriptHoldsMap(state, member, text.text))
+        readScriptAsMap(state, member, loaded.bytes);
       else {
         if (isJavaScriptMember(member))
           examineInlineMaps(state, member, text.text, member.logical);

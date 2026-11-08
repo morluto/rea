@@ -3629,6 +3629,27 @@ describe("ReleaseExposureReader script roles over a .map name", () => {
     expect(sourceMapSourcesStatus(scanned)).toBe("exposed");
     expect(scanned.debug_companions).toEqual({ paths: [], skipped: 0 });
   });
+
+  it("reads a .map script target whose bytes are a source map as a map", async () => {
+    const root = await createTestTempDirectory("rea-release-exposure-html-");
+    await writeFile(
+      join(root, "index.html"),
+      '<script src="main.map"></script>',
+    );
+    await writeFile(
+      join(root, "main.map"),
+      JSON.stringify({
+        version: 3,
+        sources: ["src/app.ts"],
+        sourcesContent: ["export {};"],
+        mappings: "",
+      }),
+    );
+    const scanned = await inspect(root);
+    expect(scanned.source_maps).toMatchObject({ embedded: 1, skipped: 0 });
+    expect(sourceMapSourcesStatus(scanned)).toBe("exposed");
+    expect(scanned.debug_companions).toEqual({ paths: [], skipped: 0 });
+  });
 });
 
 describe("ReleaseExposureReader HTML script references", () => {
