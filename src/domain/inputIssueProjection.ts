@@ -3,7 +3,10 @@ import {
   AnalysisInputError,
   type AnalysisInputIssue,
 } from "./analysisErrorCore.js";
-import { knownArgumentMistakeGuidance } from "./inputArgumentGuidance.js";
+import {
+  knownArgumentMistakeGuidance,
+  knownViewMistakeGuidance,
+} from "./inputArgumentGuidance.js";
 
 const isRootArgument = (path: readonly unknown[]): boolean =>
   path.length === 0 || (path.length === 1 && path[0] === "input");
@@ -169,6 +172,14 @@ const chargeProjection = (
     charge(cost);
   }
   charge(6 * issue.message.length);
+  const viewGuidance = knownViewMistakeGuidance(
+    operation,
+    input,
+    issue.path.flatMap((part) =>
+      typeof part === "string" || typeof part === "number" ? [part] : [],
+    ),
+  );
+  if (viewGuidance !== undefined) charge(6 * viewGuidance.message.length);
   if (issue.code === "invalid_union") chargeUnionProjection(issue, charge);
   if (issue.code === "invalid_key") charge(32 * issue.issues.length);
   if (issue.code === "unrecognized_keys")
@@ -414,6 +425,7 @@ const projectIssue = (
   const path = issue.path.flatMap((part) =>
     typeof part === "string" || typeof part === "number" ? [part] : [],
   );
+  const viewGuidance = knownViewMistakeGuidance(operation, input, path);
   // Branch issue paths are relative to the union; branches often agree.
   if (issue.code === "invalid_union") {
     return projectUnionIssue(issue, path, {
@@ -443,6 +455,9 @@ const projectIssue = (
             ? "missing_argument"
             : "invalid_type",
         expected: safeExpected(issue.expected),
+        ...(viewGuidance !== undefined
+          ? { message: viewGuidance.message }
+          : {}),
       },
     ];
   if (issue.code === "too_small")
@@ -466,13 +481,20 @@ const projectIssue = (
         path,
         reason: "invalid_value",
         expected: issue.values.filter(isSafeExpected),
+        ...(viewGuidance !== undefined
+          ? { message: viewGuidance.message }
+          : {}),
       },
     ];
   return [
     {
       path,
       reason: "invalid_value",
-      ...(issue.message.length > 0 ? { message: issue.message } : {}),
+      ...(viewGuidance !== undefined
+        ? { message: viewGuidance.message }
+        : issue.message.length > 0
+          ? { message: issue.message }
+          : {}),
     },
   ];
 };

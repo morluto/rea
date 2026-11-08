@@ -3,6 +3,7 @@ import { z } from "zod";
 
 import {
   analysisInputErrorFromIssues,
+  analysisOperationInputErrorFromIssues,
   projectInputIssues,
   projectInputIssueGroupsWithinBudget,
 } from "./inputIssueProjection.js";
@@ -590,5 +591,127 @@ describe("union branch diagnostic merging", () => {
         expected: ["beta"],
       },
     ]);
+  });
+});
+
+const testViewUnionSchema = z.union([
+  z.strictObject({
+    kind: z.literal("page"),
+    collection: z.enum(["sections", "symbols", "modules"]),
+    offset: z.number().int().default(0),
+    limit: z.number().int().default(64),
+  }),
+  z.strictObject({
+    kind: z.literal("javascript"),
+    collection: z.literal("modules"),
+    projection: z.literal("references"),
+    offset: z.number().int().default(0),
+    limit: z.number().int().default(64),
+  }),
+]);
+
+describe("inspect_analysis_view cross-kind sub-selector guidance", () => {
+  it("guides caller toward kind 'page' when javascript kind uses collection 'modules' without projection", () => {
+    const input = {
+      source: {
+        kind: "retained-evidence",
+        evidence_id: `ev_${"a".repeat(64)}`,
+      },
+      view: {
+        kind: "javascript",
+        collection: "modules",
+        limit: 40,
+        offset: 0,
+      },
+    };
+    const schema = z.strictObject({
+      source: z.unknown(),
+      view: testViewUnionSchema,
+    });
+    const parsed = schema.safeParse(input);
+    if (parsed.success) throw new Error("expected invalid input");
+    const projected = projectInputIssues(
+      parsed.error.issues,
+      input,
+      "inspect_analysis_view",
+    );
+    expect(projected).toContainEqual(
+      expect.objectContaining({
+        path: ["view", "projection"],
+        reason: "invalid_value",
+        expected: ["references"],
+        message: expect.stringMatching(/page.*modules/i),
+      }),
+    );
+  });
+
+  it("omits guidance message when operation is not inspect_analysis_view", () => {
+    const input = {
+      view: {
+        kind: "javascript",
+        collection: "modules",
+        limit: 40,
+        offset: 0,
+      },
+    };
+    const schema = z.strictObject({ view: testViewUnionSchema });
+    const parsed = schema.safeParse(input);
+    if (parsed.success) throw new Error("expected invalid input");
+    const projected = projectInputIssues(
+      parsed.error.issues,
+      input,
+      "other_operation",
+    );
+    expect(projected).toContainEqual(
+      expect.objectContaining({
+        path: ["view", "projection"],
+        reason: "invalid_value",
+        expected: ["references"],
+      }),
+    );
+    expect(
+      projected.find((p) => p.path.join(".") === "view.projection")?.message,
+    ).toBeUndefined();
+  });
+
+  it("attaches guidance when wrapped in analysisOperationInputErrorFromIssues", () => {
+    const input = {
+      source: {
+        kind: "retained-evidence",
+        evidence_id: `ev_${"a".repeat(64)}`,
+      },
+      view: {
+        kind: "javascript",
+        collection: "modules",
+        limit: 40,
+        offset: 0,
+      },
+    };
+    const schema = z.strictObject({
+      operation: z.literal("inspect_analysis_view"),
+      input: z.strictObject({
+        source: z.unknown(),
+        view: testViewUnionSchema,
+      }),
+    });
+    const parsed = schema.safeParse({
+      operation: "inspect_analysis_view",
+      input,
+    });
+    if (parsed.success) throw new Error("expected invalid input");
+    const error = analysisOperationInputErrorFromIssues(
+      "inspect_analysis_view",
+      parsed.error.issues,
+      input,
+      parsed.error,
+    );
+    expect(error.issues).toContainEqual(
+      expect.objectContaining({
+        path: ["view", "projection"],
+        reason: "invalid_value",
+        expected: ["references"],
+        message: expect.stringMatching(/page.*modules/i),
+      }),
+    );
   });
 });
