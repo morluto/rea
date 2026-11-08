@@ -281,6 +281,36 @@ it("preserves recovery and secondary failures owned by an intermediate cleanup",
   });
 });
 
+it("prefers the outer publication source over the nested primary observation", () => {
+  const provider = { id: "fixture", name: "Fixture", version: null };
+  const source = createEvidence(undefined, provider, {
+    operation: "source",
+    parameters: {},
+    result: "source",
+  });
+  const nested = createEvidence(undefined, provider, {
+    operation: "nested",
+    parameters: {},
+    result: "nested",
+  });
+  const primary = new AnalysisCancelledError("inspect", {
+    partialObservation: nested,
+  });
+  const composed = analysisErrorWithCleanupFailure(
+    primary,
+    new ProviderCleanupError("fixture", ["input"], {}),
+  );
+  composed.partialObservation = source;
+  composed.retainSourcePublication({
+    kind: "omitted",
+    reason: "primary-authentication-failed",
+    source_closure: "not-established",
+  });
+  expect(projectAnalysisError(composed).details?.partial_observation).toEqual(
+    source,
+  );
+});
+
 it("does not infer cleanup success when a composition has no live owner binding", () => {
   const primary = new AnalysisInputError("inspect");
   const cleanup = new ProviderCleanupError("fixture", ["input"], {});
