@@ -50,21 +50,14 @@ describe("Android application projection", () => {
     await writeFile(path, await writer.close());
 
     const inventory = await inventoryApplicationPackage(path);
-    const selected = parseEvidence({
-      ...inventory,
-      subject: { ...inventory.subject, name: "Selected application" },
-    });
     const first = projectAndroidApplicationEvidence({
-      inventory_evidence: [selected],
+      inventory_evidence: [inventory],
     });
     const second = projectAndroidApplicationEvidence({
       inventory_evidence: [inventory],
     });
     const left = androidApplicationProjectionResultSchema.parse(
       requireSuccessfulProjection(first).normalized_result,
-    );
-    expect(requireSuccessfulProjection(first).subject).toEqual(
-      selected.subject,
     );
     const right = androidApplicationProjectionResultSchema.parse(
       requireSuccessfulProjection(second).normalized_result,
@@ -178,6 +171,23 @@ describe("Android application projection", () => {
       "Runtime families are inferred from inventory formats and paths; filename suffixes do not establish valid DEX or JVM class bytes.",
     );
   });
+});
+
+it("preserves the selected inventory subject through application projection", async () => {
+  const root = await createTestTempDirectory("rea-android-subject-");
+  const path = join(root, "Fixture.apk");
+  const writer = new ZipWriter(new Uint8ArrayWriter());
+  await writer.add("AndroidManifest.xml", new TextReader("manifest"));
+  await writeFile(path, await writer.close());
+  const inventory = await inventoryApplicationPackage(path);
+  const selected = parseEvidence({
+    ...inventory,
+    subject: { ...inventory.subject, name: "Selected application" },
+  });
+  const result = projectAndroidApplicationEvidence({
+    inventory_evidence: [selected],
+  });
+  expect(requireSuccessfulProjection(result).subject).toEqual(selected.subject);
 });
 
 it("projects APK v1 metadata candidates at any META-INF depth", async () => {
