@@ -71,6 +71,35 @@ it.each([
 );
 
 const imported = "import {createRequire as make} from 'node:module';";
+it("preserves a native resolver before a later loader receiver escape", () => {
+  const references = (source: string) =>
+    analyzeCommonJsStaticFixture(source).references.map(
+      ({ operation, specifier }) => ({ operation, specifier }),
+    );
+  expect(
+    references(
+      'require.resolve.paths=custom;require.resolve("./first.cjs");require.call.extra=1;require.call(null,"./second.cjs");',
+    ),
+  ).toEqual([
+    { operation: "resolve", specifier: "./first.cjs" },
+    { operation: "load", specifier: "./second.cjs" },
+  ]);
+  expect(
+    references('opaque(require);require.resolve("./unsafe.cjs");').at(-1),
+  ).toEqual({
+    operation: "load",
+    specifier: null,
+  });
+  for (const source of [
+    'function run(){require.resolve("./unsafe.cjs");opaque(require);}run();run();',
+    'function mutate(){opaque(require)}mutate();require.resolve("./unsafe.cjs");',
+  ]) {
+    expect(references(source)).not.toContainEqual({
+      operation: "resolve",
+      specifier: "./unsafe.cjs",
+    });
+  }
+});
 it("retains consecutive native resolver calls while keeping replaced or escaped loaders uncertain", () => {
   const references = (source: string) =>
     analyzeCommonJsStaticFixture(source).references.map(

@@ -191,6 +191,8 @@ cliTest.for(["CLI", "stdio MCP"] as const)(
         'require.resolve.paths = custom; require.resolve("./benign-dep.cjs");',
       "benign-call.cjs":
         'require.call.extra = 1; require.call(null, "./call-dep.cjs");',
+      "consecutive-methods.cjs":
+        'require.resolve.paths = custom; require.resolve("./benign-dep.cjs"); require.call.extra = 1; require.call(null, "./call-dep.cjs");',
       "wrapped-call.cts":
         'require.call = () => 0; (require.call as any)(null, "./false-dep.cjs");',
       "alias-dep.cjs": "module.exports = 1;",
@@ -243,6 +245,12 @@ cliTest.for(["CLI", "stdio MCP"] as const)(
       .soft(loaderEdge("benign-resolve.cjs", "./benign-dep.cjs"))
       .toBeDefined();
     expect.soft(loaderEdge("benign-call.cjs", "./call-dep.cjs")).toBeDefined();
+    expect
+      .soft(loaderEdge("consecutive-methods.cjs", "./benign-dep.cjs"))
+      .toBeDefined();
+    expect
+      .soft(loaderEdge("consecutive-methods.cjs", "./call-dep.cjs"))
+      .toBeDefined();
     expect
       .soft(loaderEdge("wrapped-call.cts", "./false-dep.cjs"))
       .toBeUndefined();
