@@ -226,6 +226,29 @@ describe("JavaScript semantic analysis: configuration value escapes", () => {
   });
 
   it.each([
+    "patch(process.argv[key]); return process.argv[3];",
+    "patch(process.argv.__proto__); return process.argv[3];",
+    "const args = process.argv; patch(args[key]); return args[3];",
+  ])(
+    "retains uncertainty after an object-valued argv selection escapes: %s",
+    (body) => {
+      expect(configurationReads(body)).not.toContainEqual(["argv", "3"]);
+    },
+  );
+
+  it("preserves an earlier top-level read and unrelated configuration after an argv escape", () => {
+    const captured = analyzeJavaScriptSemantics(
+      "const saved = process.argv[3]; patch(process.argv[key]); globalThis.saved = saved;",
+    );
+    expect(
+      captured.configurationOperations.map(({ kind, key }) => [kind, key]),
+    ).toContainEqual(["argv", "3"]);
+    expect(
+      configurationReads("patch(process.argv[key]); return process.env.PORT;"),
+    ).toContainEqual(["environment", "PORT"]);
+  });
+
+  it.each([
     [
       "a direct argv entry",
       "process.argv[2] = {}; return Number(process.argv[2]);",

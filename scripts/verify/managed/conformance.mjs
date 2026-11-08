@@ -7,11 +7,11 @@ import { inspectManagedArtifactBytes } from "../../../dist/dotnet/ManagedArtifac
 import { inspectManagedMembersBytes } from "../../../dist/dotnet/ManagedMemberInspector.js";
 import { inspectManagedNativeBoundariesBytes } from "../../../dist/dotnet/ManagedNativeBoundaryInspector.js";
 import { compareManagedMemberPaths } from "../../../dist/application/managed/ManagedMemberComparisonService.js";
-import { verifyManagedNativeBoundariesEvidence } from "../../../dist/application/managed/ManagedNativeVerificationService.js";
+import { executeManagedNativeBoundaries } from "../../../dist/application/managed/ManagedNativeVerificationService.js";
 import { importManagedReconstructionEvidence } from "../../../dist/application/managed/ManagedReconstructionService.js";
 import { projectManagedApplicationGraphEvidence } from "../../../dist/application/managed/ManagedApplicationGraphService.js";
 import { traceApplicationFeatureEvidence } from "../../../dist/application/javascript/JavaScriptApplicationWorkflowService.js";
-import { MANAGED_STATIC_PROVIDER } from "../../../dist/application/InvestigationProviders.js";
+import { MANAGED_STATIC_PROVIDER } from "../../../dist/domain/investigationProviders.js";
 import { createEvidence } from "../../../dist/domain/evidence.js";
 import { functionDossier } from "../../fixtures/managed/function-dossier.mjs";
 import {
@@ -168,12 +168,15 @@ try {
       locations: [{ kind: "address", address: "0x401000" }],
     },
   );
-  const nativeVerification = verifyManagedNativeBoundariesEvidence({
+  const nativeVerification = executeManagedNativeBoundaries({
     managed_boundaries: frameworkBoundaryEvidence,
     native_observations: [nativeFunctionEvidence],
   });
   assert.equal(nativeVerification.ok, true);
-  assert.equal(nativeVerification.value.normalized_result.summary.verified, 1);
+  assert.equal(
+    nativeVerification.value.evidence.normalized_result.summary.verified,
+    1,
+  );
   const applicationGraph = projectManagedApplicationGraphEvidence({
     managed_artifact: frameworkArtifactEvidence,
     managed_members: frameworkMemberEvidence,
@@ -202,10 +205,7 @@ try {
     direction: "incoming",
   });
   assert.equal(applicationTrace.ok, true);
-  assert.equal(
-    applicationTrace.value.normalized_result.summary.matched_seeds,
-    1,
-  );
+  assert.equal(applicationTrace.value.result.summary.matched_seeds, 1);
 
   const readyToRun = await fixture("r2r-x64.exe", {
     machine: 0x8664,

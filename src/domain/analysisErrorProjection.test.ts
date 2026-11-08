@@ -9,21 +9,252 @@ import {
   AnalysisResourceConstraintError,
 } from "./analysisErrorCore.js";
 import { ArtifactOperationError } from "./artifactOperationError.js";
-import { BinaryTargetError } from "./configurationErrors.js";
+import {
+  BinaryTargetError,
+  ConfigurationError,
+} from "./configurationErrors.js";
 import { BrowserObservationError } from "./browserObservationError.js";
 import { EvidenceFileError, EvidenceIntegrityError } from "./evidenceErrors.js";
 import {
+  HOPPER_STARTUP_TIMEOUT_CONTINUING_REMEDIATION,
+  HOPPER_STARTUP_TIMEOUT_REMEDIATION,
   HopperProcessError,
   HopperRemoteError,
   HopperStartError,
   HopperTimeoutError,
 } from "./hopperErrors.js";
+import {
+  DEFAULT_HOPPER_DEMO_DIALOG_TIMEOUT_MS,
+  HOPPER_DEMO_DIALOG_TIMEOUT_SETTING,
+  MAXIMUM_HOPPER_DEMO_DIALOG_TIMEOUT_MS,
+  MINIMUM_HOPPER_DEMO_DIALOG_TIMEOUT_MS,
+  type DialogTimeoutRejection,
+  type HopperStartupFailureDiagnostic,
+} from "./hopperStartupFailure.js";
 import { ProviderAdapterError } from "./providerAdapterError.js";
 import { UnknownRegistryError } from "./unknownRegistryError.js";
-import { projectAnalysisError } from "./analysisErrorProjection.js";
+import {
+  childFailureDiagnostics,
+  projectAnalysisError,
+} from "./analysisErrorProjection.js";
+import {
+  analysisErrorRemediationAction,
+  analysisErrorUserMessage,
+} from "./analysisErrorPresentation.js";
 import { ProviderSelectionError } from "./providerSelectionError.js";
 import { analysisErrorProjectionSchema } from "../contracts/errorSchemas.js";
 import { nativeCallPartialObservationSchema } from "./native/nativeCallPartialObservation.js";
+import { analysisSettingLimit } from "./analysisSettingDefinitions.js";
+import { redactExplicitFailure } from "./explicitSensitiveFailure.js";
+import { redactExplicitText } from "./explicitSensitiveValues.js";
+import { analysisErrorWithCleanupFailure } from "./analysisErrorCleanup.js";
+import type { AnalysisCallerLifetime } from "./analysisErrorBase.js";
+import { ProviderCleanupError } from "./providerCleanupError.js";
+
+it("projects nested workflow-publication recovery for the actual caller lifetime", () => {
+  const child = new UnknownRegistryError(
+    "limit",
+  ).retainWorkflowUnknownPublication({
+    evidence_id: `ev_${"a".repeat(64)}`,
+    evidence_retention: "retained",
+    total_questions: 3,
+    created_questions: 1,
+    existing_questions: 0,
+    next_question_index: 1,
+  });
+  const error = new AnalysisCancelledError(
+    "trace_feature",
+    childFailureDiagnostics({ child: { error: child } }),
+  );
+  const continuing = projectAnalysisError(error);
+  const invocation = projectAnalysisError(error, "invocation");
+  const childOf = (value: typeof continuing) => {
+    const diagnostics = value.details?.diagnostics;
+    if (
+      typeof diagnostics !== "object" ||
+      diagnostics === null ||
+      Array.isArray(diagnostics)
+    )
+      throw new Error("Expected child diagnostics");
+    return analysisErrorProjectionSchema.parse(diagnostics.child);
+  };
+  expect(
+    childOf(continuing).details?.workflow_unknown_publication,
+  ).toMatchObject({
+    evidence_retention: "retained",
+    created_questions: 1,
+    next_question_index: 1,
+  });
+  expect(childOf(continuing).remediation.action).toContain(
+    "get_evidence_bundle",
+  );
+  expect(
+    childOf(invocation).details?.workflow_unknown_publication,
+  ).toMatchObject({
+    evidence_retention: "invocation-only",
+    created_questions: 1,
+    next_question_index: 1,
+  });
+  expect(childOf(invocation).remediation.action).not.toContain(
+    "get_evidence_bundle",
+  );
+});
+
+describe("agent recovery metadata", () => {
+  it("does not mark deterministic input validation as retryable", () => {
+    const projected = projectAnalysisError(
+      new AnalysisInputError("extract_firmware", undefined, [
+        { path: ["range", "length"], reason: "missing_argument" },
+      ]),
+    );
+
+    expect(projected).toMatchObject({
+      code: "invalid_request",
+      retryable: false,
+      remediation: {
+        action: expect.stringContaining("Do not repeat the unchanged call."),
+      },
+    });
+    expect(analysisErrorProjectionSchema.parse(projected)).toEqual(projected);
+  });
+
+  it("distinguishes deterministic duplicate identities from stale update revisions", () => {
+    const duplicate = projectAnalysisError(
+      new UnknownRegistryError("already-exists"),
+    );
+    expect(duplicate).toMatchObject({
+      code: "invalid_request",
+      category: "invalid_input",
+      retryable: false,
+      details: { reason: "already-exists" },
+      remediation: {
+        action: expect.stringContaining("do not repeat record_unknown"),
+      },
+    });
+    expect(analysisErrorProjectionSchema.parse(duplicate)).toEqual(duplicate);
+    expect(
+      projectAnalysisError(new UnknownRegistryError("revision-conflict")),
+    ).toMatchObject({ code: "revision_conflict", retryable: true });
+  });
+
+  it.each(["history_gap", "revision_chain"] as const)(
+    "preserves %s as an integrity failure with producer facts",
+    (kind) => {
+      const constraint = { kind, unknown_id: `unk_${"0".repeat(64)}` };
+      const projected = projectAnalysisError(
+        new UnknownRegistryError(constraint, {
+          cause: new Error("Unrelated private diagnostic"),
+        }),
+      );
+      expect(projected).toMatchObject({
+        code: "evidence_integrity_mismatch",
+        retryable: false,
+        details: { reason: "integrity", constraint },
+      });
+      expect(projected.message).toContain(constraint.unknown_id);
+      expect(JSON.stringify(projected)).not.toContain(
+        "Unrelated private diagnostic",
+      );
+      expect(analysisErrorProjectionSchema.parse(projected)).toEqual(projected);
+    },
+  );
+
+  it("keeps retryability for transient conflicts and provider timeouts", () => {
+    expect(
+      projectAnalysisError(new UnknownRegistryError("revision-conflict")),
+    ).toMatchObject({ code: "revision_conflict", retryable: true });
+    expect(
+      projectAnalysisError(
+        new AnalysisTimeoutError("inspect_binary_layout", 2500),
+      ),
+    ).toMatchObject({ code: "provider_timeout", retryable: true });
+  });
+
+  it("names the input contract for malformed analysis arguments", () => {
+    const projected = projectAnalysisError(
+      new AnalysisInputError("inspect_analysis_view", undefined, [
+        {
+          path: ["view", "kind"],
+          reason: "invalid_value",
+          expected: ["summary", "module"],
+        },
+      ]),
+    );
+
+    expect(projected).toMatchObject({
+      recovery: {
+        kind: "inspect_input_contract",
+        operation: "inspect_analysis_view",
+      },
+      remediation: {
+        action: expect.stringContaining("inspect_analysis_view"),
+      },
+    });
+    expect(projected.remediation.action).toContain("tools/list");
+    expect(projected.remediation.action).toMatch(/correct.*fields.*retry/iu);
+    expect(projected.remediation.action).toMatch(/not repeat.*unchanged/iu);
+    expect(analysisErrorProjectionSchema.parse(projected)).toEqual(projected);
+  });
+
+  it("omits schema recovery when a conforming request lacks a target fact", () => {
+    const issue = {
+      path: ["address"],
+      reason: "invalid_value",
+      message: "Address 0x2000 is in uninitialized memory block .bss",
+      observed: { address: "0x2000", file_mapping: "uninitialized" },
+    } as const;
+    const projected = projectAnalysisError(
+      new AnalysisInputError(
+        "address_to_file_offset",
+        {
+          userMessage: "No exact original-file offset exists.",
+          remediationAction: "Select an address inside a file-backed mapping.",
+          conformsToInputContract: true,
+        },
+        [issue],
+      ),
+    );
+
+    expect(projected).toEqual({
+      code: "invalid_request",
+      category: "invalid_input",
+      message: "No exact original-file offset exists.",
+      retryable: false,
+      remediation: {
+        action: "Select an address inside a file-backed mapping.",
+      },
+      details: { operation: "address_to_file_offset", issues: [issue] },
+    });
+    expect(analysisErrorProjectionSchema.parse(projected)).toEqual(projected);
+  });
+
+  it("separates timeout-state inspection from client deadline recovery", () => {
+    const projected = projectAnalysisError(
+      new AnalysisTimeoutError("inspect_binary_layout", 2_500),
+    );
+
+    expect(projected).toMatchObject({
+      code: "provider_timeout",
+      recovery: {
+        kind: "inspect_timeout_state",
+        operation: "inspect_binary_layout",
+        timeout_ms: 2_500,
+      },
+      message: expect.stringContaining("server/provider deadline"),
+      remediation: {
+        action: expect.stringContaining("provider diagnostics"),
+      },
+    });
+    expect(projected.message).toContain("not a client-side timeout");
+    expect(projected.remediation.action).not.toContain(
+      "raise its tool deadline",
+    );
+    expect(projected.remediation.action).not.toMatch(
+      /declared timeout controls|larger server\/provider budget|without assuming adjustable limits|do not assume adjustable/u,
+    );
+    expect(analysisErrorProjectionSchema.parse(projected)).toEqual(projected);
+  });
+});
 
 describe("capability failure retry disposition", () => {
   it.each([
@@ -38,14 +269,13 @@ describe("capability failure retry disposition", () => {
     "preserves the producer's $retryable disposition",
     ({ options, retryable, category }) => {
       const reason = "Native self-test failed with a sharing violation";
-      const projected = projectAnalysisError(
-        new AnalysisCapabilityUnavailableError(
-          "fixture-provider",
-          "inspect",
-          reason,
-          options,
-        ),
+      const error = new AnalysisCapabilityUnavailableError(
+        "fixture-provider",
+        "inspect",
+        reason,
+        options,
       );
+      const projected = projectAnalysisError(error);
       expect(projected).toMatchObject({
         code: "capability_unavailable",
         category,
@@ -56,8 +286,8 @@ describe("capability failure retry disposition", () => {
         expect(projected.message).toBe(
           "Required runtime controls are unavailable for this attempt.",
         );
-        expect(projected.remediation.action).toContain(
-          "retry the same analysis",
+        expect(projected.remediation.action).toBe(
+          analysisErrorRemediationAction(error),
         );
       }
       expect(analysisErrorProjectionSchema.safeParse(projected).success).toBe(
@@ -80,6 +310,38 @@ describe("capability failure retry disposition", () => {
         ),
       ).message,
     ).toBe("Selected runtime diagnostic");
+  });
+
+  it("uses generic recovery only when no more specific recovery exists", () => {
+    const project = (options: {
+      fallbackRemediationAction?: string;
+      remediationAction?: string;
+      retryable?: boolean;
+    }) =>
+      projectAnalysisError(
+        new AnalysisCapabilityUnavailableError(
+          "fixture",
+          "inspect",
+          "unavailable",
+          options,
+        ),
+      );
+    expect(
+      project({ fallbackRemediationAction: "Generic" }).remediation.action,
+    ).toBe("Generic");
+    expect(
+      project({
+        fallbackRemediationAction: "Generic",
+        remediationAction: "Specific",
+      }).remediation.action,
+    ).toBe("Specific");
+    const retry = project({ retryable: true });
+    const retryWithFallback = project({
+      fallbackRemediationAction: "Generic",
+      retryable: true,
+    });
+    expect(retryWithFallback.retryable).toBe(true);
+    expect(retryWithFallback.remediation.action).toBe(retry.remediation.action);
   });
 
   it("retains cleanup ownership before allowing a transient operation to retry", () => {
@@ -124,11 +386,11 @@ it("projects a published file receipt alongside retained cleanup failure", () =>
   );
   expect(projected).toMatchObject({
     code: "cleanup_incomplete",
-    message:
-      "The output file was published, but staging cleanup remains incomplete.",
+    message: expect.stringMatching(/published.*staging cleanup.*incomplete/iu),
     remediation: {
-      action:
-        "Use the published file at details.published_path and resolve the reported staging cleanup failure.",
+      action: expect.stringMatching(
+        /published.*details\.published_path.*cleanup/iu,
+      ),
     },
     details: {
       operation: "write",
@@ -199,6 +461,32 @@ it("distinguishes unsupported target formats from unavailable provider capabilit
   expect(projected.remediation.action).toContain("target format");
   expect(projected.remediation.action).not.toContain("doctor");
   expect(analysisErrorProjectionSchema.safeParse(projected).success).toBe(true);
+});
+
+it("keeps a refusing provider's recovery on a target selection failure", () => {
+  const selection = {
+    reason: "target_unsupported" as const,
+    requestedProviderId: "ghidra",
+    candidateIds: ["ghidra"],
+    userMessage: "Unsupported target: the configured extension is x86-64 only.",
+  };
+  expect(
+    projectAnalysisError(
+      new ProviderSelectionError({
+        ...selection,
+        remediationAction: "Omit the extension setting for this target.",
+      }),
+    ),
+  ).toMatchObject({
+    code: "capability_unavailable",
+    message: selection.userMessage,
+    remediation: { action: "Omit the extension setting for this target." },
+    details: { selection_reason: "target_unsupported" },
+  });
+  expect(
+    projectAnalysisError(new ProviderSelectionError(selection)).remediation
+      .action,
+  ).toBe(selection.userMessage);
 });
 
 it.each([false, true])(
@@ -392,7 +680,30 @@ it("retains native partial observations and cleanup uncertainty on provider fail
   expect(analysisErrorProjectionSchema.safeParse(projected).success).toBe(true);
 });
 
-describe("analysis error projection: provider failures", () => {
+describe("analysis error projection: browser provider failures", () => {
+  it("explains the service-worker policy refusal and names its recovery", () => {
+    const projected = projectAnalysisError(
+      new BrowserObservationError(
+        "capture_browser_scenario",
+        "service_worker_blocked",
+      ),
+    );
+
+    expect(projected).toMatchObject({
+      code: "target_unavailable",
+      category: "unavailable",
+      retryable: false,
+      message: expect.stringContaining("service-worker policy is block"),
+      remediation: {
+        action: expect.stringContaining("environment.service_workers to allow"),
+      },
+      details: {
+        operation: "capture_browser_scenario",
+        reason: "service_worker_blocked",
+      },
+    });
+  });
+
   it("projects the primary browser failure alongside incomplete cleanup", () => {
     const projected = projectAnalysisError(
       new BrowserObservationError(
@@ -422,6 +733,85 @@ describe("analysis error projection: provider failures", () => {
     });
   });
 
+  it("keeps producer facts when a browser failure is attributed to another operation", () => {
+    const partial = { kind: "browser-test-partial" } as never;
+    const original = new BrowserObservationError(
+      "inspect_web_page",
+      "cleanup_failed",
+      {
+        detail: "Target page-1 closed while REA released its session.",
+        remediationAction: "Release session page-1, then retry.",
+        cleanup: { reason: "socket close failed", resources: ["page-1"] },
+        diagnostics: { endpoint: "loopback" },
+        partialObservation: partial,
+        cause: new AggregateError([
+          new BrowserObservationError("inspect_web_page", "target_changed"),
+          new Error("socket close failed"),
+        ]),
+      },
+    );
+    const relabelled = original.forOperation("capture_web_screenshot");
+
+    expect(relabelled).toMatchObject({
+      operation: "capture_web_screenshot",
+      reason: "cleanup_failed",
+      cause: original.cause,
+      diagnostics: { endpoint: "loopback" },
+      partialObservation: partial,
+    });
+    const { details, ...projected } = projectAnalysisError(relabelled);
+    const { details: originalDetails, ...originalProjected } =
+      projectAnalysisError(original);
+    expect(projected).toEqual(originalProjected);
+    expect(projected).toMatchObject({
+      code: "cleanup_incomplete",
+      message: "Target page-1 closed while REA released its session.",
+      remediation: { action: "Release session page-1, then retry." },
+    });
+    expect(details).toEqual({
+      ...originalDetails,
+      operation: "capture_web_screenshot",
+    });
+    expect(details).toMatchObject({
+      resources: ["page-1"],
+      primary_reason: "target_changed",
+    });
+  });
+
+  it("derives default browser guidance for the attributed operation", () => {
+    const original = new BrowserObservationError(
+      "inspect_web_page",
+      "target_not_found",
+    );
+    expect(original.forOperation("inspect_web_page")).toBe(original);
+
+    const relabelled = original.forOperation("discover_webmcp_tools");
+    const projected = projectAnalysisError(relabelled);
+    expect(projected).toMatchObject({
+      code: "target_unavailable",
+      message: expect.stringMatching(/^discover_webmcp_tools could not find/),
+      details: {
+        operation: "discover_webmcp_tools",
+        reason: "target_not_found",
+      },
+    });
+    expect(projected.message).not.toContain("inspect_web_page");
+    expect(
+      projectAnalysisError(
+        new BrowserObservationError("inspect_web_page", "timeout").forOperation(
+          "observe_web_session",
+        ),
+      ),
+    ).toMatchObject({
+      code: projectAnalysisError(
+        new BrowserObservationError("observe_web_session", "timeout"),
+      ).code,
+      details: { operation: "observe_web_session", reason: "timeout" },
+    });
+  });
+});
+
+describe("analysis error projection: Hopper provider failures", () => {
   it("reports a timed-out active Hopper request and actionable retry guidance", () => {
     const projected = projectAnalysisError(
       new HopperTimeoutError(30_000, "trace_feature", 42, "busy"),
@@ -487,7 +877,9 @@ describe("analysis error projection: provider failures", () => {
       message: expect.stringContaining("Hopper analysis failed"),
     });
   });
+});
 
+describe("analysis error projection: detached provider diagnostics", () => {
   it.each(["adapter", "cancelled", "timeout"])(
     "preserves detached, actionable diagnostics for %s errors",
     (kind) => {
@@ -515,7 +907,9 @@ describe("analysis error projection: provider failures", () => {
       expect(error.diagnostics?.exit_code).toBe(1);
     },
   );
+});
 
+describe("analysis error projection: Hopper startup failures", () => {
   it("maps the Linux startup compatibility exit codes without host internals", () => {
     const expected = [
       [70, "private_display_unavailable"],
@@ -529,6 +923,8 @@ describe("analysis error projection: provider failures", () => {
       [78, "x11_input_failed"],
       [79, "runtime_dependency_unavailable"],
       [80, "x11_socket_directory_unusable"],
+      [81, "demo_dialog_absent"],
+      [82, "invalid_dialog_timeout"],
     ] as const;
 
     for (const [exitCode, code] of expected) {
@@ -537,9 +933,69 @@ describe("analysis error projection: provider failures", () => {
         code: "provider_unavailable",
         details: { failure_code: code, exit_code: exitCode },
       });
+      expect(projected.details).not.toHaveProperty("launch_rejection");
       expect(projected.message).toMatch(/\S/u);
       expect(JSON.stringify(projected)).not.toContain("/proc/");
     }
+  });
+
+  it("does not attribute an absent post-authentication dialog to publisher verification", () => {
+    const projected = projectAnalysisError(new HopperProcessError(81));
+    expect(projected).toMatchObject({
+      code: "provider_unavailable",
+      details: {
+        stage: "launch",
+        failure_code: "demo_dialog_absent",
+        exit_code: 81,
+      },
+    });
+    expect(projected.details).not.toHaveProperty("launch_rejection");
+    expect(projected.message).toContain("REA_HOPPER_DEMO_DIALOG_TIMEOUT_MS");
+  });
+
+  it("reports a rejected demo dialog timeout through its setting fields", () => {
+    const dialogTimeout = {
+      setting: HOPPER_DEMO_DIALOG_TIMEOUT_SETTING,
+      value: "-5",
+      source: "setting",
+      minimum_ms: MINIMUM_HOPPER_DEMO_DIALOG_TIMEOUT_MS,
+      maximum_ms: MAXIMUM_HOPPER_DEMO_DIALOG_TIMEOUT_MS,
+      default_ms: DEFAULT_HOPPER_DEMO_DIALOG_TIMEOUT_MS,
+    } satisfies DialogTimeoutRejection;
+    const projected = projectAnalysisError(
+      new HopperProcessError(82, {
+        diagnostic: {
+          component: "hopper_private_display",
+          operation: "launch",
+          reason: "invalid_dialog_timeout",
+          socket_directory: "/tmp/.X11-unix",
+          socket_directory_mode: null,
+          mount_read_only: null,
+          effective_socket_directory_mode: null,
+          effective_mount_read_only: null,
+          wsl: false,
+          strategy: "direct",
+          fallback_reason: null,
+          xvfb_stderr_bytes: 0,
+          status: "error",
+          failure_code: "invalid_dialog_timeout",
+          dialog_timeout: dialogTimeout,
+        } as HopperStartupFailureDiagnostic,
+      }),
+    );
+    expect(projected).toMatchObject({
+      code: "provider_unavailable",
+      details: {
+        stage: "launch",
+        failure_code: "invalid_dialog_timeout",
+        exit_code: 82,
+        diagnostics: { dialog_timeout: dialogTimeout },
+      },
+    });
+    expect(projected.details).not.toHaveProperty("launch_rejection");
+    expect(analysisErrorProjectionSchema.safeParse(projected).success).toBe(
+      true,
+    );
   });
 });
 
@@ -616,8 +1072,7 @@ describe("analysis error projection: caller contract", () => {
     ]);
     expect(projected[1]).toMatchObject({
       category: "unsupported_provider",
-      message:
-        "This analysis is unavailable for the current target. Choose another analysis or target.",
+      message: expect.stringMatching(/unavailable.*target/iu),
       details: {
         provider_id: "fixture",
         operation: "overview",
@@ -646,8 +1101,9 @@ describe("analysis error projection: caller contract", () => {
         category: "unavailable",
         retryable: false,
         remediation: {
-          action:
-            "Check the current process's read access to the selected path. Retry with a readable local file.",
+          action: expect.stringMatching(
+            /read access.*selected path.*readable local file/iu,
+          ),
         },
         details: {
           path: "/local/targets/app",
@@ -717,11 +1173,11 @@ describe("analysis error projection: caller contract", () => {
       projectAnalysisError(new UnknownRegistryError("not-found")),
     ).toMatchObject({
       code: "execution_failure",
-      message:
-        "The requested residual unknown does not exist in this session. Check the unknown_id and try again.",
+      message: expect.stringMatching(
+        /residual unknown.*does not exist.*unknown_id/iu,
+      ),
       remediation: {
-        action:
-          "Check that the unknown_id belongs to this session, then retry.",
+        action: expect.stringMatching(/unknown_id.*session.*retry/iu),
       },
       details: { reason: "not-found" },
     });
@@ -730,9 +1186,11 @@ describe("analysis error projection: caller contract", () => {
 
 describe("analysis error projection: operational diagnostics", () => {
   it("distinguishes an observed Hopper exit from an undetermined provider failure", () => {
-    const exited = projectAnalysisError(
-      new HopperProcessError(7, { operation: "search_strings", requestId: 4 }),
-    );
+    const exitedError = new HopperProcessError(7, {
+      operation: "search_strings",
+      requestId: 4,
+    });
+    const exited = projectAnalysisError(exitedError);
     expect(exited).toMatchObject({
       code: "provider_unavailable",
       retryable: true,
@@ -745,15 +1203,16 @@ describe("analysis error projection: operational diagnostics", () => {
         exit_code: 7,
       },
     });
-    expect(exited.message).not.toContain("Run `rea doctor`, then try again.");
-    expect(exited.remediation.action).toContain("Restart the owned provider");
-
-    const unknown = projectAnalysisError(
-      new HopperProcessError(null, {
-        operation: "search_strings",
-        requestId: 5,
-      }),
+    expect(exited.message).toBe(analysisErrorUserMessage(exitedError));
+    expect(exited.remediation.action).toBe(
+      analysisErrorRemediationAction(exitedError),
     );
+
+    const unknownError = new HopperProcessError(null, {
+      operation: "search_strings",
+      requestId: 5,
+    });
+    const unknown = projectAnalysisError(unknownError);
     expect(unknown.details).toMatchObject({
       stage: "analysis",
       provider_state: "unknown",
@@ -762,9 +1221,27 @@ describe("analysis error projection: operational diagnostics", () => {
       request_id: 5,
       exit_code: null,
     });
-    expect(unknown.message).toContain("could not determine");
-    expect(unknown.message).not.toContain("stopped");
-    expect(unknown.remediation.action).toContain("provider_operation_health");
+    expect(unknown.message).toBe(analysisErrorUserMessage(unknownError));
+    expect(unknown.remediation.action).toBe(
+      analysisErrorRemediationAction(unknownError),
+    );
+
+    const unreachableError = new HopperProcessError(null, {
+      operation: "search_strings",
+      providerState: "unreachable",
+    });
+    const unreachable = projectAnalysisError(unreachableError);
+    expect(unreachable).toMatchObject({
+      code: "provider_unavailable",
+      details: {
+        provider_state: "unreachable",
+        retry_action: "restart_provider",
+        operation: "search_strings",
+        exit_code: null,
+      },
+      message: analysisErrorUserMessage(unreachableError),
+      remediation: { action: analysisErrorRemediationAction(unreachableError) },
+    });
   });
 });
 
@@ -774,6 +1251,7 @@ describe("analysis error projection: evidence files", () => {
     ["read", "not-file", "invalid_request", "invalid_input"],
     ["write", "missing", "invalid_request", "invalid_input"],
     ["write", "exists", "invalid_request", "invalid_input"],
+    ["write", "path-limit", "resource_constraint", "resource_constraint"],
     [
       "read",
       "invalid-json",
@@ -798,7 +1276,9 @@ describe("analysis error projection: evidence files", () => {
 });
 
 it("retains the primary failure and both cleanup reports after a secondary failure", () => {
+  const callerReason = { caller: "stop" };
   const primary = new AnalysisCancelledError("execute_rizin_command", {
+    cause: callerReason,
     capturedOutput: {
       stdout: "partial",
       stderr: "diagnostic",
@@ -814,6 +1294,8 @@ it("retains the primary failure and both cleanup reports after a secondary failu
   });
   expect(enriched).toBe(primary);
   expect(enriched._tag).toBe("AnalysisCancelledError");
+  expect(enriched.cause).toBe(callerReason);
+  expect(enriched.secondaryFailures).toEqual([secondary]);
   expect(projectAnalysisError(enriched)).toMatchObject({
     code: "cleanup_incomplete",
     details: {
@@ -823,5 +1305,351 @@ it("retains the primary failure and both cleanup reports after a secondary failu
       captured_output: { stdout: "partial", stderr: "diagnostic" },
       diagnostics: { rebind_error: { code: "cleanup_incomplete" } },
     },
+  });
+});
+
+it("retains secondary failures when the primary error has no cause", () => {
+  const primary = new AnalysisCancelledError("execute_rizin_command");
+  const secondary = new AnalysisOutputError("open_binary", "cannot rebind");
+
+  primary.retainSecondaryFailure(secondary, {});
+
+  expect(primary.cause).toBeUndefined();
+  expect(primary.secondaryFailures).toEqual([secondary]);
+});
+
+it.each([false, true])(
+  "preserves producer capability recovery with retryable=%s",
+  (retryable) => {
+    const recovery =
+      "Choose an explicit disposition, then retry the same session.";
+    const projected = projectAnalysisError(
+      new AnalysisCapabilityUnavailableError("fixture", "close", "live state", {
+        retryable,
+        remediationAction: recovery,
+      }),
+    );
+    expect(projected).toMatchObject({
+      code: "capability_unavailable",
+      retryable,
+      remediation: { action: recovery },
+      details: {
+        provider_id: "fixture",
+        operation: "close",
+        reason: "live state",
+      },
+    });
+    expect(analysisErrorProjectionSchema.safeParse(projected).success).toBe(
+      true,
+    );
+  },
+);
+
+it("retains Hopper startup diagnostics beside generic and secondary context", () => {
+  const diagnostic = {
+    component: "hopper_private_display",
+    operation: "launch",
+    reason: "fixture_denial",
+    socket_directory: "/tmp/.X11-unix",
+    socket_directory_mode: null,
+    mount_read_only: null,
+    effective_socket_directory_mode: null,
+    effective_mount_read_only: null,
+    wsl: false,
+    strategy: "unavailable",
+    fallback_reason: null,
+    xvfb_stderr_bytes: 0,
+    status: "error",
+    failure_code: "private_display_unavailable",
+  } as const;
+  expect(
+    projectAnalysisError(new HopperProcessError(null, { diagnostic })).details
+      ?.diagnostics,
+  ).toEqual(diagnostic);
+  const generic = { caller_context: "retained" };
+  expect(
+    projectAnalysisError(
+      new HopperProcessError(null, { diagnostic, diagnostics: generic }),
+    ),
+  ).toMatchObject({
+    code: "provider_unavailable",
+    details: { diagnostics: generic, provider_diagnostics: diagnostic },
+  });
+  const secondary = new HopperProcessError(null, {
+    diagnostic,
+  }).retainSecondaryFailure(new HopperProcessError(null), {
+    retirement_error: "retained",
+  });
+  expect(projectAnalysisError(secondary).details).toMatchObject({
+    provider_diagnostics: diagnostic,
+    diagnostics: { retirement_error: "retained" },
+  });
+});
+
+it("does not offer entry-policy retries for integrity refusals without a declared-versus-observed entry contradiction", () => {
+  const native = projectAnalysisError(
+    new ArtifactOperationError(
+      "inspect_artifact",
+      "integrity",
+      undefined,
+      "hdiutil verify failed: invalid checksum",
+    ),
+  );
+  expect(native.category).toBe("integrity_mismatch");
+  expect(native.details).toMatchObject({
+    reason: "integrity",
+    detail: "hdiutil verify failed: invalid checksum",
+  });
+  expect(native.message).not.toContain("record-and-continue");
+  expect(native.remediation.action).not.toContain("record-and-continue");
+});
+
+it("preserves ordinary configuration recovery and projects a producer-owned session repair", () => {
+  const settings = [{ setting: "REA_EXAMPLE", constraint: "must be positive" }];
+  const original = projectAnalysisError(
+    new ConfigurationError("Invalid setting", { settings }),
+  );
+  const repairing = projectAnalysisError(
+    new ConfigurationError("Invalid setting", {
+      settings,
+      remediationAction: "Repair the running session, then retry.",
+    }),
+  );
+  expect(original.remediation.action).toBe(
+    "Correct REA_EXAMPLE in the environment that starts REA (your shell or the MCP client's registration), then rerun.",
+  );
+  expect(repairing).toEqual({
+    ...original,
+    remediation: { action: "Repair the running session, then retry." },
+  });
+  expect(repairing.code).toBe("configuration_invalid");
+});
+
+const continuingOnly = {
+  userMessage: "The fixture session remains usable.",
+  remediationAction: "Update the fixture runtime setting on this session.",
+};
+
+describe("analysis error projection: caller lifetime", () => {
+  it.each([
+    new AnalysisTimeoutError("procedure_pseudo_code", 5000, {
+      userMessage: "Only this request stopped.",
+      remediationAction: "Rerun with a longer launch deadline.",
+      continuingCallerGuidance: continuingOnly,
+    }),
+    new ProviderAdapterError("fixture", "procedure_pseudo_code", {
+      userMessage: "Only this request stopped.",
+      remediationAction: "Rerun with a longer launch deadline.",
+      continuingCallerGuidance: continuingOnly,
+    }),
+    new AnalysisResourceConstraintError(
+      "search_strings",
+      "cpu",
+      "Only this request stopped.",
+      null,
+      {
+        remediationAction: "Rerun with a longer launch deadline.",
+        continuingCallerGuidance: continuingOnly,
+      },
+    ),
+  ])(
+    "states continuing-session guidance only to a continuing caller ($_tag)",
+    (error) => {
+      expect(projectAnalysisError(error)).toMatchObject({
+        message:
+          "Only this request stopped. The fixture session remains usable.",
+        remediation: {
+          action: "Update the fixture runtime setting on this session.",
+        },
+      });
+      const invocation = projectAnalysisError(error, "invocation");
+      expect(invocation).toMatchObject({
+        code: projectAnalysisError(error).code,
+        message: "Only this request stopped.",
+        remediation: { action: "Rerun with a longer launch deadline." },
+      });
+      expect(analysisErrorUserMessage(error, "invocation")).toBe(
+        "Only this request stopped.",
+      );
+      expect(analysisErrorRemediationAction(error, "invocation")).toBe(
+        "Rerun with a longer launch deadline.",
+      );
+    },
+  );
+
+  it("re-scopes a limit for a finished invocation and keeps its enforced facts", () => {
+    const limit = analysisSettingLimit(
+      "regex.matching_deadline_ms",
+      250,
+      "setting",
+    );
+    const error = new AnalysisResourceConstraintError(
+      "search_strings",
+      "cpu",
+      "Regex matching exceeded its deadline.",
+      null,
+      { limit },
+    );
+    expect(projectAnalysisError(error).details?.limit).toEqual(limit);
+    expect(projectAnalysisError(error, "invocation").details?.limit).toEqual({
+      setting: "regex.matching_deadline_ms",
+      effective_value: 250,
+      source: "setting",
+      unit: "ms",
+      minimum: limit.minimum,
+      maximum: limit.maximum,
+      agent_editable: true,
+      rea_restart_required: false,
+      applies_at: "next_invocation",
+      scope: "rea-invocation",
+      environment: "REA_REGEX_MATCHING_DEADLINE_MS",
+    });
+    // The error keeps its runtime facts for other projections.
+    expect(error.limit).toEqual(limit);
+  });
+
+  it("names a per-call parameter, not an environment, when a setting has no launch seed", () => {
+    const error = new AnalysisTimeoutError("inspect_wasm_artifact", 100, {
+      limit: analysisSettingLimit("wasm.command_timeout_ms", 100, "request"),
+    });
+    expect(projectAnalysisError(error, "invocation").details?.limit).toEqual(
+      expect.objectContaining({
+        setting: "wasm.command_timeout_ms",
+        source: "request",
+        parameter: "command_timeout_ms",
+        applies_at: "next_invocation",
+        scope: "rea-invocation",
+      }),
+    );
+    expect(
+      projectAnalysisError(error, "invocation").details?.limit,
+    ).not.toHaveProperty("environment");
+  });
+
+  it("delivers each lifetime's Hopper startup recovery", () => {
+    const error = new HopperTimeoutError(
+      30_000,
+      undefined,
+      undefined,
+      "not_started",
+      "launch",
+      undefined,
+      {
+        limit: analysisSettingLimit(
+          "hopper.startup_timeout_ms",
+          30_000,
+          undefined,
+        ),
+      },
+    );
+    expect(projectAnalysisError(error).remediation.action).toBe(
+      HOPPER_STARTUP_TIMEOUT_CONTINUING_REMEDIATION,
+    );
+    const invocation = projectAnalysisError(error, "invocation");
+    expect(invocation.remediation.action).toBe(
+      HOPPER_STARTUP_TIMEOUT_REMEDIATION,
+    );
+    expect(invocation.details?.limit).toMatchObject({
+      setting: "hopper.startup_timeout_ms",
+      effective_value: 30_000,
+      scope: "rea-invocation",
+      applies_at: "next_invocation",
+      environment: "REA_HOPPER_STARTUP_TIMEOUT_MS",
+    });
+    // A busy request is not a startup: it carries no lifetime-specific text.
+    const busy = new HopperTimeoutError(30_000, "trace_feature", 42, "busy");
+    expect(projectAnalysisError(busy, "invocation").remediation).toEqual(
+      projectAnalysisError(busy).remediation,
+    );
+  });
+});
+
+describe("analysis error projection: composed failures for a caller lifetime", () => {
+  it("projects a composed cleanup failure's children for the caller and keeps their history", () => {
+    const limit = analysisSettingLimit(
+      "regex.matching_deadline_ms",
+      250,
+      "setting",
+    );
+    const primary = new AnalysisTimeoutError("search_strings", 250, {
+      limit,
+      userMessage: "Only this request stopped.",
+      remediationAction: "Rerun with a longer launch deadline.",
+      continuingCallerGuidance: continuingOnly,
+    });
+    const cleanup = new ProviderCleanupError(
+      "fixture",
+      ["fixture-process"],
+      { reason: "exit unconfirmed" },
+      { remediationAction: "Close the retained fixture process." },
+    );
+    const composed = analysisErrorWithCleanupFailure(
+      primary,
+      cleanup,
+    ).bindCleanupDependencies([primary, cleanup]);
+    const child = (lifetime: AnalysisCallerLifetime) =>
+      projectAnalysisError(composed, lifetime).details;
+    expect(child("invocation")).toMatchObject({
+      limit: { scope: "rea-invocation" },
+      diagnostics: {
+        primary_error: projectAnalysisError(primary, "invocation"),
+        cleanup_error: { code: "cleanup_incomplete" },
+      },
+    });
+    expect(child("continuing")).toMatchObject({
+      limit: { scope: "rea-runtime" },
+      diagnostics: { primary_error: projectAnalysisError(primary) },
+    });
+    expect(projectAnalysisError(composed, "invocation").message).toBe(
+      "Only this request stopped.",
+    );
+    expect(projectAnalysisError(composed).message).toBe(
+      `Only this request stopped. ${continuingOnly.userMessage}`,
+    );
+    // After cleanup resolves, history keeps the composition-time snapshot.
+    cleanup.resolveCleanup();
+    for (const lifetime of ["continuing", "invocation"] as const)
+      expect(child(lifetime)?.cleanup_history).toMatchObject({
+        primary_error: projectAnalysisError(primary, lifetime),
+        cleanup_error: { code: "cleanup_incomplete" },
+      });
+  });
+
+  it("records one lifetime form when no child depends on the caller", () => {
+    const composed = analysisErrorWithCleanupFailure(
+      new AnalysisInputError("read_bytes", undefined, [
+        { path: ["address"], reason: "invalid_format" },
+      ]),
+      new ProviderCleanupError("fixture", ["fixture-process"], {}),
+    );
+    expect(composed.invocationDiagnostics).toBeUndefined();
+    expect(projectAnalysisError(composed, "invocation").details).toEqual(
+      projectAnalysisError(composed).details,
+    );
+  });
+
+  it("keeps continuing guidance through redaction and redacts its text", () => {
+    const guidance = {
+      userMessage: "The session for secret-token remains usable.",
+      remediationAction: "Retry secret-token on this session.",
+    };
+    const error = new AnalysisTimeoutError("procedure_pseudo_code", 5000, {
+      userMessage: "Only this request stopped.",
+      remediationAction: "Rerun with a longer launch deadline.",
+      continuingCallerGuidance: guidance,
+    });
+    const redact = (text: string) => redactExplicitText(text, ["secret-token"]);
+    const redacted = redactExplicitFailure(error, ["secret-token"]);
+    expect(projectAnalysisError(redacted)).toMatchObject({
+      message: `Only this request stopped. ${redact(guidance.userMessage)}`,
+      remediation: { action: redact(guidance.remediationAction) },
+    });
+    expect(JSON.stringify(projectAnalysisError(redacted))).not.toContain(
+      "secret-token",
+    );
+    expect(projectAnalysisError(redacted, "invocation")).toMatchObject({
+      message: "Only this request stopped.",
+      remediation: { action: "Rerun with a longer launch deadline." },
+    });
   });
 });

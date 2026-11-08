@@ -1,4 +1,4 @@
-import type { AnalysisProviderSelector } from "../../contracts/providerSelection.js";
+import type { AnalysisProviderSelector } from "../../domain/providerSelection.js";
 import type { AnalysisProfileCommitment } from "../../domain/analysisProfile.js";
 import type { BinaryTarget } from "../../domain/binaryTargetTypes.js";
 import { AnalysisCapabilityUnavailableError } from "../../domain/analysisErrorCore.js";
@@ -25,6 +25,7 @@ export interface SessionProviderRoute {
   readonly identity: ProviderIdentity;
   readonly capabilities: ReadonlyMap<string, CapabilityDescriptor>;
   readonly profile: AnalysisProfileCommitment | null;
+  readonly refreshAfterRetirement?: true;
   readonly binding: AnalysisProviderBinding | null;
   readonly selection: AnalysisProviderSelection | undefined;
   createClient(
@@ -70,6 +71,16 @@ export class SessionProviderRouter {
     return this.route;
   }
 
+  /** Close provider owners not represented by the currently bound client. */
+  closeOwnedResources() {
+    return this.registry.closeOwnedResources();
+  }
+
+  /** Report retained candidate cleanup without performing cleanup work. */
+  hasPendingOwnedResources(): boolean {
+    return this.registry.hasPendingOwnedResources();
+  }
+
   /** Resolve target routes before any provider client is created. */
   async resolve(
     target: BinaryTarget,
@@ -87,11 +98,64 @@ export class SessionProviderRouter {
       : selected;
   }
 
-  /** Candidate status authoritative for the active or target-free route. */
-  candidateStatuses(
+  /** Refresh only provider selections whose state can be published by close. */
+  async refreshAfterRetirement(
     route: SessionProviderRoute,
-  ): readonly AnalysisProviderCandidateStatus[] {
-    return route.selection?.candidates ?? this.registry.candidates();
+    target: BinaryTarget,
+    signal?: AbortSignal,
+  ): Promise<Result<SessionProviderRoute, AnalysisError>> {
+    if (route.refreshAfterRetirement !== true || route.binding === null)
+      return ok(route);
+    const refreshed = await this.registry.select(
+      target,
+      route.binding.identity.id,
+      signal === undefined ? {} : { signal },
+    );
+    if (!refreshed.ok) return refreshed;
+    return ok(
+      selectableRoute(this.auxiliaryProviders, {
+        ...refreshed.value,
+        requestedProviderId:
+          route.selection?.requestedProviderId ??
+          refreshed.value.requestedProviderId,
+        binding:
+          refreshed.value.binding === null
+            ? null
+            : {
+                ...refreshed.value.binding,
+                selectionSource: route.binding.selectionSource,
+              },
+      }),
+    );
+  }
+
+  /** Preserve selection observations unless a caller requests a fresh inspection. */
+  async candidateStatuses(
+    route: SessionProviderRoute,
+    options: {
+      readonly signal?: AbortSignal;
+      readonly target?: BinaryTarget;
+      readonly refresh?: boolean;
+    } = {},
+  ): Promise<readonly AnalysisProviderCandidateStatus[]> {
+    const { signal, target, refresh = false } = options;
+    if (refresh && route.selection !== undefined) {
+      const current = await this.registry.candidates(
+        target,
+        signal === undefined ? {} : { signal },
+      );
+      return current.map((candidate) => ({
+        ...candidate,
+        selected: candidate.provider.id === route.binding?.identity.id,
+      }));
+    }
+    return (
+      route.selection?.candidates ??
+      this.registry.candidates(
+        undefined,
+        signal === undefined ? {} : { signal },
+      )
+    );
   }
 
   /** Produce exact candidate rejections for an intentionally unbound route. */
@@ -123,7 +187,12 @@ const selectableRoute = (
       ? providers[0]
       : providers.length === 0
         ? undefined
-        : new CompositeProvider(providers);
+        : new CompositeProvider(
+            providers,
+            binding?.createClient === undefined
+              ? new Map()
+              : new Map([[binding.identity.id, binding.createClient]]),
+          );
   const identity = provider?.identity() ?? emptyProviderIdentity();
   // The binding attributes deep-provider capabilities to the resolved version.
   const capabilities = capabilityMap([
@@ -134,6 +203,9 @@ const selectableRoute = (
     identity,
     capabilities,
     profile: binding?.profile ?? null,
+    ...(binding?.refreshAfterRetirement === undefined
+      ? {}
+      : { refreshAfterRetirement: binding.refreshAfterRetirement }),
     binding,
     selection,
     createClient: (target, context) =>

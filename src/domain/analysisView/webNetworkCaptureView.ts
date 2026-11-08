@@ -1,31 +1,38 @@
+import {
+  projectProtobufCapturePage,
+  protobufViewRequestSchema,
+} from "./protobufCaptureView.js";
 import { analysisViewInputError } from "./analysisViewErrors.js";
 import { createHash } from "node:crypto";
 import { z } from "zod";
 import type { AnalysisError } from "../analysisErrorBase.js";
-import { analysisInputErrorFromIssues } from "../inputIssueProjection.js";
+import { parseAnalysisViewResult } from "./analysisViewParent.js";
 import type { JsonValue } from "../jsonValue.js";
 import { err, ok, type Result } from "../result.js";
 import {
   webNetworkCaptureRecordSchema,
   webNetworkCaptureBinaryDescriptorSchema,
-  webNetworkCaptureSchema,
+  safeParseOwnedWebNetworkCapture,
   webNetworkCaptureArtifactSchema,
   webNetworkCaptureDecoderSchema,
+  protobufCaptureCoverageSchema,
   WEB_NETWORK_CAPTURE_FORMATS,
   type WebNetworkCaptureRecord,
   type WebNetworkCapture,
 } from "../webNetworkCapture.js";
-import type {
-  AnalysisViewParent,
-  AnalysisViewRequest,
-  UnsignedAnalysisView,
-} from "./analysisView.js";
+import type { AnalysisViewParent } from "./analysisViewParent.js";
+import {
+  assertOwnedView,
+  type AdmittedView,
+  type SummaryAnalysisView,
+} from "./analysisViewShape.js";
 import {
   completeWithinViewCoverage,
   pageViewCoverage,
 } from "./analysisViewCoverage.js";
 import {
   qlogSummarySchema,
+  qlogViewRequestSchema,
   summarizeQlogCapture,
   projectQlogCapturePage,
 } from "./qlogCaptureView.js";
@@ -34,25 +41,47 @@ import {
 export const captureViewRequestSchema = z.strictObject({
   kind: z.literal("capture"),
   detail: z.enum(["preview", "complete"]).default("preview"),
-  offset: z.number().int().nonnegative().default(0),
-  limit: z.number().int().positive().default(64),
+  offset: z.int().nonnegative().default(0),
+  limit: z.int().positive().default(64),
 });
 
-const previewSchema = webNetworkCaptureRecordSchema.extend({
-  binary_fields: z.array(webNetworkCaptureBinaryDescriptorSchema),
+const protobufSummarySchema = z.strictObject({
+  bodies: z.number().int().nonnegative(),
+  frames: z.number().int().nonnegative(),
+  fields: z.number().int().nonnegative(),
+  incomplete_bodies: z.number().int().nonnegative(),
 });
+const summarizeProtobuf = (records: readonly WebNetworkCaptureRecord[]) => {
+  const counts = { bodies: 0, frames: 0, fields: 0, incomplete_bodies: 0 };
+  for (const record of records)
+    for (const body of record.protobuf ?? []) {
+      counts.bodies++;
+      counts.frames += body.frames.length;
+      counts.fields += body.fields.length;
+      counts.incomplete_bodies += Number(body.status !== "complete");
+    }
+  return counts.bodies === 0 ? undefined : counts;
+};
+const previewSchema = webNetworkCaptureRecordSchema
+  .omit({ protobuf: true })
+  .extend({
+    binary_fields: z.array(webNetworkCaptureBinaryDescriptorSchema),
+    protobuf_summary: protobufSummarySchema.exactOptional(),
+  });
 export const captureViewItemsSchema = z.array(
   z.union([webNetworkCaptureRecordSchema, previewSchema]),
 );
 
 /** Count/identity overview; bodies and the archive member inventory stay in the parent. */
 export const captureSummarySchema = z.strictObject({
+  protobuf_coverage: protobufCaptureCoverageSchema.exactOptional(),
   artifact: webNetworkCaptureArtifactSchema,
   decoder: webNetworkCaptureDecoderSchema,
   format: z.enum(WEB_NETWORK_CAPTURE_FORMATS),
-  total_records: z.number().int().nonnegative(),
-  retained_records: z.number().int().nonnegative(),
+  total_records: z.int().nonnegative(),
+  retained_records: z.int().nonnegative(),
   runtime_attribution: z.literal("unknown"),
+  protobuf: protobufSummarySchema.exactOptional(),
   qlog: qlogSummarySchema.optional(),
 });
 
@@ -63,15 +92,32 @@ const object = (
     ? value
     : null;
 
-const HEADLINE_FIELDS = [
-  "method",
-  "url",
-  "httpVersion",
-  "http_version",
-  "status",
-  "statusText",
-  "reason",
-];
+// Field names have different meanings across producers. In particular, HAR
+// entry extensions named `name` or `type` are not qlog or mitmproxy headlines.
+const RECORD_HEADLINES: Readonly<Record<string, readonly string[]>> = {
+  har: ["time", "startedDateTime"],
+  qlog: ["name", "time"],
+  saz: ["session_id", "time"],
+  mitmproxy: ["type"],
+};
+const HTTP_HEADLINES: Readonly<
+  Record<string, Readonly<Record<string, readonly string[]>>>
+> = {
+  har: {
+    request: ["method", "url", "httpVersion"],
+    response: ["httpVersion", "status", "statusText"],
+  },
+  saz: {
+    request: ["method", "url", "http_version"],
+    response: ["http_version", "status", "reason"],
+  },
+  mitmproxy: {
+    request: ["method", "http_version"],
+    response: ["http_version", "reason"],
+  },
+};
+const scalar = (value: JsonValue): boolean =>
+  value === null || typeof value !== "object";
 // Native mitmproxy flows report the request target in parts and the status
 // as status_code. They are previewed only for mitmproxy records and only when
 // each value has its field's well-formed shape, which also bounds the
@@ -201,37 +247,43 @@ const ancestorsOf = (pointer: string): string[] => {
     ancestors.push(pointer.slice(0, at));
   return ancestors;
 };
-/** Add a pointer's strict ancestors, stopping at one already present (its own ancestors are too). */
-const addAncestors = (pointer: string, into: Set<string>): void => {
-  for (
-    let at = pointer.lastIndexOf("/");
-    at !== -1;
-    at = at === 0 ? -1 : pointer.lastIndexOf("/", at - 1)
-  ) {
-    const ancestor = pointer.slice(0, at);
-    if (into.has(ancestor)) return;
-    into.add(ancestor);
-  }
+/** The only coordinates a mitmproxy headline check asks about. */
+const HEADLINE_POINTERS: ReadonlySet<string> = new Set([
+  "/type",
+  ...Object.entries(MITMPROXY_HEADLINE_FIELDS).flatMap(([side, fields]) =>
+    fields.map((field) => `/${side}/${field}`),
+  ),
+]);
+const HEADLINE_CHILD_PREFIXES = [...HEADLINE_POINTERS].map(
+  (pointer) => [pointer, `${pointer}/`] as const,
+);
+/** Headline coordinates and their ancestors: the only pointers whose own facets matter. */
+const INDEXED_POINTERS: ReadonlySet<string> = new Set(
+  [...HEADLINE_POINTERS].flatMap((pointer) => [
+    pointer,
+    ...ancestorsOf(pointer),
+  ]),
+);
+/** Mark the headline coordinates a facet lies beneath, without deriving strings from its pointer. */
+const markContainers = (pointer: string, into: Set<string>): void => {
+  for (const [coordinate, prefix] of HEADLINE_CHILD_PREFIXES)
+    if (pointer.startsWith(prefix)) into.add(coordinate);
 };
-const groupByPointer = <T extends { readonly pointer: string }>(
-  facets: readonly T[],
-): Map<string, T[]> => {
-  const groups = new Map<string, T[]>();
-  for (const facet of facets) {
-    const group = groups.get(facet.pointer);
-    if (group === undefined) groups.set(facet.pointer, [facet]);
-    else group.push(facet);
-  }
-  return groups;
+/** Two entries already decide every representation check, so keep no more. */
+const keep = <T>(groups: Map<string, T[]>, pointer: string, facet: T): void => {
+  const group = groups.get(pointer);
+  if (group === undefined) groups.set(pointer, [facet]);
+  else if (group.length < 2) group.push(facet);
 };
 
-/** A record's facet coordinates, indexed once for every headline check. */
+/** A record's facets at headline coordinates and their ancestors, indexed once. */
 type FacetIndex = {
+  /** At most two facets per pointer; a second already fails every check. */
   readonly sidecars: ReadonlyMap<string, readonly NumericSidecar[]>;
   readonly bytes: ReadonlyMap<string, readonly BinaryField[]>;
   /** The producer held a number or bytes here. */
   readonly scalars: ReadonlySet<string>;
-  /** A facet lies beneath: the producer held a container here. */
+  /** Headline coordinates with a facet beneath: the producer held a container there. */
   readonly containers: ReadonlySet<string>;
   /**
    * Withheld by a value redaction or a redacted byte descriptor; either facet
@@ -241,22 +293,30 @@ type FacetIndex = {
   /** The parent of an omitted property name; it hides no sibling values. */
   readonly omittedNames: ReadonlySet<string>;
 };
+/**
+ * Facets elsewhere in the record only mark containers, so the index holds a
+ * fixed number of entries however many facets an admitted record carries.
+ */
 const indexFacets = (record: WebNetworkCaptureRecord): FacetIndex => {
+  const sidecars = new Map<string, NumericSidecar[]>();
+  const bytes = new Map<string, BinaryField[]>();
   const containers = new Set<string>();
   const withheld = new Set<string>();
   const omittedNames = new Set<string>();
-  for (const { pointer } of record.numeric_literals)
-    addAncestors(pointer, containers);
-  for (const { pointer, state } of record.binary_fields) {
-    addAncestors(pointer, containers);
-    if (state === "redacted") withheld.add(pointer);
-  }
-  for (const redaction of record.redactions) {
-    addAncestors(redaction.pointer, containers);
-    ("scope" in redaction ? omittedNames : withheld).add(redaction.pointer);
-  }
-  const sidecars = groupByPointer(record.numeric_literals);
-  const bytes = groupByPointer(record.binary_fields);
+  const indexed = (pointer: string): boolean => {
+    markContainers(pointer, containers);
+    return INDEXED_POINTERS.has(pointer);
+  };
+  for (const sidecar of record.numeric_literals)
+    if (indexed(sidecar.pointer)) keep(sidecars, sidecar.pointer, sidecar);
+  for (const field of record.binary_fields)
+    if (indexed(field.pointer)) {
+      keep(bytes, field.pointer, field);
+      if (field.state === "redacted") withheld.add(field.pointer);
+    }
+  for (const redaction of record.redactions)
+    if (indexed(redaction.pointer))
+      ("scope" in redaction ? omittedNames : withheld).add(redaction.pointer);
   return {
     sidecars,
     bytes,
@@ -310,12 +370,15 @@ const mitmproxyHeadline = (
 const selectHeadlines = (
   fields: Readonly<Record<string, JsonValue>>,
   key: string,
+  format: string,
   facets: FacetIndex | null,
   selectedPointers: Set<string>,
 ): Record<string, JsonValue> => {
   const selected: Record<string, JsonValue> = {};
   const candidates = [
-    ...HEADLINE_FIELDS.map((field) => [field, null] as const),
+    ...(HTTP_HEADLINES[format]?.[key] ?? []).map(
+      (field) => [field, null] as const,
+    ),
     ...(facets === null ? [] : (MITMPROXY_HEADLINE_FIELDS[key] ?? [])).map(
       (field) => [field, facets] as const,
     ),
@@ -325,6 +388,7 @@ const selectHeadlines = (
     if (
       !Object.hasOwn(fields, field) ||
       value === undefined ||
+      !scalar(value) ||
       (index !== null &&
         !mitmproxyHeadline(index, `/${key}/${field}`, field, value))
     )
@@ -347,12 +411,16 @@ const preview = (record: WebNetworkCaptureRecord, format: string) => {
         : null;
     const mitmproxyFacets =
       index !== null && textualFlowType(index) ? index : null;
-    for (const key of ["session_id", "name", "time", "startedDateTime", "type"])
-      if (Object.hasOwn(source, key) && source[key] !== undefined) {
+    for (const key of RECORD_HEADLINES[format] ?? [])
+      if (
+        Object.hasOwn(source, key) &&
+        source[key] !== undefined &&
+        scalar(source[key])
+      ) {
         reported[key] = source[key];
         selectedPointers.add(`/${key}`);
       }
-    for (const key of ["request", "response"]) {
+    for (const key of Object.keys(HTTP_HEADLINES[format] ?? {})) {
       const value = source[key];
       if (!Object.hasOwn(source, key) || value === undefined) continue;
       const fields = object(value);
@@ -364,13 +432,19 @@ const preview = (record: WebNetworkCaptureRecord, format: string) => {
       reported[key] = selectHeadlines(
         fields,
         key,
+        format,
         mitmproxyFacets,
         selectedPointers,
       );
     }
   }
+  const { protobuf: _protobuf, ...sourceRecord } = record;
+  const protobufSummary = summarizeProtobuf([record]);
   return {
-    ...record,
+    ...sourceRecord,
+    ...(protobufSummary === undefined
+      ? {}
+      : { protobuf_summary: protobufSummary }),
     reported: source === null ? record.reported : reported,
     binary_fields: record.binary_fields.map(
       ({ content_base64: _content, ...field }) => field,
@@ -384,37 +458,26 @@ const preview = (record: WebNetworkCaptureRecord, format: string) => {
   };
 };
 
+const captureParser = { safeParse: safeParseOwnedWebNetworkCapture };
+
 /** Authenticate the retained report and its subject at one owning boundary. */
 const parseCaptureParent = (
   parent: AnalysisViewParent,
 ): Result<WebNetworkCapture, AnalysisError> => {
-  const parsed = webNetworkCaptureSchema.safeParse(parent.normalizedResult);
-  if (!parsed.success)
-    return err(
-      analysisInputErrorFromIssues(
-        "inspect_analysis_view",
-        parsed.error.issues.map((issue) => ({
-          ...issue,
-          path: ["source", "normalized_result", ...issue.path],
-        })),
-        { source: { normalized_result: parent.normalizedResult } },
-        { cause: parsed.error },
-      ),
-    );
-  const report = parsed.data;
+  const parsed = parseAnalysisViewResult(captureParser, parent);
+  if (!parsed.ok) return parsed;
+  const report = parsed.value;
+  const subject = parent.subject;
   if (
     report.artifact.sha256 !== null &&
-    (parent.subject == null ||
-      parent.subject.local_path !== report.artifact.path ||
-      parent.subject.digest.sha256 !== report.artifact.sha256)
+    (subject == null || subject.digest.sha256 !== report.artifact.sha256)
   )
     return err(
       analysisViewInputError([
         {
           path: ["source", "subject"],
           reason: "invalid_value",
-          message:
-            "Capture parent subject must identify the report's exact path and SHA-256.",
+          message: "Capture parent subject must identify the report's SHA-256.",
         },
       ]),
     );
@@ -424,11 +487,12 @@ const parseCaptureParent = (
 /** Page immutable retained facts; no capture file, provider or network is consulted. */
 export const projectWebNetworkCaptureView = (
   parent: AnalysisViewParent,
-  view: AnalysisViewRequest,
-): Result<UnsignedAnalysisView, AnalysisError> => {
+  view: AdmittedView,
+) => {
   if (
     view.kind !== "summary" &&
     view.kind !== "capture" &&
+    view.kind !== "protobuf" &&
     view.kind !== "qlog"
   )
     return err(
@@ -437,10 +501,16 @@ export const projectWebNetworkCaptureView = (
           path: ["view"],
           reason: "invalid_value",
           message:
-            "Historical captures support summary, capture record pages, qlog fact pages and admitted api-surface views.",
+            "Historical captures support summary, capture record pages, qlog fact pages and admitted api-surface, environment-manifest, environment-state or environment-coverage views.",
         },
       ]),
     );
+  assertOwnedView<
+    | SummaryAnalysisView
+    | z.output<typeof captureViewRequestSchema>
+    | z.output<typeof protobufViewRequestSchema>
+    | z.output<typeof qlogViewRequestSchema>
+  >(view, "summary", "capture", "protobuf", "qlog");
   const parsed = parseCaptureParent(parent);
   if (!parsed.ok) return parsed;
   const report = parsed.value;
@@ -463,9 +533,18 @@ export const projectWebNetworkCaptureView = (
         : []),
     ],
   };
+  if (view.kind === "protobuf")
+    return ok({
+      ...shared,
+      ...projectProtobufCapturePage(report, view),
+      unknowns: [
+        ...shared.unknowns,
+        "Decoding covers selected retained bodies only. Exhausting wire fields does not establish schema completeness or business meaning; compressed bodies and unsupported schema facets remain unknown.",
+      ],
+    });
   if (view.kind === "summary")
     return ok({
-      kind: "summary",
+      kind: "summary" as const,
       view,
       ...shared,
       summary: {
@@ -475,6 +554,12 @@ export const projectWebNetworkCaptureView = (
         total_records: report.total_records,
         retained_records: report.records.length,
         runtime_attribution: report.runtime_attribution,
+        ...(report.protobuf_coverage === undefined
+          ? {}
+          : { protobuf_coverage: report.protobuf_coverage }),
+        ...(summarizeProtobuf(report.records) === undefined
+          ? {}
+          : { protobuf: summarizeProtobuf(report.records)! }),
         ...(report.format === "qlog"
           ? { qlog: summarizeQlogCapture(report.qlog) }
           : {}),
@@ -498,7 +583,7 @@ export const projectWebNetworkCaptureView = (
     const projected = projectQlogCapturePage(report.qlog, view);
     return projected.ok
       ? ok({
-          kind: "qlog",
+          kind: "qlog" as const,
           view,
           ...shared,
           ...projected.value,
@@ -511,7 +596,7 @@ export const projectWebNetworkCaptureView = (
   }
   const records = report.records.slice(view.offset, view.offset + view.limit);
   return ok({
-    kind: "capture",
+    kind: "capture" as const,
     view,
     ...shared,
     items: captureViewItemsSchema.parse(

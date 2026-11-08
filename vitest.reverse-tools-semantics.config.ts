@@ -6,6 +6,7 @@ export default defineConfig({
       "tests/boundary/providers/CutterBridgeClient.test.ts",
       "tests/boundary/providers/RizinCommandTimeout.test.ts",
       "tests/boundary/providers/RizinTimeoutEvidence.test.ts",
+      "tests/boundary/mcp/rizinPendingOutput.test.ts",
     ],
     pool: "forks",
     maxWorkers: 2,

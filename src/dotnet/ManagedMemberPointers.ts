@@ -1,5 +1,8 @@
 import { managedDecodeBudget } from "./ManagedDecodeBudget.js";
-import type { ManagedMetadataLayout } from "./ManagedMetadataLayout.js";
+import type {
+  ManagedMetadataLayout,
+  MetadataTableLayout,
+} from "./ManagedMetadataLayout.js";
 import {
   managedFailure,
   ManagedReaderFailure,
@@ -31,6 +34,17 @@ export const memberListIndexSize = (
   layout.tableIndexSize(table - 1) === 4 || layout.tableIndexSize(table) === 4
     ? 4
     : 2;
+
+/** Normalize a TypeDef list coordinate once for parsing and owner lookup. */
+export const validatedMemberListStart = (
+  start: number,
+  table: MetadataTableLayout | undefined,
+): number | null => {
+  const total = table?.rowCount ?? 0;
+  return Number.isSafeInteger(start) && start >= 1 && start <= total + 1
+    ? start
+    : null;
+};
 
 /** Resolve physical definition rows to list positions without changing token identity. */
 export const memberListRowLookup = (

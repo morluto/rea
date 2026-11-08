@@ -1,10 +1,10 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { chmod, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
-import { resolve } from "node:path";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { afterEach, expect, it } from "vitest";
+import { withVerifierCleanup } from "../../../scripts/lib/verifier-cleanup.mjs";
 
 import { RizinDebugSessionManager } from "../../../src/rizin/RizinDebugSessionManager.js";
 import {
@@ -12,6 +12,9 @@ import {
   type ProviderProcessHandle,
 } from "../../../src/process/ProviderProcess.js";
 import { evidenceSchema } from "../../../src/domain/evidence.js";
+import { absoluteCallerPath } from "../../../src/filesystem/callerPath.js";
+import { createDeferred } from "../../fixtures/binarySession.js";
+import { awaitAcknowledgement } from "../../fixtures/lifecycleAcknowledgement.js";
 import {
   createRizinTestManager,
   rizinTestInferiorTty,
@@ -422,7 +425,7 @@ process.stdin.on("data", (chunk) => {
     const manager = createRizinTestManager({ REA_RIZIN_COMMAND: provider });
     managers.push(manager);
     const callerSelectedPath = "./relative/../fixture.bin";
-    const resolvedPath = resolve(callerSelectedPath);
+    const resolvedPath = absoluteCallerPath(callerSelectedPath);
     const started = await manager.start({
       path: callerSelectedPath,
       inferior_tty: inferiorTty,
@@ -444,8 +447,10 @@ process.stdin.on("data", (chunk) => {
         },
       });
     if (executed.ok)
-      expect(executed.value.evidence.limitations).toContain(
-        "Launch provenance records the original and resolved startup paths; it does not establish the current target after unrestricted debugger commands.",
+      expect(executed.value.evidence.limitations).toContainEqual(
+        expect.stringMatching(
+          /launch provenance.*does not establish.*current target/iu,
+        ),
       );
   },
 );
@@ -670,7 +675,7 @@ process.stdin.on("data", (chunk) => {
     );
     managers.push(manager);
     const callerSelectedPath = "./cancelled/../fixture.bin";
-    const resolvedPath = resolve(callerSelectedPath);
+    const resolvedPath = absoluteCallerPath(callerSelectedPath);
     const started = await manager.start({
       path: callerSelectedPath,
       inferior_tty: await rizinTestInferiorTty(),
@@ -678,13 +683,16 @@ process.stdin.on("data", (chunk) => {
     expect(started.ok).toBe(true);
     if (!started.ok) return;
     const controller = new AbortController();
-    setTimeout(() => controller.abort(), 50);
-
-    const result = await manager.execute(
+    const pending = manager.execute(
       started.value.session_id,
       "slow",
       controller.signal,
     );
+    await expect
+      .poll(() => manager.status(started.value.session_id)?.output_invalid_utf8)
+      .toBe(true);
+    controller.abort();
+    const result = await pending;
 
     expect(result.ok).toBe(false);
     if (!result.ok) {
@@ -748,17 +756,34 @@ it.skipIf(process.platform === "win32")(
       `#!/usr/bin/env node\nprocess.stdin.resume();\nsetInterval(() => {}, 1000);\n`,
     );
     await chmod(provider, 0o700);
-    const manager = createRizinTestManager({
-      REA_RIZIN_COMMAND: provider,
-    });
+    const spawned = createDeferred<void>();
+    const manager = createRizinTestManager(
+      { REA_RIZIN_COMMAND: provider },
+      {
+        spawnProcess: async (options) => {
+          const launched = await spawnOwnedProviderProcess(options);
+          spawned.resolve();
+          return launched;
+        },
+      },
+    );
     managers.push(manager);
     const controller = new AbortController();
-    setTimeout(() => controller.abort(), 50);
-
-    const started = await manager.start(
+    const starting = manager.start(
       { path: "/tmp/fixture.bin", inferior_tty: await rizinTestInferiorTty() },
       controller.signal,
     );
+    const started = await withVerifierCleanup(async () => {
+      await awaitAcknowledgement(spawned.promise, starting, "Rizin spawn");
+      controller.abort();
+      return await starting;
+    }, [
+      () => controller.abort(),
+      async () => {
+        await starting;
+      },
+      () => manager.closeAll(),
+    ]);
 
     expect(started.ok).toBe(false);
     if (!started.ok) expect(started.error._tag).toBe("AnalysisCancelledError");
@@ -849,7 +874,7 @@ process.stdin.on("data", (chunk) => {
     );
     managers.push(manager);
     const callerSelectedPath = "./exit/../fixture.bin";
-    const resolvedPath = resolve(callerSelectedPath);
+    const resolvedPath = absoluteCallerPath(callerSelectedPath);
     const started = await manager.start({
       path: callerSelectedPath,
       inferior_tty: await rizinTestInferiorTty(),
@@ -884,8 +909,8 @@ process.stdin.on("data", (chunk) => {
       const partialEvidence = evidenceSchema.parse(
         exited.error.partialObservation,
       );
-      expect(partialEvidence.limitations.join(" ")).toContain(
-        "Rizin exited before the command-completion marker; retained frame output is partial and command completion is unknown.",
+      expect(partialEvidence.limitations.join(" ")).toMatch(
+        /Rizin exited.*output is partial.*completion is unknown/iu,
       );
     }
     const writerPid = Number(await readFile(writerPidPath, "utf8"));

@@ -18,6 +18,8 @@ const config = {
   concurrency: 2,
   timeoutMS: 30000,
   reporters: ["clear-text", "progress", "html", "json"],
+  jsonReporter: { fileName: "reports/mutation/reverse-tools-semantics.json" },
+  htmlReporter: { fileName: "reports/mutation/reverse-tools-semantics.html" },
 };
 
 export default {
@@ -40,7 +42,8 @@ export default {
       },
       {
         kind: "declaration",
-        name: "createRizinCommandTimeoutError",
+        name: "snapshot",
+        withinBlockWithBinding: "output",
       },
       {
         kind: "declaration",

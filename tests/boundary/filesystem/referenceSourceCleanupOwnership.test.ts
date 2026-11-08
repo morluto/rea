@@ -6,6 +6,7 @@ import {
   type FileHandle,
 } from "node:fs/promises";
 import { join } from "node:path";
+import type { Dirent } from "node:fs";
 
 import { afterEach, beforeEach, expect, it, onTestFinished, vi } from "vitest";
 
@@ -13,6 +14,7 @@ import { ArtifactResourceScope } from "../../../src/artifacts/ArtifactResourceSc
 import { importReferenceSource } from "../../../src/application/ReferenceSourceImport.js";
 import { readReferenceSource } from "../../../src/reference/ReferenceSourceReader.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+import { err, ok } from "../../../src/domain/result.js";
 
 vi.mock("node:fs/promises", async (importOriginal) => {
   const actual = await importOriginal<typeof import("node:fs/promises")>();
@@ -27,6 +29,11 @@ const openMock = vi.mocked(fsOpen);
 const opendirMock = vi.mocked(fsOpendir);
 let actual: typeof import("node:fs/promises");
 
+interface DirectoryOperations {
+  read(): Promise<Dirent | null>;
+  close(): Promise<void>;
+}
+
 beforeEach(async () => {
   actual =
     await vi.importActual<typeof import("node:fs/promises")>(
@@ -40,6 +47,87 @@ afterEach(() => {
   openMock.mockReset();
   opendirMock.mockReset();
 });
+
+it.each([
+  ["refusal", false],
+  ["refusal", true],
+  ["cancel-after-policy", false],
+  ["cancel-after-policy", true],
+  ["refusal-late-cancel", true],
+] as const)(
+  "owns directory cleanup before policy %s (close fails=%s)",
+  async (outcome, closeFails) => {
+    const root = await createTestTempDirectory("rea-reference-policy-owner-");
+    await writeFile(join(root, "unexamined.ts"), "export const value = 1;\n");
+    const resources = new ArtifactResourceScope();
+    onTestFinished(() => resources.close().catch(() => undefined));
+    const controller = new AbortController();
+    const reason = new Error("cancelled at the policy boundary");
+    const policyCause = new Error("scoped policy read failed");
+    const closeFailure = new Error("directory close rejected after policy");
+    let closeCalls = 0;
+    let readCalls = 0;
+    opendirMock.mockImplementation(async (...args) => {
+      const directory = await actual.opendir(...args);
+      const operations: DirectoryOperations = directory;
+      const read = operations.read.bind(directory);
+      vi.spyOn(operations, "read").mockImplementation(async () => {
+        readCalls += 1;
+        return read();
+      });
+      const close = operations.close.bind(directory);
+      vi.spyOn(operations, "close").mockImplementation(async () => {
+        closeCalls += 1;
+        if (outcome === "refusal-late-cancel") controller.abort(reason);
+        await close();
+        if (closeFails) throw closeFailure;
+      });
+      return directory;
+    });
+    const result = await readReferenceSource(root, resources, {
+      signal: controller.signal,
+      beforeDirectory: async () => {
+        expect(opendirMock).toHaveBeenCalledTimes(1);
+        if (outcome === "cancel-after-policy") {
+          controller.abort(reason);
+          return ok(undefined);
+        }
+        return err({
+          tag: "reference-source-reader",
+          code: "io",
+          message: "Scoped policy could not be read",
+          cause: policyCause,
+        });
+      },
+    });
+    if (result.ok) throw new Error("Policy outcome was ignored");
+    expect(result.error.code).toBe(
+      outcome === "cancel-after-policy" ? "cancelled" : "io",
+    );
+    if (outcome !== "cancel-after-policy") {
+      expect(result.error.message).toBe("Scoped policy could not be read");
+      expect(result.error.cause).toBe(policyCause);
+    }
+    expect(result.error.partial).toMatchObject({ entries: [], bytesRead: 0 });
+    expect(readCalls).toBe(0);
+    expect(openMock).not.toHaveBeenCalled();
+    expect(closeCalls).toBe(1);
+    expect(resources.hasPending).toBe(closeFails);
+    if (closeFails) {
+      expect(result.error.cleanup).toEqual({
+        resources: [root],
+        reason: expect.stringContaining(closeFailure.message),
+      });
+      await expect(resources.close()).rejects.toMatchObject({
+        cleanup: { resources: [root] },
+      });
+    } else {
+      expect(result.error.cleanup).toBeUndefined();
+      await resources.close();
+    }
+    expect(closeCalls).toBe(1);
+  },
+);
 
 it("preserves admission EIO and retains an invalidated failed-close owner", async () => {
   const root = await createTestTempDirectory("rea-reference-admission-owner-");
@@ -215,13 +303,14 @@ it("preserves a directory read failure when closing that directory also fails", 
 
   opendirMock.mockImplementation(async (...args) => {
     const directory = await actual.opendir(...args);
-    const read = directory.read.bind(directory);
-    vi.spyOn(directory, "read").mockImplementation(async () => {
+    const operations: DirectoryOperations = directory;
+    const read = operations.read.bind(directory);
+    vi.spyOn(operations, "read").mockImplementation(async () => {
       if (readCalls++ > 0) throw readFailure;
       return read();
     });
-    const close = directory.close.bind(directory);
-    vi.spyOn(directory, "close").mockImplementation(async () => {
+    const close = operations.close.bind(directory);
+    vi.spyOn(operations, "close").mockImplementation(async () => {
       closeCalls += 1;
       await close();
       throw closeFailure;
@@ -253,10 +342,7 @@ it("preserves a directory read failure when closing that directory also fails", 
       bytes: Buffer.from(bytes),
     }),
   );
-  expect(result.error.partial?.entries).toContainEqual({
-    status: "failed",
-    kind: "directory",
-    path: ".",
+  expect(result.error.partial?.rootFailure).toEqual({
     code: "io",
     message: expect.stringContaining(readFailure.message),
   });
@@ -283,15 +369,16 @@ it("keeps cancelled traversal typed when native directory close rejects after in
 
   opendirMock.mockImplementation(async (...args) => {
     const directory = await actual.opendir(...args);
+    const operations: DirectoryOperations = directory;
     openedPath = String(args[0]);
-    const read = directory.read.bind(directory);
-    vi.spyOn(directory, "read").mockImplementation(async () => {
+    const read = operations.read.bind(directory);
+    vi.spyOn(operations, "read").mockImplementation(async () => {
       const child = await read();
       if (child !== null) controller.abort();
       return child;
     });
-    const close = directory.close.bind(directory);
-    vi.spyOn(directory, "close").mockImplementation(async () => {
+    const close = operations.close.bind(directory);
+    vi.spyOn(operations, "close").mockImplementation(async () => {
       closeCalls += 1;
       await close();
       throw closeFailure;

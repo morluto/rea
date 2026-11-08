@@ -1,5 +1,7 @@
 #!/usr/bin/env node
 
+import { verifyProjectCoverage } from "./verify-real-ghidra-project-coverage.mjs";
+
 import { execFile } from "node:child_process";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -10,10 +12,10 @@ import { promisify } from "node:util";
 import { parseBinaryTarget } from "../dist/application/BinaryTargetResolver.js";
 import { resolveGhidraAnalysisProfile } from "../dist/ghidra/GhidraAnalysisProfile.js";
 import { GhidraClient } from "../dist/ghidra/GhidraClient.js";
-import { inspectGhidraInstallation } from "../dist/ghidra/GhidraInstallation.js";
-import { SUPPORTED_GHIDRA_VERSION } from "../dist/ghidra/GhidraInstallationPolicy.js";
+import { inspectVerifierGhidraInstallation } from "./lib/ghidra-installation-inspection.mjs";
+import { SUPPORTED_GHIDRA_VERSION } from "../dist/ghidra/GhidraReleasePolicy.js";
 import { GhidraHeadlessLauncher } from "../dist/ghidra/GhidraLauncher.js";
-import { GHIDRA_PROVIDER_IDENTITY } from "../dist/ghidra/GhidraProviderCapabilities.js";
+import { GHIDRA_PROVIDER_IDENTITY } from "../dist/ghidra/GhidraProviderMetadata.js";
 
 import {
   assertCleanup,
@@ -32,6 +34,7 @@ import {
 } from "./verify-real-ghidra-inventory.mjs";
 import { completeVerifierRun, createVerifierRun } from "./lib/verifier-run.mjs";
 import { hasTypedSwitchEvidence } from "./verify-real-ghidra-switch-assertions.mjs";
+import { verifyGhidraRelocationSymbols } from "./lib/real-ghidra-relocation-symbols.mjs";
 
 import {
   verifyDenseDefaultReturn,
@@ -49,7 +52,7 @@ if (installDir === undefined || !isAbsolute(installDir))
   throw new Error(
     "Set GHIDRA_INSTALL_DIR to the absolute root of an extracted Ghidra 12.1.4 release.",
   );
-const installation = inspectGhidraInstallation({
+const installation = await inspectVerifierGhidraInstallation({
   environment: process.env,
   installDir,
   ...(process.env.JAVA_HOME === undefined
@@ -281,6 +284,14 @@ try {
   }
   await writeFile(malformedPath, Buffer.from("not-a-binary\n", "utf8"));
 
+  const relocationSymbols = crossFormat
+    ? await verifyGhidraRelocationSymbols({
+        clang,
+        lld,
+        env: process.env,
+      })
+    : null;
+
   const debug = await verifyTarget(debugPath, "debug", expectedNativeTarget);
   assertDebugFixture(debug);
   const layout = await verifyTarget(
@@ -311,6 +322,10 @@ try {
   const customPath = process.env.GHIDRA_TARGET_PATH;
   const custom =
     customPath === undefined ? null : await verifyTarget(customPath, "custom");
+  const projectCoverage =
+    !crossFormat && !aarch64JumpTableOnly && process.platform !== "win32"
+      ? await verifyProjectCoverage(verifierRun)
+      : null;
   report = {
     ok: true,
     provider: { id: "ghidra", version: SUPPORTED_GHIDRA_VERSION },
@@ -331,6 +346,8 @@ try {
       ? (crossResults[0]?.native_api_cli ?? null)
       : jumpTable.native_api_cli,
     native_value_e2e: debug.native_values,
+    selected_project_coverage: projectCoverage,
+    relocation_symbols: relocationSymbols,
     custom_target: custom === null ? null : summary(custom),
     cleanup: "complete",
   };
@@ -489,11 +506,10 @@ async function verifyTarget(targetPath, variant, expectedTarget = null) {
 
   const client = new GhidraClient({
     launcher: new GhidraHeadlessLauncher({
+      configurationDirectoryName: installation.configurationDirectoryName,
       environment: process.env,
       analyzeHeadlessPath: installation.analyzeHeadlessPath,
-      ...(process.env.JAVA_HOME === undefined
-        ? {}
-        : { javaHome: process.env.JAVA_HOME }),
+      javaHome: installation.javaHome,
       bridgeScriptPath: fileURLToPath(
         new URL("../bridge/ghidra/ReaGhidraBridge.java", import.meta.url),
       ),

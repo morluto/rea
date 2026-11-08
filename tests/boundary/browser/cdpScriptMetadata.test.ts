@@ -13,7 +13,7 @@ import { ArtifactResourceScope } from "../../../src/artifacts/ArtifactResourceSc
 import { selectScriptCapture } from "../../../src/browser/assets/ScriptCaptureAdapters.js";
 import { inspectWebPageInputSchema } from "../../../src/domain/browserObservation.js";
 import { inspectElectronPageInputSchema } from "../../../src/domain/javascript/electronObservation.js";
-import { parseRuntimeCaptures } from "../../../src/domain/javascript/javascriptRuntimeReconciliationCaptureParsing.js";
+import { parseRuntimeCapture } from "../../../src/domain/javascript/javascriptRuntimeReconciliationCaptureParsing.js";
 import { projectRuntimeCaptures } from "../../../src/domain/javascript/javascriptRuntimeReconciliationRuntime.js";
 import { V8InspectorProvider } from "../../../src/inspector/V8InspectorProvider.js";
 import { startFakeCdpBrowser } from "../../fixtures/fakeCdpBrowser.js";
@@ -186,13 +186,103 @@ describe("Inspector script metadata", () => {
         result.value,
         provider.identity(),
       );
-      const projected = projectRuntimeCaptures(
-        parseRuntimeCaptures([evidence]),
-      );
+      const projected = projectRuntimeCaptures([
+        parseRuntimeCapture(evidence, ["runtime_observations", 0]),
+      ]);
       const scriptNode = projected.nodes.find(
         ({ kind }) => kind === "runtime-script-instance",
       );
       expect(scriptNode?.observations[0]?.properties).toMatchObject(expected);
     },
   );
+});
+
+describe("Inspector script exclusions", () => {
+  const reconcileV8Scripts = async (
+    scriptEvents: readonly { method: string; params: object }[],
+  ) => {
+    const root = await fixtureRoot();
+    const inspector = await startFakeV8Inspector({
+      targetUrl: pathToFileURL(join(root, "app.js")).href,
+      scriptEvents,
+    });
+    resources.push(() => inspector.close());
+    const input = {
+      inspector_endpoint: inspector.endpoint,
+      target_id: inspector.targetId,
+      observation_ms: 50,
+    };
+    const provider = new V8InspectorProvider();
+    const result = await provider.observe(input);
+    if (!result.ok) throw result.error;
+    const parsed = parseRuntimeCapture(
+      createJavaScriptRuntimeObservationEvidence(
+        "observe_javascript_runtime",
+        input,
+        result.value,
+        provider.identity(),
+      ),
+      ["runtime_observations", 0],
+    );
+    return {
+      producer: result.value.scripts.excluded,
+      completeness: parsed?.inspection.completeness,
+    };
+  };
+  const invalidFailedToParse = {
+    method: "Debugger.scriptFailedToParse",
+    params: { scriptId: 42, url: "", executionContextId: 1 },
+  };
+  const missingUrl = {
+    method: "Debugger.scriptParsed",
+    params: { scriptId: "missing-url", executionContextId: 1 },
+  };
+
+  it("keeps invalid protocol scripts out of policy filtering", async () => {
+    const { producer, completeness } = await reconcileV8Scripts([
+      invalidFailedToParse,
+      missingUrl,
+    ]);
+    expect(producer).toEqual({
+      unsupported_location: 0,
+      invalid_protocol_value: 2,
+    });
+    expect(completeness).toMatchObject({
+      status: "attach_limited",
+      conditions: ["attach_limited"],
+      policy_filtered_sections: [],
+      excluded: [
+        { section: "scripts", reason: "invalid_protocol_value", count: 2 },
+      ],
+    });
+    expect(completeness?.unavailable_sections).toContain("scripts");
+  });
+
+  it("reports unsupported and invalid script exclusions separately", async () => {
+    const { producer, completeness } = await reconcileV8Scripts([
+      invalidFailedToParse,
+      {
+        method: "Debugger.scriptParsed",
+        params: {
+          scriptId: "data-script",
+          url: "data:text/javascript,0",
+          executionContextId: 1,
+        },
+      },
+    ]);
+    expect(producer).toEqual({
+      unsupported_location: 1,
+      invalid_protocol_value: 1,
+    });
+    expect(completeness).toMatchObject({
+      status: "policy_filtered",
+      conditions: ["attach_limited", "policy_filtered"],
+      policy_filtered_sections: ["scripts"],
+      excluded: [
+        { section: "scripts", reason: "invalid_protocol_value", count: 1 },
+        { section: "scripts", reason: "out_of_target_scope", count: 1 },
+      ],
+    });
+    expect(completeness?.unavailable_sections).toContain("scripts");
+  });
 });

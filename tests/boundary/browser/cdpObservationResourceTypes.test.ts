@@ -61,7 +61,7 @@ it("keeps final URL unknown when a redirect races the final frame-tree read", as
   let frameTreeReads = 0;
   const browser = await startFakeCdpBrowser({
     eventsBeforeReply: ["Page.getFrameTree"],
-    commandEvents: (command) => {
+    commandEvents: (command, origin) => {
       if (command.method !== "Page.getFrameTree") return undefined;
       frameTreeReads += 1;
       if (frameTreeReads !== 2 || command.sessionId === undefined)
@@ -78,7 +78,7 @@ it("keeps final URL unknown when a redirect races the final frame-tree read", as
               url: "https://private.example.test/redirected",
               method: "GET",
             },
-            redirectResponse: { status: 302 },
+            redirectResponse: { url: `${origin}/prior`, status: 302 },
           },
         },
       ];

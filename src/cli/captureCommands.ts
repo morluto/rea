@@ -1,7 +1,7 @@
+import { projectCliAnalysisResult } from "./projectCliAnalysisResult.js";
 import { inspectPacketFieldsInputSchema } from "../domain/captures/packetFields.js";
 import { z } from "incur";
 import type { PacketCaptureService } from "../application/captures/PacketCaptureService.js";
-import { resolve } from "node:path";
 import { createPacketCaptureService } from "../composition/captures.js";
 import {
   packetCaptureOptionsSchema,
@@ -14,6 +14,10 @@ import type { Logger } from "pino";
 import type { CliInstance } from "./types.js";
 import { withCommandCancellation } from "./commandCancellation.js";
 import { finishAnalysisCommand } from "./finishAnalysisCommand.js";
+import { finishCliEvidenceCommand } from "./cliEvidenceCallerPath.js";
+import { cliDecimalField, cliDecimalShape } from "./options.js";
+import { localPathStringSchema } from "../domain/localPath.js";
+import { absoluteCallerPath } from "../filesystem/callerPath.js";
 export const registerCaptureCommands = (
   cli: CliInstance,
   logger: Logger,
@@ -27,14 +31,16 @@ export const registerCaptureCommands = (
     description: "Search installed TShark protocol and field definitions",
     options: z
       .object({
-        ...inspectPacketFieldsInputSchema.shape,
-        limit: z
-          .number()
-          .int()
-          .positive()
-          .max(Number.MAX_SAFE_INTEGER)
-          .optional()
-          .describe("Maximum matching records to return; defaults to 50"),
+        ...cliDecimalShape(inspectPacketFieldsInputSchema.shape),
+        limit: cliDecimalField(
+          z
+            .number()
+            .int()
+            .positive()
+            .max(Number.MAX_SAFE_INTEGER)
+            .optional()
+            .describe("Maximum matching records to return; defaults to 50"),
+        ),
         all: z
           .boolean()
           .default(false)
@@ -60,23 +66,28 @@ export const registerCaptureCommands = (
             service,
             "tshark-capture",
             "inspect_packet_fields",
-          ),
+            signal,
+          ).then(projectCliAnalysisResult),
         ),
       ),
   });
   cli.command(CLI_COMMANDS.inspectPacketCapture, {
     description:
       "Inspect an existing packet capture with caller-supplied TShark",
-    args: z.object({ path: z.string().describe("Local packet capture") }),
+    args: z.object({
+      path: localPathStringSchema.describe("Local packet capture"),
+    }),
     options: z
       .object({
-        ...packetCaptureOptionsSchema.shape,
-        match_limit: z
-          .number()
-          .int()
-          .positive()
-          .optional()
-          .describe("Returned matching frames per page; default 50"),
+        ...cliDecimalShape(packetCaptureOptionsSchema.shape),
+        match_limit: cliDecimalField(
+          z
+            .number()
+            .int()
+            .positive()
+            .optional()
+            .describe("Returned matching frames per page; default 50"),
+        ),
         all_matches: z
           .boolean()
           .default(false)
@@ -99,20 +110,22 @@ export const registerCaptureCommands = (
     run: ({ args, options: { all_matches, ...options } }) =>
       withCommandCancellation((signal) =>
         logCliCommand(logger, CLI_COMMANDS.inspectPacketCapture, async () => {
-          return finishAnalysisCommand(
+          return finishCliEvidenceCommand(
+            args.path,
             () =>
               service.inspect(
                 {
                   ...options,
                   ...(all_matches ? { match_limit: null } : {}),
-                  path: resolve(args.path),
+                  path: absoluteCallerPath(args.path),
                 },
                 { signal },
               ),
             service,
             "tshark-capture",
             "inspect_packet_capture",
-          );
+            signal,
+          ).then(projectCliAnalysisResult);
         }),
       ),
   });

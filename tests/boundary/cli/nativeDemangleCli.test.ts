@@ -18,10 +18,10 @@ const evidenceTarget = async () => {
   return path;
 };
 
-describe.skipIf(process.platform !== "darwin")(
-  "native Swift demangling CLI with line-terminator characters",
-  () => {
-    cliTest("keeps a carriage return in the symbol", async ({ cli }) => {
+describe("Swift demangling CLI with line-terminator characters", () => {
+  cliTest.skipIf(process.platform !== "darwin")(
+    "keeps a carriage return in the symbol",
+    async ({ cli }) => {
       const result = await cli.run({
         arguments: [
           "demangle-swift",
@@ -41,26 +41,55 @@ describe.skipIf(process.platform !== "darwin")(
           ],
         },
       });
-    });
+    },
+  );
 
-    cliTest("rejects a symbol spanning lines as input", async ({ cli }) => {
-      const missingTarget = join(
-        await createTestTempDirectory("rea-demangle-invalid-input-"),
-        "absent",
-      );
+  cliTest("rejects a symbol spanning lines as input", async ({ cli }) => {
+    const missingTarget = join(
+      await createTestTempDirectory("rea-demangle-invalid-input-"),
+      "absent",
+    );
+    const result = await cli.run({
+      arguments: [
+        "demangle-swift",
+        missingTarget,
+        "$s4main3FooV",
+        "$s4main\n3FooV",
+        "--json",
+      ],
+      environment,
+      timeoutMs: 20_000,
+    });
+    expect(result.signal).toBeNull();
+    expect(result.exitCode).toBe(1);
+    expect(result.json).toMatchObject({
+      code: "VALIDATION_ERROR",
+      fieldErrors: expect.arrayContaining([
+        expect.objectContaining({ path: "symbols.1", missing: false }),
+      ]),
+    });
+  });
+
+  cliTest(
+    "emits compact JSON for missing-argument validation on piped stdout",
+    async ({ cli }) => {
       const result = await cli.run({
-        arguments: [
-          "demangle-swift",
-          missingTarget,
-          "$s4main3FooV",
-          "$s4main\n3FooV",
-          "--json",
-        ],
+        arguments: ["demangle-swift", "--json"],
         environment,
         timeoutMs: 20_000,
       });
-      expect(result.exitCode).not.toBe(0);
-      expect(result.json).toMatchObject({ code: "VALIDATION_ERROR" });
-    });
-  },
-);
+      expect(result.signal).toBeNull();
+      expect(result.exitCode).toBe(1);
+      expect(result.stderr).toBe("");
+      expect(result.json).toEqual(
+        expect.objectContaining({
+          code: "VALIDATION_ERROR",
+          message: expect.stringMatching(/\S/),
+        }),
+      );
+      // Piped stdout must stay compact; Incur's Formatter always indents.
+      expect(result.stdout).not.toContain("\n  ");
+      expect(result.stdout).toBe(`${JSON.stringify(result.json)}\n`);
+    },
+  );
+});

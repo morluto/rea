@@ -4,6 +4,7 @@ import { createHash } from "node:crypto";
 import { copyFile, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { promisify } from "node:util";
+import { parseMipsReadelfSectionTypes } from "./mips-checks.mjs";
 
 const execute = promisify(execFile);
 const sha256 = (bytes) => createHash("sha256").update(bytes).digest("hex");
@@ -42,15 +43,11 @@ export async function buildPspFixture(directory, globalValue = 7) {
   assert.equal(bytes.readUInt32LE(36), 0x10a23001);
   const readelf = await execute(
     "psp-readelf",
-    ["-h", "-A", "-sW", path],
+    ["-h", "-A", "-S", "-sW", path],
     options,
   );
   assert.equal(readelf.stderr.trim(), "");
-  assert.match(readelf.stdout, /Class:\s+ELF32/u);
-  assert.match(readelf.stdout, /Data:\s+2's complement, little endian/u);
-  assert.match(readelf.stdout, /Type:\s+EXEC\b/u);
-  assert.match(readelf.stdout, /Flags:\s+0x10a23001\b/u);
-  const abiFlags = parsePspReadelfAbi(readelf.stdout);
+  const mips = parsePspReadelfMips(readelf.stdout);
   const abiDump = await execute(
     "psp-readelf",
     ["-x", ".MIPS.abiflags", path],
@@ -71,6 +68,7 @@ export async function buildPspFixture(directory, globalValue = 7) {
     ["rea_psp_entry", "FUNC"],
     ["rea_psp_leaf", "FUNC"],
     ["rea_psp_probe", "FUNC"],
+    ["rea_psp_vfpu_probe", "FUNC"],
     ["rea_psp_global", "OBJECT"],
     ["rea_psp_marker", "OBJECT"],
   ]) {
@@ -99,13 +97,7 @@ export async function buildPspFixture(directory, globalValue = 7) {
     source_sha256: sourceDigests,
     symbols,
     flags: "0x10a23001",
-    mips: {
-      elfClass: 32,
-      byteOrder: "little",
-      type: 2,
-      flags: 0x10a23001,
-      abiFlags,
-    },
+    mips,
     abi_record_hex_dump: abiDump.stdout,
     global_value: globalValue,
     versions,
@@ -115,8 +107,8 @@ export async function buildPspFixture(directory, globalValue = 7) {
   };
 }
 
-/** Independent GNU fields for the pinned PSPSDK fixture, not REA's parser. */
-export function parsePspReadelfAbi(text) {
+/** Complete independent fields for the pinned PSPSDK fixture, not REA's parser. */
+export function parsePspReadelfMips(text) {
   const field = (expression, label) => {
     const matches = [...text.matchAll(expression)];
     assert.equal(
@@ -126,6 +118,13 @@ export function parsePspReadelfAbi(text) {
     );
     return matches[0][1].trim();
   };
+  assert.equal(field(/^\s*Class:\s*(.+)$/gmu, "class"), "ELF32");
+  assert.equal(
+    field(/^\s*Data:.*?,\s*(little|big) endian\s*$/gmu, "byte order"),
+    "little",
+  );
+  assert.match(field(/^\s*Type:\s*(.+)$/gmu, "type"), /^EXEC\b/u);
+  assert.match(field(/^\s*Flags:\s*(.+)$/gmu, "flags"), /^0x10a23001\b/u);
   const width = (name) => {
     const bits = Number(
       field(new RegExp(`^${name} size:\\s*(\\d+)\\s*$`, "gmu"), name),
@@ -178,7 +177,49 @@ export function parsePspReadelfAbi(text) {
     },
     "PSPSDK ABI declaration differs from independently inspected build intent",
   );
-  return abi;
+  return {
+    elfClass: 32,
+    byteOrder: "little",
+    type: 2,
+    flags: 0x10a23001,
+    abiFlags: abi,
+    gnuAttributes: parsePspGnuAttributes(text),
+  };
+}
+
+// The maintained PSP fixture is single-float. Retain that independently decoded
+// GNU declaration when present, and refuse other tags/vendors/scopes rather
+// than confusing an uninspected or unsupported declaration with absence.
+function parsePspGnuAttributes(text) {
+  const count = parseMipsReadelfSectionTypes(text).filter(
+    (type) => type === "GNU_ATTRIBUTES",
+  ).length;
+  const headers = [...text.matchAll(/^Attribute Section: (.+)$/gmu)];
+  if (count === 0) {
+    assert.equal(
+      headers.length,
+      0,
+      "GNU attributes without a declared section",
+    );
+    return null;
+  }
+  assert.equal(count, 1, "Ambiguous GNU attributes sections");
+  assert.equal(headers.length, 1, "Missing or ambiguous GNU attributes output");
+  const header = headers[0];
+  assert.equal(header[1].trim(), "gnu", "Unsupported GNU attributes vendor");
+  const tail = text.slice(header.index + header[0].length);
+  // GNU attributes may precede or follow the architecture-specific ABI dump.
+  const end = tail.search(/^MIPS ABI Flags Version:/mu);
+  const lines = (end < 0 ? tail : tail.slice(0, end))
+    .split(/\r?\n/u)
+    .map((line) => line.trim())
+    .filter(Boolean);
+  assert.deepEqual(
+    lines,
+    ["File Attributes", "Tag_GNU_MIPS_ABI_FP: Hard float (single precision)"],
+    "Unsupported or incomplete PSP GNU attributes declaration",
+  );
+  return { fpAbi: 2, msa: null };
 }
 
 /** Observations from Ghidra, not an echo of the requested profile. */
@@ -189,6 +230,36 @@ export function assertPspLoadedImage(image, targetSha256) {
   assert.equal(image.source_files.length, 1);
   assert.equal(image.source_files[0].original_sha256, targetSha256);
   assert.equal(image.source_files[0].modified_sha256, targetSha256);
+}
+
+/** Static decode coverage only: neither opaque CALLOTHER nor generated C proves vector math. */
+export const PSP_VFPU_DECODE_CASES = [
+  { index: 2, word: 0xdc0000e4, mnemonic: "vpfxs" },
+  { index: 3, word: 0xdd0000e4, mnemonic: "vpfxt" },
+  { index: 4, word: 0xde000000, mnemonic: "vpfxd" },
+  { index: 5, word: 0x60048090, mnemonic: "vadd.q" },
+  { index: 7, word: 0xdc0000c6, mnemonic: "vpfxs" },
+  { index: 8, word: 0x60048090, mnemonic: "vadd.q" },
+  { index: 10, word: 0x60048090, mnemonic: "vadd.q" },
+];
+
+/** Compare actual Ghidra listing instructions against source-owned PSP words. */
+export function assertPspVfpuProbe(observations) {
+  assert.equal(observations.length, PSP_VFPU_DECODE_CASES.length);
+  for (let i = 0; i < observations.length; i++) {
+    const expected = PSP_VFPU_DECODE_CASES[i];
+    const observed = observations[i];
+    const word = Buffer.alloc(4);
+    word.writeUInt32LE(expected.word);
+    assert.equal(
+      observed.status,
+      "decoded",
+      `VFPU instruction ${expected.index} did not decode`,
+    );
+    assert.equal(observed.length, 4);
+    assert.equal(observed.bytes.toLowerCase(), word.toString("hex"));
+    assert.equal(observed.mnemonic.toLowerCase(), expected.mnemonic);
+  }
 }
 
 /** Fixed source encodings and independently chosen immediate, not pseudocode. */

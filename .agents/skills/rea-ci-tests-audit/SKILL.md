@@ -9,7 +9,7 @@ Establish which checks still catch real regressions and which costs can be
 removed without losing that protection. The outcome may be a verified fix,
 an evidence-backed recommendation, or an explicit decision to stop.
 
-Follow the checkout's `AGENTS.md`, [testing guide](../../../docs/testing.md),
+Follow the checkout's `AGENTS.md`, [testing guide](../../../docs/development/testing.md),
 and [contribution rules](../../../CONTRIBUTING.md). Use their current commands
 and pinned toolchain, rather than commands remembered from an earlier audit.
 Preserve the requested scope: investigation alone does not authorize edits;

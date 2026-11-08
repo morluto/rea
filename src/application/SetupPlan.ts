@@ -1,12 +1,13 @@
-import { join } from "node:path";
-
-import { isOwnedClientRegistrationCommand } from "./ClientRegistrationIdentity.js";
+import { SetupSkillInstallError, type SkillDestination } from "./SetupSkill.js";
+import { classifyClientRegistrationCommand } from "./ClientRegistrationIdentity.js";
+import type { LinuxPackageFamily } from "./HopperReleaseFeed.js";
 import {
   linuxHopperInstallDisclosure,
-  type LinuxPackageFamily,
+  LINUX_HOPPER_SETUP_HOSTS,
+  type LinuxDistribution,
 } from "./LinuxHopper.js";
-import type { SkillDestination } from "./SetupSkill.js";
 import { macHopperInstallDisclosure } from "./MacHopper.js";
+import { macHopperUserApplicationPath } from "./MacHopperPaths.js";
 import type {
   ClientConfigurationInspection,
   SetupAction,
@@ -22,11 +23,25 @@ import {
 import { redirectedWriteBlocker } from "./MsixPackageStorage.js";
 import type { DoctorReport } from "./Doctor.js";
 import { compareUnicodeCodePoints } from "../domain/unicodeCodePointOrder.js";
+import { CURRENT_ENTRYPOINT_PATH } from "../process/CurrentEntrypointPath.js";
+import { macosMajorVersion } from "../domain/macosVersion.js";
+
+/**
+ * Whether automated Hopper installation can run on this host, and why not.
+ * `unknown`: the host meets REA's own prerequisites, but the selected release
+ * declares its minimum macOS version only in metadata the installer reads
+ * after approval, so planning cannot claim the release supports this host.
+ */
+export type HopperInstallEligibility =
+  | { readonly supported: true }
+  | { readonly supported: "unknown" }
+  | { readonly supported: false; readonly remediation: string };
 
 /** Read-only setup facts shared by client selection and preflight. */
 export interface SetupDiscovery {
   readonly initialDoctor: Awaited<ReturnType<SetupHost["doctor"]>>;
   readonly installHopper: boolean;
+  readonly hopperInstall: HopperInstallEligibility;
   readonly clients: readonly SetupClient[];
   readonly detectedClientIds: readonly string[];
   readonly defaultClientIds: readonly string[];
@@ -37,7 +52,7 @@ export interface SetupDiscovery {
 /** Discover supported clients and current registrations without mutation. */
 export const discoverSetupState = async (input: {
   readonly host: SetupHost;
-  readonly providerEnvironment: SetupProviderEnvironment;
+  readonly providerConfigured: boolean;
   readonly forceHopperInstall: boolean;
   readonly hopperLauncherConfigured?: boolean;
   readonly proposeHopper: boolean;
@@ -56,17 +71,18 @@ export const discoverSetupState = async (input: {
     input.host.platform === "linux"
       ? await input.host.linuxDistribution()
       : undefined;
-  const hopperInstallSupported =
-    (input.host.platform === "darwin" &&
-      majorVersion((await input.host.macosVersion()) ?? "0") >= 12) ||
-    (input.host.platform === "linux" &&
-      linuxDistribution?.hopperSetupSupported === true);
+  const hopperInstall = hopperInstallEligibility(
+    input.host.platform,
+    input.host.platform === "darwin"
+      ? await input.host.macosVersion()
+      : undefined,
+    linuxDistribution,
+  );
   const installHopper =
     input.forceHopperInstall ||
-    (hopperInstallSupported &&
+    (hopperInstall.supported !== false &&
       input.proposeHopper &&
-      (Object.keys(input.providerEnvironment).length === 0 ||
-        linuxHopperRepairNeeded));
+      (!input.providerConfigured || linuxHopperRepairNeeded));
   const [clients, detectedClients] = await Promise.all([
     input.host.supportedClients(),
     input.host.detectedClients(),
@@ -78,20 +94,29 @@ export const discoverSetupState = async (input: {
   );
   const clientStates = clients.map((client): SetupClientState => {
     const registration = registrationByClient.get(client.name);
+    const commandIdentity =
+      registration === undefined
+        ? undefined
+        : classifyClientRegistrationCommand(
+            registration.command,
+            CURRENT_ENTRYPOINT_PATH,
+          );
     const ownedRegistration =
       (registration?.state === "aligned" || registration?.state === "stale") &&
-      isOwnedClientRegistrationCommand(registration.command);
+      commandIdentity === "owned";
     const configured = ownedRegistration;
     const status: SetupClientState["status"] =
       registration?.state === "invalid"
         ? "invalid"
-        : ownedRegistration && registration.state === "aligned"
-          ? "configured"
-          : ownedRegistration && registration.state === "stale"
-            ? "needs_configuration"
-            : detectedIds.has(client.name)
+        : registration?.state === "unknown" || commandIdentity === "unknown"
+          ? "unknown"
+          : ownedRegistration && registration.state === "aligned"
+            ? "configured"
+            : ownedRegistration && registration.state === "stale"
               ? "needs_configuration"
-              : "missing";
+              : detectedIds.has(client.name)
+                ? "needs_configuration"
+                : "missing";
     return {
       client,
       detected: detectedIds.has(client.name),
@@ -103,14 +128,20 @@ export const discoverSetupState = async (input: {
     .filter(
       (registration) =>
         (registration.state === "aligned" || registration.state === "stale") &&
-        isOwnedClientRegistrationCommand(registration.command),
+        classifyClientRegistrationCommand(
+          registration.command,
+          CURRENT_ENTRYPOINT_PATH,
+        ) === "owned",
     )
     .map(({ client }) => client);
   return {
     initialDoctor,
     installHopper,
+    hopperInstall,
     clients,
-    detectedClientIds: [...detectedIds],
+    detectedClientIds: detectedClients
+      .filter(({ format }) => format !== "unsupported")
+      .map(({ name }) => name),
     defaultClientIds,
     clientStates,
     ...(linuxDistribution?.packageFamily === undefined
@@ -150,6 +181,24 @@ export const planSetupActions = async (input: {
     const client = byId.get(id);
     return client === undefined ? [] : [client];
   });
+  const hopperCache = input.host.linuxHopperReleaseCache;
+  if (input.discovery.installHopper && hopperCache?.ok === false)
+    return {
+      plannedActions: [],
+      selectedClients,
+      clientsToConfigure: [],
+      blocker: hopperCache.error.message,
+    };
+  if (
+    selectedClients.length > 0 &&
+    input.host.registrationCommandBlocker !== undefined
+  )
+    return {
+      plannedActions: [],
+      selectedClients,
+      clientsToConfigure: [],
+      blocker: input.host.registrationCommandBlocker,
+    };
   const inspections = await Promise.all(
     selectedClients.map(async (client) => ({
       client,
@@ -171,6 +220,19 @@ export const planSetupActions = async (input: {
       blocker: `${invalid.client.displayName ?? invalid.client.name}: ${invalid.inspection.remediation}`,
     };
   }
+  let skillDestinations: readonly SkillDestination[] = [];
+  try {
+    if (input.installSkill)
+      skillDestinations = input.host.skillDestinations(input.skillClientIds);
+  } catch (cause: unknown) {
+    if (!(cause instanceof SetupSkillInstallError)) throw cause;
+    return {
+      plannedActions: [],
+      selectedClients,
+      clientsToConfigure: [],
+      blocker: cause.remediation,
+    };
+  }
   const clientPlans = plannedClientWrites(
     inspections,
     input.discovery.installHopper,
@@ -178,10 +240,13 @@ export const planSetupActions = async (input: {
   const plannedActions = setupPlan({
     platform: input.host.platform,
     homeDirectory: input.host.homeDirectory,
+    ...(hopperCache?.ok === true
+      ? { hopperCacheDirectory: hopperCache.value }
+      : {}),
     installHopper: input.discovery.installHopper,
     installSkill: input.installSkill,
     skillClientIds: input.skillClientIds,
-    skillDestinations: input.host.skillDestinations(input.skillClientIds),
+    skillDestinations,
     clients: clientPlans,
     providerEnvironment: input.providerEnvironment,
     ...(input.discovery.linuxPackageFamily === undefined
@@ -243,6 +308,7 @@ const plannedClientWrites = (
 const setupPlan = (input: {
   readonly platform: NodeJS.Platform;
   readonly homeDirectory: string;
+  readonly hopperCacheDirectory?: string;
   readonly installHopper: boolean;
   readonly installSkill: boolean;
   readonly skillClientIds: readonly string[];
@@ -264,15 +330,12 @@ const setupPlan = (input: {
           label: "Hopper deep-analysis provider",
           target:
             input.platform === "darwin"
-              ? join(
-                  input.homeDirectory,
-                  "Applications/Hopper Disassembler.app",
-                )
+              ? macHopperUserApplicationPath(input.homeDirectory)
               : "system package manager",
           detail:
             input.platform === "linux"
-              ? "Download, verify, and install Hopper plus its Xvfb demo-session dependencies. For the supported demo build, REA uses a private display and selects Hopper's offered demo mode for each analysis session."
-              : "Download the official Hopper package, verify it, and install it. Hopper may show its demo or license prompt when first opened.",
+              ? `Download the current official Hopper demo, verify its PGP publisher and launcher bytes, and retain archive, public-key.asc and release.json under ${input.hopperCacheDirectory ?? `${input.homeDirectory}/.cache/rea/hopper-releases`}/<launcher-sha256> for offline verification. Preserve replaced damaged evidence beside it as <launcher-sha256>.backup-<id>. Install Hopper plus its Xvfb demo-session dependencies${input.linuxPackageFamily === "deb" ? ", including the shared library matching the distribution Python interpreter" : ""}. REA uses a private display and selects Hopper's offered demo mode for each analysis session.`
+              : macHopperInstallDisclosure.detail,
           external: true,
           operation: "install" as const,
           ...(input.platform === "linux"
@@ -328,14 +391,51 @@ const linuxDisclosure = (family: LinuxPackageFamily) => {
     process.getuid?.() === 0,
   );
   return {
-    networkOrigins: [disclosure.downloadUrl],
+    networkOrigins: disclosure.networkOrigins,
     commands: disclosure.commands,
-    integrity: `${String(disclosure.expectedBytes)} bytes · SHA-1 ${disclosure.expectedSha1}`,
+    integrity: disclosure.integrity,
   };
 };
 
-const majorVersion = (version: string): number =>
-  Number.parseInt(version.split(".")[0] ?? "0", 10);
+/** Refuse a selected Hopper installation this host cannot run, before mutation. */
+export const hopperInstallRefusal = (
+  discovery: Pick<SetupDiscovery, "installHopper" | "hopperInstall">,
+): string | undefined =>
+  discovery.installHopper && discovery.hopperInstall.supported === false
+    ? discovery.hopperInstall.remediation
+    : undefined;
+
+/**
+ * Decide automated Hopper installation once from the host facts read during
+ * discovery, so proposals, explicit requests, and recovery advice agree. An
+ * unknown or unparseable macOS version and an unidentified Linux distribution
+ * are not eligible. macOS 12 is REA's own floor; the selected Hopper release's
+ * minimum is unknown until the installer reads it.
+ */
+const hopperInstallEligibility = (
+  platform: NodeJS.Platform,
+  macosVersion: string | undefined,
+  linuxDistribution: LinuxDistribution | undefined,
+): HopperInstallEligibility => {
+  if (platform === "darwin") {
+    const major = macosMajorVersion(macosVersion);
+    return major !== undefined && major >= 12
+      ? { supported: "unknown" }
+      : { supported: false, remediation: "Upgrade to macOS 12 or newer." };
+  }
+  if (platform === "linux")
+    return linuxDistribution?.hopperSetupSupported === true
+      ? { supported: true }
+      : {
+          supported: false,
+          remediation: `Automated Hopper setup requires ${LINUX_HOPPER_SETUP_HOSTS}; configure an existing supported provider instead.`,
+        };
+  return {
+    supported: false,
+    remediation:
+      "REA supports Hopper on macOS and selected x86_64 Linux distributions.",
+  };
+};
 
 const clientConfigurationDetail = (
   client: SetupClient,

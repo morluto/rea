@@ -3,8 +3,36 @@ import type { Page } from "playwright-core";
 import { expect, it } from "vitest";
 
 import { browserScenarioSchema } from "../domain/browserScenario.js";
-import { BrowserScenarioSecrets } from "./BrowserScenarioSecrets.js";
+import { resolveScenarioSecrets } from "../../tests/fixtures/browserScenarioSecrets.js";
 import { PlaywrightScenarioEvents } from "./PlaywrightScenarioEvents.js";
+
+it("reports opaque request redirects as a network coverage gap only when network was selected", () => {
+  const page = new EventEmitter() as unknown as Page;
+  const context = new EventEmitter();
+  const scenario = browserScenarioSchema.parse({
+    browser: { mode: "launch", executable_path: "/opt/chromium" },
+    start_url: { url: "https://app.example.test/" },
+    actions: [{ step_id: "wait", action: "wait_for_timeout", duration_ms: 1 }],
+  });
+  const secrets = resolveScenarioSecrets(scenario, {});
+  const create = (enabled: Set<"network">) =>
+    new PlaywrightScenarioEvents({
+      page,
+      context: context as never,
+      ownsContext: true,
+      enabled,
+      secrets,
+    });
+  const network = create(new Set(["network"]));
+  const none = create(new Set());
+  expect(network.limitations()).toEqual([]);
+  network.opaqueRequestRedirect();
+  none.opaqueRequestRedirect();
+  expect(network.limitations()).toEqual([
+    expect.stringContaining("response status and Location may be unavailable"),
+  ]);
+  expect(none.limitations()).toEqual([]);
+});
 
 it("omits a request without a frame in a shared context", () => {
   const context = new EventEmitter();
@@ -15,8 +43,7 @@ it("omits a request without a frame in a shared context", () => {
     actions: [{ step_id: "wait", action: "wait_for_timeout", duration_ms: 1 }],
     capture: { events: ["network"] },
   });
-  const secrets = BrowserScenarioSecrets.resolve(scenario, {});
-  if (secrets === undefined) throw new Error("Expected resolved secrets");
+  const secrets = resolveScenarioSecrets(scenario, {});
   const events = new PlaywrightScenarioEvents({
     page,
     context: context as never,
@@ -32,9 +59,10 @@ it("omits a request without a frame in a shared context", () => {
   };
   context.emit("request", unknownRequest);
   expect(events.result().items).toEqual([]);
-  expect(events.limitations()).toContain(
-    "Shared-context network capture excludes requests without a known root or descendant Page frame.",
-  );
+  const limitations = events.limitations().join("\n");
+  expect(limitations).toContain("Shared-context network capture");
+  expect(limitations).toContain("excludes requests");
+  expect(limitations).toContain("without a known root or descendant");
 });
 
 it("detaches root and popup listeners when a scenario finishes", async () => {
@@ -49,8 +77,7 @@ it("detaches root and popup listeners when a scenario finishes", async () => {
     actions: [{ step_id: "wait", action: "wait_for_timeout", duration_ms: 1 }],
     capture: { events: ["console", "popups"] },
   });
-  const secrets = BrowserScenarioSecrets.resolve(scenario, {});
-  if (secrets === undefined) throw new Error("Expected resolved secrets");
+  const secrets = resolveScenarioSecrets(scenario, {});
   const events = new PlaywrightScenarioEvents({
     page,
     context: context as never,
@@ -86,8 +113,7 @@ it("detaches worker and websocket listeners when a scenario finishes", async () 
     actions: [{ step_id: "wait", action: "wait_for_timeout", duration_ms: 1 }],
     capture: { events: ["websockets", "workers"] },
   });
-  const secrets = BrowserScenarioSecrets.resolve(scenario, {});
-  if (secrets === undefined) throw new Error("Expected resolved secrets");
+  const secrets = resolveScenarioSecrets(scenario, {});
   const events = new PlaywrightScenarioEvents({
     page,
     context: context as never,
@@ -115,8 +141,7 @@ it("detaches owned-context popup discovery when a scenario finishes", async () =
     actions: [{ step_id: "wait", action: "wait_for_timeout", duration_ms: 1 }],
     capture: { events: ["console"] },
   });
-  const secrets = BrowserScenarioSecrets.resolve(scenario, {});
-  if (secrets === undefined) throw new Error("Expected resolved secrets");
+  const secrets = resolveScenarioSecrets(scenario, {});
   const events = new PlaywrightScenarioEvents({
     page,
     context: context as never,

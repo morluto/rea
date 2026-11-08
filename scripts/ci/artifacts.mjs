@@ -7,6 +7,11 @@ import { promisify } from "node:util";
 import { parseStaticTaskContext } from "./static-task-context.mjs";
 
 const execute = promisify(execFile);
+/** Job display name owns the artifact that contains that gate's diagnostics. */
+export const STATIC_EVIDENCE_ARTIFACTS = {
+  "Static checks": "static-check-reports",
+  "Deep static checks": "static-deep-check-reports",
+};
 const MAX_ARCHIVE_BYTES = 32 * 1024 * 1024;
 const MAX_MEMBER_BYTES = 4 * 1024 * 1024;
 const MAX_DIAGNOSTICS = 10_000;
@@ -43,7 +48,8 @@ export function classifyFailure({
       "run_event_or_repository_identity_unverified",
     ],
     () => [
-      job?.name !== mainJob?.name || job?.name !== "Static checks",
+      job?.name !== mainJob?.name ||
+        !Object.hasOwn(STATIC_EVIDENCE_ARTIFACTS, job?.name ?? ""),
       "failed_job_not_the_same_static_gate",
     ],
     () => [
@@ -102,7 +108,11 @@ export function classifyFailure({
 }
 
 export function diagnosticPaths(item) {
-  return item.kind === "jscpd" ? item.paths : [item.path];
+  return item.kind === "jscpd"
+    ? item.paths
+    : item.path === undefined
+      ? []
+      : [item.path];
 }
 export function isFailedConclusion(value) {
   return value === "failure" || value === "timed_out";
@@ -134,7 +144,12 @@ export function safeSha(value) {
     ? value.toLowerCase()
     : null;
 }
-export function selectStaticCheckArtifact(page, run, runAttempt) {
+export function selectStaticCheckArtifact(
+  page,
+  run,
+  runAttempt,
+  name = STATIC_EVIDENCE_ARTIFACTS["Static checks"],
+) {
   if (runAttempt !== 1) return null;
   if (
     !Array.isArray(page?.artifacts) ||
@@ -143,9 +158,7 @@ export function selectStaticCheckArtifact(page, run, runAttempt) {
     page.artifacts.length >= 100
   )
     return null;
-  const matches = page.artifacts.filter(
-    (artifact) => artifact.name === "static-check-reports",
-  );
+  const matches = page.artifacts.filter((artifact) => artifact.name === name);
   if (matches.length !== 1) return null;
   const [artifact] = matches;
   if (
@@ -260,16 +273,15 @@ function normalizeLint(report) {
     .filter((item) => item.severity === "error")
     .map((item) => {
       if (
-        typeof item.filename !== "string" ||
-        !repoPath(item.filename) ||
-        typeof item.code !== "string" ||
+        (item.filename !== undefined && !validRepoPath(item.filename)) ||
+        (item.code !== undefined && typeof item.code !== "string") ||
         typeof item.message !== "string"
       )
         throw new Error("oxlint error diagnostic is malformed");
       return {
         kind: "lint",
-        path: item.filename,
-        code: item.code,
+        ...(item.filename === undefined ? {} : { path: item.filename }),
+        ...(item.code === undefined ? {} : { code: item.code }),
         message: item.message,
         severity: "error",
       };
@@ -292,7 +304,7 @@ function normalizeDuplicates(report) {
   if (exitCode !== 1) return [];
   return report.duplicates.map((item) => {
     const paths = [item.firstFile?.name, item.secondFile?.name].sort();
-    if (paths.some((path) => !repoPath(path)))
+    if (paths.some((path) => !validRepoPath(path)))
       throw new Error("jscpd duplicate paths are malformed");
     return { kind: "jscpd", paths };
   });
@@ -324,18 +336,6 @@ async function readLimitedBytes(response, limit) {
     offset += chunk.byteLength;
   }
   return result;
-}
-
-function repoPath(value) {
-  return (
-    typeof value === "string" &&
-    value.length > 0 &&
-    !value.startsWith("/") &&
-    !value.includes("\\") &&
-    value
-      .split("/")
-      .every((part) => part !== "" && part !== "." && part !== "..")
-  );
 }
 
 function positiveId(value) {
@@ -378,7 +378,7 @@ function blobIdentityStatus(diagnostics, blobs) {
 }
 function sameTaskHashes(diagnostics, left, right) {
   return diagnostics.every((diagnostic) => {
-    const task = diagnostic.kind === "jscpd" ? "jscpd" : "lint:built";
+    const task = diagnostic.kind === "jscpd" ? "jscpd" : "lint";
     return (
       TASK_HASH.test(left.taskHashes[task] ?? "") &&
       left.taskHashes[task] === right.taskHashes[task]
@@ -386,19 +386,11 @@ function sameTaskHashes(diagnostics, left, right) {
   });
 }
 function validContext(value) {
-  return (
-    value?.version === 1 &&
-    SHA.test(value.sourceSha ?? "") &&
-    value.sourceClean === true &&
-    typeof value.nodeVersion === "string" &&
-    typeof value.npmVersion === "string" &&
-    typeof value.turboVersion === "string" &&
-    typeof value.platform === "string" &&
-    typeof value.architecture === "string" &&
-    value.taskHashes &&
-    typeof value.taskHashes === "object" &&
-    !Array.isArray(value.taskHashes)
-  );
+  try {
+    return parseStaticTaskContext(value).sourceClean;
+  } catch {
+    return false;
+  }
 }
 function sameExecutionContext(left, right) {
   return [

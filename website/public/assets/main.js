@@ -80,27 +80,37 @@ async function initializeWebsite() {
 
   initializeStepComparisons();
 
-  function initializeFaqAnswers() {
-    const answers = document.querySelectorAll("[data-faq] details[id]");
-    if (answers.length === 0) return;
-
-    const revealAnswer = (fragment) => {
-      answers.forEach((answer) => {
-        if (`#${answer.id}` === fragment) answer.open = true;
-      });
+  function initializeLinkedDetails() {
+    const revealTarget = (fragment) => {
+      if (!fragment.startsWith("#")) return;
+      let id;
+      try {
+        id = decodeURIComponent(fragment.slice(1));
+      } catch {
+        return;
+      }
+      const target = document.getElementById(id);
+      let opened = false;
+      for (let element = target; element; element = element.parentElement) {
+        if (element instanceof HTMLDetailsElement && !element.open) {
+          element.open = true;
+          opened = true;
+        }
+      }
+      if (opened) target.scrollIntoView({ block: "start" });
     };
     window.addEventListener("hashchange", () =>
-      revealAnswer(window.location.hash),
+      revealTarget(window.location.hash),
     );
-    document.querySelectorAll('[data-faq] a[href^="#"]').forEach((link) => {
+    document.querySelectorAll('a[href^="#"]').forEach((link) => {
       link.addEventListener("click", () =>
-        revealAnswer(link.getAttribute("href")),
+        revealTarget(link.getAttribute("href")),
       );
     });
-    revealAnswer(window.location.hash);
+    revealTarget(window.location.hash);
   }
 
-  initializeFaqAnswers();
+  initializeLinkedDetails();
 
   function initializeBackToTop() {
     const link = document.querySelector(".back-to-top");
@@ -155,7 +165,9 @@ async function initializeWebsite() {
     }
   }
 
-  initializeGitHubStars();
+  return initializeGitHubStars();
 }
 
-initializeWebsite();
+initializeWebsite().catch((cause) => {
+  console.error("Website initialization failed", cause);
+});

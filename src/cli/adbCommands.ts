@@ -1,15 +1,21 @@
+import { projectCliAnalysisResult } from "./projectCliAnalysisResult.js";
 import { z } from "incur";
-import { AnalysisError } from "../domain/analysisErrorBase.js";
+import { AnalysisInputError } from "../domain/analysisErrorCore.js";
 import { AdbDeviceAnalysisService } from "../application/adb/AdbDeviceAnalysisService.js";
 import type { AdbDeviceAnalysisPort } from "../application/adb/AdbDeviceAnalysisPort.js";
 import { createAdbDeviceAnalysisProvider } from "../composition/adb.js";
 import { CLI_COMMANDS } from "../cliCommandNames.js";
 import { logCliCommand } from "../cliLogging.js";
-import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
-import type { AdbOperation } from "../domain/adb/adbDeviceAnalysis.js";
+import {
+  adbInputSchemas,
+  MAX_ADB_ACTIVITY_EXTRAS,
+  type AdbOperation,
+} from "../domain/adb/adbDeviceAnalysis.js";
 import type { Logger } from "pino";
+import { cliDecimalField } from "./options.js";
 import type { CliInstance } from "./types.js";
 import { withCommandCancellation } from "./commandCancellation.js";
+import { finishAnalysisCommand } from "./finishAnalysisCommand.js";
 
 /** Expose the same explicit ADB requests through one-shot CLI commands. */
 export const registerAdbCommands = (
@@ -23,23 +29,21 @@ export const registerAdbCommands = (
   const service = new AdbDeviceAnalysisService(provider);
   const execute = (name: string, operation: AdbOperation, input: unknown) =>
     withCommandCancellation((signal) =>
-      logCliCommand(logger, name, async () => {
-        const result = await service.execute(operation, input, { signal });
-        try {
-          await provider.close();
-        } catch (cause) {
-          if (cause instanceof AnalysisError)
-            return projectAnalysisError(cause);
-          throw cause;
-        }
-        return result.ok ? result.value : projectAnalysisError(result.error);
-      }),
+      logCliCommand(logger, name, () =>
+        finishAnalysisCommand(
+          () => service.execute(operation, input, { signal }),
+          { close: () => provider.close() },
+          "adb",
+          operation,
+          signal,
+        ).then(projectCliAnalysisResult),
+      ),
     );
 
-  const serial = z
-    .string()
-    .min(1)
-    .describe("Device serial exactly as `adb devices` reports it");
+  const serial = adbInputSchemas.inspect_adb_device.shape.serial.describe(
+    "Device serial exactly as `adb devices` reports it",
+  );
+  const packageName = adbInputSchemas.pull_adb_package.shape.package;
 
   cli.command(CLI_COMMANDS.inspectAdbClient, {
     description:
@@ -81,7 +85,7 @@ export const registerAdbCommands = (
       "Pull one installed package's complete APK set with SHA-256 digests",
     args: z.object({
       serial,
-      package: z.string().min(1).describe("Installed package name"),
+      package: packageName.describe("Installed package name"),
     }),
     options: z.object({
       "output-directory": z
@@ -102,23 +106,16 @@ export const registerAdbCommands = (
     description: "Read a bounded dump of the device log for one buffer",
     args: z.object({ serial }),
     options: z.object({
-      count: z
-        .number()
-        .int()
-        .min(1)
-        .max(10_000)
-        .default(500)
-        .describe("Number of most recent lines to read"),
+      count: cliDecimalField(
+        adbInputSchemas.read_adb_logcat.shape.count,
+      ).describe("Number of most recent lines to read"),
       buffer: z
         .enum(["main", "system", "radio", "events", "crash"])
         .default("main")
         .describe("Log buffer to read"),
-      pid: z
-        .number()
-        .int()
-        .positive()
-        .optional()
-        .describe("Restrict to one process id"),
+      pid: cliDecimalField(adbInputSchemas.read_adb_logcat.shape.pid).describe(
+        "Restrict to one process id",
+      ),
     }),
     run: ({ args, options }) =>
       execute(CLI_COMMANDS.readAdbLogcat, "read_adb_logcat", {
@@ -131,7 +128,7 @@ export const registerAdbCommands = (
   cli.command(CLI_COMMANDS.inspectAdbPackage, {
     description:
       "Inspect one installed package's version, installer, and flags through dumpsys",
-    args: z.object({ serial, package: z.string().min(1).describe("Package") }),
+    args: z.object({ serial, package: packageName.describe("Package") }),
     run: ({ args }) =>
       execute(CLI_COMMANDS.inspectAdbPackage, "inspect_adb_package", {
         serial: args.serial,
@@ -142,7 +139,7 @@ export const registerAdbCommands = (
     description: "Pull one device file to a local copy with a SHA-256 digest",
     args: z.object({
       serial,
-      "device-path": z.string().min(1).describe("Absolute device path to pull"),
+      "device-path": adbInputSchemas.pull_adb_file.shape.device_path,
     }),
     options: z.object({
       "output-directory": z
@@ -163,7 +160,7 @@ export const registerAdbCommands = (
     args: z.object({
       serial,
       "local-path": z.string().min(1).describe("Existing local file"),
-      "device-path": z.string().min(1).describe("Absolute device destination"),
+      "device-path": adbInputSchemas.push_adb_file.shape.device_path,
     }),
     options: z.object({
       overwrite: z
@@ -204,10 +201,7 @@ export const registerAdbCommands = (
     description: "List one device directory with kinds, permissions, and sizes",
     args: z.object({
       serial,
-      "device-path": z
-        .string()
-        .min(1)
-        .describe("Absolute device directory path to list"),
+      "device-path": adbInputSchemas.list_adb_directory.shape.device_path,
     }),
     run: ({ args }) =>
       execute(CLI_COMMANDS.listAdbDirectory, "list_adb_directory", {
@@ -243,10 +237,8 @@ export const registerAdbCommands = (
     description: "Read one settings value from system, secure, or global",
     args: z.object({
       serial,
-      namespace: z
-        .enum(["system", "secure", "global"])
-        .describe("Settings namespace to read"),
-      key: z.string().min(1).describe("Setting key to read"),
+      namespace: adbInputSchemas.read_adb_setting.shape.namespace,
+      key: adbInputSchemas.read_adb_setting.shape.key,
     }),
     run: ({ args }) =>
       execute(CLI_COMMANDS.readAdbSetting, "read_adb_setting", {
@@ -272,19 +264,13 @@ export const registerAdbCommands = (
   });
   cli.command(CLI_COMMANDS.resolveAdbPackages, {
     description: "Find installed packages by case-insensitive name substring",
-    args: z.object({
-      serial,
-      query: z.string().min(2).describe("Package-name substring to find"),
-    }),
+    args: adbInputSchemas.resolve_adb_packages,
     run: ({ args }) =>
-      execute(CLI_COMMANDS.resolveAdbPackages, "resolve_adb_packages", {
-        serial: args.serial,
-        query: args.query,
-      }),
+      execute(CLI_COMMANDS.resolveAdbPackages, "resolve_adb_packages", args),
   });
   cli.command(CLI_COMMANDS.installAdbPackage, {
     description:
-      "Install one local APK; --replace re-installs keeping the app's data",
+      "Install one local APK; --replace requests reinstall mode to keep existing app data",
     args: z.object({
       serial,
       "apk-path": z.string().min(1).describe("Local APK file to install"),
@@ -293,7 +279,9 @@ export const registerAdbCommands = (
       replace: z
         .boolean()
         .default(false)
-        .describe("Replace an existing install and keep its data"),
+        .describe(
+          "Request reinstall mode and keep existing app data if present",
+        ),
     }),
     run: ({ args, options }) =>
       execute(CLI_COMMANDS.installAdbPackage, "install_adb_package", {
@@ -306,7 +294,7 @@ export const registerAdbCommands = (
     description: "Uninstall one package and its data from the device",
     args: z.object({
       serial,
-      package: z.string().min(1).describe("Installed package to uninstall"),
+      package: packageName.describe("Installed package to uninstall"),
     }),
     run: ({ args }) =>
       execute(CLI_COMMANDS.uninstallAdbPackage, "uninstall_adb_package", {
@@ -319,7 +307,7 @@ export const registerAdbCommands = (
       "Start one installed app by resolving and launching its launcher activity",
     args: z.object({
       serial,
-      package: z.string().min(1).describe("Installed package to start"),
+      package: packageName.describe("Installed package to start"),
     }),
     run: ({ args }) =>
       execute(CLI_COMMANDS.startAdbApp, "start_adb_app", {
@@ -332,29 +320,50 @@ export const registerAdbCommands = (
       "Start an intent with am start (action, URI, component, extras)",
     args: z.object({
       serial,
-      action: z.string().min(1).describe("Intent action to start"),
+      action: adbInputSchemas.start_adb_activity.shape.action.describe(
+        "Intent action to start",
+      ),
     }),
     options: z.object({
-      "data-uri": z.string().min(1).optional().describe("Intent data URI (-d)"),
-      component: z
-        .string()
-        .min(1)
-        .optional()
-        .describe("Explicit component in package/activity form (-n)"),
+      "data-uri": adbInputSchemas.start_adb_activity.shape.data_uri.describe(
+        "Intent data URI (-d)",
+      ),
+      component: adbInputSchemas.start_adb_activity.shape.component.describe(
+        "Explicit component in package/activity form (-n)",
+      ),
       extra: z
         .array(z.string().min(1))
+        .max(MAX_ADB_ACTIVITY_EXTRAS)
         .default([])
         .describe(
           "Typed extra as type:key:value (string, boolean, int, long, float), repeatable",
         ),
     }),
     run: ({ args, options }) => {
-      const extras = options.extra.map((entry) => {
+      const extras: {
+        readonly type: "string" | "boolean" | "int" | "long" | "float";
+        readonly key: string;
+        readonly value: string;
+      }[] = [];
+      for (const [index, entry] of options.extra.entries()) {
         const first = entry.indexOf(":");
         const second = entry.indexOf(":", first + 1);
         if (first === -1 || second === -1)
-          throw new Error(`--extra expects type:key:value, received: ${entry}`);
-        return {
+          return logCliCommand(
+            logger,
+            CLI_COMMANDS.startAdbActivity,
+            async () => {
+              throw new AnalysisInputError("start_adb_activity", undefined, [
+                {
+                  path: ["extras", index],
+                  reason: "invalid_format",
+                  message: "Expected --extra in type:key:value form.",
+                  expected: "type:key:value",
+                },
+              ]);
+            },
+          );
+        extras.push({
           type: entry.slice(0, first) as
             | "string"
             | "boolean"
@@ -363,8 +372,8 @@ export const registerAdbCommands = (
             | "float",
           key: entry.slice(first + 1, second),
           value: entry.slice(second + 1),
-        };
-      });
+        });
+      }
       return execute(CLI_COMMANDS.startAdbActivity, "start_adb_activity", {
         serial: args.serial,
         action: args.action,
@@ -382,7 +391,7 @@ export const registerAdbCommands = (
     description: "Force-stop every process of one package",
     args: z.object({
       serial,
-      package: z.string().min(1).describe("Package to force-stop"),
+      package: packageName.describe("Package to force-stop"),
     }),
     run: ({ args }) =>
       execute(CLI_COMMANDS.stopAdbApp, "stop_adb_app", {

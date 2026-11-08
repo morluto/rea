@@ -12,21 +12,23 @@ async function workflow(name: string) {
       concurrency: z.object({ group: z.string() }).optional(),
       jobs: z.record(
         z.string(),
-        z.object({
-          name: z.string().optional(),
-          if: z.string().optional(),
-          uses: z.string().optional(),
-          with: z.record(z.string(), z.string()).optional(),
-          steps: z
-            .array(
-              z.object({
-                run: z.string().optional(),
-                uses: z.string().optional(),
-                env: z.record(z.string(), z.string()).optional(),
-              }),
-            )
-            .optional(),
-        }),
+        z
+          .object({
+            name: z.string().optional(),
+            if: z.string().optional(),
+            uses: z.string().optional(),
+            with: z.record(z.string(), z.string()).optional(),
+            steps: z
+              .array(
+                z.object({
+                  run: z.string().optional(),
+                  uses: z.string().optional(),
+                  env: z.record(z.string(), z.string()).optional(),
+                }),
+              )
+              .optional(),
+          })
+          .passthrough(),
       ),
     })
     .parse(
@@ -92,6 +94,7 @@ it("qualifies only ci:full label additions at the caller's merge revision", asyn
       with: { source_sha: "${{ github.sha }}" },
     },
   ]);
+  expect(full.jobs.qualification).not.toHaveProperty("secrets");
   // Metadata events must not create skipped replacements for the main CI checks.
   expect(full.jobs.required).toBeUndefined();
   expect(full.concurrency).toBeUndefined();

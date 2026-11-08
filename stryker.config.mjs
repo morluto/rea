@@ -22,6 +22,8 @@ const config = {
   concurrency: 2,
   timeoutMS: 30000,
   reporters: ["clear-text", "progress", "html", "json"],
+  jsonReporter: { fileName: "reports/mutation/reverse-tools.json" },
+  htmlReporter: { fileName: "reports/mutation/reverse-tools.html" },
 };
 
 export default {
@@ -123,10 +125,6 @@ export default {
       },
       {
         kind: "declaration",
-        name: "DEFAULT_MAX_SESSIONS",
-      },
-      {
-        kind: "declaration",
         owner: "GdbSessionManager",
         method: "#startProtocol",
         name: "session",
@@ -209,6 +207,12 @@ export default {
         owner: "RizinDebugSessionManager",
         method: "#receive",
         name: "nextOffset",
+      },
+    ]),
+    ...mutationRanges("src/domain/analysisResourceLimits.ts", [
+      {
+        kind: "declaration",
+        name: "DEFAULT_DEBUGGER_MAX_SESSIONS",
       },
     ]),
     ...mutationRanges("src/cli/reverseEngineeringCommands.ts", [

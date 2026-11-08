@@ -1,20 +1,13 @@
-import {
-  ELECTRON_FUSE_SENTINEL,
-  ELECTRON_FUSE_STATE_BYTES,
-} from "../../../src/domain/electron/electronFuses.js";
-
-export const FUSE_SENTINEL = Buffer.from(ELECTRON_FUSE_SENTINEL, "ascii");
+// Electron's documented on-disk fuse wire, independent of the reader constants:
+// https://github.com/electron/electron/blob/main/docs/tutorial/fuses.md#the-hard-way
+export const FUSE_SENTINEL = Buffer.from(
+  "dL7pKGdnNz796PbbjQWNKmHXBZaB9tsX",
+  "ascii",
+);
 
 /** Obsidian's observed version-1 states: disabled, enabled, then six more with the last enabled. */
 export const OBSIDIAN_FUSE_BYTES = [
-  ELECTRON_FUSE_STATE_BYTES.disabled,
-  ELECTRON_FUSE_STATE_BYTES.enabled,
-  ELECTRON_FUSE_STATE_BYTES.disabled,
-  ELECTRON_FUSE_STATE_BYTES.disabled,
-  ELECTRON_FUSE_STATE_BYTES.disabled,
-  ELECTRON_FUSE_STATE_BYTES.disabled,
-  ELECTRON_FUSE_STATE_BYTES.disabled,
-  ELECTRON_FUSE_STATE_BYTES.enabled,
+  0x30, 0x31, 0x30, 0x30, 0x30, 0x30, 0x30, 0x31,
 ] as const;
 
 export const fuseWire = (version: number, fuses: readonly number[]): Buffer =>
@@ -56,7 +49,7 @@ export const universalFuseImage = (): {
     Buffer.concat([FUSE_SENTINEL, fuseWire(1, OBSIDIAN_FUSE_BYTES)]),
   );
   const rightFuses = [...OBSIDIAN_FUSE_BYTES];
-  rightFuses[3] = ELECTRON_FUSE_STATE_BYTES.enabled;
+  rightFuses[3] = 0x31;
   const right = thinMacho(
     0x0100000c,
     Buffer.concat([FUSE_SENTINEL, fuseWire(1, rightFuses)]),
@@ -144,3 +137,59 @@ export const twoSentinelElf = (): {
 
 export const sentinelFreeMacho = (): Buffer =>
   thinMacho(0x0100000c, Buffer.from("no fuse wire in this image"));
+
+/** Fixed ELF header declaring `machine`, followed by one fuse wire. */
+export const elfHeaderFuseImage = (
+  machine: number,
+  fuses: readonly number[],
+  layout: { readonly bits: 32 | 64; readonly byteOrder: "little" | "big" } = {
+    bits: 64,
+    byteOrder: "little",
+  },
+): { readonly bytes: Buffer; readonly sentinelOffset: number } => {
+  const header = Buffer.alloc(layout.bits === 32 ? 52 : 64);
+  const little = layout.byteOrder === "little";
+  header.set(
+    [0x7f, 0x45, 0x4c, 0x46, layout.bits === 32 ? 1 : 2, little ? 1 : 2, 1],
+    0,
+  );
+  if (little) {
+    header.writeUInt16LE(3, 16);
+    header.writeUInt16LE(machine, 18);
+    header.writeUInt32LE(1, 20);
+    header.writeUInt16LE(header.length, layout.bits === 32 ? 40 : 52);
+  } else {
+    header.writeUInt16BE(3, 16);
+    header.writeUInt16BE(machine, 18);
+    header.writeUInt32BE(1, 20);
+    header.writeUInt16BE(header.length, layout.bits === 32 ? 40 : 52);
+  }
+  return {
+    bytes: Buffer.concat([header, FUSE_SENTINEL, fuseWire(1, fuses)]),
+    sentinelOffset: header.length,
+  };
+};
+
+/** PE32/PE32+ application header declaring `machine`, followed by one fuse wire. */
+export const peHeaderFuseImage = (
+  machine: number,
+  fuses: readonly number[],
+): { readonly bytes: Buffer; readonly sentinelOffset: number } => {
+  const dos = Buffer.alloc(0x80);
+  dos.write("MZ", 0, "ascii");
+  dos.writeUInt32LE(dos.length, 0x3c);
+  const pe32 = [0x14c, 0x1c0, 0x1c2, 0x1c4].includes(machine);
+  const optional = Buffer.alloc(pe32 ? 0xe0 : 0xf0);
+  optional.writeUInt16LE(pe32 ? 0x10b : 0x20b, 0);
+  optional.writeUInt32LE(16, pe32 ? 92 : 108);
+  const coff = Buffer.alloc(24);
+  coff.write("PE\0\0", 0, "binary");
+  coff.writeUInt16LE(machine, 4);
+  coff.writeUInt16LE(optional.length, 20);
+  coff.writeUInt16LE(0x0022, 22);
+  const header = Buffer.concat([dos, coff, optional]);
+  return {
+    bytes: Buffer.concat([header, FUSE_SENTINEL, fuseWire(1, fuses)]),
+    sentinelOffset: header.length,
+  };
+};

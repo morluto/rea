@@ -1,6 +1,7 @@
-import { expect, it } from "vitest";
+import { expect, it, vi } from "vitest";
 import { createHash } from "node:crypto";
 import { createEvidence } from "../evidence.js";
+import { freezeJsonSnapshot } from "../immutableJson.js";
 import { webNetworkCaptureSchema } from "../webNetworkCapture.js";
 import { projectAnalysisView } from "./analysisView.js";
 
@@ -68,6 +69,7 @@ const capture = () => {
   return {
     report,
     parent: {
+      predicateType: evidence.predicate_type,
       evidenceId: evidence.evidence_id,
       operation: evidence.operation,
       normalizedResult: report,
@@ -76,6 +78,92 @@ const capture = () => {
     },
   };
 };
+
+it("uses qlog event headlines without promoting HTTP-shaped extensions", () => {
+  const { report } = capture();
+  const first = report.records[0];
+  if (first === undefined) throw new Error("Expected a capture record");
+  const qlog = webNetworkCaptureSchema.parse({
+    ...report,
+    format: "qlog",
+    qlog: {
+      profile: "aioquic-1.5.0-json-0.3",
+      scope: "all-recorded-events-before-selection",
+      body_bytes: "not-reported",
+      clock: {
+        unit: "milliseconds",
+        domain: "unix-epoch",
+        basis: "selected-aioquic-profile-not-producer-authentication",
+      },
+      traces: [],
+    },
+    total_records: 1,
+    records: [
+      {
+        ...first,
+        ordinal: 0,
+        reported: {
+          name: "transport:packet_sent",
+          time: 1.25,
+          request: { url: { payload: "event-extension" } },
+          type: { payload: "event-extension" },
+        },
+        numeric_literals: [],
+        binary_fields: [],
+      },
+    ],
+  });
+  if (qlog.artifact.sha256 === null) throw new Error("Expected fixture digest");
+  const evidence = createEvidence(
+    { ...qlog.artifact, sha256: qlog.artifact.sha256, format: "file" },
+    qlog.decoder,
+    {
+      operation: "inspect_web_network_capture",
+      parameters: {},
+      result: qlog,
+      confidence: "observed",
+      authority: "historical-reference",
+    },
+  );
+  const preview = projectAnalysisView(
+    {
+      predicateType: evidence.predicate_type,
+      evidenceId: evidence.evidence_id,
+      operation: evidence.operation,
+      normalizedResult: qlog,
+      subject: evidence.subject,
+      limitations: evidence.limitations,
+    },
+    { kind: "capture", detail: "preview", offset: 0, limit: 1 },
+  );
+  expect(preview.ok && preview.value).toMatchObject({
+    items: [{ reported: { name: "transport:packet_sent", time: 1.25 } }],
+  });
+  expect(JSON.stringify(preview)).not.toContain("event-extension");
+});
+
+it("checks each parent's subject even after its immutable capture has been validated", () => {
+  const { parent } = capture();
+  const source = {
+    ...parent,
+    normalizedResult: freezeJsonSnapshot(parent.normalizedResult),
+  };
+  expect(projectAnalysisView(source, { kind: "summary" }).ok).toBe(true);
+  expect(
+    projectAnalysisView({ ...source, subject: null }, { kind: "summary" }).ok,
+  ).toBe(false);
+  if (source.subject === null) throw new Error("Expected fixture subject");
+  expect(
+    projectAnalysisView(
+      {
+        ...source,
+        subject: { ...source.subject, digest: { sha256: "e".repeat(64) } },
+      },
+      { kind: "summary" },
+    ).ok,
+  ).toBe(false);
+  expect(projectAnalysisView(source, { kind: "summary" }).ok).toBe(true);
+});
 
 it("keeps selected-record page coverage distinct from capture coverage and unsafe number absence", () => {
   const { parent, report } = capture();
@@ -130,7 +218,7 @@ it("keeps selected-record page coverage distinct from capture coverage and unsaf
   });
 });
 
-it("retains explicitly unknown digests and rejects a different subject path", () => {
+it("retains explicitly unknown digests and rejects a different subject digest", () => {
   const { parent, report } = capture();
   const unknown = projectAnalysisView(
     {
@@ -153,7 +241,7 @@ it("retains explicitly unknown digests and rejects a different subject path", ()
   const mismatched = projectAnalysisView(
     {
       ...parent,
-      subject: { ...parent.subject, local_path: "/different/source.saz" },
+      subject: { ...parent.subject, digest: { sha256: "e".repeat(64) } },
     },
     { kind: "summary" },
   );
@@ -263,6 +351,7 @@ const nativePreview = (
   });
   const preview = projectAnalysisView(
     {
+      predicateType: evidence.predicate_type,
       evidenceId: evidence.evidence_id,
       operation: evidence.operation,
       normalizedResult: report,
@@ -759,6 +848,100 @@ it.each([
     });
   },
 );
+
+it.each([
+  ["an unrelated", "/".repeat(1_000_000), { method: "GET", path: "/a" }],
+  [
+    "a path-descendant",
+    `/request/path${"/0".repeat(500_000)}`,
+    { method: "GET" },
+  ],
+])(
+  "indexes %s million-character facet pointer by its headline prefix only",
+  (_label, pointer, request) => {
+    // Count set additions, not elapsed time or heap, so every Node version
+    // catches a regression. Only the pointer and strings cut from it are this
+    // long here; indexing every ancestor added one per "/" it held.
+    let longAdditions = 0;
+    const add = Set.prototype.add;
+    const addSpy = vi.spyOn(Set.prototype, "add").mockImplementation(function (
+      this: Set<unknown>,
+      value: unknown,
+    ) {
+      if (typeof value === "string" && value.length > 1_000) longAdditions++;
+      return add.call(this, value);
+    });
+    let reported: unknown;
+    try {
+      reported = nativePreview(
+        "mitmproxy",
+        { method: "GET", path: "/a" },
+        {
+          response: { http_version: "HTTP/1.1", reason: "OK" },
+          sidecars: [{ pointer, producer_type: "integer", literal: "1" }],
+        },
+      ).items[0]?.reported;
+    } finally {
+      addSpy.mockRestore();
+    }
+    expect(longAdditions).toBe(0);
+    expect(reported).toEqual({
+      type: "http",
+      request,
+      response: { http_version: "HTTP/1.1", reason: "OK" },
+    });
+  },
+);
+
+// Indexing only headline coordinates must not change what the preview
+// withholds or keeps beside many facets the headline checks never consult.
+it("keeps headline omissions and controls beside many unrelated facets", () => {
+  const unrelated = Array.from({ length: 20_000 }, (_, index) => ({
+    pointer: `/extension/values/${index}`,
+    producer_type: "integer",
+    literal: String(index),
+  }));
+  const [item] = nativePreview(
+    "mitmproxy",
+    {
+      method: "GET",
+      scheme: "https",
+      host: "secret.test",
+      port: 443,
+      path: "/a",
+    },
+    {
+      response: { http_version: "HTTP/1.1", reason: "OK", status_code: 200 },
+      sidecars: [
+        ...unrelated,
+        { pointer: "/request/port", producer_type: "integer", literal: "443" },
+        {
+          pointer: "/response/status_code",
+          producer_type: "integer",
+          literal: "200",
+        },
+        // A facet beneath the path says the producer held a container there.
+        { pointer: "/request/path/0", producer_type: "integer", literal: "1" },
+      ],
+      redactions: [
+        { pointer: "/request/host", reason: "explicit-sensitive-value" },
+      ],
+    },
+  ).items;
+  expect(item?.reported).toEqual({
+    type: "http",
+    request: { method: "GET", scheme: "https", port: 443 },
+    response: { http_version: "HTTP/1.1", reason: "OK", status_code: 200 },
+  });
+  expect(item?.numeric_literals).toEqual([
+    { pointer: "/request/port", producer_type: "integer", literal: "443" },
+    {
+      pointer: "/response/status_code",
+      producer_type: "integer",
+      literal: "200",
+    },
+  ]);
+});
 
 it("keeps an unpaired-surrogate path out despite replacement-character bytes", () => {
   const reported = nativePreview(

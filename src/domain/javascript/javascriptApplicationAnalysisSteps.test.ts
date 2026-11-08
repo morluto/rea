@@ -15,7 +15,6 @@ import {
 } from "./javascriptApplicationGraph.js";
 import {
   createJavaScriptSemanticGraph,
-  createImmutableJavaScriptSemanticGraphSteps,
   isValidatedImmutableJavaScriptSemanticGraph,
   sealTransferredJavaScriptSemanticGraphSteps,
 } from "./javascriptSemanticGraph.js";
@@ -41,7 +40,7 @@ const ownedExample = () => {
       createImmutableJavaScriptApplicationGraphSteps(application),
     ),
     semantic_graph: complete(
-      createImmutableJavaScriptSemanticGraphSteps(semantic),
+      sealTransferredJavaScriptSemanticGraphSteps(semantic),
     ),
   };
 };
@@ -55,6 +54,101 @@ const issuesFrom = (action: () => unknown) => {
   }
   throw new Error("Expected complete result validation to reject the input");
 };
+
+describe("immutable JavaScript result reuse", () => {
+  it("preserves parser copies shared across owned graphs and result metadata", () => {
+    const owned = ownedExample();
+    const input = freezeJsonSnapshot({
+      ...owned,
+      limitations: owned.graph.limitations,
+    });
+    for (let repeat = 0; repeat < 2; repeat += 1) {
+      const parsed = complete(
+        parseOwnedJavaScriptApplicationAnalysisSteps(input),
+      );
+      expect(parsed).not.toBe(input);
+      expect(parsed.graph).toBe(input.graph);
+      expect(parsed.limitations).toEqual(input.graph.limitations);
+      expect(parsed.limitations).not.toBe(parsed.graph.limitations);
+    }
+  });
+
+  it.each(["hidden-extra", "changed-enumerability"])(
+    "preserves parsed results when the source has %s normalization",
+    (kind) => {
+      const input = example();
+      if (kind === "hidden-extra")
+        Object.defineProperty(input, "not_in_parsed_result", {
+          value: { unvalidated: true },
+          enumerable: false,
+        });
+      else Object.defineProperty(input, "input_path", { enumerable: false });
+      freezeJsonSnapshot(input);
+      const expected = javascriptApplicationAnalysisResultSchema.parse(input);
+      for (let repeat = 0; repeat < 2; repeat += 1) {
+        const parsed = complete(
+          parseOwnedJavaScriptApplicationAnalysisSteps(input),
+        );
+        expect(parsed).not.toBe(input);
+        expect(Object.hasOwn(parsed, "not_in_parsed_result")).toBe(false);
+        expect(
+          Object.getOwnPropertyDescriptor(parsed, "input_path")?.enumerable,
+        ).toBe(
+          Object.getOwnPropertyDescriptor(expected, "input_path")?.enumerable,
+        );
+      }
+    },
+  );
+
+  it("borrows imported immutable results only after complete format validation", () => {
+    const input = example();
+    delete input.statistics.skipped_javascript_files;
+    freezeJsonSnapshot(input);
+    const result = complete(
+      parseOwnedJavaScriptApplicationAnalysisSteps(input),
+    );
+    expect(result).toBe(input);
+    expect(result).toEqual(
+      javascriptApplicationAnalysisResultSchema.parse(input),
+    );
+    expect(result.statistics).not.toHaveProperty("skipped_javascript_files");
+    expect(complete(parseOwnedJavaScriptApplicationAnalysisSteps(input))).toBe(
+      input,
+    );
+    expect(Reflect.set(input.statistics, "findings", -1)).toBe(false);
+  });
+
+  it("preserves a normalized representation instead of borrowing changed input", () => {
+    const input = example();
+    Object.setPrototypeOf(input, null);
+    freezeJsonSnapshot(input);
+    for (let repeat = 0; repeat < 2; repeat += 1) {
+      const result = complete(
+        parseOwnedJavaScriptApplicationAnalysisSteps(input),
+      );
+      expect(result).not.toBe(input);
+      expect(Object.getPrototypeOf(result)).toBe(Object.prototype);
+      expect(result).toEqual(
+        javascriptApplicationAnalysisResultSchema.parse(input),
+      );
+    }
+  });
+
+  it.each(["mutable", "shallow-frozen"])(
+    "rechecks changed %s metadata despite authenticated nested graphs",
+    (kind) => {
+      const input = ownedExample();
+      if (kind === "shallow-frozen") Object.freeze(input);
+      expect(
+        complete(parseOwnedJavaScriptApplicationAnalysisSteps(input)),
+      ).not.toBe(input);
+      input.statistics.findings = -1;
+      expect(() =>
+        complete(parseOwnedJavaScriptApplicationAnalysisSteps(input)),
+      ).toThrow(z.ZodError);
+    },
+  );
+});
 
 describe("owned JavaScript graph validation", () => {
   it("reuses exact sealed graphs and preserves all public result fields", () => {
@@ -84,7 +178,7 @@ describe("owned JavaScript graph validation", () => {
     ).toBe(false);
   });
 
-  it("keeps ordinary constructors mutable and clones inputs before sealing", () => {
+  it("keeps ordinary constructors mutable and seals independently owned inputs", () => {
     const input = example();
     const { graph_id: _applicationId, ...application } = input.graph;
     const { graph_id: _semanticId, ...semantic } = input.semantic_graph;
@@ -94,7 +188,9 @@ describe("owned JavaScript graph validation", () => {
     expect(Object.isFrozen(ordinarySemantic)).toBe(false);
     const applicationSteps =
       createImmutableJavaScriptApplicationGraphSteps(application);
-    const semanticSteps = createImmutableJavaScriptSemanticGraphSteps(semantic);
+    const semanticSteps = sealTransferredJavaScriptSemanticGraphSteps(
+      structuredClone(semantic),
+    );
     application.limitations.push("Changed after factory input was cloned.");
     semantic.limitations.push("Changed after factory input was cloned.");
     expect(complete(applicationSteps)).toEqual(ordinaryApplication);
@@ -175,12 +271,16 @@ describe("owned JavaScript graph validation", () => {
     };
     const mutable = createJavaScriptSemanticGraph(semantic);
     const { graph_id: _mutableId, ...mutableInput } = mutable;
-    const steps = createImmutableJavaScriptSemanticGraphSteps(mutableInput);
+    const steps = sealTransferredJavaScriptSemanticGraphSteps(
+      structuredClone(mutableInput),
+    );
     expect(steps.next().done).toBe(false);
     steps.return(mutable);
     expect(isValidatedImmutableJavaScriptSemanticGraph(mutable)).toBe(false);
     const sealed = complete(
-      createImmutableJavaScriptSemanticGraphSteps(mutableInput),
+      sealTransferredJavaScriptSemanticGraphSteps(
+        structuredClone(mutableInput),
+      ),
     );
     expect(sealed).toEqual(mutable);
     expect(isValidatedImmutableJavaScriptSemanticGraph(sealed)).toBe(true);
@@ -206,7 +306,7 @@ describe("owned JavaScript result bindings", () => {
           ];
         }
         input.semantic_graph = complete(
-          createImmutableJavaScriptSemanticGraphSteps(semantic),
+          sealTransferredJavaScriptSemanticGraphSteps(semantic),
         );
       }
       expect(
@@ -237,8 +337,9 @@ describe("owned JavaScript result bindings", () => {
       ...semantic.nodes.slice(1),
     ];
     input.semantic_graph = complete(
-      createImmutableJavaScriptSemanticGraphSteps(semantic),
+      sealTransferredJavaScriptSemanticGraphSteps(semantic),
     );
+    freezeJsonSnapshot(input);
     const steps = parseOwnedJavaScriptApplicationAnalysisSteps(input);
     expect(steps.next().done).toBe(false);
     steps.return(input);
@@ -322,5 +423,43 @@ describe("graphs transferred to their sealing steps", () => {
         complete(sealTransferredJavaScriptApplicationGraphSteps(stale)),
       ),
     ).toEqual(issuesFrom(() => createJavaScriptApplicationGraph(stale)));
+  });
+});
+
+describe("skipped_javascript_files backward compatibility", () => {
+  it("preserves omission for saved evidence that predates the skipped counter", () => {
+    const legacy = structuredClone(
+      JAVASCRIPT_APPLICATION_EVIDENCE_EXAMPLE.normalized_result,
+    ) as Record<string, unknown>;
+    const statistics = legacy.statistics as Record<string, unknown>;
+    delete statistics.skipped_javascript_files;
+    const result = javascriptApplicationAnalysisResultSchema.parse(legacy);
+    // A pre-change result can contain the very resource-skipped files this
+    // field reports, but it has no counter: unknown must not become a
+    // measured zero that comparisons would treat as "nothing skipped".
+    expect("skipped_javascript_files" in result.statistics).toBe(false);
+    expect(result.statistics.skipped_javascript_files).toBeUndefined();
+  });
+
+  it("keeps the producer-written skipped count in current evidence", () => {
+    const current = structuredClone(
+      JAVASCRIPT_APPLICATION_EVIDENCE_EXAMPLE.normalized_result,
+    ) as Record<string, unknown>;
+    const statistics = current.statistics as Record<string, unknown>;
+    statistics.skipped_javascript_files = 3;
+    const result = javascriptApplicationAnalysisResultSchema.parse(current);
+    expect(result.statistics.skipped_javascript_files).toBe(3);
+  });
+});
+
+describe("Electron boundary summary compatibility", () => {
+  it("reads results produced before protocol registrations were counted", () => {
+    const current = example();
+    const { protocol_registrations: _count, ...summary } = current.summary;
+    const parsed = javascriptApplicationAnalysisResultSchema.parse({
+      ...current,
+      summary,
+    });
+    expect(parsed.summary).not.toHaveProperty("protocol_registrations");
   });
 });

@@ -40,17 +40,9 @@ const seedMatch = (
   node: ApplicationNode,
   seed: ApplicationFeatureSeed,
 ): ApplicationFeatureSeedMatch[] => {
-  if (seed.kind === "node-id")
-    return node.node_id === seed.value
-      ? [
-          {
-            node_id: node.node_id,
-            kind: node.kind,
-            basis: "node-id",
-            field: "node_id",
-          },
-        ]
-      : [];
+  const mode = featureSeedMatchMode(seed);
+  const caseSensitive = seed.case_sensitive;
+  const query = normalizeFeatureSeedText(seed.value, caseSensitive);
   if (!kindMatches(node, seed.kind)) return [];
   const requestedEntryPath =
     seed.kind === "api" && "entry_path" in seed ? seed.entry_path : undefined;
@@ -69,11 +61,8 @@ const seedMatch = (
     })
   )
     return [];
-  const mode = featureSeedMatchMode(seed);
-  const caseSensitive = seed.case_sensitive;
-  const query = normalized(seed.value, caseSensitive);
   const match = candidateFields(node, seed.kind).find((candidate) => {
-    const value = normalized(candidate.value, caseSensitive);
+    const value = normalizeFeatureSeedText(candidate.value, caseSensitive);
     return mode === "exact" ? value === query : value.includes(query);
   });
   return match === undefined
@@ -90,9 +79,9 @@ const seedMatch = (
 
 const kindMatches = (
   node: ApplicationNode,
-  kind: Exclude<ApplicationFeatureSeed["kind"], "node-id">,
+  kind: ApplicationFeatureSeed["kind"],
 ): boolean => {
-  if (kind === "string") return true;
+  if (kind === "string" || kind === "node-id") return true;
   if (kind === "route")
     return (
       node.kind === "endpoint" &&
@@ -116,8 +105,25 @@ const kindMatches = (
 
 const candidateFields = (
   node: ApplicationNode,
-  seedKind: Exclude<ApplicationFeatureSeed["kind"], "node-id">,
+  seedKind: ApplicationFeatureSeed["kind"],
 ): CandidateField[] => {
+  if (seedKind === "node-id")
+    return [{ basis: "node-id", field: "node_id", value: node.node_id }];
+  if (seedKind === "route")
+    return node.observations.flatMap((observation, index) =>
+      (["value", "path"] as const).flatMap((key) => {
+        const value = observation.properties[key];
+        return typeof value === "string"
+          ? [
+              {
+                basis: "property" as const,
+                field: `observations[${String(index)}].properties.${key}`,
+                value,
+              },
+            ]
+          : [];
+      }),
+    );
   const fields: CandidateField[] = [
     ...identityFields(node),
     ...node.observations.flatMap((observation, index) => [
@@ -266,8 +272,12 @@ const propertyFields = (
   return output;
 };
 
-const normalized = (value: string, caseSensitive: boolean): string => {
-  const normalizedValue = value.normalize("NFKC");
+/** Normalize literal matching identically across application and semantic labels. */
+export const normalizeFeatureSeedText = (
+  value: string,
+  caseSensitive: boolean,
+): string => {
+  const normalizedValue = value.normalize(caseSensitive ? "NFC" : "NFKC");
   return caseSensitive
     ? normalizedValue
     : normalizedValue.toLocaleLowerCase("en-US");

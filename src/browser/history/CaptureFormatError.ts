@@ -9,7 +9,8 @@ export class CaptureFormatError extends Error {
       | "limit",
     message: string,
     readonly pointer = "",
+    cause?: unknown,
   ) {
-    super(message);
+    super(message, cause === undefined ? undefined : { cause });
   }
 }

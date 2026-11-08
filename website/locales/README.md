@@ -120,9 +120,24 @@ Persian use right-to-left page layouts; code and numeric demos remain left to
 right. The two Notes target applications and the downloadable source archive
 remain the original investigation inputs.
 
-Greek (`el`) has a translated README and a partially translated website catalog.
-Incomplete website pages use the labeled English fallback until their required
-messages are translated and reviewed.
+Greek (`el`) has a translated README and a complete website catalog, including
+setup guides, case studies, articles and Contributors. Like the other editions,
+it uses the labeled English fallback when a future source change leaves a
+required translation missing or pending review.
+
+Malayalam (`ml`) has a translated README and a pending website catalog. Its
+website messages remain untranslated and use the labeled, nonindexable English
+fallback described above; the README translation does not establish website
+translation coverage.
+
+Roman Urdu (`ur-Latn`) has a translated README written in Latin script, with
+English technical terms retained. Its text direction is left to right. The
+website catalog is pending and uses the same labeled, nonindexable English
+fallback; the README does not establish a translated website.
+
+Romanian (`ro`) has a complete translated README. Its website catalog is pending
+and uses the same labeled, nonindexable English fallback; the Romanian README
+does not establish website translation coverage.
 
 The first catalogs started with machine-assisted drafts. They include editorial
 corrections to navigation, prompts and technical terminology. Traditional Chinese

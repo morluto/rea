@@ -3,18 +3,54 @@ import type { WebNetworkCaptureRecord } from "../../domain/webNetworkCapture.js"
 import { parseRecordedTransportUrl } from "../../domain/recordedTransportUrl.js";
 
 type Redaction = WebNetworkCaptureRecord["redactions"][number];
+type TransportUrlContext = { readonly credentialBaseUrl?: string };
 const CREDENTIAL_HEADERS = new Set([
   "authorization",
   "proxy-authorization",
   "cookie",
   "set-cookie",
 ]);
+/** HTTP credential names apply equally to recorded headers and gRPC-web trailers. */
+export const isCaptureCredentialHeader = (name: string): boolean =>
+  CREDENTIAL_HEADERS.has(name.toLowerCase());
+
+/** Match an ASCII header name without allocating a potentially enormous line. */
+export const isCaptureCredentialHeaderBytes = (
+  bytes: Uint8Array,
+  start: number,
+  end: number,
+): boolean => {
+  for (const name of CREDENTIAL_HEADERS) {
+    if (end - start !== name.length) continue;
+    let matches = true;
+    for (let index = 0; index < name.length; index++) {
+      const byte = bytes[start + index]!;
+      const lower = byte >= 65 && byte <= 90 ? byte + 32 : byte;
+      if (lower !== name.charCodeAt(index)) {
+        matches = false;
+        break;
+      }
+    }
+    if (matches) return true;
+  }
+  return false;
+};
 
 /** Literal redaction and structural authentication exclusions preserve unrelated local evidence. */
 export class CaptureRedaction {
   readonly redactions: Redaction[] = [];
   readonly #sensitiveByteValues: readonly Buffer[];
-  constructor(readonly sensitiveValues: readonly string[]) {
+  readonly #requestUrl: string | undefined;
+  constructor(
+    readonly sensitiveValues: readonly string[],
+    source?: unknown,
+  ) {
+    const request =
+      captureObject(source) && captureObject(source.request)
+        ? source.request
+        : undefined;
+    this.#requestUrl =
+      typeof request?.url === "string" ? request.url : undefined;
     // An unpaired surrogate has no UTF-8 representation. Buffer.from would
     // invent replacement-character bytes and incorrectly discard real evidence.
     this.#sensitiveByteValues = sensitiveValues.flatMap((value) => {
@@ -24,10 +60,14 @@ export class CaptureRedaction {
   }
 
   /** Preserve exact text unless explicitly sensitive or known transport URL userinfo. */
-  text(value: string, pointer: string, transportUrl = false): string | null {
+  text(
+    value: string,
+    pointer: string,
+    transportUrl?: TransportUrlContext,
+  ): string | null {
     let result = value;
-    if (transportUrl) {
-      const { credentials } = parseRecordedTransportUrl(value);
+    if (transportUrl !== undefined) {
+      const { credentials } = parseRecordedTransportUrl(value, transportUrl);
       if (credentials === "ambiguous") return this.credential(pointer);
       if (credentials !== null) {
         result = `${value.slice(0, credentials.start)}${value.slice(credentials.end)}`;
@@ -75,7 +115,7 @@ export class CaptureRedaction {
     return (
       (/^\/(request|response)\/headers\/\d+\/value$/.test(pointer) &&
         typeof parent.name === "string" &&
-        CREDENTIAL_HEADERS.has(parent.name.toLowerCase())) ||
+        isCaptureCredentialHeader(parent.name)) ||
       /^\/(request|response)\/cookies\/\d+\/value$/.test(pointer)
     );
   }
@@ -84,14 +124,21 @@ export class CaptureRedaction {
   harTransportUrl(
     pointer: string,
     parent?: Readonly<Record<string, unknown>>,
-  ): boolean {
-    return (
-      pointer === "/request/url" ||
-      pointer === "/response/redirectURL" ||
-      (/^\/(request|response)\/headers\/\d+\/value$/.test(pointer) &&
-        typeof parent?.name === "string" &&
-        ["location", "referer", "origin"].includes(parent.name.toLowerCase()))
-    );
+  ): TransportUrlContext | undefined {
+    const header = /^\/(request|response)\/headers\/\d+\/value$/.test(pointer)
+      ? typeof parent?.name === "string"
+        ? parent.name.toLowerCase()
+        : undefined
+      : undefined;
+    if (pointer === "/response/redirectURL" || header === "location")
+      return this.#requestUrl === undefined
+        ? {}
+        : { credentialBaseUrl: this.#requestUrl };
+    return pointer === "/request/url" ||
+      header === "referer" ||
+      header === "origin"
+      ? {}
+      : undefined;
   }
 
   /** Preserve bytes unless an explicitly declared UTF-8 literal occurs in them. */

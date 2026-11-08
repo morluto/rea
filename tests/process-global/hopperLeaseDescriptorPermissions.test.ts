@@ -32,7 +32,7 @@ vi.mock("node:fs/promises", async (importOriginal) => {
   };
 });
 
-import { acquireLinuxHopperApplicationLease } from "../../src/hopper/HopperTargetLease.js";
+import { acquireLinuxHopperApplicationLease } from "../../src/process/HopperLease.js";
 
 afterEach(() => {
   replacement.selected = "";

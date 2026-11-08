@@ -4,9 +4,10 @@ import type {
   BrowserScenarioStep,
   BrowserStepArtifacts,
 } from "./browserScenarioCaptureValues.js";
-import type { BrowserScenarioCapture } from "./browserScenarioCapture.js";
+import type { RetainedBrowserScenarioCapture } from "./browserScenarioCapture.js";
 import {
   fingerprintScenarioNetworkTransactions,
+  ScenarioNetworkFingerprintError,
   scenarioNetworkTransactions,
   scenarioNetworkCoverageReason,
 } from "./browserScenarioNetworkComparison.js";
@@ -73,7 +74,7 @@ const EVENT_SECTIONS = [
 
 /** Project event evidence through capture- and step-level completeness. */
 export const eventEvidenceState = (
-  capture: BrowserScenarioCapture,
+  capture: RetainedBrowserScenarioCapture,
   step: BrowserScenarioStep,
 ): BrowserScenarioEvidenceState => {
   const listed = (collection: "missing_sections" | "truncated_sections") =>
@@ -100,6 +101,41 @@ export const actionState = (step: BrowserScenarioStep) => ({
   error: step.error,
 });
 
+type StorageSnapshot = Extract<
+  BrowserStepArtifacts["storage"],
+  { state: "captured" }
+>["value"];
+
+/** Encoding provenance is not itself a target-storage difference. */
+export const storageProjection = ({
+  cookies,
+  local_storage,
+  session_storage,
+}: StorageSnapshot) => ({
+  cookies,
+  local_storage,
+  session_storage,
+});
+
+/** Legacy UTF-8 fingerprints have irreversibly lost unpaired code units. */
+export const storageFingerprintCoverageReason = (
+  ...states: readonly BrowserStepArtifacts["storage"][]
+): string | undefined =>
+  states.some(
+    (state) =>
+      state.state === "captured" &&
+      state.value.fingerprint_version === undefined &&
+      [
+        state.value.cookies,
+        state.value.local_storage,
+        state.value.session_storage,
+      ].some((entries) =>
+        entries.some(({ value_state }) => value_state === "hashed"),
+      ),
+  )
+    ? "Legacy storage fingerprints used lossy UTF-8; recapture both sides with code-unit-preserving storage fingerprints before comparing values."
+    : undefined;
+
 /** One step's ordered events and a single indexed network graph. */
 export interface ScenarioStepEvents {
   readonly events: readonly unknown[];
@@ -108,7 +144,7 @@ export interface ScenarioStepEvents {
 
 /** Build one graph and fingerprint index per capture, then select in linear total work. */
 export const prepareScenarioEvents = (
-  capture: BrowserScenarioCapture,
+  capture: RetainedBrowserScenarioCapture,
   rules: readonly BrowserScenarioNormalizationRule[],
 ): {
   readonly coverageReason: string | undefined;
@@ -128,8 +164,7 @@ export const prepareScenarioEvents = (
   for (const [index, node] of nodes.entries()) {
     const step = networkByStep.get(node.step_index) ?? [];
     const fingerprint = fingerprints[index];
-    if (fingerprint === undefined)
-      throw new Error("Network comparison node has no fingerprint");
+    if (fingerprint === undefined) throw new ScenarioNetworkFingerprintError();
     step.push(fingerprint);
     networkByStep.set(node.step_index, step);
   }
@@ -146,8 +181,8 @@ export const prepareScenarioEvents = (
 
 /** Different content selection is missing comparability, not an observed website change. */
 export const networkContentCoverageReason = (
-  before: BrowserScenarioCapture,
-  after: BrowserScenarioCapture,
+  before: RetainedBrowserScenarioCapture,
+  after: RetainedBrowserScenarioCapture,
 ): string | undefined => {
   const left = before.scenario.network_content;
   const right = after.scenario.network_content;
@@ -158,15 +193,15 @@ export const networkContentCoverageReason = (
     : undefined;
 };
 
-/** Different or unrecorded event-family selection is missing comparability, not an observed website change. */
+/** Different event-family selection is missing comparability, not an observed website change. */
 export const eventFamilyCoverageReason = (
-  before: BrowserScenarioCapture,
-  after: BrowserScenarioCapture,
+  before: RetainedBrowserScenarioCapture,
+  after: RetainedBrowserScenarioCapture,
 ): string | undefined => {
   const left = before.scenario.event_families;
   const right = after.scenario.event_families;
   if (left === undefined || right === undefined)
-    return "Event family selection is unknown in a legacy capture; capture both sides with matching event families before comparing event evidence.";
+    return "Event family selection was not recorded in at least one retained capture; event evidence remains unknown. Recapture both sides with explicit matching selections.";
   const leftFamilies = new Set(left);
   const rightFamilies = new Set(right);
   return leftFamilies.size === rightFamilies.size &&

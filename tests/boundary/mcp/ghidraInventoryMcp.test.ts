@@ -25,6 +25,35 @@ import { createServer } from "../../../src/server/createServer.js";
 import { waitForExit } from "../../support/process/processFixture.js";
 import { GhidraSessionError } from "../../../src/ghidra/GhidraSessionError.js";
 
+it("delivers a complete Ghidra inventory within the existing MCP response budget", async () => {
+  const items = Array.from({ length: 30_000 }, (_, index) => ({
+    address: `0x${(0x1000 + index).toString(16)}`,
+    value: `procedure_${String(index).padStart(6, "0")}`,
+    procedure: { external: false, thunk: false, thunk_target: null },
+  }));
+  const harness = await connectGhidraMcp(
+    "inventory-response-budget",
+    (operation) => {
+      if (operation !== "list_procedures")
+        throw new Error(`Unexpected operation: ${operation}`);
+      return Promise.resolve(ok(items));
+    },
+  );
+  try {
+    const reply = await harness.mcp.callTool({
+      name: "list_procedures",
+      arguments: {},
+    });
+    if (reply.isError) throw new Error(JSON.stringify(reply));
+    const evidence = sessionEvidence(harness.session, reply.structuredContent);
+    expect(evidence.raw_result).toBeNull();
+    expect(evidence.normalized_result).toEqual(items);
+    expect(harness.calls).toEqual(["list_procedures"]);
+  } finally {
+    await harness.close();
+  }
+});
+
 it("retains byte-search coverage and rejects malformed pages before creating Evidence", async () => {
   const page = {
     matches: [
@@ -45,6 +74,14 @@ it("retains byte-search coverage and rejects malformed pages before creating Evi
       ],
       skipped_not_loaded: [
         { segment: ".symtab", start: "0x0", end: "0x17f", bytes: 384 },
+      ],
+      skipped_overlays: [
+        {
+          segment: "overlay",
+          start: "overlay:0x401000",
+          end: "overlay:0x40100f",
+          bytes: 16,
+        },
       ],
     },
     complete: false,
@@ -87,6 +124,27 @@ it("retains byte-search coverage and rejects malformed pages before creating Evi
     expect(parseMcpToolError(malformed)).toMatchObject({
       error: { code: "unreadable_output" },
     });
+    output = jsonValueSchema.parse({
+      ...page,
+      searched: {
+        ...page.searched,
+        skipped_overlays: [
+          {
+            segment: "overlay",
+            start: "overlay:0x401000",
+            end: "overlay:0x40100f",
+            bytes: 15,
+          },
+        ],
+      },
+    });
+    const invalidOverlay = await harness.mcp.callTool({
+      name: "search_bytes",
+      arguments: { pattern: "48 ??" },
+    });
+    expect(parseMcpToolError(invalidOverlay)).toMatchObject({
+      error: { code: "unreadable_output" },
+    });
     for (const block of [
       { segment: ".text", start: "0x1000", end: "0x1009", bytes: 1 },
       { segment: ".text", start: "0x1009", end: "0x1000", bytes: 1 },
@@ -106,6 +164,24 @@ it("retains byte-search coverage and rejects malformed pages before creating Evi
       });
       expect(invalidCoverage.structuredContent).toBeUndefined();
     }
+    for (const [address, segment] of [
+      ["0x402000", ".bss"],
+      ["overlay:0x401000", ".text"],
+      ["invalid", ".text"],
+    ]) {
+      output = jsonValueSchema.parse({
+        ...page,
+        matches: [{ ...page.matches[0], address, segment }],
+      });
+      const outsideCoverage = await harness.mcp.callTool({
+        name: "search_bytes",
+        arguments: { pattern: "48 ??" },
+      });
+      expect(parseMcpToolError(outsideCoverage)).toMatchObject({
+        error: { code: "unreadable_output" },
+      });
+      expect(outsideCoverage.structuredContent).toBeUndefined();
+    }
     const calls = harness.calls.length;
     for (const args of [{ pattern: "??" }, { pattern: "48", mask: "ffff" }]) {
       const invalid = await harness.mcp.callTool({
@@ -113,9 +189,15 @@ it("retains byte-search coverage and rejects malformed pages before creating Evi
         arguments: args,
       });
       expect(invalid.isError).toBe(true);
-      expect(JSON.stringify(invalid.content)).toContain(
-        "Input validation error",
-      );
+      expect(parseMcpToolError(invalid)).toMatchObject({
+        error: {
+          code: "invalid_request",
+          recovery: {
+            kind: "inspect_input_contract",
+            operation: "search_bytes",
+          },
+        },
+      });
     }
     expect(harness.calls).toHaveLength(calls);
   } finally {
@@ -227,6 +309,7 @@ it("searches bytes through MCP and the socket bridge with pagination and skipped
     });
     expect(first.isError, JSON.stringify(first)).not.toBe(true);
     const firstEvidence = sessionEvidence(session, first.structuredContent);
+    expect(firstEvidence.raw_result).toBeNull();
     expect(firstEvidence.normalized_result).toMatchObject({
       matches: [
         {
@@ -315,7 +398,7 @@ it("retains missing PDB coverage in empty PE name-search Evidence and snapshot r
     const evidence = sessionEvidence(harness.session, reply.structuredContent);
     expect(evidence.normalized_result).toEqual([]);
     expect(evidence.analysis_profile?.parameters.pdb_observations).toBe(
-      "program-info-v1",
+      "program-info-v5",
     );
     const limitation = evidence.limitations.find((value) =>
       value.includes(pdb.file),
@@ -340,7 +423,7 @@ it("retains missing PDB coverage in empty PE name-search Evidence and snapshot r
     if (!replay.ok) throw replay.error;
     expect(replay.value.limitations).toContain(limitation);
     expect(replay.value.limitations).toContainEqual(
-      expect.stringContaining("Loaded from a local REA analysis snapshot"),
+      expect.stringMatching(/snapshot.*did not re.run the provider/iu),
     );
   } finally {
     await harness.close();
@@ -349,6 +432,7 @@ it("retains missing PDB coverage in empty PE name-search Evidence and snapshot r
 
 it("retains defined-string coverage in empty and matching search Evidence", async () => {
   let output = jsonValueSchema.parse([]);
+  let stringCoverage: string | undefined;
   const harness = await connectGhidraMcp("ghidra-string-coverage", () =>
     Promise.resolve(ok(output)),
   );
@@ -371,14 +455,25 @@ it("retains defined-string coverage in empty and matching search Evidence", asyn
       expect(evidence.analysis_profile?.parameters).toMatchObject({
         string_inventory_evidence: "defined-data-coverage-v1",
       });
-      expect(evidence.limitations).toContainEqual(
-        expect.stringMatching(
-          /Only Ghidra-defined string Data.*empty search does not establish/u,
+      const coverage = evidence.limitations.find((limitation) =>
+        /Only Ghidra-defined string Data.*empty search does not establish/u.test(
+          limitation,
         ),
       );
+      if (coverage === undefined) throw new Error("Missing string coverage");
+      if (stringCoverage !== undefined) expect(coverage).toBe(stringCoverage);
+      stringCoverage = coverage;
     }
     output = jsonValueSchema.parse([
-      { address: "0x401000", value: "projection cache ignored" },
+      {
+        address: "0x401000",
+        value: "projection cache ignored",
+        string: {
+          encoding: "US-ASCII",
+          termination: "present_or_not_required",
+          byte_length: 25,
+        },
+      },
     ]);
     const matched = await harness.mcp.callTool({
       name: "search_strings",
@@ -389,8 +484,9 @@ it("retains defined-string coverage in empty and matching search Evidence", asyn
       matched.structuredContent,
     );
     expect(evidence.normalized_result).toEqual(output);
+    expect(evidence.limitations).toContain(stringCoverage);
     expect(evidence.limitations).toContainEqual(
-      expect.stringContaining("Completeness applies to that inventory"),
+      expect.stringMatching(/completeness applies to that inventory/iu),
     );
     output = jsonValueSchema.parse([]);
     const procedures = await harness.mcp.callTool({
@@ -400,7 +496,7 @@ it("retains defined-string coverage in empty and matching search Evidence", asyn
     expect(
       sessionEvidence(harness.session, procedures.structuredContent)
         .limitations,
-    ).not.toContainEqual(expect.stringContaining("Ghidra-defined string Data"));
+    ).not.toContainEqual(expect.stringMatching(/Ghidra.defined string Data/iu));
   } finally {
     await harness.close();
   }
@@ -463,6 +559,31 @@ it("rejects contradictory provider output before emitting MCP Evidence", async (
         output: [{ address: "0x401000" }],
       },
       {
+        name: "search_strings",
+        arguments: { pattern: "needle" },
+        output: [{ address: "0x401000", value: "needle" }],
+      },
+      {
+        name: "search_strings",
+        arguments: { pattern: "needle" },
+        output: [
+          {
+            address: "0x401000",
+            value: "needle",
+            string: {
+              encoding: "UTF-8",
+              termination: "present_or_not_required",
+              byte_length: -1,
+            },
+          },
+        ],
+      },
+      {
+        name: "search_procedures",
+        arguments: { pattern: "fixture" },
+        output: [{ address: "0x401000", value: "fixture_main" }],
+      },
+      {
         name: "read_function_instructions",
         arguments: { procedure: "fixture_main" },
         output: {
@@ -507,6 +628,143 @@ it("rejects contradictory provider output before emitting MCP Evidence", async (
       });
       expect(parseMcpToolError(rejected)).not.toHaveProperty("evidence_id");
       expect(parseMcpToolError(rejected)).not.toHaveProperty("result");
+    }
+  } finally {
+    await harness.close();
+  }
+});
+
+it("returns a procedure once with the exact-entry names its search matched", async () => {
+  const primary = {
+    primary: true,
+    dynamic: false,
+    external: false,
+    type: "function",
+    source: "imported",
+  };
+  const row = (
+    address: string,
+    value: string,
+    matched_aliases?: readonly string[],
+  ) => ({
+    address,
+    value,
+    symbol: primary,
+    procedure: { external: false, thunk: false, thunk_target: null },
+    ...(matched_aliases === undefined ? {} : { matched_aliases }),
+  });
+  let output = jsonValueSchema.parse([
+    row("0x1012a0", "audit_alias", ["audit_primary"]),
+  ]);
+  const requests: unknown[] = [];
+  const harness = await connectGhidraMcp(
+    "ghidra-procedure-aliases",
+    (operation, input) => {
+      if (operation !== "search_procedures")
+        throw new Error(`Unexpected operation: ${operation}`);
+      requests.push(input);
+      return Promise.resolve(ok(output));
+    },
+  );
+  const search = async (arguments_: Record<string, unknown>) => {
+    const reply = await harness.mcp.callTool({
+      name: "search_procedures",
+      arguments: arguments_,
+    });
+    if (reply.isError === true) throw new Error(JSON.stringify(reply));
+    return sessionEvidence(harness.session, reply.structuredContent);
+  };
+  try {
+    // The bridge owns exact and regex matching over its entry symbols.
+    const exact = await search({
+      pattern: "audit_primary",
+      case_sensitive: true,
+    });
+    expect(exact.normalized_result).toEqual(output);
+    expect(exact.raw_result).toBeNull();
+    expect(exact.analysis_profile?.parameters).toMatchObject({
+      procedure_search: "primary-and-exact-entry-symbol-names-v1",
+    });
+
+    // Node owns Unicode folding: the bridge's non-ASCII candidates are kept
+    // only when they match, for secondary names as for primary names.
+    output = jsonValueSchema.parse([
+      row("0x1012a0", "audit_alias", ["audit_primary", "Äudit_label"]),
+      row("0x101300", "ÄUDIT_only", ["ünrelated"]),
+      row("0x101340", "FUN_00101340", ["AUDİT_x", "AUDIT_label"]),
+      row("0x101380", "Audit_plain"),
+    ]);
+    const folded = await search({ pattern: "audit" });
+    expect(folded.normalized_result).toEqual([
+      row("0x1012a0", "audit_alias", ["audit_primary"]),
+      row("0x101340", "FUN_00101340", ["AUDIT_label"]),
+      row("0x101380", "Audit_plain"),
+    ]);
+    expect(folded.raw_result).toEqual(output);
+    expect(requests).toEqual([
+      expect.objectContaining({ pattern: "audit_primary" }),
+      expect.objectContaining({ pattern: "audit", case_sensitive: false }),
+    ]);
+
+    // An empty alias list is not a match report.
+    output = jsonValueSchema.parse([row("0x1012a0", "audit_alias", [])]);
+    const malformed = await harness.mcp.callTool({
+      name: "search_procedures",
+      arguments: { pattern: "audit_", mode: "regex" },
+    });
+    expect(parseMcpToolError(malformed)).toMatchObject({
+      error: { code: "unreadable_output" },
+    });
+  } finally {
+    await harness.close();
+  }
+});
+
+it("keeps a namespaced entry name that matched by its leaf spelling", async () => {
+  // procedure_address accepts a symbol's leaf or qualified spelling, so the
+  // bridge matches both and reports the qualified one.
+  const output = jsonValueSchema.parse([
+    {
+      address: "0x101400",
+      value: "outer::impl",
+      procedure: { external: false, thunk: false, thunk_target: null },
+      matched_aliases: ["ns::audit_alias"],
+    },
+    {
+      address: "0x101440",
+      value: "alpha::same",
+      procedure: { external: false, thunk: false, thunk_target: null },
+    },
+  ]);
+  const harness = await connectGhidraMcp("ghidra-namespaced-aliases", () =>
+    Promise.resolve(ok(output)),
+  );
+  try {
+    const [aliasRow, primaryRow] = output as unknown[];
+    for (const [arguments_, expected] of [
+      [
+        {
+          pattern: "^(audit_alias|same)$",
+          mode: "regex",
+          case_sensitive: true,
+        },
+        output,
+      ],
+      // The host folding pass checks reported qualified spellings, which end
+      // with the leaf the bridge matched.
+      [{ pattern: "AUDIT_ALIAS" }, [aliasRow]],
+      [{ pattern: "SAME" }, [primaryRow]],
+    ] as const) {
+      const reply = await harness.mcp.callTool({
+        name: "search_procedures",
+        arguments: arguments_,
+      });
+      expect(reply.isError, JSON.stringify(arguments_)).not.toBe(true);
+      expect(
+        sessionEvidence(harness.session, reply.structuredContent)
+          .normalized_result,
+        JSON.stringify(arguments_),
+      ).toEqual(expected);
     }
   } finally {
     await harness.close();

@@ -1,13 +1,6 @@
 import { execFile } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import {
-  chmod,
-  copyFile,
-  mkdir,
-  readFile,
-  symlink,
-  unlink,
-} from "node:fs/promises";
+import { mkdir, readFile, symlink, unlink } from "node:fs/promises";
 import { join } from "node:path";
 import { promisify } from "node:util";
 
@@ -17,6 +10,10 @@ import { assertCleanLinuxHopperRuntime } from "../../scripts/lib/clean-linux-hop
 import { completeVerifierRun } from "../../scripts/lib/verifier-run.mjs";
 import { cleanupOwnedProcessGroup } from "../../src/process/ProcessOwnership.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
+import {
+  prepareRenamedNodeLauncher,
+  retainedRuntimeNodeCode,
+} from "../fixtures/retainedRuntimeNode.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -26,19 +23,16 @@ it
   "rejects a reparented %s without signaling it",
   async (mode) => {
     const runId = randomUUID();
-    const childCode =
-      "process.title = 'Xvfb'; setInterval(() => {}, 1000); process.send('ready');";
     const directory = await createTestTempDirectory("rea-clean-runtime-test-");
     const launcher = join(directory, "Hopper");
     const alternate = join(directory, "Hopper-alternate");
     const procRoot = join(directory, "proc");
     await mkdir(procRoot);
     const alternateMode = mode === "alternate launcher";
-    if (alternateMode) {
-      await copyFile("/usr/bin/sleep", launcher);
-      await chmod(launcher, 0o700);
-      await symlink(launcher, alternate);
-    }
+    const childCode = retainedRuntimeNodeCode(
+      alternateMode ? undefined : "Xvfb",
+    );
+    if (alternateMode) await prepareRenamedNodeLauncher(launcher, alternate);
     // A rejection must come from the fixture we are about to launch. An
     // existing Xvfb would otherwise mask a broken executable-identity check.
     // The copied launcher has a unique file identity and has not run yet.
@@ -49,14 +43,14 @@ it
       procRoot,
     );
     const command = alternateMode ? alternate : process.execPath;
-    const arguments_ = alternateMode ? ["30"] : ["-e", childCode];
+    const arguments_ = ["-e", childCode];
     const parentCode = `
       const { spawn } = require('node:child_process');
       const child = spawn(${JSON.stringify(command)}, ${JSON.stringify(arguments_)}, {
-        detached: true, stdio: ${JSON.stringify(alternateMode ? "ignore" : ["ignore", "ignore", "ignore", "ipc"])}
+        detached: true, stdio: ["ignore", "ignore", "ignore", "ipc"]
       });
       child.once('error', () => process.exit(1));
-      child.once(${JSON.stringify(alternateMode ? "spawn" : "message")}, () => {
+      child.once('message', () => {
         process.stdout.write(JSON.stringify({ pid: child.pid, parentPid: process.pid }));
         if (child.connected) child.disconnect();
         child.unref();

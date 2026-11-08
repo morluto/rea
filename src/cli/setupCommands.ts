@@ -1,3 +1,4 @@
+import { withCommandCancellation } from "./commandCancellation.js";
 import { z } from "incur";
 
 import type { DoctorScope } from "../application/Doctor.js";
@@ -8,6 +9,10 @@ import {
 } from "../application/SetupTypes.js";
 import { isUninstallFailure } from "../application/UninstallFailure.js";
 import { homeDirectoryFromEnvironment } from "../config/homeDirectory.js";
+import {
+  mcpToolFamiliesSchema,
+  toolFamiliesConstraint,
+} from "../config/mcpToolFamilies.js";
 import { isUpdateFailure } from "../application/UpdateFailure.js";
 import {
   confirmInteractiveSetup,
@@ -23,12 +28,7 @@ import type { CliInstance } from "./types.js";
 import { SUPPORTED_CLIENT_DEFINITIONS } from "../application/SupportedClients.js";
 
 const supportedClientIds = SUPPORTED_CLIENT_DEFINITIONS.map(({ name }) => name);
-const supportedClientSchema = z
-  .string()
-  .refine(
-    (candidate) => supportedClientIds.some((name) => name === candidate),
-    "Unsupported agent integration",
-  );
+const supportedClientSchema = z.enum(supportedClientIds);
 const skillClientSchema = z.union([z.literal("shared"), supportedClientSchema]);
 
 /** Register setup, doctor, uninstall, and update CLI commands. */
@@ -67,6 +67,18 @@ const registerSetupCommand = (
         .array(skillClientSchema)
         .default([])
         .describe("Existing client skill destination to update; repeatable"),
+      toolFamilies: z
+        .string()
+        .optional()
+        .refine(
+          (value) =>
+            value === undefined ||
+            mcpToolFamiliesSchema.safeParse(value).success,
+          { message: toolFamiliesConstraint },
+        )
+        .describe(
+          "Comma-separated tool families this registration advertises; omit to preserve the saved selection, or advertise every tool if none is saved. To restore every tool, remove REA_MCP_TOOL_FAMILIES from the client's registration and restart the client.",
+        ),
       allDetected: z
         .boolean()
         .default(false)
@@ -120,18 +132,20 @@ const registerDoctorCommand = (
         .describe("Require the installed REA skill identity to be aligned"),
     }),
     run: ({ options }) =>
-      logCliCommand(logger, "doctor", async () => {
-        const [{ runDoctorOwned }, { createSystemDoctorHost }] =
-          await Promise.all([
-            import("../application/Doctor.js"),
-            import("../doctorRuntime.js"),
-          ]);
-        return runDoctorOwned(
-          options.target,
-          createSystemDoctorHost(environment),
-          doctorScope(options),
-        );
-      }),
+      withCommandCancellation((signal) =>
+        logCliCommand(logger, "doctor", async () => {
+          const [{ runDoctorOwned }, { createSystemDoctorHost }] =
+            await Promise.all([
+              import("../application/Doctor.js"),
+              import("../doctorRuntime.js"),
+            ]);
+          return runDoctorOwned(
+            options.target,
+            createSystemDoctorHost(environment, signal),
+            doctorScope(options),
+          );
+        }),
+      ),
   });
 };
 
@@ -195,6 +209,7 @@ interface SetupCommandOptions {
   readonly installHopper: boolean;
   readonly client: readonly string[];
   readonly skillClient: readonly string[];
+  readonly toolFamilies?: string | undefined;
   readonly allDetected: boolean;
   readonly skill?: boolean | undefined;
   readonly dryRun: boolean;
@@ -226,8 +241,14 @@ const runSetupCommand = async (
       : undefined,
   );
   if (interactive) renderInteractiveSetupResult(result, environment);
-  else if (options.dryRun && !input.formatExplicit && hasInteractiveTerminal())
-    renderSetupDryRun(result.plannedActions);
+  else if (
+    options.dryRun &&
+    !input.formatExplicit &&
+    hasInteractiveTerminal()
+  ) {
+    if (result.status === "planned") renderSetupDryRun(result.plannedActions);
+    else renderInteractiveSetupResult(result, environment);
+  }
   return result;
 };
 
@@ -246,7 +267,6 @@ const setupRunOptions = (
     options.skillClient.length > 0;
   const hasSelectedClients =
     hasExplicitScope &&
-    !options.allDetected &&
     (options.client.length > 0 || options.skillClient.length > 0);
   return {
     approved: options.yes && !options.dryRun,
@@ -262,8 +282,11 @@ const setupRunOptions = (
     ...(hasExplicitScope
       ? { installSkill: options.skill ?? agentIntegrationSelected }
       : {}),
+    ...(options.toolFamilies === undefined
+      ? {}
+      : { toolFamilies: options.toolFamilies }),
     ...(interactive ? { onProgress: renderSetupProgress } : {}),
-    ...(hasSelectedClients
+    ...(hasSelectedClients && !options.allDetected
       ? {
           readinessScope: {
             clients: options.client,

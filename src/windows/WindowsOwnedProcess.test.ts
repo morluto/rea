@@ -4,6 +4,7 @@ import { describe, expect, it, vi } from "vitest";
 import type { WindowsNativeAuthority } from "./WindowsNativeLoader.js";
 import {
   quoteWindowsProcessArgument,
+  WindowsNativeControlUnavailableError,
   WindowsOwnedProcess,
 } from "./WindowsOwnedProcess.js";
 
@@ -40,6 +41,7 @@ const authority = (
     readonly jobMemoryLimit?: true;
     readonly polls?: readonly unknown[];
     readonly appliedLimit?: (requested: unknown) => unknown;
+    readonly failClose?: () => boolean;
   } = {},
 ) => {
   const calls: { operation: string; arguments_: readonly unknown[] }[] = [];
@@ -83,7 +85,10 @@ const authority = (
         };
       if (operation === "process_poll") return polls.shift();
       if (operation === "process_terminate") return true;
-      if (operation === "process_close") return null;
+      if (operation === "process_close") {
+        if (options.failClose?.()) throw new Error("native close failed");
+        return null;
+      }
       throw new Error(`Unmodeled native operation ${operation}`);
     },
   };
@@ -105,6 +110,46 @@ const launch = (
       ...(memoryLimitBytes === undefined ? {} : { memoryLimitBytes }),
     },
   );
+
+describe("Windows native release retry", () => {
+  it("ends output streams and retains ownership for a failed close retry", async () => {
+    vi.useFakeTimers();
+    let shouldFailClose = true;
+    try {
+      const { native, calls } = authority({
+        polls: [{ ...settledPoll }, { ...settledPoll }],
+        failClose: () => shouldFailClose,
+      });
+      const child = launch(native);
+      const failures: string[] = [];
+      child.on("error", (error: Error) => failures.push(error.message));
+      const closed = new Promise<void>((resolve) => {
+        child.once("close", () => resolve());
+      });
+
+      await vi.advanceTimersByTimeAsync(25);
+      expect(child.stdout.writableEnded).toBe(true);
+      expect(child.stderr.writableEnded).toBe(true);
+      expect(failures).toContain("native close failed");
+      expect(calls.some(({ operation }) => operation === "process_close")).toBe(
+        true,
+      );
+
+      shouldFailClose = false;
+      const callsBeforeRetry = calls.length;
+      const cleanup = child.cleanup();
+      expect(await cleanup).toMatchObject({ cleaned: true, signaled: false });
+      await closed;
+      expect(
+        calls.slice(callsBeforeRetry).map(({ operation }) => operation),
+      ).toEqual(["process_close"]);
+      expect(child.stdout.writableEnded).toBe(true);
+      expect(child.stderr.writableEnded).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
 
 describe("Windows Job Object memory limits", () => {
   it("emits close only after descendants leave the Job Object", async () => {
@@ -136,7 +181,45 @@ describe("Windows Job Object memory limits", () => {
   it("refuses a requested limit before launch when the artifact lacks the control", () => {
     const { native, calls } = authority();
     expect(() => launch(native, LIMIT)).toThrow(
-      "does not support Job Object memory limits",
+      expect.objectContaining({
+        constructor: WindowsNativeControlUnavailableError,
+        control: "job-memory-limit",
+        retryable: false,
+        message: expect.stringContaining(
+          "does not support Job Object memory limits",
+        ),
+      }),
+    );
+    expect(calls).toEqual([]);
+  });
+
+  it("refuses protocol stdin before launch when the artifact lacks the control", () => {
+    const { native, calls } = authority();
+    const earlier = {
+      ...native,
+      inspection: { ...native.inspection, protocolStdin: false },
+    };
+    expect(
+      () =>
+        new WindowsOwnedProcess(
+          "C:\\runtime\\bun.exe",
+          [],
+          undefined,
+          {},
+          false,
+          {
+            authority: earlier,
+            protocolStdin: true,
+          },
+        ),
+    ).toThrow(
+      expect.objectContaining({
+        constructor: WindowsNativeControlUnavailableError,
+        control: "protocol-stdin",
+        message: expect.stringContaining(
+          "does not support owned protocol stdin",
+        ),
+      }),
     );
     expect(calls).toEqual([]);
   });
@@ -421,6 +504,58 @@ describe("Windows output backpressure and cleanup", () => {
         calls.filter((call) => call.operation === "process_poll"),
       ).toHaveLength(2);
       expect(child.outputIncomplete).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
+describe("Windows output poll failure", () => {
+  it("keeps polling after failed native polls and reports the run once", async () => {
+    vi.useFakeTimers();
+    try {
+      const { native, calls } = authority({
+        polls: [
+          { malformed: true },
+          { malformed: true },
+          {
+            stdout: Buffer.from("frame\n"),
+            stderr: Buffer.alloc(0),
+            stdoutEnded: false,
+            stderrEnded: false,
+            exitCode: null,
+            activeProcesses: 1,
+          },
+          { ...settledPoll, stderr: Buffer.alloc(0), exitCode: 0 },
+        ],
+      });
+      const child = launch(native);
+      const errors: unknown[] = [];
+      child.on("error", (error) => errors.push(error));
+      const output: Buffer[] = [];
+      child.stdout.on("data", (chunk: Buffer) => output.push(chunk));
+      let closed = false;
+      child.once("close", () => (closed = true));
+      const polls = () =>
+        calls.filter((call) => call.operation === "process_poll").length;
+      // Failed polls back off 250 ms instead of retrying at the idle cadence.
+      await vi.advanceTimersByTimeAsync(25);
+      expect(polls()).toBe(1);
+      await vi.advanceTimersByTimeAsync(249);
+      expect(polls()).toBe(1);
+      await vi.advanceTimersByTimeAsync(1);
+      expect(polls()).toBe(2);
+      await vi.advanceTimersByTimeAsync(249);
+      expect(polls()).toBe(2);
+      await vi.advanceTimersByTimeAsync(1);
+      expect(polls()).toBe(3);
+      // Output resumes the immediate cadence (Node clamps a 0 ms timer to 1 ms).
+      await vi.advanceTimersByTimeAsync(1);
+      expect(polls()).toBe(4);
+      expect(errors).toHaveLength(1);
+      expect(Buffer.concat(output).toString()).toBe("frame\n");
+      expect(child.exitCode).toBe(0);
+      expect(closed).toBe(true);
     } finally {
       vi.useRealTimers();
     }
