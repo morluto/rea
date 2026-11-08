@@ -311,6 +311,61 @@ describe("parseNugetPackage: coverage and refusals", () => {
     expect(package_.source_coverage.status).toBe("complete-within-scope");
   });
 
+  it("counts a duplicate .nuspec even when the second one cannot be parsed", () => {
+    const package_ = parsed(
+      parse([
+        member("Example.nuspec", { text: NUSPEC }),
+        member("Other.nuspec", { text: "<not-xml" }),
+      ]),
+    );
+    expect(package_.nuspecs).toHaveLength(1);
+    // Two members were encountered; rejecting the second one does not undo it.
+    expect(package_.diagnostics.map((entry) => entry.code)).toEqual(
+      expect.arrayContaining(["invalid-nuspec", "duplicate-nuspec"]),
+    );
+  });
+
+  it("accepts metadata only from a package root's direct child", () => {
+    const nested = `<?xml version="1.0"?><package><wrapper><metadata><id>Nested</id></metadata></wrapper></package>`;
+    const unrelated = `<?xml version="1.0"?><not-package><metadata><id>Unrelated</id></metadata></not-package>`;
+    for (const text of [nested, unrelated]) {
+      const package_ = parsed(parse([member("Example.nuspec", { text })]));
+      expect(package_.nuspecs).toEqual([]);
+      expect(package_.diagnostics.map((entry) => entry.code)).toContain(
+        "invalid-nuspec",
+      );
+      expect(package_.source_coverage.status).toBe("partial");
+    }
+  });
+
+  it("keeps an explicitly empty repository attribute distinct from an omission", () => {
+    const text = NUSPEC.replace(
+      /<repository[^>]*\/>/u,
+      '<repository url="" type="git" />',
+    );
+    const package_ = parsed(parse([member("Example.nuspec", { text })]));
+    expect(package_.nuspecs[0]?.repository).toEqual({
+      url: "",
+      kind: "git",
+      branch: null,
+      commit: null,
+    });
+  });
+
+  it("reports no runtime identifier for a file directly under runtimes", () => {
+    const package_ = parsed(
+      parse([
+        member("runtimes/readme.txt"),
+        member("runtimes/linux-x64/native/tool"),
+      ]),
+    );
+    const byPath = new Map(package_.assets.map((asset) => [asset.path, asset]));
+    expect(byPath.get("runtimes/readme.txt")?.runtime_identifier).toBeNull();
+    expect(
+      byPath.get("runtimes/linux-x64/native/tool")?.runtime_identifier,
+    ).toBe("linux-x64");
+  });
+
   it("reports a .nuspec past the read allowance as oversized, not malformed", () => {
     const package_ = parsed(
       parse([

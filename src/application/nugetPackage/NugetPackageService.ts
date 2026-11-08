@@ -33,6 +33,7 @@ import {
   type InspectNugetPackageInput,
 } from "../../domain/nugetPackage/nugetPackageQuery.js";
 import {
+  isSafeMemberPath,
   parseNugetPackage,
   type NugetArchiveMember,
 } from "../../domain/nugetPackage/parseNugetPackage.js";
@@ -216,8 +217,14 @@ const inventoryMembers = async (
   const members: NugetArchiveMember[] = [];
   for await (const entry of reader.entries(signal)) {
     if (members.length >= input.max_entries) break;
+    // Admit the owning path before opening the member: a `../x.nuspec` entry
+    // is refused as an unsafe path by the parser, and opening it first would
+    // let a read failure report the archive as unreadable instead.
     const read =
-      entry.kind === "file" && !entry.encrypted && isNuspec(entry.path)
+      entry.kind === "file" &&
+      !entry.encrypted &&
+      isNuspec(entry.path) &&
+      isSafeMemberPath(entry.path)
         ? await readMemberText(reader, entry, signal)
         : undefined;
     members.push({

@@ -61,7 +61,7 @@ type AssetKind = NugetAsset["kind"];
  * absolute roots, drive letters and `..` segments, and a hostile archive must
  * not hand those downstream as if they were ordinary package content.
  */
-const isSafeMemberPath = (path: string): boolean =>
+export const isSafeMemberPath = (path: string): boolean =>
   path.length > 0 &&
   !path.startsWith("/") &&
   !path.startsWith("\\") &&
@@ -92,8 +92,20 @@ const targetFramework = (path: string): string | null => {
   return null;
 };
 
-const runtimeIdentifier = (path: string): string | null =>
-  path.startsWith("runtimes/") ? (path.split("/")[1] ?? null) : null;
+/**
+ * `runtimes/<rid>/…` puts the RID in the second segment, and it is a directory
+ * in both member kinds: a file written straight under `runtimes/` has a
+ * filename there, and the `runtimes/` marker itself normalises to the bare
+ * directory with no second segment.
+ */
+const runtimeIdentifier = (path: string, directory: boolean): string | null => {
+  const segments = path.split("/");
+  if (segments[0] !== "runtimes") return null;
+  const rid = segments[1];
+  if (rid === undefined || rid.length === 0) return null;
+  // A file's second segment is only a directory when another segment follows.
+  return !directory && segments.length < 3 ? null : rid;
+};
 
 /** Read the text of the first descendant with the given local name. */
 const textOf = (parent: Element, localName: string): string | null => {
@@ -115,18 +127,6 @@ const childrenNamed = (parent: Element, localName: string): Element[] => {
     if (element.localName === localName) found.push(element);
   }
   return found;
-};
-
-const firstDescendant = (
-  document: Document,
-  localName: string,
-): Element | null => {
-  const matches = document.getElementsByTagName("*");
-  for (let i = 0; i < matches.length; i += 1) {
-    const element = matches.item(i) as Element | null;
-    if (element !== null && element.localName === localName) return element;
-  }
-  return null;
 };
 
 class DiagnosticBudget {
@@ -177,10 +177,10 @@ const repositoryOf = (metadata: Element): NugetNuspec["repository"] => {
   const repository = childrenNamed(metadata, "repository")[0];
   if (repository === undefined) return null;
   return {
-    url: repository.getAttribute("url") || null,
-    kind: repository.getAttribute("type") || null,
-    branch: repository.getAttribute("branch") || null,
-    commit: repository.getAttribute("commit") || null,
+    url: declaredAttribute(repository, "url"),
+    kind: declaredAttribute(repository, "type"),
+    branch: declaredAttribute(repository, "branch"),
+    commit: declaredAttribute(repository, "commit"),
   };
 };
 
@@ -257,8 +257,20 @@ const nuspecOf = (
     );
     return;
   }
-  const metadata = firstDescendant(parsed.value, "metadata");
-  if (metadata === null) {
+  // A `.nuspec` is `<package><metadata>…`. `firstDescendant` alone would also
+  // accept a nested or unrelated `<metadata>`, turning arbitrary XML into the
+  // observed package identity, so require both the root and the direct child.
+  const root = parsed.value.documentElement;
+  if (root === null || root.localName !== "package") {
+    budget.add(
+      member.path,
+      "invalid-nuspec",
+      "The document element is not <package>.",
+    );
+    return;
+  }
+  const metadata = childrenNamed(root, "metadata")[0];
+  if (metadata === undefined) {
     budget.add(
       member.path,
       "invalid-nuspec",
@@ -290,7 +302,7 @@ const assetOf = (member: NugetArchiveMember): NugetAsset => {
     bytes: member.bytes,
     kind: assembleKind(path),
     target_framework: targetFramework(path),
-    runtime_identifier: runtimeIdentifier(path),
+    runtime_identifier: runtimeIdentifier(path, member.directory),
     directory: member.directory,
   };
 };
@@ -311,6 +323,7 @@ export const parseNugetPackage = (
   const budget = new DiagnosticBudget();
   const nuspecs: NugetNuspec[] = [];
   const assets: NugetAsset[] = [];
+  let nuspecMembers = 0;
   let truncated = false;
 
   for (const member of members) {
@@ -335,7 +348,12 @@ export const parseNugetPackage = (
       );
       continue;
     }
-    if (isNuspecPath(path)) nuspecOf(member, nuspecs, budget);
+    if (isNuspecPath(path)) {
+      // Count candidates before parsing: a second nuspec that fails to parse
+      // is still a second nuspec, and rejecting it must not erase the fact.
+      nuspecMembers += 1;
+      nuspecOf(member, nuspecs, budget);
+    }
     assets.push(assetOf(member));
   }
 
@@ -351,11 +369,11 @@ export const parseNugetPackage = (
       "no-nuspec",
       "No readable .nuspec member was found, so package identity and declared dependencies are unknown.",
     );
-  if (nuspecs.length > 1)
+  if (nuspecMembers > 1)
     budget.add(
       null,
       "duplicate-nuspec",
-      `${String(nuspecs.length)} .nuspec members were found; each is reported separately rather than choosing one.`,
+      `${String(nuspecMembers)} .nuspec members were found; each is reported separately rather than choosing one.`,
     );
 
   const partial =

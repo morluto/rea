@@ -13,7 +13,11 @@ const STORED = 0;
 
 /** A minimal stored-only ZIP, so the test does not need a compressor. */
 const zip = (
-  members: readonly { readonly path: string; readonly text: string }[],
+  members: readonly {
+    readonly path: string;
+    readonly text: string;
+    readonly corrupt?: boolean;
+  }[],
 ): Buffer => {
   const locals: Buffer[] = [];
   const central: Buffer[] = [];
@@ -21,7 +25,7 @@ const zip = (
   for (const entry of members) {
     const name = Buffer.from(entry.path, "utf8");
     const data = Buffer.from(entry.text, "utf8");
-    const crc = crc32(data);
+    const crc = entry.corrupt === true ? crc32(data) ^ 0xffffffff : crc32(data);
     const local = Buffer.alloc(30);
     local.writeUInt32LE(0x04034b50, 0);
     local.writeUInt16LE(20, 4);
@@ -171,4 +175,33 @@ it("reports the selected path and cause when it cannot resolve the package", asy
     ]);
     expect(result.error.issues[0]?.message).toContain(code);
   }
+});
+
+it("refuses an unsafe .nuspec path without opening the member", async () => {
+  const root = await createTestTempDirectory("rea-nuget-unsafe-");
+  const path = join(root, "Unsafe.1.0.0.nupkg");
+  // The member is unreadable (its stored data fails the CRC), so a read that
+  // still happened before the path admission would surface as an input error
+  // rather than the promised unsafe-entry-path diagnostic.
+  await writeFile(
+    path,
+    zip([
+      { path: "../escape.nuspec", text: NUSPEC, corrupt: true },
+      { path: "lib/net8.0/Example.dll", text: "not really an assembly" },
+    ]),
+  );
+  const resources = new ArtifactResourceScope();
+  onTestFinished(() => resources.close());
+
+  const result = await inspectNugetPackageEvidence({ path }, resources);
+  if (!result.ok) throw new Error(result.error.message);
+  const observed = result.value.evidence
+    .normalized_result as unknown as NugetPackage;
+  expect(observed.nuspecs).toEqual([]);
+  expect(observed.diagnostics.map((entry) => entry.code)).toEqual(
+    expect.arrayContaining(["unsafe-entry-path"]),
+  );
+  expect(observed.diagnostics.map((entry) => entry.code)).not.toContain(
+    "invalid-nuspec",
+  );
 });
