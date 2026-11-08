@@ -1,4 +1,5 @@
 import { posix } from "node:path";
+import { fileURLToPath } from "node:url";
 
 import {
   desktopArgumentIndex,
@@ -17,15 +18,42 @@ export type LaunchDocument =
   /** No document, for the reason given, which follows "since". */
   | { readonly kind: "none"; readonly reason: string };
 
+/** Parse a captured Linux file URL independently of the exporter host OS. */
+export const capturedFileUrl = (
+  value: string,
+): { readonly url: URL; readonly path: string } | undefined => {
+  if (!/^file:/iu.test(value)) return undefined;
+  try {
+    const url = new URL(value);
+    return url.protocol === "file:"
+      ? { url, path: fileURLToPath(url, { windows: false }) }
+      : undefined;
+  } catch {
+    return undefined;
+  }
+};
+
 /** The home path an argument names, absolute or from the working directory; none for an option or a path outside the home. */
 const homePathOf = (
   argument: string,
   home: string,
   workingDirectory: string,
+  known: (path: string) => boolean,
 ): string | undefined => {
   // An empty value is not a relative path. Resolving it would name the working directory.
   if (argument === "" || argument.startsWith("-")) return undefined;
-  const path = posix.resolve(workingDirectory, argument);
+  let input = argument;
+  if (/^[A-Za-z][A-Za-z0-9+.-]*:/u.test(argument)) {
+    const candidate = posix.resolve(workingDirectory, argument);
+    if (candidate.startsWith(`${home}/`)) {
+      const relative = candidate.slice(home.length + 1);
+      if (known(relative)) return relative;
+    }
+    const parsed = capturedFileUrl(argument);
+    if (parsed === undefined) return undefined;
+    input = parsed.path;
+  }
+  const path = posix.resolve(workingDirectory, input);
   return path.startsWith(`${home}/`) ? path.slice(home.length + 1) : undefined;
 };
 
@@ -79,17 +107,22 @@ export const openSeedDocument = (
       ? undefined
       : `${home}/${seedPath}`;
   };
+  // A file URL keeps its form; the export rewrites its home at launch.
+  const homePath = (value: string) =>
+    capturedFileUrl(value) === undefined
+      ? homePathOf(value, home, facts.workingDirectory, namesCaptured)
+      : undefined;
   const retarget = (argument: string) => {
     const equals = argument.indexOf("=");
     if (argument.startsWith("-") && equals > 0) {
       const value = argument.slice(equals + 1);
-      const path = homePathOf(value, home, facts.workingDirectory);
+      const path = homePath(value);
       const absolute = path === undefined ? undefined : absoluteSeed(path);
       return absolute === undefined
         ? argument
         : `${argument.slice(0, equals + 1)}${absolute}`;
     }
-    const path = homePathOf(argument, home, facts.workingDirectory);
+    const path = homePath(argument);
     if (path === undefined) return argument;
     return absoluteSeed(path) ?? argument;
   };
@@ -99,7 +132,7 @@ export const openSeedDocument = (
     if (!/^[A-Za-z_][A-Za-z0-9_]*=/u.test(argument)) return argument;
     const split = argument.indexOf("=");
     const value = argument.slice(split + 1);
-    const path = homePathOf(value, home, facts.workingDirectory);
+    const path = homePath(value);
     const absolute = path === undefined ? undefined : absoluteSeed(path);
     return absolute === undefined
       ? argument
@@ -120,7 +153,7 @@ export const openSeedDocument = (
         argument.startsWith("-") && equals > 0
           ? argument.slice(equals + 1)
           : argument;
-      return homePathOf(value, home, facts.workingDirectory);
+      return homePathOf(value, home, facts.workingDirectory, facts.isDocument);
     })
     .map((path) => (path === undefined ? undefined : spelled(path)));
   if (named.some((path) => path !== undefined && facts.isDocument(path)))

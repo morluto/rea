@@ -76,7 +76,6 @@ const capture = async (
 
 const failureOf = async (result: ReturnType<typeof capture>) => {
   const completed = await result;
-  expect(completed.ok).toBe(false);
   if (completed.ok) throw new Error("Expected command failure");
   return completed.error;
 };
@@ -191,7 +190,6 @@ nativeClientTest(
       operation: "inspect_adb_client",
       input: {},
     });
-    expect(result.ok).toBe(false);
     if (result.ok) throw new Error("Expected capture overflow");
     expect(projectAnalysisError(result.error)).toMatchObject({
       code: "resource_constraint",
@@ -241,7 +239,6 @@ nativeClientTest.each([
       {},
       { signal: controller.signal },
     );
-    expect(result.ok).toBe(false);
     if (result.ok) throw new Error("Expected completion cancellation");
     expect(result.error._tag).toBe("AnalysisCancelledError");
     expect(result.error.cause).toBe(reason);
@@ -287,7 +284,6 @@ nativeClientTest.each([false, true])(
       { operation: "inspect_adb_client", input: {} },
       { signal: controller.signal },
     );
-    expect(result.ok).toBe(false);
     if (result.ok) throw new Error("Expected version timeout");
     expect(projectAnalysisError(result.error)).toMatchObject({
       code: "provider_timeout",

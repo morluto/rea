@@ -99,7 +99,6 @@ it("preserves the exact object reason for an already-aborted caller", async () =
     },
     unexpectedCleanup,
   );
-  expect(result.ok).toBe(false);
   if (result.ok) throw new Error("expected cancellation");
   expect(result.error).toBeInstanceOf(AnalysisCancelledError);
   expect(result.error.cause).toBe(reason);
@@ -178,7 +177,6 @@ it("preserves exact caller reason when cancellation precedes process exit", asyn
     },
     () => setTimeout(() => controller.abort(reason), 0),
   );
-  expect(result.ok).toBe(false);
   if (result.ok) throw new Error("expected cancellation");
   expect(result.error).toBeInstanceOf(AnalysisCancelledError);
   expect(result.error.cause).toBe(reason);
@@ -222,7 +220,6 @@ it("preserves an observed nonzero exit before caller cancellation during output 
     waitSpy.mockRestore();
   }
   expect(observedBeforeAbort).toEqual({ code: 7, signal: null });
-  expect(result.ok).toBe(false);
   if (result.ok) throw new Error("expected physical failure");
   expect(result.error._tag).toBe("ProviderAdapterError");
   expect(result.error.diagnostics).toMatchObject({
@@ -236,7 +233,6 @@ it("preserves an observed nonzero exit before caller cancellation during output 
 
 it("classifies the same nonzero exit without cancellation", async () => {
   const result = await runChild(undefined, exitsAfterHoldingOutput);
-  expect(result.ok).toBe(false);
   if (result.ok) throw new Error("expected physical failure");
   expect(result.error).toMatchObject({
     _tag: "ProviderAdapterError",
@@ -255,7 +251,6 @@ it("stops a held drain after late output exceeds budget but keeps the exit prima
     exitsThenDescendantExceedsStderrBudget,
   );
   const elapsedMs = performance.now() - startedAt;
-  expect(result.ok).toBe(false);
   if (result.ok) throw new Error("expected physical failure");
   expect(result.error._tag).toBe("ProviderAdapterError");
   expect(result.error.diagnostics).toMatchObject({
@@ -322,7 +317,6 @@ it("preserves an observed process-memory limit over the codec exit status", asyn
     waitSpy.mockRestore();
   }
   expect(observedBeforeAbort).toEqual({ code: 3, signal: null });
-  expect(result.ok).toBe(false);
   if (result.ok) throw new Error("expected memory-limit failure");
   expect(result.error).toBeInstanceOf(AnalysisResourceConstraintError);
   expect(result.error).toMatchObject({
@@ -363,7 +357,6 @@ it("keeps a timeout distinct from caller cancellation", async () => {
       },
       unexpectedCleanup,
     );
-    expect(result.ok).toBe(false);
     if (result.ok) throw new Error("expected timeout");
     expect(result.error).toBeInstanceOf(AnalysisTimeoutError);
     if (runtimePath === undefined) throw new Error("runtime was not acquired");
@@ -400,7 +393,6 @@ it("applies a non-default decode deadline and releases its runtime", async () =>
       unexpectedCleanup,
       250,
     );
-    expect(result.ok).toBe(false);
     if (result.ok) throw new Error("expected timeout");
     expect(result.error).toBeInstanceOf(AnalysisTimeoutError);
     expect(result.error.userMessage).toContain("250");

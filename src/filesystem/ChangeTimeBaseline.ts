@@ -69,7 +69,7 @@ const changeTimeMs = (stats: Stats): number =>
  * Whether an observed ChangeTime can still move on its own, so recording it now
  * would create a baseline a later observation is entitled to disagree with.
  */
-export const changeTimeMayStillDrift = (
+const changeTimeMayStillDrift = (
   stats: Stats,
   seams: ChangeTimeSettleSeams = {},
 ): boolean => {
