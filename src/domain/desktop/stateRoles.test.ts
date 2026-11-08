@@ -1,8 +1,11 @@
 import { describe, expect, it } from "vitest";
 
+import type { DesktopApplicationCapture } from "./desktopCapture.js";
 import {
   isApplicationDconfGroup,
   namedInTitles,
+  roleFacts,
+  sqliteSidecarRoots,
   stateReasons,
   stateRole,
   type DesktopRoleFacts,
@@ -61,6 +64,20 @@ describe("stateRole", () => {
     expect(stateRole(["selected_path"], "Documents/lockfile")).toBe(
       "application_state",
     );
+    // A sibling-lock name stays a document. A lone notes.lck is opened; one
+    // beside its file is left out of the seed by isLockFile.
+    expect(stateRole(["selected_path"], "Documents/.household.gsb.lock")).toBe(
+      "document",
+    );
+    expect(stateRole(["selected_path"], "Documents/plan.vym.lock")).toBe(
+      "document",
+    );
+    expect(
+      stateRole(["selected_path"], "Documents/household.gnucash.LCK"),
+    ).toBe("document");
+    expect(stateRole(["selected_path"], "Documents/notes.lck")).toBe(
+      "document",
+    );
     expect(
       stateRole(
         ["selected_path", "named_in_window_title"],
@@ -78,6 +95,25 @@ describe("stateRole", () => {
         "desktop_trash",
       ]),
     ).toBe("shared_desktop");
+  });
+});
+
+describe("roleFacts", () => {
+  it("keeps a log the caller selected even when that path is also a state directory", () => {
+    const home = "/home/ada";
+    const log = `${home}/.notes.log`;
+    const facts = roleFacts({
+      host: { home },
+      application: { state_directories: [{ path: log }] },
+      state: {
+        content_roots: [log],
+        state_directories: [log],
+        selected_paths: [{ path: log, physical: log }],
+      },
+      session: { windows: [], opened_files: [] },
+    } as unknown as DesktopApplicationCapture);
+
+    expect(facts.selectedRoots).toEqual([log]);
   });
 });
 
@@ -180,6 +216,47 @@ describe("stateReasons for state directories", () => {
     expect(reasons("/home/ada/.config/GIMPshop/sessionrc")).toEqual([]);
     expect(reasons("/home/ada/.config/other/GIMP/sessionrc")).toEqual([]);
     expect(reasons("/home/ada/.Config/gimp/sessionrc")).toEqual([]);
+  });
+});
+
+describe("sqliteSidecarRoots", () => {
+  it("names the write-ahead log and journal of a selected database, and not a log selected on its own", () => {
+    const database = "/home/ada/Documents/books.db";
+    const wal = `${database}-wal`;
+    const journal = `${database}-journal`;
+    expect(sqliteSidecarRoots([database, wal, journal])).toEqual(
+      new Set([wal, journal]),
+    );
+    expect(sqliteSidecarRoots([wal])).toEqual(new Set());
+  });
+
+  it("keeps a selected folder whose name ends in -journal", () => {
+    const home = "/home/ada";
+    const report = `${home}/Projects/report`;
+    const journal = `${home}/Projects/report-journal`;
+    const database = `${home}/Documents/books.db`;
+    const facts = roleFacts({
+      host: { home },
+      application: { state_directories: [] },
+      state: {
+        content_roots: [report, journal, database, `${database}-journal`],
+        selected_paths: [
+          { path: report, physical: report, kind: "directory" },
+          { path: journal, physical: journal, kind: "directory" },
+          { path: database, physical: database, kind: "file" },
+        ],
+      },
+      session: { windows: [], opened_files: [] },
+    } as unknown as DesktopApplicationCapture);
+
+    expect(facts.sqliteSidecars).toEqual(new Set([`${database}-journal`]));
+    expect(facts.selectedRoots).toEqual(
+      expect.arrayContaining([report, journal, database]),
+    );
+    expect(facts.selectedRoots).not.toContain(`${database}-journal`);
+    expect(stateReasons(facts, `${journal}/notes.txt`, [], false)).toContain(
+      "selected_path",
+    );
   });
 });
 

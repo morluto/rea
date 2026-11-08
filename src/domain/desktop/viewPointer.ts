@@ -1,5 +1,5 @@
 import type { JsonValue } from "../jsonValue.js";
-import { collapseWhitespace } from "./appTask.js";
+import { collapseWhitespace, isTimestamp } from "./appTask.js";
 import {
   bracketed,
   insideSteps,
@@ -87,6 +87,19 @@ const fieldOf = (member: JsonValue, { prefix, key }: Condition) => {
   return typeof value === "string" ? value : undefined;
 };
 
+/** An element's text with save-time leaves removed, so a name around a timestamp still matches after the time changes. */
+const textWithoutStamps = (node: JsonValue): string => {
+  if (typeof node === "string") return isTimestamp(node) ? "" : node;
+  if (!isRecord(node) || !Array.isArray(node.children)) return "";
+  return node.children.map((child) => textWithoutStamps(child)).join("");
+};
+
+/** A child's text as a condition reads it: whitespace collapsed, without a nested save time unless it is only a time. */
+const conditionText = (child: JsonValue): string => {
+  const plain = collapseWhitespace(textWithoutStamps(child));
+  return plain === "" ? collapseWhitespace(elementText(child)) : plain;
+};
+
 /**
  * Whether an element has a child element named the first step that holds
  * `value` along the rest: at the last step its text, whitespace collapsed,
@@ -107,7 +120,7 @@ const elementHolds = (
       (rest.length > 0
         ? elementHolds(child, rest, value)
         : at < 0
-          ? collapseWhitespace(elementText(child)) === value
+          ? conditionText(child) === value
           : own(child.attributes, step.slice(at + 1)) === value),
   );
 };
@@ -189,6 +202,8 @@ export const locatePointer = (
   view: JsonValue | null,
   pointer: string,
 ): Located => {
+  if (pointer === "")
+    return { kind: "value", value: view, searched: [], byPosition: [] };
   let current: JsonValue = view;
   const segments = pointer.slice(1).split("/");
   const steps = { searched: [] as string[], byPosition: [] as string[] };

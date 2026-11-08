@@ -74,6 +74,7 @@ const jsonBytes = (entry: BuildComputerAction): number =>
 export class BuildComputerActionLog {
   readonly #kept: { entry: BuildComputerAction; bytes: number }[] = [];
   readonly #lastApplied: Partial<Record<ComputerAction, number>> = {};
+  readonly #lastUnsettled: Partial<Record<ComputerAction, number>> = {};
   #total = 0;
   #bytes = 0;
 
@@ -100,6 +101,11 @@ export class BuildComputerActionLog {
     return { ...this.#lastApplied };
   }
 
+  /** The index of the last action whose reply was lost, kept or not. */
+  get lastUnsettled(): Readonly<Partial<Record<ComputerAction, number>>> {
+    return { ...this.#lastUnsettled };
+  }
+
   /** Log an action as it is sent, pending, and how to record how it ended. */
   begin(
     action: ComputerAction,
@@ -107,7 +113,10 @@ export class BuildComputerActionLog {
     args: Readonly<Record<string, JsonValue>>,
   ): {
     readonly index: number;
-    readonly settle: (outcome: Exclude<Outcome, "pending">) => void;
+    readonly settle: (
+      outcome: Exclude<Outcome, "pending">,
+      observation?: { readonly unsettled?: boolean },
+    ) => void;
   } {
     const index = this.#total;
     const fields = Object.entries(args).map(
@@ -132,11 +141,16 @@ export class BuildComputerActionLog {
     this.#keep(this.#kept.length, entry);
     return {
       index,
-      settle: (outcome) => {
+      settle: (outcome, observation) => {
         if (outcome === "applied")
           this.#lastApplied[action] = Math.max(
             index,
             this.#lastApplied[action] ?? index,
+          );
+        if (observation?.unsettled === true)
+          this.#lastUnsettled[action] = Math.max(
+            index,
+            this.#lastUnsettled[action] ?? index,
           );
         // An action dropped while pending leaves only its outcome above.
         const slot = index - this.dropped;
@@ -163,5 +177,5 @@ export class BuildComputerActionLog {
 /** What later stages read of a computer's action log. */
 export type ReadonlyActionLog = Pick<
   BuildComputerActionLog,
-  "total" | "dropped" | "entries" | "lastApplied"
+  "total" | "dropped" | "entries" | "lastApplied" | "lastUnsettled"
 >;

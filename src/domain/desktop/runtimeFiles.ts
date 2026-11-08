@@ -14,6 +14,25 @@ const LOCK_NAMES = new Set([
 ]);
 /** LibreOffice's lock beside a document it has open: `.~lock.<name>#`. */
 const DOCUMENT_LOCK = /^\.~lock\..+#$/u;
+/**
+ * A lock named for the file beside it: GnuCash's `<file>.LCK`, Grisbi's
+ * `.<file>.lock`, and VYM's `<file>.<ext>.lock`. A project's `Gemfile.lock`
+ * or `Cargo.lock` does not match.
+ */
+const SIBLING_LOCKS = [
+  /^(.+)\.lck$/iu,
+  /^\.(.+)\.(?:lock|lck)$/iu,
+  /^([^.].*\.[^.]+)\.lock$/iu,
+];
+
+/** Every file a sibling lock's name could refer to. A hidden `.lck` matches more than one pattern, so the caller checks each against the files beside it. */
+export const siblingLockTargets = (file: string): readonly string[] => {
+  const name = file.split("/").at(-1) ?? "";
+  return SIBLING_LOCKS.flatMap((lock) => {
+    const locked = lock.exec(name)?.[1];
+    return locked === undefined ? [] : [locked];
+  });
+};
 
 /** Whether a file is named as a lock an app holds while it runs, wherever it lies: a profile lock or LibreOffice's document lock. */
 export const isLockName = (file: string): boolean => {
@@ -48,6 +67,7 @@ const WEB_STORAGE_FILES = new Set([
   "trust tokens",
   "trust tokens-journal",
   "visited links",
+  "user_prefs.json",
 ]);
 
 /**

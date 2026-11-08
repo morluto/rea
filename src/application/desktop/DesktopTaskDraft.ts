@@ -69,7 +69,10 @@ const draft = async (
   );
   const { checkpoints } = state.capture;
   const ends = selectStateEnds(checkpoints, selection, OPERATION);
-  const { files, dconf, paths, homePath } = exportedStateFiles(capture, state);
+  const { files, dconf, paths, homePath, selected } = exportedStateFiles(
+    capture,
+    state,
+  );
   const withheld = withheldFiles(
     capture.state.checkpoints,
     homePath,
@@ -86,13 +89,28 @@ const draft = async (
     files,
     (home) => isWithinAny(home, paths) && !held(home),
     ends,
+    selected,
   );
+  const covered = (index: number) => {
+    const point = capture.state.checkpoints[index];
+    return (
+      point !== undefined &&
+      !point.truncated &&
+      point.unreadable_directories === 0 &&
+      point.unchecked_paths === 0 &&
+      point.unconfirmed_changes === 0
+    );
+  };
   const notes = draftNotes(files, {
     drafted,
     owned: paths,
     dconf,
     ends,
     checkpoints,
+    observed: Array.from(
+      { length: ends.end - ends.seed + 1 },
+      (_, offset) => ends.seed + offset,
+    ).every(covered),
   });
   const environment = exportEnvironmentName(capture, undefined);
   const result = {

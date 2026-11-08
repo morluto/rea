@@ -254,6 +254,7 @@ const planExport = async (
     seedFiles: [...seeds.keys()].sort(),
     textSeeds,
     seedModes: seedModes(capture, seeds, files, context.seed),
+    stateAliases: stateFiles.stateAliases,
     unseededFiles: unseeded.filter((file) => !isLeftOut(file)),
     ...leftOutSeeds(
       [...locks, ...unseeded.filter(isLeftOut)],
@@ -373,7 +374,14 @@ const runExport = async (
         );
   const admitted = await admitDesktopTask(
     request.tasks,
-    { ...plan, files, identity, ends, seedViews },
+    {
+      ...plan,
+      files,
+      identity,
+      ends,
+      seedViews,
+      seeded: new Set(seeds.keys()),
+    },
     signal,
   );
   const copy = await withheldCopy(request, plan, held.captured, signal);

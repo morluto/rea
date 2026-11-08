@@ -74,4 +74,26 @@ describe("draftTaskFiles for items placed by their own position", () => {
       "/root/children/[name=preview]",
     );
   });
+
+  it("checks a text whose runs carry x and y by the text, not as notes placed on the page", () => {
+    const poster = (headline: string) =>
+      `<svg><text id="title" x="10" y="20"><tspan x="10" y="20">${headline}</tspan><tspan x="10" y="40">Saturday</tspan></text></svg>`;
+    const file = xmlDraft(poster("Spring Fair"), poster("Summer Fair"));
+
+    expect(file.suggested).toEqual([
+      {
+        kind: "text_equals",
+        file: FILE,
+        pointer:
+          "/root/children/[name=text][@id=title]/children/[name=tspan][@y=20]",
+        value: "Summer Fair",
+      },
+    ]);
+    expect(passing(FILE, xml(poster("Spring Fair")), file.suggested)).toEqual([
+      false,
+    ]);
+    expect(passing(FILE, xml(poster("Summer Fair")), file.suggested)).toEqual([
+      true,
+    ]);
+  });
 });

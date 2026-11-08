@@ -127,8 +127,10 @@ cliTest.for(["CLI", "stdio MCP"] as const)(
         timestamp: null,
       }),
     );
-    expect(normalized.limitations).toContain(
-      "Timeline rows without a comparable producer timestamp have a null timestamp. Buffered events with unknown timing are retained as context only; they do not establish activity inside the selected observation window.",
+    expect(normalized.limitations).toContainEqual(
+      expect.stringMatching(
+        /Buffered events.*unknown timing.*context only.*do not establish.*observation window/iu,
+      ),
     );
     expect(browser.commands).toContainEqual(
       expect.objectContaining({

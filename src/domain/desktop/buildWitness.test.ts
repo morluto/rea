@@ -120,10 +120,17 @@ describe("build witness rules", () => {
     const seed = [
       { ...staged("seed", 0), results: [passing, unread, failing] },
     ];
-    for (const stage of ["seed", "near_miss", "after_reset"] as const) {
+    for (const stage of ["seed", "near_miss"] as const) {
       expect(stageVerdict(stage, [passing, unread], seed)).toBe("undecided");
       expect(stageVerdict(stage, [unread, failing], seed)).toBe("held");
     }
+    // after_reset must read every check. An unread one does not match the seed.
+    expect(stageVerdict("after_reset", [passing, unread], seed)).toBe(
+      "undecided",
+    );
+    expect(stageVerdict("after_reset", [unread, failing], seed)).toBe(
+      "undecided",
+    );
     expect(stageVerdict("after_edit", [passing, unread])).toBe("undecided");
     expect(stageVerdict("after_edit", [unread, failing])).toBe("not_held");
   });
@@ -188,6 +195,74 @@ describe("build witness rules", () => {
     expect(
       admit([...nearMiss, staged("after_reset", 6)], "after_reset", []),
     ).toMatchObject({ ok: false, error: expect.stringContaining("ended") });
+  });
+});
+
+describe("build witness reset compared with an unreadable seed", () => {
+  it("leaves after_reset undecided when an unreadable seed check later passes", () => {
+    const unread = {
+      id: "note",
+      passed: false,
+      description: "",
+      undecided: true as const,
+    };
+    const failing = { id: "eggs", passed: false, description: "" };
+    const seed = [{ ...staged("seed", 0), results: [unread, failing] }];
+    const passed = { id: "note", passed: true, description: "" };
+    const eggsPass = { id: "eggs", passed: true, description: "" };
+    expect(stageVerdict("after_reset", [passed, failing], seed)).toBe(
+      "undecided",
+    );
+    expect(stageVerdict("after_reset", [unread, failing], seed)).toBe(
+      "undecided",
+    );
+    expect(stageVerdict("after_reset", [passed, eggsPass], seed)).toBe(
+      "not_held",
+    );
+  });
+});
+
+describe("build witness unread reset", () => {
+  it("stays undecided when a decided seed failure is unreadable after the reset and another check still fails", () => {
+    const seedFailure = { id: "a", passed: false, description: "" };
+    const stillFailing = { id: "b", passed: false, description: "" };
+    const unreadAfter = { ...seedFailure, undecided: true as const };
+    const restored = { id: "a", passed: true, description: "" };
+    const unreadOther = { ...stillFailing, undecided: true as const };
+    const seed = [
+      { ...staged("seed", 0), results: [seedFailure, stillFailing] },
+    ];
+    expect(stageVerdict("after_reset", [unreadAfter, stillFailing], seed)).toBe(
+      "undecided",
+    );
+    expect(stageVerdict("after_reset", [restored, unreadOther], seed)).toBe(
+      "not_held",
+    );
+  });
+
+  it("treats a reset whose reply was lost as blocking the near miss until a later input", () => {
+    const edited = [staged("seed", 0), staged("after_edit", 1)];
+    const log = {
+      total: 3,
+      lastApplied: { type: 1 },
+      lastUnsettled: { reset: 2 },
+    };
+    expect(admitWitnessStage(edited, "near_miss", log)).toMatchObject({
+      ok: false,
+      error: expect.stringContaining("lost its reply"),
+    });
+    expect(
+      admitWitnessStage(edited, "near_miss", {
+        total: 4,
+        lastApplied: { type: 3 },
+        lastUnsettled: { reset: 2 },
+      }),
+    ).toEqual({ ok: true, value: 4 });
+    const nearMiss = [...edited, staged("near_miss", 2)];
+    expect(admitWitnessStage(nearMiss, "after_reset", log)).toMatchObject({
+      ok: false,
+      error: expect.stringContaining("reply was lost"),
+    });
   });
 });
 

@@ -367,7 +367,6 @@ it("preserves zero-padded, qualified, and large observation addresses", () => {
     "inspect_native_load_image",
     jsonValueSchema.parse(observation),
   );
-  expect(parsed.ok).toBe(true);
   if (!parsed.ok) throw parsed.error;
   expect(parsed.value.value).toEqual(observation);
 });

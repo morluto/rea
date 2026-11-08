@@ -4,6 +4,10 @@ import {
   matchProcedureNames,
 } from "../domain/analysisSearch.js";
 
+/** Explain the retained bridge observation when Node owns final matching. */
+export const GHIDRA_LITERAL_CANDIDATES_LIMITATION =
+  "For this case-insensitive literal search, raw_result contains Ghidra's candidate rows before REA's Unicode-aware filtering; normalized_result contains the matches.";
+
 /** ASCII-only candidates are exact; every non-ASCII source value stays eligible.
  * Node owns Unicode folding, so the Java runtime's Unicode version cannot omit
  * a match. Null means no ASCII-only value can match this query.
