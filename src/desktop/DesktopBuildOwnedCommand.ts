@@ -8,6 +8,11 @@ import {
   runOwnedCommand,
 } from "../process/OwnedCommand.js";
 import { DarwinProcessOwnershipInspectionError } from "../process/DarwinProcessRunTokenReader.js";
+import { artifactCommandOutput } from "../process/ArtifactAnalysisResources.js";
+import {
+  AnalysisCancelledError,
+  AnalysisOutputError,
+} from "../domain/analysisErrorCore.js";
 
 /** Run a setup command with ownership of its entire process family and partial output. */
 export const runDesktopBuildOwnedCommand = async (input: {
@@ -80,6 +85,7 @@ export const runDesktopBuildOwnedCommand = async (input: {
         `Setup command cleanup incomplete: ${cleanupReason ?? "unknown reason"}`,
       );
   } catch (cause: unknown) {
+    let failure: unknown = cause;
     const preparation =
       cause instanceof DarwinProcessOwnershipInspectionError
         ? cause
@@ -101,18 +107,36 @@ export const runDesktopBuildOwnedCommand = async (input: {
           resource: paths[0]!,
           lease: new AnalysisCleanupLease(removeOwnedPaths, paths),
         });
-        throw new AggregateError(
+        failure = new AggregateError(
           [cause, cleanup],
           "Setup command failed and its partial output could not be removed",
         );
       }
     }
     if (retained)
-      throw new Error(
+      failure = new Error(
         `${desktopBuildOwnedCommandReason(cause)}; cleanup is incomplete: ${cleanupReason ?? "unknown reason"}`,
         { cause },
       );
-    throw cause;
+    if (input.signal?.aborted) {
+      const command = cause instanceof OwnedCommandFailure ? cause : undefined;
+      const reason = desktopBuildOwnedCommandReason(cause);
+      const cancelled = new AnalysisCancelledError("setup", {
+        cause: input.signal.reason,
+        diagnostics: {
+          setup_failure: reason,
+          ...(command === undefined ? {} : { command_failure: command.reason }),
+        },
+        ...(command?.snapshot == null
+          ? {}
+          : { capturedOutput: artifactCommandOutput(command.snapshot) }),
+      });
+      cancelled.retainSecondaryFailure(
+        new AnalysisOutputError("setup", reason, { cause: failure }),
+      );
+      throw cancelled;
+    }
+    throw failure;
   }
 };
 
