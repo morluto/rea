@@ -1074,6 +1074,39 @@ describe("ReleaseExposureService hosts without an ASAR layout", () => {
     );
     expect((await runAsNode(service))?.status).toBe("unknown");
   });
+
+  it("keeps safe fuses unknown beside a sentinel-less image outside an ASAR layout", async () => {
+    const { service, desktop, electronFuses } = owners(
+      directoryScan(["/work/app/a/a", "/work/app/b/launcher"]),
+    );
+    const report = electronDesktopReport();
+    desktop.inspect.mockResolvedValue(
+      ok(
+        evidence({
+          ...report,
+          files: [
+            {
+              ...report.files[0],
+              path: "a/resources/app.asar",
+              local_path: "/work/app/a/resources/app.asar",
+            },
+          ],
+        }),
+      ),
+    );
+    electronFuses.inspect.mockImplementation(async (input) =>
+      ok(
+        evidence(
+          fuseReport(
+            (input as { path?: string }).path === "/work/app/b/launcher"
+              ? []
+              : [slice(0)],
+          ),
+        ),
+      ),
+    );
+    expect((await runAsNode(service))?.status).toBe("unknown");
+  });
 });
 
 describe("ReleaseExposureService Electron host identity", () => {

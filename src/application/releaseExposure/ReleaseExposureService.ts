@@ -860,10 +860,12 @@ const limitNativeSample = (
     (image) => !layouts.some((folder) => inLayout(folder, image.path)),
   );
   const outsideHosts = hostsAmong(outside);
-  // A build without an ASAR names no host, so while the family is undecided
-  // any sampled image may carry the fuses and none settles another alone.
+  // A build without an ASAR names no host, so any sampled image outside the
+  // discovered layouts may carry another build's fuses and none settles
+  // another alone. That holds beside a found layout and, with none found,
+  // while the family is undecided.
   const unnamedHosts =
-    outsideHosts.length === 0 && layouts.length === 0 && familyUndecided
+    outsideHosts.length === 0 && (layouts.length > 0 || familyUndecided)
       ? outside
       : outsideHosts;
   // A named host settles only its own layout, so each layout chooses its hosts.
