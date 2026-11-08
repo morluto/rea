@@ -523,3 +523,72 @@ describe("discriminated union input issue projection", () => {
     ]);
   });
 });
+
+describe("union branch diagnostic merging", () => {
+  it("merges disjoint expected sets at the identical path for homogeneous union failures", () => {
+    const peFieldSchema = z.enum(["name", "ordinal", "address", "forwarder"]);
+    const elfFieldSchema = z.enum([
+      "name",
+      "name_bytes_base64",
+      "value",
+      "size",
+      "type",
+      "binding",
+    ]);
+    const schema = z.object({
+      fields: z.array(z.union([peFieldSchema, elfFieldSchema])),
+    });
+    const input = { fields: ["name", "symbol_type"] };
+    const parsed = schema.safeParse(input);
+    if (parsed.success) throw new Error("expected invalid input");
+    const projected = projectInputIssues(parsed.error.issues, input);
+    expect(projected).toEqual([
+      {
+        path: ["fields", 1],
+        reason: "invalid_value",
+        expected: [
+          "name",
+          "ordinal",
+          "address",
+          "forwarder",
+          "name_bytes_base64",
+          "value",
+          "size",
+          "type",
+          "binding",
+        ],
+      },
+    ]);
+  });
+
+  it("merges scalar literal expected values at identical path", () => {
+    const schema = z.union([z.literal("alpha"), z.literal("beta")]);
+    const parsed = schema.safeParse("gamma");
+    if (parsed.success) throw new Error("expected invalid input");
+    expect(projectInputIssues(parsed.error.issues, "gamma")).toEqual([
+      {
+        path: [],
+        reason: "invalid_value",
+        expected: ["alpha", "beta"],
+      },
+    ]);
+  });
+
+  it("preserves distinct diagnostic reasons at identical path", () => {
+    const schema = z.union([z.number(), z.literal("beta")]);
+    const parsed = schema.safeParse("gamma");
+    if (parsed.success) throw new Error("expected invalid input");
+    expect(projectInputIssues(parsed.error.issues, "gamma")).toEqual([
+      {
+        path: [],
+        reason: "invalid_type",
+        expected: "number",
+      },
+      {
+        path: [],
+        reason: "invalid_value",
+        expected: ["beta"],
+      },
+    ]);
+  });
+});

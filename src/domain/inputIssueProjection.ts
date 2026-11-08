@@ -477,11 +477,50 @@ const projectIssue = (
   ];
 };
 
+const mergeExpectedValues = (
+  first: unknown,
+  second: unknown,
+): (string | number | boolean | null)[] => [
+  ...new Set(
+    [
+      ...(Array.isArray(first) ? first : [first]),
+      ...(Array.isArray(second) ? second : [second]),
+    ].filter(isSafeExpected),
+  ),
+];
+
 const uniqueIssues = (
   issues: readonly AnalysisInputIssue[],
-): AnalysisInputIssue[] => [
-  ...new Map(issues.map((issue) => [JSON.stringify(issue), issue])).values(),
-];
+): AnalysisInputIssue[] => {
+  const merged: AnalysisInputIssue[] = [];
+  const invalidValueIndexByPath = new Map<string, number>();
+
+  for (const issue of issues) {
+    const pathKey = JSON.stringify(issue.path);
+    if (issue.reason === "invalid_value" && issue.expected !== undefined) {
+      const existingIndex = invalidValueIndexByPath.get(pathKey);
+      if (existingIndex !== undefined) {
+        const existing = merged[existingIndex];
+        if (existing !== undefined) {
+          merged[existingIndex] = {
+            ...existing,
+            expected: mergeExpectedValues(existing.expected, issue.expected),
+            ...((existing.message ?? issue.message)
+              ? { message: existing.message ?? issue.message }
+              : {}),
+          };
+          continue;
+        }
+      }
+      invalidValueIndexByPath.set(pathKey, merged.length);
+    }
+    const fullKey = JSON.stringify(issue);
+    if (!merged.some((m) => JSON.stringify(m) === fullKey)) {
+      merged.push(issue);
+    }
+  }
+  return merged;
+};
 
 const valueAtPath = (input: unknown, path: readonly PropertyKey[]): unknown => {
   let current = input;
