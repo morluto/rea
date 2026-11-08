@@ -1,5 +1,5 @@
 import { chmod, mkdir, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { basename, dirname, join } from "node:path";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -24,7 +24,15 @@ vi.mock("node:fs/promises", async (importOriginal) => {
     ...actual,
     open: async (...args: Parameters<typeof actual.open>) => {
       const file = await actual.open(...args);
-      if (args[0] === injection.path) {
+      // The secret's file, or the one its bytes are written to before it takes the secret's name.
+      if (
+        args[0] === injection.path ||
+        (injection.path !== "" &&
+          typeof args[0] === "string" &&
+          args[0].startsWith(
+            join(dirname(injection.path), `.${basename(injection.path)}.`),
+          ))
+      ) {
         injection.opened.push(file);
         if (injection.failWrite)
           file.writeFile = async () => {

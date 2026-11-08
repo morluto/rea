@@ -9,7 +9,8 @@
   the start of a value each of REA's cuts leaves, a draft value's, a
   reference's, a view's and a check's, hidden at any length and through an
   XML or JSON escape, as a string, a JSON member and a result's JSON text;
-  ordinary text ending in `…`, such as `Please…`, left whole.
+  ordinary text ending in `…`, such as `Please…`, left whole; an unclosed
+  quote before 64 KiB of escaped quotes scanned in linear time.
 - `src/application/desktop/DesktopBuildOutputRead.test.ts`: a secret the
   app's stderr or the capture's progress holds, redacted before the quote of
   their end cuts it.
@@ -81,6 +82,10 @@ password.
   holds them as before it or they are seeded with consent.
 - `src/application/desktop/DesktopBuildSecrets.test.ts`: a kept file's
   handle that names a path refused, nothing written outside the folder.
+- `src/desktop/BuildSecretFiles.concurrent.test.ts`: an export never given
+  the handle of another whose different bytes are still being written.
+- `tests/boundary/application/buildExportGzipScans.test.ts`: a gzip seed
+  file decompressed once for its secret, credential and size checks.
 - `src/desktop/ExportedAppPython.test.ts`: `_write_withheld` writes the
   decoded bytes `0600` and `_views` leaves the file out.
 - `tests/boundary/mcp/buildWithheldMcp.test.ts`: the named file's bytes kept

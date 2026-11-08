@@ -1,10 +1,13 @@
+import { randomUUID } from "node:crypto";
 import { constants, type Stats } from "node:fs";
 import {
   chmod,
+  link,
   lstat,
   mkdir,
   open,
   readdir,
+  unlink,
   type FileHandle,
 } from "node:fs/promises";
 import { isAbsolute, join } from "node:path";
@@ -195,7 +198,7 @@ export const listBuildSecretHandles = async (
     .sort();
 };
 
-/** Write a new secret file only its owner reads, in a folder only they enter, never through a link; false, writing nothing, when the handle already has a file. */
+/** Write a new secret file only its owner reads, in a folder only they enter, never through a link, its name given only once it is whole; false, giving it none, when the handle already has a file. */
 export const writeBuildSecretFile = async (
   directory: string,
   handle: string,
@@ -205,23 +208,20 @@ export const writeBuildSecretFile = async (
   await mkdir(directory, { recursive: true, mode: 0o700 });
   const refusal = await folderRefusal(directory);
   if (refusal !== undefined) throw new Error(refusal);
-  let file: FileHandle;
-  try {
-    file = await open(
-      join(directory, handle),
-      constants.O_WRONLY |
-        constants.O_CREAT |
-        constants.O_EXCL |
-        constants.O_NOFOLLOW,
-      0o600,
-    );
-  } catch (cause: unknown) {
-    if (errorCode(cause) === "EEXIST") return false;
-    throw cause;
-  }
+  // Written under a name no handle takes, then linked to the handle's, which fails if it has a file: no reader sees one half written.
+  const pending = join(directory, `.${handle}.${randomUUID()}`);
+  const file = await open(
+    pending,
+    constants.O_WRONLY |
+      constants.O_CREAT |
+      constants.O_EXCL |
+      constants.O_NOFOLLOW,
+    0o600,
+  );
+  let linked: boolean;
   try {
     await withArtifactFileHandle(
-      join(directory, handle),
+      pending,
       file,
       resources,
       undefined,
@@ -230,11 +230,20 @@ export const writeBuildSecretFile = async (
         await file.writeFile(value);
       },
     );
+    linked = await link(pending, join(directory, handle)).then(
+      () => true,
+      (cause: unknown) => {
+        if (errorCode(cause) === "EEXIST") return false;
+        throw cause;
+      },
+    );
   } catch (cause: unknown) {
+    await unlink(pending).catch(() => undefined);
     if (cause instanceof ArtifactFileCleanupFailure)
-      throw secretFileCleanupFailure(join(directory, handle), cause);
+      throw secretFileCleanupFailure(pending, cause);
     throw cause;
   }
-  await chmod(directory, 0o700);
-  return true;
+  await unlink(pending);
+  if (linked) await chmod(directory, 0o700);
+  return linked;
 };

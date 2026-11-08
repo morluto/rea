@@ -4,7 +4,7 @@ import {
   holdsDerPrivateKey,
   redactDerKeys,
 } from "./derPrivateKeys.js";
-import { gunzip, isGzip } from "./gzipDocument.js";
+import { gzipInside, type GzipInside } from "./buildSecrets.js";
 
 /** A kind of credential found by its shape, whatever its value, and the pattern that finds it. */
 interface CredentialPattern {
@@ -36,9 +36,6 @@ const CREDENTIAL_PATTERNS: readonly CredentialPattern[] = [
   { name: "jwt", pattern: /\beyJ[\w-]{8,}\.eyJ[\w-]{8,}\.[\w-]{8,}/gu },
 ];
 
-/** How much of a gzip file the scan decompresses to search inside it. */
-const MAX_GUNZIPPED_BYTES = 64 * 1024 * 1024;
-
 /** The kinds of credential a text holds, each once, in pattern order. */
 export const credentialsIn = (text: string): string[] => [
   ...new Set([
@@ -57,10 +54,12 @@ const textsOf = (bytes: Buffer): string[] => [
   bytes.subarray(1).toString("utf16le"),
 ];
 
-/** The kinds of credential a file holds: in its bytes as text of any encoding, as raw DER, and inside a gzip file too. */
-export const credentialsInBytes = (bytes: Uint8Array): string[] => {
+/** The kinds of credential a file holds: in its bytes as text of any encoding, as raw DER, and inside a gzip file too, as `inner` holds it. */
+export const credentialsInBytes = (
+  bytes: Uint8Array,
+  inner: GzipInside = gzipInside(bytes),
+): string[] => {
   const buffer = Buffer.from(bytes.buffer, bytes.byteOffset, bytes.length);
-  const inner = isGzip(bytes) ? gunzip(bytes, MAX_GUNZIPPED_BYTES) : undefined;
   const files = inner?.ok === true ? [buffer, inner.value] : [buffer];
   const found = new Set(
     files.flatMap((file) => [

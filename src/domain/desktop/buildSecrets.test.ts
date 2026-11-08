@@ -268,6 +268,25 @@ describe("build secrets in escaped text", () => {
     );
   });
 
+  it("scans an unclosed quote before many escaped quotes in time linear in its length", () => {
+    /** An opening quote, `pairs` escaped quotes and an ellipsis, never closed. */
+    const unclosed = (pairs: number) => `"${'\\"'.repeat(pairs)}…`;
+    const elapsed = (text: string) => {
+      const start = performance.now();
+      expect(redactSecrets(text, SECRETS)).toBe(text);
+      return performance.now() - start;
+    };
+    const fastest = (text: string) =>
+      Math.min(...Array.from({ length: 5 }, () => elapsed(text)));
+    const text = unclosed(32 * 1024);
+    expect(text.length).toBeGreaterThan(64 * 1024);
+    // A scan restarting at each quote took seconds here.
+    expect(elapsed(text)).toBeLessThan(250);
+    const once = fastest(unclosed(128 * 1024));
+    const twice = fastest(unclosed(256 * 1024));
+    expect(twice).toBeLessThan(3 * once + 5);
+  });
+
   it("never treats an empty or short value as one to find", () => {
     const empty = [
       { handle: "empty", value: "" },

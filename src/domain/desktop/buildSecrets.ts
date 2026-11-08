@@ -109,29 +109,36 @@ const holds = (bytes: Uint8Array, spellings: readonly Buffer[]): boolean => {
   return spellings.some((spelling) => haystack.includes(spelling));
 };
 
-/** The handles of the secrets `bytes` hold in any spelling, also inside a gzip file. */
+/** What a scan reads inside a gzip file: its document, or why it has none; undefined for bytes that are not gzip. */
+export type GzipInside = ReturnType<typeof gunzip> | undefined;
+
+/** A gzip file decompressed once, as far as a scan reads, for each check of it to share. */
+export const gzipInside = (bytes: Uint8Array): GzipInside =>
+  isGzip(bytes) ? gunzip(bytes, MAX_GUNZIPPED_BYTES) : undefined;
+
+/** The handles of the secrets `bytes` hold in any spelling, also inside a gzip file; `inner`, when given, is `gzipInside(bytes)`. */
 export const secretsIn = (
   bytes: Uint8Array,
   secrets: readonly KnownSecret[],
+  inner?: GzipInside,
 ): string[] => {
   const scanned = secrets.filter(({ value }) => isScannableSecret(value));
   if (scanned.length === 0) return [];
-  const inner = isGzip(bytes) ? gunzip(bytes, MAX_GUNZIPPED_BYTES) : undefined;
+  const inside = inner ?? gzipInside(bytes);
   return scanned.flatMap(({ handle, value }) => {
     const spellings = byteSpellings(value);
     return holds(bytes, spellings) ||
-      (inner?.ok === true && holds(inner.value, spellings))
+      (inside?.ok === true && holds(inside.value, spellings))
       ? [handle]
       : [];
   });
 };
 
 /** Whether bytes are a gzip file that expands past what a scan decompresses, so no scan can tell what it holds inside. */
-export const isUncheckedGzip = (bytes: Uint8Array): boolean => {
-  if (!isGzip(bytes)) return false;
-  const inner = gunzip(bytes, MAX_GUNZIPPED_BYTES);
-  return !inner.ok && inner.error === "too_large";
-};
+export const isUncheckedGzip = (
+  bytes: Uint8Array,
+  inner: GzipInside = gzipInside(bytes),
+): boolean => inner?.ok === false && inner.error === "too_large";
 
 /** For each length of `pattern`'s prefixes, the longest proper prefix of it that also ends it. */
 const borders = (pattern: string): number[] => {
@@ -180,8 +187,36 @@ const ellipses = (text: string): number[] => {
   return found;
 };
 
-/** A JSON string literal, as a result's JSON text holds each of its strings. */
-const JSON_STRING = /"(?:[^"\\]|\\.)*"/gu;
+/** The characters that end a line, which no JSON escape takes. */
+const LINE_ENDS = new Set(["\n", "\r", "\u2028", "\u2029"]);
+
+/**
+ * Each JSON string literal of `text`, as a result's JSON text holds each of
+ * its strings, and where it starts, in one forward scan: a quote the scan
+ * passed was escaped, so no literal can open there.
+ */
+const jsonStringLiterals = (
+  text: string,
+): { readonly index: number; readonly literal: string }[] => {
+  const found: { index: number; literal: string }[] = [];
+  for (let open = text.indexOf('"'); open !== -1;) {
+    let at = open + 1;
+    let closed = false;
+    while (at < text.length) {
+      if (text[at] === '"') {
+        closed = true;
+        break;
+      }
+      if (text[at] !== "\\") at += 1;
+      else if (at + 1 < text.length && !LINE_ENDS.has(text[at + 1] ?? ""))
+        at += 2;
+      else break;
+    }
+    if (closed) found.push({ index: open, literal: text.slice(open, at + 1) });
+    open = text.indexOf('"', at + 1);
+  }
+  return found;
+};
 
 /** A JSON string literal's text, or undefined when it is not one. */
 const literalText = (literal: string): string | undefined => {
@@ -197,17 +232,16 @@ const literalText = (literal: string): string | undefined => {
 const cutOrders = (text: string): ReadonlySet<number> => {
   const all = ellipses(text);
   const ends = new Set(all.filter((at) => endsValueCut(text, at)));
-  for (const literal of text.matchAll(JSON_STRING)) {
-    if (!literal[0].includes("…")) continue;
-    const inner = literalText(literal[0]);
+  for (const { index, literal } of jsonStringLiterals(text)) {
+    if (!literal.includes("…")) continue;
+    const inner = literalText(literal);
     if (inner === undefined) continue;
     const kept = ellipses(inner);
-    const spelled = ellipses(literal[0]);
+    const spelled = ellipses(literal);
     // An ellipsis the literal escapes cannot be placed in the text.
     if (kept.length !== spelled.length) continue;
     kept.forEach((at, order) => {
-      if (endsValueCut(inner, at))
-        ends.add((spelled[order] ?? 0) + literal.index);
+      if (endsValueCut(inner, at)) ends.add((spelled[order] ?? 0) + index);
     });
   }
   return new Set(all.flatMap((at, order) => (ends.has(at) ? [order] : [])));

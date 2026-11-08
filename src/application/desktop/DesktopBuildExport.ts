@@ -11,6 +11,7 @@ import {
   type BuildConsent,
 } from "../../domain/desktop/appWithheld.js";
 import {
+  gzipInside,
   isUncheckedGzip,
   MAX_GUNZIPPED_BYTES,
   redactSecrets,
@@ -109,18 +110,20 @@ const heldBack = (
   const seeded = file.path.startsWith(guard.seed)
     ? file.path.slice(guard.seed.length)
     : undefined;
+  // A gzip file is decompressed once, for all three checks.
+  const inner = gzipInside(file.bytes);
   return {
     handles: [
       ...new Set([
         ...secretsIn(Buffer.from(file.path), guard.secrets),
-        ...secretsIn(file.bytes, guard.secrets),
+        ...secretsIn(file.bytes, guard.secrets, inner),
       ]),
     ],
     credentials:
       seeded === undefined || guard.consented.has(seeded)
         ? []
-        : credentialsInBytes(file.bytes),
-    unchecked: isUncheckedGzip(file.bytes),
+        : credentialsInBytes(file.bytes, inner),
+    unchecked: isUncheckedGzip(file.bytes, inner),
   };
 };
 
