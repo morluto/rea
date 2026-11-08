@@ -8,6 +8,14 @@ import { importReferenceSource } from "../../support/referenceSourceResourceScop
 it("retains constructor loader requests without inventing host authority", async () => {
   const root = await createTestTempDirectory("rea-reference-loader-new-");
   await Promise.all([
+    writeFile(
+      join(root, ".MJS"),
+      'import {join} from "node:path"; require("./dep.cjs");',
+    ),
+    writeFile(
+      join(root, ".TS"),
+      'import {join} from "node:path"; require("./dep.cjs");',
+    ),
     writeFile(join(root, "direct.cjs"), 'new require("./dep.cjs");'),
     writeFile(join(root, "wrapped.cts"), 'new (require as any)("./dep.cjs");'),
     writeFile(join(root, "wrapped-call.cts"), '(require as any)("./dep.cjs");'),
@@ -60,35 +68,29 @@ it("retains constructor loader requests without inventing host authority", async
   });
   if (!result.ok) throw result.error;
   expect(result.value.parse_failures).toEqual([]);
-  expect(result.value.relationships).toContainEqual({
-    from_path: "direct.cjs",
-    to: "dep.cjs",
-    kind: "requires",
-    resolution: "internal",
-    parse_state: "parsed",
-  });
-  expect(result.value.relationships).toContainEqual({
-    from_path: "wrapped.cts",
-    to: "dep.cjs",
-    kind: "requires",
-    resolution: "internal",
-    parse_state: "parsed",
-  });
-  expect(result.value.relationships).toContainEqual({
-    from_path: "wrapped-call.cts",
-    to: "dep.cjs",
-    kind: "requires",
-    resolution: "internal",
-    parse_state: "parsed",
-  });
-  expect(result.value.relationships).toContainEqual({
-    from_path: "nested-call.cjs",
-    to: "dep.cjs",
-    kind: "requires",
-    resolution: "internal",
-    parse_state: "parsed",
-  });
-  for (const from_path of ["nested-child.cjs", "nested-apply.cjs"]) {
+  expect(result.value.entries).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({
+        path: ".MJS",
+        language: "JavaScript",
+        classifications: ["source"],
+      }),
+      expect.objectContaining({
+        path: ".TS",
+        language: "TypeScript",
+        classifications: ["source"],
+      }),
+    ]),
+  );
+  for (const from_path of [
+    "direct.cjs",
+    "wrapped.cts",
+    "wrapped-call.cts",
+    "nested-call.cjs",
+    "nested-child.cjs",
+    "nested-apply.cjs",
+    "wrapped-resolve.cts",
+  ]) {
     expect(result.value.relationships).toContainEqual({
       from_path,
       to: "dep.cjs",
@@ -97,27 +99,15 @@ it("retains constructor loader requests without inventing host authority", async
       parse_state: "parsed",
     });
   }
-  expect(result.value.relationships).toContainEqual({
-    from_path: "nested-unknown.MJS",
-    to: "./dep.cjs",
-    kind: "requires",
-    resolution: "unknown",
-    parse_state: "partial",
-  });
-  expect(result.value.relationships).toContainEqual({
-    from_path: "wrapped-resolve.cts",
-    to: "dep.cjs",
-    kind: "requires",
-    resolution: "internal",
-    parse_state: "parsed",
-  });
-  expect(result.value.relationships).toContainEqual({
-    from_path: "alias.MJS",
-    to: "./dep.cjs",
-    kind: "requires",
-    resolution: "unknown",
-    parse_state: "partial",
-  });
+  for (const from_path of ["nested-unknown.MJS", "alias.MJS", ".MJS", ".TS"]) {
+    expect(result.value.relationships).toContainEqual({
+      from_path,
+      to: "./dep.cjs",
+      kind: "requires",
+      resolution: "unknown",
+      parse_state: "partial",
+    });
+  }
   expect(
     result.value.relationships.some(({ from_path }) =>
       [
