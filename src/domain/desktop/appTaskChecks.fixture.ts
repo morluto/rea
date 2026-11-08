@@ -132,6 +132,29 @@ export const CHECK_VIEWS: Readonly<Record<string, TaskFileView>> = {
     format: "zip",
     view: { entries: [], entry_count: 1200, truncated: true },
   },
+  "Documents/shaped.zip": {
+    format: "zip",
+    view: {
+      entries: [
+        {
+          name: "a.json",
+          format: "json",
+          view: {
+            nodes: [
+              {
+                name: "node",
+                attributes: {},
+                children: [],
+                data: { Title: "New" },
+              },
+            ],
+          },
+        },
+      ],
+      entry_count: 1,
+      truncated: false,
+    },
+  },
   "Documents/cut.xml": {
     format: "xml",
     view: {
@@ -282,6 +305,8 @@ export const CHECK_VIEWS: Readonly<Record<string, TaskFileView>> = {
           uid: "812403bed9f511f19fc4edd4f1920549",
         },
         {
+          name: "node",
+          attributes: {},
           children: [],
           data: {
             Author: "Peter Frankopan",
@@ -1437,6 +1462,91 @@ const INSIDE_PATH_CASES: readonly (readonly [
   DesktopTaskCheckInput,
   boolean,
 ])[] = [
+  [
+    {
+      kind: "value_equals",
+      file: "Documents/plate.FCStd",
+      pointer: "/entries/[>name=Document.xml]/format",
+      value: "xml",
+    },
+    true,
+  ],
+  [
+    {
+      kind: "member_count",
+      file: "Documents/plate.FCStd",
+      pointer: "/entries/[>name=Document.xml]/view/root/children",
+      matching: "[>Property/Float@value=5.0000000000000000]",
+      equals: 1,
+    },
+    true,
+  ],
+  [
+    {
+      kind: "text_equals",
+      file: "Documents/plate.FCStd",
+      pointer:
+        "/entries/[>name=Document.xml]/view/root/children/[>Property~1Float@value=5.0000000000000000]/children/[name=Property]/children/[name=Float]/attributes/value",
+      value: "5.0000000000000000",
+    },
+    true,
+  ],
+  [
+    {
+      kind: "value_equals",
+      file: "Documents/plate.FCStd",
+      pointer:
+        "/entries/[>name=Document.xml]/view/root/children/[>Property~1Float@value=5.0000000000000000]/name",
+      value: "Object",
+    },
+    true,
+  ],
+  [
+    {
+      kind: "value_equals",
+      file: "Documents/shaped.zip",
+      pointer:
+        "/entries/[>name=a.json]/view/nodes/[>data~1Title=New]/data/Title",
+      value: "New",
+    },
+    true,
+  ],
+  [
+    {
+      kind: "value_absent",
+      file: books,
+      pointer: "/nodes/[>data~1Title=The Silk Roads]",
+    },
+    false,
+  ],
+  [
+    {
+      kind: "member_count",
+      file: books,
+      pointer: "/nodes",
+      matching: "[>data/Title=The Silk Roads]",
+      equals: 1,
+    },
+    true,
+  ],
+  [
+    {
+      kind: "value_absent",
+      file: "Documents/shaped.zip",
+      pointer: "/entries/[name=a.json]/view/nodes/[>data~1Title=New]",
+    },
+    false,
+  ],
+  [
+    {
+      kind: "member_count",
+      file: "Documents/shaped.zip",
+      pointer: "/entries/[name=a.json]/view/nodes",
+      matching: "[>data/Title=New]",
+      equals: 1,
+    },
+    true,
+  ],
   [
     {
       kind: "value_equals",

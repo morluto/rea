@@ -1,4 +1,4 @@
-import { isWellFormedXml } from "../xmlDocument.js";
+import { isWellFormedXml, opensLikeXml } from "../xmlDocument.js";
 import type { NamedFacts } from "./appTaskDraftNamed.js";
 import { doctypeHasInternalSubset } from "./stateFormats.js";
 
@@ -120,12 +120,9 @@ const textOpening = (lines: readonly string[]): string => {
   return opening.trimStart();
 };
 
-const opensXml = (opening: string): boolean =>
-  /^<(?:\?xml\b|!DOCTYPE\b|[A-Za-z_:][\w:.-]*(?=\s|\/?>))/u.test(opening);
-
 /** Text views can preserve XML that the structured reader cannot admit. */
 export const textOpensXml = (lines: readonly string[]): boolean =>
-  opensXml(textOpening(lines));
+  opensLikeXml(textOpening(lines));
 
 /**
  * A note on a text file that opens like XML, with a declaration, a DOCTYPE
@@ -139,7 +136,7 @@ export const readAsTextNotes = (
   lines: readonly string[],
 ): FileNote[] => {
   const opening = textOpening(lines);
-  if (!opensXml(opening)) return [];
+  if (!opensLikeXml(opening)) return [];
   if (
     !doctypeHasInternalSubset(opening) &&
     isWellFormedXml(opening, { doctype: "external" })

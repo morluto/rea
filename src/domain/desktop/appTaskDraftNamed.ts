@@ -40,6 +40,7 @@ import {
   resolvePointer,
 } from "./viewPointer.js";
 import {
+  ARCHIVE,
   referenceRoots,
   valueFormat,
   type CheckTree,
@@ -60,7 +61,11 @@ export const innermost = (pointers: readonly string[]): readonly string[] =>
 
 /** Whether a check at a pointer is decided by name: no object or array reached by position, no array searched that the view may cut. */
 const byName = (view: JsonValue | null, pointer: string, tree: CheckTree) => {
-  const located = locatePointer(view, pointer);
+  const located = locatePointer(
+    view,
+    pointer,
+    valueFormat(tree, view, pointer),
+  );
   return (
     located.kind !== "unresolved" &&
     located.byPosition.length === 0 &&
@@ -89,7 +94,12 @@ const isLayoutText = (
   tree.xml(view, pointer);
 
 /** The tags of elements a pointer reaches by position, which no attribute names alone among their siblings. */
-const positionalTags = (view: JsonValue | null, pointer: string): string[] => {
+const positionalTags = (
+  view: JsonValue | null,
+  pointer: string,
+  tree: CheckTree,
+): string[] => {
+  if (!tree.xml(view, pointer)) return [];
   const segments = pointer.split("/");
   return segments.flatMap((segment, index) => {
     if (segments[index - 1] !== "children" || !/^\d+$/u.test(segment))
@@ -97,6 +107,7 @@ const positionalTags = (view: JsonValue | null, pointer: string): string[] => {
     const element = resolvePointer(
       view,
       segments.slice(0, index + 1).join("/"),
+      valueFormat(tree, view, pointer),
     );
     return isXmlElement(element) ? [element.name] : [];
   });
@@ -187,13 +198,17 @@ const unnamed = (
 ) => {
   if (
     collected.context.texts.covers(pointer) ||
-    locatePointer(view, pointer).byPosition.length === 0
+    locatePointer(
+      view,
+      pointer,
+      valueFormat(collected.context.tree, view, pointer),
+    ).byPosition.length === 0
   )
     return;
   collected.positional.count += 1;
   if (collected.context.noise(pointer) === undefined)
     collected.positional.real += 1;
-  for (const tag of positionalTags(view, pointer))
+  for (const tag of positionalTags(view, pointer, collected.context.tree))
     collected.positional.tags.add(tag);
 };
 
@@ -223,7 +238,11 @@ const equals = (
   const { file, ends, tree, texts, noise } = collected.context;
   const list =
     noise(pointer) === undefined ? collected.values : collected.noise.values;
-  const before = resolvePointer(ends.baseline, pointer);
+  const before = resolvePointer(
+    ends.baseline,
+    pointer,
+    valueFormat(tree, ends.baseline, pointer),
+  );
   // Text whose whitespace alone changed, as a formula moved to a line of its own, holds what the seed did.
   const relaid =
     typeof value === "string" &&
@@ -237,7 +256,7 @@ const equals = (
     value === undefined ||
     (isRecord(value) && Object.keys(value).length > 0) ||
     isStamp(value) ||
-    inSplitDate(ends.final, pointer) ||
+    (tree.xml(ends.final, pointer) && inSplitDate(ends.final, pointer)) ||
     isLayoutText(tree, ends.final, pointer, value) ||
     relaid
   )
@@ -320,10 +339,23 @@ const addedChecks = (
     !room(collected, collected.values)
   )
     return;
-  if (isXmlElement(value)) elementChecks(collected, pointer, value);
+  if (
+    collected.context.tree.xml(collected.context.ends.final, pointer) &&
+    isXmlElement(value)
+  )
+    elementChecks(collected, pointer, value);
   else if (collected.context.texts.covers(pointer)) return;
   else if (Array.isArray(value) && value.length > 0) {
-    const { keys } = pairMembers(value, []).newer;
+    const { keys } = pairMembers(
+      value,
+      [],
+      undefined,
+      valueFormat(
+        collected.context.tree,
+        collected.context.ends.final,
+        pointer,
+      ),
+    ).newer;
     value.forEach((item, index) =>
       addedChecks(
         collected,
@@ -341,7 +373,11 @@ const addedChecks = (
 /** A check that a value is gone, only where the entry still has a view to lack it in. */
 const removedCheck = (collected: Collected, pointer: string) => {
   const { file, ends, tree, texts } = collected.context;
-  const before = resolvePointer(ends.baseline, pointer);
+  const before = resolvePointer(
+    ends.baseline,
+    pointer,
+    valueFormat(tree, ends.baseline, pointer),
+  );
   if (
     texts.covers(pointer) ||
     isLayoutText(tree, ends.baseline, pointer, before) ||
@@ -361,7 +397,7 @@ const removedCheck = (collected: Collected, pointer: string) => {
 
 /** The element a member pointer names at the seed: there, or, for one keyed by its new name as `renameKeys` keys it, the member it pairs with. */
 const atSeed = (ends: AddedContext["ends"], owner: string) =>
-  resolvePointer(ends.baseline, owner) ?? pairedAtSeed(ends, owner);
+  resolvePointer(ends.baseline, owner, "xml") ?? pairedAtSeed(ends, owner);
 
 /**
  * A check that the identifier an element was renamed from names nothing at
@@ -377,6 +413,7 @@ const renamedFrom = (collected: Collected, pointer: string) => {
   const before = atSeed(ends, owner);
   const old = isXmlElement(before) ? before.attributes[key] : undefined;
   if (
+    !tree.xml(ends.baseline, owner) ||
     list === undefined ||
     !(owner.split("/").at(-1) ?? "").includes("][@") ||
     !isIdentifyingAttribute(key) ||
@@ -387,11 +424,11 @@ const renamedFrom = (collected: Collected, pointer: string) => {
   )
     return;
   const at = `${list}/${escapeToken(`[name=${before.name}][@${key}=${old}]`)}`;
-  const seed = locatePointer(ends.baseline, at);
+  const seed = locatePointer(ends.baseline, at, "xml");
   if (
     seed.kind === "value" &&
     seed.value === before &&
-    locatePointer(ends.final, at).kind === "none" &&
+    locatePointer(ends.final, at, "xml").kind === "none" &&
     tree.root(ends.final, at) === at &&
     named(collected, ends.baseline, at) &&
     named(collected, ends.final, at)
@@ -403,7 +440,7 @@ const renamedFrom = (collected: Collected, pointer: string) => {
 const collectChecks = (
   context: CollectContext,
   change: DesktopStateDifference,
-): Collected => {
+): Collected & { readonly runs: ReturnType<typeof readsText> } => {
   const collected: Collected = {
     context,
     elements: [],
@@ -413,25 +450,49 @@ const collectChecks = (
     fieldLong: [],
   };
   const { ends, tree } = context;
-  const runs = attributeTexts(collected, change);
+  const runs = attributeTexts(collected, xmlChange(change, ends, tree));
   for (const pointer of change.added.filter((at) => !runs(at, ends.final))) {
     const root = tree.root(ends.final, pointer);
     if (root !== undefined)
-      addedChecks(collected, root, resolvePointer(ends.final, root));
+      addedChecks(
+        collected,
+        root,
+        resolvePointer(ends.final, root, valueFormat(tree, ends.final, root)),
+      );
   }
   for (const pointer of innermost(change.changed))
     if (
       tree.root(ends.final, pointer) === pointer &&
       !runs(pointer, ends.final)
     ) {
-      equals(collected, pointer, resolvePointer(ends.final, pointer));
+      equals(
+        collected,
+        pointer,
+        resolvePointer(
+          ends.final,
+          pointer,
+          valueFormat(tree, ends.final, pointer),
+        ),
+      );
       // An id the app renumbered, or other noise, renamed nothing.
       if (context.noise(pointer) === undefined) renamedFrom(collected, pointer);
     }
   for (const pointer of change.removed.filter((at) => !runs(at, ends.baseline)))
     removedCheck(collected, pointer);
-  return collected;
+  return { ...collected, runs };
 };
+
+/** Only XML entries can contain elements and formatting runs. */
+const xmlChange = (
+  change: DesktopStateDifference,
+  ends: AddedContext["ends"],
+  tree: CheckTree,
+): DesktopStateDifference => ({
+  ...change,
+  added: change.added.filter((pointer) => tree.xml(ends.final, pointer)),
+  changed: change.changed.filter((pointer) => tree.xml(ends.final, pointer)),
+  removed: change.removed.filter((pointer) => tree.xml(ends.baseline, pointer)),
+});
 
 /**
  * Take the `attributeTextCheck` of each attribute that may hold runs of
@@ -498,8 +559,14 @@ export const namedDraft = (
   tree: CheckTree,
   options: NamedOptions,
 ): NamedDraft => {
-  const change = diffNamedMembers(ends.baseline, ends.final);
-  const noise = changeNoise(change, ends);
+  const change = diffNamedMembers(
+    ends.baseline,
+    ends.final,
+    tree === ARCHIVE ? "zip" : "xml",
+  );
+  const noise = changeNoise(change, ends, (view, pointer) =>
+    valueFormat(tree, view, pointer),
+  );
   const named = (view: JsonValue | null, pointer: string) =>
     byName(view, pointer, tree) && !tree.leavesOut(view, pointer);
   const texts = wholeTextSuggestions(file, change, ends, {
@@ -523,8 +590,9 @@ export const namedDraft = (
         named(view, list) && !tree.arrayLeavesOut(view, list),
       noisy: (pointer) => noise(pointer) !== undefined,
       covered: texts.covers,
+      coveredRun: checks.runs,
     },
-    change,
+    xmlChange(change, ends, tree),
   );
   const clean = [
     ...texts.suggestions.filter((check) => !noisy(check)),
@@ -566,7 +634,10 @@ export const namedDraft = (
               noisy: (pointer) => noise(pointer) !== undefined,
               chars: options.limit.chars,
             },
-            suggested,
+            suggested.filter(
+              (check) =>
+                "pointer" in check && tree.xml(ends.final, check.pointer),
+            ),
           ),
         ].slice(0, MAX_GUARDS),
         ...counts.guards,

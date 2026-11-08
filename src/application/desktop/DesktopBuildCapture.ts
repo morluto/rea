@@ -125,12 +125,23 @@ const checkExportRuntime = async (
       return err(
         schemaCommandError(
           command.exitCode,
-          content.toString("utf8").slice(-2048),
+          computer.redacted(content.toString("utf8")).slice(-2048),
         ),
       );
-    const schema = exportOptionsSchema.safeParse(
-      JSON.parse(content.toString("utf8")),
-    );
+    let rawSchema: unknown;
+    try {
+      rawSchema = JSON.parse(content.toString("utf8"));
+    } catch {
+      // Parser errors can quote only a fragment of a credential, which cannot
+      // be removed reliably by exact-token redaction.
+      return err(
+        adapterError(
+          START,
+          "The build computer's REA export schema is invalid JSON.",
+        ),
+      );
+    }
+    const schema = exportOptionsSchema.safeParse(rawSchema);
     if (!schema.success)
       return err(
         adapterError(
@@ -148,14 +159,16 @@ const checkExportRuntime = async (
       );
     return ok(undefined);
   } catch (cause: unknown) {
+    if (signal.aborted)
+      return err(new AnalysisCancelledError(START, { cause: signal.reason }));
+    const message = errorText(cause);
+    const redacted = computer.redacted(message);
     return err(
-      signal.aborted
-        ? new AnalysisCancelledError(START, { cause: signal.reason })
-        : adapterError(
-            START,
-            `Could not read the build computer's REA export schema: ${errorText(cause)}`,
-            cause,
-          ),
+      adapterError(
+        START,
+        `Could not read the build computer's REA export schema: ${redacted}`,
+        redacted === message ? cause : undefined,
+      ),
     );
   }
 };

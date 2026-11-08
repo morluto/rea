@@ -202,7 +202,8 @@ const plainChange = (
   baseline: Version,
   final: Version,
 ) => {
-  if (format === "json") return diffNamedMembers(baseline.view, final.view);
+  if (format === "json")
+    return diffNamedMembers(baseline.view, final.view, "json");
   const change = diffStateViews(format, baseline.view, final.view);
   const pointers = keyPointers([baseline.view, final.view]);
   const at = (entries: readonly string[]) =>
@@ -292,7 +293,8 @@ const valueSuggestions = (
   const added = new Set(change.added);
   for (const entry of leaves([...change.added, ...change.changed])) {
     const at = pointer(entry);
-    const value = at === undefined ? undefined : resolvePointer(final.view, at);
+    const value =
+      at === undefined ? undefined : resolvePointer(final.view, at, format);
     // An id the app generates, as TreeLine's uuid1 `uid`, holds nothing another save repeats.
     if (
       at !== undefined &&
