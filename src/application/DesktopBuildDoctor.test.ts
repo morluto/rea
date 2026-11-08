@@ -14,7 +14,7 @@ const ready: DesktopBuildFacts = {
     status: "found",
     path: "/home/ada/.local/bin/agent-env",
     source: "path",
-    version: "0.9.1431",
+    version: "0.9.1464",
   },
   archive: {
     path: "/home/ada/.cache/rea/build-computer/rea-6.8.0.tar.xz",
@@ -201,7 +201,7 @@ describe("desktop build tool checks", () => {
     );
     expect(check.classification).toBe("missing_dependency");
     expect(check.remediation).toContain(
-      "uv tool install agentenv-framework==0.9.1431",
+      "uv tool install agentenv-framework==0.9.1464",
     );
   });
 
