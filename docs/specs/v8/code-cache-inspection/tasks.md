@@ -9,5 +9,6 @@
 - [x] Document the command, the report and the bounds.
 - [x] Link the guide from `docs/README.md` and the VitePress index.
 - [x] Add parser, CLI, MCP, absolute-path and decimal-argument tests.
+- [x] Hold the budget advice to the recovery struct rather than to its wording.
 - [x] Run the static, formatting, duplication, documentation and test gates.
 - [x] Address the independent review.

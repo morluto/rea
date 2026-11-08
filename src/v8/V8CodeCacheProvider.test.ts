@@ -7,7 +7,10 @@ import {
   inspectV8CodeCacheInputSchema,
 } from "../domain/v8/v8CodeCache.js";
 import { V8CodeCacheBudgetFailure } from "./V8CodeCache.errors.js";
-import { observationBudgetRecovery } from "./V8CodeCacheProvider.js";
+import {
+  observationBudgetRecovery,
+  observationBudgetRemediation,
+} from "./V8CodeCacheProvider.js";
 
 /**
  * The observation budget has two caller-selected limits, each with a ceiling:
@@ -101,4 +104,40 @@ it("requires a smaller artifact only when the run length cannot drop", () => {
     canLowerMinStringBytes: false,
     requiresSmallerArtifact: true,
   });
+});
+
+/**
+ * The sentence is rendered from the recovery struct, so what it must be held to is that
+ * it does not advise a knob the struct closed. Matching the wording would break on a
+ * reword without catching wrong advice; asserting the branches catches the advice.
+ */
+it.each([
+  [
+    "no retry left",
+    exhausted(MAX_INSPECT_V8_CODE_CACHE_STRINGS),
+    input({
+      max_strings: MAX_INSPECT_V8_CODE_CACHE_STRINGS,
+      min_string_bytes: MAX_INSPECT_V8_CODE_CACHE_MIN_STRING_BYTES,
+    }),
+  ],
+  [
+    "only the run length closed",
+    exhausted(16),
+    input({ min_string_bytes: MAX_INSPECT_V8_CODE_CACHE_MIN_STRING_BYTES }),
+  ],
+  [
+    "only the count closed",
+    exhausted(MAX_INSPECT_V8_CODE_CACHE_STRINGS),
+    input({ max_strings: MAX_INSPECT_V8_CODE_CACHE_STRINGS }),
+  ],
+  ["both open", exhausted(16), input()],
+] as const)("never advises a closed budget when %s", (_label, cause, input) => {
+  const recovery = observationBudgetRecovery(cause, input);
+  const advice = observationBudgetRemediation(cause, input);
+  if (!recovery.canRaiseMaxStrings)
+    expect(advice).not.toMatch(/Raise max_strings/u);
+  if (!recovery.canRaiseMinStringBytes)
+    expect(advice).not.toMatch(/Raise min_string_bytes/u);
+  if (recovery.requiresSmallerArtifact)
+    expect(advice).toMatch(/smaller artifact/u);
 });

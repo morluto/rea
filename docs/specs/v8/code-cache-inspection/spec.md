@@ -39,9 +39,16 @@ through the `inspect_v8_code_cache` MCP tool.
 
 ## Verification
 
-- Producer detection and payload retention are covered by parser tests built from real
-  `vm.Script`, `vm.compileFunction` and `vm.SourceTextModule` output.
+- The `vm.Script` producer word and its retained strings come from output this suite
+  generates through `vm.Script.createCachedData()`, and the `vm.compileFunction` case
+  compiles through `vm.compileFunction` for the same reason.
+- The `vm.SourceTextModule` producer bit is checked by setting the measured bit on a real
+  `vm.Script` cache rather than by compiling through `vm.SourceTextModule`, so that case
+  covers the bit's meaning and not a cache from that producer.
 - The CLI, MCP, absolute-path and decimal-argument boundary contracts have their own
   tests.
-- The budget remediation sentence is compared with its owning formatter, not with a
-  frozen string.
+- The budget tests call `observationBudgetRecovery` and assert its structured facts — the
+  boundary reached and which knob may move. `observationBudgetRemediation` renders that
+  struct into a sentence, so it is held to the struct rather than to its wording: the
+  sentence must not advise a knob the struct closed, and must mention a smaller artifact
+  exactly when the struct requires one. Rewording stays free; wrong advice does not.
