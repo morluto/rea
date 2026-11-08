@@ -110,6 +110,40 @@ describe("draftDesktopApplicationTask notes", () => {
     expect(draft.notes.map(({ code }) => code)).toEqual(["no_change"]);
   });
 
+  it("does not call reordered saved lines unchanged when the value diff is empty", async () => {
+    const base = seedEndCapture();
+    const note = `${HOME}/Documents/today.txt`;
+    const before = "milk\neggs\n";
+    const after = "eggs\nmilk\n";
+    const capture = {
+      ...base,
+      state: {
+        ...base.state,
+        checkpoints: base.state.checkpoints.map((point) =>
+          point.name === "seed"
+            ? {
+                ...point,
+                changes: [change(note, { after: before })],
+                retained: [retained(note, before)],
+              }
+            : point.name === "end"
+              ? {
+                  ...point,
+                  changes: [change(note, { before, after })],
+                  retained: [retained(note, after)],
+                }
+              : point,
+        ),
+      },
+    };
+    const draft = await notesOf(capture, [before, after]);
+    expect(draft.files).toEqual([]);
+    expect(draft.notes.map(({ code }) => code)).not.toContain("no_change");
+    expect(draft.notes.map(({ code }) => code)).toContain(
+      "uncheckable_changes",
+    );
+  });
+
   it("does not call an empty change list unchanged when a checkpoint was cut short", async () => {
     const base = withEnd(seedEndCapture(), { changes: [], kept: [] });
     const cut: DesktopApplicationCapture = {
@@ -225,8 +259,10 @@ describe("draftDesktopApplicationTask notes", () => {
     expect(saved.notes[0]?.files).toEqual([
       { file: ".config/dconf/user", role: "application_state" },
     ]);
-    // Only the desktop's own keys changed, so nothing the app saved did.
-    expect(desktop.notes.map(({ code }) => code)).toEqual(["no_change"]);
+    // Desktop-only changes do not establish that no file changed.
+    expect(desktop.notes.map(({ code }) => code)).toEqual([
+      "uncheckable_changes",
+    ]);
     // A database REA could not read changed: whose keys is unknown, and the read error is kept.
     expect(unread.notes).toMatchObject([
       {
@@ -277,7 +313,9 @@ describe("draftDesktopApplicationTask notes on a dconf database the capture kept
     expect(saved.notes[0]?.files).toEqual([
       { file: ".config/dconf/user", role: "application_state" },
     ]);
-    // The database holds none of the app's keys at the end, so none of them changed.
-    expect(desktop.notes.map(({ code }) => code)).toEqual(["no_change"]);
+    // An unkept baseline does not establish that the database was unchanged.
+    expect(desktop.notes.map(({ code }) => code)).toEqual([
+      "uncheckable_changes",
+    ]);
   });
 });
