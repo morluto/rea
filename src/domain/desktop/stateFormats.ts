@@ -9,6 +9,8 @@ import {
 } from "./desktopViewPolicy.js";
 import { err, ok, type Result } from "../result.js";
 import { safeParseJson } from "../safeJson.js";
+import { hasZipSignature } from "../zipPackageFormat.js";
+import { ZIP_EOCD_BYTES } from "../zipEndOfCentralDirectory.js";
 import {
   declaredDocumentType,
   isWellFormedXml,
@@ -344,7 +346,11 @@ export const detectStateFormat = (
   const header = new TextDecoder("latin1").decode(bytes.subarray(0, 16));
   if (header === SQLITE_HEADER) return "sqlite";
   if (header.startsWith(GVDB_HEADER)) return "dconf";
-  if (header.startsWith(ZIP_HEADER)) return "zip";
+  if (
+    header.startsWith(ZIP_HEADER) ||
+    (bytes.length >= ZIP_EOCD_BYTES && hasZipSignature(bytes))
+  )
+    return "zip";
   const text = decodeStateText(bytes);
   if (text === undefined) return "binary";
   const trimmed = text.trimStart();
