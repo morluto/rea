@@ -48,9 +48,9 @@ const apktoolVersionProbeTimeoutGuidance = (): {
 
 const APKTOOL_VERSION_REMEDIATION = `Set ${APKTOOL_COMMAND_ENV} to an Apktool 2.7.0 or newer launcher whose --version prints its version, or put one on PATH.`;
 /** Repair when the selected apktool launcher does not exist. */
-export const APKTOOL_MISSING_REMEDIATION = `Set ${APKTOOL_COMMAND_ENV} to an absolute apktool launcher (the upstream wrapper or a java -jar script).`;
+const APKTOOL_MISSING_REMEDIATION = `Set ${APKTOOL_COMMAND_ENV} to an absolute apktool launcher (the upstream wrapper or a java -jar script).`;
 /** Repair when execution of the selected apktool launcher is denied. */
-export const APKTOOL_NOT_EXECUTABLE_REMEDIATION = `Check file type and execute permission for ${APKTOOL_COMMAND_ENV} or select an executable apktool launcher.`;
+const APKTOOL_NOT_EXECUTABLE_REMEDIATION = `Check file type and execute permission for ${APKTOOL_COMMAND_ENV} or select an executable apktool launcher.`;
 
 /** How the apktool launcher was selected for this provider instance. */
 export interface ApktoolCommandSelection {
@@ -420,7 +420,7 @@ const interpretApktoolVersion = (
     throw new ApktoolConfigurationFailure(
       "unsupported_version",
       `The selected Apktool version ${identity.version} is older than the supported minimum 2.7.0`,
-      `Use Apktool 2.7.0 or newer; see docs/apktool-resource-analysis.md.`,
+      `Use Apktool 2.7.0 or newer; see docs/guides/android/apktool-resource-analysis.md.`,
       {
         selected_command: selection.command,
         command_source: selection.commandSource,

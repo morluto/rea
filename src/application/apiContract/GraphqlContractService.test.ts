@@ -84,7 +84,6 @@ it.each(["path", "operations_path"] as const)(
     );
     await withScope(async (resources) => {
       const result = await inspectApiContractEvidence(input, resources);
-      expect(result.ok).toBe(false);
       if (result.ok) throw new Error("Expected invalid UTF-8");
       expect(result.error._tag).toBe("AnalysisInputError");
       expect(projectAnalysisError(result.error)).toMatchObject({
@@ -148,7 +147,6 @@ it("attributes auxiliary file admission failures to operations_path and retains 
       { ...input, operations_path: join(input.path, "missing") },
       resources,
     );
-    expect(missing.ok).toBe(false);
     if (missing.ok) throw new Error("Expected missing operation file");
     expect(projectAnalysisError(missing.error)).toMatchObject({
       details: { issues: [{ path: ["operations_path"] }] },

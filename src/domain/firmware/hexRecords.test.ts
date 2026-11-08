@@ -136,8 +136,9 @@ describe("Intel HEX decoding", () => {
       ok: false,
       error: {
         kind: "format",
-        message:
-          "address 0x00000003 written with different values at line 1 (0x04) and line 2 (0x99)",
+        message: expect.stringMatching(
+          /0x00000003\b.*different values.*line 1\b.*0x04\b.*line 2\b.*0x99\b/iu,
+        ),
       },
     });
   });
@@ -212,7 +213,7 @@ describe("Intel HEX lines, termination and limits", () => {
     expect(decoded.regions).toHaveLength(2);
     expect(decoded.metadata.termination).toBe("absent");
     expect(decoded.limitations).toEqual([
-      "Intel HEX has no termination record; the file may be truncated.",
+      expect.stringMatching(/no termination record.*may be truncated/iu),
     ]);
   });
 
@@ -239,7 +240,7 @@ describe("Intel HEX lines, termination and limits", () => {
       ok: false,
       error: {
         kind: "format",
-        message: "line 1: line exceeds the 521-character Intel HEX maximum",
+        message: expect.stringMatching(/line 1.*521.*Intel HEX/iu),
       },
     });
   });

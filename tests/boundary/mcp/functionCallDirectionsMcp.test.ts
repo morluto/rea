@@ -84,6 +84,7 @@ it.each(profiles)("preserves directional gaps (%s)", async (profile) => {
         status: "partial",
         limitations: [limitation],
         limited_directions: directions,
+        discovery: { callees: { status: "complete" } },
       };
       const observation = observe(coverage);
       expect(session.recordEvidence(observation).ok).toBe(true);
