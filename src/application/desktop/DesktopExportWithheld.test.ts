@@ -26,6 +26,8 @@ import { draftDesktopApplicationTask } from "./DesktopTaskDraft.js";
 import {
   HOME,
   capture,
+  change,
+  checkpoint,
   readers,
   retained,
   writeCaptureFolder,
@@ -59,6 +61,7 @@ const exportWithheld = async (
     readonly capture: DesktopApplicationCapture;
     readonly content: readonly string[];
   },
+  stateReaders = readers,
 ) => {
   const root = await createTestTempDirectory("desktop-withheld-");
   const directory = join(root, "bundle");
@@ -86,7 +89,7 @@ const exportWithheld = async (
       withheldCopy,
       ...options,
     },
-    readers,
+    stateReaders,
   );
   return { result, directory, withheldCopy, root };
 };
@@ -409,6 +412,105 @@ describe("exportDesktopApplication of withheld sign-in state", () => {
         { file: ".local/share/notes/notes.db" },
       ],
     });
+  });
+});
+
+describe("exportDesktopApplication of dconf keys a sign-in changed", () => {
+  it("refuses dconf keys the sign-in window changed and the seed holds, unless seeded with consent", async () => {
+    const database = `${HOME}/.config/dconf/user`;
+    // Made-up dconf databases by their bytes, and the keys each dumps.
+    const dumps: Readonly<Record<string, string>> = {
+      "GVariant signed out": "[org/notes]\nwrap=true\n",
+      "GVariant signed in": "[org/notes]\nwrap=true\nsession='e-made-up'\n",
+    };
+    const [out = "", signed = ""] = Object.keys(dumps);
+    const dconfReaders = {
+      ...readers,
+      dconf: async (path: string) => ({
+        ok: true as const,
+        text: dumps[await readFile(path, "utf8")] ?? "",
+      }),
+    };
+    /** The notes capture signing in between its window's checkpoints, with the database at `seeded` by the seed. */
+    const signedIn = (seeded: string) => {
+      const base = capture();
+      const [first, edited] = base.state.checkpoints;
+      if (first === undefined || edited === undefined)
+        throw new Error("fixture");
+      const reset =
+        seeded === signed
+          ? []
+          : [change(database, { before: signed, after: seeded })];
+      return {
+        capture: {
+          ...base,
+          state: {
+            ...base.state,
+            checkpoints: [
+              {
+                ...first,
+                retained: [...first.retained, retained(database, out)],
+              },
+              checkpoint("pre-sign-in", "request", [], []),
+              checkpoint(
+                "post-sign-in",
+                "request",
+                [change(database, { before: out, after: signed })],
+                [retained(database, signed)],
+              ),
+              checkpoint(
+                "seed",
+                "request",
+                reset,
+                reset.length === 0 ? [] : [retained(database, seeded)],
+              ),
+              { ...edited, name: "end" },
+            ],
+          },
+        },
+        content: [out, signed],
+      };
+    };
+    const options = {
+      withhold: { from: "pre-sign-in", to: "post-sign-in" },
+      seedCheckpoint: "seed",
+      endCheckpoint: "end",
+    };
+    const refused = await exportWithheld(
+      options,
+      [],
+      signedIn(signed),
+      dconfReaders,
+    );
+    expect(refused.result).toBeInstanceOf(Error);
+    const message = String(
+      (refused.result as Error & { userMessage?: string }).userMessage,
+    );
+    expect(message).toContain("org/notes/session");
+    expect(message).not.toContain("e-made-up");
+    expect(await exists(refused.directory)).toBe(false);
+
+    // Signed out again before the seed, the keys ship as they were before the sign-in.
+    const reset = await exportWithheld(
+      options,
+      [],
+      signedIn(out),
+      dconfReaders,
+    );
+    expect(reset.result).not.toBeInstanceOf(Error);
+
+    const consent = join(refused.root, "consent.json");
+    await writeFile(consent, JSON.stringify(CONSENT));
+    const seeded = await exportWithheld(
+      { ...options, seedWithheld: true, consent },
+      [],
+      signedIn(signed),
+      dconfReaders,
+    );
+    expect(seeded.result).not.toBeInstanceOf(Error);
+    expect(
+      await readFile(join(seeded.directory, "envs/notes/notes_app.py"), "utf8"),
+    ).toContain("session=");
   });
 });
 

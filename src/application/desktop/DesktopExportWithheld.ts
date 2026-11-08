@@ -16,6 +16,11 @@ import {
   type WithholdSelection,
 } from "../../domain/desktop/appWithheld.js";
 import type { DesktopApplicationCapture } from "../../domain/desktop/desktopCapture.js";
+import {
+  versionAt,
+  type DesktopApplicationState,
+  type DesktopStatePath,
+} from "../../domain/desktop/desktopState.js";
 import { isWithinAny } from "../../domain/desktop/desktopStateDiff.js";
 import { safeParseUtf8Json } from "../../domain/safeJson.js";
 import type { SeedVersion } from "./DesktopExportFiles.js";
@@ -170,6 +175,60 @@ export const planWithheld = async (
     consented: [],
     consent: shipped,
   };
+};
+
+/** The app's dconf keys a version holds, as `<group>/<key>`, each with its value. */
+const dconfKeys = (
+  version: DesktopStatePath["versions"][number] | undefined,
+): ReadonlyMap<string, string> => {
+  const view = version?.present === true ? version.view : null;
+  const groups =
+    typeof view === "object" && view !== null && !Array.isArray(view)
+      ? view.groups
+      : undefined;
+  if (typeof groups !== "object" || groups === null || Array.isArray(groups))
+    return new Map();
+  return new Map(
+    Object.entries(groups).flatMap(([group, keys]) =>
+      typeof keys === "object" && keys !== null && !Array.isArray(keys)
+        ? Object.entries(keys).map(
+            ([key, value]) =>
+              [`${group}/${key}`, JSON.stringify(value)] as const,
+          )
+        : [],
+    ),
+  );
+};
+
+/** Refuse the app's dconf keys that the sign-in window changed and the seed holds other than before it, unless seeded with consent: the class ships dconf keys and cannot withhold them as it does files. */
+export const refuseSignInDconf = (
+  request: WithheldRequest,
+  state: DesktopApplicationState,
+  seed: number,
+): void => {
+  const { from, to } = request.withhold ?? {};
+  if (from === undefined || to === undefined || request.seedWithheld === true)
+    return;
+  const database = state.paths.find(
+    (path) => path.format === "dconf" && path.role === "application_state",
+  );
+  if (database === undefined) return;
+  const at = (index: number) => dconfKeys(versionAt(database, index));
+  const { checkpoints } = state.capture;
+  const before = at(checkpoints.indexOf(from));
+  const after = at(checkpoints.indexOf(to));
+  const changed = [...at(seed)]
+    .filter(
+      ([key, value]) =>
+        after.get(key) !== before.get(key) && value !== before.get(key),
+    )
+    .map(([key]) => key);
+  if (changed.length > 0)
+    throw refused(
+      "withhold",
+      `The app's dconf keys ${changed.join(", ")} changed between ${from} and ${to}, and the seed holds them, but REA withholds files, not dconf keys, so it wrote no bundle.`,
+      "If the person consents to ship them, record it with record_build_consent, kind seed_sign_in, and export with seed_sign_in; otherwise capture again on a new build computer, signing out of the app before marking seed.",
+    );
 };
 
 /** Each withheld file's bytes at the seed, refused when one is too large for a setting. */

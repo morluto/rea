@@ -20,6 +20,7 @@ const checkpoint = (
   entries: 1,
   truncated: false,
   unreadable_directories: 0,
+  unchecked_paths: 0,
   unconfirmed_changes: 0,
   changes: paths.map((path) => ({
     path: `${HOME}/${path}`,
@@ -87,6 +88,32 @@ describe("withheld files", () => {
     });
   });
 
+  it("refuses a window whose walks may have missed a file the sign-in wrote", () => {
+    const window = { from: SIGN_IN_START, to: SIGN_IN_END };
+    const gapped = (at: number, gap: Partial<DesktopCheckpoint>) =>
+      withheldFiles(
+        CHECKPOINTS.map((point, index) =>
+          index === at ? { ...point, ...gap } : point,
+        ),
+        homePath,
+        OWNED,
+        window,
+      );
+    for (const [at, gap] of [
+      [1, { truncated: true }],
+      [2, { unreadable_directories: 1 }],
+      [3, { unchecked_paths: 2 }],
+      [3, { unconfirmed_changes: 1 }],
+    ] as const)
+      expect(gapped(at, gap)).toMatchObject({
+        ok: false,
+        error: expect.stringContaining(CHECKPOINTS[at]?.name ?? ""),
+      });
+    // A walk cut short after the window, or a change unconfirmed up to its start, leaves the window whole.
+    expect(gapped(4, { truncated: true })).toMatchObject({ ok: true });
+    expect(gapped(1, { unconfirmed_changes: 1 })).toMatchObject({ ok: true });
+  });
+
   it("names each withheld file's setting, environment variable and handle", () => {
     expect(withheldSettings("typora", [".config/Typora/mAxvdiPNmi"])).toEqual([
       {
@@ -106,5 +133,19 @@ describe("withheld files", () => {
     expect(named?.variable).toMatch(/^REA_AN_APP_\w+_[0-9A-F]{8}$/u);
     expect(other?.setting).not.toBe(again?.setting);
     expect(other?.variable).not.toBe(again?.variable);
+  });
+
+  it("names settings Python takes as arguments, distinct whatever the files' order", () => {
+    const files = [".pass", "1license", "file_1license", "class"];
+    for (const order of [files, [...files].reverse()]) {
+      const settings = withheldSettings("an-app", order).map(
+        ({ setting }) => setting,
+      );
+      expect(new Set(settings).size).toBe(settings.length);
+      for (const setting of settings) {
+        expect(setting).toMatch(/^[a-z]\w*$/u);
+        expect(["pass", "class"]).not.toContain(setting);
+      }
+    }
   });
 });

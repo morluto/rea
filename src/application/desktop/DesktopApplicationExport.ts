@@ -61,6 +61,7 @@ import {
 } from "./DesktopExportFiles.js";
 import {
   planWithheld,
+  refuseSignInDconf,
   withheldCopy,
   type WithheldRequest,
 } from "./DesktopExportWithheld.js";
@@ -220,6 +221,7 @@ const planExport = async (
     capture,
     app,
   );
+  refuseSignInDconf(request, state, context.seed);
   const { locks } = versions;
   const unseeded = unseededFiles(capture, homePath, files, {
     paths,

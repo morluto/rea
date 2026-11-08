@@ -195,24 +195,30 @@ export const listBuildSecretHandles = async (
     .sort();
 };
 
-/** Write a secret file only its owner reads, in a folder only they enter, replacing one already there; never through a link. */
+/** Write a new secret file only its owner reads, in a folder only they enter, never through a link; false, writing nothing, when the handle already has a file. */
 export const writeBuildSecretFile = async (
   directory: string,
   handle: string,
   value: string,
   resources?: ArtifactResourceScope,
-): Promise<void> => {
+): Promise<boolean> => {
   await mkdir(directory, { recursive: true, mode: 0o700 });
   const refusal = await folderRefusal(directory);
   if (refusal !== undefined) throw new Error(refusal);
-  const file = await open(
-    join(directory, handle),
-    constants.O_WRONLY |
-      constants.O_CREAT |
-      constants.O_TRUNC |
-      constants.O_NOFOLLOW,
-    0o600,
-  );
+  let file: FileHandle;
+  try {
+    file = await open(
+      join(directory, handle),
+      constants.O_WRONLY |
+        constants.O_CREAT |
+        constants.O_EXCL |
+        constants.O_NOFOLLOW,
+      0o600,
+    );
+  } catch (cause: unknown) {
+    if (errorCode(cause) === "EEXIST") return false;
+    throw cause;
+  }
   try {
     await withArtifactFileHandle(
       join(directory, handle),
@@ -230,4 +236,5 @@ export const writeBuildSecretFile = async (
     throw cause;
   }
   await chmod(directory, 0o700);
+  return true;
 };

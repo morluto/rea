@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { readdir, readFile, stat } from "node:fs/promises";
+import { mkdir, readdir, readFile, stat, writeFile } from "node:fs/promises";
 import { isAbsolute, join } from "node:path";
 
 import type { Client } from "@modelcontextprotocol/client";
@@ -175,6 +175,38 @@ it("withholds a file the agent names, keeps its bytes in a secret file only the 
   expect(parseMcpToolError(unsafe as CallToolResult).error.code).toBe(
     "invalid_request",
   );
+});
+
+it("keeps a later build's withheld bytes under a handle of their own, leaving an earlier build's secret as it was", async () => {
+  const config = await createTestTempDirectory("xdg-config-");
+  const folder = join(config, "rea", "build-secrets");
+  await mkdir(folder, { recursive: true, mode: 0o700 });
+  const earlier = Buffer.from("[ui]\nwrap=true\n").toString("base64");
+  await writeFile(join(folder, HANDLE), earlier, { mode: 0o600 });
+  const { client } = await buildCaptureFakes({
+    serverEnv: { XDG_CONFIG_HOME: config },
+    exportArgs: ["--withhold-path", SETTINGS],
+  });
+  const id = await startBuildComputer(client, REQUEST);
+  await captureThrough(client, id, ["seed", "end"]);
+  const kept = async () => {
+    const { result } = await exportTo(client, id, { withhold: [SETTINGS] });
+    expect(result.isError, JSON.stringify(result)).not.toBe(true);
+    return toolContract("export_build_environment").outputSchema.parse(
+      result.structuredContent,
+    ).withheld_files;
+  };
+  const own = `${HANDLE}-2`;
+  expect(await kept()).toEqual([
+    { file: SETTINGS, variable: VARIABLE, handle: own },
+  ]);
+  expect(await readFile(join(folder, HANDLE), "utf8")).toBe(earlier);
+  expect(await readFile(join(folder, own), "utf8")).toBe(
+    Buffer.from("[ui]\nwrap=false\n").toString("base64"),
+  );
+  // Exported again, the same bytes keep the handle they already have.
+  expect((await kept())[0]?.handle).toBe(own);
+  expect((await readdir(folder)).sort()).toEqual([HANDLE, own]);
 });
 
 it("records the person's consent, seeds withheld state only with it, and passes the sign-in window to the draft and the export", async () => {

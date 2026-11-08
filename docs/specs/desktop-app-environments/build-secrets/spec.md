@@ -49,24 +49,34 @@ to seed it, and a credential REA finds by its shape never ships unasked.
   a gzip file, decompressed up to 64 MiB. A bundle holding one is refused as
   an invalid request naming each secret's handle and the files, each value
   in a file's name shown as `<secret:<handle>>`, and nothing is written to
-  the folder.
+  the folder. A gzip file that expands past 64 MiB, which neither this scan
+  nor the credential scan can see inside, is refused the same way, by name.
 - The skill asks the person for a secret's file instead of the secret, types
   it only into a masked field, and stops when an export finds a secret.
 - Withheld state: files under the owned paths that changed after checkpoint
   `pre-sign-in` up to `post-sign-in`, by the capture's recorded changes, and
   those `withhold` names, are withheld. With only one of the two checkpoints
-  the export is refused. The draft leaves them out and lists them as
-  `withheld_files`; a task check naming one is refused. Each one present at
+  the export is refused, and so is a window in which a walk, from
+  `pre-sign-in` to `post-sign-in`, stopped at its entry limit, could not list
+  a directory or check a path, or left a change unconfirmed, since it may
+  have missed a file the sign-in wrote. The draft leaves the withheld files
+  out and lists them as `withheld_files`; a task check naming one is
+  refused. An export is refused, too, for a dconf key of the app that the
+  window changed and the seed holds other than before it, since the class
+  seeds dconf keys and cannot withhold them, unless the withheld state is
+  seeded with consent. Each withheld file present at
   the seed is left out of it and becomes a `SecretStr` field of the class's
-  `Settings`, which `env.toml`'s `[settings]` sets to `env:REA_<APP>_<FILE>`,
-  so a deploy without the variable is refused with its name. At first boot,
+  `Settings`, named as Python takes an argument and distinct within the app,
+  which `env.toml`'s `[settings]` sets to `env:REA_<APP>_<FILE>`, so a
+  deploy without the variable is refused with its name. At first boot,
   before `keep_initial`, the class writes each from its setting, the file's
   bytes in base64, mode `0600`; `data/get` serves it neither as a part nor in
   the views, and `data/reset` restores it. The README names each variable and
   how to fill it. A file larger than 48 KiB is refused. The CLI copies the
   withheld files to `--withheld-copy`, outside the bundle, and the build host
-  keeps each one's base64 as the secret `rea-<app>-<file>` (`0600`), named in
-  the export's `withheld_files`.
+  keeps each one's base64 as the secret `rea-<app>-<file>`, or the first
+  `rea-<app>-<file>-<n>` holding no other value (`0600`), never replacing a
+  secret file, named in the export's `withheld_files`.
 - The export refuses a seed file whose bytes equal a withheld file's, by
   SHA-256, naming both files; a backup that differs from the withheld file is
   not caught, so the agent trashes backups before `seed`.

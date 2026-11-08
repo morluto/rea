@@ -267,6 +267,40 @@ it("refuses UTF-16 credentials in seeded files and gzip content", async () => {
   expect(await readdir(directory).catch(() => [])).toEqual([]);
 });
 
+it("refuses a gzip file that expands past what REA checks, though a credential opens it", async () => {
+  const { client, outputs } = await buildCaptureFakes();
+  const id = await startBuildComputer(client, REQUEST);
+  await callOk(client, "start_build_capture", { computer_id: id });
+  for (const name of ["seed", "end"])
+    await callOk(client, "mark_build_checkpoint", { computer_id: id, name });
+  await callOk(client, "stop_build_capture", { computer_id: id });
+  const seed = join(outputs.bundle, "envs/notes/seed/Documents");
+  await mkdir(seed, { recursive: true });
+  // An unsigned JWT, built from its parts so secret scanners do not flag the file.
+  const token = [
+    JSON.stringify({ alg: "none" }),
+    JSON.stringify({ sub: "rea-test" }),
+    "fake-signature",
+  ]
+    .map((part) => Buffer.from(part).toString("base64url"))
+    .join(".");
+  const inside = Buffer.concat([
+    Buffer.from(`token=${token}\n`),
+    Buffer.alloc(65 * 1024 * 1024),
+  ]);
+  await writeFile(join(seed, "large.txt.gz"), gzipSync(inside));
+  const directory = join(await createTestTempDirectory("build-out-"), "notes");
+  const refused = await client.callTool({
+    name: "export_build_environment",
+    arguments: { computer_id: id, task: TASK, directory },
+  });
+  const { error } = parseMcpToolError(refused as CallToolResult);
+  expect(error.code).toBe("invalid_request");
+  expect(error.message).toContain("large.txt.gz");
+  expect(error.message).toContain("64 MiB");
+  expect(await readdir(directory).catch(() => [])).toEqual([]);
+});
+
 it("redacts a typed secret truncated in a stopped capture draft", async () => {
   const secret = `e-${"Fake9Kite".repeat(88)}x`;
   const config = await secretsConfig({ master: { text: secret } });

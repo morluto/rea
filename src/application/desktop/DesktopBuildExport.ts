@@ -11,6 +11,8 @@ import {
   type BuildConsent,
 } from "../../domain/desktop/appWithheld.js";
 import {
+  isUncheckedGzip,
+  MAX_GUNZIPPED_BYTES,
   redactSecrets,
   secretsIn,
   type KnownSecret,
@@ -99,7 +101,7 @@ interface BundleGuard {
   readonly consented: ReadonlySet<string>;
 }
 
-/** Why a fetched file is held back: the secrets it holds and the credentials a seed file holds. */
+/** Why a fetched file is held back: the secrets it holds, the credentials a seed file holds, and whether it is a gzip file too large to check inside. */
 const heldBack = (
   file: { readonly path: string; readonly bytes: Buffer },
   guard: BundleGuard,
@@ -118,8 +120,20 @@ const heldBack = (
       seeded === undefined || guard.consented.has(seeded)
         ? []
         : credentialsInBytes(file.bytes),
+    unchecked: isUncheckedGzip(file.bytes),
   };
 };
+
+/** The refusal of gzip files too large for REA to check inside for secrets and credentials, naming each. */
+const uncheckedRefusal = (
+  holding: readonly { readonly path: string }[],
+  directory: string,
+) =>
+  refused(
+    EXPORT,
+    `REA could not check inside ${counted(holding.map(({ path }) => path))}: each is a gzip file that expands past ${String(MAX_GUNZIPPED_BYTES / 1024 / 1024)} MiB, the most REA decompresses to look for secrets and credentials, so REA wrote none of the bundle to ${directory}.`,
+    "Keep each such file out of the seed: delete it in the app before marking seed, or capture again on a new build computer without it, then export again.",
+  );
 
 /** The refusal of seed files holding credentials found by their shape: each file and the kinds, never the values. */
 const credentialsRefusal = (
@@ -164,8 +178,12 @@ const writeBundle = async (
   Result<{ readonly files: number; readonly bytes: number }, AnalysisError>
 > => {
   let fetched = { files: 0, bytes: 0 };
-  const holding: { path: string; handles: string[]; credentials: string[] }[] =
-    [];
+  const holding: {
+    path: string;
+    handles: string[];
+    credentials: string[];
+    unchecked: boolean;
+  }[] = [];
   const unclosed = await writeOutputTree(
     directory,
     async (tree) => {
@@ -174,9 +192,13 @@ const writeBundle = async (
         bundle,
         {
           file: async (file) => {
-            // A file holding a secret or a credential is kept back, and the bundle refused once all are read.
+            // A file holding a secret or a credential, or one REA could not check, is kept back, and the bundle refused once all are read.
             const held = heldBack(file, guard);
-            if (held.handles.length > 0 || held.credentials.length > 0) {
+            if (
+              held.handles.length > 0 ||
+              held.credentials.length > 0 ||
+              held.unchecked
+            ) {
               holding.push({ path: file.path, ...held });
               return;
             }
@@ -193,6 +215,8 @@ const writeBundle = async (
       const secret = holding.filter(({ handles }) => handles.length > 0);
       if (secret.length > 0)
         throw secretsRefusal(secret, guard.secrets, directory);
+      const unchecked = holding.filter((held) => held.unchecked);
+      if (unchecked.length > 0) throw uncheckedRefusal(unchecked, directory);
       if (holding.length > 0) throw credentialsRefusal(holding, directory);
     },
     { operation: EXPORT, field: "directory" },
@@ -249,7 +273,7 @@ const exportArguments = (
 const consentFile = (consents: readonly BuildConsent[]): string =>
   `${JSON.stringify({ consents }, null, 2)}\n`;
 
-/** Keep each withheld file's bytes as the secret its handle names, fetched from beside the bundle; none leaves REA otherwise. */
+/** Keep each withheld file's bytes as a secret, fetched from beside the bundle, reported by the handle that keeps it; none leaves REA otherwise. */
 const keepWithheld = async (
   computer: ControlledComputer,
   folder: string,
@@ -258,19 +282,20 @@ const keepWithheld = async (
     keep,
     signal,
   }: {
-    readonly keep: (handle: string, bytes: Buffer) => Promise<void>;
+    readonly keep: (handle: string, bytes: Buffer) => Promise<string>;
     readonly signal: AbortSignal;
   },
 ): Promise<WithheldReport[]> => {
   if (files.length === 0) return [];
   const handles = new Map(files.map(({ file, handle }) => [file, handle]));
+  const kept = new Map<string, string>();
   await fetchHomeFolder(
     computer,
     folder,
     {
       file: async ({ path, bytes }) => {
         const handle = handles.get(path);
-        if (handle !== undefined) await keep(handle, bytes);
+        if (handle !== undefined) kept.set(path, await keep(handle, bytes));
       },
     },
     signal,
@@ -278,7 +303,7 @@ const keepWithheld = async (
   return files.map(({ file, variable, handle }) => ({
     file,
     variable,
-    handle,
+    handle: kept.get(file) ?? handle,
   }));
 };
 
@@ -292,7 +317,7 @@ interface ExportCapture {
   readonly extraPackages: readonly string[];
   /** The secrets no bundle may hold, and where the withheld files' bytes are kept as secrets. */
   readonly secrets: readonly KnownSecret[];
-  readonly keep: (handle: string, bytes: Buffer) => Promise<void>;
+  readonly keep: (handle: string, bytes: Buffer) => Promise<string>;
   /** Whether both sign-in checkpoints were marked, and the consents the person gave. */
   readonly signIn: boolean;
   readonly consents: readonly BuildConsent[];

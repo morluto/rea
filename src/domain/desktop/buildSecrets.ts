@@ -20,7 +20,7 @@ export const MAX_SECRET_CHARACTERS = 1024;
 /** The most characters a setting's secret holds: a withheld file's bytes in base64. */
 export const MAX_SETTING_CHARACTERS = 64 * 1024;
 /** How much of a gzip file the scan decompresses to search inside it. */
-const MAX_GUNZIPPED_BYTES = 64 * 1024 * 1024;
+export const MAX_GUNZIPPED_BYTES = 64 * 1024 * 1024;
 
 /** A secret the build host knows: its handle and the value it names. */
 export interface KnownSecret {
@@ -123,6 +123,13 @@ export const secretsIn = (
       ? [handle]
       : [];
   });
+};
+
+/** Whether bytes are a gzip file that expands past what a scan decompresses, so no scan can tell what it holds inside. */
+export const isUncheckedGzip = (bytes: Uint8Array): boolean => {
+  if (!isGzip(bytes)) return false;
+  const inner = gunzip(bytes, MAX_GUNZIPPED_BYTES);
+  return !inner.ok && inner.error === "too_large";
 };
 
 /** For each length of `pattern`'s prefixes, the longest proper prefix of it that also ends it. */

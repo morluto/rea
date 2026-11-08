@@ -8,6 +8,7 @@ import {
   AnalysisInputError,
 } from "../../domain/analysisErrorCore.js";
 import {
+  buildSecretHandleSchema,
   isScannableSecret,
   MAX_SETTING_CHARACTERS,
   redactSecrets,
@@ -33,6 +34,8 @@ import {
 } from "../../desktop/BuildSecretFiles.js";
 
 const ACT = "act_on_build_computer";
+/** How many handles a withheld file may take, its own and those numbered after it, each within a handle's 63 characters. */
+const MAX_KEPT_HANDLES = 99;
 
 /** The secrets one REA server types, kept only in memory so results, logs and records can show their handles instead. */
 export class DesktopBuildSecrets {
@@ -92,13 +95,39 @@ export class DesktopBuildSecrets {
     return read;
   }
 
-  /** Keep a withheld file's bytes, in base64, as the secret `handle` names, for a witness to supply. */
-  async keep(handle: string, bytes: Buffer): Promise<void> {
+  /** Keep a withheld file's bytes, in base64, for a witness to supply, as a secret of their own: `handle`, or the first `handle-<n>` that holds no other value, never replacing one; the handle that keeps them. */
+  async keep(handle: string, bytes: Buffer): Promise<string> {
     const value = bytes.toString("base64");
-    this.#remember(handle, value);
-    await this.#run(() =>
-      writeBuildSecretFile(this.directory, handle, value, this.#resources),
-    );
+    for (let count = 1; count <= MAX_KEPT_HANDLES; count += 1) {
+      const candidate = count === 1 ? handle : `${handle}-${String(count)}`;
+      if (!buildSecretHandleSchema.safeParse(candidate).success) break;
+      let written: boolean;
+      try {
+        written = await this.#run(() =>
+          writeBuildSecretFile(
+            this.directory,
+            candidate,
+            value,
+            this.#resources,
+          ),
+        );
+      } catch (cause: unknown) {
+        this.#remember(candidate, value);
+        throw cause;
+      }
+      if (written) {
+        this.#remember(candidate, value);
+        return candidate;
+      }
+      const held = await this.resolve(candidate, "setting");
+      if (!held.ok && held.error instanceof AnalysisError) throw held.error;
+      if (held.ok && held.value === value) return candidate;
+    }
+    throw new ProviderAdapterError(AGENTENV_PROVIDER, "build_secret_file", {
+      userMessage: `REA has no handle free to keep a withheld file as, from ${handle} on, in ${this.directory}.`,
+      remediationAction:
+        "Ask the person to delete the secret files of builds they no longer witness, then export again.",
+    });
   }
 
   async close(): Promise<void> {

@@ -1,5 +1,5 @@
-import { chmod, mkdir, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { chmod, mkdir, readdir, writeFile } from "node:fs/promises";
+import { dirname, join } from "node:path";
 
 import { describe, expect, it } from "vitest";
 
@@ -53,5 +53,14 @@ describe("build secrets of one server", () => {
       ok: true,
       value: Buffer.from("ab").toString("base64"),
     });
+  });
+
+  it("keeps a withheld file only under a handle, never at a path a computer's answer names", async () => {
+    const directory = await folder();
+    const secrets = new DesktopBuildSecrets(directory);
+    await expect(
+      secrets.keep("../escaped", Buffer.from(FIRST)),
+    ).rejects.toThrow();
+    expect(await readdir(dirname(directory))).toEqual(["s"]);
   });
 });

@@ -21,7 +21,7 @@
   refusal quoting it shows the handle; `witness.json` records the handle and
   a `type` holding the value redacted; and an export whose bundle holds a
   secret's value is refused, naming its files with the value redacted, and
-  writes nothing.
+  writes nothing, as is one holding a gzip file that expands past 64 MiB.
 
 Each of these failed against the code before the change.
 
@@ -57,9 +57,11 @@ password.
 ### Tests
 
 - `src/domain/desktop/appWithheld.test.ts`: the owned files changed in the
-  window, and those named; a window missing a checkpoint or out of order; a
-  path outside the owned paths; settings, variables and handles, a long path
-  hashed and like paths kept apart.
+  window, and those named; a window missing a checkpoint or out of order, or
+  one a walk may have missed a change in; a path outside the owned paths;
+  settings, variables and handles, a long path hashed and like paths kept
+  apart, and settings that are neither Python keywords nor alike in any
+  order.
 - `src/domain/desktop/credentialPatterns.test.ts`: KeePassXC's KeeShare key
   shape with a made-up key, PEM, JWT, URL user info and tokens found and
   redacted; ordinary settings, digests, ids and images not; a gzip file's
@@ -68,15 +70,19 @@ password.
   left out of the seed, declared a secret setting from `env:`, copied aside
   and named in the README; seeding it refused without a consent and done with
   one, `consent.json` shipped; a check on it refused; the draft leaving out
-  the window's files.
+  the window's files; dconf keys the window changed refused unless the seed
+  holds them as before it or they are seeded with consent.
+- `src/application/desktop/DesktopBuildSecrets.test.ts`: a kept file's
+  handle that names a path refused, nothing written outside the folder.
 - `src/desktop/ExportedAppPython.test.ts`: `_write_withheld` writes the
   decoded bytes `0600` and `_views` leaves the file out.
 - `tests/boundary/mcp/buildWithheldMcp.test.ts`: the named file's bytes kept
   as a `0600` secret and supplied to a witness's deploy by handle, a variable
-  other than `REA_*` refused; consent recorded and required for
-  `seed_sign_in`, and the sign-in window passed to the draft and the export;
-  one sign-in checkpoint alone refused; a seed holding a key refused by file
-  and kind; the draft showing `<credential:private-key>`.
+  other than `REA_*` refused; a later build's bytes kept under a handle of
+  their own, an earlier build's secret left as it was; consent recorded and
+  required for `seed_sign_in`, and the sign-in window passed to the draft and
+  the export; one sign-in checkpoint alone refused; a seed holding a key
+  refused by file and kind; the draft showing `<credential:private-key>`.
 
 Each of these failed against the code before the change.
 

@@ -85,7 +85,25 @@ export const namedWithheldPaths = (
   return ok([...new Set(named.map(({ home }) => home ?? ""))]);
 };
 
-/** The owned files that changed in the window's checkpoints and the paths the selection names, normalized and sorted; refused for a window it cannot place or a path outside the owned ones. */
+/** What a checkpoint's walk could not see, and, for one diffed against the window's earlier walk, the changes it could not confirm. */
+const walkGaps = (point: DesktopCheckpoint, diffed: boolean): string[] => [
+  ...(point.truncated ? ["stopped at its entry limit"] : []),
+  ...(point.unreadable_directories > 0
+    ? [`could not list ${String(point.unreadable_directories)} directories`]
+    : []),
+  ...(point.unchecked_paths === 0
+    ? []
+    : [
+        `could not check ${String(point.unchecked_paths ?? "an unrecorded number of")} paths`,
+      ]),
+  ...(diffed && point.unconfirmed_changes > 0
+    ? [
+        `could not confirm ${String(point.unconfirmed_changes)} changes, which it left out`,
+      ]
+    : []),
+];
+
+/** The owned files that changed in the window's checkpoints and the paths the selection names, normalized and sorted; refused for a window it cannot place, one whose walks may have missed a change, or a path outside the owned ones. */
 export const withheldFiles = (
   checkpoints: readonly DesktopCheckpoint[],
   homePath: (path: string) => string | null,
@@ -111,6 +129,16 @@ export const withheldFiles = (
     );
   if (end <= start)
     return err(`${to} was marked before ${from}; mark ${from} first`);
+  const gaps = checkpoints.slice(start, end + 1).flatMap((point, offset) => {
+    const missed = walkGaps(point, offset > 0);
+    return missed.length === 0
+      ? []
+      : [`at ${point.name} the walk ${missed.join(" and ")}`];
+  });
+  if (gaps.length > 0)
+    return err(
+      `The walks from ${from} to ${to} may have missed a file the sign-in wrote: ${gaps.join("; ")}. Capture again on a new build computer, or mark no sign-in window and name the files the sign-in writes in withhold`,
+    );
   const changed = checkpoints
     .slice(start + 1, end + 1)
     .flatMap(({ changes }) => changes)
@@ -133,6 +161,26 @@ const upper = (text: string): string =>
 /** The most characters a variable takes, so its handle stays within one. */
 const MAX_VARIABLE = 60;
 
+/** Python's lowercase keywords, which the class cannot take as a setting's argument name. */
+const PYTHON_KEYWORDS = new Set(
+  "and as assert async await break class continue def del elif else except finally for from global if import in is lambda nonlocal not or pass raise return try while with yield".split(
+    " ",
+  ),
+);
+
+/** A setting Python takes as an argument's name, distinct from those `settings` holds, which it joins. */
+const distinctSetting = (named: string, settings: Set<string>): string => {
+  const valid =
+    /^[a-z]/u.test(named) && !PYTHON_KEYWORDS.has(named)
+      ? named
+      : `file_${named}`;
+  let setting = valid;
+  for (let count = 2; settings.has(setting); count += 1)
+    setting = `${valid}_${String(count)}`;
+  settings.add(setting);
+  return setting;
+};
+
 /** Each withheld file's setting, environment variable and handle, distinct within the app. */
 export const withheldSettings = (
   app: string,
@@ -140,6 +188,7 @@ export const withheldSettings = (
 ): WithheldFile[] => {
   const prefix = `REA_${upper(app).slice(0, 20)}_`;
   const taken = new Set<string>();
+  const settings = new Set<string>();
   return files.map((file) => {
     const hash = createHash("sha256")
       .update(file)
@@ -155,10 +204,12 @@ export const withheldSettings = (
             "",
           );
     taken.add(variable);
-    const setting = variable.slice(prefix.length).toLowerCase();
     return {
       file,
-      setting: /^[a-z]/u.test(setting) ? setting : `file_${setting}`,
+      setting: distinctSetting(
+        variable.slice(prefix.length).toLowerCase(),
+        settings,
+      ),
       variable,
       handle: variable.toLowerCase().replaceAll("_", "-"),
     };

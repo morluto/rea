@@ -232,8 +232,11 @@ export class DesktopBuildCapture {
     request: BuildRequest | undefined,
     private readonly secrets: {
       readonly all: () => Promise<readonly KnownSecret[]>;
-      readonly keep: (handle: string, bytes: Buffer) => Promise<void>;
-    } = { all: () => Promise.resolve([]), keep: () => Promise.resolve() },
+      readonly keep: (handle: string, bytes: Buffer) => Promise<string>;
+    } = {
+      all: () => Promise.resolve([]),
+      keep: (handle) => Promise.resolve(handle),
+    },
   ) {
     this.#entry = request?.desktop_entry;
     this.#packageFile =
