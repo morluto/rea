@@ -83,6 +83,12 @@ const schemaCommandError = (exitCode: number | null, detail: string) =>
     remediationAction: `Inspect the command error. If the runtime is outdated, ${repackRuntime}`,
   });
 
+/** Export options a build passes, as the runtime's schema names them, with what each supports. */
+const BUILD_EXPORT_OPTIONS = {
+  syntheticSeed: "synthetic seeds",
+  taskEnd: "task ends",
+} as const;
+
 /** Check the installed runtime's advertised export contract before capturing the user's work. */
 const checkExportRuntime = async (
   computer: ControlledComputer,
@@ -131,11 +137,14 @@ const checkExportRuntime = async (
           "The build computer's REA returned an invalid export schema.",
         ),
       );
-    if (!("syntheticSeed" in schema.data.options.properties))
+    const unsupported = Object.entries(BUILD_EXPORT_OPTIONS)
+      .filter(([name]) => !(name in schema.data.options.properties))
+      .map(([, what]) => what);
+    if (unsupported.length > 0)
       return err(
         refused(
           START,
-          "The REA runtime in this build computer does not support synthetic seeds required by build export.",
+          `The REA runtime in this build computer does not support ${unsupported.join(" or ")} required by build export.`,
           repackRuntime,
         ),
       );

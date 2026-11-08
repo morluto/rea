@@ -127,6 +127,8 @@ elif command == "export-desktop-application":
             schema = json.load(handle)
         if os.environ.get("FAKE_REA_OLD_EXPORT"):
             schema["options"]["properties"].pop("syntheticSeed", None)
+        for name in os.environ.get("FAKE_REA_EXPORT_WITHOUT", "").split(","):
+            schema["options"]["properties"].pop(name, None)
         print(json.dumps(schema))
         sys.exit(0)
     for path in options(args, "--task"):

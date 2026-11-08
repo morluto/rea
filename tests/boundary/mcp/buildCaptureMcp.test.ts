@@ -315,6 +315,26 @@ it("refuses an older build runtime before capturing the app", async () => {
   );
 });
 
+it("refuses a build runtime whose export takes no task ends before capturing the app", async () => {
+  const { rea, client } = await fakes({
+    env: { FAKE_REA_EXPORT_WITHOUT: "taskEnd" },
+  });
+  const id = await startBuildComputer(client, REQUEST);
+  const { error } = parseMcpToolError(
+    await client.callTool({
+      name: "start_build_capture",
+      arguments: { computer_id: id },
+    }),
+  );
+  expect(error.message).toContain("does not support task ends");
+  expect(error.message).not.toContain("synthetic seeds");
+  expect(JSON.stringify(error)).toContain("pack:build-computer-runtime");
+  const calls = (await rea.notes("calls.jsonl")) as { argv: string[] }[];
+  expect(calls.map(({ argv }) => argv[0])).not.toContain(
+    "capture-desktop-application",
+  );
+});
+
 it("reports an unsuccessful runtime schema command without diagnosing its cause", async () => {
   const { rea, client } = await fakes({
     env: { FAKE_REA_SCHEMA_FAILURE: "1" },
