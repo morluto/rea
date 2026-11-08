@@ -411,7 +411,6 @@ describe.skipIf(process.platform === "win32")(
       async (mode) => {
         const { session, launcher, analysisArguments } = await fixture(mode);
         const launched = await launcher.launch(session);
-        expect(launched.ok).toBe(false);
         if (launched.ok) throw new Error("Expected a helper failure");
         expect(analysisArguments).toEqual([]);
         const failure = bindGhidraSessionFailure(() => ({}))(
@@ -947,7 +946,6 @@ describe.skipIf(process.platform === "win32")(
           {},
           { signal: controller.signal },
         );
-        expect(result.ok).toBe(false);
         if (result.ok) throw new Error("Expected interrupted startup");
         const projected = analysisErrorProjectionSchema.parse(
           JSON.parse(JSON.stringify(projectAnalysisError(result.error))),

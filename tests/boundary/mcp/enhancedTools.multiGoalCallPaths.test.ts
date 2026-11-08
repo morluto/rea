@@ -33,7 +33,12 @@ describe("multi-goal call paths", () => {
           createAnalysisExecution(
             graph[address] ?? [],
             { id: "fixture", name: "fixture", version: "1" },
-            { relationshipCoverage: { status: "complete" } },
+            {
+              relationshipCoverage: {
+                status: "complete",
+                discovery: { callers: { status: "complete" } },
+              },
+            },
           ),
         );
       },

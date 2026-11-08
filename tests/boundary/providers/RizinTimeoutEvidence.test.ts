@@ -51,11 +51,13 @@ it("preserves every field of partial Rizin timeout Evidence", () => {
     unit: "ms",
   });
   expect(evidence.limitations).toEqual([
-    "The current debugger target identity is not established by the Rizin session identifier.",
+    expect.stringMatching(/target identity.*not established/iu),
     rizinCommandTimeoutLimitation(deadline),
-    "The owned debugger session was stopped because output correlation could no longer be guaranteed.",
-    "The command is unrestricted and may access local files, the shell, network, or mutate the target.",
-    "Interrupted output may include an incomplete completion-marker prefix; it is retained because it cannot be distinguished from command diagnostics.",
-    "Launch provenance records the original and resolved startup paths; it does not establish the current target after unrestricted debugger commands.",
+    expect.stringMatching(/session.*stopped.*output correlation/iu),
+    expect.stringMatching(/unrestricted.*shell.*network.*mutate/iu),
+    expect.stringMatching(/incomplete completion.marker prefix.*diagnostics/iu),
+    expect.stringMatching(
+      /launch provenance.*does not establish.*current target/iu,
+    ),
   ]);
 });

@@ -388,8 +388,8 @@ cliTest(
     expect(
       cliKeyIdentified.normalized_result.posture.v1_signers_match_block_signers,
     ).toBeNull();
-    expect(cliKeyIdentified.limitations.join(" ")).toContain(
-      "META-INF/CERT.EC: a SignerInfo names its certificate by subjectKeyIdentifier, which apksig does not resolve",
+    expect(cliKeyIdentified.limitations.join(" ")).toMatch(
+      /META-INF\/CERT\.EC.*subjectKeyIdentifier.*apksig does not resolve/iu,
     );
   },
 );

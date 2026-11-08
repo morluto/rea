@@ -1,5 +1,6 @@
 import { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
 import {
+  isPointerCheck,
   parseDesktopTask,
   type DesktopTask,
   type DesktopTaskCheck,
@@ -147,8 +148,7 @@ const targetProblem = (
     if (named !== undefined)
       return `names ${named}, the capture host's name or user, which the export removes from the seed`;
   }
-  if (check.kind !== "value_equals" && check.kind !== "value_absent")
-    return undefined;
+  if (!isPointerCheck(check)) return undefined;
   return [views.seed, views.end].some(
     (at) => at.get(check.file)?.format === "text",
   )
@@ -250,14 +250,26 @@ export const admitDesktopTask = async (
       "task",
       "Write checks that the captured end state passes; describe-desktop-application-task shows its views.",
     );
-  const failingOnSeed = evaluateTaskChecks(task.checks, views.seed)
-    .filter((outcome) => !outcome.passed)
-    .map((outcome) => outcome.id);
-  if (failingOnSeed.length === 0)
+  const seed = evaluateTaskChecks(task.checks, views.seed).filter(
+    (outcome) => !outcome.passed,
+  );
+  if (seed.length === 0)
     throw refuse(
       "Every check already passes on the seed, so the task would be done before the agent starts.",
       "task",
       "Add a check that the change the user made is needed for.",
+    );
+  // Only a failure on what the seed's view shows proves the task is not done yet.
+  const failingOnSeed = seed
+    .filter((outcome) => outcome.undecided !== true)
+    .map((outcome) => outcome.id);
+  if (failingOnSeed.length === 0)
+    throw refuse(
+      `No check fails on what the seed's views show: each failure there may come from a view that could not be read or is cut short (${seed
+        .map(({ id, description }) => `${JSON.stringify(id)}: ${description}`)
+        .join("; ")}).`,
+      "task",
+      "Add a check that fails on what the seed's views hold, such as a line or row of a file read whole; describe-desktop-application-task shows its views.",
     );
   return {
     summary: {

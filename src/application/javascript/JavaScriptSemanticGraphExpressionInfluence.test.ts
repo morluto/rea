@@ -36,8 +36,12 @@ it.each([
 
 it("explains an unmodeled dynamic call result at the reached argument", () => {
   const result = trace('const url = wrap(base + "/x"); fetch(url);');
-  expect(result.unknowns.map((unknown) => unknown.detail)).toContain(
-    "The dynamic call's return dependency on this argument is unknown.",
+  expect(result.unknowns).toContainEqual(
+    expect.objectContaining({
+      reason: "dynamic-call",
+      family: "data-flow",
+      relation_kinds: ["influences"],
+    }),
   );
 });
 
@@ -48,20 +52,24 @@ it.each([
 ])("keeps nested dynamic call return influence unknown: %s", (body) => {
   const result = trace(body);
   expect(result.status).not.toBe("found");
-  expect(result.unknowns.map((unknown) => unknown.detail)).toContain(
-    "The dynamic call's return dependency on this argument is unknown.",
+  expect(result.unknowns).toContainEqual(
+    expect.objectContaining({
+      reason: "dynamic-call",
+      family: "data-flow",
+      relation_kinds: ["influences"],
+    }),
   );
 });
 
 it("does not report an unused dynamic call result as a missing value", () => {
   const result = trace('consume(base + "/x");');
-  expect(
-    result.unknowns.some(
-      (unknown) =>
-        unknown.detail ===
-        "The dynamic call's return dependency on this argument is unknown.",
-    ),
-  ).toBe(false);
+  expect(result.unknowns).not.toContainEqual(
+    expect.objectContaining({
+      reason: "dynamic-call",
+      family: "data-flow",
+      relation_kinds: ["influences"],
+    }),
+  );
 });
 
 it("bounds operator production before graph admission and reports truncation", () => {

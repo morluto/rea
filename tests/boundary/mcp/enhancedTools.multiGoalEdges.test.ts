@@ -14,7 +14,10 @@ const observed = (value: unknown) =>
       value,
       { id: "fixture", name: "fixture", version: "1" },
       {
-        relationshipCoverage: { status: "complete" },
+        relationshipCoverage: {
+          status: "complete",
+          discovery: { callees: { status: "partial" } },
+        },
       },
     ),
   );
@@ -135,6 +138,10 @@ describe("multi-goal graph boundaries", () => {
         normalized_result: {
           roots: [],
           truncated: false,
+          search_scope: {
+            discovery: direction === "forward" ? "partial" : "unknown",
+            observed_goal_status: "not_requested",
+          },
           traversal: { nodes_visited: 2 },
           goal_results: [
             {
@@ -142,7 +149,7 @@ describe("multi-goal graph boundaries", () => {
               goal_status: "reached",
               traversal_path: ["0x1", "0x2"],
             },
-            { goal: "0x9", goal_status: "not_reached", traversal_path: [] },
+            { goal: "0x9", goal_status: "unknown", traversal_path: [] },
           ],
         },
       });

@@ -1019,7 +1019,6 @@ it("preserves literal replacement characters in valid UTF-8 worker facts", async
       makeScript("fetch('/literal-�');"),
       10_000,
     );
-    expect(result.ok).toBe(true);
     if (!result.ok) throw new Error(result.error.error.message);
     if (result.value.status !== "analyzed")
       throw new Error("Expected analyzed worker facts");

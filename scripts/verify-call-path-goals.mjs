@@ -137,7 +137,9 @@ await withVerifierCleanup(
     for (const goal of trace.goal_results.slice(1)) {
       assert.equal(
         goal.goal_status,
-        trace.truncated ? "unknown" : "not_reached",
+        trace.truncated || trace.search_scope.discovery !== "complete"
+          ? "unknown"
+          : "not_reached",
       );
       assert.deepEqual(goal.traversal_path, []);
     }
@@ -205,7 +207,9 @@ await withVerifierCleanup(
     });
     assert.equal(
       forward.goal_results[1].goal_status,
-      forward.truncated ? "unknown" : "not_reached",
+      forward.truncated || forward.search_scope.discovery !== "complete"
+        ? "unknown"
+        : "not_reached",
     );
     assert.deepEqual(forward.roots, []);
     console.log(JSON.stringify({ acceptance: "passed", provider }));
