@@ -500,6 +500,32 @@ it.each([
   },
 );
 
+it("retains a read stream when Array.prototype is set to a FileHandle", () => {
+  // An array literal is normally not a valid `fd`, but `Object.setPrototypeOf` on
+  // `Array.prototype` makes it `instanceof FileHandle`. Measured on Node 24.22.1 with a
+  // real `FileHandle` as that prototype, `createReadStream(p, {fd: []})` constructs a
+  // stream and reads from the descriptor.
+  const operations = analyzeJavaScriptSemantics(`
+    const fs = require("node:fs");
+    const handle = fs.openSync("input", "r");
+    Object.setPrototypeOf(Array.prototype, handle);
+    const stream = fs.createReadStream("input", { fd: [] });
+    stream.close();
+  `).resourceOperations;
+  expect(
+    operations.filter(
+      ({ kind, method }) => kind === "acquire" && method === "createReadStream",
+    ),
+  ).toHaveLength(1);
+});
+
+it("still rejects an fd array when Array.prototype is untouched", () => {
+  const operations = analyzeJavaScriptSemantics(`
+    const fs = require("node:fs");
+    fs.createReadStream("input", { fd: [] });
+  `).resourceOperations;
+  expect(operations.filter(({ kind }) => kind === "acquire")).toEqual([]);
+});
 it.each([
   [
     "a default import",
