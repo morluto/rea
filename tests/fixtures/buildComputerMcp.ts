@@ -12,6 +12,7 @@ import { createServer } from "../../src/server/createServer.js";
 import { createTestBinarySession } from "./binarySession.js";
 import {
   fakeAgentEnvRunner,
+  isolatedBuildDefaults,
   startFakeComputer,
   type FakeAgentEnvRunner,
   type FakeComputer,
@@ -55,6 +56,7 @@ export const connectBuildServer = async (
         ...environment,
       },
       desktopBuildSettle: settle,
+      desktopBuildDefaults: await isolatedBuildDefaults(),
     },
   );
   const client = new Client({ name: "build-computer-mcp", version: "1" });

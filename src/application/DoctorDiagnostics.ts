@@ -5,6 +5,7 @@ import {
 import { hopperLauncherDiscovery } from "./HopperLauncherDiscovery.js";
 import { macosMajorVersion } from "../domain/macosVersion.js";
 import { LINUX_HOPPER_SETUP_HOSTS, supportsReaHost } from "./LinuxHopper.js";
+import { isDesktopBuildCheck } from "./DoctorProviderIds.js";
 import type {
   DoctorCheck,
   DoctorHost,
@@ -63,16 +64,17 @@ export const doctorHealthy = (
       | undefined;
   },
 ): boolean => {
+  const audited = checks.filter(({ name }) => !isDesktopBuildCheck(name));
   if (providers.providerInspections === undefined)
-    return checks.every(({ ok }) => ok);
-  const providerChecks = checks.filter(
+    return audited.every(({ ok }) => ok);
+  const providerChecks = audited.filter(
     ({ name }) =>
       name.startsWith("hopper") ||
       providers.providerInspections?.some((inspection) =>
         providerCheckName(inspection.id, name),
       ) === true,
   );
-  const coreHealthy = checks
+  const coreHealthy = audited
     .filter((candidate) => !providerChecks.includes(candidate))
     .every(({ ok }) => ok);
   const configuredProvidersHealthy = providerChecks
@@ -95,7 +97,9 @@ export const doctorHealthy = (
 };
 
 /** Runtime support follows the shared rule, which judges Bun by its Node.js compatibility. */
-const nodeCheck = ({ runtime }: DoctorHost): DoctorCheck => {
+export const nodeCheck = ({
+  runtime,
+}: Pick<DoctorHost, "runtime">): DoctorCheck => {
   const failure = {
     remediation: `Install ${SUPPORTED_NODE_VERSION_PROSE}.`,
     classification: "missing_dependency",

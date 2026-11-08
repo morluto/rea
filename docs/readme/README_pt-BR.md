@@ -273,6 +273,12 @@ O REA exporta um ambiente executável com um teste básico para verificar se ele
 [Referência de ambientes](../agent-environments.md) ·
 [Veja a demonstração no X](https://x.com/reatools/status/2112574822584918075?s=20)
 
+### Ambientes de aplicativos de desktop
+
+O REA também pode criar um ambiente de um aplicativo de desktop Linux, que um agente usa por capturas de tela, mouse e teclado. A partir de um pedido de uma linha, como "Crie um ambiente do Gnote em que o agente adiciona azeite à nota da lista de compras", seu agente instala o aplicativo em um computador de build local, escreve a tarefa, exporta o ambiente e verifica a tarefa em um computador novo. A máquina que o cria precisa de Linux em amd64 ou arm64, Docker e da versão do framework agentenv fixada pelo guia.
+
+[Configurar ambientes de aplicativos de desktop](../desktop-build-computer.md)
+
 ## Perguntas frequentes
 
 <details>

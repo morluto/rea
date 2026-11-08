@@ -273,6 +273,12 @@ REA exporta un entorno ejecutable con una prueba básica que comprueba que arran
 [Referencia de entornos](../agent-environments.md) ·
 [Ver la demo en X](https://x.com/reatools/status/2112574822584918075?s=20)
 
+### Entornos de aplicaciones de escritorio
+
+REA también puede crear un entorno de una aplicación de escritorio de Linux, que un agente usa mediante capturas de pantalla, el ratón y el teclado. A partir de una petición de una línea, como «Créame un entorno de Gnote en el que el agente añada aceite de oliva a la nota de la lista de la compra», tu agente instala la aplicación en un ordenador de compilación local, escribe la tarea, exporta el entorno y comprueba la tarea en un ordenador nuevo. El equipo que lo crea necesita Linux en amd64 o arm64, Docker y la versión del framework agentenv que fija la guía.
+
+[Configurar entornos de aplicaciones de escritorio](../desktop-build-computer.md)
+
 ## Preguntas frecuentes
 
 <details>

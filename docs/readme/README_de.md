@@ -273,6 +273,12 @@ REA exportiert eine lauffähige Umgebung mit einem einfachen Test, der prüft, o
 [Umgebungsreferenz](../agent-environments.md) ·
 [Demo auf X ansehen](https://x.com/reatools/status/2112574822584918075?s=20)
 
+### Desktop-App-Umgebungen
+
+REA kann auch eine Umgebung für eine Linux-Desktop-App erstellen, die ein Agent über Screenshots, Maus und Tastatur bedient. Aus einer einzeiligen Anfrage wie „Erstelle mir eine Gnote-Umgebung, in der der Agent der Einkaufslisten-Notiz Olivenöl hinzufügt“ installiert dein Agent die App auf einem lokalen Build-Computer, schreibt die Aufgabe, exportiert die Umgebung und prüft die Aufgabe auf einem frischen Computer. Der Rechner, der sie erstellt, braucht Linux auf amd64 oder arm64, Docker und die Version des agentenv-Frameworks, die der Leitfaden festlegt.
+
+[Desktop-App-Umgebungen einrichten](../desktop-build-computer.md)
+
 ## Häufige Fragen
 
 <details>
