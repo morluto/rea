@@ -26,8 +26,16 @@ type CandidateFields = Omit<
 /** Internal generated or reviewed obligation before manifest closure evaluation. */
 export interface ReconstructionObligationCandidate extends CandidateFields {
   readonly definitionCount: number;
-  readonly disposition: "active" | "blocked" | "out-of-scope";
+  readonly disposition: ReviewedReconstructionObligation["disposition"];
+  /** Analyst reason recorded with a retiring disposition. */
+  readonly dispositionReason: string | null;
 }
+
+/** A retiring disposition removes the obligation from required closure work. */
+export const retiresObligation = (
+  disposition: ReconstructionObligationCandidate["disposition"],
+): boolean =>
+  disposition === "out-of-scope" || disposition === "not-applicable";
 
 export interface ReconstructionObligationCandidateSet {
   readonly candidates: readonly ReconstructionObligationCandidate[];
@@ -269,6 +277,7 @@ const deriveProcessCandidate = (
       : [],
     definitionCount: 1,
     disposition: "active",
+    dispositionReason: null,
   });
   if (capture.truncated)
     limitations.add(
@@ -328,17 +337,52 @@ const generatedCandidate = ({
   ],
   definitionCount: 1,
   disposition: "active",
+  dispositionReason: null,
 });
 
-const reviewedCandidate = (
+/** Separate the review-only fields from the obligation definition. */
+const splitReviewedObligation = (
   obligation: ReviewedReconstructionObligation,
-  records: ReadonlyMap<string, Evidence>,
-): ReconstructionObligationCandidate => {
+): {
+  readonly definition: Omit<
+    ReviewedReconstructionObligation,
+    "disposition" | "disposition_reason" | "review_evidence_ids"
+  >;
+  readonly reviewEvidenceIds: readonly string[];
+  readonly disposition: ReconstructionObligationCandidate["disposition"];
+  readonly dispositionReason: string | null;
+} => {
+  if (
+    obligation.disposition === "out-of-scope" ||
+    obligation.disposition === "not-applicable"
+  ) {
+    const {
+      review_evidence_ids: reviewEvidenceIds,
+      disposition,
+      disposition_reason: dispositionReason,
+      ...definition
+    } = obligation;
+    return { definition, reviewEvidenceIds, disposition, dispositionReason };
+  }
   const {
     review_evidence_ids: reviewEvidenceIds,
     disposition,
     ...definition
   } = obligation;
+  return {
+    definition,
+    reviewEvidenceIds,
+    disposition,
+    dispositionReason: null,
+  };
+};
+
+const reviewedCandidate = (
+  obligation: ReviewedReconstructionObligation,
+  records: ReadonlyMap<string, Evidence>,
+): ReconstructionObligationCandidate => {
+  const { definition, reviewEvidenceIds, disposition, dispositionReason } =
+    splitReviewedObligation(obligation);
   return {
     ...definition,
     origin: "reviewed",
@@ -359,6 +403,7 @@ const reviewedCandidate = (
     observed_cases: [],
     definitionCount: 1,
     disposition,
+    dispositionReason,
   };
 };
 
@@ -416,8 +461,21 @@ const addCandidate = (
     candidates.set(candidate.obligation_id, candidate);
     return;
   }
+  // A retiring reviewed record that names a generated ID reviews that
+  // generated claim: its disposition, reason, and next steps apply to the
+  // generated definition, which is kept rather than redefined.
+  const retiresGenerated =
+    current.origin === "generated" &&
+    candidate.origin === "reviewed" &&
+    retiresObligation(candidate.disposition);
   candidates.set(candidate.obligation_id, {
     ...current,
+    ...(retiresGenerated
+      ? {
+          disposition: candidate.disposition,
+          dispositionReason: candidate.dispositionReason,
+        }
+      : {}),
     authority_references: uniqueSortedBy(
       [...current.authority_references, ...candidate.authority_references],
       (reference) =>
@@ -440,15 +498,18 @@ const addCandidate = (
       ...current.unavailable_authority,
       ...candidate.unavailable_authority,
     ]),
-    required_next_evidence: uniqueSorted([
-      ...current.required_next_evidence,
-      ...candidate.required_next_evidence,
-    ]),
+    required_next_evidence: retiresGenerated
+      ? candidate.required_next_evidence
+      : uniqueSorted([
+          ...current.required_next_evidence,
+          ...candidate.required_next_evidence,
+        ]),
     // A generated ID digests its derivation key, so two generated candidates
     // with one ID are the same claim seen by several records. Only another
     // reviewed definition can introduce a competing definition.
     definitionCount:
-      current.origin === "generated" && candidate.origin === "generated"
+      (current.origin === "generated" && candidate.origin === "generated") ||
+      retiresGenerated
         ? current.definitionCount
         : current.definitionCount + candidate.definitionCount,
   });

@@ -17,7 +17,10 @@ import {
   reconstructionObligationReports,
   summarizeReconstructionObligations,
 } from "../domain/reconstructionObligationLedgerIntegrity.js";
-import type { ReconstructionObligationCandidate } from "./ReconstructionObligationCandidates.js";
+import {
+  retiresObligation,
+  type ReconstructionObligationCandidate,
+} from "./ReconstructionObligationCandidates.js";
 import {
   parseReconstructionProofEvidence,
   qualifyReconstructionProof,
@@ -36,10 +39,22 @@ import {
   originalCasesFor,
 } from "./ReconstructionObligationOriginalCases.js";
 import { obligationLedgerEvidenceLinks } from "./ReconstructionObligationLedgerProjection.js";
+import { uniqueSorted } from "../domain/canonicalOrdering.js";
 import { compareUnicodeCodePoints } from "../domain/unicodeCodePointOrder.js";
 
 type Diagnostic = ReconstructionObligation["diagnostics"][number];
 type Binding = NonNullable<ReconstructionObligation["binding"]>;
+
+/**
+ * Generated obligations in one artifact that have neither runtime authority
+ * nor a manifest binding. Above this count the artifact is reported as
+ * over-generated: each such claim demands several fixtures and a verifier
+ * before any evidence shows the boundary is reachable, so blind fixture work
+ * would dominate the reconstruction and decoy boundaries in dead code could
+ * absorb it. Hand-written preload or IPC surfaces rarely exceed this count;
+ * larger applications first need runtime authority or reviewed dispositions.
+ */
+export const OBLIGATION_OVERGENERATION_THRESHOLD = 20;
 
 interface EvaluationContext {
   readonly candidates: ReadonlyMap<string, ReconstructionObligationCandidate>;
@@ -77,7 +92,7 @@ export const evaluateReconstructionObligationLedger = ({
   const dependencyGraph = reconstructionObligationDependencyGraph(obligations);
   const evidenceLinks = obligationLedgerEvidenceLinks(obligations, manifest);
   const limitations = ledgerLimitations(
-    generationLimitations,
+    [...generationLimitations, ...overgenerationLimitations(obligations)],
     candidates.length,
     orphanManifestIds,
     evidenceLinks.filter((id) => !records.has(id)).length,
@@ -182,6 +197,40 @@ const ledgerLimitations = (
     ]),
   ].sort();
 
+/**
+ * One artifact-level limitation per over-generated artifact. Every candidate
+ * stays in the ledger; the limitation tells agents to stop fixture work on
+ * static-only, unbound claims until authority or review narrows them.
+ */
+const overgenerationLimitations = (
+  obligations: readonly ReconstructionObligation[],
+): string[] => {
+  const unboundByArtifact = new Map<string, ReconstructionObligation[]>();
+  for (const obligation of obligations) {
+    const sha256 = obligation.target.artifact_sha256;
+    if (
+      sha256 === null ||
+      obligation.origin !== "generated" ||
+      obligation.binding !== null ||
+      obligation.source_state === "observed"
+    )
+      continue;
+    unboundByArtifact.set(sha256, [
+      ...(unboundByArtifact.get(sha256) ?? []),
+      obligation,
+    ]);
+  }
+  return [...unboundByArtifact]
+    .filter(([, group]) => group.length > OBLIGATION_OVERGENERATION_THRESHOLD)
+    .map(([sha256, group]) => {
+      const retired = group.filter(
+        ({ status }) => status === "out-of-scope",
+      ).length;
+      const unreviewed = group.length - retired;
+      return `obligation-overgeneration: artifact ${sha256} has ${String(group.length)} generated obligations with no runtime authority and no manifest binding (families: ${uniqueSorted(group.map(({ family }) => family)).join(", ")}), above the threshold of ${String(OBLIGATION_OVERGENERATION_THRESHOLD)}; ${String(unreviewed)} still unreviewed, ${String(retired)} retired by reviewed disposition. Stop: do not write fixtures or verifiers for these candidates; obtain runtime authority for the artifact or record a reviewed disposition for each still-unreviewed decoy first.`;
+    });
+};
+
 const evaluateObligation = (
   candidate: ReconstructionObligationCandidate,
   context: EvaluationContext,
@@ -190,13 +239,16 @@ const evaluateObligation = (
   const binding = bindings.length === 1 ? (bindings[0] ?? null) : null;
   const originalCases = originalCasesFor(candidate, binding);
   const diagnostics: Diagnostic[] = [];
+  // A retired claim keeps its facts and contradictions visible but demands no
+  // owner, fixture, original case, or authority; that work is not required.
+  const retired = retiresObligation(candidate.disposition);
   if (candidate.definitionCount > 1)
     addDiagnostic(
       diagnostics,
       "duplicate-definition",
       "Multiple candidate definitions share this obligation ID.",
     );
-  if (bindings.length === 0)
+  if (bindings.length === 0 && !retired)
     addDiagnostic(
       diagnostics,
       "missing-owner",
@@ -208,12 +260,14 @@ const evaluateObligation = (
       "ambiguous-owner",
       "Multiple reconstruction manifest bindings claim this obligation.",
     );
-  if (binding !== null)
+  if (binding !== null && !retired)
     evaluateBinding(candidate, binding, context, diagnostics);
-  diagnostics.push(
-    ...originalCaseDiagnostics(candidate, originalCases, context.evidence),
-  );
-  evaluateAuthority(candidate, originalCases, context, diagnostics);
+  if (!retired) {
+    diagnostics.push(
+      ...originalCaseDiagnostics(candidate, originalCases, context.evidence),
+    );
+    evaluateAuthority(candidate, originalCases, context, diagnostics);
+  }
   evaluateDisposition(candidate, diagnostics);
   diagnostics.push(
     ...contradictionDiagnostics(
@@ -467,9 +521,20 @@ const evaluateDisposition = (
     addDiagnostic(
       diagnostics,
       "out-of-scope",
-      "Reviewed disposition marks this obligation out of scope; it remains visible.",
+      `Reviewed disposition marks this obligation out of scope; it remains visible.${retiredReason(candidate)}`,
+    );
+  if (candidate.disposition === "not-applicable")
+    addDiagnostic(
+      diagnostics,
+      "not-applicable",
+      `Reviewed disposition marks this obligation not applicable; it remains visible.${retiredReason(candidate)}`,
     );
 };
+
+const retiredReason = (candidate: ReconstructionObligationCandidate): string =>
+  candidate.dispositionReason === null
+    ? ""
+    : ` Reason: ${candidate.dispositionReason}`;
 
 const applyDependencyDiagnostics = (
   obligations: readonly ReconstructionObligation[],
@@ -507,7 +572,11 @@ const obligationStatus = (
   binding: Binding | null,
   diagnostics: readonly Diagnostic[],
 ): ReconstructionObligation["status"] => {
-  if (hasDiagnostic(diagnostics, "out-of-scope")) return "out-of-scope";
+  if (
+    hasDiagnostic(diagnostics, "out-of-scope") ||
+    hasDiagnostic(diagnostics, "not-applicable")
+  )
+    return "out-of-scope";
   if (hasDiagnostic(diagnostics, "blocked")) return "blocked";
   if (hasDiagnostic(diagnostics, "contradiction")) return "contradicted";
   if (
