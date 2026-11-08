@@ -1,5 +1,6 @@
 import { registerPlaywrightTraceTool } from "./registerApplicationTools/playwrightTrace.js";
 import { registerApiContractTool } from "./registerApplicationTools/apiContract.js";
+import { registerNugetPackageTool } from "./registerApplicationTools/nugetPackage.js";
 import type { EvidenceMcpServer } from "./EvidenceMcpServer.js";
 
 import { registerTraceFeatureTool } from "./registerApplicationTools/traceFeature.js";
@@ -28,6 +29,7 @@ export const registerApplicationTools = (
   registerCompareApplicationVersionsTool(server, options);
   registerCompareEndpointsTool(server, options);
   registerApiContractTool(server, options);
+  registerNugetPackageTool(server, options);
   registerPlaywrightTraceTool(server, options);
   registerCompareSourceToBundleTool(server, options);
   registerCompareJavaScriptExportShapesTool(server, options);

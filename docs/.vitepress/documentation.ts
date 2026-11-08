@@ -238,6 +238,11 @@ export const documentationSections = [
         source: "guides/data/pcap-analysis.md",
         route: "/pcap-analysis",
       },
+      {
+        text: "NuGet package inspection",
+        source: "guides/data/nuget-packages.md",
+        route: "/nuget-packages",
+      },
     ],
   },
   {
