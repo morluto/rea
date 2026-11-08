@@ -933,10 +933,10 @@ the runner's `.agentenv/config.toml`, else `[model] default`, else
 verifiers and does not reach this one. Without an endpoint the verifier
 raises, so the run fails rather than scoring the agent.
 
-REA's witness runs that same `verify.py` as a script, `verify.py judge
-<check> <screenshot>`, with the agentenv runner's Python, on a fresh
-screenshot at each stage, so REA calls no model itself. The witness then
-needs the model endpoint in the environment REA runs in.
+REA's witness runs that same `verify.py` with the agentenv runner's Python,
+as `verify.py judge CHECK SCREENSHOT` on a fresh screenshot at each stage, so
+REA calls no model itself. The witness then needs the model endpoint in the
+environment REA runs in.
 
 ## Validation and export
 
