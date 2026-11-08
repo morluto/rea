@@ -199,7 +199,11 @@ export class ReleaseExposureService {
       reason: OWNER_NOT_RUN,
       archivePaths: [],
     });
-    const prepared = limitNativeSample(scan, desktop.archivePaths);
+    const prepared = limitNativeSample(
+      scan,
+      desktop.archivePaths,
+      desktop.family === "unknown",
+    );
     const digests = new Map(
       scan.native_images.flatMap((image) =>
         image.sha256 === undefined ? [] : [[image.path, image.sha256] as const],
@@ -773,6 +777,7 @@ const nativeBasename = (path: string): string =>
 const limitNativeSample = (
   scan: ReleaseExposureScan,
   basisPaths: readonly ArchiveBasis[],
+  familyUndecided: boolean,
 ): {
   readonly scan: ReleaseExposureScan;
   readonly electronExecutableIncluded: boolean;
@@ -851,13 +856,19 @@ const limitNativeSample = (
       ? named
       : images.filter((image) => ranked.has(image.path));
   };
+  const outside = kept.filter(
+    (image) => !layouts.some((folder) => inLayout(folder, image.path)),
+  );
+  const outsideHosts = hostsAmong(outside);
+  // A build without an ASAR names no host, so while the family is undecided
+  // any sampled image may carry the fuses and none settles another alone.
+  const unnamedHosts =
+    outsideHosts.length === 0 && layouts.length === 0 && familyUndecided
+      ? outside
+      : outsideHosts;
   // A named host settles only its own layout, so each layout chooses its hosts.
   const hosts = [
-    ...hostsAmong(
-      kept.filter(
-        (image) => !layouts.some((folder) => inLayout(folder, image.path)),
-      ),
-    ),
+    ...unnamedHosts,
     ...layouts.flatMap((folder) => {
       const found = hostsAmong(
         kept.filter((image) => inLayout(folder, image.path)),

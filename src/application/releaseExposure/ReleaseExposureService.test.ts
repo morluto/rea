@@ -1056,6 +1056,26 @@ describe("ReleaseExposureService Electron discovery identity", () => {
   });
 });
 
+describe("ReleaseExposureService hosts without an ASAR layout", () => {
+  it("keeps safe fuses unknown beside a sentinel-less image", async () => {
+    const { service, electronFuses } = owners(
+      directoryScan(["/work/app/one", "/work/app/two"]),
+    );
+    electronFuses.inspect.mockImplementation(async (input) =>
+      ok(
+        evidence(
+          fuseReport(
+            (input as { path?: string }).path === "/work/app/one"
+              ? []
+              : [slice(0)],
+          ),
+        ),
+      ),
+    );
+    expect((await runAsNode(service))?.status).toBe("unknown");
+  });
+});
+
 describe("ReleaseExposureService Electron host identity", () => {
   it("keeps safe fuses decided when inventory stopped after the named executable", async () => {
     const { service, desktop, electronFuses } = owners({
