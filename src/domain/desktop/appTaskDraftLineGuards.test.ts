@@ -191,8 +191,12 @@ describe("draftTaskFiles for added lines", () => {
     );
   });
 
-  it("keeps ordinary Markdown that begins with an autolink", () => {
-    const opening = "<https://example.test>\n";
+  it.each([
+    "https://example.test",
+    "ada@example.test",
+    "mailto:ada@example.test",
+  ])("keeps ordinary Markdown that begins with an autolink %s", (link) => {
+    const opening = `<${link}>\n`;
     const line = 'msgstr "Set \\\"created=2025550123 and save"';
     const file = drafted(opening, `${opening}${line}`);
     expect(file.suggested).toEqual([
