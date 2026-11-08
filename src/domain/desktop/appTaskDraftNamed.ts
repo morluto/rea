@@ -270,6 +270,7 @@ const elementChecks = (
     named: (view: JsonValue | null, at: string) =>
       named(collected, view, at) && !tree.leavesOut(view, at),
     chars: collected.context.limit.chars,
+    referenceRoots: () => referenceRoots(tree, ends.baseline),
     noisy: (at: string) => collected.context.noise(at) !== undefined,
     long: collected.fieldLong,
   };
@@ -288,7 +289,13 @@ const elementChecks = (
     ...attributeChecks(added, pointer, value),
     ...(records.length > 0 ? records : fieldChecks(added, pointer, value)),
     ...nestedRecordChecks(
-      { file, final: ends.final, named: (at) => added.named(ends.final, at) },
+      {
+        file,
+        final: ends.final,
+        named: (at) => added.named(ends.final, at),
+        chars: added.chars,
+        long: added.long,
+      },
       pointer,
       value,
     ),
@@ -562,21 +569,20 @@ export const namedDraft = (
   // The count guard sits outside the cap, so line and sibling guards never squeeze it out.
   const guards = edited
     ? [
-        ...[
-          ...texts.guards,
-          ...draftGuards(
-            {
-              file,
-              ends,
-              named,
-              noisy: (pointer) => noise(pointer) !== undefined,
-              chars: options.limit.chars,
-            },
-            suggested,
-          ),
-        ].slice(0, MAX_GUARDS),
-        ...counts.guards,
+        ...texts.guards,
+        ...draftGuards(
+          {
+            file,
+            ends,
+            named,
+            noisy: (pointer) => noise(pointer) !== undefined,
+            chars: options.limit.chars,
+          },
+          suggested,
+        ),
       ]
+        .slice(0, MAX_GUARDS)
+        .concat(counts.guards)
     : [];
   return {
     suggested,

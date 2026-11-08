@@ -15,6 +15,7 @@ import {
 } from "./attributeRank.js";
 import { escapeToken, isXmlElement, resolvePointer } from "./viewPointer.js";
 import { spellCondition } from "./viewSelector.js";
+import { checkFits, type AddedContext } from "./appTaskDraftAdded.js";
 
 type Element = Record<string, JsonValue> & {
   name: string;
@@ -108,9 +109,12 @@ const recordKey = (
   record: Element,
   records: readonly Element[],
   cousins: readonly Element[],
+  chars: number,
 ) => {
   const values = Object.entries(record.attributes).flatMap(([key, value]) =>
-    selectable(key, value) ? [{ key, value: String(value) }] : [],
+    selectable(key, value) && typeof value === "string" && value.length <= chars
+      ? [{ key, value }]
+      : [],
   );
   const repeated = (key: string, value: string) =>
     cousins.some((cousin) => cousin.attributes[key] === value);
@@ -172,11 +176,11 @@ const checkedKeys = (
       continue;
     keys.push(key);
   }
-  return keys.slice(0, MAX_PER_RECORD);
+  return keys;
 };
 
 /** What checks of nested records read: the file, the end, and whether a pointer names its value without a step by position. */
-export interface NestedContext {
+export interface NestedContext extends Pick<AddedContext, "chars" | "long"> {
   readonly file: string;
   readonly final: JsonValue | null;
   readonly named: (pointer: string) => boolean;
@@ -207,18 +211,25 @@ export const nestedRecordChecks = (
     .flatMap(({ steps, records }) => {
       const cousins = cousinsOf(likes, steps, records[0]?.name ?? "");
       return records.flatMap((record) => {
-        const key = recordKey(record, records, cousins);
+        const key = recordKey(record, records, cousins, context.chars);
         if (key === undefined) return [];
         const at = [pointer, ...steps, "children", key.segment].join("/");
-        return checkedKeys(record, [...records, ...cousins], key.key).flatMap(
-          (name) => {
+        return checkedKeys(record, [...records, ...cousins], key.key)
+          .filter((name) => {
+            const value = record.attributes[name];
+            return (
+              typeof value === "string" &&
+              checkFits(context, `${at}/attributes/${escapeToken(name)}`, value)
+            );
+          })
+          .slice(0, MAX_PER_RECORD)
+          .flatMap((name) => {
             const field = `${at}/attributes/${escapeToken(name)}`;
             const value = record.attributes[name];
             return context.named(field) && typeof value === "string"
               ? [valueEqualsCheck(context.file, field, value)]
               : [];
-          },
-        );
+          });
       });
     })
     .slice(0, MAX_NESTED_CHECKS);

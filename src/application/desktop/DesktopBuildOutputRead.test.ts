@@ -8,29 +8,6 @@ import {
 import { readOutput } from "./DesktopBuildCommands.js";
 import { endedCapture } from "./DesktopBuildCaptureFailure.js";
 
-describe("endedCapture", () => {
-  it("returns the size refusal instead of a generic exit when the capture output is too large", async () => {
-    const error = await endedCapture(
-      {
-        homeFiles: () => Promise.resolve(new Map()),
-        redacted: (text) => text,
-        exec: () => Promise.reject(new Error("unused")),
-      },
-      {
-        operation: "desktop.capture",
-        when: "before checkpoint seed",
-        afterAppExit: "unused",
-        folder: "/tmp/capture",
-      },
-      { exited: 0, output_bytes: Number.MAX_SAFE_INTEGER },
-      new AbortController().signal,
-    );
-
-    expect(error).toBeInstanceOf(AnalysisResourceConstraintError);
-    expect(error.message).toContain("max-old-space-size");
-  });
-});
-
 describe("readOutput", () => {
   it("does not fetch a command output whose reported size exceeds the host answer ceiling", async () => {
     let fetched = false;

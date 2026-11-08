@@ -8,7 +8,6 @@ import {
 } from "./appTaskDraftNoise.js";
 import { isPlacedItem, placedItemCheck } from "./appTaskDraftItems.js";
 import { valueEqualsCheck } from "./appTaskDraftScalars.js";
-import { addedTextChecks } from "./appTaskDraftTextAdded.js";
 import { rankAttributes } from "./attributeRank.js";
 import type { DesktopStateDifference } from "./stateChanges.js";
 import { elementText, isXmlElement, resolvePointer } from "./viewPointer.js";
@@ -36,7 +35,7 @@ export interface TextPlacement {
 /** Text checks for the elements whose text changed, and the pointers those checks make redundant: text and whole runs holding text in them, or an element added whole checked itself, not an attribute or name of an element both ends hold, nor an element holding no text, as an image or a break. */
 export interface WholeTextSuggestions {
   readonly suggestions: readonly DesktopTaskCheckInput[];
-  /** Checks that text an addition kept is still there, for an author to add by choice. */
+  /** Kept positioned items associated with the selected text checks. */
   readonly guards: readonly DesktopTaskCheckInput[];
   /** Elements whose text changed that no check took, because every place for one held more text than the limit. */
   readonly long: readonly string[];
@@ -508,11 +507,12 @@ const textHolder = (
   return { holder: listed ? undefined : kept, listed };
 };
 
-/** A text check, the element it reads as the diff names it, and guards of the text it kept. */
+/** A text check and the element it reads as the diff names it. */
 interface Placed {
   readonly element: string;
   readonly check: DesktopTaskCheckInput;
-  readonly guards: readonly DesktopTaskCheckInput[];
+  /** Positioned items can supply checks of their kept siblings. */
+  readonly guards?: readonly DesktopTaskCheckInput[];
 }
 
 /** What text checks read: the file, its two ends, and where checks go. */
@@ -529,36 +529,27 @@ const isLaidOutLine = (value: string) =>
 /**
  * The check of an element's whole text: a decimal held as the element's one
  * text node, as a spreadsheet keeps a cell's number, by its value within a
- * tolerance, so another spelling of the number still passes; text that grew
- * by whole lines by those lines, with guards of what it kept; any other text
- * whole.
+ * tolerance, so another spelling of the number still passes; other text
+ * is compared whole.
  */
 export const wholeTextCheck = (
   file: string,
   pointer: string,
-  now: { readonly value: string; readonly children: readonly JsonValue[] },
+  value: string,
   before: string | undefined,
-): Pick<Placed, "check" | "guards"> => {
-  const { value } = now;
+): DesktopTaskCheckInput => {
   // A line between breaks is still that line. Trim it before the decimal test so `\\n437.8\\n` stays a number within tolerance.
   const comparable = isLaidOutLine(value) ? value.trim() : value;
   const earlier =
     before !== undefined && isLaidOutLine(before) ? before.trim() : before;
   // The element's joined text, not its first text node. A later save may split `437.8` into `437.` and a run holding `8`. When that text is a decimal, compare the number within the usual tolerance, so `437.80` and a long float still match.
   const numeric = valueEqualsCheck(file, pointer, comparable, earlier);
-  if ("tolerance" in numeric) return { check: numeric, guards: [] };
+  if ("tolerance" in numeric) return numeric;
   // One line the app lays out between line breaks, as KmPlot's formula before its next element, compares with its whitespace collapsed.
   const laidOut = isLaidOutLine(value)
     ? { value: collapseWhitespace(value), normalize_whitespace: true }
     : { value };
-  return (
-    (before === undefined
-      ? undefined
-      : addedTextChecks(file, pointer, before, value)) ?? {
-      check: { kind: "text_equals", file, pointer, ...laidOut },
-      guards: [],
-    }
-  );
+  return { kind: "text_equals", file, pointer, ...laidOut };
 };
 
 /** The element a candidate names in the final view, whole, at the pointer `name` gives it. */
@@ -607,12 +598,7 @@ const textCheck = (
     !holdsSplitDate(context.ends.final, pointer)
     ? {
         element: candidate.element,
-        ...wholeTextCheck(
-          context.file,
-          pointer,
-          { value, children: now.children },
-          old,
-        ),
+        check: wholeTextCheck(context.file, pointer, value, old),
       }
     : undefined;
 };
@@ -762,7 +748,7 @@ export const wholeTextSuggestions = (
     .slice(0, place.limit.suggestions);
   return {
     suggestions: suggested.map(({ check }) => check),
-    guards: suggested.flatMap(({ guards }) => guards),
+    guards: suggested.flatMap(({ guards }) => guards ?? []),
     long: [...long],
     covers: (pointer) => {
       if (

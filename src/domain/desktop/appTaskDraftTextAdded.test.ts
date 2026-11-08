@@ -16,72 +16,41 @@ const draftOf = (before: string, after: string) =>
 const LIST = "Shopping List\n\neggs\nbread";
 
 describe("draftTaskFiles for lines added to free text", () => {
-  it("checks the added line by text_contains, which a correct edit spaced or ordered otherwise passes, and guards each kept line, which one placed mid-list passes too", () => {
-    const file = draftOf(LIST, `${LIST}\nolive oil`);
+  it.each(["no olive oil", "olive oil soap"])(
+    "does not accept %s in place of the added line",
+    (wrong) => {
+      const file = draftOf(LIST, `${LIST}\nolive oil`);
+      const checks = [...file.suggested, ...file.guards];
+      expect(
+        passing(FILE, xml(note(`${LIST}\n${wrong}`)), checks).every(Boolean),
+      ).toBe(false);
+      expect(
+        passing(FILE, xml(note(`${LIST}\nolive oil`)), checks).every(Boolean),
+      ).toBe(true);
+      // Whole free text has no item boundary the current checks can select.
+      expect(
+        passing(
+          FILE,
+          xml(note("Shopping List\n\nolive oil\neggs\nbread")),
+          checks,
+        ).every(Boolean),
+      ).toBe(false);
+    },
+  );
 
-    expect(file.suggested).toEqual([
-      {
-        kind: "text_contains",
-        file: FILE,
-        pointer: CONTENT,
-        value: "olive oil",
-      },
-    ]);
-    expect(file.guards).toEqual(
-      ["Shopping List", "eggs", "bread"].map((value) => ({
-        kind: "text_contains",
-        file: FILE,
-        pointer: CONTENT,
-        value,
-      })),
-    );
-    const checks = [...file.suggested, ...file.guards];
-    expect(passing(FILE, xml(note(LIST)), checks)).toEqual([
-      false,
-      true,
-      true,
-      true,
-    ]);
-    for (const solved of [
-      `${LIST}\nolive oil\n`,
-      "Shopping List\n\neggs\nolive oil\nbread",
-      "Shopping List\n\nolive oil\neggs\nbread",
-    ])
-      expect(passing(FILE, xml(note(solved)), checks).every(Boolean)).toBe(
-        true,
-      );
-    // A line lost fails its guard.
-    expect(
-      passing(FILE, xml(note("Shopping List\n\neggs\nolive oil")), checks),
-    ).toEqual([true, true, true, false]);
-  });
-
-  it("guards at most four kept lines, those nearest the insertion, in the text's order", () => {
-    const long = [
-      "Shopping List",
-      "",
-      "eggs",
-      "bread",
-      "rice",
-      "lemons",
-      "milk",
-      "tea",
-    ].join("\n");
-    const file = draftOf(long, long.replace("lemons", "lemons\nolive oil"));
-
-    expect(file.guards.map((guard) => "value" in guard && guard.value)).toEqual(
-      ["rice", "lemons", "milk", "tea"],
-    );
-  });
-
-  it("does not guard a kept line that is only a timestamp", () => {
+  it("checks the whole note when a kept line contains a timestamp", () => {
     const before = "Notes\n2026-11-07T10:12:00Z\nKeep milk";
-    const file = draftOf(before, `${before}\nBuy eggs`);
+    const after = `${before}\nBuy eggs`;
+    const file = draftOf(before, after);
 
-    expect(file.guards.map((guard) => "value" in guard && guard.value)).toEqual(
-      ["Notes", "Keep milk"],
-    );
-    expect(file.suggested).toMatchObject([{ value: "Buy eggs" }]);
+    expect(file.guards).toEqual([]);
+    expect(file.suggested).toMatchObject([
+      { kind: "text_equals", value: after },
+    ]);
+    expect(passing(FILE, xml(note(after)), file.suggested)).toEqual([true]);
+    expect(
+      passing(FILE, xml(note(`${before}\nDo not buy eggs`)), file.suggested),
+    ).toEqual([false]);
   });
 
   it("keeps text_equals where a line was replaced rather than added", () => {
@@ -105,32 +74,17 @@ describe("draftTaskFiles for a line added to a note among others, as CherryTree 
   const CHORES =
     "Water the tomato plants\nSweep the back porch\nReplace the hallway bulb\nReturn the library books";
 
-  it("offers the count guard beside the four kept-line guards, outside their cap", () => {
+  it("keeps the sibling count guard beside a whole-text check", () => {
     const file = xmlDraft(
       notebook(CHORES),
       notebook(`${CHORES}\nClean the gutters`),
     );
-
-    const chores = "/root/children/[name=node][@name=Weekend chores]";
-    expect(file.guards).toEqual([
-      ...[
-        "Water the tomato plants",
-        "Sweep the back porch",
-        "Replace the hallway bulb",
-        "Return the library books",
-      ].map((value) => ({
-        kind: "text_contains",
-        file: "Documents/doc.xml",
-        pointer: chores,
-        value,
-      })),
-      {
-        kind: "member_count",
-        file: "Documents/doc.xml",
-        pointer: "/root/children",
-        matching: "[name=node]",
-        equals: 3,
-      },
-    ]);
+    expect(file.guards).toContainEqual({
+      kind: "member_count",
+      file: "Documents/doc.xml",
+      pointer: "/root/children",
+      matching: "[name=node]",
+      equals: 3,
+    });
   });
 });

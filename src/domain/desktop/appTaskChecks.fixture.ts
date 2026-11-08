@@ -1361,6 +1361,24 @@ const MEMBER_COUNT_CASES: readonly (readonly [
   [
     {
       kind: "member_count",
+      file: "Documents/cut.xml",
+      pointer: "/root/missing",
+      equals: 0,
+    },
+    false,
+  ],
+  [
+    {
+      kind: "member_count",
+      file: "Documents/listing.zip",
+      pointer: "/entries/1/view/root/missing",
+      equals: 0,
+    },
+    false,
+  ],
+  [
+    {
+      kind: "member_count",
       file: contacts,
       pointer: "/root/children",
       matching: "[name=contact]",
