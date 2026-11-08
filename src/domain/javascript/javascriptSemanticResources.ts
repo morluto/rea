@@ -506,6 +506,18 @@ const resourceCandidateId = (candidate: ResourceCandidate): string =>
  * `void anything` is `undefined`, which Node reads as an absent option rather than
  * a bad port, so it stays undecided here.
  */
+/**
+ * Whether a `port` member's exactly readable value is one Node rejects.
+ *
+ * `null` and booleans are not ports. `NaN`, `Infinity` and a numeric literal that
+ * overflows to a non-finite number are all out of range, but `void anything` is
+ * `undefined`: Node then treats the port as absent, so it is not a bad port and
+ * stays undecided.
+ *
+ * This is the single reader for both the positional argument and the options
+ * member. `net`/`tls` judge the same effective port either way, so a rule learned
+ * here applies to both spellings; two readers could drift apart.
+ */
 const rejectsPortValue = (
   value: t.Node,
   context: DataEffectTraversalContext,
@@ -548,7 +560,18 @@ const rejectsPortValue = (
     const signed = value.operator === "-" ? -operand.value : operand.value;
     return !isUsablePortNumber(signed);
   }
-  return false;
+  // A value spread or hoisted into a binding still reads exactly, so a const
+  // initializer is decided on the same terms as an inline literal.
+  const literal = readExactJavaScriptLiteral(value);
+  if (!literal.found) return false;
+  if (typeof literal.value === "number")
+    return !isUsablePortNumber(literal.value);
+  if (typeof literal.value !== "string") return false;
+  // A string port is coerced, so `""` and whitespace throw while `" 80 "`,
+  // `"0x50"`, `"1e2"` and `"080"` all read as 80.
+  return (
+    literal.value.trim().length === 0 || !isUsablePortString(literal.value)
+  );
 };
 
 /** Whether a string port reads as one Node accepts; Node coerces with `Number`. */
@@ -605,7 +628,7 @@ const rejectsSocketPort = (
   // positional value is the one validated. `tls.connect(-1, {})` still throws.
   const merged = mergedOptionsProperty(objects, "port");
   if (merged.status === "explicit")
-    return rejectsOptionsPortValue(
+    return rejectsPortValue(
       unwrapJavaScriptExpression(merged.value as t.Node).node,
       context,
     );
@@ -868,7 +891,7 @@ const rejectsOptionsPortLiteral = (
   // One shared rescue decision, so this branch and the positional branch agree.
   if (optionsRescuePort(objects, specifier, context.state) !== "validates")
     return false;
-  return rejectsOptionsPortValue(
+  return rejectsPortValue(
     unwrapJavaScriptExpression(read.value as t.Node).node,
     context,
   );
@@ -918,59 +941,3 @@ const optionsRescuePort = (
 /** Whether a number is a TCP port Node accepts. */
 const isUsablePortNumber = (value: number): boolean =>
   Number.isInteger(value) && value >= 0 && value <= 65535;
-
-/**
- * Whether a `port` member's exactly readable value is one Node rejects.
- *
- * `null` and booleans are not ports. `NaN`, `Infinity` and a numeric literal that
- * overflows to a non-finite number are all out of range, but `void anything` is
- * `undefined`: Node then treats the port as absent, so it is not a bad port and
- * stays undecided.
- */
-const rejectsOptionsPortValue = (
-  value: t.Node,
-  context: DataEffectTraversalContext,
-): boolean => {
-  if (t.isNullLiteral(value) || t.isBooleanLiteral(value)) return true;
-  if (t.isBigIntLiteral(value)) return true;
-  // `null`-like syntax reads as an absent port, which throws `ERR_MISSING_ARGS`.
-  if (isNullishJavaScriptSyntax(value)) return false;
-  // `NaN` and `Infinity` are unshadowed globals, and neither is a port.
-  if (
-    t.isIdentifier(value) &&
-    (value.name === "NaN" || value.name === "Infinity") &&
-    isUnmodifiedGlobalReference(value, context.state, value.name)
-  )
-    return true;
-  if (t.isNumericLiteral(value)) return !isUsablePortNumber(value.value);
-  // A sign over one is the same non-finite number, but `void` is `undefined`: it
-  // is not a sign, so only `+` and `-` are decided here.
-  if (
-    t.isUnaryExpression(value) &&
-    (value.operator === "+" || value.operator === "-")
-  ) {
-    const operand = unwrapJavaScriptExpression(value.argument).node;
-    if (
-      t.isIdentifier(operand) &&
-      (operand.name === "NaN" || operand.name === "Infinity")
-    )
-      return isUnmodifiedGlobalReference(operand, context.state, operand.name);
-    if (!t.isNumericLiteral(operand)) return false;
-    // Compute the signed value and apply the whole check. The sign alone does not
-    // decide: `-0` is port zero, which connects, while `+65536` is out of range and
-    // throws. Both are signed spellings Node judges by value.
-    const signed = value.operator === "-" ? -operand.value : operand.value;
-    return !isUsablePortNumber(signed);
-  }
-  const literal = readExactJavaScriptLiteral(value);
-  if (!literal.found) return false;
-  const port = literal.value;
-  if (typeof port === "number")
-    return !Number.isInteger(port) || port < 0 || port > 65535;
-  if (typeof port !== "string") return false;
-  // A string port is coerced, so `""` and whitespace throw while `" 80 "`,
-  // `"0x50"`, `"1e2"` and `"080"` all read as 80.
-  if (port.trim().length === 0) return true;
-  const number = Number(port);
-  return !Number.isInteger(number) || number < 0 || number > 65535;
-};
