@@ -1080,7 +1080,8 @@ const hasCommonJsModuleSource = (
   // A strict check that exhausts the budget examines the queued sources by
   // their own selected keys, breadth first, so a growing alias cannot starve a
   // sibling. One may still be a retained module identity, possibly behind a
-  // binding or call, so a second budget bounds following those.
+  // binding, call, container or getter, so a second budget bounds every state
+  // created after exhaustion. Unnormalized paths can grow without a binding.
   let exhausted = false;
   let drained = 0;
   for (
@@ -1112,8 +1113,9 @@ const hasCommonJsModuleSource = (
     if (identity === undefined) {
       // Consumption contexts must not provide an unbounded second path to
       // expansion beyond the shared selector budget.
-      if (
-        !exhausted &&
+      if (exhausted) {
+        if (++drained > SEMANTIC_ALIAS_SELECTION_LIMIT) break;
+      } else if (
         (byMode.size > 1 || context.identities.size > 0) &&
         ++additionalStates > SEMANTIC_ALIAS_SELECTION_LIMIT
       ) {
@@ -1200,7 +1202,6 @@ const hasCommonJsModuleSource = (
       const mode = awaitDepths.includes(path.length)
         ? "awaited-call"
         : "direct-call";
-      if (exhausted && ++drained > SEMANTIC_ALIAS_SELECTION_LIMIT) continue;
       const returnedResult = returnedLoaderReferences(state, mode)(
         value.callee,
         t.isNewExpression(value) ? undefined : value,
@@ -1338,7 +1339,6 @@ const hasCommonJsModuleSource = (
       if (sources === undefined) return true;
       eligibility = true;
     }
-    if (exhausted && ++drained > SEMANTIC_ALIAS_SELECTION_LIMIT) continue;
     enqueue(
       ...projectedLoaderSources({ ...next, node: value, path }, sources).map(
         (source) => (eligibility ? { ...source, eligibility } : source),
