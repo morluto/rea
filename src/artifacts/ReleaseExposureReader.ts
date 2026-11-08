@@ -1450,7 +1450,10 @@ const examineTextMember = async (
       );
     }
     state.skippedText += 1;
-    if (holdsScripts(member)) state.skippedMaps += 1;
+    // A name is not a script's role: `runner.txt` may start with a Node
+    // shebang, and the header that would say so is past the allowance too, so
+    // any unread member that could hold a script leaves its maps unassessed.
+    if (!isCssMember(member)) state.skippedMaps += 1;
     return true;
   }
   const bytesReadBefore = state.memberBytesRead;

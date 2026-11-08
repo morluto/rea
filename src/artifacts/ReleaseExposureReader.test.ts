@@ -3634,6 +3634,26 @@ describe("ReleaseExposureReader byte-order-marked maps", () => {
   });
 });
 
+describe("ReleaseExposureReader text-named scripts past the allowance", () => {
+  it("keeps coverage unknown for a text-named script past the spent text allowance", async () => {
+    const root = await createTestTempDirectory("rea-release-exposure-shebang-");
+    const members =
+      MAX_RELEASE_EXPOSURE_TEXT_BYTES / MAX_RELEASE_EXPOSURE_TEXT_MEMBER_BYTES;
+    for (let index = 0; index < members; index += 1)
+      await writeFile(
+        join(root, `a${String(index)}.txt`),
+        Buffer.alloc(MAX_RELEASE_EXPOSURE_TEXT_MEMBER_BYTES, 0x20),
+      );
+    await writeFile(
+      join(root, "z-runner.txt"),
+      `#!/usr/bin/env node\nrun();\n//# sourceMappingURL=data:application/json;base64,${embeddedSourceMap().toString("base64")}\n`,
+    );
+    const scanned = await inspect(root);
+    expect(scanned.source_maps).toMatchObject({ embedded: 0, skipped: 1 });
+    expect(sourceMapSourcesStatus(scanned)).toBe("unknown");
+  });
+});
+
 describe("ReleaseExposureReader Node shebang scripts", () => {
   const dataUrl = `data:application/json;base64,${Buffer.from(
     JSON.stringify({
