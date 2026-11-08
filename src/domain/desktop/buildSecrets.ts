@@ -64,12 +64,15 @@ const jsonEscaped = (text: string) => JSON.stringify(text).slice(1, -1);
 const xmlEscaped = (text: string) =>
   text.replaceAll("&", "&amp;").replaceAll("<", "&lt;");
 
-/** The value's spellings as text: as it is, escaped in XML and in JSON once or twice, in hex, in base64 at each alignment and in URL encoding. */
+/** The value's spellings as text: as it is, escaped in XML and in JSON once or twice, in hex, in base64 at each alignment and in URL and form encoding. */
 const textSpellings = (value: string): readonly string[] => {
   const bytes = Buffer.from(value, "utf8");
   const hex = bytes.toString("hex");
   const base64 = [0, 1, 2].map((offset) => base64Stable(bytes, offset));
   const url = encodeURIComponent(value);
+  const form = new URLSearchParams([["value", value]])
+    .toString()
+    .slice("value=".length);
   const xml = [
     value,
     xmlEscaped(value),
@@ -87,6 +90,8 @@ const textSpellings = (value: string): readonly string[] => {
       url,
       url.replaceAll("%20", "+"),
       url.replace(/%[0-9A-F]{2}/gu, (escape) => escape.toLowerCase()),
+      form,
+      form.replace(/%[0-9A-F]{2}/gu, (escape) => escape.toLowerCase()),
     ]),
   ];
 };

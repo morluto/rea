@@ -80,6 +80,22 @@ describe("build secrets", () => {
     expect(found(Buffer.from(ACCENTED).toString("hex"))).toEqual(["licence"]);
   });
 
+  it("finds and redacts declared form-encoded secrets without altering unmarked values", () => {
+    const value = "e-Fake!Password~42 a";
+    const secrets = [{ handle: "master", value }];
+    const encoded = new URLSearchParams([["q", value]]).toString().slice(2);
+    for (const spelling of [
+      encoded,
+      encoded.replace(/%[0-9A-F]{2}/gu, (part) => part.toLowerCase()),
+    ]) {
+      const text = `q=${spelling}`;
+      expect(secretsIn(Buffer.from(text), secrets)).toEqual(["master"]);
+      expect(redactSecrets(text, secrets)).toBe("q=<secret:master>");
+      expect(secretsIn(Buffer.from(text), [])).toEqual([]);
+      expect(redactSecrets(text, [])).toBe(text);
+    }
+  });
+
   it("finds a value base64-encoded at any byte alignment, in either alphabet", () => {
     for (const prefix of ["", "a", "ab", "abc"]) {
       const encoded = Buffer.from(`${prefix}${VALUE}tail`).toString("base64");

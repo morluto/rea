@@ -237,6 +237,43 @@ it("refuses to write a bundle that holds a handle's value, naming the files but 
   expect(await readdir(directory).catch(() => [])).toEqual([]);
 });
 
+it("refuses a bundle containing a declared form-encoded secret", async () => {
+  const value = "e-Fake!Password~42 a";
+  const encoded = new URLSearchParams([["q", value]]).toString().slice(2);
+  const config = await secretsConfig({ master: { text: value } });
+  const { client, outputs, computer } = await buildCaptureFakes({
+    serverEnv: { XDG_CONFIG_HOME: config },
+  });
+  const id = await startBuildComputer(client, REQUEST);
+  await callOk(client, "act_on_build_computer", {
+    computer_id: id,
+    action: "type_secret",
+    secret: "master",
+  });
+  await callOk(client, "start_build_capture", { computer_id: id });
+  for (const name of ["seed", "end"])
+    await callOk(client, "mark_build_checkpoint", { computer_id: id, name });
+  await callOk(client, "stop_build_capture", { computer_id: id });
+  const seed = join(outputs.bundle, "envs/notes/seed/Documents");
+  await mkdir(seed, { recursive: true });
+  await writeFile(join(seed, "settings.txt"), `field=${encoded}`);
+  const directory = join(await createTestTempDirectory("build-out-"), "notes");
+  const result = await client.callTool({
+    name: "export_build_environment",
+    arguments: { computer_id: id, task: TASK, directory },
+  });
+  const { error } = parseMcpToolError(result as CallToolResult);
+  expect(error.message).toContain("master");
+  expect(error.message).not.toContain(encoded);
+  expect(await readdir(directory).catch(() => [])).toEqual([]);
+  computer.refuseNext("computer_click", `field=${encoded}`);
+  const quote = await client.callTool({
+    name: "act_on_build_computer",
+    arguments: { computer_id: id, action: "click", x: 1, y: 2 },
+  });
+  expect(errorMessage(quote)).toContain("field=<secret:master>");
+});
+
 it("preserves unmarked token-shaped data in seeded UTF-16 and gzip files", async () => {
   const { client, outputs } = await buildCaptureFakes();
   const id = await startBuildComputer(client, REQUEST);
