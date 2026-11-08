@@ -1,5 +1,4 @@
 import type { JsonValue } from "../jsonValue.js";
-import { leftOutFiles } from "./appExportUnowned.js";
 import { isTimestamp, type DesktopTaskCheckInput } from "./appTask.js";
 import { fileNotes, type FileNote } from "./appTaskDraftFileNotes.js";
 import { lineGuards } from "./appTaskDraftLineGuards.js";
@@ -401,28 +400,26 @@ const changeShape = (change: TaskDraftFile["change"], final: Version) => ({
  * Each file under the owned paths whose state differs between its versions at
  * the seed and end checkpoints, with suggested checks, values, guards and
  * notes for the files the user worked on: documents, or the app's own state
- * when no document changed. Values stay within the draft's byte budget, in
+ * when no document changed, excluding locks the export leaves out of the seed.
+ * Values stay within the draft's byte budget, in
  * file order.
  */
 export const draftTaskFiles = (
   files: ReadonlyMap<string, DesktopStatePath>,
   served: (home: string) => boolean,
   ends: StateEnds,
-  /** Home paths the export selected exactly, as `exportedStateFiles` spells them. */
-  selected: readonly string[] = [],
+  /** The export owner's exclusion decision for each home path. */
+  isLeftOut: (home: string) => boolean,
 ): readonly TaskDraftFile[] => {
   const changed = changedStateFiles(files, ends, served);
-  const { isLeftOut } = leftOutFiles(files, [], selected, selected);
   // A lock the seed leaves out is not the document the user worked on.
-  const considered = changed.filter(
-    ({ home, path }) => !(path.role === "document" && isLeftOut(home)),
-  );
+  const considered = changed.filter(({ home }) => !isLeftOut(home));
   const role = considered.some(({ path }) => path.role === "document")
     ? "document"
     : "application_state";
   return withinDraftBudget(
     changed.map(({ home, path, baseline, final, change }) => {
-      const drafted = path.role === role;
+      const drafted = path.role === role && !isLeftOut(home);
       const draft: FileDraft = drafted
         ? suggestedChecks(home, baseline, final, role === "document")
         : { suggested: [], ...NO_VALUES };

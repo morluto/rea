@@ -886,18 +886,20 @@ describe("exportDesktopApplication of Poedit's locks and a seed's mode", () => {
 });
 
 describe("exportDesktopApplication of the app's logs", () => {
-  it("leaves Freeplane's and QElectroTech's logs out of the seed and lists them, but seeds a selected or document log", async () => {
+  it("seeds unselected app logs and leaves their locks out", async () => {
     const locked = lockedCapture();
     const [baseline, edited] = locked.state.checkpoints;
     if (baseline === undefined || edited === undefined)
       throw new Error("the fixture has two checkpoints");
     const logLine = "os_version = 7.0.0-1014-aws\n";
+    const history = "Ada: Hello\nLin: Welcome\n";
     const freeplane = `${HOME}/.config/notes/1.7.x/logs/log.0`;
     // QElectroTech's log in its own folder, which it holds open as it does its settings.
     const qet = `${HOME}/.qet`;
     const selected = `${HOME}/.config/notes/notes.log`;
     const document = `${HOME}/Documents/build.log`;
     const written = [
+      [`${HOME}/.config/notes/history.log`, history, "state"],
       [freeplane, logLine, "state"],
       [`${freeplane}.lck`, "", "state"],
       [`${qet}/20261106.log`, logLine, "opened"],
@@ -946,6 +948,7 @@ describe("exportDesktopApplication of the app's logs", () => {
     };
 
     const { result, directory } = await exportLocked(recorded, [
+      history,
       logLine,
       "",
       "[ui]\n",
@@ -957,6 +960,7 @@ describe("exportDesktopApplication of the app's logs", () => {
       .parse(result.normalized_result).seed_files;
     expect(seedFiles).toEqual(
       expect.arrayContaining([
+        ".config/notes/history.log",
         ".qet/qelectrotech.conf",
         ".config/notes/notes.log",
         "Documents/build.log",
@@ -964,23 +968,24 @@ describe("exportDesktopApplication of the app's logs", () => {
         ".config/notes/sync/000005.log",
       ]),
     );
-    const logs = [
-      ".config/notes/1.7.x/logs/log.0",
-      ".config/notes/1.7.x/logs/log.0.lck",
-      ".qet/20261106.log",
-    ];
-    const listed = result.limitations.filter((limitation) =>
-      logs.every((log) => limitation.includes(`~/${log}`)),
-    );
-    expect(listed).toHaveLength(1);
-    // Logs are listed apart from the lock files.
-    expect(listed[0]).not.toContain(".~lock.today.txt#");
-    const readme = await readFile(join(directory, "README.md"), "utf8");
-    for (const log of logs) {
-      expect(seedFiles).not.toContain(log);
-      expect(await exists(join(directory, "envs/notes/seed", log))).toBe(false);
-      expect(readme).toContain(`\`~/${log}\``);
+    for (const log of [".config/notes/1.7.x/logs/log.0", ".qet/20261106.log"]) {
+      expect(seedFiles).toContain(log);
+      expect(
+        await readFile(join(directory, "envs/notes/seed", log), "utf8"),
+      ).toBe(logLine);
     }
+    expect(
+      await readFile(
+        join(directory, "envs/notes/seed/.config/notes/history.log"),
+        "utf8",
+      ),
+    ).toBe(history);
+    const lock = ".config/notes/1.7.x/logs/log.0.lck";
+    expect(seedFiles).not.toContain(lock);
+    expect(await exists(join(directory, "envs/notes/seed", lock))).toBe(false);
+    expect(
+      result.limitations.some((limitation) => limitation.includes(`~/${lock}`)),
+    ).toBe(true);
   });
 
   it("seeds a log under a folder named as a state path, but not a lock there", async () => {

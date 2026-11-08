@@ -179,17 +179,11 @@ and the recording and writes the record as Evidence.
   task's prompt names neither the app's title, environment nor package: a
   solving agent's shell cannot see the computer's files. The unowned paths
   limitation counts files or folders.
-- Gaps of the published bundles: the app's logs in its own state, `*.log`
-  and `log.<n>` with their `.lck` or `.lock`, are left out of the seed and
-  listed apart from the lock files, since Freeplane's and QElectroTech's
-  recorded the capture host's kernel, CPU, memory and disk sizes; a
-  document, a path selected itself or a log under a selected folder is
-  seeded, as are Pidgin's conversations and fldigi's logbook under their
-  `logs` folders, and so is a database's journal of saved writes: a
-  `*.log` in browser storage, under a `leveldb` folder, or numbered beside
-  a LevelDB database's `CURRENT` or `MANIFEST-*`. LibreOffice's recovery
-  list items are found with the shared XML parser and cut by their source
-  ranges, so quoting, spacing, comments and CDATA cannot fool the match,
+- Gaps of the published bundles: app-state logs are retained because their
+  names alone do not distinguish diagnostic output from user history or
+  database writes. Locks remain excluded under the lock ownership rules.
+  LibreOffice's recovery list items are found with the shared XML parser and
+  cut by their source ranges, so quoting, spacing, comments and CDATA cannot fool the match,
   and a registry that is not well-formed ships unchanged.
 - Gaps of the seventh batch: a window title names a file only by its whole
   name, or its `~/` or absolute path, never by a folder of a path it shows,

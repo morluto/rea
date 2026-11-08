@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
 import type { JsonValue } from "../jsonValue.js";
+import { leftOutFiles } from "./appExportUnowned.js";
 import type { DesktopTaskCheck } from "./appTask.js";
 import { evaluateTaskChecks } from "./appTaskChecks.js";
 import { draftTaskFiles, type TaskDraftFile } from "./appTaskDraft.js";
@@ -54,7 +55,62 @@ const draft = (files: Record<string, DesktopStatePath>) =>
     new Map(Object.entries(files)),
     (home) => home !== "elsewhere",
     { seed: 0, end: 1 },
+    leftOutFiles(new Map(Object.entries(files)), [], []),
   );
+
+it("omits checks for a lock left out of a selected folder but retains an explicitly selected lock", () => {
+  const files = new Map(
+    Object.entries({
+      "Documents/plan.vym": path("document", "text", text("old"), text("new")),
+      "Documents/plan.vym.lock": path(
+        "document",
+        "text",
+        text("pid 1"),
+        text("pid 2"),
+      ),
+    }),
+  );
+  const ends = { seed: 0, end: 1 };
+  const fromFolder = draftTaskFiles(
+    files,
+    () => true,
+    ends,
+    leftOutFiles(files, [], ["Documents"]),
+  );
+  expect(
+    fromFolder.find(({ file }) => file === "Documents/plan.vym")?.suggested
+      .length,
+  ).toBeGreaterThan(0);
+  expect(
+    fromFolder.find(({ file }) => file === "Documents/plan.vym.lock"),
+  ).toMatchObject({ suggested: [], values: [], guards: [] });
+  const explicit = draftTaskFiles(
+    files,
+    () => true,
+    ends,
+    leftOutFiles(files, [], ["Documents/plan.vym.lock"]),
+  );
+  expect(
+    explicit.find(({ file }) => file === "Documents/plan.vym.lock")?.suggested
+      .length,
+  ).toBeGreaterThan(0);
+});
+
+it("drafts a changed unselected conversation history in app state", () => {
+  const [file] = draft({
+    ".config/app/history.log": path(
+      "application_state",
+      "text",
+      text("Ada: Hello"),
+      text("Ada: Hello", "Lin: Welcome"),
+    ),
+  });
+  expect(file?.suggested).toContainEqual({
+    kind: "lines_present",
+    file: ".config/app/history.log",
+    lines: ["Lin: Welcome"],
+  });
+});
 
 describe("draftTaskFiles", () => {
   it("suggests the lines a document gained and lost, and leaves the app's state without views", () => {
