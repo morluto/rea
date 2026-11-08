@@ -1738,6 +1738,34 @@ describe("ReleaseExposureReader nested packages in a host", () => {
   });
 });
 
+describe("ReleaseExposureReader undecided PE members", () => {
+  it.each(["payload.map", "payload.bin"])(
+    "keeps a large PE member named %s with a late header undecided",
+    async (name) => {
+      const root = await createTestTempDirectory("rea-release-exposure-pe-");
+      // The PE signature sits past the retained prefix of an oversized member.
+      const image = Buffer.alloc(2 * 1024 * 1024);
+      image.write("MZ", 0, "latin1");
+      image.writeUInt32LE(8192, 60);
+      image.write("PE\0\0", 8192, "latin1");
+      await writeFile(
+        join(root, "app.exe"),
+        cArchiveExecutable({
+          carrier: "pe",
+          layout: "2.1",
+          pythonVersion: 310,
+          members: [{ name, typeCode: "x", compress: false, payload: image }],
+        }),
+      );
+      const scanned = await inspect(root);
+      expect(scanned.coverage).toBe("unknown");
+      expect(
+        scanned.debug_companions.paths.some((path) => path.endsWith(name)),
+      ).toBe(false);
+    },
+  );
+});
+
 describe("ReleaseExposureReader source-map count", () => {
   it.each([
     [

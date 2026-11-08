@@ -1115,6 +1115,15 @@ const examineMapMember = async (
       { ...member, format: packaged },
       context,
     );
+  // A package member whose PE header is undecided may be native, so its `MZ`
+  // prefix is no evidence of a linker map.
+  if (
+    header !== null &&
+    member.packageFormat !== null &&
+    !member.kindStated &&
+    noteUndecidedPe(state, member, header)
+  )
+    return true;
   if (read !== null) settleMapRead(state, declared, read);
   const loaded = read?.loaded ?? null;
   if (loaded?.kind === "bytes")
@@ -1943,19 +1952,8 @@ const examinePackagedBinary = async (
           header,
           probe.kind === "bytes" ? header.length : member.declaredSize,
         ));
-  if (native === null && header?.toString("latin1", 0, 2) === "MZ") {
-    const windows = observeMzWindowsHeader(header);
-    if (
-      windows.state === "signature-needed" ||
-      (windows.state === "candidate" && windows.signature === "unobserved")
-    ) {
-      // The image may be native, so it stays unexamined by the on-disk readers,
-      // and it may carry a package that nothing here can clear.
-      state.packagedNative += 1;
-      notePeNotExamined(state, member.location);
-      noteUnexaminedPackage(state);
-    }
-  }
+  if (native === null && header !== null)
+    noteUndecidedPe(state, member, header);
   if (
     native === null &&
     header !== null &&
@@ -1981,6 +1979,29 @@ const examinePackagedBinary = async (
   if (image.kind === "bytes") readPdb(state, image.bytes, member.location);
   else notePeNotExamined(state, member.location);
   return image.kind !== "unread";
+};
+
+/**
+ * An `MZ` header whose PE signature lies past the bytes read may be native, so
+ * the image stays unexamined by the on-disk readers, and it may carry a
+ * package that nothing here can clear. Returns whether the header was undecided.
+ */
+const noteUndecidedPe = (
+  state: ScanState,
+  member: Pick<MemberView, "location">,
+  header: Buffer,
+): boolean => {
+  if (header.toString("latin1", 0, 2) !== "MZ") return false;
+  const windows = observeMzWindowsHeader(header);
+  if (
+    windows.state !== "signature-needed" &&
+    !(windows.state === "candidate" && windows.signature === "unobserved")
+  )
+    return false;
+  state.packagedNative += 1;
+  notePeNotExamined(state, member.location);
+  noteUnexaminedPackage(state);
+  return true;
 };
 
 const readPdb = (state: ScanState, bytes: Buffer, imagePath: string): void => {
