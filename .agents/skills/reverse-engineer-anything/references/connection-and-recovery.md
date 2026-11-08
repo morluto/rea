@@ -16,7 +16,8 @@ blocker. Keep the user's target and question in view. Explain what prevented the
 operation and the next useful step; after repair, continue the investigation.
 
 Commands below use an installed `rea`. If none is available, use the package
-invocation in `SKILL.md` when acquiring REA is authorized. Follow the connected
+invocation under [Continue through an installed CLI](#continue-through-an-installed-cli)
+when acquiring REA is authorized. Follow the connected
 server's schemas and the installed CLI's help rather than assuming repository
 main and an older release expose the same arguments. Tool-name prefixes belong
 to the client: find the canonical REA operation in its actual tool listing and
