@@ -19,6 +19,7 @@ import {
   BUILD_COMPUTER_SETTINGS,
   defaultBuildComputerArchive,
   programOnPath,
+  resolveBuildComputerProgram,
   type BuildComputerSetting,
 } from "./BuildComputerEnvironment.js";
 
@@ -298,12 +299,24 @@ const registrationFacts = async (
       const status = registered.find((entry) => entry.client === client);
       const recordedRunner =
         status === undefined ? undefined : recordedRunners.get(client);
+      const effectiveRunner =
+        recordedRunner === undefined
+          ? undefined
+          : await resolveBuildComputerProgram(
+              recordedRunner,
+              "agent-env",
+              input.environment,
+            );
       let runner: DesktopBuildFacts["registrations"][number]["runner"];
       if (recordedRunner !== undefined) {
-        if (!isAbsolute(recordedRunner) || !(await executable(recordedRunner)))
+        if (
+          effectiveRunner === undefined ||
+          !isAbsolute(effectiveRunner) ||
+          !(await executable(effectiveRunner))
+        )
           runner = { status: "invalid" };
         else {
-          const version = await versionFor(recordedRunner);
+          const version = await versionFor(effectiveRunner);
           runner =
             version === undefined
               ? { status: "unknown" }
@@ -316,7 +329,13 @@ const registrationFacts = async (
                 };
         }
       }
-      const differing = status?.provider_settings?.differing ?? [];
+      const differing = (status?.provider_settings?.differing ?? []).filter(
+        (name) =>
+          name !== "REA_AGENT_ENV_COMMAND" ||
+          recordedRunner !== "" ||
+          effectiveRunner === undefined ||
+          effectiveRunner !== selectedSettings.REA_AGENT_ENV_COMMAND,
+      );
       const compared = differing.filter(
         (name) => selectedSettings[name as BuildComputerSetting] !== undefined,
       );
