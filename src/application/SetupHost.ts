@@ -324,18 +324,20 @@ export const systemSetupHost = (
         resources,
       ),
     doctor: (scope) => runDoctor(undefined, doctorHost, scope),
-    desktopBuild: desktopBuildHost(doctorHost, environment),
+    desktopBuild: desktopBuildHost(doctorHost, environment, resources),
   };
 };
 
 const desktopBuildHost = (
   doctorHost: DoctorHost,
   environment: Readonly<NodeJS.ProcessEnv>,
+  resources: ArtifactResourceScope,
 ) =>
   systemDesktopBuildSetupHost(
     environment,
     doctorHost.platform,
     doctorHost.clientRegistrations,
+    resources,
   );
 
 const setupInstallerDiagnostic = (
