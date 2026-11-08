@@ -1237,6 +1237,32 @@ describe("ReleaseExposureReader generic map links", () => {
   );
 });
 
+describe("ReleaseExposureReader sibling map identity", () => {
+  it("does not report a sibling .map a selected page loads as a script as a linker map", async () => {
+    const root = await createTestTempDirectory("rea-release-sibling-script-");
+    await writeFile(
+      join(root, "index.html"),
+      '<html><script src="boot.map"></script></html>',
+    );
+    await writeFile(join(root, "boot.map"), "console.log('boot');\n");
+    const scanned = await inspect(join(root, "index.html"));
+    expect(scanned.debug_companions).toEqual({ paths: [], skipped: 0 });
+    expect(debugCompanionsStatus(scanned)).not.toBe("exposed");
+    expect(scanned.source_maps).toMatchObject({ embedded: 0, skipped: 1 });
+  });
+
+  it("does not report a native image beside a selected file as a linker map", async () => {
+    const root = await createTestTempDirectory("rea-release-sibling-native-");
+    const elf = Buffer.alloc(64);
+    elf.set([0x7f, 0x45, 0x4c, 0x46], 0);
+    await writeFile(join(root, "release.map"), elf);
+    await writeFile(join(root, "app"), "plain file");
+    const scanned = await inspect(join(root, "app"));
+    expect(scanned.debug_companions).toEqual({ paths: [], skipped: 0 });
+    expect(debugCompanionsStatus(scanned)).not.toBe("exposed");
+  });
+});
+
 describe("ReleaseExposureReader acquisition and sibling review regressions", () => {
   it.each(["external section", "decoder limit", "malformed JSON"])(
     "keeps a sibling map with an unsupported %s unresolved",

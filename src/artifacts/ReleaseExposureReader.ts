@@ -2743,8 +2743,10 @@ const scanSiblings = async (
     }
     if (!entry.name.toLowerCase().endsWith(".map")) continue;
     if (isJavaScriptSourceMapName(entry.name)) continue;
-    // A declared map stays a source map, and `noteUnreachedTargets` counts it.
-    if (state.mapTargets.has(memberLocationKey(sibling))) continue;
+    // A declared map stays a source map and a loaded script stays a script,
+    // and `noteUnreachedTargets` counts either one.
+    const key = memberLocationKey(sibling);
+    if (state.mapTargets.has(key) || state.scriptTargets.has(key)) continue;
     // A link is not followed, so a linker map it names stays unread, not absent.
     if (entry.isSymbolicLink()) {
       state.skippedCompanions += 1;
@@ -2774,6 +2776,15 @@ const classifySiblingMap = async (
   }
   const prefix = loaded.kind === "bytes" ? loaded.bytes : loaded.prefix;
   if (loaded.kind === "bytes" && hasSlot && parsesAsSourceMap(loaded.bytes))
+    return;
+  // A native header outranks the name, as it does for a member.
+  if (
+    prefix !== null &&
+    sniffNativeFormat(
+      prefix,
+      loaded.kind === "bytes" ? prefix.length : null,
+    ) !== null
+  )
     return;
   if (prefix === null || mayHaveSourceMapPrefix(prefix))
     state.skippedCompanions += 1;
