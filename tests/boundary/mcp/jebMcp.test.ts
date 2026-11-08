@@ -173,6 +173,87 @@ it("reports retained JEB availability cleanup through binary_session", async () 
   }
 });
 
+it("retains the JEB discovery timeout when availability cleanup also fails", async () => {
+  let releaseCatalog!: () => void;
+  const catalogRelease = new Promise<void>((resolve) => {
+    releaseCatalog = resolve;
+  });
+  const fixture = await startJebMcpFixture(
+    (tool) => jebPrimaryResponses[tool]!,
+    async () => {
+      await catalogRelease;
+      return { tools: [] };
+    },
+  );
+  onTestFinished(() => fixture.close());
+  const provider = new JebProvider({
+    environment: { REA_JEB_MCP_URL: fixture.endpoint },
+    discoveryTimeoutMs: 250,
+  });
+  const { client, close } = await createApplicationMcpHarness({
+    serverOptions: { environment: {}, jebAnalysis: provider },
+  });
+  const inspect = provider.inspectAvailability.bind(provider);
+  let originating: AnalysisError | undefined;
+  const inspection = vi
+    .spyOn(provider, "inspectAvailability")
+    .mockImplementation(async (signal) => {
+      try {
+        return await inspect(signal);
+      } catch (cause: unknown) {
+        if (cause instanceof AnalysisError) originating = cause;
+        throw cause;
+      }
+    });
+  const nativeClose = Client.prototype.close;
+  let allowClose = false;
+  const clientClose = vi
+    .spyOn(Client.prototype, "close")
+    .mockImplementation(async function (this: Client) {
+      if (!allowClose) throw new Error("injected JEB client close failure");
+      await nativeClose.call(this);
+    });
+  try {
+    const result = await client.callTool({
+      name: "binary_session",
+      arguments: { detail: "complete" },
+    });
+    expect(parseMcpToolError(result)).toMatchObject({
+      error: {
+        code: "cleanup_incomplete",
+        details: {
+          resources: expect.arrayContaining([
+            expect.stringContaining(fixture.endpoint),
+          ]),
+          execution_failure: "provider_timeout",
+          diagnostics: {
+            primary_error: {
+              code: "provider_timeout",
+              remediation: {
+                action: expect.stringContaining("REA_JEB_MCP_TIMEOUT_MS"),
+              },
+            },
+          },
+        },
+      },
+    });
+    if (originating === undefined)
+      throw new Error("Missing retained JEB error");
+    expect(originating.cleanupIncomplete).toBe(true);
+    allowClose = true;
+    releaseCatalog();
+    await provider.close();
+    expect(originating.cleanupIncomplete).toBe(false);
+  } finally {
+    allowClose = true;
+    releaseCatalog();
+    clientClose.mockRestore();
+    inspection.mockRestore();
+    await close();
+    await provider.close();
+  }
+});
+
 it("advertises exact valid JEB schemas and records inline evidence through MCP", async () => {
   const execution = createAnalysisExecution(
     {
