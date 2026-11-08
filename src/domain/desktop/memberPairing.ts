@@ -83,11 +83,12 @@ const candidatesOf = (
   names: Map<string, number>,
   positional: ReadonlySet<string>,
   saved: ReadonlySet<string>,
+  json = false,
 ): Candidates | undefined => {
   if (!isRecord(member)) return undefined;
   const name = own(member, "name");
   if (typeof name !== "string" || !selectable(name)) return undefined;
-  const attributes = own(member, "attributes");
+  const attributes = json ? undefined : own(member, "attributes");
   const usable = (
     isRecord(attributes) ? Object.entries(attributes) : []
   ).flatMap(([key, value]) =>
@@ -99,7 +100,7 @@ const candidatesOf = (
       : [],
   );
   // An id the app generates names a kept member, but no new one another save would key alike, so it ranks last.
-  const children = childCandidates(member);
+  const children = json ? [] : childCandidates(member);
   // An id numbering the members by save position names one after a child's text does.
   const placed =
     children.length === 0
@@ -428,15 +429,16 @@ const pairElements = (
   newer: readonly JsonValue[],
   older: readonly JsonValue[],
   place?: ListPlace,
+  json = false,
 ): { readonly newer: PairedSide; readonly older: PairedSide } => {
   const names = new Map<string, number>();
   const positional = positionalKeys(newer, older);
   const saved = savePositionKeys(newer, older);
   const newCandidates = newer.map((member) =>
-    candidatesOf(member, names, positional, saved),
+    candidatesOf(member, names, positional, saved, json),
   );
   const oldCandidates = older.map((member) =>
-    candidatesOf(member, names, positional, saved),
+    candidatesOf(member, names, positional, saved, json),
   );
   const newCounts = countIds(newCandidates);
   const oldCounts = countIds(oldCandidates);
@@ -533,9 +535,11 @@ const pairElements = (
 export const pairMembers = (
   newer: readonly JsonValue[],
   older: readonly JsonValue[],
-  place?: ListPlace,
+  place: ListPlace | undefined,
+  format: string | null | undefined,
 ): { readonly newer: PairedSide; readonly older: PairedSide } =>
-  pairRecordsById(newer, older) ?? pairElements(newer, older, place);
+  (format === "xml" ? undefined : pairRecordsById(newer, older)) ??
+  pairElements(newer, older, place, format !== "xml");
 
 /**
  * The member a pointer names at the end, as its seed version: the other
@@ -552,16 +556,18 @@ export const pairedAtSeed = (
 ): JsonValue | undefined => {
   const list = /^(?<list>.*\/children)\/[^/]+$/u.exec(member)?.groups?.list;
   const newer =
-    list === undefined ? undefined : resolvePointer(ends.final, list);
+    list === undefined ? undefined : resolvePointer(ends.final, list, "xml");
   const older =
-    list === undefined ? undefined : resolvePointer(ends.baseline, list);
-  const element = resolvePointer(ends.final, member);
+    list === undefined ? undefined : resolvePointer(ends.baseline, list, "xml");
+  const element = resolvePointer(ends.final, member, "xml");
   if (list === undefined || !Array.isArray(newer) || !Array.isArray(older))
     return undefined;
   const index = newer.indexOf(element ?? null);
   const partner =
     index < 0
       ? undefined
-      : pairMembers(newer, older, holdsTagOnly(list)).newer.partners[index];
+      : pairMembers(newer, older, holdsTagOnly(list), "xml").newer.partners[
+          index
+        ];
   return partner === undefined ? undefined : older[partner];
 };

@@ -105,20 +105,20 @@ const namedByIdentifier = (pointer: string) => {
  */
 const textlessAt = (pointer: string, ends: Ends) =>
   [ends.baseline, ends.final].some((view) => {
-    const value = resolvePointer(view, pointer);
+    const value = resolvePointer(view, pointer, "xml");
     return isXmlElement(value) && elementText(value) === "";
   });
 
 /** Whether both ends hold an element at a pointer. */
 const keptAt = (element: string, ends: Ends) =>
   [ends.baseline, ends.final].every((view) =>
-    isXmlElement(resolvePointer(view, element)),
+    isXmlElement(resolvePointer(view, element, "xml")),
   );
 
 /** Whether an element holds text of its own, at either end. */
 const mixedAt = (element: string, ends: Ends) =>
   [ends.baseline, ends.final].some((view) =>
-    holdsText(resolvePointer(view, element)),
+    holdsText(resolvePointer(view, element, "xml")),
   );
 
 /** Where a text check may go: an element as the diff names it, the pointer the check names it by, and whether an identifier is in that pointer. */
@@ -135,8 +135,8 @@ interface Candidate {
  */
 const byOwnAttribute = (element: string, ends: Ends): Candidate | undefined => {
   const parent = parentOf(element);
-  const before = resolvePointer(ends.baseline, element);
-  const after = resolvePointer(ends.final, element);
+  const before = resolvePointer(ends.baseline, element, "xml");
+  const after = resolvePointer(ends.final, element, "xml");
   if (parent === undefined || !isXmlElement(before) || !isXmlElement(after))
     return undefined;
   const attributes = attributesOf(after);
@@ -164,8 +164,8 @@ const byOwnAttribute = (element: string, ends: Ends): Candidate | undefined => {
     const selector = `[name=${after.name}][@${key}=${value}]`;
     const pointer = `${parent}/children/${selector.replaceAll("~", "~0").replaceAll("/", "~1")}`;
     if (
-      resolvePointer(ends.baseline, pointer) === before &&
-      resolvePointer(ends.final, pointer) === after
+      resolvePointer(ends.baseline, pointer, "xml") === before &&
+      resolvePointer(ends.final, pointer, "xml") === after
     )
       return { element, pointer, identifier: isIdentifier(key) };
   }
@@ -187,7 +187,7 @@ const isField = (pointer: string, ends: Ends) => {
     parent !== undefined &&
     tag !== undefined &&
     [ends.baseline, ends.final].every((view) => {
-      const record = resolvePointer(view, parent);
+      const record = resolvePointer(view, parent, "xml");
       const fields = isXmlElement(record)
         ? record.children.filter(isXmlElement)
         : [];
@@ -285,10 +285,10 @@ const outsideRuns = (pointer: string, ends: Ends): readonly Candidate[] => {
       // A record directly under the document can still hold a save time. Leave a formatting run out when the paragraph remains.
       if (
         stopped !== undefined &&
-        holdsNoisyText(resolvePointer(ends.final, stopped))
+        holdsNoisyText(resolvePointer(ends.final, stopped, "xml"))
       ) {
         const narrower = withoutRuns(chain, (element) =>
-          holdsNoisyText(resolvePointer(ends.final, element)),
+          holdsNoisyText(resolvePointer(ends.final, element, "xml")),
         );
         if (narrower.length > 0)
           return narrower.map((element) => ({
@@ -305,7 +305,7 @@ const outsideRuns = (pointer: string, ends: Ends): readonly Candidate[] => {
     named = parent;
   }
   const noisy = (element: string) =>
-    holdsNoisyText(resolvePointer(ends.final, element));
+    holdsNoisyText(resolvePointer(ends.final, element, "xml"));
   // An ancestor whose text joins a timestamp fails a later save that only restamps it.
   if (noisy(named)) {
     const narrower = withoutRuns(
@@ -419,7 +419,7 @@ const inText = (view: JsonValue | null, pointer: string): boolean => {
     parent !== undefined;
     parent = parentOf(parent)
   ) {
-    const element = resolvePointer(view, parent);
+    const element = resolvePointer(view, parent, "xml");
     if (
       isXmlElement(element) &&
       TEXT_TAG.test(element.name.split(":").at(-1) ?? element.name)
@@ -456,7 +456,7 @@ const listOf = (
   )
     return false;
   const like = (view: JsonValue | null) => {
-    const list = resolvePointer(view, holder);
+    const list = resolvePointer(view, holder, "xml");
     return isXmlElement(list)
       ? list.children.flatMap((child) =>
           isXmlElement(child) &&
@@ -568,7 +568,9 @@ const candidateAt = (
 ) => {
   const pointer = place.name(named);
   const now =
-    pointer === undefined ? undefined : resolvePointer(ends.final, pointer);
+    pointer === undefined
+      ? undefined
+      : resolvePointer(ends.final, pointer, "xml");
   return pointer === undefined || !isXmlElement(now)
     ? undefined
     : { pointer, now };
@@ -589,7 +591,7 @@ const textCheck = (
   const found = candidateAt(context, candidate);
   if (found === undefined) return undefined;
   const { pointer, now } = found;
-  const before = resolvePointer(context.ends.baseline, pointer);
+  const before = resolvePointer(context.ends.baseline, pointer, "xml");
   if (!added && !isXmlElement(before)) return undefined;
   // A timestamp between other text is not part of the check. Joining across it asks for text the file never contains.
   if (holdsNoisyText(now)) return undefined;
@@ -643,7 +645,7 @@ const textHolders = (change: Listed, ends: Ends, place: TextPlacement) => {
     view: JsonValue | null,
     how: "changed" | "added" | "removed",
   ) => {
-    const value = resolvePointer(view, pointer);
+    const value = resolvePointer(view, pointer, "xml");
     const parent = parentOf(pointer);
     // Noise, such as a time the app stamps, never makes its ancestor's whole text a check.
     if (place.noise(pointer)) return;

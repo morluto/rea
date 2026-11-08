@@ -32,7 +32,7 @@ export const mirrorsOf = (
 ) => {
   const texts = change.changed.flatMap((pointer) => {
     const [before, after] = [ends.baseline, ends.final].map((view) =>
-      resolvePointer(view, pointer),
+      resolvePointer(view, pointer, "xml"),
     );
     const element = pointer.replace(/\/children\/\d+$/u, "");
     return element !== pointer &&
@@ -58,6 +58,7 @@ export const mirrorsOf = (
         ? resolvePointer(
             ends.final,
             mirror.element.replace(/\/children\/[^/]+$/u, ""),
+            "xml",
           )
         : undefined;
       const shown = new Set(
@@ -134,7 +135,7 @@ export const idReferencesOf = (
   ends: Ends,
 ) => {
   const added = change.added.flatMap((pointer) => {
-    const element = resolvePointer(ends.final, pointer);
+    const element = resolvePointer(ends.final, pointer, "xml");
     return isXmlElement(element) ? [{ pointer, element }] : [];
   });
   const mirrors = added.flatMap(({ pointer, element }) => {

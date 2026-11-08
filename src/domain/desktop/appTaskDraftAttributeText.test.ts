@@ -57,6 +57,35 @@ describe("draftTaskFiles for text an app keeps in an attribute", () => {
     ).toBe(true);
   });
 
+  it("does not count formatting runs when the edit splits or merges them", () => {
+    for (const [before, after] of [
+      [flyer("Spring Fair"), flyer("Summer ", "Fair")],
+      [flyer("Spring ", "Fair"), flyer("Summer Fair")],
+    ] as const) {
+      const file = xmlDraft(before, after);
+      const checks = [...file.suggested, ...file.guards];
+      expect(
+        checks.some(
+          (check) =>
+            check.kind === "text_equals" && check.text_attribute === "CH",
+        ),
+      ).toBe(true);
+      expect(passing(FILE, xml(before), file.suggested).every(Boolean)).toBe(
+        false,
+      );
+      expect(passing(FILE, xml(after), checks).every(Boolean)).toBe(true);
+      expect(
+        passing(FILE, xml(flyer("Summer Fair")), checks).every(Boolean),
+      ).toBe(true);
+      expect(
+        passing(FILE, xml(flyer("Sum", "mer ", "Fair")), checks).every(Boolean),
+      ).toBe(true);
+      expect(
+        passing(FILE, xml(flyer("Summer Fete")), file.suggested).every(Boolean),
+      ).toBe(false);
+    }
+  });
+
   it("keeps a check of a run's formatting the text check does not read, beside it", () => {
     const styled = (first: string, font: string) =>
       `<SCRIBUSUTF8NEW><DOCUMENT><PAGEOBJECT ANNAME="Headline"><StoryText><ITEXT FONT="Regular" CH="${first}"/><ITEXT FONT="${font}" CH="Fair"/></StoryText></PAGEOBJECT><PAGEOBJECT ANNAME="Details"/></DOCUMENT></SCRIBUSUTF8NEW>`;

@@ -5,7 +5,6 @@ import {
   isNameLikeKey,
   isPlaceholder,
 } from "./attributeRank.js";
-import { isXmlElement } from "./viewPointer.js";
 import { MAX_INSIDE_STEPS, spellCondition } from "./viewSelector.js";
 
 /** A field naming a JSON record, as TreeLine's `uid`: `id`, `uid`, `uuid`, `guid`, `key`, or a name ending in `_id`, `-id` or `Id`. */
@@ -27,7 +26,7 @@ const isRecord = (
   typeof value === "object" && value !== null && !Array.isArray(value);
 
 const isJsonRecord = (value: JsonValue): value is Record<string, JsonValue> =>
-  isRecord(value) && !isXmlElement(value);
+  isRecord(value);
 
 /** Whether every member holds a string at a key a selector can carry, each its own. */
 const namesEach = (members: readonly JsonValue[], key: string) => {
