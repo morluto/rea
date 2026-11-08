@@ -36,12 +36,15 @@ export interface ReferenceSourceRequireCall {
   readonly limitation?: string;
 }
 
+export type ReferenceSourceRequireInvocation =
+  t.CallExpression | t.OptionalCallExpression | t.NewExpression;
+
 /** Identify exact calls through a source-owned Node loader and their resolver base. */
 export const referenceSourceRequireCalls = (
   file: Pick<ParsedJavaScriptSource, "program">,
   path: string,
 ): ReadonlyMap<
-  t.CallExpression | t.OptionalCallExpression,
+  ReferenceSourceRequireInvocation,
   ReferenceSourceRequireCall
 > => {
   // Unmarked paths depend on package scope or compiler options. Preserve their
@@ -55,7 +58,7 @@ export const referenceSourceRequireCalls = (
   );
   const factoryBindings: ReadonlySet<string> = new Set();
   const candidates: {
-    readonly call: t.CallExpression | t.OptionalCallExpression;
+    readonly call: ReferenceSourceRequireInvocation;
     readonly identifier: t.Identifier;
     readonly arguments: JavaScriptRequireCallFact["arguments"];
     readonly resolutionBase: ReferenceSourceRequireResolutionBase;
@@ -63,7 +66,11 @@ export const referenceSourceRequireCalls = (
   }[] = [];
   traverseJavaScriptAst(file.program, {
     enter: (node) => {
-      if (!t.isCallExpression(node) && !t.isOptionalCallExpression(node))
+      if (
+        !t.isCallExpression(node) &&
+        !t.isOptionalCallExpression(node) &&
+        !t.isNewExpression(node)
+      )
         return;
       const identifier = callReceiverIdentifier(node.callee);
       if (identifier === undefined) return;
@@ -140,7 +147,12 @@ export const referenceSourceRequireCalls = (
       });
     },
   });
-  if (candidates.some(({ call }) => !t.isIdentifier(call.callee)))
+  if (
+    candidates.some(
+      ({ call }) =>
+        !t.isIdentifier(unwrapJavaScriptExpression(call.callee).node),
+    )
+  )
     completeSemanticSteps(index.indexMemberMutationFactsSteps());
   return new Map(
     candidates.map(
@@ -157,7 +169,7 @@ export const referenceSourceRequireCalls = (
             arguments: callArguments,
             ...(limitation === undefined ? {} : { limitation }),
             resolutionBase:
-              !t.isIdentifier(call.callee) &&
+              !t.isIdentifier(unwrapJavaScriptExpression(call.callee).node) &&
               hasPriorMemberMutation(index, call, identifier)
                 ? "unknown"
                 : resolutionBase,
@@ -199,10 +211,10 @@ const requireResolveSearchBase = (
 
 const hasPriorMemberMutation = (
   index: JavaScriptReceiverIndex,
-  site: t.CallExpression | t.OptionalCallExpression,
+  site: ReferenceSourceRequireInvocation,
   identifier: t.Identifier,
 ): boolean => {
-  const callee = site.callee;
+  const callee = unwrapJavaScriptExpression(site.callee).node;
   const property =
     t.isMemberExpression(callee) || t.isOptionalMemberExpression(callee)
       ? semanticStaticPropertyKey(callee.property, callee.computed)
@@ -221,11 +233,15 @@ const hasPriorMemberMutation = (
 const callReceiverIdentifier = (
   callee: t.Node | null | undefined,
 ): t.Identifier | undefined => {
-  if (t.isIdentifier(callee)) return callee;
+  if (!t.isNode(callee)) return undefined;
+  const expression = unwrapJavaScriptExpression(callee).node;
+  if (t.isIdentifier(expression)) return expression;
   if (
-    (t.isMemberExpression(callee) || t.isOptionalMemberExpression(callee)) &&
-    t.isIdentifier(callee.object)
-  )
-    return callee.object;
+    t.isMemberExpression(expression) ||
+    t.isOptionalMemberExpression(expression)
+  ) {
+    const receiver = unwrapJavaScriptExpression(expression.object).node;
+    return t.isIdentifier(receiver) ? receiver : undefined;
+  }
   return undefined;
 };
