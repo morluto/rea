@@ -308,6 +308,11 @@ describe("Ghidra relationship coverage replay", () => {
 describe("Ghidra snapshot profile admission", () => {
   it.each([
     {
+      parameter: "inventory_search_projection",
+      current: "provider-inventory-facts-v1",
+      legacy: undefined,
+    },
+    {
       parameter: "data_type_observations",
       current: "bit-field-base-and-lookup-v1",
       legacy: undefined,
@@ -319,7 +324,12 @@ describe("Ghidra snapshot profile admission", () => {
     },
     {
       parameter: "instruction_status",
-      current: "unlisted-address-without-decode-v1",
+      current: "unlisted-and-containing-code-data-v3",
+      legacy: "unlisted-address-without-decode-v1",
+    },
+    {
+      parameter: "instruction_status",
+      current: "unlisted-and-containing-code-data-v3",
       legacy: undefined,
     },
     {

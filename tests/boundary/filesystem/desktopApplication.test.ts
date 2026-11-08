@@ -714,7 +714,6 @@ it("retains complete observations through cancellation during directory finaliza
     { path: root },
     { signal: controller.signal },
   );
-  expect(result.ok).toBe(false);
   if (result.ok) throw new Error("Expected cancellation");
   expect(result.error).toMatchObject({ reason: "cancelled", cause: reason });
   const retained = parseEvidence(result.error.partialObservation);

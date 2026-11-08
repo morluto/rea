@@ -15,7 +15,10 @@ const BEGIN = "<!-- BEGIN:compare-artifacts:compared-format-metadata-kinds -->";
 const END = "<!-- END:compare-artifacts:compared-format-metadata-kinds -->";
 
 it("names exactly the format metadata kinds that artifact comparison compares", async () => {
-  const contracts = await readFile(resolve("docs/mcp-contracts.md"), "utf8");
+  const contracts = await readFile(
+    resolve("docs/reference/mcp-contracts.md"),
+    "utf8",
+  );
   const start = contracts.indexOf(BEGIN);
   const end = contracts.indexOf(END);
   expect(start).toBeGreaterThanOrEqual(0);
