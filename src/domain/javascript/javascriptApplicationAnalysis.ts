@@ -59,16 +59,21 @@ const electronBoundarySummarySchema = z.strictObject({
   /** Absent in evidence produced before protocol registrations were reported. */
   protocol_registrations: countSchema.exactOptional(),
   /**
-   * Whether the Electron boundary surface was actually recovered. `empty` means
-   * an analyzed source names Electron but no boundary fact was recovered, so the
-   * zeroes above are missing coverage and not evidence of absence.
+   * Whether the Electron boundary surface was recovered. `partial` means an
+   * observed Electron source could not finish semantic analysis. `empty` means
+   * an analyzed source names Electron but no boundary fact was recovered.
    *
    * Absent when no retained fact names an Electron module, or in evidence
    * produced before this field existed. Absence is unknown rather than proof
    * that the application has no Electron surface: unread sources, failed
    * analysis, and dynamic module names can hide one.
    */
-  electron_semantics: z.enum(["recovered", "empty"]).exactOptional(),
+  electron_semantics: z
+    .enum(["recovered", "empty", "partial"])
+    .describe(
+      "Partial means at least one source that loads Electron did not finish semantic analysis. Counts include only retained observations.",
+    )
+    .exactOptional(),
 });
 
 const reconstructionStatisticsSchema = z.strictObject({

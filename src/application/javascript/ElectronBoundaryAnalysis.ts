@@ -6,7 +6,10 @@ import {
   ELECTRON_REFERENCE_KINDS,
 } from "../../domain/javascript/javascriptElectronMemberWrites.js";
 import type { ElectronBoundarySummary } from "../../domain/javascript/javascriptApplicationAnalysis.js";
-import type { JavaScriptArtifactAnalysis } from "./JavaScriptArtifactAnalysisTypes.js";
+import type {
+  AnalyzedJavaScriptArtifactFile,
+  JavaScriptArtifactAnalysis,
+} from "./JavaScriptArtifactAnalysisTypes.js";
 import type { JavaScriptArtifactFile } from "../../domain/javascript/javascriptArtifactFiles.js";
 import {
   resolveArtifactPathByContext,
@@ -133,31 +136,35 @@ export const createElectronIpcContext = (
  * Historical evidence may predate that field, so the retained references answer
  * the same question for those files.
  */
-export const electronModuleReferenced = (
-  analysis: JavaScriptArtifactAnalysis,
-): boolean =>
-  analysis.files.some(({ javascript, semantic }) => {
-    const applicability = javascript?.analysis_coverage?.applicability.electron;
-    if (applicability !== undefined) return applicability === "observed";
-    const links = semantic?.ir.moduleLinks;
-    if (
-      links !== undefined &&
-      links.some(
-        ({ specifier, kind }) =>
-          kind !== "type-import" &&
-          specifier !== null &&
-          ELECTRON_MODULE.test(specifier),
-      )
-    )
-      return true;
-    return (javascript?.references ?? []).some(
-      ({ specifier, kind, operation }) =>
-        operation === "load" &&
-        ELECTRON_REFERENCE_KINDS.has(kind) &&
+const electronFileReferenced = ({
+  javascript,
+  semantic,
+}: AnalyzedJavaScriptArtifactFile): boolean => {
+  const applicability = javascript?.analysis_coverage?.applicability.electron;
+  if (applicability !== undefined) return applicability === "observed";
+  const links = semantic?.ir.moduleLinks;
+  if (
+    links !== undefined &&
+    links.some(
+      ({ specifier, kind }) =>
+        kind !== "type-import" &&
         specifier !== null &&
         ELECTRON_MODULE.test(specifier),
-    );
-  });
+    )
+  )
+    return true;
+  return (javascript?.references ?? []).some(
+    ({ specifier, kind, operation }) =>
+      operation === "load" &&
+      ELECTRON_REFERENCE_KINDS.has(kind) &&
+      specifier !== null &&
+      ELECTRON_MODULE.test(specifier),
+  );
+};
+
+export const electronModuleReferenced = (
+  analysis: JavaScriptArtifactAnalysis,
+): boolean => analysis.files.some(electronFileReferenced);
 
 /** Every Electron boundary fact family the graph reports. */
 export const electronBoundaryFactCount = (
@@ -178,19 +185,22 @@ export const electronBoundaryFactCount = (
     0,
   );
 
-/**
- * Whether the Electron boundary summary came back empty. `undefined` means no
- * analyzed source names Electron, which is unknown rather than absent: unread
- * sources and dynamic module names can hide its use.
- */
+/** Summarize recovery only over sources whose Electron applicability was observed. */
 export const electronSemanticsState = (
   analysis: JavaScriptArtifactAnalysis,
-): "recovered" | "empty" | undefined =>
-  electronModuleReferenced(analysis) === false
-    ? undefined
-    : electronBoundaryFactCount(analysis) === 0
-      ? "empty"
-      : "recovered";
+): ElectronBoundarySummary["electron_semantics"] => {
+  if (
+    analysis.files.some(
+      (entry) =>
+        entry.semantic === null &&
+        entry.analysis_failure !== undefined &&
+        electronFileReferenced(entry),
+    )
+  )
+    return "partial";
+  if (!electronModuleReferenced(analysis)) return undefined;
+  return electronBoundaryFactCount(analysis) === 0 ? "empty" : "recovered";
+};
 
 /** Summarize static Electron findings without treating gaps as absence. */
 export const summarizeElectronBoundaries = (

@@ -386,11 +386,16 @@ const graphLimitations = (
     )
       ? [ELECTRON_IDENTITY_LIMITATION]
       : []),
+    ...(electronSemantics === "partial"
+      ? [
+          "Semantic analysis did not complete for one or more sources that load Electron. Inspect the affected source observations for details, or select the application sources with --source-paths-json (CLI) or source_paths (MCP) and retry.",
+        ]
+      : []),
     ...(electronSemantics === "empty"
       ? [
           "Electron modules are referenced but no Electron boundary fact was recovered from inert syntax. Zero IPC operations and zero BrowserWindows here mean empty coverage, not evidence that the application has none.",
         ]
-      : electronSemantics === "recovered"
+      : electronSemantics !== undefined
         ? [
             "Electron relationships are derived from inert syntax; runtime registration, reachability, defaults, and enforcement remain unproven.",
           ]

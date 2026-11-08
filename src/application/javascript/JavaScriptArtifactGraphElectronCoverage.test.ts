@@ -7,9 +7,10 @@ import { moduleResolutionModeForJavaScriptReference } from "../../domain/javascr
 import { analyzeParsedJavaScriptSemanticsSteps } from "../../domain/javascript/javascriptSemanticAnalysis.js";
 import { parseJavaScriptSource } from "../../domain/javascript/javascriptSourceParser.js";
 import { analyzeParsedJavaScriptStaticSourceSteps } from "../../domain/javascript/javascriptStaticAnalysis.js";
-import type {
-  AnalyzedJavaScriptArtifactFile,
-  JavaScriptArtifactAnalysis,
+import {
+  javascriptArtifactAnalysisScopes,
+  type AnalyzedJavaScriptArtifactFile,
+  type JavaScriptArtifactAnalysis,
 } from "./JavaScriptArtifactAnalysisTypes.js";
 import { completeJavaScriptAnalysisSteps } from "./JavaScriptAnalysisControl.js";
 import { buildImmutableJavaScriptArtifactGraphSteps as buildGraph } from "./JavaScriptArtifactGraphBuilder.js";
@@ -81,15 +82,17 @@ const graphFor = async (
     entry: AnalyzedJavaScriptArtifactFile,
   ) => AnalyzedJavaScriptArtifactFile,
   path: string = PATH,
+  additionalEntries: readonly AnalyzedJavaScriptArtifactFile[] = [],
 ): Promise<{
   limitations: readonly string[];
   electronSemantics: string | undefined;
 }> => {
   const base = await analyzedEntry(source, path);
   const entry = mutate === undefined ? base : mutate(base);
+  const files = [entry, ...additionalEntries];
   const analysis: JavaScriptArtifactAnalysis = {
     jsonDocuments: new JavaScriptJsonDocuments(),
-    files: [entry],
+    files,
     packages: [],
     json_modules: [],
     html_scripts: [],
@@ -102,7 +105,7 @@ const graphFor = async (
     limitations: [],
   };
   const fileSet = {
-    files: [entry.file],
+    files: files.map(({ file }) => file),
     unavailable_relevant_files: [],
     containers: [],
     text_bytes_read: entry.file.bytes,
@@ -135,6 +138,37 @@ describe("Electron semantic coverage", () => {
       "Electron relationships are derived from inert syntax; runtime registration, reachability, defaults, and enforcement remain unproven.",
     );
     expect(electronSemantics).toBe("recovered");
+  });
+
+  it("reports partial Electron coverage when an IPC fact survives another file's semantic failure", async () => {
+    const window = await analyzedEntry(
+      'const electron = require("electron"); new electron.BrowserWindow();',
+      "window.js",
+    );
+    const { electronSemantics, limitations } = await graphFor(
+      'const { ipcMain } = require("electron"); ipcMain.handle("ping", () => 1);',
+      undefined,
+      PATH,
+      [
+        {
+          ...window,
+          semantic: null,
+          analysis_failure: {
+            scope: javascriptArtifactAnalysisScopes.javascript,
+            status: "interrupted",
+            reason: "window.js: semantic analysis did not start",
+            error: { code: "resource_constraint" },
+            limits: { semantic_result_budget_bytes: 0 },
+          },
+        },
+      ],
+    );
+
+    expect(electronSemantics).toBe("partial");
+    expect(limitations).toEqual(
+      expect.arrayContaining([expect.stringContaining("--source-paths-json")]),
+    );
+    expect(limitations).not.toContain(EMPTY_COVERAGE);
   });
 
   it("omits the coverage field when the source never references Electron", async () => {
