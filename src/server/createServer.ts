@@ -352,6 +352,9 @@ export const createServer = (
     recordUnknown,
     evidenceById,
     withAdmittedAnalysis: analysisAdmission,
+    ...(session === undefined
+      ? {}
+      : { admitRecovery: session.admitRecoveryObservation.bind(session) }),
   };
   const evidenceOptions = {
     logger: toolLogger,
@@ -369,6 +372,12 @@ export const createServer = (
     enhanced: () =>
       registerEnhancedTools(server, {
         ...analysisOptions,
+        ...(session === undefined
+          ? {}
+          : { evidenceForAnalysis: session.evidenceForAnalysis.bind(session) }),
+        ...(session === undefined
+          ? {}
+          : { admitRecovery: session.admitRecoveryObservation.bind(session) }),
         analysisProfile:
           session === undefined
             ? undefined

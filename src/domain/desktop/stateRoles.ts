@@ -243,7 +243,15 @@ export const stateReasons = (
     facts.openedFiles.has(path)
   )
     reasons.push("opened_by_application");
-  if (namedInTitle(path, facts)) reasons.push("named_in_window_title");
+  if (
+    namedInTitle(path, facts) ||
+    facts.selections.some(
+      ({ path: selected, physical }) =>
+        isWithinAny(path, [physical]) &&
+        namedInTitle(`${selected}${path.slice(physical.length)}`, facts),
+    )
+  )
+    reasons.push("named_in_window_title");
   if (isWithinAny(path, facts.selectedRoots)) reasons.push("selected_path");
   if (dconfApplicationKeys) reasons.push("dconf_application_keys");
   if (relative !== null && isWithinAny(relative, SHARED_DESKTOP_PATHS))
