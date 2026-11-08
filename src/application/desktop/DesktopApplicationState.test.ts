@@ -295,6 +295,346 @@ describe("nullable SQLite row identity through desktop capture consumers", () =>
   });
 });
 
+describe("SQLite sidecar checkpoint coverage", () => {
+  it.each([
+    ["absent", { truncated: true }],
+    ["retained", { truncated: true }],
+    ["absent", { unreadable_directories: 1 }],
+    ["retained", { unreadable_directories: 1 }],
+    ["absent", { unchecked_paths: 1 }],
+    ["retained", { unchecked_paths: 1 }],
+    ["absent", { unconfirmed_changes: 1 }],
+    ["retained", { unconfirmed_changes: 1 }],
+  ] as const)(
+    "does not pair a changed database with a previously %s WAL after an incomplete walk (%o)",
+    async (baselineWal, incomplete) => {
+      const base = capture();
+      const [baseline, edited] = base.state.checkpoints;
+      if (baseline === undefined || edited === undefined)
+        throw new Error("fixture");
+      const folder = await writeCaptureFolder(
+        {
+          ...base,
+          state: {
+            ...base.state,
+            checkpoints: [
+              {
+                ...baseline,
+                retained: [
+                  ...baseline.retained,
+                  ...(baselineWal === "retained"
+                    ? [retained(`${DATABASE}-wal`, "wal v1")]
+                    : []),
+                ],
+              },
+              { ...edited, ...incomplete },
+            ],
+          },
+        },
+        undefined,
+        ["wal v1"],
+      );
+      const readVersions: string[] = [];
+      const byPath = await statePathsOf(folder, {
+        ...readers,
+        sqlite: async (database, signal) => {
+          readVersions.push(await readFile(database, "utf8"));
+          return readers.sqlite(database, signal);
+        },
+      });
+
+      expect(byPath.get(".local/share/notes/notes.db")?.versions).toMatchObject(
+        [
+          { checkpoint_index: 0, view_error: null },
+          { checkpoint_index: 1, view: null, view_error: expect.any(String) },
+        ],
+      );
+      expect(readVersions).toEqual(["SQLite format 3\0v1"]);
+    },
+  );
+});
+
+describe("SQLite sidecar coverage recovery", () => {
+  it.each(["unobserved", "changed", "deleted"] as const)(
+    "keeps sidecar uncertainty after a complete walk unless the WAL is %s",
+    async (wal) => {
+      const base = capture();
+      const [baseline, edited] = base.state.checkpoints;
+      if (baseline === undefined || edited === undefined)
+        throw new Error("fixture");
+      const later = {
+        ...edited,
+        name: "later",
+        changes: [
+          ...edited.changes,
+          ...(wal === "changed"
+            ? [
+                change(`${DATABASE}-wal`, {
+                  before: "wal v1",
+                  after: "wal v2",
+                }),
+                change(`${DATABASE}-journal`, {
+                  before: "journal v1",
+                  after: "journal v2",
+                }),
+              ]
+            : wal === "deleted"
+              ? [
+                  {
+                    ...change(`${DATABASE}-wal`, {
+                      before: "wal v1",
+                      after: "wal v2",
+                    }),
+                    kind: "deleted" as const,
+                    after: null,
+                  },
+                  {
+                    ...change(`${DATABASE}-journal`, {
+                      before: "journal v1",
+                      after: "journal v2",
+                    }),
+                    kind: "deleted" as const,
+                    after: null,
+                  },
+                ]
+              : []),
+        ],
+        retained: [
+          ...edited.retained,
+          ...(wal === "changed"
+            ? [
+                retained(`${DATABASE}-wal`, "wal v2"),
+                retained(`${DATABASE}-journal`, "journal v2"),
+              ]
+            : []),
+        ],
+      };
+      const folder = await writeCaptureFolder(
+        {
+          ...base,
+          state: {
+            ...base.state,
+            checkpoints: [
+              {
+                ...baseline,
+                retained: [
+                  ...baseline.retained,
+                  retained(`${DATABASE}-wal`, "wal v1"),
+                  retained(`${DATABASE}-journal`, "journal v1"),
+                ],
+              },
+              { ...checkpoint("partial", "request", [], []), truncated: true },
+              later,
+            ],
+          },
+        },
+        undefined,
+        ["wal v1", "wal v2", "journal v1", "journal v2"],
+      );
+      const byPath = await statePathsOf(folder);
+      expect(
+        byPath.get(".local/share/notes/notes.db")?.versions[1],
+      ).toMatchObject(
+        wal !== "unobserved"
+          ? { checkpoint_index: 2, view_error: null }
+          : { checkpoint_index: 2, view: null, view_error: expect.any(String) },
+      );
+    },
+  );
+});
+
+describe("SQLite coherent checkpoint sets", () => {
+  it("does not pair a changed WAL with an unconfirmed earlier database after an incomplete walk", async () => {
+    const base = capture();
+    const [baseline, edited] = base.state.checkpoints;
+    if (baseline === undefined || edited === undefined)
+      throw new Error("fixture");
+    const folder = await writeCaptureFolder(
+      {
+        ...base,
+        state: {
+          ...base.state,
+          checkpoints: [
+            {
+              ...baseline,
+              retained: [
+                ...baseline.retained,
+                retained(`${DATABASE}-wal`, "wal v1"),
+              ],
+            },
+            {
+              ...edited,
+              truncated: true,
+              changes: [
+                change(`${DATABASE}-wal`, {
+                  before: "wal v1",
+                  after: "wal v2",
+                }),
+              ],
+              retained: [retained(`${DATABASE}-wal`, "wal v2")],
+            },
+          ],
+        },
+      },
+      undefined,
+      ["wal v1", "wal v2"],
+    );
+    const readVersions: string[] = [];
+    const byPath = await statePathsOf(folder, {
+      ...readers,
+      sqlite: async (database, signal) => {
+        readVersions.push(await readFile(database, "utf8"));
+        return readers.sqlite(database, signal);
+      },
+    });
+
+    expect(byPath.get(".local/share/notes/notes.db")?.versions).toMatchObject([
+      { checkpoint_index: 0, view_error: null },
+      { checkpoint_index: 1, view: null, view_error: expect.any(String) },
+    ]);
+    expect(readVersions).toEqual(["SQLite format 3\0v1"]);
+  });
+
+  it("reads a SQLite set explicitly recorded at the same incomplete checkpoint", async () => {
+    const base = extended({
+      baseline: [
+        retained(`${DATABASE}-wal`, "wal v1"),
+        retained(`${DATABASE}-journal`, "journal v1"),
+      ],
+      changes: [
+        change(`${DATABASE}-wal`, { before: "wal v1", after: "wal v2" }),
+        change(`${DATABASE}-journal`, {
+          before: "journal v1",
+          after: "journal v2",
+        }),
+      ],
+      later: [
+        retained(`${DATABASE}-wal`, "wal v2"),
+        retained(`${DATABASE}-journal`, "journal v2"),
+      ],
+    });
+    const [baseline, edited] = base.state.checkpoints;
+    if (baseline === undefined || edited === undefined)
+      throw new Error("fixture");
+    const folder = await writeCaptureFolder(
+      {
+        ...base,
+        state: {
+          ...base.state,
+          checkpoints: [baseline, { ...edited, truncated: true }],
+        },
+      },
+      undefined,
+      ["wal v1", "wal v2", "journal v1", "journal v2"],
+    );
+
+    const byPath = await statePathsOf(folder);
+    expect(
+      byPath.get(".local/share/notes/notes.db")?.versions[1],
+    ).toMatchObject({
+      checkpoint_index: 1,
+      view_error: null,
+      view: {
+        tables: {
+          notes: {
+            rows: [
+              [1, "a"],
+              [2, "b"],
+            ],
+          },
+        },
+      },
+    });
+  });
+});
+
+describe("SQLite non-file sidecars", () => {
+  it("refuses an unchanged baseline WAL that the walk recorded as a symlink", async () => {
+    const base = capture();
+    const folder = await writeCaptureFolder({
+      ...base,
+      state: {
+        ...base.state,
+        baseline_non_files: [{ path: `${DATABASE}-wal`, type: "symlink" }],
+      },
+    });
+    const byPath = await statePathsOf(folder);
+    expect(
+      byPath.get(".local/share/notes/notes.db")?.versions[0],
+    ).toMatchObject({
+      view: null,
+      view_error: expect.stringContaining("write-ahead log"),
+    });
+  });
+
+  it.each(["created", "type_changed"] as const)(
+    "refuses a database whose WAL was %s as a symlink",
+    async (kind) => {
+      const base = capture();
+      const [baseline, edited] = base.state.checkpoints;
+      if (baseline === undefined || edited === undefined)
+        throw new Error("fixture");
+      const wal = change(`${DATABASE}-wal`, {
+        ...(kind === "type_changed" ? { before: "wal v1" } : {}),
+        after: "link",
+      });
+      const folder = await writeCaptureFolder(
+        {
+          ...base,
+          state: {
+            ...base.state,
+            checkpoints: [
+              {
+                ...baseline,
+                retained: [
+                  ...baseline.retained,
+                  ...(kind === "type_changed"
+                    ? [retained(`${DATABASE}-wal`, "wal v1")]
+                    : []),
+                ],
+              },
+              {
+                ...edited,
+                changes: [
+                  ...edited.changes,
+                  {
+                    ...wal,
+                    kind,
+                    after: { ...wal.after, type: "symlink", sha256: null },
+                  },
+                ],
+              },
+            ],
+          },
+        },
+        undefined,
+        ["wal v1"],
+      );
+      const byPath = await statePathsOf(folder);
+      expect(
+        byPath.get(".local/share/notes/notes.db")?.versions[1],
+      ).toMatchObject({
+        view: null,
+        view_error: expect.stringContaining("write-ahead log"),
+      });
+    },
+  );
+
+  it("refuses a legacy capture without baseline non-file facts", async () => {
+    const base = capture();
+    const { baseline_non_files: _missing, ...state } = base.state;
+    const folder = await writeCaptureFolder({
+      ...base,
+      state,
+    } as DesktopApplicationCapture);
+    const result = await inspectDesktopApplicationState(folder, readers);
+    expect(result).toBeInstanceOf(Error);
+    expect(result).toMatchObject({
+      remediationAction: "Capture the application again.",
+    });
+  });
+});
+
 describe("inspectDesktopApplicationState database sidecars", () => {
   it("refuses a database whose write-ahead log was left out at the baseline", async () => {
     const base = capture();
