@@ -281,6 +281,16 @@ it.each([
       REA_MCP_INPUT_SCHEMA_PROFILE: profile,
     });
     const before = await client.listTools();
+    // Compare independently composed canonical SDK registrations as well as
+    // recorded artifacts. Listing every explicit family selects eager startup
+    // with the same inventory, without target analysis or provider acquisition.
+    const eager = await connect(mode, {
+      REA_MCP_INPUT_SCHEMA_PROFILE: profile,
+      REA_MCP_TOOL_FAMILIES: TOOL_FAMILY_DEFINITIONS.map(({ id }) => id).join(
+        ",",
+      ),
+    });
+    expect(before).toEqual(await eager.client.listTools());
     const withoutOutput = ({
       outputSchema: _output,
       ...tool
