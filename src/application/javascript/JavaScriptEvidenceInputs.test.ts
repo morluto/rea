@@ -26,6 +26,74 @@ const native = createEvidence(
   { operation: "procedure_info", parameters: {}, result: {} },
 );
 
+it("preserves the verified application subject in both trace workflows", () => {
+  const original = JAVASCRIPT_FEATURE_TRACE_EXAMPLE.application;
+  if (original.subject === null)
+    throw new Error("Expected application subject");
+  const application = createEvidence(
+    {
+      path: original.subject.local_path,
+      sha256: original.subject.digest.sha256,
+      format: original.subject.format,
+      architecture: "x86_64",
+      name: "caller-selected-name",
+    },
+    original.provider,
+    {
+      operation: original.operation,
+      predicateType: original.predicate_type,
+      parameters: original.parameters,
+      result: original.normalized_result,
+      confidence: "derived",
+      authority: "shipped-artifact",
+    },
+  );
+  const feature = traceApplicationFeatureEvidence({
+    ...JAVASCRIPT_FEATURE_TRACE_EXAMPLE,
+    application,
+  });
+  const semantic = traceJavaScriptSemanticsEvidence({
+    application,
+    query: {
+      seed: { kind: "property", name: "unobserved" },
+      direction: "ownership",
+    },
+  });
+  for (const result of [feature, semantic]) {
+    if (!result.ok) throw result.error;
+    expect(result.value.evidence.subject).toEqual(application.subject);
+    expect(result.value.evidence.limitations).not.toContain(
+      "Artifact identity is unavailable for this observation.",
+    );
+  }
+});
+
+it("does not attribute a multi-source reconciliation graph to its envelope subject", () => {
+  const original = JAVASCRIPT_APPLICATION_VERSION_COMPARISON_EXAMPLE.right;
+  const reconciliation = createEvidence(
+    { path: "/other/artifact", sha256: "f".repeat(64), format: "file" },
+    original.provider,
+    {
+      operation: original.operation,
+      predicateType: original.predicate_type,
+      parameters: original.parameters,
+      result: original.normalized_result,
+      confidence: "inferred",
+      authority: "analyst-inference",
+      evidenceLinks: original.evidence_links,
+    },
+  );
+  const result = traceApplicationFeatureEvidence({
+    ...JAVASCRIPT_FEATURE_TRACE_EXAMPLE,
+    application: reconciliation,
+  });
+  if (!result.ok) throw result.error;
+  expect(result.value.evidence.subject).toBeNull();
+  expect(result.value.evidence.limitations).toContain(
+    "Artifact identity is unavailable for this observation.",
+  );
+});
+
 it("resolves feature native arrays without changing source identity or unknowns", () => {
   const input = {
     ...JAVASCRIPT_FEATURE_TRACE_EXAMPLE,

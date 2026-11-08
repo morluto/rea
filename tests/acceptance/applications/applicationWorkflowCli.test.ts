@@ -771,6 +771,7 @@ describe("application workflow CLI parity", () => {
     expect(traced).toMatchObject({
       operation: "trace_application_feature",
       predicate_type: "rea.application-feature-trace",
+      subject: JAVASCRIPT_FEATURE_TRACE_EXAMPLE.application.subject,
       normalized_result: {
         seed: { kind: "module", value: "renderer.js", match: "exact" },
         summary: {
@@ -890,6 +891,7 @@ describe("application workflow CLI parity", () => {
     expect(traced).toMatchObject({
       operation: "trace_javascript_semantics",
       predicate_type: "rea.javascript-semantic-trace",
+      subject: analyzed.value.subject,
       normalized_result: {
         source_evidence_id: analyzed.value.evidence_id,
         source_graph_id: result.semantic_graph.graph_id,
@@ -936,6 +938,7 @@ it("traces all endpoint carriers and their response consumers through CLI and MC
     const cliEvidence = parseEvidence(
       await runCliWithRequestFile(root, "trace-javascript-semantics", input),
     );
+    expect(cliEvidence.subject).toEqual(application.subject);
     const mcpResponse = await client.callTool({
       name: "trace_javascript_semantics",
       arguments: input,
@@ -1920,6 +1923,11 @@ const runCliWithRequestFile = async (
 /** The CLI keeps complete trace JSON; the shared view owner selects from the saved file. */
 const assertTraceFileView = async (root: string, traced: unknown) => {
   const parent = parseEvidence(traced);
+  if (parent.subject === null) throw new Error("Expected trace subject");
+  const artifact = {
+    path: parent.subject.local_path,
+    sha256: parent.subject.digest.sha256,
+  };
   const tracePath = join(root, "trace.json");
   await writeFile(tracePath, JSON.stringify(parent));
   const source = { kind: "evidence-file", path: tracePath };
@@ -1934,6 +1942,7 @@ const assertTraceFileView = async (root: string, traced: unknown) => {
       kind: "summary",
       parent_evidence_id: parent.evidence_id,
       parent_operation: "trace_application_feature",
+      artifact,
       summary: { summary: { matched_seeds: 1, traced_nodes: 1 } },
     },
   });
@@ -1949,6 +1958,7 @@ const assertTraceFileView = async (root: string, traced: unknown) => {
   ).toMatchObject({
     normalized_result: {
       kind: "feature-trace",
+      artifact,
       items: [{ seed: true, observation_count: 1 }],
       coverage: { total: 1, exhausted: true },
     },

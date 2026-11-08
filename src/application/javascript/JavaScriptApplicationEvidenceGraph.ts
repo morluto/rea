@@ -3,7 +3,11 @@ import {
   JAVASCRIPT_RUNTIME_RECONCILIATION_PROVIDER,
   MANAGED_WORKFLOW_PROVIDER,
 } from "../../domain/investigationProviders.js";
-import { isImmutableEvidence, type Evidence } from "../../domain/evidence.js";
+import {
+  isImmutableEvidence,
+  type Evidence,
+  type EvidenceSubjectTarget,
+} from "../../domain/evidence.js";
 import { readEvidence } from "../../domain/evidenceValidation.js";
 import { EvidenceIntegrityError } from "../../domain/evidenceErrors.js";
 import {
@@ -34,6 +38,25 @@ export interface ApplicationGraphEvidenceSource {
   readonly rootArtifactSha256: string;
   readonly semanticGraph: JavaScriptSemanticGraph | null;
 }
+
+/** Only static application inputs validate a subject against the graph artifact. */
+export const applicationGraphSubjectTarget = (
+  source: ApplicationGraphEvidenceSource,
+): EvidenceSubjectTarget | undefined => {
+  const subject =
+    source.kind === "static-application" ? source.evidence.subject : null;
+  return subject === null
+    ? undefined
+    : {
+        path: subject.local_path,
+        sha256: subject.digest.sha256,
+        format: subject.format,
+        name: subject.name,
+        ...(subject.architecture === null
+          ? {}
+          : { architecture: subject.architecture }),
+      };
+};
 
 /** Caller-owned Evidence failed validation at the application graph boundary. */
 export interface ApplicationGraphEvidenceInputFailure {
@@ -246,8 +269,7 @@ const assertResultEvidenceLinksInEnvelope = (
   evidence: Evidence,
   path: readonly (string | number)[],
   resultLabel:
-    | "Runtime reconciliation result"
-    | "Managed application graph result",
+    "Runtime reconciliation result" | "Managed application graph result",
 ): void => {
   const unmatchedLink = resultEvidenceLinks.find(
     (evidenceId) => !evidence.evidence_links.includes(evidenceId),

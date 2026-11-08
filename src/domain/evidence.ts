@@ -184,6 +184,8 @@ export interface EvidenceSubjectTarget {
   readonly sha256: string;
   readonly format: z.infer<typeof subjectSchema>["format"];
   readonly architecture?: BinaryArchitecture;
+  /** Preserve an existing Evidence subject's display name when deriving observations. */
+  readonly name?: string;
 }
 
 /** Rebind a matching immutable artifact subject to the caller's selected path. */
@@ -466,7 +468,9 @@ export const evidenceEnvelopeForAdmission = (
     target === undefined
       ? null
       : {
-          name: basename(target.path) || "artifact",
+          name:
+            ("name" in target ? target.name : undefined) ??
+            (basename(target.path) || "artifact"),
           digest: { sha256: target.sha256 },
           format: target.format,
           architecture: target.architecture ?? null,
