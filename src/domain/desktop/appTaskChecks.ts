@@ -113,11 +113,13 @@ export const sameJson = (
 /** A decimal numeral as FreeCAD and other apps write numbers in text, such as `5.0000000000000000`. */
 const NUMERAL = /^[+-]?(?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+)(?:[eE][+-]?[0-9]+)?$/u;
 
-/** A number, or a numeral string read as one; undefined for anything else or a numeral past the doubles. */
+/** A number, or a whitespace-trimmed numeral string read as one; undefined for anything else or a numeral past the doubles. */
 export const numberOf = (value: JsonValue): number | undefined => {
   if (typeof value === "number") return value;
-  if (typeof value !== "string" || !NUMERAL.test(value)) return undefined;
-  const number = Number(value);
+  if (typeof value !== "string") return undefined;
+  const text = value.trim();
+  if (!NUMERAL.test(text)) return undefined;
+  const number = Number(text);
   return Number.isFinite(number) ? number : undefined;
 };
 
@@ -245,7 +247,7 @@ const nearVerdict = (
   join: boolean,
 ): Verdict => {
   const read = join ? elementText(found) : found;
-  const number = numberOf(typeof read === "string" ? read.trim() : read);
+  const number = numberOf(read);
   const within = `within ${shown(tolerance)} of ${shown(expected)}`;
   if (number === undefined)
     return fail(`${at} is ${shown(found)}, not a number`);

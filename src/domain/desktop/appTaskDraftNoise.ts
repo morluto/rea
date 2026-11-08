@@ -222,6 +222,7 @@ const volatileAt = (
   key: string | undefined,
   value: JsonValue | undefined,
   fresh: boolean,
+  xml: boolean,
 ) =>
   (typeof value === "string" &&
     (isVolatileValue(
@@ -234,7 +235,7 @@ const volatileAt = (
   (key !== undefined && ID_COUNTER.test(key.split(":").at(-1) ?? key)) ||
   metadataCount(elements, key, value) ||
   elements.some(assignedId) ||
-  (isXmlElement(value) && assignedId(value));
+  (xml && isXmlElement(value) && assignedId(value));
 
 /**
  * The ids of the elements a change added (`id`, `xid`, `uuid`, `guid`, as
@@ -441,13 +442,14 @@ const upkeepOf = (
         ? ends.baseline
         : ends.final;
     return (
-      ENTRY_VIEW.exec(pointer)?.[0] === "/entries/[name=styles.xml]/view/" ||
-      (key !== undefined &&
-        /style-name$/iu.test(key) &&
-        automatic(pointer, key)) ||
-      elementsAlong(view, pointer, ends.format(view, pointer)).some(
-        ({ name }) => STYLE_AREA.test(name),
-      )
+      ends.format(view, pointer) === "xml" &&
+      (ENTRY_VIEW.exec(pointer)?.[0] === "/entries/[name=styles.xml]/view/" ||
+        (key !== undefined &&
+          /style-name$/iu.test(key) &&
+          automatic(pointer, key)) ||
+        elementsAlong(view, pointer, ends.format(view, pointer)).some(
+          ({ name }) => STYLE_AREA.test(name),
+        ))
     );
   };
   // The user's edit is elsewhere when a change no other rule calls noise lies outside the styles.
@@ -685,8 +687,25 @@ export const changeNoise = (
   format: Ends["format"],
 ): ((pointer: string) => NoiseReason | undefined) => {
   const ends: Ends = { ...input, format };
+  const isXmlPointer = (pointer: string) => {
+    const view =
+      resolvePointer(ends.final, pointer, ends.format(ends.final, pointer)) ===
+      undefined
+        ? ends.baseline
+        : ends.final;
+    return ends.format(view, pointer) === "xml";
+  };
+  const xmlChange = {
+    added: change.added.filter(
+      (pointer) => ends.format(ends.final, pointer) === "xml",
+    ),
+    changed: change.changed.filter(isXmlPointer),
+    removed: change.removed.filter(
+      (pointer) => ends.format(ends.baseline, pointer) === "xml",
+    ),
+  };
   const byPosition = positionalRenumbering(ends);
-  const fresh = freshIds(change, ends);
+  const fresh = freshIds(xmlChange, ends);
   const added = new Set(change.added);
   // A reference on an element both ends hold, as a split moved to the new account, is the user's.
   const freshAt = (
@@ -710,8 +729,8 @@ export const changeNoise = (
       undefined
         ? ends.baseline
         : ends.final;
-    const xml = ends.format(view, pointer) === "xml";
-    const key = xml ? attributeKeyOf(pointer) : undefined;
+    const isXml = ends.format(view, pointer) === "xml";
+    const key = isXml ? attributeKeyOf(pointer) : undefined;
     const elements = elementsAlong(view, pointer, ends.format(view, pointer));
     const value = resolvePointer(view, pointer, ends.format(view, pointer));
     const reason: NoiseReason | undefined =
@@ -721,15 +740,20 @@ export const changeNoise = (
             isIdentifyingAttribute(key) &&
             byPosition(pointer, key)
           ? "renumbered"
-          : xml &&
-              volatileAt(elements, key, value, freshAt(pointer, key, value))
+          : volatileAt(
+                elements,
+                key,
+                value,
+                isXml && freshAt(pointer, key, value),
+                isXml,
+              )
             ? "volatile"
             : isStamp(value ?? null) ||
                 stampedAlong(elements) ||
                 stampedWhole(elements, value)
               ? "timestamp"
               : elements.some(isSlots) ||
-                  (xml && isMemberCount(ends, pointer, key))
+                  (isXml && isMemberCount(ends, pointer, key))
                 ? "upkeep"
                 : undefined;
     known.set(pointer, reason);
@@ -738,13 +762,14 @@ export const changeNoise = (
   const upkeep = upkeepOf(change, ends, base);
   const layout = derivedLayout(change, ends);
   const drawing = drawingLayout(change, ends, base);
-  const mirror = mirrorsOf(change, ends);
-  const reference = idReferencesOf(change, ends);
+  const mirror = mirrorsOf(xmlChange, ends);
+  const reference = idReferencesOf(xmlChange, ends);
   return (pointer) =>
     base(pointer) ??
-    (upkeep(pointer) || mirror(pointer) || reference(pointer)
+    (isXmlPointer(pointer) &&
+    (upkeep(pointer) || mirror(pointer) || reference(pointer))
       ? "upkeep"
-      : layout(pointer) || drawing(pointer)
+      : isXmlPointer(pointer) && (layout(pointer) || drawing(pointer))
         ? "layout"
         : undefined);
 };
