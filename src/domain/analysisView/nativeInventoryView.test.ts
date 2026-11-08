@@ -218,3 +218,21 @@ it("bounds aliases separately and rejects invalid source rows", () => {
     ),
   ).toThrow();
 });
+
+it("admits a larger alias selection when it fits the response budget", () => {
+  const aliases = Array.from({ length: 200 }, (_, index) => `alias_${index}`);
+  const source = parent(
+    freezeJsonSnapshot([{ ...rows()[0], matched_aliases: aliases }]),
+  );
+  const page = project(source, {
+    kind: "native-inventory-aliases",
+    source_index: 0,
+    limit: 200,
+  });
+  expect(page).toMatchObject({
+    items: {
+      aliases: aliases.map((name, alias_index) => ({ alias_index, name })),
+    },
+    coverage: { total: 200, exhausted: true },
+  });
+});

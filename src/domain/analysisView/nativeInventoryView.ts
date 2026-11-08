@@ -55,7 +55,7 @@ export const nativeInventoryAliasViewRequestSchema = z.strictObject({
   kind: z.literal("native-inventory-aliases"),
   source_index: z.int().nonnegative().describe("Original procedure row index."),
   offset: z.int().nonnegative().default(0),
-  limit: z.int().positive().max(128).default(32),
+  limit: z.int().positive().default(32),
 });
 
 export const nativeInventoryAliasItemsSchema = z.discriminatedUnion("state", [
@@ -182,7 +182,15 @@ export const projectNativeInventoryView = (
           },
         ]),
       );
-    const page = nativeInventoryAliasPage(row, view);
+    const { matched_aliases: names } = row;
+    const items: z.output<typeof nativeInventoryAliasItemsSchema> =
+      names === undefined
+        ? { state: "not-recorded", aliases: null }
+        : { state: "recorded", aliases: [] };
+    const count = Math.max(
+      0,
+      Math.min(view.limit, (names?.length ?? 0) - view.offset),
+    );
     const result = {
       ...shared,
       kind: view.kind,
@@ -193,17 +201,15 @@ export const projectNativeInventoryView = (
         value: row.value,
         source_index: view.source_index,
       },
-      ...page,
+      items,
+      coverage:
+        names === undefined
+          ? null
+          : pageViewCoverage(view.offset, count, names.length),
     };
-    // Include source context and reserve space for the final view digest.
     const pageBytes = 1024 * 1024;
-    if (
-      jsonValueByteLength(
-        { ...result, view_digest: "0".repeat(64) } as JsonValue,
-        pageBytes,
-      ) > pageBytes
-    )
-      return err(
+    const tooLarge = () =>
+      err(
         new AnalysisResourceConstraintError(
           "inspect_analysis_view",
           "transport",
@@ -212,6 +218,23 @@ export const projectNativeInventoryView = (
           ANALYSIS_VIEW_PAGE_BUDGET_RECOVERY,
         ),
       );
+    // Measure the result header, including the future digest and empty alias
+    // array, then count only the requested aliases before retaining each row.
+    let bytes = jsonValueByteLength(
+      { ...result, view_digest: "0".repeat(64) } as JsonValue,
+      pageBytes,
+    );
+    if (bytes > pageBytes) return tooLarge();
+    if (names !== undefined && items.state === "recorded") {
+      for (let index = 0; index < count; index++) {
+        const aliasIndex = view.offset + index;
+        const alias = { alias_index: aliasIndex, name: names[aliasIndex]! };
+        bytes +=
+          jsonValueByteLength(alias, pageBytes - bytes) + (index === 0 ? 0 : 1);
+        if (bytes > pageBytes) return tooLarge();
+        items.aliases.push(alias);
+      }
+    }
     return ok(result);
   }
   // Normalize the selection once: repeated caller fields must not multiply
@@ -248,26 +271,4 @@ export const projectNativeInventoryView = (
     })),
     coverage: pageViewCoverage(view.offset, selected.length, rows.length),
   });
-};
-
-const nativeInventoryAliasPage = (
-  row: InventoryRecord,
-  view: z.output<typeof nativeInventoryAliasViewRequestSchema>,
-) => {
-  if (row.matched_aliases === undefined)
-    return {
-      items: { state: "not-recorded" as const, aliases: null },
-      coverage: null,
-    };
-  const aliases = row.matched_aliases
-    .slice(view.offset, view.offset + view.limit)
-    .map((name, index) => ({ alias_index: view.offset + index, name }));
-  return {
-    items: { state: "recorded" as const, aliases },
-    coverage: pageViewCoverage(
-      view.offset,
-      aliases.length,
-      row.matched_aliases.length,
-    ),
-  };
 };
