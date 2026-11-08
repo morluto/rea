@@ -10,6 +10,7 @@ import {
   RPC_OPERATION_NAME_LIMIT,
   RPC_QUERY_LIMIT_CHARS,
   RPC_REQUEST_BODY_LIMIT_BYTES,
+  selectRpcOperationFactsFromText,
   selectRpcOperationFromText,
   XSSI_RESPONSE_BODY_LIMIT_BYTES,
 } from "./rpcOperationSelector.js";
@@ -469,5 +470,97 @@ describe("XSSI response prefix detection and parsing", () => {
         "application/javascript",
       ),
     ).toBe(false);
+  });
+});
+
+describe("selectRpcOperationFactsFromText GraphQL document status", () => {
+  it("preserves declared GraphQL kind and distinguishes absent vs unknown query fields", () => {
+    expect(
+      selectRpcOperationFactsFromText({
+        method: "POST",
+        path: "/graphql",
+        bodyText:
+          '{"operationName":"GetViewer","query":"mutation GetViewer { resetViewer { id } }"}',
+      }),
+    ).toEqual({
+      kind: "graphql",
+      name: "GetViewer",
+      graphqlDocument: "mutation",
+    });
+
+    expect(
+      selectRpcOperationFactsFromText({
+        method: "POST",
+        path: "/graphql",
+        mimeType: "application/json",
+        bodyText:
+          '{"operationName":"GetViewer","query":"mutation GetViewer($id: ID!) { resetViewer(id: $id) { id } }","variables":{"cursor":9007199254740993}}',
+      }),
+    ).toEqual({
+      kind: "graphql",
+      name: "GetViewer",
+      graphqlDocument: "mutation",
+    });
+
+    expect(
+      selectRpcOperationFactsFromText({
+        method: "POST",
+        path: "/graphql",
+        bodyText:
+          '{"operationName":"GetViewer","query":"query GetViewer { viewer { id } }","variables":{"cursor":9007199254740993}}',
+      }),
+    ).toEqual({
+      kind: "graphql",
+      name: "GetViewer",
+      graphqlDocument: "query",
+    });
+
+    expect(
+      selectRpcOperationFactsFromText({
+        method: "POST",
+        path: "/graphql",
+        mimeType: "application/json",
+        bodyText:
+          '{"operationName":"GetViewer","query":"subscription GetViewer { viewerUpdated { id } }"}',
+      }),
+    ).toEqual({
+      kind: "graphql",
+      name: "GetViewer",
+      graphqlDocument: "subscription",
+    });
+
+    for (const bodyText of [
+      '{"operationName":"GetViewer","query":null}',
+      '{"operationName":"GetViewer","query":""}',
+      '{"operationName":"GetViewer","query":"query GetViewer { a } mutation GetViewer { b }"}',
+    ]) {
+      expect(
+        selectRpcOperationFactsFromText({
+          method: "POST",
+          path: "/graphql",
+          mimeType: "application/json",
+          bodyText,
+        }),
+      ).toEqual({
+        kind: "graphql",
+        name: "GetViewer",
+        graphqlDocument: "unknown",
+      });
+    }
+
+    expect(
+      selectRpcOperationFactsFromText({
+        method: "POST",
+        path: "/graphql",
+        bodyText: JSON.stringify({
+          operationName: "GetViewer",
+          extensions: { persistedQuery: { version: 1, sha256Hash: "abc" } },
+        }),
+      }),
+    ).toEqual({
+      kind: "graphql",
+      name: "GetViewer",
+      graphqlDocument: "absent",
+    });
   });
 });

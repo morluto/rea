@@ -8,7 +8,10 @@ import type { ListQuery } from "./environmentStateListQuery.js";
 import { canonicalJson } from "../comparisonSemantics.js";
 import { compareUnicodeCodePoints } from "../unicodeCodePointOrder.js";
 import type { JsonValue } from "../jsonValue.js";
-import type { RpcOperation } from "./rpcOperationSelector.js";
+import type {
+  RpcOperation,
+  RpcOperationFacts,
+} from "./rpcOperationSelector.js";
 import type { StateWritePlan } from "./environmentStateWriteRules.js";
 import {
   respellClock,
@@ -66,8 +69,8 @@ export interface StateBudget {
   ) => T | null;
   /** Whether a record's response had no body. */
   readonly emptyResponse: (ordinal: number) => boolean;
-  /** Extracted RPC operation for one recorded exchange (`null` when inspected with no match). */
-  readonly rpcOperation?: (ordinal: number) => RpcOperation | null;
+  /** Extracted RPC operation facts for one recorded exchange (`null` when inspected with no match). */
+  readonly rpcOperation?: (ordinal: number) => RpcOperationFacts | null;
   readonly retain: (bytes: number) => boolean;
   /** Mark the retained bytes; the returned call releases what was retained since, once none of it is held. */
   readonly checkpoint: () => () => void;

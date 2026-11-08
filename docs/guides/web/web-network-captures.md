@@ -774,8 +774,9 @@ order when any start time is missing (`timeline`), as for a
 path has a segment such as `search`, `query`, `list`, `find`, `fuzzy`,
 `count` or `stats`, or whose calls the capture shows only reading (including a
 GraphQL `query` operation selected by `operationName` across multi-definition
-and fragment-bearing documents, while mutations, subscriptions and conflicting
-duplicate operation names remain writes), which queries state instead. A type's state comes from its
+and fragment-bearing documents, or a persisted GraphQL request with no `query`
+field whose `operationName` names a read, while mutations, subscriptions and
+conflicting or non-string `query` fields remain writes), which queries state instead. A type's state comes from its
 successful reads that finished before the first such write under the same root:
 the path's API base (the literal segments every tool sharing its first segment
 has), any `v1`-style version segments, then one more segment. A read that

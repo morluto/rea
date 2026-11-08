@@ -15,8 +15,10 @@ import {
 import { isAbsence } from "./environmentStateWriteChecks.js";
 import { prefixRelated } from "./environmentStateWriteRules.js";
 import {
-  selectRpcOperationFromText,
+  graphqlOperationKind,
+  selectRpcOperationFactsFromText,
   type RpcOperation,
+  type RpcOperationFacts,
 } from "./rpcOperationSelector.js";
 import { ENTRY_BYTES, textBytes } from "./webNetworkRouteTemplates.js";
 
@@ -97,7 +99,7 @@ export interface QueryCallIo {
     use: (body: JsonValue | undefined) => T,
   ) => T;
   readonly request: (ordinal: number) => JsonValue | undefined;
-  readonly rpcOperation?: (ordinal: number) => RpcOperation | null;
+  readonly rpcOperation?: (ordinal: number) => RpcOperationFacts | null;
   readonly retain: (bytes: number) => void;
 }
 
@@ -409,172 +411,67 @@ class ReadsByEnd {
   }
 }
 
-const isGraphqlNameChar = (code: number): boolean =>
-  (code >= 0x41 && code <= 0x5a) ||
-  (code >= 0x61 && code <= 0x7a) ||
-  (code >= 0x30 && code <= 0x39) ||
-  code === 0x5f;
-
-const skipGraphqlTrivia = (source: string, start: number): number => {
-  let at = start;
-  while (at < source.length) {
-    const code = source.charCodeAt(at);
-    if (
-      code === 0x09 ||
-      code === 0x0a ||
-      code === 0x0d ||
-      code === 0x20 ||
-      code === 0x2c ||
-      code === 0xfeff
-    ) {
-      at += 1;
-      continue;
-    }
-    if (code === 0x23) {
-      while (at < source.length && source[at] !== "\n" && source[at] !== "\r")
-        at += 1;
-      continue;
-    }
-    break;
-  }
-  return at;
-};
-
-const skipGraphqlString = (source: string, start: number): number => {
-  if (source.startsWith('"""', start)) {
-    let at = start + 3;
-    while (at < source.length) {
-      if (source.startsWith('\\"""', at)) at += 4;
-      else if (source.startsWith('"""', at)) return at + 3;
-      else at += 1;
-    }
-    return source.length;
-  }
-  let at = start + 1;
-  while (at < source.length) {
-    if (source[at] === "\\") at += 2;
-    else if (source[at] === '"') return at + 1;
-    else at += 1;
-  }
-  return source.length;
-};
-
-type GraphqlOperationKind = "query" | "mutation" | "subscription";
-
-const graphqlOperationKind = (
-  source: string,
-  operationName: string,
-): GraphqlOperationKind | undefined => {
-  const definitions: {
-    readonly kind: GraphqlOperationKind;
-    readonly name: string | undefined;
-  }[] = [];
-  let braceDepth = 0;
-  let parenDepth = 0;
-  let awaitingSelection = false;
-  let at = 0;
-  while (at < source.length) {
-    at = skipGraphqlTrivia(source, at);
-    if (at >= source.length) break;
-    const ch = source[at]!;
-    if (ch === '"') {
-      at = skipGraphqlString(source, at);
-      continue;
-    }
-    if (ch === "(") {
-      parenDepth += 1;
-      at += 1;
-      continue;
-    }
-    if (ch === ")") {
-      parenDepth = Math.max(0, parenDepth - 1);
-      at += 1;
-      continue;
-    }
-    if (ch === "{") {
-      if (parenDepth === 0) {
-        if (braceDepth === 0 && !awaitingSelection)
-          definitions.push({ kind: "query", name: undefined });
-        braceDepth += 1;
-        awaitingSelection = false;
-      }
-      at += 1;
-      continue;
-    }
-    if (ch === "}") {
-      if (parenDepth === 0) braceDepth = Math.max(0, braceDepth - 1);
-      at += 1;
-      continue;
-    }
-    if (isGraphqlNameChar(source.charCodeAt(at))) {
-      const start = at;
-      while (at < source.length && isGraphqlNameChar(source.charCodeAt(at)))
-        at += 1;
-      if (braceDepth === 0 && parenDepth === 0 && !awaitingSelection) {
-        const word = source.slice(start, at);
-        if (
-          word === "query" ||
-          word === "mutation" ||
-          word === "subscription"
-        ) {
-          const next = skipGraphqlTrivia(source, at);
-          let name: string | undefined;
-          if (
-            next < source.length &&
-            isGraphqlNameChar(source.charCodeAt(next))
-          ) {
-            let end = next;
-            while (
-              end < source.length &&
-              isGraphqlNameChar(source.charCodeAt(end))
-            )
-              end += 1;
-            name = source.slice(next, end);
-            at = end;
-          }
-          definitions.push({ kind: word, name });
-        }
-        awaitingSelection = true;
-      }
-      continue;
-    }
-    at += 1;
-  }
-  const matching = definitions.filter((entry) => entry.name === operationName);
-  if (matching.length === 1) return matching[0]!.kind;
-  if (matching.length > 1)
-    return matching.every((entry) => entry.kind === matching[0]!.kind)
-      ? matching[0]!.kind
-      : undefined;
-  return definitions.length === 1 ? definitions[0]?.kind : undefined;
-};
-
-const rpcCallReadsOnly = (
+const fallbackRpcFacts = (
   rpcOperation: RpcOperation,
   body: JsonValue | undefined,
-): boolean => {
-  if (
-    rpcOperation.kind === "graphql" &&
-    isObject(body) &&
-    typeof body.query === "string"
-  )
-    return graphqlOperationKind(body.query, rpcOperation.name) === "query";
-  return readsOnly(rpcOperation.name);
+): RpcOperationFacts => {
+  if (rpcOperation.kind !== "graphql")
+    return { kind: rpcOperation.kind, name: rpcOperation.name };
+  if (!isObject(body))
+    return {
+      kind: "graphql",
+      name: rpcOperation.name,
+      graphqlDocument: "unknown",
+    };
+  if (typeof body.query === "string")
+    return {
+      kind: "graphql",
+      name: rpcOperation.name,
+      graphqlDocument:
+        graphqlOperationKind(body.query, rpcOperation.name) ?? "unknown",
+    };
+  return {
+    kind: "graphql",
+    name: rpcOperation.name,
+    graphqlDocument: Object.hasOwn(body, "query") ? "unknown" : "absent",
+  };
 };
 
-const inferredRpcOperation = (
+const rpcFactsForCall = (
+  tool: StateToolFacts,
   call: StateRecordFacts,
   body: JsonValue | undefined,
   io: QueryCallIo,
-): RpcOperation | undefined => {
-  if (io.rpcOperation !== undefined)
-    return io.rpcOperation(call.ordinal) ?? undefined;
-  return selectRpcOperationFromText({
+): RpcOperationFacts | undefined => {
+  if (io.rpcOperation !== undefined) {
+    const recorded = io.rpcOperation(call.ordinal);
+    if (recorded !== null) return recorded;
+    return tool.rpc_operation === undefined
+      ? undefined
+      : fallbackRpcFacts(tool.rpc_operation, body);
+  }
+  if (tool.rpc_operation !== undefined)
+    return fallbackRpcFacts(tool.rpc_operation, body);
+  return selectRpcOperationFactsFromText({
     method: call.method,
     path: call.path,
     query: call.query,
     bodyText: body === undefined ? undefined : JSON.stringify(body),
   });
+};
+
+const rpcCallReadsOnly = (rpc: RpcOperationFacts): boolean => {
+  if (rpc.kind !== "graphql") return readsOnly(rpc.name);
+  switch (rpc.graphqlDocument) {
+    case "query":
+      return true;
+    case "mutation":
+    case "subscription":
+    case "unknown":
+      return false;
+    case "absent":
+      return readsOnly(rpc.name);
+  }
 };
 
 /** Every call names only read operations. */
@@ -585,8 +482,8 @@ const namesReadOperations = (
 ): boolean =>
   calls.every((call) => {
     const body = io.request(call.ordinal);
-    const rpc = tool.rpc_operation ?? inferredRpcOperation(call, body, io);
-    if (rpc !== undefined) return rpcCallReadsOnly(rpc, body);
+    const rpc = rpcFactsForCall(tool, call, body, io);
+    if (rpc !== undefined) return rpcCallReadsOnly(rpc);
     const operations = operationsOf(call, body);
     return (
       operations !== undefined &&

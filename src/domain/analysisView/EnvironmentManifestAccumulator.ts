@@ -21,8 +21,9 @@ import {
   isBatchExecutePath,
   RPC_QUERY_LIMIT_CHARS,
   RPC_REQUEST_BODY_LIMIT_BYTES,
-  selectRpcOperationFromText,
+  selectRpcOperationFactsFromText,
   type RpcOperation,
+  type RpcOperationFacts,
 } from "./rpcOperationSelector.js";
 import { z } from "zod";
 import { environmentManifestFields } from "./environmentManifestSchema.js";
@@ -199,7 +200,7 @@ const hasParam = (parts: readonly MutablePart[]): boolean =>
 export class EnvironmentManifestAccumulator extends WebNetworkProjectionAccumulator {
   readonly #groups = new Map<string, GroupState>();
   readonly #records: RecordLine[] = [];
-  readonly #recordRpcOperations = new Map<number, RpcOperation>();
+  readonly #recordRpcOperations = new Map<number, RpcOperationFacts>();
   readonly #origins = new Map<string, OriginStats>();
   readonly #rules: ReadonlySet<TemplateRule>;
   #unrepresented = 0;
@@ -223,8 +224,8 @@ export class EnvironmentManifestAccumulator extends WebNetworkProjectionAccumula
     return true;
   }
 
-  /** Extracted RPC discriminator for one recorded exchange, even when a single-operation route omits `rpc_operation`. */
-  protected recordRpcOperation(ordinal: number): RpcOperation | null {
+  /** Extracted RPC discriminator facts for one recorded exchange, even when a single-operation route omits `rpc_operation`. */
+  protected recordRpcOperation(ordinal: number): RpcOperationFacts | null {
     return this.discriminateRpc
       ? (this.#recordRpcOperations.get(ordinal) ?? null)
       : null;
@@ -359,7 +360,7 @@ export class EnvironmentManifestAccumulator extends WebNetworkProjectionAccumula
   #rpcOperation(
     line: RequestLine,
     reported: unknown,
-  ): Result<RpcOperation | undefined, AnalysisError> {
+  ): Result<RpcOperationFacts | undefined, AnalysisError> {
     const request = readRecordedRequestBody(reported);
     const body = request.kind === "request" ? request.postData : undefined;
     const mimeType = body?.kind === "object" ? body.mimeType : undefined;
@@ -392,7 +393,7 @@ export class EnvironmentManifestAccumulator extends WebNetworkProjectionAccumula
       )
         return this.overBudget();
       return ok(
-        selectRpcOperationFromText({
+        selectRpcOperationFactsFromText({
           method: line.method,
           path: line.path,
           query,
@@ -429,7 +430,7 @@ export class EnvironmentManifestAccumulator extends WebNetworkProjectionAccumula
     bucket: {
       readonly key: string;
       readonly group: GroupState | undefined;
-      readonly rpcOperation: RpcOperation | undefined;
+      readonly rpcOperation: RpcOperationFacts | undefined;
     },
     exchange: {
       readonly shape: BodyShape | null;
@@ -483,7 +484,7 @@ export class EnvironmentManifestAccumulator extends WebNetworkProjectionAccumula
     for (const name of queryNames ?? [])
       if (!group?.queryNames.has(name))
         bytes += ENTRY_BYTES + textBytes(name.length);
-    if (bucket.rpcOperation !== undefined) bytes += ENTRY_BYTES;
+    if (bucket.rpcOperation !== undefined) bytes += ENTRY_BYTES * 2;
     // Reserve the whole mutation while route scratch is still live.
     if (!this.retain(bytes)) return this.overBudget();
     if (bucket.rpcOperation !== undefined)
@@ -514,7 +515,12 @@ export class EnvironmentManifestAccumulator extends WebNetworkProjectionAccumula
         bodyShape,
         ...(bucket.rpcOperation === undefined
           ? {}
-          : { rpcOperation: bucket.rpcOperation }),
+          : {
+              rpcOperation: {
+                kind: bucket.rpcOperation.kind,
+                name: bucket.rpcOperation.name,
+              },
+            }),
         apiPath: isApiPath(route.template),
         jsonLike: false,
         bodiless: BODILESS_WRITE_METHODS.has(line.method),

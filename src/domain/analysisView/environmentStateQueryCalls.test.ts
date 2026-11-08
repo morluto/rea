@@ -2,7 +2,10 @@ import { StateRecordChronology } from "./StateRecordChronology.js";
 import { parseOffsetDateTimeInstant } from "../offsetDateTime.js";
 import { describe, expect, it } from "vitest";
 
+import { environmentManifestCaptureFixture } from "../../../tests/fixtures/analysisView.js";
 import type { JsonValue } from "../jsonValue.js";
+import type { WebNetworkCaptureRecord } from "../webNetworkCapture.js";
+import { EnvironmentStateAccumulator } from "./EnvironmentStateAccumulator.js";
 import {
   readOnlyTools,
   type QueryCallIo,
@@ -962,5 +965,166 @@ describe("persisted GraphQL read-only classification", () => {
         { ...persistedCall("Viewer", "post_graphql", false), start: 2, end: 3 },
       ]),
     ).toEqual(["post_graphql"]);
+  });
+});
+
+interface RawGraphqlExchange {
+  readonly postText: string;
+  readonly mimeType?: string;
+}
+
+const graphqlCaptureRecord = (
+  ordinal: number,
+  exchange: RawGraphqlExchange,
+): WebNetworkCaptureRecord => ({
+  ...environmentManifestCaptureFixture().records[0]!,
+  ordinal,
+  limitations: [],
+  reported: {
+    startedDateTime: new Date(1_700_000_000_000 + ordinal * 100).toISOString(),
+    time: 10,
+    request: {
+      method: "POST",
+      url: "https://manifest.test/graphql",
+      postData: {
+        ...(exchange.mimeType === undefined
+          ? {}
+          : { mimeType: exchange.mimeType }),
+        text: exchange.postText,
+      },
+    },
+    response: {
+      status: 200,
+      content: {
+        mimeType: "application/json",
+        text: JSON.stringify({ data: { viewer: { id: "u1" } } }),
+      },
+    },
+  },
+});
+
+const extractGraphqlStateBuckets = (
+  exchanges: readonly RawGraphqlExchange[],
+): {
+  readonly views: readonly string[];
+  readonly writes: readonly string[];
+} => {
+  const accumulator = new EnvironmentStateAccumulator(1024 * 1024);
+  for (const [ordinal, exchange] of exchanges.entries())
+    expect(accumulator.add(graphqlCaptureRecord(ordinal, exchange)).ok).toBe(
+      true,
+    );
+  const state = accumulator.finishState();
+  if (!state.ok) throw state.error;
+  return {
+    views: state.value.views.map((view) => view.tool),
+    writes: state.value.writes.map((plan) => plan.tool),
+  };
+};
+
+describe("GraphQL read-only classification with unreadable state bodies and non-string query fields", () => {
+  it("keeps mutations and null-query payloads in writes when state request bodies are unreadable", () => {
+    const omittedMimeMutation: RawGraphqlExchange = {
+      postText:
+        '{"operationName":"GetViewer","query":"mutation GetViewer { resetViewer { id } }"}',
+    };
+    const lossyVarMutation: RawGraphqlExchange = {
+      mimeType: "application/json",
+      postText:
+        '{"operationName":"GetViewer","query":"mutation GetViewer($id: ID!) { resetViewer(id: $id) { id } }","variables":{"cursor":9007199254740993}}',
+    };
+    const nullQueryPayload: RawGraphqlExchange = {
+      mimeType: "application/json",
+      postText: '{"operationName":"GetViewer","query":null}',
+    };
+    const siblingRead: RawGraphqlExchange = {
+      mimeType: "application/json",
+      postText:
+        '{"operationName":"ListItems","query":"query ListItems { items { id } }"}',
+    };
+
+    for (const writeExchange of [
+      omittedMimeMutation,
+      lossyVarMutation,
+      nullQueryPayload,
+    ]) {
+      expect(extractGraphqlStateBuckets([writeExchange])).toEqual({
+        views: [],
+        writes: ["post_graphql"],
+      });
+      expect(extractGraphqlStateBuckets([writeExchange, siblingRead])).toEqual({
+        views: ["post_graphql_list_items"],
+        writes: ["post_graphql_get_viewer"],
+      });
+    }
+
+    expect(
+      readOnlyOf([
+        {
+          method: "POST",
+          path: "/graphql",
+          tool: "post_graphql_get_viewer",
+          rpcOperation: { kind: "graphql", name: "GetViewer" },
+          response: { data: { resetViewer: { id: "u1" } } },
+        },
+      ]),
+    ).toEqual([]);
+
+    expect(
+      readOnlyOf([
+        {
+          method: "POST",
+          path: "/graphql",
+          tool: "post_graphql_get_viewer",
+          rpcOperation: { kind: "graphql", name: "GetViewer" },
+          request: { operationName: "GetViewer", query: null },
+          response: { data: { viewer: { id: "u1" } } },
+        },
+      ]),
+    ).toEqual([]);
+  });
+
+  it("classifies declared queries and genuine persisted queries as read-only when state request bodies are unreadable", () => {
+    expect(
+      extractGraphqlStateBuckets([
+        {
+          postText:
+            '{"operationName":"Viewer","query":"query Viewer { viewer { id } }"}',
+        },
+      ]),
+    ).toEqual({ views: ["post_graphql"], writes: [] });
+
+    expect(
+      extractGraphqlStateBuckets([
+        {
+          mimeType: "application/json",
+          postText:
+            '{"operationName":"Viewer","query":"query Viewer($id: ID!) { viewer(id: $id) { id } }","variables":{"cursor":9007199254740993}}',
+        },
+      ]),
+    ).toEqual({ views: ["post_graphql"], writes: [] });
+
+    expect(
+      extractGraphqlStateBuckets([
+        {
+          postText: JSON.stringify({
+            operationName: "GetViewer",
+            extensions: {
+              persistedQuery: { version: 1, sha256Hash: "a".repeat(64) },
+            },
+          }),
+        },
+      ]),
+    ).toEqual({ views: ["post_graphql"], writes: [] });
+
+    expect(
+      extractGraphqlStateBuckets([
+        {
+          mimeType: "application/json",
+          postText:
+            '{"operationName":"GetViewer","variables":{"cursor":9007199254740993},"extensions":{"persistedQuery":{"version":1,"sha256Hash":"abc"}}}',
+        },
+      ]),
+    ).toEqual({ views: ["post_graphql"], writes: [] });
   });
 });

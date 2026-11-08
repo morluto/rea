@@ -23,6 +23,21 @@ export interface RpcOperation {
   readonly name: string;
 }
 
+type GraphqlOperationKind = "query" | "mutation" | "subscription";
+type GraphqlDocumentStatus = GraphqlOperationKind | "unknown" | "absent";
+
+/** Internal per-record RPC discriminator plus declared GraphQL document classification from raw request text. */
+export type RpcOperationFacts =
+  | {
+      readonly kind: "graphql";
+      readonly name: string;
+      readonly graphqlDocument: GraphqlDocumentStatus;
+    }
+  | {
+      readonly kind: "json-rpc" | "batchexecute";
+      readonly name: string;
+    };
+
 /** Maximum character length of a discriminated RPC operation name or method identifier. */
 export const RPC_OPERATION_NAME_LIMIT = 128;
 /** Maximum UTF-8 request body size inspected for RPC operation discrimination. */
@@ -110,21 +125,180 @@ const withinByteLimit = (text: string, limitBytes: number): boolean =>
 const withinBodyByteLimit = (text: string): boolean =>
   withinByteLimit(text, RPC_REQUEST_BODY_LIMIT_BYTES);
 
-const selectFromJsonObject = (
+const isGraphqlNameChar = (code: number): boolean =>
+  isAsciiAlphaOrUnderscore(code) || isAsciiDigit(code);
+
+const skipGraphqlTrivia = (source: string, start: number): number => {
+  let at = start;
+  while (at < source.length) {
+    const code = source.charCodeAt(at);
+    if (
+      code === 0x09 ||
+      code === 0x0a ||
+      code === 0x0d ||
+      code === 0x20 ||
+      code === 0x2c ||
+      code === 0xfeff
+    ) {
+      at += 1;
+      continue;
+    }
+    if (code === 0x23) {
+      while (at < source.length && source[at] !== "\n" && source[at] !== "\r")
+        at += 1;
+      continue;
+    }
+    break;
+  }
+  return at;
+};
+
+const skipGraphqlString = (source: string, start: number): number => {
+  if (source.startsWith('"""', start)) {
+    let at = start + 3;
+    while (at < source.length) {
+      if (source.startsWith('\\"""', at)) at += 4;
+      else if (source.startsWith('"""', at)) return at + 3;
+      else at += 1;
+    }
+    return source.length;
+  }
+  let at = start + 1;
+  while (at < source.length) {
+    if (source[at] === "\\") at += 2;
+    else if (source[at] === '"') return at + 1;
+    else at += 1;
+  }
+  return source.length;
+};
+
+const readGraphqlOperationHeader = (
+  source: string,
+  word: string,
+  afterWord: number,
+):
+  | {
+      readonly definition: {
+        readonly kind: GraphqlOperationKind;
+        readonly name: string | undefined;
+      };
+      readonly nextAt: number;
+    }
+  | undefined => {
+  if (word !== "query" && word !== "mutation" && word !== "subscription")
+    return undefined;
+  const next = skipGraphqlTrivia(source, afterWord);
+  if (next >= source.length || !isGraphqlNameChar(source.charCodeAt(next)))
+    return { definition: { kind: word, name: undefined }, nextAt: afterWord };
+  let end = next;
+  while (end < source.length && isGraphqlNameChar(source.charCodeAt(end)))
+    end += 1;
+  return {
+    definition: { kind: word, name: source.slice(next, end) },
+    nextAt: end,
+  };
+};
+
+/** Resolve the GraphQL operation kind selected by `operationName`, skipping fragments, comments, strings and defaults. */
+export const graphqlOperationKind = (
+  source: string,
+  operationName: string,
+): GraphqlOperationKind | undefined => {
+  const definitions: {
+    readonly kind: GraphqlOperationKind;
+    readonly name: string | undefined;
+  }[] = [];
+  let braceDepth = 0;
+  let parenDepth = 0;
+  let awaitingSelection = false;
+  let at = 0;
+  while (at < source.length) {
+    at = skipGraphqlTrivia(source, at);
+    if (at >= source.length) break;
+    const ch = source[at]!;
+    if (ch === '"') {
+      at = skipGraphqlString(source, at);
+      continue;
+    }
+    if (ch === "(") {
+      parenDepth += 1;
+      at += 1;
+      continue;
+    }
+    if (ch === ")") {
+      parenDepth = Math.max(0, parenDepth - 1);
+      at += 1;
+      continue;
+    }
+    if (ch === "{") {
+      if (parenDepth === 0) {
+        if (braceDepth === 0 && !awaitingSelection)
+          definitions.push({ kind: "query", name: undefined });
+        braceDepth += 1;
+        awaitingSelection = false;
+      }
+      at += 1;
+      continue;
+    }
+    if (ch === "}") {
+      if (parenDepth === 0) braceDepth = Math.max(0, braceDepth - 1);
+      at += 1;
+      continue;
+    }
+    if (isGraphqlNameChar(source.charCodeAt(at))) {
+      const start = at;
+      while (at < source.length && isGraphqlNameChar(source.charCodeAt(at)))
+        at += 1;
+      if (braceDepth === 0 && parenDepth === 0 && !awaitingSelection) {
+        const header = readGraphqlOperationHeader(
+          source,
+          source.slice(start, at),
+          at,
+        );
+        if (header !== undefined) {
+          definitions.push(header.definition);
+          at = header.nextAt;
+        }
+        awaitingSelection = true;
+      }
+      continue;
+    }
+    at += 1;
+  }
+  const matching = definitions.filter((entry) => entry.name === operationName);
+  if (matching.length === 1) return matching[0]!.kind;
+  if (matching.length > 1)
+    return matching.every((entry) => entry.kind === matching[0]!.kind)
+      ? matching[0]!.kind
+      : undefined;
+  return definitions.length === 1 ? definitions[0]?.kind : undefined;
+};
+
+const selectFactsFromJsonObject = (
   root: Readonly<Record<string, unknown>>,
   path: string,
-): RpcOperation | undefined => {
+): RpcOperationFacts | undefined => {
   if (root.jsonrpc === "2.0")
     return isJsonRpcMethodName(root.method)
       ? { kind: "json-rpc", name: root.method }
       : undefined;
   if (!isGraphqlOperationName(root.operationName)) return undefined;
-  if (typeof root.query === "string")
-    return withinBodyByteLimit(root.query)
-      ? { kind: "graphql", name: root.operationName }
-      : undefined;
+  const hasQueryMember = Object.hasOwn(root, "query");
+  if (typeof root.query === "string") {
+    if (!withinBodyByteLimit(root.query)) return undefined;
+    return {
+      kind: "graphql",
+      name: root.operationName,
+      graphqlDocument:
+        graphqlOperationKind(root.query, root.operationName) ?? "unknown",
+    };
+  }
   if (isPlainObject(root.extensions) || isGraphqlPath(path))
-    return { kind: "graphql", name: root.operationName };
+    return {
+      kind: "graphql",
+      name: root.operationName,
+      graphqlDocument: hasQueryMember ? "unknown" : "absent",
+    };
   return undefined;
 };
 
@@ -154,7 +328,7 @@ const parseBatchExecuteEnvelope = (freqText: string): BatchExecuteBodyParse => {
 
 const selectBatchExecuteFormValues = (
   freqs: readonly string[],
-): RpcOperation | undefined => {
+): RpcOperationFacts | undefined => {
   let selected: string | undefined;
   for (const freq of freqs) {
     const parsed = parseBatchExecuteEnvelope(freq);
@@ -198,14 +372,14 @@ const isFormCandidateMime = (essence: string | null, path: string): boolean =>
   essence === null ||
   isBatchExecutePath(path);
 
-/** Extract an optional RPC operation discriminator from a recorded HTTP request with raw body text. */
-export const selectRpcOperationFromText = (input: {
+/** Extract an optional RPC operation discriminator and GraphQL document status from raw HTTP request text. */
+export const selectRpcOperationFactsFromText = (input: {
   readonly method: string;
   readonly path: string;
   readonly query?: string | null | undefined;
   readonly mimeType?: string | null | undefined;
   readonly bodyText?: string | null | undefined;
-}): RpcOperation | undefined => {
+}): RpcOperationFacts | undefined => {
   if (input.method !== "POST") return undefined;
   const essence =
     input.mimeType === undefined || input.mimeType === null
@@ -220,7 +394,7 @@ export const selectRpcOperationFromText = (input: {
         : safeParseJson(bodyText);
     if (parsedJson?.ok === true)
       return isJsonCandidateMime(essence) && isPlainObject(parsedJson.value)
-        ? selectFromJsonObject(parsedJson.value, input.path)
+        ? selectFactsFromJsonObject(parsedJson.value, input.path)
         : undefined;
     if (isFormCandidateMime(essence, input.path)) {
       const freqs = new URLSearchParams(bodyText).getAll("f.req");
@@ -232,6 +406,20 @@ export const selectRpcOperationFromText = (input: {
     if (rpcId !== undefined) return { kind: "batchexecute", name: rpcId };
   }
   return undefined;
+};
+
+/** Extract an optional RPC operation discriminator from a recorded HTTP request with raw body text. */
+export const selectRpcOperationFromText = (input: {
+  readonly method: string;
+  readonly path: string;
+  readonly query?: string | null | undefined;
+  readonly mimeType?: string | null | undefined;
+  readonly bodyText?: string | null | undefined;
+}): RpcOperation | undefined => {
+  const facts = selectRpcOperationFactsFromText(input);
+  return facts === undefined
+    ? undefined
+    : { kind: facts.kind, name: facts.name };
 };
 
 /** Whether a response media type can carry JSON or an XSSI-guarded JSON/batchexecute payload. */
