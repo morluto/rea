@@ -353,7 +353,7 @@ it("retains the absolute header budget for GGUF without allocating that extent",
   }
 });
 
-it("names exact offset and nesting limits instead of the retained report allowance", async () => {
+it("names exact offset limits instead of the retained report allowance", async () => {
   const base = ggufFixture({ tensors: [] });
   const oversized = ggufFixture({
     metadata: [
@@ -365,20 +365,8 @@ it("names exact offset and nesting limits instead of the retained report allowan
     ],
     tensors: [],
   });
-  let nested = Buffer.from([1]);
-  for (let frame = 0; frame < 33; frame += 1)
-    nested = Buffer.concat([
-      base.u32(frame === 0 ? 7 : 9),
-      base.u64(1n),
-      nested,
-    ]);
-  const deep = ggufFixture({
-    metadata: [{ key: "custom.nested", type: 9, value: nested }],
-    tensors: [],
-  });
   for (const [label, bytes, allowance] of [
     ["offset", oversized.bytes, String(Number.MAX_SAFE_INTEGER)],
-    ["nesting", deep.bytes, "32 array frames"],
   ] as const) {
     const { path, provider } = await providerAt(bytes);
     const result = await provider.inspect({ path, hash: "header" });
@@ -399,6 +387,68 @@ it("names exact offset and nesting limits instead of the retained report allowan
     });
   }
 });
+
+it.each([MODEL_METADATA_NESTING + 3, 4096])(
+  "bounds GGUF previews while validating %s nested arrays and preserving tensor facts",
+  async (depth) => {
+    const base = ggufFixture();
+    const nested = Buffer.concat([
+      ...Array.from({ length: depth }, (_, index) =>
+        Buffer.concat([base.u32(index === depth - 1 ? 7 : 9), base.u64(1n)]),
+      ),
+      Buffer.from([1]),
+    ]);
+    const fixture = ggufFixture({
+      metadata: [{ key: "custom.nested", type: 9, value: nested }],
+      tensors: [{ name: "weight", type: 0, shape: [1n], offset: 0n, bytes: 4 }],
+    });
+    const { path, provider } = await providerAt(fixture.bytes);
+    const result = await provider.inspect({ path, hash: "header" });
+    if (!result.ok) throw result.error;
+    expect(result.value.metadata[0]).toMatchObject({
+      key: "custom.nested",
+      preview_complete: false,
+    });
+    expect(result.value.tensors).toMatchObject([
+      {
+        name: "weight",
+        shape: ["1"],
+        byte_length: 4,
+        file_offset: fixture.dataOffset,
+      },
+    ]);
+  },
+);
+
+it.each([7, 8, 99])(
+  "validates omitted deep GGUF values of type %s",
+  async (type) => {
+    const base = ggufFixture();
+    // Invalid boolean, invalid UTF-8 string, or unknown type beyond the preview depth.
+    let nested: Buffer =
+      type === 8
+        ? Buffer.concat([
+            base.u32(type),
+            base.u64(1n),
+            base.u64(1n),
+            Buffer.from([0xff]),
+          ])
+        : Buffer.concat([base.u32(type), base.u64(1n), Buffer.from([2])]);
+    for (let frame = 0; frame < MODEL_METADATA_NESTING + 3; frame++)
+      nested = Buffer.concat([base.u32(9), base.u64(1n), nested]);
+    const fixture = ggufFixture({
+      metadata: [{ key: "custom.nested", type: 9, value: nested }],
+      tensors: [],
+    });
+    const { path, provider } = await providerAt(fixture.bytes);
+    const result = await provider.inspect({ path, hash: "header" });
+    if (result.ok) throw new Error("Malformed omitted metadata was accepted");
+    expect(result.error).toMatchObject({
+      _tag: "BinaryTargetError",
+      constraint: "file_format_rejected",
+    });
+  },
+);
 
 it("preserves safetensors scalar, empty and packed tensor declarations and raw string metadata", async () => {
   const fixture = safetensorsFixture();
@@ -838,9 +888,6 @@ it("chooses model recovery from the producing limit", () => {
   const offset = modelCapacityRemediation("exact-offset");
   expect(offset).toContain(String(Number.MAX_SAFE_INTEGER));
   expect(offset).not.toContain(String(MODEL_REPORT_BYTES));
-  const nesting = modelCapacityRemediation("metadata-nesting");
-  expect(nesting).toContain(`${String(MODEL_METADATA_NESTING)} array frames`);
-  expect(nesting).not.toContain(String(MODEL_REPORT_BYTES));
   const jsonNesting = modelCapacityRemediation("json-nesting");
   expect(jsonNesting).toContain(`${String(MODEL_JSON_NESTING)} levels`);
   expect(jsonNesting).not.toContain(String(MODEL_REPORT_BYTES));
@@ -1133,19 +1180,72 @@ it("accepts nested JSON values in ignored Safetensors extension fields", async (
   expect(result.ok).toBe(true);
 });
 
-it("classifies over-depth Safetensors extension JSON as a resource limit", async () => {
-  const nested = `${"[".repeat(MODEL_JSON_NESTING + 1)}0${"]".repeat(MODEL_JSON_NESTING + 1)}`;
+it.each([MODEL_JSON_NESTING + 1, 4096])(
+  "validates %s deep ignored Safetensors extensions without losing tensor facts",
+  async (depth) => {
+    const nested = `${"[".repeat(depth)}0${"]".repeat(depth)}`;
+    const fixture = safetensorsFixture(
+      `{"weight":{"dtype":"F32","shape":[1],"data_offsets":[0,4],"note":${nested}}}`,
+      Buffer.alloc(4),
+    );
+    const { provider, path } = await providerAt(fixture.bytes);
+    const result = await provider.inspect({ path, hash: "header" });
+    if (!result.ok) throw result.error;
+    expect(result.value.tensors).toMatchObject([
+      { name: "weight", type: "F32", shape: ["1"], byte_length: 4 },
+    ]);
+  },
+);
+
+it.each([
+  '{"duplicate":0,"duplicate":1}',
+  "[0,]",
+  '{"invalid":"\\uD800"}',
+  '{"missing":}',
+])(
+  "rejects malformed JSON inside deep ignored Safetensors extensions: %s",
+  async (invalid) => {
+    const nested = `${"[".repeat(48)}${invalid}${"]".repeat(48)}`;
+    const fixture = safetensorsFixture(
+      `{"weight":{"dtype":"F32","shape":[1],"data_offsets":[0,4],"note":${nested}}}`,
+      Buffer.alloc(4),
+    );
+    const { provider, path } = await providerAt(fixture.bytes);
+    const result = await provider.inspect({ path, hash: "header" });
+    if (result.ok) throw new Error("Malformed extension was accepted");
+    expect(result.error).toMatchObject({
+      _tag: "BinaryTargetError",
+      constraint: "file_format_rejected",
+    });
+  },
+);
+
+it("bounds work while discarding large ignored Safetensors extensions", async () => {
+  const note = `[${"0,".repeat(600_000)}0]`;
   const fixture = safetensorsFixture(
-    `{"weight":{"dtype":"F32","shape":[1],"data_offsets":[0,4],"note":${nested}}}`,
+    `{"weight":{"dtype":"F32","shape":[1],"data_offsets":[0,4],"note":${note}}}`,
     Buffer.alloc(4),
   );
   const { provider, path } = await providerAt(fixture.bytes);
   const result = await provider.inspect({ path, hash: "header" });
-  if (result.ok) throw new Error("Over-depth JSON was accepted");
+  if (result.ok) throw new Error("Unbounded ignored values were accepted");
   expect(result.error).toMatchObject({
     _tag: "AnalysisResourceConstraintError",
-    resource: "memory",
-    reason: expect.stringContaining("Safetensors JSON nesting"),
+    reportedLimits: { maximum_representation_bytes: MODEL_REPORT_BYTES },
+  });
+});
+
+it("retains the depth bound for required Safetensors fields", async () => {
+  const nested = `${"[".repeat(MODEL_JSON_NESTING + 1)}1${"]".repeat(MODEL_JSON_NESTING + 1)}`;
+  const fixture = safetensorsFixture(
+    `{"weight":{"dtype":"F32","shape":${nested},"data_offsets":[0,4]}}`,
+    Buffer.alloc(4),
+  );
+  const { provider, path } = await providerAt(fixture.bytes);
+  const result = await provider.inspect({ path, hash: "header" });
+  if (result.ok) throw new Error("Over-depth required field was accepted");
+  expect(result.error).toMatchObject({
+    _tag: "AnalysisResourceConstraintError",
     reportedLimits: { maximum_json_depth: MODEL_JSON_NESTING },
   });
 });

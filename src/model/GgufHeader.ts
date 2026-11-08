@@ -106,6 +106,52 @@ export class GgufHeader {
     return result;
   }
 
+  async #skipFixedArray(element: number, count: number): Promise<void> {
+    let left = count * WIDTHS[element]!;
+    while (left > 0) {
+      const size = Math.min(left, 65536);
+      const bytes = await this.reader.take(size);
+      if (element === 7 && bytes.some((byte) => byte !== 0 && byte !== 1))
+        rejectModel("GGUF boolean must be 0 or 1");
+      left -= size;
+    }
+  }
+
+  /** Validate omitted nested arrays without a recursive call stack or retained values. */
+  async #drainArray(element: number, count: number): Promise<void> {
+    const frames: { element: number; remaining: number }[] = [];
+    const push = (type: number, remaining: number): void => {
+      const minimum = WIDTHS[type];
+      if (minimum === undefined)
+        rejectModel(`Unknown GGUF array element type ${String(type)}`);
+      this.reader.guarantee(remaining * minimum!);
+      this.#budget.charge(64);
+      frames.push({ element: type, remaining });
+    };
+    push(element, count);
+    let steps = 0;
+    while (frames.length > 0) {
+      if (++steps % 4096 === 0) await setImmediate();
+      const frame = frames.at(-1)!;
+      if (frame.remaining === 0) {
+        frames.pop();
+        continue;
+      }
+      if (frame.element !== 8 && frame.element !== 9) {
+        await this.#skipFixedArray(frame.element, frame.remaining);
+        frames.pop();
+      } else {
+        frame.remaining--;
+        if (frame.element === 8) await this.#text(false);
+        else {
+          const next = await this.#unsigned(4);
+          const length = await this.#unsigned(8);
+          push(next, length);
+        }
+      }
+    }
+  }
+
   async #value(
     type: number,
     retain: boolean,
@@ -118,12 +164,6 @@ export class GgufHeader {
   }> {
     if (NAMES[type] === undefined)
       rejectModel(`Unknown GGUF metadata type ${String(type)}`);
-    if (depth > MODEL_METADATA_NESTING)
-      throw new ModelFormatFailure(
-        "capacity",
-        `GGUF metadata nesting exceeds ${String(MODEL_METADATA_NESTING)} array frames`,
-        "metadata-nesting",
-      );
     if (type === 8)
       return {
         value: await this.#text(retain),
@@ -138,6 +178,15 @@ export class GgufHeader {
       if (minimum === undefined)
         rejectModel(`Unknown GGUF array element type ${String(element)}`);
       this.reader.guarantee(count * minimum);
+      if (!retain || depth >= MODEL_METADATA_NESTING) {
+        await this.#drainArray(element, count);
+        return {
+          value: [],
+          element_type: NAMES[element] ?? null,
+          element_count: count,
+          complete: count === 0,
+        };
+      }
       const preview: JsonValue[] = [];
       if (retain)
         this.#budget.charge(128 + Math.min(count, MODEL_ARRAY_PREVIEW) * 64);
@@ -150,14 +199,7 @@ export class GgufHeader {
           element !== 9 &&
           (!retain || index >= MODEL_ARRAY_PREVIEW)
         ) {
-          let left = (count - index) * minimum;
-          while (left > 0) {
-            const size = Math.min(left, 65536);
-            const bytes = await this.reader.take(size);
-            if (element === 7 && bytes.some((byte) => byte !== 0 && byte !== 1))
-              rejectModel("GGUF boolean must be 0 or 1");
-            left -= size;
-          }
+          await this.#skipFixedArray(element, count - index);
           break;
         }
         const keep = retain && index < MODEL_ARRAY_PREVIEW;
