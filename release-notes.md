@@ -7,6 +7,7 @@
 
 ### ⚠ BREAKING CHANGES
 
+* **ghidra:** qualify memory effect coverage ([#8651](https://github.com/morluto/rea/issues/8651))
 * **ghidra:** Byte search results require skipped_overlays; loaded overlays no longer appear in skipped_not_loaded. The Ghidra profile changes so prior snapshots are not replayed.
 * **ghidra:** identify containing code and data ([#8777](https://github.com/morluto/rea/issues/8777))
 * **native:** recognize identical function evidence ([#8442](https://github.com/morluto/rea/issues/8442))
@@ -556,6 +557,7 @@
 * **ghidra:** preserve configured seed path traversal ([01d6a95](https://github.com/morluto/rea/commit/01d6a95fd7df6065562b8f087082f5d2062cb468))
 * **ghidra:** preserve facts in inventory searches ([#8376](https://github.com/morluto/rea/issues/8376)) ([c06b536](https://github.com/morluto/rea/commit/c06b53644bbd85b19f91b98a8d218f641976b0b0))
 * **ghidra:** preserve project access failures ([6979c58](https://github.com/morluto/rea/commit/6979c589b06dcef6525e125c2c61ea2735715285))
+* **ghidra:** qualify memory effect coverage ([#8651](https://github.com/morluto/rea/issues/8651)) ([c5ed046](https://github.com/morluto/rea/commit/c5ed046d6e7000b27a12c01a1444f28cc1651c4a))
 * **ghidra:** qualify selected project call coverage ([#8391](https://github.com/morluto/rea/issues/8391)) ([1a0e2c7](https://github.com/morluto/rea/commit/1a0e2c77f208bfb8d102dc68d75af3cc6f1a5a75))
 * **ghidra:** reject uncommitted handshake reports before the first query ([#8630](https://github.com/morluto/rea/issues/8630)) ([aba56df](https://github.com/morluto/rea/commit/aba56df689380f5bcd66e4858b778ba1e3115e90)), closes [#8612](https://github.com/morluto/rea/issues/8612)
 * **ghidra:** report a missing existing-project program as a configuration error ([#8222](https://github.com/morluto/rea/issues/8222)) ([1dc97d8](https://github.com/morluto/rea/commit/1dc97d8cece2eb68c0e72feb56c7a2821f23237c))
