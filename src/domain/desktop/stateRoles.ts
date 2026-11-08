@@ -136,18 +136,18 @@ export interface DesktopRoleFacts {
 
 /**
  * Content roots that are the `-wal` or `-journal` of another root, not
- * selections of their own. A folder the caller selected is not one of those
+ * selections of their own. An explicitly selected path is not one of those
  * logs, even when its name ends in `-wal` or `-journal`.
  */
 export const sqliteSidecarRoots = (
   roots: readonly string[],
-  directories: ReadonlySet<string> = new Set(),
+  selected: ReadonlySet<string> = new Set(),
 ): ReadonlySet<string> => {
   const present = new Set(roots);
   return new Set(
     roots.filter(
       (root) =>
-        !directories.has(root) &&
+        !selected.has(root) &&
         SQLITE_SIDECARS.some(
           ({ suffix }) =>
             root.endsWith(suffix) && present.has(root.slice(0, -suffix.length)),
@@ -169,12 +169,13 @@ export const roleFacts = (
   const stateTails = named
     .map(hiddenTail)
     .filter((tail): tail is string => tail !== null);
-  const directories = new Set(
-    (state.selected_paths ?? []).flatMap((entry) =>
-      entry.kind === "directory" ? [entry.path, entry.physical] : [],
-    ),
+  const selected = new Set(
+    (state.selected_paths ?? []).flatMap((entry) => [
+      entry.path,
+      entry.physical,
+    ]),
   );
-  const sqliteSidecars = sqliteSidecarRoots(state.content_roots, directories);
+  const sqliteSidecars = sqliteSidecarRoots(state.content_roots, selected);
   return {
     home: host.home,
     stateDirectories,
@@ -275,7 +276,18 @@ export const stateReasons = (
     facts.openedFiles.has(path)
   )
     reasons.push("opened_by_application");
-  if (namedInTitles(path, facts.home, facts.titles))
+  if (
+    namedInTitles(path, facts.home, facts.titles) ||
+    facts.selections.some(
+      ({ path: selected, physical }) =>
+        isWithinAny(path, [physical]) &&
+        namedInTitles(
+          `${selected}${path.slice(physical.length)}`,
+          facts.home,
+          facts.titles,
+        ),
+    )
+  )
     reasons.push("named_in_window_title");
   if (isWithinAny(path, facts.selectedRoots)) reasons.push("selected_path");
   if (dconfApplicationKeys) reasons.push("dconf_application_keys");
