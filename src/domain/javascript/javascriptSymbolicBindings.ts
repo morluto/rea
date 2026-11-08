@@ -350,6 +350,8 @@ export class JavaScriptSymbolicBindings {
     key: string,
     read?: SymbolicPropertyRead,
   ): SymbolicValue {
+    if (value.overwrittenMembers?.has(key))
+      return symbolicUnknown("overwritten object members");
     if (value.kind === "external") {
       const path = [...value.path, key];
       if (
@@ -482,6 +484,17 @@ export class JavaScriptSymbolicBindings {
   members(
     value: SymbolicValue,
     active = new Set<SymbolicValue>(),
+  ): readonly string[] {
+    const members = this.#representedMembers(value, active);
+    // A written member is enumerable even when the bound value lacked it.
+    return value.overwrittenMembers === undefined
+      ? members
+      : [...new Set([...members, ...value.overwrittenMembers])];
+  }
+
+  #representedMembers(
+    value: SymbolicValue,
+    active: Set<SymbolicValue>,
   ): readonly string[] {
     if (active.has(value)) return [];
     if (!this.#admitEvaluation()) return [];
@@ -776,7 +789,10 @@ export class JavaScriptSymbolicBindings {
       return symbolicUnknown("dynamic member writes");
     for (let e: SymbolicEnvironment | undefined = env; e; e = e.parent) {
       const value = e.values.get(binding.bindingId);
-      if (value) return value;
+      if (value)
+        return electronOrigin === undefined
+          ? this.#withMemberWrites(value, binding.bindingId)
+          : value;
     }
     if (electronOrigin === undefined && this.#writes.has(binding.bindingId))
       return symbolicUnknown("overwritten object members");
@@ -808,6 +824,36 @@ export class JavaScriptSymbolicBindings {
       });
     }
     return value;
+  }
+
+  /**
+   * A bound value, such as a parameter's argument, read through a binding
+   * that visibly writes some of its members. Only those members lose the
+   * bound value, and the result carries them through aliases and calls.
+   */
+  #withMemberWrites(value: SymbolicValue, bindingId: string): SymbolicValue {
+    const writes = this.#writes.get(bindingId);
+    if (writes === undefined) return value;
+    const members = new Set<string>();
+    for (const write of writes) {
+      const member = write.path[0];
+      if (member === undefined)
+        return symbolicUnknown("overwritten object members");
+      members.add(member);
+    }
+    return symbolicUnion(
+      symbolicVariants(value).map((variant) =>
+        variant.kind === "unknown"
+          ? variant
+          : {
+              ...variant,
+              overwrittenMembers:
+                variant.overwrittenMembers === undefined
+                  ? members
+                  : new Set([...variant.overwrittenMembers, ...members]),
+            },
+      ),
+    );
   }
 
   #readBoundary(

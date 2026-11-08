@@ -873,6 +873,64 @@ it("keeps the source registration when only its channel is site-determined", () 
   ]);
 });
 it.each([
+  // The wrapper registers its rewritten channel, not the argument's member.
+  ['def.channel = "app:" + tag', "stale", []],
+  ["def.registered = true", "app:ping", [["app:ping", "wrapper-substitution"]]],
+])(
+  "substitutes a wrapper parameter's channel member only while unwritten: %s",
+  (write, argument, substituted) => {
+    const result = analyzeJavaScriptStaticSource(`
+    const { ipcMain } = require("electron");
+    function register(tag, def) {
+      ${write};
+      ipcMain.handle(def.channel, () => tag);
+    }
+    register("ping", { channel: "${argument}" });
+  `);
+    expect(
+      result.electron.ipc.map(({ channel, resolution_basis }) => [
+        channel,
+        resolution_basis ?? "direct",
+      ]),
+    ).toEqual([[null, "direct"], ...substituted]);
+  },
+);
+it("does not trace a bridge member its wrapper replaces before exposure", () => {
+  const result = analyzeJavaScriptStaticSource(`
+    const { contextBridge, ipcRenderer } = require("electron");
+    function expose(key, api) {
+      api.ping = () => ipcRenderer.invoke("real");
+      api.extra = () => ipcRenderer.invoke("added");
+      contextBridge.exposeInMainWorld(key, api);
+    }
+    expose("api", {
+      ping: () => ipcRenderer.invoke("stale"),
+      keep: () => ipcRenderer.invoke("kept"),
+    });
+  `);
+  // The exposed object has the wrapper's members; their values stay unresolved.
+  expect(
+    result.electron.call_paths?.map(({ entry, channel }) => [entry, channel]),
+  ).toEqual([["api.keep", "kept"]]);
+  expect(
+    result.electron.context_bridge_apis.map(
+      ({ api_key, members, unknown_members, resolution_basis }) => ({
+        api_key,
+        members,
+        unknown_members,
+        resolution_basis,
+      }),
+    ),
+  ).toEqual([
+    {
+      api_key: "api",
+      members: ["extra", "keep", "ping"],
+      unknown_members: 0,
+      resolution_basis: "wrapper-substitution",
+    },
+  ]);
+});
+it.each([
   [
     "a closure over a wrapper parameter",
     `function register(seed) {

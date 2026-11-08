@@ -575,6 +575,11 @@ determines, such as a local constant, resolves that call's observation rather
 than adding a second one. A channel or registration handler supplied through
 a wrapper argument is a candidate beside the call's own unresolved
 observation, because callers outside the traced paths may pass other values.
+A member that a function writes, deletes or redefines through a parameter
+stays unresolved in every value read through that parameter, including
+aliases, destructuring, spreads, returns and forwarded arguments, even when
+the read precedes the write. An exposed API still lists that member; the
+argument's other members keep their values.
 A wrapper call that is both its own entry and reached through another entry
 is recorded once when both paths find the same facts; calls that supply
 different handlers or channels stay distinct.

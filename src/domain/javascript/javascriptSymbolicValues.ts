@@ -32,6 +32,15 @@ export interface SymbolicMetadata {
   readonly conditionUnresolved?: true;
 }
 
+export interface SymbolicMemberWrites {
+  /**
+   * Members the binding this value was read through visibly writes. Writes
+   * are not ordered against reads, so these members are enumerable but their
+   * values stay unresolved.
+   */
+  readonly overwrittenMembers?: ReadonlySet<string>;
+}
+
 export interface SymbolicFunction extends SymbolicMetadata {
   readonly kind: "function";
   readonly node: t.Function;
@@ -78,7 +87,8 @@ export type SymbolicValue = (
     }
   | SymbolicFunction
 ) &
-  SymbolicMetadata;
+  SymbolicMetadata &
+  SymbolicMemberWrites;
 
 export const symbolicUnknown = (reason: string): SymbolicValue => ({
   kind: "unknown",

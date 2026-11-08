@@ -209,6 +209,95 @@ it.each([
   expect(values[0]?.kind).toBe("unknown");
 });
 
+it.each([
+  [
+    "a direct read",
+    `function f(o){o.channel="real";return o.channel} inspect(f({channel:"stale"}));`,
+  ],
+  [
+    "destructuring",
+    `function f(o){o.channel="real";const {channel}=o;return channel} inspect(f({channel:"stale"}));`,
+  ],
+  [
+    "an alias",
+    `function f(o){o.channel="real";const alias=o;return alias.channel} inspect(f({channel:"stale"}));`,
+  ],
+  [
+    "a returned parameter",
+    `function f(o){o.channel="real";return o} inspect(f({channel:"stale"}).channel);`,
+  ],
+  [
+    "a forwarded parameter",
+    `function g(p){return p.channel} function f(o){o.channel="real";return g(o)} inspect(f({channel:"stale"}));`,
+  ],
+  [
+    "a spread of an added member",
+    `function f(o){o.channel="real";return {channel:"stale",...o}.channel} inspect(f({}));`,
+  ],
+  [
+    "a nested member",
+    `function f(o){o.options.channel="real";return o.options.channel} inspect(f({options:{channel:"stale"}}));`,
+  ],
+])("keeps a written parameter member unresolved for %s", (_name, source) => {
+  expect(inspectOne(source).kind).toBe("unknown");
+});
+
+it.each([
+  'o.channel+="!"',
+  "delete o.channel",
+  'Object.defineProperty(o,"channel",{value:"real"})',
+])("treats %s as a parameter member write", (write) => {
+  expect(
+    inspectOne(
+      `function f(o){${write};return o.channel} inspect(f({channel:"stale"}));`,
+    ),
+  ).toEqual({ kind: "unknown", reason: "overwritten object members" });
+});
+
+it("keeps parameter members its function does not write", () => {
+  expect(
+    inspectOne(
+      `function f(o){o.handled=true;return o.channel} inspect(f({channel:"kept"}));`,
+    ),
+  ).toEqual({ kind: "literal", value: "kept" });
+  expect(
+    inspectOne(
+      `function f(o){o.extra=1;return {channel:"kept",...o}.channel} inspect(f({}));`,
+    ),
+  ).toEqual({ kind: "literal", value: "kept" });
+});
+
+it("enumerates a member a parameter's function adds without resolving it", () => {
+  const { values } = inspectFixture(
+    `function f(o){o.extra="added";return o} inspect(f({keep:"kept"}));`,
+    (bindings, node) => {
+      const value = bindings.evaluate(node.arguments[0]);
+      expect([...bindings.members(value)].sort()).toEqual(["extra", "keep"]);
+      expect(bindings.unknownMembers(value)).toBe(0);
+      expect(bindings.property(value, "extra").kind).toBe("unknown");
+      expect(bindings.property(value, "keep")).toEqual({
+        kind: "literal",
+        value: "kept",
+      });
+      return value;
+    },
+  );
+  expect(values).toHaveLength(1);
+});
+
+it("loads modules through a loader parameter whose members a module writes", () => {
+  expect(
+    inspectOne(`(() => {
+    const modules = {
+      1(module) { module.exports = require("electron"); },
+      2(module, exports, load) { load.p = "/"; inspect(load(1).ipcMain); }
+    };
+    function load(id) { const m = {exports:{}}; modules[id](m,m.exports,load); return m.exports; }
+    load(2);
+  })();`),
+  ).toEqual({ kind: "external", path: ["electron", "ipcMain"] });
+});
+
 it("does not substitute a lexical or var initializer before its source write", () => {
   for (const source of [
     `inspect(value); const value = require("electron");`,
