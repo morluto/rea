@@ -13,20 +13,20 @@ import {
 
 const FILE = "Documents/doc.xml";
 
-describe("draftTaskFiles for a UML model, as Umbrello saves one", () => {
-  const STRING = "uMUM2QvoIZjRj";
-  const INT = "uC0y4gxFPBxQT";
-  const attribute = (id: string, name: string, type: string) =>
-    `<ownedAttribute xmi:type="uml:Property" xmi:id="${id}" name="${name}" visibility="private" type="${type}"/>`;
-  /** A model: data types, two classes of attributes, the class diagram's boxes, the id counter, and the tree view mirroring the model by id. */
-  const model = (added: string, height: string, counter: string) =>
-    `<xmi:XMI xmlns:xmi="x" xmlns:uml="u"><uml:Model xmi:id="m1" name="UML Model"><packagedElement xmi:type="uml:Model" xmi:id="Logical_View" name="Logical View"><uml:Package xmi:id="Datatypes" name="Datatypes"><packagedElement xmi:type="uml:DataType" xmi:id="${INT}" name="int"/><packagedElement xmi:type="uml:DataType" xmi:id="${STRING}" name="string"/></uml:Package><packagedElement xmi:type="uml:Class" xmi:id="u3dEaKzAZMUjj" name="Book">${attribute("unJOJYqtTrFmw", "title", STRING)}${attribute("ufuOeMM0RJQRU", "isbn", STRING)}</packagedElement><packagedElement xmi:type="uml:Class" xmi:id="u6wBR4Z5TqyET" name="Member">${attribute("u0xTeAOXDVGS9", "name", STRING)}${attribute("uJiGZsdCWAH42", "memberId", INT)}${added}</packagedElement><xmi:Extension extender="umbrello"><diagrams><diagram xmi.id="uOOLUpU1ZgvZX" name="class diagram"><widgets><classwidget xmi.id="u6wBR4Z5TqyET" localid="uiLi0eQjS7TpP" x="574" y="150" width="116" height="${height}"/><classwidget xmi.id="u3dEaKzAZMUjj" localid="uR6uLy6layctB" x="234" y="150" width="96" height="52"/></widgets></diagram></diagrams></xmi:Extension></packagedElement></uml:Model><xmi:Extension extender="umbrello"><docsettings uniqueid="${counter}"/><codegeneration lastobject="${counter}"/><listview><listitem id="Logical_View" type="801"><listitem id="${STRING}" type="829"/><listitem id="u6wBR4Z5TqyET" type="813"><listitem id="uJiGZsdCWAH42" type="814"/><listitem id="u0xTeAOXDVGS9" type="814"/>${added === "" ? "" : '<listitem id="ubcgF2AWfBmHh" type="814"/>'}</listitem></listitem></listview></xmi:Extension></xmi:XMI>`;
-  const SEED = model("", "52", "uAmSta7YLvI1L");
-  const email = (type: string) =>
-    model(attribute("ubcgF2AWfBmHh", "email", type), "67", "ubcgF2AWfBmHh");
-  const MEMBER =
-    "/root/children/[name=uml:Model]/children/[name=packagedElement]/children/[name=packagedElement][@name=Member]";
+const STRING = "uMUM2QvoIZjRj";
+const INT = "uC0y4gxFPBxQT";
+const attribute = (id: string, name: string, type: string) =>
+  `<ownedAttribute xmi:type="uml:Property" xmi:id="${id}" name="${name}" visibility="private" type="${type}"/>`;
+/** A model: data types, two classes of attributes, the class diagram's boxes, the id counter, and the tree view mirroring the model by id. */
+const model = (added: string, height: string, counter: string) =>
+  `<xmi:XMI xmlns:xmi="x" xmlns:uml="u"><uml:Model xmi:id="m1" name="UML Model"><packagedElement xmi:type="uml:Model" xmi:id="Logical_View" name="Logical View"><uml:Package xmi:id="Datatypes" name="Datatypes"><packagedElement xmi:type="uml:DataType" xmi:id="${INT}" name="int"/><packagedElement xmi:type="uml:DataType" xmi:id="${STRING}" name="string"/></uml:Package><packagedElement xmi:type="uml:Class" xmi:id="u3dEaKzAZMUjj" name="Book">${attribute("unJOJYqtTrFmw", "title", STRING)}${attribute("ufuOeMM0RJQRU", "isbn", STRING)}</packagedElement><packagedElement xmi:type="uml:Class" xmi:id="u6wBR4Z5TqyET" name="Member">${attribute("u0xTeAOXDVGS9", "name", STRING)}${attribute("uJiGZsdCWAH42", "memberId", INT)}${added}</packagedElement><xmi:Extension extender="umbrello"><diagrams><diagram xmi.id="uOOLUpU1ZgvZX" name="class diagram"><widgets><classwidget xmi.id="u6wBR4Z5TqyET" localid="uiLi0eQjS7TpP" x="574" y="150" width="116" height="${height}"/><classwidget xmi.id="u3dEaKzAZMUjj" localid="uR6uLy6layctB" x="234" y="150" width="96" height="52"/></widgets></diagram></diagrams></xmi:Extension></packagedElement></uml:Model><xmi:Extension extender="umbrello"><docsettings uniqueid="${counter}"/><codegeneration lastobject="${counter}"/><listview><listitem id="Logical_View" type="801"><listitem id="${STRING}" type="829"/><listitem id="u6wBR4Z5TqyET" type="813"><listitem id="uJiGZsdCWAH42" type="814"/><listitem id="u0xTeAOXDVGS9" type="814"/>${added === "" ? "" : '<listitem id="ubcgF2AWfBmHh" type="814"/>'}</listitem></listitem></listview></xmi:Extension></xmi:XMI>`;
+const SEED = model("", "52", "uAmSta7YLvI1L");
+const email = (type: string) =>
+  model(attribute("ubcgF2AWfBmHh", "email", type), "67", "ubcgF2AWfBmHh");
+const MEMBER =
+  "/root/children/[name=uml:Model]/children/[name=packagedElement]/children/[name=packagedElement][@name=Member]";
 
+describe("draftTaskFiles for a UML model, as Umbrello saves one", () => {
   it("checks the new attribute's type, never its class's visibility values as runs of text, so an attribute of another type fails", () => {
     const file = xmlDraft(SEED, email(STRING));
 
@@ -93,7 +93,9 @@ describe("draftTaskFiles for a UML model, as Umbrello saves one", () => {
       `${MEMBER}/children/[name=ownedAttribute][@name=memberId]/attributes/type`,
     ]);
   });
+});
 
+describe("draftTaskFiles for a zipped UML model", () => {
   it("checks the new attribute's type in a zipped model, whose data types only the archive's entries hold", () => {
     const ZIP = "Documents/library.zip";
     const zipped = (text: string): JsonValue => ({

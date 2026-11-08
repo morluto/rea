@@ -426,7 +426,9 @@ describe("draftTaskFiles for records whatever their fields are called", () => {
     expect(values).toEqual(["Delphine", "Moreau"]);
     expect(passing(FILE, xml(after), checks).every(Boolean)).toBe(true);
   });
+});
 
+describe("draftTaskFiles for truncated and linked records", () => {
   it("suggests no check a cut view leaves undecided for a record only position names, added before the cut", () => {
     const book = (...people: string[]) =>
       `<book><contacts>${people
