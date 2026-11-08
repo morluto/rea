@@ -33,6 +33,7 @@ export class ArtifactOperationError extends AnalysisError {
       | "inspect_pe_resources"
       | "inspect_pe_certificates"
       | "inspect_elf_notes"
+      | "inspect_elf_debug_link"
       | "inspect_devicetree"
       | "inspect_api_contract"
       | "inspect_playwright_trace"

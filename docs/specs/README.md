@@ -10,3 +10,8 @@ for the specification lifecycle, roadmap granularity and producer-owned contract
 
 - [Organization](documentation/organization/spec.md)
   ([plan](documentation/organization/plan.md), [tasks](documentation/organization/tasks.md))
+
+## Native
+
+- [ELF separate debug-file linkage](native/elf-debug-link/spec.md)
+  ([plan](native/elf-debug-link/plan.md), [tasks](native/elf-debug-link/tasks.md))

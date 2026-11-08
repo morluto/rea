@@ -53,6 +53,10 @@ import {
   elfNotesSchema,
 } from "../../domain/native/elfNotes.js";
 import {
+  inspectElfDebugLinkInputSchema,
+  elfDebugLinkSchema,
+} from "../../domain/native/elfDebugLink.js";
+import {
   inspectAppleIpsInputSchema,
   appleIpsSchema,
 } from "../../domain/native/appleIps.js";
@@ -137,6 +141,28 @@ export const BINARY_DIAGNOSTICS_TOOL_CONTRACTS = [
       {
         title: "Inspect ELF GNU build-id and ABI-tag notes",
         input: { path: "/artifacts/program" },
+      },
+    ],
+  },
+  {
+    name: "inspect_elf_debug_link",
+    ...toolContractMetadata("inspect_elf_debug_link"),
+    kind: "native-provider",
+    description:
+      "Inspect one explicit local ELF32/ELF64 image for separate debug-file linkage without executing it or opening a disassembler. Returns .gnu_debuglink file name and CRC32, .gnu_debugaltlink file name and build-id, the GNU build-id, conventional lookup path strings, and .gnu_debugdata presence, file offset, and size. An optional candidate_path verifies that one caller-selected file by debuglink CRC32 and build-id equality. The verdict is matches, does_not_match, or cannot_verify. Lookup paths are not opened. The xz MiniDebugInfo payload is not decoded. A missing section is observed absence only when section names are complete, not proof the image never carried that linkage. Reads stable regular files; malformed ELF headers and exhausted note budgets return no partial success. Portable on supported Node hosts.",
+    inputSchema: inspectElfDebugLinkInputSchema,
+    outputSchema: evidenceResultOf(elfDebugLinkSchema),
+    examples: [
+      {
+        title: "Inspect ELF separate debug-file linkage",
+        input: { path: "/artifacts/program" },
+      },
+      {
+        title: "Verify one caller-selected debug file",
+        input: {
+          path: "/artifacts/program",
+          candidate_path: "/artifacts/program.debug",
+        },
       },
     ],
   },

@@ -82,13 +82,77 @@ const afterValidation = async <T>(
 };
 
 /** Read one bounded regular file and reject replacement or in-place changes. */
-export const readStableArtifact = async (
+export const readStableArtifact = (
   path: string,
   maximumBytes: number,
   signal?: AbortSignal,
   fileSystem: StableArtifactFileSystem = FILE_SYSTEM,
   resourceScope?: ArtifactResourceScope,
-): Promise<StableArtifactSnapshot> => {
+): Promise<StableArtifactSnapshot> =>
+  readStableArtifactChunks(
+    path,
+    maximumBytes,
+    signal,
+    fileSystem,
+    resourceScope,
+    (size) => size,
+    undefined,
+    (bytes, sha256) => ({ bytes, sha256 }),
+  );
+
+/** Whole-file identity of one streamed stable read and its retained prefix. */
+export interface StableArtifactStream {
+  readonly sha256: string;
+  readonly size: number;
+  /** The first `retainBytes(size)` bytes; the whole file when that equals size. */
+  readonly prefix: Buffer;
+}
+
+/** Options for one streamed stable read. */
+export interface StableArtifactStreamOptions {
+  /** Bytes to retain from the start of the file, given its admitted size. */
+  readonly retainBytes: (size: number) => number;
+  /**
+   * Observe every physical chunk in file order. The buffer may be reused after
+   * the callback returns, so it must be consumed synchronously.
+   */
+  readonly onChunk: (chunk: Buffer) => void;
+  readonly signal?: AbortSignal | undefined;
+  readonly fileSystem?: StableArtifactFileSystem;
+  readonly resourceScope?: ArtifactResourceScope | undefined;
+}
+
+/**
+ * Stream one bounded regular file in fixed chunks with the same identity,
+ * freshness, cancellation, and descriptor-ownership checks as
+ * {@link readStableArtifact}, retaining only a caller-sized prefix.
+ */
+export const streamStableArtifact = (
+  path: string,
+  maximumBytes: number,
+  options: StableArtifactStreamOptions,
+): Promise<StableArtifactStream> =>
+  readStableArtifactChunks(
+    path,
+    maximumBytes,
+    options.signal,
+    options.fileSystem ?? FILE_SYSTEM,
+    options.resourceScope,
+    options.retainBytes,
+    options.onChunk,
+    (prefix, sha256, size) => ({ sha256, size, prefix }),
+  );
+
+const readStableArtifactChunks = async <Value>(
+  path: string,
+  maximumBytes: number,
+  signal: AbortSignal | undefined,
+  fileSystem: StableArtifactFileSystem,
+  resourceScope: ArtifactResourceScope | undefined,
+  retainBytes: (size: number) => number,
+  onChunk: ((chunk: Buffer) => void) | undefined,
+  complete: (retained: Buffer, sha256: string, size: number) => Value,
+): Promise<Value> => {
   assertArtifactReadActive(signal);
   const before = await fileSystem.lstat(path);
   if (!before.isFile() || before.isSymbolicLink())
@@ -132,8 +196,11 @@ export const readStableArtifact = async (
       // A raced descriptor size must not allocate beyond the selected budget.
       // These private bytes are published only after the exact count and both
       // file identities below validate, so an incomplete read exposes no tail.
+      const admitted = Number(
+        initial.size > maximumSize ? maximumSize : initial.size,
+      );
       const bytes = Buffer.allocUnsafe(
-        Number(initial.size > maximumSize ? maximumSize : initial.size),
+        Math.max(0, Math.min(admitted, retainBytes(admitted))),
       );
       const overflow = Buffer.allocUnsafe(65536);
       const hash = createHash("sha256");
@@ -167,7 +234,9 @@ export const readStableArtifact = async (
           );
         // Read growth into bounded scratch space while preserving physical
         // read failures and byte-budget refusal ahead of final integrity checks.
-        hash.update(target.subarray(offset, offset + bytesRead));
+        const chunk = target.subarray(offset, offset + bytesRead);
+        hash.update(chunk);
+        onChunk?.(chunk);
       }
       const after = await file.stat({ bigint: true });
       const current = await afterValidation(path, "during read", () =>
@@ -182,10 +251,7 @@ export const readStableArtifact = async (
           `Artifact changed during read: ${path}`,
         );
       assertArtifactReadActive(signal);
-      return {
-        bytes,
-        sha256: hash.digest("hex"),
-      };
+      return complete(bytes, hash.digest("hex"), count);
     },
   );
 };

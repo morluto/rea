@@ -19,6 +19,7 @@ import { snapshotEnvironment } from "../process/snapshotEnvironment.js";
 import { captureProviderEnvironment } from "./providerEnvironment.js";
 import { createByteEntropyService } from "../composition/binaryDiagnostics.js";
 import { registerElfNotesTool } from "./registerElfNotesTool.js";
+import { registerElfDebugLinkTool } from "./registerElfDebugLinkTool.js";
 import { registerAppleIpsTool } from "./registerAppleIpsTool.js";
 import { registerKernelModuleTool } from "./registerKernelModuleTool.js";
 import { registerPeLoadConfigTool } from "./registerPeLoadConfigTool.js";
@@ -216,6 +217,7 @@ export const createServer = (
     nativeExports,
     devicetree,
     elfNotes,
+    elfDebugLink,
     appleIps,
     kernelModule,
     peLoadConfig,
@@ -475,6 +477,13 @@ export const createServer = (
       registerElfNotesTool(
         server,
         elfNotes,
+        toolLogger,
+        recordEvidence,
+        analysisAdmission,
+      );
+      registerElfDebugLinkTool(
+        server,
+        elfDebugLink,
         toolLogger,
         recordEvidence,
         analysisAdmission,

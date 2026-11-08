@@ -29,6 +29,7 @@ import {
   BINARY_HARDENING_PROVIDER,
   BYTE_ENTROPY_PROVIDER,
   DEVICETREE_PROVIDER,
+  ELF_DEBUG_LINK_PROVIDER,
   ELF_NOTES_PROVIDER,
   HARMONY_APPLICATION_PROVIDER,
   JAVASCRIPT_APPLICATION_PROVIDER,
@@ -255,6 +256,11 @@ export const CAPABILITY_DECLARATIONS = {
   },
   elfNotes: {
     providers: [providerBinding(ELF_NOTES_PROVIDER, ["inspect_elf_notes"])],
+  },
+  elfDebugLink: {
+    providers: [
+      providerBinding(ELF_DEBUG_LINK_PROVIDER, ["inspect_elf_debug_link"]),
+    ],
   },
   erlangBeam: {
     providers: [

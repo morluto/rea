@@ -525,6 +525,11 @@ export const documentationSections = [
       },
       { text: "ELF note tables", source: "elf-notes.md", route: "/elf-notes" },
       {
+        text: "ELF separate debug files",
+        source: "elf-debug-link.md",
+        route: "/elf-debug-link",
+      },
+      {
         text: "Erlang BEAM files",
         source: "erlang-beam.md",
         route: "/erlang-beam",

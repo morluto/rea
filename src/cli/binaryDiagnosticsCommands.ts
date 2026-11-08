@@ -10,6 +10,7 @@ import {
   createRecordedCrashService,
   createBinaryLayoutService,
   createElfNotesService,
+  createElfDebugLinkService,
   createAppleIpsService,
   createDevicetreeService,
   createKernelModuleService,
@@ -32,6 +33,7 @@ import { inspectPeCertificatesInputSchema } from "../domain/native/peCertificate
 import { inspectPeImportsInputSchema } from "../domain/native/peImports.js";
 import { inspectNativeExportsInputSchema } from "../domain/native/nativeExports.js";
 import { inspectElfNotesInputSchema } from "../domain/native/elfNotes.js";
+import { inspectElfDebugLinkInputSchema } from "../domain/native/elfDebugLink.js";
 import { inspectAppleIpsInputSchema } from "../domain/native/appleIps.js";
 import { inspectKernelModuleInputSchema } from "../domain/native/kernelModule.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
@@ -83,6 +85,56 @@ export const registerBinaryDiagnosticsCommands = (
               elf,
               "rea-elf-notes",
               "inspect_elf_notes",
+              signal,
+            ).then(projectCliAnalysisResult),
+        );
+      }),
+  });
+  cli.command(CLI_COMMANDS.inspectElfDebugLink, {
+    description:
+      "Inspect ELF separate debug-file linkage without executing the image",
+    args: z.object({
+      path: localPathStringSchema.describe("Local ELF32/ELF64 image"),
+    }),
+    options: z.object({
+      maxFileBytes: cliDecimalField(
+        inspectElfDebugLinkInputSchema.shape.max_file_bytes,
+      ),
+      maxEntries: cliDecimalField(
+        inspectElfDebugLinkInputSchema.shape.max_entries,
+      ),
+      candidatePath: localPathStringSchema
+        .optional()
+        .describe("One caller-selected debug file to verify"),
+    }),
+    run: ({ args, options }) =>
+      withCommandCancellation(async (signal) => {
+        const elf = createElfDebugLinkService();
+        return await logCliCommand(
+          logger,
+          CLI_COMMANDS.inspectElfDebugLink,
+          async () =>
+            finishCliEvidenceCommand(
+              args.path,
+              () =>
+                elf.inspect(
+                  {
+                    path: absoluteCallerPath(args.path),
+                    max_file_bytes: options.maxFileBytes,
+                    max_entries: options.maxEntries,
+                    ...(options.candidatePath === undefined
+                      ? {}
+                      : {
+                          candidate_path: absoluteCallerPath(
+                            options.candidatePath,
+                          ),
+                        }),
+                  },
+                  { signal },
+                ),
+              elf,
+              "rea-elf-debug-link",
+              "inspect_elf_debug_link",
               signal,
             ).then(projectCliAnalysisResult),
         );

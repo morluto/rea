@@ -24,6 +24,7 @@ const CONTRACTS = [
 const PATH_FIELDS = {
   inspect_apple_ips: ["path"],
   inspect_elf_notes: ["path"],
+  inspect_elf_debug_link: ["path", "candidate_path"],
   inspect_kernel_module: ["path"],
   inspect_byte_entropy: ["path"],
   inspect_api_contract: ["path", "operations_path"],
@@ -122,6 +123,8 @@ it("rejects one relative path field at a time on tools/list", async () => {
   expect(checked).toEqual([
     "inspect_apple_ips.path",
     "inspect_elf_notes.path",
+    "inspect_elf_debug_link.path",
+    "inspect_elf_debug_link.candidate_path",
     "inspect_kernel_module.path",
     "inspect_byte_entropy.path",
     "inspect_api_contract.path",

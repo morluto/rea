@@ -53,6 +53,13 @@ export const ELF_NOTES_PROVIDER = Object.freeze({
   version: "1",
 } as const);
 
+/** Provider identity for portable, execution-free ELF separate-debug linkage. */
+export const ELF_DEBUG_LINK_PROVIDER = Object.freeze({
+  id: "rea-elf-debug-link",
+  name: "REA ELF debug-link parser",
+  version: "1",
+} as const);
+
 /** Provider identity for portable, execution-free Apple .ips crash-report decoding. */
 export const APPLE_IPS_PROVIDER = Object.freeze({
   id: "rea-apple-ips",

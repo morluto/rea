@@ -449,6 +449,20 @@ The workflow reports note owners, types, descriptor hashes, and GNU build-id
 or ABI-tag fields when those descriptors match. A missing note table is
 observed absence of those declarations. See [ELF note tables](../elf-notes.md).
 
+Inspect ELF separate debug-file linkage without executing the image:
+
+```bash
+rea inspect-elf-debug-link /absolute/path/to/program --json
+rea inspect-elf-debug-link /absolute/path/to/program --candidate-path /absolute/path/to/program.debug --json
+```
+
+The workflow reports `.gnu_debuglink` name and CRC32, `.gnu_debugaltlink`
+name and build-id, the GNU build-id, conventional lookup path strings, and
+`.gnu_debugdata` presence, offset, and size. Lookup paths are not opened. An
+optional candidate is verified by CRC32 and build-id equality. A missing
+section is observed absence only when section names are complete. See
+[ELF debug files](../elf-debug-link.md).
+
 Inspect an Apple `.ips` crash report without executing a target:
 
 ```bash
