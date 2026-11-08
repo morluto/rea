@@ -75,6 +75,45 @@ const LINK_BLIND_FILE_SYSTEM: StableArtifactFileSystem = {
 
 /** Where a Windows path's ancestors begin: past a drive root or device prefix. */
 const WINDOWS_PATH_ROOT = /^(?:[\\/]{2}[?.][\\/])?(?:[A-Za-z]:)?[\\/]*/u;
+/** A `\\?\` path, which Windows opens as spelled, without removing `.` or `..`. */
+const LITERAL_DEVICE_PATH = /^[\\/]{2}\?[\\/]/u;
+/** One path component and the separators the caller wrote after it. */
+const WINDOWS_PATH_COMPONENT = /([^\\/]+)([\\/]*)/gu;
+
+/**
+ * The ancestor directories Windows reaches when it opens `path`, spelled as
+ * the caller wrote them. Win32 removes `.` and `..` components before opening
+ * a path, so `C:\alias\..\real\a.lnk` reaches only `C:\real`, and `..`
+ * cannot climb above an absolute root. A `\\?\` path skips that
+ * normalization, so its components are walked as written. A relative path
+ * keeps a leading `..` that has nothing to remove.
+ */
+const windowsAncestors = (path: string): readonly string[] => {
+  const root = WINDOWS_PATH_ROOT.exec(path)?.[0] ?? "";
+  const literal = LITERAL_DEVICE_PATH.test(root);
+  const absolute = /[\\/]$/u.test(root);
+  const kept: string[] = [];
+  for (const [spelled, name] of path
+    .slice(root.length)
+    .matchAll(WINDOWS_PATH_COMPONENT)) {
+    if (!literal && name === ".") continue;
+    if (!literal && name === "..") {
+      const last = kept.at(-1);
+      if (last !== undefined && !/^\.\.[\\/]*$/u.test(last)) {
+        kept.pop();
+        continue;
+      }
+      if (absolute) continue;
+    }
+    kept.push(spelled);
+  }
+  // The final component is the shortcut itself, not an ancestor.
+  return kept
+    .slice(0, -1)
+    .map((_, index) =>
+      (root + kept.slice(0, index + 1).join("")).replace(/[\\/]+$/u, ""),
+    );
+};
 
 /**
  * The first ancestor directory of a Windows path that is a symbolic link or
@@ -87,13 +126,7 @@ const linkedWindowsAncestor = async (
   path: string,
   signal: AbortSignal | undefined,
 ): Promise<string | undefined> => {
-  const start = WINDOWS_PATH_ROOT.exec(path)?.[0].length ?? 0;
-  for (let index = start; index < path.length; index += 1) {
-    const separator = path[index];
-    if (separator !== "\\" && separator !== "/") continue;
-    const previous = path[index - 1];
-    if (previous === "\\" || previous === "/") continue;
-    const ancestor = path.slice(0, index);
+  for (const ancestor of windowsAncestors(path)) {
     assertArtifactReadActive(signal);
     try {
       if ((await LINK_BLIND_FILE_SYSTEM.lstat(ancestor)).isSymbolicLink())

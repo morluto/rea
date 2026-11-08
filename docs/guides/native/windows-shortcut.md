@@ -85,7 +85,10 @@ The selected path must be a regular file. Symbolic links are rejected.
 UNC paths and other host-prefixed device paths, such as `\\server\share\a.lnk`
 and `\\?\UNC\server\share\a.lnk`, are rejected before any filesystem call. On
 Windows, a path whose parent directory is a symbolic link or junction is
-rejected before anything follows that link. A mapped network drive cannot be
-told apart from a local drive by its path and is not rejected.
+rejected before anything follows that link. The check covers the directories
+Windows opens after removing `.` and `..`, so `C:\alias\..\real\a.lnk` is
+checked at `C:\real` only; a `\\?\` path is checked as written. A mapped
+network drive cannot be told apart from a local drive by its path and is not
+rejected.
 This workflow does not resolve, open, or execute the link target or call COM,
 and it does not contact a network for a path on a local volume.

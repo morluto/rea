@@ -295,4 +295,50 @@ describe("Windows shortcut parent directory links", () => {
     expect(result.error._tag).toBe("AnalysisCancelledError");
     expect(entered).not.toHaveBeenCalled();
   });
+
+  it.skipIf(process.platform === "win32")(
+    "walks the parents Windows reaches after removing dot components",
+    async () => {
+      const root = await createTestTempDirectory(
+        "rea-windows-shortcut-parent-dots-",
+      );
+      const real = join(root, "real");
+      await mkdir(real);
+      await writeFile(
+        join(real, "shortcut.lnk"),
+        powershellHiddenIconSpoofShortcut(),
+      );
+      // A sibling link, so the POSIX host's own `..` lands where Windows would.
+      // The paths are spelled out, since `join` would remove the dots itself.
+      await symlink(real, join(root, "alias"));
+      const provider = new WindowsShortcutProvider("win32");
+
+      expect(
+        await provider.inspect(
+          providerInput(`${root}/alias/../real/shortcut.lnk`),
+        ),
+      ).toMatchObject({ ok: true });
+      expect(
+        await provider.inspect(providerInput(`${root}/./alias/./shortcut.lnk`)),
+      ).toMatchObject({ ok: false });
+    },
+  );
+
+  it("starts the walk at the first parent of the effective Windows path", async () => {
+    const provider = new WindowsShortcutProvider("win32");
+    for (const [path, first] of [
+      ["C:\\alias\\..\\real\\a.lnk", "C:\\real"],
+      ["C:/alias/../real/a.lnk", "C:/real"],
+      ["C:\\..\\.\\real\\a.lnk", "C:\\real"],
+      ["\\\\.\\C:\\alias\\..\\real\\a.lnk", "\\\\.\\C:\\real"],
+      ["\\\\?\\C:\\alias\\..\\real\\a.lnk", "\\\\?\\C:\\alias"],
+      ["..\\real\\a.lnk", ".."],
+    ] as const) {
+      const entered = vi.fn();
+      lstatGate.hold = { entered, release: Promise.resolve() };
+      await provider.inspect(providerInput(path));
+      lstatGate.hold = undefined;
+      expect(entered).toHaveBeenCalledWith(first);
+    }
+  });
 });
