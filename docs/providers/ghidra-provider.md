@@ -140,6 +140,11 @@ also accept source-file byte offsets. Existing symbols and analysis addresses
 take precedence; a `0x`-prefixed number that resolves to no procedure falls back
 to its observed source mapping. Use `--file-offset=0x...` on the CLI or
 `procedure: "file-offset:0x..."` through MCP to select file coordinates explicitly.
+To select an analysis address without the bare-hex fallback, qualify it with its
+Ghidra address space, for example `ram:0x...`. The `inspect-native-load-image`
+CLI command or MCP `inspect_native_load_image` reports Ghidra's observed default
+address space; use the space appropriate to the address, and retain any
+load-image verification limitations.
 Multiple mapping candidates fail as ambiguous rather than selecting a bank or
 address space. A successful conversion retains the file offset, mapped address
 and procedure entry in raw Evidence and `locations`.
@@ -274,6 +279,18 @@ same function can be retried after raising the limit. See the
 [settings design](../design/limits-and-recovery.md) for snapshots, precedence,
 and provider integration.
 
+When `inspect_native_instruction` selects a byte inside a listed instruction,
+`containing_instruction` reports its separate start, length and Ghidra Listing
+text, retaining any non-default address space. The requested address remains
+unchanged, and a containing function may be absent. For defined data, the same
+tool reports its containing object's start, length and type path; use the start
+with `inspect_native_data_type` to inspect its layout. This does not select a
+field or union member. These are listing observations, not proof of execution or
+an alternate decode. Earlier Evidence can
+omit the field. The analysis-profile revision prevents older snapshots from
+replaying results without it; open the target without the old snapshot and save
+a fresh snapshot when needed.
+
 Function extents and instruction completeness refer to Ghidra's analyzed body.
 An inferred no-return call can terminate that body before subsequent bytes.
 Pseudocode, assembly, procedure info, instruction windows, incoming and outgoing
@@ -342,10 +359,17 @@ must be constrained.
 
 Optional `start` and `end` addresses are inclusive and select one address space.
 A match must end at or before `end`, so `end` set inside a match excludes it.
-Without bounds, loaded memory blocks are eligible, in Ghidra address order.
-Blocks that are not loaded (file parts such as `.symtab`) and overlay blocks are
-listed in `searched.skipped_not_loaded` and are not searched; pass `start` or
-`end` in their address space to search them.
+Without bounds, loaded non-overlay memory blocks are eligible, in Ghidra address
+order, including across adjacent initialized blocks. Blocks that are not loaded
+(file parts such as `.symtab`) are listed in `searched.skipped_not_loaded`;
+loaded overlay blocks are listed separately in `searched.skipped_overlays`.
+Neither is searched by default; pass `start` or `end` in its address space to
+search it. A block that is both unloaded and an overlay is listed once under
+`skipped_not_loaded`.
+The separate overlay field changes the byte-search result contract and the
+Ghidra analysis profile. Refresh cached MCP schemas; snapshots from the older
+profile are not replayed. Previously exported Evidence remains importable as
+historical data with its original result shape.
 Overlapping matches are included, including across adjacent eligible initialized
 blocks in the same address space. Gaps and excluded or uninitialized blocks break
 a search run. Each match reports its address, starting segment, unique source file

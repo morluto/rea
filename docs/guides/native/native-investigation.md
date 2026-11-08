@@ -100,6 +100,36 @@ body are excluded. `procedure_references` returns internal and external edges;
 The reference collector's semantics participate in the analysis profile, so
 older snapshots cannot replay the former incomplete results under this profile.
 
+For a bounded handoff, request `procedure_references` with `detail: "summary"`.
+The summary retains the complete observation and reports the selected procedure,
+direction and counts. Page it with `inspect_analysis_view`, using the summary's
+`normalized_result.parent_evidence_id` and a view such as
+`{"kind":"native-procedure-references","collection":"references","source_address":"0x1234","offset":0,"limit":64}`.
+The optional exact source and target filters apply before paging. A row's
+`source_index` identifies it in the original retained collection, including
+duplicates. Endpoint `kind: "selected-procedure"` refers to the full procedure
+in the page summary; `kind: "null"` preserves the original null without asserting
+why it was unavailable. `kind: "shared"` carries an index into `items.endpoints`,
+where each other procedure object is stored once per page. Use collection
+`unresolved_calls` for paged unresolved call sites and their original reasons.
+Page coverage describes retained rows, not complete provider discovery or runtime
+execution. A 1 MiB projection allowance, also used by other bounded analysis views, can
+shorten a requested page; `byte_limited: true` and `coverage.next_offset` identify the
+continuation. A single row or summary that cannot fit returns a resource error;
+retrieve or export the complete parent Evidence. This allowance has no runtime
+override. Omit detail to receive the complete observation inline.
+
+For a one-shot CLI handoff, save the complete Evidence and its linked sources:
+
+```bash
+rea procedure-references /absolute/path/to/program my_function --provider ghidra \
+  --direction incoming --detail summary --evidence_output /absolute/path/to/references.json
+```
+
+Use `rea inspect-analysis-view` with that bundle as an `evidence-file` source to
+page it without reopening the target. This command requires a provider supporting
+`procedure_references`; Kuna currently reports that capability unavailable.
+
 Ghidra regex searches use Java Pattern semantics. If compiling or matching a
 pattern exhausts the engine's stack, REA returns a resource constraint and
 preserves the active database and annotations. Retry in literal mode or simplify
@@ -544,8 +574,17 @@ The raw Java `is_dead` flag can remain set after Ghidra decodes a live block;
 `block_membership` reports actual syntax-tree membership separately.
 
 The provider dossier itself retains up to 3,000 p-code operations, 64 inputs per
-operation and 12,000 def-use edges, with explicit omitted counts. A `STORE`
-may describe stack memory and does not itself prove persistent state.
+operation and 12,000 def-use edges, with explicit omitted counts. Memory effects
+cover high-p-code `LOAD` and `STORE` operations; direct memory address varnodes
+in other operations are excluded, so an empty effect list does not establish
+that the function accesses no memory. `procedure_references` can supply
+complementary recorded instruction references, with its own coverage limits. A
+`STORE` may describe stack memory and does not itself prove persistent state.
+The Ghidra analysis profile commits to this effect scope. Snapshots from before
+that commitment are rejected; analyze without the snapshot and save a fresh one.
+To keep historical Evidence, copy the old snapshot's `evidence_bundle` object to
+a separate JSON file and import that bundle. Import validates the Evidence; it
+does not replay the old provider analysis.
 
 Jump-table evidence keeps numeric `mappings`, explicit `default_targets`, and
 backing `data_sources` separate. A null case value denotes an unresolved
@@ -1279,6 +1318,11 @@ and slice commitments establish the same canonical entry. The result reports
 remain separate dimensions. Equal numeric addresses without applicable coordinate
 commitments do not establish same-entry correspondence. Inspect the retained
 source Evidence and coverage when correspondence remains ambiguous.
+When both inputs authenticate to the same Evidence ID and an applicable entry
+comparison is unavailable, the match reports `method: "same-evidence"`.
+This identifies one selected observation, not a correspondence between distinct
+records or proof of complete analysis. Unavailable facets and unestablished
+call coverage remain unknown.
 To aggregate already-retained comparison results, pass their exact IDs to
 `find_changed_behavior`, for example:
 

@@ -73,7 +73,7 @@ export const OFFICIAL_TOOL_CONTRACTS = [
   ),
   official(
     "inspect_native_instruction",
-    "Inspect one exact code or data address: decoded bytes, mnemonic, ordered operand tokens, flow, outgoing instruction references and typed incoming references where available. Incoming references preserve source, access kind, operand index and analysis provenance even at data addresses; they do not prove runtime access. Page retained references with inspect_analysis_view kind native-instruction-references; null coverage means the selected collection was unavailable or not recorded. Memory addressing decomposition is unavailable when the provider supplies only tokens. Ghidra reports in-memory addresses without a listed instruction or defined data as not-in-listing, without attempting a decode.",
+    "Inspect one exact code or data address: decoded bytes, mnemonic, ordered operand tokens, flow, outgoing instruction references and typed incoming references where available. For a byte inside a listed instruction or defined data, Ghidra reports the containing instruction or data object separately, preserving the query and address space. Inspect the starting address of a data object with inspect_native_data_type for its layout; a containing object does not select a field or union member. Incoming references preserve source, access kind, operand index and analysis provenance even at data addresses; they do not prove runtime access. Page retained references with inspect_analysis_view kind native-instruction-references; null coverage means the selected collection was unavailable or not recorded. Memory addressing decomposition is unavailable when the provider supplies only tokens. Ghidra reports in-memory addresses without a listed instruction or defined data as not-in-listing, without attempting a decode.",
     nativeInstructionInputSchema,
   ),
   official(
@@ -205,16 +205,18 @@ export const OFFICIAL_TOOL_CONTRACTS = [
   ),
   official(
     "procedure_references",
-    "Return every raw incoming or outgoing reference edge for one procedure. Endpoint procedures are resolved only from provider containment. Ghidra preserves detailed reference flags. Hopper preserves native CallReference classifications and exact endpoints while leaving unavailable detailed flags explicit.",
+    "Return incoming or outgoing reference edges for one procedure. Ghidra preserves detailed reference flags; Hopper preserves native CallReference classifications and exact endpoints. Select detail summary to retain complete Evidence and page references or unresolved calls using inspect_analysis_view kind native-procedure-references. Page coverage describes retained observations, not complete discovery or proof the target ran.",
     z.object({
       procedure,
       direction: z.enum(["incoming", "outgoing"]).default("outgoing"),
       document,
+      detail: analysisDetailSchema,
     }),
+    { evidenceParameters: "omit-detail" },
   ),
   official(
     "procedure_pseudo_code",
-    "Decompile one analyzed procedure by symbol name or provider-normalized address. To request a fresh independent attempt, use analysis: independent_fresh when binary_session reports independent_decompile for this provider operation; otherwise it is refused. The independent result may have different analysis context. Ghidra also accepts file-offset:0x... selectors and falls back to a unique source-file mapping when a 0x-prefixed number resolves to no procedure; existing analysis addresses take precedence and ambiguous mappings fail explicitly. Returns provider-specific pseudocode, never original source or cross-provider text equivalence, and may return null. When supplied, raw_result.pseudocode_absence distinguishes provider-failure from not-in-export; absence of that fact means unknown. Request procedure_assembly when instruction precision matters. Ghidra no-return assumptions may cut the analyzed body; Evidence limitations report observed terminal calls and available callee identities. Select detail summary to retain complete Evidence and receive text availability and counts; inspect_analysis_view summary or native/pseudocode pages read the original observation without decompiling again. Complete remains the default.",
+    "Decompile one analyzed procedure by symbol name or provider-normalized address. To request a fresh independent attempt, use analysis: independent_fresh when binary_session reports independent_decompile for this provider operation; otherwise it is refused. The independent result may have different analysis context. Ghidra also accepts file-offset:0x... selectors and falls back to a unique source-file mapping when a 0x-prefixed number resolves to no procedure; existing analysis addresses take precedence and ambiguous mappings fail explicitly. A space-qualified address such as ram:0x... avoids that fallback; inspect_native_load_image reports Ghidra's observed default address space. Returns provider-specific pseudocode, never original source or cross-provider text equivalence, and may return null. When supplied, raw_result.pseudocode_absence distinguishes provider-failure from not-in-export; absence of that fact means unknown. Request procedure_assembly when instruction precision matters. Ghidra no-return assumptions may cut the analyzed body; Evidence limitations report observed terminal calls and available callee identities. Select detail summary to retain complete Evidence and receive text availability and counts; inspect_analysis_view summary or native/pseudocode pages read the original observation without decompiling again. Complete remains the default.",
     z.object({
       procedure,
       document,
