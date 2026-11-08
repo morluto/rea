@@ -246,8 +246,18 @@ def listing(arguments: dict) -> int:
     """
     home = os.path.expanduser("~")
     files, skipped = [], []
-    for directory, folders, names in os.walk(os.path.abspath(arguments["root"])):
+
+    def fail_walk(error: OSError) -> None:
+        raise error
+
+    for directory, folders, names in os.walk(os.path.abspath(arguments["root"]), onerror=fail_walk):
         folders.sort()
+        # os.walk does not follow directory symlinks; disclose them to the consumer.
+        for name in folders[:]:
+            path = os.path.join(directory, name)
+            if os.path.islink(path):
+                skipped.append(os.path.relpath(path, home))
+                folders.remove(name)
         for name in sorted(names):
             path = os.path.join(directory, name)
             relative = os.path.relpath(path, home)

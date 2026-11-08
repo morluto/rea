@@ -250,9 +250,10 @@ it.each(["captured", "over-capacity"] as const)(
         nestedResult.error.cleanupPrimary?.partialObservation,
       ),
     ).toEqual(expected);
-    expect(projected.details?.diagnostics).toMatchObject({
-      primary_error: { details: { partial_observation: expected } },
-    });
+    expect(projected.details?.partial_observation).toEqual(expected);
+    expect(projected.details?.diagnostics).not.toHaveProperty(
+      "primary_error.details.partial_observation",
+    );
     expect(JSON.stringify(projected)).not.toContain("private-read-marker");
     expect(JSON.stringify(projected)).not.toContain(snapshot.sha256);
     composed.resolveCleanup();
