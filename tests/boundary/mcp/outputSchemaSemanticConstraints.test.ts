@@ -9,10 +9,7 @@ import { z } from "zod";
 import { toolContract } from "../../../src/contracts/toolContracts.js";
 import { MANAGED_NATIVE_VERIFICATION_EXAMPLE } from "../../../src/contracts/managed/managedWorkflowExamples.js";
 import { EMPTY_PROCESS_CAPTURE_EXAMPLE } from "../../../src/domain/process/processCaptureExample.js";
-import {
-  managedNativeVerificationInputSchema,
-  managedNativeVerificationResultSchema,
-} from "../../../src/domain/managed/managedNativeVerificationSchemas.js";
+import { managedNativeVerificationResultSchema } from "../../../src/domain/managed/managedNativeVerificationSchemas.js";
 import { nativeUiResultSchema } from "../../../src/domain/native/nativeUiObservation.js";
 import { nativeLoadImageSchema } from "../../../src/domain/native/nativeLoadImage.js";
 import { createEvidence } from "../../../src/domain/evidence.js";
@@ -175,9 +172,7 @@ it("advertises semantic output invariants and keeps producers aligned with Zod",
       "accepted plus unsupported equals total",
     );
     const verificationSource = readManagedNativeVerificationSource(
-      managedNativeVerificationInputSchema.parse(
-        MANAGED_NATIVE_VERIFICATION_EXAMPLE,
-      ),
+      MANAGED_NATIVE_VERIFICATION_EXAMPLE,
     );
     if (!verificationSource.ok) throw verificationSource.error;
     const validVerification = verifyManagedNativeVerificationSource(

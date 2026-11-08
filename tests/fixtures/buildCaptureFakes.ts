@@ -71,6 +71,13 @@ const realCliOutputs = async (
   const download = join(work, "download-install.json");
   if (install?.downloadInstall !== undefined)
     await writeFile(download, JSON.stringify(install.downloadInstall));
+  const schema = await serveCli([
+    "export-desktop-application",
+    "--schema",
+    "--json",
+  ]);
+  expect(schema.exitCode, schema.stdout).toBe(0);
+  await writeFile(join(work, "schema.json"), schema.stdout);
   const draft = await serveCli([
     "describe-desktop-application-task",
     capture,
@@ -109,6 +116,7 @@ const realCliOutputs = async (
     draft: join(work, "draft.json"),
     export: join(work, "export.json"),
     bundle,
+    schema: join(work, "schema.json"),
   };
 };
 

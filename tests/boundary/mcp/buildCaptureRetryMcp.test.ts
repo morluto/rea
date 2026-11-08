@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process";
 import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 
@@ -93,7 +94,9 @@ it("returns a checkpoint taken in the computer when its reply was lost and the n
 });
 
 it("finishes a stop whose draft reply was lost when stop is asked again, and repeats its result", async () => {
-  const { rea, client } = await fakes({ dropReplies: ["run"] });
+  const { rea, client } = await fakes({
+    dropReplies: ["run:describe-desktop-application-task"],
+  });
   const id = await startBuildComputer(client, BUILD_REQUEST);
   await captureSeedAndEnd(client, id);
   const stop = () => call(client, "stop_build_capture", { computer_id: id });
@@ -131,6 +134,40 @@ it("reports a failed package list download with apt's own message", async () => 
   await callOk(client, "stop_build_capture", { computer_id: id });
 });
 
+it("downloads the package lists again when an update exits 0 with no list", async () => {
+  const { client } = await fakes({
+    env: { FAKE_APT_EMPTY: "1", FAKE_APT_IGNORE_ERROR_MODE: "1" },
+  });
+  const id = await startBuildComputer(client, BUILD_REQUEST);
+  for (const attempt of [1, 2]) {
+    const value = toolContract("start_build_capture").outputSchema.parse(
+      (await callOk(client, "start_build_capture", { computer_id: id }))
+        .structuredContent,
+    );
+    expect(value.package_lists, `start ${String(attempt)}`).toBe(0);
+    expect(value.package_lists_error, `start ${String(attempt)}`).toContain(
+      "without a package list",
+    );
+    await callOk(client, "stop_build_capture", { computer_id: id });
+  }
+});
+
+it("retries an empty apt update that Error-Mode turns into a failure", async () => {
+  const { client } = await fakes({ env: { FAKE_APT_EMPTY: "1" } });
+  const id = await startBuildComputer(client, BUILD_REQUEST);
+  for (const attempt of [1, 2]) {
+    const value = toolContract("start_build_capture").outputSchema.parse(
+      (await callOk(client, "start_build_capture", { computer_id: id }))
+        .structuredContent,
+    );
+    expect(value.package_lists, `start ${String(attempt)}`).toBe(0);
+    expect(value.package_lists_error, `start ${String(attempt)}`).toContain(
+      "exited 100",
+    );
+    await callOk(client, "stop_build_capture", { computer_id: id });
+  }
+});
+
 it("downloads the package lists again on the next start after an update that fetched some and failed", async () => {
   const { client } = await fakes({
     env: { FAKE_APT_EXIT: "100", FAKE_APT_PARTIAL: "1" },
@@ -148,6 +185,44 @@ it("downloads the package lists again on the next start after an update that fet
     await callOk(client, "stop_build_capture", { computer_id: id });
   }
 });
+
+it("releases a capture whose start was cancelled after launch, so another start can run", async () => {
+  const { computer, client } = await fakes({
+    screenshotDelaysMs: [0, 60_000],
+  });
+  const id = await startBuildComputer(client, BUILD_REQUEST);
+  const screenshots = () =>
+    computer.calls.filter(({ name }) => name === "computer_screenshot").length;
+  const controller = new AbortController();
+  const started = client.callTool(
+    { name: "start_build_capture", arguments: { computer_id: id } },
+    { signal: controller.signal },
+  );
+  await vi.waitFor(() => expect(screenshots()).toBe(2), { timeout: 30_000 });
+  controller.abort();
+  await expect(started).rejects.toThrow();
+  const again = await callOk(client, "start_build_capture", {
+    computer_id: id,
+  });
+  expect(again.structuredContent).toMatchObject({ package_lists: 1 });
+}, 60_000);
+
+it("stops a detached capture when the computer closes", async () => {
+  const { rea, client, computer } = await fakes();
+  const id = await startBuildComputer(client, BUILD_REQUEST);
+  await callOk(client, "start_build_capture", { computer_id: id });
+  const running = () =>
+    execFileSync("ps", ["-eo", "args="], { encoding: "utf8" })
+      .split("\n")
+      .filter(
+        (line) =>
+          line.includes(rea.home) &&
+          line.includes("capture-desktop-application"),
+      );
+  expect(running().length).toBeGreaterThan(0);
+  await computer.close();
+  expect(running()).toEqual([]);
+}, 60_000);
 
 it("cancels a capture's start when the computer closes while it waits for the opened app's screenshot", async () => {
   // The start's own screenshot answers at once; the capture's waits until its request is cancelled.
@@ -219,7 +294,10 @@ const captureRequest = async (
     ({ argv }) => argv,
   );
   const argv = (command: string) =>
-    calls.find((candidate) => candidate[0] === command) ?? [];
+    calls.find(
+      (candidate) =>
+        candidate[0] === command && !candidate.includes("--schema"),
+    ) ?? [];
   return { started, exported, directory, argv };
 };
 
@@ -359,7 +437,11 @@ it("passes an AppImage request's download to the export in a file, whose bundle 
       argv: string[];
       cwd: string;
     }[]
-  ).find(({ argv: called }) => called[0] === "export-desktop-application");
+  ).find(
+    ({ argv: called }) =>
+      called[0] === "export-desktop-application" &&
+      !called.includes("--schema"),
+  );
   const flag = exportCall?.argv.indexOf("--download-install") ?? -1;
   expect(flag).toBeGreaterThan(0);
   expect(

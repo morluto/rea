@@ -128,11 +128,12 @@ describe("captureScope", () => {
     );
 
     expect(selectedPaths).toEqual([
-      { path: linked, physical: settings },
-      { path: score, physical: score },
+      { path: linked, physical: settings, kind: "directory" },
+      { path: score, physical: score, kind: "file" },
       {
         path: `${linked}/MuseScore3.ini`,
         physical: `${settings}/MuseScore3.ini`,
+        kind: "file",
       },
     ]);
     expect(scope.contentRoots).toEqual(

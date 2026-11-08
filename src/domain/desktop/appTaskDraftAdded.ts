@@ -2,6 +2,8 @@ import type { JsonValue } from "../jsonValue.js";
 import { collapseWhitespace, type DesktopTaskCheckInput } from "./appTask.js";
 import {
   isRenumberedKey,
+  isBookkeeping,
+  isBookkeepingName,
   inSplitDate,
   isStamp,
   isVolatileValue,
@@ -46,6 +48,8 @@ export interface AddedContext {
   readonly chars: number;
   /** Whether a change at a pointer is noise, which no field check takes. */
   readonly noisy?: (pointer: string) => boolean;
+  /** Fields left unchecked because their text is past `chars`. */
+  readonly long?: string[];
 }
 
 type Element = Extract<JsonValue, Record<string, JsonValue>> & {
@@ -180,16 +184,23 @@ export const attributeChecks = (
   // A value two or more like siblings all hold, as Grisbi's `Cu="1"`, is a default: it comes after what varies.
   const usual = (key: string, value: string) =>
     likes.length > 1 && everywhere(key, value) ? 1 : 0;
+  const eligible = fields.filter(
+    ({ key, value }) =>
+      !(nested && everywhere(key, value)) &&
+      !isPlaceholder(value) &&
+      !isStamp(value) &&
+      !isVolatileValue(
+        value,
+        isBookkeeping(element) || isBookkeepingName(key),
+      ) &&
+      !isViewStateName(key) &&
+      !isRenumberedKey(key),
+  );
+  for (const { key, value } of eligible)
+    if (value.length > context.chars)
+      context.long?.push(`${pointer}/attributes/${escapeToken(key)}`);
   return rankAttributes(
-    fields.filter(
-      ({ key, value }) =>
-        !(nested && everywhere(key, value)) &&
-        !isPlaceholder(value) &&
-        !isStamp(value) &&
-        !isVolatileValue(value) &&
-        !isViewStateName(key) &&
-        !isRenumberedKey(key),
-    ),
+    eligible.filter(({ value }) => value.length <= context.chars),
   )
     .toSorted(
       (left, right) =>
@@ -203,6 +214,61 @@ export const attributeChecks = (
         value,
       ),
     );
+};
+
+/**
+ * A field's text with save-time leaves removed, split where a timestamp sat
+ * between them. `Delphine` and `Moreau` around a save time stay two checks;
+ * joining them would look for text the file never contains.
+ */
+const keptFieldPieces = (node: JsonValue, bookkeeping = false): string[] => {
+  if (typeof node === "string")
+    return isStamp(node) || isVolatileValue(node.trim(), bookkeeping)
+      ? []
+      : [node];
+  if (!isXmlElement(node)) return [];
+  const inBookkeeping = bookkeeping || isBookkeeping(node);
+  const pieces: string[] = [];
+  let run = "";
+  const flush = () => {
+    if (run !== "") pieces.push(run);
+    run = "";
+  };
+  for (const child of node.children) {
+    if (typeof child === "string") {
+      if (isStamp(child) || isVolatileValue(child.trim(), inBookkeeping))
+        flush();
+      else run += child;
+      continue;
+    }
+    if (!isXmlElement(child)) continue;
+    if (isStamp(elementText(child))) {
+      flush();
+      continue;
+    }
+    const nested = keptFieldPieces(child, inBookkeeping);
+    if (nested.length !== 1) {
+      flush();
+      pieces.push(...nested);
+      continue;
+    }
+    run += nested[0] ?? "";
+  }
+  flush();
+  return pieces;
+};
+
+/** An element's text with save-time leaves removed, in document order. */
+const plainText = (node: JsonValue | null, bookkeeping = false): string => {
+  if (typeof node === "string")
+    return isStamp(node) || isVolatileValue(node.trim(), bookkeeping)
+      ? ""
+      : node;
+  if (!isXmlElement(node)) return "";
+  if (isStamp(elementText(node))) return "";
+  return node.children
+    .map((child) => plainText(child, bookkeeping || isBookkeeping(node)))
+    .join("");
 };
 
 /** The nearest ancestor both ends hold that a check names without a step by position. */
@@ -222,22 +288,17 @@ const keptNamedAncestor = (context: AddedContext, pointer: string) => {
   return undefined;
 };
 
-/** The texts an element holds, each trimmed, in document order. */
-const leafTexts = (value: JsonValue): string[] =>
-  typeof value === "string"
-    ? [value.trim()]
-    : isXmlElement(value)
-      ? value.children.flatMap(leafTexts)
-      : [];
-
 /**
  * A `text_contains` per new field of a record added whole that only position
  * names, as Osmo adds a `<record>` of `<first_name>` and `<email_1>` among
  * others, at the nearest ancestor both ends hold that a check can name: up to
  * five fields of three or more characters, each absent from that ancestor's
- * text at the seed, so each fails there. Empty for an element that
- * `holdsFields` says is no record, as a paragraph of runs, or that has no
- * like sibling.
+ * text at the seed, so each fails there. A record a selector names is checked
+ * itself, so the words have to be in that record. The field's own path is
+ * kept, so an identifier, a date stamped in parts and text past the limit are
+ * left out, as `recordChecks` leaves them out; a field past the limit is
+ * named in `context.long`. Empty for an element that `holdsFields` says is
+ * no record, as a paragraph of runs, or that has no like sibling.
  */
 export const fieldChecks = (
   context: AddedContext,
@@ -252,18 +313,75 @@ export const fieldChecks = (
     return [];
   const at = keptNamedAncestor(context, pointer);
   if (at === undefined) return [];
-  const seen = elementText(resolvePointer(ends.baseline, at) ?? null);
-  return [...new Set(leafTexts(element))]
-    .filter(
-      (text) =>
-        text.length >= MIN_FIELD_CHARS &&
-        /[\p{L}\d]/u.test(text) &&
-        !seen.includes(text) &&
-        !isStamp(text) &&
-        !isVolatileValue(text),
+  // The record's own selector. Words already in another record still have to be here.
+  const onRecord = context.named(ends.final, pointer);
+  const seen = onRecord
+    ? ""
+    : elementText(resolvePointer(ends.baseline, at) ?? null);
+  const { keys } = pairMembers(element.children, []).newer;
+  const texts: string[] = [];
+  let alreadySeen = false;
+  element.children.forEach((field, index) => {
+    if (!isXmlElement(field)) return;
+    const key = keys[index] ?? String(index);
+    const fieldAt = `${pointer}/children/${key.startsWith("[") ? escapeToken(key) : key}`;
+    if (
+      ID_FIELD.test(field.name) ||
+      inSplitDate(ends.final, fieldAt) ||
+      context.noisy?.(fieldAt) === true
     )
-    .slice(0, MAX_FIELD_CHECKS)
-    .map((value) => ({ kind: "text_contains", file, pointer: at, value }));
+      return;
+    for (const value of keptFieldPieces(field)) {
+      const text = value.trim();
+      if (
+        text.length < MIN_FIELD_CHARS ||
+        !/[\p{L}\d]/u.test(text) ||
+        isStamp(text) ||
+        isVolatileValue(text, isBookkeeping(field))
+      )
+        continue;
+      if (seen.includes(text)) {
+        alreadySeen = true;
+        continue;
+      }
+      if (value.length > context.chars) {
+        context.long?.push(fieldAt);
+        continue;
+      }
+      texts.push(text);
+    }
+  });
+  if (texts.length > 0)
+    return [...new Set(texts)].slice(0, MAX_FIELD_CHECKS).map((value) => ({
+      kind: "text_contains" as const,
+      file,
+      pointer: onRecord ? pointer : at,
+      value,
+    }));
+  if (onRecord) return [];
+  // Every new field repeats text the seed already has. The list's text shows the record was added, when it fits and holds no save time. A save time stays out of the check: the new record's own text has to be there, and the seed's text has to remain.
+  const holder = resolvePointer(ends.final, at);
+  const before = resolvePointer(ends.baseline, at);
+  const now = elementText(holder ?? null);
+  const plain = plainText(holder ?? null);
+  const seedPlain = plainText(before ?? null);
+  if (
+    !alreadySeen ||
+    plain === seedPlain ||
+    plain.length === 0 ||
+    plain.length > context.chars
+  )
+    return [];
+  if (plain === now)
+    return [{ kind: "text_equals", file, pointer: at, value: now }];
+  const addedPlain = plainText(element);
+  const seed = elementText(before ?? null);
+  // The seed's own text already passes, so it is not a check. Only text the new record adds, which the seed does not hold, shows that the record is there.
+  return addedPlain.length >= MIN_FIELD_CHARS &&
+    now.includes(addedPlain) &&
+    !seed.includes(addedPlain)
+    ? [{ kind: "text_contains", file, pointer: at, value: addedPlain }]
+    : [];
 };
 
 /** Each field's text that every like sibling at the end holds in a field of its tag, as Osmo's `<group>None</group>` on every record: a default, not what the user entered. */
@@ -370,7 +488,7 @@ const fieldsOf = (
     ...sharedFields(context, pointer, element),
     ...(selector ? [] : selectorFields(pointer)),
   ]);
-  return element.children.flatMap((field, index) => {
+  return element.children.flatMap((field, index): Suggestion[] => {
     const key = keys[index] ?? "";
     const at = `${pointer}/children/${escapeToken(key)}`;
     if (
@@ -398,20 +516,32 @@ const fieldsOf = (
           : [],
       );
     }
-    const value = elementText(field);
-    return value.trim() === "" ||
-      value.length > context.chars ||
-      isStamp(value) ||
-      isVolatileValue(value) ||
-      holdsIds(field)
-      ? []
-      : [
-          wholeTextCheck(
-            file,
-            at,
-            { value, children: field.children },
-            undefined,
-          ).check,
-        ];
+    const pieces = keptFieldPieces(field).filter((piece) => {
+      const text = piece.trim();
+      return (
+        text !== "" &&
+        !isStamp(text) &&
+        !isVolatileValue(text, isBookkeeping(field))
+      );
+    });
+    if (pieces.length === 0 || holdsIds(field)) return [];
+    // The evaluator reads the field's text as saved, including the line breaks around it.
+    const whole = elementText(field);
+    if (pieces.length === 1 && pieces[0]?.trim() === whole.trim()) {
+      const value = whole;
+      if (value.length > context.chars) {
+        context.long?.push(at);
+        return [];
+      }
+      return [
+        wholeTextCheck(file, at, { value, children: field.children }, undefined)
+          .check,
+      ];
+    }
+    return pieces.flatMap((value) =>
+      value.length > context.chars
+        ? []
+        : [{ kind: "text_contains" as const, file, pointer: at, value }],
+    ) satisfies Suggestion[];
   });
 };

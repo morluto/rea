@@ -203,6 +203,34 @@ describe("isLockFile", () => {
     ).toBe(false);
   });
 
+  it("leaves a lock beside its file out of a selected folder, and keeps a lone lock and one named itself", () => {
+    const files = new Map([
+      ["Documents/household.gsb", file("document")],
+      ["Documents/.household.gsb.lock", file("application_state")],
+      ["Documents/.notes.lock", file("application_state")],
+    ]);
+    const underFolder = leftOutFiles(files, [], ["Documents"]);
+
+    expect(underFolder.isLeftOut("Documents/.household.gsb.lock")).toBe(true);
+    expect(underFolder.isLeftOut("Documents/.notes.lock")).toBe(false);
+    const homeFiles = new Map([
+      ["Cargo.lock", file("document")],
+      ["poedit.lock", file("application_state")],
+    ]);
+    const home = leftOutFiles(homeFiles, [], []);
+    expect(home.isLeftOut("Cargo.lock")).toBe(false);
+    expect(home.isLeftOut("poedit.lock")).toBe(true);
+    expect(underFolder.isLeftOut("Documents/household.gsb")).toBe(false);
+    expect(
+      leftOutFiles(
+        files,
+        [],
+        ["Documents/.household.gsb.lock"],
+        ["Documents/.household.gsb.lock"],
+      ).isLeftOut("Documents/.household.gsb.lock"),
+    ).toBe(false);
+  });
+
   it("knows a *.lock file directly in a state directory nested in another", () => {
     // A custom XDG_STATE_HOME can put one app's state folder inside another's.
     const stateDirectories = [".config/app", ".config/app/state/app"];
@@ -360,6 +388,7 @@ describe("runtimeSeeds", () => {
         paths: [
           ".config/Notes/Platform Notifications",
           ".config/Notes/Visited Links",
+          ".config/Notes/user_prefs.json",
           qt,
         ],
       },

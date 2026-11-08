@@ -16,6 +16,11 @@ import {
 
 /** How far a text check climbs from a run to the element an attribute names. */
 const MAX_CLIMB = 3;
+/** A run's formatting, such as Scribus's `FONT`, not the words it holds. */
+const isFormattingAttribute = (key: string) =>
+  /(?:font(?:name|size|family)?|face|features|colou?r|weight|size|family|style)$/iu.test(
+    key.split(":").at(-1) ?? key,
+  );
 
 /** The element a member of `children` sits in; none for the root. */
 const parentOf = (pointer: string): string | undefined =>
@@ -104,8 +109,9 @@ export interface AttributeTextContext {
  * an attribute names, within three levels and below the root, that holds no
  * text nodes at either end and whose holders of the attribute are runs
  * (`runsOf`), two or more, or one holding words with a space; with the
- * ancestor, whose runs it covers. Undefined otherwise, as for a Freeplane
- * node's own `TEXT`, which a check reads where it is.
+ * ancestor, whose runs it covers. A formatting attribute such as `FONT`
+ * stays a field check on its own run. Undefined otherwise, as for a
+ * Freeplane node's own `TEXT`, which a check reads where it is.
  */
 export const attributeTextCheck = (
   context: AttributeTextContext,
@@ -121,6 +127,7 @@ export const attributeTextCheck = (
   const value = element?.attributes[key];
   if (
     isIdentifyingAttribute(key) ||
+    isFormattingAttribute(key) ||
     typeof value !== "string" ||
     !/\p{L}/u.test(value) ||
     isStamp(value)

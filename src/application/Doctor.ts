@@ -56,7 +56,10 @@ import {
   type ClientRegistrationStatus,
   type UnhealthyClientRegistrationStatus,
 } from "./ClientRegistrationStatus.js";
-import type { ProviderRequestBudgetResolver } from "./ClientRegistrationEnvironment.js";
+import type {
+  OwnedProviderSetting,
+  ProviderRequestBudgetResolver,
+} from "./ClientRegistrationEnvironment.js";
 import { registrationSpelledSettings } from "./SetupRegistrationEnvironment.js";
 import {
   collectDoctorDiagnostics,
@@ -153,6 +156,7 @@ export interface DoctorHost {
   clientRegistrations?(
     selectedClientIds?: readonly string[],
     providerSettings?: Readonly<Record<string, string>>,
+    ownedProviderSetting?: OwnedProviderSetting,
   ): Promise<readonly ClientRegistrationStatus[]>;
   ilspyCmdVersion?(path: string): Promise<string | undefined>;
   /** Desktop build host facts; read only when that scope is selected. */
@@ -885,12 +889,17 @@ export const systemDoctorHost = (
         throw failure;
       }
     },
-    clientRegistrations: (selectedClientIds, providerSettings) =>
+    clientRegistrations: (
+      selectedClientIds,
+      providerSettings,
+      ownedProviderSetting,
+    ) =>
       readClientRegistrationStatuses(homeDirectory, undefined, {
         platform,
         environment,
         resources,
         ...(selectedClientIds === undefined ? {} : { selectedClientIds }),
+        ...(ownedProviderSetting === undefined ? {} : { ownedProviderSetting }),
         ...(providerSettings === undefined
           ? {}
           : {

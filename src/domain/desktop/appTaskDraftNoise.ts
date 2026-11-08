@@ -55,16 +55,29 @@ const EPOCH_RANGE = [946_684_800, 4_102_444_800] as const;
 const ENCODED =
   /^(?:iVBORw0KGgo[A-Za-z0-9+/=\r\n]*|(?=[^]*[a-z])(?=[^]*[A-Z])(?=[^]*\d)[A-Za-z0-9+/\r\n]{256,}={0,2})$/u;
 
-/** A value a program makes anew, a UUID, an epoch time in seconds or milliseconds, or binary data it encodes, which no user types. */
-export const isVolatileValue = (value: string): boolean => {
+/**
+ * UUIDs, encoded binary, and epoch-shaped values in named save metadata are
+ * likely generated. Numeric shape alone does not identify a timestamp.
+ */
+export const isVolatileValue = (
+  value: string,
+  bookkeeping = false,
+): boolean => {
   if (UUID.test(value) || ENCODED.test(value.trim())) return true;
+  if (!bookkeeping) return false;
   if (!/^\d{10}(?:\d{3})?$/u.test(value)) return false;
   const seconds = Number(value.slice(0, 10));
-  return seconds > EPOCH_RANGE[0] && seconds < EPOCH_RANGE[1];
+  if (!(seconds > EPOCH_RANGE[0] && seconds < EPOCH_RANGE[1])) return false;
+  return true;
 };
 
-/** A time of day to the second, as LibreOffice stamps a header's `text:time-value` with `05:16:21.675302540`. */
-const TIME_OF_DAY = /^\d{2}:\d{2}:\d{2}(?:[.,]\d+)?(?:Z|[+-]\d{2}:?\d{2})?$/u;
+/**
+ * A machine time of day, as LibreOffice stamps a header's `text:time-value`
+ * with `05:16:21.675302540`. A clock a person writes, such as `09:30:00`,
+ * has no fraction and no zone, so it stays text.
+ */
+const TIME_OF_DAY =
+  /^\d{2}:\d{2}:\d{2}(?:[.,]\d+(?:Z|[+-]\d{2}:?\d{2})?|Z|[+-]\d{2}:?\d{2})$/u;
 
 /** Whether a value is a time an app stamps: a date and time `isTimestamp` reads, or a time of day to the second. */
 export const isStamp = (value: JsonValue): boolean =>
@@ -81,10 +94,11 @@ const DATE_PART = /^(?:year|month|day|hour|minute|second)$/u;
 const BOOKKEEPING =
   /^[cm]date$|creat(?:ed|ion)|modif(?:ied|ication)|updated|saved|changed|accessed|entered|timestamp/u;
 
-const isBookkeeping = (element: Element) =>
-  BOOKKEEPING.test(
-    (element.name.split(":").at(-1) ?? element.name).toLowerCase(),
-  );
+export const isBookkeepingName = (name: string) =>
+  BOOKKEEPING.test((name.split(":").at(-1) ?? name).toLowerCase());
+
+export const isBookkeeping = (element: Element) =>
+  isBookkeepingName(element.name);
 
 /**
  * Whether a value is a date written in parts, as Tellico writes an entry's
@@ -212,7 +226,13 @@ const volatileAt = (
   fresh: boolean,
 ) =>
   (typeof value === "string" &&
-    (isVolatileValue(value) || isGarbled(value) || fresh)) ||
+    (isVolatileValue(
+      value,
+      elements.some(isBookkeeping) ||
+        (key !== undefined && isBookkeepingName(key)),
+    ) ||
+      isGarbled(value) ||
+      fresh)) ||
   (key !== undefined && ID_COUNTER.test(key.split(":").at(-1) ?? key)) ||
   metadataCount(elements, key, value) ||
   elements.some(assignedId) ||
@@ -362,15 +382,23 @@ const upkeepOf = (
       isXmlElement(resolvePointer(view, ownerOfAttribute(pointer))),
     );
   const edited = new Set<string>();
-  const filled = new Set<string>();
+  /** How many elements of an entry gained one attribute key. One gain is an edit; a repeated gain is the app filling a default in. */
+  const filled = new Map<string, Map<string, number>>();
   for (const pointer of [
     ...change.added,
     ...change.changed,
     ...change.removed,
   ]) {
     const [entry] = ENTRY_VIEW.exec(pointer) ?? [];
-    if (entry !== undefined && noise(pointer) === undefined)
-      (gained(pointer) ? filled : edited).add(entry);
+    if (entry === undefined || noise(pointer) !== undefined) continue;
+    const key = attributeKeyOf(pointer);
+    if (!gained(pointer) || key === undefined) {
+      edited.add(entry);
+      continue;
+    }
+    const counts = filled.get(entry) ?? new Map<string, number>();
+    filled.set(entry, counts);
+    counts.set(key, (counts.get(key) ?? 0) + 1);
   }
   // A style a user names, as "Quotations" given to a paragraph, is an edit; one the app numbers, as `P1`, its upkeep.
   const automatic = (pointer: string, key: string) =>
@@ -408,13 +436,29 @@ const upkeepOf = (
   );
   return (pointer: string) => {
     const [entry] = ENTRY_VIEW.exec(pointer) ?? [];
+    const key = attributeKeyOf(pointer);
+    const count =
+      entry === undefined || key === undefined
+        ? 0
+        : (filled.get(entry)?.get(key) ?? 0);
+    const view =
+      resolvePointer(ends.final, pointer) === undefined
+        ? ends.baseline
+        : ends.final;
+    const inStyleArea = elementsAlong(view, pointer).some(({ name }) =>
+      STYLE_AREA.test(name),
+    );
+    const automaticName =
+      key !== undefined && /style-name$/iu.test(key) && automatic(pointer, key);
+    // One attribute gained in styles.xml is the edit. A repeated fill-in, an automatic style name, or a style area the app rewrites is upkeep.
     return (
-      (elsewhere && styled(pointer)) ||
+      (elsewhere &&
+        (automaticName || inStyleArea || (styled(pointer) && count >= 2))) ||
       (edited.size > 0 &&
         entry !== undefined &&
-        filled.has(entry) &&
         !edited.has(entry) &&
-        gained(pointer))
+        gained(pointer) &&
+        count >= 2)
     );
   };
 };
@@ -516,11 +560,9 @@ const drawingLayout = (
     elementsAlong(viewOf(pointer), pointer).some(({ name }) =>
       DRAWING.test(name.split(":").at(-1) ?? name),
     );
-  const elsewhere = [
-    ...change.added,
-    ...change.changed,
-    ...change.removed,
-  ].some(
+  // A model element added or removed can resize the drawing. A rename or
+  // other edit outside it does not make a deliberate resize into layout.
+  const elsewhere = [...change.added, ...change.removed].some(
     (pointer) =>
       noise(pointer) === undefined &&
       !ENTRY_META.test(pointer) &&
@@ -639,10 +681,20 @@ export const changeNoise = (
         : (key !== undefined &&
               (isRenumberedKey(key) ||
                 (isIdentifyingAttribute(key) && byPosition(pointer, key)))) ||
-            renumbered.some(
-              (element) =>
-                pointer === element || pointer.startsWith(`${element}/`),
-            )
+            renumbered.some((element) => {
+              if (pointer !== element && !pointer.startsWith(`${element}/`))
+                return false;
+              if (pointer === element) return false;
+              const next = resolvePointer(ends.final, pointer);
+              const text =
+                typeof next === "string"
+                  ? next.trim()
+                  : isXmlElement(next)
+                    ? elementText(next).trim()
+                    : undefined;
+              // Gnumeric clears a shared formula when it renumbers the cell. A formula that still has text was edited.
+              return text === undefined || text === "";
+            })
           ? "renumbered"
           : volatileAt(elements, key, value, freshAt(pointer, key, value))
             ? "volatile"
