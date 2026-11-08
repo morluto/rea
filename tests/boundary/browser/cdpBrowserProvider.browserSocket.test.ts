@@ -1181,11 +1181,11 @@ it("reuses one browser socket across equivalent normalized spellings while keepi
   const connectUrls: string[] = [];
   const connectSpy = vi
     .spyOn(CdpConnection, "connect")
-    .mockImplementation((url, operation, signal, limits, onConnected) => {
+    .mockImplementation((url, ...rest) => {
       connectUrls.push(url);
       const wireUrl =
         url === canonicalIpv6Url ? ipv6Browser.browserWebSocketUrl : url;
-      return originalConnect(wireUrl, operation, signal, limits, onConnected);
+      return originalConnect(wireUrl, ...rest);
     });
   const provider = new CdpBrowserProvider();
   try {
@@ -1235,5 +1235,102 @@ it("reuses one browser socket across equivalent normalized spellings while keepi
   await vi.waitFor(() => {
     expect(ipv6Browser.activeConnectionCount()).toBe(0);
     expect(ipv4Browser.activeConnectionCount()).toBe(0);
+  });
+});
+
+it("keeps distinct /devtools/browser/<id> paths on separate browser sockets while reusing each normalized path", async () => {
+  const browserA = await startFakeCdpBrowser();
+  const browserB = await startFakeCdpBrowser();
+  const browserCaseA = await startFakeCdpBrowser();
+  trackBrowser(browserA);
+  trackBrowser(browserB);
+  trackBrowser(browserCaseA);
+  const port = new URL(browserA.endpoint).port;
+  const canonicalIdAUrl = `ws://127.0.0.1:${port}/devtools/browser/idA`;
+  const canonicalIdBUrl = `ws://127.0.0.1:${port}/devtools/browser/idB`;
+  const canonicalCaseIdAUrl = `ws://127.0.0.1:${port}/devtools/browser/IdA`;
+  const routedWireUrls = new Map<string, string>([
+    [canonicalIdAUrl, browserA.browserWebSocketUrl],
+    [canonicalIdBUrl, browserB.browserWebSocketUrl],
+    [canonicalCaseIdAUrl, browserCaseA.browserWebSocketUrl],
+  ]);
+  const originalConnect = CdpConnection.connect.bind(CdpConnection);
+  const connectUrls: string[] = [];
+  const connectSpy = vi
+    .spyOn(CdpConnection, "connect")
+    .mockImplementation((url, ...rest) => {
+      connectUrls.push(url);
+      const wireUrl = routedWireUrls.get(url);
+      if (wireUrl === undefined) {
+        throw new Error(`Unexpected unmapped browser socket URL: ${url}`);
+      }
+      return originalConnect(wireUrl, ...rest);
+    });
+  const provider = new CdpBrowserProvider();
+  try {
+    const firstIdAListed = await provider.listTargets(
+      listBrowserTargetsInputSchema.parse({
+        cdp_endpoint: canonicalIdAUrl,
+      }),
+    );
+    if (!firstIdAListed.ok) throw firstIdAListed.error;
+
+    const firstIdBListed = await provider.listTargets(
+      listBrowserTargetsInputSchema.parse({
+        cdp_endpoint: canonicalIdBUrl,
+      }),
+    );
+    if (!firstIdBListed.ok) throw firstIdBListed.error;
+
+    const secondIdAInspected = await provider.inspectPage(
+      inspectWebPageInputSchema.parse({
+        cdp_endpoint: canonicalIdAUrl,
+        target_id: "allowed-page",
+        observation_ms: 0,
+      }),
+    );
+    if (!secondIdAInspected.ok) throw secondIdAInspected.error;
+
+    const leadingZeroIdBListed = await provider.listTargets(
+      listBrowserTargetsInputSchema.parse({
+        cdp_endpoint: `WS://127.0.0.1:0${port}/devtools/browser/idB`,
+      }),
+    );
+    if (!leadingZeroIdBListed.ok) throw leadingZeroIdBListed.error;
+
+    const caseDistinctListed = await provider.listTargets(
+      listBrowserTargetsInputSchema.parse({
+        cdp_endpoint: canonicalCaseIdAUrl,
+      }),
+    );
+    if (!caseDistinctListed.ok) throw caseDistinctListed.error;
+
+    const caseDistinctScreenshot = await provider.captureScreenshot(
+      captureWebScreenshotInputSchema.parse({
+        cdp_endpoint: `WS://127.0.0.1:0${port}/devtools/browser/IdA`,
+        target_id: "allowed-page",
+      }),
+    );
+    if (!caseDistinctScreenshot.ok) throw caseDistinctScreenshot.error;
+
+    expect(browserA.openedConnectionCount()).toBe(1);
+    expect(browserB.openedConnectionCount()).toBe(1);
+    expect(browserCaseA.openedConnectionCount()).toBe(1);
+    expect(browserA.activeConnectionCount()).toBe(1);
+    expect(browserB.activeConnectionCount()).toBe(1);
+    expect(browserCaseA.activeConnectionCount()).toBe(1);
+    expect(connectUrls).toEqual([
+      canonicalIdAUrl,
+      canonicalIdBUrl,
+      canonicalCaseIdAUrl,
+    ]);
+  } finally {
+    connectSpy.mockRestore();
+    await provider.close();
+  }
+  await vi.waitFor(() => {
+    expect(browserA.activeConnectionCount()).toBe(0);
+    expect(browserB.activeConnectionCount()).toBe(0);
+    expect(browserCaseA.activeConnectionCount()).toBe(0);
   });
 });
