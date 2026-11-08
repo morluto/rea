@@ -270,6 +270,7 @@ const elementChecks = (
     named: (view: JsonValue | null, at: string) =>
       named(collected, view, at) && !tree.leavesOut(view, at),
     chars: collected.context.limit.chars,
+    referenceRoots: () => referenceRoots(tree, ends.baseline),
     noisy: (at: string) => collected.context.noise(at) !== undefined,
     long: collected.fieldLong,
   };

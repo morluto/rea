@@ -45,6 +45,8 @@ export interface AddedContext {
   };
   readonly named: (view: JsonValue | null, pointer: string) => boolean;
   readonly chars: number;
+  /** XML views owning identifiers the seed may reference. */
+  readonly referenceRoots: () => readonly JsonValue[];
   /** Whether a change at a pointer is noise, which no field check takes. */
   readonly noisy?: (pointer: string) => boolean;
   /** Fields left unchecked because their text is past `chars`. */
@@ -112,17 +114,22 @@ const copiesSibling = (
   });
 
 /** The values of the `id`, `xmi:id` and `key` attributes of the elements in a view, outside a view the app keeps of it: what another element's attribute may refer to. */
-const idsIn = (view: JsonValue | null): ReadonlySet<string> => {
+const idsIn = (roots: readonly JsonValue[]): ReadonlySet<string> => {
   const ids = new Set<string>();
-  const pending: JsonValue[] = [view];
+  const pending: JsonValue[] = [];
+  for (const root of roots) pending.push(root);
   for (let node = pending.pop(); node !== undefined; node = pending.pop()) {
     if (isXmlElement(node)) {
       if (isViewStateName(node.name)) continue;
       for (const [key, value] of Object.entries(node.attributes))
         if (typeof value === "string" && /^(?:[^:]*:)?(?:id|key)$/iu.test(key))
           ids.add(value);
-      pending.push(...node.children);
-    } else if (isRecord(node)) pending.push(...Object.values(node));
+      for (const child of node.children) pending.push(child);
+    } else if (isRecord(node)) {
+      for (const child of Object.values(node)) pending.push(child);
+    } else if (Array.isArray(node)) {
+      for (const child of node) pending.push(child);
+    }
   }
   return ids;
 };
@@ -174,7 +181,7 @@ export const attributeChecks = (
   // Copied from a sibling, only a reference to an element the seed holds by an id, not a plain number, is the user's.
   let fields = own;
   if (copiesSibling(context, pointer, element, own)) {
-    const ids = idsIn(ends.baseline);
+    const ids = idsIn(context.referenceRoots());
     fields = own.filter(
       ({ value }) => ids.has(value) && !/^-?\d+$/u.test(value),
     );
