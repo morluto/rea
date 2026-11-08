@@ -247,6 +247,34 @@ describe("sqliteSidecarRoots", () => {
     expect(sqliteSidecarRoots([wal])).toEqual(new Set());
   });
 
+  it("keeps a separately selected journal-named document alongside automatic sidecars", () => {
+    const home = "/home/ada";
+    const report = `${home}/Documents/report`;
+    const journal = `${report}-journal`;
+    const database = `${home}/Documents/books.db`;
+    const facts = roleFacts({
+      host: { home },
+      application: { state_directories: [] },
+      state: {
+        content_roots: [report, journal, database, `${database}-journal`],
+        selected_paths: [report, journal, database].map((path) => ({
+          path,
+          physical: path,
+          kind: "file",
+        })),
+      },
+      session: { windows: [], opened_files: [] },
+    } as unknown as DesktopApplicationCapture);
+    expect(facts.sqliteSidecars).toEqual(new Set([`${database}-journal`]));
+    expect(facts.selectedRoots).toContain(journal);
+    expect(
+      stateRole(
+        stateReasons(facts, journal, [], false),
+        "Documents/report-journal",
+      ),
+    ).toBe("document");
+  });
+
   it("keeps a selected folder whose name ends in -journal", () => {
     const home = "/home/ada";
     const report = `${home}/Projects/report`;
