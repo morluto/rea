@@ -13,6 +13,7 @@ import {
 import { absoluteCallerPath } from "../filesystem/callerPath.js";
 import { withCommandCancellation } from "./commandCancellation.js";
 import { finishCliEvidenceCommand } from "./cliEvidenceCallerPath.js";
+import { cliDecimalField } from "./options.js";
 import { projectCliAnalysisResult } from "./projectCliAnalysisResult.js";
 import type { CliInstance } from "./types.js";
 
@@ -37,7 +38,9 @@ export const registerReleaseExposureCommands = (
         .describe(
           "Completed audit exits 3 when an exposed check meets this severity. Unknown and unassessed checks do not.",
         ),
-      maxFileBytes: auditReleaseExposureInputSchema.shape.max_file_bytes,
+      maxFileBytes: cliDecimalField(
+        auditReleaseExposureInputSchema.shape.max_file_bytes,
+      ),
     }),
     run: ({ args, options }) =>
       withCommandCancellation(async (signal) => {
