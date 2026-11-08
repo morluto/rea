@@ -19,8 +19,10 @@ import {
 import type { DesktopApplicationCapture } from "./desktopCapture.js";
 import type { DesktopApplicationState } from "./desktopState.js";
 import { isWithinAny } from "./desktopStateDiff.js";
+import { SQLITE_SIDECARS } from "./stateFormats.js";
 import { SEED_HOME } from "./hostIdentity.js";
-import type { LaunchDocument } from "./seedDocument.js";
+import { capturedFileUrl, type LaunchDocument } from "./seedDocument.js";
+import { posix } from "node:path";
 import { roleFacts, stateDirectoryOf } from "./stateRoles.js";
 
 /** agentenv-framework release the exported class was checked against. */
@@ -69,6 +71,11 @@ export interface DesktopAppExportPlan {
   readonly textSeeds: readonly string[];
   /** Seed files' permission bits at the seed where the capture recorded them and they are not the 0644 a written file gets. */
   readonly seedModes: Readonly<Record<string, number>>;
+  /** Home-relative selected aliases that must resolve to an app state path. */
+  readonly stateAliases?: readonly {
+    readonly alias: string;
+    readonly target: string;
+  }[];
   /** Files under the owned paths that existed before the capture but whose bytes were not retained. */
   readonly unseededFiles: readonly string[];
   /** Lock files under the owned paths at the seed, left out of it so a stale one cannot keep the app from starting. */
@@ -166,9 +173,7 @@ export const ownedPaths = (
 };
 
 /** A captured path's home-relative path, in the innermost walked state directory's own spelling unless that leaves the home. */
-export const capturedHomePath = (
-  capture: DesktopApplicationCapture,
-): ((path: string) => string | null) => {
+const capturedHomePlan = (capture: DesktopApplicationCapture) => {
   const { home } = capture.host;
   const relative = (path: string) =>
     path.startsWith(`${home}/`) ? path.slice(home.length + 1) : null;
@@ -178,23 +183,116 @@ export const capturedHomePath = (
   const renamed = (walked.length === logical.length ? walked : [])
     .flatMap((physical, index) => {
       const path = logical[index]?.path;
-      return path === undefined || path === physical
-        ? []
-        : [{ physical, logical: path }];
+      return path === undefined ? [] : [{ physical, logical: path }];
     })
     .sort((left, right) => right.physical.length - left.physical.length);
-  return (path) => {
-    const directory = renamed.find(({ physical }) =>
-      isWithinAny(path, [physical]),
-    );
-    const respelled =
-      directory === undefined
-        ? null
-        : relative(
-            `${directory.logical}${path.slice(directory.physical.length)}`,
-          );
-    return respelled ?? relative(path);
+  const selections = [...(capture.state.selected_paths ?? [])];
+  const stateAliases = capturedStateAliases(capture);
+  const aliasPaths = [...stateAliases].sort(
+    (left, right) => right.alias.length - left.alias.length,
+  );
+  const selectedSpelling = (path: string) => {
+    for (const { alias, target } of aliasPaths) {
+      const prefix = `${home}/${alias}`;
+      if (isWithinAny(path, [prefix]))
+        return `${home}/${target}${path.slice(prefix.length)}`;
+    }
+    return path;
   };
+  const recorded = [
+    ...(capture.state.content_roots ?? []),
+    ...(capture.state.state_directories ?? []),
+    ...logical.map((entry) => entry.path),
+    ...selections.flatMap(({ path, physical }) => [path, physical]),
+  ];
+  const directories = new Set<string>();
+  for (const selected of selections)
+    if (selected.kind === "directory") {
+      directories.add(selected.path);
+      directories.add(selected.physical);
+    }
+  for (const checkpoint of capture.state.checkpoints ?? [])
+    for (const change of checkpoint.changes) {
+      const facts = change.after ?? change.before;
+      if (facts?.type === "directory") directories.add(change.path);
+    }
+  const known = new Set(recorded);
+  for (const path of known) {
+    let parent = path;
+    for (;;) {
+      const slash = parent.lastIndexOf("/");
+      if (slash <= 0) break;
+      parent = parent.slice(0, slash);
+      if (known.has(parent)) directories.add(parent);
+    }
+  }
+  const isDirectory = (path: string) => directories.has(path);
+  // The longest physical path wins, whether it is a selected link or a walked
+  // settings folder. A broad selection of ~/settings must not hide
+  // ~/.config/notes when that folder was walked at ~/settings/notes.
+  const spellings = [
+    ...renamed,
+    ...selections.map(({ physical, path }) => ({
+      physical,
+      logical: selectedSpelling(path),
+    })),
+  ].sort((left, right) => right.physical.length - left.physical.length);
+  const spell = (path: string) => {
+    for (const { physical, logical } of spellings) {
+      if (!isWithinAny(path, [physical])) continue;
+      const spelled = relative(`${logical}${path.slice(physical.length)}`);
+      if (spelled !== null) return { spelled, specificity: physical.length };
+    }
+    const plain = relative(path);
+    return plain === null ? undefined : { spelled: plain, specificity: 0 };
+  };
+  const homePath = (path: string) => {
+    const own = spell(path);
+    // A database log follows the database only when that database's mapping is
+    // more specific than the log file's own. A selected file whose name ends
+    // in -wal or -journal keeps its own spelling.
+    for (const { suffix } of SQLITE_SIDECARS) {
+      if (!path.endsWith(suffix)) continue;
+      const database = path.slice(0, -suffix.length);
+      const base = spell(database);
+      // A directory selected under a renamed folder is not a database. A file
+      // with an explicit mapping is, even when that mapping keeps its name or
+      // the file sits outside the home.
+      if (
+        isDirectory(database) ||
+        base === undefined ||
+        base.specificity === 0 ||
+        (own !== undefined && base.specificity <= own.specificity)
+      )
+        continue;
+      return `${base.spelled}${suffix}`;
+    }
+    return own?.spelled ?? null;
+  };
+  return { homePath, stateAliases };
+};
+
+/** A captured path's home-relative spelling in the shared export plan. */
+export const capturedHomePath = (capture: DesktopApplicationCapture) =>
+  capturedHomePlan(capture).homePath;
+
+/** Selected links to an app state root must keep both the app's name and the selected name. */
+const capturedStateAliases = (capture: DesktopApplicationCapture) => {
+  const { home } = capture.host;
+  const walked = capture.state.state_directories ?? [];
+  const roots = capture.application.state_directories;
+  if (walked.length !== roots.length) return [];
+  const relative = (path: string) =>
+    path.startsWith(`${home}/`) ? path.slice(home.length + 1) : null;
+  return (capture.state.selected_paths ?? []).flatMap(({ path, physical }) => {
+    const index = walked.indexOf(physical);
+    const state = index < 0 ? undefined : roots[index]?.path;
+    const alias = relative(path);
+    const target = state === undefined ? null : relative(state);
+    return alias === null || target === null || alias === target
+      ? []
+      : [{ alias, target }];
+  });
 };
 
 type StatePath = DesktopApplicationState["paths"][number];
@@ -243,14 +341,15 @@ export const stateFilesByHomePath = (
 /**
  * The state view's files and dconf databases by home path, the paths the app
  * owns, and which home files the seed leaves out as locks the app holds, as
- * the export decides them. A document, a path the caller selected or a file
- * under one is never left out, whatever its name.
+ * the export decides them. A document or a file under a selected path is
+ * seeded, except a lock beside its file, which stays out unless that lock
+ * was the selected path.
  */
 export const exportedStateFiles = (
   capture: DesktopApplicationCapture,
   state: DesktopApplicationState,
 ) => {
-  const homePath = capturedHomePath(capture);
+  const { homePath, stateAliases } = capturedHomePlan(capture);
   const homePaths = (paths: readonly string[]) =>
     paths.map(homePath).filter((path): path is string => path !== null);
   const { files, dconf, collisions } = stateFilesByHomePath(
@@ -263,18 +362,31 @@ export const exportedStateFiles = (
     ...capture.application.state_directories.map((entry) => entry.path),
     ...(capture.state.state_directories ?? []),
   ]);
-  const usersOwn = [
-    ...withRole("document"),
-    ...homePaths(roleFacts(capture).selectedRoots),
-  ];
-  const leftOut = leftOutFiles(files, stateDirectories, usersOwn);
-  // A lock or log never makes a path the app's, as Poedit's `~/poedit.lock` would.
+  const selected = homePaths(roleFacts(capture).selectedRoots);
+  const usersOwn = [...withRole("document"), ...selected];
+  const leftOut = leftOutFiles(files, stateDirectories, usersOwn, selected);
+  // A lock or log directly in the home or a shared folder must not own that path, as Poedit's `~/poedit.lock` would. One inside the app's own folder still marks the folder, so settings beside the log stay seeded.
+  const marksFolder = (home: string) => {
+    const folder = home.split("/").slice(0, -1).join("/");
+    return !SHARED_FOLDERS.has(folder);
+  };
   const paths = ownedPaths(
-    withRole("application_state").filter((home) => !leftOut.isLeftOut(home)),
+    withRole("application_state").filter(
+      (home) => !leftOut.isLeftOut(home) || marksFolder(home),
+    ),
     withRole("document"),
     stateDirectories,
   );
-  return { homePath, files, dconf, collisions, paths, ...leftOut };
+  return {
+    homePath,
+    stateAliases,
+    files,
+    dconf,
+    collisions,
+    paths,
+    selected,
+    ...leftOut,
+  };
 };
 
 /** Text safe inside a Python triple-quoted docstring. */
@@ -298,12 +410,37 @@ export const launchCommand = (
   capturedHome: string,
   workingDirectory: string,
 ): readonly string[] => {
+  const homeUrl = (value: string): string | undefined => {
+    const parsed = capturedFileUrl(value);
+    if (parsed === undefined) return undefined;
+    const { url, path } = parsed;
+    const root = posix.normalize(capturedHome);
+    if (
+      path !== root &&
+      !(root === "/" ? path.startsWith("/") : path.startsWith(`${root}/`))
+    )
+      return undefined;
+    const segments = url.pathname.split("/");
+    const count = root.split("/").filter(Boolean).length;
+    const encodedSuffix = segments.slice(count + 1).join("/");
+    const suffix =
+      (segments.length > count + 1 ? `/${encodedSuffix}` : "") +
+      url.search +
+      url.hash;
+    // The framework executes this command in a Python environment. Encode the
+    // runtime home as a URL path; shell quoting alone does not escape # or spaces.
+    const encodedHome = `"$(python3 -I -c 'import os,urllib.parse;print(urllib.parse.quote(os.environ["HOME"],safe="/"),end="")')"`;
+    const prefix =
+      /^file:\/\/(?:localhost)?(?=\/)/iu.exec(value)?.[0] ?? "file://";
+    return `${shellQuote(prefix)}${encodedHome}${shellQuote(suffix)}`;
+  };
   const underHome = (path: string) =>
-    path === capturedHome
+    homeUrl(path) ??
+    (path === capturedHome
       ? `"$HOME"`
       : path.startsWith(`${capturedHome}/`)
         ? `"$HOME"/${shellQuote(path.slice(capturedHome.length + 1))}`
-        : undefined;
+        : undefined);
   const respell = (argument: string) => {
     const equals = argument.indexOf("=");
     const value =
@@ -355,6 +492,7 @@ const classBody = (plan: DesktopAppExportPlan): string => {
         if not INITIAL.exists():
             _seed_home(Path.home())
             _load_dconf(Path.home())
+        _ensure_state_aliases(Path.home())
         keep_initial(self.paths)
 ${PYTHON_DATA_HOOKS}${PYTHON_READY_CHECK}`;
   return ownlessBody(
@@ -444,6 +582,7 @@ SEED_HOME = ${py(SEED_HOME)}
 PATHS = ${pyList(plan.paths)}
 DCONF = ${py(plan.dconf)}
 TEXT_SEEDS = frozenset(${pyList(plan.textSeeds)})
+STATE_ALIASES = [${(plan.stateAliases ?? []).map(({ alias, target }) => `(${py(alias)}, ${py(target)})`).join(", ")}]
 SEED_MODES = {${Object.entries(plan.seedModes)
     .map(([home, mode]) => `${py(home)}: 0o${mode.toString(8)}`)
     .join(", ")}}

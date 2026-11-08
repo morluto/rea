@@ -7,9 +7,6 @@ export const DEFAULT_JUDGE_MODEL = "anthropic/claude-sonnet-5-5";
 export const SCREEN_SETTLE_MS = 1000;
 /** The largest checkpoint screenshot the export ships as a judge's example. */
 export const SCREEN_EXAMPLE_MAX_BYTES = 2 * 1024 * 1024;
-/** The most bytes of a bundle's verifier the witness reads: the judge's code and both examples, base64. */
-export const VERIFIER_MAX_BYTES =
-  1024 * 1024 + 2 * Math.ceil((SCREEN_EXAMPLE_MAX_BYTES * 4) / 3);
 /** How many times the judge is asked each question; the check passes on most of them saying yes. */
 export const SCREEN_JUDGE_VOTES = 3;
 

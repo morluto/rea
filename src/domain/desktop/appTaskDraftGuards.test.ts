@@ -9,8 +9,69 @@ import {
   xmlDraft,
 } from "./appTaskDraft.fixture.js";
 import { draftGuards } from "./appTaskDraftGuards.js";
+import { lineGuards } from "./appTaskDraftLineGuards.js";
 
 const FILE = "Documents/doc.xml";
+
+it("does not guard whole sibling text that contains an unchanged timestamp", () => {
+  const document = (title: string) =>
+    `<doc><item id="a"><title>${title}</title></item><item id="b"><title>Keep</title><modified>2026-11-01T10:12:00Z</modified></item><item id="c"><title>Stable</title></item></doc>`;
+  const baseline = xml(document("Old"));
+  const final = xml(document("New"));
+  const guards = draftGuards(
+    {
+      file: FILE,
+      ends: { baseline, final },
+      named: () => true,
+      noisy: () => false,
+      chars: 2000,
+    },
+    [
+      {
+        kind: "text_equals",
+        file: FILE,
+        pointer: "/root/children/[name=item][@id=a]",
+        value: "New",
+      },
+    ],
+  );
+  expect(guards).toEqual([
+    expect.objectContaining({
+      pointer: "/root/children/[name=item][@id=c]",
+      value: "Stable",
+    }),
+  ]);
+});
+
+it("does not guard whole sibling text that contains an unchanged generated UUID", () => {
+  const document = (title: string) =>
+    `<doc><item id="a"><title>${title}</title></item><item id="b"><title>Keep</title><session>123e4567-e89b-12d3-a456-426614174000</session></item><item id="c"><title>Stable</title></item></doc>`;
+  const baseline = xml(document("Old"));
+  const final = xml(document("New"));
+  const guards = draftGuards(
+    {
+      file: FILE,
+      ends: { baseline, final },
+      named: () => true,
+      noisy: () => false,
+      chars: 2000,
+    },
+    [
+      {
+        kind: "text_equals",
+        file: FILE,
+        pointer: "/root/children/[name=item][@id=a]",
+        value: "New",
+      },
+    ],
+  );
+  expect(guards).toEqual([
+    expect.objectContaining({
+      pointer: "/root/children/[name=item][@id=c]",
+      value: "Stable",
+    }),
+  ]);
+});
 
 describe("draftTaskFiles guards", () => {
   /** A flyer's frames, each named, its text in an attribute, as Scribus saves them. */
@@ -61,12 +122,12 @@ describe("draftTaskFiles guards", () => {
     expect(frame("Headline")).toContain("[@ANNAME=Headline]");
   });
 
-  it("guards no sibling whose field changed too, and a number by its value within the tolerance", () => {
+  it("guards no sibling whose field changed too, and a number by the cell's whole text", () => {
     const sheet = (march: string, april: string) =>
       `<Sheet><Cells><Cell Row="2" Col="2">398.2</Cell><Cell Row="2" Col="3">${march}</Cell><Cell Row="2" Col="4">${april}</Cell><Cell Row="3" Col="3">174.9</Cell></Cells></Sheet>`;
     // Each cell by the fewest attributes naming it alone.
     const cell = (selector: string) =>
-      `/root/children/[name=Cells]/children/[name=Cell]${selector}/children/0`;
+      `/root/children/[name=Cells]/children/[name=Cell]${selector}`;
 
     const file = xmlDraft(sheet("405.1", "421.75"), sheet("437.8", "430.1"));
 
@@ -108,8 +169,8 @@ describe("draftTaskFiles guards of a spreadsheet's cells", () => {
     const file = xmlDraft(sheet("376.9"), sheet("418.65"));
 
     expect(file.guards.map(pointerOf)).toEqual([
-      "/root/children/[name=Cell][@Col=2]/children/0",
-      "/root/children/[name=Cell][@Col=3][@Row=1]/children/0",
+      "/root/children/[name=Cell][@Col=2]",
+      "/root/children/[name=Cell][@Col=3][@Row=1]",
       "/root/children",
     ]);
   });
@@ -155,10 +216,10 @@ describe("draftTaskFiles guards beyond a sibling's same field", () => {
     const file = xmlDraft(sheet("405.1"), sheet("437.8"));
 
     expect(file.suggested.map(pointerOf)).toEqual([
-      "/root/children/[name=Cell][@Row=2]/children/0",
+      "/root/children/[name=Cell][@Row=2]",
     ]);
     expect(file.guards.map(pointerOf)).toEqual([
-      "/root/children/[name=Cell][@Col=4]/children/0",
+      "/root/children/[name=Cell][@Col=4]",
       "/root/children",
     ]);
   });
@@ -321,6 +382,27 @@ describe("draftTaskFiles for components of a wiring diagram, as QElectroTech sav
       },
     ]);
   });
+
+  it("checks a component's shown text when only another component's label made the same change", () => {
+    const page = (
+      coil: readonly [string, string, string],
+      other: readonly [string, string, string],
+    ) =>
+      `<project><diagram><elements>${component("3524", other)}${component("1b6b", coil, TERMINALS)}${component("af99", ["S1", "S1", "Start pump"])}</elements></diagram></project>`;
+    const file = xmlDraft(
+      page(["K1", "K1", "Pump contactor"], ["K1", "H1", "Pump running"]),
+      page(["K1", "KM1", "Pump contactor"], ["KM1", "H1", "Pump running"]),
+    );
+
+    expect(file.suggested.map(pointerOf)).toContain(
+      `${ELEMENTS}/[name=element][@uuid={1b6b}]/children/[name=dynamic_texts]/children/[name=dynamic_elmt_text][@uuid={1b6b-text}]/children/[name=text]`,
+    );
+    expect(
+      file.values.find((value) =>
+        value.pointer.endsWith("/children/[name=text]"),
+      )?.note,
+    ).toBeUndefined();
+  });
 });
 
 describe("draftTaskFiles for a dialog's buttons, as Glade saves them", () => {
@@ -474,5 +556,16 @@ describe("draftGuards on a long list", () => {
 
     expect(guards).toEqual([]);
     expect(noisy.mock.calls.length).toBeLessThanOrEqual(16);
+  });
+});
+
+describe("lineGuards text bound", () => {
+  it("leaves a huge unchanged line out of the guard", () => {
+    const huge = "word ".repeat(500);
+    expect(
+      lineGuards("Documents/note.txt", [huge, "milk"], ["eggs", huge, "milk"]),
+    ).toEqual([
+      { kind: "lines_present", file: "Documents/note.txt", lines: ["milk"] },
+    ]);
   });
 });

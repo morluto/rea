@@ -398,9 +398,13 @@ Write `{"name", "prompt", "checks"}` from the draft and what you did.
   what the user did and drop what follows from how the app saves.
 - Compare exact values, so a typo or a wrong number fails.
 - Read each file's `values` before writing checks: every value the change
-  added, changed and removed, with `before` and `after` (a scalar, or an
-  element as compact XML, cut at 600 characters) at the pointer a check
-  names it by, so copy the pointer and the `after` value into a check.
+  added, changed and removed, with `before` and `after` (an uncut scalar, or
+  a preview cut at 600 characters) at the pointer a check names it by. Copy
+  the pointer. Copy `after` into `value` only when it is an uncut scalar: a
+  string without a trailing `…`, a number, or a boolean. Compact XML and a
+  JSON array or object are preview strings, so a `value_equals` check needs
+  the structured value from the file's view, and element text uses
+  `text_equals` or `text_contains`.
   Only XML files, archives, JSON and key files have values: a text file's
   or SQLite database's `change` already lists its lines and rows.
   `refers_to` says what a number or id stands for, such as `category="44"`

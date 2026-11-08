@@ -83,16 +83,12 @@ const isRecord = (
 ): value is Record<string, JsonValue> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
 
-/** The value at a list's pointer, where an empty one is the whole view, as for a file whose top level is the array. */
-const listAt = (view: JsonValue | null, list: string) =>
-  list === "" ? view : resolvePointer(view, list);
-
-/** The array a member pointer sits in, when its parent is one in a view. */
+/** The array a member pointer sits in, when its parent is one in a view. The empty pointer is the view itself, as a file whose top level is an array. */
 const arrayOf = (view: JsonValue | null, pointer: string) => {
   const list = pointer.replace(/\/[^/]+$/u, "");
-  return list !== pointer && Array.isArray(listAt(view, list))
-    ? list
-    : undefined;
+  if (list === pointer) return undefined;
+  const items = list === "" ? view : resolvePointer(view, list);
+  return Array.isArray(items) ? list : undefined;
 };
 
 /** A counted array, and the kind field and value its counted members share, when they carry one. */
@@ -115,7 +111,7 @@ const kindOf = (member: JsonValue | undefined, items: readonly JsonValue[]) => {
 };
 
 const membersOf = (view: JsonValue | null, { list, kind }: Counted) => {
-  const items = listAt(view, list);
+  const items = list === "" ? view : resolvePointer(view, list);
   return (Array.isArray(items) ? items : []).filter(
     (item) =>
       kind === undefined || (isRecord(item) && item[kind.key] === kind.value),
@@ -158,9 +154,16 @@ export const jsonCounts = (
   const lists = new Map<string, Counted>();
   const note = (pointer: string, view: JsonValue | null) => {
     const list = arrayOf(view, pointer);
-    const items = list === undefined ? [] : listAt(view, list);
+    const items = list === undefined ? [] : resolvePointer(view, list);
+    const atEnd =
+      list === undefined
+        ? undefined
+        : list === ""
+          ? ends.final
+          : resolvePointer(ends.final, list);
     if (
       list === undefined ||
+      !Array.isArray(atEnd) ||
       !named(list, ends.baseline) ||
       !named(list, ends.final)
     )
@@ -191,13 +194,14 @@ export const jsonCounts = (
   const tried = new Set<string>();
   for (const pointer of change.changed) {
     const segments = pointer.split("/");
-    for (let index = segments.length - 1; index >= 1; index -= 1) {
+    for (let index = segments.length - 1; index > 0; index -= 1) {
       const list = segments.slice(0, index).join("/");
       const counted = { list };
       if (tried.has(list)) continue;
       tried.add(list);
+      const items = list === "" ? ends.final : resolvePointer(ends.final, list);
       if (
-        Array.isArray(listAt(ends.final, list)) &&
+        Array.isArray(items) &&
         !lists.has(JSON.stringify(counted)) &&
         named(list, ends.baseline) &&
         named(list, ends.final) &&
@@ -243,7 +247,7 @@ const addedRecordOf = (
   const segments = pointer.split("/");
   for (let index = segments.length - 1; index >= 1; index -= 1) {
     const list = segments.slice(0, index).join("/");
-    const items = listAt(ends.final, list);
+    const items = resolvePointer(ends.final, list);
     const member = segments[index] ?? "";
     const record = resolvePointer(ends.final, `${list}/${member}`);
     if (!Array.isArray(items) || !isRecord(record)) continue;
@@ -253,7 +257,7 @@ const addedRecordOf = (
       item !== record &&
       isRecord(item) &&
       (kind === undefined || item[kind.key] === kind.value);
-    const older = listAt(ends.baseline, list);
+    const older = resolvePointer(ends.baseline, list);
     return {
       list,
       member,
@@ -346,7 +350,7 @@ export const recordGuards = (
     const known = pairings.get(list);
     if (known !== undefined) return known;
     const [newer = [], older = []] = [ends.final, ends.baseline].map((view) => {
-      const items = listAt(view, list);
+      const items = resolvePointer(view, list);
       return Array.isArray(items) ? items : [];
     });
     const pairing = pairMembers(newer, older);

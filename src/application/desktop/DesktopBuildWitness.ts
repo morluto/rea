@@ -22,13 +22,17 @@ import {
   stageExpectation,
   stageVerdict,
   unrestoredChecks,
+  unreadResetChecks,
   WITNESS_STAGES,
   type WitnessStage,
   type WitnessStageRecord,
 } from "../../domain/desktop/buildWitness.js";
 import { ProviderAdapterError } from "../../domain/providerAdapterError.js";
 import { err, ok, type Result } from "../../domain/result.js";
-import type { AgentEnvComputer } from "../../desktop/AgentEnvComputer.js";
+import type {
+  AgentEnvComputer,
+  RecordingManifest,
+} from "../../desktop/AgentEnvComputer.js";
 import { AGENTENV_PROVIDER } from "../../desktop/AgentEnvComputerHelper.js";
 import { isPortableBundleName } from "../environment/environmentBundle.js";
 import {
@@ -37,6 +41,7 @@ import {
 } from "../ProgressReporter.js";
 import type { ReadonlyActionLog } from "./DesktopBuildActionLog.js";
 import { errorText } from "./DesktopBuildCommands.js";
+import { desktopOperationFailure } from "./DesktopCaptureRefusals.js";
 import { settledAppData, type BuildSettle } from "./DesktopBuildSettle.js";
 import { readTaskReaderViews } from "./DesktopTaskReaders.js";
 import {
@@ -115,6 +120,23 @@ const usableFolder = async (directory: string): Promise<boolean> =>
 interface OpenWitness extends EndedWitness {
   state: "open" | "saving" | "saved";
   record?: WitnessRecord;
+  /** A manifest whose segments still need to be fetched. */
+  pendingManifest?: RecordingManifest | undefined;
+  /**
+   * The action log as it stood when the record was first written. A retry
+   * uses this copy, so later activity cannot drop the witnessed actions.
+   */
+  logged?: Pick<ReadonlyActionLog, "entries" | "dropped">;
+  /**
+   * A published record whose handles are still open. The error already carries
+   * the record and the cleanup lease; every later close failure returns it.
+   */
+  published?:
+    | {
+        readonly error: AnalysisError;
+        readonly release: () => Promise<void>;
+      }
+    | undefined;
 }
 
 /** What the witness says of one filed stage. */
@@ -149,6 +171,22 @@ const counted = (task: DesktopTask, { results, settled, read_cut }: Graded) => {
  * verifier does, and witnesses it: the seed, the edit, a near miss and the
  * seed again after a reset, recorded, with the action log, as Evidence.
  */
+/**
+ * Retry closing a published witness. A further failure returns the original
+ * error, which already carries the record and the cleanup lease.
+ */
+export const retryPublishedCleanup = async (
+  published: AnalysisError,
+  release: () => Promise<void>,
+): Promise<Result<void, AnalysisError>> => {
+  try {
+    await release();
+    return ok(undefined);
+  } catch {
+    return err(published);
+  }
+};
+
 export class DesktopBuildWitness {
   #witness: OpenWitness | undefined;
   /**
@@ -267,17 +305,27 @@ export class DesktopBuildWitness {
     const witness = this.#witness;
     if (witness === undefined) throw new TypeError("the stage was admitted");
     const verdict = stageVerdict(stage, results, witness.stages);
-    if (verdict === "undecided")
+    if (verdict === "undecided") {
+      const unreadSeed =
+        stage === "after_reset"
+          ? unreadResetChecks(witness.stages, results).map(
+              (result) => result.id,
+            )
+          : [];
       return err(
         refused(
-          `The checks cannot decide ${stage}: each failure that would settle it may come from a view that could not be read or is cut short (${results
-            .flatMap((result) =>
+          `The checks cannot decide ${stage}: each failure that would settle it may come from a view that could not be read or is cut short (${[
+            ...results.flatMap((result) =>
               result.undecided === true ? [result.description] : [],
-            )
-            .join("; ")}). Nothing was filed.`,
+            ),
+            ...unreadSeed.map(
+              (id) => `${id} could not be compared with the seed`,
+            ),
+          ].join("; ")}). Nothing was filed.`,
           `Check ${stage} again once the app's files read whole; a view that is always cut short or unreadable needs a task whose checks read other files.`,
         ),
       );
+    }
     const held = verdict === "held";
     const unrestored =
       stage === "after_reset" && !held
@@ -313,16 +361,41 @@ export class DesktopBuildWitness {
     filed: WitnessStageRecord,
     signal: AbortSignal,
   ): Promise<Result<WitnessSummary, AnalysisError>> {
-    const record = await writeWitnessRecord(
+    const published = witness.published;
+    if (witness.record !== undefined && published !== undefined) {
+      const released = await retryPublishedCleanup(
+        published.error,
+        published.release,
+      );
+      if (!released.ok) return released;
+      witness.published = undefined;
+      witness.state = "saved";
+      return ok(summaryOf(filed, null, witness.record));
+    }
+    witness.logged ??= {
+      entries: [...this.actions.entries],
+      dropped: this.actions.dropped,
+    };
+    const written = await writeWitnessRecord(
       this.computer,
       witness,
-      this.actions,
+      witness.logged,
       signal,
+      witness.pendingManifest,
     );
-    if (!record.ok) return record;
+    if (written.kind === "retry") {
+      if (written.manifest !== undefined)
+        witness.pendingManifest = written.manifest;
+      return err(written.error);
+    }
+    witness.pendingManifest = undefined;
+    witness.record = written.record;
+    if (written.kind === "published") {
+      witness.published = { error: written.error, release: written.release };
+      return err(written.error);
+    }
     witness.state = "saved";
-    witness.record = record.value;
-    return ok(summaryOf(filed, null, record.value));
+    return ok(summaryOf(filed, null, written.record));
   }
 
   /**
@@ -437,10 +510,23 @@ export class DesktopBuildWitness {
           "Give a new or empty folder.",
         ),
       );
-    const differs =
-      this.bundle === undefined
-        ? undefined
-        : await bundleTaskDifference(this.bundle.path, task, signal);
+    let differs: string | undefined;
+    if (this.bundle !== undefined) {
+      try {
+        differs = await bundleTaskDifference(this.bundle.path, task, signal);
+      } catch (cause: unknown) {
+        // A cancelled read, an I/O failure, or a handle that would not close
+        // stays a Result. A cleanup lease stays bound to that error.
+        return err(
+          desktopOperationFailure(
+            cause,
+            signal,
+            CHECK,
+            "Reading the bundle's task",
+          ),
+        );
+      }
+    }
     if (differs !== undefined)
       return err(
         refused(

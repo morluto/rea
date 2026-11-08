@@ -12,8 +12,10 @@ import type {
 import { createEvidence, type Evidence } from "../../domain/evidence.js";
 import type { JsonValue } from "../../domain/jsonValue.js";
 import { ProviderAdapterError } from "../../domain/providerAdapterError.js";
-import { err, ok, type Result } from "../../domain/result.js";
-import type { AgentEnvComputer } from "../../desktop/AgentEnvComputer.js";
+import type {
+  AgentEnvComputer,
+  RecordingManifest,
+} from "../../desktop/AgentEnvComputer.js";
 import { AGENTENV_PROVIDER } from "../../desktop/AgentEnvComputerHelper.js";
 import {
   LOGGED_ACTIONS,
@@ -82,19 +84,40 @@ export interface EndedWitness {
 const sha256 = (bytes: Buffer) =>
   createHash("sha256").update(bytes).digest("hex");
 
-/** End the recording and bring its segments back, or say why they are missing. */
-const endRecording = async (
+/** A recording fetch that can resume after the manifest is known. */
+type RecordingFetch =
+  | {
+      readonly ok: true;
+      readonly recording: Exclude<Recording, { error: string }>;
+      readonly segments: readonly Segment[];
+    }
+  | {
+      readonly ok: false;
+      readonly error: string;
+      readonly manifest?: RecordingManifest;
+    };
+
+/**
+ * End the recording and bring its segments back. A failure before the
+ * manifest leaves nothing to resume; a failure after it keeps the manifest
+ * so the next try only fetches the segments.
+ */
+const fetchRecording = async (
   computer: RecordedComputer,
   recordingId: string,
+  pending: RecordingManifest | undefined,
   signal: AbortSignal,
-): Promise<{
-  readonly recording: Recording;
-  readonly segments: readonly Segment[];
-}> => {
+): Promise<RecordingFetch> => {
+  let manifest = pending;
   try {
-    const manifest = await computer.endRecording(recordingId, signal);
+    manifest ??= await computer.endRecording(recordingId, signal);
+  } catch (cause: unknown) {
+    return { ok: false, error: errorText(cause) };
+  }
+  try {
     const segments = await computer.recordingSegments(manifest, signal);
     return {
+      ok: true,
       segments,
       recording: {
         recording_id: manifest.recording_id,
@@ -109,7 +132,7 @@ const endRecording = async (
       },
     };
   } catch (cause: unknown) {
-    return { segments: [], recording: { error: errorText(cause) } };
+    return { ok: false, error: errorText(cause), manifest };
   }
 };
 
@@ -119,7 +142,15 @@ const writeRecordFolder = async (
   files: readonly { readonly path: string; readonly bytes: Buffer }[],
   evidence: Evidence,
   signal: AbortSignal,
-): Promise<AnalysisError | undefined> => {
+): Promise<
+  | undefined
+  | { readonly published: false; readonly error: AnalysisError }
+  | {
+      readonly published: true;
+      readonly error: AnalysisError;
+      readonly release: () => Promise<void>;
+    }
+> => {
   try {
     const unclosed = await writeOutputTree(
       directory,
@@ -137,24 +168,32 @@ const writeRecordFolder = async (
     );
     return unclosed === undefined
       ? undefined
-      : writtenWithOpenHandles(
-          {
-            provider: AGENTENV_PROVIDER,
-            operation: CHECK,
-            what: "witness record",
-          },
-          directory,
-          unclosed,
-          evidence,
-        );
+      : {
+          published: true,
+          error: writtenWithOpenHandles(
+            {
+              provider: AGENTENV_PROVIDER,
+              operation: CHECK,
+              what: "witness record",
+            },
+            directory,
+            unclosed,
+            evidence,
+          ),
+          release: () => unclosed.lease.release(),
+        };
   } catch (cause: unknown) {
-    return cause instanceof AnalysisError
-      ? cause
-      : new ProviderAdapterError(AGENTENV_PROVIDER, CHECK, {
-          userMessage: `The witness record could not be written: ${errorText(cause)}`,
-          cause,
-          partialObservation: evidence,
-        });
+    return {
+      published: false,
+      error:
+        cause instanceof AnalysisError
+          ? cause
+          : new ProviderAdapterError(AGENTENV_PROVIDER, CHECK, {
+              userMessage: `The witness record could not be written: ${errorText(cause)}`,
+              cause,
+              partialObservation: evidence,
+            }),
+    };
   }
 };
 
@@ -207,26 +246,56 @@ const howChecked = (task: DesktopTask): string => {
     : "Checks read the app's data/get views and the task's readers' views, the readers run in the computer through computer-exec/v1, with REA's evaluator, as the exported verifier does; the verifier itself did not run.";
 };
 
+/** How a witness write ended: saved, retryable, or published with cleanup still open. */
+export type WitnessWrite =
+  | { readonly kind: "saved"; readonly record: WitnessRecord }
+  | {
+      readonly kind: "retry";
+      readonly error: AnalysisError;
+      readonly manifest?: RecordingManifest;
+    }
+  | {
+      readonly kind: "published";
+      readonly record: WitnessRecord;
+      readonly error: AnalysisError;
+      readonly release: () => Promise<void>;
+    };
+
 /**
  * End the witness's recording, fetch it, and write the segments and
- * `witness.json`, the record as Evidence, into the witness folder.
+ * `witness.json`, the record as Evidence, into the witness folder. A
+ * recording that has not been fetched is not written, so the next try can
+ * resume it. A published folder whose handles fail to close is returned with
+ * the record and the cleanup to retry.
  */
 export const writeWitnessRecord = async (
   computer: RecordedComputer,
   witness: EndedWitness,
   log: Pick<ReadonlyActionLog, "entries" | "dropped">,
   signal: AbortSignal,
-): Promise<Result<WitnessRecord, AnalysisError>> => {
+  pendingManifest?: RecordingManifest,
+): Promise<WitnessWrite> => {
   const actions = log.entries.map(
     ({ truncated_arguments: cut, ...entry }): RecordedAction =>
       cut === undefined ? entry : { ...entry, truncated_arguments: [...cut] },
   );
   const dropped = log.dropped;
-  const { recording, segments } = await endRecording(
+  const fetched = await fetchRecording(
     computer,
     witness.recordingId,
+    pendingManifest,
     signal,
   );
+  if (!fetched.ok)
+    return {
+      kind: "retry",
+      ...(fetched.manifest === undefined ? {} : { manifest: fetched.manifest }),
+      error: new ProviderAdapterError(AGENTENV_PROVIDER, CHECK, {
+        userMessage: `The witness recording could not be saved: ${fetched.error}. Check this stage again to retry it.`,
+        cause: new Error(fetched.error),
+      }),
+    };
+  const { recording, segments } = fetched;
   const failed = witness.stages.find((stage) => !stage.held);
   const result = {
     verdict: failed === undefined ? ("held" as const) : ("failed" as const),
@@ -271,10 +340,18 @@ export const writeWitnessRecord = async (
     evidence,
     signal,
   );
-  if (unwritten !== undefined) return err(unwritten);
-  return ok({
+  const record = {
     path: join(witness.directory, RECORD),
     evidence_id: evidence.evidence_id,
     ...result,
-  });
+  };
+  if (unwritten === undefined) return { kind: "saved", record };
+  if (unwritten.published)
+    return {
+      kind: "published",
+      record,
+      error: unwritten.error,
+      release: unwritten.release,
+    };
+  return { kind: "retry", error: unwritten.error };
 };

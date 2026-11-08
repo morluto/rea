@@ -324,7 +324,7 @@ describe("a verifier without readers", () => {
     expect(rendered).not.toContain("computer-exec");
     // The digest of this task's verifier as the tree before readers rendered it.
     expect(createHash("sha256").update(rendered).digest("hex")).toBe(
-      "91821c466b06c9ffe86c421e81055cd9127ee03c97c4a175193a517a91d43bd4",
+      "b65d6c15a52e8ba2b27ddc8318d34306e343ba6c31ea145513175e347a4c35e5",
     );
   });
 });

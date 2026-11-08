@@ -206,14 +206,34 @@ const lineVerdict = (
   );
 };
 
-/** A value compared within a tolerance: numbers, and numeral strings, by their difference. */
+/**
+ * Whether `value` is an XML element whose joined text is the number: an XML
+ * file, or an XML entry inside a zip. A JSON object with the same shape is
+ * the value itself, not a cell.
+ */
+const joinsElementText = (
+  format: string | null | undefined,
+  view: JsonValue | null,
+  pointer: string,
+  value: JsonValue,
+): boolean => {
+  if (!isXmlElement(value)) return false;
+  if (format === "xml") return true;
+  if (format !== "zip") return false;
+  const entry = zipEntryAt(view, pointer);
+  return typeof entry === "object" && entry.format === "xml";
+};
+
+/** A value compared within a tolerance: numbers, and numeral strings, by their difference. An XML element's text is joined only when `join` says the view is XML. */
 const nearVerdict = (
   at: string,
   found: JsonValue,
   expected: number,
   tolerance: number,
+  join: boolean,
 ): Verdict => {
-  const number = numberOf(found);
+  const read = join ? elementText(found) : found;
+  const number = numberOf(typeof read === "string" ? read.trim() : read);
   const within = `within ${shown(tolerance)} of ${shown(expected)}`;
   if (number === undefined)
     return fail(`${at} is ${shown(found)}, not a number`);
@@ -285,8 +305,17 @@ const valueVerdict = (
   if (whole && truncated) return undecided(check.file);
   if (check.kind === "value_equals") {
     if (located.kind === "none") return noValue(at, located, truncated);
-    if (check.tolerance !== undefined && typeof check.value === "number")
-      return nearVerdict(at, located.value, check.value, check.tolerance);
+    if (check.tolerance !== undefined && typeof check.value === "number") {
+      // A cut element's kept runs can join into a number the file never held.
+      const join = joinsElementText(
+        entry?.format,
+        read.view,
+        check.pointer,
+        located.value,
+      );
+      if (join && truncated) return undecided(check.file);
+      return nearVerdict(at, located.value, check.value, check.tolerance, join);
+    }
     return sameJson(located.value, check.value)
       ? pass(`${at} is ${shown(check.value)}`)
       : fail(`${at} is ${shown(located.value)}, not ${shown(check.value)}`);
@@ -367,10 +396,17 @@ const textVerdict = (
   if (problem !== undefined) return fail(problem);
   if (located.kind === "unresolved") return fail(`${at}: ${located.problem}`);
   // A zip view's truncation that matters is the entry the pointer goes into.
+  // A child past the kept nodes of a cut view may still hold the text.
   const truncated = zip
     ? zipLeavesOutAt(read.view, check.pointer)
     : read.truncated;
-  if (located.kind === "none") return noValue(at, located, truncated);
+  // A missing child of a cut view is the same undecided result in both evaluators.
+  if (located.kind === "none")
+    return truncated
+      ? unread(
+          `the view of ${check.file} is truncated, so what it leaves out is unknown (${check.pointer})`,
+        )
+      : noValue(at, located, false);
   const found = located.value;
   // Only an element has attributes of its own and of its descendants to join.
   const attribute = check.text_attribute;
@@ -396,13 +432,8 @@ const memberVerdict = (
   const { matching, pointer } = check;
   const read = viewOf(check, entry, undefined);
   if ("passed" in read) return read;
-  // The empty pointer names the whole view, as a JSON file whose top level is an array.
   const located: Located =
-    entry === undefined
-      ? NOTHING
-      : pointer === ""
-        ? { kind: "value", value: read.view, searched: [], byPosition: [] }
-        : locatePointer(read.view, pointer);
+    entry === undefined ? NOTHING : locatePointer(read.view, pointer);
   const at = pointer === "" ? check.file : `${check.file} at ${pointer}`;
   const unknown = unreadOrPartial(check, entry?.format, read, located);
   if (unknown !== undefined) return unknown;

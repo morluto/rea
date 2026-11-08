@@ -108,15 +108,16 @@ const candidatesOf = (
           ({ key }) =>
             isIdentifyingAttribute(key) && isPositionalKey(saved, name, key),
         );
-  const generated = usable.filter(
-    (field) =>
-      !placed.includes(field) &&
-      ((isIdentifyingAttribute(field.key) && isGeneratedId(field.value)) ||
-        isGuid(field.value)),
-  );
   // An id the app numbers anew on each save names no member past it: it ranks with the tokens.
   const numbered = usable.filter(({ key, value }) =>
     isSaveNumberedId(key, value),
+  );
+  const generated = usable.filter(
+    (field) =>
+      !placed.includes(field) &&
+      !numbered.includes(field) &&
+      ((isIdentifyingAttribute(field.key) && isGeneratedId(field.value)) ||
+        isGuid(field.value)),
   );
   const identities = usable.filter(
     (field) =>

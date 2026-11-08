@@ -1,5 +1,6 @@
 import { procedureInfoSchema } from "../domain/native/procedureInfo.js";
 import { z } from "zod";
+import { providerReleaseVerificationSchema } from "../domain/providerReleaseVerification.js";
 import { investigationStatisticsSchema } from "../domain/investigationLifecycle.js";
 import { utcDateTimeSchema } from "../domain/offsetDateTime.js";
 import { analysisCleanupRetrySchema } from "../domain/analysisErrorRecovery.js";
@@ -53,6 +54,29 @@ export const requireOutputSchema = <
 /** The readiness owner's repair instruction; never the failure description. */
 const providerRemediation = z.string().min(1);
 
+const nativeValueFlowDeclaration = z.discriminatedUnion("status", [
+  z.strictObject({ status: z.literal("supported") }),
+  z.strictObject({
+    status: z.literal("unavailable"),
+    reason: z.string().min(1),
+  }),
+]);
+const nativeValueFlowSupport = z.discriminatedUnion("status", [
+  z.strictObject({
+    status: z.literal("supported"),
+    provider_id: z.string().min(1),
+  }),
+  z.strictObject({
+    status: z.literal("unavailable"),
+    provider_id: z.string().min(1),
+    reason: z.string().min(1),
+  }),
+  z.strictObject({
+    status: z.literal("unknown"),
+    provider_id: z.string().min(1).nullable(),
+  }),
+]);
+
 const providerCapabilityFacts = {
   operation: z.string(),
   effects: z.object({
@@ -65,6 +89,8 @@ const providerCapabilityFacts = {
     requires_root: z.boolean(),
   }),
   limitations: z.array(z.string()),
+  native_value_flow: nativeValueFlowDeclaration.exactOptional(),
+  independent_decompile: z.literal(true).exactOptional(),
 };
 
 export const providerCapability = z.discriminatedUnion("available", [
@@ -100,6 +126,8 @@ const providerCapabilityGroupFacts = {
   operations: z.array(z.string().min(1)).min(1),
   effects: z.array(providerCapabilityFacts.effects.keyof()),
   limitations: z.array(z.string()),
+  native_value_flow: nativeValueFlowDeclaration.exactOptional(),
+  independent_decompile: providerCapabilityFacts.independent_decompile,
 };
 
 const providerCapabilityGroup = z.discriminatedUnion("available", [
@@ -138,6 +166,12 @@ export const expandProviderCapabilities = (
       group.operations.map((operation) => ({
         ...providerCapability.parse({
           operation,
+          ...(group.native_value_flow === undefined
+            ? {}
+            : { native_value_flow: group.native_value_flow }),
+          ...(group.independent_decompile === undefined
+            ? {}
+            : { independent_decompile: group.independent_decompile }),
           available: group.available,
           reason: group.reason,
           availability_code: group.availability_code,
@@ -375,6 +409,11 @@ const toolAvailabilityFacts = {
   surface: z.string(),
   default_mode_available: z.boolean().optional(),
   modes: z.array(toolAvailabilityMode).optional(),
+  value_flow_support: nativeValueFlowSupport
+    .describe(
+      "The named provider's declared ability to supply value flow for some functions, separate from runtime readiness. Supported does not guarantee a model for a particular function; unknown means no declaration.",
+    )
+    .exactOptional(),
   client_requirements: z.object({
     required: z.array(clientFeatureNameSchema),
     optional: z.array(clientFeatureNameSchema),
@@ -440,6 +479,7 @@ const toolAvailabilityStatusGroupFacts = {
   names: z.array(z.string().min(1)).min(1),
   default_mode_available: toolAvailabilityFacts.default_mode_available,
   modes: toolAvailabilityFacts.modes,
+  value_flow_support: toolAvailabilityFacts.value_flow_support,
   client_requirements: toolAvailabilityFacts.client_requirements.optional(),
 };
 
@@ -449,6 +489,7 @@ const toolAvailabilityGroupFacts = {
   default_mode_available:
     toolAvailabilityStatusGroupFacts.default_mode_available,
   modes: toolAvailabilityStatusGroupFacts.modes,
+  value_flow_support: toolAvailabilityStatusGroupFacts.value_flow_support,
   client_requirements: toolAvailabilityStatusGroupFacts.client_requirements,
   effects: z.array(toolAvailabilityFacts.effects.keyof()),
   annotations: z.array(toolAvailabilityFacts.annotations.keyof()),
@@ -565,6 +606,7 @@ export const sessionProviderFacts = z
           "auto-single-candidate",
         ]),
         analysis_profile: analysisProfileSchema,
+        release_verification: providerReleaseVerificationSchema.optional(),
       })
       .nullable(),
     client_features: z.object({

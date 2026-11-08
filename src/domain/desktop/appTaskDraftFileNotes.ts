@@ -1,4 +1,6 @@
+import { isWellFormedXml } from "../xmlDocument.js";
 import type { NamedFacts } from "./appTaskDraftNamed.js";
+import { doctypeHasInternalSubset } from "./stateFormats.js";
 
 /** Why a file in a draft has few or no suggested checks, one code per reason. */
 export const FILE_NOTE_CODES = [
@@ -89,7 +91,7 @@ const factNotes = (file: string, facts: NamedFacts): FileNote[] => {
     notes.push({
       code: "long_text",
       file,
-      message: `The text of ${String(facts.long.length)} element(s) in ${home} changed but is longer than the 2,000 characters a text check compares, so no check of its whole text is suggested; check a phrase in it with text_contains.`,
+      message: `${String(facts.long.length)} value(s) in ${home} exceed the 2,000-character check limit, so whole-value checks were omitted; use a smaller check where supported.`,
       pointers: facts.long.slice(0, MAX_LISTED),
     });
   return notes;
@@ -108,6 +110,23 @@ export const fileNotes = (
 /** The text a check of whether a file opens like XML reads, enough for a declaration and a DOCTYPE. */
 const OPENING_CHARS = 2048;
 
+/** The bounded opening used to recognize a text view of an XML document. */
+const textOpening = (lines: readonly string[]): string => {
+  let opening = "";
+  for (const line of lines) {
+    opening += `${line}\n`;
+    if (opening.length > OPENING_CHARS) break;
+  }
+  return opening.trimStart();
+};
+
+const opensXml = (opening: string): boolean =>
+  /^<(?:\?xml|!DOCTYPE|[A-Za-z_:])/u.test(opening);
+
+/** Text views can preserve XML that the structured reader cannot admit. */
+export const textOpensXml = (lines: readonly string[]): boolean =>
+  opensXml(textOpening(lines));
+
 /**
  * A note on a text file that opens like XML, with a declaration, a DOCTYPE
  * or an element, and so reads as text only because it is not XML REA reads:
@@ -119,14 +138,14 @@ export const readAsTextNotes = (
   file: string,
   lines: readonly string[],
 ): FileNote[] => {
-  let opening = "";
-  for (const line of lines) {
-    opening += `${line}\n`;
-    if (opening.length > OPENING_CHARS) break;
-  }
-  opening = opening.trimStart();
-  if (!/^<(?:\?xml|!DOCTYPE|[A-Za-z_:])/u.test(opening)) return [];
-  const why = /^(?:<\?xml[^>]*>\s*)?<!DOCTYPE[^>[]*\[/u.test(opening)
+  const opening = textOpening(lines);
+  if (!opensXml(opening)) return [];
+  if (
+    !doctypeHasInternalSubset(opening) &&
+    isWellFormedXml(opening, { doctype: "external" })
+  )
+    return [];
+  const why = doctypeHasInternalSubset(opening)
     ? "its DOCTYPE has an internal subset, which can declare entities"
     : "it is not well-formed XML";
   return [

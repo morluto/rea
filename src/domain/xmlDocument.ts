@@ -157,6 +157,33 @@ export const xmlElementRanges = (
   }
 };
 
+/** Source offsets of attribute opening quotes, parsed without reading a DTD. */
+export const xmlAttributeQuoteStarts = (
+  source: string,
+): Result<readonly number[], XmlDocumentParseError> => {
+  const starts: number[] = [];
+  try {
+    checkXmlSyntax(source, "allow", (syntax) => {
+      syntax.on("attribute", () => {
+        const end = syntax.position - 1;
+        const quote = source[end];
+        if (quote !== '"' && quote !== "'")
+          throw new XmlDocumentParseError("malformed");
+        const start = source.lastIndexOf(quote, end - 1);
+        if (start < 0) throw new XmlDocumentParseError("malformed");
+        starts.push(start);
+      });
+    });
+    return ok(starts);
+  } catch (cause: unknown) {
+    return err(
+      cause instanceof XmlDocumentParseError
+        ? cause
+        : new XmlDocumentParseError("malformed", cause),
+    );
+  }
+};
+
 /** One boundary owns strict XML syntax, under a DOCTYPE policy, and the source-located DOM projection. */
 export const parseXmlDocument = (
   source: string,

@@ -11,11 +11,11 @@ import type { TaskCheckOutcome } from "../../domain/desktop/appTaskChecks.js";
 import {
   renderTaskSteps,
   renderTaskVerifier,
+  sameTaskVerifier,
   taskVerifierArtifact,
 } from "../../domain/desktop/appTaskPython.js";
 import {
   SCREEN_SETTLE_MS,
-  VERIFIER_MAX_BYTES,
   isScreenTask,
   screenExamplesOf,
   type ScreenJudge,
@@ -23,7 +23,11 @@ import {
 import { ProviderAdapterError } from "../../domain/providerAdapterError.js";
 import { err, ok, type Result } from "../../domain/result.js";
 import { safeParseUtf8Json } from "../../domain/safeJson.js";
-import type { AgentEnvComputer } from "../../desktop/AgentEnvComputer.js";
+import {
+  guestFileAnswerCeiling,
+  guestFileAnswerWorkingBytes,
+  type AgentEnvComputer,
+} from "../../desktop/AgentEnvComputer.js";
 import { AGENTENV_PROVIDER } from "../../desktop/AgentEnvComputerHelper.js";
 import { readHostFile } from "../../desktop/HostFileRead.js";
 import { errorText } from "./DesktopBuildCommands.js";
@@ -43,8 +47,14 @@ export type Graded = {
   readonly read_cut: boolean;
 };
 
-/** The most bytes REA reads of the bundle's steps for the task; its verifier may also hold a judge's two examples. */
-const BUNDLE_FILE_BYTES = 1024 * 1024;
+/**
+ * The most bytes REA reads of each of the bundle's task files. A task the
+ * export accepts has no smaller file cap, and the steps file holds the whole
+ * prompt. The bound is the same working budget as a guest file answer: a
+ * quarter of the heap, divided by the copies a read and a parse hold.
+ */
+const bundleFileBytes = () =>
+  guestFileAnswerWorkingBytes(guestFileAnswerCeiling());
 const stepsSchema = z.array(
   z.looseObject({ type: z.string(), env_id: z.string().optional() }),
 );
@@ -57,10 +67,11 @@ export const bundleTaskDifference = async (
 ): Promise<string | undefined> => {
   const stepsPath = `tasks/${task.name}.json`;
   const verifierPath = `artifacts/${taskVerifierArtifact(task)}/verify.py`;
-  const [steps, verifier] = await Promise.all([
-    readHostFile(join(bundle, stepsPath), BUNDLE_FILE_BYTES, signal),
-    readHostFile(join(bundle, verifierPath), VERIFIER_MAX_BYTES, signal),
-  ]);
+  const [steps, verifier] = await Promise.all(
+    [stepsPath, verifierPath].map((path) =>
+      readHostFile(join(bundle, path), bundleFileBytes(), signal),
+    ),
+  );
   if (!Buffer.isBuffer(steps) || !Buffer.isBuffer(verifier))
     return `the bundle at ${bundle} has no readable ${Buffer.isBuffer(steps) ? verifierPath : stepsPath}.`;
   const parsed = safeParseUtf8Json(steps);
@@ -74,13 +85,18 @@ export const bundleTaskDifference = async (
   )
     return `the bundle's ${stepsPath} differs from this task's steps.`;
   const source = verifier.toString("utf8");
+  const differs = `the bundle's ${verifierPath} differs from this task's checks.`;
+  if (!isScreenTask(task))
+    return sameTaskVerifier(renderTaskVerifier(task, app), source)
+      ? undefined
+      : differs;
   // A screen judge's examples are the build's screenshots, which only the bundle holds.
-  const examples = isScreenTask(task) ? screenExamplesOf(source) : undefined;
-  if (isScreenTask(task) && examples === undefined)
+  const examples = screenExamplesOf(source);
+  if (examples === undefined)
     return `the bundle's ${verifierPath} holds no screen judge examples.`;
   return source === renderTaskVerifier(task, app, examples)
     ? undefined
-    : `the bundle's ${verifierPath} differs from this task's checks.`;
+    : differs;
 };
 
 /** A screen-judged task's checks on a fresh screenshot, each answered by the bundle's own judge. */

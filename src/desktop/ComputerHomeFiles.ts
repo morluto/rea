@@ -50,12 +50,14 @@ export const writeHomeFiles = async (
     throw new Error(`data/add failed: ${redacted(answer.error.message)}`);
 };
 
-/** The files under paths of a computer user's home, by home path, through the driver's `data/get` sent by `post`. */
+/** The decoded file parts under paths of a computer user's home, each with the home path it names, through the driver's `data/get` sent by `post`. */
 export const readHomeFiles = async (
   post: (body: unknown) => Promise<unknown>,
   redacted: (text: string) => string,
   paths: readonly string[],
-): Promise<ReadonlyMap<string, Buffer>> => {
+): Promise<
+  readonly { readonly path: string | undefined; readonly bytes: Buffer }[]
+> => {
   const answer = dataGetSchema.parse(
     await post({
       jsonrpc: "2.0",
@@ -66,13 +68,15 @@ export const readHomeFiles = async (
   );
   if ("error" in answer)
     throw new Error(`data/get failed: ${redacted(answer.error.message)}`);
-  return new Map(
-    answer.result.parts.flatMap((part) => {
-      const path = Object.values(part.metadata ?? {})[0]?.path;
-      const encoded = part.file?.bytes;
-      return path === undefined || encoded === undefined
-        ? []
-        : [[path, Buffer.from(encoded, "base64")] as const];
-    }),
-  );
+  return answer.result.parts.flatMap((part) => {
+    const encoded = part.file?.bytes;
+    return encoded === undefined
+      ? []
+      : [
+          {
+            path: Object.values(part.metadata ?? {})[0]?.path,
+            bytes: Buffer.from(encoded, "base64"),
+          },
+        ];
+  });
 };

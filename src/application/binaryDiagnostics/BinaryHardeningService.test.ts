@@ -69,7 +69,6 @@ const service = (value: BinaryHardening = report()) =>
 it("returns derived Evidence for a multi-field ELF row", async () => {
   const value = report();
   const result = await service(value).inspect({ path: value.artifact.path });
-  expect(result.ok).toBe(true);
   if (!result.ok) throw result.error;
   expect(result.value).toMatchObject({
     confidence: "derived",
@@ -305,7 +304,6 @@ it("keeps sibling Mach-O slices when one range is empty or past EOF", async () =
     ],
   });
   const result = await service(value).inspect({ path: value.artifact.path });
-  expect(result.ok).toBe(true);
   if (!result.ok) throw result.error;
   expect(result.value.normalized_result).toMatchObject({
     images: [
@@ -354,7 +352,6 @@ it("keeps a sibling when a failed slice declares an offset past 2^32", async () 
     ],
   });
   const result = await service(value).inspect({ path: value.artifact.path });
-  expect(result.ok).toBe(true);
   if (!result.ok) throw result.error;
   expect(result.value.locations).toEqual([
     { kind: "artifact-path", path: value.artifact.path },

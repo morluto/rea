@@ -79,6 +79,7 @@ const shortText = (element: JsonValue): string | undefined => {
   const pending: JsonValue[] = [element];
   for (let node = pending.pop(); node !== undefined; node = pending.pop())
     if (typeof node === "string") {
+      if (isTimestamp(node)) continue;
       if (!append(node)) return undefined;
     } else if (isRecord(node) && Array.isArray(node.children))
       for (let index = node.children.length - 1; index >= 0; index -= 1)

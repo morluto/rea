@@ -39,7 +39,11 @@ import {
   locatePointer,
   resolvePointer,
 } from "./viewPointer.js";
-import type { CheckTree } from "./appTaskDraftTree.js";
+import {
+  referenceRoots,
+  valueFormat,
+  type CheckTree,
+} from "./appTaskDraftTree.js";
 
 type Suggestion = DesktopTaskCheckInput;
 
@@ -165,6 +169,8 @@ interface Collected {
     real: number;
     readonly tags: Set<string>;
   };
+  /** Fields of an added record left unchecked because their text is past the limit. */
+  readonly fieldLong: string[];
 }
 
 const named = (
@@ -265,6 +271,7 @@ const elementChecks = (
       named(collected, view, at) && !tree.leavesOut(view, at),
     chars: collected.context.limit.chars,
     noisy: (at: string) => collected.context.noise(at) !== undefined,
+    long: collected.fieldLong,
   };
   if (!named(collected, ends.final, `${pointer}/name`)) {
     const fields = fieldChecks(added, pointer, value);
@@ -275,9 +282,11 @@ const elementChecks = (
     return;
   }
   if (texts.covers(pointer) || !room(collected, collected.elements)) return;
+  const records = recordChecks(added, pointer, value);
+  // Repeated unnamed fields, such as two `<field>` children, have no selector. Their text is the content check; the tag name is not.
   const own = [
     ...attributeChecks(added, pointer, value),
-    ...recordChecks(added, pointer, value),
+    ...(records.length > 0 ? records : fieldChecks(added, pointer, value)),
     ...nestedRecordChecks(
       { file, final: ends.final, named: (at) => added.named(ends.final, at) },
       pointer,
@@ -401,6 +410,7 @@ const collectChecks = (
     values: [],
     noise: { elements: [], values: [] },
     positional: { count: 0, real: 0, tags: new Set() },
+    fieldLong: [],
   };
   const { ends, tree } = context;
   const runs = attributeTexts(collected, change);
@@ -540,6 +550,8 @@ export const namedDraft = (
     ends,
     listed: tree.listed,
     noise,
+    format: (view, pointer) => valueFormat(tree, view, pointer),
+    referenceRoots: (view) => referenceRoots(tree, view),
   });
   // The count guard sits outside the cap, so line and sibling guards never squeeze it out.
   const guards = edited
@@ -585,7 +597,7 @@ const factsOf = (
 ): NamedFacts => ({
   positional: checks.positional.count,
   positionalTags: [...checks.positional.tags],
-  long: texts.long,
+  long: [...new Set([...texts.long, ...checks.fieldLong])],
   changes: change.listed.length,
   noise: change.listed.filter((pointer) => change.noise(pointer) !== undefined)
     .length,

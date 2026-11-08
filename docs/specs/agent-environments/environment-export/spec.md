@@ -94,7 +94,7 @@ recorded in `verification.md` is the proof that one exported bundle runs under
 
 The export copies bytes and never inspects the tarball; it does not build or
 run the image itself. Its writes are not transactional: a host failure after
-the first file leaves the partial folder for inspection, as `docs/cli.md`
+the first file leaves the partial folder for inspection, as `docs/getting-started/cli.md`
 states. The verifier checks one replayed status and the tool count, not every
 tool. The lane passes `--sandbox local` as designed although
 `tasks/smoke.json` already pins `sandbox_type: local` on its deploy step, so
