@@ -22,6 +22,7 @@ import {
   type AnalysisCallerLifetime,
 } from "../domain/analysisErrorBase.js";
 import { createDeferred } from "../../tests/fixtures/binarySession.js";
+import { awaitAcknowledgement } from "../../tests/fixtures/lifecycleAcknowledgement.js";
 import { ProviderInspectionScope } from "../application/ProviderInspectionScope.js";
 import { ok as javaProbeOk, err, ok } from "../domain/result.js";
 import type { GhidraJavaObservation } from "./GhidraJavaProbe.js";
@@ -6000,9 +6001,9 @@ it.each(["retry", "physical", "cleanup", "close"] as const)(
     let second: ReturnType<typeof ghidra.inspectAvailability> | undefined;
     let closing: ReturnType<typeof ghidra.closeOwnedResources> | undefined;
     try {
-      await entered.promise;
+      await awaitAcknowledgement(entered.promise, first, "Java inspection");
       controller.abort("first inspection");
-      await aborted.promise;
+      await awaitAcknowledgement(aborted.promise, first, "inspection abort");
       second = ghidra.inspectAvailability();
       void second.catch(() => undefined);
       await Promise.resolve();

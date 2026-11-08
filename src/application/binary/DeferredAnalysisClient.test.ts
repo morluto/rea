@@ -312,6 +312,7 @@ it.each(["caller", "close", "cleanup", "physical"] as const)(
   async (outcome) => {
     const entered = gate(),
       aborted = gate(),
+      acquisition = gate(),
       release = gate(),
       cleanupEntered = gate();
     const firstController = new AbortController();
@@ -331,6 +332,7 @@ it.each(["caller", "close", "cleanup", "physical"] as const)(
         await release.promise;
         throw physical;
       }
+      await acquisition.promise;
       return child(async () => {
         cleanupEntered.resolve();
         await release.promise;
@@ -351,10 +353,17 @@ it.each(["caller", "close", "cleanup", "physical"] as const)(
     let second: ReturnType<AnalysisClient["execute"]> | undefined;
     let closing: ReturnType<AnalysisClient["close"]> | undefined;
     await withVerifierCleanup(async () => {
-      await entered.promise;
+      await awaitAcknowledgement(entered.promise, first, "client creation");
       firstController.abort("first caller");
-      await aborted.promise;
-      if (outcome !== "physical") await cleanupEntered.promise;
+      await awaitAcknowledgement(aborted.promise, first, "creation abort");
+      if (outcome !== "physical") {
+        acquisition.resolve();
+        await awaitAcknowledgement(
+          cleanupEntered.promise,
+          first,
+          "client cleanup",
+        );
+      }
       second = client.execute(
         "analyze_function",
         {},
@@ -389,6 +398,7 @@ it.each(["caller", "close", "cleanup", "physical"] as const)(
     }, [
       () => firstController.abort(),
       () => secondController.abort(),
+      () => acquisition.resolve(),
       () => release.resolve(),
       async () => {
         await Promise.allSettled([first, second, closing]);
