@@ -19,6 +19,8 @@ import {
 
 /** SQLite's generic SQL error, raised while compiling or evaluating an expression. */
 const SQLITE_ERROR = 1;
+/** SQLite refuses statement text or a record above a fixed size with this result code. */
+const SQLITE_TOOBIG = 18;
 
 const natural = z
   .bigint()
@@ -72,7 +74,7 @@ type Inspection = Pick<
 >;
 type SelectedTableFacts = Pick<
   SqliteDatabase["schema"]["tables"][number],
-  "name" | "kind" | "columns"
+  "name" | "kind" | "columns" | "without_rowid"
 >;
 
 class OutputBudget {
@@ -430,6 +432,7 @@ const readSchema = (
         encoding,
         selectedColumns: input.columns,
       }),
+      without_rowid: selectedRowSource.wr !== 0n,
     };
   // NOCASE folds only ASCII letters, as SQLite does when it resolves the
   // table named by an index or trigger. Fold only for an ordinary table whose
@@ -514,7 +517,12 @@ const readSchema = (
           selectedColumns: scope === "inventory" ? input.columns : undefined,
         });
         if (input.table === value.name)
-          selectedTable = { name: table.name, kind: table.kind, columns };
+          selectedTable = {
+            name: table.name,
+            kind: table.kind,
+            columns,
+            without_rowid: table.without_rowid,
+          };
         if (scope !== "inventory") table.columns = columns;
       }
       if (input.table === value.name && selectedTable === undefined)
@@ -522,6 +530,7 @@ const readSchema = (
           name: table.name,
           kind: table.kind,
           columns: table.columns,
+          without_rowid: table.without_rowid,
         };
       schema.tables.push(table);
     } else if (value.type === "index") {
@@ -593,7 +602,11 @@ const resultColumnLimitFailure = (
   cause: unknown,
   selectedColumns: number,
 ): SqliteColumnLimitFailure | undefined => {
-  if (sqlitePrimaryResultCode(cause) !== SQLITE_ERROR) return undefined;
+  // A statement wide enough to overflow SQLite's SQL-text length fails as
+  // SQLITE_TOOBIG before it can report the result-column limit, but the
+  // projection is still the reason it did.
+  const code = sqlitePrimaryResultCode(cause);
+  if (code !== SQLITE_ERROR && code !== SQLITE_TOOBIG) return undefined;
   const engineColumnLimit = db.limits.column;
   if (
     !Number.isSafeInteger(engineColumnLimit) ||
@@ -700,6 +713,76 @@ const rowEvaluationFailure = (
   );
 };
 
+type RowOrder = {
+  readonly order: "rowid" | "primary_key" | "unspecified";
+  readonly clause: string;
+};
+
+const indexKeyRow = z.object({
+  name: z.instanceof(Uint8Array),
+  desc: z.union([z.bigint(), z.number()]),
+  coll: z.instanceof(Uint8Array),
+});
+
+/**
+ * Choose the unique order a window is read in, without accepting caller SQL.
+ * A rowid table exposes an implicit rowid unless all three spellings are
+ * declared columns. A WITHOUT ROWID table orders by its primary key, reusing the
+ * index's own direction and collation so no sorter is introduced.
+ */
+const readRowOrder = (
+  db: DatabaseSync,
+  table: SelectedTableFacts,
+  encoding: DatabaseEncoding,
+): RowOrder => {
+  if (!table.without_rowid) {
+    const declared = new Set(
+      table.columns.map((column) => column.name.toLowerCase()),
+    );
+    return declared.has("rowid") &&
+      declared.has("_rowid_") &&
+      declared.has("oid")
+      ? { order: "unspecified", clause: "" }
+      : { order: "rowid", clause: " ORDER BY rowid" };
+  }
+  const key = table.columns
+    .filter((column) => column.primary_key_position !== 0)
+    .sort(
+      (left, right) => left.primary_key_position - right.primary_key_position,
+    );
+  if (key.length === 0) return { order: "unspecified", clause: "" };
+  const primaryKey = db
+    .prepare(
+      "SELECT CAST(name AS BLOB) AS name FROM temp.pragma_index_list(?) WHERE origin = 'pk'",
+    )
+    .get(table.name) as { readonly name: unknown } | undefined;
+  if (primaryKey === undefined) return { order: "unspecified", clause: "" };
+  const details = new Map<
+    string,
+    { readonly desc: boolean; readonly coll: string }
+  >();
+  for (const raw of db
+    .prepare(
+      'SELECT CAST(name AS BLOB) AS name, "desc", CAST(coll AS BLOB) AS coll FROM temp.pragma_index_xinfo(CAST(? AS BLOB)) WHERE key = 1',
+    )
+    .iterate(primaryKey.name as Uint8Array) as Iterable<unknown>) {
+    const { name, desc, coll } = indexKeyRow.parse(raw);
+    details.set(decodeSchemaText(name, encoding, "index column"), {
+      desc: desc === 1n || desc === 1,
+      coll: decodeSchemaText(coll, encoding, "collation"),
+    });
+  }
+  // The declared collation keeps NOCASE/RTRIM keys in index order; spelling it
+  // explicitly also prevents a caller column's own collation from re-sorting.
+  const terms = key.map((column) => {
+    const detail = details.get(column.name);
+    const collation =
+      detail === undefined ? "" : ` COLLATE ${quoteIdentifier(detail.coll)}`;
+    return `${quoteIdentifier(column.name)}${collation}${detail !== undefined && detail.desc ? " DESC" : ""}`;
+  });
+  return { order: "primary_key", clause: ` ORDER BY ${terms.join(", ")}` };
+};
+
 const readRows = (
   db: DatabaseSync,
   input: InspectSqliteDatabaseInput,
@@ -723,6 +806,7 @@ const readRows = (
       `Rows from ${table.kind} table ${input.table} are outside the ordinary-table inspection profile.`,
     );
   const limit = input.row_limit ?? SQLITE_ROW_LIMIT_DEFAULT;
+  const offset = input.row_offset ?? 0;
   const visibleColumns = table.columns
     .filter((column) => column.hidden !== 1)
     .map((column) => column.name);
@@ -741,6 +825,15 @@ const readRows = (
     })
     .join(", ");
   const source = `main.${quoteIdentifier(input.table)} NOT INDEXED`;
+  const { order, clause } = readRowOrder(db, table, encoding);
+  // An offset needs a stated order to mean anything; refuse instead of skipping
+  // an arbitrary prefix of an order the reply cannot claim.
+  if (offset > 0 && order === "unspecified")
+    throw new SqliteInspectionFailure(
+      "selection",
+      `row_offset requires a stated row order, but table ${input.table} shadows rowid, _rowid_ and oid and declares no primary key. Read the table without row_offset.`,
+    );
+  const window = `${source}${clause} LIMIT ? OFFSET ?`;
   const rows: NonNullable<SqliteDatabase["rows"]> = {
     table: input.table,
     columns,
@@ -748,19 +841,21 @@ const readRows = (
     row_limit: limit,
     returned_rows: 0,
     truncated: false,
-    order: "unspecified",
+    order,
+    row_offset: offset,
+    next_row_offset: null,
   };
   // Keep query-source, expression, capacity and malformed-data failures distinct.
   try {
     const lengths = db.prepare(
-      `SELECT ${columns.map(cellByteLength).join(", ")} FROM ${source} LIMIT ?`,
+      `SELECT ${columns.map(cellByteLength).join(", ")} FROM ${window}`,
     );
     lengths.setReturnArrays(true);
-    for (const raw of lengths.iterate(limit))
+    for (const raw of lengths.iterate(limit, offset))
       budget.beforeProjection(cellByteLengths.parse(raw));
-    const statement = db.prepare(`SELECT ${projection} FROM ${source} LIMIT ?`);
+    const statement = db.prepare(`SELECT ${projection} FROM ${window}`);
     statement.setReturnArrays(true);
-    for (const raw of statement.iterate(limit)) {
+    for (const raw of statement.iterate(limit, offset)) {
       const rawRow = arrayRow.parse(raw);
       // Hex expansion already belongs to the retained-output budget, before decoding/copying cells.
       budget.beforeDecode(rawRow);
@@ -769,8 +864,9 @@ const readRows = (
       rows.values.push(values);
     }
     rows.truncated =
-      db.prepare(`SELECT 1 FROM ${source} LIMIT 1 OFFSET ?`).get(limit) !==
-      undefined;
+      db
+        .prepare(`SELECT 1 FROM ${source}${clause} LIMIT 1 OFFSET ?`)
+        .get(offset + rows.values.length) !== undefined;
   } catch (cause: unknown) {
     throw rowEvaluationFailure(db, cause, {
       table,
@@ -781,6 +877,8 @@ const readRows = (
     });
   }
   rows.returned_rows = rows.values.length;
+  // Only a window with rows beyond it can be followed by another page.
+  rows.next_row_offset = rows.truncated ? offset + rows.returned_rows : null;
   return rows;
 };
 

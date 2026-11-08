@@ -609,7 +609,9 @@ it("inspects committed WAL schema and rows while preserving every source artifac
       returned_rows: 1,
       truncated: true,
       row_limit: 1,
-      order: "unspecified",
+      order: "rowid",
+      row_offset: 0,
+      next_row_offset: 1,
     },
   });
   for (const artifact of original) {

@@ -682,6 +682,98 @@ it("samples above 1000 rows and safe integer limits within the byte budget", asy
   }
 });
 
+it("pages a rowid table in rowid order without repeating or dropping rows", async () => {
+  const path = await createDatabase(`CREATE TABLE items(value TEXT);
+    INSERT INTO items(value) VALUES ('a'), ('b'), ('c'), ('d'), ('e');`);
+  const first = inspectSqliteDatabaseSnapshot(path, {
+    path,
+    table: "items",
+    row_limit: 2,
+  });
+  expect(first.rows).toMatchObject({
+    order: "rowid",
+    row_offset: 0,
+    returned_rows: 2,
+    truncated: true,
+    next_row_offset: 2,
+  });
+  const second = inspectSqliteDatabaseSnapshot(path, {
+    path,
+    table: "items",
+    row_limit: 2,
+    row_offset: first.rows?.next_row_offset ?? 0,
+  });
+  expect(second.rows).toMatchObject({
+    order: "rowid",
+    row_offset: 2,
+    returned_rows: 2,
+    truncated: true,
+    next_row_offset: 4,
+  });
+  const last = inspectSqliteDatabaseSnapshot(path, {
+    path,
+    table: "items",
+    row_limit: 2,
+    row_offset: second.rows?.next_row_offset ?? 0,
+  });
+  expect(last.rows).toMatchObject({
+    row_offset: 4,
+    returned_rows: 1,
+    truncated: false,
+    next_row_offset: null,
+  });
+});
+
+it("orders a WITHOUT ROWID table by its primary key, including DESC direction and collation", async () => {
+  const path = await createDatabase(`
+    CREATE TABLE ordered(k INTEGER, label TEXT COLLATE NOCASE, PRIMARY KEY(k DESC, label)) WITHOUT ROWID;
+    CREATE INDEX ordered_label ON ordered(label);
+    INSERT INTO ordered VALUES (1, 'b'), (3, 'a'), (2, 'c'), (3, 'd');`);
+  const result = inspectSqliteDatabaseSnapshot(path, {
+    path,
+    table: "ordered",
+    row_limit: 20,
+  });
+  expect(result.rows).toMatchObject({ order: "primary_key", truncated: false });
+  // k DESC, then label in its declared NOCASE order for equal keys.
+  expect(
+    result.rows?.values.map((row) =>
+      row.map((cell) => ("value" in cell ? cell.value : cell.type)),
+    ),
+  ).toEqual([
+    ["3", "a"],
+    ["3", "d"],
+    ["2", "c"],
+    ["1", "b"],
+  ]);
+});
+
+it("refuses a row offset when the table shadows rowid and declares no primary key", async () => {
+  const path = await createDatabase(
+    `CREATE TABLE shadowed(rowid TEXT, _rowid_ TEXT, oid TEXT);
+     INSERT INTO shadowed VALUES ('a', 'a', 'a'), ('b', 'b', 'b');`,
+  );
+  expect(
+    inspectSqliteDatabaseSnapshot(path, { path, table: "shadowed" }).rows,
+  ).toMatchObject({
+    order: "unspecified",
+    row_offset: 0,
+    next_row_offset: null,
+  });
+  expect(() =>
+    inspectSqliteDatabaseSnapshot(path, {
+      path,
+      table: "shadowed",
+      row_offset: 1,
+    }),
+  ).toThrow(
+    expect.objectContaining({
+      reason: "selection",
+      message: expect.stringContaining("row_offset"),
+    }),
+  );
+});
+
 nativeTest.skipIf(SQLITE_NATIVE_LIMITS_AVAILABLE)(
   "rejects a runtime without native limits before querying the snapshot",
   async () => {
