@@ -418,7 +418,11 @@ const addedChecks = (
     !room(collected, collected.values)
   )
     return;
-  if (isXmlElement(value)) elementChecks(collected, pointer, value);
+  if (
+    collected.context.tree.xml(collected.context.ends.final, pointer) &&
+    isXmlElement(value)
+  )
+    elementChecks(collected, pointer, value);
   else if (collected.context.texts.covers(pointer)) return;
   else if (Array.isArray(value) && value.length > 0) {
     const { keys } = pairMembers(value, []).newer;
@@ -471,6 +475,7 @@ const renamedFrom = (collected: Collected, pointer: string) => {
   const before = resolvePointer(ends.baseline, owner);
   const old = resolvePointer(ends.baseline, pointer);
   if (
+    !tree.xml(ends.baseline, owner) ||
     key === undefined ||
     list === undefined ||
     !(owner.split("/").at(-1) ?? "").includes("][@") ||

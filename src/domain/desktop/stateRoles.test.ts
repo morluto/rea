@@ -168,6 +168,23 @@ describe("stateReasons", () => {
     ).toBe(true);
   });
 
+  it("matches the selected symlink spelling when the window names it", () => {
+    const physical = "/home/ada/Music/blob.mscz";
+    const selected = "/home/ada/.scores/current.mscz";
+    const facts: DesktopRoleFacts = {
+      home: "/home/ada",
+      stateDirectories: [],
+      stateTails: [],
+      selectedRoots: [physical],
+      selections: [{ path: selected, physical }],
+      titles: ["current.mscz - MuseScore"],
+      openedFiles: new Set(),
+    };
+    const reasons = stateReasons(facts, physical, [], false);
+    expect(reasons).toContain("named_in_window_title");
+    expect(stateRole(reasons, ".scores/current.mscz")).toBe("document");
+  });
+
   it("marks the desktop Trash, where a file the user deleted keeps its name", () => {
     const facts: DesktopRoleFacts = {
       home: "/home/ada",
@@ -228,6 +245,34 @@ describe("sqliteSidecarRoots", () => {
       new Set([wal, journal]),
     );
     expect(sqliteSidecarRoots([wal])).toEqual(new Set());
+  });
+
+  it("keeps a separately selected journal-named document alongside automatic sidecars", () => {
+    const home = "/home/ada";
+    const report = `${home}/Documents/report`;
+    const journal = `${report}-journal`;
+    const database = `${home}/Documents/books.db`;
+    const facts = roleFacts({
+      host: { home },
+      application: { state_directories: [] },
+      state: {
+        content_roots: [report, journal, database, `${database}-journal`],
+        selected_paths: [report, journal, database].map((path) => ({
+          path,
+          physical: path,
+          kind: "file",
+        })),
+      },
+      session: { windows: [], opened_files: [] },
+    } as unknown as DesktopApplicationCapture);
+    expect(facts.sqliteSidecars).toEqual(new Set([`${database}-journal`]));
+    expect(facts.selectedRoots).toContain(journal);
+    expect(
+      stateRole(
+        stateReasons(facts, journal, [], false),
+        "Documents/report-journal",
+      ),
+    ).toBe("document");
   });
 
   it("keeps a selected folder whose name ends in -journal", () => {
