@@ -211,7 +211,9 @@ const readMemberText = async (
  */
 const decodeNuspecText = (
   bytes: Buffer,
-): { readonly kind: "text"; readonly text: string } | { readonly kind: "unreadable" } => {
+):
+  | { readonly kind: "text"; readonly text: string }
+  | { readonly kind: "unreadable" } => {
   const label =
     bytes[0] === 0xff && bytes[1] === 0xfe
       ? "utf-16le"
@@ -255,7 +257,8 @@ const inventoryMembers = async (
       nameVerified: entry.nameVerified,
       bytes: entry.declaredSize,
       directory: entry.kind === "directory",
-      encrypted: entry.encrypted || entry.kind === "symlink",
+      encrypted: entry.encrypted,
+      symlink: entry.kind === "symlink",
       text: read?.kind === "text" ? read.text : undefined,
       oversized: read?.kind === "oversized",
       limitations: entry.limitations,

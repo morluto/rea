@@ -125,6 +125,7 @@ export const nugetDiagnosticSchema = z.strictObject({
     "entry-limit-reached",
     "diagnostic-limit-reached",
     "encrypted-entry",
+    "symlink-entry",
     "directory-entry",
     "unsafe-entry-path",
   ]),

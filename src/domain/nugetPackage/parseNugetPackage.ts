@@ -27,6 +27,8 @@ export interface NugetArchiveMember {
   readonly bytes: number | null;
   readonly directory: boolean;
   readonly encrypted: boolean;
+  /** The archive states a Unix symlink; its target was not read. */
+  readonly symlink?: boolean | undefined;
   /** The decoded text of a `.nuspec` member; absent for every other member. */
   readonly text?: string | undefined;
   /** A `.nuspec` that exceeds the read allowance, which is not the same as unreadable. */
@@ -448,6 +450,17 @@ export const parseNugetPackage = (
       );
       admitted += 1;
       continue;
+    }
+    if (member.symlink) {
+      // A symlink is not an encrypted member: the archive states a distinct
+      // kind, and reading its target is what was skipped. Reporting it as
+      // encryption invents a package property and drops the security-relevant
+      // fact the archive did state.
+      budget.add(
+        member.path,
+        "symlink-entry",
+        "Unix symlink members are inventoried without following their target.",
+      );
     }
     if (isNuspecPath(path)) {
       // Count candidates before parsing: a second nuspec that fails to parse

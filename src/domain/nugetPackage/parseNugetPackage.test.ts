@@ -530,6 +530,22 @@ describe("parseNugetPackage: runtime folders and bounded reads", () => {
     expect(package_.source_coverage.status).toBe("partial");
   });
 
+  it("inventories a symlink member instead of calling it encrypted", () => {
+    const package_ = parsed(
+      parse([
+        member("lib/net8.0/Example.dll", { symlink: true }),
+        member("Example.nuspec", { text: NUSPEC }),
+      ]),
+    );
+    expect(package_.assets.map((asset) => asset.path)).toEqual([
+      "lib/net8.0/Example.dll",
+      "Example.nuspec",
+    ]);
+    const codes = package_.diagnostics.map((entry) => entry.code);
+    expect(codes).toContain("symlink-entry");
+    expect(codes).not.toContain("encrypted-entry");
+  });
+
   it("does not read an encrypted member and says so", () => {
     const package_ = parsed(
       parse([
