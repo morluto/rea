@@ -794,9 +794,52 @@ const TEXT_CASES: readonly (readonly [DesktopTaskCheckInput, boolean])[] = [
     },
     false,
   ],
+  [
+    {
+      kind: "text_contains",
+      file: "Documents/cut.xml",
+      pointer: "/root/children/2",
+      value: "later",
+    },
+    false,
+  ],
+  [
+    {
+      kind: "text_equals",
+      file: "Documents/listing.zip",
+      pointer: "/entries/1/view/root/children/2",
+      value: "later",
+    },
+    false,
+  ],
 ];
 
 /** Every kind of check against those views, each with the outcome both evaluators must give. */
+
+/** Failures a cut view may have caused, which both evaluators fail alike and REA marks undecided. */
+const CUT_VIEW_CASES: readonly (readonly [DesktopTaskCheckInput, boolean])[] = [
+  [{ kind: "lines_present", file: "Documents/long.txt", lines: ["z"] }, false],
+  [{ kind: "row_present", file: db, table: "big", where: { id: 9 } }, false],
+  [
+    {
+      kind: "value_equals",
+      file: "Documents/long.txt",
+      pointer: "/lines/5500",
+      value: "z",
+    },
+    false,
+  ],
+  [
+    {
+      kind: "value_equals",
+      file: "Documents/many.zip",
+      pointer: "/entries/1100/name",
+      value: "a.txt",
+    },
+    false,
+  ],
+];
+
 export const CHECK_CASES: readonly (readonly [
   DesktopTaskCheckInput,
   boolean,
@@ -1045,4 +1088,5 @@ export const CHECK_CASES: readonly (readonly [
   ...SELECTOR_CASES,
   ...TOLERANCE_CASES,
   ...TEXT_CASES,
+  ...CUT_VIEW_CASES,
 ];

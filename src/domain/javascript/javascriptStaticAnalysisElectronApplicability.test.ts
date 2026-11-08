@@ -26,11 +26,20 @@ describe("Electron applicability", () => {
     `import "electron";`,
     `import("electron");`,
     `require("electron");`,
-    `require.resolve("electron");`,
-  ])("recognizes actual Electron module references: %s", (source) => {
+  ])("recognizes Electron module loads: %s", (source) => {
     expect(
       analyzeJavaScriptStaticSource(source).analysis_coverage?.applicability
         .electron,
     ).toBe("observed");
+  });
+
+  it("retains a resolution reference without observing an Electron load", () => {
+    const analysis = analyzeJavaScriptStaticSource(
+      'require.resolve("electron");',
+    );
+    expect(analysis.references).toContainEqual(
+      expect.objectContaining({ specifier: "electron", operation: "resolve" }),
+    );
+    expect(analysis.analysis_coverage?.applicability.electron).toBe("unknown");
   });
 });

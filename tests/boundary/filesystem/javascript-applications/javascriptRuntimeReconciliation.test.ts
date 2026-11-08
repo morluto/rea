@@ -12,7 +12,7 @@ import { createEvidence } from "../../../../src/domain/evidence.js";
 import { mappedRuntimePaths } from "../../../../src/domain/javascript/javascriptRuntimeStaticCandidates.js";
 import { applicationNodeContentDigest } from "../../../../src/domain/javascript/javascriptApplicationFileIdentity.js";
 import { projectRuntimeCaptures } from "../../../../src/domain/javascript/javascriptRuntimeReconciliationRuntime.js";
-import { parseRuntimeCaptures } from "../../../../src/domain/javascript/javascriptRuntimeReconciliationCaptureParsing.js";
+import { parseRuntimeCapture } from "../../../../src/domain/javascript/javascriptRuntimeReconciliationCaptureParsing.js";
 import { electronPageInspectionSchema } from "../../../../src/domain/javascript/electronObservation.js";
 import {
   readRuntimeReconciliationInput,
@@ -378,7 +378,7 @@ it("preserves unknown Electron frame provenance without linking it to an authori
       },
     },
   });
-  const captures = parseRuntimeCaptures([evidence]);
+  const captures = [parseRuntimeCapture(evidence, ["runtime_observations", 0])];
   expect(captures[0]?.scriptsCompleteWithinScope).toBe(false);
   const projected = projectRuntimeCaptures(captures);
   const script = projected.entities.find(({ kind }) => kind === "script");
