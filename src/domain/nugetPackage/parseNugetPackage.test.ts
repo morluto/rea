@@ -638,6 +638,53 @@ describe("parseNugetPackage: runtime folders and bounded reads", () => {
     );
     expect(package_.source_coverage.status).toBe("complete-within-scope");
   });
+
+  it("keeps an unverified name uncertain when the same member was rewritten", () => {
+    const package_ = parsed(
+      parse([
+        member("Example.Package.nuspec", { text: NUSPEC }),
+        member("lib/net8.0/Exämple.dll", {
+          sourcePath: "./lib/net8.0/Exämple.dll",
+          nameVerified: false,
+          limitations: [
+            'ZIP member name "./lib/net8.0/Exämple.dll" has a leading current-directory prefix omitted from its logical path.',
+            "ZIP name uses CP437 fallback; source encoding unverified; raw hex: 2e2f6c69622f6e6574382e302f4578e46d706c652e646c6c.",
+          ],
+        }),
+      ]),
+    );
+    expect(package_.source_coverage.status).toBe("partial");
+  });
+
+  it("spends a readable nuspec once against the member allowance", () => {
+    // The same member is both an asset and the parsed nuspec; counting it twice
+    // would report this complete package as truncated.
+    const package_ = parsed(
+      parse([
+        member("Example.Package.nuspec", { text: NUSPEC }),
+        member("lib/net8.0/Example.dll"),
+      ], 2),
+    );
+    expect(package_.assets).toHaveLength(2);
+    expect(
+      package_.diagnostics.filter((entry) => entry.code === "entry-limit-reached"),
+    ).toEqual([]);
+    expect(package_.source_coverage.status).toBe("complete-within-scope");
+  });
+
+  it("reports the member allowance once when the archive continues", () => {
+    const package_ = parsed(
+      parse([
+        member("Example.Package.nuspec", { text: NUSPEC }),
+        member("lib/net8.0/Example.dll"),
+      ], 1),
+    );
+    expect(package_.assets).toHaveLength(1);
+    expect(package_.diagnostics).toEqual([
+      expect.objectContaining({ code: "entry-limit-reached" }),
+    ]);
+    expect(package_.source_coverage.status).toBe("partial");
+  });
 });
 
 describe("parseNugetPackage: stable identities", () => {

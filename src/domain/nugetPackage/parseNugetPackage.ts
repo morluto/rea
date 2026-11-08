@@ -22,6 +22,8 @@ export interface NugetArchiveMember {
   readonly path: string;
   /** The reader's own name for the member, present only when `path` rewrote it. */
   readonly sourcePath?: string | undefined;
+  /** Whether the reader verified the stored name; false means it is decoded guesswork. */
+  readonly nameVerified?: boolean | undefined;
   readonly bytes: number | null;
   readonly directory: boolean;
   readonly encrypted: boolean;
@@ -392,16 +394,22 @@ export const parseNugetPackage = (
   // Normalisation is recorded but never reduces coverage, so it needs its own
   // set: a fully read package with a `./` member is not a partial package.
   const normalisations = new Set<string>();
+  let admitted = 0;
 
   for (const member of members) {
-    if (assets.length + nuspecs.length >= options.maxEntries) {
+    // `members` is already the admitted slice, so the allowance applies to the
+    // archive members once; counting assets plus nuspecs again would spend a
+    // readable `.nuspec` twice and report a complete package as truncated.
+    if (admitted >= options.maxEntries) {
       truncated = true;
       break;
     }
     for (const limitation of member.limitations ?? [])
-      // The reader's own `sourcePath` states whether it rewrote the name; the
-      // limitation text is prose and may be reworded.
-      if (member.sourcePath !== undefined) normalisations.add(limitation);
+      // A rewritten name is a normalisation the reader states structurally, so
+      // it never reduces coverage; an unverified stored name is uncertainty and
+      // always does, whether or not the same member was also normalised.
+      if (member.sourcePath !== undefined && member.nameVerified !== false)
+        normalisations.add(limitation);
       else nameLimitations.add(limitation);
     const path = normalisePath(member.path);
     if (!isSafeMemberPath(path)) {
@@ -410,6 +418,7 @@ export const parseNugetPackage = (
         "unsafe-entry-path",
         "The member path leaves the package root and is not inventoried.",
       );
+      admitted += 1;
       continue;
     }
     if (member.encrypted) {
@@ -418,6 +427,7 @@ export const parseNugetPackage = (
         "encrypted-entry",
         "Encrypted archive members are not supported and were not read.",
       );
+      admitted += 1;
       continue;
     }
     if (isNuspecPath(path)) {
@@ -427,6 +437,7 @@ export const parseNugetPackage = (
       nuspecOf(member, nuspecs, budget);
     }
     assets.push(assetOf(member));
+    admitted += 1;
   }
 
   const packageWide = (code: NugetDiagnostic["code"], message: string) =>
@@ -448,10 +459,13 @@ export const parseNugetPackage = (
     );
 
   const diagnostics = budget.report();
-  // An undecoded stored name leaves the member path uncertain even though the
-  // entry itself was read, so coverage is partial and the uncertainty is published.
+  // A member name the reader could not verify makes the inventory a prefix in
+  // two ways: this pass kept every read member but cannot trust their spelling,
+  // and any member past the allowance was never read at all.
+  const nameUnverified = members.some((member) => member.nameVerified === false);
   const partial =
     truncated ||
+    nameUnverified ||
     nameLimitations.size > 0 ||
     diagnostics.some((entry) => entry.code !== "duplicate-nuspec");
 

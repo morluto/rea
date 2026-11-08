@@ -56,6 +56,8 @@ export interface ArtifactEntry {
   readonly formatMetadata?: ArtifactFormatMetadata;
   readonly unpacked: boolean;
   readonly limitations: readonly string[];
+  /** False when the reader only guessed the stored name; absent when it verified it. */
+  readonly nameVerified?: boolean;
   readonly adapterKey: string;
   /** Filesystem identity captured during traversal, when supplied by an adapter. */
   readonly sourceIdentity?: {

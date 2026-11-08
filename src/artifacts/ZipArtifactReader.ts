@@ -346,6 +346,7 @@ const projectZipEntry = (
   // Root directory markers carry no inventory occurrence. A file with this
   // spelling is still passed to the shared path validator and rejected there.
   if (kind === "directory" && (path === "" || path === ".")) return undefined;
+  const legacyNames = legacyNameLimitations(entry);
   return {
     path,
     ...(path === sourcePath ? {} : { sourcePath }),
@@ -364,8 +365,11 @@ const projectZipEntry = (
         : [
             `ZIP member name ${JSON.stringify(sourcePath)} has a leading current-directory prefix omitted from its logical path.`,
           ]),
-      ...legacyNameLimitations(entry),
+      ...legacyNames,
     ],
+    // A CP437 fallback name is a guess at the stored bytes, so the logical path
+    // is a projection of it rather than a verified spelling.
+    ...(legacyNames.length === 0 ? {} : { nameVerified: false }),
     adapterKey: `zip-entry:${index}`,
   };
 };
