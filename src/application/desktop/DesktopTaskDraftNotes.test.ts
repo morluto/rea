@@ -229,7 +229,9 @@ describe("draftDesktopApplicationTask notes", () => {
     expect(draft.notes.map(({ code }) => code)).toContain("incomplete_capture");
     expect(draft.notes.map(({ code }) => code)).not.toContain("no_change");
   });
+});
 
+describe("draftDesktopApplicationTask notes for unowned files", () => {
   it("lists the first five changed files outside the owned paths, desktop files last, when no document was recognized", async () => {
     const base = seedEndCapture();
     const untitled: DesktopApplicationCapture = {
