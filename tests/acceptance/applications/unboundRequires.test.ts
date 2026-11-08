@@ -17,6 +17,54 @@ import { writeFixtureFiles } from "../../support/javascriptApplicationFixture.js
 
 const execute = promisify(execFile);
 
+const expectResolverCandidates = (
+  graph: ReturnType<
+    typeof javascriptApplicationAnalysisResultSchema.parse
+  >["graph"],
+): void => {
+  for (const source of [
+    "upper-resolve.MJS",
+    "wrapped-resolve.TS",
+    "wrapped-receiver.TS",
+  ])
+    expect(graph.edges).toContainEqual(
+      expect.objectContaining({
+        relation: "imports",
+        properties: expect.objectContaining({
+          kind: "require",
+          operation: "resolve",
+          specifier: "./dep.cjs",
+          loader_authority: "candidate",
+          resolved_path: null,
+          resolution_mode: null,
+        }),
+        evidence: expect.objectContaining({
+          confidence: "low",
+          location: expect.objectContaining({
+            value: expect.objectContaining({ source }),
+          }),
+        }),
+      }),
+    );
+  for (const source of [
+    "upper-shadow.MJS",
+    "upper-mutated.MJS",
+    "wrapped-shadow.TS",
+    "wrapped-mutated.TS",
+  ]) {
+    expect(
+      graph.edges.some(
+        ({ properties, evidence }) =>
+          properties.loader_authority === "candidate" &&
+          properties.specifier === "./dep.cjs" &&
+          evidence.location.available &&
+          evidence.location.value.kind === "source-range" &&
+          evidence.location.value.source === source,
+      ),
+    ).toBe(false);
+  }
+};
+
 const expectUnknownLoaderCandidates = (
   graph: ReturnType<
     typeof javascriptApplicationAnalysisResultSchema.parse
@@ -65,47 +113,7 @@ const expectUnknownLoaderCandidates = (
   expect(staticCandidate?.evidence.limitations.join(" ")).toContain(
     "loader is unknown",
   );
-  for (const source of [
-    "upper-resolve.MJS",
-    "wrapped-resolve.TS",
-    "wrapped-receiver.TS",
-  ])
-    expect(graph.edges).toContainEqual(
-      expect.objectContaining({
-        relation: "imports",
-        properties: expect.objectContaining({
-          kind: "require",
-          operation: "resolve",
-          specifier: "./dep.cjs",
-          loader_authority: "candidate",
-          resolved_path: null,
-          resolution_mode: null,
-        }),
-        evidence: expect.objectContaining({
-          confidence: "low",
-          location: expect.objectContaining({
-            value: expect.objectContaining({ source }),
-          }),
-        }),
-      }),
-    );
-  for (const source of [
-    "upper-shadow.MJS",
-    "upper-mutated.MJS",
-    "wrapped-shadow.TS",
-    "wrapped-mutated.TS",
-  ]) {
-    expect(
-      graph.edges.some(
-        ({ properties, evidence }) =>
-          properties.loader_authority === "candidate" &&
-          properties.specifier === "./dep.cjs" &&
-          evidence.location.available &&
-          evidence.location.value.kind === "source-range" &&
-          evidence.location.value.source === source,
-      ),
-    ).toBe(false);
-  }
+  expectResolverCandidates(graph);
   const candidateExports = graph.edges.filter(
     ({ relation, properties, evidence }) =>
       relation === "exposes" &&
