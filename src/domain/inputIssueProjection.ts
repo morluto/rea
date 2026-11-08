@@ -1,4 +1,4 @@
-import type { z } from "zod";
+import type { util, z } from "zod";
 import {
   AnalysisInputError,
   type AnalysisInputIssue,
@@ -251,7 +251,31 @@ const projectIssue = (
         },
       ];
     }
-    return uniqueIssues(
+    // A union tag selects branches. When branches declare literal sets for one
+    // tag property, only the branches accepting the supplied tag describe the
+    // caller's mistake; sibling branches report unrelated field paths.
+    const tagged = narrowUnionBranch(issue, path, input);
+    if (tagged !== undefined) {
+      if (tagged.branches.length === 0)
+        return [
+          {
+            path: [...path, ...tagged.tagPath],
+            reason: "invalid_value",
+            expected: [...mergeTagLiterals(issue.errors, tagged.tagPath)],
+          },
+        ];
+      return mergeAgreeingIssues(
+        tagged.branches.flatMap((branchIssue) =>
+          projectIssue(
+            nestedIssue(issue, branchIssue, budget),
+            input,
+            budget,
+            operation,
+          ),
+        ),
+      );
+    }
+    return mergeAgreeingIssues(
       issue.errors.flatMap((branch) =>
         branch.flatMap((branchIssue) =>
           projectIssue(
@@ -318,11 +342,191 @@ const projectIssue = (
   ];
 };
 
+const isSafeExpected = (
+  value: unknown,
+): value is string | number | boolean | null =>
+  value === null || ["string", "number", "boolean"].includes(typeof value);
+
+const safeExpected = (value: unknown) =>
+  isSafeExpected(value) ? value : "schema-defined value";
+
+const isTagLiteralValue = (value: unknown): value is string | number =>
+  typeof value === "string" || typeof value === "number";
+
 const uniqueIssues = (
   issues: readonly AnalysisInputIssue[],
 ): AnalysisInputIssue[] => [
   ...new Map(issues.map((issue) => [JSON.stringify(issue), issue])).values(),
 ];
+
+const issuePath = (
+  path: readonly (string | number | PropertyKey)[],
+): readonly (string | number)[] =>
+  path.filter(
+    (part): part is string | number =>
+      typeof part === "string" || typeof part === "number",
+  );
+
+const samePath = (
+  left: readonly (string | number)[],
+  right: readonly (string | number)[],
+): boolean =>
+  left.length === right.length &&
+  left.every((part, index) => part === right[index]);
+
+/** Collapse branch expectations that agree into one correction per path. */
+const mergeAgreeingIssues = (
+  issues: readonly AnalysisInputIssue[],
+): AnalysisInputIssue[] => {
+  const merged: AnalysisInputIssue[] = [];
+  for (const issue of issues) {
+    const index = merged.findIndex(
+      (other) =>
+        other.reason === issue.reason &&
+        other.message === issue.message &&
+        Array.isArray(other.expected) &&
+        Array.isArray(issue.expected) &&
+        samePath(other.path, issue.path),
+    );
+    const existing = index === -1 ? undefined : merged[index];
+    if (
+      existing === undefined ||
+      !Array.isArray(existing.expected) ||
+      !Array.isArray(issue.expected)
+    ) {
+      merged.push(issue);
+    } else {
+      merged[index] = {
+        ...existing,
+        expected: [...new Set([...existing.expected, ...issue.expected])],
+      };
+    }
+  }
+  return uniqueIssues(merged);
+};
+
+const isTagLiterals = (
+  issue: z.core.$ZodIssue,
+): issue is z.core.$ZodIssue & {
+  readonly code: "invalid_value";
+  readonly values: readonly util.Primitive[];
+} => issue.code === "invalid_value" && issue.values.length > 0;
+
+/** Property paths whose accepted literals differ between union branches. */
+const taggedFieldPaths = (
+  issue: z.core.$ZodIssue & { readonly code: "invalid_union" },
+): readonly (readonly (string | number)[])[] => {
+  const paths = new Map<string, readonly (string | number)[]>();
+  for (const branch of issue.errors)
+    for (const branchIssue of flattenUnionBranches(branch)) {
+      if (!isTagLiterals(branchIssue)) continue;
+      const path = issuePath(branchIssue.path);
+      paths.set(JSON.stringify(path), path);
+    }
+  return [...paths.values()];
+};
+
+/** Nested unions inside a branch report their own literals one level down. */
+const flattenUnionBranches = (
+  branch: readonly z.core.$ZodIssue[],
+): readonly z.core.$ZodIssue[] =>
+  branch.flatMap((branchIssue) =>
+    branchIssue.code === "invalid_union" && branchIssue.errors.length > 0
+      ? branchIssue.errors.flat().map((nested) => ({
+          ...nested,
+          path: [...issuePath(branchIssue.path), ...nested.path],
+        }))
+      : [branchIssue],
+  );
+
+const branchTagLiterals = (
+  branch: readonly z.core.$ZodIssue[],
+  tagPath: readonly (string | number)[],
+): readonly (string | number)[] | undefined => {
+  const declared = flattenUnionBranches(branch)
+    .filter(
+      (branchIssue) =>
+        isTagLiterals(branchIssue) &&
+        samePath(issuePath(branchIssue.path), tagPath),
+    )
+    .flatMap((branchIssue) =>
+      branchIssue.code === "invalid_value"
+        ? branchIssue.values.filter(isTagLiteralValue)
+        : [],
+    );
+  return declared.length === 0 ? undefined : declared;
+};
+
+/** Literals any branch declares for one tag property, in schema order. */
+const mergeTagLiterals = (
+  branches: readonly (readonly z.core.$ZodIssue[])[],
+  tagPath: readonly (string | number)[],
+): readonly (string | number)[] => [
+  ...new Set(
+    branches.flatMap((branch) => branchTagLiterals(branch, tagPath) ?? []),
+  ),
+];
+
+/**
+ * Keep the diagnostics from branches whose tag literals accept the supplied
+ * tag, dropping the tag rejection they all share. Undefined means no tag
+ * discriminates the branches.
+ */
+const narrowUnionBranch = (
+  issue: z.core.$ZodIssue & { readonly code: "invalid_union" },
+  path: readonly (string | number)[],
+  input: unknown,
+):
+  | {
+      readonly branches: readonly z.core.$ZodIssue[];
+      readonly tagPath: readonly (string | number)[];
+    }
+  | undefined => {
+  const supplied = valueAtPath(input, path);
+  if (typeof supplied !== "object" || supplied === null) return undefined;
+  for (const tagPath of taggedFieldPaths(issue)) {
+    const tag = valueAtPath(supplied, tagPath);
+
+    if (typeof tag !== "string" && typeof tag !== "number") continue;
+    const literals = issue.errors.map((branch) =>
+      branchTagLiterals(branch, tagPath),
+    );
+    const accepts = (values: readonly (string | number)[] | undefined) =>
+      values === undefined || values.includes(tag);
+    const accepting = literals
+      .map((values, index) => ({ values, index }))
+      .filter(({ values }) => accepts(values));
+    // A property selects branches when the branches declaring its literals
+    // agree on which tag they accept and at least one rejects the supplied tag.
+    // A branch reporting the property for an unrelated reason (an unusable
+    // value rather than a literal mismatch) is not part of that selector.
+    if (
+      !literals.some((values) => values !== undefined && !values.includes(tag))
+    )
+      continue;
+    if (accepting.length === issue.errors.length) continue;
+    const unrelated = issue.errors.some((branch, index) => {
+      const declared = literals[index];
+      if (declared !== undefined) return false;
+      return branch.some(
+        (branchIssue) =>
+          samePath(issuePath(branchIssue.path), tagPath) &&
+          branchIssue.code !== "invalid_value",
+      );
+    });
+    if (unrelated) continue;
+    return {
+      branches: accepting.flatMap(
+        ({ index }) =>
+          issue.errors[index]?.filter(
+            (branchIssue) => !samePath(issuePath(branchIssue.path), tagPath),
+          ) ?? [],
+      ),
+      tagPath,
+    };
+  }
+  return undefined;
+};
 
 const valueAtPath = (input: unknown, path: readonly PropertyKey[]): unknown => {
   let current = input;
@@ -336,14 +540,6 @@ const valueAtPath = (input: unknown, path: readonly PropertyKey[]): unknown => {
 
 const numericBound = (value: number | bigint): number | undefined =>
   typeof value === "number" && Number.isFinite(value) ? value : undefined;
-
-const isSafeExpected = (
-  value: unknown,
-): value is string | number | boolean | null =>
-  value === null || ["string", "number", "boolean"].includes(typeof value);
-
-const safeExpected = (value: unknown) =>
-  isSafeExpected(value) ? value : "schema-defined value";
 
 const boundedIssue = (
   path: readonly (string | number)[],

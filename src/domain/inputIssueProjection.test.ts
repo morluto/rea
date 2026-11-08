@@ -154,6 +154,83 @@ describe("input issue projection", () => {
   });
 });
 
+describe("union branch diagnostics", () => {
+  it("narrows union diagnostics to the branches a supplied tag selects", () => {
+    const schema = z.object({
+      seed: z.union([
+        z.strictObject({ kind: z.literal("node-id"), value: z.string() }),
+        z.strictObject({ kind: z.literal("route"), path: z.array(z.string()) }),
+      ]),
+    });
+
+    const unmatched = { seed: { kind: "node", value: "x" } };
+    const unmatchedParse = schema.safeParse(unmatched);
+    if (unmatchedParse.success) throw new Error("expected invalid input");
+    expect(projectInputIssues(unmatchedParse.error.issues, unmatched)).toEqual([
+      {
+        path: ["seed", "kind"],
+        reason: "invalid_value",
+        expected: ["node-id", "route"],
+      },
+    ]);
+
+    const selected = { seed: { kind: "route", value: "x" } };
+    const selectedParse = schema.safeParse(selected);
+    if (selectedParse.success) throw new Error("expected invalid input");
+    expect(projectInputIssues(selectedParse.error.issues, selected)).toEqual([
+      { path: ["seed", "path"], reason: "missing_argument", expected: "array" },
+      { path: ["seed", "value"], reason: "unknown_argument" },
+    ]);
+  });
+
+  it("still narrows when the branch accepts a tag it does not declare", () => {
+    const schema = z.object({
+      seed: z.union([
+        z.strictObject({ kind: z.literal("a"), items: z.array(z.string()) }),
+        z.strictObject({ count: z.number() }),
+      ]),
+    });
+    const unmatched = { seed: { items: "x" } };
+    const unmatchedParse = schema.safeParse(unmatched);
+    if (unmatchedParse.success) throw new Error("expected invalid input");
+    expect(projectInputIssues(unmatchedParse.error.issues, unmatched)).toEqual([
+      { path: ["seed", "kind"], reason: "invalid_value", expected: ["a"] },
+      { path: ["seed", "items"], reason: "invalid_type", expected: "array" },
+      {
+        path: ["seed", "count"],
+        reason: "missing_argument",
+        expected: "number",
+      },
+      { path: ["seed", "items"], reason: "unknown_argument" },
+    ]);
+  });
+
+  it("merges literal expectations reported at one path across branches", () => {
+    const schema = z.object({
+      roots: z.union([
+        z.strictObject({
+          mode: z.literal("a"),
+          field: z.enum(["name", "size"]),
+        }),
+        z.strictObject({
+          mode: z.literal("b"),
+          field: z.enum(["size", "type"]),
+        }),
+      ]),
+    });
+    const input = { roots: { mode: "a", field: "weight" } };
+    const parsed = schema.safeParse(input);
+    if (parsed.success) throw new Error("expected invalid input");
+    expect(projectInputIssues(parsed.error.issues, input)).toEqual([
+      {
+        path: ["roots", "field"],
+        reason: "invalid_value",
+        expected: ["name", "size", "type"],
+      },
+    ]);
+  });
+});
+
 describe("input issue argument guidance", () => {
   it("guides callers from neighboring-tool argument names while keeping unknown keys strict", () => {
     const input = { address: "0x401000", count: 10 };
