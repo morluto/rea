@@ -34,8 +34,6 @@ export default defineConfig({
       "tests/boundary/providers/RizinDebugSessionCoverage.part3.test.ts",
       "tests/boundary/providers/RizinDebugSessionCoverage.part4.test.ts",
       "tests/boundary/providers/RizinDebugSessionCoverage.part5.test.ts",
-      "tests/boundary/providers/RizinTimeoutEvidence.test.ts",
-      "tests/boundary/providers/RizinCommandTimeout.test.ts",
       "tests/boundary/providers/CutterBridgeClient.test.ts",
       "tests/boundary/providers/CutterBridgeCapacity.test.ts",
       "tests/boundary/providers/cutterBridgeProducer.test.ts",
