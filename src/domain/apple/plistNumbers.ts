@@ -45,6 +45,26 @@ export const createPlistNumberCollector = () => {
   };
 };
 
+/**
+ * Drop integer literals already decoded exactly from their source objects, so their
+ * rounded values no longer collide with integral reals during value-based association.
+ */
+export const withoutDecodedPlistIntegers = (
+  literals: PlistNumberLiterals,
+  decimals: Iterable<string>,
+): PlistNumberLiterals => {
+  const integers = new Map(
+    [...literals.integers].map(([rounded, set]) => [rounded, new Set(set)]),
+  );
+  for (const decimal of decimals) {
+    const rounded = Number(BigInt(decimal));
+    const candidates = integers.get(rounded);
+    candidates?.delete(decimal);
+    if (candidates?.size === 0) integers.delete(rounded);
+  }
+  return { ...literals, integers };
+};
+
 /** One association established from source literals, before adapter projection. */
 type PlistNumberSource =
   | { readonly kind: "integer"; readonly decimal: string }

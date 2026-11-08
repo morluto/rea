@@ -36,6 +36,7 @@ import {
   incompletePlistNumberLimitation,
   createPlistNumberProjection,
   resolvePlistNumberSource,
+  withoutDecodedPlistIntegers,
   type PlistNumberLiterals,
 } from "../../domain/apple/plistNumbers.js";
 import { UnsupportedBinaryPlistUidError } from "../../domain/apple/plistScalars.js";
@@ -394,15 +395,21 @@ export const parsePlistBinary = (
     const decoded = decodeBinaryPropertyList(bytes, expansion, undefined, {
       exactIntegers: true,
     });
-    let decodedExactIntegers = 0;
+    const decodedIntegers: string[] = [];
     const projected = projectPlistValue(
       decoded.value,
       (wrapped) => {
-        if (wrapped.$plist_type === "integer") decodedExactIntegers += 1;
+        if (
+          wrapped.$plist_type === "integer" &&
+          typeof wrapped.decimal === "string"
+        )
+          decodedIntegers.push(wrapped.decimal);
       },
       MAX_NATIVE_PLIST_NESTING_DEPTH,
     );
-    const numbers = createPlistNumberProjection(decoded.numberLiterals);
+    const numbers = createPlistNumberProjection(
+      withoutDecodedPlistIntegers(decoded.numberLiterals, decodedIntegers),
+    );
     const value = numbers.project(projected.value);
     return ok({
       value,
@@ -416,7 +423,7 @@ export const parsePlistBinary = (
                 expansion.datePrecisionOverlapCount,
               ),
             ]),
-        ...numbers.limitations(decodedExactIntegers),
+        ...numbers.limitations(decodedIntegers.length),
         ...plistDuplicateKeyLimitations(decoded.duplicateKeys),
       ],
     });
