@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { promisify } from "node:util";
 
@@ -47,12 +47,16 @@ it.skipIf(process.platform === "win32")(
   async () => {
     const { root, bin, home } = await buildHost("rea-desktop-doctor-defaults-");
     await program(join(bin, "docker"), "exit 1");
-    await program(join(bin, "agent-env"), 'echo "agent-env 0.9.1431"');
+    await program(
+      join(bin, "agent-env"),
+      'printf x >> "$REA_TEST_RUNNER_LOG"; echo "agent-env 0.9.1431"',
+    );
     const environment = {
       HOME: home,
       USERPROFILE: home,
       PATH: `${bin}:/usr/bin:/bin`,
       XDG_CACHE_HOME: join(root, "cache"),
+      REA_TEST_RUNNER_LOG: join(root, "runner-log"),
     };
     await writeFile(
       join(home, ".claude.json"),
@@ -74,6 +78,7 @@ it.skipIf(process.platform === "win32")(
       }),
     );
     const facts = await readFacts(environment, ["claude_code"]);
+    expect(await readFile(environment.REA_TEST_RUNNER_LOG, "utf8")).toBe("x");
     expect(facts.registrations).toMatchObject([
       {
         client: "claude_code",

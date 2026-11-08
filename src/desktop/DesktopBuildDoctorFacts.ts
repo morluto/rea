@@ -44,6 +44,14 @@ export const readDesktopBuildFacts = async (
     "REA_AGENT_ENV_COMMAND",
     "agent-env",
   );
+  const versions = new Map<string, Promise<string | undefined>>();
+  const versionFor = (path: string): Promise<string | undefined> => {
+    const existing = versions.get(path);
+    if (existing !== undefined) return existing;
+    const pending = agentEnvVersion(input, path);
+    versions.set(path, pending);
+    return pending;
+  };
   const archive = await archiveFact(input);
   const chosenCommand = (
     name: BuildComputerSetting,
@@ -76,10 +84,10 @@ export const readDesktopBuildFacts = async (
     ),
     agentEnv:
       agentEnv.status === "found"
-        ? { ...agentEnv, version: await agentEnvVersion(input, agentEnv.path) }
+        ? { ...agentEnv, version: await versionFor(agentEnv.path) }
         : agentEnv,
     archive,
-    registrations: await registrationFacts(input, selectedSettings),
+    registrations: await registrationFacts(input, selectedSettings, versionFor),
     environmentSettings: BUILD_COMPUTER_SETTINGS.filter(
       (name) => (environment[name] ?? "") !== "",
     ),
@@ -262,6 +270,7 @@ const archiveFact = async (
 const registrationFacts = async (
   input: DesktopBuildFactsInput,
   selectedSettings: Partial<Record<BuildComputerSetting, string>>,
+  versionFor: (path: string) => Promise<string | undefined>,
 ): Promise<DesktopBuildFacts["registrations"]> => {
   const selected = input.clientIds.length === 0 ? undefined : input.clientIds;
   const recordedRunners = new Map<string, string>();
@@ -294,7 +303,7 @@ const registrationFacts = async (
         if (!isAbsolute(recordedRunner) || !(await executable(recordedRunner)))
           runner = { status: "invalid" };
         else {
-          const version = await agentEnvVersion(input, recordedRunner);
+          const version = await versionFor(recordedRunner);
           runner =
             version === undefined
               ? { status: "unknown" }

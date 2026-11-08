@@ -312,6 +312,9 @@ describe("desktop build registration checks", () => {
       detail: expect.stringContaining("REA_AGENT_ENV_COMMAND"),
     });
   });
+});
+
+describe("desktop build registration settings", () => {
   it("reports differing or unchecked recorded paths instead of healthy", async () => {
     for (const fact of [
       { differing: ["REA_AGENT_ENV_COMMAND"] },
