@@ -66,12 +66,26 @@ const draft = async (
     ends,
     seeding,
   );
+  const covered = (index: number) => {
+    const point = capture.state.checkpoints[index];
+    return (
+      point !== undefined &&
+      !point.truncated &&
+      point.unreadable_directories === 0 &&
+      point.unchecked_paths === 0 &&
+      point.unconfirmed_changes === 0
+    );
+  };
   const notes = draftNotes(files, {
     drafted,
     owned: paths,
     dconf,
     ends,
     checkpoints,
+    observed: Array.from(
+      { length: ends.end - ends.seed + 1 },
+      (_, offset) => ends.seed + offset,
+    ).every(covered),
   });
   const environment = exportEnvironmentName(capture, undefined);
   const result = {

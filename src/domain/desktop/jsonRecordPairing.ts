@@ -10,6 +10,8 @@ import { MAX_INSIDE_STEPS, spellCondition } from "./viewSelector.js";
 
 /** A field naming a JSON record, as TreeLine's `uid`: `id`, `uid`, `uuid`, `guid`, `key`, or a name ending in `_id`, `-id` or `Id`. */
 const ID_FIELD = /^(?:_?id|uid|uuid|guid|key)$|[_-]id$|[a-z]Id$/u;
+/** The record's own id, ahead of a relationship such as `parent_id`, which also matches `ID_FIELD`. */
+const OWN_ID = ["uid", "uuid", "guid", "id", "key"];
 
 /** A field naming what kind of record a member is, as TreeLine's `format="BOOK"`. */
 export const KIND_FIELD = /^(?:type|kind|format|category)$/iu;
@@ -213,13 +215,22 @@ export const pairRecordsById = (
   const [first] = [...newer, ...older];
   if (!isJsonRecord(first ?? null) || ![...newer, ...older].every(isJsonRecord))
     return undefined;
-  const key = Object.keys(first ?? {}).find(
-    (field) =>
-      ID_FIELD.test(field) &&
-      !/[=[\]]/u.test(field) &&
-      namesEach(newer, field) &&
-      namesEach(older, field),
-  );
+  const key = Object.keys(first ?? {})
+    .filter(
+      (field) =>
+        ID_FIELD.test(field) &&
+        // `[@attr]` and `[>child]` are selector marks, not a JSON field's name.
+        !/^[@>]|[=[\]]/u.test(field) &&
+        namesEach(newer, field) &&
+        namesEach(older, field),
+    )
+    .toSorted((left, right) => {
+      const rank = (field: string) => {
+        const own = OWN_ID.indexOf(field.toLowerCase());
+        return own < 0 ? OWN_ID.length : own;
+      };
+      return rank(left) - rank(right);
+    })[0];
   if (key === undefined) return undefined;
   const idOf = (member: JsonValue) =>
     isJsonRecord(member) ? String(member[key]) : "";

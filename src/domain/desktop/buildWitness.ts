@@ -29,6 +29,11 @@ export type WitnessExpectation = "some_fail" | "all_pass";
 export interface WitnessActionLog {
   readonly total: number;
   readonly lastApplied: Readonly<Partial<Record<ComputerAction, number>>>;
+  /**
+   * The index of the last reset whose reply was lost. It is not applied, and
+   * it is not absent: a near miss cannot use the input before it.
+   */
+  readonly lastUnsettled?: Readonly<Partial<Record<ComputerAction, number>>>;
 }
 
 /** One stage's checks, with how many logged actions came before it. */
@@ -63,28 +68,49 @@ export const stageExpectation = (stage: WitnessStage): WitnessExpectation =>
 /** What a stage's results show of it: that it held, that it did not, or, when only undecided checks could tell, nothing. */
 export type StageVerdict = "held" | "not_held" | "undecided";
 
-/** The checks whose result after a reset differs from the filed seed's, or that the seed decided and the reset leaves undecided; a reset that restores the seed leaves none. */
-export const unrestoredChecks = <
-  Outcome extends Pick<TaskCheckOutcome, "id" | "passed" | "undecided">,
->(
+type ComparedOutcome = Pick<TaskCheckOutcome, "id" | "passed" | "undecided">;
+
+const seedResults = (
+  stages: readonly WitnessStageRecord[],
+): Map<string, Pick<TaskCheckOutcome, "passed" | "undecided">> =>
+  new Map(
+    stages
+      .find((filed) => filed.stage === "seed")
+      ?.results.map((result) => [result.id, result]),
+  );
+
+/**
+ * The checks whose decided result after a reset differs from a decided seed
+ * result. A seed result that was unreadable is not a failure to compare
+ * against; a reset that restores the seed leaves none.
+ */
+export const unrestoredChecks = <Outcome extends ComparedOutcome>(
   stages: readonly WitnessStageRecord[],
   results: readonly Outcome[],
 ): Outcome[] => {
-  const seed = new Map(
-    stages
-      .find((filed) => filed.stage === "seed")
-      ?.results.map((result): [string, TaskCheckOutcome] => [
-        result.id,
-        result,
-      ]),
-  );
+  const seed = seedResults(stages);
   return results.filter((result) => {
     const filed = seed.get(result.id);
-    return (
-      filed === undefined ||
-      filed.passed !== result.passed ||
-      (filed.undecided !== true && result.undecided === true)
-    );
+    if (filed === undefined) return true;
+    if (filed.undecided === true) return false;
+    return filed.passed !== result.passed;
+  });
+};
+
+/**
+ * Checks whose seed comparison is unknown: either the filed seed result or the
+ * result after the reset was not read. An unreadable `false` is not the same
+ * result as a decided `false`.
+ */
+export const unreadResetChecks = <Outcome extends ComparedOutcome>(
+  stages: readonly WitnessStageRecord[],
+  results: readonly Outcome[],
+): Outcome[] => {
+  const seed = seedResults(stages);
+  return results.filter((result) => {
+    const filed = seed.get(result.id);
+    if (filed === undefined) return false;
+    return filed.undecided === true || result.undecided === true;
   });
 };
 
@@ -104,7 +130,8 @@ export const stageVerdict = (
     const unrestored = unrestoredChecks(stages, results);
     if (unrestored.some((result) => result.undecided !== true))
       return "not_held";
-    if (unrestored.length > 0) return "undecided";
+    if (unrestored.length > 0 || unreadResetChecks(stages, results).length > 0)
+      return "undecided";
   }
   const failed = results.filter((result) => !result.passed);
   const shown = failed.some((result) => result.undecided !== true);
@@ -121,11 +148,17 @@ const notAnEdit = (
   latest: {
     readonly input: number;
     readonly reset: number;
+    readonly unsettledReset: number;
     readonly from: number;
   },
 ): string | undefined => {
   if (latest.input < latest.from)
     return `Before checking ${stage}, act on the app with act_on_build_computer: no click, drag, scroll, type or key was applied since ${since}, and a reset does not count.`;
+  if (
+    latest.unsettledReset > latest.reset &&
+    latest.unsettledReset > latest.input
+  )
+    return `A reset since ${since} lost its reply, so whether it restored the seed is unknown. Reset again, or act after a reset whose reply you have, before checking ${stage}.`;
   if (latest.reset > latest.input)
     return `A reset since ${since} put the seed back; act on the app after it before checking ${stage}.`;
   return undefined;
@@ -156,12 +189,21 @@ export const admitWitnessStage = (
     from: stages.at(-1)?.actions_before ?? 0,
     input: Math.max(-1, ...INPUT.map((kind) => log.lastApplied[kind] ?? -1)),
     reset: log.lastApplied.reset ?? -1,
+    unsettledReset: log.lastUnsettled?.reset ?? -1,
   };
   const edit =
     stage === "after_edit" || stage === "near_miss"
       ? notAnEdit(stage, stages.at(-1)?.stage ?? "the start", latest)
       : undefined;
   if (edit !== undefined) return err(edit);
+  if (
+    stage === "after_reset" &&
+    latest.unsettledReset > latest.reset &&
+    latest.unsettledReset >= latest.from
+  )
+    return err(
+      "The last reset's reply was lost, so whether it restored the seed is unknown. Reset again, then check after_reset once that reset is applied.",
+    );
   if (
     stage === "after_reset" &&
     (latest.reset < latest.from || latest.reset < latest.input)

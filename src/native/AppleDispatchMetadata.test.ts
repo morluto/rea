@@ -1466,8 +1466,9 @@ describe("Objective-C category class references without a class name", () => {
     bytes.writeUInt32LE(bindings.length, 284);
     expect(categoryCoverage(bytes)).toMatchObject({
       status: "partial",
-      reason:
-        "category_class_unresolved at 0x100000b48: Category FixtureCategory class reference is bound to _$s4Main3FooCN, which is not read as an Objective-C class name",
+      reason: expect.stringMatching(
+        /category_class_unresolved.*0x100000b48.*FixtureCategory.*_\$s4Main3FooCN.*not read as an Objective-C class name/iu,
+      ),
     });
   });
 
@@ -2478,3 +2479,144 @@ it.each([false, true])(
     ).toBe(unreadParent ? "partial" : "complete");
   },
 );
+
+describe("Objective-C adopted protocol-list count limit", () => {
+  // Root class and metaclass that adopt the fixture protocol through the
+  // class_ro_t base protocol list at 0x700.
+  const rootClass = (protocolCount: bigint, category?: "partial-method") => {
+    const bytes = fixture(false, category);
+    bytes.writeUInt32LE(2, 12);
+    bytes.writeUInt32LE(5, 88);
+    bytes.writeUInt32LE(2, 0x300);
+    bytes.writeUInt32LE(3, 0x380);
+    bytes.writeBigUInt64LE(protocolCount, 0x700);
+    return bytes;
+  };
+  const classCoverage = (
+    result: ReturnType<typeof decodeAppleDispatchMetadata>,
+  ) =>
+    result.coverage.find(
+      ({ facet }) => facet === "objc_class_method_ivar_metadata",
+    );
+
+  it("retains the class and metaclass rows when the list exceeds its count limit", () => {
+    const result = decodeAppleDispatchMetadata(
+      rootClass(20001n),
+      100,
+      provenance,
+    );
+    expect(
+      result.objc_classes.map(({ name, is_meta_class, protocols, decode }) => ({
+        name,
+        is_meta_class,
+        protocols,
+        decode,
+      })),
+    ).toEqual([
+      {
+        name: "Fixture",
+        is_meta_class: false,
+        protocols: [],
+        decode: { status: "partial", reason: "protocol_list_unreadable" },
+      },
+      // The metaclass has no adopted-protocol list of its own.
+      {
+        name: "Fixture",
+        is_meta_class: true,
+        protocols: [],
+        decode: { status: "decoded", reason: null },
+      },
+    ]);
+    expect(result.objc_classes[0]?.properties).toHaveLength(3);
+    expect(result.objc_ivars).toHaveLength(1);
+    expect(result.objc_dispatch_implementations).toMatchObject([
+      { class_name: "Fixture", selector: "performAction:" },
+    ]);
+    expect(classCoverage(result)).toMatchObject({
+      status: "partial",
+      // The class row is retained as partial, so it is examined but not
+      // counted as fully decoded; the metaclass is fully decoded.
+      examined: 2,
+      decoded: 1,
+    });
+  });
+
+  it("retains the readable protocol prefix when a later list slot is unmapped", () => {
+    const bytes = rootClass(2n);
+    bytes.writeBigUInt64LE(base + 0x5000n, 0x710);
+    const result = decodeAppleDispatchMetadata(bytes, 100, provenance);
+    expect(result.objc_classes).toMatchObject([
+      {
+        name: "Fixture",
+        protocols: ["FixtureProtocol"],
+        decode: { status: "partial", reason: "protocol_list_unreadable" },
+      },
+      { name: "Fixture", is_meta_class: true },
+    ]);
+    expect(result.objc_protocol_records).toMatchObject([
+      { name: "FixtureProtocol", decode: { status: "decoded" } },
+    ]);
+  });
+
+  it("retains a category's own methods and properties after a protocol-list refusal", () => {
+    const bytes = rootClass(0n, "partial-method");
+    bytes.writeBigUInt64LE(base + 0x700n, 0xb98);
+    bytes.writeBigUInt64LE(base + 0x600n, 0xb68);
+    bytes.writeBigUInt64LE(base + 0xa00n, 0xb60);
+    bytes.writeBigUInt64LE(20001n, 0xa00);
+    const result = decodeAppleDispatchMetadata(bytes, 100, provenance);
+    expect(result.objc_categories).toMatchObject([
+      {
+        name: "FixtureCategory",
+        class_name: "Fixture",
+        instance_methods: ["performAction:"],
+        protocols: [],
+        decode: { status: "partial", reason: "protocol_list_unreadable" },
+      },
+    ]);
+    expect(result.objc_categories[0]?.properties).toHaveLength(3);
+    expect(classCoverage(result)?.status).toBe("complete");
+    expect(
+      result.coverage.find(
+        ({ facet }) => facet === "objc_properties_categories",
+      ),
+    ).toMatchObject({ status: "partial" });
+  });
+
+  it("retains an adopting protocol's own method declarations after a list refusal", () => {
+    const bytes = rootClass(1n);
+    bytes.writeBigUInt64LE(base + 0xa00n, 0x750);
+    bytes.writeBigUInt64LE(20001n, 0xa00);
+    const result = decodeAppleDispatchMetadata(bytes, 100, provenance);
+    expect(result.objc_protocol_records).toMatchObject([
+      {
+        name: "FixtureProtocol",
+        adopted_protocols: [],
+        methods: [{ selector: "requiredAction:" }],
+        optional_methods: [{ selector: "optionalAction:" }],
+        decode: { status: "partial", reason: "protocol_list_unreadable" },
+      },
+    ]);
+    expect(result.objc_protocols).toMatchObject([
+      { name: "FixtureProtocol", methods: [{ selector: "requiredAction:" }] },
+    ]);
+    expect(result.objc_classes).toHaveLength(2);
+    expect(classCoverage(result)?.status).toBe("partial");
+  });
+
+  it.each([0n, 1n])(
+    "keeps complete class coverage for an in-limit count of %s",
+    (count) => {
+      const bytes = rootClass(count);
+      const result = decodeAppleDispatchMetadata(bytes, 100, provenance);
+      const reason = classCoverage(result)?.reason ?? "";
+      expect(reason).not.toContain("Protocol list of Fixture");
+      expect(result.objc_classes).toHaveLength(2);
+      for (const row of result.objc_classes)
+        expect(row.decode?.reason ?? "").not.toContain(
+          "protocol_list_unreadable",
+        );
+      expect(classCoverage(result)?.status).toBe("complete");
+    },
+  );
+});

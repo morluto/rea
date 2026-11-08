@@ -1,11 +1,7 @@
 import type { JsonValue } from "../jsonValue.js";
 import type { DesktopTaskCheckInput } from "./appTask.js";
 import { evaluateTaskChecks } from "./appTaskChecks.js";
-import {
-  draftTaskFiles,
-  type SeedingPaths,
-  type TaskDraftFile,
-} from "./appTaskDraft.js";
+import { draftTaskFiles, type TaskDraftFile } from "./appTaskDraft.js";
 import type { DesktopStatePath } from "./desktopState.js";
 import { xmlView } from "./stateFormats.js";
 
@@ -36,16 +32,17 @@ export const statePath = (
   changes: [],
 });
 
-/** The draft of files by home path, every one served, from the seed to the end, with the export's state directories and kept paths. */
+/** The draft of files by home path, every one served, from the seed to the end, with the paths the export selected and its state directories. */
 export const draftOf = (
   files: Record<string, DesktopStatePath>,
-  seeding: SeedingPaths = { stateDirectories: [], kept: [] },
+  selected: readonly string[] = [],
+  stateDirectories: readonly string[] = [],
 ): readonly TaskDraftFile[] =>
   draftTaskFiles(
     new Map(Object.entries(files)),
     () => true,
     { seed: 0, end: 1 },
-    seeding,
+    { stateDirectories, kept: selected, selected },
   );
 
 /** An XML text's view, which a test's own text always has. */

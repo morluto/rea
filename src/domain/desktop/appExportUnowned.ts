@@ -6,6 +6,7 @@ import { versionAt, type DesktopStatePath } from "./desktopState.js";
 import { isWithinAny } from "./desktopStateDiff.js";
 import {
   isLockName,
+  siblingLockTargets,
   runtimeFile,
   type RuntimeFileKind,
 } from "./runtimeFiles.js";
@@ -106,18 +107,11 @@ export interface RuntimeSeeds {
  * `<file>.LCK`, Grisbi's `.<file>.lock`, and VYM's `<file>.<ext>.lock`, whose
  * file has an extension, so a project's `Gemfile.lock` or `Cargo.lock` is not
  * one.
- */
-const SIBLING_LOCKS = [
-  /^(.+)\.lck$/iu,
-  /^\.(.+)\.(?:lock|lck)$/iu,
-  /^([^.].*\.[^.]+)\.lock$/iu,
-];
-
 /**
  * Whether a home file is a lock an app holds while it runs: a profile lock's
  * name anywhere, LibreOffice's document lock, a lock named for a file of the
- * `recorded` home paths beside it (`SIBLING_LOCKS`), or a `*.lock` or `*.lck`
- * file directly in one of the app's state directories, home-relative.
+ * `recorded` home paths beside it (`siblingLockTargets`), or a `*.lock` or
+ * `*.lck` file directly in one of the app's state directories, home-relative.
  * Elsewhere such a file may be a project's own, such as `Cargo.lock`, which
  * pins dependencies rather than marking a profile in use.
  */
@@ -129,13 +123,9 @@ export const isLockFile = (
   if (isLockName(file)) return true;
   const name = file.split("/").at(-1) ?? "";
   const folder = folderOf(file);
-  const besideItsFile = SIBLING_LOCKS.some((lock) => {
-    const locked = lock.exec(name)?.[1];
-    return (
-      locked !== undefined &&
-      recorded.has(folder.length === 0 ? locked : `${folder}/${locked}`)
-    );
-  });
+  const besideItsFile = siblingLockTargets(file).some((locked) =>
+    recorded.has(folder.length === 0 ? locked : `${folder}/${locked}`),
+  );
   if (besideItsFile) return true;
   // One directly in the home is an app's, as wxWidgets' single-instance `~/poedit.lock`;
   // each state directory on its own, so one nested in another is still found.
@@ -339,8 +329,10 @@ const LEVELDB_MARKER = /^(?:CURRENT|MANIFEST-\d+)$/u;
 /**
  * Which home files the seed leaves out: the app's logs in its own state
  * (application state, or under one of its state directories), and lock
- * files; never one of `kept`, such as a document or a selected path, nor a
- * log under one. A `*.log` in browser storage, under a `leveldb` folder, or
+ * files. A log under `kept` stays. A lock beside a recorded file stays out
+ * unless `selectedFiles` names that lock. A document whose name only looks
+ * like a lock, such as `Cargo.lock` in the home, stays.
+ * A `*.log` in browser storage, under a `leveldb` folder, or
  * numbered beside a LevelDB database's `CURRENT` or `MANIFEST-*` is the
  * database's own journal of saved writes, so it is seeded.
  */
@@ -348,6 +340,7 @@ export const leftOutFiles = (
   files: ReadonlyMap<string, DesktopStatePath>,
   stateDirectories: readonly string[],
   kept: readonly string[],
+  selectedFiles: readonly string[] = [],
 ) => {
   const recorded = new Set(files.keys());
   const nameOf = (home: string) => home.split("/").at(-1) ?? "";
@@ -366,9 +359,22 @@ export const leftOutFiles = (
     !isJournal(home) &&
     (files.get(home)?.role === "application_state" ||
       stateDirectoryOf(home, stateDirectories) !== undefined);
-  const isLeftOut = (home: string) =>
-    isLeftOutLog(home) ||
-    (!kept.includes(home) && isLockFile(home, stateDirectories, recorded));
+  const besideRecordedFile = (home: string) => {
+    const folder = folderOf(home);
+    return siblingLockTargets(home).some((locked) =>
+      recorded.has(folder.length === 0 ? locked : `${folder}/${locked}`),
+    );
+  };
+  const isLeftOut = (home: string) => {
+    if (isLeftOutLog(home)) return true;
+    if (
+      !isLockFile(home, stateDirectories, recorded) ||
+      selectedFiles.includes(home)
+    )
+      return false;
+    // A lock named for a file beside it is the app's, even when a title made it a document. A document that merely ends in `.lock` stays.
+    return besideRecordedFile(home) || files.get(home)?.role !== "document";
+  };
   return { isLeftOut, isLeftOutLog };
 };
 

@@ -4,7 +4,7 @@ import {
 } from "node:child_process";
 import { mkdtempSync, writeFileSync, unlinkSync, rmdirSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { chmod, mkdir, stat, writeFile } from "node:fs/promises";
+import { chmod, mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { expect, it } from "vitest";
@@ -34,7 +34,7 @@ const execPython = (
   try {
     writeFileSync(script, args[codeIndex + 1]!, "utf8");
     return execFileSync(
-      "python3",
+      process.platform === "win32" ? "python" : "python3",
       [
         "-X",
         "utf8",
@@ -187,6 +187,58 @@ _seed_home(Path(sys.argv[2]))
     (await stat(join(root, "home", path))).mode & 0o777;
   expect(await mode(".config/notes/secret.ini")).toBe(0o600);
   expect(await mode("run.sh")).toBe(0o755);
+});
+
+it("restores a selected settings alias without replacing an existing path", async () => {
+  const root = await createTestTempDirectory("desktop-state-alias-");
+  const home = join(root, "home");
+  await mkdir(join(root, "seed", ".config", "notes"), { recursive: true });
+  await writeFile(
+    join(root, "seed", ".config", "notes", "settings.ini"),
+    "saved",
+  );
+  await mkdir(join(root, "seed", ".config", "notes", "profiles", "work"), {
+    recursive: true,
+  });
+  await writeFile(
+    join(root, "seed", ".config", "notes", "profiles", "work", "profile.ini"),
+    "profile",
+  );
+  const imports = PYTHON_IMPORTS.split("\n")
+    .filter((line) => !line.includes("agentenv_protocol"))
+    .join("\n");
+  const program = `${imports}
+SEED_HOME = "/home/ada"
+TEXT_SEEDS = frozenset()
+SEED_MODES = {}
+STATE_ALIASES = [("settings", ".config/notes")]
+HERE = Path(sys.argv[1])
+${PYTHON_HELPERS}
+home = Path(sys.argv[2])
+_seed_home(home)
+_ensure_state_aliases(home)
+_ensure_state_aliases(home)
+`;
+  execPython(["-I", "-B", "-c", program, root, home], { encoding: "utf8" });
+  expect(await readFile(join(home, "settings", "settings.ini"), "utf8")).toBe(
+    "saved",
+  );
+  expect(
+    await readFile(
+      join(home, "settings", "profiles", "work", "profile.ini"),
+      "utf8",
+    ),
+  ).toBe("profile");
+  const other = join(root, "other-home");
+  await mkdir(other);
+  await writeFile(join(other, "settings"), "preserve");
+  expect(() =>
+    execPython(["-I", "-B", "-c", program, root, other], {
+      encoding: "utf8",
+      stdio: "pipe",
+    }),
+  ).toThrow();
+  expect(await readFile(join(other, "settings"), "utf8")).toBe("preserve");
 });
 
 /** A stand-in xprop answering the root window list and each window's class and state from a table. */
@@ -410,15 +462,16 @@ it("checks text for JSON the way REA does, token by token, without parsing it", 
         "-I",
         "-B",
         "-c",
-        `${imports}${PYTHON_HELPERS}\nprint(json.dumps([_is_json(text) for text in json.load(sys.stdin)]))`,
+        `${imports}${PYTHON_HELPERS}\ntexts = json.load(sys.stdin)\nprint(json.dumps({"syntax": [_read_json(text, build=False) is not _INVALID_JSON for text in texts], "built": [_read_json(text) is not _INVALID_JSON for text in texts]}))`,
       ],
       { input: JSON.stringify(texts), encoding: "utf8" },
     ),
-  ) as boolean[];
+  ) as { syntax: boolean[]; built: boolean[] };
 
   const parsed = texts.map((text) => safeParseJson(text).ok);
   expect(texts.map((text) => isJsonText(text))).toEqual(parsed);
-  expect(python).toEqual(parsed);
+  expect(python.syntax).toEqual(parsed);
+  expect(python.built).toEqual(parsed);
   expect(parsed.filter(Boolean)).toHaveLength(10);
 });
 
@@ -480,9 +533,13 @@ print(json.dumps([_text_view("settings.ini", text, len(text.encode()))["view"]["
   const root = await createTestTempDirectory("rea-keyfile-python-");
   const script = join(root, "fixture.py");
   await writeFile(script, program, "utf8");
-  const output = execFileSync("python3", ["-I", "-B", "-X", "utf8", script], {
-    input: JSON.stringify(inputs),
-    encoding: "utf8",
-  });
+  const output = execFileSync(
+    process.platform === "win32" ? "python" : "python3",
+    ["-I", "-B", "-X", "utf8", script],
+    {
+      input: JSON.stringify(inputs),
+      encoding: "utf8",
+    },
+  );
   expect(JSON.parse(output)).toEqual(inputs.map(keyfileView));
 });

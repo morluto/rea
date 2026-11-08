@@ -24,6 +24,7 @@ import {
 import {
   exportDesktopApplication,
   seedLimitation,
+  trashedFilesLimitation,
 } from "./DesktopApplicationExport.js";
 import {
   EDITED_NOTE,
@@ -251,6 +252,66 @@ describe("exportDesktopApplication", () => {
   });
 });
 
+it("seeds the app's state at its own path and retains a selected alias", async () => {
+  const local = capture();
+  const physical = `${HOME}/.config/notes`;
+  const { result, directory } = await exportCapture({
+    ...local,
+    state: {
+      ...local.state,
+      content_roots: [physical],
+      state_directories: [physical, `${HOME}/.local/share/notes`],
+      selected_paths: [
+        { path: `${HOME}/settings`, physical, kind: "directory" },
+        {
+          path: `${HOME}/settings/profiles/work`,
+          physical: `${physical}/profiles/work`,
+          kind: "directory",
+        },
+      ],
+      checkpoints: [
+        checkpoint(
+          "baseline",
+          "baseline",
+          [],
+          [
+            retained(`${physical}/settings.ini`, "[ui]\nwrap=false\n"),
+            retained(`${physical}/profiles/work/profile.ini`, "milk\n"),
+          ],
+        ),
+      ],
+    },
+  });
+  if (result instanceof Error) throw result;
+  expect(result.normalized_result).toMatchObject({
+    paths: [".config/notes"],
+    seed_files: [
+      ".config/notes/profiles/work/profile.ini",
+      ".config/notes/settings.ini",
+    ],
+  });
+  expect(
+    await readFile(
+      join(directory, "envs/notes/seed/.config/notes/settings.ini"),
+      "utf8",
+    ),
+  ).toBe("[ui]\nwrap=false\n");
+  expect(
+    await readFile(
+      join(
+        directory,
+        "envs/notes/seed/.config/notes/profiles/work/profile.ini",
+      ),
+      "utf8",
+    ),
+  ).toBe("milk\n");
+  const module = await readFile(
+    join(directory, "envs/notes/notes_app.py"),
+    "utf8",
+  );
+  expect(module).toContain('("settings", ".config/notes")');
+});
+
 describe("exportDesktopApplication and the desktop Trash", () => {
   it("leaves a file the user moved to the Trash out of the seed and the owned paths, and says so", async () => {
     const local = capture();
@@ -309,9 +370,13 @@ describe("exportDesktopApplication and the desktop Trash", () => {
         "Documents/today.txt",
       ],
     });
-    expect(result.limitations).toContain(
-      "The desktop Trash held 2 file(s) at the seed checkpoint, which are not seeded: ~/.local/share/Trash/files/today.txt, ~/.local/share/Trash/info/today.txt.trashinfo. Restore one the task needs and capture again.",
-    );
+    const trashPaths = [
+      ".local/share/Trash/files/today.txt",
+      ".local/share/Trash/info/today.txt.trashinfo",
+    ];
+    const notice = trashedFilesLimitation(trashPaths);
+    expect(result.limitations).toContain(notice);
+    for (const path of trashPaths) expect(notice).toContain(`~/${path}`);
   });
 });
 
@@ -1611,12 +1676,16 @@ describe("exportDesktopApplication launch document", () => {
         recorded: linkedSettingsCapture(`${HOME}/${target}`),
       });
 
-      // The settings keep the link's meaning, so the note is the one document.
+      // The selected link is ~/.config/MuseScore, so the settings keep that
+      // spelling and the note stays the one document.
       expect(result.normalized_result).toMatchObject({
         seed_files: expect.arrayContaining([
           "Documents/today.txt",
-          `${target}/MuseScore3.ini`,
+          ".config/MuseScore/MuseScore3.ini",
         ]),
+      });
+      expect(result.normalized_result).not.toMatchObject({
+        seed_files: expect.arrayContaining([`${target}/MuseScore3.ini`]),
       });
       expect(module).toContain(
         `exec 'notes' \\"$HOME\\"/'Documents/today.txt'"]`,

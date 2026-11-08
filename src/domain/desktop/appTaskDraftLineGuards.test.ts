@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import { draftOf, statePath } from "./appTaskDraft.fixture.js";
 import { textView } from "./stateFormats.js";
+import { evaluateTaskChecks } from "./appTaskChecks.js";
 
 const FILE = "Documents/trip.txt";
 
@@ -25,6 +26,178 @@ const drafted = (before: string, after: string) => {
 };
 
 describe("draftTaskFiles for lines holding values the app generates", () => {
+  it("keeps assignment-like text quoted in a translation", () => {
+    const translation = 'msgstr "Set created=2025550123 and save"';
+    const file = drafted(lines(), lines(translation));
+    expect(file.suggested).toEqual([
+      { kind: "lines_present", file: FILE, lines: [translation] },
+    ]);
+  });
+
+  it("keeps an escaped quote inside ordinary text", () => {
+    const translation = 'msgstr "Set \\\"created=2025550123 and save"';
+    const file = drafted('msgid "Hello"', `msgid "Hello"\n${translation}`);
+    expect(file.suggested).toEqual([
+      { kind: "lines_present", file: FILE, lines: [translation] },
+    ]);
+  });
+});
+
+describe("draftTaskFiles for XML text views", () => {
+  it("checks an XML text fallback without freezing a timestamp after a literal backslash", () => {
+    const opening = '<!DOCTYPE map [<!ENTITY title "Map">]>\n<map>\n';
+    const node = (time: string) =>
+      `<node TEXT="C:\\work\\" CREATED="${time}"/>`;
+    const before = `${opening}</map>`;
+    const after = `${opening}${node("1793955250671")}\n</map>`;
+    const file = drafted(before, after);
+    const results = evaluateTaskChecks(
+      file.suggested.map((check, index) => ({ ...check, id: `c${index}` })),
+      new Map([
+        [
+          FILE,
+          {
+            format: "text" as const,
+            view: textView(`${opening}${node("1793955259999")}\n</map>`),
+          },
+        ],
+      ]),
+    );
+    expect(file.suggested).toEqual([
+      expect.objectContaining({
+        kind: "line_count",
+        contains: '<node TEXT="C:\\work\\" CREATED="',
+      }),
+    ]);
+    expect(results.map(({ passed }) => passed)).toEqual([true]);
+  });
+
+  it("keeps quoted CDATA as an exact requested line", () => {
+    const opening = '<!DOCTYPE map [<!ENTITY title "Map">]>\n<map>\n';
+    const line =
+      '<text><![CDATA[msgstr "Set \\\"created=2025550123 and save"]]></text>';
+    const file = drafted(`${opening}</map>`, `${opening}${line}\n</map>`);
+    expect(file.suggested).toEqual([
+      { kind: "lines_present", file: FILE, lines: [line] },
+    ]);
+    const altered = line.replace("2025550123", "WRONG");
+    const results = evaluateTaskChecks(
+      file.suggested.map((check, index) => ({ ...check, id: `c${index}` })),
+      new Map([
+        [
+          FILE,
+          {
+            format: "text" as const,
+            view: textView(`${opening}${altered}\n</map>`),
+          },
+        ],
+      ]),
+    );
+    expect(results.map(({ passed }) => passed)).toEqual([false]);
+  });
+
+  it("recognizes an attribute on a later line of an XML tag", () => {
+    const opening = '<!DOCTYPE map [<!ENTITY title "Map">]>\n<map>\n<node\n';
+    const attribute = 'TEXT="C:\\work\\" CREATED="1793955250671"/>';
+    const file = drafted(`${opening}</map>`, `${opening}${attribute}\n</map>`);
+    expect(file.suggested).toEqual([
+      expect.objectContaining({
+        kind: "line_count",
+        contains: 'TEXT="C:\\work\\" CREATED="',
+      }),
+    ]);
+  });
+
+  it("keeps quoted text after a Markdown autolink", () => {
+    const line =
+      '<https://example.test> msgstr "Set \\\"created=2025550123 and save"';
+    const file = drafted("# Note", `# Note\n${line}`);
+    expect(file.suggested).toEqual([
+      { kind: "lines_present", file: FILE, lines: [line] },
+    ]);
+  });
+
+  it("recognizes attributes after a comment inside the DTD", () => {
+    const opening = "<!DOCTYPE map [<!-- author's note -->]>\n<map>\n";
+    const node = '<node TEXT="C:\\work\\" CREATED="1793955250671"/>';
+    const file = drafted(`${opening}</map>`, `${opening}${node}\n</map>`);
+    expect(file.suggested).toEqual([
+      expect.objectContaining({
+        kind: "line_count",
+        contains: '<node TEXT="C:\\work\\" CREATED="',
+      }),
+    ]);
+  });
+
+  it("counts repeated new lines even when one is inside an XML comment", () => {
+    const opening = '<!DOCTYPE map [<!ENTITY title "Map">]>\n<map>\n';
+    const node = '<node TEXT="C:\\work\\" CREATED="1793955250671"/>';
+    const file = drafted(
+      `${opening}</map>`,
+      `${opening}<!--\n${node}\n-->\n${node}\n</map>`,
+    );
+    expect(file.suggested).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          kind: "line_count",
+          contains: '<node TEXT="C:\\work\\" CREATED="',
+          equals: 2,
+        }),
+      ]),
+    );
+    const results = evaluateTaskChecks(
+      file.suggested.map((check, index) => ({ ...check, id: `c${index}` })),
+      new Map([
+        [
+          FILE,
+          {
+            format: "text" as const,
+            view: textView(`${opening}<!--\n${node}\n-->\n</map>`),
+          },
+        ],
+      ]),
+    );
+    expect(results.some(({ passed }) => !passed)).toBe(true);
+  });
+
+  it("does not guess attribute boundaries when the XML syntax reader cannot finish", () => {
+    const opening = '<!DOCTYPE map [<!ENTITY title "Map">]>\n<map>&title;\n';
+    const node = '<node TEXT="C:\\work\\" CREATED="1793955250671"/>';
+    const file = drafted(`${opening}</map>`, `${opening}${node}\n</map>`);
+    expect(file.suggested).toEqual([]);
+    expect(file.notes).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: "read_as_text",
+          message: expect.stringContaining("could not locate XML attributes"),
+        }),
+      ]),
+    );
+  });
+});
+
+describe("draftTaskFiles for added lines", () => {
+  it("keeps long ordinary text as a whole line", () => {
+    const text = `msgstr "${"ordinary words ".repeat(3000)}"`;
+    const file = drafted(lines(), lines(text));
+    expect(file.suggested).toEqual([
+      { kind: "lines_present", file: FILE, lines: [text] },
+    ]);
+  });
+  it("keeps phone numbers but counts a stable prefix before a named creation time", () => {
+    const phone = 'topic TEXT="Call 2025550123"';
+    const timed = 'topic TEXT="Water filter" CREATED="1793955250671"';
+    const file = drafted(lines(), lines(phone, timed));
+    expect(file.suggested).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ kind: "lines_present", lines: [phone] }),
+        expect.objectContaining({
+          kind: "line_count",
+          contains: 'topic TEXT="Water filter" CREATED="',
+        }),
+      ]),
+    );
+  });
   it("counts the lines holding a new line's text up to its first generated value, rather than the line whole, which another save would not repeat", () => {
     const file = drafted(
       lines(),
@@ -215,40 +388,54 @@ describe("draftTaskFiles for the app's log beside its journal", () => {
       byFile.get(".config/app/state.xml")?.notes.map(({ code }) => code),
     ).toEqual(["read_as_text"]);
   });
+
+  it("drafts a log the caller selected, and does not call a quoted bracket an entity subset", () => {
+    const lines = (...text: string[]) => textView(text.join("\n"));
+    const selected = {
+      ...statePath(
+        "application_state",
+        "text",
+        lines("opened"),
+        lines("opened", "saved"),
+      ),
+      reasons: ["selected_path" as const],
+    };
+    const logged = draftOf({ ".config/app/notes.log": selected }, [
+      ".config/app/notes.log",
+    ]);
+    const noted = draftOf({
+      "Documents/state.txt": statePath(
+        "document",
+        "text",
+        lines('<!DOCTYPE state SYSTEM "state[1].dtd">', "<state/>"),
+        lines('<!DOCTYPE state SYSTEM "state[1].dtd">', "<state>saved</state>"),
+      ),
+    });
+
+    expect(logged[0]?.suggested).not.toEqual([]);
+    expect(
+      noted[0]?.notes.some((note) => note.message.includes("internal subset")),
+    ).toBe(false);
+  });
 });
 
-describe("draftTaskFiles for the app's logs, as the export seeds them", () => {
-  const log = statePath(
-    "application_state",
-    "text",
-    textView("opened Groceries\n"),
-    textView("opened Groceries\nadded Oat milk to Groceries\n"),
-  );
-  const seeding = {
-    stateDirectories: [".config/notes"],
-    kept: [".config/notes/history"],
-  };
-
-  it("drafts a check on a log under a path the user selected, which the export seeds", () => {
-    const [history] = draftOf(
-      { ".config/notes/history/2026-11-06.log": log },
-      seeding,
+describe("draftTaskFiles for a lock the export leaves out of a state directory", () => {
+  it("drafts no check or guard on a lock directly in a state directory, which the export leaves out of the seed", () => {
+    const [lock] = draftOf(
+      {
+        ".config/notes/sync.lock": statePath(
+          "application_state",
+          "text",
+          textView("pid 1\n"),
+          textView("pid 2\n"),
+        ),
+      },
+      [],
+      [".config/notes"],
     );
 
-    expect(history?.suggested).toEqual([
-      {
-        kind: "lines_present",
-        file: ".config/notes/history/2026-11-06.log",
-        lines: ["added Oat milk to Groceries"],
-      },
-    ]);
-  });
-
-  it("drafts no check or guard on a log under a state directory the user did not select, which the export leaves out", () => {
-    const [run] = draftOf({ ".config/notes/logs/run.log": log }, seeding);
-
-    expect(run).toMatchObject({
-      file: ".config/notes/logs/run.log",
+    expect(lock).toMatchObject({
+      file: ".config/notes/sync.lock",
       suggested: [],
       guards: [],
     });

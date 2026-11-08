@@ -45,44 +45,36 @@ const ownNameRecord = (pointer: string): string | undefined => {
   return at === -1 ? undefined : spelled.slice(0, at + 1).join("/");
 };
 
-/** A check kept only when no other check reads its record. */
-export interface RecordFallback {
-  readonly record: string;
-  readonly check: Suggestion;
-}
-
 /**
- * The checks without their records' fallbacks: a field its record's selector
- * names it by (`ownNameRecord`), and a default every like record holds
- * (`likeDefaultRecord`). The first fallback of a record no other check reads
- * is kept, as for a new record holding only a generated uid and its title, so
- * its addition is still checked.
+ * The checks without those of a field its record's selector names it by
+ * (`ownNameRecord`), but for the first of a record no other check reads, as
+ * a new record holding only a generated uid and its title, so its addition
+ * is still checked.
  */
-export const withRecordFallbacks = (
+export const ownNamesUnreadOtherwise = (
   checks: readonly Suggestion[],
-  defaults: readonly RecordFallback[] = [],
 ): Suggestion[] => {
-  const fallbacks: RecordFallback[] = [];
-  const kept: Suggestion[] = [];
-  for (const check of checks) {
-    const record =
-      "pointer" in check ? ownNameRecord(check.pointer) : undefined;
-    if (record === undefined) kept.push(check);
-    else fallbacks.push({ record, check });
-  }
+  const records = checks.map((check) =>
+    "pointer" in check ? ownNameRecord(check.pointer) : undefined,
+  );
   const read = new Set<string>();
-  const reads = (check: Suggestion) => {
-    if (!("pointer" in check)) return;
-    const parts = check.pointer.split("/");
+  const reads = (pointer: string) => {
+    const parts = pointer.split("/");
     for (let end = 1; end < parts.length; end += 1)
       read.add(parts.slice(0, end).join("/"));
   };
-  kept.forEach(reads);
-  for (const { record, check } of [...fallbacks, ...defaults])
-    if (!read.has(record)) {
-      reads(check);
-      kept.push(check);
-    }
+  const kept = checks.filter((check, index) => {
+    if (records[index] !== undefined) return false;
+    if ("pointer" in check) reads(check.pointer);
+    return true;
+  });
+  checks.forEach((check, index) => {
+    const record = records[index];
+    if (record === undefined || read.has(record) || !("pointer" in check))
+      return;
+    reads(check.pointer);
+    kept.push(check);
+  });
   return kept;
 };
 
@@ -91,16 +83,12 @@ const isRecord = (
 ): value is Record<string, JsonValue> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
 
-/** The value at a list's pointer, where an empty one is the whole view, as for a file whose top level is the array. */
-const listAt = (view: JsonValue | null, list: string) =>
-  list === "" ? view : resolvePointer(view, list);
-
-/** The array a member pointer sits in, when its parent is one in a view. */
+/** The array a member pointer sits in, when its parent is one in a view. The empty pointer is the view itself, as a file whose top level is an array. */
 const arrayOf = (view: JsonValue | null, pointer: string) => {
   const list = pointer.replace(/\/[^/]+$/u, "");
-  return list !== pointer && Array.isArray(resolvePointer(view, list))
-    ? list
-    : undefined;
+  if (list === pointer) return undefined;
+  const items = list === "" ? view : resolvePointer(view, list);
+  return Array.isArray(items) ? list : undefined;
 };
 
 /** A counted array, and the kind field and value its counted members share, when they carry one. */
@@ -123,7 +111,7 @@ const kindOf = (member: JsonValue | undefined, items: readonly JsonValue[]) => {
 };
 
 const membersOf = (view: JsonValue | null, { list, kind }: Counted) => {
-  const items = resolvePointer(view, list);
+  const items = list === "" ? view : resolvePointer(view, list);
   return (Array.isArray(items) ? items : []).filter(
     (item) =>
       kind === undefined || (isRecord(item) && item[kind.key] === kind.value),
@@ -167,8 +155,15 @@ export const jsonCounts = (
   const note = (pointer: string, view: JsonValue | null) => {
     const list = arrayOf(view, pointer);
     const items = list === undefined ? [] : resolvePointer(view, list);
+    const atEnd =
+      list === undefined
+        ? undefined
+        : list === ""
+          ? ends.final
+          : resolvePointer(ends.final, list);
     if (
       list === undefined ||
+      !Array.isArray(atEnd) ||
       !named(list, ends.baseline) ||
       !named(list, ends.final)
     )
@@ -199,13 +194,14 @@ export const jsonCounts = (
   const tried = new Set<string>();
   for (const pointer of change.changed) {
     const segments = pointer.split("/");
-    for (let index = segments.length - 1; index > 1; index -= 1) {
+    for (let index = segments.length - 1; index > 0; index -= 1) {
       const list = segments.slice(0, index).join("/");
       const counted = { list };
       if (tried.has(list)) continue;
       tried.add(list);
+      const items = list === "" ? ends.final : resolvePointer(ends.final, list);
       if (
-        Array.isArray(resolvePointer(ends.final, list)) &&
+        Array.isArray(items) &&
         !lists.has(JSON.stringify(counted)) &&
         named(list, ends.baseline) &&
         named(list, ends.final) &&
@@ -251,7 +247,7 @@ const addedRecordOf = (
   const segments = pointer.split("/");
   for (let index = segments.length - 1; index >= 1; index -= 1) {
     const list = segments.slice(0, index).join("/");
-    const items = listAt(ends.final, list);
+    const items = resolvePointer(ends.final, list);
     const member = segments[index] ?? "";
     const record = resolvePointer(ends.final, `${list}/${member}`);
     if (!Array.isArray(items) || !isRecord(record)) continue;
@@ -261,7 +257,7 @@ const addedRecordOf = (
       item !== record &&
       isRecord(item) &&
       (kind === undefined || item[kind.key] === kind.value);
-    const older = listAt(ends.baseline, list);
+    const older = resolvePointer(ends.baseline, list);
     return {
       list,
       member,
@@ -278,22 +274,22 @@ const addedRecordOf = (
   return undefined;
 };
 
-/** The record added whole whose field a pointer reads, when the field holds what every like record at the end holds there, as the empty `children` of every TreeLine book: a default, not what the user entered. */
-export const likeDefaultRecord = (
+/** Whether a field of a record added whole holds what every like record at the end holds there, as the empty `children` of every TreeLine book: a default, not what the user entered. */
+export const isLikeDefault = (
   ends: Ends,
   added: ReadonlySet<string>,
   pointer: string,
   value: JsonValue,
-): string | undefined => {
+): boolean => {
   const record = addedRecordOf(ends, added, pointer);
-  return record !== undefined &&
+  return (
+    record !== undefined &&
     record.field !== "/" &&
     record.likes.final.length > 0 &&
     record.likes.final.every(({ item }) =>
       sameJson(resolvePointer(item, record.field), value),
     )
-    ? `${record.list}/${record.member}`
-    : undefined;
+  );
 };
 
 /** Whether a member's selector reads a field, as `[format=BOOK][>data~1Title=SPQR]` reads `/data/Title`: a guard of it proves only that such a member exists. */
@@ -354,7 +350,7 @@ export const recordGuards = (
     const known = pairings.get(list);
     if (known !== undefined) return known;
     const [newer = [], older = []] = [ends.final, ends.baseline].map((view) => {
-      const items = listAt(view, list);
+      const items = resolvePointer(view, list);
       return Array.isArray(items) ? items : [];
     });
     const pairing = pairMembers(newer, older);

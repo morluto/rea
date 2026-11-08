@@ -9,6 +9,7 @@ import { diffStateViews } from "./stateChanges.js";
 /** Why a task draft holds no files, one code per reason; a new reason adds its code. */
 const EMPTY_DRAFT_CODES = [
   "no_change",
+  "incomplete_capture",
   "unowned_changes",
   "uncheckable_changes",
   "unreadable_changes",
@@ -98,7 +99,7 @@ type Version = DesktopStatePath["versions"][number];
  * How a changed dconf database's application keys differ between two
  * versions: why one could not be read, whether its application groups
  * differ, or undefined when only other groups changed. A version kept without
- * its bytes, as the first walk leaves the database, counts as holding none.
+ * its bytes stays unread: the missing copy is not an empty key list.
  */
 const dconfKeysChange = (
   baseline: Version,
@@ -107,14 +108,17 @@ const dconfKeysChange = (
   const unread = [baseline, final].find(
     (version) =>
       version.present &&
-      version.sha256 !== null &&
-      (version.view_error !== null || version.format !== "dconf"),
+      (version.sha256 === null ||
+        version.view_error !== null ||
+        version.format !== "dconf"),
   );
   if (unread !== undefined)
     return {
       error:
-        unread.view_error ??
-        `read as ${unread.format ?? "an unknown format"}, not a dconf database`,
+        unread.sha256 === null
+          ? (unread.view_error ?? "content not retained")
+          : (unread.view_error ??
+            `read as ${unread.format ?? "an unknown format"}, not a dconf database`),
     };
   const keys = diffStateViews(
     "dconf",
@@ -143,6 +147,11 @@ export const draftNotes = (
     readonly dconf: ReadonlyMap<string, DesktopStatePath>;
     readonly ends: StateEnds;
     readonly checkpoints: readonly string[];
+    /**
+     * False when the seed or end checkpoint stopped early or could not read
+     * part of the home, so an empty change list is not evidence of no change.
+     */
+    readonly observed: boolean;
   },
 ): readonly DraftNote[] => {
   if (facts.drafted.length > 0)
@@ -168,7 +177,17 @@ export const draftNotes = (
       unread.push({ file: home, role: path.role, error: keys.error });
   }
   const notes: EmptyDraftNote[] = [];
-  if (changed.length === 0 && settings.length === 0 && unread.length === 0)
+  if (!facts.observed)
+    notes.push({
+      code: "incomplete_capture",
+      message: `Checkpoint ${seed} or ${end} did not cover the whole home, so a change can be missing from the list. Walk it again before treating an empty list as no change.`,
+    });
+  if (
+    facts.observed &&
+    changed.length === 0 &&
+    settings.length === 0 &&
+    unread.length === 0
+  )
     notes.push({
       code: "no_change",
       message: `No file under the home changed between checkpoints ${seed} and ${end}: save the change in the app before taking ${end}.`,

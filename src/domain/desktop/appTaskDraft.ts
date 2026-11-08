@@ -1,16 +1,15 @@
 import type { JsonValue } from "../jsonValue.js";
-import { isTimestamp, type DesktopTaskCheckInput } from "./appTask.js";
 import { leftOutFiles } from "./appExportUnowned.js";
+import { isTimestamp, type DesktopTaskCheckInput } from "./appTask.js";
 import { isGeneratedUid } from "./attributeRank.js";
 import {
   decisive,
-  likeDefaultRecord,
+  isLikeDefault,
   jsonCounts,
   outermost,
+  ownNamesUnreadOtherwise,
   positionalNotes,
   recordGuards,
-  withRecordFallbacks,
-  type RecordFallback,
 } from "./appTaskDraftJson.js";
 import {
   fileNotes,
@@ -137,9 +136,25 @@ const textSuggestions = (
         )
       : { checks: [], notes: [] };
   suggestions.push(...gained.checks);
+  const formatNotes = readAsTextNotes(file, linesOf(final));
+  const unreadableAttributes = gained.notes.find(
+    ({ code }) => code === "read_as_text",
+  );
   const result = {
     suggestions,
-    notes: [...gained.notes, ...readAsTextNotes(file, linesOf(final))],
+    notes: [
+      ...gained.notes.filter(({ code }) => code !== "read_as_text"),
+      ...(unreadableAttributes !== undefined && formatNotes.length === 0
+        ? [unreadableAttributes]
+        : formatNotes.map((note) =>
+            unreadableAttributes === undefined
+              ? note
+              : {
+                  ...note,
+                  message: `${note.message} ${unreadableAttributes.message}`,
+                },
+          )),
+    ],
   };
   if (truncated) return result;
   if (gone.length > 0 && gone.length <= MAX_SUGGESTIONS)
@@ -210,6 +225,8 @@ const plainValues = (
     ends: versions(baseline, final),
     listed: () => true,
     noise: () => undefined,
+    format: () => "json",
+    referenceRoots: () => [],
   });
 
 /**
@@ -270,7 +287,6 @@ const valueSuggestions = (
   const wholes = (entries: readonly string[]) =>
     format === "keyfile" ? entries : outermost(entries);
   const edits: Suggestion[] = [];
-  const defaults: RecordFallback[] = [];
   const ends = versions(baseline, final);
   // A key file's entries hold no array, so no record of one is added whole.
   const added = new Set(change.added);
@@ -279,28 +295,16 @@ const valueSuggestions = (
     const value = at === undefined ? undefined : resolvePointer(final.view, at);
     // An id the app generates, as TreeLine's uuid1 `uid`, holds nothing another save repeats.
     if (
-      at === undefined ||
-      at === "" ||
-      value === undefined ||
-      isTimestamp(value) ||
-      (typeof value === "string" && isGeneratedUid(value))
+      at !== undefined &&
+      at !== "" &&
+      value !== undefined &&
+      !isTimestamp(value) &&
+      !(typeof value === "string" && isGeneratedUid(value)) &&
+      !isLikeDefault(ends, added, at, value)
     )
-      continue;
-    const check: Suggestion = {
-      kind: "value_equals",
-      file,
-      pointer: at,
-      value,
-    };
-    const record = likeDefaultRecord(ends, added, at, value);
-    if (record === undefined) edits.push(check);
-    else defaults.push({ record, check });
+      edits.push({ kind: "value_equals", file, pointer: at, value });
   }
-  // A fallback the seed already passes, as a place another record held, checks nothing.
-  const listed = withRecordFallbacks(
-    decisive(edits, ends),
-    defaults.filter(({ check }) => decisive([check], ends).length > 0),
-  );
+  const listed = ownNamesUnreadOtherwise(edits);
   for (const entry of wholes(change.removed)) {
     const at = pointer(entry);
     if (at !== undefined && at !== "")
@@ -417,10 +421,13 @@ const netChange = (baseline: Version, final: Version) => {
   };
 };
 
-/** The paths the export decides the app's logs by: its state directories, and the documents and selected paths it always seeds. */
+/** The paths the export decides what it leaves out of the seed by, as `exportedStateFiles` spells them. */
 export interface SeedingPaths {
   readonly stateDirectories: readonly string[];
+  /** Documents and selected paths, whose logs the seed keeps. */
   readonly kept: readonly string[];
+  /** Home paths the export selected exactly, whose locks the seed keeps. */
+  readonly selected: readonly string[];
 }
 
 /** One changed file an author writes checks about. */
@@ -477,7 +484,8 @@ const changeShape = (change: TaskDraftFile["change"], final: Version) => ({
  * notes for the files the user worked on: documents, or the app's own state
  * when no document changed, never the app's logs the export leaves out of
  * the seed (`leftOutFiles`), as it decides them from its state directories
- * and kept paths. Values stay within the draft's byte budget, in file order.
+ * and kept and selected paths. Values stay within the draft's byte budget, in
+ * file order.
  */
 export const draftTaskFiles = (
   files: ReadonlyMap<string, DesktopStatePath>,
@@ -486,18 +494,22 @@ export const draftTaskFiles = (
   seeding: SeedingPaths,
 ): readonly TaskDraftFile[] => {
   const changed = changedStateFiles(files, ends, served);
-  const role = changed.some(({ path }) => path.role === "document")
-    ? "document"
-    : "application_state";
-  // The app's logs, which the export leaves out of the seed, never hold a check.
-  const { isLeftOutLog } = leftOutFiles(
+  const { isLeftOut } = leftOutFiles(
     files,
     seeding.stateDirectories,
     seeding.kept,
+    seeding.selected,
   );
+  // A lock the seed leaves out is not the document the user worked on.
+  const considered = changed.filter(({ home }) => !isLeftOut(home));
+  const role = considered.some(({ path }) => path.role === "document")
+    ? "document"
+    : "application_state";
+  // A file absent from the seed cannot supply a useful check. The same owner
+  // keeps explicitly selected files, including a selected lock.
   return withinDraftBudget(
     changed.map(({ home, path, baseline, final, change }) => {
-      const drafted = path.role === role && !isLeftOutLog(home);
+      const drafted = path.role === role && !isLeftOut(home);
       const draft: FileDraft = drafted
         ? suggestedChecks(home, baseline, final, role === "document")
         : { suggested: [], ...NO_VALUES };

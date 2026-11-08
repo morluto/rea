@@ -150,6 +150,22 @@ describe("draftDesktopApplicationTask notes", () => {
     expect(draft.notes.map(({ code }) => code)).toEqual(["no_change"]);
   });
 
+  it("does not call an empty change list unchanged when a checkpoint was cut short", async () => {
+    const base = withEnd(seedEndCapture(), { changes: [], kept: [] });
+    const cut: DesktopApplicationCapture = {
+      ...base,
+      state: {
+        ...base.state,
+        checkpoints: base.state.checkpoints.map((point) =>
+          point.name === "end" ? { ...point, truncated: true } : point,
+        ),
+      },
+    };
+    const draft = await notesOf(cut);
+    expect(draft.notes.map(({ code }) => code)).toContain("incomplete_capture");
+    expect(draft.notes.map(({ code }) => code)).not.toContain("no_change");
+  });
+
   it("lists the first five changed files outside the owned paths, desktop files last, when no document was recognized", async () => {
     const base = seedEndCapture();
     const untitled: DesktopApplicationCapture = {
@@ -265,7 +281,7 @@ describe("draftDesktopApplicationTask notes on dconf", () => {
 });
 
 describe("draftDesktopApplicationTask notes on a dconf database the capture kept no copy of", () => {
-  it("compares the app's dconf keys at the end with none, rather than calling the database unreadable, when the capture kept no copy of it from the start", async () => {
+  it("keeps a dconf database unknown when the capture kept no copy of its starting bytes", async () => {
     /** As the recorder writes it: the first walk keeps no copy of the database, so its change has no starting digest. */
     const unkept = (after: string): DesktopApplicationCapture => {
       const written = change(database, {
@@ -297,13 +313,62 @@ describe("draftDesktopApplicationTask notes on a dconf database the capture kept
       dconfReaders,
     );
 
-    expect(saved.notes.map(({ code }) => code)).toEqual([
-      "uncheckable_changes",
-    ]);
+    expect(saved.notes.map(({ code }) => code)).toEqual(["unreadable_changes"]);
+    expect(saved.notes[0]?.error).toContain("content not retained");
     expect(saved.notes[0]?.files).toEqual([
       { file: ".config/dconf/user", role: "application_state" },
     ]);
-    // The database holds none of the app's keys at the end, so none of them changed.
-    expect(desktop.notes.map(({ code }) => code)).toEqual(["no_change"]);
+    expect(desktop.notes.map(({ code }) => code)).toEqual([
+      "unreadable_changes",
+    ]);
+  });
+});
+
+describe("draftDesktopApplicationTask notes for an incomplete checkpoint", () => {
+  it("does not call an empty change list unchanged when a checkpoint omits how many paths it left unchecked", async () => {
+    const base = withEnd(seedEndCapture(), { changes: [], kept: [] });
+    const omitted: DesktopApplicationCapture = {
+      ...base,
+      state: {
+        ...base.state,
+        checkpoints: base.state.checkpoints.map((point) => {
+          const { unchecked_paths: _dropped, ...rest } = point;
+          return rest;
+        }),
+      },
+    };
+    const draft = await notesOf(omitted);
+    expect(draft.notes.map(({ code }) => code)).toContain("incomplete_capture");
+    expect(draft.notes.map(({ code }) => code)).not.toContain("no_change");
+  });
+
+  it("does not call the ends unchanged when a checkpoint between them left a deletion unconfirmed", async () => {
+    const base = withEnd(seedEndCapture(), { changes: [], kept: [] });
+    const seedAt = base.state.checkpoints.findIndex(
+      (point) => point.name === "seed",
+    );
+    const seed = base.state.checkpoints[seedAt];
+    if (seed === undefined) throw new Error("the fixture has a seed");
+    const partial: DesktopApplicationCapture = {
+      ...base,
+      state: {
+        ...base.state,
+        checkpoints: [
+          ...base.state.checkpoints.slice(0, seedAt + 1),
+          {
+            ...seed,
+            name: "during",
+            trigger: "request",
+            unconfirmed_changes: 1,
+            changes: [],
+          },
+          ...base.state.checkpoints.slice(seedAt + 1),
+        ],
+      },
+    };
+    const draft = await notesOf(partial);
+
+    expect(draft.notes.map(({ code }) => code)).toContain("incomplete_capture");
+    expect(draft.notes.map(({ code }) => code)).not.toContain("no_change");
   });
 });

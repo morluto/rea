@@ -23,6 +23,13 @@ import { nativeSearchInput } from "../domain/native/nativeSearch.js";
 const hopperRegexDeadline =
   "Regex dialect depends on the provider: Ghidra uses Java Pattern; Kuna, IDA and Hopper use ECMAScript Unicode. See binary_session for selected-provider limits. Hopper regex mode uses a cancellable worker. The matching deadline is REA_REGEX_MATCHING_DEADLINE_MS (a positive decimal integer of milliseconds from 1 to 2147483647, default 5000). Unset keeps the default. A deadline failure names the effective milliseconds, source (default or setting), the default, and the maximum, and leaves the API usable. The worker old-generation request is REA_REGEX_WORKER_HEAP_REQUEST_MIB (a decimal integer of mebibytes from 7 to 16384, default 128). Unset keeps the default. A positive Node --max-old-space-size, including NODE_OPTIONS, overrides that request and is not limited by the setting's floor or maximum. A heap failure names the effective request, its source (default or setting), the default, the floor, and the maximum.";
 
+export const decompileAnalysisSelection = z
+  .enum(["independent_fresh"])
+  .optional()
+  .describe(
+    "Request a new independent decompile, bypassing project and snapshot results. Use only when the routed provider's procedure_pseudo_code capability declares independent_decompile; otherwise the request is refused. This may use different analysis context.",
+  );
+
 const official = <
   Name extends keyof typeof officialOutputSchemas,
   Schema extends z.ZodObject,
@@ -50,7 +57,7 @@ const official = <
 export const OFFICIAL_TOOL_CONTRACTS = [
   official(
     "annotate_native_function",
-    "Atomically update one function name and/or entry comments, read them back, and return a refreshed complete function dossier. Ghidra changes its ephemeral session analysis database only; original executable bytes remain unchanged. Empty comment text clears that comment. Edits remain available to subsequent MCP calls until close; CLI returns the updated dossier before discarding its session. Invalid edits roll back the entire operation. Windows P0 and providers without this capability are unsupported.",
+    "Atomically update one function name and/or entry comments, read them back, and return a refreshed complete function dossier. Ghidra edits owned Program metadata; original executable bytes remain unchanged. Empty comment text clears that comment. With REA_GHIDRA_CHECKPOINT_DIR configured at startup, normal close saves edits for the next process; ephemeral mode discards them. CLI follows the same setting after returning its updated dossier. Check binary_session capabilities for the current mode. Invalid edits roll back the entire operation. Windows P0 and providers without this capability are unsupported.",
     nativeFunctionAnnotationsInputSchema,
   ),
   official(
@@ -207,8 +214,13 @@ export const OFFICIAL_TOOL_CONTRACTS = [
   ),
   official(
     "procedure_pseudo_code",
-    "Decompile one analyzed procedure by symbol name or provider-normalized address. Ghidra also accepts file-offset:0x... selectors and falls back to a unique source-file mapping when a 0x-prefixed number resolves to no procedure; existing analysis addresses take precedence and ambiguous mappings fail explicitly. Returns provider-specific pseudocode, never original source or cross-provider text equivalence, and may return null; request procedure_assembly when instruction precision matters. Ghidra no-return assumptions may cut the analyzed body; Evidence limitations report observed terminal calls and available callee identities. Select detail summary to retain complete Evidence and receive text availability and counts; inspect_analysis_view summary or native/pseudocode pages read the original observation without decompiling again. Complete remains the default.",
-    z.object({ procedure, document, detail: analysisDetailSchema }),
+    "Decompile one analyzed procedure by symbol name or provider-normalized address. To request a fresh independent attempt, use analysis: independent_fresh when binary_session reports independent_decompile for this provider operation; otherwise it is refused. The independent result may have different analysis context. Ghidra also accepts file-offset:0x... selectors and falls back to a unique source-file mapping when a 0x-prefixed number resolves to no procedure; existing analysis addresses take precedence and ambiguous mappings fail explicitly. Returns provider-specific pseudocode, never original source or cross-provider text equivalence, and may return null. When supplied, raw_result.pseudocode_absence distinguishes provider-failure from not-in-export; absence of that fact means unknown. Request procedure_assembly when instruction precision matters. Ghidra no-return assumptions may cut the analyzed body; Evidence limitations report observed terminal calls and available callee identities. Select detail summary to retain complete Evidence and receive text availability and counts; inspect_analysis_view summary or native/pseudocode pages read the original observation without decompiling again. Complete remains the default.",
+    z.object({
+      procedure,
+      document,
+      analysis: decompileAnalysisSelection,
+      detail: analysisDetailSchema,
+    }),
     { evidenceParameters: "omit-detail" },
   ),
   official(

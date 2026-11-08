@@ -18,6 +18,9 @@ const placed = (element: JsonValue | undefined) =>
   isXmlElement(element) &&
   ["x", "y"].every((key) => NUMBER.test(String(element.attributes[key] ?? "")));
 
+/** A run of a text element. Its `x` and `y` place that run; they do not make it a note of its own. */
+const TEXT_RUN = /^(?:tspan|span)$/iu;
+
 /**
  * Whether the element at a pointer is an item placed by its own position, as
  * Xournal++ places each `<text x="88.3" y="156.5">` note on a layer: it and a
@@ -29,6 +32,10 @@ export const isPlacedItem = (
   pointer: string,
 ): boolean => {
   const element = resolvePointer(view, pointer);
+  const local = isXmlElement(element)
+    ? (element.name.split(":").at(-1) ?? element.name)
+    : "";
+  if (TEXT_RUN.test(local)) return false;
   const owner = placeOf(pointer);
   const list =
     owner === undefined ? undefined : resolvePointer(view, `${owner}/children`);
