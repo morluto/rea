@@ -1657,7 +1657,7 @@ it("revises trace workflow profiles so earlier results are not replayed", () => 
   expect(
     workflowAnalysisProfile(profile, "trace_feature").parameters
       .workflow_revision,
-  ).toBe(8);
+  ).toBe(9);
 
   expect(workflowAnalysisProfile(profile, "trace_feature")).not.toEqual(
     workflowAnalysisProfile(profile),

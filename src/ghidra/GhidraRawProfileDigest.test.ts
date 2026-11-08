@@ -11,9 +11,9 @@ import { GhidraProvider } from "./GhidraProvider.js";
 // bit-field base-type and inventory-search revisions that prevent reuse of snapshots with earlier
 // results.
 const RAW_DIGESTS = {
-  "6502": "680bb3b4d53fc520816573bda3c2ecd2a80fcb9ee52ef70fc75caa77aa7be956",
+  "6502": "04e570d6e4d3486c9432039f2f390fee250e23a542c496c236a0e74584804f2f",
   "x86-disabled-analyzer":
-    "8215917f661dce79a599e4db246c5828eb048957383d2443fe1b7fdedd455284",
+    "22207cc0fe7ec188d6c51ea51f3faadd941bd5f92fe8d4b258111e61221712ab",
 } as const;
 
 const configFor = (environment: NodeJS.ProcessEnv) => {
@@ -48,11 +48,13 @@ describe("raw-binary analysis profile digest", () => {
       load_image_evidence: "independent-raw-mapping-context-v4",
       load_image_observations:
         "source-mappings-entry-context-relocation-symbol-v3",
-      instruction_status: "unlisted-address-without-decode-v1",
+      instruction_status: "unlisted-and-containing-code-data-v3",
       inventory_search_projection: "provider-inventory-facts-v1",
       value_flow_effect_scope: "pcode-load-store-explicit-v1",
       byte_search_boundary: "contiguous-eligible-initialized-blocks-v1",
       data_type_observations: "bit-field-base-and-lookup-v1",
+      instruction_references:
+        "exact-address-incoming-without-synthetic-entry-v3",
       analyzer_preset: "ghidra-default",
     });
   });
