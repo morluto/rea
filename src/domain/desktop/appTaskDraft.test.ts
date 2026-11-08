@@ -55,7 +55,7 @@ const draft = (files: Record<string, DesktopStatePath>) =>
     new Map(Object.entries(files)),
     (home) => home !== "elsewhere",
     { seed: 0, end: 1 },
-    leftOutFiles(new Map(Object.entries(files)), [], []).isLeftOut,
+    leftOutFiles(new Map(Object.entries(files)), [], []),
   );
 
 it("omits checks for a lock left out of a selected folder but retains an explicitly selected lock", () => {
@@ -75,7 +75,7 @@ it("omits checks for a lock left out of a selected folder but retains an explici
     files,
     () => true,
     ends,
-    leftOutFiles(files, [], ["Documents"], ["Documents"]).isLeftOut,
+    leftOutFiles(files, [], ["Documents"]),
   );
   expect(
     fromFolder.find(({ file }) => file === "Documents/plan.vym")?.suggested
@@ -88,17 +88,28 @@ it("omits checks for a lock left out of a selected folder but retains an explici
     files,
     () => true,
     ends,
-    leftOutFiles(
-      files,
-      [],
-      ["Documents/plan.vym.lock"],
-      ["Documents/plan.vym.lock"],
-    ).isLeftOut,
+    leftOutFiles(files, [], ["Documents/plan.vym.lock"]),
   );
   expect(
     explicit.find(({ file }) => file === "Documents/plan.vym.lock")?.suggested
       .length,
   ).toBeGreaterThan(0);
+});
+
+it("drafts a changed unselected conversation history in app state", () => {
+  const [file] = draft({
+    ".config/app/history.log": path(
+      "application_state",
+      "text",
+      text("Ada: Hello"),
+      text("Ada: Hello", "Lin: Welcome"),
+    ),
+  });
+  expect(file?.suggested).toContainEqual({
+    kind: "lines_present",
+    file: ".config/app/history.log",
+    lines: ["Lin: Welcome"],
+  });
 });
 
 describe("draftTaskFiles", () => {

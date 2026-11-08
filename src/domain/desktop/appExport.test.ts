@@ -44,7 +44,6 @@ const plan: DesktopAppExportPlan = {
   unseededFiles: [],
   seedModes: {},
   leftOutLocks: [],
-  leftOutLogs: [],
   unownedFolders: [],
   runtimeSeeds: [],
   dconf: "",
