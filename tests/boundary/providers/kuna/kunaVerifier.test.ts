@@ -13,6 +13,43 @@ import { fakeKunaCalls, writeFakeKuna } from "./fakeKuna.js";
 
 const it = test.skipIf(process.platform === "win32");
 
+test("refuses missing prerequisites before loading MCP contracts", async () => {
+  const root = await createTestTempDirectory("rea-kuna-prerequisite-");
+  const loader = join(root, "unavailable-catalog.mjs");
+  await writeFile(
+    loader,
+    `import { registerHooks } from "node:module";
+const catalog = ${JSON.stringify(pathToFileURL(resolve("dist/contracts/toolContracts.js")).href)};
+registerHooks({
+  load(url, context, nextLoad) {
+    if (url === catalog) throw new Error("MCP catalog unavailable before verification");
+    return nextLoad(url, context);
+  },
+});
+`,
+  );
+  const result = spawnSync(
+    process.execPath,
+    ["--import", pathToFileURL(loader).href, "scripts/verify-real-kuna.mjs"],
+    {
+      encoding: "utf8",
+      timeout: 10_000,
+      env: {
+        PATH: process.env.PATH,
+        SystemRoot: process.env.SystemRoot,
+        HOME: root,
+        TEMP: root,
+        TMP: root,
+      },
+    },
+  );
+  expect(result.error).toBeUndefined();
+  expect(result.status).toBe(1);
+  expect(result.stdout).toBe("");
+  expect(result.stderr).toContain("Kuna lane prerequisite missing");
+  expect(result.stderr).not.toContain("MCP catalog unavailable");
+});
+
 const createCallerMatrix = async (root: string) => {
   const targets = join(root, "targets");
   const binaries: string[] = [];

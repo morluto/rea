@@ -23,8 +23,6 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseArgs, promisify } from "node:util";
-import { Client } from "@modelcontextprotocol/client";
-import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import { inspectKunaInstallation } from "../dist/kuna/KunaInstallation.js";
 import {
   KUNA_RELEASE_VERIFICATION_EXPLANATION,
@@ -37,17 +35,12 @@ import {
   KUNA_XREF_MISSING_NAME_REMEDIATION,
   missingKunaXrefNameMessage,
 } from "../dist/kuna/KunaSelectorGuidance.js";
-import {
-  requireMcpOperationResult,
-  requireMcpToolError,
-} from "./lib/mcp-verifier-results.mjs";
 import { verifyKunaReferences } from "./lib/kuna-reference-verifier.mjs";
 import {
   nativeKunaStrings,
   verifyKunaStrings,
 } from "./lib/kuna-string-verifier.mjs";
 import { nativeKunaIncomingSites } from "./lib/kuna-native-reference-verifier.mjs";
-import { MULTI_MODE_REMEDIATION } from "../dist/application/CapabilityInventory.js";
 import {
   assertVerifierCleanupComplete,
   completeVerifierRun,
@@ -185,6 +178,16 @@ const sampleTree = async (root) => {
 
 /** One MCP server with a selected provider, sampled while it runs. */
 const openServer = async (provider, kunaSettings = {}) => {
+  // Prerequisite and caller selection failures need no MCP catalog or client.
+  const [
+    { Client },
+    { StdioClientTransport },
+    { requireMcpOperationResult, requireMcpToolError },
+  ] = await Promise.all([
+    import("@modelcontextprotocol/client"),
+    import("@modelcontextprotocol/client/stdio"),
+    import("./lib/mcp-verifier-results.mjs"),
+  ]);
   const owner = Symbol(provider.id);
   pendingServers.add(owner);
   const transport = new StdioClientTransport({
@@ -419,6 +422,8 @@ const verifyKuna = async (
         false,
       );
       if (process.platform === "darwin") {
+        const { MULTI_MODE_REMEDIATION } =
+          await import("../dist/application/CapabilityInventory.js");
         const authored = trace?.modes?.find(
           ({ name }) => name === "authored_ui_dispatch",
         );
