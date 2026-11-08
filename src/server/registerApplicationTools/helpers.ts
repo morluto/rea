@@ -63,11 +63,22 @@ export const deliverApplicationEvidence = async (
             id === parent.evidence_id ? parent : options.evidenceById?.(id),
         );
   await setImmediate();
-  if (signal.aborted)
-    return delivery.toErrorToolResult(
-      new AnalysisCancelledError(contract.name, { cause: signal.reason }),
+  if (signal.aborted) {
+    // A completed parent is retained; a cancelled selection is not, so those
+    // callers keep the unchanged-session contract.
+    const interrupted = new AnalysisCancelledError(contract.name, {
+      cause: signal.reason,
+    });
+    const cancelled =
+      view === undefined
+        ? interrupted.retainPartialObservation(parent)
+        : interrupted;
+    return delivery.toPartialErrorToolResult(
+      cancelled,
       contract.returnsTargetContent,
+      options.recordEvidence,
     );
+  }
   if (!selected.ok) return delivery.toCallToolResult(selected, contract);
   const sources = recordEvidenceSources(
     options.recordEvidence,
