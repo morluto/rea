@@ -14,6 +14,7 @@ import {
   type BinaryContainer,
   type FileMapping,
   type FileMappingIndex,
+  type LoadRegion,
 } from "../native/metadata/BinaryContainer.js";
 
 const MAX_TRACKED_CANDIDATES = 100_000;
@@ -50,12 +51,30 @@ export const recoverGoStringLiterals = (
   maxItems: number = DEFAULT_MAX_GO_STRING_LITERALS,
   checkActive?: () => void,
 ): GoStringLiterals => {
+  checkActive?.();
   const index = createFileMappingIndex(
     imageFileMappings(container),
     container.zero_fills,
   );
-  const targets = selectTargetSpans(bytes, container, index);
-  const headerSpans = selectHeaderScanSpans(bytes, container, index);
+  checkActive?.();
+  const readableRegions = createReadableLoadRegionIndex(
+    container.load_regions,
+    checkActive,
+  );
+  const targets = selectTargetSpans(
+    bytes,
+    container,
+    index,
+    readableRegions,
+    checkActive,
+  );
+  const headerSpans = selectHeaderScanSpans(
+    bytes,
+    container,
+    index,
+    readableRegions,
+    checkActive,
+  );
   if (targets.length === 0 || headerSpans.length === 0)
     return {
       evidence_kind: "inferred",
@@ -251,18 +270,64 @@ const admitMappedSpan = (
   }
 };
 
-const hasReadableLoadRegion = (
-  container: BinaryContainer,
-  address: bigint,
-  size: number,
-): boolean => {
-  const end = address + BigInt(size);
-  return (container.load_regions ?? []).some(
-    (region) =>
-      region.read &&
-      region.mapping.address <= address &&
-      end <= region.mapping.address + BigInt(region.mapping.size),
+interface ReadableLoadRegionIndex {
+  readonly contains: (address: bigint, size: number) => boolean;
+}
+
+const createReadableLoadRegionIndex = (
+  loadRegions: readonly LoadRegion[] | undefined,
+  checkActive?: () => void,
+): ReadableLoadRegionIndex => {
+  if (loadRegions === undefined || loadRegions.length === 0)
+    return { contains: () => false };
+  const raw: { start: bigint; end: bigint }[] = [];
+  let steps = 0;
+  for (const region of loadRegions) {
+    if ((++steps & 0x3ff) === 0) checkActive?.();
+    if (!region.read || region.mapping.size <= 0) continue;
+    raw.push({
+      start: region.mapping.address,
+      end: region.mapping.address + BigInt(region.mapping.size),
+    });
+  }
+  if (raw.length === 0) return { contains: () => false };
+  checkActive?.();
+  raw.sort((left, right) =>
+    left.start < right.start
+      ? -1
+      : left.start > right.start
+        ? 1
+        : left.end < right.end
+          ? -1
+          : left.end > right.end
+            ? 1
+            : 0,
   );
+  const starts: bigint[] = [];
+  const ends: bigint[] = [];
+  let currentStart = (raw[0] as (typeof raw)[number]).start;
+  let currentEnd = (raw[0] as (typeof raw)[number]).end;
+  for (let index = 1; index < raw.length; index += 1) {
+    if ((index & 0x3ff) === 0) checkActive?.();
+    const span = raw[index] as (typeof raw)[number];
+    if (span.start <= currentEnd) {
+      if (span.end > currentEnd) currentEnd = span.end;
+      continue;
+    }
+    starts.push(currentStart);
+    ends.push(currentEnd);
+    currentStart = span.start;
+    currentEnd = span.end;
+  }
+  starts.push(currentStart);
+  ends.push(currentEnd);
+  return {
+    contains: (address, size) => {
+      if (size <= 0) return false;
+      const index = lastBigIntAtOrBelow(starts, address);
+      return index >= 0 && address + BigInt(size) <= (ends[index] as bigint);
+    },
+  };
 };
 
 /**
@@ -273,10 +338,14 @@ const selectTargetSpans = (
   bytes: Buffer,
   container: BinaryContainer,
   index: FileMappingIndex,
+  readableRegions: ReadableLoadRegionIndex,
+  checkActive?: () => void,
 ): readonly FileMapping[] => {
   const raw: FileMapping[] = [];
+  let steps = 0;
   if (container.sections.length > 0) {
     for (const section of container.sections) {
+      if ((++steps & 0x3ff) === 0) checkActive?.();
       if (!section.read_only) continue;
       if (
         section.format === "pe" &&
@@ -285,7 +354,9 @@ const selectTargetSpans = (
         continue;
       if (
         section.format === "macho" &&
-        (section.flags & MACHO_ATTR_DEBUG) !== 0
+        (section.segment_unmapped ||
+          (section.flags & MACHO_ATTR_DEBUG) !== 0 ||
+          !readableRegions.contains(section.address, section.size))
       )
         continue;
       const address =
@@ -304,6 +375,7 @@ const selectTargetSpans = (
     }
   } else {
     for (const region of container.load_regions ?? []) {
+      if ((++steps & 0x3ff) === 0) checkActive?.();
       if (!region.read || region.write || region.execute) continue;
       const admitted = admitMappedSpan(
         bytes,
@@ -326,6 +398,7 @@ const selectTargetSpans = (
   const nonContained: FileMapping[] = [];
   let maxEnd = -1n;
   for (const span of raw) {
+    if ((++steps & 0x3ff) === 0) checkActive?.();
     const end = span.address + BigInt(span.size);
     if (end <= maxEnd) continue;
     nonContained.push(span);
@@ -339,8 +412,11 @@ const selectHeaderScanSpans = (
   bytes: Buffer,
   container: BinaryContainer,
   index: FileMappingIndex,
+  readableRegions: ReadableLoadRegionIndex,
+  checkActive?: () => void,
 ): readonly HeaderScanSpan[] => {
   const spans: FileMapping[] = [];
+  let steps = 0;
   const push = (address: bigint, offset: number, size: number): void => {
     const admitted = admitMappedSpan(
       bytes,
@@ -354,6 +430,7 @@ const selectHeaderScanSpans = (
   };
 
   for (const section of container.sections) {
+    if ((++steps & 0x3ff) === 0) checkActive?.();
     if (!section.file_backed || section.compressed) continue;
     if (section.format === "elf") {
       if (
@@ -370,7 +447,7 @@ const selectHeaderScanSpans = (
         section.segment_unmapped ||
         (section.flags & MACHO_ATTR_INSTRUCTIONS) !== 0 ||
         (section.flags & MACHO_ATTR_DEBUG) !== 0 ||
-        !hasReadableLoadRegion(container, section.address, section.size)
+        !readableRegions.contains(section.address, section.size)
       )
         continue;
       push(section.address, section.offset, section.size);
@@ -394,6 +471,7 @@ const selectHeaderScanSpans = (
 
   if (container.sections.length === 0) {
     for (const region of container.load_regions ?? []) {
+      if ((++steps & 0x3ff) === 0) checkActive?.();
       if (!region.read || region.execute) continue;
       push(region.mapping.address, region.mapping.offset, region.mapping.size);
     }
@@ -402,12 +480,17 @@ const selectHeaderScanSpans = (
     container.section_names_limitation !== undefined
   ) {
     for (const region of container.load_regions ?? []) {
+      if ((++steps & 0x3ff) === 0) checkActive?.();
       if (!region.read || !region.write || region.execute) continue;
       push(region.mapping.address, region.mapping.offset, region.mapping.size);
     }
   }
 
-  return normalizeHeaderScanSpans(spans, container.bits === 64 ? 8 : 4);
+  return normalizeHeaderScanSpans(
+    spans,
+    container.bits === 64 ? 8 : 4,
+    checkActive,
+  );
 };
 
 /**
@@ -418,6 +501,7 @@ const selectHeaderScanSpans = (
 const normalizeHeaderScanSpans = (
   spans: readonly FileMapping[],
   wordBytes: 4 | 8,
+  checkActive?: () => void,
 ): readonly HeaderScanSpan[] => {
   const wordWidth = BigInt(wordBytes);
   const aligned: {
@@ -425,7 +509,9 @@ const normalizeHeaderScanSpans = (
     endOffset: number;
     readonly phase: number;
   }[] = [];
+  let steps = 0;
   for (const span of spans) {
+    if ((++steps & 0x3ff) === 0) checkActive?.();
     const misalign = Number(
       (wordWidth - (span.address % wordWidth)) % wordWidth,
     );
@@ -450,6 +536,7 @@ const normalizeHeaderScanSpans = (
   const merged: HeaderScanSpan[] = [];
   let current = aligned[0] as (typeof aligned)[number];
   for (let index = 1; index < aligned.length; index += 1) {
+    if ((++steps & 0x3ff) === 0) checkActive?.();
     const next = aligned[index] as (typeof aligned)[number];
     if (next.phase === current.phase && next.startOffset < current.endOffset) {
       if (next.endOffset > current.endOffset)
@@ -471,6 +558,20 @@ const normalizeHeaderScanSpans = (
       left.startOffset - right.startOffset || left.endOffset - right.endOffset,
   );
   return merged;
+};
+
+const lastBigIntAtOrBelow = (
+  sorted: readonly bigint[],
+  value: bigint,
+): number => {
+  let low = 0;
+  let high = sorted.length;
+  while (low < high) {
+    const middle = (low + high) >>> 1;
+    if ((sorted[middle] as bigint) <= value) low = middle + 1;
+    else high = middle;
+  }
+  return low - 1;
 };
 
 const lastSpanAtOrBelow = (

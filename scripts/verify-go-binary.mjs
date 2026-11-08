@@ -12,6 +12,7 @@ import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import { parseEvidence } from "../dist/domain/evidence.js";
 import { goBinarySchema } from "../dist/domain/go/goBinary.js";
 import { PrivateRuntimeRoot } from "../dist/process/PrivateRuntimeRoot.js";
+import { artifactMcpCall } from "./lib/artifact-e2e.mjs";
 import { requireMcpOutput } from "./lib/mcp-verifier-results.mjs";
 import { createVerifierRun, completeVerifierRun } from "./lib/verifier-run.mjs";
 
@@ -365,7 +366,8 @@ async function inspect(mode, path, includeStringLiterals = false) {
     const argumentsPayload = includeStringLiterals
       ? { path, include_string_literals: true }
       : { path };
-    const response = await client.callTool(
+    const response = await artifactMcpCall(
+      client,
       { name: "inspect_go_binary", arguments: argumentsPayload },
       { timeout: 30_000 },
     );

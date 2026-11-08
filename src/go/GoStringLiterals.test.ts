@@ -3,8 +3,15 @@ import {
   MAX_GO_STRING_AGGREGATE_BYTES,
   MAX_GO_STRING_LITERAL_BYTES,
 } from "../domain/go/goBinary.js";
+import type {
+  BinaryContainer,
+  FileMapping,
+  ImageSection,
+  LoadRegion,
+} from "../native/metadata/BinaryContainer.js";
 import { createGoRodataStringFixture } from "../../tests/fixtures/go/rodataStringImage.js";
 import { readGoBinaryImage } from "./GoBinaryImage.js";
+import { recoverGoStringLiterals } from "./GoStringLiterals.js";
 
 const LITERALS = [
   "ListResourceProviders",
@@ -472,4 +479,107 @@ it("bounds rejected-slice caching across thousands of distinct NUL slices withou
       },
     ],
   });
+});
+
+it("indexes 25,000 Mach-O load regions and sections without quadratic stalls and honors section-loop cancellation", () => {
+  const count = 25_000;
+  const slotBytes = 16;
+  const bytes = Buffer.alloc((count + 1) * slotBytes);
+  const literal = "macho-indexed";
+  const literalBytes = Buffer.from(literal, "utf8");
+  literalBytes.copy(bytes, 0);
+
+  const mappings: FileMapping[] = [];
+  const loadRegions: LoadRegion[] = [];
+  const sections: ImageSection[] = [];
+  for (let index = 0; index < count; index += 1) {
+    const offset = index * slotBytes;
+    const address = 0x100000n + BigInt(index) * 0x2000n;
+    const mapping: FileMapping = { address, offset, size: slotBytes };
+    const readable = index !== count - 2;
+    mappings.push(mapping);
+    loadRegions.push({
+      mapping,
+      memory_size: BigInt(slotBytes),
+      read: readable,
+      write: index > 0,
+      execute: false,
+    });
+    sections.push({
+      format: "macho",
+      name: index === 0 ? "__TEXT,__rodata" : "__DATA,__data",
+      section_name: index === 0 ? "__rodata" : "__data",
+      type: 0,
+      flags: 0,
+      address,
+      declared_range: { offset: BigInt(offset), size: BigInt(slotBytes) },
+      segment_mapping: mapping,
+      segment_unmapped: false,
+      offset,
+      size: slotBytes,
+      file_backed: true,
+      read_only: index === 0,
+      compressed: false,
+    });
+  }
+
+  const roAddr = 0x100000n;
+  const unreadableHeaderOffset = (count - 2) * slotBytes;
+  bytes.writeBigUInt64LE(roAddr, unreadableHeaderOffset);
+  bytes.writeBigUInt64LE(
+    BigInt(literalBytes.length),
+    unreadableHeaderOffset + 8,
+  );
+
+  const validHeaderOffset = (count - 1) * slotBytes;
+  bytes.writeBigUInt64LE(roAddr, validHeaderOffset);
+  bytes.writeBigUInt64LE(BigInt(literalBytes.length), validHeaderOffset + 8);
+
+  const container: BinaryContainer = {
+    format: "macho",
+    architecture: "arm64",
+    bits: 64,
+    byte_order: "little",
+    mappings,
+    load_regions: loadRegions,
+    zero_fills: [],
+    sections,
+  };
+
+  const started = performance.now();
+  const recovered = recoverGoStringLiterals(bytes, container);
+  const elapsedMs = performance.now() - started;
+
+  expect(elapsedMs).toBeLessThan(500);
+  expect(recovered.items).toEqual([
+    {
+      value: literal,
+      location: { offset: 0, bytes: literalBytes.length },
+      first_header_offset: validHeaderOffset,
+      reference_count: 1,
+    },
+  ]);
+
+  let inSectionLoop = false;
+  let observedSections = 0;
+  const trackedSections = new Proxy(sections, {
+    get(target, property, receiver) {
+      if (typeof property === "string" && /^\d+$/u.test(property)) {
+        inSectionLoop = true;
+        observedSections += 1;
+      }
+      return Reflect.get(target, property, receiver);
+    },
+  });
+  expect(() =>
+    recoverGoStringLiterals(
+      bytes,
+      { ...container, sections: trackedSections },
+      2000,
+      () => {
+        if (inSectionLoop) throw new Error("cancelled during section indexing");
+      },
+    ),
+  ).toThrow("cancelled during section indexing");
+  expect(observedSections).toBeLessThan(count);
 });
