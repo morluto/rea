@@ -364,6 +364,14 @@ MCP encoding. An oversized single row remains in the complete parent, which
 can be exported. Page exhaustion describes retained rows, not discovery or
 runtime access.
 
+For retained `inspect_with_objdump` Evidence, use
+`view: {"kind":"objdump-output","stream":"stdout","offset":0,"limit":2048}`
+to read exact retained stdout or choose `stderr`. Follow `coverage.next_offset`
+for more text. Offsets and limits count UTF-16 code units, with pages preserving
+complete surrogate pairs. Capture status, exit information and both stream
+lengths accompany each page. Exhaustion applies to the retained stream, and
+`capture.output_truncated` still identifies incomplete producer output.
+
 For oversized native function Evidence, `details.reported_limits.continuation`
 contains a ready-to-call `inspect_analysis_view` request for the retained
 pseudocode's first page. Use its `name` and `arguments` directly, then follow

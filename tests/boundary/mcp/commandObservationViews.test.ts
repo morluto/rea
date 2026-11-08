@@ -233,6 +233,41 @@ it("keeps pathless objdump observations subjectless and preserves the default co
   expect(ledger.get(parent.evidence_id)).toEqual(parent);
 });
 
+it("pages a retained objdump stream through its advertised schemas without rerunning it", async () => {
+  const { client, run } = await connect();
+  const reply = await client.callTool({
+    name: "inspect_with_objdump",
+    arguments: { operation: "architectures" },
+  });
+  const parent = parseEvidence(reply.structuredContent);
+  const schemas = await advertisedMcpToolSchemas(
+    client,
+    "inspect_analysis_view",
+  );
+  const arguments_ = {
+    source: { kind: "retained-evidence", evidence_id: parent.evidence_id },
+    view: { kind: "objdump-output", stream: "stderr", offset: 0, limit: 4 },
+  };
+  expect(schemas.ajv.validate(schemas.inputSchema, arguments_)).toBe(true);
+  const page = await client.callTool({
+    name: "inspect_analysis_view",
+    arguments: arguments_,
+  });
+  expect(
+    schemas.ajv.validate(schemas.outputSchema, page.structuredContent),
+    JSON.stringify(schemas.ajv.errors),
+  ).toBe(true);
+  expect(parseEvidence(page.structuredContent)).toMatchObject({
+    evidence_links: [parent.evidence_id],
+    normalized_result: {
+      item: { text: "diag", unit: "utf16-code-units" },
+      capture: { output_truncated: false, completion_status: "complete" },
+      coverage: { total: 11, next_offset: 4, exhausted: false },
+    },
+  });
+  expect(run).toHaveBeenCalledOnce();
+});
+
 it("rejects summary without retention before executing either native command", async () => {
   const { client, execute, run } = await connect(false);
   for (const input of [
@@ -343,3 +378,62 @@ it.each([true, false, null])(
     }
   },
 );
+
+it("reassembles exact Unicode text while preserving incomplete producer coverage", async () => {
+  const parent = createEvidence(
+    undefined,
+    { id: "fixture", name: "Fixture", version: null },
+    {
+      operation: "inspect_with_objdump",
+      parameters: { operation: "architectures" },
+      result: {
+        stdout: "ab🧪z",
+        stderr: "",
+        exit_code: "ETIMEDOUT",
+        signal: "SIGTERM",
+        output_truncated: true,
+        completion_status: "unknown",
+        artifact_sha256_after: null,
+        artifact_changed: null,
+      },
+    },
+  );
+  const query = async (stream: "stdout" | "stderr", offset: number) => {
+    const result = await inspectAnalysisView({
+      source: { kind: "inline", evidence: parent },
+      view: { kind: "objdump-output", stream, offset, limit: 3 },
+    });
+    if (!result.ok) throw result.error;
+    return result.value.normalized_result;
+  };
+  const first = await query("stdout", 0);
+  expect(first).toMatchObject({
+    item: { text: "ab" },
+    coverage: { next_offset: 2, total: 5 },
+    capture: {
+      output_truncated: true,
+      completion_status: "unknown",
+      exit_code: "ETIMEDOUT",
+      signal: "SIGTERM",
+      stdout_utf16_units: 5,
+      stderr_utf16_units: 0,
+    },
+  });
+  expect(await query("stdout", 2)).toMatchObject({
+    item: { text: "🧪z" },
+    coverage: { next_offset: null, exhausted: true },
+    capture: { output_truncated: true },
+  });
+  expect(await query("stderr", 0)).toMatchObject({
+    item: { text: "" },
+    coverage: { total: 0, exhausted: true },
+  });
+  await expect(query("stdout", 3)).rejects.toMatchObject({
+    issues: [
+      expect.objectContaining({
+        path: ["view"],
+        message: expect.stringContaining("surrogate pair"),
+      }),
+    ],
+  });
+});

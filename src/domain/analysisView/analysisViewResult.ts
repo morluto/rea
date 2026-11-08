@@ -1,3 +1,4 @@
+import { analysisTextPageItemSchema } from "./analysisViewText.js";
 import { graphqlContractViewRequestSchema } from "../apiContract/graphqlContractQuery.js";
 import {
   graphqlContractViewContextSchema,
@@ -130,6 +131,8 @@ import {
 import {
   commandSummaryContext,
   gdbCommandSummarySchema,
+  objdumpOutputCaptureSchema,
+  objdumpOutputViewRequestSchema,
 } from "./commandObservationView.js";
 import {
   fridaSessionStatusSummarySchema,
@@ -1243,6 +1246,16 @@ const machoPageViewResultSchema = z
 
 /** Projected facts for one selected view of retained analysis Evidence. */
 export const analysisViewResultSchema = z.discriminatedUnion("kind", [
+  z.strictObject({
+    ...viewResultBase,
+    ...commandSummaryContext,
+    kind: z.literal("objdump-output"),
+    parent_operation: z.literal("inspect_with_objdump"),
+    artifact: artifactSchema.nullable(),
+    view: objdumpOutputViewRequestSchema,
+    item: analysisTextPageItemSchema,
+    capture: objdumpOutputCaptureSchema,
+  }),
   z.strictObject({
     ...viewResultBase,
     ...nativeViewSourceContext,

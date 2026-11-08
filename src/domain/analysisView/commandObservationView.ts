@@ -19,6 +19,7 @@ import {
   completeWithinViewCoverage,
 } from "./analysisViewCoverage.js";
 import { analysisViewInputError } from "./analysisViewErrors.js";
+import { analysisTextPage } from "./analysisViewText.js";
 import { parseAnalysisViewResult } from "./analysisViewParent.js";
 
 export const commandSummaryContext = {
@@ -26,6 +27,21 @@ export const commandSummaryContext = {
   source_analysis_profile_digest: digestSchema.nullable(),
   source_parameters: jsonValueSchema,
 };
+
+/** A bounded page of either opaque stream retained by objdump. */
+export const objdumpOutputViewRequestSchema = z.strictObject({
+  kind: z.literal("objdump-output"),
+  stream: z.enum(["stdout", "stderr"]),
+  offset: z.int().nonnegative().default(0),
+  limit: z.int().positive().max(16_384).default(2_048),
+});
+
+export const objdumpOutputCaptureSchema = commandObservationSchema
+  .omit({ stdout: true, stderr: true })
+  .extend({
+    stdout_utf16_units: z.int().nonnegative(),
+    stderr_utf16_units: z.int().nonnegative(),
+  });
 
 /** Keep every ordered record, including asynchronous and unrecognized records. */
 export const gdbCommandSummarySchema = gdbCommandResultSchema
@@ -44,14 +60,21 @@ export const projectCommandObservationView = (
   parent: AnalysisViewParent,
   admitted: AdmittedView,
 ) => {
-  const view = ownedView<SummaryAnalysisView>(admitted, "summary");
-  if (view === undefined)
+  const view = ownedView<
+    SummaryAnalysisView | z.output<typeof objdumpOutputViewRequestSchema>
+  >(admitted, "summary", "objdump-output");
+  if (
+    view === undefined ||
+    (view.kind === "objdump-output" &&
+      parent.operation !== "inspect_with_objdump")
+  )
     return err(
       analysisViewInputError([
         {
           path: ["view"],
           reason: "invalid_value",
-          message: "Command observations support summary views.",
+          message:
+            "Use summary for command observations or objdump-output for objdump Evidence.",
         },
       ]),
     );
@@ -91,15 +114,12 @@ export const projectCommandObservationView = (
             sha256: parent.subject.digest.sha256,
           };
   const shared = {
-    kind: "summary" as const,
-    view,
     parent_evidence_id: parent.evidenceId,
     parent_digest: parent.evidenceId.slice(3),
     artifact,
     source_provider: parent.provider ?? null,
     source_analysis_profile_digest: parent.analysisProfile?.digest ?? null,
     source_parameters: parameters.data,
-    coverage: completeWithinViewCoverage(1, 1),
     limitations: boundedViewMessages(
       parent.limitations,
       parent.evidenceId,
@@ -112,6 +132,12 @@ export const projectCommandObservationView = (
       parent.evidenceId,
       "unknowns",
     ),
+  };
+  const summary = {
+    ...shared,
+    kind: "summary" as const,
+    view: { kind: "summary" as const },
+    coverage: completeWithinViewCoverage(1, 1),
   };
   if (parent.operation === "gdb_console") {
     const parsed = parseAnalysisViewResult(gdbCommandResultSchema, parent);
@@ -136,7 +162,7 @@ export const projectCommandObservationView = (
       );
     const { console, target, log, ...records } = parsed.value;
     return ok({
-      ...shared,
+      ...summary,
       parent_operation: "gdb_console" as const,
       summary: {
         ...records,
@@ -169,9 +195,30 @@ export const projectCommandObservationView = (
         },
       ]),
     );
+  if (view.kind === "summary")
+    return ok({
+      ...summary,
+      parent_operation: "inspect_with_objdump" as const,
+      summary: report,
+    });
+  const page = analysisTextPage(
+    report[view.stream],
+    view.offset,
+    view.limit,
+    view.stream,
+  );
+  if (!page.ok) return page;
+  const { stdout, stderr, ...capture } = report;
   return ok({
     ...shared,
+    kind: view.kind,
     parent_operation: "inspect_with_objdump" as const,
-    summary: report,
+    view,
+    ...page.value,
+    capture: {
+      ...capture,
+      stdout_utf16_units: stdout.length,
+      stderr_utf16_units: stderr.length,
+    },
   });
 };
