@@ -73,6 +73,7 @@ product pages. The VitePress documentation source is this `docs/` tree.
 ## Databases and recorded packets
 
 - [SQLite database snapshots](guides/data/sqlite-databases.md)
+- [Linux perf recordings](guides/data/perf-recordings.md)
 - [Recorded packet capture inspection](guides/data/packet-captures.md)
 - [Packet capture summaries](guides/data/pcap-analysis.md)
 

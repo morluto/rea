@@ -229,6 +229,11 @@ export const documentationSections = [
         route: "/sqlite-databases",
       },
       {
+        text: "Linux perf recordings",
+        source: "guides/data/perf-recordings.md",
+        route: "/perf-recordings",
+      },
+      {
         text: "Recorded packet capture inspection",
         source: "guides/data/packet-captures.md",
         route: "/packet-captures",
