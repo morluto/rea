@@ -53,6 +53,11 @@ export interface DesktopBuildFacts {
     readonly unresolved: readonly string[];
     readonly differing?: readonly string[];
     readonly unchecked?: readonly string[];
+    /** Version check of this client's recorded runner, without the recorded path. */
+    readonly runner?: {
+      readonly status: "current" | "stale" | "invalid" | "unknown";
+      readonly version?: string;
+    };
   }[];
   /** Build settings this terminal's environment sets. */
   readonly environmentSettings: readonly string[];
@@ -71,6 +76,8 @@ export interface DesktopBuildFactsInput {
   readonly registrations: (
     clientIds: readonly string[] | undefined,
     settings: Readonly<Record<string, string>>,
+    owned?: undefined,
+    observe?: (client: string, name: string, value: string) => void,
   ) => Promise<readonly ClientRegistrationStatus[]>;
 }
 
@@ -148,7 +155,7 @@ export const desktopBuildChecks = (
   dockerCheck(facts.docker),
   daemonCheck(facts.daemon),
   diskCheck(facts.disk),
-  agentEnvCheck(facts.agentEnv),
+  agentEnvCheck(facts),
   archiveCheck(facts.archive, context.clients),
   registrationCheck(facts, context.clients),
   skillCheck(context.skill),
@@ -232,9 +239,51 @@ const diskCheck = (disk: DesktopBuildFacts["disk"]): DoctorCheck => {
       );
 };
 
-const agentEnvCheck = (
-  agentEnv: DesktopBuildFacts["agentEnv"],
-): DoctorCheck => {
+const agentEnvCheck = (facts: DesktopBuildFacts): DoctorCheck => {
+  const { agentEnv } = facts;
+  const clients = facts.registrations.filter(({ registered }) => registered);
+  if (
+    clients.some(
+      ({ runner, unresolved }) =>
+        runner !== undefined || unresolved.includes("REA_AGENT_ENV_COMMAND"),
+    )
+  ) {
+    const rows = clients.map(({ client, runner, unresolved }) => ({
+      client,
+      ...(runner ??
+        (unresolved.includes("REA_AGENT_ENV_COMMAND")
+          ? { status: "unknown" as const }
+          : agentEnv.status !== "found"
+            ? { status: "invalid" as const }
+            : agentEnv.version === undefined
+              ? { status: "unknown" as const }
+              : {
+                  status:
+                    agentEnv.version === DESKTOP_EXPORT_FRAMEWORK_VERSION
+                      ? ("current" as const)
+                      : ("stale" as const),
+                  version: agentEnv.version,
+                })),
+    }));
+    const healthy = rows.every(({ status }) => status === "current");
+    return result(
+      "agent-env",
+      healthy,
+      rows
+        .map(({ client, status }) => `${client}'s runner is ${status}.`)
+        .join(" "),
+      {
+        classification: rows.some(({ status }) => status === "unknown")
+          ? "unknown"
+          : "missing_dependency",
+        remediation: `${AGENTENV_INSTALL_COMMAND}, or rea setup --desktop-build --install-agentenv.`,
+        details: {
+          expected_version: DESKTOP_EXPORT_FRAMEWORK_VERSION,
+          clients: rows,
+        },
+      },
+    );
+  }
   const pinned = agentEnv.version === DESKTOP_EXPORT_FRAMEWORK_VERSION;
   const detail =
     agentEnv.status !== "found"
@@ -285,6 +334,7 @@ const registrationCheck = (
       unresolved,
       differing = [],
       unchecked = [],
+      runner,
     }) => ({
       client,
       registered,
@@ -292,11 +342,17 @@ const registrationCheck = (
       unresolved: [...unresolved],
       ...(differing.length === 0 ? {} : { differing: [...differing] }),
       ...(unchecked.length === 0 ? {} : { unchecked: [...unchecked] }),
+      ...(runner === undefined ? {} : { runner }),
     }),
   );
   const failing = gaps.filter(
-    ({ registered, missing, differing }) =>
-      !registered || missing.length > 0 || (differing?.length ?? 0) > 0,
+    ({ registered, missing, differing, runner }) =>
+      !registered ||
+      missing.length > 0 ||
+      (differing ?? []).some(
+        (name) =>
+          name !== "REA_AGENT_ENV_COMMAND" || runner?.status !== "current",
+      ),
   );
   const unknown = gaps.filter(
     ({ unresolved, unchecked }) =>
