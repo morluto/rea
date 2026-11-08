@@ -25,12 +25,18 @@ and the committed Ghidra analysis profile.
   Omitting `dsym_path` preserves existing executable-only behavior.
 - **Bundle shape and target applicability**: the resolved path must name a
   `.dSYM` bundle directory (`*.dSYM`, including trailing `/` or `/.`) containing
-  regular-file DWARF members under `Contents/Resources/DWARF`, opened without
-  following symlinks on bundle components or members where the host supports
-  `O_NOFOLLOW`. Pairings with headerless formats (`raw-binary`, `dos-com`),
-  non-Mach-O targets, or pre-imported `REA_GHIDRA_PROJECT_PATH` sessions
-  (`-process -noanalysis`) fail closed as caller input (`invalid_request` /
-  `invalid_input`) with constraint `debug_companion_rejected`.
+  regular-file DWARF members under `Contents/Resources/DWARF`. Bundle,
+  directory, and member opens follow caller symlinks while admitting members
+  only through REA's non-blocking regular-file owner (skipping or rejecting
+  non-regular entries such as FIFOs, sockets, and device nodes). Target-admission
+  and pairing failures — missing or non-`.dSYM` bundles, missing or empty
+  `Contents/Resources/DWARF`, headerless formats (`raw-binary`, `dos-com`), and
+  non-Mach-O targets — fail closed as caller input (`invalid_request` /
+  `invalid_input`) with constraint `debug_companion_rejected`. Pairing
+  `dsym_path` with pre-imported `REA_GHIDRA_PROJECT_PATH` sessions
+  (`-process -noanalysis`) fails closed as a provider configuration conflict
+  (`configuration_invalid` with `details.settings` naming
+  `REA_GHIDRA_PROJECT_PATH`).
 - **Mandatory `LC_UUID` and CPU matching**: thin and universal containers
   validate Mach-O header/load-command framing and universal slice bounds,
   alignment, overlap, and header-versus-table CPU agreement. Placeholder
@@ -43,16 +49,16 @@ and the committed Ghidra analysis profile.
 - **Bounded admission and handle ownership**: examine at most 16 entries in
   `Contents/Resources/DWARF`, cap matched member size and cumulative
   matching-member digest reads at 1 GiB (deduplicating hard links sharing one
-  `(dev, ino)` file identity), and bound incremental header/UUID traversal to a
-  64 KiB read window and 64 MiB total header I/O across target and candidates.
-  Preserve refusal diagnostics ahead of final-close cancellation, retain failed
-  handles when descriptor or directory close fails, and honor cancellation
-  across member reads, staging copies, and cleanup retries.
+  `(dev, ino, size)` file identity), and bound incremental header/UUID traversal
+  to a 64 KiB read window and 64 MiB total header I/O across target and
+  candidates. Preserve refusal diagnostics ahead of final-close cancellation,
+  retain failed handles when descriptor or directory close fails, and honor
+  cancellation across member reads, staging copies, and cleanup retries.
 - **Private staging and provenance**: stage only the matched DWARF member inside
   REA's private runtime root at
-  `<snapshot>.dSYM/Contents/Resources/DWARF/<snapshot>` with `0600` file
-  permissions (`0700` directories) and post-copy size/SHA-256 verification,
-  leaving the caller's bundle untouched. Record
+  `<snapshot>.dSYM/Contents/Resources/DWARF/<snapshot>` via exclusive `0600`
+  file creation and post-copy size/SHA-256/file-state verification, leaving the
+  caller's bundle untouched. Record
   `dsym { source_path, member_sha256, uuid, staged_member }` in target-admission
   evidence and `debug_companion { source_path, uuid, member_sha256 }` in
   `GhidraAnalysisProfile` so companion-selected and bare runs never share an
@@ -64,8 +70,9 @@ and the committed Ghidra analysis profile.
   validation delegation, placeholder zero UUIDs, CPU/subtype matching, and
   duplicate-slice ambiguity.
 - Boundary and process-global lifecycle tests cover `.dSYM` directory naming,
-  symlink rejection, entry/size/I/O limits, mismatch and conflict diagnostics,
-  staging digest verification, analysis-profile and checkpoint isolation, and
+  non-regular member handling, entry/size/I/O limits, mismatch and conflict
+  diagnostics, `REA_GHIDRA_PROJECT_PATH` configuration refusal, staging digest
+  verification, analysis-profile and checkpoint isolation, and
   close-failure/cancellation invariants across directory, member, and staging
   handles.
 - Real macOS `clang -g` + `dsymutil` fixtures verify CLI and MCP admission of

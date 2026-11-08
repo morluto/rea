@@ -12,8 +12,8 @@
   target resolution before any provider starts. Reuse the resolver's open target
   handle, enforce normalized `.dSYM` directory naming, enumerate
   `Contents/Resources/DWARF` through `OwnedDirectoryHandle` and
-  `withRegularFileCompletion`, deduplicate `(dev, ino)` digests, and attach
-  `MachODebugCompanion` to Mach-O `BinaryTarget` variants or project
+  `withRegularFileCompletion`, deduplicate `(dev, ino, size)` digests, and
+  attach `MachODebugCompanion` to Mach-O `BinaryTarget` variants or project
   `debug_companion_rejected` refusals via `src/domain/analysisErrorProjection.ts`
   and `src/domain/analysisErrorPresentation.ts`.
 - `src/contracts/sessionLifecycleInputs.ts`,
@@ -22,13 +22,14 @@
   `src/application/binary/BinarySessionOpen.ts`: expose optional absolute
   `dsym_path` / `--dsym-path` across MCP `open_binary` and one-shot native CLI
   commands with contract-level headerless-format pairing rejection.
-- `src/ghidra/GhidraDebugCompanion.ts`, `src/ghidra/GhidraClient.ts`,
-  `src/ghidra/GhidraAnalysisProfile.ts`, and
+- `src/ghidra/GhidraProvider.ts`, `src/ghidra/GhidraDebugCompanion.ts`,
+  `src/ghidra/GhidraClient.ts`, `src/ghidra/GhidraAnalysisProfile.ts`, and
   `src/domain/liveBinaryTargetSummary.ts`: reject `REA_GHIDRA_PROJECT_PATH`
-  pairing before headless launch, commit `debug_companion` into the Ghidra
-  analysis profile so saved Program checkpoints stay isolated from bare imports,
-  stage the verified member beside the private snapshot, and project `dsym`
-  facts into target-admission evidence.
+  pairing as a `ConfigurationError` (`configuration_invalid`) before headless
+  launch, commit `debug_companion` into the Ghidra analysis profile so saved
+  Program checkpoints stay isolated from bare imports, stage the verified member
+  beside the private snapshot, and project `dsym` facts into target-admission
+  evidence.
 
 ## Incremental work and validation
 
@@ -55,6 +56,6 @@
 
 All new inputs are optional; omitting `dsym_path` preserves existing target
 resolution, analysis-profile digests, Program checkpoints, and Evidence shapes.
-Staging writes only inside REA's private runtime root (`0600` files, `0700`
-directories) and cleans up with the ephemeral session root. Neither the caller's
-executable nor `.dSYM` bundle is modified or executed.
+Staging writes only inside REA's private runtime root (exclusive `0600` staged
+member creation) and cleans up with the ephemeral session root. Neither the
+caller's executable nor `.dSYM` bundle is modified or executed.
