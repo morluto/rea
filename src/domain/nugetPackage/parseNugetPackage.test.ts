@@ -168,6 +168,31 @@ describe("parseNugetPackage: nuspec metadata", () => {
     expect(nuspecs[0]?.license).toBeNull();
   });
 
+  it("keeps a dependency with no id unnamed instead of inventing an empty name", () => {
+    const nuspec = NUSPEC.replace(
+      '<dependency id="System.Text.Json" version="8.0.0" />',
+      '<dependency version="8.0.0" />',
+    );
+    const nuspecs = parsed(
+      parse([
+        member("Example.Package.nuspec", {
+          bytes: nuspec.length,
+          text: nuspec,
+        }),
+      ]),
+    ).nuspecs;
+    const group = nuspecs[0]?.dependency_groups[0];
+    if (group === undefined) throw new Error("Expected one group");
+    expect(group.dependencies[1]).toEqual({
+      name: null,
+      version_range: "8.0.0",
+      exclude: null,
+      include: null,
+    });
+  });
+});
+
+describe("parseNugetPackage: dependency text", () => {
   it("reads dependencies written directly under <dependencies> as the untargeted group", () => {
     const nuspec = NUSPEC.replace(
       /<dependencies>[\s\S]*<\/dependencies>/,
@@ -253,6 +278,21 @@ describe("parseNugetPackage: asset layout", () => {
     // A `lib/` file with no framework folder has no framework to report.
     const bare = parsed(parse([member("lib/Example.dll")])).assets[0];
     expect(bare?.target_framework).toBe(null);
+  });
+});
+
+describe("parseNugetPackage: framework folder edge cases", () => {
+  it("treats an empty framework segment as no framework folder", () => {
+    const byPath = new Map(
+      parsed(
+        parse([
+          member("lib//Example.dll"),
+          member("runtimes/win-x64/lib/", { directory: true }),
+        ]),
+      ).assets.map((asset) => [asset.path, asset]),
+    );
+    expect(byPath.get("lib//Example.dll")?.target_framework).toBe(null);
+    expect(byPath.get("runtimes/win-x64/lib/")?.target_framework).toBe(null);
   });
 });
 

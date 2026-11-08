@@ -25,7 +25,8 @@ const zip = (
   for (const entry of members) {
     const name = Buffer.from(entry.path, "utf8");
     const data = Buffer.from(entry.text, "utf8");
-    const crc = entry.corrupt === true ? crc32(data) ^ 0xffffffff : crc32(data);
+    const crc =
+      entry.corrupt === true ? (crc32(data) ^ 0xffffffff) >>> 0 : crc32(data);
     const local = Buffer.alloc(30);
     local.writeUInt32LE(0x04034b50, 0);
     local.writeUInt16LE(20, 4);
@@ -204,4 +205,25 @@ it("refuses an unsafe .nuspec path without opening the member", async () => {
   expect(observed.diagnostics.map((entry) => entry.code)).not.toContain(
     "invalid-nuspec",
   );
+});
+
+it("keeps the admitted file snapshot when a later ZIP read fails", async () => {
+  const root = await createTestTempDirectory("rea-nuget-late-failure-");
+  const path = join(root, "Corrupt.1.0.0.nupkg");
+  // The central directory is readable, so the carrier admits and hashes the
+  // file; reading the member's stored data then fails its CRC.
+  await writeFile(
+    path,
+    zip([{ path: "Example.Package.nuspec", text: NUSPEC, corrupt: true }]),
+  );
+  const resources = new ArtifactResourceScope();
+  onTestFinished(() => resources.close());
+
+  const result = await inspectNugetPackageEvidence({ path }, resources);
+  expect(result.ok).toBe(false);
+  if (result.ok) throw new Error("Expected a read refusal");
+  expect(result.error.partialObservation).toMatchObject({
+    kind: "file-snapshot-hash",
+    path,
+  });
 });

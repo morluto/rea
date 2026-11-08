@@ -64,7 +64,8 @@ export const nugetNuspecSchema = z.strictObject({
       target_framework: z.string().nullable(),
       dependencies: z.array(
         z.strictObject({
-          name: z.string(),
+          /** Null when the element wrote no `id`; a declaration with no name. */
+          name: z.string().nullable(),
           version_range: z.string().nullable(),
           /** `exclude` attribute, verbatim; absent is not the same as empty. */
           exclude: z.string().nullable(),

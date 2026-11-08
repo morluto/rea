@@ -82,13 +82,16 @@ const assembleKind = (path: string): AssetKind => {
  * `runtimes/<rid>/lib/<tfm>/…` puts the RID second and the framework fourth.
  * A file placed directly under `lib/` has no framework folder.
  */
+const frameworkSegment = (segment: string | undefined): string | null =>
+  segment === undefined || segment.length === 0 ? null : segment;
+
 const targetFramework = (path: string): string | null => {
   const segments = path.split("/");
   if (segments.length < 3) return null;
   if (segments[0] === "lib" || segments[0] === "ref")
-    return segments[1] ?? null;
+    return frameworkSegment(segments[1]);
   if (segments[0] === "runtimes" && segments[2] === "lib")
-    return segments[3] ?? null;
+    return frameworkSegment(segments[3]);
   return null;
 };
 
@@ -198,7 +201,9 @@ const dependenciesOf = (
   parent: Element,
 ): NugetNuspec["dependency_groups"][number]["dependencies"] =>
   childrenNamed(parent, "dependency").map((dependency) => ({
-    name: dependency.getAttribute("id") ?? "",
+    // A dependency with no `id` names no package; reporting "" would invent a
+    // name the document did not write and hide the omission from the reader.
+    name: declaredAttribute(dependency, "id"),
     version_range: declaredAttribute(dependency, "version"),
     exclude: declaredAttribute(dependency, "exclude"),
     include: declaredAttribute(dependency, "include"),

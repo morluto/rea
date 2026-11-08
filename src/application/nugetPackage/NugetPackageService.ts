@@ -278,7 +278,16 @@ export const inspectNugetPackageEvidence = async (
       inventoryMembers(reader, input, options.signal),
     );
   } catch (failure: unknown) {
-    return err(readFailure(failure, input));
+    const refusal = readFailure(failure, input);
+    // The file was admitted and hashed before the ZIP stage; a decoder refusal
+    // does not undo that identity, so keep it as a partial observation.
+    refusal.retainPartialObservation({
+      kind: "file-snapshot-hash",
+      path: input.path,
+      sha256,
+      bytes: bytes.length,
+    });
+    return err(refusal);
   } finally {
     await reader.close().catch(() => undefined);
   }
