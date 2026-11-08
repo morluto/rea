@@ -10,8 +10,9 @@ import {
 import { awaitAcknowledgement } from "../../fixtures/lifecycleAcknowledgement.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
-const { realpathCalls, lstatGate } = vi.hoisted(() => ({
+const { realpathCalls, lstatCalls, lstatGate } = vi.hoisted(() => ({
   realpathCalls: vi.fn(),
+  lstatCalls: vi.fn(),
   // When set, the next lstat reports its path and waits for the gate.
   lstatGate: {} as {
     hold?:
@@ -29,6 +30,7 @@ vi.mock("node:fs/promises", async (importOriginal) => {
       return actual.realpath(...args);
     }) as typeof actual.realpath,
     lstat: (async (...args: Parameters<typeof actual.lstat>) => {
+      lstatCalls(String(args[0]));
       const hold = lstatGate.hold;
       if (hold !== undefined) {
         lstatGate.hold = undefined;
@@ -356,5 +358,16 @@ describe("Windows shortcut parent directory links", () => {
       lstatGate.hold = undefined;
       expect(entered).toHaveBeenCalledWith(first);
     }
+  });
+});
+
+describe("Windows shortcut deep parent paths", () => {
+  it("stops a deep missing Windows path at its first unreadable parent", async () => {
+    const provider = new WindowsShortcutProvider("win32");
+    const path = `C:\\missing${"\\a".repeat(8_000)}\\a.lnk`;
+    lstatCalls.mockClear();
+    await provider.inspect(providerInput(path));
+    expect(lstatCalls.mock.calls[0]).toEqual(["C:\\missing"]);
+    expect(lstatCalls).not.toHaveBeenCalledWith("C:\\missing\\a");
   });
 });

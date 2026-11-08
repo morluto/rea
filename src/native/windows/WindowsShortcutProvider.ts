@@ -87,33 +87,37 @@ const WINDOWS_PATH_COMPONENT = /([^\\/]+)([\\/]*)/gu;
  * cannot climb above an absolute root. A `\\?\` path skips that
  * normalization, so its components are walked as written. A relative path
  * keeps a leading `..` that has nothing to remove.
+ *
+ * Only the normalized components are retained, which is linear in the path.
+ * Each ancestor is built from the running prefix as the walk reaches it, so a
+ * deep path never holds every parent spelling at once.
  */
-const windowsAncestors = (path: string): readonly string[] => {
+function* windowsAncestors(path: string): Generator<string, void, undefined> {
   const root = WINDOWS_PATH_ROOT.exec(path)?.[0] ?? "";
   const literal = LITERAL_DEVICE_PATH.test(root);
   const absolute = /[\\/]$/u.test(root);
-  const kept: string[] = [];
-  for (const [spelled, name] of path
+  const kept: { readonly name: string; readonly spelled: string }[] = [];
+  for (const [spelled, name = ""] of path
     .slice(root.length)
     .matchAll(WINDOWS_PATH_COMPONENT)) {
     if (!literal && name === ".") continue;
     if (!literal && name === "..") {
       const last = kept.at(-1);
-      if (last !== undefined && !/^\.\.[\\/]*$/u.test(last)) {
+      if (last !== undefined && last.name !== "..") {
         kept.pop();
         continue;
       }
       if (absolute) continue;
     }
-    kept.push(spelled);
+    kept.push({ name, spelled });
   }
   // The final component is the shortcut itself, not an ancestor.
-  return kept
-    .slice(0, -1)
-    .map((_, index) =>
-      (root + kept.slice(0, index + 1).join("")).replace(/[\\/]+$/u, ""),
-    );
-};
+  let prefix = root;
+  for (const { name, spelled } of kept.slice(0, -1)) {
+    yield prefix + name;
+    prefix += spelled;
+  }
+}
 
 /**
  * The first ancestor directory of a Windows path that is a symbolic link or
