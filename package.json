@@ -265,6 +265,7 @@
     "verify:fixtures": "npm run build:fixtures && node scripts/verify-conformance-fixtures.mjs",
     "verify:readiness": "npm run build:cached && npm run verify:fixtures && node scripts/verify-reconstruction-readiness.mjs",
     "verify:package": "npm run build:cached && node scripts/verify-package.mjs",
+    "verify:package:unknown-provider": "npm run build:cached && node scripts/verify-package-unknown-provider.mjs",
     "verify:package:windows": "npm run build:cached && node scripts/verify-windows-package.mjs",
     "verify:qwen-client": "npm run build:cached && node scripts/verify-qwen-client.mjs",
     "verify:gemini-client": "npm run build:cached && node scripts/verify-gemini-client.mjs",
