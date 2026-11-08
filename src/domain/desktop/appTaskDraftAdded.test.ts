@@ -412,6 +412,21 @@ describe("draftTaskFiles for records whatever their fields are called", () => {
     ).toBe(true);
   });
 
+  it.each([
+    "<person><name>Delphine</name><modified>2026-11-07T10:12:00Z</modified></person><name>Moreau</name>",
+    "<name>Delphine</name><person><modified>2026-11-07T10:12:00Z</modified><name>Moreau</name></person>",
+  ])("keeps a nested omitted timestamp as a text boundary", (details) => {
+    const records = (extra: string) =>
+      `<records><record><field>Hannah</field></record>${extra}</records>`;
+    const after = records(`<record><details>${details}</details></record>`);
+    const checks = xmlDraft(records(""), after).suggested;
+    const values = checks.flatMap((check) =>
+      check.kind === "text_contains" ? [check.value] : [],
+    );
+    expect(values).toEqual(["Delphine", "Moreau"]);
+    expect(passing(FILE, xml(after), checks).every(Boolean)).toBe(true);
+  });
+
   it("suggests no check a cut view leaves undecided for a record only position names, added before the cut", () => {
     const book = (...people: string[]) =>
       `<book><contacts>${people

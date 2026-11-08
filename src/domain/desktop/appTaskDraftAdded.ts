@@ -237,38 +237,28 @@ export const attributeChecks = (
  * joining them would look for text the file never contains.
  */
 const keptFieldPieces = (node: JsonValue, bookkeeping = false): string[] => {
-  if (typeof node === "string")
-    return isStamp(node) || isVolatileValue(node.trim(), bookkeeping)
-      ? []
-      : [node];
-  if (!isXmlElement(node)) return [];
-  const inBookkeeping = bookkeeping || isBookkeeping(node);
   const pieces: string[] = [];
   let run = "";
   const flush = () => {
     if (run !== "") pieces.push(run);
     run = "";
   };
-  for (const child of node.children) {
-    if (typeof child === "string") {
-      if (isStamp(child) || isVolatileValue(child.trim(), inBookkeeping))
+  const visit = (value: JsonValue, inBookkeeping: boolean): void => {
+    if (typeof value === "string") {
+      if (isStamp(value) || isVolatileValue(value.trim(), inBookkeeping))
         flush();
-      else run += child;
-      continue;
+      else run += value;
+      return;
     }
-    if (!isXmlElement(child)) continue;
-    if (isStamp(elementText(child))) {
+    if (!isXmlElement(value)) return;
+    if (isStamp(elementText(value))) {
       flush();
-      continue;
+      return;
     }
-    const nested = keptFieldPieces(child, inBookkeeping);
-    if (nested.length !== 1) {
-      flush();
-      pieces.push(...nested);
-      continue;
-    }
-    run += nested[0] ?? "";
-  }
+    const nestedBookkeeping = inBookkeeping || isBookkeeping(value);
+    for (const child of value.children) visit(child, nestedBookkeeping);
+  };
+  visit(node, bookkeeping);
   flush();
   return pieces;
 };
