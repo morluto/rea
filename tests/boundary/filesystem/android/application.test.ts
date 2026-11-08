@@ -20,6 +20,7 @@ import {
 import { projectAndroidApplicationEvidence } from "../../../../src/application/android/AndroidApplicationService.js";
 import { androidApplicationProjectionResultSchema } from "../../../../src/domain/android/androidApplication.js";
 import { artifactInventoryResultSchema } from "../../../../src/domain/artifactGraph.js";
+import { parseEvidence } from "../../../../src/domain/evidence.js";
 
 describe("Android application projection", () => {
   it("projects deterministic APK components and explicit bridge hypotheses", async () => {
@@ -49,14 +50,21 @@ describe("Android application projection", () => {
     await writeFile(path, await writer.close());
 
     const inventory = await inventoryApplicationPackage(path);
+    const selected = parseEvidence({
+      ...inventory,
+      subject: { ...inventory.subject, name: "Selected application" },
+    });
     const first = projectAndroidApplicationEvidence({
-      inventory_evidence: [inventory],
+      inventory_evidence: [selected],
     });
     const second = projectAndroidApplicationEvidence({
       inventory_evidence: [inventory],
     });
     const left = androidApplicationProjectionResultSchema.parse(
       requireSuccessfulProjection(first).normalized_result,
+    );
+    expect(requireSuccessfulProjection(first).subject).toEqual(
+      selected.subject,
     );
     const right = androidApplicationProjectionResultSchema.parse(
       requireSuccessfulProjection(second).normalized_result,
