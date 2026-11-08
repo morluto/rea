@@ -1142,6 +1142,14 @@ const examineMapMember = async (
       loaded.bytes.length,
       decodeMemberText(loaded.bytes),
     );
+  // A package member's name is not its format, so one whose header was never
+  // read may be a native image or package, as on the text route.
+  else if (
+    header === null &&
+    member.packageFormat !== null &&
+    !member.kindStated
+  )
+    noteUnreadBinary(state, member);
   else state.skippedText += 1;
   return loaded?.kind !== "unread";
 };

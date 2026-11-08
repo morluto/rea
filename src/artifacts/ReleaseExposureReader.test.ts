@@ -1738,6 +1738,30 @@ describe("ReleaseExposureReader nested packages in a host", () => {
   });
 });
 
+describe("ReleaseExposureReader unread packaged maps", () => {
+  it.each(["payload.map", "payload.js.map"])(
+    "keeps coverage unknown for a corrupt compressed %s in an ELF host",
+    async (name) => {
+      const root = await createTestTempDirectory("rea-release-exposure-zlib-");
+      const payload = Buffer.from('{"version":3}\n');
+      const executable = cArchiveExecutable({
+        carrier: "elf",
+        layout: "2.1",
+        pythonVersion: 310,
+        members: [{ name, typeCode: "x", compress: true, payload }],
+      });
+      // Past the two-byte zlib header, 0xff opens a block of reserved type 3.
+      executable[executable.indexOf(deflateSync(payload)) + 2] = 0xff;
+      await writeFile(join(root, "app"), executable);
+      const scanned = await inspect(root);
+      expect(scanned.coverage).toBe("unknown");
+      expect(scanned.limitations).toContain(
+        `Could not read ${join(root, "app")}/${name} to rule out a native image or package.`,
+      );
+    },
+  );
+});
+
 describe("ReleaseExposureReader undecided PE members", () => {
   it.each(["payload.map", "payload.bin", "payload.json"])(
     "keeps a large PE member named %s with a late header undecided",
