@@ -687,6 +687,29 @@ describe("parseNugetPackage: runtime folders and bounded reads", () => {
   });
 });
 
+describe("parseNugetPackage: stored paths and tool layouts", () => {
+  it("publishes the member path as the archive stores it", () => {
+    const package_ = parsed(
+      parse([member("lib\\net8.0\\Example.dll"), member("lib/net8.0/Other.dll")]),
+    );
+    const [stored, plain] = package_.assets;
+    expect(stored?.path).toBe("lib\\net8.0\\Example.dll");
+    expect(stored?.kind).toBe("assemblies");
+    expect(stored?.target_framework).toBe("net8.0");
+    expect(plain?.path).toBe("lib/net8.0/Other.dll");
+    // Classification normalises separators, identity must follow the stored path.
+    expect(stored?.asset_id).not.toBe(plain?.asset_id);
+  });
+
+  it("reads the target framework of a framework-qualified tool package", () => {
+    const package_ = parsed(parse([member("tools/net8.0/any/MyTool.dll")]));
+    expect(package_.assets[0]).toMatchObject({
+      kind: "tools",
+      target_framework: "net8.0",
+    });
+  });
+});
+
 describe("parseNugetPackage: stable identities", () => {
   it("gives identical packages identical identifiers", () => {
     const first = parsed(parse([member("a.dll"), member("b.dll")]));
@@ -695,5 +718,28 @@ describe("parseNugetPackage: stable identities", () => {
     expect(first.assets.map((asset) => asset.asset_id)).toEqual(
       second.assets.map((asset) => asset.asset_id),
     );
+  });
+});
+
+describe("parseNugetPackage: stored paths and tool layouts", () => {
+  it("publishes the member path as the archive stores it", () => {
+    const package_ = parsed(
+      parse([member("lib\\net8.0\\Example.dll"), member("lib/net8.0/Other.dll")]),
+    );
+    const [stored, plain] = package_.assets;
+    expect(stored?.path).toBe("lib\\net8.0\\Example.dll");
+    expect(stored?.kind).toBe("assemblies");
+    expect(stored?.target_framework).toBe("net8.0");
+    expect(plain?.path).toBe("lib/net8.0/Other.dll");
+    // Classification normalises separators, identity must follow the stored path.
+    expect(stored?.asset_id).not.toBe(plain?.asset_id);
+  });
+
+  it("reads the target framework of a framework-qualified tool package", () => {
+    const package_ = parsed(parse([member("tools/net8.0/any/MyTool.dll")]));
+    expect(package_.assets[0]).toMatchObject({
+      kind: "tools",
+      target_framework: "net8.0",
+    });
   });
 });

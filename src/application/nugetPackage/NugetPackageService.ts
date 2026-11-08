@@ -200,10 +200,32 @@ const readMemberText = async (
     }
     chunks.push(chunk);
   }
-  return {
-    kind: "text",
-    text: Buffer.concat(chunks, length).toString("utf8"),
-  };
+  return decodeNuspecText(Buffer.concat(chunks, length));
+};
+
+/**
+ * A `.nuspec` is XML, so its encoding comes from its own byte-order mark: NuGet
+ * packages written on Windows are UTF-16. Decoding those as UTF-8 would turn
+ * every other byte into NUL and discard declarations the file really states.
+ * Bytes with no mark and no valid UTF-8 are unreadable rather than replaced.
+ */
+const decodeNuspecText = (
+  bytes: Buffer,
+): { readonly kind: "text"; readonly text: string } | { readonly kind: "unreadable" } => {
+  const label =
+    bytes[0] === 0xff && bytes[1] === 0xfe
+      ? "utf-16le"
+      : bytes[0] === 0xfe && bytes[1] === 0xff
+        ? "utf-16be"
+        : "utf-8";
+  try {
+    return {
+      kind: "text",
+      text: new TextDecoder(label, { fatal: true }).decode(bytes),
+    };
+  } catch {
+    return { kind: "unreadable" };
+  }
 };
 
 const isNuspec = (path: string): boolean =>

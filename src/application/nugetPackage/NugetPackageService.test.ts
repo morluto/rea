@@ -15,7 +15,7 @@ const STORED = 0;
 const zip = (
   members: readonly {
     readonly path: string;
-    readonly text: string;
+    readonly text: string | Buffer;
     readonly corrupt?: boolean;
   }[],
 ): Buffer => {
@@ -24,7 +24,9 @@ const zip = (
   let offset = 0;
   for (const entry of members) {
     const name = Buffer.from(entry.path, "utf8");
-    const data = Buffer.from(entry.text, "utf8");
+    const data = Buffer.isBuffer(entry.text)
+      ? entry.text
+      : Buffer.from(entry.text, "utf8");
     const crc =
       entry.corrupt === true ? (crc32(data) ^ 0xffffffff) >>> 0 : crc32(data);
     const local = Buffer.alloc(30);
@@ -120,6 +122,40 @@ const writePackage = async (
   );
   return path;
 };
+
+it("reads a UTF-16 nuspec from its own byte-order mark", async () => {
+  const root = await createTestTempDirectory("rea-nuget-package-");
+  const resources = new ArtifactResourceScope();
+  onTestFinished(() => resources.close());
+  const utf16 = Buffer.concat([
+    Buffer.from([0xff, 0xfe]),
+    Buffer.from(NUSPEC, "utf16le"),
+  ]);
+  const path = join(root, "Utf16.1.0.0.nupkg");
+  await writeFile(
+    path,
+    zip([
+      { path: "Example.Package.nuspec", text: utf16 },
+      { path: "lib/net8.0/Example.dll", text: "not really an assembly" },
+    ]),
+  );
+
+  const result = await inspectNugetPackageEvidence({ path }, resources);
+  if (!result.ok) throw new Error(result.error.message);
+  const observed = result.value.evidence
+    .normalized_result as unknown as NugetPackage;
+
+  expect(observed.nuspecs[0]).toMatchObject({
+    id: "Example.Package",
+    version: "1.0.0",
+    dependency_groups: [
+      expect.objectContaining({ target_framework: "net8.0" }),
+    ],
+  });
+  expect(
+    observed.diagnostics.filter((entry) => entry.code === "invalid-nuspec"),
+  ).toEqual([]);
+});
 
 it("inventories a supplied package end to end", async () => {
   const root = await createTestTempDirectory("rea-nuget-package-");

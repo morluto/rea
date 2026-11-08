@@ -13,9 +13,9 @@ import {
 import { completeWithinViewCoverage } from "./analysisViewCoverage.js";
 
 /**
- * A summary keeps what triage reads: identity, the declaration facts, the
- * per-kind asset counts and every diagnostic. The full member list stays in the
- * parent Evidence, so the summary counts what it did not repeat.
+ * A summary keeps what triage reads: identity, the declaration facts, per-kind
+ * asset counts and a bounded diagnostic sample. The full member and diagnostic
+ * lists stay in the parent Evidence, so the summary counts what it omitted.
  */
 export const nugetPackageSummarySchema = z.strictObject({
   artifact: nugetPackageSchema.shape.artifact,
@@ -37,10 +37,18 @@ export const nugetPackageSummarySchema = z.strictObject({
   asset_count: z.int().nonnegative(),
   assemblies: z.int().nonnegative(),
   diagnostics: nugetPackageSchema.shape.diagnostics,
+  /** Diagnostics this summary did not repeat; the parent lists all of them. */
+  diagnostics_omitted: z.int().nonnegative(),
   source_coverage: nugetPackageSchema.shape.source_coverage,
 });
 
 const readReport = createAnalysisViewResultReader(nugetPackageSchema);
+
+/**
+ * A summary has no paging companion, so it repeats only the diagnostics that
+ * fit a single reply; the parent Evidence stays the complete list.
+ */
+const VIEW_DIAGNOSTIC_LIMIT = 100;
 
 /** Project retained declaration and inventory facts without reopening the package. */
 export const projectNugetPackageView = (
@@ -98,7 +106,14 @@ export const projectNugetPackageView = (
       asset_counts: assetCounts,
       asset_count: report.assets.length,
       assemblies: report.summary.assemblies,
-      diagnostics: report.diagnostics,
+      diagnostics:
+        report.diagnostics.length > VIEW_DIAGNOSTIC_LIMIT
+          ? report.diagnostics.slice(0, VIEW_DIAGNOSTIC_LIMIT)
+          : report.diagnostics,
+      diagnostics_omitted: Math.max(
+        0,
+        report.diagnostics.length - VIEW_DIAGNOSTIC_LIMIT,
+      ),
       source_coverage: report.source_coverage,
     },
     coverage: completeWithinViewCoverage(1, 1),

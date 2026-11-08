@@ -113,6 +113,9 @@ const targetFramework = (path: string, directory: boolean): string | null => {
     return directory || segments.length >= 4
       ? frameworkSegment(segments[2])
       : null;
+  // A .NET tool package nests its payload as tools/<tfm>/any/<file|folder>.
+  if (segments[0] === "tools" && segments[2] === "any" && segments.length >= 4)
+    return frameworkSegment(segments[1]);
   // A file's fourth segment is only a framework folder when another segment
   // follows it; otherwise it is the filename.
   if (segments[0] === "runtimes" && segments[2] === "lib")
@@ -360,14 +363,16 @@ const nuspecOf = (
 };
 
 const assetOf = (member: NugetArchiveMember): NugetAsset => {
-  const path = normalisePath(member.path);
+  // `path` is documented as the member path as stored, so classification reads
+  // a normalised copy while the published value keeps the archive's spelling.
+  const classifiable = normalisePath(member.path);
   return {
-    asset_id: digest("nuget_asset", path),
-    path,
+    asset_id: digest("nuget_asset", classifiable),
+    path: member.path,
     bytes: member.bytes,
-    kind: assembleKind(path),
-    target_framework: targetFramework(path, member.directory),
-    runtime_identifier: runtimeIdentifier(path, member.directory),
+    kind: assembleKind(classifiable),
+    target_framework: targetFramework(classifiable, member.directory),
+    runtime_identifier: runtimeIdentifier(classifiable, member.directory),
     directory: member.directory,
   };
 };

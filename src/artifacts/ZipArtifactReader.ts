@@ -152,6 +152,7 @@ class NodeFileReader extends Reader<string> {
       throw new ArtifactReaderFailure(
         "limit",
         `ZIP metadata read requires ${readBytes} bytes, exceeding the ${this.maximumReadBytes}-byte read budget`,
+        { boundary: "capacity" },
       );
     const bytes = await readFileHandleRange(handle, index, readBytes);
     if (bytes.length !== readBytes)
@@ -226,6 +227,7 @@ export class ZipArtifactReader implements ArtifactReader {
             throw new ArtifactReaderFailure(
               "limit",
               `ZIP entries declare ${String(declaredFileBytes)} uncompressed bytes, exceeding this archive's ${String(budget)}-byte decompression budget (${String(MINIMUM_ARTIFACT_EXPANDED_BYTES)}-byte minimum, ${String(ARTIFACT_EXPANSION_RATIO)}x archive size); a small archive cannot expand this far`,
+              { boundary: "capacity" },
             );
         }
         const stored = this.#entries.get(metadata.adapterKey);
