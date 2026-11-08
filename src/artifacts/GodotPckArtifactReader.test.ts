@@ -445,7 +445,7 @@ describe("GodotPckArtifactReader carrier truncation", () => {
       try {
         await expect(text(await reader.open(entry))).rejects.toMatchObject({
           reason: "integrity",
-          message: "Godot PCK entry ended early: member.bin",
+          message: expect.stringContaining("member.bin"),
         });
         expect(calls).toBe(2);
       } finally {

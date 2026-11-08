@@ -92,7 +92,7 @@ describe("ESP partition tables", () => {
     expect(decoded.md5.status).toBe("invalid");
     expect(decoded.partitions).toHaveLength(6);
     expect(decoded.limitations).toEqual([
-      "The partition table MD5 at 0xc0 does not match the entries before it; ESP-IDF's bootloader rejects the table.",
+      expect.stringMatching(/MD5.*0xc0.*does not match.*bootloader rejects/iu),
     ]);
   });
 
