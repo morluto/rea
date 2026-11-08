@@ -1244,6 +1244,41 @@ it("returns the first sample of a truncated rowid-shadowing table without a next
   });
 });
 
+it("attributes a refused row offset to row_offset across the worker round trip", async () => {
+  const workspace = await createTestWorkspace("rea-sqlite-shadowed-");
+  onTestFinished(() => removeTestWorkspace(workspace.root));
+  const path = workspace.path("shadowed.db");
+  const writer = new DatabaseSync(path);
+  writer.exec(
+    `CREATE TABLE shadowed(rowid TEXT, _rowid_ TEXT, oid TEXT);
+     INSERT INTO shadowed VALUES ('a', 'a', 'a'), ('b', 'b', 'b');`,
+  );
+  writer.close();
+  const provider = createProvider();
+  onTestFinished(() => provider.close());
+  const result = await provider.inspect({
+    path,
+    table: "shadowed",
+    row_offset: 1,
+  });
+  if (result.ok) throw new Error("Expected a rejected row offset");
+  // The worker refuses this offset itself, so the refusal has to survive the
+  // reply schema and arrive as an input error naming the caller's argument
+  // rather than as an unparsable reply.
+  expect(projectAnalysisError(result.error)).toMatchObject({
+    code: "invalid_request",
+    details: {
+      issues: [
+        {
+          path: ["row_offset"],
+          reason: "invalid_format",
+          message: expect.stringContaining("row_offset"),
+        },
+      ],
+    },
+  });
+});
+
 it("retains an unavailable virtual module definition without executing it", async () => {
   const workspace = await createTestWorkspace("rea-sqlite-virtual-");
   onTestFinished(() => removeTestWorkspace(workspace.root));
