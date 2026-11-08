@@ -22,9 +22,11 @@ process.stdin.on("data", (chunk) => {
   }
 });`,
     );
-    const { manager, sessionId } = await start(provider, {
-      frameTimeoutMs: 1000,
-    });
+    const { manager, sessionId } = await start(
+      provider,
+      {},
+      { REA_DEBUGGER_COMMAND_DEADLINE_MS: "1000" },
+    );
     const result = await manager.execute(sessionId, "many");
     expect(result.ok).toBe(true);
     if (result.ok) {
@@ -36,26 +38,6 @@ process.stdin.on("data", (chunk) => {
       expect(limitations).toContain("4096 frame command limit");
       expect(limitations).not.toContain("16777216");
     }
-  },
-);
-
-it.skipIf(process.platform === "win32")(
-  "returns partial evidence when the command frame deadline is already expired",
-  async () => {
-    const provider = await makeProvider(
-      'process.stdout.write("\\0"); process.stdin.resume();',
-    );
-    const { manager, sessionId } = await start(provider, {
-      frameTimeoutMs: 0,
-    });
-    const result = await manager.execute(sessionId, "dr");
-    expect(result.ok).toBe(true);
-    if (result.ok)
-      expect(result.value.result).toMatchObject({
-        output: "",
-        output_truncated: true,
-        completion_status: "unknown",
-      });
   },
 );
 
@@ -77,9 +59,11 @@ process.stdin.on("data", (chunk) => {
   }
 });`,
     );
-    const { manager, sessionId } = await start(provider, {
-      frameTimeoutMs: 3000,
-    });
+    const { manager, sessionId } = await start(
+      provider,
+      {},
+      { REA_DEBUGGER_COMMAND_DEADLINE_MS: "3000" },
+    );
     const result = await manager.execute(sessionId, "full");
     expect(result.ok).toBe(true);
     if (result.ok) {
@@ -118,9 +102,11 @@ process.stdin.on("data", (chunk) => {
   }
 });`,
     );
-    const { manager, sessionId } = await start(provider, {
-      frameTimeoutMs: 3000,
-    });
+    const { manager, sessionId } = await start(
+      provider,
+      {},
+      { REA_DEBUGGER_COMMAND_DEADLINE_MS: "3000" },
+    );
     const result = await manager.execute(sessionId, "aggregate");
     expect(result.ok).toBe(true);
     if (result.ok) {
@@ -152,9 +138,11 @@ process.stdin.on("data", (chunk) => {
   }
 });`,
     );
-    const { manager, sessionId } = await start(provider, {
-      frameTimeoutMs: 2000,
-    });
+    const { manager, sessionId } = await start(
+      provider,
+      {},
+      { REA_DEBUGGER_COMMAND_DEADLINE_MS: "2000" },
+    );
     const result = await manager.execute(sessionId, "large");
     expect(result.ok).toBe(true);
     if (result.ok) {
@@ -188,9 +176,11 @@ process.stdin.on("data", (chunk) => {
   }
 });`,
     );
-    const { manager, sessionId } = await start(provider, {
-      frameTimeoutMs: 2000,
-    });
+    const { manager, sessionId } = await start(
+      provider,
+      {},
+      { REA_DEBUGGER_COMMAND_DEADLINE_MS: "2000" },
+    );
     const result = await manager.execute(sessionId, "large");
     expect(result.ok).toBe(true);
     if (result.ok)

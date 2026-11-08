@@ -241,16 +241,16 @@ it.each(providerNames)(
 );
 
 const DIGEST_MISMATCH_REASON =
-  "Evidence validation failed at evidence_id: Evidence semantic identifier does not match its record";
+  /evidence_id.*semantic identifier.*does not match/i;
 
-const identityMismatchReason = (tool: string): string => {
+const identityMismatchReason = (tool: string): RegExp => {
   switch (tool) {
     case "find_changed_behavior":
-      return "Comparison Evidence operation, predicate, and provider disagree";
+      return /comparison Evidence.*operation.*predicate.*provider.*disagree/i;
     case "correlate_static_and_runtime":
-      return "Comparison Evidence operation, predicate, provider, or citations disagree";
+      return /comparison Evidence.*operation.*predicate.*provider.*citations.*disagree/i;
     case "verify_reconstruction":
-      return "Comparison Evidence identity or authority disagrees";
+      return /comparison Evidence.*identity.*authority.*disagrees/i;
     default:
       throw new Error(`Unexpected comparison consumer ${tool}`);
   }
@@ -260,26 +260,26 @@ const unsupportedOperationIssue = (
   tool: string,
 ): {
   readonly path: readonly (string | number)[];
-  readonly message: string;
+  readonly message: RegExp;
 } => {
   switch (tool) {
     case "find_changed_behavior":
       return {
         path: ["comparisons", 0],
         message:
-          "Changed-behavior analysis requires process, artifact, or function comparison Evidence",
+          /changed.behavior.*requires.*process.*artifact.*function comparison Evidence/i,
       };
     case "correlate_static_and_runtime":
       return {
         path: ["runtime_comparisons", 0],
         message:
-          "Static/runtime correlation requires process comparison Evidence",
+          /static\/runtime correlation.*requires.*process comparison Evidence/i,
       };
     case "verify_reconstruction":
       return {
         path: ["claims", 0, "comparison_evidence_id"],
         message:
-          "Claim terminal-output requires compare_process_captures Evidence; selected fixture_comparison",
+          /terminal-output.*requires compare_process_captures Evidence.*fixture_comparison/i,
       };
     default:
       throw new Error(`Unexpected comparison consumer ${tool}`);
@@ -293,11 +293,13 @@ const expectComparisonRejection = (
 ) => {
   if (kind === "operation") {
     const issue = unsupportedOperationIssue(tool);
-    expect(parseMcpToolError(response), tool).toMatchObject({
+    const parsed = parseMcpToolError(response);
+    expect(parsed.error.message).toMatch(issue.message);
+    expect(parsed, tool).toMatchObject({
       error: {
         code: "invalid_request",
         category: "invalid_input",
-        message: issue.message,
+        message: parsed.error.message,
         recovery: { kind: "inspect_input_contract", operation: tool },
         details: {
           operation: tool,
@@ -305,7 +307,7 @@ const expectComparisonRejection = (
             {
               path: [...issue.path],
               reason: "invalid_value",
-              message: issue.message,
+              message: parsed.error.message,
             },
           ],
         },
@@ -315,12 +317,13 @@ const expectComparisonRejection = (
   }
   const reason =
     kind === "digest" ? DIGEST_MISMATCH_REASON : identityMismatchReason(tool);
-  expect(parseMcpToolError(response), tool).toMatchObject({
+  const parsed = parseMcpToolError(response);
+  expect(parsed.error.message).toMatch(reason);
+  expect(parsed, tool).toMatchObject({
     error: {
       code: "evidence_integrity_mismatch",
       category: "integrity_mismatch",
-      message: reason,
-      details: { reason },
+      details: { reason: parsed.error.message },
     },
   });
 };

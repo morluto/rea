@@ -69,7 +69,7 @@ const draft = async (
   );
   const { checkpoints } = state.capture;
   const ends = selectStateEnds(checkpoints, selection, OPERATION);
-  const { files, dconf, paths, homePath, selected } = exportedStateFiles(
+  const { files, dconf, paths, homePath, isLeftOut } = exportedStateFiles(
     capture,
     state,
   );
@@ -89,7 +89,7 @@ const draft = async (
     files,
     (home) => isWithinAny(home, paths) && !held(home),
     ends,
-    selected,
+    isLeftOut,
   );
   const covered = (index: number) => {
     const point = capture.state.checkpoints[index];

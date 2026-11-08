@@ -11,6 +11,7 @@ import type {
 } from "../application/DesktopBuildDoctor.js";
 import { homeDirectoryFromEnvironment } from "../config/homeDirectory.js";
 import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
+import { DESKTOP_EXPORT_FRAMEWORK_VERSION } from "../domain/desktop/appExport.js";
 import { PRODUCT_IDENTITY } from "../identity.js";
 import { execFileOutputFailure } from "../process/ExecFileOutput.js";
 import {
@@ -43,6 +44,35 @@ export const readDesktopBuildFacts = async (
     "REA_AGENT_ENV_COMMAND",
     "agent-env",
   );
+  const versions = new Map<string, Promise<string | undefined>>();
+  const versionFor = (path: string): Promise<string | undefined> => {
+    const existing = versions.get(path);
+    if (existing !== undefined) return existing;
+    const pending = agentEnvVersion(input, path);
+    versions.set(path, pending);
+    return pending;
+  };
+  const archive = await archiveFact(input);
+  const chosenCommand = (
+    name: BuildComputerSetting,
+    command: DesktopBuildCommand,
+  ) =>
+    (environment[name] ?? "") !== ""
+      ? environment[name]
+      : command.status === "found"
+        ? command.path
+        : undefined;
+  const selectedDocker = chosenCommand("REA_DOCKER_COMMAND", docker);
+  const selectedAgentEnv = chosenCommand("REA_AGENT_ENV_COMMAND", agentEnv);
+  const selectedSettings: Partial<Record<BuildComputerSetting, string>> = {
+    ...(selectedDocker === undefined
+      ? {}
+      : { REA_DOCKER_COMMAND: selectedDocker }),
+    ...(selectedAgentEnv === undefined
+      ? {}
+      : { REA_AGENT_ENV_COMMAND: selectedAgentEnv }),
+    REA_BUILD_COMPUTER_REA_ARCHIVE: archive.path,
+  };
   return {
     ps: await psFact(input),
     docker,
@@ -54,10 +84,10 @@ export const readDesktopBuildFacts = async (
     ),
     agentEnv:
       agentEnv.status === "found"
-        ? { ...agentEnv, version: await agentEnvVersion(input, agentEnv.path) }
+        ? { ...agentEnv, version: await versionFor(agentEnv.path) }
         : agentEnv,
-    archive: await archiveFact(input),
-    registrations: await registrationFacts(input),
+    archive,
+    registrations: await registrationFacts(input, selectedSettings, versionFor),
     environmentSettings: BUILD_COMPUTER_SETTINGS.filter(
       (name) => (environment[name] ?? "") !== "",
     ),
@@ -239,23 +269,73 @@ const archiveFact = async (
 /** Setting names each considered registration records; values stay in its file. */
 const registrationFacts = async (
   input: DesktopBuildFactsInput,
+  selectedSettings: Partial<Record<BuildComputerSetting, string>>,
+  versionFor: (path: string) => Promise<string | undefined>,
 ): Promise<DesktopBuildFacts["registrations"]> => {
   const selected = input.clientIds.length === 0 ? undefined : input.clientIds;
+  const recordedRunners = new Map<string, string>();
   const statuses = await input.registrations(
     selected,
-    Object.fromEntries(BUILD_COMPUTER_SETTINGS.map((name) => [name, ""])),
+    Object.fromEntries(
+      BUILD_COMPUTER_SETTINGS.map((name) => [
+        name,
+        selectedSettings[name] ?? "",
+      ]),
+    ),
+    undefined,
+    (client, name, value) => {
+      if (
+        name === "REA_AGENT_ENV_COMMAND" &&
+        (selected === undefined || selected.includes(client))
+      )
+        recordedRunners.set(client, value);
+    },
   );
   const registered = statuses.filter(({ command }) => command.length > 0);
   const considered = selected ?? registered.map(({ client }) => client);
-  return considered.map((client) => {
-    const status = registered.find((entry) => entry.client === client);
-    return {
-      client,
-      registered: status !== undefined,
-      unrecorded: status?.provider_settings?.unrecorded ?? [],
-      unresolved: status?.provider_settings?.unresolved ?? [],
-    };
-  });
+  return Promise.all(
+    considered.map(async (client) => {
+      const status = registered.find((entry) => entry.client === client);
+      const recordedRunner =
+        status === undefined ? undefined : recordedRunners.get(client);
+      let runner: DesktopBuildFacts["registrations"][number]["runner"];
+      if (recordedRunner !== undefined) {
+        if (!isAbsolute(recordedRunner) || !(await executable(recordedRunner)))
+          runner = { status: "invalid" };
+        else {
+          const version = await versionFor(recordedRunner);
+          runner =
+            version === undefined
+              ? { status: "unknown" }
+              : {
+                  status:
+                    version === DESKTOP_EXPORT_FRAMEWORK_VERSION
+                      ? "current"
+                      : "stale",
+                  version,
+                };
+        }
+      }
+      const differing = status?.provider_settings?.differing ?? [];
+      const compared = differing.filter(
+        (name) => selectedSettings[name as BuildComputerSetting] !== undefined,
+      );
+      const unchecked = differing.filter(
+        (name) =>
+          selectedSettings[name as BuildComputerSetting] === undefined &&
+          !(name === "REA_AGENT_ENV_COMMAND" && runner !== undefined),
+      );
+      return {
+        client,
+        registered: status !== undefined,
+        unrecorded: status?.provider_settings?.unrecorded ?? [],
+        unresolved: status?.provider_settings?.unresolved ?? [],
+        ...(compared.length === 0 ? {} : { differing: compared }),
+        ...(unchecked.length === 0 ? {} : { unchecked }),
+        ...(runner === undefined ? {} : { runner }),
+      };
+    }),
+  );
 };
 
 const solveEndpoint = async (

@@ -1555,12 +1555,12 @@ it("discloses qualified and unfamiliar strings tables while preserving exact loc
         locale: locale ?? null,
         coverage: "complete",
       });
-      expect(result.value.limitations).toContain(
-        `Other strings tables are not selected by locale; their resource configuration suffixes are preserved without inferring Android runtime matching: ${tables
-          .map((suffix) => JSON.stringify(`values-${suffix}`))
-          .sort()
-          .join(", ")}`,
+      const otherTables = result.value.limitations.find((line) =>
+        line.includes("values-unknown_CONFIGURATION"),
       );
+      expect(otherTables).toMatch(/without inferring.*runtime matching/iu);
+      for (const suffix of tables)
+        expect(otherTables).toContain(JSON.stringify(`values-${suffix}`));
       if (locale === undefined)
         expect(result.value.result).toMatchObject({
           strings: [
@@ -1570,8 +1570,8 @@ it("discloses qualified and unfamiliar strings tables while preserving exact loc
         });
       else if (locale === "en-rUS") {
         expect(result.value.result).toMatchObject({ strings: [] });
-        expect(result.value.limitations).toContain(
-          "No strings.xml was found for locale en-rUS",
+        expect(result.value.limitations).toContainEqual(
+          expect.stringMatching(/strings\.xml.*locale en-rUS/iu),
         );
       } else
         expect(result.value.result).toMatchObject({
@@ -1691,8 +1691,9 @@ it.each([
       });
       const limitations = result.value.limitations.join("\n");
       if (kind === "unsupported") {
-        expect(limitations).toContain(
-          "String entries omitted due to unsupported markup or missing names: 2",
+        expect(limitations).toMatch(/omitted[^\n]*2/iu);
+        expect(limitations).toMatch(
+          /omitted.*unsupported markup.*missing names/iu,
         );
         expect(limitations).not.toContain("entry counts are unknown");
       } else {

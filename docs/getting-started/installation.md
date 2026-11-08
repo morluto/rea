@@ -1590,6 +1590,11 @@ For supported header-selected MIPS ELF targets, the profile also binds the
 selected target's ELF metadata; it does not claim a fresh-import MIPS lane was
 used for the saved project.
 A matching recorded import digest does not claim that the database is unedited.
+Caller and callee coverage therefore remains unknown. A single-direction query
+with known omissions remains partial and also reports the unknown project history.
+Observed call edges are still available: a path to an observed caller or callee
+can be reached, but a missing path is unknown when the project's prior analysis
+cannot establish completeness.
 Saved REA seed/analyzer reports remain historical facts in retained source Evidence;
 they are not interpreted as overrides applied by this session.
 Project content participates in snapshot identity, so different project states

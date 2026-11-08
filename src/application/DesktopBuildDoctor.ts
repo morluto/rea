@@ -51,6 +51,13 @@ export interface DesktopBuildFacts {
     readonly registered: boolean;
     readonly unrecorded: readonly string[];
     readonly unresolved: readonly string[];
+    readonly differing?: readonly string[];
+    readonly unchecked?: readonly string[];
+    /** Version check of this client's recorded runner, without the recorded path. */
+    readonly runner?: {
+      readonly status: "current" | "stale" | "invalid" | "unknown";
+      readonly version?: string;
+    };
   }[];
   /** Build settings this terminal's environment sets. */
   readonly environmentSettings: readonly string[];
@@ -69,6 +76,8 @@ export interface DesktopBuildFactsInput {
   readonly registrations: (
     clientIds: readonly string[] | undefined,
     settings: Readonly<Record<string, string>>,
+    owned?: undefined,
+    observe?: (client: string, name: string, value: string) => void,
   ) => Promise<readonly ClientRegistrationStatus[]>;
 }
 
@@ -146,7 +155,7 @@ export const desktopBuildChecks = (
   dockerCheck(facts.docker),
   daemonCheck(facts.daemon),
   diskCheck(facts.disk),
-  agentEnvCheck(facts.agentEnv),
+  agentEnvCheck(facts),
   archiveCheck(facts.archive, context.clients),
   registrationCheck(facts, context.clients),
   skillCheck(context.skill),
@@ -230,9 +239,51 @@ const diskCheck = (disk: DesktopBuildFacts["disk"]): DoctorCheck => {
       );
 };
 
-const agentEnvCheck = (
-  agentEnv: DesktopBuildFacts["agentEnv"],
-): DoctorCheck => {
+const agentEnvCheck = (facts: DesktopBuildFacts): DoctorCheck => {
+  const { agentEnv } = facts;
+  const clients = facts.registrations.filter(({ registered }) => registered);
+  if (
+    clients.some(
+      ({ runner, unresolved }) =>
+        runner !== undefined || unresolved.includes("REA_AGENT_ENV_COMMAND"),
+    )
+  ) {
+    const rows = clients.map(({ client, runner, unresolved }) => ({
+      client,
+      ...(runner ??
+        (unresolved.includes("REA_AGENT_ENV_COMMAND")
+          ? { status: "unknown" as const }
+          : agentEnv.status !== "found"
+            ? { status: "invalid" as const }
+            : agentEnv.version === undefined
+              ? { status: "unknown" as const }
+              : {
+                  status:
+                    agentEnv.version === DESKTOP_EXPORT_FRAMEWORK_VERSION
+                      ? ("current" as const)
+                      : ("stale" as const),
+                  version: agentEnv.version,
+                })),
+    }));
+    const healthy = rows.every(({ status }) => status === "current");
+    return result(
+      "agent-env",
+      healthy,
+      rows
+        .map(({ client, status }) => `${client}'s runner is ${status}.`)
+        .join(" "),
+      {
+        classification: rows.some(({ status }) => status === "unknown")
+          ? "unknown"
+          : "missing_dependency",
+        remediation: `${AGENTENV_INSTALL_COMMAND}, or rea setup --desktop-build --install-agentenv.`,
+        details: {
+          expected_version: DESKTOP_EXPORT_FRAMEWORK_VERSION,
+          clients: rows,
+        },
+      },
+    );
+  }
   const pinned = agentEnv.version === DESKTOP_EXPORT_FRAMEWORK_VERSION;
   const detail =
     agentEnv.status !== "found"
@@ -276,17 +327,37 @@ const registrationCheck = (
 ): DoctorCheck => {
   const set = new Set(facts.environmentSettings);
   const gaps = facts.registrations.map(
-    ({ client, registered, unrecorded, unresolved }) => ({
+    ({
+      client,
+      registered,
+      unrecorded,
+      unresolved,
+      differing = [],
+      unchecked = [],
+      runner,
+    }) => ({
       client,
       registered,
       missing: unrecorded.filter((name) => !set.has(name)),
       unresolved: [...unresolved],
+      ...(differing.length === 0 ? {} : { differing: [...differing] }),
+      ...(unchecked.length === 0 ? {} : { unchecked: [...unchecked] }),
+      ...(runner === undefined ? {} : { runner }),
     }),
   );
   const failing = gaps.filter(
-    ({ registered, missing }) => !registered || missing.length > 0,
+    ({ registered, missing, differing, runner }) =>
+      !registered ||
+      missing.length > 0 ||
+      (differing ?? []).some(
+        (name) =>
+          name !== "REA_AGENT_ENV_COMMAND" || runner?.status !== "current",
+      ),
   );
-  const unknown = gaps.filter(({ unresolved }) => unresolved.length > 0);
+  const unknown = gaps.filter(
+    ({ unresolved, unchecked }) =>
+      unresolved.length > 0 || (unchecked?.length ?? 0) > 0,
+  );
   const repair = failing[0]?.client ?? unknown[0]?.client;
   return result(
     "registration",
@@ -308,14 +379,34 @@ const registrationDetail = (gap: {
   readonly registered: boolean;
   readonly missing: readonly string[];
   readonly unresolved: readonly string[];
-}): string =>
-  !gap.registered
-    ? `${gap.client} does not register REA.`
-    : gap.missing.length > 0
-      ? `${gap.client}'s registration does not record ${gap.missing.join(", ")}, and this environment does not set them.`
-      : gap.unresolved.length > 0
-        ? `REA could not read ${gap.client}'s ${gap.unresolved.join(", ")}.`
-        : `${gap.client}'s registration records the build settings, or this environment sets them.`;
+  readonly differing?: readonly string[];
+  readonly unchecked?: readonly string[];
+}): string => {
+  if (!gap.registered) return `${gap.client} does not register REA.`;
+  const details = [
+    ...(gap.missing.length === 0
+      ? []
+      : [
+          `${gap.client}'s registration does not record ${gap.missing.join(", ")}, and this environment does not set them.`,
+        ]),
+    ...(gap.unresolved.length === 0
+      ? []
+      : [`REA could not read ${gap.client}'s ${gap.unresolved.join(", ")}.`]),
+    ...(gap.differing === undefined
+      ? []
+      : [
+          `${gap.client}'s registration records different values for ${gap.differing.join(", ")}.`,
+        ]),
+    ...(gap.unchecked === undefined
+      ? []
+      : [
+          `REA did not check ${gap.client}'s recorded ${gap.unchecked.join(", ")} against the paths used in this terminal.`,
+        ]),
+  ];
+  return details.length > 0
+    ? details.join(" ")
+    : `${gap.client}'s registration records the build settings, or this environment sets them.`;
+};
 
 const skillCheck = (skill: DesktopBuildContext["skill"]): DoctorCheck =>
   result(

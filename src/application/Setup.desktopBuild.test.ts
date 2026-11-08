@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import { FakeSetupHost } from "./Setup.fixture.js";
 import { runSetup } from "./Setup.js";
+import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
 import type {
   DesktopBuildSetupFacts,
   DesktopBuildSetupHost,
@@ -55,6 +56,71 @@ const desktopOptions = (
   desktopBuild: true,
   readinessScope: { clients: ["claude_code"], providers: ["desktop_build"] },
   ...extra,
+});
+
+describe("desktop setup cancellation", () => {
+  it.each(["install", "pack"] as const)(
+    "waits for %s cleanup and stops later setup work after cancellation",
+    async (action) => {
+      const { host, calls } = desktopHost(
+        action === "install"
+          ? {
+              agentEnvVersion: undefined,
+              uv: {
+                path: "/usr/local/bin/uv",
+                agentEnv: "/home/ada/.local/bin/agent-env",
+              },
+            }
+          : {},
+      );
+      const controller = new AbortController();
+      const reason = new Error("stop setup");
+      let started!: () => void;
+      let finish!: () => void;
+      const began = new Promise<void>((resolve) => {
+        started = resolve;
+      });
+      const cleanup = new Promise<void>((resolve) => {
+        finish = resolve;
+      });
+      let closed = false;
+      const effect = async (_path: string, signal?: AbortSignal) => {
+        expect(signal).toBe(controller.signal);
+        started();
+        await cleanup;
+        return undefined;
+      };
+      Object.assign(
+        host.desktopBuild,
+        action === "install"
+          ? { installAgentenv: effect }
+          : { packRuntime: effect },
+      );
+      Object.assign(host, {
+        close: async () => {
+          closed = true;
+        },
+      });
+      const pending = runSetup(
+        desktopOptions(true, {
+          installAgentenv: action === "install",
+          signal: controller.signal,
+        }),
+        host,
+      );
+      void pending.catch(() => undefined);
+      await began;
+      controller.abort(reason);
+      expect(closed).toBe(false);
+      finish();
+      const failure: unknown = await pending.catch((cause: unknown) => cause);
+      expect(failure).toBeInstanceOf(AnalysisCancelledError);
+      expect(failure).toMatchObject({ cause: reason });
+      expect(closed).toBe(true);
+      expect(calls).toEqual([]);
+      expect(host.configuredProviderEnvironments).toEqual([]);
+    },
+  );
 });
 
 describe("rea setup --desktop-build", () => {
@@ -226,4 +292,52 @@ describe("rea setup --desktop-build", () => {
     expect(calls).toEqual([]);
     expect(host.configurations).toBe(0);
   });
+});
+
+describe("desktop setup failures", () => {
+  it.each([
+    {
+      action: "pack",
+      kept: "REA_BUILD_COMPUTER_REA_ARCHIVE",
+      written: "REA_AGENT_ENV_COMMAND",
+      remediation: "Packing REA's build-computer runtime failed",
+    },
+    {
+      action: "install",
+      kept: "REA_AGENT_ENV_COMMAND",
+      written: "REA_BUILD_COMPUTER_REA_ARCHIVE",
+      remediation: "Installing agentenv failed",
+    },
+  ] as const)(
+    "leaves the client's $kept as recorded when $action fails",
+    async ({ action, kept, written, remediation }) => {
+      const { host } = desktopHost({
+        agentEnvVersion: undefined,
+        uv: {
+          path: "/usr/local/bin/uv",
+          agentEnv: "/home/ada/.local/bin/agent-env",
+        },
+      });
+      Object.assign(
+        host.desktopBuild,
+        action === "pack"
+          ? { packRuntime: () => Promise.resolve("ENOSPC") }
+          : { installAgentenv: () => Promise.resolve("uv exited 2") },
+      );
+
+      const result = await runSetup(
+        desktopOptions(true, { installAgentenv: true }),
+        host,
+      );
+
+      expect(result.status).toBe("needs_human");
+      expect(result.remediation).toContain(remediation);
+      expect(host.configuredProviderEnvironments).toHaveLength(1);
+      expect(host.configuredProviderEnvironments[0]).not.toHaveProperty(kept);
+      expect(host.configuredProviderEnvironments[0]).toMatchObject({
+        REA_DOCKER_COMMAND: SETTINGS.REA_DOCKER_COMMAND,
+        [written]: SETTINGS[written],
+      });
+    },
+  );
 });
