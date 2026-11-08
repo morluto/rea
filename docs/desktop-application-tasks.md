@@ -96,12 +96,14 @@ operation `describe_desktop_application_task` and predicate type
   and files under a `logs` folder).
   A text file gains `lines_present` for its new lines and `lines_absent` for
   lines it lost (when either is at most ten), and `line_count` for each line
-  holding a letter whose count changed; a new line holding a value the app
-  generates, a UUID, an epoch time or an id such as `ID_329023692`, gets a
+  holding a letter whose count changed; a new line holding a value REA
+  recognizes as generated, such as a named epoch time or `ID_329023692`, gets a
   `line_count` of the lines `contains` its text up to that value, as
   `<node TEXT="Water filter" ID="`, at the end's number, where both views
   hold the whole file, instead of a `lines_present` another save would
-  fail, or a `volatile_lines` note when no text comes before it; JSON and key files gain
+  fail, or a `volatile_lines` note when no text comes before it. UUID-shaped
+  text stays exact because its shape alone does not show that it was generated;
+  JSON and key files gain
   `value_equals` and `value_absent` by pointer, a JSON array's records named
   by an id field each holds alone at both ends (`id`, `uid`, `uuid`, `guid`,
   `key` or a name ending in `_id` or `Id`), as TreeLine's
@@ -328,10 +330,10 @@ operation `describe_desktop_application_task` and predicate type
     `config:config-item[@config:name=CursorPositionX]` inside
     `[@config:name=ooo:view-settings]`, or a settings path ending in how a
     panel shows (`visible`, `hidden`, `expanded`, `geometry`, `size` and the
-    like), as VYM's `<setting key="/treeeditor/visible">`; an attribute ending in `ID` or `Id`,
-    or an `rsid`, that the app renumbered, with everything else in its
-    element, as Gnumeric empties a formula cell whose shared expression it
-    renumbers, and an identifier the app numbers by position; volatile
+    like), as VYM's `<setting key="/treeeditor/visible">`; an identifier the
+    app numbers by position. An `Id` suffix alone does not show that an
+    attribute is generated, so relationship fields such as `accountId` are
+    retained; other save-generated IDs may need manual review; volatile
     values, UUIDs and epoch times, binary data encoded as base64 (a PNG's
     `iVBORw0KGgo`, or 256 or more base64 characters mixing cases and
     digits), an id counter (`uniqueid`, `nextobjectid`), a value equal to an
@@ -402,7 +404,7 @@ operation `describe_desktop_application_task` and predicate type
   it, and otherwise one that varies among them, as Planner's `work` rather
   than the `type="normal"` every task shares, but not one numbering the
   members in order, as MyPaint's `src`; never through a sibling only
-  position or a renumbered id pairs. A guard never selects its sibling by
+  position pairs. A guard never selects its sibling by
   what it reads: a sibling its selector names by the attribute the guard
   checks, or by a value that is or holds the text it reads, as Glade's
   `[>object=CancelTrueTrueTrue]` for a button's `Cancel` label, is named by
