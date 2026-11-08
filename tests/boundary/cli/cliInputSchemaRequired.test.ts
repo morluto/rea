@@ -173,11 +173,13 @@ const registerParserAdvertisementInventoryTests = (): void => {
         const parser = parserSchema(cli, command, group);
         for (const [key, field] of Object.entries(parser?.shape ?? {})) {
           const schema = advertised[group]?.properties[key];
-          if (schema === undefined || !advertisesNumber(schema)) continue;
+          if (schema === undefined) continue;
           const label = `${command} ${group}.${key}`;
+          // Parser discovery keeps string-advertised fields such as --port.
           const probe = decimalProbe(field as z.ZodType, schema);
           if (probe === undefined) {
-            mismatches.push(`${label}: no in-range decimal token parses`);
+            if (advertisesNumber(schema))
+              mismatches.push(`${label}: no in-range decimal token parses`);
             continue;
           }
           checked += 1;
