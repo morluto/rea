@@ -87,6 +87,7 @@
 * **binary-layout:** admit ELF64 AArch64 and name the refused host ([#8711](https://github.com/morluto/rea/issues/8711)) ([6442ea0](https://github.com/morluto/rea/commit/6442ea02cbdabd8cbaa4106bdbe934ea07d0dcef))
 * **browser:** import saved Playwright v10 trace evidence ([#9127](https://github.com/morluto/rea/issues/9127)) ([985b9ea](https://github.com/morluto/rea/commit/985b9eae962e561c2e02c01fbe8cbfea9478c100))
 * **browser:** retain compact scenario summaries and selected views ([#7120](https://github.com/morluto/rea/issues/7120)) ([fc43e28](https://github.com/morluto/rea/commit/fc43e285eaae2155d32e2ca0ab5d2181a4e2f1b5))
+* **browser:** reuse admitted browser-socket transport and allow discovery_timeout_ms ([#9203](https://github.com/morluto/rea/issues/9203)) ([9d0e87f](https://github.com/morluto/rea/commit/9d0e87f331ae4e23e7b5db7d41554f578ae69b56))
 * **browser:** reuse saved response values across scenario steps ([#7267](https://github.com/morluto/rea/issues/7267)) ([3fcbabe](https://github.com/morluto/rea/commit/3fcbabe593611435ebc26e1eac86706fe60abb6e))
 * **cli:** add CSV and TSV analysis views ([#7254](https://github.com/morluto/rea/issues/7254)) ([aa6f643](https://github.com/morluto/rea/commit/aa6f6436c9cb211d913e0b65b150e977d13b7164))
 * **cli:** expose caller-selected reference-source path exclusions ([#2630](https://github.com/morluto/rea/issues/2630)) ([996977e](https://github.com/morluto/rea/commit/996977edf2bf2055b49c6cb047239ce189929e49))
