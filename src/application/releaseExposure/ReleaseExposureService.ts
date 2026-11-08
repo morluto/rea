@@ -1,4 +1,4 @@
-import { basename, dirname, join, win32 } from "node:path";
+import { basename, dirname, posix, win32 } from "node:path";
 
 import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
 import type { ExecutionOptions } from "../AnalysisProvider.js";
@@ -622,6 +622,11 @@ const failedMetadata = (reason: string, path?: string): MetadataImageFact => ({
 interface ArchiveBasis {
   readonly path: string;
   readonly electronArchive: boolean;
+  /**
+   * The owner's slash-separated layout folder for this archive, relative to
+   * the read root. It names the layout without the caller's path spelling.
+   */
+  readonly layout: string;
 }
 
 interface DesktopFamilyFact {
@@ -665,6 +670,7 @@ const desktopFamily = (
                 path: file.local_path,
                 electronArchive: desktopPathConventions(file.path)
                   .electronArchive,
+                layout: posix.dirname(posix.dirname(file.path)),
               },
             ];
       }),
@@ -715,10 +721,6 @@ const nativeDirname = (path: string): string =>
   WINDOWS_ABSOLUTE_PATH.test(path) ? win32.dirname(path) : dirname(path);
 const nativeBasename = (path: string): string =>
   WINDOWS_ABSOLUTE_PATH.test(path) ? win32.basename(path) : basename(path);
-const nativeJoin = (path: string, child: string): string =>
-  WINDOWS_ABSOLUTE_PATH.test(path)
-    ? win32.join(path, child)
-    : join(path, child);
 
 const limitNativeSample = (
   scan: ReleaseExposureScan,
@@ -762,23 +764,28 @@ const limitNativeSample = (
     ),
   ];
   // A bundle or selected-executable read settles only its own layout: an app
-  // that embeds another Electron app still needs that app's host read.
+  // that embeds another Electron app still needs that app's host read. The
+  // layout is named by the owner's relative path, which carries no caller
+  // spelling, and looked up by the owner's resolved folder.
   const selectedRead = kept.some(
     (image) => image.path === scan.target.selected_path,
   );
-  const bundles = [
-    ...(scan.target.kind === "app" ? [scan.target.selected_path] : []),
-    ...scan.fuse_candidates
-      .filter((candidate) => candidate.role === "app-bundle")
-      .map((candidate) => candidate.path),
-  ];
-  const settledLayouts = new Set([
-    ...bundles.map((bundle) => nativeJoin(bundle, "Contents")),
-    ...(selectedRead ? [nativeDirname(scan.target.selected_path)] : []),
-  ]);
+  const bundleRead =
+    scan.target.kind === "app" ||
+    scan.fuse_candidates.some((candidate) => candidate.role === "app-bundle");
+  const settledLayouts = new Set(
+    basisPaths
+      .filter(
+        (basis) =>
+          basis.electronArchive &&
+          ((bundleRead && basis.layout === "Contents") ||
+            (selectedRead && basis.layout === ".")),
+      )
+      .map((basis) => nativeDirname(nativeDirname(basis.path))),
+  );
   const electronExecutableIncluded =
     layouts.length === 0
-      ? bundles.length > 0 || selectedRead || hostRead(preferred)
+      ? bundleRead || selectedRead || hostRead(preferred)
       : layouts.every(
           (folder) =>
             settledLayouts.has(folder) ||

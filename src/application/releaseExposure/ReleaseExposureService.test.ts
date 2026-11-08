@@ -1115,6 +1115,49 @@ describe("ReleaseExposureService Electron host identity", () => {
 });
 
 describe("ReleaseExposureService nested app layouts", () => {
+  it("settles the bundle's own layout when the owner resolved the selected path", async () => {
+    const images = [
+      "/private/tmp/App.app/Contents/MacOS/App",
+      "/private/tmp/App.app/Contents/MacOS/one",
+      "/private/tmp/App.app/Contents/MacOS/two",
+      "/private/tmp/App.app/Contents/MacOS/three",
+      "/private/tmp/App.app/Contents/MacOS/four",
+    ].map((path) => ({ path, format: "elf" as const }));
+    const { service, desktop, electronFuses } = owners({
+      ...appScan,
+      target: { ...appScan.target, selected_path: "/tmp/App.app" },
+      native_images: images,
+      fuse_candidates: [
+        { path: "/tmp/App.app", role: "app-bundle" },
+        ...images.map((image) => ({
+          path: image.path,
+          role: "native-image" as const,
+        })),
+      ],
+    });
+    const report = electronDesktopReport();
+    desktop.inspect.mockResolvedValue(
+      ok(
+        evidence({
+          ...report,
+          files: [
+            {
+              ...report.files[0],
+              path: "Contents/Resources/app.asar",
+              local_path: "/private/tmp/App.app/Contents/Resources/app.asar",
+            },
+          ],
+        }),
+      ),
+    );
+    electronFuses.inspect.mockResolvedValue(
+      ok(evidence(fuseReport([slice(0)]))),
+    );
+    expect((await runAsNode(service, "/tmp/App.app"))?.status).toBe(
+      "not_observed",
+    );
+  });
+
   it.each([
     ["the outer bundle", "/work/App.app/Contents/MacOS/App", "not_observed"],
     [
