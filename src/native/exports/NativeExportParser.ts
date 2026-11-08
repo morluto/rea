@@ -128,6 +128,11 @@ const parsePeExports = (bytes: Buffer, artifact: Artifact): NativeExports => {
         ...PE_LIMITATIONS,
       ],
     };
+  if (directory.size < PE_EXPORT_DIRECTORY_BYTES)
+    throw new BinaryFormatFailure(
+      "malformed",
+      `PE export directory size ${String(directory.size)} is shorter than its 40-byte header`,
+    );
   const reader = new BinaryReader(bytes, true);
   const mappings = imageFileMappings(image);
   const map = (rva: number, size: number): number =>

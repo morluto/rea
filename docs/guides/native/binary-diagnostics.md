@@ -424,6 +424,9 @@ rea inspect-native-exports ./libexample.so --detail summary --evidence_output ./
   unbiased 16-bit EAT index; reported biased ordinals may exceed 16 bits. The
   directory's DLL name, ordinal base and timestamp are reported, and an image
   without an export directory is a complete empty inventory.
+  A present directory must declare at least the 40-byte export header;
+  a shorter declaration is malformed even when more bytes follow in the file.
+  The separately addressed export tables may lie outside that header interval.
 - ELF rows list defined `.dynsym` symbols with global, weak or GNU-unique
   binding and default or protected visibility. Each row keeps `value`
   (`st_value` as stored; bit 0 marks Thumb code on 32-bit ARM), `size`, `type`,

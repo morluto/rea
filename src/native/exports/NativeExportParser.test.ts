@@ -22,6 +22,45 @@ const parse = (bytes: Buffer) =>
     parseNativeExports(bytes, artifact),
   );
 
+it.each(
+  ([32, 64] as const).flatMap((bits) =>
+    [0, 1, 39].map((size) => [bits, size] as const),
+  ),
+)("refuses a PE%d export directory with only %d header bytes", (bits, size) => {
+  const bytes = peExportImage({
+    bits,
+    functions: [{ rva: 0x2000 }],
+    names: [{ name: "Exported", index: 0 }],
+  });
+  bytes.writeUInt32LE(size, 152 + (bits === 64 ? 112 : 96) + 4);
+  expect(() => parse(bytes)).toThrow(/export directory.*40-byte header/u);
+});
+
+it.each([32, 64] as const)(
+  "reads a complete PE%d export header when its tables are outside the directory interval",
+  (bits) => {
+    const bytes = peExportImage({
+      bits,
+      functions: [{ rva: 0x2000 }],
+      names: [{ name: "Exported", index: 0 }],
+    });
+    bytes.writeUInt32LE(40, 152 + (bits === 64 ? 112 : 96) + 4);
+    const report = parse(bytes);
+    if (report.format !== "pe") throw new Error("Expected PE exports");
+    expect(report.export_directory).toMatchObject({ rva: 0x1000, size: 40 });
+    expect(report.exports).toEqual([
+      {
+        name: "Exported",
+        ordinal: 1,
+        address: bits === 64 ? "0x180002000" : "0x10002000",
+        forwarder: null,
+      },
+    ]);
+    expect(report.coverage.status).toBe("complete");
+    expect(report.issues).toEqual([]);
+  },
+);
+
 it.each(["requirements", "definitions"] as const)(
   "bounds aliased GNU version %s work and keeps exports with unknown versions",
   (kind) => {
