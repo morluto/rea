@@ -153,6 +153,78 @@ describe("Webpack and Rspack runtime adapters", () => {
   });
 });
 
+describe("standalone Rspack inline FunctionExpression bootstraps", () => {
+  it("recovers standalone Rspack inline FunctionExpression bootstraps and Electron IPC", async () => {
+    const root = await createTestTempDirectory("rea-rspack-iife-bootstrap-");
+    await writeFixtureFiles(root, {
+      "preload.js": `(() => {
+        "use strict";
+        var __webpack_modules__ = {
+          91288: (module) => { module.exports = require("electron"); },
+          85425: (_unused, _exports, __webpack_require__) => {
+            const electron_1 = __webpack_require__(91288);
+            const { ipcRenderer } = electron_1;
+            ipcRenderer.send("APP_READY");
+          }
+        };
+        var __webpack_module_cache__ = {};
+        var __webpack_exports__ = (function __webpack_require__(moduleId) {
+          var cachedModule = __webpack_module_cache__[moduleId];
+          if (cachedModule !== undefined) return cachedModule.exports;
+          var module = (__webpack_module_cache__[moduleId] = { exports: {} });
+          return __webpack_modules__[moduleId].call(module.exports, module, module.exports, __webpack_require__), module.exports;
+        })(85425);
+      })();`,
+    });
+
+    const { graph, electron_summary } =
+      await reconstructJavaScriptFixture(root);
+    const bootstrapChunk = findChunkNode(
+      graph,
+      "webpack-bootstrap@0",
+      "bootstrap@0",
+    );
+    const entryModule = findModuleNodeByKey(graph, "85425");
+    const externalModule = findModuleNodeByKey(graph, "91288");
+
+    expect(bootstrapChunk?.observations[0]?.properties).toMatchObject({
+      bundler: "webpack",
+      runtime_require_name: "__webpack_require__",
+      entry_module_keys: ["85425"],
+    });
+    expect(entryModule?.observations[0]?.properties).toMatchObject({
+      factory_require_name: "__webpack_require__",
+      runtime_entry: true,
+    });
+    expect(externalModule).toBeDefined();
+    expect(
+      findGraphEdge(graph, bootstrapChunk, entryModule, "loads"),
+    ).toMatchObject({
+      properties: expect.objectContaining({
+        kind: "bundler-entry-module",
+        resolution_status: "resolved",
+      }),
+    });
+    expect(electron_summary.ipc).toMatchObject({
+      literal_channels: 1,
+    });
+    expect(graph.nodes).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          kind: "ipc-channel",
+          observations: expect.arrayContaining([
+            expect.objectContaining({
+              properties: expect.objectContaining({
+                channel: "APP_READY",
+              }),
+            }),
+          ]),
+        }),
+      ]),
+    );
+  });
+});
+
 const bundlerFixture = async (): Promise<string> => {
   const root = await createTestTempDirectory("rea-bundler-adapters-");
   await writeFixtureFiles(root, {

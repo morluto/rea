@@ -1,7 +1,10 @@
 import * as t from "@babel/types";
 
 import type { javascriptBootstrapAt } from "./javascriptBootstrap.js";
-import { semanticStaticPropertyKey } from "./javascriptAstValues.js";
+import {
+  runtimeFunctionParameters,
+  semanticStaticPropertyKey,
+} from "./javascriptAstValues.js";
 import { semanticIdentifierRole } from "./javascriptSemanticProjection.js";
 import {
   resolveSemanticBindingState,
@@ -12,6 +15,7 @@ import { traverseJavaScriptValueAst } from "./javascriptSemanticTraversal.js";
 import { evaluateSemanticExpression } from "./javascriptSemanticValues.js";
 
 type Bootstrap = NonNullable<ReturnType<typeof javascriptBootstrapAt>>;
+type BootstrapLoader = Bootstrap["loader"];
 
 /** Slots a visible literal write may have replaced; the rest stay as declared. */
 export interface JavaScriptBootstrapIntegrity {
@@ -52,30 +56,40 @@ export const proveJavaScriptBootstrapIntegrity = (
     )
   )
     return undefined;
-  const loader = bootstrap.body.body.find(
-    (statement): statement is t.FunctionDeclaration =>
-      t.isFunctionDeclaration(statement) &&
-      statement.id !== null &&
-      statement.id !== undefined &&
-      bindingOf(state, statement.id) === bootstrap.loaderBindingId,
-  );
-  const shape =
-    loader === undefined
-      ? undefined
-      : loaderShape(loader, bootstrap.tableBindingId, state);
+  for (const id of bootstrap.loaderSelfBindingIds) {
+    const binding = state.bindingsById.get(id);
+    if (
+      binding === undefined ||
+      binding.definitions.length !== 1 ||
+      binding.definitions[0]?.kind === "assignment" ||
+      (state.bindingWrites.get(id)?.length ?? 0) !== 0
+    )
+      return undefined;
+  }
+  const trackedLoaderIds = new Set([
+    ...loaderIds,
+    ...bootstrap.loaderSelfBindingIds,
+  ]);
+  const shape = loaderShape(bootstrap.loader, bootstrap.tableBindingId, state);
   if (shape === undefined) return undefined;
-  return referencesAreContained(call, { bootstrap, shape, loaderIds }, state);
+  return referencesAreContained(
+    call,
+    { bootstrap, shape, loaderIds: trackedLoaderIds },
+    state,
+  );
 };
 
 const loaderShape = (
-  loader: t.FunctionDeclaration,
+  loader: BootstrapLoader,
   tableId: string,
   state: JavaScriptSemanticAnalysisState,
 ): LoaderShape | undefined => {
-  const [parameter] = loader.params;
-  const parameterId = t.isIdentifier(parameter)
-    ? bindingOf(state, parameter)
-    : undefined;
+  const parameters = runtimeFunctionParameters(loader);
+  const [parameter] = parameters;
+  const parameterId =
+    parameters.length === 1 && t.isIdentifier(parameter)
+      ? bindingOf(state, parameter)
+      : undefined;
   // A rewritten key would dispatch a different slot than the caller named,
   // and falling off the end returns undefined instead of the exports.
   if (
@@ -253,7 +267,7 @@ const isPlainObject = (node: t.Node): boolean =>
 /** Every ancestor up to the loader body executes whenever the loader runs. */
 const runsUnconditionally = (
   dispatch: t.Node,
-  loader: t.FunctionDeclaration,
+  loader: BootstrapLoader,
   state: JavaScriptSemanticAnalysisState,
 ): boolean => {
   let child: t.Node = dispatch;
@@ -279,7 +293,7 @@ const runsUnconditionally = (
  * writes to members other than `exports`, so nothing swaps its exports.
  */
 const moduleObjectContained = (
-  loader: t.FunctionDeclaration,
+  loader: BootstrapLoader,
   moduleId: string,
   dispatch: t.CallExpression,
   state: JavaScriptSemanticAnalysisState,
@@ -323,7 +337,7 @@ const moduleUse = (
 
 /** Record `cache[key]` reads that initialize the loader's early-return binding. */
 const withCacheReads = (
-  loader: t.FunctionDeclaration,
+  loader: BootstrapLoader,
   shape: LoaderShape,
   state: JavaScriptSemanticAnalysisState,
 ): LoaderShape | undefined => {
@@ -453,11 +467,19 @@ const referencesAreContained = (
       if (!t.isIdentifier(node) || !names.has(node.name) || parent === null)
         return;
       const ancestors = readAncestors();
-      if (semanticIdentifierRole(node, parent, () => ancestors) === null)
-        return;
+      const identifierRole = semanticIdentifierRole(
+        node,
+        parent,
+        () => ancestors,
+      );
+      if (identifierRole === null) return;
       const id = bindingOf(state, node);
       const role = id === undefined ? undefined : tracked.get(id);
       if (role === undefined) return;
+      if (identifierRole !== "read") {
+        contained = false;
+        return;
+      }
       const use: Use = { node, parent, ancestors, shape, loaderIds, state };
       if (role !== "loader") contained = containedUse(role, use);
       else if (exposedTableUse(use) === "escaped") contained = false;
@@ -496,11 +518,20 @@ const unreadRuntimeDefinitions = (
       if (t.isThisExpression(node)) confined = false;
       if (!t.isIdentifier(node) || parent === null) return;
       const ancestors = readAncestors();
+      const identifierRole = semanticIdentifierRole(
+        node,
+        parent,
+        () => ancestors,
+      );
       if (
-        semanticIdentifierRole(node, parent, () => ancestors) === null ||
+        identifierRole === null ||
         !loaderIds.has(bindingOf(state, node) ?? "")
       )
         return;
+      if (identifierRole !== "read") {
+        confined = false;
+        return;
+      }
       if (
         t.isCallExpression(parent) &&
         (parent.callee === node ||

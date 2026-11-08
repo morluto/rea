@@ -3,6 +3,7 @@ import * as t from "@babel/types";
 import {
   semanticStaticPropertyKey,
   runtimeFunctionParameters,
+  unwrapJavaScriptExpression,
 } from "./javascriptAstValues.js";
 import { moduleFactory } from "./javascriptStaticAnalysisHelpers.js";
 import { traverseJavaScriptAst } from "./javascriptSemanticTraversal.js";
@@ -10,15 +11,32 @@ import {
   resolveSemanticBindingState,
   semanticStableInitializer,
   type JavaScriptSemanticAnalysisState,
+  type JavaScriptSemanticBindingState,
 } from "./javascriptSemanticState.js";
+
+type BootstrapLoader =
+  | (t.FunctionDeclaration & { readonly body: t.BlockStatement })
+  | (t.FunctionExpression & { readonly body: t.BlockStatement })
+  | (t.ArrowFunctionExpression & { readonly body: t.BlockStatement });
 
 /** A literal module table dispatched by a standalone CommonJS-style runtime. */
 interface JavaScriptBootstrap {
   readonly body: t.BlockStatement;
   readonly table: t.ObjectExpression;
+  readonly loader: BootstrapLoader;
   readonly loaderName: string;
   readonly loaderBindingId: string;
+  readonly loaderSelfBindingIds: ReadonlySet<string>;
+  readonly inlineCall?: t.CallExpression;
   readonly tableBindingId: string;
+}
+
+interface LoaderCandidate {
+  readonly loader: BootstrapLoader;
+  readonly loaderName: string;
+  readonly loaderBindingId: string;
+  readonly loaderSelfBindingIds: ReadonlySet<string>;
+  readonly inlineCall?: t.CallExpression;
 }
 
 /** Recognize syntax, never invoke a bootstrap or infer it from variable names. */
@@ -26,15 +44,16 @@ export const javascriptBootstrapAt = (
   call: t.CallExpression,
   state: JavaScriptSemanticAnalysisState,
 ): JavaScriptBootstrap | undefined => {
+  const outerCallee = unwrapJavaScriptExpression(call.callee).node;
   if (
-    (!t.isFunctionExpression(call.callee) &&
-      !t.isArrowFunctionExpression(call.callee)) ||
-    !t.isBlockStatement(call.callee.body) ||
-    runtimeFunctionParameters(call.callee).length !== 0 ||
+    (!t.isFunctionExpression(outerCallee) &&
+      !t.isArrowFunctionExpression(outerCallee)) ||
+    !t.isBlockStatement(outerCallee.body) ||
+    runtimeFunctionParameters(outerCallee).length !== 0 ||
     call.arguments.length !== 0
   )
     return undefined;
-  const body = call.callee.body;
+  const body = outerCallee.body;
   const tables = new Map<string, t.ObjectExpression>();
   for (const statement of body.body) {
     if (!t.isVariableDeclaration(statement)) continue;
@@ -61,50 +80,202 @@ export const javascriptBootstrapAt = (
     }
   }
   if (tables.size === 0) return undefined;
-  for (const loader of body.body) {
+  for (const candidate of collectLoaderCandidates(body, state)) {
+    const { loader } = candidate;
     if (
-      !t.isFunctionDeclaration(loader) ||
-      loader.id === null ||
-      loader.id === undefined ||
+      loader.async ||
+      loader.generator ||
       runtimeFunctionParameters(loader).length !== 1
     )
       continue;
     const parameter = runtimeFunctionParameters(loader)[0];
     if (!t.isIdentifier(parameter)) continue;
-    const loaderName = loader.id.name;
-    const loaderBindingId = bindingId(state, loader.id);
     const parameterBindingId = bindingId(state, parameter);
-    if (loaderBindingId === undefined || parameterBindingId === undefined)
-      continue;
+    if (parameterBindingId === undefined) continue;
     let tableBindingId: string | undefined;
     traverseJavaScriptAst(loader.body, {
       enter: (node, _parent, ancestors) => {
         if (
           !t.isCallExpression(node) ||
-          ancestors().some((node) => t.isFunction(node))
+          ancestors().some((ancestor) => t.isFunction(ancestor))
         )
           return;
-        const candidate = dispatchedTableBinding(
+        const matchedTable = dispatchedTableBinding(
           node,
-          loaderBindingId,
+          candidate.loaderSelfBindingIds,
           parameterBindingId,
           state,
         );
-        if (candidate !== undefined && tables.has(candidate))
-          tableBindingId = candidate;
+        if (matchedTable !== undefined && tables.has(matchedTable))
+          tableBindingId = matchedTable;
       },
     });
     const table =
       tableBindingId === undefined ? undefined : tables.get(tableBindingId);
     if (table !== undefined && tableBindingId !== undefined)
-      return { body, table, loaderName, loaderBindingId, tableBindingId };
+      return {
+        body,
+        table,
+        loader,
+        loaderName: candidate.loaderName,
+        loaderBindingId: candidate.loaderBindingId,
+        loaderSelfBindingIds: candidate.loaderSelfBindingIds,
+        ...(candidate.inlineCall === undefined
+          ? {}
+          : { inlineCall: candidate.inlineCall }),
+        tableBindingId,
+      };
   }
   return undefined;
 };
 
+const collectLoaderCandidates = (
+  body: t.BlockStatement,
+  state: JavaScriptSemanticAnalysisState,
+): readonly LoaderCandidate[] => {
+  const candidates: LoaderCandidate[] = [];
+  for (const statement of body.body) {
+    if (
+      t.isFunctionDeclaration(statement) &&
+      t.isIdentifier(statement.id) &&
+      t.isBlockStatement(statement.body)
+    ) {
+      const id = unreassignedBindingId(state, statement.id, "function");
+      if (id !== undefined)
+        candidates.push({
+          loader: statement,
+          loaderName: statement.id.name,
+          loaderBindingId: id,
+          loaderSelfBindingIds: new Set([id]),
+        });
+      continue;
+    }
+    if (!t.isVariableDeclaration(statement)) continue;
+    for (const declaration of statement.declarations) {
+      if (!t.isIdentifier(declaration.id) || declaration.init == null) continue;
+      const initNode = unwrapJavaScriptExpression(declaration.init).node;
+      if (!isBlockFunctionExpression(initNode)) continue;
+      const outerBinding = resolveSemanticBindingState(
+        state,
+        declaration.id,
+        declaration.id.name,
+      );
+      if (
+        outerBinding === undefined ||
+        semanticStableInitializer(outerBinding, state)?.node !==
+          declaration.init ||
+        !isUnreassignedBinding(outerBinding, "variable", state) ||
+        hasTopLevelReferenceBeforeInitializer(
+          body,
+          outerBinding.bindingId,
+          declaration,
+          state,
+        )
+      )
+        continue;
+      const selfIds = new Set([outerBinding.bindingId]);
+      if (t.isFunctionExpression(initNode) && initNode.id != null) {
+        if (!t.isIdentifier(initNode.id)) continue;
+        const innerId = unreassignedBindingId(state, initNode.id, "function");
+        if (innerId === undefined) continue;
+        selfIds.add(innerId);
+      }
+      candidates.push({
+        loader: initNode,
+        loaderName: declaration.id.name,
+        loaderBindingId: outerBinding.bindingId,
+        loaderSelfBindingIds: selfIds,
+      });
+    }
+  }
+  traverseJavaScriptAst(body, {
+    skip: (node) => t.isFunction(node),
+    enter: (node) => {
+      if (
+        !t.isCallExpression(node) ||
+        node.arguments.length !== 1 ||
+        t.isSpreadElement(node.arguments[0])
+      )
+        return;
+      const callee = unwrapJavaScriptExpression(node.callee).node;
+      if (
+        !t.isFunctionExpression(callee) ||
+        !t.isIdentifier(callee.id) ||
+        !isBlockFunctionExpression(callee)
+      )
+        return;
+      const innerId = unreassignedBindingId(state, callee.id, "function");
+      if (innerId === undefined) return;
+      candidates.push({
+        loader: callee,
+        loaderName: callee.id.name,
+        loaderBindingId: innerId,
+        loaderSelfBindingIds: new Set([innerId]),
+        inlineCall: node,
+      });
+    },
+  });
+  return candidates;
+};
+
+const isBlockFunctionExpression = (
+  node: t.Node,
+): node is
+  | (t.FunctionExpression & { readonly body: t.BlockStatement })
+  | (t.ArrowFunctionExpression & { readonly body: t.BlockStatement }) =>
+  (t.isFunctionExpression(node) || t.isArrowFunctionExpression(node)) &&
+  t.isBlockStatement(node.body);
+
+const isUnreassignedBinding = (
+  binding: JavaScriptSemanticBindingState,
+  kind: "function" | "variable",
+  state: JavaScriptSemanticAnalysisState,
+): boolean =>
+  binding.definitions.length === 1 &&
+  binding.definitions[0]?.kind === kind &&
+  (state.bindingWrites.get(binding.bindingId)?.length ?? 0) === 0;
+
+const unreassignedBindingId = (
+  state: JavaScriptSemanticAnalysisState,
+  identifier: t.Identifier,
+  kind: "function" | "variable",
+): string | undefined => {
+  const binding = resolveSemanticBindingState(
+    state,
+    identifier,
+    identifier.name,
+  );
+  return binding !== undefined && isUnreassignedBinding(binding, kind, state)
+    ? binding.bindingId
+    : undefined;
+};
+
+const hasTopLevelReferenceBeforeInitializer = (
+  body: t.BlockStatement,
+  targetBindingId: string,
+  declarator: t.VariableDeclarator,
+  state: JavaScriptSemanticAnalysisState,
+): boolean => {
+  const readyAt = declarator.end ?? Number.POSITIVE_INFINITY;
+  let before = false;
+  traverseJavaScriptAst(body, {
+    skip: (node) => before || t.isFunction(node),
+    enter: (node) => {
+      if (
+        !t.isIdentifier(node) ||
+        node === declarator.id ||
+        (node.start ?? -1) >= readyAt
+      )
+        return;
+      if (bindingId(state, node) === targetBindingId) before = true;
+    },
+  });
+  return before;
+};
+
 const dispatchedTableBinding = (
   call: t.CallExpression,
-  loaderBindingId: string,
+  loaderBindingIds: ReadonlySet<string>,
   keyBindingId: string,
   state: JavaScriptSemanticAnalysisState,
 ): string | undefined => {
@@ -134,7 +305,7 @@ const dispatchedTableBinding = (
     semanticStaticPropertyKey(exports.property, exports.computed) !==
       "exports" ||
     !t.isIdentifier(require) ||
-    bindingId(state, require) !== loaderBindingId
+    !loaderBindingIds.has(bindingId(state, require) ?? "")
   )
     return undefined;
   if (

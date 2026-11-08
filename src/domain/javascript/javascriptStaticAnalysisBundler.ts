@@ -1,5 +1,8 @@
 import * as t from "@babel/types";
-import { runtimeFunctionParameters } from "./javascriptAstValues.js";
+import {
+  runtimeFunctionParameters,
+  unwrapJavaScriptExpression,
+} from "./javascriptAstValues.js";
 import { javascriptBootstrapAt } from "./javascriptBootstrap.js";
 import {
   resolveSemanticBindingState,
@@ -119,12 +122,17 @@ export const inspectBundlerBootstrap = (
     enter: (node, _parent, ancestors) => {
       if (
         !t.isCallExpression(node) ||
-        ancestors().some((node) => t.isFunction(node)) ||
-        !t.isIdentifier(node.callee) ||
-        resolveSemanticBindingState(bindings, node.callee, node.callee.name)
-          ?.bindingId !== bootstrap.loaderBindingId
+        ancestors().some((ancestor) => t.isFunction(ancestor))
       )
         return;
+      const callee = unwrapJavaScriptExpression(node.callee).node;
+      const isInlineEntry =
+        bootstrap.inlineCall !== undefined && node === bootstrap.inlineCall;
+      const isBoundLoaderCall =
+        t.isIdentifier(callee) &&
+        resolveSemanticBindingState(bindings, callee, callee.name)
+          ?.bindingId === bootstrap.loaderBindingId;
+      if (!isInlineEntry && !isBoundLoaderCall) return;
       const value = argumentValue(node.arguments[0]);
       if (value === undefined) unknownEntries++;
       else entries.push(value);
