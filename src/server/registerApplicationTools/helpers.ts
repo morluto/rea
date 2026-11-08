@@ -95,15 +95,20 @@ export const deliverApplicationEvidence = async (
         options.recordEvidence,
       );
     }
+    // The retained parent carries an open unknown on ordinary completion, so a
+    // cancelled run registers the same unknown rather than dropping it. A
+    // refusal must stay visible: the parent is already committed, so the
+    // failure rides along as a secondary cause while cancellation stays primary.
+    if (unknownKind !== undefined) {
+      const registered = recordApplicationResult(options, parent, unknownKind);
+      if (registered !== undefined && !registered.ok)
+        interrupted.retainSecondaryFailure(registered.error);
+    }
     const retained = delivery.toPartialErrorToolResult(
       interrupted.retainPartialObservation(parent),
       contract.returnsTargetContent,
       options.recordEvidence,
     );
-    // The retained parent carries an open unknown on ordinary completion, so a
-    // cancelled run registers the same unknown rather than dropping it.
-    if (unknownKind !== undefined)
-      recordApplicationResult(options, parent, unknownKind);
     return retained;
   }
   if (!selected.ok) return delivery.toCallToolResult(selected, contract);
