@@ -51,9 +51,13 @@ ${decoys}
   expect(bridges).toHaveLength(DECOY_COUNT + 1);
 
   const ledger = build(request([analyzed.value]));
+  // Semantic parser-boundary candidates for the same preload file share the
+  // bridge's application node id, so the lookup must name the family too.
   expect(
     ledger.obligations.find(
-      ({ target }) => target.application_node_id === realBridge.node_id,
+      ({ family, target }) =>
+        family === "context-bridge" &&
+        target.application_node_id === realBridge.node_id,
     ),
   ).toMatchObject({
     family: "context-bridge",
@@ -67,13 +71,14 @@ ${decoys}
         ({ target }) => target.application_node_id === bridge.node_id,
       ),
     ).toBe(true);
-  const overgeneration = ledger.limitations.filter((limitation) =>
-    limitation.startsWith("obligation-overgeneration:"),
+  // The preload file's own semantic candidates may over-generate under their
+  // own sha; only the root artifact's limitation is this test's subject.
+  const overgeneration = ledger.limitations.filter(
+    (limitation) =>
+      limitation.startsWith("obligation-overgeneration:") &&
+      limitation.includes(`artifact ${result.root_artifact_sha256} has`),
   );
   expect(overgeneration).toHaveLength(1);
-  expect(overgeneration[0]).toContain(
-    `artifact ${result.root_artifact_sha256} has`,
-  );
   expect(overgeneration[0]).toContain("context-bridge");
   expect(ledger.status).toBe("unknown");
 }, 60_000);
