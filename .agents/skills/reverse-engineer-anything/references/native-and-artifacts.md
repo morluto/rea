@@ -2,26 +2,9 @@
 
 Read the section matching the supplied artifact; other sections are optional.
 
+- [Other artifact guides](#other-artifact-guides)
 - [Apple app resources](#apple-app-resources)
 - [Desktop installation directories](#desktop-installation-directories)
-- [Go build metadata](#go-build-metadata)
-- [Model files](#model-files)
-- [IL2CPP metadata](#il2cpp-metadata)
-- [Rust dependency metadata](#rust-dependency-metadata)
-- [PE Authenticode certificate tables](#pe-authenticode-certificate-tables)
-- [PE import and delay-load tables](#pe-import-and-delay-load-tables)
-- [PE TLS callbacks and load configuration](#pe-tls-callbacks-and-load-configuration)
-- [Binary hardening](#binary-hardening)
-- [ELF note tables](#elf-note-tables)
-- [Apple IPS crash reports](#apple-ips-crash-reports)
-- [Linux kernel modules](#linux-kernel-modules)
-- [CPython pyc files](#cpython-pyc-files)
-- [Erlang BEAM files](#erlang-beam-files)
-- [SQLite snapshots](#sqlite-snapshots)
-- [Recorded Linux crashes](#recorded-linux-crashes)
-- [Offline ELF layout](#offline-elf-layout)
-- [Offline WASM](#offline-wasm)
-- [Offline APK signatures](#offline-apk-signatures)
 - [Native targets](#native-targets)
 - [Continue editable Ghidra analysis across processes](#continue-editable-ghidra-analysis-across-processes)
 - [Reuse caller-selected Ghidra analysis](#reuse-caller-selected-ghidra-analysis)
@@ -31,14 +14,8 @@ Read the section matching the supplied artifact; other sections are optional.
 - [Static memory and original file bytes](#static-memory-and-original-file-bytes)
 - [DOS MZ with Ghidra](#dos-mz-with-ghidra)
 - [Managed PE/CLI](#managed-pecli)
-- [Packages and extraction](#packages-and-extraction)
 - [DOS COM loader interpretation](#dos-com-loader-interpretation)
 - [Function annotations in Ghidra](#function-annotations-in-ghidra)
-- [Offline PE resource inventory](#offline-pe-resource-inventory)
-- [Offline PE and ELF export tables](#offline-pe-and-elf-export-tables)
-- [Godot PCK](#godot-pck)
-- [ESP images](#esp-images)
-- [ESP flash images](#esp-flash-images)
 - [Bun standalone executables](#bun-standalone-executables)
 
 For release comparisons on one MCP connection, retain `list_procedures` Evidence
@@ -102,78 +79,6 @@ a digest of every file's contents. Component path markers do not establish
 runtime presence. For compact CLI output, use
 `inspect-desktop-application PATH --detail summary --evidence_output BUNDLE`.
 See [desktop installations](https://github.com/morluto/rea/blob/main/docs/desktop-applications.md).
-
-## Go build metadata
-
-Read [Go build metadata](format-inspectors.md#go-build-metadata).
-
-## Model files
-
-Read [Model files](format-inspectors.md#model-files).
-
-## IL2CPP metadata
-
-Read [IL2CPP metadata](format-inspectors.md#il2cpp-metadata).
-
-## Rust dependency metadata
-
-Read [Rust dependency metadata](format-inspectors.md#rust-dependency-metadata).
-
-## PE Authenticode certificate tables
-
-Read [PE Authenticode certificate tables](format-inspectors.md#pe-authenticode-certificate-tables).
-
-## PE import and delay-load tables
-
-Read [PE import and delay-load tables](format-inspectors.md#pe-import-and-delay-load-tables).
-
-## PE TLS callbacks and load configuration
-
-Read [PE TLS callbacks and load configuration](format-inspectors.md#pe-tls-callbacks-and-load-configuration).
-
-## Binary hardening
-
-Read [Binary hardening](format-inspectors.md#binary-hardening).
-
-## ELF note tables
-
-Read [ELF note tables](format-inspectors.md#elf-note-tables).
-
-## Apple IPS crash reports
-
-Read [Apple IPS crash reports](format-inspectors.md#apple-ips-crash-reports).
-
-## Linux kernel modules
-
-Read [Linux kernel modules](format-inspectors.md#linux-kernel-modules).
-
-## CPython pyc files
-
-Read [CPython pyc files](format-inspectors.md#cpython-pyc-files).
-
-## Erlang BEAM files
-
-Read [Erlang BEAM files](format-inspectors.md#erlang-beam-files).
-
-## SQLite snapshots
-
-Read [SQLite snapshots](format-inspectors.md#sqlite-snapshots).
-
-## Recorded Linux crashes
-
-Read [Recorded Linux crashes](format-inspectors.md#recorded-linux-crashes).
-
-## Offline ELF layout
-
-Read [Offline ELF layout](format-inspectors.md#offline-elf-layout).
-
-## Offline WASM
-
-Read [Offline WASM](format-inspectors.md#offline-wasm).
-
-## Offline APK signatures
-
-Read [Offline APK signatures](format-inspectors.md#offline-apk-signatures).
 
 ## Native targets
 
@@ -470,10 +375,6 @@ and distinguish derived metadata from Ghidra database observations. Recovered
 types and native pseudocode are not original C# source. Windows Ghidra P0 has
 no database mutation authority.
 
-## Packages and extraction
-
-Read [Packages and extraction](packages-and-archives.md#packages-and-extraction).
-
 For headerless firmware and address-bearing containers, read
 [raw images](firmware-and-raw-images.md#headerless-raw-images-and-firmware-containers).
 
@@ -504,26 +405,36 @@ architecture, provider-owned mapping and selected-image commitments. Equal
 numeric addresses alone cannot establish correspondence; inspect retained
 source Evidence and coverage when the match remains ambiguous.
 
-## Offline PE resource inventory
-
-Read [Offline PE resource inventory](format-inspectors.md#offline-pe-resource-inventory).
-
-## Offline PE and ELF export tables
-
-Read [Offline PE and ELF export tables](format-inspectors.md#offline-pe-and-elf-export-tables).
-
-## Godot PCK
-
-Read [Godot PCK](packages-and-archives.md#godot-pck).
-
-## ESP images
-
-Read [ESP images](firmware-and-raw-images.md#esp-images).
-
-## ESP flash images
-
-Read [ESP flash images](firmware-and-raw-images.md#esp-flash-images).
-
 ## Bun standalone executables
 
 Read [Bun standalone executables](packages-and-archives.md#bun-standalone-executables).
+
+## Other artifact guides
+
+Read the owning page for offline formats, containers or firmware. These explicit
+anchors preserve older links without creating duplicate searchable sections.
+
+- <a id="go-build-metadata"></a>[Go build metadata](format-inspectors.md#go-build-metadata)
+- <a id="model-files"></a>[Model files](format-inspectors.md#model-files)
+- <a id="il2cpp-metadata"></a>[IL2CPP metadata](format-inspectors.md#il2cpp-metadata)
+- <a id="rust-dependency-metadata"></a>[Rust dependency metadata](format-inspectors.md#rust-dependency-metadata)
+- <a id="pe-authenticode-certificate-tables"></a>[PE Authenticode certificate tables](format-inspectors.md#pe-authenticode-certificate-tables)
+- <a id="pe-import-and-delay-load-tables"></a>[PE import and delay-load tables](format-inspectors.md#pe-import-and-delay-load-tables)
+- <a id="pe-tls-callbacks-and-load-configuration"></a>[PE TLS callbacks and load configuration](format-inspectors.md#pe-tls-callbacks-and-load-configuration)
+- <a id="binary-hardening"></a>[Binary hardening](format-inspectors.md#binary-hardening)
+- <a id="elf-note-tables"></a>[ELF note tables](format-inspectors.md#elf-note-tables)
+- <a id="apple-ips-crash-reports"></a>[Apple IPS crash reports](format-inspectors.md#apple-ips-crash-reports)
+- <a id="linux-kernel-modules"></a>[Linux kernel modules](format-inspectors.md#linux-kernel-modules)
+- <a id="cpython-pyc-files"></a>[CPython pyc files](format-inspectors.md#cpython-pyc-files)
+- <a id="erlang-beam-files"></a>[Erlang BEAM files](format-inspectors.md#erlang-beam-files)
+- <a id="sqlite-snapshots"></a>[SQLite snapshots](format-inspectors.md#sqlite-snapshots)
+- <a id="recorded-linux-crashes"></a>[Recorded Linux crashes](format-inspectors.md#recorded-linux-crashes)
+- <a id="offline-elf-layout"></a>[Offline ELF layout](format-inspectors.md#offline-elf-layout)
+- <a id="offline-wasm"></a>[Offline WASM](format-inspectors.md#offline-wasm)
+- <a id="offline-apk-signatures"></a>[Offline APK signatures](format-inspectors.md#offline-apk-signatures)
+- <a id="packages-and-extraction"></a>[Packages and extraction](packages-and-archives.md#packages-and-extraction)
+- <a id="offline-pe-resource-inventory"></a>[Offline PE resource inventory](format-inspectors.md#offline-pe-resource-inventory)
+- <a id="offline-pe-and-elf-export-tables"></a>[Offline PE and ELF export tables](format-inspectors.md#offline-pe-and-elf-export-tables)
+- <a id="godot-pck"></a>[Godot PCK](packages-and-archives.md#godot-pck)
+- <a id="esp-images"></a>[ESP images](firmware-and-raw-images.md#esp-images)
+- <a id="esp-flash-images"></a>[ESP flash images](firmware-and-raw-images.md#esp-flash-images)

@@ -132,7 +132,8 @@ it.each([
       if (!found.ok) throw found.error;
       if (found.value.status !== "matches")
         throw new Error("Expected guidance matches");
-      const match = found.value.matches.find((item) => item.guide === guide);
+      expect(found.value.matches[0]?.guide).toBe(guide);
+      const match = found.value.matches[0];
       if (match === undefined)
         throw new Error(`Missing focused guide for ${query}`);
       const read = await readGuidanceSection(

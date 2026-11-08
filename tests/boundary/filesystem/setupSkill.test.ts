@@ -14,7 +14,7 @@ import {
   writeFile,
 } from "node:fs/promises";
 import { constants as fsConstants } from "node:fs";
-import { dirname, join } from "node:path";
+import { dirname, join, sep } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
@@ -641,6 +641,7 @@ describe("canonical skill transaction", () => {
     );
     const packagedPaths = (await readdir(packagedRoot, { recursive: true }))
       .filter((path) => path.endsWith(".md"))
+      .map((path) => path.split(sep).join("/"))
       .sort();
     expect(packagedPaths).toEqual([...MANAGED_SKILL_FILES].sort());
     expect(await skillReferenceIssues(dirname(destination))).toEqual([]);
