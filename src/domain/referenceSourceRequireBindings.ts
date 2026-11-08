@@ -2,6 +2,7 @@ import * as t from "@babel/types";
 import { posix } from "node:path";
 
 import {
+  semanticMemberChain,
   semanticStaticPropertyKey,
   unwrapJavaScriptExpression,
 } from "./javascript/javascriptAstValues.js";
@@ -59,7 +60,6 @@ export const referenceSourceRequireCalls = (
   const factoryBindings: ReadonlySet<string> = new Set();
   const candidates: {
     readonly call: ReferenceSourceRequireInvocation;
-    readonly identifier: t.Identifier;
     readonly arguments: JavaScriptRequireCallFact["arguments"];
     readonly resolutionBase: ReferenceSourceRequireResolutionBase;
     readonly limitation?: string;
@@ -72,8 +72,7 @@ export const referenceSourceRequireCalls = (
         !t.isNewExpression(node)
       )
         return;
-      const identifier = callReceiverIdentifier(node.callee);
-      if (identifier === undefined) return;
+      if (callReceiverIdentifier(node.callee) === undefined) return;
       let fact = semanticRequireLoaderAt(node, index.bindings, factoryBindings);
       const callee = unwrapJavaScriptExpression(node.callee).node;
       if (
@@ -96,7 +95,13 @@ export const referenceSourceRequireCalls = (
         index,
       );
       if (callFact === undefined || callFact.loader === "local") return;
-      if (fact !== "create-require" && fact !== "commonjs-loader") return;
+      if (
+        fact !== "create-require" &&
+        fact !== "commonjs-loader" &&
+        callFact.loader !== "create-require" &&
+        callFact.loader !== "commonjs-loader"
+      )
+        return;
       const sourceRelativePath = callFact.sourceRelativePath;
       const normalizedSourceRelativePath =
         sourceRelativePath === undefined
@@ -122,8 +127,7 @@ export const referenceSourceRequireCalls = (
                       kind: "source-relative-file",
                       path: normalizedSourceRelativePath,
                     }
-            : fact === "commonjs-loader" &&
-                callFact.loader === "commonjs-loader" &&
+            : callFact.loader === "commonjs-loader" &&
                 runtimeContext === "commonjs"
               ? "source-file"
               : "unknown";
@@ -136,7 +140,6 @@ export const referenceSourceRequireCalls = (
       );
       candidates.push({
         call: node,
-        identifier,
         arguments: callFact.arguments,
         resolutionBase: searchBase,
         ...(runtimeContext === "unknown"
@@ -156,13 +159,7 @@ export const referenceSourceRequireCalls = (
     completeSemanticSteps(index.indexMemberMutationFactsSteps());
   return new Map(
     candidates.map(
-      ({
-        call,
-        identifier,
-        arguments: callArguments,
-        resolutionBase,
-        limitation,
-      }) =>
+      ({ call, arguments: callArguments, resolutionBase, limitation }) =>
         [
           call,
           {
@@ -170,7 +167,7 @@ export const referenceSourceRequireCalls = (
             ...(limitation === undefined ? {} : { limitation }),
             resolutionBase:
               !t.isIdentifier(unwrapJavaScriptExpression(call.callee).node) &&
-              hasPriorMemberMutation(index, call, identifier)
+              hasPriorMemberMutation(index, call)
                 ? "unknown"
                 : resolutionBase,
           },
@@ -212,20 +209,19 @@ const requireResolveSearchBase = (
 const hasPriorMemberMutation = (
   index: JavaScriptReceiverIndex,
   site: ReferenceSourceRequireInvocation,
-  identifier: t.Identifier,
 ): boolean => {
   const callee = unwrapJavaScriptExpression(site.callee).node;
-  const property =
-    t.isMemberExpression(callee) || t.isOptionalMemberExpression(callee)
-      ? semanticStaticPropertyKey(callee.property, callee.computed)
-      : undefined;
-  if (property === undefined || property === null) return true;
-  const facts = index.effectsForReferenceAt(site, identifier, [property]);
+  const chain = semanticMemberChain(callee);
+  if (chain === undefined) return true;
+  const facts = index.effectsForReferenceAt(site, callee);
   return (
     !facts.memberEffectsIndexed ||
     facts.effects.some(
-      ({ kind, timing }) =>
-        (kind === "member-write" || kind === "escape") && timing !== "after",
+      ({ kind, timing, path }) =>
+        timing !== "after" &&
+        (kind === "escape" ||
+          (kind === "member-write" &&
+            (path === undefined || path.length <= chain.members.length))),
     )
   );
 };
@@ -234,14 +230,11 @@ const callReceiverIdentifier = (
   callee: t.Node | null | undefined,
 ): t.Identifier | undefined => {
   if (!t.isNode(callee)) return undefined;
-  const expression = unwrapJavaScriptExpression(callee).node;
-  if (t.isIdentifier(expression)) return expression;
-  if (
+  let expression = unwrapJavaScriptExpression(callee).node;
+  while (
     t.isMemberExpression(expression) ||
     t.isOptionalMemberExpression(expression)
-  ) {
-    const receiver = unwrapJavaScriptExpression(expression.object).node;
-    return t.isIdentifier(receiver) ? receiver : undefined;
-  }
-  return undefined;
+  )
+    expression = unwrapJavaScriptExpression(expression.object).node;
+  return t.isIdentifier(expression) ? expression : undefined;
 };
