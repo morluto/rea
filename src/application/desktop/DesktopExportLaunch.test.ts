@@ -70,7 +70,9 @@ describe("planLaunch captured paths", () => {
     );
     expect(command).toContain("/mnt/other/unselected.db");
   });
+});
 
+describe("planLaunch URL and argument spelling", () => {
   it("keeps an encoded filename when a file URL has repeated separators", () => {
     const physical = `${HOME}/data/A budget.svg`;
     const capture = {
