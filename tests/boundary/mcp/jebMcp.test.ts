@@ -9,6 +9,7 @@ import type {
 import { createAnalysisExecution } from "../../../src/application/AnalysisProvider.js";
 import { toolContract } from "../../../src/contracts/toolContracts.js";
 import { parseEvidence } from "../../../src/domain/evidence.js";
+import { AnalysisError } from "../../../src/domain/analysisErrorBase.js";
 import { AnalysisTimeoutError } from "../../../src/domain/analysisErrorCore.js";
 import { ProviderCleanupError } from "../../../src/domain/providerCleanupError.js";
 import { AnalysisCleanupLease } from "../../../src/artifacts/AnalysisCleanupLease.js";
@@ -163,9 +164,21 @@ it("preserves the JEB discovery timeout when availability cleanup is incomplete"
       },
     },
   });
-  expect(cleanup.cleanupIncomplete).toBe(true);
+  // The MCP response is a snapshot; retain the provider error to check recovery.
+  const returned = await provider
+    .inspectAvailability()
+    .catch((cause: unknown) => cause);
+  if (!(returned instanceof AnalysisError))
+    throw new Error("Expected availability to throw a retained analysis error");
+  for (const error of [cleanup, failure, returned]) {
+    expect(error.cleanupIncomplete).toBe(true);
+    expect(error.cleanupResources).toEqual([resource]);
+  }
   await provider.close();
-  expect(cleanup.cleanupIncomplete).toBe(false);
+  for (const error of [cleanup, failure, returned])
+    expect(error.cleanupIncomplete).toBe(false);
+  expect(failure.cleanupResources).toEqual([]);
+  expect(returned.cleanupResources).toEqual([]);
 });
 
 it("advertises exact valid JEB schemas and records inline evidence through MCP", async () => {
