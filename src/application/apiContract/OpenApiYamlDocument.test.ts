@@ -49,8 +49,16 @@ it("inventories the same declarations from the published YAML and JSON contracts
     readFile(jsonFixture),
     readFile(yamlFixture),
   ]);
-  const json = await importText("contract.json", jsonBytes.toString(), "openapi-json");
-  const yaml = await importText("contract.yaml", yamlBytes.toString(), "openapi-yaml");
+  const json = await importText(
+    "contract.json",
+    jsonBytes.toString(),
+    "openapi-json",
+  );
+  const yaml = await importText(
+    "contract.yaml",
+    yamlBytes.toString(),
+    "openapi-yaml",
+  );
   const fromJson = contractOf(json);
   const fromYaml = contractOf(yaml);
 
@@ -117,7 +125,11 @@ it("records YAML anchors, aliases, tags and comments without changing the facts"
 
 it("rejects YAML that the decoder cannot compose, without inventing declarations", async () => {
   const malformed = contractError(
-    await importText("broken.yaml", "openapi: 3.0.4\npaths: [\n", "openapi-yaml"),
+    await importText(
+      "broken.yaml",
+      "openapi: 3.0.4\npaths: [\n",
+      "openapi-yaml",
+    ),
   );
   expect(malformed).toContain("OpenAPI YAML could not be parsed");
 
@@ -218,25 +230,32 @@ it("keeps collection-valued sequence items and names the selected format in pars
   );
   expect(nested.operations).toEqual([]);
 
-  const missingVersion = contractError(
-    await importText(
-      "no-version.yaml",
-      "info: {title: t}\npaths: {}\n",
-      "openapi-yaml",
-    ),
+  const missingVersionResult = await importText(
+    "no-version.yaml",
+    "info: {title: t}\npaths: {}\n",
+    "openapi-yaml",
   );
+  const missingVersion = contractError(missingVersionResult);
   expect(missingVersion).toContain("OpenAPI YAML document");
   expect(missingVersion).not.toContain("OpenAPI JSON object");
+  // The wording is checked through the YAML decoder; the refusal itself must
+  // stay a typed input error naming the refused argument.
+  if (missingVersionResult.ok) throw new Error("expected a refusal");
+  expect(missingVersionResult.error).toMatchObject({
+    issues: [{ path: ["path"], reason: "invalid_format" }],
+  });
 
-  const unsupportedVersion = contractError(
-    await importText(
-      "bad-version.yaml",
-      'openapi: "3.3.0"\ninfo: {}\n',
-      "openapi-yaml",
-    ),
+  const unsupportedVersionResult = await importText(
+    "bad-version.yaml",
+    'openapi: "3.3.0"\ninfo: {}\n',
+    "openapi-yaml",
   );
-  expect(unsupportedVersion).toContain(
+  expect(contractError(unsupportedVersionResult)).toContain(
     "Only OpenAPI 3.0, 3.1 and 3.2 YAML documents are supported.",
+  );
+  if (unsupportedVersionResult.ok) throw new Error("expected a refusal");
+  expect(unsupportedVersionResult.error._tag).toBe(
+    "AnalysisUnsupportedTargetError",
   );
 });
 
@@ -247,6 +266,8 @@ const contractError = (
   if (result.ok) return "";
   const issues = (result.error as { issues?: readonly { message: string }[] })
     .issues;
-  return [result.error.message, ...(issues ?? []).map(({ message }) => message)]
-    .join("\n");
+  return [
+    result.error.message,
+    ...(issues ?? []).map(({ message }) => message),
+  ].join("\n");
 };
