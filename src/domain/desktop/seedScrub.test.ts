@@ -560,13 +560,15 @@ describe("scrubSeed on gzip files", () => {
     );
   });
 
-  it("searches the document inside one the state view did not read, and ships a damaged one as captured, searched as its bytes", () => {
+  it("scrubs a readable document the state view did not read and searches damaged bytes as captured", () => {
     const damaged = workbook("ada@e81232be457d").subarray(0, 40);
     const unread = { home: "seed", format: null };
 
-    expect(
-      scrubSeed(workbook("ada@e81232be457d"), unread, GEANY).holdsIdentity,
-    ).toBe(true);
+    const scrubbed = scrubSeed(workbook("ada@e81232be457d"), unread, GEANY);
+    expect(scrubbed.holdsIdentity).toBe(false);
+    expect(gunzipSync(scrubbed.bytes ?? Buffer.alloc(0)).toString("utf8")).toBe(
+      XML("user@localhost"),
+    );
     expect(scrubSeed(Buffer.from(damaged), seed("xml"), GEANY)).toEqual({
       bytes: undefined,
       holdsIdentity: false,
