@@ -463,7 +463,8 @@ const tableOf = (
   check: Check<"row_present" | "row_absent" | "row_count">,
   view: JsonValue | null,
 ):
-  { columns: JsonValue[]; rows: JsonValue[]; truncated: boolean } | Verdict => {
+  | { columns: JsonValue[]; rows: JsonValue[]; truncated: boolean }
+  | Verdict => {
   const sqlite = isRecord(view) ? view : {};
   const tables = isRecord(sqlite.tables) ? sqlite.tables : {};
   const table = Object.hasOwn(tables, check.table)
