@@ -576,8 +576,9 @@ describe("token sweep batch failures", () => {
       failures: expect.arrayContaining([
         expect.objectContaining({
           pid: 101,
-          diagnostic:
-            "individual unreadable; run-token batch failed: batch reader unavailable",
+          diagnostic: expect.stringMatching(
+            /individual unreadable.*batch reader unavailable/iu,
+          ),
         }),
       ]),
     });

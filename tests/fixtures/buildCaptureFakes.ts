@@ -67,6 +67,13 @@ const realCliOutputs = async (
   const task = join(work, "task.json");
   await writeFile(task, JSON.stringify(BUILD_TASK));
   const bundle = join(work, "bundle");
+  const schema = await serveCli([
+    "export-desktop-application",
+    "--schema",
+    "--json",
+  ]);
+  expect(schema.exitCode, schema.stdout).toBe(0);
+  await writeFile(join(work, "schema.json"), schema.stdout);
   const draft = await serveCli([
     "describe-desktop-application-task",
     capture,
@@ -102,6 +109,7 @@ const realCliOutputs = async (
     draft: join(work, "draft.json"),
     export: join(work, "export.json"),
     bundle,
+    schema: join(work, "schema.json"),
   };
 };
 

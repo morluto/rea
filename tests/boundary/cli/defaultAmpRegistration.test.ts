@@ -375,3 +375,37 @@ cliTest(
     }
   },
 );
+
+cliTest(
+  "invalid registration never starts a package runner or changes settings",
+  async ({ cli }) => {
+    const f = await fixture(original);
+    const before = await stat(f.settings);
+    for (const options of [
+      ["--bogus"],
+      ["--agents", "claude-code"],
+      ["--unknown=declared-literal", "--sensitive-value", "declared-literal"],
+      ["--unknown=API_SECRET_ordinary-evidence"],
+    ]) {
+      const result = await cli.run({
+        arguments: ["mcp", "add", ...options, "--json"],
+        cwd: f.home,
+        environment: f.environment,
+        timeoutMs: 20_000,
+      });
+      expect(result.exitCode, result.stderr).toBe(1);
+      expect(result.json).toMatchObject({
+        code: "VALIDATION_ERROR",
+        fieldErrors: [expect.objectContaining({ path: "arguments" })],
+      });
+      if (options.includes("--sensitive-value")) {
+        expect(result.stdout + result.stderr).not.toContain("declared-literal");
+        expect(result.stdout).toContain("[REDACTED]");
+      } else expect(result.stdout).toContain(options[0]);
+      expect(await readFile(f.settings, "utf8")).toBe(original);
+      expect((await stat(f.settings)).mtimeMs).toBe(before.mtimeMs);
+      expect(await readdir(f.directory)).toEqual(["settings.json"]);
+      expect(await readFile(f.log, "utf8")).toBe("");
+    }
+  },
+);

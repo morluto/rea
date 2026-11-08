@@ -56,6 +56,36 @@ const draft = (files: Record<string, DesktopStatePath>) =>
     { seed: 0, end: 1 },
   );
 
+it("omits checks for a lock left out of a selected folder but retains an explicitly selected lock", () => {
+  const files = new Map(
+    Object.entries({
+      "Documents/plan.vym": path("document", "text", text("old"), text("new")),
+      "Documents/plan.vym.lock": path(
+        "document",
+        "text",
+        text("pid 1"),
+        text("pid 2"),
+      ),
+    }),
+  );
+  const ends = { seed: 0, end: 1 };
+  const fromFolder = draftTaskFiles(files, () => true, ends, ["Documents"]);
+  expect(
+    fromFolder.find(({ file }) => file === "Documents/plan.vym")?.suggested
+      .length,
+  ).toBeGreaterThan(0);
+  expect(
+    fromFolder.find(({ file }) => file === "Documents/plan.vym.lock"),
+  ).toMatchObject({ suggested: [], values: [], guards: [] });
+  const explicit = draftTaskFiles(files, () => true, ends, [
+    "Documents/plan.vym.lock",
+  ]);
+  expect(
+    explicit.find(({ file }) => file === "Documents/plan.vym.lock")?.suggested
+      .length,
+  ).toBeGreaterThan(0);
+});
+
 describe("draftTaskFiles", () => {
   it("suggests the lines a document gained and lost, and leaves the app's state without views", () => {
     const [state, document] = draft({
@@ -1054,6 +1084,38 @@ describe("draftTaskFiles for elements without text beside a text edit", () => {
         [true, false],
       ]);
     }
+  });
+});
+
+describe("draftTaskFiles for a whitespace-only run", () => {
+  it("covers a whitespace-only run with the paragraph text check and does not require that run", () => {
+    const file = "Documents/note.abw";
+    const note = (sixth: JsonValue[]): JsonValue => ({
+      root: xmlElement("abiword", {}, [
+        xmlElement("section", { xid: "1" }, [
+          xmlElement("p", { xid: "6" }, sixth),
+        ]),
+      ]),
+      truncated: false,
+    });
+    const edited = ["Hello", xmlElement("c", {}, [" "]), "there"];
+    const [draftFile] = draft({
+      [file]: path("document", "xml", note(["Hello"]), note(edited)),
+    });
+    const paragraph = "/root/children/[name=section]/children/[name=p]";
+    expect(draftFile?.suggested).toEqual([
+      {
+        kind: "text_equals",
+        file,
+        pointer: paragraph,
+        value: "Hello there",
+      },
+    ]);
+    expect(
+      [edited, ["Hello", " ", "there"]].map((saved) =>
+        passing(file, draftFile?.suggested, note(saved)),
+      ),
+    ).toEqual([[true], [true]]);
   });
 });
 

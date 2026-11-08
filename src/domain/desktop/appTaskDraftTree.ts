@@ -103,6 +103,33 @@ export const XML_FILE: CheckTree = {
   empty: null,
 };
 
+export const valueFormat = (
+  tree: CheckTree,
+  view: JsonValue | null,
+  pointer: string,
+) =>
+  tree === ARCHIVE && /^\/entries\/[^/]+$/u.test(pointer)
+    ? ("archive" as const)
+    : tree.xml(view, pointer)
+      ? ("xml" as const)
+      : ("json" as const);
+
+export const referenceRoots = (
+  tree: CheckTree,
+  view: JsonValue | null,
+): JsonValue[] => {
+  if (tree !== ARCHIVE) return view === null ? [] : [view];
+  if (!isRecord(view) || !Array.isArray(view.entries)) return [];
+  return view.entries.flatMap((entry) =>
+    isRecord(entry) &&
+    entry.format === "xml" &&
+    entry.view !== undefined &&
+    entry.view !== null
+      ? [entry.view]
+      : [],
+  );
+};
+
 /**
  * The values of an archive or XML file created or deleted: what its one end
  * holds against `tree.empty`, each entry, or the root element, whole once, as
@@ -121,5 +148,7 @@ export const presenceValues = (
     ends: from,
     listed: tree.listed,
     noise: changeNoise(change, from),
+    format: (view, pointer) => valueFormat(tree, view, pointer),
+    referenceRoots: (view) => referenceRoots(tree, view),
   });
 };

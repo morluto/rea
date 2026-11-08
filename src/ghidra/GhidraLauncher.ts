@@ -1,5 +1,7 @@
 import { GhidraAdmissionError } from "./GhidraAdmissionError.js";
 import { copyExistingGhidraProject } from "./GhidraProjectSnapshot.js";
+import { hashGhidraPackedProgram } from "./GhidraCheckpoint.js";
+import { constants as fsConstants } from "node:fs";
 import type { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
 import { GHIDRA_BRIDGE_SOURCES } from "./GhidraBridgeSources.js";
 import {
@@ -9,7 +11,7 @@ import {
 import type { GhidraLanguageOverride } from "../config/ghidraLanguageOverride.js";
 import type { GhidraRiscvCallingConvention } from "./GhidraRiscvProfile.js";
 import { snapshotEnvironment } from "../process/snapshotEnvironment.js";
-import { mkdir, readFile, realpath } from "node:fs/promises";
+import { copyFile, mkdir, readFile, realpath } from "node:fs/promises";
 import { basename, dirname, join, posix, win32 } from "node:path";
 
 import { writeGhidraRuntimeFile } from "./GhidraRuntimeFile.js";
@@ -69,6 +71,7 @@ export interface GhidraLaunchSession {
   readonly targetSha256: string;
   readonly providerVersion: string;
   readonly profileDigest: string;
+  readonly packedProgram?: import("./GhidraCheckpoint.js").GhidraPackedProgram;
 }
 
 /** Process plus private log coordinates returned by a Ghidra launcher. */
@@ -335,6 +338,29 @@ export class GhidraHeadlessLauncher implements GhidraLauncher {
         platform,
         this.options.configurationDirectoryName,
       );
+      let packedProgramPath: string | undefined;
+      if (session.packedProgram !== undefined) {
+        if (options.resourceScope === undefined)
+          throw new GhidraLaunchError(
+            "Checkpoint restore requires its owning resource scope.",
+          );
+        packedProgramPath = join(session.runtimeRoot, "restored-program.gzf");
+        await copyFile(
+          session.packedProgram.path,
+          packedProgramPath,
+          fsConstants.COPYFILE_EXCL,
+        );
+        if (
+          (await hashGhidraPackedProgram(
+            packedProgramPath,
+            options.resourceScope,
+            options.signal,
+          )) !== session.packedProgram.sha256
+        )
+          throw new GhidraLaunchError(
+            "Ghidra checkpoint changed before its private import; reopen the target.",
+          );
+      }
       // Copy-first: open the caller's project only through the owned copy so
       // Ghidra never touches the original project files.
       if (existingProject !== undefined)
@@ -426,6 +452,7 @@ export class GhidraHeadlessLauncher implements GhidraLauncher {
         projectRoot: paths.projectRoot,
         targetPath: session.targetPath,
         ...(existingProject === undefined ? {} : { existingProject }),
+        ...(packedProgramPath === undefined ? {} : { packedProgramPath }),
         bridgeScriptPath: this.options.bridgeScriptPath,
         descriptorPath: paths.descriptorPath,
         ghidraLogPath: paths.ghidraLogPath,
@@ -764,6 +791,7 @@ export interface GhidraHeadlessArgumentOptions {
   readonly platform?: NodeJS.Platform;
   readonly projectRoot: string;
   readonly targetPath: string;
+  readonly packedProgramPath?: string;
   /** Open this pre-imported program with -process instead of importing. */
   readonly existingProject?: Pick<
     GhidraExistingProject,
@@ -916,7 +944,7 @@ export const ghidraHeadlessArguments = (
     ...(existing === undefined
       ? [
           "-import",
-          options.targetPath,
+          options.packedProgramPath ?? options.targetPath,
           ...(gamecubeDol !== undefined
             ? [
                 // One BinaryLoader block at file offset 0; the pre-script rebuilds the DOL section map.
@@ -984,7 +1012,11 @@ export const ghidraHeadlessArguments = (
     // An existing project opens with -noanalysis: its auto-analysis was paid
     // when the project was imported, outside this session's startup deadline.
     ...(existing === undefined
-      ? ["-readOnly", "-deleteProject"]
+      ? [
+          ...(options.packedProgramPath === undefined ? [] : ["-noanalysis"]),
+          "-readOnly",
+          "-deleteProject",
+        ]
       : ["-noanalysis", "-readOnly"]),
     "-log",
     options.ghidraLogPath,
