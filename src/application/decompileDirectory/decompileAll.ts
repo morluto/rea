@@ -83,7 +83,6 @@ interface PublishState {
   readonly failures: InlineFailure[];
   inlineFailureBytes: number;
   readonly recentFailures: PublishState["failures"];
-  bodyUnavailable: boolean;
   /** Failure code of the function being attempted, if it failed. */
   lastFailureCode: string | undefined;
   /**
@@ -135,7 +134,6 @@ export const decompileAll = async (
     failures: [],
     inlineFailureBytes: 2,
     recentFailures: [],
-    bodyUnavailable: false,
     lastFailureCode: undefined,
     outputIoStreak: 0,
   };
@@ -154,12 +152,11 @@ export const decompileAll = async (
       limit: input.limit,
       state,
     });
-    state.bodyUnavailable = session.hasProcedureInfoUnavailable;
     limitations = exportLimitations(
       input.layout,
       loaded.value.identity,
       selection.collapsedDuplicates,
-      state.bodyUnavailable,
+      session.hasProcedureInfoUnavailable,
       loaded.value.unaddressed,
     );
     indexed = await session.writeIndex({
@@ -485,7 +482,6 @@ const publishOne = async (input: {
   if (body.kind === "unavailable") {
     const recorded = await input.session.markProcedureInfoUnavailable();
     if (!recorded.ok) return { result: recorded, bodySupport: body.support };
-    input.state.bodyUnavailable = true;
   }
   // Caveats of the observations this attempt used. The journal record keeps
   // the complete list, written or failed, so the bounded Evidence summary and

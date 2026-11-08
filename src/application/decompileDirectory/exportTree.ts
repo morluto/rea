@@ -398,8 +398,9 @@ const openResumedJournal = async (
   // Repair a torn final line using a normal writable handle.
   // Windows does not support ftruncate on an O_APPEND handle.
   if (opened.value.committedBytes !== opened.value.journalBytes) {
+    const journalPath = join(root, DECOMPILE_DIRECTORY_JOURNAL_NAME);
     const repairHandle = await open(
-      join(root, DECOMPILE_DIRECTORY_JOURNAL_NAME),
+      journalPath,
       constants.O_WRONLY | NO_FOLLOW,
     ).catch((cause: unknown) => cause);
 
@@ -412,6 +413,9 @@ const openResumedJournal = async (
       );
     }
 
+    // Register immediately so failed cleanup remains owned and retryable.
+    const closeRepairHandle = resources.ownFile(repairHandle, journalPath);
+
     const truncated = await repairHandle
       .truncate(opened.value.committedBytes)
       .then(
@@ -419,10 +423,7 @@ const openResumedJournal = async (
         () => false,
       );
 
-    const closed = await repairHandle.close().then(
-      () => true,
-      () => false,
-    );
+    const closed = await closeRepairHandle();
 
     if (!truncated || !closed) {
       return err(

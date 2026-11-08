@@ -555,8 +555,7 @@ describe("decompile_all resume", () => {
     const first = harness({ info: "unavailable" });
     const created = await run(first.tools, directory());
 
-    expect(created.ok).toBe(true);
-    if (!created.ok) return;
+    if (!created.ok) throw created.error;
 
     const resumed = harness();
     const result = await run(resumed.tools, directory(), { resume: true });
@@ -581,8 +580,7 @@ describe("decompile_all resume limitations and recovery", () => {
     const first = harness({ info: "unavailable" });
     const created = await run(first.tools, directory());
 
-    expect(created.ok).toBe(true);
-    if (!created.ok) return;
+    if (!created.ok) throw created.error;
 
     const resumed = harness();
     const result = await run(resumed.tools, directory(), {
