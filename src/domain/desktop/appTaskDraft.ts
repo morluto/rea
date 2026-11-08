@@ -201,7 +201,8 @@ const plainChange = (
   baseline: Version,
   final: Version,
 ) => {
-  if (format === "json") return diffNamedMembers(baseline.view, final.view);
+  if (format === "json")
+    return diffNamedMembers(baseline.view, final.view, "json");
   const change = diffStateViews(format, baseline.view, final.view);
   const pointers = keyPointers([baseline.view, final.view]);
   const at = (entries: readonly string[]) =>
@@ -291,7 +292,8 @@ const valueSuggestions = (
   const added = new Set(change.added);
   for (const entry of leaves([...change.added, ...change.changed])) {
     const at = pointer(entry);
-    const value = at === undefined ? undefined : resolvePointer(final.view, at);
+    const value =
+      at === undefined ? undefined : resolvePointer(final.view, at, format);
     // An id the app generates, as TreeLine's uuid1 `uid`, holds nothing another save repeats.
     if (
       at !== undefined &&
@@ -472,8 +474,8 @@ const changeShape = (change: TaskDraftFile["change"], final: Version) => ({
  * Each file under the owned paths whose state differs between its versions at
  * the seed and end checkpoints, with suggested checks, values, guards and
  * notes for the files the user worked on: documents, or the app's own state
- * when no document changed, never the app's logs the export leaves out of
- * the seed (`leftOutFiles`). Values stay within the draft's byte budget, in
+ * when no document changed, excluding locks the export leaves out of the seed.
+ * Values stay within the draft's byte budget, in
  * file order.
  */
 export const draftTaskFiles = (

@@ -38,16 +38,8 @@ const isViewStateValue = (value: string): boolean =>
 const namesElement = (key: string) =>
   isNameLikeKey(key) || /^(?:[^:]*:)?key$/iu.test(key);
 
-/** An attribute an app renumbers as it saves: a generated id such as Gnumeric's `ExprID` or Scribus's `ItemID`, or LibreOffice's `rsid`. */
-export const isRenumberedKey = (key: string): boolean => {
-  const local = key.split(":").at(-1) ?? key;
-  return (
-    !isIdentifyingAttribute(key) &&
-    /(?:[a-z]I[dD]|(?:^|[-_])[rR][sS][iI][dD])$/u.test(local)
-  );
-};
-
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/iu;
+export const isUuid = (value: string): boolean => UUID.test(value);
 /** Seconds since 1970 of 2000-01-01 and 2100-01-01: an epoch time a save stamps falls between. */
 const EPOCH_RANGE = [946_684_800, 4_102_444_800] as const;
 
@@ -63,7 +55,7 @@ export const isVolatileValue = (
   value: string,
   bookkeeping = false,
 ): boolean => {
-  if (UUID.test(value) || ENCODED.test(value.trim())) return true;
+  if (isUuid(value) || ENCODED.test(value.trim())) return true;
   if (!bookkeeping) return false;
   if (!/^\d{10}(?:\d{3})?$/u.test(value)) return false;
   const seconds = Number(value.slice(0, 10));
@@ -151,7 +143,12 @@ const isRecord = (
   typeof value === "object" && value !== null && !Array.isArray(value);
 
 /** The elements a pointer steps into through `children`, read from the view, outermost first. */
-const elementsAlong = (view: JsonValue | null, pointer: string): Element[] => {
+const elementsAlong = (
+  view: JsonValue | null,
+  pointer: string,
+  format: string,
+): Element[] => {
+  if (format !== "xml") return [];
   const segments = pointer.split("/");
   const elements: Element[] = [];
   for (let index = 2; index < segments.length; index += 1) {
@@ -159,6 +156,7 @@ const elementsAlong = (view: JsonValue | null, pointer: string): Element[] => {
     const element = resolvePointer(
       view,
       segments.slice(0, index + 1).join("/"),
+      "xml",
     );
     if (isXmlElement(element)) elements.push(element);
   }
@@ -224,6 +222,7 @@ const volatileAt = (
   key: string | undefined,
   value: JsonValue | undefined,
   fresh: boolean,
+  xml: boolean,
 ) =>
   (typeof value === "string" &&
     (isVolatileValue(
@@ -236,7 +235,7 @@ const volatileAt = (
   (key !== undefined && ID_COUNTER.test(key.split(":").at(-1) ?? key)) ||
   metadataCount(elements, key, value) ||
   elements.some(assignedId) ||
-  (isXmlElement(value) && assignedId(value));
+  (xml && isXmlElement(value) && assignedId(value));
 
 /**
  * The ids of the elements a change added (`id`, `xid`, `uuid`, `guid`, as
@@ -251,8 +250,12 @@ const freshIds = (
 ): ReadonlySet<string> =>
   new Set(
     change.added.flatMap((pointer) => {
-      const element = resolvePointer(ends.final, pointer);
-      return isXmlElement(element)
+      const element = resolvePointer(
+        ends.final,
+        pointer,
+        ends.format(ends.final, pointer),
+      );
+      return ends.format(ends.final, pointer) === "xml" && isXmlElement(element)
         ? Object.entries(element.attributes).flatMap(([key, value]) =>
             /^(?:[^:]*:)?(?:x|uu|g)?id$/iu.test(key) &&
             typeof value === "string" &&
@@ -270,7 +273,7 @@ const isSlots = (element: Element) => /^(?:[^:]*:)?slots$/u.test(element.name);
 
 /** Whether a pointer is a date the app stamps in parts, or inside one. */
 export const inSplitDate = (view: JsonValue | null, pointer: string): boolean =>
-  stampedAlong(elementsAlong(view, pointer));
+  stampedAlong(elementsAlong(view, pointer, "xml"));
 
 /** Whether an element holds a date the app stamps in parts, `named` when a tag it sits in names bookkeeping. */
 const holdsStamped = (value: JsonValue, named: boolean): boolean =>
@@ -286,8 +289,8 @@ export const holdsSplitDate = (
   view: JsonValue | null,
   pointer: string,
 ): boolean => {
-  const along = elementsAlong(view, pointer);
-  const value = resolvePointer(view, pointer);
+  const along = elementsAlong(view, pointer, "xml");
+  const value = resolvePointer(view, pointer, "xml");
   return (
     stampedAlong(along) ||
     (value !== undefined && holdsStamped(value, along.some(isBookkeeping)))
@@ -310,6 +313,7 @@ const VIEW_SETTING =
 
 /** A file's views at its two ends. */
 interface Ends {
+  readonly format: (view: JsonValue | null, pointer: string) => string;
   readonly baseline: JsonValue | null;
   readonly final: JsonValue | null;
 }
@@ -337,12 +341,26 @@ const positionalRenumbering = (ends: Ends) => {
     const owner = ownerOfAttribute(pointer);
     const list = owner.split("/").slice(0, -1).join("/");
     const element =
-      resolvePointer(ends.final, owner) ?? resolvePointer(ends.baseline, owner);
-    if (!list.endsWith("/children") || !isXmlElement(element)) return false;
+      resolvePointer(ends.final, owner, ends.format(ends.final, owner)) ??
+      resolvePointer(ends.baseline, owner, ends.format(ends.baseline, owner));
+    if (
+      ends.format(ends.final, owner) !== "xml" ||
+      !list.endsWith("/children") ||
+      !isXmlElement(element)
+    )
+      return false;
     let keys = lists.get(list);
     if (keys === undefined) {
-      const newer = resolvePointer(ends.final, list);
-      const older = resolvePointer(ends.baseline, list);
+      const newer = resolvePointer(
+        ends.final,
+        list,
+        ends.format(ends.final, list),
+      );
+      const older = resolvePointer(
+        ends.baseline,
+        list,
+        ends.format(ends.baseline, list),
+      );
       keys =
         Array.isArray(newer) && Array.isArray(older)
           ? positionalKeys(newer, older)
@@ -376,10 +394,17 @@ const upkeepOf = (
 ) => {
   const added = new Set(change.added);
   const gained = (pointer: string) =>
+    ends.format(ends.final, pointer) === "xml" &&
     added.has(pointer) &&
     attributeKeyOf(pointer) !== undefined &&
     [ends.baseline, ends.final].every((view) =>
-      isXmlElement(resolvePointer(view, ownerOfAttribute(pointer))),
+      isXmlElement(
+        resolvePointer(
+          view,
+          ownerOfAttribute(pointer),
+          ends.format(view, ownerOfAttribute(pointer)),
+        ),
+      ),
     );
   const edited = new Set<string>();
   /** How many elements of an entry gained one attribute key. One gain is an edit; a repeated gain is the app filling a default in. */
@@ -403,7 +428,7 @@ const upkeepOf = (
   // A style a user names, as "Quotations" given to a paragraph, is an edit; one the app numbers, as `P1`, its upkeep.
   const automatic = (pointer: string, key: string) =>
     [ends.baseline, ends.final].every((view) => {
-      const value = resolvePointer(view, pointer);
+      const value = resolvePointer(view, pointer, ends.format(view, pointer));
       return (
         value === undefined ||
         (typeof value === "string" && isAutomaticStyle(key, value))
@@ -412,15 +437,19 @@ const upkeepOf = (
   const styled = (pointer: string) => {
     const key = attributeKeyOf(pointer);
     const view =
-      resolvePointer(ends.final, pointer) === undefined
+      resolvePointer(ends.final, pointer, ends.format(ends.final, pointer)) ===
+      undefined
         ? ends.baseline
         : ends.final;
     return (
-      ENTRY_VIEW.exec(pointer)?.[0] === "/entries/[name=styles.xml]/view/" ||
-      (key !== undefined &&
-        /style-name$/iu.test(key) &&
-        automatic(pointer, key)) ||
-      elementsAlong(view, pointer).some(({ name }) => STYLE_AREA.test(name))
+      ends.format(view, pointer) === "xml" &&
+      (ENTRY_VIEW.exec(pointer)?.[0] === "/entries/[name=styles.xml]/view/" ||
+        (key !== undefined &&
+          /style-name$/iu.test(key) &&
+          automatic(pointer, key)) ||
+        elementsAlong(view, pointer, ends.format(view, pointer)).some(
+          ({ name }) => STYLE_AREA.test(name),
+        ))
     );
   };
   // The user's edit is elsewhere when a change no other rule calls noise lies outside the styles.
@@ -442,12 +471,15 @@ const upkeepOf = (
         ? 0
         : (filled.get(entry)?.get(key) ?? 0);
     const view =
-      resolvePointer(ends.final, pointer) === undefined
+      resolvePointer(ends.final, pointer, ends.format(ends.final, pointer)) ===
+      undefined
         ? ends.baseline
         : ends.final;
-    const inStyleArea = elementsAlong(view, pointer).some(({ name }) =>
-      STYLE_AREA.test(name),
-    );
+    const inStyleArea = elementsAlong(
+      view,
+      pointer,
+      ends.format(view, pointer),
+    ).some(({ name }) => STYLE_AREA.test(name));
     const automaticName =
       key !== undefined && /style-name$/iu.test(key) && automatic(pointer, key);
     // One attribute gained in styles.xml is the edit. A repeated fill-in, an automatic style name, or a style area the app rewrites is upkeep.
@@ -493,8 +525,10 @@ const derivedLayout = (
   ends: Ends,
 ) => {
   const textAt = (view: JsonValue | null, pointer: string) => {
-    const element = resolvePointer(view, pointer);
-    return isXmlElement(element) ? elementText(element) : undefined;
+    const element = resolvePointer(view, pointer, ends.format(view, pointer));
+    return ends.format(view, pointer) === "xml" && isXmlElement(element)
+      ? elementText(element)
+      : undefined;
   };
   const known = new Map<string, boolean>();
   const retexted = (pointer: string) => {
@@ -507,7 +541,11 @@ const derivedLayout = (
   };
   const layout = new Set(
     change.changed.filter((pointer) => {
-      const value = resolvePointer(ends.final, pointer);
+      const value = resolvePointer(
+        ends.final,
+        pointer,
+        ends.format(ends.final, pointer),
+      );
       const owner = ownerOfAttribute(pointer);
       if (
         attributeKeyOf(pointer) === undefined ||
@@ -553,13 +591,16 @@ const drawingLayout = (
   noise: (pointer: string) => NoiseReason | undefined,
 ) => {
   const viewOf = (pointer: string) =>
-    resolvePointer(ends.final, pointer) === undefined
+    resolvePointer(ends.final, pointer, ends.format(ends.final, pointer)) ===
+    undefined
       ? ends.baseline
       : ends.final;
   const drawn = (pointer: string) =>
-    elementsAlong(viewOf(pointer), pointer).some(({ name }) =>
-      DRAWING.test(name.split(":").at(-1) ?? name),
-    );
+    elementsAlong(
+      viewOf(pointer),
+      pointer,
+      ends.format(viewOf(pointer), pointer),
+    ).some(({ name }) => DRAWING.test(name.split(":").at(-1) ?? name));
   // A model element added or removed can resize the drawing. A rename or
   // other edit outside it does not make a deliberate resize into layout.
   const elsewhere = [...change.added, ...change.removed].some(
@@ -569,7 +610,11 @@ const drawingLayout = (
       !drawn(pointer),
   );
   return (pointer: string) => {
-    const value = resolvePointer(viewOf(pointer), pointer);
+    const value = resolvePointer(
+      viewOf(pointer),
+      pointer,
+      ends.format(viewOf(pointer), pointer),
+    );
     return (
       elsewhere &&
       attributeKeyOf(pointer) !== undefined &&
@@ -608,7 +653,7 @@ const namesLayout = (
   [
     attributeKeyOf(pointer) ?? "",
     ...elements.flatMap((at) => {
-      const element = resolvePointer(view, at);
+      const element = resolvePointer(view, at, "xml");
       return isXmlElement(element)
         ? [
             element.name,
@@ -623,10 +668,8 @@ const namesLayout = (
 /**
  * Why each pointer into a file is noise, or undefined when it is not: a tag,
  * attribute or name-like attribute value on its way naming view state, as
- * `[@config:name=CursorPositionX]`; an attribute an app renumbers, an
- * identifier it numbers by position, or anything inside an element both ends
- * hold whose renumbered attribute changed, as Gnumeric empties a formula cell
- * whose shared expression it renumbers; a UUID or epoch time, an id
+ * `[@config:name=CursorPositionX]`; an identifier numbered by position;
+ * a UUID or epoch time, an id
  * counter, an id the change gave a new element (`freshIds`), or a duration or
  * count under the document's metadata; a time the app stamps, whole or in
  * parts (`inSplitDate`), or a date under a tag naming bookkeeping; an id
@@ -640,16 +683,29 @@ const namesLayout = (
  */
 export const changeNoise = (
   change: Pick<DesktopStateDifference, "added" | "changed" | "removed">,
-  ends: Ends,
+  input: Omit<Ends, "format">,
+  format: Ends["format"],
 ): ((pointer: string) => NoiseReason | undefined) => {
-  const renumbered = change.changed.flatMap((pointer) => {
-    const key = attributeKeyOf(pointer);
-    return key !== undefined && isRenumberedKey(key)
-      ? [ownerOfAttribute(pointer)]
-      : [];
-  });
+  const ends: Ends = { ...input, format };
+  const isXmlPointer = (pointer: string) => {
+    const view =
+      resolvePointer(ends.final, pointer, ends.format(ends.final, pointer)) ===
+      undefined
+        ? ends.baseline
+        : ends.final;
+    return ends.format(view, pointer) === "xml";
+  };
+  const xmlChange = {
+    added: change.added.filter(
+      (pointer) => ends.format(ends.final, pointer) === "xml",
+    ),
+    changed: change.changed.filter(isXmlPointer),
+    removed: change.removed.filter(
+      (pointer) => ends.format(ends.baseline, pointer) === "xml",
+    ),
+  };
   const byPosition = positionalRenumbering(ends);
-  const fresh = freshIds(change, ends);
+  const fresh = freshIds(xmlChange, ends);
   const added = new Set(change.added);
   // A reference on an element both ends hold, as a split moved to the new account, is the user's.
   const freshAt = (
@@ -669,40 +725,35 @@ export const changeNoise = (
   const base = (pointer: string): NoiseReason | undefined => {
     if (known.has(pointer)) return known.get(pointer);
     const view =
-      resolvePointer(ends.final, pointer) === undefined
+      resolvePointer(ends.final, pointer, ends.format(ends.final, pointer)) ===
+      undefined
         ? ends.baseline
         : ends.final;
-    const key = attributeKeyOf(pointer);
-    const elements = elementsAlong(view, pointer);
-    const value = resolvePointer(view, pointer);
+    const isXml = ends.format(view, pointer) === "xml";
+    const key = isXml ? attributeKeyOf(pointer) : undefined;
+    const elements = elementsAlong(view, pointer, ends.format(view, pointer));
+    const value = resolvePointer(view, pointer, ends.format(view, pointer));
     const reason: NoiseReason | undefined =
       elements.some(showsView) || (key !== undefined && isViewStateName(key))
         ? "view_state"
-        : (key !== undefined &&
-              (isRenumberedKey(key) ||
-                (isIdentifyingAttribute(key) && byPosition(pointer, key)))) ||
-            renumbered.some((element) => {
-              if (pointer !== element && !pointer.startsWith(`${element}/`))
-                return false;
-              if (pointer === element) return false;
-              const next = resolvePointer(ends.final, pointer);
-              const text =
-                typeof next === "string"
-                  ? next.trim()
-                  : isXmlElement(next)
-                    ? elementText(next).trim()
-                    : undefined;
-              // Gnumeric clears a shared formula when it renumbers the cell. A formula that still has text was edited.
-              return text === undefined || text === "";
-            })
+        : key !== undefined &&
+            isIdentifyingAttribute(key) &&
+            byPosition(pointer, key)
           ? "renumbered"
-          : volatileAt(elements, key, value, freshAt(pointer, key, value))
+          : volatileAt(
+                elements,
+                key,
+                value,
+                isXml && freshAt(pointer, key, value),
+                isXml,
+              )
             ? "volatile"
             : isStamp(value ?? null) ||
                 stampedAlong(elements) ||
                 stampedWhole(elements, value)
               ? "timestamp"
-              : elements.some(isSlots) || isMemberCount(ends, pointer, key)
+              : elements.some(isSlots) ||
+                  (isXml && isMemberCount(ends, pointer, key))
                 ? "upkeep"
                 : undefined;
     known.set(pointer, reason);
@@ -711,13 +762,14 @@ export const changeNoise = (
   const upkeep = upkeepOf(change, ends, base);
   const layout = derivedLayout(change, ends);
   const drawing = drawingLayout(change, ends, base);
-  const mirror = mirrorsOf(change, ends);
-  const reference = idReferencesOf(change, ends);
+  const mirror = mirrorsOf(xmlChange, ends);
+  const reference = idReferencesOf(xmlChange, ends);
   return (pointer) =>
     base(pointer) ??
-    (upkeep(pointer) || mirror(pointer) || reference(pointer)
+    (isXmlPointer(pointer) &&
+    (upkeep(pointer) || mirror(pointer) || reference(pointer))
       ? "upkeep"
-      : layout(pointer) || drawing(pointer)
+      : isXmlPointer(pointer) && (layout(pointer) || drawing(pointer))
         ? "layout"
         : undefined);
 };

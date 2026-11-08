@@ -96,6 +96,38 @@ describe("draftTaskFiles for XML text views", () => {
     expect(results.map(({ passed }) => passed)).toEqual([false]);
   });
 
+  it("keeps requested text inside a multiline XML attribute exact", () => {
+    const opening = '<!DOCTYPE map [<!ENTITY title "Map">]>\n<map>\n';
+    const text = 'created=2025550123 and save"/>';
+    const file = drafted(
+      `${opening}</map>`,
+      `${opening}<node TEXT="Set\n${text}\n</map>`,
+    );
+    expect(file.suggested).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          kind: "lines_present",
+          lines: expect.arrayContaining([text]),
+        }),
+      ]),
+    );
+    const result = evaluateTaskChecks(
+      file.suggested.map((check, index) => ({ ...check, id: `c${index}` })),
+      new Map([
+        [
+          FILE,
+          {
+            format: "text" as const,
+            view: textView(
+              `${opening}<node TEXT="Set\n${text.replace("2025550123", "WRONG")}\n</map>`,
+            ),
+          },
+        ],
+      ]),
+    );
+    expect(result.some(({ passed }) => !passed)).toBe(true);
+  });
+
   it("recognizes an attribute on a later line of an XML tag", () => {
     const opening = '<!DOCTYPE map [<!ENTITY title "Map">]>\n<map>\n<node\n';
     const attribute = 'TEXT="C:\\work\\" CREATED="1793955250671"/>';
@@ -107,7 +139,9 @@ describe("draftTaskFiles for XML text views", () => {
       }),
     ]);
   });
+});
 
+describe("draftTaskFiles for markup boundaries and incomplete XML", () => {
   it("keeps quoted text after a Markdown autolink", () => {
     const line =
       '<https://example.test> msgstr "Set \\\"created=2025550123 and save"';
@@ -177,6 +211,41 @@ describe("draftTaskFiles for XML text views", () => {
 });
 
 describe("draftTaskFiles for added lines", () => {
+  it("recognizes Unicode XML names before a malformed closing tag", () => {
+    const opening = "<máp>\n";
+    const node = '<node TEXT="C:\\work\\" CREATED="1793955250671"/>';
+    const file = drafted(`${opening}</máp>`, `${opening}${node}\n</wrong>`);
+    expect(file.suggested).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          kind: "line_count",
+          contains: '<node TEXT="C:\\work\\" CREATED="',
+        }),
+      ]),
+    );
+  });
+
+  it("requires the exact caller-supplied UUID in ordinary text", () => {
+    const line = "Tracking id: 123e4567-e89b-12d3-a456-426614174000";
+    const file = drafted("# Notes", `# Notes\n${line}`);
+    expect(file.suggested).toEqual([
+      { kind: "lines_present", file: FILE, lines: [line] },
+    ]);
+    const results = evaluateTaskChecks(
+      file.suggested.map((check, index) => ({ ...check, id: `c${index}` })),
+      new Map([
+        [
+          FILE,
+          {
+            format: "text" as const,
+            view: textView("# Notes\nTracking id: WRONG"),
+          },
+        ],
+      ]),
+    );
+    expect(results.map(({ passed }) => passed)).toEqual([false]);
+  });
+
   it("retains parsed attribute positions before a malformed closing tag", () => {
     const opening = "<map>\n";
     const node = '<node TEXT="C:\\work\\" CREATED="1793955250671"/>';
@@ -377,7 +446,23 @@ describe("draftTaskFiles guards of lines with no text of their own", () => {
 });
 
 describe("draftTaskFiles for the app's log beside its journal", () => {
-  it("drafts no check or guard on a log the export leaves out of the seed, and notes a text file that opens like XML but is not", () => {
+  it("drafts a changed unselected conversation history in app state", () => {
+    const [file] = draftOf({
+      ".config/app/history.log": statePath(
+        "application_state",
+        "text",
+        textView("Ada: Hello"),
+        textView("Ada: Hello\nLin: Welcome"),
+      ),
+    });
+    expect(file?.suggested).toContainEqual({
+      kind: "lines_present",
+      file: ".config/app/history.log",
+      lines: ["Lin: Welcome"],
+    });
+  });
+
+  it("drafts an app log and notes a text file that opens like XML but is not", () => {
     const lines = (...text: string[]) => textView(text.join("\n"));
     const files = draftOf({
       ".rednotebook/data/2026-10.txt": statePath(
@@ -404,10 +489,9 @@ describe("draftTaskFiles for the app's log beside its journal", () => {
     });
 
     const byFile = new Map(files.map((file) => [file.file, file]));
-    expect(byFile.get(".rednotebook/rednotebook.log")).toMatchObject({
-      suggested: [],
-      guards: [],
-    });
+    expect(byFile.get(".rednotebook/rednotebook.log")?.suggested).not.toEqual(
+      [],
+    );
     expect(byFile.get(".rednotebook/data/2026-10.txt")?.suggested).not.toEqual(
       [],
     );

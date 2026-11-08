@@ -15,9 +15,7 @@ import { holdsFields, isRecordAt } from "./appTaskDraftText.js";
 import {
   attributesOf,
   compactValue,
-  cut,
-  escapeText,
-  startTag,
+  previewWriter,
 } from "./compactValue.js";
 import { pairMembers, pairedAtSeed } from "./memberPairing.js";
 import {
@@ -193,17 +191,34 @@ const leafText = (node: JsonValue): string | undefined => {
 const referenceTag = (
   element: Record<string, JsonValue> & { name: string },
 ) => {
+  const writer = previewWriter(VALUE_LIMITS.chars);
+  if (!writer.startTag(element)) return writer.result();
   const children = isXmlElement(element) ? element.children : [];
+  if (children.length === 0) {
+    writer.push("/>");
+    return writer.result();
+  }
+  if (!writer.push(">")) return writer.result();
   const named = children.find(
     (child) =>
       isXmlElement(child) &&
       /^(?:name|title|label)$/iu.test(localOf(child.name)) &&
       leafText(child) !== undefined,
   );
-  const shown = isXmlElement(named)
-    ? `<${named.name}>${escapeText(leafText(named) ?? "")}</${named.name}>`
-    : "";
-  return `${startTag(element)}${children.length === 0 ? "/>" : `>${shown}…`}`;
+  if (isXmlElement(named)) {
+    if (
+      !writer.push("<") ||
+      !writer.push(named.name) ||
+      !writer.push(">") ||
+      !writer.escaped(leafText(named) ?? "") ||
+      !writer.push("</") ||
+      !writer.push(named.name) ||
+      !writer.push(">")
+    )
+      return writer.result();
+  }
+  writer.push("…");
+  return writer.result();
 };
 
 /** Whether an attribute's name and an element's tag share a stem, as HomeBank's `payee` and `<pay>`. */
@@ -261,7 +276,7 @@ const referencesFrom = (
       ? {
           ...(attribute === undefined ? {} : { attribute }),
           value,
-          element: cut(referenceTag(element), VALUE_LIMITS.chars),
+          element: referenceTag(element),
         }
       : undefined;
   };
@@ -327,7 +342,7 @@ const referencesOf = (
   view: JsonValue | null,
   pointer: string,
 ): ValueReference[] => {
-  const value = resolvePointer(view, pointer);
+  const value = resolvePointer(view, pointer, "xml");
   if (isXmlElement(value))
     return uniqueReferences([
       ...attributeReferences(resolve, value),
@@ -349,15 +364,24 @@ const referencesOf = (
   const segments = pointer.split("/");
   const attribute =
     segments.at(-2) === "attributes" ? attributeKeyOf(pointer) : undefined;
-  const owner = resolvePointer(view, segments.slice(0, -2).join("/"));
+  const owner = resolvePointer(view, segments.slice(0, -2).join("/"), "xml");
   return [resolve(value, attribute, owner) ?? []].flat();
 };
 
 /** What a pointer names at the seed; an attribute of a member keyed by its new name, as a renamed layer, read from the member it pairs with there. */
-const seedValue = ({ ends }: ValueContext, pointer: string) => {
+const seedValue = ({ ends, format }: ValueContext, pointer: string) => {
   const key = attributeKeyOf(pointer);
-  const seen = resolvePointer(ends.baseline, pointer);
-  if (seen !== undefined || key === undefined) return seen;
+  const seen = resolvePointer(
+    ends.baseline,
+    pointer,
+    format(ends.baseline, pointer),
+  );
+  if (
+    seen !== undefined ||
+    key === undefined ||
+    format(ends.final, pointer) !== "xml"
+  )
+    return seen;
   const member = pairedAtSeed(ends, pointer.split("/").slice(0, -2).join("/"));
   return isXmlElement(member) ? member.attributes[key] : undefined;
 };
@@ -371,7 +395,7 @@ const entryOf = (
 ): DraftValue => {
   const { baseline, final } = context.ends;
   const view = kind === "removed" ? baseline : final;
-  const located = locatePointer(view, pointer);
+  const located = locatePointer(view, pointer, context.format(view, pointer));
   const found = located.kind === "value";
   // A text node added or removed is reached only by its index among its element's children.
   const listPointer = pointer.replace(/\/\d+$/u, "");
@@ -380,8 +404,10 @@ const entryOf = (
     context.format(view, pointer) === "xml" &&
     kind !== "changed" &&
     /\/children\/\d+$/u.test(pointer) &&
-    Array.isArray(resolvePointer(view, listPointer)) &&
-    isXmlElement(resolvePointer(view, listPointer.replace(/\/children$/u, "")));
+    Array.isArray(resolvePointer(view, listPointer, "xml")) &&
+    isXmlElement(
+      resolvePointer(view, listPointer.replace(/\/children$/u, ""), "xml"),
+    );
   const note: ValueNote | undefined =
     found && located.byPosition.length > 0
       ? "by_position"
@@ -414,7 +440,7 @@ const entryOf = (
       kind === "removed"
         ? null
         : compactValue(
-            resolvePointer(final, pointer),
+            resolvePointer(final, pointer, context.format(final, pointer)),
             VALUE_LIMITS.chars,
             context.format(final, pointer),
           ),
@@ -432,8 +458,8 @@ const entryOf = (
  * whole, as a document's root or a FreeCAD object of property lists.
  */
 const fieldsOf = (view: JsonValue | null, pointer: string): string[] => {
-  const value = resolvePointer(view, pointer);
-  const list = resolvePointer(view, pointer.replace(/\/[^/]+$/u, ""));
+  const value = resolvePointer(view, pointer, "xml");
+  const list = resolvePointer(view, pointer.replace(/\/[^/]+$/u, ""), "xml");
   if (
     !isXmlElement(value) ||
     !/\/children\/[^/]+$/u.test(pointer) ||
@@ -448,6 +474,8 @@ const fieldsOf = (view: JsonValue | null, pointer: string): string[] => {
     const { keys } = pairMembers(
       isXmlElement(element) ? element.children : [],
       [],
+      undefined,
+      "xml",
     ).newer;
     return (isXmlElement(element) ? element.children : []).flatMap(
       (child, index) =>

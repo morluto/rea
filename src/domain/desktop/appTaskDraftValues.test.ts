@@ -9,8 +9,48 @@ import {
   xmlDraft,
 } from "./appTaskDraft.fixture.js";
 import { draftValues } from "./appTaskDraftValues.js";
+import { compactValue } from "./compactValue.js";
 import { resolvePointer } from "./viewPointer.js";
 import { zipEntry, zipView } from "./zipView.js";
+
+it("cuts XML previews after escaping, including entity and surrogate boundaries", () => {
+  const element = {
+    name: "n",
+    attributes: { value: '😀&<"' },
+    children: ["a&<😀"],
+  };
+  const complete = '<n value="😀&amp;&lt;&quot;">a&amp;&lt;😀</n>';
+  for (const limit of [
+    0,
+    1,
+    10,
+    11,
+    12,
+    17,
+    25,
+    complete.length,
+    complete.length + 1,
+  ])
+    expect(compactValue(element, limit, "xml")).toBe(
+      complete.length > limit ? `${complete.slice(0, limit)}…` : complete,
+    );
+  expect(
+    compactValue(
+      { name: "n", attributes: { value: "&".repeat(1_000_000) }, children: [] },
+      600,
+      "xml",
+    ),
+  ).toBe(`${('<n value="' + "&amp;".repeat(120)).slice(0, 600)}…`);
+});
+
+it("cuts JSON previews after escaping keys and values", () => {
+  const value = { '😀"\n': ["a\n😀\\\ud800"] };
+  const complete = JSON.stringify(value);
+  for (let limit = 0; limit <= complete.length + 1; limit += 1)
+    expect(compactValue(value, limit, "json")).toBe(
+      complete.length > limit ? `${complete.slice(0, limit)}…` : complete,
+    );
+});
 
 /** A household book: accounts, payees and categories by key, and operations naming them. */
 const book = (operations: string, note = "Draft", tags = '<tag name="old"/>') =>
@@ -37,8 +77,12 @@ describe("draftTaskFiles values", () => {
     expect(removed).toMatchObject({ before: '<tag name="old"/>', after: null });
     // A scalar's before and after are what its pointer reads at each end.
     expect(changed).toMatchObject({ before: "Draft", after: "Final" });
-    expect(resolvePointer(xml(before), changed?.pointer ?? "")).toBe("Draft");
-    expect(resolvePointer(xml(after), changed?.pointer ?? "")).toBe("Final");
+    expect(resolvePointer(xml(before), changed?.pointer ?? "", "xml")).toBe(
+      "Draft",
+    );
+    expect(resolvePointer(xml(after), changed?.pointer ?? "", "xml")).toBe(
+      "Final",
+    );
   });
 
   it("resolves a value that is another element's key, by the attribute's stem where several share it", () => {
@@ -218,6 +262,53 @@ it("uses the entry format for JSON within an archive", () => {
   );
   expect(value?.after).toBe(JSON.stringify(element));
   expect(value?.refers_to).toBeUndefined();
+});
+
+it("keeps JSON archive edits whose keys resemble XML attributes", () => {
+  const archive = (contents: unknown) => {
+    const bytes = new TextEncoder().encode(JSON.stringify(contents));
+    return zipView(
+      [
+        zipEntry(
+          {
+            name: "state.json",
+            size: bytes.length,
+            compressedSize: bytes.length,
+            method: 8,
+            encrypted: false,
+          },
+          bytes,
+        ),
+      ],
+      1,
+    );
+  };
+  const file = draftOf({
+    "Documents/state.zip": statePath(
+      "document",
+      "zip",
+      archive({ title: "old", attributes: { history: "first" } }),
+      archive({ title: "new", attributes: { history: "second" } }),
+    ),
+  })[0];
+  expect(file?.suggested).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({
+        kind: "value_equals",
+        pointer: "/entries/[name=state.json]/view/title",
+        value: "new",
+      }),
+      expect.objectContaining({
+        kind: "value_equals",
+        pointer: "/entries/[name=state.json]/view/attributes/history",
+        value: "second",
+      }),
+    ]),
+  );
+  expect(
+    file?.values.find(({ pointer }) => pointer.endsWith("/attributes/history"))
+      ?.note,
+  ).toBeUndefined();
 });
 
 describe("draftTaskFiles values' text and references", () => {
@@ -722,6 +813,7 @@ describe("draftTaskFiles values' other pointers", () => {
       resolvePointer(
         xml(poster("Jazz Festival")),
         changed?.alternatives?.[0] ?? "",
+        "xml",
       ),
     ).toBe("Jazz Festival");
   });

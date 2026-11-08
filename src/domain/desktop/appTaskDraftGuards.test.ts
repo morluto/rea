@@ -209,7 +209,7 @@ describe("draftTaskFiles guards beyond a sibling's same field", () => {
     ]);
   });
 
-  it("guards no sibling paired by an id the app renumbers", () => {
+  it("keeps a sibling guard when its id has no proof of renumbering", () => {
     const sheet = (march: string) =>
       `<Cells><Cell Row="2" Col="3">${march}</Cell><Cell Row="5" Col="3" ExprID="1">=sum(C2:C4)</Cell><Cell Row="5" Col="4">=sum(D2:D4)</Cell></Cells>`;
 
@@ -219,6 +219,7 @@ describe("draftTaskFiles guards beyond a sibling's same field", () => {
       "/root/children/[name=Cell][@Row=2]",
     ]);
     expect(file.guards.map(pointerOf)).toEqual([
+      "/root/children/[name=Cell][@ExprID=1]",
       "/root/children/[name=Cell][@Col=4]",
       "/root/children",
     ]);

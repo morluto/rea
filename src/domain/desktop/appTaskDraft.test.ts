@@ -55,7 +55,7 @@ const draft = (files: Record<string, DesktopStatePath>) =>
     new Map(Object.entries(files)),
     (home) => home !== "elsewhere",
     { seed: 0, end: 1 },
-    leftOutFiles(new Map(Object.entries(files)), [], []).isLeftOut,
+    leftOutFiles(new Map(Object.entries(files)), [], []),
   );
 
 it("omits checks for a lock left out of a selected folder but retains an explicitly selected lock", () => {
@@ -75,7 +75,7 @@ it("omits checks for a lock left out of a selected folder but retains an explici
     files,
     () => true,
     ends,
-    leftOutFiles(files, [], ["Documents"], ["Documents"]).isLeftOut,
+    leftOutFiles(files, [], ["Documents"]),
   );
   expect(
     fromFolder.find(({ file }) => file === "Documents/plan.vym")?.suggested
@@ -88,17 +88,28 @@ it("omits checks for a lock left out of a selected folder but retains an explici
     files,
     () => true,
     ends,
-    leftOutFiles(
-      files,
-      [],
-      ["Documents/plan.vym.lock"],
-      ["Documents/plan.vym.lock"],
-    ).isLeftOut,
+    leftOutFiles(files, [], ["Documents/plan.vym.lock"]),
   );
   expect(
     explicit.find(({ file }) => file === "Documents/plan.vym.lock")?.suggested
       .length,
   ).toBeGreaterThan(0);
+});
+
+it("drafts a changed unselected conversation history in app state", () => {
+  const [file] = draft({
+    ".config/app/history.log": path(
+      "application_state",
+      "text",
+      text("Ada: Hello"),
+      text("Ada: Hello", "Lin: Welcome"),
+    ),
+  });
+  expect(file?.suggested).toContainEqual({
+    kind: "lines_present",
+    file: ".config/app/history.log",
+    lines: ["Lin: Welcome"],
+  });
 });
 
 describe("draftTaskFiles", () => {
@@ -403,7 +414,7 @@ describe("draftTaskFiles for an AbiWord document", () => {
     ).toEqual([]);
     // Every check names the elements it goes through, so a reordered save keeps it.
     for (const pointer of pointers) {
-      const located = locatePointer(after, pointer);
+      const located = locatePointer(after, pointer, "xml");
       expect([pointer, located.byPosition]).toEqual([pointer, []]);
     }
     expect(
@@ -1445,6 +1456,33 @@ const listing = (entries: JsonValue[]): JsonValue => ({
 });
 
 describe("draftTaskFiles archives added to whole", () => {
+  it("checks JSON values that resemble XML elements using the entry format", () => {
+    const file = "Documents/a.zip";
+    const before = listing([zipEntry("a.json", "json", {})]);
+    const saved = (label: string) =>
+      listing([
+        zipEntry("a.json", "json", {
+          element: { name: "Cell", attributes: {}, children: [], label },
+        }),
+      ]);
+    const [result] = draft({
+      [file]: path("document", "zip", before, saved("keep")),
+    });
+    const checks = result?.suggested ?? [];
+    expect(checks).toContainEqual({
+      kind: "value_equals",
+      file,
+      pointer: "/entries/[name=a.json]/view/element/label",
+      value: "keep",
+    });
+    expect(passing(file, checks, saved("keep"), "zip").every(Boolean)).toBe(
+      true,
+    );
+    expect(passing(file, checks, saved("wrong"), "zip").every(Boolean)).toBe(
+      false,
+    );
+  });
+
   it("suggests checks inside a JSON value or a readable entry added whole", () => {
     const [file] = draft({
       "Documents/a.zip": path(
