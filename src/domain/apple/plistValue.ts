@@ -19,9 +19,7 @@ const jsonScalarSchema = z.union([
 export const MAX_PLIST_DEPTH = 128;
 
 /** Agent-visible refusal for nesting past the JSON projection allowance. */
-export const plistNestingLimitMessage = (
-  maximumDepth = MAX_PLIST_DEPTH,
-): string =>
+const plistNestingLimitMessage = (maximumDepth = MAX_PLIST_DEPTH): string =>
   `Plist exceeds ${String(maximumDepth)} nesting levels. This release has no runtime override for this ${String(maximumDepth)}-level nesting allowance.`;
 
 /** A source-value depth refusal, distinct from malformed decoder output. */

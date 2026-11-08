@@ -177,6 +177,33 @@ describe("draftTaskFiles for XML text views", () => {
 });
 
 describe("draftTaskFiles for added lines", () => {
+  it("retains parsed attribute positions before a malformed closing tag", () => {
+    const opening = "<map>\n";
+    const node = '<node TEXT="C:\\work\\" CREATED="1793955250671"/>';
+    const file = drafted(`${opening}</map>`, `${opening}${node}\n</wrong>`);
+    expect(file.suggested).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          kind: "line_count",
+          contains: '<node TEXT="C:\\work\\" CREATED="',
+        }),
+      ]),
+    );
+  });
+
+  it.each([
+    "https://example.test",
+    "ada@example.test",
+    "mailto:ada@example.test",
+  ])("keeps ordinary Markdown that begins with an autolink %s", (link) => {
+    const opening = `<${link}>\n`;
+    const line = 'msgstr "Set \\\"created=2025550123 and save"';
+    const file = drafted(opening, `${opening}${line}`);
+    expect(file.suggested).toEqual([
+      { kind: "lines_present", file: FILE, lines: [line] },
+    ]);
+  });
+
   it("keeps long ordinary text as a whole line", () => {
     const text = `msgstr "${"ordinary words ".repeat(3000)}"`;
     const file = drafted(lines(), lines(text));

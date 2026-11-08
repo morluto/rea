@@ -18,18 +18,9 @@ import {
 } from "../../../src/contracts/toolOutputSchemaPrimitives.js";
 import { createApplicationMcpHarness } from "../../fixtures/applicationMcpHarness.js";
 import { startJebMcpFixture } from "../../fixtures/jebMcp.js";
-import { jebMcpTimeoutGuidance } from "../../../src/jeb/JebMcpDeadline.js";
 import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
-import {
-  ADB_MISSING_REMEDIATION,
-  ADB_NOT_EXECUTABLE_REMEDIATION,
-} from "../../../src/adb/AdbConfiguration.js";
-import {
-  APKTOOL_MISSING_REMEDIATION,
-  APKTOOL_NOT_EXECUTABLE_REMEDIATION,
-} from "../../../src/apktool/ApktoolConfiguration.js";
 
 const schemaValidation = createMcpSchemaValidation();
 afterAll(() => schemaValidation.clear());
@@ -82,11 +73,15 @@ it("names the JEB discovery deadline setting instead of repeating the expired de
       available: false,
       reason: "provider_unavailable",
     });
-    // The deadline owner authors the repair; discovery must not restate the failure.
-    expect(entry?.remediation).toBe(
-      jebMcpTimeoutGuidance("discovery", 100).remediationAction,
+    expect(entry?.remediation).toMatch(
+      /increase REA_JEB_MCP_TIMEOUT_MS.*restart and reconnect REA/iu,
     );
-    expect(entry?.remediation).toContain("REA_JEB_MCP_TIMEOUT_MS");
+    expect(entry?.remediation).toMatch(
+      /catalog discovery.*tools\/call.*cleanup.*headroom/iu,
+    );
+    expect(entry?.remediation).toMatch(
+      /confirm outstanding work and cleanup before retrying/iu,
+    );
     expect(entry?.remediation).not.toContain("deadlineExpired");
   } finally {
     release();
@@ -97,13 +92,13 @@ it("names the JEB discovery deadline setting instead of repeating the expired de
 it.skipIf(process.platform === "win32").each([
   {
     selection: "non-executable",
-    adb: ADB_NOT_EXECUTABLE_REMEDIATION,
-    apktool: APKTOOL_NOT_EXECUTABLE_REMEDIATION,
+    adb: /absolute path.*adb executable.*execute permission.*search permission/iu,
+    apktool: /file type and execute permission.*executable apktool launcher/iu,
   },
   {
     selection: "missing",
-    adb: ADB_MISSING_REMEDIATION,
-    apktool: APKTOOL_MISSING_REMEDIATION,
+    adb: /absolute path.*existing adb binary/iu,
+    apktool: /absolute apktool launcher.*wrapper.*java -jar/iu,
   },
 ] as const)(
   "keeps the owner's repair for a $selection ADB and Apktool selection",
@@ -129,7 +124,10 @@ it.skipIf(process.platform === "win32").each([
     for (const { setting, repair, names } of entries)
       for (const name of names) {
         const entry = tools.get(name);
-        expect(entry).toMatchObject({ available: false, remediation: repair });
+        expect(entry).toMatchObject({
+          available: false,
+          remediation: expect.stringMatching(repair),
+        });
         // Independent of wording: the repair names the setting and matches
         // the observed failure, not the other outcome's repair.
         expect(entry?.remediation).toContain(setting);

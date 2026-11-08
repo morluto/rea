@@ -169,20 +169,12 @@ export const addedLineChecks = (
   const isXml = textOpensXml(lines.after);
   const source = isXml ? lines.after.join("\n") : "";
   const parsed = isXml ? xmlAttributeQuoteStarts(source) : undefined;
-  if (parsed?.ok === false && /^\s*(?:<\?xml\b|<!DOCTYPE\b)/u.test(source))
-    return {
-      checks: [],
-      notes: [
-        {
-          code: "read_as_text",
-          file,
-          message: `REA could not locate XML attributes in ~/${file}, so no added-line checks are suggested; inspect the changed text and add checks manually.`,
-        },
-      ],
-    };
-  const offsets = parsed?.ok === true ? parsed.value : [];
+  const offsets =
+    parsed === undefined ? [] : parsed.ok ? parsed.value : parsed.error.starts;
+  const examined = parsed?.ok === false ? parsed.error.examined : source.length;
   const addedSet = new Set(added);
   const classifications = new Map<string, number>();
+  const unexamined = new Set<string>();
   let lineStart = 0;
   let nextOffset = 0;
   for (const line of lines.after) {
@@ -194,6 +186,11 @@ export const addedLineChecks = (
       nextOffset += 1;
     }
     if (addedSet.has(line)) {
+      if (parsed?.ok === false && lineEnd > examined) {
+        unexamined.add(line);
+        lineStart = lineEnd + 1;
+        continue;
+      }
       const at = volatileAt(line, quoteStarts);
       const previous = classifications.get(line);
       if (
@@ -204,10 +201,12 @@ export const addedLineChecks = (
     }
     lineStart = lineEnd + 1;
   }
-  const classified = added.map((line) => ({
-    line,
-    at: classifications.get(line) ?? -1,
-  }));
+  const classified = added
+    .filter((line) => !unexamined.has(line))
+    .map((line) => ({
+      line,
+      at: classifications.get(line) ?? -1,
+    }));
   const whole = classified.filter(({ at }) => at < 0).map(({ line }) => line);
   const prefixes = new Set<string>();
   let unnamed = 0;
@@ -236,15 +235,25 @@ export const addedLineChecks = (
         equals: holding(lines.after, contains),
       })),
     ],
-    notes:
-      unnamed === 0
+    notes: [
+      ...(unexamined.size === 0
         ? []
         : [
             {
-              code: "volatile_lines",
+              code: "read_as_text" as const,
+              file,
+              message: `REA could not locate XML attributes in ${String(unexamined.size)} added line(s) of ~/${file}, so no checks are suggested for them; inspect the changed text and add checks manually.`,
+            },
+          ]),
+      ...(unnamed === 0
+        ? []
+        : [
+            {
+              code: "volatile_lines" as const,
               file,
               message: `${String(unnamed)} line(s) ~/${file} gained hold a value the app generates, an id or a time, and no text before it tells them apart, so no check of them is suggested: check what the line says with line_count and contains.`,
             },
-          ],
+          ]),
+    ],
   };
 };

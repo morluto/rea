@@ -1,9 +1,12 @@
 import { randomUUID } from "node:crypto";
-import { access, mkdir, rename, rm, stat } from "node:fs/promises";
+import { access, mkdir, mkdtemp, rename, rm, stat } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import type { DoctorHost } from "../application/Doctor.js";
+import type { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
+import { assertSetupActive } from "../application/SetupCancellation.js";
 import type {
   DesktopBuildSetupFacts,
   DesktopBuildSetupHost,
@@ -20,6 +23,10 @@ import {
   defaultBuildComputerArchive,
   programOnPath,
 } from "./BuildComputerEnvironment.js";
+import {
+  desktopBuildOwnedCommandReason,
+  runDesktopBuildOwnedCommand,
+} from "./DesktopBuildOwnedCommand.js";
 
 const PACK_SCRIPT = fileURLToPath(
   new URL("../../scripts/pack-build-computer-runtime.mjs", import.meta.url),
@@ -60,11 +67,12 @@ export const systemDesktopBuildSetupHost = (
   environment: Readonly<NodeJS.ProcessEnv>,
   platform: NodeJS.Platform,
   registrations: DoctorHost["clientRegistrations"],
+  resources: ArtifactResourceScope,
 ): DesktopBuildSetupHost => {
   const run = (
     command: string,
     arguments_: readonly string[],
-    limits: typeof PROBE | typeof PACK | typeof INSTALL,
+    limits: typeof PROBE,
     env = environment,
   ) =>
     execFileOutput(command, arguments_, {
@@ -83,39 +91,92 @@ export const systemDesktopBuildSetupHost = (
         },
         clientIds,
       ),
-    async packRuntime(archive) {
+    async packRuntime(archive, signal) {
       const partial = join(dirname(archive), `.rea-${randomUUID()}.tar.xz`);
-      try {
-        await mkdir(dirname(archive), { recursive: true });
-        await run(process.execPath, [PACK_SCRIPT, partial], PACK, {
-          ...environment,
-          npm_config_loglevel: "error",
-          npm_config_progress: "false",
-          npm_config_fund: "false",
-          npm_config_audit: "false",
-        });
-        await rename(partial, archive);
-        return undefined;
-      } catch (cause: unknown) {
-        await rm(partial, { force: true });
-        return failureReason(cause);
-      }
+      let commandFinished = false;
+      return resources.run(async () => {
+        try {
+          assertSetupActive(signal);
+          await mkdir(dirname(archive), { recursive: true });
+          const workspace = await mkdtemp(join(tmpdir(), "rea-desktop-pack-"));
+          await runDesktopBuildOwnedCommand({
+            command: process.execPath,
+            arguments: [PACK_SCRIPT, partial],
+            timeoutMs: PACK.timeout,
+            maxOutputBytes: PACK.maxBuffer,
+            resources,
+            partialPath: partial,
+            workspace,
+            ...(signal === undefined ? {} : { signal }),
+            environment: {
+              ...environment,
+              TMPDIR: workspace,
+              TMP: workspace,
+              TEMP: workspace,
+              npm_config_loglevel: "error",
+              npm_config_progress: "false",
+              npm_config_fund: "false",
+              npm_config_audit: "false",
+            },
+          });
+          commandFinished = true;
+          try {
+            await rm(workspace, { recursive: true, force: true });
+          } catch (cause: unknown) {
+            resources.retain({
+              kind: "lease",
+              resource: workspace,
+              lease: {
+                release: () => rm(workspace, { recursive: true, force: true }),
+              },
+            });
+            throw cause;
+          }
+          assertSetupActive(signal);
+          await rename(partial, archive);
+          return undefined;
+        } catch (cause: unknown) {
+          if (commandFinished) {
+            try {
+              await rm(partial, { force: true });
+            } catch (cleanup: unknown) {
+              resources.retain({
+                kind: "lease",
+                resource: partial,
+                lease: { release: () => rm(partial, { force: true }) },
+              });
+              assertSetupActive(signal);
+              return `${desktopBuildOwnedCommandReason(cause)}; partial archive cleanup failed: ${failureReason(cleanup)}`;
+            }
+          }
+          assertSetupActive(signal);
+          return desktopBuildOwnedCommandReason(cause);
+        }
+      });
     },
-    async installAgentenv(uv) {
-      try {
-        await run(
-          uv,
-          [
-            "tool",
-            "install",
-            `agentenv-framework==${DESKTOP_EXPORT_FRAMEWORK_VERSION}`,
-          ],
-          INSTALL,
-        );
-        return undefined;
-      } catch (cause: unknown) {
-        return failureReason(cause);
-      }
+    async installAgentenv(uv, signal) {
+      return resources.run(async () => {
+        try {
+          assertSetupActive(signal);
+          await runDesktopBuildOwnedCommand({
+            command: uv,
+            arguments: [
+              "tool",
+              "install",
+              `agentenv-framework==${DESKTOP_EXPORT_FRAMEWORK_VERSION}`,
+            ],
+            timeoutMs: INSTALL.timeout,
+            maxOutputBytes: INSTALL.maxBuffer,
+            resources,
+            environment,
+            ...(signal === undefined ? {} : { signal }),
+          });
+          return undefined;
+        } catch (cause: unknown) {
+          assertSetupActive(signal);
+          return desktopBuildOwnedCommandReason(cause);
+        }
+      });
     },
   };
 };

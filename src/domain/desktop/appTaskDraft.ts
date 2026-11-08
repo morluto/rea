@@ -1,5 +1,4 @@
 import type { JsonValue } from "../jsonValue.js";
-import { leftOutFiles } from "./appExportUnowned.js";
 import { isTimestamp, type DesktopTaskCheckInput } from "./appTask.js";
 import { isGeneratedUid } from "./attributeRank.js";
 import {
@@ -481,11 +480,10 @@ export const draftTaskFiles = (
   files: ReadonlyMap<string, DesktopStatePath>,
   served: (home: string) => boolean,
   ends: StateEnds,
-  /** Home paths the export selected exactly, as `exportedStateFiles` spells them. */
-  selected: readonly string[] = [],
+  /** The export owner's exclusion decision for each home path. */
+  isLeftOut: (home: string) => boolean,
 ): readonly TaskDraftFile[] => {
   const changed = changedStateFiles(files, ends, served);
-  const { isLeftOut } = leftOutFiles(files, [], selected, selected);
   // A lock the seed leaves out is not the document the user worked on.
   const considered = changed.filter(({ home }) => !isLeftOut(home));
   const role = considered.some(({ path }) => path.role === "document")

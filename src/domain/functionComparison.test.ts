@@ -1538,8 +1538,9 @@ it.each([
           {
             path: ["status"],
             code: "custom",
-            message:
-              "Function comparison status contradicts its dimensions or function match.",
+            message: expect.stringMatching(
+              /status contradicts.*dimensions or function match/i,
+            ),
           },
         ]);
     }

@@ -50,7 +50,6 @@ const MCP_TOOLS_WITHOUT_DEDICATED_CLI = Object.freeze([
   "procedure_callees",
   "procedure_callers",
   "procedure_info",
-  "procedure_references",
   "resolve_containing_procedure",
   "set_address_name",
   "set_addresses_names",
