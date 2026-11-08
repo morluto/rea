@@ -1,4 +1,6 @@
 import { readFile } from "node:fs/promises";
+import { join } from "node:path";
+import { DatabaseSync } from "node:sqlite";
 
 import { describe, expect, it } from "vitest";
 
@@ -13,6 +15,7 @@ import {
   type DesktopStateReaders,
 } from "./DesktopApplicationState.js";
 import { draftDesktopApplicationTask } from "./DesktopTaskDraft.js";
+import { createTestTempDirectory } from "../../../tests/fixtures/temporaryDirectory.js";
 import {
   DATABASE,
   HOME,
@@ -296,6 +299,83 @@ describe("nullable SQLite row identity through desktop capture consumers", () =>
 });
 
 describe("SQLite sidecar checkpoint coverage", () => {
+  it("does not infer absent baseline sidecars from creations after an incomplete baseline", async () => {
+    const directory = await createTestTempDirectory("desktop-baseline-wal-");
+    const databasePath = join(directory, "state.db");
+    const db = new DatabaseSync(databasePath);
+    let database: Buffer;
+    let wal: Buffer;
+    try {
+      db.exec(
+        "CREATE TABLE notes(id INTEGER PRIMARY KEY, body TEXT); INSERT INTO notes VALUES(1, 'base'); PRAGMA journal_mode=WAL; PRAGMA wal_autocheckpoint=0; INSERT INTO notes VALUES(2, 'committed in WAL');",
+      );
+      database = await readFile(databasePath);
+      wal = await readFile(`${databasePath}-wal`);
+    } finally {
+      db.close();
+    }
+    const base = capture();
+    const [baseline] = base.state.checkpoints;
+    if (baseline === undefined) throw new Error("fixture");
+    const later = checkpoint(
+      "later",
+      "request",
+      [
+        change(`${DATABASE}-wal`, { after: wal }),
+        change(`${DATABASE}-journal`, { after: "later journal" }),
+      ],
+      [
+        retained(`${DATABASE}-wal`, wal),
+        retained(`${DATABASE}-journal`, "later journal"),
+      ],
+    );
+    const folder = await writeCaptureFolder(
+      {
+        ...base,
+        state: {
+          ...base.state,
+          checkpoints: [
+            {
+              ...baseline,
+              truncated: true,
+              retained: [retained(DATABASE, database)],
+            },
+            checkpoint("complete", "request", [], []),
+            later,
+          ],
+        },
+      },
+      undefined,
+      [database, wal, "later journal"],
+    );
+    const byPath = await statePathsOf(folder, {
+      ...readers,
+      sqlite: async (path) => {
+        const staged = new DatabaseSync(path);
+        try {
+          return {
+            ok: true,
+            view: {
+              rows: staged
+                .prepare("SELECT id, body FROM notes ORDER BY id")
+                .all()
+                .map((row) => [Number(row.id), String(row.body)]),
+            },
+          };
+        } finally {
+          staged.close();
+        }
+      },
+    });
+    expect(
+      byPath.get(".local/share/notes/notes.db")?.versions[0],
+    ).toMatchObject({
+      checkpoint_index: 0,
+      view: null,
+      view_error: expect.any(String),
+    });
+  });
+
   it.each([
     ["absent", { truncated: true }],
     ["retained", { truncated: true }],

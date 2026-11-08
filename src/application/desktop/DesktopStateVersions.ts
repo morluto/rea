@@ -212,7 +212,7 @@ export const observedFileAt = (
   const changes = index.changes.get(path) ?? [];
   const first = changes[0];
   const baselineChange =
-    first !== undefined && !index.incomplete.slice(1, first.index).some(Boolean)
+    first !== undefined && !index.incomplete.slice(0, first.index).some(Boolean)
       ? first.change
       : undefined;
   const hasNonFile = (candidate: string): boolean => {
