@@ -61,7 +61,7 @@ describe("draftTaskFiles for text an app keeps in an attribute", () => {
     for (const [before, after] of [
       [flyer("Spring Fair"), flyer("Summer ", "Fair")],
       [flyer("Spring ", "Fair"), flyer("Summer Fair")],
-    ]) {
+    ] as const) {
       const file = xmlDraft(before, after);
       const checks = [...file.suggested, ...file.guards];
       expect(
