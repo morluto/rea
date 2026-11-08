@@ -1,6 +1,6 @@
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { serveStdio } from "@modelcontextprotocol/server/stdio";
-import { afterEach, expect, it } from "vitest";
+import { afterAll, afterEach, expect, it } from "vitest";
 import { ArtifactResourceScope } from "../../../src/artifacts/ArtifactResourceScope.js";
 import {
   readGuidanceSectionOutputSchema,
@@ -11,7 +11,10 @@ import { EvidenceMcpServer } from "../../../src/server/EvidenceMcpServer.js";
 import { registerGuidanceTools } from "../../../src/server/registerGuidanceTools.js";
 import { ToolResultDelivery } from "../../../src/server/ToolResultDelivery.js";
 import { advertisedMcpToolSchemas } from "../../fixtures/advertisedMcpTool.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 
+const schemaValidation = createMcpSchemaValidation();
+afterAll(() => schemaValidation.clear());
 const open: {
   client: Client;
   serving: ReturnType<typeof serveStdio>;
@@ -42,9 +45,12 @@ const connectGuidance = async (revision: (typeof REVISIONS)[number]) => {
   registerGuidanceTools(server, resources);
   const client = new Client(
     { name: "guidance-client", version: "1" },
-    revision === "2026-07-28"
-      ? { versionNegotiation: { mode: { pin: revision } } }
-      : { supportedProtocolVersions: [revision] },
+    {
+      jsonSchemaValidator: schemaValidation,
+      ...(revision === "2026-07-28"
+        ? { versionNegotiation: { mode: { pin: revision } } }
+        : { supportedProtocolVersions: [revision] }),
+    },
   );
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();
@@ -54,10 +60,15 @@ const connectGuidance = async (revision: (typeof REVISIONS)[number]) => {
   await client.connect(clientTransport);
   expect(client.getNegotiatedProtocolVersion()).toBe(revision);
   const advertised = {
-    search_guidance: await advertisedMcpToolSchemas(client, "search_guidance"),
+    search_guidance: await advertisedMcpToolSchemas(
+      client,
+      "search_guidance",
+      schemaValidation.assertions,
+    ),
     read_guidance_section: await advertisedMcpToolSchemas(
       client,
       "read_guidance_section",
+      schemaValidation.assertions,
     ),
   };
   // A typeless union root is wrapped in `{result}` by 2025-era projections and
@@ -74,8 +85,11 @@ const guidanceResult = async <T>(
   schema: { parse(value: unknown): T },
   arguments_: Record<string, unknown>,
 ): Promise<T> => {
-  const { ajv, outputSchema } = advertised[name];
-  const response = await client.callTool({ name, arguments: arguments_ });
+  const { ajv, outputSchema, toolDefinition } = advertised[name];
+  const response = await client.callTool(
+    { name, arguments: arguments_ },
+    { toolDefinition },
+  );
   expect(response.isError).not.toBe(true);
   expect(
     ajv.validate(outputSchema, response.structuredContent),
