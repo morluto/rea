@@ -722,6 +722,13 @@ it("pages a rowid table in rowid order without repeating or dropping rows", asyn
     truncated: false,
     next_row_offset: null,
   });
+  // Reading every page once must reproduce the table exactly: asserting only
+  // counts and offsets would pass even if a page repeated the first rows.
+  expect(
+    [first, second, last].flatMap((page) =>
+      (page.rows?.values ?? []).map((row) => row.map((cell) => cell.value)),
+    ),
+  ).toEqual([["a"], ["b"], ["c"], ["d"], ["e"]]);
 });
 
 it("orders a WITHOUT ROWID table by its primary key, including DESC direction and collation", async () => {
