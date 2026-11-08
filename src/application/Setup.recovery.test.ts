@@ -848,23 +848,34 @@ describe("setup cancellation", () => {
     expect(host.configurations).toBe(0);
   });
 
-  it("reports cancellation during final cleanup instead of ready", async () => {
+  it("reports cancellation during final cleanup with the completed setup result", async () => {
+    const clients = {
+      codex: { status: "configured", backupPath: "/fixture/codex.toml.bak" },
+      cursor: { status: "configured", backupPath: "/fixture/cursor.json.bak" },
+    } as const;
     const input = {
       ...options(true),
       installSkill: false,
       proposeHopper: false,
-      clientIds: ["codex"],
+      clientIds: Object.keys(clients),
     };
     const prepared = () => {
       const host = new FakeSetupHost();
       host.hopper = "/Applications/Hopper";
-      host.clients = [{ name: "codex", configPath: "/codex.toml" }];
+      host.clients = [
+        { name: "codex", configPath: "/fixture/codex.toml" },
+        { name: "cursor", configPath: "/fixture/cursor.json" },
+      ];
+      for (const [name, result] of Object.entries(clients))
+        host.clientResults.set(name, result);
       return host;
     };
     const control = await runSetup(input, prepared());
     expect(control).toMatchObject({
       status: "ready",
-      appliedActions: ["configured_codex"],
+      appliedActions: ["configured_codex", "configured_cursor"],
+      clients,
+      doctor: { healthy: true, scope: { clients: ["codex", "cursor"] } },
     });
     const controller = new AbortController();
     const reason = new Error("stop setup");
@@ -881,9 +892,17 @@ describe("setup cancellation", () => {
     ).catch((cause: unknown) => cause);
 
     expect(failure).toBeInstanceOf(AnalysisCancelledError);
+    if (!(failure instanceof AnalysisCancelledError))
+      throw new Error("Expected setup to report its cancellation");
     expect(failure).toMatchObject({
       cause: reason,
-      diagnostics: { applied_actions: ["configured_codex"] },
+      diagnostics: { setup_result: control },
+    });
+    expect(projectAnalysisError(failure)).toMatchObject({
+      code: "cancelled",
+      details: {
+        diagnostics: { setup_result: { clients, doctor: control.doctor } },
+      },
     });
   });
 });
