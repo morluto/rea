@@ -282,8 +282,9 @@ Write `{"name", "prompt", "checks"}` from the draft and what you did.
   or a stretch of it with `text_contains`. Cell texts join with nothing
   between, so a row reads `February23100`.
 - For a line added to free text, such as an item on a note's list, the
-  draft suggests `text_contains` of the new line, which passes however the
-  app spaces or orders it, and a guard that the old text is still there.
+  draft compares the whole text with `text_equals`. This rejects longer or
+  negated items, but can reject a correct edit with different ordering or
+  spacing. Report that limitation when the task permits such variations.
 - Some apps keep text in an attribute, such as Scribus's `<ITEXT CH=...>`.
   `text_equals` cannot join it, so check the attribute with `value_equals`:
   `/root/children/[name=DOCUMENT]/children/[name=PAGEOBJECT][@ANNAME=Headline]/children/[name=StoryText]/children/[name=ITEXT]/attributes/CH`.

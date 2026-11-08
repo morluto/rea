@@ -268,15 +268,33 @@ const capturedStateAliases = (capture: DesktopApplicationCapture) => {
   if (walked.length !== roots.length) return [];
   const relative = (path: string) =>
     path.startsWith(`${home}/`) ? path.slice(home.length + 1) : null;
-  return (capture.state.selected_paths ?? []).flatMap(({ path, physical }) => {
-    const index = walked.indexOf(physical);
-    const state = index < 0 ? undefined : roots[index]?.path;
-    const alias = relative(path);
-    const target = state === undefined ? null : relative(state);
-    return alias === null || target === null || alias === target
-      ? []
-      : [{ alias, target }];
-  });
+  const aliases = (capture.state.selected_paths ?? []).flatMap(
+    ({ path, physical }) => {
+      const index = walked.indexOf(physical);
+      const state = index < 0 ? undefined : roots[index]?.path;
+      const alias = relative(path);
+      const target = state === undefined ? null : relative(state);
+      return alias === null || target === null || alias === target
+        ? []
+        : [{ alias, target }];
+    },
+  );
+  const retained: typeof aliases = [];
+  for (const entry of aliases.toSorted(
+    (left, right) => left.alias.length - right.alias.length,
+  )) {
+    const parent = retained.findLast(
+      ({ alias }) => alias !== entry.alias && isWithinAny(entry.alias, [alias]),
+    );
+    if (
+      parent !== undefined &&
+      `${parent.target}${entry.alias.slice(parent.alias.length)}` ===
+        entry.target
+    )
+      continue;
+    retained.push(entry);
+  }
+  return retained;
 };
 
 type StatePath = DesktopApplicationState["paths"][number];
