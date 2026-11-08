@@ -10,7 +10,7 @@
 **気に入った機能を見つけたら、その仕組みをバイナリのレベルまで理解する。**
 
 [![npm version](https://img.shields.io/npm/v/rea-agents?style=flat-square&color=cb3837)](https://www.npmjs.com/package/rea-agents)
-[![MCP tool catalog](https://img.shields.io/badge/MCP-tool_catalog-5c4ee5?style=flat-square)](../mcp-contracts.md#generated-catalog)
+[![MCP tool catalog](https://img.shields.io/badge/MCP-tool_catalog-5c4ee5?style=flat-square)](../reference/mcp-contracts.md#generated-catalog)
 [![Node.js requirements](https://img.shields.io/badge/Node.js-requirements-339933?style=flat-square&logo=nodedotjs&logoColor=white)](#current-status)
 [![skills.sh](https://skills.sh/b/morluto/rea?style=flat-square)](https://skills.sh/morluto/rea/reverse-engineer-anything)
 [![MIT license](https://img.shields.io/badge/license-MIT-f4c430?style=flat-square)](../../LICENSE)
@@ -80,7 +80,7 @@ npx rea-agents setup
 
 使うエージェントを選び、予定されている変更を確認して承認してください。セットアップは REA の MCP サーバーと対応するワークフローの手順を追加し、既存の設定をバックアップします。完了後にエージェントを再起動してください。
 
-セットアップは Claude Code、Codex、Cursor、Gemini CLI、Grok Build、および[その他のエージェント](../installation.md#supported-agents)に対応しています。プロバイダーの設定と MCP の手動登録については、[インストールとセットアップ](../installation.md)を参照してください。
+セットアップは Claude Code、Codex、Cursor、Gemini CLI、Grok Build、および[その他のエージェント](../getting-started/installation.md#supported-agents)に対応しています。プロバイダーの設定と MCP の手動登録については、[インストールとセットアップ](../getting-started/installation.md)を参照してください。
 
 MCP は既定でコンパクトな入力スキーマを使用します。完全なフィールド説明と入れ子の検証情報が必要な場合は、MCP 登録に `REA_MCP_INPUT_SCHEMA_PROFILE=full` を設定してください。どちらも全ツールと同じ正規サーバー検証を維持します。詳細は MCP 契約ガイドを参照してください。
 
@@ -109,7 +109,7 @@ npm install --global rea-agents
 rea --help
 ```
 
-ネイティブ分析には、先にプロバイダーの設定が必要です。ネイティブ分析のコマンド、プロバイダーの選択、スナップショット、スクリプトでの利用は、[CLI と Evidence のガイド](../cli.md)を参照してください。
+ネイティブ分析には、先にプロバイダーの設定が必要です。ネイティブ分析のコマンド、プロバイダーの選択、スナップショット、スクリプトでの利用は、[CLI と Evidence のガイド](../getting-started/cli.md)を参照してください。
 
 ### REA を更新する
 
@@ -151,46 +151,46 @@ Bun では `npx rea-agents@latest` の代わりに `bunx rea-agents@latest` を�
 
 REA には Node.js 22.x（>=22.23.4）、24.x（>=24.22.1）、または 26+ (>=26.12.1) と npm が必要です。追加のツールや対応ホストは、対象によって異なります。
 
-| 対象                             | REA が返すもの                                                                              | 要件とガイド                                                                                                                                   |
-| -------------------------------- | ------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
-| ネイティブバイナリ               | 疑似コード、アセンブリ、文字列、シンボル、呼び出し、参照                                    | Hopper、Ghidra、IDA、または Kuna；[ネイティブ分析](../native-investigation.md)                                                                 |
-| オフライン ELF レイアウト        | セクション、セグメント、元のシンボル／再配置情報、静的解析によるセキュリティ対策の候補      | Linux x64 で利用者が用意する pwntools；[バイナリ診断](../binary-diagnostics.md)                                                                |
-| PE certificates                  | Authenticode WIN_CERTIFICATE entries and PKCS#7 signer/X.509 identity fields                | Built-in static PE inspection; [PE certificates](../pe-certificates.md)                                                                        |
-| PE imports                       | Import and delay-load DLL names, ordinals, IAT RVAs and pefile import hash                  | Built-in static PE inspection; [PE imports](../pe-imports.md)                                                                                  |
-| EVM バイトコード                 | ディスパッチセレクター、バイトオフセット、推定された引数と状態変更の可否                    | Linux x64 上のローカルの生バイト／16 進数の入力ファイル；[オフライン EVM ガイド](../evm-bytecode.md)                                           |
-| Rust binaries                    | Embedded cargo-auditable dependency list                                                    | [Rust binaries](../rust-binaries.md)                                                                                                           |
-| ELF notes                        | PT_NOTE/SHT_NOTE owners, types, GNU build-id and ABI-tag fields                             | Built-in static ELF inspection; [ELF notes](../elf-notes.md)                                                                                   |
-| DWARF compile units              | Compile-unit name, directory, producer, language, and dwo_name                              | Built-in static ELF, Mach-O, and PE inspection; [DWARF compile units](../dwarf-units.md)                                                       |
-| Binary hardening                 | PIE, NX, RELRO, CFG and related header flags for ELF, PE and Mach-O                         | Built-in static header inspection; [binary hardening](../binary-hardening.md)                                                                  |
-| Apple IPS crashes                | .ips metadata, threads, images, registers and crash classes                                 | Built-in static JSON inspection; [Apple IPS](../apple-ips.md)                                                                                  |
-| Linux kernel modules             | .modinfo keys, __versions CRCs, this_module presence, and signature trailer                 | Built-in static ELF inspection; [kernel modules](../kernel-modules.md)                                                                         |
-| Erlang BEAM                      | IFF chunks, atoms, exports, and tables                                                      | Built-in static BEAM inspection; [Erlang BEAM](../erlang-beam.md)                                                                              |
-| 記録済みの Linux クラッシュ      | 生の note レコード、記録された全スレッドのレジスター／シグナル、任意のマッピング候補        | Linux x64 で利用者が用意する pwntools；GDB/pwndbg は任意；[記録済みクラッシュ](../recorded-crashes.md)                                         |
-| デスクトップのインストール先     | ランタイム候補、根拠ファイル、コンポーネントの目印、次の調査手順                            | 上限付きのディレクトリ・ヘッダー検査；[デスクトップアプリ](../desktop-applications.md)                                                         |
-| JavaScript / Electron            | モジュール、インポート、ソースマップ、ルート、IPC、ネイティブアドオンの関係                 | Node.js と npm；[アプリケーション分析](../javascript-application-workflows.md); Linux: procps `ps`                                             |
-| ウェブサイト                     | ページ構造、スクリプト、ネットワークの観測結果、依頼されたスクリーンショット                | Chrome 系ブラウザー；[ブラウザー分析](../browser-observation.md)                                                                               |
-| 保存済みのネットワークキャプチャ | リクエスト、レスポンス、取得可能なペイロード、ソース内の位置                                | HAR / Fiddler Everywhere SAZ；mitmproxy ネイティブ形式のキャプチャには Linux 上の mitmdump；[キャプチャガイド](../web-network-captures.md)     |
-| パケットキャプチャ               | エンドポイント、DNS、TLS SNI、プロトコル分布、HTTPリクエスト                                | 呼び出し側が用意した tshark と capinfos；[pcapガイド](../pcap-analysis.md)                                                                     |
-| .NET アセンブリ                  | メタデータ、CIL 命令、宣言されたネイティブ依存関係、ビルドの比較                            | 静的な検査；[マネージドコードのガイド](../managed-code-analysis.md)                                                                            |
-| PyInstaller                      | CArchive, PYZ, Python bytecode                                                              | Static inspection; [Python packaged applications](../python-packaged-applications.md)                                                          |
-| Android APK                      | マニフェストの宣言、クラス、逆コンパイルされたメソッド、参照                                | Linux/macOS/Windows x64 上のヘッドレス JADX と完全な JDK；[Android ガイド](../android-analysis.md)                                             |
-| Android デバイス                 | デバイス、パッケージ、プロセス、ログ、ダンプ、スクリーンキャプチャ、APK/ファイル転送        | 呼び出し側が用意した adb（エミュレーターまたは実機）；[ADB ガイド](../adb-device-analysis.md)                                                  |
-| JEBプロジェクト                  | エンジンによるプロジェクトユニット、アーティファクトのダイジェスト、型/メソッドの擬似コード | 呼び出し側が起動し MCP を提供する JEB クライアント（REA_JEB_MCP_URL で選択）；[JEB ガイド](../jeb-analysis.md)                                 |
-| Android リソース                 | デコードされたマニフェスト、文字列テーブル、ロケール、バージョン情報                        | 呼び出し側が用意した Apktool ランチャー；[リソースガイド](../apktool-resource-analysis.md)                                                     |
-| Flutter アプリ                   | Dart スナップショットハッシュ、ABI ごとのライブラリダイジェスト、エンジンビルドの来歴       | 不要（静的 APK 解析）；[Flutter ガイド](../flutter-analysis.md)                                                                                |
-| ファームウェア                   | 領域、抽出結果、ネイティブ分析への引き継ぎ                                                  | Linux 上の Binwalk / Unblob；[ファームウェアガイド](../firmware-analysis.md)                                                                   |
-| 記録済みパケット                 | 選択フィールド、繰り返し値、フィルター、デコード指定                                        | Linux: TShark 4.x + prlimit; [キャプチャガイド](../packet-captures.md)                                                                         |
-| 記録済みロジック信号             | デコーダ注釈、サンプル範囲、診断情報                                                        | Linux: sigrok-cli 0.7.2 + prlimit; [信号記録ガイド](../signal-recordings.md)                                                                   |
-| パッケージとリソース             | ファイル一覧、ダイジェスト、plist、Apple バンドルの構造、抽出されたリソース                 | [アーティファクトと JavaScript のガイド](../javascript-artifact-reconstruction.md)、[Apple アプリケーション](../apple-application-analysis.md) |
-| プロセスの動作                   | ターミナル出力、対話、終了とファイルシステムの観測結果、実行の比較                          | ネイティブ PTY を備えた Linux/macOS；[プロセスキャプチャ](../process-capture.md)                                                               |
-| Go バイナリ                      | 埋め込みコンパイラバージョン、モジュール、置換、ビルド設定                                  | 組み込みの静的解析 ELF/PE/thin Mach-O; Go のインストールは不要                                                                                 |
-| SQLite データベース              | テーブル、列、インデックス、ビュー、トリガー、選択した通常テーブルの行                      | ローカル DB/WAL スナップショット。ネイティブ SQLite 制限 API を備える Node.js 24.x >=24.15 または 26+                                          |
-| GPU コードオブジェクト           | CUDA/HIP ターゲット、選択したカーネルの引数とリソース、保持された PTX                       | 組み込みの静的解析 ELF/PE/fatbin/CUBIN/PTX; [GPU](../gpu-code-objects.md)                                                                      |
-| モデルファイル                   | GGUF / safetensors メタデータ、テンソル宣言、導出した合計                                   | ヘッダー解析。任意でファイル全体をハッシュ; [GGUF / safetensors](../model-artifacts.md)                                                        |
-| IL2CPP メタデータ                | Unity global-metadata.dat のアセンブリ、型・メソッド名、インデックス範囲                    | バージョン 24、27、29、31、39 を静的デコード。Unity 不要                                                                                       |
-| Godot PCK                        | アーカイブ一覧と展開、元のヘッダー・ディレクトリ情報、選択内容の識別情報                    | 形式 2、3、4 を静的解析。Godot 不要                                                                                                            |
-| WASM アーティファクト            | 検証、セクション、正確なインポート/エクスポート WAT 形式、デコード済み WAT                  | 利用者が用意 WABT 1.0.42; `inspect_wasm_artifact`                                                                                              |
-| APK 署名                         | v1/v2/v3/v3.1 署名者、証明書指紋、鍵ローテーション、ダイジェストの自己整合性                | 組み込みの静的解析; `inspect_apk_signature`                                                                                                    |
+| 対象                             | REA が返すもの                                                                              | 要件とガイド                                                                                                                                                                  |
+| -------------------------------- | ------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| ネイティブバイナリ               | 疑似コード、アセンブリ、文字列、シンボル、呼び出し、参照                                    | Hopper、Ghidra、IDA、または Kuna；[ネイティブ分析](../guides/native/native-investigation.md)                                                                                  |
+| オフライン ELF レイアウト        | セクション、セグメント、元のシンボル／再配置情報、静的解析によるセキュリティ対策の候補      | Linux x64 で利用者が用意する pwntools；[バイナリ診断](../guides/native/binary-diagnostics.md)                                                                                 |
+| PE certificates                  | Authenticode WIN_CERTIFICATE entries and PKCS#7 signer/X.509 identity fields                | Built-in static PE inspection; [PE certificates](../pe-certificates.md)                                                                                                       |
+| PE imports                       | Import and delay-load DLL names, ordinals, IAT RVAs and pefile import hash                  | Built-in static PE inspection; [PE imports](../pe-imports.md)                                                                                                                 |
+| EVM バイトコード                 | ディスパッチセレクター、バイトオフセット、推定された引数と状態変更の可否                    | Linux x64 上のローカルの生バイト／16 進数の入力ファイル；[オフライン EVM ガイド](../guides/evm/evm-bytecode.md)                                                               |
+| Rust binaries                    | Embedded cargo-auditable dependency list                                                    | [Rust binaries](../rust-binaries.md)                                                                                                                                          |
+| ELF notes                        | PT_NOTE/SHT_NOTE owners, types, GNU build-id and ABI-tag fields                             | Built-in static ELF inspection; [ELF notes](../elf-notes.md)                                                                                                                  |
+| DWARF compile units              | Compile-unit name, directory, producer, language, and dwo_name                              | Built-in static ELF, Mach-O, and PE inspection; [DWARF compile units](../dwarf-units.md)                                                                                      |
+| Binary hardening                 | PIE, NX, RELRO, CFG and related header flags for ELF, PE and Mach-O                         | Built-in static header inspection; [binary hardening](../binary-hardening.md)                                                                                                 |
+| Apple IPS crashes                | .ips metadata, threads, images, registers and crash classes                                 | Built-in static JSON inspection; [Apple IPS](../apple-ips.md)                                                                                                                 |
+| Linux kernel modules             | .modinfo keys, __versions CRCs, this_module presence, and signature trailer                 | Built-in static ELF inspection; [kernel modules](../kernel-modules.md)                                                                                                        |
+| Erlang BEAM                      | IFF chunks, atoms, exports, and tables                                                      | Built-in static BEAM inspection; [Erlang BEAM](../erlang-beam.md)                                                                                                             |
+| 記録済みの Linux クラッシュ      | 生の note レコード、記録された全スレッドのレジスター／シグナル、任意のマッピング候補        | Linux x64 で利用者が用意する pwntools；GDB/pwndbg は任意；[記録済みクラッシュ](../guides/native/recorded-crashes.md)                                                          |
+| デスクトップのインストール先     | ランタイム候補、根拠ファイル、コンポーネントの目印、次の調査手順                            | 上限付きのディレクトリ・ヘッダー検査；[デスクトップアプリ](../desktop-applications.md)                                                                                        |
+| JavaScript / Electron            | モジュール、インポート、ソースマップ、ルート、IPC、ネイティブアドオンの関係                 | Node.js と npm；[アプリケーション分析](../guides/javascript/javascript-application-workflows.md); Linux: procps `ps`                                                          |
+| ウェブサイト                     | ページ構造、スクリプト、ネットワークの観測結果、依頼されたスクリーンショット                | Chrome 系ブラウザー；[ブラウザー分析](../guides/web/browser-observation.md)                                                                                                   |
+| 保存済みのネットワークキャプチャ | リクエスト、レスポンス、取得可能なペイロード、ソース内の位置                                | HAR / Fiddler Everywhere SAZ；mitmproxy ネイティブ形式のキャプチャには Linux 上の mitmdump；[キャプチャガイド](../guides/web/web-network-captures.md)                         |
+| パケットキャプチャ               | エンドポイント、DNS、TLS SNI、プロトコル分布、HTTPリクエスト                                | 呼び出し側が用意した tshark と capinfos；[pcapガイド](../guides/data/pcap-analysis.md)                                                                                        |
+| .NET アセンブリ                  | メタデータ、CIL 命令、宣言されたネイティブ依存関係、ビルドの比較                            | 静的な検査；[マネージドコードのガイド](../guides/managed/managed-code-analysis.md)                                                                                            |
+| PyInstaller                      | CArchive, PYZ, Python bytecode                                                              | Static inspection; [Python packaged applications](../python-packaged-applications.md)                                                                                         |
+| Android APK                      | マニフェストの宣言、クラス、逆コンパイルされたメソッド、参照                                | Linux/macOS/Windows x64 上のヘッドレス JADX と完全な JDK；[Android ガイド](../guides/android/android-analysis.md)                                                             |
+| Android デバイス                 | デバイス、パッケージ、プロセス、ログ、ダンプ、スクリーンキャプチャ、APK/ファイル転送        | 呼び出し側が用意した adb（エミュレーターまたは実機）；[ADB ガイド](../guides/android/adb-device-analysis.md)                                                                  |
+| JEBプロジェクト                  | エンジンによるプロジェクトユニット、アーティファクトのダイジェスト、型/メソッドの擬似コード | 呼び出し側が起動し MCP を提供する JEB クライアント（REA_JEB_MCP_URL で選択）；[JEB ガイド](../providers/jeb-analysis.md)                                                      |
+| Android リソース                 | デコードされたマニフェスト、文字列テーブル、ロケール、バージョン情報                        | 呼び出し側が用意した Apktool ランチャー；[リソースガイド](../guides/android/apktool-resource-analysis.md)                                                                     |
+| Flutter アプリ                   | Dart スナップショットハッシュ、ABI ごとのライブラリダイジェスト、エンジンビルドの来歴       | 不要（静的 APK 解析）；[Flutter ガイド](../guides/android/flutter-analysis.md)                                                                                                |
+| ファームウェア                   | 領域、抽出結果、ネイティブ分析への引き継ぎ                                                  | Linux 上の Binwalk / Unblob；[ファームウェアガイド](../guides/firmware/firmware-analysis.md)                                                                                  |
+| 記録済みパケット                 | 選択フィールド、繰り返し値、フィルター、デコード指定                                        | Linux: TShark 4.x + prlimit; [キャプチャガイド](../guides/data/packet-captures.md)                                                                                            |
+| 記録済みロジック信号             | デコーダ注釈、サンプル範囲、診断情報                                                        | Linux: sigrok-cli 0.7.2 + prlimit; [信号記録ガイド](../guides/signals/signal-recordings.md)                                                                                   |
+| パッケージとリソース             | ファイル一覧、ダイジェスト、plist、Apple バンドルの構造、抽出されたリソース                 | [アーティファクトと JavaScript のガイド](../guides/javascript/javascript-artifact-reconstruction.md)、[Apple アプリケーション](../guides/apple/apple-application-analysis.md) |
+| プロセスの動作                   | ターミナル出力、対話、終了とファイルシステムの観測結果、実行の比較                          | ネイティブ PTY を備えた Linux/macOS；[プロセスキャプチャ](../guides/runtime/process-capture.md)                                                                               |
+| Go バイナリ                      | 埋め込みコンパイラバージョン、モジュール、置換、ビルド設定                                  | 組み込みの静的解析 ELF/PE/thin Mach-O; Go のインストールは不要                                                                                                                |
+| SQLite データベース              | テーブル、列、インデックス、ビュー、トリガー、選択した通常テーブルの行                      | ローカル DB/WAL スナップショット。ネイティブ SQLite 制限 API を備える Node.js 24.x >=24.15 または 26+                                                                         |
+| GPU コードオブジェクト           | CUDA/HIP ターゲット、選択したカーネルの引数とリソース、保持された PTX                       | 組み込みの静的解析 ELF/PE/fatbin/CUBIN/PTX; [GPU](../gpu-code-objects.md)                                                                                                     |
+| モデルファイル                   | GGUF / safetensors メタデータ、テンソル宣言、導出した合計                                   | ヘッダー解析。任意でファイル全体をハッシュ; [GGUF / safetensors](../model-artifacts.md)                                                                                       |
+| IL2CPP メタデータ                | Unity global-metadata.dat のアセンブリ、型・メソッド名、インデックス範囲                    | バージョン 24、27、29、31、39 を静的デコード。Unity 不要                                                                                                                      |
+| Godot PCK                        | アーカイブ一覧と展開、元のヘッダー・ディレクトリ情報、選択内容の識別情報                    | 形式 2、3、4 を静的解析。Godot 不要                                                                                                                                           |
+| WASM アーティファクト            | 検証、セクション、正確なインポート/エクスポート WAT 形式、デコード済み WAT                  | 利用者が用意 WABT 1.0.42; `inspect_wasm_artifact`                                                                                                                             |
+| APK 署名                         | v1/v2/v3/v3.1 署名者、証明書指紋、鍵ローテーション、ダイジェストの自己整合性                | 組み込みの静的解析; `inspect_apk_signature`                                                                                                                                   |
 
 静的な JavaScript と .NET の検査は、指定されたファイルを読み取り、アプリケーションを実行しません。実行時キャプチャは、あなたのユーザー権限で対象を実行したり、対象とやり取りしたりします。それぞれの実行時ガイドに、どのような操作が行われるかを記載しています。
 
@@ -200,7 +200,7 @@ REA には Node.js 22.x（>=22.23.4）、24.x（>=24.22.1）、または 26+ (>=
 
 大きなバイナリでは `REA_GHIDRA_STARTUP_TIMEOUT_MS` または `REA_HOPPER_STARTUP_TIMEOUT_MS` でプロバイダーの起動期限を延長できます。
 
-対応するネイティブ形式とホストは、プロバイダーによって異なります。[Hopper と Ghidra のセットアップ](../installation.md#hopper)、[IDA ガイド](../ida-provider.md)、[Kuna](../kuna-provider.md)、[Windows 向け Ghidra の実験的対応](../windows-ghidra-p0.md)を参照してください。Ghidra は [16 ビット DOS 分析](../ghidra-dos.md)にも対応しています。プロバイダーの選択は [CLI ガイド](../cli.md#choose-a-provider)を参照してください。最新の npm リリース以降に追加された機能については、[リリースでの利用可否](../installation.md#released-package-and-main)を確認してください。
+対応するネイティブ形式とホストは、プロバイダーによって異なります。[Hopper と Ghidra のセットアップ](../getting-started/installation.md#hopper)、[IDA ガイド](../providers/ida-provider.md)、[Kuna](../kuna-provider.md)、[Windows 向け Ghidra の実験的対応](../providers/windows-ghidra-p0.md)を参照してください。Ghidra は [16 ビット DOS 分析](../providers/ghidra-dos.md)にも対応しています。プロバイダーの選択は [CLI ガイド](../getting-started/cli.md#choose-a-provider)を参照してください。最新の npm リリース以降に追加された機能については、[リリースでの利用可否](../getting-started/installation.md#released-package-and-main)を確認してください。
 
 ## 事例
 
@@ -281,28 +281,28 @@ REA は実行可能な環境と、起動して応答することを確認する�
 <details>
 <summary><strong>どのエージェントで REA を使えますか？</strong></summary>
 
-ローカル MCP サーバーに対応するエージェントなら使えます。セットアップは[対応エージェント](../installation.md#supported-agents)を設定します。その他のクライアントでは、[MCP の手動登録](../installation.md#mcp-registry)を利用できます。
+ローカル MCP サーバーに対応するエージェントなら使えます。セットアップは[対応エージェント](../getting-started/installation.md#supported-agents)を設定します。その他のクライアントでは、[MCP の手動登録](../getting-started/installation.md#mcp-registry)を利用できます。
 
 </details>
 
 <details>
 <summary><strong>Hopper、Ghidra、IDA、Kuna は必要ですか？</strong></summary>
 
-深いネイティブ分析には、そのいずれかを使います。静的な JavaScript と .NET の検査には、ネイティブ分析エンジンは必要ありません。セットアップは承認後に Hopper をインストールできます。Ghidra、IDA、Kuna は既存のインストールを使います。[プロバイダーのセットアップ](../installation.md#hopper)を参照してください。
+深いネイティブ分析には、そのいずれかを使います。静的な JavaScript と .NET の検査には、ネイティブ分析エンジンは必要ありません。セットアップは承認後に Hopper をインストールできます。Ghidra、IDA、Kuna は既存のインストールを使います。[プロバイダーのセットアップ](../getting-started/installation.md#hopper)を参照してください。
 
 </details>
 
 <details>
 <summary><strong>先に Hopper を起動する必要はありますか？</strong></summary>
 
-REA は必要な操作の際に Hopper を起動します。macOS では、初回起動時にデモモードを選ぶか、ライセンスを有効化するよう求められることがあります。[Hopper の起動とトラブルシューティング](../installation.md#launcher-paths-and-troubleshooting)を参照してください。
+REA は必要な操作の際に Hopper を起動します。macOS では、初回起動時にデモモードを選ぶか、ライセンスを有効化するよう求められることがあります。[Hopper の起動とトラブルシューティング](../getting-started/installation.md#launcher-paths-and-troubleshooting)を参照してください。
 
 </details>
 
 <details>
 <summary><strong>skills.sh からスキルをインストールすると何ができますか？</strong></summary>
 
-スキルはエージェントに調査の手順を提供します。`npx rea-agents setup` で REA の MCP サーバーを登録し、対応する手順をインストールしてから、エージェントを再起動してください。[スキルのみのインストール](../installation.md#skill-only-installation)を参照してください。
+スキルはエージェントに調査の手順を提供します。`npx rea-agents setup` で REA の MCP サーバーを登録し、対応する手順をインストールしてから、エージェントを再起動してください。[スキルのみのインストール](../getting-started/installation.md#skill-only-installation)を参照してください。
 
 </details>
 
@@ -345,12 +345,12 @@ npx rea-agents@latest setup
 
 まずはウェブサイトの[実践ガイド](https://rea.tools/ja/guides/)を参照してください。正確なオプション、前提条件、結果の契約については、以下を参照してください。
 
-- [インストールとセットアップ](../installation.md)：エージェントの登録、プロバイダーの設定、更新、アンインストール。
-- [準備状況の確認とトラブルシューティング](../installation.md#check-readiness-for-your-task)：特定のエージェントや分析エンジンを診断。
-- [CLI と Evidence](../cli.md)：コマンド、プロバイダーの選択、スナップショット、インポート／エクスポート、終了ステータス。
-- [MCP 契約](../mcp-contracts.md)と[エージェント向けプロンプト](../mcp-prompts.md)：ツールの結果、セッション、ガイド付き調査。
-- [ツールカタログ](../mcp-contracts.md#generated-catalog)：ビルド時に生成されるツール、プロバイダー、CLI コマンドの一覧。
-- [ロードマップ](../roadmap.md)：計画中の作業と機能の進捗。
+- [インストールとセットアップ](../getting-started/installation.md)：エージェントの登録、プロバイダーの設定、更新、アンインストール。
+- [準備状況の確認とトラブルシューティング](../getting-started/installation.md#check-readiness-for-your-task)：特定のエージェントや分析エンジンを診断。
+- [CLI と Evidence](../getting-started/cli.md)：コマンド、プロバイダーの選択、スナップショット、インポート／エクスポート、終了ステータス。
+- [MCP 契約](../reference/mcp-contracts.md)と[エージェント向けプロンプト](../getting-started/mcp-prompts.md)：ツールの結果、セッション、ガイド付き調査。
+- [ツールカタログ](../reference/mcp-contracts.md#generated-catalog)：ビルド時に生成されるツール、プロバイダー、CLI コマンドの一覧。
+- [ロードマップ](../development/roadmap.md)：計画中の作業と機能の進捗。
 
 脆弱性の報告は [SECURITY.md](../../SECURITY.md) に従ってください。
 
@@ -380,7 +380,7 @@ REA は、法令に従った研究、教育、相互運用性の確保、ソフ�
 
 REA への貢献を歓迎します！[issue を作成](https://github.com/morluto/rea/issues)してバグや機能の提案を報告したり、[pull request を送信](https://github.com/morluto/rea/pulls)してコードやドキュメントを改善したりできます。
 
-開発環境とチェックは [CONTRIBUTING.md](../../CONTRIBUTING.md)、検証レーンは[テストガイド](../testing.md)、プロジェクト構造は[アーキテクチャ図](../architecture.mermaid)を参照してください。
+開発環境とチェックは [CONTRIBUTING.md](../../CONTRIBUTING.md)、検証レーンは[テストガイド](../development/testing.md)、プロジェクト構造は[アーキテクチャ図](../architecture/architecture.mermaid)を参照してください。
 
 ## ライセンス
 

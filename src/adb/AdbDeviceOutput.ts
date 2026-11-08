@@ -97,7 +97,14 @@ export const parseAdbDevicesOutput = (
       if (remainder === undefined || !remainder.startsWith(candidate))
         return false;
       const next = remainder[candidate.length];
-      return next === undefined || /\s/u.test(next);
+      // adb prints no-permissions as `no permissions[ (reason)]; see [URL]` and
+      // omits the reason on a host where it finds no udev problem to name,
+      // such as one without a plugdev group, so `;` can follow it directly.
+      return (
+        next === undefined ||
+        /\s/u.test(next) ||
+        (candidate === "no permissions" && next === ";")
+      );
     });
     if (match === null || state === undefined) {
       if (rawLine.trim() !== "") unparsed.add(rawLine);

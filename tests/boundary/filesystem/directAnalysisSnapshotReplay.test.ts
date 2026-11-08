@@ -1,8 +1,10 @@
+import { EvidenceIntegrityError } from "../../../src/domain/evidenceErrors.js";
 import { ProviderCleanupError } from "../../../src/domain/providerCleanupError.js";
 import { AnalysisCancelledError } from "../../../src/domain/analysisErrorCore.js";
 import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
 import type { AnalysisError } from "../../../src/domain/analysisErrorBase.js";
 import { projectCliAnalysisResult } from "../../../src/cli/projectCliAnalysisResult.js";
+import { publishCliAnalysisEvidence } from "../../../src/cli/analysisEvidenceDelivery.js";
 import { parseConfig } from "../../../src/config/parseConfig.js";
 import { readFile, symlink, writeFile } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
@@ -131,6 +133,19 @@ const expectWorkflowQuestionsRetained = (
   );
 };
 
+const expectSourceSnapshotRetained = (snapshot: AnalysisSnapshot) => {
+  expect(snapshot.entries).toHaveLength(1);
+  const parent = snapshot.evidence_bundle.records.find(
+    (record) => record.operation === "list_strings",
+  );
+  expect(parent?.evidence_links).toHaveLength(1);
+  expect(snapshot.evidence_bundle.records).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({ evidence_id: parent?.evidence_links[0] }),
+    ]),
+  );
+};
+
 interface SnapshotProviderTrace {
   readonly starts: string[];
   readonly queries: Array<{
@@ -145,6 +160,8 @@ interface SnapshotProviderOptions {
   readonly identity?: ProviderIdentity;
   readonly supportedOperations?: readonly CapabilityDescriptor["operation"][];
   readonly limitations?: readonly string[];
+  readonly sourceEvidence?: boolean;
+  readonly sourceMissingLink?: boolean;
 }
 
 const makeProvider = (
@@ -181,7 +198,7 @@ const makeProvider = (
       trace.resolutions.push(profile.digest);
       return ok({ profile });
     },
-    createClient: () => {
+    createClient: (target) => {
       trace.starts.push("start");
       return {
         execute: async (operation, parameters) => {
@@ -242,6 +259,20 @@ const makeProvider = (
               analysisProfile: profile,
               rawResult: result,
               limitations: options.limitations ?? [],
+              ...(options.sourceEvidence
+                ? {
+                    sourceEvidence: [
+                      createEvidence(target, profile.provider, {
+                        operation: "health",
+                        parameters: {},
+                        result: "fixture source",
+                        ...(options.sourceMissingLink
+                          ? { evidenceLinks: [`ev_${"0".repeat(64)}`] }
+                          : {}),
+                      }),
+                    ],
+                  }
+                : {}),
             }),
           );
         },
@@ -550,13 +581,18 @@ const withEarlierHistoricalEvidence = (
 };
 
 describe("snapshot output cleanup lifecycle", () => {
-  it.each(["cleanup", "cancelled"] as const)(
-    "preserves the committed snapshot receipt after %s finalization and retry",
-    async (failureKind) => {
+  it.each([
+    { failureKind: "cleanup", sourceEvidence: false },
+    { failureKind: "cancelled", sourceEvidence: false },
+    { failureKind: "cleanup", sourceEvidence: true },
+    { failureKind: "cancelled", sourceEvidence: true },
+  ] as const)(
+    "preserves a committed snapshot after $failureKind finalization with source=$sourceEvidence",
+    async ({ failureKind, sourceEvidence }) => {
       const fixture = await createSnapshotReplayFixture(
         "rea-snapshot-close-failure-",
       );
-      const provider = fixture.createProvider();
+      const provider = fixture.createProvider({ sourceEvidence });
       const failure =
         failureKind === "cleanup"
           ? new ProviderCleanupError(
@@ -587,17 +623,19 @@ describe("snapshot output cleanup lifecycle", () => {
       try {
         const opened = await session.open(fixture.path);
         if (!opened.ok) throw opened.error;
-        const analyzed = await session.execute("list_segments", {});
+        const analyzed = sourceEvidence
+          ? await session.execute("list_strings", { document: "fixture" })
+          : await session.execute("list_segments", {});
         if (!analyzed.ok) throw analyzed.error;
         const closed = await session.closeWithSnapshot(
           fixture.snapshotPath,
           false,
         );
-        expect(closed.ok).toBe(false);
         if (closed.ok) throw new Error("Expected close failure");
         const committed = await readFile(fixture.snapshotPath);
         const snapshot = await readAnalysisSnapshot(fixture.snapshotPath);
         if (!snapshot.ok) throw snapshot.error;
+        if (sourceEvidence) expectSourceSnapshotRetained(snapshot.value);
         const receipt = {
           path: fixture.snapshotPath,
           bytes: committed.byteLength,
@@ -928,6 +966,13 @@ describe("direct analysis composed snapshot replay", () => {
         { snapshotPath: fixture.snapshotPath },
       ).then(projectCliAnalysisResult);
       expect(first).toMatchObject({ operation: scenario.tool });
+      if (scenario.tool === "trace_feature")
+        expect(parseEvidence(first).analysis_profile?.parameters).toMatchObject(
+          {
+            workflow_revision: 9,
+            source_limitations: "provider-operation-caveats-v1",
+          },
+        );
       const callsAfterFirst = [...fixture.calls];
       const startsAfterFirst = [...fixture.starts];
       const loaded = await readAnalysisSnapshot(fixture.snapshotPath);
@@ -1572,7 +1617,7 @@ const expectReaderBindingMismatch = (
   expect(projectAnalysisError(error).details).toMatchObject({
     binding_mismatch: {
       provider: {
-        snapshot: { version: "apple-metadata-reader-older" },
+        snapshot: { version: "apple-metadata-reader-2" },
         selected: { version: selectedVersion },
       },
       profile_digest: { snapshot: snapshotDigest },
@@ -1610,12 +1655,13 @@ const expectProfilelessWorkflowSnapshotRejections = async (
   if (!opened.ok) throw opened.error;
   const readerIdentity = APPLE_DISPATCH_METADATA_ANALYSIS_PROFILE.provider;
   const wrongReader = structuredClone(snapshot);
+  // Reader v2 could discard owners when their adopted-protocol list was unreadable.
   const otherReaderProfile = createAnalysisProfile(
-    { ...readerIdentity, version: "apple-metadata-reader-older" },
+    { ...readerIdentity, version: "apple-metadata-reader-2" },
     {
       operation: "inspect_native_dispatch_metadata",
       reader: "apple-dispatch-metadata",
-      revision: 0,
+      revision: 2,
     },
   );
   wrongReader.binding = {
@@ -1834,6 +1880,395 @@ it("retains a native dispatch workflow snapshot without a deep provider profile"
     provider,
     saved.value,
   );
+});
+
+it.each([false, true])(
+  "does not replay a fresh decompile from a selected snapshot (document supplied: %s)",
+  async (withDocument) => {
+    const fixture = await createSnapshotReplayFixture(
+      "rea-fresh-decompile-snapshot-",
+    );
+    const original = fixture.createProvider({
+      supportedOperations: ["procedure_pseudo_code"],
+    });
+    const provider: AnalysisProvider = {
+      ...original,
+      capabilities: () =>
+        original.capabilities().map((descriptor) => ({
+          ...descriptor,
+          independentDecompile: true as const,
+        })),
+    };
+    const args = {
+      procedure: "fixture",
+      analysis: "independent_fresh",
+      ...(withDocument ? { document: fixture.path } : {}),
+    };
+    const first = await runDirectAnalysis(
+      fixture.dependencies(provider),
+      fixture.path,
+      "procedure_pseudo_code",
+      args,
+      { snapshotPath: fixture.snapshotPath },
+    );
+    const second = await runDirectAnalysis(
+      fixture.dependencies(provider),
+      fixture.path,
+      "procedure_pseudo_code",
+      args,
+      { snapshotPath: fixture.snapshotPath },
+    );
+    expect(first.ok).toBe(true);
+    expect(second.ok).toBe(true);
+    expect(
+      fixture.calls.filter(
+        (operation) => operation === "procedure_pseudo_code",
+      ),
+    ).toHaveLength(2);
+    const saved = await readAnalysisSnapshot(fixture.snapshotPath);
+    if (!saved.ok) throw saved.error;
+    expect(
+      saved.value.entries.some(
+        (entry) => entry.operation === "procedure_pseudo_code",
+      ),
+    ).toBe(false);
+  },
+);
+
+it.each([true, false])(
+  "does not replay an imported fresh decompile (provider declares support: %s)",
+  async (declared) => {
+    const fixture = await createSnapshotReplayFixture(
+      "rea-fresh-imported-snapshot-",
+    );
+    const original = fixture.createProvider({
+      supportedOperations: ["procedure_pseudo_code"],
+    });
+    const provider: AnalysisProvider = {
+      ...original,
+      capabilities: () =>
+        original.capabilities().map((descriptor) => ({
+          ...descriptor,
+          ...(declared ? { independentDecompile: true as const } : {}),
+        })),
+    };
+    const parameters = { procedure: "fixture", document: fixture.path };
+    const dependencies = fixture.dependencies(provider);
+    const first = await runDirectAnalysis(
+      dependencies,
+      fixture.path,
+      "procedure_pseudo_code",
+      parameters,
+      { snapshotPath: fixture.snapshotPath },
+    );
+    if (!first.ok) throw first.error;
+    const saved = await readAnalysisSnapshot(fixture.snapshotPath);
+    if (!saved.ok) throw saved.error;
+    const entry = saved.value.entries.find(
+      (item) => item.operation === "procedure_pseudo_code",
+    );
+    const evidence = saved.value.evidence_bundle.records.find(
+      (item) => item.operation === "procedure_pseudo_code",
+    );
+    if (
+      entry === undefined ||
+      evidence === undefined ||
+      evidence.analysis_profile === null
+    )
+      throw new Error("Missing saved decompile");
+    const freshParameters = { ...parameters, analysis: "independent_fresh" };
+    const historical = createEvidence(
+      {
+        path: fixture.path,
+        sha256: saved.value.target.sha256,
+        format: saved.value.target.format,
+      },
+      evidence.provider,
+      {
+        operation: evidence.operation,
+        parameters: freshParameters,
+        result: evidence.normalized_result,
+        rawResult: evidence.raw_result,
+        analysisProfile: evidence.analysis_profile,
+        confidence: evidence.confidence,
+        limitations: evidence.limitations,
+        locations: evidence.locations,
+      },
+    );
+    const written = await withArtifactResourceScope((resources) =>
+      writeAnalysisSnapshot(
+        {
+          ...saved.value,
+          entries: [
+            {
+              ...entry,
+              parameters: freshParameters,
+              query_id: analysisQueryId(
+                saved.value.target,
+                saved.value.binding,
+                entry.operation,
+                freshParameters,
+              ),
+            },
+          ],
+          evidence_bundle: createEvidenceBundle([historical]),
+        },
+        fixture.snapshotPath,
+        true,
+        resources,
+      ),
+    );
+    if (!written.ok) throw written.error;
+    const fresh = await runDirectAnalysis(
+      dependencies,
+      fixture.path,
+      "procedure_pseudo_code",
+      freshParameters,
+      { snapshotPath: fixture.snapshotPath },
+    );
+    expect(fresh.ok).toBe(declared);
+    if (!fresh.ok)
+      expect(fresh.error, JSON.stringify(fresh.error)).toMatchObject({
+        code: "capability_unavailable",
+      });
+    expect(
+      fixture.calls.filter(
+        (operation) => operation === "procedure_pseudo_code",
+      ),
+    ).toHaveLength(declared ? 2 : 1);
+  },
+);
+
+it("replays source-bearing direct analysis only while snapshot source Evidence is present", async () => {
+  const fixture = await createSnapshotReplayFixture(
+    "rea-direct-source-replay-",
+  );
+  const provider = fixture.createProvider({
+    supportedOperations: ["procedure_pseudo_code"],
+    sourceEvidence: true,
+  });
+  const dependencies = fixture.dependencies(provider);
+  const parameters = { procedure: "0x1000", document: "fixture" };
+  const options = {
+    snapshotPath: fixture.snapshotPath,
+    includeEvidenceSources: true,
+  };
+  const run = () =>
+    runDirectAnalysis(
+      dependencies,
+      fixture.path,
+      "procedure_pseudo_code",
+      parameters,
+      options,
+    );
+  const firstResult = await run();
+  const first = parseEvidence(projectCliAnalysisResult(firstResult));
+  expect(
+    firstResult.sourceEvidence?.map((record) => record.evidence_id),
+  ).toEqual(first.evidence_links);
+  expect(first.evidence_links).toHaveLength(1);
+  const saved = await readAnalysisSnapshot(fixture.snapshotPath);
+  if (!saved.ok) throw saved.error;
+  expect(saved.value.entries).toHaveLength(1);
+  const sourceId = first.evidence_links[0];
+  expect(
+    saved.value.evidence_bundle.records.some(
+      (record) => record.evidence_id === sourceId,
+    ),
+  ).toBe(true);
+  const initialStarts = fixture.starts.length;
+  const replayed = await run();
+  expect(
+    parseEvidence(projectCliAnalysisResult(replayed)).evidence_links,
+  ).toEqual(first.evidence_links);
+  expect(replayed.sourceEvidence?.map((record) => record.evidence_id)).toEqual(
+    first.evidence_links,
+  );
+  const outputPath = join(
+    dirname(fixture.snapshotPath),
+    "replayed-evidence.json",
+  );
+  await publishCliAnalysisEvidence(replayed, {
+    providerId: IDENTITY.id,
+    operation: "procedure_pseudo_code",
+    signal: new AbortController().signal,
+    detail: "complete",
+    evidenceOutput: outputPath,
+  });
+  const published = JSON.parse(await readFile(outputPath, "utf8")) as {
+    records: Evidence[];
+  };
+  expect(published.records.map((record) => record.evidence_id).sort()).toEqual(
+    [first.evidence_id, ...first.evidence_links].sort(),
+  );
+  expect(fixture.starts).toHaveLength(initialStarts);
+
+  const withoutSource = {
+    ...saved.value,
+    evidence_bundle: createEvidenceBundle(
+      saved.value.evidence_bundle.records.filter(
+        (record) => record.evidence_id !== sourceId,
+      ),
+    ),
+  };
+  const written = await withArtifactResourceScope((resources) =>
+    writeAnalysisSnapshot(withoutSource, fixture.snapshotPath, true, resources),
+  );
+  if (!written.ok) throw written.error;
+  const refreshedResult = await run();
+  const refreshed = parseEvidence(projectCliAnalysisResult(refreshedResult));
+  expect(
+    refreshedResult.sourceEvidence?.map((record) => record.evidence_id),
+  ).toEqual(first.evidence_links);
+  expect(fixture.starts).toHaveLength(initialStarts + 1);
+  expect(refreshed.evidence_links).toEqual(first.evidence_links);
+  const repaired = await readAnalysisSnapshot(fixture.snapshotPath);
+  if (!repaired.ok) throw repaired.error;
+  expect(
+    repaired.value.evidence_bundle.records.some(
+      (record) => record.evidence_id === sourceId,
+    ),
+  ).toBe(true);
+});
+
+it("preserves captured sources when a transitive source is missing", async () => {
+  const fixture = await createSnapshotReplayFixture(
+    "rea-direct-partial-source-",
+  );
+  const provider = fixture.createProvider({
+    supportedOperations: ["procedure_pseudo_code"],
+    sourceEvidence: true,
+    sourceMissingLink: true,
+  });
+  const result = await runDirectAnalysis(
+    fixture.dependencies(provider),
+    fixture.path,
+    "procedure_pseudo_code",
+    { procedure: "0x1000", document: "fixture" },
+    { includeEvidenceSources: true },
+  );
+  expect(result.ok).toBe(false);
+  expect(result.sourceEvidence).toHaveLength(1);
+  const outputPath = join(dirname(fixture.snapshotPath), "missing-source.json");
+  const output = await publishCliAnalysisEvidence(result, {
+    providerId: IDENTITY.id,
+    operation: "procedure_pseudo_code",
+    signal: new AbortController().signal,
+    detail: "complete",
+    evidenceOutput: outputPath,
+  });
+  const failure = output as {
+    details: {
+      source_closure: {
+        records: Evidence[];
+        omitted: { evidence_id: string }[];
+        complete: boolean;
+      };
+    };
+  };
+  expect(failure.details.source_closure.complete).toBe(false);
+  expect(
+    failure.details.source_closure.records.map((record) => record.evidence_id),
+  ).toEqual(result.sourceEvidence?.map((record) => record.evidence_id));
+  expect(failure.details.source_closure.omitted).toEqual([
+    { evidence_id: `ev_${"0".repeat(64)}`, reason: "not_captured" },
+  ]);
+  await expect(readFile(outputPath)).rejects.toMatchObject({ code: "ENOENT" });
+});
+
+it("retains completed function sources when cancellation arrives as execution returns", async () => {
+  const fixture = await createSnapshotReplayFixture(
+    "rea-direct-cancel-source-",
+  );
+  const provider = fixture.createProvider({
+    supportedOperations: ["analyze_function"],
+    sourceEvidence: true,
+  });
+  const session = createTestBinarySession(provider);
+  const execute = session.execute.bind(session);
+  const controller = new AbortController();
+  session.execute = async (...args) => {
+    const result = await execute(...args);
+    if (args[0] === "analyze_function") controller.abort();
+    return result;
+  };
+  const dependencies = {
+    ...fixture.dependencies(provider),
+    createBinarySession: () => session,
+  };
+  const result = await runDirectAnalysis(
+    dependencies,
+    fixture.path,
+    "analyze_function",
+    { procedure: "0x1000" },
+    { signal: controller.signal, includeEvidenceSources: true },
+  );
+  expect(result.ok).toBe(false);
+  const outputPath = join(dirname(fixture.snapshotPath), "cancelled.json");
+  const output = await publishCliAnalysisEvidence(result, {
+    providerId: IDENTITY.id,
+    operation: "analyze_function",
+    signal: controller.signal,
+    detail: "complete",
+    evidenceOutput: outputPath,
+  });
+  const failure = output as {
+    code: string;
+    details: {
+      partial_observation: Evidence;
+      source_closure: { records: Evidence[]; complete: boolean };
+    };
+  };
+  expect(failure.code).toBe("cancelled");
+  expect(failure.details.source_closure.complete).toBe(true);
+  expect(
+    failure.details.source_closure.records.map((record) => record.evidence_id),
+  ).toEqual(failure.details.partial_observation.evidence_links);
+  await expect(readFile(outputPath)).rejects.toMatchObject({ code: "ENOENT" });
+});
+
+it("retains function sources when completed parent admission fails", async () => {
+  const fixture = await createSnapshotReplayFixture(
+    "rea-direct-parent-admission-",
+  );
+  const provider = fixture.createProvider({
+    supportedOperations: ["analyze_function"],
+    sourceEvidence: true,
+  });
+  const session = createTestBinarySession(provider);
+  session.importEvidenceBundle = () =>
+    err(new EvidenceIntegrityError("controlled parent admission failure"));
+  const dependencies = {
+    ...fixture.dependencies(provider),
+    createBinarySession: () => session,
+  };
+  const result = await runDirectAnalysis(
+    dependencies,
+    fixture.path,
+    "analyze_function",
+    { procedure: "0x1000" },
+    { includeEvidenceSources: true },
+  );
+  expect(result.ok).toBe(false);
+  const outputPath = join(dirname(fixture.snapshotPath), "refused.json");
+  const output = await publishCliAnalysisEvidence(result, {
+    providerId: IDENTITY.id,
+    operation: "analyze_function",
+    signal: new AbortController().signal,
+    detail: "complete",
+    evidenceOutput: outputPath,
+  });
+  const failure = output as {
+    details: {
+      partial_observation: Evidence;
+      source_closure: { records: Evidence[]; complete: boolean };
+    };
+  };
+  expect(failure.details.source_closure.complete).toBe(true);
+  expect(
+    failure.details.source_closure.records.map((record) => record.evidence_id),
+  ).toEqual(failure.details.partial_observation.evidence_links);
+  await expect(readFile(outputPath)).rejects.toMatchObject({ code: "ENOENT" });
 });
 
 it("runs decompile export against the provider after loading a pseudocode snapshot", async () => {

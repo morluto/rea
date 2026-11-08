@@ -1,3 +1,5 @@
+import { err, ok, type Result } from "./domain/result.js";
+
 /** Global output flags that take a value. */
 export const VALUED_OUTPUT_FLAGS: ReadonlySet<string> = new Set([
   "--format",
@@ -67,6 +69,8 @@ export const splitCliTimingArguments = (
 export interface IncurBuiltinArgumentSplit {
   /** Tokens left for command resolution and command option parsing. */
   readonly command: readonly string[];
+  /** Argument position of each `command` token. */
+  readonly commandIndices: readonly number[];
   /** Valueless global flags extracted by Incur before command dispatch. */
   readonly flags: ReadonlySet<string>;
   /** Positions of nonempty values consumed by valued output flags. */
@@ -85,6 +89,7 @@ export const splitIncurBuiltinArguments = (
   arguments_: readonly string[],
 ): IncurBuiltinArgumentSplit => {
   const command: string[] = [];
+  const commandIndices: number[] = [];
   const flags = new Set<string>();
   const outputValues: { readonly flag: string; readonly index: number }[] = [];
   for (let index = 0; index < arguments_.length; index += 1) {
@@ -104,20 +109,29 @@ export const splitIncurBuiltinArguments = (
       continue;
     }
     command.push(argument);
+    commandIndices.push(index);
   }
   // Incur extracts builtin output values first, then parses globals until `--`.
   // A timing-shaped output value is data; a command option's value is still
   // subject to this global pass before the registration builtin consumes it.
   let globalsEnded = false;
-  const remaining = command.filter((token) => {
+  const remaining: string[] = [];
+  const remainingIndices: number[] = [];
+  command.forEach((token, position) => {
     if (token === "--") globalsEnded = true;
     if (!globalsEnded && cliTimingFlagValue(token) !== undefined) {
       flags.add(token);
-      return false;
+      return;
     }
-    return true;
+    remaining.push(token);
+    remainingIndices.push(commandIndices[position]!);
   });
-  return { command: remaining, flags, outputValues };
+  return {
+    command: remaining,
+    commandIndices: remainingIndices,
+    flags,
+    outputValues,
+  };
 };
 
 /**
@@ -202,7 +216,11 @@ export const expandMcpAddEqualsArguments = (
   arguments_: readonly string[],
 ): string[] =>
   arguments_.flatMap((token) => {
-    if (token.startsWith("--agent=") || token.startsWith("--command=")) {
+    if (
+      token.startsWith("--agent=") ||
+      token.startsWith("--command=") ||
+      token.startsWith("-c=")
+    ) {
       const separator = token.indexOf("=");
       const value = token.slice(separator + 1);
       return value === "" ? [token] : [token.slice(0, separator), value];
@@ -210,26 +228,55 @@ export const expandMcpAddEqualsArguments = (
     return [token];
   });
 
+type McpAddArgumentError =
+  | {
+      readonly kind: "missing_value";
+      readonly flag: string;
+      readonly field: "agent" | "command";
+    }
+  | { readonly kind: "unexpected_argument"; readonly token: string };
+
 /**
- * Agent selection for an `mcp add` command, after equals-form expansion.
- * Single owner: the project-scope guard and the `mcp add` dispatch in
- * `cli.ts` both consume this. Incur consumes command values before agent
- * flags, so a `--command` value is never read as an agent.
+ * Own token consumption for the pinned registration builtin. Agent selection
+ * remains observable even for invalid input so the launcher's scope refusal
+ * and dispatch cannot interpret a command value as an agent selector.
  */
-export const mcpAddAgents = (
+export const readMcpAddArguments = (
   command: IncurBuiltinArgumentSplit["command"],
-): string[] => {
+): {
+  readonly agents: readonly string[];
+  readonly validation: Result<void, McpAddArgumentError>;
+} => {
   const agents: string[] = [];
+  let missing: McpAddArgumentError | undefined;
+  let unexpected: McpAddArgumentError | undefined;
   for (let index = 0; index < command.length; index += 1) {
-    if (
-      (command[index] === "--command" || command[index] === "-c") &&
-      command[index + 1]
-    )
-      index += 1;
-    else if (command[index] === "--agent" && command[index + 1])
-      agents.push(command[++index]!);
+    const token = command[index]!;
+    const flag = token.split("=", 1)[0]!;
+    if (flag === "--agent" || flag === "--command" || flag === "-c") {
+      const equals = token.indexOf("=");
+      const value = equals < 0 ? command[++index] : token.slice(equals + 1);
+      // Spaced flags cannot satisfy another option's missing value. Equals
+      // values retain Incur's existing expansion/discovery behavior.
+      if (
+        value === undefined ||
+        value === "" ||
+        (equals < 0 && value.startsWith("-"))
+      )
+        missing ??= {
+          kind: "missing_value",
+          flag,
+          field: flag === "--agent" ? "agent" : "command",
+        };
+      if (flag === "--agent" && value) agents.push(value);
+    } else if (token !== "--no-global")
+      unexpected ??= { kind: "unexpected_argument", token };
   }
-  return agents;
+  const failure = missing ?? unexpected;
+  return {
+    agents,
+    validation: failure === undefined ? ok(undefined) : err(failure),
+  };
 };
 
 /**
@@ -266,7 +313,10 @@ export const classifyMcpAddDiscovery = (
     flags.has("--help") ||
     flags.has("-h") ||
     flags.has("--llms") ||
-    flags.has("--llms-full")
+    flags.has("--llms-full") ||
+    flags.has("--mcp") ||
+    flags.has("--update") ||
+    flags.has("--incur-update-check")
   )
     return "bypass";
   if (flags.has("--version")) return "version";
@@ -284,7 +334,7 @@ export const isProjectScopedAmpRegistration = (
   if (classifyMcpAddDiscovery(flags) !== undefined) return false;
   const rest = command.slice(2);
   if (!rest.includes("--no-global")) return false;
-  const agents = mcpAddAgents(rest);
+  const { agents } = readMcpAddArguments(rest);
   return agents.length === 0 || agents.includes("amp");
 };
 

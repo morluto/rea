@@ -9,6 +9,7 @@ import {
 } from "./binaryTargetTypes.js";
 import {
   createEvidence,
+  evidenceEnvelopeForAdmission,
   evidenceSchema,
   parseEvidence,
   immutableEvidence,
@@ -320,6 +321,45 @@ it("retains verbatim caller input without changing semantic identity or copying 
       .success,
   ).toBe(false);
   expect(() => withEvidenceCallerInputPath(second, "invalid\0path")).toThrow();
+});
+
+it("retains named auxiliary path choices without changing identity, history or shared payloads", () => {
+  const original = immutableEvidence(
+    createEvidence(TARGET, PROVIDER, {
+      operation: "inspect",
+      parameters: {},
+      result: { rows: ["source facts"] },
+    }),
+  );
+  const paths = { operations_path: "./queries 雪.graphql" };
+  const rebound = withEvidenceCallerInputPath(
+    original,
+    "./schema.graphql",
+    paths,
+  );
+  paths.operations_path = "later unrelated choice";
+  expect(rebound.caller_input_paths).toEqual({
+    operations_path: "./queries 雪.graphql",
+  });
+  expect(original.caller_input_paths).toBeUndefined();
+  expect(rebound.evidence_id).toBe(original.evidence_id);
+  expect(rebound.normalized_result).toBe(original.normalized_result);
+  expect(Object.isFrozen(rebound.caller_input_paths)).toBe(true);
+  expect(parseEvidence(JSON.parse(JSON.stringify(rebound)))).toEqual(rebound);
+  expect(
+    withEvidenceCallerInputPath(rebound, "./schema.graphql", {
+      operations_path: "./queries 雪.graphql",
+    }),
+  ).toBe(rebound);
+  expect(
+    evidenceSchema.safeParse({ ...original, caller_input_paths: undefined })
+      .success,
+  ).toBe(false);
+  expect(() =>
+    withEvidenceCallerInputPath(original, "./schema.graphql", {
+      operations_path: "invalid\0path",
+    }),
+  ).toThrow();
 });
 
 it.each(["caller selection", "subject display"])(
@@ -641,7 +681,7 @@ it("binds an explicit unknown-subject reason into the semantic Evidence identity
   expect(explicit.subject).toBeNull();
   expect(explicit.limitations).toEqual([reason]);
   expect(defaulted.limitations).toEqual([
-    "Artifact identity is unavailable for this observation.",
+    expect.stringMatching(/artifact identity.*unavailable/iu),
   ]);
   expect(explicit.evidence_id).not.toBe(defaulted.evidence_id);
   expect(parseEvidence(explicit)).toEqual(explicit);
@@ -855,4 +895,21 @@ it("diagnoses a previous explicit-null coverage commitment without admitting or 
     result: { observed: true },
   });
   expect(parseEvidence(current)).toEqual(current);
+});
+
+it("borrows variable-size collections for admission", () => {
+  const limitations = ["one", "two"];
+  const locations: never[] = [];
+  const evidenceLinks = ["ev_" + "a".repeat(64)];
+  const envelope = evidenceEnvelopeForAdmission(TARGET, PROVIDER, {
+    operation: "borrow",
+    parameters: {},
+    result: {},
+    limitations,
+    locations,
+    evidenceLinks,
+  });
+  expect(envelope.limitations).toBe(limitations);
+  expect(envelope.locations).toBe(locations);
+  expect(envelope.evidence_links).toBe(evidenceLinks);
 });
