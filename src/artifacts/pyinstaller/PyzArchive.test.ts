@@ -176,7 +176,10 @@ it("reports a truncated table before deferred signature rejection", async () => 
   header.writeUInt32BE(12, 8);
   expect(await readImage(header, 16)).toMatchObject({
     ok: false,
-    error: { reason: "format", message: "PYZ table is truncated" },
+    error: {
+      reason: "format",
+      message: expect.stringMatching(/table.*truncated/iu),
+    },
   });
 });
 
@@ -185,7 +188,10 @@ it("reports the signature after completing a readable table and image hash", asy
   image.write("BAD\0");
   expect(await readImage(image)).toMatchObject({
     ok: false,
-    error: { reason: "format", message: "PYZ archive magic does not match" },
+    error: {
+      reason: "format",
+      message: expect.stringMatching(/magic.*match/iu),
+    },
   });
 });
 

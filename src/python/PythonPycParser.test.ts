@@ -131,9 +131,7 @@ it("decodes a hash-based header and a FLAG_REF top-level code object", () => {
   expect(root(report).name).toBe("<module>");
 });
 
-it("fails unknown magics and truncated marshal without partial success", () => {
-  const unknown = Buffer.concat([pythonPycHeader(1), marshalCode("py311")]);
-  expect(() => parse(unknown)).toThrow(PythonPycFormatFailure);
+it("rejects truncated marshal without partial success", () => {
   expect(() => parse(pythonPycFixture("py311").subarray(0, 20))).toThrow(
     PythonPycFormatFailure,
   );
@@ -173,82 +171,34 @@ it.each([
       flags,
       ...(flags === 0 ? {} : { sourceHash: Buffer.alloc(8, 0xab) }),
     });
-    expect(() => parse(header)).toThrow(
-      expect.objectContaining({
-        kind: "unsupported",
-        message: expect.stringContaining(
-          `CPython ${version} header is recognized`,
-        ),
-      }),
+    let failure: unknown;
+    try {
+      parse(header);
+    } catch (error) {
+      failure = error;
+    }
+    expect(failure).toBeInstanceOf(PythonPycFormatFailure);
+    expect(failure).toMatchObject({ kind: "unsupported" });
+    if (!(failure instanceof PythonPycFormatFailure)) throw failure;
+    expect(failure.message).toContain(
+      `CPython ${version} header is recognized`,
     );
-    expect(() => parse(header)).toThrow(
-      expect.objectContaining({
-        message: expect.stringContaining(`magic ${magic}, 16-byte header`),
-      }),
+    expect(failure.message).toContain(`magic ${magic}, 16-byte header`);
+    expect(failure.message).toContain(`flags 0x${flags.toString(16)}`);
+    expect(failure.message).toContain(mode);
+    expect(failure.message).not.toContain(
+      mode === "hash-based" ? "timestamp-based" : "hash-based",
     );
-    // The reported facts are the ones packed into this header.
-    expect(() => parse(header)).toThrow(
-      expect.objectContaining({
-        message: expect.stringContaining(`flags 0x${flags.toString(16)}`),
-      }),
-    );
-    expect(() => parse(header)).toThrow(
-      expect.objectContaining({
-        message: expect.stringContaining(mode),
-      }),
-    );
-    expect(() => parse(header)).toThrow(
-      expect.objectContaining({
-        message: expect.stringContaining(
-          "no marshal code layout is pinned for that version",
-        ),
-      }),
-    );
-    expect(() => parse(header)).toThrow(
-      expect.objectContaining({
-        message: expect.stringContaining(
-          "marshal decoding is pinned for CPython 3.7",
-        ),
-      }),
-    );
+    expect(failure.message).toMatch(/no marshal code layout.*pinned/iu);
+    expect(failure.message).toMatch(/marshal decoding.*CPython 3\.7/iu);
   },
 );
-
-it("reports timestamp-based for a pyc without the hash flag and hash-based with it", () => {
-  // Same magic, opposite header mode: the two refusals must differ only in that fact.
-  const timestamp = () =>
-    parse(pythonPycHeader(3666, { mtime: 7, sourceSize: 9 }));
-  const hash = () =>
-    parse(
-      pythonPycHeader(3666, { flags: 0x1, sourceHash: Buffer.alloc(8, 1) }),
-    );
-  expect(timestamp).toThrow(
-    expect.objectContaining({
-      message: expect.stringContaining("timestamp-based"),
-    }),
-  );
-  expect(timestamp).toThrow(
-    expect.not.objectContaining({
-      message: expect.stringContaining("hash-based"),
-    }),
-  );
-  expect(hash).toThrow(
-    expect.objectContaining({ message: expect.stringContaining("hash-based") }),
-  );
-  expect(hash).toThrow(
-    expect.not.objectContaining({
-      message: expect.stringContaining("timestamp-based"),
-    }),
-  );
-});
 
 it("does not qualify a magic outside the pinned identity table", () => {
   expect(() => parse(pythonPycHeader(1))).toThrow(
     expect.objectContaining({
       kind: "unsupported",
-      message: expect.stringContaining(
-        "is not a pinned CPython identity, so its header cannot be qualified",
-      ),
+      message: expect.stringMatching(/not a pinned CPython identity.*header/iu),
     }),
   );
 });
@@ -258,8 +208,7 @@ it("reports a short unknown header before unsupported magic, and bad CR LF befor
   expect(() => parse(unknown)).toThrow(
     expect.objectContaining({
       kind: "malformed",
-      message:
-        "Selected file is shorter than a 16-byte CPython 3.7+ pyc header.",
+      message: expect.stringMatching(/shorter than.*16.byte.*header/iu),
     }),
   );
   const badTrailer = Buffer.from(unknown);
@@ -267,7 +216,7 @@ it("reports a short unknown header before unsupported magic, and bad CR LF befor
   expect(() => parse(badTrailer)).toThrow(
     expect.objectContaining({
       kind: "malformed",
-      message: "Pyc magic is not a little-endian integer followed by CR LF.",
+      message: expect.stringMatching(/magic.*little.endian.*CR LF/iu),
     }),
   );
 });

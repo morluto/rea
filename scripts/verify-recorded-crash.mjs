@@ -28,7 +28,7 @@ for (const key of [
 ])
   if (!isAbsolute(environment[key] ?? ""))
     throw new Error(
-      `verify:recorded:crash requires absolute ${key}; see docs/recorded-crashes.md. No dependencies are installed by this verifier.`,
+      `verify:recorded:crash requires absolute ${key}; see docs/guides/native/recorded-crashes.md. No dependencies are installed by this verifier.`,
     );
 if (process.platform !== "linux" || process.arch !== "x64")
   throw new Error("verify:recorded:crash requires Linux x64.");

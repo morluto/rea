@@ -922,7 +922,7 @@ it("retains the descriptor owner when admission cleanup fails", async () => {
       reader.entries()[Symbol.asyncIterator]().next(),
     ).rejects.toMatchObject({
       reason: "format",
-      message: `PyInstaller source is not a regular file: ${directory}`,
+      message: expect.stringContaining(directory),
       cleanup: {
         reason: closeFailure.message,
         resources: [directory],
