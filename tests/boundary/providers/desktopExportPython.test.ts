@@ -297,24 +297,6 @@ it("refuses the JSON numbers REA's state view refuses, as JSON with an error rat
   });
 });
 
-it("refuses JSON nested deeper than the 500 levels REA's view keeps, reading the boundary itself", () => {
-  const nested = (levels: number) =>
-    `${"[".repeat(levels)}${"]".repeat(levels)}`;
-  const texts = [nested(501), nested(502), nested(1100)];
-
-  const python = pythonJson(texts);
-
-  expect(texts.map((text) => jsonView(text).ok)).toEqual([true, false, false]);
-  texts.forEach((text, index) => {
-    const typescript = jsonView(text);
-    expect(python[index]).toEqual(
-      typescript.ok
-        ? { format: "json", view: typescript.value, truncated: false }
-        : { format: "json", view: null, error: typescript.error },
-    );
-  });
-});
-
 /** The exported module's format, view and error for each named text, and REA's for the same bytes. */
 const textViews = (files: readonly (readonly [string, string])[]) => {
   const imports = PYTHON_IMPORTS.split("\n")

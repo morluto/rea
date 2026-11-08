@@ -27,7 +27,7 @@ const MIN_RETRY_MS = 5 * 60_000;
 for (const key of ["REA_AGENT_ENV_COMMAND", "REA_DOCKER_COMMAND"])
   if (!isAbsolute(process.env[key] ?? ""))
     throw new Error(
-      `verify:agentenv:environment requires absolute ${key}; see docs/testing.md. No dependencies are installed by this verifier.`,
+      `verify:agentenv:environment requires absolute ${key}; see docs/development/testing.md. No dependencies are installed by this verifier.`,
     );
 const agentEnv = process.env.REA_AGENT_ENV_COMMAND;
 const docker = process.env.REA_DOCKER_COMMAND;

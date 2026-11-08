@@ -20,6 +20,31 @@ const reasonOf = ({ opens }: ReturnType<typeof openSeedDocument>): string => {
   return opens.reason;
 };
 
+it("keeps a captured file URL without appending the same document", () => {
+  const url = `file://${HOME}/Documents/poster%20one.svg?mode=edit#page`;
+  const argv = ["inkscape", url];
+  expect(
+    openSeedDocument(argv, {
+      ...AT_HOME,
+      exec: "inkscape %U",
+      documents: ["Documents/poster one.svg"],
+    }),
+  ).toEqual({ argv, opens: { kind: "captured" } });
+});
+
+it("recognizes a captured relative filename containing a colon", () => {
+  const argv = ["app", "Budget:2026.svg"];
+  expect(
+    openSeedDocument(argv, {
+      ...AT_HOME,
+      workingDirectory: `${HOME}/Documents`,
+      exec: "app %U",
+      documents: ["Documents/Budget:2026.svg"],
+      isDocument: (path) => path === "Documents/Budget:2026.svg",
+    }),
+  ).toEqual({ argv, opens: { kind: "captured" } });
+});
+
 describe("openSeedDocument", () => {
   it("appends the seed's one document when Exec takes files, respelled under $HOME by the launch", () => {
     const opened = openSeedDocument(["inkscape"], {
@@ -159,6 +184,49 @@ describe("openSeedDocument", () => {
       opens: { kind: "seed", document: "Documents/poster.svg" },
     });
   });
+});
+
+it("matches file URLs without changing their spelling and keeps URLs when a link is retargeted", () => {
+  const url = `file://${HOME}/Documents/poster.svg`;
+  expect(
+    openSeedDocument(["inkscape", url], {
+      ...AT_HOME,
+      exec: "inkscape %U",
+      documents: poster,
+    }),
+  ).toEqual({ argv: ["inkscape", url], opens: { kind: "captured" } });
+  expect(
+    openSeedDocument(
+      ["inkscape", `file://${HOME}/storage/poster%20one.svg?mode=edit#page`],
+      {
+        ...AT_HOME,
+        exec: "inkscape %U",
+        documents: ["Documents/poster one.svg"],
+        isDocument: (path) => path === "Documents/poster one.svg",
+        spell: (path) =>
+          path === "storage/poster one.svg" ? "Documents/poster one.svg" : path,
+      },
+    ),
+  ).toEqual({
+    argv: [
+      "inkscape",
+      `file://${HOME}/Documents/poster%20one.svg?mode=edit#page`,
+    ],
+    opens: { kind: "captured" },
+  });
+});
+
+it("recognizes a captured relative filename containing a colon", () => {
+  const argv = ["app", "Budget:2026.svg"];
+  expect(
+    openSeedDocument(argv, {
+      ...AT_HOME,
+      workingDirectory: `${HOME}/Documents`,
+      exec: "app %U",
+      documents: ["Documents/Budget:2026.svg"],
+      isDocument: (path) => path === "Documents/Budget:2026.svg",
+    }),
+  ).toEqual({ argv, opens: { kind: "captured" } });
 });
 
 describe("openSeedDocument settings spelling", () => {

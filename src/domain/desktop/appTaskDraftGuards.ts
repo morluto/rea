@@ -1,7 +1,12 @@
 import type { JsonValue } from "../jsonValue.js";
 import type { DesktopTaskCheckInput } from "./appTask.js";
 import { elementText, isXmlElement, sameJson } from "./appTaskChecks.js";
-import { isRenumberedKey, isStamp } from "./appTaskDraftNoise.js";
+import {
+  holdsSplitDate,
+  isRenumberedKey,
+  isStamp,
+} from "./appTaskDraftNoise.js";
+import { holdsNoisyText } from "./appTaskDraftText.js";
 import { decimalOf, valueEqualsCheck } from "./appTaskDraftScalars.js";
 import { isIdentifyingAttribute, rankAttributes } from "./attributeRank.js";
 import { escapeToken, pairMembers, resolvePointer } from "./viewPointer.js";
@@ -69,6 +74,10 @@ const guardAt = (
       value.trim() === "" ||
       value !== elementText(after) ||
       value.length > context.chars ||
+      holdsNoisyText(before) ||
+      holdsNoisyText(after) ||
+      holdsSplitDate(ends.baseline, pointer) ||
+      holdsSplitDate(ends.final, pointer) ||
       isStamp(value)
     )
       return undefined;
@@ -82,6 +91,10 @@ const guardAt = (
     return value.trim() !== "" &&
       value === elementText(after) &&
       value.length <= context.chars &&
+      !holdsNoisyText(before) &&
+      !holdsNoisyText(after) &&
+      !holdsSplitDate(ends.baseline, pointer) &&
+      !holdsSplitDate(ends.final, pointer) &&
       !isStamp(value)
       ? { kind: "text_equals", file, pointer, value }
       : undefined;

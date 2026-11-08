@@ -68,6 +68,12 @@ describe("compact Ghidra reference MCP evidence", () => {
       inspect_native_instruction: {
         ...compactInstruction(),
         status: "data",
+        containing_data: {
+          address: "0x401000",
+          length: 4,
+          type_id: "/dword",
+          provenance: "ghidra-listing",
+        },
         incoming_references: [],
       },
       resolve_native_call_targets: compactCallTargets(),

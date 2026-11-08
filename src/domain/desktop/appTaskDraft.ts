@@ -185,6 +185,8 @@ const plainValues = (
     ends: versions(baseline, final),
     listed: () => true,
     noise: () => undefined,
+    format: () => "json",
+    referenceRoots: () => [],
   });
 
 /**

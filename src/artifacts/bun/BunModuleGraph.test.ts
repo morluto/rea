@@ -3,13 +3,13 @@ import { join } from "node:path";
 import { expect, it, vi } from "vitest";
 import { createTestTempDirectory } from "../../../tests/fixtures/temporaryDirectory.js";
 import {
-  locateBunStandaloneGraph,
   probeBunStandaloneGraph,
   bunModuleCountLimit,
   BUN_GRAPH_SUFFIX_BYTES,
 } from "./BunModuleGraphLayout.js";
 import { decodeBunModuleGraph } from "./BunModuleGraphMembers.js";
 import {
+  locateBunGraphFixture,
   bunModuleGraphPayload,
   bunPrefixedPayload,
   machoBunSection,
@@ -25,7 +25,7 @@ async function locate(bytes: Buffer) {
   await writeFile(path, bytes);
   const handle = await open(path, "r");
   try {
-    const result = await locateBunStandaloneGraph(handle, bytes.length);
+    const result = await locateBunGraphFixture(handle, bytes.length);
     if (result.status === "present" && result.graph !== undefined) {
       const graph = result.graph;
       return {
