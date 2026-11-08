@@ -2,7 +2,6 @@ import { ProviderCleanupError } from "../../../src/domain/providerCleanupError.j
 import { createEvidence } from "../../../src/domain/evidence.js";
 import { ProcessCaptureResourceScope } from "../../../src/process/capture/ProcessCaptureLifecycle.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
-import { advertisedMcpToolSchemas } from "../../fixtures/advertisedMcpTool.js";
 import { mkdir, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
@@ -862,30 +861,21 @@ describe("MCP dsym_path companion lifecycle", () => {
       join(validBundle, "Contents", "Resources", "DWARF", "pair"),
       thinMacho(),
     );
-    const openSchemas = await advertisedMcpToolSchemas(mcp, "open_binary");
-    const sessionSchemas = await advertisedMcpToolSchemas(
-      mcp,
-      "binary_session",
-      openSchemas.ajv,
-    );
     const trailingDsym = `${validBundle}/`;
     const opened = await mcp.callTool({
       name: "open_binary",
       arguments: { path: targetPath, dsym_path: trailingDsym },
     });
     expect(opened.isError, JSON.stringify(opened.content)).not.toBe(true);
-    expect(
-      openSchemas.ajv.validate(
-        openSchemas.outputSchema,
-        opened.structuredContent,
-      ),
-    ).toBe(true);
+    const parsedOpened = toolContract("open_binary").outputSchema.parse(
+      opened.structuredContent,
+    );
     const expectedCompanion = {
       source_path: trailingDsym,
       uuid: "11111111-2222-3333-4444-555555555555",
       member_sha256: expect.stringMatching(/^[a-f0-9]{64}$/u),
     };
-    expect(structured(opened).result).toMatchObject({
+    expect(parsedOpened.result).toMatchObject({
       format: "mach-o",
       debug_companion: expectedCompanion,
     });
@@ -895,13 +885,10 @@ describe("MCP dsym_path companion lifecycle", () => {
       arguments: {},
     });
     expect(sessionState.isError).not.toBe(true);
-    expect(
-      sessionSchemas.ajv.validate(
-        sessionSchemas.outputSchema,
-        sessionState.structuredContent,
-      ),
-    ).toBe(true);
-    expect(structured(sessionState).result).toMatchObject({
+    const parsedSession = toolContract("binary_session").outputSchema.parse(
+      sessionState.structuredContent,
+    );
+    expect(parsedSession.result).toMatchObject({
       open: true,
       format: "mach-o",
       debug_companion: expectedCompanion,
@@ -913,6 +900,7 @@ describe("MCP dsym_path companion lifecycle", () => {
       arguments: { snapshot_path: snapshotPath },
     });
     expect(closed.isError, JSON.stringify(closed.content)).not.toBe(true);
+    toolContract("close_binary").outputSchema.parse(closed.structuredContent);
     const persisted = parseAnalysisSnapshot(
       JSON.parse(await readFile(snapshotPath, "utf8")),
     );
