@@ -72,6 +72,7 @@ const sharedAnalysisSemantics = {
   instruction_flow_evidence: "decoded-return-pcode-v1",
   instruction_status: "unlisted-and-containing-code-data-v3",
   instruction_references: "exact-address-incoming-without-synthetic-entry-v3",
+  byte_search_coverage: "separate-loaded-overlays-v1",
   function_boundary_observations: "ghidra-function-boundary-limitations-v4",
 } as const;
 
@@ -487,6 +488,7 @@ export const existingGhidraAnalysisProfile = (
     ...(mipsElf === undefined ? {} : { mips_elf: mipsElf }),
     import_mode: "existing-project-private-copy-v1",
     ...sharedAnalysisSemantics,
+    selected_project_relationship_coverage: "prior-analysis-unknown-v1",
     annotation_policy: "read-only-existing-project-v1",
     existing_project: project,
     original_analysis: { completeness: "unknown", settings: "unknown" },
