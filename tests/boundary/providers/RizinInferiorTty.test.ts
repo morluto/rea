@@ -569,7 +569,6 @@ process.stdin.on("data", (chunk) => {
   manager = new RizinDebugSessionManager(
     {
       ...process.env,
-      REA_RIZIN_COMMAND: provider,
       ...(options.maxCommandOutputBytes === undefined
         ? {}
         : {
@@ -577,6 +576,7 @@ process.stdin.on("data", (chunk) => {
               options.maxCommandOutputBytes,
             ),
           }),
+      REA_RIZIN_COMMAND: provider,
     },
     {
       spawnProcess: async (spawnOptions) => {
