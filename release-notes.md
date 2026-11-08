@@ -1047,6 +1047,7 @@
 * **test:** bind deferred runtime calls to advertised schemas ([#8622](https://github.com/morluto/rea/issues/8622)) ([8250bf2](https://github.com/morluto/rea/commit/8250bf2320ea57aab4e664db4b4d44b8abd2004e))
 * **tests:** reuse bounded CLI workers for native matching errors ([#9163](https://github.com/morluto/rea/issues/9163)) ([98c589e](https://github.com/morluto/rea/commit/98c589e42019b4cc2c3c6aee1f6d2031e2de2441))
 * **tests:** reuse bounded CLI workers in mobile archive checks ([#9116](https://github.com/morluto/rea/issues/9116)) ([afc9cfe](https://github.com/morluto/rea/commit/afc9cfe9ff63c5ccef2d0a6f6c71d1d26281d431))
+* **tests:** reuse CLI sessions in Electron call-path regressions ([#9335](https://github.com/morluto/rea/issues/9335)) ([72d5e72](https://github.com/morluto/rea/commit/72d5e72e6d7b7997c4ecb11972fc405be8ec67d2))
 
 
 ### Code Refactoring
