@@ -895,17 +895,24 @@ export const parseElfDependencies = (
       );
     },
   );
-  const classEntrySize = bits === 64 ? 24 : 16;
-  const declaredEntrySize = syment ?? (dynsymSection?.entrySize || undefined);
-  const symbolEntrySize =
-    declaredEntrySize === undefined || declaredEntrySize === 0
-      ? classEntrySize
-      : declaredEntrySize;
-  if (syment !== undefined && syment !== classEntrySize)
+  // Elf32_Sym and Elf64_Sym have fixed widths, so a DT_SYMENT or .dynsym
+  // sh_entsize that disagrees is reported and never used to stride the table.
+  const symbolEntrySize = bits === 64 ? 24 : 16;
+  if (syment !== undefined && syment !== symbolEntrySize)
     issues.push({
       code: "malformed_entry",
       location: hex(dynamic.offset),
       message: "DT_SYMENT does not match the ELF class symbol size",
+    });
+  if (
+    dynsymSection !== undefined &&
+    dynsymSection.entrySize !== 0 &&
+    dynsymSection.entrySize !== symbolEntrySize
+  )
+    issues.push({
+      code: "malformed_entry",
+      location: hex(dynsymSection.offset),
+      message: ".dynsym sh_entsize does not match the ELF class symbol size",
     });
   const symbolCount = locateSymbolCount(
     reader,

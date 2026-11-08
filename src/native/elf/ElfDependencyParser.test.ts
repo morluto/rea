@@ -642,6 +642,32 @@ it.each([32, 64] as const)(
   },
 );
 
+it.each([32, 64] as const)(
+  "strides ELF%i symbols by the class width when .dynsym sh_entsize disagrees",
+  (bits) => {
+    // No DT_SYMENT, and a section entry size twice the class width: reading
+    // with the declared width would skip every other symbol and pair the rest
+    // with the wrong version slots.
+    const report = parse(
+      elfDependencyFixture({
+        bits,
+        omitSymentTag: true,
+        sectionEntrySizes: { ".dynsym": bits === 64 ? 48 : 32 },
+      }),
+    );
+    expect(report.coverage.status).toBe("partial");
+    expect(report.imports).toEqual(
+      parse(elfDependencyFixture({ bits })).imports,
+    );
+    expect(report.issues).toContainEqual(
+      expect.objectContaining({
+        code: "malformed_entry",
+        message: ".dynsym sh_entsize does not match the ELF class symbol size",
+      }),
+    );
+  },
+);
+
 /** The file offset of the little-endian fixture's SHT_GNU_VERSYM section. */
 const versymOffset = (bytes: Buffer, bits: 32 | 64): number => {
   const wide = bits === 64;

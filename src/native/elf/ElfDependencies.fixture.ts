@@ -114,6 +114,10 @@ export interface ElfDependencyFixtureOptions {
   readonly omitHashTag?: boolean;
   /** Overrides the size these section headers declare, by section name. */
   readonly sectionSizes?: Readonly<Record<string, number>>;
+  /** Overrides the entry size these section headers declare, by section name. */
+  readonly sectionEntrySizes?: Readonly<Record<string, number>>;
+  /** Leaves DT_SYMENT out of the dynamic table. */
+  readonly omitSymentTag?: boolean;
 }
 
 const defaultNeeded = (): string[] => [
@@ -397,6 +401,8 @@ interface FixtureConfig {
   readonly displacedSection: string | undefined;
   readonly omitHashTag: boolean;
   readonly sectionSizes: Readonly<Record<string, number>>;
+  readonly sectionEntrySizes: Readonly<Record<string, number>>;
+  readonly omitSymentTag: boolean;
 }
 
 interface DependencyTables {
@@ -490,6 +496,8 @@ const fixtureConfig = (options: ElfDependencyFixtureOptions): FixtureConfig => {
     displacedSection: options.displacedSection,
     omitHashTag: options.omitHashTag === true,
     sectionSizes: options.sectionSizes ?? {},
+    sectionEntrySizes: options.sectionEntrySizes ?? {},
+    omitSymentTag: options.omitSymentTag === true,
   };
 };
 
@@ -629,7 +637,7 @@ const buildDynamicTags = (
   addTag(5, offsets.dynstrOff);
   addTag(6, offsets.dynsymOff);
   addTag(10, tables.dynstrBytes.length);
-  addTag(11, bits === 64 ? 24 : 16);
+  if (!config.omitSymentTag) addTag(11, bits === 64 ? 24 : 16);
   addTag(0x6ffffff0, offsets.versymOff);
   if (tables.verneedBytes.length !== 0) {
     addTag(0x6ffffffe, offsets.verneedOff);
@@ -932,7 +940,7 @@ const writeDependencySections = (
         : (config.sectionSizes[row[0]] ?? row[5]),
       row[6],
       row[7],
-      row[8],
+      config.sectionEntrySizes[row[0]] ?? row[8],
     );
   });
 };
