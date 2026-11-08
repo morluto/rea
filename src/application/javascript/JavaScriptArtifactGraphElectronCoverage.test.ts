@@ -232,61 +232,6 @@ describe("Electron semantic coverage", () => {
     expect(limitations).toContain(EMPTY_COVERAGE);
   });
 
-  it("reports partial coverage when an Electron source was dropped for the result budget", async () => {
-    // #9321: IPC handlers from an admitted source were reported while the
-    // window source's projection was rejected, so zero windows is unknown.
-    const reported = await analyzedEntry(
-      `const electron = require("electron");\nelectron.ipcMain.handle("ping", () => "pong");\n`,
-      "out/main/ipc.cjs",
-    );
-    const window = await analyzedEntry(
-      `const electron = require("electron");\nnew electron.BrowserWindow({ webPreferences: { contextIsolation: true } });\n`,
-      "out/main/window.cjs",
-    );
-    expect(window.javascript?.electron.browser_windows).toHaveLength(1);
-    const complete = graphForEntries([reported, window]);
-    expect(complete.electronSemantics).toBe("recovered");
-    expect(complete.browserWindows).toBe(1);
-
-    const notStarted = new AnalysisResourceConstraintError(
-      "analyze_javascript_application",
-      "memory",
-      "semantic analysis of out/main/window.cjs was not started",
-      { semantic_result_budget_bytes: 0 },
-    );
-    const dropped: AnalyzedJavaScriptArtifactFile[] = [
-      {
-        ...window,
-        application_projection_failure: {
-          reason: "result budget exhausted",
-          error: projectAnalysisError(notStarted),
-          limits: null,
-        },
-      },
-      {
-        ...window,
-        semantic: null,
-        analysis_failure: {
-          scope: javascriptArtifactAnalysisScopes.javascript,
-          status: "interrupted",
-          reason: `out/main/window.cjs: ${notStarted.message}`,
-          error: projectAnalysisError(notStarted),
-          limits: notStarted.reportedLimits,
-        },
-      },
-    ];
-    for (const entry of dropped) {
-      const partial = graphForEntries([reported, entry]);
-      expect(partial.electronSemantics).toBe("partial");
-      expect(partial.limitations).not.toContain(EMPTY_COVERAGE);
-      expect(partial.limitations).toContainEqual(
-        expect.stringContaining(
-          "Electron boundary facts are partial: 1 Electron-loading source(s)",
-        ),
-      );
-    }
-  });
-
   it("counts a retained static reference when semantic analysis was skipped", async () => {
     // Semantic analysis can be skipped for a budget, which leaves the module
     // links absent while the static reference is still retained.
@@ -411,4 +356,92 @@ it("classifies a bundle module by its loader, not by its name", async () => {
     "main.cjs",
   );
   expect(externalUnderKey.electronSemantics).toBe("recovered");
+});
+
+it("reports partial coverage when an Electron source was dropped for the result budget", async () => {
+  // #9321: IPC handlers from an admitted source were reported while the
+  // window source's projection was rejected, so zero windows is unknown.
+  const reported = await analyzedEntry(
+    `const electron = require("electron");\nelectron.ipcMain.handle("ping", () => "pong");\n`,
+    "out/main/ipc.cjs",
+  );
+  const window = await analyzedEntry(
+    `const electron = require("electron");\nnew electron.BrowserWindow({ webPreferences: { contextIsolation: true } });\n`,
+    "out/main/window.cjs",
+  );
+  expect(window.javascript?.electron.browser_windows).toHaveLength(1);
+  const complete = graphForEntries([reported, window]);
+  expect(complete.electronSemantics).toBe("recovered");
+  expect(complete.browserWindows).toBe(1);
+
+  const notStarted = new AnalysisResourceConstraintError(
+    "analyze_javascript_application",
+    "memory",
+    "semantic analysis of out/main/window.cjs was not started",
+    { semantic_result_budget_bytes: 0 },
+  );
+  const dropped: AnalyzedJavaScriptArtifactFile[] = [
+    {
+      ...window,
+      application_projection_failure: {
+        reason: "result budget exhausted",
+        error: projectAnalysisError(notStarted),
+        limits: null,
+      },
+    },
+    {
+      ...window,
+      semantic: null,
+      analysis_failure: {
+        scope: javascriptArtifactAnalysisScopes.javascript,
+        status: "interrupted",
+        reason: `out/main/window.cjs: ${notStarted.message}`,
+        error: projectAnalysisError(notStarted),
+        limits: notStarted.reportedLimits,
+      },
+    },
+  ];
+  for (const entry of dropped) {
+    const partial = graphForEntries([reported, entry]);
+    expect(partial.electronSemantics).toBe("partial");
+    expect(partial.limitations).not.toContain(EMPTY_COVERAGE);
+    expect(partial.limitations).toContainEqual(
+      expect.stringContaining(
+        "Electron boundary facts are partial: 1 Electron-loading source(s)",
+      ),
+    );
+  }
+});
+
+it("reports partial coverage when a successful static pass stopped at a limit", async () => {
+  // The wrapper expansion budget ends Electron call-path discovery without
+  // failing the worker, so no failure field marks the source as incomplete.
+  const { electronSemantics, limitations } = await graphFor(
+    `const electron = require("electron");\nelectron.ipcMain.handle("ping", () => "pong");\n`,
+    (entry) => {
+      const javascript = entry.javascript!;
+      const coverage = javascript.analysis_coverage!;
+      return {
+        ...entry,
+        javascript: {
+          ...javascript,
+          analysis_coverage: {
+            ...coverage,
+            examination: {
+              ...coverage.examination,
+              status: "limited",
+              electron_call_paths_limited: true,
+            },
+          },
+        },
+      };
+    },
+    "main.cjs",
+  );
+  expect(electronSemantics).toBe("partial");
+  expect(limitations).toContainEqual(
+    expect.stringContaining(
+      "Electron boundary facts are partial: 1 Electron-loading source(s)",
+    ),
+  );
 });

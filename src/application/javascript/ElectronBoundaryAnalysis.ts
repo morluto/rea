@@ -231,9 +231,21 @@ export const hasCandidateElectronFindings = (
   );
 
 /**
- * Electron-loading sources whose boundary facts are missing from the report:
- * their analysis was interrupted or not started, or their application
- * projection was rejected for the result budget.
+ * A completed static pass can still stop early, for example at the Electron
+ * wrapper expansion budget. The examination status owns that verdict.
+ */
+const electronExaminationLimited = ({
+  javascript,
+}: AnalyzedJavaScriptArtifactFile): boolean => {
+  const status = javascript?.analysis_coverage?.examination.status;
+  return status !== undefined && status !== "complete";
+};
+
+/**
+ * Electron-loading sources whose boundary facts may be missing from the
+ * report: their analysis was interrupted or not started, their application
+ * projection was rejected for the result budget, or their static examination
+ * stopped at a resource limit.
  */
 export const electronIncompleteSourceCount = (
   analysis: JavaScriptArtifactAnalysis,
@@ -241,7 +253,8 @@ export const electronIncompleteSourceCount = (
   analysis.files.filter(
     (file) =>
       (file.analysis_failure !== undefined ||
-        file.application_projection_failure !== undefined) &&
+        file.application_projection_failure !== undefined ||
+        electronExaminationLimited(file)) &&
       electronModuleReferencedBy(file),
   ).length;
 
