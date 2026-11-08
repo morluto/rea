@@ -7,6 +7,7 @@
 
 ### ⚠ BREAKING CHANGES
 
+* Strict clients that cached the previous full inspect_address_context output schema must refresh tools/list and accept the typed error field on unavailable facets.
 * **ghidra:** qualify memory effect coverage ([#8651](https://github.com/morluto/rea/issues/8651))
 * **ghidra:** Byte search results require skipped_overlays; loaded overlays no longer appear in skipped_not_loaded. The Ghidra profile changes so prior snapshots are not replayed.
 * **ghidra:** identify containing code and data ([#8777](https://github.com/morluto/rea/issues/8777))
@@ -175,6 +176,7 @@
 * **adb:** separate unresolvable paths and host capacity in adb spawn failures ([#6188](https://github.com/morluto/rea/issues/6188)) ([92f3326](https://github.com/morluto/rea/commit/92f332652d352e60b550567adf2399d83d8ebe78))
 * **adb:** validate screen capture PNG headers ([#7962](https://github.com/morluto/rea/issues/7962)) ([f7cd4e5](https://github.com/morluto/rea/commit/f7cd4e5256441f69ddb7a3e78167b200460a6601))
 * **adb:** verify pushes to long device paths ([#8047](https://github.com/morluto/rea/issues/8047)) ([1da304b](https://github.com/morluto/rea/commit/1da304b28213ca7a50f6787eae716abe73c4e628))
+* **agentenv:** report incomplete folder inventories ([#9466](https://github.com/morluto/rea/issues/9466)) ([b4b8811](https://github.com/morluto/rea/commit/b4b881116f7cada0d9d2bed45847a7b5bd1d28f1))
 * **analysis-view:** distinguish unavailable native collections ([#8291](https://github.com/morluto/rea/issues/8291)) ([b1b6cb6](https://github.com/morluto/rea/commit/b1b6cb64c2c9b0765e0ff6d6f48740140767d5fd))
 * **analysis-view:** keep inferred confidence on views of inferred Evidence ([#8099](https://github.com/morluto/rea/issues/8099)) ([bfa082f](https://github.com/morluto/rea/commit/bfa082f77774a33f4a7d72ed6570429d9d294dc7)), closes [#8098](https://github.com/morluto/rea/issues/8098)
 * **analysis:** interpret provider and ELF inputs once ([248133d](https://github.com/morluto/rea/commit/248133d784522488b01296391a0eea3eabbd7567))
@@ -802,6 +804,7 @@
 * **node-sea:** bound ELF note scans by the notes a carrier holds ([#8031](https://github.com/morluto/rea/issues/8031)) ([1f8084c](https://github.com/morluto/rea/commit/1f8084c7db806354ebe571e1490264b128ef92c2))
 * **objdump:** preserve unknown executable identity ([#8824](https://github.com/morluto/rea/issues/8824)) ([c3647ad](https://github.com/morluto/rea/commit/c3647ade1e557c4179a8b825a37e0c2193cd2526))
 * **outputs:** use neutral destination diagnostics ([#7949](https://github.com/morluto/rea/issues/7949)) ([0448f31](https://github.com/morluto/rea/commit/0448f318e6f713a2b61fb226dd1e411568c84a61))
+* **paths:** enforce selected path contracts at admission ([#9465](https://github.com/morluto/rea/issues/9465)) ([25d3c72](https://github.com/morluto/rea/commit/25d3c7237ffeffc4f9e6ab87be2f83a643cf5cbb))
 * **paths:** preserve native selections across launch and publication ([f2b4468](https://github.com/morluto/rea/commit/f2b4468183e0c1fdc6dbf196283c580213cc7d73))
 * **paths:** preserve native selections through analysis and removal ([68f2d67](https://github.com/morluto/rea/commit/68f2d67c56f283a750371c65fcd536af71ad2313))
 * **paths:** preserve native traversal and unset PATH semantics ([83a6cdb](https://github.com/morluto/rea/commit/83a6cdb8596fdb2334862d512ca1b1be991fa4a6))
@@ -841,6 +844,7 @@
 * preserve address context resource recovery ([#8424](https://github.com/morluto/rea/issues/8424)) ([106ba17](https://github.com/morluto/rea/commit/106ba1730f71f9d0f3d82c87668b77279db4287f))
 * preserve feature traces when owner lookup is unavailable ([#8368](https://github.com/morluto/rea/issues/8368)) ([6e9ee97](https://github.com/morluto/rea/commit/6e9ee97a69cb16c7150d8b550e705cba055ee4f0))
 * preserve nullable source-map facts and streamline model tests ([#8018](https://github.com/morluto/rea/issues/8018)) ([b3d31ed](https://github.com/morluto/rea/commit/b3d31ed106c6f3baef1dc778ea688c23323879ba))
+* preserve results when source publication fails ([#8444](https://github.com/morluto/rea/issues/8444)) ([88cf498](https://github.com/morluto/rea/commit/88cf498036d85f639a74a82376f08b2704d25b39))
 * preserve source closure during snapshot replay ([#8870](https://github.com/morluto/rea/issues/8870)) ([441ba94](https://github.com/morluto/rea/commit/441ba94086e899f8e8bb159fea2bd8cee617a019))
 * **process:** await Swift frontend lifetime pipe ([#7948](https://github.com/morluto/rea/issues/7948)) ([c92322b](https://github.com/morluto/rea/commit/c92322b473742628eecb4d13bd467a195fa3126e))
 * **process:** classify withheld Darwin environments before parser failures ([26b033d](https://github.com/morluto/rea/commit/26b033d51fd627af0cfdf47efcbdb346484e1c85))
