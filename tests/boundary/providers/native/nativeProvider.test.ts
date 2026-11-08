@@ -838,7 +838,6 @@ describe("native returned cleanup ownership", () => {
         // aggregate marker when that retry is still incomplete.
         const closed = await client.close();
         expect(cleanupCalls).toBe(2);
-        expect(closed.ok).toBe(false);
         if (closed.ok) throw new Error("Expected cleanup to remain incomplete");
         expect(closed.error.cleanupIncomplete).toBe(true);
         expect(closed.error.cleanupResources).toEqual(
@@ -1231,7 +1230,6 @@ describe("native command failure projection", () => {
       ]);
 
       const closed = await client.close();
-      expect(closed.ok).toBe(false);
       if (closed.ok) throw new Error("Expected unknown owner cleanup facts");
       expect(closed.error.cleanupIncomplete).toBe(true);
       expect(closed.error.cleanupResources).toEqual([

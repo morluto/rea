@@ -14,7 +14,7 @@
    the record projection, the manifest from a scenario parent, the refusal,
    replay of UTF-8 and binary bodies, and the bundle README.
 5. Document scenario parents in `docs/agent-environments.md` and
-   `docs/web-network-captures.md`, extend the tool contract text, and record
+   `docs/guides/web/web-network-captures.md`, extend the tool contract text, and record
    the spec.
 
 No new dependency is introduced and no command is added.
