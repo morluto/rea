@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  analyzeFixtureProcedure,
   requireCurrentDocument,
   resolveFixtureProcedure,
 } from "../../../../scripts/lib/real-hopper-semantic.mjs";
@@ -48,6 +49,97 @@ describe("Hopper verifier semantic fixture resolution", () => {
     ).rejects.toThrow(/exactly one Hopper procedure/u);
   });
 });
+
+describe("Hopper verifier dossier coverage", () => {
+  const procedure = { address: "0x1000", name: "rea_entry" };
+  const normalizeStructured = (value: unknown) =>
+    (value as { structuredContent?: unknown }).structuredContent ?? value;
+
+  it("accepts the caller and callee coverage the provider declares", async () => {
+    await expect(
+      analyzeFixtureProcedure(
+        clientWithDossier({
+          status: "unknown",
+          limited_directions: ["callers", "callees"],
+          reason: "Independent public API inventories.",
+        }),
+        {},
+        procedure,
+        normalizeStructured,
+      ),
+    ).resolves.toMatchObject({ facet_availability: expect.any(Object) });
+  });
+
+  it.each([
+    ["complete", { status: "complete" }],
+    [
+      "one direction",
+      {
+        status: "unknown",
+        limited_directions: ["callers"],
+        reason: "Callers only.",
+      },
+    ],
+    [
+      "no reason",
+      { status: "unknown", limited_directions: ["callers", "callees"] },
+    ],
+  ])("rejects %s coverage", async (_label, coverage) => {
+    await expect(
+      analyzeFixtureProcedure(
+        clientWithDossier(coverage),
+        {},
+        procedure,
+        normalizeStructured,
+      ),
+    ).rejects.toThrow(/relationship|reason|Expected/u);
+  });
+});
+
+const facetAvailability = () =>
+  Object.fromEntries(
+    [
+      "pseudocode",
+      "assembly",
+      "comments",
+      "callers",
+      "callees",
+      "references",
+      "strings_names",
+      "cfg",
+    ].map((facet) => [facet, { available: true }]),
+  );
+
+const clientWithDossier = (relationshipCoverage: unknown) => {
+  const structuredContent = {
+    relationship_coverage: relationshipCoverage,
+    facet_availability: facetAvailability(),
+    outgoing_references: [],
+  };
+  return {
+    callTool: async (request: { readonly name: string }) => {
+      if (request.name === "analyze_function")
+        return { structuredContent };
+      return {
+        structuredContent: {
+          dimensions: [
+            "identity",
+            "pseudocode",
+            "assembly",
+            "comments",
+            "calls",
+            "references",
+            "strings_names",
+            "cfg",
+          ].map((dimension) => ({
+            dimension,
+            status: dimension === "references" ? "unknown" : "unchanged",
+          })),
+        },
+      };
+    },
+  };
+};
 
 const clientWithItems = (items: readonly unknown[]) => ({
   callTool: async () => items,

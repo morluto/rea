@@ -324,9 +324,14 @@ export const analyzeFixtureProcedure = async (
     options,
   );
   const dossier = normalizedResult(reply, "analyze_function");
-  assert.deepEqual(reply.structuredContent.relationship_coverage, {
-    status: "complete",
-  });
+  // Hopper declares caller/callee inventories as incomplete for every operation,
+  // so the fixture oracle must accept that declaration instead of demanding
+  // coverage the provider never claims.
+  const coverage = reply.structuredContent.relationship_coverage;
+  assert.equal(coverage?.status, "unknown");
+  assert.deepEqual(coverage.limited_directions, ["callers", "callees"]);
+  assert.equal(typeof coverage.reason, "string");
+  assert(coverage.reason.length > 0);
   for (const facet of [
     "pseudocode",
     "assembly",
