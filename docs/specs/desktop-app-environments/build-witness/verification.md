@@ -472,6 +472,8 @@ Each test below failed before the change and passes now.
 
 ## The app's logs
 
+Historical note: the filename-based exclusions described below were later removed; app-state logs are now retained.
+
 Run on macOS with source tests and gates. Each test below failed before the
 change and passes now.
 

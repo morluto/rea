@@ -474,9 +474,8 @@ const changeShape = (change: TaskDraftFile["change"], final: Version) => ({
  * Each file under the owned paths whose state differs between its versions at
  * the seed and end checkpoints, with suggested checks, values, guards and
  * notes for the files the user worked on: documents, or the app's own state
- * when no document changed, never the app's logs the export leaves out of
- * the seed (`leftOutFiles`), as it decides them from its state directories
- * and kept and selected paths. Values stay within the draft's byte budget, in
+ * when no document changed, excluding locks the export leaves out of the seed.
+ * Values stay within the draft's byte budget, in
  * file order.
  */
 export const draftTaskFiles = (

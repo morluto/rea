@@ -16,4 +16,4 @@
 - [x] Read dconf in the build computer, name dconf settings the export could not read, and leave a `<file>.LCK` beside its file out of the seed.
 - [x] Name a version-dotted desktop entry's environment whole, send glibc's fatal errors to the captured app's stderr, leave Grisbi's `.<file>.lock` and LibreOffice's recovery list out of the seed, and rank caches last under a selected folder.
 - [x] Rank a checkpoint's changed files by window titles first and QtWebEngine storage last, name the app in prompts, and say when a prompt does not.
-- [x] Leave the app's logs out of the seed, listed apart from its lock files.
+- [x] Retain app-state logs without inferring their purpose from filenames; leave owned locks out of the seed.
