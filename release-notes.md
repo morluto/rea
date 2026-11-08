@@ -1262,6 +1262,7 @@
 * scope performance measurements to concrete needs ([90b793e](https://github.com/morluto/rea/commit/90b793e0f488be73a3e98ba430bcb132ad8b0c31))
 * **search:** clarify provider case folding ([86d4a21](https://github.com/morluto/rea/commit/86d4a21215cb0fbafaf555b5c7d9fcda3f255d82))
 * **security:** add fallback reporting email ([3b26d7f](https://github.com/morluto/rea/commit/3b26d7f80b6bfa5d46c6a3817b949cb6924593f5))
+* **security:** define REA threat model and security properties ([#9384](https://github.com/morluto/rea/issues/9384)) ([559083b](https://github.com/morluto/rea/commit/559083be29bd8502a7feefcbe981380b2bbf4cd9))
 * **setup:** clarify Hopper failures and installer verification ([3842809](https://github.com/morluto/rea/commit/3842809c371a59609f576a9db8f9c492a3f071e6))
 * **setup:** describe FreeBuff as published setup support ([#7246](https://github.com/morluto/rea/issues/7246)) ([4910e14](https://github.com/morluto/rea/commit/4910e149ad9b2d8e3c3d0be62332b633ac418889))
 * **setup:** restore target and Hopper launch settings ([#7902](https://github.com/morluto/rea/issues/7902)) ([539a494](https://github.com/morluto/rea/commit/539a494d25df3dc68e8d7bbadeea7edb527c4884))
