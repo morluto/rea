@@ -10,7 +10,10 @@ const launcher = fileURLToPath(
   new URL("../../../scripts/plugin-mcp-launcher.mjs", import.meta.url),
 );
 
-const pluginFixture = async (runtime: string) => {
+const pluginFixture = async (
+  runtime: string,
+  packageFields: Readonly<Record<string, unknown>> = {},
+) => {
   const workspace = await createTestTempDirectory("rea-plugin-");
   const root = join(workspace, "plugin with spaces");
   await mkdir(root);
@@ -20,7 +23,12 @@ const pluginFixture = async (runtime: string) => {
   await copyFile(launcher, entry);
   await writeFile(
     join(root, "package.json"),
-    JSON.stringify({ name: "rea-agents", version: "6.8.0", type: "module" }),
+    JSON.stringify({
+      name: "rea-agents",
+      version: "6.8.0",
+      type: "module",
+      ...packageFields,
+    }),
   );
   await writeFile(join(root, "dist/mcp/main.js"), "");
   await writeFile(join(root, "scripts/rea.mjs"), runtime);
@@ -109,6 +117,41 @@ it("rejects a mismatched runtime instead of downloading another package", async 
     stderr:
       "REA plugin version pin does not match its installed rea-agents package; reinstall the plugin.\n",
   });
+});
+
+it("names an unsupported Node.js runtime instead of starting REA", async () => {
+  const { root, entry } = await pluginFixture(
+    'process.stdout.write("unexpected");',
+    { engines: { node: "^0.0.1 || >=999.0.0" } },
+  );
+  const { child, closed } = start(entry, root);
+  child.stdin.end();
+  expect(await closed).toEqual({
+    code: 1,
+    stdout: "",
+    stderr: `REA plugin requires Node.js ^0.0.1 || >=999.0.0, but the client started it with ${process.versions.node} at ${process.execPath}; put a supported Node.js first on the PATH the client starts with, then restart the client.\n`,
+  });
+});
+
+it("starts on a Node.js runtime the published engines range admits", async () => {
+  const [major] = process.versions.node.split(".");
+  const { root, entry } = await pluginFixture(
+    'process.stdout.write("started");',
+    { engines: { node: `>=999.0.0 || ^${major}.0.0` } },
+  );
+  const { child, closed } = start(entry, root);
+  child.stdin.end();
+  expect(await closed).toEqual({ code: 0, stdout: "started", stderr: "" });
+});
+
+it("does not block a runtime when an engines clause is outside the read grammar", async () => {
+  const { root, entry } = await pluginFixture(
+    'process.stdout.write("started");',
+    { engines: { node: ">=999.0.0 || 1.x - 99.x" } },
+  );
+  const { child, closed } = start(entry, root);
+  child.stdin.end();
+  expect(await closed).toEqual({ code: 0, stdout: "started", stderr: "" });
 });
 
 it("reports how to repair an incomplete artifact or unbuilt source checkout", async () => {
