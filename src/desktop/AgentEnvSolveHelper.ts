@@ -15,6 +15,7 @@ import {
 import {
   AGENTENV_PROVIDER,
   agentEnvInterpreter,
+  removeSandbox,
 } from "./AgentEnvComputerHelper.js";
 
 const HELPER = fileURLToPath(
@@ -30,6 +31,12 @@ const POLL_MS = 1_000;
 /** How long REA waits for the report once the helper's process group is cleared. */
 const REPORT_DRAIN_MS = 5_000;
 
+const cleanupSchema = z.strictObject({
+  unknown: z.boolean(),
+  sandboxes: z.array(
+    z.strictObject({ id: z.string().min(1), type: z.string().nullable() }),
+  ),
+});
 const reportSchema = z.union([
   z.strictObject({
     outcome: z.enum([
@@ -52,12 +59,17 @@ const reportSchema = z.union([
     usd: z.number().nonnegative().nullable(),
     agentenv: z.string().nullable(),
     error: z.string().nullable(),
+    cleanup: cleanupSchema.optional(),
   }),
-  z.strictObject({ error: z.string() }),
+  z.strictObject({ error: z.string(), cleanup: cleanupSchema.optional() }),
 ]);
 
 /** What the helper printed: how the solve ended, or why no solve ran. */
 export type SolveReport = z.infer<typeof reportSchema>;
+export type SolveCleanupOwner = Pick<
+  ProviderProcessSupervisor,
+  "stop" | "dispose"
+>;
 
 /** Failed cleanup retains both its owner and any report the helper completed. */
 export class SolveCleanupError extends ProviderCleanupError {
@@ -68,6 +80,7 @@ export class SolveCleanupError extends ProviderCleanupError {
       Record<string, import("../domain/jsonValue.js").JsonValue>
     >,
     operation: string,
+    unknown = false,
   ) {
     super(
       AGENTENV_PROVIDER,
@@ -80,8 +93,9 @@ export class SolveCleanupError extends ProviderCleanupError {
       },
       {
         operation,
-        remediationAction:
-          "Closing REA retries this cleanup; check that no agentenv run of the bundle is still up with docker ps.",
+        remediationAction: unknown
+          ? "The helper did not identify every sandbox. Inspect agentenv's records and Docker containers; REA cannot safely select an unknown sandbox for removal."
+          : "Closing REA retries this cleanup; check that no agentenv run of the bundle is still up with docker ps.",
       },
     );
   }
@@ -108,7 +122,10 @@ const parseReport = (line: string): SolveReport => {
   } catch {
     // Reported below as a line that is not a report.
   }
-  return { error: "REA's solve helper wrote something other than its report" };
+  return {
+    error: "REA's solve helper wrote something other than its report",
+    cleanup: { unknown: true, sandboxes: [] },
+  };
 };
 
 /** How long a solve may run, and how long a stopped one has to exit before its process group is cleared. */
@@ -133,7 +150,7 @@ export const runSolveHelper = async (options: {
   readonly environment: Readonly<NodeJS.ProcessEnv>;
   readonly signal: AbortSignal;
   readonly operation: string;
-  readonly retainCleanup: (owner: ProviderProcessSupervisor) => void;
+  readonly retainCleanup: (owner: SolveCleanupOwner) => void;
   readonly spawn?: typeof spawnOwnedProviderProcess;
   readonly timing?: SolveTiming;
 }): Promise<SolveReport> => {
@@ -175,7 +192,10 @@ export const runSolveHelper = async (options: {
     for await (const line of readBoundedControlLines(stdout, REPORT_BYTES))
       report ??= line.ok
         ? parseReport(line.value)
-        : { error: "REA's solve helper's report is too long" };
+        : {
+            error: "REA's solve helper's report is too long",
+            cleanup: { unknown: true, sandboxes: [] },
+          };
   })().catch(() => undefined);
   let stopped: Awaited<ReturnType<ProviderProcessSupervisor["stop"]>>;
   try {
@@ -197,18 +217,68 @@ export const runSolveHelper = async (options: {
       new Promise((resolve) => setTimeout(resolve, REPORT_DRAIN_MS)),
     ]);
   }
-  if (stopped.status === "incomplete") {
-    options.retainCleanup(supervisor);
-    throw new SolveCleanupError(
+  let processPending = stopped.status === "incomplete";
+  const pending = new Map(
+    (report?.cleanup?.sandboxes ?? []).map((item) => [item.id, item.type]),
+  );
+  const unknown = report?.cleanup?.unknown ?? true;
+  const resources = () => [
+    ...(processPending
+      ? [`process group ${String(spawned.ownership.processGroupId)}`]
+      : []),
+    ...[...pending.keys()].map((id) => `agentenv sandbox ${id}`),
+    ...(unknown ? ["agentenv sandbox identity unknown"] : []),
+  ];
+  let cleanupError: SolveCleanupError | undefined;
+  const cleanupOwner: SolveCleanupOwner = {
+    async stop() {
+      if (processPending) {
+        const result = await supervisor.stop();
+        if (result.status === "incomplete") return result;
+        processPending = false;
+      }
+      const failures: string[] = [];
+      for (const [id, type] of pending) {
+        if (type !== null && type !== "local") {
+          failures.push(`Sandbox ${id} uses unsupported provider ${type}.`);
+          continue;
+        }
+        const failure = await removeSandbox(environment, id);
+        if (failure === undefined) pending.delete(id);
+        else failures.push(failure);
+      }
+      if (failures.length > 0)
+        return { status: "incomplete", reason: failures.join(" ") };
+      if (!unknown) cleanupError?.resolveCleanup();
+      return { status: "verified-cleanup" };
+    },
+    dispose: () => supervisor.dispose(),
+  };
+  const cleanup = processPending ? stopped : await cleanupOwner.stop();
+  if (cleanup.status === "incomplete" || unknown) {
+    if (cleanup.status === "incomplete") options.retainCleanup(cleanupOwner);
+    const reason =
+      cleanup.status === "incomplete"
+        ? cleanup.reason
+        : "The helper ended before identifying every sandbox; REA cannot safely select an unknown sandbox for removal.";
+    cleanupError = new SolveCleanupError(
       report,
-      [`process group ${String(spawned.ownership.processGroupId)}`],
+      resources(),
       {
-        reason: stopped.reason,
+        reason,
         leader_pid: spawned.ownership.leaderPid,
         process_group_id: spawned.ownership.processGroupId,
+        helper_stderr: supervisor.snapshot().stderr.text,
       },
       options.operation,
+      unknown,
     );
+    cleanupError.bindCleanupResourceOwner({
+      get cleanupResources() {
+        return resources();
+      },
+    });
+    throw cleanupError;
   }
   if (signal.aborted && report !== undefined)
     throw new SolveCancelledError(report, options.operation, signal.reason);
@@ -217,6 +287,7 @@ export const runSolveHelper = async (options: {
   return (
     report ?? {
       error: `REA's solve helper ended (exit ${String(exit?.code ?? exit?.signal)}) without a report: ${supervisor.snapshot().stderr.text.slice(-2000)}`,
+      cleanup: { unknown: true, sandboxes: [] },
     }
   );
 };

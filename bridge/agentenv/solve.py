@@ -73,30 +73,47 @@ def _version() -> str | None:
         return None
 
 
+def _cleanup(result) -> dict:
+    """Only a returned teardown report can confirm what agentenv released."""
+    if result is None:
+        return {"unknown": True, "sandboxes": []}
+    unknown, sandboxes = False, []
+    for run in result.runs:
+        report = getattr(run, "torn_down", None)
+        if report is None:
+            unknown = True
+        else:
+            sandboxes.extend({"id": item.sandbox_id, "type": item.sandbox_type} for item in report.still_up)
+    return {"unknown": unknown, "sandboxes": sandboxes}
+
+
 def main(argv: list[str]) -> int:
     protocol = _protocol()
     bundle, task, model, agent = argv[1:5]
     try:
         from agent_env.bundle import run_bundle
     except ImportError as error:
-        _say(protocol, {"error": f"agent_env does not import with {sys.executable}: {error}"})
+        _say(protocol, {"error": f"agent_env does not import with {sys.executable}: {error}",
+                        "cleanup": {"unknown": False, "sandboxes": []}})
         return 2
     try:
         result = run_bundle(bundle, tasks=[task], model=model, agent=agent, sandbox="local", emulate=False,
                             on_progress=lambda line: print(line, file=sys.stderr, flush=True))
     except BaseException as error:  # noqa: BLE001 - a signal's RunInterrupted too; run_bundle tore its run down
-        _say(protocol, {"error": f"{type(error).__name__}: {error}"[:MAX_TEXT * 4]})
+        _say(protocol, {"error": f"{type(error).__name__}: {error}"[:MAX_TEXT * 4],
+                        "cleanup": _cleanup(getattr(error, "result", None))})
         return 2
     run = result.runs[0] if result.runs else None
     if run is None:
-        _say(protocol, {"error": "the bundle ran no task"})
+        _say(protocol, {"error": "the bundle ran no task", "cleanup": _cleanup(result)})
         return 2
     turns, usd = _trajectory_end(run.context)
     error = getattr(run, "error", None)
     _say(protocol, {"outcome": run.outcome.value, "instance_id": run.instance_id,
                     "seconds": round(float(run.duration), 1), "checks": _checks(run.context, task),
                     "turns": turns, "usd": usd, "agentenv": _version(),
-                    "error": None if error is None else f"{type(error).__name__}: {error}"[:MAX_TEXT]})
+                    "error": None if error is None else f"{type(error).__name__}: {error}"[:MAX_TEXT],
+                    "cleanup": _cleanup(result)})
     return 0
 
 

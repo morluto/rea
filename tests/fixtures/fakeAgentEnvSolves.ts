@@ -61,8 +61,11 @@ def run_bundle(root, *, tasks=(), model=None, agent=None, sandbox=None, emulate=
                                                  "results": results}}},
         prompt_responses=[types.SimpleNamespace(agent_trajectory_object_url="file://" + trajectory)],
     )
+    still_up = [types.SimpleNamespace(sandbox_id=id, sandbox_type="local")
+                for id in json.loads(os.environ.get("FAKE_SOLVE_STILL_UP", "[]"))]
     run = types.SimpleNamespace(outcome=Outcome(planned["outcome"]), context=context, instance_id=f"inst-{n}",
-                                duration=42.0, error=None if planned["outcome"] != "failed" else RuntimeError("deploy"))
+                                duration=42.0, error=None if planned["outcome"] != "failed" else RuntimeError("deploy"),
+                                torn_down=types.SimpleNamespace(still_up=still_up))
     return types.SimpleNamespace(runs=(run,))
 `;
 

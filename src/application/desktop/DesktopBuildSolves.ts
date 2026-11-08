@@ -34,13 +34,13 @@ import {
   SolveCleanupError,
   SolveCancelledError,
   type SolveReport,
+  type SolveCleanupOwner,
 } from "../../desktop/AgentEnvSolveHelper.js";
 import {
   resolveBuildComputerEnvironment,
   type BuildComputerDefaults,
 } from "../../desktop/BuildComputerEnvironment.js";
 import { readHostFile } from "../../desktop/HostFileRead.js";
-import type { ProviderProcessSupervisor } from "../../process/ProviderProcess.js";
 import { PRODUCT_IDENTITY } from "../../identity.js";
 import {
   silentProgressReporter,
@@ -367,7 +367,7 @@ export const measureInFreshComputers = async (
   host: {
     readonly environment: Readonly<NodeJS.ProcessEnv>;
     readonly defaults: BuildComputerDefaults;
-    readonly retainCleanup: (owner: ProviderProcessSupervisor) => void;
+    readonly retainCleanup: (owner: SolveCleanupOwner) => void;
     readonly resources: ArtifactResourceScope;
   },
   signal: AbortSignal,
