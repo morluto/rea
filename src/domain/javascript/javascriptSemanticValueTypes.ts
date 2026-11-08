@@ -77,8 +77,15 @@ export type JavaScriptSemanticValue =
       readonly resourceLimit?: JavaScriptSemanticResourceLimit;
     };
 
-export type JavaScriptSemanticProperty = {
+/** One statically named own slot in an object or array. */
+export interface JavaScriptSemanticProperty {
   readonly name: string;
   readonly value: JavaScriptSemanticValue;
-  readonly presence: "present" | "absent" | "unknown-coverage";
-};
+  readonly presence: JavaScriptSemanticSlotPresence;
+}
+
+/** Own-slot presence, independent of its value and sibling coverage. */
+export type JavaScriptSemanticSlotPresence =
+  | "present"
+  | "absent"
+  | "unknown-coverage";

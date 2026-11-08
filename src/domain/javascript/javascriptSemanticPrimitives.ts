@@ -6,6 +6,7 @@ import { compareUnicodeCodePoints } from "../unicodeCodePointOrder.js";
 import { semanticPrimitiveKey } from "./javascriptSemanticProvenance.js";
 import {
   SEMANTIC_PRIMITIVE_CANDIDATE_LIMIT,
+  SEMANTIC_PRIMITIVE_JSON_BYTES_LIMIT,
   SEMANTIC_PRIMITIVE_SAMPLE_SCOPE_LIMIT,
   exceedsSemanticPrimitiveStringByteBudget,
   semanticResourceLimitUnknown,
@@ -124,18 +125,28 @@ const sampledUnionOrByteLimit = (
     | typeof SEMANTIC_PRIMITIVE_SAMPLE_METHOD
     | typeof SEMANTIC_PRIMITIVE_PRODUCT_SAMPLE_METHOD,
 ): JavaScriptSemanticValue => {
-  const uniqueRetained = [...new Set(retained)];
-  if (
-    exceedsSemanticPrimitiveStringByteBudget(
-      uniqueRetained.flatMap((value) =>
-        typeof value === "string" ? [value] : [],
-      ),
-    )
-  )
-    return semanticResourceLimitUnknown("primitive-bytes");
+  // Validate and account while retaining: combined strings are checked
+  // against the byte budget before they enter the dedup set, and nonfinite
+  // numbers are rejected exactly like the exact-set path, so a sampled
+  // result can never smuggle values the exact path would have refused.
+  const uniqueRetained = new Set<JavaScriptSemanticPrimitive>();
+  let stringBytes = 0;
+  for (const value of retained) {
+    if (typeof value === "number" && !Number.isFinite(value))
+      return {
+        status: "unknown",
+        reason: "Nonfinite numbers are outside the JSON primitive lattice.",
+      };
+    if (typeof value === "string") {
+      stringBytes += value.length * 6 + 2;
+      if (stringBytes > SEMANTIC_PRIMITIVE_JSON_BYTES_LIMIT)
+        return semanticResourceLimitUnknown("primitive-bytes");
+    }
+    uniqueRetained.add(value);
+  }
   return {
     status: "union",
-    values: uniqueRetained,
+    values: [...uniqueRetained],
     sampled: { method, seenCount },
   };
 };
@@ -156,10 +167,18 @@ export const semanticPrimitiveSampledProduct = (options: {
   rightSeenCount: number;
 }): JavaScriptSemanticValue => {
   const { left, right, combine, leftSeenCount, rightSeenCount } = options;
-  const total = leftSeenCount * rightSeenCount;
+  // The reported scope and the grid math stay finite no matter how large the
+  // true product grows; deeply chained products saturate instead of producing
+  // nonfinite positions the worker schema would reject.
+  const total = Math.min(
+    leftSeenCount * rightSeenCount,
+    Number.MAX_SAFE_INTEGER,
+  );
   const retained: JavaScriptSemanticPrimitive[] = [];
   for (let index = 0; index < SEMANTIC_PRIMITIVE_CANDIDATE_LIMIT; index += 1) {
-    const flat = Math.floor((index * total) / SEMANTIC_PRIMITIVE_CANDIDATE_LIMIT);
+    const flat = Math.floor(
+      (index * total) / SEMANTIC_PRIMITIVE_CANDIDATE_LIMIT,
+    );
     const leftScope = Math.floor(flat / rightSeenCount);
     const rightScope = flat % rightSeenCount;
     // Scope positions may exceed the retained sample when an operand was
