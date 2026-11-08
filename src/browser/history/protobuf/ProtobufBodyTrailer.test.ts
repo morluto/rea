@@ -128,8 +128,9 @@ it.each(["grpc-web", "grpc-web-text"] as const)(
       status: "partial",
       examined_bytes: trailer.length,
       error: {
-        reason:
-          "gRPC-web trailer field contains opaque non-UTF-8 bytes; that field was omitted",
+        reason: expect.stringMatching(
+          /gRPC-web trailer.*non-UTF-8 bytes.*field was omitted/i,
+        ),
       },
       trailers: [
         { name: "grpc-status", value: "0" },

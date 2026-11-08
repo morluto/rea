@@ -160,10 +160,19 @@ export const xmlElementRanges = (
 /** Source offsets of attribute opening quotes, parsed without reading a DTD. */
 export const xmlAttributeQuoteStarts = (
   source: string,
-): Result<readonly number[], XmlDocumentParseError> => {
+): Result<
+  readonly number[],
+  {
+    readonly error: XmlDocumentParseError;
+    readonly starts: readonly number[];
+    readonly examined: number;
+  }
+> => {
   const starts: number[] = [];
+  let reader: SaxesParser<{ xmlns: true }> | undefined;
   try {
     checkXmlSyntax(source, "allow", (syntax) => {
+      reader = syntax;
       syntax.on("attribute", () => {
         const end = syntax.position - 1;
         const quote = source[end];
@@ -176,11 +185,14 @@ export const xmlAttributeQuoteStarts = (
     });
     return ok(starts);
   } catch (cause: unknown) {
-    return err(
-      cause instanceof XmlDocumentParseError
-        ? cause
-        : new XmlDocumentParseError("malformed", cause),
-    );
+    return err({
+      error:
+        cause instanceof XmlDocumentParseError
+          ? cause
+          : new XmlDocumentParseError("malformed", cause),
+      starts,
+      examined: Math.max(0, (reader?.position ?? 0) - 1),
+    });
   }
 };
 

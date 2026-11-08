@@ -142,6 +142,9 @@ export interface RecordedProviderSettings {
 /** Whether a recorded value is the caller's own, which it may replace; the value never leaves the reader. */
 export type OwnedProviderSetting = (name: string, value: string) => boolean;
 
+/** Consume a resolved setting inside its reader without including its value in diagnostics. */
+export type ProviderSettingObserver = (name: string, value: string) => void;
+
 /**
  * Compare settings selected in this process with a registration's own file.
  * The server's environment also depends on what its client passes on, which is
@@ -153,6 +156,7 @@ export const recordedProviderSettings = (
   selected: Readonly<Record<string, string>>,
   platform: NodeJS.Platform = process.platform,
   owns?: OwnedProviderSetting,
+  observe?: ProviderSettingObserver,
 ): RecordedProviderSettings | undefined => {
   const names = Object.keys(selected).sort(compareUnicodeCodePoints);
   if (names.length === 0) return undefined;
@@ -171,6 +175,11 @@ export const recordedProviderSettings = (
     ),
     platform,
   );
+  for (const name of names) {
+    const value = recorded[name];
+    if (value !== undefined && expressions[name] === undefined)
+      observe?.(name, value);
+  }
   const facts = {
     unrecorded: names.filter(
       (name) => recorded[name] === undefined && expressions[name] === undefined,

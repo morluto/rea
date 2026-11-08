@@ -219,13 +219,17 @@ export const systemSetupHost = (
         doctor: diagnosis,
       };
     },
-    installHopper: (replaceExisting) =>
+    installHopper: (replaceExisting, signal) =>
       resources.run<SetupHopperInstallResult>(async () => {
         const publisher = platform === "linux" ? publisherCleanup : macCleanup;
+        const cancellation = signal === undefined ? {} : { signal };
         cleanup.admit(publisher);
         try {
           if (platform === "linux") {
-            const result = await installLinuxHopper(linuxHopperHost);
+            const result = await installLinuxHopper(
+              linuxHopperHost,
+              cancellation,
+            );
             if (result.cleanupFailure !== undefined) {
               pendingLinuxHopperCleanup.retain(result.cleanupFailure);
               cleanup.admit(temporaryCleanup);
@@ -256,7 +260,7 @@ export const systemSetupHost = (
           if (macHopperHost === undefined)
             return setupInstallFailure("unsupported_host");
           const result = await installMacHopper(
-            { replaceExisting },
+            { replaceExisting, ...cancellation },
             macHopperHost,
           );
           if (result.status === "installed")
@@ -324,18 +328,20 @@ export const systemSetupHost = (
         resources,
       ),
     doctor: (scope) => runDoctor(undefined, doctorHost, scope),
-    desktopBuild: desktopBuildHost(doctorHost, environment),
+    desktopBuild: desktopBuildHost(doctorHost, environment, resources),
   };
 };
 
 const desktopBuildHost = (
   doctorHost: DoctorHost,
   environment: Readonly<NodeJS.ProcessEnv>,
+  resources: ArtifactResourceScope,
 ) =>
   systemDesktopBuildSetupHost(
     environment,
     doctorHost.platform,
     doctorHost.clientRegistrations,
+    resources,
   );
 
 const setupInstallerDiagnostic = (

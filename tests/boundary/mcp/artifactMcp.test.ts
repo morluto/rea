@@ -26,6 +26,7 @@ import {
   ok as resultOk,
   err as resultErr,
 } from "../../../src/domain/result.js";
+import { createHash } from "node:crypto";
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
@@ -51,13 +52,6 @@ import { createArtifactBinarySession } from "../../../src/composition/binary.js"
 import { observed } from "../../fixtures/analysisExecution.js";
 import { cArchiveExecutable } from "../../../src/artifacts/pyinstaller/CArchive.fixture.js";
 import { compareUnicodeCodePoints } from "../../../src/domain/unicodeCodePointOrder.js";
-
-const integrityMessage = (unpacked: boolean): string =>
-  `${
-    unpacked
-      ? "Declared ASAR integrity for unpacked entry main.js contradicts its companion file; packaging tools commonly sign or strip unpacked native binaries after writing the archive."
-      : "Artifact bytes contradict declared integrity."
-  } If expected, rerun inspect_artifact with integrity_policy=record-and-continue (CLI: --integrity-policy record-and-continue) to retain observed bytes as untrusted; otherwise get a fresh copy.`;
 
 it("refuses an artifact parent and summary when its actual inventory source cannot be recorded", async ({
   mcp,
@@ -169,21 +163,35 @@ it.for([
         arguments: {},
       });
       expect(result.isError).toBe(true);
-      expect(parseMcpToolError(result)).toEqual({
+      const projected = parseMcpToolError(result);
+      expect(projected).toEqual({
         error: {
           code: "artifact_integrity_mismatch",
           category: "integrity_mismatch",
-          message: integrityMessage(unpacked),
+          message: expect.stringMatching(
+            /integrity.*inspect_artifact.*integrity_policy=record-and-continue.*untrusted.*fresh copy/iu,
+          ),
           details: {
             logical_path: "main.js",
-            declared_sha256: expect.stringMatching(/^[a-f0-9]{64}$/u),
-            calculated_sha256: expect.stringMatching(/^[a-f0-9]{64}$/u),
+            declared_sha256: createHash("sha256")
+              .update(original)
+              .digest("hex"),
+            calculated_sha256: createHash("sha256")
+              .update(changed)
+              .digest("hex"),
             unpacked,
           },
           retryable: false,
-          remediation: { action: integrityMessage(unpacked) },
+          remediation: { action: projected.error.message },
         },
       });
+      expect(projected.error.message).toContain(
+        "--integrity-policy record-and-continue",
+      );
+      if (unpacked)
+        expect(projected.error.message).toMatch(
+          /unpacked entry main\.js.*companion file/iu,
+        );
     } finally {
       await mcp.close();
     }

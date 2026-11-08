@@ -6,6 +6,8 @@ import { z } from "zod";
 
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
+import { defaultBuildComputerArchive } from "../../../src/desktop/BuildComputerEnvironment.js";
+import { DESKTOP_EXPORT_FRAMEWORK_VERSION } from "../../../src/domain/desktop/appExport.js";
 
 const checkSchema = z.object({ name: z.string(), ok: z.boolean() }).loose();
 
@@ -48,6 +50,124 @@ const buildHost = async (launcher = "/opt/rea/scripts/rea.mjs") => {
 };
 
 cliTest.skipIf(!["darwin", "linux"].includes(process.platform))(
+  "doctor checks the selected client's runner even when it is not on PATH",
+  { timeout: 60_000 },
+  async ({ cli }) => {
+    const { environment, home } = await buildHost();
+    const bin = join(home, "..", "bin");
+    const privateBin = join(home, ".local", "bin");
+    await mkdir(privateBin, { recursive: true });
+    const runner = join(privateBin, "agent-env");
+    await writeFile(
+      runner,
+      `#!/bin/sh\necho "agent-env ${DESKTOP_EXPORT_FRAMEWORK_VERSION}"\n`,
+      { mode: 0o755 },
+    );
+    await writeFile(
+      join(home, ".claude.json"),
+      JSON.stringify({
+        mcpServers: {
+          rea: {
+            command: process.execPath,
+            args: ["/opt/rea/scripts/rea.mjs", "mcp"],
+            env: {
+              REA_DOCKER_COMMAND: join(bin, "docker"),
+              REA_AGENT_ENV_COMMAND: runner,
+              REA_BUILD_COMPUTER_REA_ARCHIVE: defaultBuildComputerArchive(
+                environment,
+                process.platform,
+              ),
+            },
+          },
+        },
+      }),
+    );
+    const result = await cli.run({
+      arguments: [
+        "doctor",
+        "--provider",
+        "desktop_build",
+        "--client",
+        "claude_code",
+        "--json",
+      ],
+      environment,
+      timeoutMs: 45_000,
+    });
+    const report = z
+      .object({ scope_checks: z.array(checkSchema) })
+      .parse(result.json);
+    expect(
+      report.scope_checks.find(
+        ({ name }) => name === "desktop_build-agent-env",
+      ),
+    ).toMatchObject({
+      ok: true,
+      detail: expect.stringContaining("claude_code"),
+    });
+    expect(
+      report.scope_checks.find(
+        ({ name }) => name === "desktop_build-registration",
+      ),
+    ).toMatchObject({ ok: true });
+    expect(result.stdout).not.toContain(runner);
+  },
+);
+
+cliTest.skipIf(!["darwin", "linux"].includes(process.platform))(
+  "doctor accepts client paths matching resolved build defaults",
+  { timeout: 60_000 },
+  async ({ cli }) => {
+    const { environment, home } = await buildHost();
+    const bin = join(home, "..", "bin");
+    await writeFile(
+      join(bin, "agent-env"),
+      '#!/bin/sh\necho "agent-env 0.9.1431"\n',
+      { mode: 0o755 },
+    );
+    await writeFile(
+      join(home, ".claude.json"),
+      JSON.stringify({
+        mcpServers: {
+          rea: {
+            command: process.execPath,
+            args: ["/opt/rea/scripts/rea.mjs", "mcp"],
+            env: {
+              REA_DOCKER_COMMAND: join(bin, "docker"),
+              REA_AGENT_ENV_COMMAND: join(bin, "agent-env"),
+              REA_BUILD_COMPUTER_REA_ARCHIVE: defaultBuildComputerArchive(
+                environment,
+                process.platform,
+              ),
+            },
+          },
+        },
+      }),
+    );
+    const result = await cli.run({
+      arguments: [
+        "doctor",
+        "--provider",
+        "desktop_build",
+        "--client",
+        "claude_code",
+        "--json",
+      ],
+      environment,
+      timeoutMs: 45_000,
+    });
+    const report = z
+      .object({ scope_checks: z.array(checkSchema) })
+      .parse(result.json);
+    expect(
+      report.scope_checks.find(
+        ({ name }) => name === "desktop_build-registration",
+      ),
+    ).toMatchObject({ ok: true });
+  },
+);
+
+cliTest.skipIf(!["darwin", "linux"].includes(process.platform))(
   "doctor checks a desktop build host and names settings without their values",
   { timeout: 60_000 },
   async ({ cli }) => {
@@ -62,7 +182,10 @@ cliTest.skipIf(!["darwin", "linux"].includes(process.platform))(
         "claude_code",
         "--json",
       ],
-      environment,
+      environment: {
+        ...environment,
+        REA_DOCKER_COMMAND: join(environment.HOME, "..", "bin", "docker"),
+      },
       timeoutMs: 45_000,
     });
 
@@ -85,6 +208,7 @@ cliTest.skipIf(!["darwin", "linux"].includes(process.platform))(
     });
     expect(checks.get("desktop_build-registration")).toMatchObject({
       ok: false,
+      detail: expect.stringContaining("REA_DOCKER_COMMAND"),
       details: {
         registrations: [
           {
@@ -93,6 +217,7 @@ cliTest.skipIf(!["darwin", "linux"].includes(process.platform))(
               "REA_AGENT_ENV_COMMAND",
               "REA_BUILD_COMPUTER_REA_ARCHIVE",
             ],
+            differing: ["REA_DOCKER_COMMAND"],
           },
         ],
       },

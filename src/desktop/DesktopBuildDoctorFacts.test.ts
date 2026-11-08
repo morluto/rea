@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { promisify } from "node:util";
 
@@ -8,6 +8,7 @@ import { expect, it } from "vitest";
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
 import { systemDoctorHost } from "../application/Doctor.js";
 import { readDesktopBuildFacts } from "./DesktopBuildDoctorFacts.js";
+import { defaultBuildComputerArchive } from "./BuildComputerEnvironment.js";
 
 const execute = promisify(execFile);
 
@@ -40,6 +41,99 @@ const readFacts = async (
     await host.close?.();
   }
 };
+
+it.skipIf(process.platform === "win32")(
+  "compares registrations to resolved defaults when the terminal has no overrides",
+  async () => {
+    const { root, bin, home } = await buildHost("rea-desktop-doctor-defaults-");
+    await program(join(bin, "docker"), "exit 1");
+    await program(
+      join(bin, "agent-env"),
+      'printf x >> "$REA_TEST_RUNNER_LOG"; echo "agent-env 0.9.1431"',
+    );
+    const environment = {
+      HOME: home,
+      USERPROFILE: home,
+      PATH: `${bin}:/usr/bin:/bin`,
+      XDG_CACHE_HOME: join(root, "cache"),
+      REA_TEST_RUNNER_LOG: join(root, "runner-log"),
+    };
+    await writeFile(
+      join(home, ".claude.json"),
+      JSON.stringify({
+        mcpServers: {
+          rea: {
+            command: process.execPath,
+            args: ["/opt/rea/scripts/rea.mjs", "mcp"],
+            env: {
+              REA_DOCKER_COMMAND: join(bin, "docker"),
+              REA_AGENT_ENV_COMMAND: join(bin, "agent-env"),
+              REA_BUILD_COMPUTER_REA_ARCHIVE: defaultBuildComputerArchive(
+                environment,
+                "linux",
+              ),
+            },
+          },
+        },
+      }),
+    );
+    const facts = await readFacts(environment, ["claude_code"]);
+    expect(await readFile(environment.REA_TEST_RUNNER_LOG, "utf8")).toBe("x");
+    expect(facts.registrations).toMatchObject([
+      {
+        client: "claude_code",
+        registered: true,
+        unrecorded: [],
+        unresolved: [],
+      },
+    ]);
+  },
+);
+
+it.skipIf(process.platform === "win32")(
+  "compares explicitly selected paths and reports unchecked recorded paths by name only",
+  async () => {
+    const { root, bin, home } = await buildHost(
+      "rea-desktop-doctor-registration-",
+    );
+    await writeFile(
+      join(home, ".claude.json"),
+      JSON.stringify({
+        mcpServers: {
+          rea: {
+            command: process.execPath,
+            args: ["/opt/rea/scripts/rea.mjs", "mcp"],
+            env: {
+              REA_AGENT_ENV_COMMAND: "/private/old-agent-env",
+              REA_DOCKER_COMMAND: "/private/docker",
+              REA_BUILD_COMPUTER_REA_ARCHIVE: "/private/old-archive",
+            },
+          },
+        },
+      }),
+    );
+    const facts = await readFacts(
+      {
+        HOME: home,
+        USERPROFILE: home,
+        PATH: `${bin}:/usr/bin:/bin`,
+        XDG_CACHE_HOME: join(root, "cache"),
+        REA_AGENT_ENV_COMMAND: "/private/current-agent-env",
+        REA_DOCKER_COMMAND: "/private/docker",
+      },
+      ["claude_code"],
+    );
+    expect(facts.registrations).toMatchObject([
+      {
+        client: "claude_code",
+        registered: true,
+        differing: ["REA_AGENT_ENV_COMMAND", "REA_BUILD_COMPUTER_REA_ARCHIVE"],
+        runner: { status: "invalid" },
+      },
+    ]);
+    expect(JSON.stringify(facts.registrations)).not.toContain("/private/");
+  },
+);
 
 it.skipIf(process.platform === "win32")(
   "reads a refused daemon and names unrecorded settings without their values",

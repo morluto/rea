@@ -1,6 +1,7 @@
 import { DESKTOP_EXPORT_FRAMEWORK_VERSION } from "../domain/desktop/appExport.js";
 import { AGENTENV_INSTALL_COMMAND } from "./DesktopBuildDoctor.js";
 import { DESKTOP_BUILD_PROVIDER_ID } from "./DoctorProviderIds.js";
+import { assertSetupActive } from "./SetupCancellation.js";
 import type {
   SetupAction,
   SetupOptions,
@@ -29,9 +30,15 @@ export interface DesktopBuildSetupFacts {
 export interface DesktopBuildSetupHost {
   facts(clientIds: readonly string[]): Promise<DesktopBuildSetupFacts>;
   /** Pack this REA as the build-computer runtime; the reason when it failed. */
-  packRuntime(archive: string): Promise<string | undefined>;
+  packRuntime(
+    archive: string,
+    signal?: AbortSignal,
+  ): Promise<string | undefined>;
   /** Install the pinned agentenv-framework with uv; the reason when it failed. */
-  installAgentenv(uv: string): Promise<string | undefined>;
+  installAgentenv(
+    uv: string,
+    signal?: AbortSignal,
+  ): Promise<string | undefined>;
 }
 
 /** A desktop build setup as runSetup drives it; inert when it was not selected. */
@@ -39,7 +46,10 @@ export interface DesktopBuildSetup {
   readonly selected: boolean;
   readonly blocker?: string;
   readonly actions: readonly SetupAction[];
-  /** Settings added to each selected client's registration only. */
+  /**
+   * Settings added to each selected client's registration only; after apply, a
+   * setting whose pack or install failed is left as the client records it.
+   */
   readonly clientEnvironments: Readonly<
     Record<string, SetupProviderEnvironment>
   >;
@@ -48,6 +58,7 @@ export interface DesktopBuildSetup {
   apply(
     appliedActions: string[],
     onProgress?: (event: SetupProgressEvent) => void,
+    signal?: AbortSignal,
   ): Promise<string | undefined>;
   /** Where to look when the build host is not ready after setup. */
   readinessRemediation(healthy: boolean): string | undefined;
@@ -92,24 +103,38 @@ export const planDesktopBuild = async (
       : {}),
   };
   const remediation = agentenvRemediation(pinned, install, uv);
+  const failed = new Set<string>();
   return {
     selected: true,
     actions,
-    clientEnvironments: Object.fromEntries(
-      clientIds.map((client) => [
-        client,
-        Object.fromEntries(
-          Object.entries(settings).filter(
-            ([name]) =>
-              facts.selected.includes(name) ||
-              !(facts.recorded[client] ?? []).includes(name),
+    get clientEnvironments() {
+      return Object.fromEntries(
+        clientIds.map((client) => [
+          client,
+          Object.fromEntries(
+            Object.entries(settings).filter(
+              ([name]) =>
+                !failed.has(name) &&
+                (facts.selected.includes(name) ||
+                  !(facts.recorded[client] ?? []).includes(name)),
+            ),
           ),
-        ),
-      ]),
-    ),
+        ]),
+      );
+    },
     ...(remediation === undefined ? {} : { remediation }),
-    apply: (appliedActions, onProgress) =>
-      applyActions(host, actions, uv?.path, { appliedActions, onProgress }),
+    apply: (appliedActions, onProgress, signal) =>
+      applyActions(host, actions, uv?.path, {
+        appliedActions,
+        onProgress,
+        signal,
+        failed: (kind) => {
+          if (kind === "pack_build_runtime")
+            failed.add("REA_BUILD_COMPUTER_REA_ARCHIVE");
+          else if (!facts.selected.includes("REA_AGENT_ENV_COMMAND"))
+            failed.add("REA_AGENT_ENV_COMMAND");
+        },
+      }),
     readinessRemediation: (healthy) =>
       healthy
         ? undefined
@@ -135,15 +160,19 @@ const applyActions = async (
   progress: {
     readonly appliedActions: string[];
     readonly onProgress?: ((event: SetupProgressEvent) => void) | undefined;
+    readonly signal?: AbortSignal | undefined;
+    /** Leave the setting this failed action produces as each client records it. */
+    readonly failed: (kind: SetupAction["kind"]) => void;
   },
 ): Promise<string | undefined> => {
   const failures: string[] = [];
   for (const { id, kind, label, target } of actions) {
+    assertSetupActive(progress.signal);
     progress.onProgress?.({ actionId: id, label, state: "started" });
     const failure =
       kind === "install_agentenv"
-        ? await host.installAgentenv(uv ?? "uv")
-        : await host.packRuntime(target);
+        ? await host.installAgentenv(uv ?? "uv", progress.signal)
+        : await host.packRuntime(target, progress.signal);
     progress.onProgress?.({
       actionId: id,
       label,
@@ -151,12 +180,14 @@ const applyActions = async (
       ...(failure === undefined ? {} : { detail: failure }),
     });
     if (failure === undefined) progress.appliedActions.push(id);
-    else
-      failures.push(
-        kind === "install_agentenv"
-          ? `Installing agentenv failed: ${failure} Run ${AGENTENV_INSTALL_COMMAND} yourself, then rerun setup.`
-          : `Packing REA's build-computer runtime failed: ${failure} Fix the reported problem, then rerun setup with --desktop-build.`,
-      );
+    assertSetupActive(progress.signal);
+    if (failure === undefined) continue;
+    progress.failed(kind);
+    failures.push(
+      kind === "install_agentenv"
+        ? `Installing agentenv failed: ${failure} Run ${AGENTENV_INSTALL_COMMAND} yourself, then rerun setup.`
+        : `Packing REA's build-computer runtime failed: ${failure} Fix the reported problem, then rerun setup with --desktop-build.`,
+    );
   }
   return failures.length === 0 ? undefined : failures.join(" ");
 };

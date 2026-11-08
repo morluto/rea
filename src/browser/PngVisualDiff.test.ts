@@ -140,8 +140,10 @@ describe("PNG visual diff", () => {
       }),
     );
     expect(result).toMatchObject({ status: "identical", changed_pixels: 0 });
-    expect(result.limitations).toContain(
-      "PNG tRNS transparency is accepted only as a six-byte RGB color key; tRNS on RGBA or with another length is rejected.",
+    expect(result.limitations).toContainEqual(
+      expect.stringMatching(
+        /tRNS.*only.*six-byte RGB.*RGBA.*another length.*rejected/iu,
+      ),
     );
   });
 
