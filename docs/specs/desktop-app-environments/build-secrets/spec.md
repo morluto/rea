@@ -38,12 +38,12 @@ to seed it. REA does not infer secrecy from a value or name.
 - Results and records: every string in each build tool's text content and
   structured content, errors included, and in `witness.json`'s record, has
   each secret typed on the server, in each text spelling below, replaced by
-  `<secret:<handle>>`. Images pass as they are. So has the start of one that
-  a cut of REA's own leaves before its `…`: a draft value or the element it
-  refers to cut at 600 UTF-16 code units, a string of a draft's view at
-  2,000, and a value's JSON a check's description quotes at 200; other text
-  ending in `…` is left as it is. The host redacts the app's stderr and the
-  capture's progress before it quotes their end.
+  `<secret:<handle>>`. Images pass as they are. After this server uses a
+  declared secret, automatic task drafting is withheld before it runs; the
+  capture remains available for a manually written task and export. Check
+  descriptions redact complete known values before shortening them. Ordinary
+  text is never redacted merely because it resembles part of a secret. The
+  host redacts the app's stderr and capture progress before quoting their end.
 - Export scan: before writing a bundle on the host, REA searches each file's
   path and bytes for every secret typed on the server and every other one the
   folder holds, whatever its permissions, in these spellings: as it is,

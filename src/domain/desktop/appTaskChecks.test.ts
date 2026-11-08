@@ -10,8 +10,32 @@ import {
 import { CHECK_CASES, CHECK_VIEWS } from "./appTaskChecks.fixture.js";
 import { textView, xmlView } from "./stateFormats.js";
 import { elementText } from "./viewPointer.js";
+import { redactSecretsInJson } from "./buildSecrets.js";
 
 const portable = (name: string) => /^[a-z0-9]+(?:-[a-z0-9]+)*$/u.test(name);
+
+it("redacts full check values before shortening descriptions without changing the verdict", () => {
+  const secret = "e-Plum7-Kite-Throwaway-42";
+  const actual = `${"x".repeat(180)}${secret}`;
+  const checks = [
+    {
+      id: "check-1",
+      kind: "value_equals" as const,
+      file: "data.json",
+      pointer: "/value",
+      value: "other",
+    },
+  ];
+  const views = new Map<string, TaskFileView>([
+    ["data.json", { format: "json", view: { value: actual } }],
+  ]);
+  const [result] = evaluateTaskChecks(checks, views, (value) =>
+    redactSecretsInJson(value, [{ handle: "master", value: secret }]),
+  );
+  expect(result?.passed).toBe(false);
+  expect(result?.description).not.toContain(secret.slice(0, 8));
+  expect(result?.description).toContain("<secret:master>");
+});
 
 /** A value as a description shows it: caller data and what the view holds, as JSON. */
 const quoted = (value: unknown) => JSON.stringify(value);

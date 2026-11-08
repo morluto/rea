@@ -326,7 +326,9 @@ export class DesktopBuildWitness {
       const views = appStateViews(read.parts);
       return views.ok
         ? ok({
-            results: [...evaluateTaskChecks(task.checks, views.value)],
+            results: [
+              ...evaluateTaskChecks(task.checks, views.value, this.#redact),
+            ],
             settled: read.settled,
             read_cut: read.readCut,
           })

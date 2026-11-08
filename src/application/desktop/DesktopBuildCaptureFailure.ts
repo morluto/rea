@@ -66,7 +66,7 @@ const lastProgress = (progress: string | undefined): string | undefined => {
   return lines.at(-1);
 };
 
-/** Text with each typed secret and credential replaced, before a quote cuts it where no later redaction could see the whole of one. */
+/** Text with each declared secret replaced before a quote cuts it. */
 type Redact = (text: string) => string;
 const unredacted: Redact = (text) => text;
 

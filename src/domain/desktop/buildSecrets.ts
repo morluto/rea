@@ -2,7 +2,6 @@ import { z } from "zod";
 
 import type { JsonValue } from "../jsonValue.js";
 import { gunzip, isGzip } from "./gzipDocument.js";
-import { endsValueCut } from "./valueCuts.js";
 
 /** A secret's handle: the name of one file in the build host's secrets folder. */
 export const buildSecretHandleSchema = z
@@ -14,8 +13,6 @@ export const buildSecretHandleSchema = z
 
 /** The fewest characters a secret holds, so a scan can tell it from ordinary text. */
 const MIN_SECRET_CHARACTERS = 8;
-/** How far before a cut's ellipsis a scan looks for the start of a secret: past any cut a view makes, escaped twice. */
-const MAX_CUT_LOOKBACK = 16 * 1024;
 /** The most characters one secret holds, as one typed field takes. */
 export const MAX_SECRET_CHARACTERS = 1024;
 /** The most characters a setting's secret holds: a withheld file's bytes in base64. */
@@ -140,144 +137,7 @@ export const isUncheckedGzip = (
   inner: GzipInside = gzipInside(bytes),
 ): boolean => inner?.ok === false && inner.error === "too_large";
 
-/** For each length of `pattern`'s prefixes, the longest proper prefix of it that also ends it. */
-const borders = (pattern: string): number[] => {
-  const table = [0];
-  let length = 0;
-  for (let index = 1; index < pattern.length; index += 1) {
-    while (length > 0 && pattern[index] !== pattern[length])
-      length = table[length - 1] ?? 0;
-    if (pattern[index] === pattern[length]) length += 1;
-    table.push(length);
-  }
-  return table;
-};
-
-/** How many characters of `text` before `end` begin `pattern`, as many as can, but never all of it. */
-const prefixEndingAt = (
-  text: string,
-  end: number,
-  pattern: string,
-  table: readonly number[],
-): number => {
-  let length = 0;
-  for (
-    let index = Math.max(
-      0,
-      end - Math.min(pattern.length - 1, MAX_CUT_LOOKBACK),
-    );
-    index < end;
-    index += 1
-  ) {
-    while (
-      length > 0 &&
-      (length === pattern.length || text[index] !== pattern[length])
-    )
-      length = table[length - 1] ?? 0;
-    if (text[index] === pattern[length]) length += 1;
-  }
-  return length === pattern.length ? 0 : length;
-};
-
-/** The index of each `…` in `text`. */
-const ellipses = (text: string): number[] => {
-  const found: number[] = [];
-  for (let at = text.indexOf("…"); at !== -1; at = text.indexOf("…", at + 1))
-    found.push(at);
-  return found;
-};
-
-/** The characters that end a line, which no JSON escape takes. */
-const LINE_ENDS = new Set(["\n", "\r", "\u2028", "\u2029"]);
-
-/**
- * Each JSON string literal of `text`, as a result's JSON text holds each of
- * its strings, and where it starts, in one forward scan: a quote the scan
- * passed was escaped, so no literal can open there.
- */
-const jsonStringLiterals = (
-  text: string,
-): { readonly index: number; readonly literal: string }[] => {
-  const found: { index: number; literal: string }[] = [];
-  for (let open = text.indexOf('"'); open !== -1;) {
-    let at = open + 1;
-    let closed = false;
-    while (at < text.length) {
-      if (text[at] === '"') {
-        closed = true;
-        break;
-      }
-      if (text[at] !== "\\") at += 1;
-      else if (at + 1 < text.length && !LINE_ENDS.has(text[at + 1] ?? ""))
-        at += 2;
-      else break;
-    }
-    if (closed) found.push({ index: open, literal: text.slice(open, at + 1) });
-    open = text.indexOf('"', at + 1);
-  }
-  return found;
-};
-
-/** A JSON string literal's text, or undefined when it is not one. */
-const literalText = (literal: string): string | undefined => {
-  try {
-    const value: unknown = JSON.parse(literal);
-    return typeof value === "string" ? value : undefined;
-  } catch {
-    return undefined;
-  }
-};
-
-/** The order, among the `…` of `text`, of each that ends one of REA's cuts: in the text as one string, or in a JSON string literal it holds. */
-const cutOrders = (text: string): ReadonlySet<number> => {
-  const all = ellipses(text);
-  const ends = new Set(all.filter((at) => endsValueCut(text, at)));
-  for (const { index, literal } of jsonStringLiterals(text)) {
-    if (!literal.includes("…")) continue;
-    const inner = literalText(literal);
-    if (inner === undefined) continue;
-    const kept = ellipses(inner);
-    const spelled = ellipses(literal);
-    // An ellipsis the literal escapes cannot be placed in the text.
-    if (kept.length !== spelled.length) continue;
-    kept.forEach((at, order) => {
-      if (endsValueCut(inner, at)) ends.add((spelled[order] ?? 0) + index);
-    });
-  }
-  return new Set(all.flatMap((at, order) => (ends.has(at) ? [order] : [])));
-};
-
-/** Text with the start of a spelling one of REA's cuts left, just before the cut's ellipsis, replaced by its handle's placeholder; `isCut` names those ellipses by their order. */
-const redactCutSpellings = (
-  text: string,
-  spellings: readonly { readonly handle: string; readonly spelling: string }[],
-  isCut: (order: number) => boolean,
-): string => {
-  if (!text.includes("…")) return text;
-  const tables = spellings.map(({ spelling }) => borders(spelling));
-  let redacted = "";
-  let start = 0;
-  let order = -1;
-  for (
-    let end = text.indexOf("…");
-    end !== -1;
-    end = text.indexOf("…", end + 1)
-  ) {
-    order += 1;
-    if (!isCut(order)) continue;
-    let longest = { length: 0, handle: "" };
-    spellings.forEach(({ handle, spelling }, index) => {
-      const length = prefixEndingAt(text, end, spelling, tables[index] ?? []);
-      if (length > longest.length) longest = { length, handle };
-    });
-    if (longest.length === 0 || end - longest.length < start) continue;
-    redacted += `${text.slice(start, end - longest.length)}${secretPlaceholder(longest.handle)}`;
-    start = end;
-  }
-  return redacted + text.slice(start);
-};
-
-/** Text with each text spelling of each secret, longest first, replaced by its handle's placeholder, and any start of one that one of REA's cuts left before its ellipsis. */
+/** Replace complete spellings of explicitly known secrets, longest first. */
 export const redactSecrets = (
   text: string,
   secrets: readonly KnownSecret[],
@@ -288,16 +148,10 @@ export const redactSecrets = (
       textSpellings(value).map((spelling) => ({ handle, spelling })),
     )
     .sort((left, right) => right.spelling.length - left.spelling.length);
-  const cuts = text.includes("…") ? cutOrders(text) : new Set<number>();
-  const replaced = spellings.reduce(
+  return spellings.reduce(
     (redacted, { handle, spelling }) =>
       redacted.replaceAll(spelling, secretPlaceholder(handle)),
     text,
-  );
-  // A secret holding `…` shifts the order of the rest, so every one then counts as a cut.
-  const placed = ellipses(replaced).length === ellipses(text).length;
-  return redactCutSpellings(replaced, spellings, (order) =>
-    placed ? cuts.has(order) : true,
   );
 };
 

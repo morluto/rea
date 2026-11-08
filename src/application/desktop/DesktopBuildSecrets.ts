@@ -38,6 +38,7 @@ export class DesktopBuildSecrets {
   /** Every value each handle named while this server ran, an earlier one still held by the app after the person changed it. */
   readonly #seen = new Map<string, Set<string>>();
   readonly #resources = new ArtifactResourceScope();
+  #hasDeclaredSecret = false;
 
   constructor(readonly directory: string) {}
 
@@ -137,10 +138,16 @@ export class DesktopBuildSecrets {
   }
 
   #remember(handle: string, value: string): void {
+    this.#hasDeclaredSecret = true;
     if (!isScannableSecret(value)) return;
     const values = this.#seen.get(handle) ?? new Set<string>();
     values.add(value);
     this.#seen.set(handle, values);
+  }
+
+  /** Whether this server has used or kept any explicitly declared secret. */
+  get hasDeclaredSecret(): boolean {
+    return this.#hasDeclaredSecret;
   }
 
   #known(): KnownSecret[] {

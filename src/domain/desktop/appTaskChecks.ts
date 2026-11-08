@@ -69,8 +69,7 @@ const fail = (description: string): Verdict => ({
   passed: false,
   description,
 });
-const shown = (value: JsonValue): string =>
-  cut(JSON.stringify(value), CHECK_VALUE_CHARS);
+type ShowValue = (value: JsonValue) => string;
 /** A failure for want of a readable or whole view, not for what the view holds. */
 const unread = (description: string): Verdict => ({
   ...fail(description),
@@ -184,6 +183,7 @@ const compared = (check: CountCheck, n: number, what: string): Verdict => {
 const lineVerdict = (
   check: Check<"lines_present" | "lines_absent" | "line_count">,
   entry: TaskFileView | undefined,
+  shown: ShowValue,
 ): Verdict => {
   const read = viewOf(check, entry, "text");
   if ("passed" in read) return read;
@@ -243,6 +243,7 @@ const nearVerdict = (
   expected: number,
   tolerance: number,
   join: boolean,
+  shown: ShowValue,
 ): Verdict => {
   const read = join ? elementText(found) : found;
   const number = numberOf(typeof read === "string" ? read.trim() : read);
@@ -295,6 +296,7 @@ const noValue = (
 const valueVerdict = (
   check: Check<"value_equals" | "value_absent">,
   entry: TaskFileView | undefined,
+  shown: ShowValue,
 ): Verdict => {
   const read = viewOf(check, entry, undefined);
   if ("passed" in read) return read;
@@ -328,7 +330,14 @@ const valueVerdict = (
         located.value,
       );
       if (join && truncated) return undecided(check.file);
-      return nearVerdict(at, located.value, check.value, check.tolerance, join);
+      return nearVerdict(
+        at,
+        located.value,
+        check.value,
+        check.tolerance,
+        join,
+        shown,
+      );
     }
     return sameJson(located.value, check.value)
       ? pass(`${at} is ${shown(check.value)}`)
@@ -377,6 +386,7 @@ const comparedText = (
   check: Check<"text_equals" | "text_contains">,
   at: string,
   found: string,
+  shown: ShowValue,
 ): Verdict => {
   const collapse = check.normalize_whitespace === true;
   const text = collapse ? collapseWhitespace(found) : found;
@@ -399,6 +409,7 @@ const comparedText = (
 const textVerdict = (
   check: Check<"text_equals" | "text_contains">,
   entry: TaskFileView | undefined,
+  shown: ShowValue,
 ): Verdict => {
   const read = viewOf(check, entry, undefined);
   if ("passed" in read) return read;
@@ -440,13 +451,14 @@ const textVerdict = (
   // A text node is whole. An element's text in a cut view may lack what the cut
   // dropped from its middle, so its kept runs can read as text it never had.
   if (typeof found !== "string" && truncated) return undecided(check.file);
-  return comparedText(check, at, elementText(found, attribute));
+  return comparedText(check, at, elementText(found, attribute), shown);
 };
 
 /** How many members of the array at a pointer, or of those a selector matches, compared with the expected number. */
 const memberVerdict = (
   check: Check<"member_count">,
   entry: TaskFileView | undefined,
+  shown: ShowValue,
 ): Verdict => {
   const { matching, pointer } = check;
   const read = viewOf(check, entry, undefined);
@@ -531,6 +543,7 @@ export const countTaskRows = (
 const rowVerdict = (
   check: Check<"row_present" | "row_absent" | "row_count">,
   entry: TaskFileView | undefined,
+  shown: ShowValue,
 ): Verdict => {
   const read = viewOf(check, entry, "sqlite");
   if ("passed" in read) return read;
@@ -565,6 +578,7 @@ const rowVerdict = (
 const verdict = (
   check: DesktopTaskCheck,
   entry: TaskFileView | undefined,
+  shown: ShowValue,
 ): Verdict => {
   switch (check.kind) {
     case "file_present":
@@ -578,19 +592,19 @@ const verdict = (
     case "lines_present":
     case "lines_absent":
     case "line_count":
-      return lineVerdict(check, entry);
+      return lineVerdict(check, entry, shown);
     case "value_equals":
     case "value_absent":
-      return valueVerdict(check, entry);
+      return valueVerdict(check, entry, shown);
     case "text_equals":
     case "text_contains":
-      return textVerdict(check, entry);
+      return textVerdict(check, entry, shown);
     case "row_present":
     case "row_absent":
     case "row_count":
-      return rowVerdict(check, entry);
+      return rowVerdict(check, entry, shown);
     case "member_count":
-      return memberVerdict(check, entry);
+      return memberVerdict(check, entry, shown);
   }
 };
 
@@ -598,8 +612,12 @@ const verdict = (
 export const evaluateTaskChecks = (
   checks: readonly DesktopTaskCheck[],
   views: ReadonlyMap<string, TaskFileView>,
-): readonly TaskCheckOutcome[] =>
-  checks.map((check) => ({
+  redact: (value: JsonValue) => JsonValue = (value) => value,
+): readonly TaskCheckOutcome[] => {
+  const shown: ShowValue = (value) =>
+    cut(JSON.stringify(redact(value)), CHECK_VALUE_CHARS);
+  return checks.map((check) => ({
     id: check.id,
-    ...verdict(check, views.get(check.file)),
+    ...verdict(check, views.get(check.file), shown),
   }));
+};

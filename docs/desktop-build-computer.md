@@ -348,6 +348,10 @@ refusal names the file and why, never its text.
   witness record and in the build tools' results, has each secret typed on
   this server, in any text spelling the scan below knows, replaced by
   `<secret:<handle>>`.
+- After this server uses a declared secret, `stop_build_capture` withholds
+  its automatic draft before running it. The capture remains available; write
+  the task manually and export it. Check descriptions redact known values
+  before shortening them.
 - `export_build_environment` refuses a bundle whose file names or contents
   hold any secret the folder holds, typed or not, readable by others or not:
   as it is, escaped in JSON, in UTF-16 of either byte order, in hex, in base64

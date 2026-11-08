@@ -368,7 +368,9 @@ the first source that has the app:
    checks), `draft.guards`, `draft.notes` and `limitations`. When `draft`
    is null, read `draft_refusal` first: a missing `seed` or `end`
    checkpoint means capturing again on a new build computer, while a failed
-   draft command names its own cause to fix. When `draft.files` is empty,
+   draft command names its own cause to fix. If a declared secret was used,
+   automatic drafting is withheld: write the task manually and export it.
+   When `draft.files` is empty,
    `draft.notes` says why:
    - `no_change`: nothing was saved between `seed` and `end`. Capture again
      on a new build computer, and save before marking `end`.

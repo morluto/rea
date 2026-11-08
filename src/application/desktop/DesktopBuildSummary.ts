@@ -174,8 +174,15 @@ const draftTask = async (
   computer: ControlledComputer,
   folder: string,
   checkpoints: ReadonlySet<string>,
+  hasDeclaredSecret: boolean,
   signal: AbortSignal,
 ): Promise<Pick<StoppedCapture, "draft" | "draft_refusal">> => {
+  if (hasDeclaredSecret)
+    return {
+      draft: null,
+      draft_refusal:
+        "Automatic task drafting is unavailable after this server used a declared secret. The capture remains available; write the task manually and export it.",
+    };
   const missing = [SEED_CHECKPOINT, END_CHECKPOINT].filter(
     (name) => !checkpoints.has(name),
   );
@@ -235,6 +242,7 @@ const draftTask = async (
 export const summarizeCapture = async (
   computer: ControlledComputer,
   capture: { readonly folder: string; readonly outputBytes: number },
+  hasDeclaredSecret: boolean,
   signal: AbortSignal,
 ): Promise<
   Result<
@@ -277,7 +285,13 @@ export const summarizeCapture = async (
         sources: [...installed.sources],
       },
       limitations: [...recorded.limitations],
-      ...(await draftTask(computer, capture.folder, checkpoints, signal)),
+      ...(await draftTask(
+        computer,
+        capture.folder,
+        checkpoints,
+        hasDeclaredSecret,
+        signal,
+      )),
     },
   });
 };

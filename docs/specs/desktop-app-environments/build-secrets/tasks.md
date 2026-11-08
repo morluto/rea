@@ -35,10 +35,6 @@
       `appWithheld.test.ts`, `DesktopExportWithheld.test.ts`,
       `DesktopBuildSecrets.test.ts`, `buildSecretsMcp.test.ts`,
       `buildWithheldMcp.test.ts`).
-- [x] Match the start of a secret only before the `…` of one of REA's own
-      cuts, whose lengths the producers share, and redact the app's stderr and
-      the capture's progress before quoting their end (results and records;
-      `buildSecrets.test.ts`, `DesktopBuildOutputRead.test.ts`).
-- [ ] Follow-up: redact each typed secret before anything cuts a value, in the
-      build computer's draft and the export's task checks as on the host, then
-      drop the matching of a cut's start (results and records).
+- [x] Withhold automatic drafting before it runs after a declared secret;
+      preserve the capture and manual task export. Redact full check values
+      before shortening descriptions, without matching partial secret prefixes.

@@ -247,10 +247,12 @@ export class DesktopBuildCapture {
       readonly all: () => Promise<readonly KnownSecret[]>;
       readonly keep: (handle: string, bytes: Buffer) => Promise<string>;
       readonly redact: (text: string) => string;
+      readonly hasDeclaredSecret: boolean;
     } = {
       all: () => Promise.resolve([]),
       keep: (handle) => Promise.resolve(handle),
       redact: (text) => text,
+      hasDeclaredSecret: false,
     },
   ) {
     this.#entry = request?.desktop_entry;
@@ -502,6 +504,7 @@ export class DesktopBuildCapture {
       const summary = await summarizeCapture(
         this.computer,
         { folder: run.folder, outputBytes: run.outputBytes },
+        this.secrets.hasDeclaredSecret,
         signal,
       );
       if (!summary.ok) {
