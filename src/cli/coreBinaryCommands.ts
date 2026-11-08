@@ -199,7 +199,7 @@ const registerDecompileCommand = (
   runDirectAnalysis: DirectAnalysis["runDirectAnalysis"],
 ): void => {
   cli.command(CLI_COMMANDS.decompile, {
-    description: `Read one part of an app as code. ${decompileSelectorGuidance} Equal positional and --procedure values are accepted; conflicts fail.`,
+    description: `Read one part of an app as code. ${decompileSelectorGuidance} Equal positional and --procedure values are accepted; conflicts fail. With Ghidra, a space-qualified address such as ram:0x... avoids file-offset fallback; inspect-native-load-image reports the observed default space.`,
     args: z.object({
       path: localPathStringSchema.describe("App or program path"),
       address: z
@@ -445,7 +445,11 @@ const registerFunctionCommand = (
                 "analyze_function",
               ),
             },
-            { ...directAnalysisOptionsFromCli(logger, options), signal },
+            {
+              ...directAnalysisOptionsFromCli(logger, options),
+              signal,
+              includeEvidenceSources: options.evidence_output !== undefined,
+            },
           );
           return publishCliAnalysisEvidence(complete, delivery);
         }),

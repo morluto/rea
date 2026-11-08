@@ -88,7 +88,7 @@ export const SESSION_TOOL_CONTRACTS = [
   ),
   session(
     "binary_session",
-    'Report the active binary target or resource-only app root, provider and capability availability when applicable, client-feature, analysis, and server-identity status without starting analysis. Start with the default summary: after selecting Ghidra, capabilities[].shared_limitations already reports enabled checkpoint or ephemeral mode. Request detail: "complete" only for provider diagnostics, candidate capabilities or static tool flags; omitted_fields lists what summary leaves out.',
+    'Report the active binary target or resource-only app root, provider and capability availability when applicable, client-feature, analysis, and server-identity status without starting analysis. analysis_provider_candidates_observed distinguishes this status request from retained target-selection observations; selection-time readiness may have changed. Set refresh_candidates true to inspect current candidates without changing the active binding or engine. open_binary with an explicit provider_id reselects and may retire the previous engine and its ephemeral edits; reopening the same target without provider_id reuses its current route. A selected provider may report release_verification under its binding; omission means not reported, and reported-version verification does not authenticate executable bytes. Start with the default summary: after selecting Ghidra, capabilities[].shared_limitations already reports enabled checkpoint or ephemeral mode. Request detail: "complete" only for provider diagnostics, candidate capabilities or static tool flags; omitted_fields lists what summary leaves out.',
     binarySessionInputSchema,
   ),
   session(
@@ -123,7 +123,7 @@ export const SESSION_TOOL_CONTRACTS = [
   ),
   session(
     "compare_functions",
-    "Compare two explicit analyze_function Evidence records or exact retained session references across identity, exact provider text, calls, references, strings, and address-normalized CFG topology. Authenticated same-artifact entry coordinates establish correspondence independently of renamed labels; metadata and text changes remain separate. Missing or provider-incompatible facets remain truncated or unknown; every conclusion cites both Evidence sets.",
+    "Compare two explicit analyze_function Evidence records or exact retained session references across identity, exact provider text, calls, references, strings, and address-normalized CFG topology. The same authenticated Evidence record or compatible same-artifact entry coordinates establish correspondence independently of symbol origin; metadata and text changes remain separate. Missing or provider-incompatible facets remain truncated or unknown; every conclusion cites both Evidence sets.",
     functionComparisonInputSchema,
   ),
   session(

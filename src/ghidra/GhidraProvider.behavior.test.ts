@@ -1,7 +1,6 @@
 import { z } from "zod";
 import { GHIDRA_LITERAL_CANDIDATES_LIMITATION } from "./GhidraLiteralSearch.js";
 import {
-  EXISTING_PROJECT_WINDOWS_REMEDIATION,
   EXISTING_PROJECT_WINDOWS_UNAVAILABLE,
   existingProjectCapabilities,
   ghidraEmptyIncomingReferencesLimitation,
@@ -68,7 +67,6 @@ import type { BinaryTarget } from "../domain/binaryTargetTypes.js";
 import { parseExecutableHeader } from "../domain/binaryTarget.js";
 import { elf, thinMach } from "../domain/binaryTarget.fixture.js";
 import { GhidraProvider } from "./GhidraProvider.js";
-import { GHIDRA_RESTRICTED_TEMP_REMEDIATION } from "./GhidraTemporaryDirectory.js";
 import type { GhidraTargetSnapshot } from "./GhidraClient.js";
 import {
   GHIDRA_ANNOTATIONS_RETAINED,
@@ -1315,6 +1313,8 @@ describe("Ghidra result projection", () => {
     ["invalid_request", "AnalysisInputError"],
     ["not_found", "AnalysisInputError"],
     ["ambiguous", "AnalysisInputError"],
+    ["file_offset_ambiguous", "AnalysisInputError"],
+    ["procedure_ambiguous", "AnalysisInputError"],
     ["method_unavailable", "AnalysisCapabilityUnavailableError"],
   ] as const)(
     "projects remote %s without losing its typed meaning",
@@ -3679,13 +3679,19 @@ describe("Ghidra empty instruction reference facets", () => {
     ...compactInstruction(outgoing),
     incoming_references: incoming,
   });
-  const nonDecoded = (status: JsonValue, incoming: JsonValue[]) => ({
+  const definedData = (incoming: JsonValue[]) => ({
     ...compactInstruction(),
-    status,
+    status: "data",
     bytes: null,
     length: null,
     mnemonic: null,
     raw_disassembly: null,
+    containing_data: {
+      address: "0x401000",
+      length: 1,
+      type_id: "/undefined1",
+      provenance: "ghidra-listing",
+    },
     incoming_references: incoming,
   });
   const executeInspect = async (
@@ -3736,15 +3742,13 @@ describe("Ghidra empty instruction reference facets", () => {
   });
 
   it("keeps only the address caveat when a data address resolves no incoming references", async () => {
-    const limitations = await executeInspect(nonDecoded("data", []));
+    const limitations = await executeInspect(definedData([]));
     expect(limitations).toContain(ghidraEmptyXrefsLimitation);
     expect(limitations).not.toContain(ghidraEmptyInstructionOutgoingLimitation);
   });
 
   it("adds no caveat for a data address whose incoming references were observed", async () => {
-    const limitations = await executeInspect(
-      nonDecoded("data", [compactReference()]),
-    );
+    const limitations = await executeInspect(definedData([compactReference()]));
     expect(limitations).not.toContain(ghidraEmptyXrefsLimitation);
     expect(limitations).not.toContain(ghidraEmptyInstructionOutgoingLimitation);
   });
@@ -4477,8 +4481,11 @@ describe("Ghidra missing project program", () => {
     expect(projected.message).toContain(path);
     expect(projected.message).toContain("Win32 error 5");
     expect(projected.message).not.toMatch(/antivirus|DACL/iu);
-    expect(projected.remediation.action).toBe(
-      GHIDRA_RESTRICTED_TEMP_REMEDIATION,
+    expect(projected.remediation.action).toMatch(
+      /TMP and TEMP.*allowed tree.*no dot-prefixed element.*restart REA/iu,
+    );
+    expect(projected.remediation.action).toMatch(
+      /java_home\.save.*creating that file in advance does not help/iu,
     );
   });
 
@@ -4488,8 +4495,8 @@ describe("Ghidra missing project program", () => {
       {},
       "java.io.FileNotFoundException: C:\\x\\other.txt (Access is denied)\n",
     );
-    expect(projected.remediation.action).not.toBe(
-      GHIDRA_RESTRICTED_TEMP_REMEDIATION,
+    expect(projected.remediation.action).not.toMatch(
+      /TMP and TEMP.*allowed tree/iu,
     );
   });
 });
@@ -6527,11 +6534,17 @@ describe("Windows Ghidra readiness repair", () => {
   });
 
   it("gives every operation of a Windows existing-project session the same repair", () => {
-    for (const capability of existingProjectCapabilities("win32"))
+    const capabilities = existingProjectCapabilities("win32");
+    expect(capabilities.length).toBeGreaterThan(0);
+    for (const capability of capabilities)
       expect(capability).toMatchObject({
         available: false,
-        reason: EXISTING_PROJECT_WINDOWS_UNAVAILABLE,
-        remediation: EXISTING_PROJECT_WINDOWS_REMEDIATION,
+        reason: expect.stringMatching(
+          /existing Ghidra project.*cannot be opened.*Windows/iu,
+        ),
+        remediation: expect.stringMatching(
+          /unset REA_GHIDRA_PROJECT_PATH.*ephemeral project.*Linux or macOS.*restart REA/iu,
+        ),
       });
   });
 });

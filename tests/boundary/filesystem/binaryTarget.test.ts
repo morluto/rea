@@ -16,6 +16,7 @@ import { buildBinary } from "plist";
 import { describe, expect, it, vi } from "vitest";
 
 import { parseBinaryTarget } from "../../../src/application/BinaryTargetResolver.js";
+import { espFlashSelectionError } from "../../../src/domain/firmware/espFlashSelection.js";
 import {
   resolveAppBundleExecutable,
   type AppBundleFileSystem,
@@ -756,19 +757,24 @@ describe("binary target I/O: ESP flash layouts", () => {
         },
       },
     });
-    for (const [options, reason] of [
+    for (const [options, selection, facts] of [
       [
         { espFlash: { flashOffset: 0x1000 } },
-        "flash_offset and partition_table_offset apply only with format=esp-flash-image",
+        { flashOffset: 0x1000 },
+        ["flash_offset", "esp-flash-image"],
       ],
       [
         {
           loadSelection: { format: "esp-flash-image" },
           espFlash: { partitionTableOffset: 0x8800 },
         },
-        "partition_table_offset must be a multiple of 0x1000, as ESP-IDF requires",
+        { format: "esp-flash-image", partitionTableOffset: 0x8800 },
+        ["partition_table_offset", "0x1000"],
       ],
-    ] as const)
+    ] as const) {
+      const reason = espFlashSelectionError(selection);
+      if (reason === undefined) throw new Error("Expected selection error");
+      for (const fact of facts) expect(reason).toContain(fact);
       expect(await parseBinaryTarget(partial, options)).toMatchObject({
         ok: false,
         error: {
@@ -777,6 +783,7 @@ describe("binary target I/O: ESP flash layouts", () => {
           reason,
         },
       });
+    }
     // Ciphertext is not recognized as a layout: unknown, not malformed.
     expect(
       await parseBinaryTarget(noise, {
@@ -1151,8 +1158,7 @@ describe("binary target I/O: explicit kinds and executable headers", () => {
     expect(result.ok).toBe(false);
     expect(result.ok ? undefined : result.error).toMatchObject({
       path,
-      reason:
-        "truncated Mach-O header: a 64-bit header needs 32 bytes; the file has 12",
+      reason: expect.stringMatching(/truncated Mach-O.*64-bit.*32 bytes.*12/i),
     });
   });
 

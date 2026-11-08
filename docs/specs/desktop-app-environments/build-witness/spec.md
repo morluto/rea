@@ -94,11 +94,12 @@ and the recording and writes the record as Evidence.
   want of a readable or whole view is `undecided` and proves nothing; a
   stage only such checks would settle files nothing and can be checked
   again. Undecided includes a failure to find a line, row or value that may
-  lie in what a cut view left out; a check that passes on what the view kept
-  stays decided. The export likewise keeps a task only when a check fails on
-  what the seed's view shows. The controller writes a folder's file list to a
-  file that REA reads through `data/get`, so a large bundle's list is not cut
-  at the 1 MiB of a command's output.
+  lie in what a cut view left out, and any text check of an element in a cut
+  view, which may have lost text from between the element's runs; any other
+  check that passes on what the view kept stays decided. The export likewise keeps a task only when a check
+  fails on what the seed's view shows. The controller writes a folder's file
+  list to a file that REA reads through `data/get`, so a large bundle's list
+  is not cut at the 1 MiB of a command's output.
 - The witness reads the build computer's bounded action log: its stage rules
   use the log's count and the last applied action of each kind, and the
   record holds the entries the log keeps, `actions_dropped`, and a

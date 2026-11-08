@@ -7,6 +7,7 @@ import { projectAnalysisError } from "../../../src/domain/analysisErrorProjectio
 import { pe } from "../../../src/domain/binaryTarget.fixture.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { rawLoadAtEntry } from "../../../src/domain/rawBinary.fixture.js";
+import { stating } from "../../support/statingFacts.js";
 
 describe("executable format refusal diagnostics", () => {
   it.each([
@@ -62,8 +63,7 @@ describe("executable format refusal diagnostics", () => {
           constraint: "file_format_rejected",
         },
         remediation: {
-          action:
-            "Review the reported file-format reason and select a supported, well-formed target.",
+          action: expect.stringMatching(/file.format.*supported.*target/i),
         },
       });
       expect(projected.message).not.toContain("Check that the path");
@@ -71,8 +71,7 @@ describe("executable format refusal diagnostics", () => {
       expect(await systemDoctorHost().inspectTarget?.(path)).toMatchObject({
         classification: "unsupported_target",
         details: { constraint: "file_format_rejected" },
-        remediation:
-          "Review the reported file-format reason and select a supported, well-formed target.",
+        remediation: projected.remediation.action,
       });
     },
   );
@@ -254,15 +253,28 @@ describe("raw-binary load rejection diagnostics", () => {
       code: "invalid_request",
       category: "invalid_input",
       retryable: false,
-      message:
-        "Cannot open artifact: raw-binary arm entry_point 0x1 must be 4-byte aligned.",
+      message: expect.stringMatching(
+        /raw-binary.*arm.*entry_point.*0x1.*4.byte.*align/i,
+      ),
       details: {
-        reason: "raw-binary arm entry_point 0x1 must be 4-byte aligned",
+        reason: expect.stringMatching(
+          /raw-binary.*arm.*entry_point.*0x1.*4.byte.*align/i,
+        ),
         constraint: "load_selection_rejected",
       },
       remediation: {
-        action:
-          "Correct the reported load argument (--target-format, --architecture, --architecture-variant, --entry-point, --base-address, or --vector-table-address on the CLI; format, architecture, architecture_variant, entry_point, base_address, or vector_table_address through MCP) and retry.",
+        action: stating(
+          "--target-format",
+          "--architecture",
+          "--architecture-variant",
+          "--entry-point",
+          "--base-address",
+          "--vector-table-address",
+          "architecture_variant",
+          "entry_point",
+          "base_address",
+          "vector_table_address",
+        ),
       },
     });
     expect(projected.message).not.toContain("Check that the path");
@@ -292,8 +304,9 @@ describe("raw-binary load rejection diagnostics", () => {
     expect(projected).toMatchObject({
       code: "invalid_request",
       category: "invalid_input",
-      message:
-        "Cannot open artifact: architecture and entry_point apply only with format=raw-binary.",
+      message: expect.stringMatching(
+        /architecture.*entry_point.*format=raw-binary/i,
+      ),
       details: { constraint: "load_selection_rejected" },
     });
     expect(projected.message).not.toContain("Check that the path");

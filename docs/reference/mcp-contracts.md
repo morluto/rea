@@ -1014,6 +1014,18 @@ finish without reading relationships, even when neither traversal mode is
 available. Discovery does not block that direct invocation or replace its typed
 partial/error outcomes.
 
+`trace_native_values` includes `value_flow_support` for the provider routed to
+`analyze_function`. `supported` declares that the provider may supply value flow;
+it does not guarantee a model for the selected function. `unavailable` includes
+the provider's reason, and `unknown` means no declaration. The provider ID is
+preserved, or null if no analysis provider is routed. This declaration is separate
+from operation readiness and the availability of call-target resolution. When
+call-target resolution is missing, a direct trace may still return a local graph
+with call-resolution unknowns; even `max_depth: 0` attempts to resolve call sites.
+When support is unknown but the declared operation prerequisites are ready,
+availability can still be true; it does not promise that value flow is present.
+The trace's returned observations and unknowns remain authoritative for that call.
+
 `trace_native_ui_action` reports authored-UI and native-seed modes separately.
 Apple dispatch metadata requires a Mach-O target; another provider may supply
 the symbol-only alternative on other formats. If neither mode is available,
@@ -1054,8 +1066,20 @@ limitations. An unavailable group carries `remediation` when its readiness
 owner supplied a repair instruction; `tool_availability` uses that instruction
 rather than the failure description.
 
-`binary_session.analysis_provider_candidates` is authoritative for deep-engine
-discovery. Each candidate's capability sets, returned with complete detail,
+`binary_session.analysis_provider_candidates` reports deep-engine discovery.
+`analysis_provider_candidates_observed` is `target_selection` when those facts
+were retained from the active target's selection, `status_request` when the
+status request sought candidate observations, and `not_applicable` for resource-only
+sessions. Selection-time readiness may have changed since the target was opened.
+Set `refresh_candidates: true` to inspect candidate readiness and target support
+again without replacing the active binding or engine. That does not resolve a
+new analysis profile or start a provider client. Later transitions and analysis
+calls wait for the inspection to finish, including cleanup. Current-route capabilities
+remain those of the bound session. Candidate statuses can still be unknown when
+an inspection cannot complete.
+`open_binary` with an explicit `provider_id` performs a new selection. Reopening
+the same target without `provider_id` reuses its current route. A changed route
+can retire the previous engine and its ephemeral edits. Each candidate's capability sets, returned with complete detail,
 describe that possible provider;
 they do not select it. The top-level `capabilities` describe the current route,
 while `analysis_provider_binding` identifies the concrete selected route. These
@@ -1067,7 +1091,19 @@ analysis client. `open_binary.provider_id` accepts a concrete provider ID or
 concrete version, selection source, and complete analysis profile through
 `analysis_provider_binding`. Ambiguity and unknown, unavailable, or unsupported
 choices return typed selection details. A selected provider is never replaced
-automatically after a runtime failure.
+automatically after a runtime failure. When the bound route does not declare an
+operation, its error points to `binary_session` with `detail: "complete"` for
+candidate capabilities and an explicit `open_binary` provider choice. A
+candidate's availability does not guarantee support for the selected target;
+switching may discard provider session edits, and retained Evidence does not restore them.
+
+When the selected provider reports `release_verification` in its binding,
+the status compares its reported release version at binding with the provider's
+verified baseline. It does not recheck the executable, authenticate its bytes,
+or guarantee results.
+An unverified release may still be usable; the optional remediation preserves
+the caller's choice. Omission means verification was not reported. Target-free
+discovery does not probe a version solely to populate this fact.
 
 When an admitted `open_binary` attempt fails, `error.details.selection_at_failure`
 records the canonical binary path and SHA-256, resource root (including its

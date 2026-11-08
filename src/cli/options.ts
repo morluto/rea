@@ -186,7 +186,7 @@ export const snapshotSelectionOption = z
  * Explicit interpretation for headerless native executable formats. Flash
  * dumps take their offsets on the artifact commands instead.
  */
-export const formatSelectionOption = executableFormatHintSchema
+const formatSelectionOption = executableFormatHintSchema
   .exclude(["esp-flash-image"])
   .optional()
   .describe(

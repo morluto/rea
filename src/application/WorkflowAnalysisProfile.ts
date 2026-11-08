@@ -14,14 +14,17 @@ export const workflowAnalysisProfile = (
     upstream_analysis_profile: upstream,
     source_limitations: "provider-operation-caveats-v1",
     ...(operation === "trace_native_values"
-      ? { value_flow_absence: "recorded-versus-unavailable-v1" }
+      ? {
+          value_flow_limitations: "provider-attributed-v1",
+          value_flow_absence: "recorded-versus-unavailable-v1",
+        }
       : {}),
     ...(operation === "binary_overview"
       ? { workflow_revision: 5 }
       : operation === "batch_decompile"
         ? { workflow_revision: 4 }
         : operation === "trace_feature"
-          ? { workflow_revision: 8 }
+          ? { workflow_revision: 9 }
           : operation === "get_call_graph"
             ? { workflow_revision: 3 }
             : operation === "trace_call_path" ||
