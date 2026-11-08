@@ -381,7 +381,7 @@ const assetOf = (
       member.sourcePath ?? "",
       occurrence,
     ),
-    path: member.path,
+    path: member.sourcePath ?? member.path,
     bytes: member.bytes,
     kind: assembleKind(classifiable),
     target_framework: targetFramework(classifiable, member.directory),

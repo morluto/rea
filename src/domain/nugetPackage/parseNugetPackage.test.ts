@@ -640,6 +640,12 @@ describe("parseNugetPackage: name uncertainty and read allowances", () => {
     );
     expect(package_.limitations).toContain(note);
     expect(package_.source_coverage.status).toBe("complete-within-scope");
+    // The schema and the spec both call `path` the member path as stored; the
+    // normalised copy is only what classification reads.
+    expect(package_.assets.map((asset) => asset.path)).toEqual([
+      "Example.Package.nuspec",
+      "./lib/net8.0/Example.dll",
+    ]);
   });
 
   it("treats a rewritten limitation as prose, not a coverage signal", () => {
