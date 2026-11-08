@@ -124,6 +124,9 @@ describe("openSeedDocument", () => {
     expect(new Set(reasons).size).toBe(reasons.length);
   });
 
+});
+
+describe("openSeedDocument captured document spelling", () => {
   it("respells an argument the seed holds through a selected link", () => {
     const opened = openSeedDocument(["editor", "storage/report.md"], {
       ...AT_HOME,
