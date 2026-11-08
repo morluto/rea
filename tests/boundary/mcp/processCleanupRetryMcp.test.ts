@@ -121,6 +121,7 @@ it("projects the retained process root through close_binary and resolves its ret
     const firstWire = JSON.stringify(failed);
     expect(failed.error).toMatchObject({
       code: "cleanup_incomplete",
+      recovery: { kind: "retry_cleanup", operation: "close_binary" },
       details: { resources: [root] },
     });
     expect(fault.removalAttempts).toBe(2);
@@ -182,6 +183,9 @@ it.each(["returned", "thrown", "synchronous"] as const)(
       if (delivered === undefined || delivered.ok)
         throw new Error("Expected the composed lifecycle error at delivery");
       const composed = delivered.error;
+      // The session failure did not retire its target under a retained
+      // cleanup, so its own recovery applies before any close retry.
+      expect(failed.error).not.toHaveProperty("recovery");
       expect(failed.error).toMatchObject({
         code: "cleanup_incomplete",
         details: {

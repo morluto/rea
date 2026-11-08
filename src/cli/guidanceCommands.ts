@@ -14,27 +14,39 @@ import { logCliCommand } from "../cliLogging.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import type { Logger } from "pino";
 import type { CliInstance } from "./types.js";
+import { cliDecimalField } from "./options.js";
 
-let retainedGuidanceResources: ArtifactResourceScope | undefined;
+/** Guidance descriptors owned by one CLI host. */
+export class CliGuidanceResources {
+  #retained: ArtifactResourceScope | undefined;
 
-const guidanceResources = (): ArtifactResourceScope => {
-  retainedGuidanceResources ??= new ArtifactResourceScope();
-  return retainedGuidanceResources;
-};
+  resources(): ArtifactResourceScope {
+    this.#retained ??= new ArtifactResourceScope();
+    return this.#retained;
+  }
+
+  /** Release this host's descriptors, retaining failed cleanup for retry. */
+  async close(): Promise<void> {
+    const resources = this.#retained;
+    if (resources === undefined) return;
+    await resources.close();
+    if (this.#retained === resources) this.#retained = undefined;
+  }
+}
+
+/** Process CLI host used when a caller does not pass its own resources. */
+const processGuidanceResources = new CliGuidanceResources();
 
 /** Release CLI-owned guidance descriptors, retaining failed cleanup for retry. */
-export const closeCliGuidanceResources = async (): Promise<void> => {
-  const resources = retainedGuidanceResources;
-  if (resources === undefined) return;
-  await resources.close();
-  if (retainedGuidanceResources === resources)
-    retainedGuidanceResources = undefined;
-};
+export const closeCliGuidanceResources = (
+  resources: CliGuidanceResources = processGuidanceResources,
+): Promise<void> => resources.close();
 
 /** Register offline search and retrieval for the installed REA guide bundle. */
 export const registerGuidanceCommands = (
   cli: CliInstance,
   logger: Logger,
+  resources: CliGuidanceResources = processGuidanceResources,
 ): void => {
   cli.command(CLI_COMMANDS.guidance, {
     description: "Search or read the installed REA workflow guidance",
@@ -53,9 +65,10 @@ export const registerGuidanceCommands = (
         locator: readGuidanceSectionInputSchema.shape.locator
           .optional()
           .describe("Required with --action read; locator returned by search"),
-        limit: searchGuidanceLimitSchema
-          .optional()
-          .describe("Maximum search matches; search only, defaults to 8"),
+        // Decimal tokens only: numeric coercion would read "0x2" as 2.
+        limit: cliDecimalField(searchGuidanceLimitSchema.optional()).describe(
+          "Maximum search matches; search only, defaults to 8",
+        ),
         cursor: searchGuidanceInputSchema.shape.cursor
           .optional()
           .describe("Continue a search page; search only"),
@@ -106,13 +119,13 @@ export const registerGuidanceCommands = (
                     ? {}
                     : { cursor: options.cursor }),
                 },
-                guidanceResources(),
+                resources.resources(),
               )
             : await readGuidanceSection(
                 {
                   locator: options.locator,
                 },
-                guidanceResources(),
+                resources.resources(),
               );
         return result.ok ? result.value : projectAnalysisError(result.error);
       }),

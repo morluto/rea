@@ -43,8 +43,10 @@ import {
   isMissingUuidDyldFailure,
   isUnbackedTextDyldFailure,
   isVtoolContainerRefusal,
+  nativeCommandOperand,
   nativeMachoCapturedOutput,
-  missingUuidLimitation,
+  dyldRefusalLimitation,
+  dyldSliceRefusal,
   parseDyldFileTypeRefusal,
   unusableNativeCommandOutput,
 } from "./NativeMachoCommandDiagnostics.js";
@@ -106,6 +108,9 @@ const REQUIRED_SLICE_COMMANDS = [
 const OPTIONAL_VTOOL_COMMAND = ["vtool", ["-show-build"]] as const;
 const VTOOL_UNAVAILABLE_LIMITATION =
   "vtool is unavailable; build metadata is normalized from binary load commands.";
+/** Recorded when vtool refuses the universal container and slice facts remain. */
+export const VTOOL_CONTAINER_REFUSAL_LIMITATION =
+  "vtool declined the universal container as not Mach-O; build metadata is normalized from binary load commands.";
 /** Inspect one Mach-O with the required native commands and normalized output. */
 export const inspectNativeMacho = async (
   context: NativeMachoInspectionContext,
@@ -125,7 +130,7 @@ export const inspectNativeMacho = async (
   const parsedLipo = parseLipoCapture(
     lipo,
     "inspect_macho",
-    context.target.path,
+    nativeCommandOperand(lipo) ?? context.target.path,
   );
   if (!parsedLipo.ok) return parsedLipo;
   const { format, architectures } = parsedLipo.value;
@@ -160,11 +165,11 @@ export const inspectNativeMacho = async (
       context.signal,
       tool === "dyld_info"
         ? (capture) =>
-            isMissingUuidDyldFailure(capture) ||
+            dyldSliceRefusal(capture) !== null ||
             isUnbackedTextDyldFailure(capture) ||
             parseDyldFileTypeRefusal(capture) !== null
         : tool === "vtool" && format === "fat"
-          ? (capture) => isVtoolContainerRefusal(capture, context.target.path)
+          ? (capture) => isVtoolContainerRefusal(capture)
           : undefined,
     );
   // vtool knows no variant subtypes, so no spelling selects an arm64e.x1 slice.
@@ -184,7 +189,7 @@ export const inspectNativeMacho = async (
     if (!captured.ok) return err(captured.error);
     if (
       (captured.value.exitCode !== 0 || captured.value.signal !== null) &&
-      !isMissingUuidDyldFailure(captured.value) &&
+      dyldSliceRefusal(captured.value) === null &&
       !isUnbackedTextDyldFailure(captured.value) &&
       parseDyldFileTypeRefusal(captured.value) === null
     )
@@ -200,10 +205,8 @@ export const inspectNativeMacho = async (
     );
   else if (optional.ok) {
     captures.push(optional.value);
-    if (isVtoolContainerRefusal(optional.value, context.target.path))
-      limitations.push(
-        "vtool declined the universal container as not Mach-O; build metadata is normalized from binary load commands.",
-      );
+    if (isVtoolContainerRefusal(optional.value))
+      limitations.push(VTOOL_CONTAINER_REFUSAL_LIMITATION);
   } else if (optional.error._tag === "AnalysisCapabilityUnavailableError")
     limitations.push(VTOOL_UNAVAILABLE_LIMITATION);
   else return err(optional.error);
@@ -298,7 +301,7 @@ export const inspectNativeMacho = async (
   // Only then does llvm-nm's dyld-info pass add names, and its exact names
   // disambiguate dyld_info rows. Refusals above are not export rows.
   if (
-    !isMissingUuidDyldFailure(dyldExports) &&
+    dyldSliceRefusal(dyldExports) === null &&
     !namesEveryExport(captures[nmIndex]!.stdout, dyldExports)
   ) {
     const withDyldInfo = await runSliceCommand(DYLD_INFO_EXPORTS);
@@ -318,10 +321,7 @@ export const inspectNativeMacho = async (
     sliceOutput(dyldImports),
     hasChainedFixups,
   );
-  if (
-    !isMissingUuidDyldFailure(dyldImports) &&
-    parsedImports.needsNameInventory
-  ) {
+  if (parsedImports.needsNameInventory) {
     const importNames = await runSliceCommand(SYMBOL_TABLE_IMPORTS);
     if (!importNames.ok) return err(importNames.error);
     captures.push(importNames.value);
@@ -347,7 +347,6 @@ export const inspectNativeMacho = async (
     parsedImports.items,
     captures[nmIndex]!,
     { format, architectures, encryption },
-    context.target.path,
     {
       name: selectedArchitectureName,
       container_file_offset: containerOffset ?? null,
@@ -433,7 +432,6 @@ const normalizeMacho = (
     readonly architectures: readonly LipoArchitecture[];
     readonly encryption: MachoEncryptionRead;
   },
-  artifactPath: string,
   selectedArchitecture: {
     readonly name: string | null;
     readonly container_file_offset: number | null;
@@ -444,9 +442,10 @@ const normalizeMacho = (
   const byTool = captureLookup(captures);
   const dyldImportsCapture = byTool("dyld_info", 0);
   const dyldExportsCapture = byTool("dyld_info", 1);
-  const missingImportsUuid = isMissingUuidDyldFailure(dyldImportsCapture);
-  const missingExportsUuid = isMissingUuidDyldFailure(dyldExportsCapture);
-  const imports = missingImportsUuid ? [] : parsedImports.map(withRuntimeName);
+  const importsRefusal = dyldSliceRefusal(dyldImportsCapture);
+  const exportsRefusal = dyldSliceRefusal(dyldExportsCapture);
+  const imports =
+    importsRefusal === null ? parsedImports.map(withRuntimeName) : [];
   const imageBase =
     load.segments.find(
       (segment) =>
@@ -456,13 +455,11 @@ const normalizeMacho = (
         segment.file_size <= sliceSize,
     )?.vm_address ?? null;
   const nmExports = parseNmExports(exportNames.stdout);
-  const dyldExports = missingExportsUuid
-    ? []
-    : parseDyldExports(
-        sliceOutput(dyldExportsCapture),
-        imageBase,
-        new Set(nmExports.map(({ name }) => name)),
-      );
+  const dyldExports = parseDyldExports(
+    sliceOutput(dyldExportsCapture),
+    imageBase,
+    new Set(nmExports.map(({ name }) => name)),
+  );
   const exports = uniqueSymbols([...dyldExports, ...nmExports]).map(
     withRuntimeName,
   );
@@ -470,7 +467,7 @@ const normalizeMacho = (
   const uuid = reconcileMachoUuid(
     load.commands,
     dwarfdump.stdout,
-    artifactPath,
+    nativeCommandOperand(dwarfdump) ?? "",
     selectedArchitecture.name === null
       ? null
       : {
@@ -493,8 +490,12 @@ const normalizeMacho = (
         ]
       : []),
     ...additionalLimitations,
-    ...(missingImportsUuid ? [missingUuidLimitation("imports")] : []),
-    ...(missingExportsUuid ? [missingUuidLimitation("exports")] : []),
+    ...(importsRefusal === null
+      ? []
+      : [dyldRefusalLimitation("imports", importsRefusal)]),
+    ...(exportsRefusal === null
+      ? []
+      : [dyldRefusalLimitation("exports", exportsRefusal)]),
     ...uuid.limitations,
     ...(imageBase === null &&
     /^\s*offset\s+symbol\s*$/mu.test(sliceOutput(byTool("dyld_info", 1)))
@@ -532,7 +533,9 @@ const normalizeMacho = (
     ),
     imports: covered(imports, false, [
       "dyld_info textual imports may omit chained or toolchain-unsupported metadata.",
-      ...(missingImportsUuid ? [missingUuidLimitation("imports")] : []),
+      ...(importsRefusal === null
+        ? []
+        : [dyldRefusalLimitation("imports", importsRefusal)]),
       ...(imports.some(({ name_status }) => name_status === "ambiguous")
         ? [
             "Import text contains name, flags, library, or addend boundaries whose split is ambiguous.",
@@ -540,11 +543,11 @@ const normalizeMacho = (
         : []),
     ]),
     exports: covered(exports, false, [
-      ...(missingExportsUuid
-        ? [missingUuidLimitation("exports")]
-        : [
+      ...(exportsRefusal === null
+        ? [
             "Merged nm/dyld_info results may be incomplete for stripped binaries.",
-          ]),
+          ]
+        : [dyldRefusalLimitation("exports", exportsRefusal)]),
       ...(dyldExports.some(({ sourceSymbol }) => sourceSymbol !== undefined)
         ? [
             "Renamed re-exports are listed under their exported name; the source library's symbol name is not reported.",

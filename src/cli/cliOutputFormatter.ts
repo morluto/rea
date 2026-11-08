@@ -227,18 +227,6 @@ export const delimitedOutputInputError = (
     { path, reason: "invalid_value", message },
   ]);
 
-/** Render a validated row page, preceded by a versioned metadata record. */
-export const formatDelimitedRows = (
-  rows: unknown,
-  format: "csv" | "tsv",
-  options: CliDelimitedOutputOptions,
-): Result<string, AnalysisInputError> => {
-  const prepared = prepareDelimitedOutput(rows, format, options);
-  return prepared.ok
-    ? ok([...formatDelimitedOutputParts(prepared.value)].join(""))
-    : prepared;
-};
-
 /** Stream a page after its rows and cells have been validated and snapshotted. */
 export function* formatDelimitedOutputParts({
   encodedHeaders,
@@ -323,39 +311,69 @@ const escapeTableCell = (value: string): string =>
       (character) =>
         `\\u${character.charCodeAt(0).toString(16).padStart(4, "0")}`,
     )
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/[\\|`*[\]~]|_+/g, escapeInlineSyntax)
+    .replace(/[\\|`*[\]~{}#]|_+/g, escapeInlineSyntax)
+    // Encode renderer-extension introducers at the same boundary as HTML
+    // characters. Generated entities must not themselves be re-escaped.
+    .replace(/[&<>:]|;(?=-?[)(])/g, (character) => {
+      switch (character) {
+        case "&":
+          return "&amp;";
+        case "<":
+          return "&lt;";
+        case ">":
+          return "&gt;";
+        case ":":
+          return "&#58;";
+        default:
+          return "&#59;";
+      }
+    })
+    .replace(/([xXB8]-)\)/g, "$1&#41;")
     .replace(/\r\n|\r|\n/g, "<br>");
+
+const encodeMarkdownWhitespace = (whitespace: string): string =>
+  whitespace.replace(/\s/g, (character) => `&#${character.charCodeAt(0)};`);
 
 /** Heading and paragraph facts are literal data, including block syntax. */
 const escapeMarkdownText = (value: string): string =>
   escapeTableCell(value)
-    .replace(/#/g, "\\#")
     .replace(/^(\s*)([-+=])/, "$1\\$2")
-    .replace(/^(\s*\d{1,9})([.)])(?=\s)/, "$1\\$2")
-    .replace(/^[ \t]+/, (indent) =>
-      indent.replace(/ /g, "&#32;").replace(/\t/g, "&#9;"),
-    );
+    .replace(/^(\s*\d{1,9})([.)])(?=\s|$)/, "$1\\$2")
+    .replace(/^[ \t]+/, encodeMarkdownWhitespace)
+    .replace(/[ \t]+$/u, encodeMarkdownWhitespace);
 
 const markdownHeading = (path: readonly string[]): string =>
   `## ${escapeMarkdownText(path.join("."))}\n\n`;
+
+const markdownEdgeWhitespace = /[\t \p{Z}\ufeff]/u;
+
+/** Encode edge spacing that Markdown can represent as character references. */
+export const encodeMarkdownTableCell = (value: string): string => {
+  const escaped = escapeTableCell(value);
+  let start = 0;
+  let end = escaped.length;
+  // Scan each edge once instead of retrying a trailing match at every suffix.
+  while (start < end && markdownEdgeWhitespace.test(escaped[start]!))
+    start += 1;
+  while (end > start && markdownEdgeWhitespace.test(escaped[end - 1]!))
+    end -= 1;
+  return (
+    encodeMarkdownWhitespace(escaped.slice(0, start)) +
+    escaped.slice(start, end) +
+    encodeMarkdownWhitespace(escaped.slice(end))
+  );
+};
 
 const renderTable = (
   headers: readonly string[],
   rows: readonly string[][],
 ): string => {
   if (headers.length === 0) return "";
-  const encodeTableCell = (value: string): string =>
-    escapeTableCell(value).replace(/^ +| +$/g, (spaces) =>
-      "&#32;".repeat(spaces.length),
-    );
-  const escapedHeaders = headers.map(encodeTableCell);
+  const escapedHeaders = headers.map(encodeMarkdownTableCell);
   const widths = escapedHeaders.map((header) => header.length);
   for (const row of rows) {
     for (let index = 0; index < escapedHeaders.length; index += 1) {
-      const width = encodeTableCell(row[index] ?? "").length;
+      const width = encodeMarkdownTableCell(row[index] ?? "").length;
       if (width > widths[index]!) widths[index] = width;
     }
   }
@@ -369,7 +387,9 @@ const renderTable = (
   for (const row of rows) {
     lines.push(
       `| ${escapedHeaders
-        .map((_, index) => pad(encodeTableCell(row[index] ?? ""), index))
+        .map((_, index) =>
+          pad(encodeMarkdownTableCell(row[index] ?? ""), index),
+        )
         .join(" | ")} |`,
     );
   }

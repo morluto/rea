@@ -38,22 +38,30 @@ export const digestCanonicalValue = (
 
 type Emit = (part: string) => void;
 
+/** Canonical-JSON refusal. The code is the stable identity. */
+export class CanonicalDigestError extends Error {
+  readonly _tag = "CanonicalDigestError";
+
+  constructor(readonly code: "nan" | "infinity" | "circular") {
+    super(code);
+    this.name = "CanonicalDigestError";
+  }
+}
+
 const emitCanonical = (
   value: unknown,
   emit: Emit,
   ancestors: Set<object>,
 ): boolean => {
   if (typeof value === "number" && !Number.isFinite(value))
-    throw new Error(
-      Number.isNaN(value) ? "NaN is not allowed" : "Infinity is not allowed",
-    );
+    throw new CanonicalDigestError(Number.isNaN(value) ? "nan" : "infinity");
   if (value === null || typeof value !== "object") {
     const encoded = JSON.stringify(value);
     if (encoded === undefined) return false;
     emit(encoded);
     return true;
   }
-  if (ancestors.has(value)) throw new Error("Circular reference detected");
+  if (ancestors.has(value)) throw new CanonicalDigestError("circular");
   ancestors.add(value);
   try {
     if ("toJSON" in value && typeof value.toJSON === "function") {

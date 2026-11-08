@@ -2,7 +2,7 @@
 name: reverse-engineer-anything
 description: Reverse engineer native, managed, Electron/JavaScript, packaged, firmware, and browser targets with REA, and build agent environments (AgentEnv bundles) of web applications from a live instance or a capture. Use shipped-artifact or requested runtime evidence to explain features, compare versions, decompile code, or guide a reconstruction. Skip REA for ordinary source-repository architecture analysis.
 metadata:
-  version: "54"
+  version: "60"
 ---
 
 # REA
@@ -94,6 +94,9 @@ explicit path or endpoint and do not need it.
   than extra calls and schemas. Runtime options are metadata, not files.
   Compact delivery still inventories and hashes members. See the
   [Python packaged applications guide](https://github.com/morluto/rea/blob/main/docs/python-packaged-applications.md).
+- Bun `--compile` executable: `open_binary`, then `inspect_artifact`; the Bun
+  module graph is the application layer. Extract stored modules and analyze the
+  JavaScript. See [Bun standalone executables](https://github.com/morluto/rea/blob/main/docs/bun-standalone.md).
 - Apple app plist, Interface Builder, asset catalog, or keyed archive resources:
   `open_bundle_resources`, then the selected resource tool. This does not
   require `CFBundleExecutable` or a deep provider. Resource sessions have no
@@ -105,7 +108,7 @@ explicit path or endpoint and do not need it.
 - Firmware image: `inspect_firmware_regions` when advertised. Use
   `extract_firmware` when extraction is requested, with a caller-selected new
   absolute output directory. These tools use caller-supplied Binwalk/Unblob on
-  Linux; see the [firmware guide](https://github.com/morluto/rea/blob/main/docs/firmware-analysis.md).
+  Linux; see the [firmware guide](https://github.com/morluto/rea/blob/main/docs/guides/firmware/firmware-analysis.md).
 - ESP32-family app or bootloader image (`0xE9` magic): `inspect_artifact`
   without a provider; see the ESP section of `references/native-and-artifacts.md`.
 - .NET NativeAOT PE/ELF: native Ghidra analysis. Native code can yield pseudocode;
@@ -118,6 +121,15 @@ explicit path or endpoint and do not need it.
   cleanup effects, and do not require a preliminary static session unless their
   own contract says so.
 - User-owned browser page already open: `list_browser_targets`.
+- Passive traffic capture of a SPA: the default scope is the page's own origin,
+  and data APIs usually live on another origin. Discover API origins from
+  absolute URLs in loaded bundles or script text via JavaScript analysis tools
+  (another passive capture without those origins still scopes to the page
+  origin, and `completeness.excluded` counts lack URLs). Pass both the page
+  origin and those API origins in `allowed_origins` — the list replaces the
+  default scope — and read `completeness.excluded` before reporting that an
+  API is absent. For long captures with body shapes, use
+  `export_evidence_bundle` instead of expecting an inline result.
 - Browser action the agent must perform (click, type, navigate):
   `capture_browser_scenario` with declared actions. See
   [runtime observation](references/runtime-observation.md) for connect/launch
@@ -125,6 +137,9 @@ explicit path or endpoint and do not need it.
 - Agent environment (AgentEnv bundle) of a web application: read
   [environments](references/environments.md) before recording; it records with
   `capture_browser_scenario` and writes the bundle with `export_environment_bundle`.
+- Task for a desktop application's exported environment, from a
+  `capture-desktop-application` folder: read
+  [desktop application tasks](references/environments.md#tasks-for-a-desktop-application-environment).
 - Fiddler Everywhere traffic or a native `.saz` capture: read the
   [Fiddler workflow](references/runtime-observation.md#fiddler-everywhere-traffic-debugging).
   Inspect saved SAZ with `inspect_web_network_capture` and `format: "saz"`;
@@ -135,7 +150,7 @@ explicit path or endpoint and do not need it.
   old-generation heap is `REA_CAPTURE_DECODER_OLD_GENERATION_MIB` (default 192 MiB,
   floor 8, maximum 16384), set where REA starts. Host memory and `NODE_OPTIONS` do not
   raise it. See
-  [historical captures](https://github.com/morluto/rea/blob/main/docs/web-network-captures.md) for the exact upstream
+  [historical captures](https://github.com/morluto/rea/blob/main/docs/guides/web/web-network-captures.md) for the exact upstream
   profile and credential exclusions. Qlog support starts with aioquic 1.5.0
   JSON 0.3; stream coverage and endpoint loss declarations do not recover bodies
   or establish network loss. Prefer detail summary, then kind qlog trace/stream
@@ -150,7 +165,7 @@ explicit path or endpoint and do not need it.
   display filters and decode-as rules. Requires Linux, util-linux prlimit and
   TShark 4.x on an absolute `PATH` entry or via the optional absolute
   `REA_TSHARK_COMMAND` override; see
-  [capture guide](https://github.com/morluto/rea/blob/main/docs/packet-captures.md).
+  [capture guide](https://github.com/morluto/rea/blob/main/docs/guides/data/packet-captures.md).
   Packet limits count input packets before filtering. Output defaults to 50 matching
   frames; use `match_offset` / `match_limit` for later pages, or explicit null
   limit for complete matching output. Preserve the source digest across pages.
@@ -158,7 +173,7 @@ explicit path or endpoint and do not need it.
   For address/DNS/SNI/protocol summaries use `inspect_pcap_capture` with MCP
   detail summary, then retained kind pcap pages. Requires Wireshark 4.x tshark
   and capinfos, with Linux prlimit or Windows Job Objects; see
-  [packet summaries](https://github.com/morluto/rea/blob/main/docs/pcap-analysis.md).
+  [packet summaries](https://github.com/morluto/rea/blob/main/docs/guides/data/pcap-analysis.md).
   Select an exact DNS question for address pages; page exhaustion does not prove
   network completeness. This reads recordings and does not acquire traffic.
 - Decoder discovery: `inspect_signal_decoders` searches installed decoder IDs
@@ -166,7 +181,7 @@ explicit path or endpoint and do not need it.
   relevant details before choosing settings; this does not scan hardware.
 - Recorded logic/signal traces: `decode_signal_recording` with explicit decoder,
   channel and protocol settings. On Linux with util-linux prlimit, supply sigrok-cli 0.7.2 through
-  `REA_SIGROK_COMMAND`; see [recording guide](https://github.com/morluto/rea/blob/main/docs/signal-recordings.md).
+  `REA_SIGROK_COMMAND`; see [recording guide](https://github.com/morluto/rea/blob/main/docs/guides/signals/signal-recordings.md).
   Output defaults to 50 literal lines; select annotation classes and page with
   `line_offset` / `line_limit`, or explicit null for all remaining output.
   Window counts are display lines, not annotations or samples. Preserve source digests across pages.
@@ -175,7 +190,7 @@ explicit path or endpoint and do not need it.
   through `REA_WABT_BIN_DIRECTORY`; retain exact byte/tool identity and decoded WAT.
   Select JavaScript glue and candidate paths explicitly and preserve URL/path
   ambiguity. No implicit fetch or target execution; WAT is not original source.
-  See the [WASM guide](https://github.com/morluto/rea/blob/main/docs/wasm-artifacts.md).
+  See the [WASM guide](https://github.com/morluto/rea/blob/main/docs/guides/wasm/wasm-artifacts.md).
 - Explicit local Android APK (or ZIP/AAB) signing: `inspect_apk_signature`.
   Prefer its summary or selected signer/digest/lineage page; retain complete
   Evidence and use `inspect_analysis_view` kind `apk-signature` for follow-ups.
@@ -194,13 +209,13 @@ explicit path or endpoint and do not need it.
   Evidence stays retained under its original identity. Use the returned
   `parent_evidence_id` for exact function or `bytecode_hex`/stdout/stderr pages.
   Candidate coverage does not establish interface completeness. See the
-  [EVM bytecode guide](https://github.com/morluto/rea/blob/main/docs/evm-bytecode.md).
+  [EVM bytecode guide](https://github.com/morluto/rea/blob/main/docs/guides/evm/evm-bytecode.md).
 - Embedded Go compiler, module or build-setting metadata: `inspect_go_binary`
   with the explicit local file. This built-in target-free inspection requires no
   Go installation or disassembler. Preserve raw module bytes and source ranges;
   absent metadata does not prove a binary is not Go, and unparsed text records
   remain explicit. See the
-  [Go binary guide](https://github.com/morluto/rea/blob/main/docs/go-binaries.md).
+  [Go binary guide](https://github.com/morluto/rea/blob/main/docs/guides/native/go-binaries.md).
 - Embedded CUDA/HIP code objects: `inspect_gpu_code_objects`; inventory targets
   first, then decode selected payloads and query retained GPU Evidence.
 - Bundled GGUF or safetensors model declarations: `inspect_model_artifact`
@@ -261,6 +276,15 @@ explicit path or endpoint and do not need it.
   linker declarations, not proof of enforcement. A missing directory is observed
   absence of that declaration. See the
   [PE load configuration guide](https://github.com/morluto/rea/blob/main/docs/pe-load-config.md).
+- ELF, PE, and Mach-O hardening: `inspect_binary_hardening` with the explicit
+  local file. This built-in target-free inspection requires no pwntools or other
+  host tool. One image per Mach-O slice. Each property is `enabled`, `disabled`,
+  `partial`, `unknown`, or `not_applicable`, with the header field or import
+  behind it. A missing stack-protector or fortify import is `unknown`, not
+  proof the protection was omitted. Authenticode and Mach-O code signatures
+  report presence, not validity. Hardened runtime stays unknown and names
+  `inspect_signature`. The image is not executed. See the
+  [binary hardening guide](https://github.com/morluto/rea/blob/main/docs/binary-hardening.md).
 - ELF note tables: `inspect_elf_notes` with the explicit local ELF32/ELF64
   file. This built-in target-free inspection requires no disassembler. Preserve
   PT_NOTE and SHT_NOTE ranges, owners, types, descriptor SHA-256, and GNU
@@ -308,17 +332,17 @@ explicit path or endpoint and do not need it.
   20 rows; request `schema_scope: "database"` for the complete stored schema. Preserve both database and existing sibling WAL identity; row samples
   report truncation and have unspecified order. Use a quiescent snapshot rather
   than assuming a live database/WAL pair was copied atomically. See the
-  [SQLite guide](https://github.com/morluto/rea/blob/main/docs/sqlite-databases.md).
+  [SQLite guide](https://github.com/morluto/rea/blob/main/docs/guides/data/sqlite-databases.md).
 - Explicit Linux ELF file for offline layout, symbols, relocations or static
   mitigation evidence: `inspect_binary_layout`. This target-free operation uses
   caller-supplied pwntools without opening a disassembler database. Preserve its
   raw locations and inference/coverage limits; see the
-  [offline binary guide](https://github.com/morluto/rea/blob/main/docs/binary-diagnostics.md).
+  [offline binary guide](https://github.com/morluto/rea/blob/main/docs/guides/native/binary-diagnostics.md).
 - Supplied Linux x86-64 ELF core: `inspect_recorded_crash`. Read every recorded
   thread, raw note and source-bound register without opening a live target.
   Historical PIDs do not select live processes. Request `include_debugger_context`
   only when core-only mapping candidates help; see the
-  [recorded crash guide](https://github.com/morluto/rea/blob/main/docs/recorded-crashes.md).
+  [recorded crash guide](https://github.com/morluto/rea/blob/main/docs/guides/native/recorded-crashes.md).
 - PE resource type/name/language trees and static icon group references:
   `inspect_pe_resources` with an explicit path. This portable operation requires
   no active target or engine; opaque payloads retain file ranges and SHA-256.
@@ -334,9 +358,9 @@ The legacy attached profile binds the already-open GUI input by SHA-256 and
 leaves its database open. The modern headless profile creates and closes an
 owned private database without saving. Installation and registration reuse
 [mrexodia/ida-pro-mcp](https://github.com/mrexodia/ida-pro-mcp); see the
-[IDA provider guide](https://github.com/morluto/rea/blob/main/docs/ida-provider.md).
+[IDA provider guide](https://github.com/morluto/rea/blob/main/docs/providers/ida-provider.md).
 For migration to the separate native IDA MCP plugin, follow the guide's
-[legacy attached migration](https://github.com/morluto/rea/blob/main/docs/ida-provider.md#migrate-a-legacy-attached-registration).
+[legacy attached migration](https://github.com/morluto/rea/blob/main/docs/providers/ida-provider.md#migrate-a-legacy-attached-registration).
 Replace the upstream registration explicitly; modern mrexodia tools are not the
 native profile. Native attachment preserves the database but does not provide
 direct callers; check session availability and the guide's verification limits.
@@ -374,12 +398,17 @@ unless the group overrides them. The grouped name union is the complete tool
 inventory; use `tools/list` for canonical tool schemas. The default summary keeps
 each provider candidate's availability and target-support status, code and
 reason; `omitted_fields` lists what it leaves out. Request `{"detail": "complete"}`
-only when you need provider diagnostics, candidate capability sets, or tool
-surface, effect and annotation flags; in those closed flag vocabularies, listed
+only when you need an unavailable candidate's remediation, provider
+diagnostics, candidate capability sets, or tool surface, effect and annotation
+flags; in those closed flag vocabularies, listed
 flags are true and omitted known flags are false. Provider candidate facts
 describe possible providers, while top-level session capabilities describe the
 current route and `analysis_provider_binding` names the selected provider. Do
 not treat those scopes as interchangeable.
+
+For editable Ghidra analysis that must survive a later agent process, select
+the [owned Program checkpoint workflow](references/native-and-artifacts.md#continue-editable-ghidra-analysis-across-processes)
+before making metadata edits. It is separate from Evidence/Unknown persistence.
 
 For a Ghidra startup timeout on a large native target, follow
 [deadline recovery](references/native-and-artifacts.md#ghidra-startup-deadline-recovery)
@@ -398,9 +427,18 @@ call `analyze_javascript_application` or `inspect_binary_layout` with
 a flag: its default reply is the summary, and the complete dossier stays
 retained under `parent_evidence_id` for facet paging. Pass that ID as a
 `retained-evidence` reference to `compare_functions`, or inside
-`match_native_functions` `left_observations`/`right_observations`; request
-`"detail": "complete"` only when the dossier must travel inline, as
-`build_call_path` requires.
+`match_native_functions` `left_observations`/`right_observations` or
+`build_call_path.functions`; request `"detail": "complete"` only when the
+dossier must travel inline.
+Use the same exact-reference form in other advertised logical Evidence inputs,
+including optional sources, arrays and nested sources across domains. Each
+source can independently be inline or retained; preserve its source identity,
+coverage, partial facts and unknowns. A summary or inspection page has its own
+Evidence ID: use `normalized_result.parent_evidence_id` when the consumer needs
+the complete source. For portable CLI follow-ups, commands advertising
+`--evidence-bundle` resolve references from that selected exported bundle.
+See [Evidence composition](references/evidence-workflows.md) for scope and
+recovery; file selectors are supported only where explicitly advertised.
 Page module identities and select the returned `node_id` before requesting an
 item; a single file path can represent several graph roles. Do not repeat an
 identical analysis or rejected call without a changed input or resolved blocker.
@@ -419,7 +457,10 @@ output also streams without a single MCP frame.
 When the retained parent ID is unknown, use `get_evidence_bundle` with
 `detail: "summary"` and exact filters for operation, target SHA-256,
 analysis-profile digest or canonical procedure address. Select its returned
-Evidence ID for the next view instead of requesting the complete bundle.
+Evidence ID for the next view instead of requesting the complete bundle. When
+that record has no supported view (for example an annotation), read it with
+`detail: "records"` and an `evidence_id` filter; `missing_evidence_links`
+names linked sources this session does not retain.
 `retention: "complete-record"` means the whole record is stored; native
 value-flow truncation and unknown metadata remain separate. For an exported
 portable bundle, use `rea inspect-evidence-bundle` with JSON containing `path`,
@@ -496,10 +537,16 @@ as complete while required questions remain open.
 - Agent environments (AgentEnv bundles) of a web application, recorded from
   a live instance or a HAR:
   [references/environments.md](references/environments.md)
+- Tasks for a desktop application's exported environment:
+  [references/environments.md](references/environments.md#tasks-for-a-desktop-application-environment)
 
 ## Finish the task
 
 Explain findings in plain language and tie them to returned evidence. When the
 user asks to build something, use normal coding tools and separate observed
 behavior from design choices. Close an opened native session with
-`close_binary` when the investigation is complete.
+`close_binary` when its engine is no longer needed. Evidence references and Unknown
+history remain in memory on the same MCP connection. End the investigation with
+`reset_investigation`; supply `save_path` to checkpoint the complete bundle before
+clearing. Import the saved bundle to restore original references and Unknown
+history in a new process. Retention is bounded and is not automatic persistence.

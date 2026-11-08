@@ -793,6 +793,7 @@ describe("application workflow CLI parity", () => {
     });
 
     const root = await createTestTempDirectory("rea-application-cli-");
+    await assertTraceFileView(root, traced);
     const comparisonPath = join(root, "comparison.json");
     await writeFile(
       comparisonPath,
@@ -1279,10 +1280,13 @@ describe("application version source-scope MCP comparison", () => {
             properties.operation === "select-javascript-sources",
         ),
     );
-    expect(scope?.observations[0]?.evidence).toMatchObject({
+    const scopeEvidence = scope?.observations[0]?.evidence;
+    if (scopeEvidence === undefined)
+      throw new Error("Missing source scope evidence");
+    expect(scopeEvidence).toMatchObject({
       state: "unavailable",
       limitations: [
-        "Source is outside the caller-selected source_paths; it was inventoried but not analyzed.",
+        expect.stringMatching(/source_paths.*inventoried.*not analyzed/iu),
       ],
     });
     const client = await connectedMcpClient();
@@ -1306,9 +1310,7 @@ describe("application version source-scope MCP comparison", () => {
     ).toMatchObject({
       status: "unknown",
       dimensions: ["availability"],
-      limitations: [
-        "Source is outside the caller-selected source_paths; it was inventoried but not analyzed.",
-      ],
+      limitations: scopeEvidence.limitations,
       evidence_links: expect.arrayContaining([
         full.evidence_id,
         selected.evidence_id,
@@ -1913,6 +1915,59 @@ const runCliWithRequestFile = async (
   const requestPath = join(root, "request.json");
   await writeFile(requestPath, JSON.stringify(request));
   return runCli([command, requestPath, "--json"]);
+};
+
+/** The CLI keeps complete trace JSON; the shared view owner selects from the saved file. */
+const assertTraceFileView = async (root: string, traced: unknown) => {
+  const parent = parseEvidence(traced);
+  const tracePath = join(root, "trace.json");
+  await writeFile(tracePath, JSON.stringify(parent));
+  const source = { kind: "evidence-file", path: tracePath };
+  expect(
+    await runCli([
+      "inspect-analysis-view",
+      JSON.stringify({ source, view: { kind: "summary" } }),
+      "--json",
+    ]),
+  ).toMatchObject({
+    normalized_result: {
+      kind: "summary",
+      parent_evidence_id: parent.evidence_id,
+      parent_operation: "trace_application_feature",
+      summary: { summary: { matched_seeds: 1, traced_nodes: 1 } },
+    },
+  });
+  expect(
+    await runCli([
+      "inspect-analysis-view",
+      JSON.stringify({
+        source,
+        view: { kind: "feature-trace", collection: "nodes", limit: 1 },
+      }),
+      "--json",
+    ]),
+  ).toMatchObject({
+    normalized_result: {
+      kind: "feature-trace",
+      items: [{ seed: true, observation_count: 1 }],
+      coverage: { total: 1, exhausted: true },
+    },
+  });
+  // Without a session ledger the CLI cannot retain a parent for a selected view.
+  expect(
+    await runCli(
+      [
+        "trace-application-feature",
+        JSON.stringify({
+          ...JAVASCRIPT_FEATURE_TRACE_EXAMPLE,
+          view: { kind: "summary" },
+        }),
+        "--json",
+      ],
+      {},
+      1,
+    ),
+  ).toMatchObject({ code: "invalid_request" });
 };
 
 const assertSourceFileView = async (sourceCompared: unknown) => {

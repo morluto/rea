@@ -225,7 +225,9 @@ describe("headless IDA containing procedure", () => {
           classification: null,
           body: {
             available: false,
-            reason: "IDA MCP does not report complete function body ranges.",
+            reason: expect.stringMatching(
+              /does not report complete function body ranges/iu,
+            ),
           },
         },
       });
@@ -458,7 +460,10 @@ describe("headless IDA containment lookup failures", () => {
       });
 
       expect(result.ok).toBe(false);
-      if (!result.ok) expect(result.error._tag).toBe("AnalysisCancelledError");
+      if (!result.ok) {
+        expect(result.error._tag).toBe("AnalysisCancelledError");
+        expect(result.error.cause).toBe(controller.signal.reason);
+      }
       expect(
         producer.calls.some(({ name }) => name === "survey_binary"),
         "nothing is dispatched after cancellation",
@@ -606,7 +611,10 @@ describe("headless IDA document identity", () => {
       );
 
       expect(result.ok).toBe(false);
-      if (!result.ok) expect(result.error._tag).toBe("AnalysisCancelledError");
+      if (!result.ok) {
+        expect(result.error._tag).toBe("AnalysisCancelledError");
+        expect(result.error.cause).toBe(controller.signal.reason);
+      }
       expect(producer.calls).toEqual([]);
     } finally {
       expect((await client.close()).ok).toBe(true);

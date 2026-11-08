@@ -321,6 +321,14 @@ cliTest(
     const report = managedMemberInspectionSchema.parse(
       parent.normalized_result,
     );
+    // The fixture declares three MemberRef rows. Paging against the produced
+    // report alone would also pass if the inspector silently dropped rows.
+    expect(report.member_refs.map(({ token }) => token)).toEqual([
+      "0x0a000001",
+      "0x0a000002",
+      "0x0a000003",
+    ]);
+    expect(summary.summary.reported_counts.member_refs).toBe(3);
     expect(summary.summary.selection).toEqual({
       type_names: typeNames,
       unmatched_type_names: ["Missing.Type"],

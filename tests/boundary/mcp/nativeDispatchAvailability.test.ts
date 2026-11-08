@@ -290,6 +290,7 @@ const connectUnconfiguredSymbolFallback = async (
             status: "unavailable",
             code: "not_configured",
             reason: "Fixture symbol provider is not configured.",
+            remediation: "Configure the fixture symbol provider.",
             diagnostics: {},
           }),
           inspectTargetSupport: () => ({

@@ -39,6 +39,7 @@ const parentOf = (
 ) => {
   const evidence = analysisViewCaptureEvidence(capture);
   return {
+    predicateType: evidence.predicate_type,
     evidenceId: evidence.evidence_id,
     operation: evidence.operation,
     normalizedResult: evidence.normalized_result,
@@ -351,6 +352,9 @@ it("derives value-free body shapes, observed query names and record pointers", (
       "status",
     ]);
   const silent = manifest([], environmentManifestCaptureFixture(), false);
+  expect(silent.tools.map((tool) => tool.name)).toEqual(
+    projected.tools.map((tool) => tool.name),
+  );
   expect(
     silent.tools.every((tool) => tool.query_parameter_names.length === 0),
   ).toBe(true);
@@ -422,8 +426,8 @@ it("excludes other origins, pages, assets and non-JSON groups with reasons and f
     "/health:non-json",
     "/status:non-json",
   ]);
-  expect(mixed.limitations).toContain(
-    "1 retained records without a usable request line are not represented in the manifest.",
+  expect(mixed.limitations).toContainEqual(
+    expect.stringMatching(/1.*request line.*not represented.*manifest/iu),
   );
   expect(mixed.records.map((record) => record.content_type)).toEqual([
     "text/csv",
@@ -851,6 +855,7 @@ it("refuses non-HAR formats, sensitive parents, unsupported parents and malforme
   expect(
     projectAnalysisView(
       {
+        predicateType: layout.predicate_type,
         evidenceId: layout.evidence_id,
         operation: layout.operation,
         normalizedResult: layout.normalized_result,
@@ -868,6 +873,7 @@ it("refuses non-HAR formats, sensitive parents, unsupported parents and malforme
     expect(
       projectAnalysisView(
         {
+          predicateType: "rea.analysis",
           evidenceId: `ev_${"a".repeat(64)}`,
           operation: "inspect_web_network_capture",
           normalizedResult,
