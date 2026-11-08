@@ -124,6 +124,9 @@ describe("openSeedDocument", () => {
     expect(new Set(reasons).size).toBe(reasons.length);
   });
 
+});
+
+describe("openSeedDocument captured document spelling", () => {
   it("respells an argument the seed holds through a selected link", () => {
     const opened = openSeedDocument(["editor", "storage/report.md"], {
       ...AT_HOME,
@@ -152,6 +155,32 @@ describe("openSeedDocument", () => {
       argv: ["editor", `${HOME}/Documents/report.md`],
       opens: { kind: "captured" },
     });
+  });
+
+  it("respells selected file URLs in arguments and options while retaining their URL details", () => {
+    const facts = {
+      ...AT_HOME,
+      exec: "editor %U",
+      documents: ["Documents/A budget.svg"],
+      isDocument: (path: string) => path === "Documents/A budget.svg",
+      spell: (path: string) =>
+        path === "data/A budget.svg" ? "Documents/A budget.svg" : path,
+    };
+    const old = `file://localhost${HOME}/data/%41%20budget.svg?mode=edit#page`;
+    const mapped = `file://localhost${HOME}/Documents/%41%20budget.svg?mode=edit#page`;
+    expect(openSeedDocument(["editor", old], facts)).toEqual({
+      argv: ["editor", mapped],
+      opens: { kind: "captured" },
+    });
+    expect(openSeedDocument(["editor", `--open=${old}`], facts).argv).toEqual([
+      "editor",
+      `--open=${mapped}`,
+    ]);
+    for (const url of [
+      `file://remote${HOME}/data/A%20budget.svg`,
+      `file://${HOME}/data/%ZZ.svg`,
+    ])
+      expect(openSeedDocument(["editor", url], facts).argv[1]).toBe(url);
   });
 
   it("leaves a command that already names a document alone, absolute or from its working directory", () => {
