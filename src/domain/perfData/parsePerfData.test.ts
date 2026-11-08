@@ -252,7 +252,9 @@ describe("parsePerfData section accounting", () => {
 
   it("marks the identifier inventory incomplete when its allowance truncates it", () => {
     const ids = Array.from({ length: 200_001 }, (_unused, index) => index + 1);
-    const archive = parsed(buildPerfRecording({ entries: [perfEntry({ ids })] }));
+    const archive = parsed(
+      buildPerfRecording({ entries: [perfEntry({ ids })] }),
+    );
     expect(archive.events[0]?.ids_truncated).toBe(true);
     expect(archive.summary.identifiers_present).toBe(false);
     expect(archive.diagnostics).toEqual([
@@ -393,5 +395,36 @@ describe("parsePerfData attribute widths", () => {
       PERF_HEADER_BYTES + 0x08,
     );
     expect(parsed(bytes).events[0]?.config).toBe(null);
+  });
+});
+
+describe("parsePerfData identifier completeness", () => {
+  it("does not report an empty, truncated entry as a complete inventory", () => {
+    const bytes = buildPerfRecording({
+      entries: [perfEntry(), perfEntry({ ids: [7, 8] })],
+    });
+    // Shrink the attribute section so the second entry cannot fit: its ids are
+    // never examined, and the retained list is only a prefix.
+    const firstStride = PERF_STRIDE;
+    bytes.writeBigUInt64LE(BigInt(firstStride + 8), 0x20);
+    const archive = parsed(bytes);
+    expect(archive.events).toHaveLength(1);
+    expect(archive.diagnostics).toEqual([
+      expect.objectContaining({ code: "truncated-event-attribute" }),
+    ]);
+    expect(archive.summary.identifiers_present).toBe(false);
+  });
+
+  it("does not report a rejected attribute section as a complete inventory", () => {
+    const bytes = buildPerfRecording();
+    // Point the attribute section past the end of the file: no entry is
+    // examined, so the identifier inventory cannot be called complete.
+    bytes.writeBigUInt64LE(0xffffn, 0x18);
+    const archive = parsed(bytes);
+    expect(archive.events).toEqual([]);
+    expect(archive.diagnostics).toEqual([
+      expect.objectContaining({ code: "invalid-attribute-section" }),
+    ]);
+    expect(archive.summary.identifiers_present).toBe(false);
   });
 });

@@ -195,6 +195,9 @@ const readEvents = (
         "truncated-event-attribute",
         `The attribute section ends ${stride - (end - cursor)} bytes into the entry at ${cursor}; it was not read.`,
       );
+      // The walk stopped early: later entries can carry identifiers this pass
+      // never saw, so the retained list is a prefix rather than the inventory.
+      state.identifiersPresent = false;
       return;
     }
     const declared = read.u32(bytes, cursor + ATTR_SIZE_OFFSET);
@@ -208,6 +211,9 @@ const readEvents = (
         "unsupported-attribute-size",
         `The entry at ${cursor} declares a ${declared}-byte attribute, which cannot fit the ${stride}-byte stride.`,
       );
+      // Same early stop as a truncated entry: the entries behind this one were
+      // never examined, so the identifier inventory stays incomplete.
+      state.identifiersPresent = false;
       return;
     }
     const ordinal = state.events.length;
@@ -463,6 +469,11 @@ export const parsePerfData = (
       attributeSection.offset > dataSection.offset &&
       dataSection.offset + dataSection.size > attributeSection.offset
     );
+  // A rejected attribute extent means no entry was examined, so the recording
+  // states no identifier inventory this pass can defend. Reporting `true` with
+  // a zero count would present an unread section as a complete empty one.
+  if (!attributeFits && attributeSection.size > 0)
+    state.identifiersPresent = false;
   if (!attributeSection.within_file)
     diagnose(
       state,
