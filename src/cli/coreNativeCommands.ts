@@ -1,5 +1,6 @@
 import { projectCliAnalysisResult } from "./projectCliAnalysisResult.js";
 import { nativeDispatchMetadataInputSchema } from "../domain/native/objcSwiftMetadata.js";
+import { nativeInvestigationTraceLimitsSchema } from "../domain/native/nativeInvestigationGraph.js";
 import { nativeValueTraceInputSchema } from "../domain/native/nativeValueTrace.js";
 import { z } from "incur";
 import {
@@ -21,6 +22,7 @@ import { CLI_COMMANDS } from "../cliCommandNames.js";
 import { logCliCommand } from "../cliLogging.js";
 import type { Logger } from "pino";
 import {
+  cliDecimalField,
   directAnalysisOptionsFromCli,
   nativeOpenOptionFields,
   snapshotSelectionOption,
@@ -62,13 +64,15 @@ export const registerCoreNativeCommands = (
         .string()
         .optional()
         .describe("Continuation from the same query's next_cursor"),
-      limit: z
-        .number()
-        .int()
-        .min(1)
-        .max(MAX_BYTE_SEARCH_MATCHES)
-        .default(100)
-        .describe("Maximum matches on this page"),
+      limit: cliDecimalField(
+        z
+          .number()
+          .int()
+          .min(1)
+          .max(MAX_BYTE_SEARCH_MATCHES)
+          .default(100)
+          .describe("Maximum matches on this page"),
+      ),
       ...nativeOpenOptionFields,
     }),
     run: ({ args, options }) =>
@@ -144,12 +148,9 @@ export const registerCoreNativeCommands = (
       address: z.string().describe("Exact provider memory address"),
     }),
     options: z.object({
-      length: z
-        .number()
-        .int()
-        .min(1)
-        .default(256)
-        .describe("Requested byte count"),
+      length: cliDecimalField(
+        z.number().int().min(1).default(256).describe("Requested byte count"),
+      ),
       ...nativeOpenOptionFields,
     }),
     run: ({ args, options }) =>
@@ -193,54 +194,27 @@ export const registerCoreNativeCommands = (
       ),
     }),
     options: z.object({
-      maxDepth: z
-        .number()
-        .int()
-        .min(0)
-        .max(16)
-        .default(3)
-        .describe("Maximum call traversal depth"),
-      maxFunctions: z
-        .number()
-        .int()
-        .min(1)
-        .max(64)
-        .default(16)
-        .describe("Maximum function decompilations"),
-      maxCallSites: z
-        .number()
-        .int()
-        .min(1)
-        .max(4096)
-        .default(256)
-        .describe("Maximum static call-site resolutions"),
-      maxNodes: z
-        .number()
-        .int()
-        .min(1)
-        .max(20000)
-        .default(5000)
-        .describe("Maximum retained graph nodes"),
-      maxEdges: z
-        .number()
-        .int()
-        .min(1)
-        .max(40000)
-        .default(10000)
-        .describe("Maximum retained graph edges"),
-      offset: z
-        .number()
-        .int()
-        .min(0)
-        .default(0)
-        .describe("First graph node index"),
-      limit: z
-        .number()
-        .int()
-        .min(1)
-        .max(5000)
-        .default(1000)
-        .describe("Maximum nodes on this page"),
+      maxDepth: cliDecimalField(
+        nativeValueTraceInputSchema.shape.max_depth,
+      ).describe("Maximum call traversal depth"),
+      maxFunctions: cliDecimalField(
+        nativeValueTraceInputSchema.shape.max_functions,
+      ).describe("Maximum function decompilations"),
+      maxCallSites: cliDecimalField(
+        nativeValueTraceInputSchema.shape.max_call_sites,
+      ).describe("Maximum static call-site resolutions"),
+      maxNodes: cliDecimalField(
+        nativeValueTraceInputSchema.shape.max_nodes,
+      ).describe("Maximum retained graph nodes"),
+      maxEdges: cliDecimalField(
+        nativeValueTraceInputSchema.shape.max_edges,
+      ).describe("Maximum retained graph edges"),
+      offset: cliDecimalField(
+        nativeValueTraceInputSchema.shape.offset,
+      ).describe("First graph node index"),
+      limit: cliDecimalField(nativeValueTraceInputSchema.shape.limit).describe(
+        "Maximum nodes on this page",
+      ),
       ...analysisEvidenceDeliveryOptions,
       ...nativeOpenOptionFields,
     }),
@@ -338,7 +312,7 @@ export const registerCoreNativeCommands = (
     cli.command(command, {
       description:
         operation === "inspect_native_instruction"
-          ? "Inspect one native instruction with decoded operand facts"
+          ? "Inspect a code or data address, its containing Ghidra listing object, and typed incoming references where supported"
           : "Resolve one static native call site",
       args: z.object({
         path: localPathStringSchema.describe(
@@ -378,10 +352,12 @@ const registerNativeDispatchMetadataCommand = (
       ),
     }),
     options: z.object({
-      maxRecords: nativeDispatchMetadataInputSchema.shape.max_records.describe(
-        "Maximum symbol records to inspect",
+      maxRecords: cliDecimalField(
+        nativeDispatchMetadataInputSchema.shape.max_records,
+      ).describe("Maximum symbol records to inspect"),
+      maxInputBytes: cliDecimalField(
+        nativeDispatchMetadataInputSchema.shape.max_input_bytes,
       ),
-      maxInputBytes: nativeDispatchMetadataInputSchema.shape.max_input_bytes,
       snapshot: snapshotSelectionOption.describe(
         "Load or update the local analysis snapshot",
       ),
@@ -424,27 +400,15 @@ const registerNativeUiActionCommand = (
         ),
     }),
     options: z.object({
-      maxDepth: z
-        .number()
-        .int()
-        .min(0)
-        .max(32)
-        .default(8)
-        .describe("Maximum relationship depth"),
-      maxNodes: z
-        .number()
-        .int()
-        .min(1)
-        .max(2_000)
-        .default(250)
-        .describe("Maximum returned graph nodes"),
-      maxEdges: z
-        .number()
-        .int()
-        .min(1)
-        .max(5_000)
-        .default(500)
-        .describe("Maximum returned graph edges"),
+      maxDepth: cliDecimalField(
+        nativeInvestigationTraceLimitsSchema.shape.max_depth,
+      ).describe("Maximum relationship depth"),
+      maxNodes: cliDecimalField(
+        nativeInvestigationTraceLimitsSchema.shape.max_nodes,
+      ).describe("Maximum returned graph nodes"),
+      maxEdges: cliDecimalField(
+        nativeInvestigationTraceLimitsSchema.shape.max_edges,
+      ).describe("Maximum returned graph edges"),
       ...nativeOpenOptionFields,
     }),
     run: async ({ args, options }) =>
@@ -518,7 +482,9 @@ const registerAnnotationCommand = (
       path: localPathStringSchema.describe("Local executable path"),
       procedure: z
         .string()
-        .describe("Exact function entry address or unique name"),
+        .describe(
+          "Function name or address; Ghidra resolves interior addresses to the containing function and edits its entry",
+        ),
     }),
     options: z.object({
       name: z.string().min(1).optional().describe("Analyst function name"),

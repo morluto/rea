@@ -1,3 +1,19 @@
+import { graphqlContractViewRequestSchema } from "../apiContract/graphqlContractQuery.js";
+import {
+  graphqlContractViewContextSchema,
+  graphqlContractViewItemsSchema,
+} from "./graphqlContractView.js";
+import { playwrightTraceViewRequestSchema } from "../playwrightTrace/playwrightTraceQuery.js";
+import {
+  playwrightTraceViewContextSchema,
+  playwrightTraceViewItemsSchema,
+} from "./playwrightTraceView.js";
+import { apiContractViewRequestSchema } from "../apiContract/apiContractQuery.js";
+import { apiContractArtifactSchema } from "../apiContract/apiContract.js";
+import {
+  apiContractViewContextSchema,
+  apiContractViewItemsSchema,
+} from "./apiContractView.js";
 import {
   analysisViewCoverageSchema,
   nullableCollectionViewCoverageSchema,
@@ -73,6 +89,11 @@ import {
   sourceToBundleViewItemsSchema,
   sourceToBundleViewContextSchema,
 } from "./sourceToBundleView.js";
+import {
+  endpointComparisonViewContextSchema,
+  endpointComparisonViewItemsSchema,
+  endpointComparisonViewRequestSchema,
+} from "./endpointComparisonView.js";
 import {
   featureTraceSummarySchema,
   featureTraceViewCollections,
@@ -287,6 +308,8 @@ import {
   pageViewSchema,
   summaryViewSchema,
 } from "./analysisViewShape.js";
+import { recordedArrayViewSchema } from "./analysisViewRequest.js";
+
 const artifactSchema = z.strictObject({
   path: z
     .string()
@@ -1017,6 +1040,58 @@ export const sourceToBundleSummaryViewResultSchema = z.strictObject({
   parent_operation: z.literal("compare_source_to_bundle"),
   summary: sourceToBundleViewContextSchema,
 });
+export const playwrightTraceSummaryViewResultSchema = z.strictObject({
+  ...summaryViewResultBase,
+  parent_operation: z.literal("inspect_playwright_trace"),
+  summary: playwrightTraceViewContextSchema,
+});
+export const playwrightTracePageViewResultSchema = z.strictObject({
+  ...viewResultBase,
+  ...playwrightTraceViewContextSchema.shape,
+  kind: z.literal("playwright-trace"),
+  parent_operation: z.literal("inspect_playwright_trace"),
+  view: playwrightTraceViewRequestSchema,
+  items: playwrightTraceViewItemsSchema,
+});
+export const apiContractSummaryViewResultSchema = z.strictObject({
+  ...summaryViewResultBase,
+  parent_operation: z.literal("inspect_api_contract"),
+  summary: z.union([
+    apiContractViewContextSchema,
+    graphqlContractViewContextSchema,
+  ]),
+});
+export const apiContractPageViewResultSchema = z.strictObject({
+  ...viewResultBase,
+  ...apiContractViewContextSchema.shape,
+  kind: z.literal("api-contract"),
+  artifact: apiContractArtifactSchema,
+  parent_operation: z.literal("inspect_api_contract"),
+  view: apiContractViewRequestSchema,
+  items: apiContractViewItemsSchema,
+});
+export const graphqlContractPageViewResultSchema = z.strictObject({
+  ...viewResultBase,
+  ...graphqlContractViewContextSchema.shape,
+  parent_operation: z.literal("inspect_api_contract"),
+  view: graphqlContractViewRequestSchema,
+  items: graphqlContractViewItemsSchema,
+});
+export const endpointComparisonSummaryViewResultSchema = z.strictObject({
+  ...summaryViewResultBase,
+  artifact: z.null(),
+  parent_operation: z.literal("compare_static_and_observed_endpoints"),
+  summary: endpointComparisonViewContextSchema,
+});
+export const endpointComparisonPageViewResultSchema = z.strictObject({
+  ...viewResultBase,
+  ...endpointComparisonViewContextSchema.shape,
+  kind: z.literal("endpoint-comparison"),
+  artifact: z.null(),
+  parent_operation: z.literal("compare_static_and_observed_endpoints"),
+  view: endpointComparisonViewRequestSchema,
+  items: endpointComparisonViewItemsSchema,
+});
 export const sourceToBundlePageViewResultSchema = z.strictObject({
   ...viewResultBase,
   ...sourceToBundleViewContextSchema.shape,
@@ -1132,6 +1207,21 @@ export const analysisViewResultSchema = z.discriminatedUnion("kind", [
   z.strictObject({
     ...viewResultBase,
     ...nativeViewSourceContext,
+    source_parameters: jsonObjectSchema
+      .nullable()
+      .describe(
+        "Null means source parameters were omitted to fit the page; retrieve the parent Evidence.",
+      ),
+    parent_operation: z.string(),
+    artifact: artifactSchema.nullable(),
+    kind: z.literal("recorded-array"),
+    view: recordedArrayViewSchema,
+    rows: z.array(jsonValueSchema),
+  }),
+  playwrightTracePageViewResultSchema,
+  z.strictObject({
+    ...viewResultBase,
+    ...nativeViewSourceContext,
     kind: z.literal("native-instruction-references"),
     parent_operation: z.literal("inspect_native_instruction"),
     artifact: artifactSchema.nullable(),
@@ -1146,6 +1236,9 @@ export const analysisViewResultSchema = z.discriminatedUnion("kind", [
   javaScriptRoutesViewResultSchema,
   webBundlePageViewResultSchema,
   sourceToBundlePageViewResultSchema,
+  endpointComparisonPageViewResultSchema,
+  apiContractPageViewResultSchema,
+  graphqlContractPageViewResultSchema,
   featureTraceViewResultSchema,
   batchDecompileViewResultSchema,
   z.strictObject({
@@ -1241,6 +1334,9 @@ export const analysisViewResultSchema = z.discriminatedUnion("kind", [
     nativeFunctionMatchingSummaryViewResultSchema,
     nativeFunctionSummaryViewResultSchema,
     sourceToBundleSummaryViewResultSchema,
+    endpointComparisonSummaryViewResultSchema,
+    apiContractSummaryViewResultSchema,
+    playwrightTraceSummaryViewResultSchema,
     featureTraceSummaryViewResultSchema,
     batchDecompileSummaryViewResultSchema,
     webBundleSummaryViewResultSchema,

@@ -30,6 +30,25 @@ The work lands as one PR per step:
    installed from a downloaded `.deb` file, which the computer downloads from
    an operator's URL and checks by its captured SHA-256, starting with
    VariCAD.
+10. [Document views](document-views/spec.md): documents saved as zip
+    archives (FreeCAD, OpenDocument, Office Open XML, EPUB) read as their
+    entries, checked by name rather than position, namespaced XML included,
+    and numbers compared within a tolerance, starting with FreeCAD.
+11. [Capture for building](capture-for-building/spec.md): one capture makes
+    the seed and then the change, at checkpoints the export and the task
+    draft are told; apt lists from a user-space `apt-get update` are found;
+    the application does not inherit the computer's control token; and the
+    bundle holds neither the capture host's name nor its user's.
+12. [Build computer](build-computer/spec.md): an agentenv computer REA keeps
+    up from a request or a bundle, with REA installed inside for building,
+    driven through REA's MCP tools while an agent builds the environment.
+13. [Build and witness](build-witness/spec.md): REA's capture, task draft
+    and export run inside the build computer with acknowledged checkpoints,
+    the bundle comes back to the host, and the task is witnessed live in a
+    fresh computer of it: seed, edit, near miss and reset, recorded.
+14. [XML text checks](xml-text-checks/spec.md): XML whose DOCTYPE only names
+    its DTD read as XML, starting with AbiWord, and checks of an element's
+    whole text across the runs an app splits a paragraph into.
 
 Version 1 covers Linux with X11, applications whose state lives in files or
 SQLite under the home directory, and real applications from public packages.

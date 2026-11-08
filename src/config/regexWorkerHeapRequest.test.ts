@@ -5,10 +5,7 @@ import { KunaProvider } from "../kuna/KunaProvider.js";
 import { silentLogger } from "../logger.js";
 import { ConfigurationError } from "../domain/configurationErrors.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
-import {
-  regexWorkerHeapError,
-  launchRegexMatchingLimitation,
-} from "../process/RegexMatcher.js";
+import { regexWorkerHeapError } from "../process/RegexMatcher.js";
 import { parseEnvironment } from "./environment.js";
 import { parseConfig } from "./parseConfig.js";
 import {
@@ -99,12 +96,7 @@ it("uses a valid REA_REGEX_WORKER_HEAP_REQUEST_MIB override", () => {
     .capabilities()
     .find((capability) => capability.operation === "search_procedures")
     ?.limitations.join(" ");
-  expect(hopperText).toContain(
-    launchRegexMatchingLimitation(
-      parsed.value.regexMatchingDeadline,
-      parsed.value.regexWorkerHeapRequest,
-    ),
-  );
+  expect(hopperText).toMatch(/256 MiB worker heap request.*source setting/iu);
 
   vi.stubEnv(REGEX_WORKER_HEAP_REQUEST_SETTING, "8");
   try {
@@ -115,12 +107,7 @@ it("uses a valid REA_REGEX_WORKER_HEAP_REQUEST_MIB override", () => {
       .capabilities()
       .find((capability) => capability.operation === "search_strings")
       ?.limitations.join(" ");
-    expect(kunaText).toContain(
-      launchRegexMatchingLimitation(
-        parsed.value.regexMatchingDeadline,
-        parsed.value.regexWorkerHeapRequest,
-      ),
-    );
+    expect(kunaText).toMatch(/256 MiB worker heap request.*source setting/iu);
   } finally {
     vi.unstubAllEnvs();
   }
@@ -131,7 +118,9 @@ it("uses a valid REA_REGEX_WORKER_HEAP_REQUEST_MIB override", () => {
       .capabilities()
       .find((capability) => capability.operation === "search_procedures")
       ?.limitations,
-  ).toContain(launchRegexMatchingLimitation());
+  ).toContainEqual(
+    expect.stringMatching(/128 MiB worker heap request.*source default/iu),
+  );
 });
 
 it.each([

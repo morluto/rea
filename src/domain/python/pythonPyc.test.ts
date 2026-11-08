@@ -41,7 +41,12 @@ it("keeps pinned CPython identity separate from standalone marshal coverage", ()
     pythonVersion: "3.14",
     headerBytes: 16,
   });
+  expect(pythonBytecodeIdentity(3666)).toEqual({
+    pythonVersion: "3.15",
+    headerBytes: 16,
+  });
   expect(pythonPycMarshalProfile(3627)).toBeNull();
+  expect(pythonPycMarshalProfile(3666)).toBeNull();
   expect(pythonPycMarshalProfile(3450)).toBeNull();
   expect(pythonPycMarshalProfile(62171)).toBeNull();
   expect(PYTHON_PYC_MARSHAL_PROFILES.size).toBeGreaterThan(80);

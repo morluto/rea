@@ -1,12 +1,72 @@
+import { AnalysisInputError } from "../../domain/analysisErrorCore.js";
 import type {
   DesktopApplicationCapture,
   DesktopStateChange,
 } from "../../domain/desktop/desktopCapture.js";
-import type { DesktopStatePath } from "../../domain/desktop/desktopState.js";
+import type {
+  DesktopStatePath,
+  StateEnds,
+} from "../../domain/desktop/desktopState.js";
 import { isWithinAny } from "../../domain/desktop/desktopStateDiff.js";
 import { SQLITE_SIDECARS } from "../../domain/desktop/stateFormats.js";
 
 type Version = DesktopStatePath["versions"][number];
+
+/** The checkpoints a caller named for the seed and the end; unnamed ones default. */
+export interface CheckpointSelection {
+  readonly seed?: string | undefined;
+  readonly end?: string | undefined;
+}
+
+/**
+ * The seed and end among a capture's checkpoint names, by position: the
+ * baseline and the last checkpoint unless named. Refuses a name the capture
+ * does not hold exactly once, and an end before the seed.
+ */
+export const selectStateEnds = (
+  checkpoints: readonly string[],
+  selection: CheckpointSelection,
+  operation: string,
+): StateEnds => {
+  const refuse = (field: string, userMessage: string) =>
+    new AnalysisInputError(
+      operation,
+      {
+        userMessage,
+        remediationAction:
+          "Name a checkpoint inspect-desktop-application-state lists, with the end at or after the seed.",
+        conformsToInputContract: true,
+      },
+      [{ path: [field], reason: "invalid_value", message: userMessage }],
+    );
+  const position = (
+    field: string,
+    name: string | undefined,
+    fallback: number,
+  ) => {
+    if (name === undefined) return fallback;
+    const found = checkpoints.flatMap((candidate, index) =>
+      candidate === name ? [index] : [],
+    );
+    if (found.length === 1) return found[0] ?? fallback;
+    const count =
+      found.length === 0
+        ? "no checkpoint"
+        : `${String(found.length)} checkpoints`;
+    throw refuse(
+      field,
+      `The capture has ${count} named ${JSON.stringify(name)}; its checkpoints are ${checkpoints.join(", ")}.`,
+    );
+  };
+  const seed = position("seed_checkpoint", selection.seed, 0);
+  const end = position("end_checkpoint", selection.end, checkpoints.length - 1);
+  if (end < seed)
+    throw refuse(
+      "end_checkpoint",
+      `The end checkpoint ${checkpoints[end] ?? ""} was taken before the seed checkpoint ${checkpoints[seed] ?? ""}.`,
+    );
+  return { seed, end };
+};
 
 /** The changes of each path in checkpoint order. */
 type ChangeIndex = ReadonlyMap<

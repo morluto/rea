@@ -62,13 +62,14 @@ const sharedAnalysisSemantics = {
   call_relationship_coverage: "function-body-call-coverage-v5",
   function_dossier_coverage: "observed-facets-and-call-relationships-v1",
   string_inventory_evidence: "defined-data-coverage-v1",
+  inventory_search_projection: "provider-inventory-facts-v1",
   data_type_observations: "bit-field-base-and-lookup-v1",
   location_resolution: "explicit-address-exact-entry-symbol-first-v3",
   procedure_search: "primary-and-exact-entry-symbol-names-v1",
   procedure_file_offset_resolution:
     "address-first-unique-target-source-mapping-v2",
   instruction_flow_evidence: "decoded-return-pcode-v1",
-  instruction_status: "unlisted-address-without-decode-v1",
+  instruction_status: "unlisted-and-containing-code-data-v3",
   instruction_references: "exact-address-incoming-without-synthetic-entry-v3",
   function_boundary_observations: "ghidra-function-boundary-limitations-v4",
 } as const;
@@ -485,6 +486,7 @@ export const existingGhidraAnalysisProfile = (
     ...(mipsElf === undefined ? {} : { mips_elf: mipsElf }),
     import_mode: "existing-project-private-copy-v1",
     ...sharedAnalysisSemantics,
+    selected_project_relationship_coverage: "prior-analysis-unknown-v1",
     annotation_policy: "read-only-existing-project-v1",
     existing_project: project,
     original_analysis: { completeness: "unknown", settings: "unknown" },
