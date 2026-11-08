@@ -203,7 +203,10 @@ separately checks binary input, backpressure, EOF and pending-write job closure.
 `REA_JADX_MCP_JAR` for jadx-headless-mcp 0.7.1. Set `REA_ANDROID_TEST_APK` to the
 fixed public ApiDemos v6.0.18 fixture. Obtain both with the explicit
 `npm run fixtures:android` command; files are SHA-256 verified and
-kept under ignored `_reference/`. No Gradle build, Android SDK, emulator or
+kept under ignored `_reference/`. Downloads retry HTTP 429/502/503/504 up to three
+attempts within one two-minute deadline per artifact. Checksum mismatches and
+other HTTP errors fail immediately; existing mismatched files are not overwritten.
+No Gradle build, Android SDK, emulator or
 application execution is required. The lane compares real CLI/MCP package,
 class search, class inventory, method decompilation and incoming references.
 See [Android analysis](guides/android/android-analysis.md) for boundaries and resource budgets.

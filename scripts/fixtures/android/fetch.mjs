@@ -3,6 +3,7 @@ import { createReadStream } from "node:fs";
 import { link, mkdir, open, rm } from "node:fs/promises";
 import { resolve, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { setTimeout as delay } from "node:timers/promises";
 import { JADX_RELEASE } from "../../../src/android/JadxRelease.ts";
 import fixture from "./apidemos.json" with { type: "json" };
 
@@ -20,6 +21,24 @@ const hashFile = async (path) => {
   const hash = createHash("sha256");
   for await (const chunk of createReadStream(path)) hash.update(chunk);
   return hash.digest("hex");
+};
+const fetchFixture = async (url) => {
+  const maxAttempts = 3;
+  // Retries share the existing deadline rather than extending the CI budget.
+  const signal = AbortSignal.timeout(120_000);
+  for (let attempt = 1; ; attempt++) {
+    const response = await fetch(url, { signal });
+    if (
+      ![429, 502, 503, 504].includes(response.status) ||
+      attempt === maxAttempts
+    )
+      return response;
+    await response.body?.cancel();
+    console.warn(
+      `Download returned HTTP ${response.status}; retrying ${url} (${attempt}/${maxAttempts - 1})`,
+    );
+    await delay(attempt * 1000, undefined, { signal });
+  }
 };
 for (const item of [
   {
@@ -44,9 +63,7 @@ for (const item of [
   }
   const temporary = `${path}.${randomUUID()}.partial`;
   try {
-    const response = await fetch(item.url, {
-      signal: AbortSignal.timeout(120_000),
-    });
+    const response = await fetchFixture(item.url);
     if (!response.ok || response.body === null)
       throw new Error(`Download failed: ${item.url}: HTTP ${response.status}`);
     const handle = await open(temporary, "wx", 0o600);
