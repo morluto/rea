@@ -1,6 +1,6 @@
 # Website runtime source attribution
 
-REA integrates native Chrome DevTools Protocol inspection and precise V8 coverage through two composable tools. Supply an existing loopback CDP endpoint and a page target from `list_browser_targets`. With omitted origins, REA selects the page's current HTTP(S) origin. The browser and page remain externally owned.
+REA integrates native Chrome DevTools Protocol inspection and precise V8 coverage through two composable tools. Supply an existing loopback CDP endpoint and a page target from `list_browser_targets`. With omitted origins, REA selects the page's current HTTP(S) origin. Pages without an HTTP(S) origin, such as Electron `file://` renderers, are refused; [Electron file-page observation](../javascript/electron-observation.md) inspects those pages without execution coverage. The browser and page remain externally owned.
 
 ## Observe execution
 

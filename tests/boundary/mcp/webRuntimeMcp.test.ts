@@ -278,6 +278,75 @@ cliTest(
   20_000,
 );
 
+cliTest(
+  "explains a file:// page refusal through MCP and the compiled CLI before attaching",
+  async ({ cli }) => {
+    const browser = await startRuntimeBrowser({
+      electronFileUrl: "file:///opt/example/index.html",
+    });
+    const session = createTestBinarySession(() => {
+      throw new Error("Binary provider must not start");
+    });
+    const provider = new CdpWebRuntimeProvider();
+    const server = createServer(
+      { kind: "session", session },
+      { webRuntime: new WebRuntimeService(provider) },
+    );
+    const client = new Client(
+      { name: "runtime-target-scope", version: "1" },
+      { jsonSchemaValidator: schemaValidation },
+    );
+    onTestFinished(async () => {
+      await client.close();
+      await server.close();
+      await provider.close();
+      await session.close();
+      await browser.close();
+    });
+    const [clientTransport, serverTransport] =
+      InMemoryTransport.createLinkedPair();
+    await server.connect(serverTransport);
+    await client.connect(clientTransport);
+    const refusal = {
+      code: "target_unavailable",
+      message: "Target electron-page is a page without an HTTP(S) origin.",
+      remediation: {
+        action: expect.stringMatching(
+          /^allowed_origins accepts only HTTP\(S\) origins .*list_electron_targets and inspect_electron_page/u,
+        ),
+      },
+      details: {
+        operation: "observe_web_execution",
+        reason: "target_not_allowed",
+      },
+    };
+    const response = await client.callTool({
+      name: "observe_web_execution",
+      arguments: {
+        cdp_endpoint: browser.endpoint,
+        target_id: "electron-page",
+        observation_ms: 1,
+      },
+    });
+    expect(parseMcpToolError(response).error).toMatchObject(refusal);
+    const cliResult = await cli.run({
+      arguments: [
+        "observe-web-execution",
+        browser.endpoint,
+        "electron-page",
+        "--observation-ms",
+        "1",
+        "--json",
+      ],
+      environment: process.env,
+    });
+    expect(cliResult.exitCode).toBe(1);
+    expect(cliResult.json).toMatchObject(refusal);
+    expect(browser.openedConnectionCount()).toBe(0);
+  },
+  20_000,
+);
+
 it.each([
   {
     name: "observe_web_execution" as const,

@@ -3,10 +3,9 @@ import type {
   ProviderIdentity,
   ExecutionOptions,
 } from "../application/AnalysisProvider.js";
-import {
-  sanitizeBrowserUrl,
-  type InspectWebPageInput,
-  type ListBrowserTargetsInput,
+import type {
+  InspectWebPageInput,
+  ListBrowserTargetsInput,
 } from "../domain/browserObservation.js";
 import {
   browserTargetListSchema,
@@ -77,7 +76,10 @@ import {
 import { capturePage, type CapturedPage } from "./CdpPageCapture.js";
 import { selectedCdpCommandTimeoutMs } from "../domain/browserDeadline.js";
 import { fetchWebSourceMaps } from "./WebSourceMapFetcher.js";
-import { authorizeCdpTarget } from "./CdpAuthorizedTarget.js";
+import {
+  authorizeCdpTarget,
+  classifyCdpTarget,
+} from "./CdpAuthorizedTarget.js";
 import { observeCdpSession } from "./CdpObservationSession.js";
 import { discoverWebMcp } from "./CdpWebMcpDiscovery.js";
 import { captureCdpScreenshot } from "./CdpScreenshot.js";
@@ -546,22 +548,12 @@ const selectTargets = (
   readonly unconnectable: number;
 } => {
   const allowed = [];
-  let disallowedOrigin = 0;
-  let unsupportedUrl = 0;
-  let nonPage = 0;
+  const excluded = { disallowed_origin: 0, unsupported_url: 0, non_page: 0 };
   let unconnectable = 0;
   for (const target of discovery.targets) {
-    if (target.type !== "page") {
-      nonPage += 1;
-      continue;
-    }
-    const url = sanitizeBrowserUrl(target.url);
-    if (url.origin === null) {
-      unsupportedUrl += 1;
-      continue;
-    }
-    if (allowedOrigins !== undefined && !allowedOrigins.has(url.origin)) {
-      disallowedOrigin += 1;
+    const scope = classifyCdpTarget(target, allowedOrigins);
+    if (scope.excluded !== undefined) {
+      excluded[scope.excluded] += 1;
       continue;
     }
     if (!hasCdpTargetWebSocket(discovery, target)) {
@@ -572,23 +564,15 @@ const selectTargets = (
       target_id: target.id,
       type: target.type,
       title: target.title,
-      url: url.url,
-      origin: url.origin,
+      url: scope.url,
+      origin: scope.origin,
       attached: target.attached,
     });
   }
   allowed.sort((left, right) =>
     compareUnicodeCodePoints(left.target_id, right.target_id),
   );
-  return {
-    allowed,
-    excluded: {
-      disallowed_origin: disallowedOrigin,
-      unsupported_url: unsupportedUrl,
-      non_page: nonPage,
-    },
-    unconnectable,
-  };
+  return { allowed, excluded, unconnectable };
 };
 
 const providerError = (
