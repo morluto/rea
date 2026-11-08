@@ -9,6 +9,30 @@ from bridge.agentenv import capture
 
 
 class CaptureListingTest(unittest.TestCase):
+    def test_lists_real_directory_symlink_as_skipped(self):
+        with tempfile.TemporaryDirectory(prefix="rea-capture-real-") as root:
+            root_path = Path(root)
+            (root_path / "ordinary-dir").mkdir()
+            (root_path / "ordinary-dir" / "inside.txt").write_bytes(b"ordinary")
+            target = root_path / "target-dir"
+            target.mkdir()
+            (target / "secret.txt").write_bytes(b"secret")
+            link = root_path / "linked-dir"
+            try:
+                link.symlink_to(target, target_is_directory=True)
+            except OSError as error:
+                self.skipTest(f"directory symlinks unavailable: {error}")
+
+            output = root_path / "listing.json"
+            capture.listing({"root": str(root_path), "output": str(output)})
+            listed = json.loads(output.read_text(encoding="utf-8"))
+            relative = lambda path: os.path.relpath(path, os.path.expanduser("~"))
+            self.assertEqual(
+                [entry["path"] for entry in listed["files"]],
+                [relative(root_path / "ordinary-dir" / "inside.txt")],
+            )
+            self.assertEqual(listed["skipped"], [relative(link)])
+
     def test_lists_directory_symlinks_as_skipped_without_following_them(self):
         with tempfile.TemporaryDirectory(prefix="rea-capture-list-") as root:
             root_path = Path(root)
