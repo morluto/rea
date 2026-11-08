@@ -320,6 +320,7 @@ const completedInventory = (
   inventory: ContractInventory,
   context: {
     openapi: string;
+    format: ApiContract["format"];
     info: ApiContract["info"];
     pathsState: ApiContract["source_coverage"]["paths_state"];
     examined: number;
@@ -331,7 +332,7 @@ const completedInventory = (
     if (operation.state === "declared") declared++;
   return {
     contract_id: `api_contract_${artifact.sha256}`,
-    format: "openapi-json",
+    format: context.format,
     openapi: context.openapi,
     artifact,
     info: context.info,
@@ -355,7 +356,7 @@ const completedInventory = (
       path_entries_examined: context.examined,
       reference_resolution: "not-attempted",
       schema_validation: "not-performed",
-      duplicate_json_members: "last-value-wins",
+      duplicate_json_members: context.format === "openapi-yaml" ? "rejected" : "last-value-wins",
     },
     limitations: [
       "Operations are document declarations, not evidence of runtime implementation, reachability or authorization.",
@@ -363,7 +364,9 @@ const completedInventory = (
       "No reference is resolved, including local fragments. A Path Item reference makes its effective operations unknown; adjacent inline slots are preserved without merging referenced definitions.",
       "Transport userinfo credentials are excluded from reference URIs. credential_redacted marks the exclusion; an ambiguous credential span leaves the displayed reference unknown. Other reference text is preserved.",
       "This is a structural inventory, not full OpenAPI schema validation. operationId values are preserved without assuming uniqueness; operation_key matches exact method/path spelling, not semantic equivalence across APIs.",
-      "Source JSON members use last-value-wins parsing. Original bytes remain in the caller-selected artifact, identified by SHA-256; this Evidence does not embed the complete source document.",
+      context.format === "openapi-yaml"
+        ? "YAML is composed into the same JSON-compatible shape before this inventory; comments, anchors after alias expansion, tags and document styles are not retained. A repeated mapping key is rejected rather than resolved last-value-wins. Original bytes remain in the caller-selected artifact, identified by SHA-256; this Evidence does not embed the complete source document."
+        : "Source JSON members use last-value-wins parsing. Original bytes remain in the caller-selected artifact, identified by SHA-256; this Evidence does not embed the complete source document.",
     ],
   };
 };
@@ -372,6 +375,7 @@ const completedInventory = (
 export function* parseApiContractSteps(
   value: unknown,
   artifact: ApiContractArtifact,
+  sourceFormat: ApiContract["format"] = "openapi-json",
 ): Generator<void, Result<ApiContract, AnalysisError>> {
   const root = record(value);
   if (root === undefined || typeof root.openapi !== "string")
@@ -444,6 +448,7 @@ export function* parseApiContractSteps(
   return ok(
     completedInventory(inventory, {
       openapi: root.openapi,
+      format: sourceFormat,
       info: info.value,
       pathsState,
       examined,

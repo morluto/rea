@@ -1,15 +1,24 @@
 # Offline API contract inventory
 
 `inspect_api_contract` / `rea inspect-api-contract` supports local OpenAPI JSON
-and GraphQL SDL (`format: "graphql-sdl"`). Neither profile contacts endpoints.
+(`format: "openapi-json"`, the default), OpenAPI YAML (`format: "openapi-yaml"`)
+and GraphQL SDL (`format: "graphql-sdl"`). No profile contacts endpoints.
 
 ## OpenAPI JSON
 
 The default profile reads one local OpenAPI
-3.0, 3.1 or 3.2 JSON document. It inventories inline operation slots under
+3.0, 3.1 or 3.2 JSON document; `openapi-yaml` reads the same declarations from
+the equivalent YAML document. Both inventory inline operation slots under
 `paths`; the facts describe declarations, not implemented, reachable or
-authorized runtime behavior. YAML, AsyncAPI, callbacks/webhooks, schema graphs,
+authorized runtime behavior. AsyncAPI, callbacks/webhooks, schema graphs,
 contract diffs and traffic correlation are outside this version.
+
+YAML is composed into the same JSON-compatible shape before inventory, so
+anchors, aliases, tags and comments change nothing in the reported facts.
+Unlike JSON, a repeated mapping key is rejected instead of resolving
+last-value-wins: YAML composition cannot express which declaration the author
+meant. `source_coverage.duplicate_json_members` records `last-value-wins` for
+JSON and `rejected` for YAML.
 
 The OpenAPI importer never resolves references, opens sibling documents, evaluates
 examples or contacts declared servers. OpenAPI 3.2 `query` and

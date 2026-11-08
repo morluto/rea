@@ -47,10 +47,10 @@ export const registerApiContractCommand = (
 ): void => {
   cli.command(CLI_COMMANDS.inspectApiContract, {
     description:
-      "Inspect local OpenAPI JSON or GraphQL SDL declarations and field bindings offline",
+      "Inspect local OpenAPI JSON/YAML or GraphQL SDL declarations and field bindings offline",
     args: z.object({
       path: localPathStringSchema.describe(
-        "Local OpenAPI JSON or GraphQL SDL path",
+        "Local OpenAPI JSON/YAML or GraphQL SDL path",
       ),
     }),
     options: z.object({
@@ -58,7 +58,9 @@ export const registerApiContractCommand = (
       maxFileBytes: cliDecimalField(apiContractFileBytesSchema),
       contractFormat: apiContractFormatSchema
         .default("openapi-json")
-        .describe("Input API contract syntax: OpenAPI JSON or GraphQL SDL"),
+        .describe(
+          "Input API contract syntax: OpenAPI JSON, OpenAPI YAML, or GraphQL SDL",
+        ),
       operationsPath: localPathStringSchema
         .optional()
         .describe(

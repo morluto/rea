@@ -45,7 +45,11 @@ export const apiContractViewRequestSchema = z.discriminatedUnion("collection", [
   }),
 ]);
 
-export const apiContractFormatSchema = z.enum(["openapi-json", "graphql-sdl"]);
+export const apiContractFormatSchema = z.enum([
+  "openapi-json",
+  "openapi-yaml",
+  "graphql-sdl",
+]);
 export const apiContractFileBytesSchema = z
   .int()
   .positive()
@@ -71,7 +75,11 @@ export const inspectApiContractInputSchema = z
   .union([
     z.strictObject({
       ...commonInput,
-      format: z.literal("openapi-json").default("openapi-json"),
+      // Both OpenAPI syntaxes share one declaration contract; only the decoder
+      // differs, so they form one input group.
+      format: z
+        .enum(["openapi-json", "openapi-yaml"])
+        .default("openapi-json"),
       view: apiContractViewRequestSchema
         .optional()
         .describe(selectionDescription),

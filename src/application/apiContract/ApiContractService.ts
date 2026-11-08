@@ -12,6 +12,7 @@ import { err, ok, type Result } from "../../domain/result.js";
 import {
   API_CONTRACT_OPERATION as operation,
   API_CONTRACT_PROVIDER,
+  type ApiContract,
   type ApiContractArtifact,
 } from "../../domain/apiContract/apiContract.js";
 import {
@@ -23,6 +24,7 @@ import { parseAnalysisInput } from "../AnalysisInput.js";
 import { nativeJsonParseRequiredBytes } from "../JsonInputFile.js";
 import { parseUtf8Json } from "../Utf8JsonInput.js";
 import { readApiContract } from "./ApiContractRead.js";
+import { decodeOpenApiYaml } from "./OpenApiYamlDocument.js";
 import { completeApiContractSteps } from "./ApiContractTraversal.js";
 import { completeProviderEvidence } from "../ProviderOperationExecution.js";
 
@@ -31,7 +33,7 @@ const inputFailure = (message: string, cause?: unknown) =>
     { path: ["path"], reason: "invalid_format", message },
   ]);
 
-const decodeDocument = (
+const decodeJsonDocument = (
   bytes: Buffer,
   path: string,
 ): Result<unknown, AnalysisError> => {
@@ -65,26 +67,40 @@ const decodeDocument = (
   }
 };
 
-function* documentSteps(document: unknown, artifact: ApiContractArtifact) {
+function* documentSteps(
+  document: unknown,
+  artifact: ApiContractArtifact,
+  format: ApiContract["format"],
+) {
   const issue = yield* jsonValueValidationSteps(document);
   if (issue !== undefined) return err(inputFailure(issue));
-  return yield* parseApiContractSteps(document, artifact);
+  return yield* parseApiContractSteps(document, artifact, format);
 }
 
 const importDocument = async (
-  input: Extract<InspectApiContractInput, { format: "openapi-json" }>,
+  input: Extract<
+    InspectApiContractInput,
+    { format: "openapi-json" | "openapi-yaml" }
+  >,
   bytes: Buffer,
   sha256: string,
   signal?: AbortSignal,
 ): Promise<Result<Evidence, AnalysisError>> => {
-  const document = decodeDocument(bytes, input.path);
+  const document =
+    input.format === "openapi-yaml"
+      ? decodeOpenApiYaml(bytes, input.path)
+      : decodeJsonDocument(bytes, input.path);
   if (!document.ok) return document;
   const parsed = await completeApiContractSteps(
-    documentSteps(document.value, {
-      path: input.path,
-      sha256,
-      bytes: bytes.length,
-    }),
+    documentSteps(
+      document.value,
+      {
+        path: input.path,
+        sha256,
+        bytes: bytes.length,
+      },
+      input.format,
+    ),
     signal,
   );
   if (!parsed.ok) return parsed;
