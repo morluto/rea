@@ -30,6 +30,10 @@ compression type leaves section names unknown and adds a limitation; note bytes
 remain independently examined. Each `entries[]` item reports owner, type,
 descriptor SHA-256, and a hex preview for descriptors of 64 bytes or less.
 
+For supported compression types, the decoded section's declared alignment must
+be zero or a power of two, as in the ELF section-header contract. Other values
+are malformed input, so their names are not published as decoded facts.
+
 A section name also stays null when its offset is outside the declared string
 table or its bytes lack a NUL terminator. A limitation explains that missing
 name. Note coverage remains complete when all declared note tables and entries
