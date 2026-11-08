@@ -57,9 +57,10 @@ could shadow a standard library module such as `calendar`. A class name that
 would collide with a name the module imports or defines, such as `Path`, takes
 an `App` suffix.
 
-Captured application titles and checkpoint labels keep their original text in
-the generated Python documentation strings, with source quoting applied so
-their punctuation and control characters do not break the module.
+Captured titles and checkpoint labels keep their original text in Python
+documentation strings. The skill's YAML description likewise quotes the title
+and window class, so punctuation and control characters do not change its value
+or break the generated module.
 
 The class declares:
 

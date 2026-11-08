@@ -383,7 +383,7 @@ ${hooks}`;
 /** The skill an agent reads before using the app. */
 export const renderSkill = (plan: DesktopAppExportPlan): string =>
   `---
-description: Use ${plan.title} on this Linux desktop; its window has class ${plan.windowClass}.
+description: ${JSON.stringify(`Use ${plan.title} on this Linux desktop; its window has class ${plan.windowClass}.`)}
 ---
 
 # ${plan.title}

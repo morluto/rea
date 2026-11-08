@@ -2,9 +2,11 @@ import { execFileSync } from "node:child_process";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect, it } from "vitest";
+import { parseDocument } from "yaml";
 
 import {
   renderAppClass,
+  renderSkill,
   type DesktopAppExportPlan,
 } from "../../../src/domain/desktop/appExport.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
@@ -87,3 +89,23 @@ The seed is the user's state at checkpoint ${selected.seedCheckpoint}: keep this
     });
   },
 );
+
+it.each([
+  ["ordinary metadata", "Notes", "Notes"],
+  ["colon in the title", "Notes: editor", "Notes"],
+  ["comment marker in the title", "Notes #1", "Notes"],
+  ["a line break in the title", "Notes\nextra: value", "Notes"],
+  ["colon in the window class", "Notes", "Notes: main"],
+  ["NUL in the title", "Notes\0archive", "Notes"],
+  ["quotes and backslashes", 'Notes "quoted" \\ archive', "Notes"],
+])("keeps %s as one skill description string", (_label, title, windowClass) => {
+  const source = renderSkill({ ...plan, title, windowClass });
+  const frontmatter = /^---\n(?<yaml>[\s\S]*?)\n---(?:\n|$)/u.exec(source)
+    ?.groups?.yaml;
+  expect(frontmatter).toBeDefined();
+  const document = parseDocument(frontmatter ?? "");
+  expect(document.errors).toEqual([]);
+  expect(document.toJSON()).toEqual({
+    description: `Use ${title} on this Linux desktop; its window has class ${windowClass}.`,
+  });
+});
