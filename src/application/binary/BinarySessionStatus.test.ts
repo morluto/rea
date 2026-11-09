@@ -672,43 +672,59 @@ it("keeps host unavailability ahead of target applicability", async () => {
   ]);
 });
 
+/** A rejected candidate whose diagnostic text must not reach the summary. */
+const unavailableReport = {
+  provider: providerB,
+  status: {
+    code: "not_configured" as const,
+    reason: "PROVIDER_B_HOME is not set.",
+    remediation: "Set PROVIDER_B_HOME; see docs/provider-b.md.",
+  },
+  support: {
+    code: "architecture_unsupported" as const,
+    reason: "Provider B cannot select this slice.",
+  },
+};
+const rejectedCandidate = (
+  report: typeof unavailableReport,
+): AnalysisProviderCandidateStatus => ({
+  ...candidate(providerB, otherCapabilities),
+  availability: {
+    status: "unavailable",
+    code: report.status.code,
+    reason: report.status.reason,
+    remediation: report.status.remediation,
+    diagnostics: { checks: [{ name: "configuration", ok: false }] },
+  },
+  targetSupport: {
+    status: "unsupported",
+    code: report.support.code,
+    reason: report.support.reason,
+    diagnostics: { architecture: "arm64" },
+  },
+  selected: false,
+  selectionSource: null,
+  rejections: [
+    {
+      providerId: providerB.id,
+      origin: "availability",
+      code: report.status.code,
+      reason: report.status.reason,
+      remediation: report.status.remediation,
+      diagnostics: { checks: [{ name: "configuration", ok: false }] },
+    },
+    {
+      providerId: providerB.id,
+      origin: "target",
+      code: report.support.code,
+      reason: report.support.reason,
+      diagnostics: { architecture: "arm64" },
+    },
+  ],
+});
+
 describe("binary session summary projection", () => {
   it("keeps each candidate's status, code and reason in summary without diagnostics or capability sets", async () => {
-    const unavailable: AnalysisProviderCandidateStatus = {
-      ...candidate(providerB, otherCapabilities),
-      availability: {
-        status: "unavailable",
-        code: "not_configured",
-        reason: "PROVIDER_B_HOME is not set.",
-        remediation: "Set PROVIDER_B_HOME; see docs/provider-b.md.",
-        diagnostics: { checks: [{ name: "configuration", ok: false }] },
-      },
-      targetSupport: {
-        status: "unsupported",
-        code: "architecture_unsupported",
-        reason: "Provider B cannot select this slice.",
-        diagnostics: { architecture: "arm64" },
-      },
-      selected: false,
-      selectionSource: null,
-      rejections: [
-        {
-          providerId: providerB.id,
-          origin: "availability",
-          code: "not_configured",
-          reason: "PROVIDER_B_HOME is not set.",
-          remediation: "Set PROVIDER_B_HOME; see docs/provider-b.md.",
-          diagnostics: { checks: [{ name: "configuration", ok: false }] },
-        },
-        {
-          providerId: providerB.id,
-          origin: "target",
-          code: "architecture_unsupported",
-          reason: "Provider B cannot select this slice.",
-          diagnostics: { architecture: "arm64" },
-        },
-      ],
-    };
     const pending: AnalysisProviderCandidateStatus = {
       ...candidate(providerA, selectedCapabilities),
       availability: {
@@ -718,7 +734,7 @@ describe("binary session summary projection", () => {
         diagnostics: { startup: "pending" },
       },
     };
-    const candidates = [pending, unavailable];
+    const candidates = [pending, rejectedCandidate(unavailableReport)];
     const before = structuredClone(candidates);
     const runtimeUnavailability = new Map([
       ["procedure_info", { reason: "Runtime operation failure" }],
@@ -733,6 +749,7 @@ describe("binary session summary projection", () => {
       detail: "summary",
     });
     const summary = summaryStatusSchema.parse(raw);
+    const { status, support } = unavailableReport;
 
     expect(candidates).toEqual(before);
     expect(summary.capabilities).toEqual(complete.capabilities);
@@ -750,30 +767,72 @@ describe("binary session summary projection", () => {
           reason: "No target is open.",
         },
         selected: true,
+        selection_source: "auto-single-candidate",
+        rejections: [],
       },
       {
         provider: providerB,
         availability: {
           status: "unavailable",
-          code: "not_configured",
-          reason: "PROVIDER_B_HOME is not set.",
+          code: status.code,
+          reason: status.reason,
         },
         target_support: {
           status: "unsupported",
-          code: "architecture_unsupported",
-          reason: "Provider B cannot select this slice.",
+          code: support.code,
+          reason: support.reason,
         },
         selected: false,
+        selection_source: null,
+        rejections: [
+          {
+            provider_id: providerB.id,
+            origin: "availability",
+            code: status.code,
+            reason: status.reason,
+          },
+          {
+            provider_id: providerB.id,
+            origin: "target",
+            code: support.code,
+            reason: support.reason,
+          },
+        ],
       },
     ]);
     expect(JSON.stringify(raw)).not.toContain("diagnostics");
+    // Complete detail keeps the owner's repair copy on each rejection.
+    expect(complete.analysis_provider_candidates[1]?.rejections).toEqual([
+      {
+        provider_id: providerB.id,
+        origin: "availability",
+        code: status.code,
+        reason: status.reason,
+        remediation: status.remediation,
+        diagnostics: { checks: [{ name: "configuration", ok: false }] },
+      },
+      {
+        provider_id: providerB.id,
+        origin: "target",
+        code: support.code,
+        reason: support.reason,
+        diagnostics: { architecture: "arm64" },
+      },
+    ]);
     // Complete detail keeps the owner's repair; summary omits it.
     expect(
       complete.analysis_provider_candidates[1]?.availability,
-    ).toMatchObject({
-      remediation: "Set PROVIDER_B_HOME; see docs/provider-b.md.",
-    });
+    ).toMatchObject({ remediation: status.remediation });
     expect(JSON.stringify(raw)).not.toContain("PROVIDER_B_HOME;");
+    // Summary keeps every rejection code and reason but never its repair text.
+    expect(
+      summary.analysis_provider_candidates[1]?.rejections.map(
+        ({ origin, code, reason }) => ({ origin, code, reason }),
+      ),
+    ).toEqual([
+      { origin: "availability", code: status.code, reason: status.reason },
+      { origin: "target", code: support.code, reason: support.reason },
+    ]);
     expect(
       analysisProviderCandidate
         .array()

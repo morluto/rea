@@ -27,6 +27,7 @@ import type {
 import { compareUnicodeCodePoints } from "../../domain/unicodeCodePointOrder.js";
 import type { BinarySessionDetail } from "../../contracts/sessionStatusContract.js";
 import type { AnalysisCleanupRetry } from "../../domain/analysisErrorRecovery.js";
+import type { ProviderSelectionRejection } from "../../domain/providerSelectionError.js";
 
 interface BinarySessionStatusInput {
   readonly investigation: InvestigationStatistics;
@@ -134,12 +135,16 @@ export const binarySessionStatus = async ({
                 availability: providerStateSummary(candidate.availability),
                 target_support: providerStateSummary(candidate.targetSupport),
                 selected: candidate.selected,
+                selection_source: candidate.selectionSource,
+                rejections: candidate.rejections.map(rejectionSummary),
               }
             : {
                 provider: providerSummary(candidate.provider),
                 availability: structuredClone(candidate.availability),
                 target_support: structuredClone(candidate.targetSupport),
                 selected: candidate.selected,
+                selection_source: candidate.selectionSource,
+                rejections: candidate.rejections.map(selectionRejection),
                 capabilities: providerCapabilitySets(
                   candidate.capabilities
                     .slice()
@@ -322,6 +327,36 @@ const providerSummary = ({
   readonly name: string;
   readonly version: string | null;
 }) => ({ id, name, version });
+
+/** Carry every rejection fact at complete detail; clones keep the caller's copy immutable. */
+const selectionRejection = ({
+  providerId,
+  origin,
+  code,
+  reason,
+  remediation,
+  diagnostics,
+}: ProviderSelectionRejection) => ({
+  provider_id: providerId,
+  origin,
+  code,
+  reason,
+  ...(remediation === undefined ? {} : { remediation }),
+  diagnostics: structuredClone(diagnostics),
+});
+
+/** Rejection codes and reasons stay at summary detail; repair and diagnostics do not. */
+const rejectionSummary = ({
+  providerId,
+  origin,
+  code,
+  reason,
+}: ProviderSelectionRejection) => ({
+  provider_id: providerId,
+  origin,
+  code,
+  reason,
+});
 
 const processLineageStatus = (
   snapshots: readonly ProviderRuntimeLineageSnapshot[],

@@ -415,24 +415,43 @@ const candidateStatus = (candidates: unknown) =>
     z
       .array(z.record(z.string(), z.unknown()))
       .parse(candidates)
-      .map(({ provider, selected, availability, target_support }) => {
-        const state = (value: unknown) => {
-          const { status, code, reason } = z
-            .object({
-              status: z.string(),
-              code: z.unknown(),
-              reason: z.unknown(),
-            })
-            .parse(value);
-          return { status, code, reason };
-        };
-        return {
+      .map(
+        ({
           provider,
           selected,
-          availability: state(availability),
-          target_support: state(target_support),
-        };
-      }),
+          selection_source,
+          availability,
+          target_support,
+          rejections,
+        }) => {
+          const state = (value: unknown) => {
+            const { status, code, reason } = z
+              .object({
+                status: z.string(),
+                code: z.unknown(),
+                reason: z.unknown(),
+              })
+              .parse(value);
+            return { status, code, reason };
+          };
+          return {
+            provider,
+            selected,
+            selection_source,
+            availability: state(availability),
+            target_support: state(target_support),
+            rejections: z
+              .array(z.record(z.string(), z.unknown()))
+              .parse(rejections)
+              .map(({ provider_id, origin, code, reason }) => ({
+                provider_id,
+                origin,
+                code,
+                reason,
+              })),
+          };
+        },
+      ),
   );
 
 const expectSummaryKeepsDecisionFacts = (
