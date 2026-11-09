@@ -274,17 +274,25 @@ const requireFileCovers = (fileSize: number, imageEnd: number): void => {
     );
 };
 
-const decodeField = (
-  bytes: Buffer,
-): { readonly text: string | null; readonly hex: string } => {
+const untilNul = (bytes: Buffer): Buffer => {
   const nul = bytes.indexOf(0);
-  const slice = nul === -1 ? bytes : bytes.subarray(0, nul);
+  return nul === -1 ? bytes : bytes.subarray(0, nul);
+};
+
+const decodeText = (bytes: Buffer): string | null => {
   try {
-    return { text: UTF8.decode(slice), hex: bytes.toString("hex") };
+    return UTF8.decode(bytes);
   } catch {
-    return { text: null, hex: bytes.toString("hex") };
+    return null;
   }
 };
+
+const decodeField = (
+  bytes: Buffer,
+): { readonly text: string | null; readonly hex: string } => ({
+  text: decodeText(untilNul(bytes)),
+  hex: bytes.toString("hex"),
+});
 
 const commandFields = (
   cmdlineBytes: Buffer,
@@ -304,10 +312,14 @@ const commandFields = (
     cmdlineBytesHex: cmdline.hex,
     extraCmdline: extra?.text ?? null,
     extraCmdlineBytesHex: extra?.hex ?? null,
+    // A multibyte character can straddle the cmdline/extra_cmdline split,
+    // so the joined line is decoded from the joined bytes.
     commandLine:
-      cmdline.text === null || (extra !== null && extra.text === null)
-        ? null
-        : `${cmdline.text}${extra?.text ?? ""}`,
+      extraBytes === null
+        ? cmdline.text
+        : decodeText(
+            Buffer.concat([untilNul(cmdlineBytes), untilNul(extraBytes)]),
+          ),
   };
 };
 

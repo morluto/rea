@@ -170,6 +170,26 @@ it("aligns a kernel larger than 2^31 without allocating the image", () => {
   expect(result.value.imageEnd).toBe(0x8000_1000);
 });
 
+it("decodes a legacy command line whose UTF-8 character straddles the 512-byte split", () => {
+  const image = buildBootImage({ version: 0, cmdline: "", extraCmdline: "" });
+  const joined = Buffer.from(`${"a".repeat(511)}\u00e9 quiet`, "utf8");
+  joined.copy(image, 64, 0, 512);
+  joined.copy(image, 608, 512);
+  const facts = parsed(image);
+  expect(facts.cmdline).toBeNull();
+  expect(facts.extraCmdline).toBeNull();
+  expect(facts.cmdlineBytesHex).toBe(joined.subarray(0, 512).toString("hex"));
+  expect(facts.commandLine).toBe(`${"a".repeat(511)}\u00e9 quiet`);
+});
+
+it("keeps a legacy command line null when the joined bytes are invalid UTF-8", () => {
+  const image = buildBootImage({ version: 0, cmdline: "", extraCmdline: "" });
+  Buffer.from("a".repeat(511), "utf8").copy(image, 64);
+  image[575] = 0xc3;
+  image[608] = 0x41;
+  expect(parsed(image).commandLine).toBeNull();
+});
+
 it("decodes v3 and v4 boot images with a fixed 4096-byte page", () => {
   const kernel = Buffer.from("kern");
   const v3 = parsed(
