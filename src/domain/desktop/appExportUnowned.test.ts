@@ -282,7 +282,10 @@ describe("the limitations on folders the app held files open in", () => {
         seed: ".config/libreoffice/4/user/registrymodifications.xcu",
         source: `${home}/.config/libreoffice/4/user/registrymodifications.xcu`,
       },
-      { seed: "Documents/q1-sales.ods", source: `${home}/Documents/q1-sales.ods` },
+      {
+        seed: "Documents/q1-sales.ods",
+        source: `${home}/Documents/q1-sales.ods`,
+      },
     ]);
     const none = heldOpenLimitation([`${home}/Documents`], home, [
       {
