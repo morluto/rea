@@ -1767,3 +1767,73 @@ describe("Rspack bootstrap forwarded defaults, tagged-template .raw, and call-ti
     `);
   });
 });
+
+describe("Rspack bootstrap same-activation captures and container boundaries", () => {
+  it("retains same-activation captures, fresh Object.values containers, and empty Array.from mapper inputs", () => {
+    const preserved = analyzeJavaScriptStaticSource(`
+      const e = require("electron");
+
+      (() => {
+        const box = { x: { ipcRenderer: {} } };
+        const a = box.x;
+        const pick = (o) => o.x;
+        const b = pick(box);
+        box.x = e;
+        a.ipcRenderer.send = () => {};
+        b.ipcRenderer.invoke = () => {};
+      })();
+
+      const topBox = { x: { ipcRenderer: {} } };
+      const topSnap = topBox.x;
+      topBox.x = e;
+      (() => {
+        topSnap.ipcRenderer.send = () => {};
+      })();
+
+      const list = Object.values(e);
+      list.ipcRenderer = {};
+      Object.defineProperty(Object.values(e), "ipcRenderer", { value: {} });
+
+      for (const item of Array.from([], () => e)) {
+        item.ipcRenderer = {};
+      }
+      const emptyMapped = Array.from({ length: 0 }, () => e);
+      if (emptyMapped[0]) emptyMapped[0].ipcRenderer.send = () => {};
+
+      e.ipcRenderer.send("SAME_ACTIVATION_AND_CONTAINERS_OK");
+    `);
+    expect(preserved.electron.ipc).toEqual([
+      expect.objectContaining({
+        channel: "SAME_ACTIVATION_AND_CONTAINERS_OK",
+        operation: "send",
+        side: "renderer",
+      }),
+    ]);
+
+    expectNoDirectElectron(`
+      const e = require("electron");
+      const outerBox = { x: { ipcRenderer: {} } };
+      function repeat() {
+        const a = outerBox.x;
+        outerBox.x = e;
+        a.ipcRenderer.send = () => {};
+      }
+      repeat();
+      repeat();
+      e.ipcRenderer.send("REPEATED_OUTER_BOX_TAINTED");
+    `);
+
+    expectNoDirectElectron(`
+      const e = require("electron");
+      function repeatShared() {
+        const box = globalThis.getShared();
+        const a = box.x;
+        box.x = e;
+        a.ipcRenderer.send = () => {};
+      }
+      repeatShared();
+      repeatShared();
+      e.ipcRenderer.send("REPEATED_OPAQUE_BOX_TAINTED");
+    `);
+  });
+});

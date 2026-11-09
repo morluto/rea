@@ -1232,6 +1232,7 @@ const enclosingActivationFunction = (
 const memberSelectionCaptureSite = (
   memberNode: t.Node,
   callFrame: ElectronMemberWriteCallFrame | undefined,
+  rootActivation: t.Function | undefined,
   state: JavaScriptSemanticAnalysisState,
 ): t.Node | undefined => {
   const fn = enclosingActivationFunction(memberNode, state);
@@ -1244,7 +1245,8 @@ const memberSelectionCaptureSite = (
       break;
     }
   }
-  if (matchingFrame === undefined) return undefined;
+  if (matchingFrame === undefined)
+    return fn === rootActivation ? memberNode : undefined;
   let currentFrame = matchingFrame;
   while (true) {
     const callerFn = enclosingActivationFunction(currentFrame.callSite, state);
@@ -1261,27 +1263,33 @@ const memberSelectionCaptureSite = (
         break;
       }
     }
-    if (outerFrame === undefined) return undefined;
+    if (outerFrame === undefined)
+      return callerFn === rootActivation ? currentFrame.callSite : undefined;
     currentFrame = outerFrame;
   }
 };
 
 const normalizeCandidateCaptures = (
   captures: readonly SemanticCapturedSelection[] | undefined,
-  callFrame: ElectronMemberWriteCallFrame | undefined,
-  suffixLength: number,
-  state: JavaScriptSemanticAnalysisState,
+  context: {
+    readonly callFrame: ElectronMemberWriteCallFrame | undefined;
+    readonly rootActivation: t.Function | undefined;
+    readonly suffixLength: number;
+    readonly state: JavaScriptSemanticAnalysisState;
+  },
 ): readonly SemanticCapturedSelection[] | undefined => {
   if (captures === undefined || captures.length === 0) return undefined;
   const resolved: SemanticCapturedSelection[] = [];
   for (const capture of captures) {
-    const at =
-      enclosingActivationFunction(capture.at, state) === undefined
-        ? capture.at
-        : memberSelectionCaptureSite(capture.at, callFrame, state);
+    const at = memberSelectionCaptureSite(
+      capture.at,
+      context.callFrame,
+      context.rootActivation,
+      context.state,
+    );
     if (at !== undefined) resolved.push({ ...capture, at });
   }
-  return semanticNormalizeCapturedSelections(resolved, suffixLength);
+  return semanticNormalizeCapturedSelections(resolved, context.suffixLength);
 };
 
 const maySelectArrayElementSegment = (
@@ -1997,7 +2005,8 @@ const resolveSlotSourcesInCallFrame = (
   const captureAt =
     enclosingActivationFunction(callSite, state) === undefined
       ? callSite
-      : (memberSelectionCaptureSite(callSite, callFrame, state) ?? callSite);
+      : (memberSelectionCaptureSite(callSite, callFrame, undefined, state) ??
+        callSite);
   return [{ state: "source", source, captureAt }];
 };
 
@@ -2030,7 +2039,8 @@ const resolveSingleExpressionInCallFrame = (
   const captureAt =
     enclosingActivationFunction(callSite, state) === undefined
       ? callSite
-      : (memberSelectionCaptureSite(callSite, callFrame, state) ?? callSite);
+      : (memberSelectionCaptureSite(callSite, callFrame, undefined, state) ??
+        callSite);
   return { node: expr, captureAt };
 };
 
@@ -3219,15 +3229,15 @@ const enqueueNonIdentifierMemberWriteSources = (
         }
         return;
       }
-      if (
-        ns === "intrinsic" &&
-        obj === "Object" &&
-        method === "values" &&
-        current.suffix.length > 0 &&
-        maySelectArrayElementSegment(current.suffix[0]!)
-      ) {
+      if (ns === "intrinsic" && obj === "Object" && method === "values") {
+        if (
+          current.suffix.length === 0 ||
+          !maySelectArrayElementSegment(current.suffix[0]!)
+        )
+          return;
         const [target] = callArgs;
-        if (target !== undefined && t.isExpression(target)) {
+        if (target === undefined) return;
+        if (t.isExpression(target)) {
           const remainingSuffix = current.suffix.slice(1);
           const readAt = current.readAt ?? node;
           const targetCapturedSelections: readonly SemanticCapturedSelection[] =
@@ -3331,8 +3341,8 @@ const enqueueNonIdentifierMemberWriteSources = (
             capturedSelections: targetCapturedSelections,
             callFrame: current.callFrame,
           });
+          return;
         }
-        return;
       }
       if (ns === "intrinsic" && obj === "Array" && method === "from") {
         if (
@@ -3542,6 +3552,7 @@ const enqueueNonIdentifierMemberWriteSources = (
             enqueueDirectCopy();
             return;
           }
+          if (inputSegments.length === 0) return;
           const isElementIterated =
             current.iteratedDepths?.includes(elementSuffix.length) === true;
           const isElementIteratedItem =
@@ -4584,6 +4595,7 @@ const electronMemberWriteExports = (
 ): readonly JavaScriptSemanticPropertyPath[] => {
   const direct = rootOrigin(root) ?? candidateRootExport(root);
   if (direct !== undefined) return [[...direct, ...members]];
+  const rootActivation = enclosingActivationFunction(root, state);
   const results: JavaScriptSemanticPropertyPath[] = [];
   const seenPaths = new Set<string>();
   const addPath = (candidate: JavaScriptSemanticPropertyPath): void => {
@@ -4636,9 +4648,12 @@ const electronMemberWriteExports = (
           node,
           capturedSelections: normalizeCandidateCaptures(
             candidate.capturedSelections,
-            candidate.callFrame,
-            candidate.suffix.length,
-            state,
+            {
+              callFrame: candidate.callFrame,
+              rootActivation,
+              suffixLength: candidate.suffix.length,
+              state,
+            },
           ),
         };
     const visitKey = JSON.stringify([
