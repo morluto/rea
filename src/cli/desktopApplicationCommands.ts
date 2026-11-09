@@ -47,6 +47,7 @@ export const registerDesktopApplicationCommands = (
             const { detail, evidence_output, ...limits } = options;
             const service = createDesktopApplicationService();
             return deliverCliAnalysisEvidence({
+              callerInputPath: args.path,
               run: () =>
                 service.inspect(
                   { path: absoluteCallerPath(args.path), ...limits },

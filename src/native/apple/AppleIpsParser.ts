@@ -25,7 +25,7 @@ const recordedUuidPattern =
   /^(?:[0-9a-fA-F]{32}|[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})$/u;
 const IPS_LIMITATIONS = [
   "Rows reproduce the selected .ips JSON; they do not establish that the process still exists or that a live kernel agrees with the recorded state.",
-  "Opened Mach-O and dSYM UUID joins remain unobserved.",
+  "Frames join a caller-selected Mach-O or dSYM only by matching slice LC_UUID and architecture; function and symbol resolution at a joined static address stays unobserved.",
   "Symbol names printed inside the report are recorded claims and are not verified.",
 ];
 
@@ -392,9 +392,9 @@ export const parseAppleIps = (
   bytes: Buffer,
   artifact: Artifact,
   input: InspectAppleIpsInput,
+  read: FieldReader = new FieldReader(input.max_integer_text_bytes),
 ): AppleIps => {
   const text = crashText(bytes);
-  const read = new FieldReader(input.max_integer_text_bytes);
   const metadata = metadataOf(text.metadata, read);
   if (text.body.length === 0)
     throw new AppleIpsFormatFailure(
@@ -451,6 +451,7 @@ export const parseAppleIps = (
     classification: classify(exception, termination),
     coverage: coverageOf(threads, images, read.mismatches),
     unlisted_body_keys: [...bodyJson.unlisted],
+    join: null,
     limitations: IPS_LIMITATIONS,
   };
 };
