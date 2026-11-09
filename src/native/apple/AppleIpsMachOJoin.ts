@@ -11,8 +11,8 @@ import {
 import { FieldReader } from "./AppleIpsFieldReader.js";
 import {
   machoArchitectureName,
-  machoCpuSubtypeBase,
   machoKnownArm64Subtype,
+  machoKnownX86_64Subtype,
 } from "../../domain/apple/machoCpuIdentity.js";
 import type { AppleIps, AppleIpsJoin } from "../../domain/native/appleIps.js";
 
@@ -206,7 +206,7 @@ const architectureRelation = (
       : "mismatch";
   if (
     slice.cpuType === 0x01000007 &&
-    ![3, 8].includes(machoCpuSubtypeBase(slice.cpuSubtype))
+    machoKnownX86_64Subtype(slice.cpuSubtype) === undefined
   )
     return left.startsWith("x86_64") ? "unknown" : "mismatch";
   const right = ARCH_ALIASES[comparableArch(slice.arch)];
@@ -256,7 +256,7 @@ export const resolveAppleIpsJoin = async (
         architectureRelation(recordedArch, slice) !== "mismatch",
     );
     if (unknownUuid.length > 0) {
-      const reason = `image ${String(image.index)} cannot be joined uniquely because a compatible slice UUID is unknown; the parsed slice identities remain available.`;
+      const reason = `image ${String(image.index)} cannot be joined uniquely because a slice UUID is unknown and its architecture does not rule out a match; the parsed slice identities remain available.`;
       limitations.push(reason);
       rejectedImage.set(image.index, reason);
       continue;
