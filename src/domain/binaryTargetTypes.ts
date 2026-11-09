@@ -294,6 +294,7 @@ export type BinaryTarget =
           | "godot-pck"
           | "unityfs"
           | "wxapkg"
+          | "axml"
           | "uimage"
           | "dmg"
           | "pkg"

@@ -281,6 +281,7 @@ export const projectArtifactInventoryView = (
     inventory.manifest.root_format === "godot-pck" ||
     inventory.manifest.root_format === "unityfs" ||
     inventory.manifest.root_format === "wxapkg" ||
+    inventory.manifest.root_format === "axml" ||
     inventory.manifest.root_format === "pyinstaller" ||
     inventory.manifest.root_format === "node-sea" ||
     inventory.manifest.root_format === "intel-hex" ||
