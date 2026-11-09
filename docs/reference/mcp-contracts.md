@@ -1073,8 +1073,20 @@ limitations. An unavailable group carries `remediation` when its readiness
 owner supplied a repair instruction; `tool_availability` uses that instruction
 rather than the failure description.
 
-`binary_session.analysis_provider_candidates` is authoritative for deep-engine
-discovery. Each candidate's capability sets, returned with complete detail,
+`binary_session.analysis_provider_candidates` reports deep-engine discovery.
+`analysis_provider_candidates_observed` is `target_selection` when those facts
+were retained from the active target's selection, `status_request` when the
+status request sought candidate observations, and `not_applicable` for resource-only
+sessions. Selection-time readiness may have changed since the target was opened.
+Set `refresh_candidates: true` to inspect candidate readiness and target support
+again without replacing the active binding or engine. That does not resolve a
+new analysis profile or start a provider client. Later transitions and analysis
+calls wait for the inspection to finish, including cleanup. Current-route capabilities
+remain those of the bound session. Candidate statuses can still be unknown when
+an inspection cannot complete.
+`open_binary` with an explicit `provider_id` performs a new selection. Reopening
+the same target without `provider_id` reuses its current route. A changed route
+can retire the previous engine and its ephemeral edits. Each candidate's capability sets, returned with complete detail,
 describe that possible provider;
 they do not select it. The top-level `capabilities` describe the current route,
 while `analysis_provider_binding` identifies the concrete selected route. These
@@ -1353,6 +1365,15 @@ Native call tracing and process capture retain available observations in
 `details.partial_observation` on failure, including when cleanup succeeds.
 The observation reports its partial coverage; cleanup details describe host
 state separately from the execution failure.
+When a completed observation cannot be published because recording a source
+failed, the original source failure remains the error. `partial_observation`
+can carry the failed source and `completed_observation` carries the completed
+result, with `source_closure: "not-established"`. A retained reference is
+reported only when its owning ledger confirms it; an inline result with
+`retention: "unknown"` makes no claim about ledger membership. If an
+observation cannot fit the MCP response, its corresponding `_omitted` detail
+reports the delivery limit. Cleanup failure and other completed source failures
+remain visible separately.
 For these tools, cancellation observed during result finalization or owned
 cleanup also returns typed cancellation with the available observations.
 A normal target exit does not establish request completion. Incomplete cleanup
@@ -1667,7 +1688,7 @@ procedure resolution returns typed unreadable output; provider errors never
 become absence from their message text. `inspect_address_context` requires an explicit address and
 returns name, procedure, comment, inline-comment, and bookmark facets;
 unsupported facets are local `unavailable` outcomes. A facet rejected for
-invalid input or a resource constraint includes its canonical `error`
+invalid input, source Evidence integrity or a resource constraint includes its canonical `error`
 projection, including structured issues or reported limits and recovery,
 alongside the other facet outcomes. Use `current_document`,
 `current_address`, and `current_procedure` for direct single-field lookups; use

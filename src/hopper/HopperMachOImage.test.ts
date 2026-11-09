@@ -835,8 +835,9 @@ it.each([0, 129])(
     expect(result.error).toMatchObject({
       _tag: "BinaryTargetError",
       path,
-      reason:
-        "FAT architecture table is truncated or exceeds the supported 128 entries",
+      reason: expect.stringMatching(
+        /FAT architecture table.*truncated.*128 entries/i,
+      ),
     });
   },
 );

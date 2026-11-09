@@ -181,6 +181,14 @@ export const traceNativeValues = async (
       analysis_profile_digest: execution.value.analysisProfile?.digest ?? null,
     });
     const flow = dossier.native_value_flow;
+    if (flow !== null)
+      sourceLimitations.push(
+        ...flow.limitations.map((limitation) => ({
+          provider: execution.value.provider,
+          operation: "analyze_function" as const,
+          limitation,
+        })),
+      );
     if (flow === null || !flow.available) {
       unknowns.push({
         procedure: address,

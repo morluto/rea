@@ -1,4 +1,7 @@
-import type { AnalysisError } from "../domain/analysisErrorBase.js";
+import {
+  sourcePublicationRecoveryOf,
+  type AnalysisError,
+} from "../domain/analysisErrorBase.js";
 import {
   childFailureDiagnostics,
   projectAnalysisError,
@@ -40,15 +43,46 @@ export const projectDirectAnalysisFailure = (
     !Array.isArray(partial) &&
     partial.kind === "unretained-evidence";
   const observation = tryParseEvidence(wrapped ? partial.evidence : partial);
-  if (observation === undefined) return projection;
-  const rebound = withEvidenceCallerInputPath(observation, callerInputPath);
+  const rebound =
+    observation === undefined
+      ? undefined
+      : withEvidenceCallerInputPath(observation, callerInputPath);
+  const completed = sourcePublicationRecoveryOf(error)?.completed;
+  const completedWithPath =
+    completed?.kind === "unretained-evidence" ||
+    completed?.kind === "inline-evidence"
+      ? {
+          ...completed,
+          evidence: withEvidenceCallerInputPath(
+            completed.evidence,
+            callerInputPath,
+          ),
+        }
+      : completed?.kind === "unretained-observation"
+        ? {
+            ...completed,
+            observation: {
+              ...completed.observation,
+              caller_input_path: callerInputPath,
+            },
+          }
+        : undefined;
+  if (rebound === undefined && completedWithPath === undefined)
+    return projection;
   return {
     ...projection,
     details: {
       ...projection.details,
-      partial_observation: wrapped
-        ? { ...partial, evidence: rebound }
-        : rebound,
+      ...(rebound === undefined
+        ? {}
+        : {
+            partial_observation: wrapped
+              ? { ...partial, evidence: rebound }
+              : rebound,
+          }),
+      ...(completedWithPath === undefined
+        ? {}
+        : { completed_observation: completedWithPath }),
     },
   };
 };

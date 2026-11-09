@@ -32,12 +32,10 @@ import { withCommandCancellation } from "./commandCancellation.js";
 import {
   analysisEvidenceDeliveryOptions,
   cliEvidenceDeliveryInputError,
-  cliEvidenceSourceClosure,
   publishCliAnalysisEvidence,
 } from "./analysisEvidenceDelivery.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import { AnalysisOutputError } from "../domain/analysisErrorCore.js";
-import type { EvidenceBundle } from "../domain/evidenceBundle.js";
 
 const bytePatternInputSchema = z
   .object(bytePatternFields)
@@ -51,15 +49,26 @@ export const registerCoreNativeCommands = (
 ): void => {
   registerAnnotationCommand(cli, logger, runDirectAnalysis);
   cli.command(CLI_COMMANDS.searchBytes, {
-    description: "Find masked byte patterns in initialized provider memory",
+    description:
+      "Find masked bytes; unbounded searches skip unloaded blocks and overlays",
     args: z.object({
       path: localPathStringSchema.describe("Local executable path"),
       pattern: bytePatternFields.pattern,
     }),
     options: z.object({
       mask: bytePatternFields.mask,
-      start: z.string().optional().describe("Inclusive start address"),
-      end: z.string().optional().describe("Inclusive end address"),
+      start: z
+        .string()
+        .optional()
+        .describe(
+          "Inclusive start address; use an overlay address space to search it",
+        ),
+      end: z
+        .string()
+        .optional()
+        .describe(
+          "Inclusive end address; use an overlay address space to search it",
+        ),
       cursor: z
         .string()
         .optional()
@@ -137,6 +146,68 @@ export const registerCoreNativeCommands = (
             { ...directAnalysisOptionsFromCli(logger, options), signal },
           );
           return publishCliAnalysisEvidence(complete, delivery);
+        }),
+      ),
+  });
+  cli.command(CLI_COMMANDS.procedureReferences, {
+    description: `Inspect incoming or outgoing references for one native procedure. ${addressOrProcedureGuidance} ${equalSelectorGuidance}`,
+    args: z.object({
+      path: localPathStringSchema.describe("Local executable path"),
+      procedure: z
+        .string()
+        .min(1)
+        .optional()
+        .describe(
+          `Procedure name or provider address. ${addressOrProcedureGuidance}`,
+        ),
+    }),
+    options: z.object({
+      procedure: z
+        .string()
+        .min(1)
+        .optional()
+        .describe(
+          `Procedure name or provider address; use --procedure=<value> for leading dashes. ${addressOrProcedureGuidance}`,
+        ),
+      direction: z
+        .enum(["incoming", "outgoing"])
+        .default("outgoing")
+        .describe("Reference direction. Defaults to outgoing."),
+      snapshot: snapshotSelectionOption,
+      ...analysisEvidenceDeliveryOptions,
+      ...nativeOpenOptionFields,
+    }),
+    run: ({ args, options }) =>
+      withCommandCancellation((signal) =>
+        logCliCommand(logger, CLI_COMMANDS.procedureReferences, async () => {
+          const delivery = {
+            providerId: "auto",
+            operation: "procedure_references",
+            signal,
+            detail: options.detail,
+            evidenceOutput: options.evidence_output,
+          };
+          const invalid = cliEvidenceDeliveryInputError(delivery);
+          if (invalid !== undefined) return projectAnalysisError(invalid);
+          const result = await runDirectAnalysis(
+            args.path,
+            "procedure_references",
+            {
+              procedure: resolveCliAnalysisSelector(
+                args.procedure,
+                options.procedure,
+                "procedure",
+                "procedure_references",
+              ),
+              direction: options.direction,
+            },
+            {
+              ...directAnalysisOptionsFromCli(logger, options),
+              signal,
+              includeEvidenceSources: options.evidence_output !== undefined,
+            },
+          );
+          return publishCliAnalysisEvidence(result, delivery);
         }),
       ),
   });
@@ -230,7 +301,6 @@ export const registerCoreNativeCommands = (
           };
           const invalid = cliEvidenceDeliveryInputError(delivery);
           if (invalid !== undefined) return projectAnalysisError(invalid);
-          let sessionBundle: EvidenceBundle | undefined;
           const complete = await runDirectAnalysis(
             args.path,
             "trace_native_values",
@@ -247,43 +317,28 @@ export const registerCoreNativeCommands = (
             {
               ...directAnalysisOptionsFromCli(logger, options),
               signal,
-              ...(options.evidence_output === undefined
-                ? {}
-                : {
-                    onEvidenceBundle: (bundle: EvidenceBundle) => {
-                      sessionBundle = bundle;
-                    },
-                  }),
+              includeEvidenceSources: options.evidence_output !== undefined,
             },
           );
           if (!complete.ok || options.evidence_output === undefined)
             return publishCliAnalysisEvidence(complete, delivery);
-          if (sessionBundle === undefined)
+          if (complete.sourceEvidence === undefined)
             return projectAnalysisError(
               new AnalysisOutputError(
                 "trace_native_values",
-                "The CLI session did not return its retained Evidence bundle.",
+                "The CLI session did not return its source Evidence.",
               ).retainPartialObservation(complete.value),
             );
-          const sources = cliEvidenceSourceClosure(
-            complete.value,
-            sessionBundle.records,
-          );
-          if (!sources.ok)
-            return projectAnalysisError(
-              sources.error.retainPartialObservation(complete.value),
-            );
-          return publishCliAnalysisEvidence(complete, {
-            ...delivery,
-            sourceEvidence: sources.value,
-          });
+          return publishCliAnalysisEvidence(complete, delivery);
         }),
       ),
   });
   cli.command(CLI_COMMANDS.inspectNativeDataType, {
     description: "Inspect one recovered database type or typed data object",
     args: z.object({
-      path: z.string().describe("Local native executable or app path"),
+      path: localPathStringSchema.describe(
+        "Local native executable or app path",
+      ),
     }),
     options: z.object({
       type: z.string().optional().describe("Exact database type category path"),

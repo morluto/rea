@@ -286,9 +286,13 @@ const openServer = async (provider, kunaSettings = {}) => {
       path: provider.path,
       provider_id: provider.id,
     });
+    const session = (await call("binary_session")).value;
+    assert.equal(
+      session.analysis_provider_candidates_observed,
+      "target_selection",
+    );
     if (provider.id === "kuna") {
-      const status = (await call("binary_session")).value;
-      const binding = status.analysis_provider_binding;
+      const binding = session.analysis_provider_binding;
       const verification = binding.release_verification;
       assert.equal(verification.basis, "reported_version");
       assert.equal(verification.verified_version, KUNA_VERIFIED_VERSION);

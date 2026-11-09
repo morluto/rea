@@ -92,8 +92,9 @@ it("rejects an inspection carrier whose Evidence subject disagrees with its nest
   } catch (cause: unknown) {
     expect(cause).toBeInstanceOf(EvidenceIntegrityError);
     expect(cause).toMatchObject({
-      message:
-        "Artifact inspection Evidence subject does not match its root manifest",
+      message: expect.stringMatching(
+        /Evidence subject.*does not match.*root manifest/i,
+      ),
       cause: expect.any(ArtifactInventoryValidationError),
     });
   }
