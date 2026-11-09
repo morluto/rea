@@ -22,11 +22,21 @@ const routeViewFromEvidence = (evidence: unknown) =>
 // process spawn and pushes the test into its own timeout.
 const indexRouteCases = [
   ["literal", "", "true", "js", ["/"], "module", false],
+  // With script syntax and no package type, .js is CommonJS; .jsx is unproven.
+  [
+    "package-commonjs",
+    "var INDEX=true;globalThis.INDEX=false;",
+    "INDEX",
+    "js",
+    ["/"],
+    "script",
+    false,
+  ],
   [
     "script-global",
     "var INDEX=true;globalThis.INDEX=false;",
     "INDEX",
-    "js",
+    "jsx",
     [],
     "script",
     true,
@@ -129,7 +139,7 @@ cliTest(
       JSON.stringify({ name: "program-var-fixture", private: true }),
     );
     await writeFile(
-      join(path, "routes.js"),
+      join(path, "routes.jsx"),
       "var PATH='/reports/stale';globalThis.PATH='/other';createBrowserRouter([{path:PATH},{path:'/reports'}]);const independent='/reports/help';",
     );
     for (const collection of ["routes", "unknowns"] as const) {
