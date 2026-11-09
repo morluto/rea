@@ -118,6 +118,8 @@ public final class ReaGhidraRiscvCallingConvention extends GhidraScript {
   private record Held(long bytes, boolean untyped) {}
 
   private final Map<DataType, Held> heldFields = new HashMap<>();
+  private final Map<DataType, Boolean> unexplained = new HashMap<>();
+  private final Map<DataType, Long> alignments = new HashMap<>();
   private final Map<DataType, Kind> psabiKinds = new HashMap<>();
   private final Map<DataType, Kind> parameterKinds = new HashMap<>();
   private final Map<DataType, Kind> returnKinds = new HashMap<>();
@@ -545,35 +547,51 @@ public final class ReaGhidraRiscvCallingConvention extends GhidraScript {
    * that natural alignment adds before a member or at the end accounts for. Over-alignment, such
    * as `__attribute__((aligned(8)))`, counts too: it cannot be told apart from an omitted field.
    */
-  private static boolean unexplainedBytes(DataType type) {
+  private boolean unexplainedBytes(DataType type) {
     type = strip(type);
-    if (type instanceof Array array) return unexplainedBytes(array.getDataType());
-    if (!(type instanceof Structure structure)) return false;
-    long end = 0;
-    long alignment = 1;
-    for (DataTypeComponent component : structure.getDefinedComponents()) {
-      if (component.getLength() == 0) continue;
-      long member = naturalAlignment(component.getDataType());
-      if (component.getOffset() > alignUp(end, member)) return true;
-      end = Math.max(end, (long) component.getOffset() + component.getLength());
-      alignment = Math.max(alignment, member);
-      if (unexplainedBytes(component.getDataType())) return true;
+    Boolean known = unexplained.get(type);
+    if (known != null) return known;
+    boolean result = false;
+    if (type instanceof Array array) result = unexplainedBytes(array.getDataType());
+    else if (type instanceof Structure structure) {
+      long end = 0;
+      long alignment = 1;
+      for (DataTypeComponent component : structure.getDefinedComponents()) {
+        if (component.getLength() == 0) continue;
+        long member = naturalAlignment(component.getDataType());
+        if (component.getOffset() > alignUp(end, member)
+            || unexplainedBytes(component.getDataType())) {
+          result = true;
+          break;
+        }
+        end = Math.max(end, (long) component.getOffset() + component.getLength());
+        alignment = Math.max(alignment, member);
+      }
+      result = result || structure.getLength() > alignUp(end, alignment);
     }
-    return structure.getLength() > alignUp(end, alignment);
+    unexplained.put(type, result);
+    return result;
   }
 
-  /** C's alignment for a type, worked out from its members because Ghidra's DWARF import does not pack structures. */
-  private static long naturalAlignment(DataType type) {
+  /**
+   * C's alignment for a type, worked out from its members because Ghidra's DWARF import does not
+   * pack structures. Both results are kept per type, as nested types repeat each other.
+   */
+  private long naturalAlignment(DataType type) {
     type = strip(type);
-    if (type instanceof BitFieldDataType bitField) return naturalAlignment(bitField.getBaseDataType());
-    if (type instanceof Array array) return naturalAlignment(array.getDataType());
-    if (type instanceof Structure structure) {
-      long alignment = 1;
+    Long known = alignments.get(type);
+    if (known != null) return known;
+    long result;
+    if (type instanceof BitFieldDataType bitField)
+      result = naturalAlignment(bitField.getBaseDataType());
+    else if (type instanceof Array array) result = naturalAlignment(array.getDataType());
+    else if (type instanceof Structure structure) {
+      result = 1;
       for (DataTypeComponent component : structure.getDefinedComponents())
-        alignment = Math.max(alignment, naturalAlignment(component.getDataType()));
-      return alignment;
-    }
-    return Math.max(1, type.getAlignment());
+        result = Math.max(result, naturalAlignment(component.getDataType()));
+    } else result = Math.max(1, type.getAlignment());
+    alignments.put(type, result);
+    return result;
   }
 
   private static long alignUp(long value, long alignment) {

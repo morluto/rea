@@ -294,8 +294,13 @@ passes a type the prototype misplaces:
   width, which the psABI still counts: Clang 19 passes
   `struct { float f; unsigned : 1; }` in `fa0` and `a0`, and a following `int`
   in `a1`, while Ghidra sees one float in 8 bytes. An over-aligned structure of
-  up to 8 bytes looks the same and is refused too. An unnamed bit-field inside
-  a named bit-field's storage unit leaves no trace, so the check cannot see it.
+  up to 8 bytes looks the same and is refused too. An unnamed bit-field that
+  fits inside a named bit-field's storage unit, or in padding that natural
+  alignment adds, leaves no trace, so the check cannot see it: Clang 19 passes
+  `struct { char c; unsigned : 1; float f; }` in `a0` and `a1`, and its DWARF
+  lists only `c` and `f`, so the lane admits it with the float in `fa0`.
+  Refusing every padded value with a float would also refuse common layouts
+  such as `struct { char c; float f; }`, which takes `a0` and `fa0`.
 
 A bit-field counts by its width, not its declared type, so a `float` beside
 `unsigned long long b : 1` takes a float and an integer register. The check
