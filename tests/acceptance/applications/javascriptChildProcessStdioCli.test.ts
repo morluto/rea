@@ -29,13 +29,13 @@ const cases = [
     0,
   ],
   [
-    'spawn("conditional-spreads", [], {stdio:"inherit",...(input&&{shell:true}),...(input?{cwd:"/"}:null)})',
+    'spawn("conditional-spreads", [], {stdio:"inherit",...(!input&&{shell:true}),...(input?{cwd:"/"}:null)})',
     "conditional-spreads",
     "inherit",
     0,
   ],
   [
-    'spawn("conditional-override", [], {stdio:"inherit",...(input&&{stdio:"pipe"})})',
+    'spawn("conditional-override", [], {stdio:"inherit",...(!input&&{stdio:"pipe"})})',
     "conditional-override",
     "dynamic",
     0,

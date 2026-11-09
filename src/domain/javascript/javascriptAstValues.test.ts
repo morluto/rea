@@ -140,10 +140,10 @@ it("leaves only the keys a conditional literal spread can copy unresolved", () =
       t.objectProperty(t.identifier("frame"), t.booleanLiteral(false)),
     ]);
   const flag = t.identifier("flag");
-  // Index keys: a falsy `&&` operand may be document.all; a string branch
-  // copies its own indices.
+  // A falsy comparison copies no keys; a string branch copies its indices.
+  const comparison = t.binaryExpression("===", flag, t.stringLiteral("darwin"));
   for (const [argument, first, third] of [
-    [t.logicalExpression("&&", flag, frame()), "dynamic", "dynamic"],
+    [t.logicalExpression("&&", comparison, frame()), "missing", "missing"],
     [
       t.conditionalExpression(flag, frame(), t.nullLiteral()),
       "missing",
@@ -179,7 +179,7 @@ it("leaves only the keys a conditional literal spread can copy unresolved", () =
   const override = t.spreadElement(
     t.logicalExpression(
       "&&",
-      flag,
+      comparison,
       t.objectExpression([
         t.objectProperty(t.identifier("preload"), t.identifier("runtimePath")),
       ]),
@@ -207,7 +207,7 @@ it("leaves only the keys a conditional literal spread can copy unresolved", () =
     t.spreadElement(
       t.logicalExpression(
         "&&",
-        flag,
+        comparison,
         t.objectExpression([
           t.objectProperty(t.identifier(name), t.numericLiteral(1)),
         ]),
@@ -231,6 +231,7 @@ it("keeps fallback and unresolved conditional spreads unknown", () => {
     t.stringLiteral("./preload.js"),
   );
   const flag = t.identifier("flag");
+  const comparison = t.binaryExpression("===", flag, t.stringLiteral("darwin"));
   const frame = t.objectExpression([
     t.objectProperty(t.identifier("frame"), t.booleanLiteral(false)),
   ]);
@@ -238,23 +239,26 @@ it("keeps fallback and unresolved conditional spreads unknown", () => {
     t.logicalExpression("||", flag, frame),
     t.logicalExpression("??", flag, frame),
     t.conditionalExpression(flag, t.identifier("input"), frame),
+    // A falsy `&&` operand is copied itself, and document.all, the only
+    // falsy object, can carry an expando with any key.
+    t.logicalExpression("&&", flag, frame),
     t.logicalExpression(
       "&&",
-      flag,
+      comparison,
       t.objectExpression([
         t.objectMethod("get", t.identifier("frame"), [], t.blockStatement([])),
       ]),
     ),
     t.logicalExpression(
       "&&",
-      flag,
+      comparison,
       t.objectExpression([
         t.objectProperty(t.identifier("key"), t.booleanLiteral(true), true),
       ]),
     ),
     t.logicalExpression(
       "&&",
-      flag,
+      comparison,
       t.objectExpression([t.spreadElement(t.identifier("input"))]),
     ),
   ]) {
@@ -282,7 +286,11 @@ it("bounds nested conditional spreads by expression depth", () => {
       t.objectProperty(t.identifier("frame"), t.booleanLiteral(false)),
     ]);
     for (let level = 0; level < levels; level++)
-      argument = t.logicalExpression("&&", t.identifier("flag"), argument);
+      argument = t.logicalExpression(
+        "&&",
+        t.unaryExpression("!", t.identifier("flag")),
+        argument,
+      );
     return argument;
   };
   const read = (levels: number) =>

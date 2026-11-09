@@ -548,11 +548,14 @@ Unresolved option objects, bridge keys, API objects, and IPC channel expressions
 remain unknown and make coverage partial.
 
 A later spread can replace earlier options. A conditional spread whose
-branches are object literals, such as `...(isMac && { titleBarStyle: "hidden" })`
-or `...(isMac ? { frame: false } : {})`, leaves unknown only the keys a branch
+branches are object literals, such as
+`...(process.platform === "darwin" && { titleBarStyle: "hidden" })` or
+`...(isMac ? { frame: false } : {})`, leaves unknown only the keys a branch
 can copy, so an earlier `webPreferences` stays explicit unless a branch also
-sets it. A spread of an unresolved value, such as an identifier or an `||` or
-`??` fallback, leaves every earlier option unknown.
+sets it. `&&` copies a falsy left operand itself, so that operand must also be
+bounded, such as a comparison or a `!` negation. A spread of an unresolved
+value, such as an identifier, `isMac && {...}` with an unresolved `isMac`, or
+an `||` or `??` fallback, leaves every earlier option unknown.
 
 BrowserWindow options and `webPreferences` can follow local `const` aliases
 whose initialization precedes the use. The shared lexical and mutation index

@@ -57,7 +57,7 @@ const scenarios = [
     preloadPath: "./first.js",
   },
   {
-    preferences: `${FIRST}, ...(isDev && { devTools: true })`,
+    preferences: `${FIRST}, ...(!app.isPackaged && { devTools: true })`,
     preloadPath: "./first.js",
   },
   {
@@ -224,7 +224,7 @@ cliTest.for(["CLI", "stdio MCP"] as const)(
       // the keys their branches copy.
       {
         sourceLine:
-          'new BrowserWindow({webPreferences:{preload:"./first.js",sandbox:true},...(isMac&&{titleBarStyle:"hidden"})});',
+          'new BrowserWindow({webPreferences:{preload:"./first.js",sandbox:true},...(process.platform==="darwin"&&{titleBarStyle:"hidden"})});',
         expectedPreload: "./first.js",
         preferencesStatus: "object-literal",
       },
@@ -236,13 +236,21 @@ cliTest.for(["CLI", "stdio MCP"] as const)(
       },
       {
         sourceLine:
-          'new BrowserWindow({webPreferences:{preload:"./first.js"},...(isMac&&{webPreferences:{sandbox:false}})});',
+          'new BrowserWindow({webPreferences:{preload:"./first.js"},...(process.platform==="darwin"&&{webPreferences:{sandbox:false}})});',
         expectedPreload: null,
         preferencesStatus: "dynamic",
       },
       {
         sourceLine:
           'new BrowserWindow({webPreferences:{preload:"./first.js"},...(extraOptions||{})});',
+        expectedPreload: null,
+        preferencesStatus: "dynamic",
+      },
+      // A falsy unresolved `&&` operand is copied itself; document.all can
+      // carry an expando with any key.
+      {
+        sourceLine:
+          'new BrowserWindow({webPreferences:{preload:"./first.js"},...(isMac&&{titleBarStyle:"hidden"})});',
         expectedPreload: null,
         preferencesStatus: "dynamic",
       },

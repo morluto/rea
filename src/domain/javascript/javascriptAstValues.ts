@@ -300,15 +300,6 @@ type StaticObjectMember =
 
 const UNKNOWN_STATIC_OBJECT_MEMBER: StaticObjectMember = { kind: "unknown" };
 
-/**
- * A falsy `&&` operand is copied itself. A falsy primitive copies no keys;
- * document.all, the only falsy object, copies its element indices.
- */
-const FALSY_OPERAND_INDICES: StaticObjectIndexMember = {
-  kind: "primitive-indices",
-  length: null,
-};
-
 /** Object-literal prototype setters are never ordinary own-property writes. */
 export const isObjectPrototypeSetter = (
   property: t.ObjectProperty | t.ObjectMethod,
@@ -437,7 +428,9 @@ const appendStaticSpreadMembers = (
 /**
  * Record the keys either branch may copy. The test runs before the branch and
  * cannot reach the object under construction, so the branches alone bound
- * the copied keys; none of them is known to be present.
+ * the copied keys; none of them is known to be present. A falsy `&&` operand
+ * is copied itself and is bounded like a branch: document.all, the only falsy
+ * object, can carry expando properties with any key.
  */
 const appendConditionalSpreadMembers = (
   members: StaticObjectMember[],
@@ -445,13 +438,10 @@ const appendConditionalSpreadMembers = (
   depth: number,
   isNullish?: (node: t.Node) => boolean,
 ): boolean => {
-  const conditional = t.isConditionalExpression(spread);
-  const copied: StaticObjectMember[] = conditional
-    ? []
-    : [FALSY_OPERAND_INDICES];
-  for (const branch of conditional
+  const copied: StaticObjectMember[] = [];
+  for (const branch of t.isConditionalExpression(spread)
     ? [spread.consequent, spread.alternate]
-    : [spread.right])
+    : [spread.left, spread.right])
     if (!appendStaticSpreadMembers(copied, branch, depth, isNullish))
       return false;
   const keys = new Set<string>();
