@@ -58,7 +58,11 @@ fail without partial success. A security directory that ends in fewer than
 eight header bytes, including zeros, is a truncated `WIN_CERTIFICATE` and
 fails the same way. SignedData must contain at least one `SignerInfo`, and
 each `SignerInfo` must carry a non-empty signature value. Each embedded X.509
-certificate must include `subjectPublicKeyInfo` and `signatureValue`. Decoded
+certificate must include `subjectPublicKeyInfo` and `signatureValue`.
+Certificate issuer/subject and signer issuer names require nonempty RDN sets
+and exactly two fields (type and value) in each attribute, as defined in
+[RFC 5280](https://www.rfc-editor.org/rfc/rfc5280.html#section-4.1.2.4).
+Malformed name structures fail before their text is reported. Decoded
 certificate name text, serials, validity spellings, and subject key identifiers
 share a 64 KiB budget per PKCS#7 payload, and each payload decodes at most
 16,384 ASN.1 values. Exhausting either fixed allowance returns a nonretryable

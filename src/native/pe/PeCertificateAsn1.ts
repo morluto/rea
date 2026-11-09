@@ -292,8 +292,11 @@ const decodeName = (
   const attributes: Attribute[] = [];
   for (const rdn of sequence(node, "Name")) {
     if (rdn.tag !== 0x31) return fail("Name RDN is not a SET.");
+    if (rdn.children.length === 0) return fail("Name RDN is empty.");
     for (const attribute of rdn.children) {
       const parts = sequence(attribute, "AttributeTypeAndValue");
+      if (parts.length !== 2)
+        return fail("AttributeTypeAndValue must have exactly two fields.");
       const oidNode = parts[0];
       const valueNode = parts[1];
       if (

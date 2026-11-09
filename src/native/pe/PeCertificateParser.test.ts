@@ -723,6 +723,67 @@ const namedCertificate = (issuer: Buffer, subject: Buffer) =>
     der(0x03, Buffer.from([0])),
   );
 
+it.each(
+  (["issuer", "subject", "signerIssuer"] as const).flatMap((target) =>
+    (["extra-field", "empty-rdn"] as const).map((kind) => ({ target, kind })),
+  ),
+)("rejects a $kind in the $target name", ({ target, kind }) => {
+  const malformed =
+    kind === "empty-rdn"
+      ? derSeq(derSet())
+      : derSeq(
+          derSet(
+            derSeq(cn, der(0x0c, Buffer.from("A")), der(0x05, Buffer.alloc(0))),
+          ),
+        );
+  const payload = pkcs7SignedDataFixture(
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    { [target]: malformed },
+  );
+  expect(() => parse(peCertificateFixture(false, payload))).toThrow(
+    /Name RDN|AttributeTypeAndValue/u,
+  );
+});
+
+it("preserves multiple attributes in a nonempty RDN", () => {
+  const multiple = derSeq(
+    derSet(
+      derSeq(cn, der(0x0c, Buffer.from("A"))),
+      derSeq(
+        Buffer.from([0x06, 0x03, 0x55, 0x04, 0x0a]),
+        der(0x0c, Buffer.from("B")),
+      ),
+    ),
+  );
+  const payload = pkcs7SignedDataFixture(
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    { issuer: multiple, subject: multiple, signerIssuer: multiple },
+  );
+  const pkcs7 = parse(peCertificateFixture(true, payload)).entries[0]?.pkcs7;
+  for (const name of [
+    pkcs7?.certificates[0]?.issuer,
+    pkcs7?.certificates[0]?.subject,
+    pkcs7?.signers[0]?.issuer,
+  ])
+    expect(name?.attributes.map(({ value }) => value)).toEqual(["A", "B"]);
+});
+
+it("distinguishes an empty RDNSequence from an empty RDN", () => {
+  const certificate = readAsn1(
+    namedCertificate(directoryName(der(0x0c, Buffer.from("Issuer"))), derSeq()),
+  );
+  expect(parseCertificate(certificate).subject).toEqual({
+    text: "",
+    attributes: [],
+  });
+});
+
 it.each(["signature", "public-key", "issuer-id", "subject-id"] as const)(
   "validates BIT STRING padding for %s at the shared certificate boundary",
   (field) => {

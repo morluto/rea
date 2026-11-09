@@ -68,6 +68,7 @@ export const pkcs7SignedDataFixture = (
   organization = "REA Tests",
   signature = octet(Buffer.from("sig")),
   unsignedAttributes?: readonly (readonly number[])[],
+  names: Partial<Record<"issuer" | "subject" | "signerIssuer", Buffer>> = {},
 ): Buffer => {
   const serial = Buffer.from([0x11, 0x22, 0x33, 0x44]);
   const subject = name(commonName, organization);
@@ -75,9 +76,9 @@ export const pkcs7SignedDataFixture = (
     context(0, integer(2)),
     integer(serial),
     algorithm(SHA256_RSA),
-    subject,
+    names.issuer ?? subject,
     seq(utc("250101000000Z"), utc("260101000000Z")),
-    subject,
+    names.subject ?? subject,
     seq(algorithm(RSA), bitString(Buffer.from("pubkey"))),
     context(
       3,
@@ -91,7 +92,7 @@ export const pkcs7SignedDataFixture = (
   );
   const signer = seq(
     integer(1),
-    seq(subject, integer(serial)),
+    seq(names.signerIssuer ?? subject, integer(serial)),
     algorithm(SHA256),
     algorithm(SHA256_RSA),
     signature,
