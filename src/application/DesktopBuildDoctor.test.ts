@@ -422,15 +422,6 @@ describe("desktop build informational checks", () => {
     );
   });
 
-  it("says a screen-judged task needs the endpoint to be witnessed and run", async () => {
-    const report = await diagnose(buildHost({ solveEndpoint: undefined }));
-    const check = report.informational_checks.find(
-      ({ name }) => name === "desktop_build-solve-endpoint",
-    );
-    expect(check?.detail).toContain("screen_judge");
-    expect(check?.remediation).toContain("screen_judge");
-  });
-
   it("reports an unavailable endpoint query as unknown", async () => {
     const report = await diagnose(buildHost({ solveEndpoint: null }));
     expect(report.informational_checks).toContainEqual(

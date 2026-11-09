@@ -2,6 +2,7 @@ import { Readable } from "node:stream";
 
 import { z } from "zod";
 
+import type { DownloadInstall } from "../../domain/desktop/appDownloadInstall.js";
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
 import {
   READER_RUNNER_SLACK_S,
@@ -125,6 +126,7 @@ export const exportBuild = async (
     readonly attempt: number;
     /** The URL a computer downloads the app's `.deb` from, when the capture says apt does not install it. */
     readonly packageUrl?: string;
+    readonly downloadInstall?: DownloadInstall;
     /** The packages the request named beside the app, which the bundle installs beside it too. */
     readonly extraPackages: readonly string[];
   },
@@ -137,6 +139,8 @@ export const exportBuild = async (
   const bundle = `${folder}/bundle-${attempt}`;
   const task = `${folder}/task-${attempt}.json`;
   const stdout = `${folder}/export-${attempt}.json`;
+  const downloadPath = `${folder}/download-install-${attempt}.json`;
+  const download = capture.downloadInstall;
   const taskFile = `${JSON.stringify(request.task, null, 2)}\n`;
   try {
     const argv = [
@@ -154,6 +158,7 @@ export const exportBuild = async (
       ...(capture.packageUrl === undefined
         ? []
         : ["--package-url", capture.packageUrl]),
+      ...(download === undefined ? [] : ["--download-install", downloadPath]),
       ...capture.extraPackages.flatMap((name) => ["--extra-package", name]),
       "--json",
     ];
@@ -165,7 +170,17 @@ export const exportBuild = async (
           (sum, reader) => sum + readerTimeout(reader) + READER_RUNNER_SLACK_S,
           0,
         );
-    const options = { stdout, files: { [task]: taskFile }, timeoutS, signal };
+    const options = {
+      stdout,
+      files: {
+        [task]: taskFile,
+        ...(download === undefined
+          ? {}
+          : { [downloadPath]: `${JSON.stringify(download, null, 2)}\n` }),
+      },
+      timeoutS,
+      signal,
+    };
     const { stdoutBytes: bytes } =
       timeoutS + 60 <= 3600
         ? await runRea(computer, argv, options)

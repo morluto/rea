@@ -5,8 +5,10 @@ import { AnalysisCancelledError } from "../../domain/analysisErrorCore.js";
 import type { BuildRequest } from "../../domain/desktop/appBuild.js";
 import {
   BUILD_PACKAGE_FILE,
+  downloadInstallOf,
   extraPackagesOf,
 } from "../../domain/desktop/appBuild.js";
+import type { DownloadInstall } from "../../domain/desktop/appDownloadInstall.js";
 import {
   END_CHECKPOINT,
   SEED_CHECKPOINT,
@@ -268,6 +270,8 @@ export class DesktopBuildCapture {
   #run: CaptureRun | undefined;
   readonly #entry: string | undefined;
   readonly #packageFile: { readonly url: string } | undefined;
+  /** The AppImage or tarball the request unpacked the app from, which the export downloads too. */
+  readonly #download: DownloadInstall | undefined;
   /** What the request named beside the app, which the export installs too, so a package file's dependencies outlive an install by name. */
   readonly #extraPackages: readonly string[];
 
@@ -282,6 +286,8 @@ export class DesktopBuildCapture {
         ? { url: request.install.url }
         : undefined;
     this.#extraPackages = request === undefined ? [] : extraPackagesOf(request);
+    this.#download =
+      request === undefined ? undefined : downloadInstallOf(request);
   }
 
   async start(
@@ -577,6 +583,9 @@ export class DesktopBuildCapture {
         ...(this.#packageFile === undefined || run.packageFile !== true
           ? {}
           : { packageUrl: this.#packageFile.url }),
+        ...(this.#download === undefined
+          ? {}
+          : { downloadInstall: this.#download }),
         extraPackages: this.#extraPackages,
       },
       input,

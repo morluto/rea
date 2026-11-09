@@ -430,12 +430,12 @@ const solveEndpointCheck = (where: string | null | undefined): DoctorCheck =>
     where === null
       ? "REA could not determine whether agentenv has a model endpoint configured."
       : where === undefined
-        ? "No model endpoint is configured for solver runs or for a screen_judge task's judge, which its witness and its runs need."
+        ? "No model endpoint is configured for solver runs."
         : `A model endpoint is configured in ${where}; its availability was not checked.`,
     {
       classification: where === null ? "unknown" : "missing_dependency",
       remediation:
-        "For solver runs, and to witness or run a screen_judge task, export LITELLM_BASE_URL and LITELLM_API_KEY in the shell that starts the agent, or set base_url and api_key under [model] in .agentenv/config.toml.",
+        "For solver runs, export LITELLM_BASE_URL and LITELLM_API_KEY in the shell that starts the agent, or set base_url and api_key under [model] in .agentenv/config.toml.",
     },
   );
 
