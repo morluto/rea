@@ -84,6 +84,10 @@ La configuración admite Claude Code, Codex, Cursor, Gemini CLI, Grok Build y [o
 
 MCP usa esquemas de entrada compactos por defecto. Para ver todas las instrucciones de campos y la validación anidada, establece `REA_MCP_INPUT_SCHEMA_PROFILE=full` en el registro MCP. Ambos perfiles conservan todas las herramientas y la misma validación canónica del servidor; consulta la guía de contratos MCP.
 
+La configuración registra directamente el entorno de ejecución elegido y el script de entrada de REA. Si usas un ejecutor de paquetes, conserva su entrada de caché y el entorno de ejecución; descarga el paquete desde un directorio de confianza fuera del proyecto objetivo. Consulta la guía de instalación.
+
+Los esquemas de salida completos se anuncian por defecto. Si tu cliente limita `tools/list`, establece `REA_MCP_OUTPUT_SCHEMA_PROFILE=compact` o `off` en el registro MCP. La validación del servidor y los resultados estructurados siguen siendo completos. Consulta «Output schemas» en la guía de contratos MCP.
+
 ### Pregunta a tu agente
 
 ```text

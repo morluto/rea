@@ -320,6 +320,14 @@ explicit path or endpoint and do not need it.
   build-id or ABI-tag fields. A missing table is observed absence of those
   declarations, not proof the image never carried notes. See the
   [ELF notes guide](https://github.com/morluto/rea/blob/main/docs/elf-notes.md).
+- Code that runs before `main` or at exit in ELF or Mach-O:
+  `inspect_native_initializers` with the explicit local file (and
+  `architecture` for a universal Mach-O). This built-in inspection requires no
+  disassembler. Preserve slot and target addresses, the `resolution` of each
+  entry, and its limitations. An `unresolved` slot is not a zero pointer, and a
+  missing table is not proof that no constructor exists. See the
+  [initializer guide](https://github.com/morluto/rea/blob/main/docs/guides/native/native-initializers.md).
+
 - ELF unwind function ranges: `inspect_elf_unwind_ranges` with the explicit
   local ELF32/ELF64 file. This built-in target-free inspection requires no
   disassembler. Preserve FDE start, end, size, containing section, exact

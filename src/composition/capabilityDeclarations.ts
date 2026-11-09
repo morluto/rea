@@ -40,6 +40,7 @@ import {
   MANAGED_STATIC_PROVIDER,
   MANAGED_WORKFLOW_PROVIDER,
   NATIVE_EXPORTS_PROVIDER,
+  NATIVE_INITIALIZERS_PROVIDER,
   PE_CERTIFICATES_PROVIDER,
   PE_IMPORTS_PROVIDER,
   PE_LOAD_CONFIG_PROVIDER,
@@ -260,6 +261,13 @@ export const CAPABILITY_DECLARATIONS = {
   },
   elfNotes: {
     providers: [providerBinding(ELF_NOTES_PROVIDER, ["inspect_elf_notes"])],
+  },
+  nativeInitializers: {
+    providers: [
+      providerBinding(NATIVE_INITIALIZERS_PROVIDER, [
+        "inspect_native_initializers",
+      ]),
+    ],
   },
   elfUnwindRanges: {
     providers: [

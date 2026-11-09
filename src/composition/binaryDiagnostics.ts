@@ -20,6 +20,8 @@ import { WindowsShortcutService } from "../application/binaryDiagnostics/Windows
 import { WindowsShortcutProvider } from "../native/windows/WindowsShortcutProvider.js";
 import { ElfNotesService } from "../application/binaryDiagnostics/ElfNotesService.js";
 import { ElfNotesProvider } from "../native/elf/ElfNotesProvider.js";
+import { NativeInitializersService } from "../application/binaryDiagnostics/NativeInitializersService.js";
+import { NativeInitializersProvider } from "../native/initializers/NativeInitializersProvider.js";
 import { ElfUnwindRangesService } from "../application/binaryDiagnostics/ElfUnwindRangesService.js";
 import { ElfUnwindRangesProvider } from "../native/elf/ElfUnwindRangesProvider.js";
 import { AppleIpsService } from "../application/binaryDiagnostics/AppleIpsService.js";
@@ -66,6 +68,9 @@ export const createNativeExportsService = (): NativeExportsService =>
 export const createElfNotesService = (): ElfNotesService =>
   new ElfNotesService(new ElfNotesProvider());
 
+/** Portable ELF and Mach-O initializer and finalizer listing with no engine. */
+export const createNativeInitializersService = (): NativeInitializersService =>
+  new NativeInitializersService(new NativeInitializersProvider());
 /** Portable ELF unwind-range inspection with no engine or disassembler. */
 export const createElfUnwindRangesService = (): ElfUnwindRangesService =>
   new ElfUnwindRangesService(new ElfUnwindRangesProvider());

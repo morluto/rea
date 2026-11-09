@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { objcRecordBudgetMacho } from "../../tests/fixtures/objcRecordBudgetMacho.js";
-import { decodeAppleDispatchMetadata } from "./AppleDispatchMetadata.js";
+import { decodeAppleDispatchMetadata } from "./AppleDispatchMetadata.fixture.js";
 
 const base = 0x100000000n;
 const provenance = {

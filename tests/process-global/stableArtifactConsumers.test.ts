@@ -111,6 +111,7 @@ import { inspectPythonPycInputSchema } from "../../src/domain/python/pythonPyc.j
 import { PeResourcesProvider } from "../../src/native/pe/PeResourcesProvider.js";
 import { Il2cppMetadataProvider } from "../../src/il2cpp/Il2cppMetadataProvider.js";
 import { ElfNotesProvider } from "../../src/native/elf/ElfNotesProvider.js";
+import { NativeInitializersProvider } from "../../src/native/initializers/NativeInitializersProvider.js";
 import { ElfUnwindRangesProvider } from "../../src/native/elf/ElfUnwindRangesProvider.js";
 import { AppleIpsProvider } from "../../src/native/apple/AppleIpsProvider.js";
 import { KernelModuleProvider } from "../../src/native/elf/KernelModuleProvider.js";
@@ -122,6 +123,7 @@ import { WindowsShortcutProvider } from "../../src/native/windows/WindowsShortcu
 import { NativeExportsProvider } from "../../src/native/exports/NativeExportsProvider.js";
 import { BeamProvider } from "../../src/erlang/BeamProvider.js";
 import { inspectElfNotesInputSchema } from "../../src/domain/native/elfNotes.js";
+import { inspectNativeInitializersInputSchema } from "../../src/domain/native/nativeInitializers.js";
 import { inspectElfUnwindRangesInputSchema } from "../../src/domain/native/elfUnwindRanges.js";
 import { inspectAppleIpsInputSchema } from "../../src/domain/native/appleIps.js";
 import { inspectKernelModuleInputSchema } from "../../src/domain/native/kernelModule.js";
@@ -1006,6 +1008,7 @@ it.each([
 const stableArtifactProviders = [
   ...staticProviders,
   ["ELF notes", () => new ElfNotesProvider()],
+  ["native initializers", () => new NativeInitializersProvider()],
   ["ELF unwind ranges", () => new ElfUnwindRangesProvider()],
   ["Apple IPS", () => new AppleIpsProvider()],
   ["kernel module", () => new KernelModuleProvider()],
@@ -1039,6 +1042,11 @@ const inspectFileFailure = (
   if (provider instanceof ElfNotesProvider)
     return provider.inspect(
       inspectElfNotesInputSchema.parse({ path }),
+      options,
+    );
+  if (provider instanceof NativeInitializersProvider)
+    return provider.inspect(
+      inspectNativeInitializersInputSchema.parse({ path }),
       options,
     );
   if (provider instanceof ElfUnwindRangesProvider)

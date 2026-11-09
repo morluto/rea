@@ -84,6 +84,10 @@ Quá trình thiết lập hỗ trợ Claude Code, Codex, Cursor, Gemini CLI, Gro
 
 MCP mặc định dùng schema đầu vào gọn. Để có hướng dẫn đầy đủ về trường và xác thực lồng nhau, đặt `REA_MCP_INPUT_SCHEMA_PROFILE=full` trong đăng ký MCP. Cả hai cấu hình giữ toàn bộ công cụ và cùng xác thực chuẩn ở máy chủ; xem hướng dẫn hợp đồng MCP.
 
+Thiết lập đăng ký trực tiếp runtime đã chọn và script khởi chạy REA. Khi dùng trình chạy gói, hãy giữ mục cache và runtime đó; tải gói từ một thư mục đáng tin cậy bên ngoài dự án đích. Xem hướng dẫn cài đặt.
+
+Schema đầu ra đầy đủ được công bố theo mặc định. Nếu client giới hạn `tools/list`, hãy đặt `REA_MCP_OUTPUT_SCHEMA_PROFILE=compact` hoặc `off` trong cấu hình MCP. Xác thực phía server và kết quả có cấu trúc vẫn đầy đủ. Xem mục “Output schemas” trong hướng dẫn hợp đồng MCP.
+
 ### Hỏi tác nhân
 
 ```text
