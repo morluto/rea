@@ -319,6 +319,33 @@ const branchAcceptsKey = (
   return true;
 };
 
+const branchHasNonValueKeyIssue = (
+  branchErrors: readonly z.core.$ZodIssue[],
+  key: string,
+  budget?: { remaining: number },
+): boolean => {
+  if (budget !== undefined) {
+    budget.remaining -= 16;
+    if (budget.remaining < 0) throw projectionBudgetExceeded;
+  }
+  for (const err of branchErrors) {
+    if (
+      err.path.length === 1 &&
+      err.path[0] === key &&
+      err.code !== "invalid_value"
+    ) {
+      return true;
+    }
+    if (err.code === "invalid_union" && err.path.length === 0) {
+      const anyNested = err.errors.some((nested) =>
+        branchHasNonValueKeyIssue(nested, key, budget),
+      );
+      if (anyNested) return true;
+    }
+  }
+  return false;
+};
+
 const branchHasDirectKeyIssue = (
   branchErrors: readonly z.core.$ZodIssue[],
   key: string,
@@ -412,10 +439,10 @@ const resolveUnionDiscriminatorDiagnostic = (
     );
     if (!allBranchesReject) continue;
 
-    const anyBranchHasInvalidType = currentErrors.some((branch) =>
-      branchHasDirectKeyIssue(branch, key, "invalid_type", budget),
+    const anyBranchHasNonValue = currentErrors.some((branch) =>
+      branchHasNonValueKeyIssue(branch, key, budget),
     );
-    if (anyBranchHasInvalidType) continue;
+    if (anyBranchHasNonValue) continue;
 
     const anyBranchHasInvalidValue = currentErrors.some((branch) =>
       branchHasDirectKeyIssue(branch, key, "invalid_value", budget),
@@ -443,9 +470,11 @@ const narrowUnionBranches = (
   errors: readonly (readonly z.core.$ZodIssue[])[],
   targetValue: object,
   budget?: { remaining: number },
+  keysToCheck?: readonly string[],
 ): readonly (readonly z.core.$ZodIssue[])[] => {
   let currentErrors = errors;
-  const candidateKeys = candidateDiscriminatorKeys(targetValue, budget);
+  const candidateKeys =
+    keysToCheck ?? candidateDiscriminatorKeys(targetValue, budget);
   for (const key of candidateKeys) {
     const matchingBranches = currentErrors.filter((branch) =>
       branchAcceptsKey(branch, key, budget),
@@ -505,26 +534,40 @@ const projectUnionIssue = (
     targetValue !== null &&
     !Array.isArray(targetValue)
   ) {
-    if (issue.errors.length > 1) {
-      const topDiscriminator = resolveUnionDiscriminatorDiagnostic(
-        issue.errors,
-        path,
-        targetValue,
-        budget,
-      );
-      if (topDiscriminator !== undefined) return topDiscriminator;
-    }
+    let narrowed = narrowUnionBranches(
+      issue.errors,
+      targetValue,
+      budget,
+      CANDIDATE_DISCRIMINATOR_KEYS,
+    );
 
-    const narrowed = narrowUnionBranches(issue.errors, targetValue, budget);
-
-    if (narrowed.length > 1 && narrowed.length < issue.errors.length) {
-      const secondaryDiscriminator = resolveUnionDiscriminatorDiagnostic(
+    if (narrowed.length > 1) {
+      const discriminator = resolveUnionDiscriminatorDiagnostic(
         narrowed,
         path,
         targetValue,
         budget,
       );
-      if (secondaryDiscriminator !== undefined) return secondaryDiscriminator;
+      if (discriminator !== undefined) return discriminator;
+
+      const payloadNarrowed = narrowUnionBranches(
+        narrowed,
+        targetValue,
+        budget,
+      );
+      if (
+        payloadNarrowed.length > 1 &&
+        payloadNarrowed.length < narrowed.length
+      ) {
+        const secondary = resolveUnionDiscriminatorDiagnostic(
+          payloadNarrowed,
+          path,
+          targetValue,
+          budget,
+        );
+        if (secondary !== undefined) return secondary;
+      }
+      narrowed = payloadNarrowed;
     }
 
     activeErrors = narrowed;

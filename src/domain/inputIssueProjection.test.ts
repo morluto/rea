@@ -858,3 +858,71 @@ describe("discriminated union nested alternatives and budget", () => {
     );
   });
 });
+
+describe("union discriminator variant selection and constraint preservation", () => {
+  it("respects matched outer discriminator before secondary selector and retains selected branch errors", () => {
+    const schema = z.union([
+      z.strictObject({
+        kind: z.literal("a"),
+        mode: z.literal("fast"),
+        value: z.string(),
+      }),
+      z.strictObject({
+        kind: z.literal("b"),
+        mode: z.literal("slow"),
+        count: z.number(),
+      }),
+    ]);
+    const input = { kind: "a", mode: "bogus" };
+    const parsed = schema.safeParse(input);
+    if (parsed.success) throw new Error("expected invalid input");
+    const issues = projectInputIssues(parsed.error.issues, input);
+    expect(issues).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          path: ["mode"],
+          reason: "invalid_value",
+          expected: ["fast"],
+        }),
+        expect.objectContaining({
+          path: ["value"],
+          reason: "missing_argument",
+        }),
+      ]),
+    );
+    expect(issues.some((issue) => issue.path.join(".") === "count")).toBe(
+      false,
+    );
+    const modeIssue = issues.find((issue) => issue.path.join(".") === "mode");
+    expect(modeIssue?.expected).not.toContain("slow");
+
+    const bounded = projectInputIssuesBounded(parsed.error.issues, input, 8192);
+    expect(bounded.issues).toEqual(issues);
+    expect(bounded.omittedIssueCount).toBe(0);
+  });
+
+  it("preserves non-value discriminator failures and does not collapse when a branch has range constraints", () => {
+    const schema = z.union([
+      z.strictObject({ kind: z.enum(["a", "b"]), foo: z.string() }),
+      z.strictObject({ kind: z.string().min(5), bar: z.string() }),
+    ]);
+    const input = { kind: "x" };
+    const parsed = schema.safeParse(input);
+    if (parsed.success) throw new Error("expected invalid input");
+    const issues = projectInputIssues(parsed.error.issues, input);
+    expect(issues).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          path: ["kind"],
+          reason: "invalid_value",
+          expected: ["a", "b"],
+        }),
+        expect.objectContaining({
+          path: ["kind"],
+          reason: "out_of_range",
+          minimum: 5,
+        }),
+      ]),
+    );
+  });
+});
