@@ -154,14 +154,15 @@ def _ensure_state_aliases(home: Path) -> None:
     for alias, target in aliases:
         link = home / alias
         destination = home / target
+        has_children = any(Path(alias) in Path(child).parents for child, _ in aliases)
         if link.is_symlink() and link.resolve() == destination.resolve():
-            if not destination.exists():
+            if has_children:
                 destination.mkdir(parents=True, exist_ok=True)
             continue
         if os.path.lexists(link):
             raise FileExistsError(f"Cannot restore selected state alias; path already exists: {link}")
         link.parent.mkdir(parents=True, exist_ok=True)
-        if not destination.exists():
+        if has_children:
             destination.mkdir(parents=True, exist_ok=True)
         link.symlink_to(destination)
 
@@ -430,6 +431,36 @@ export const PYTHON_MODULE_NAMES: ReadonlySet<string> = new Set([
   ...boundNames(PYTHON_HELPERS),
   ...PYTHON_CONSTANTS,
 ]);
+
+/**
+ * The class body of an app that owns no files: launched at boot, its captured
+ * dconf settings loaded if any, serving no data operations, or, when its task
+ * judges its screen, a reset that only relaunches it.
+ */
+export const ownlessBody = (
+  title: string,
+  dconf: boolean,
+  relaunch: boolean,
+): string => {
+  const reset = relaunch
+    ? `
+    @reset_data
+    async def relaunch(self) -> None:
+        """Nothing to restore: the app is stopped before this and relaunched after it, back to its first screen."""
+`
+    : "";
+  const serves = relaunch
+    ? "and keeps its task's state on screen, so its reset only relaunches it"
+    : "so it serves no data operations";
+  if (dconf)
+    return `    """${title}, launched at boot with its captured settings. It owns no files, ${serves}."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        _load_dconf(Path.home())
+${reset}${PYTHON_READY_CHECK}`;
+  return `    """${title}, launched at boot. No state was observed, ${serves}."""\n${reset}${PYTHON_READY_CHECK}`;
+};
 
 /** The data hooks of an app that owns paths; `_views` reads files, so it runs in a thread. */
 export const PYTHON_DATA_HOOKS = `

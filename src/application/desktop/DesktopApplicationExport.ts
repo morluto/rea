@@ -1,4 +1,5 @@
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
+import type { DownloadInstall } from "../../domain/desktop/appDownloadInstall.js";
 import {
   DESKTOP_EXPORT_FRAMEWORK_VERSION,
   appModuleFile,
@@ -7,7 +8,6 @@ import {
   launchDocumentLimitation,
   renderAppClass,
   renderEnvToml,
-  renderInstallScript,
   renderReadme,
   renderSkill,
   renderSmokeTask,
@@ -15,7 +15,6 @@ import {
   type HomePathCollision,
   type SeedScrubReport,
 } from "../../domain/desktop/appExport.js";
-import { INSTALL_SCRIPT } from "../../domain/desktop/appExportInstall.js";
 import {
   heldOpenLimitation,
   leftOutLocksLimitation,
@@ -51,6 +50,8 @@ import {
 import {
   admitApplication,
   exportEnvironmentName,
+  installFiles,
+  readDownloadInstall,
 } from "./DesktopExportInstall.js";
 import {
   writeOutputTree,
@@ -58,7 +59,6 @@ import {
 } from "./DesktopOutputTree.js";
 import {
   retainedCopies,
-  shippedSeedViews,
   writeFiles,
   type SeedVersion,
 } from "./DesktopExportFiles.js";
@@ -66,6 +66,7 @@ import { withRetainedContent } from "./DesktopRetainedContent.js";
 import { planLaunch, seedModes, seedVersions } from "./DesktopExportLaunch.js";
 import { selectStateEnds } from "./DesktopStateVersions.js";
 import { admitDesktopTask, type AdmittedTask } from "./DesktopTaskExport.js";
+import { taskReads } from "./DesktopExportReaders.js";
 
 const OPERATION = "export_desktop_application";
 /** Largest seed file the export copies; the state view reads only 64 MiB. */
@@ -82,12 +83,16 @@ export interface DesktopExportRequest {
   readonly packageUrl?: string | undefined;
   /** Packages installed beside the application, such as a runtime piece a build request named. */
   readonly extraPackages?: readonly string[] | undefined;
+  /** A JSON file naming the AppImage or tarball a build computer unpacked the application from. */
+  readonly downloadInstall?: string | undefined;
   /** The checkpoint the seed is taken at; the baseline when omitted. */
   readonly seedCheckpoint?: string | undefined;
   /** The checkpoint a task's end state is read at; the last when omitted. */
   readonly endCheckpoint?: string | undefined;
   /** The seed was made for the task, as in a build computer, rather than taken from the user's own data. */
   readonly syntheticSeed?: boolean | undefined;
+  /** The folder a build computer keeps a screenshot of each checkpoint in, `<name>.jpg`, for a screen judge's examples. */
+  readonly screens?: string | undefined;
 }
 
 /** What the export wrote. */
@@ -170,6 +175,7 @@ const planExport = (
     readonly evidenceId: string;
     readonly seed: number;
     readonly identity: HostIdentity;
+    readonly download: DownloadInstall | undefined;
   },
 ): {
   readonly plan: DesktopAppExportPlan;
@@ -182,12 +188,10 @@ const planExport = (
 } => {
   const { application, host } = capture;
   const source = exportEnvironmentName(capture, request.name);
-  const { install, windowClass } = admitApplication(
-    capture,
-    source,
-    request.packageUrl,
-    request.extraPackages,
-  );
+  const { install, windowClass } = admitApplication(capture, source, {
+    ...request,
+    download: context.download,
+  });
   const electron = application.executable.electron_markers.length > 0;
   const stateFiles = exportedStateFiles(capture, state);
   const { homePath, stateAliases, files, collisions, paths, isLeftOut } =
@@ -219,6 +223,7 @@ const planExport = (
     aptSources: install.sources,
     architectures: install.architectures,
     packageFile: install.packageFile,
+    ...(install.download === undefined ? {} : { download: install.download }),
     ...(install.executablePackage === undefined
       ? {}
       : { executablePackage: install.executablePackage }),
@@ -298,18 +303,16 @@ const bundleText = (
       text(`${environment}/env.toml`, renderEnvToml(plan)),
       text(
         `${environment}/${appModuleFile(plan.name)}`,
-        renderAppClass(plan),
+        renderAppClass({
+          ...plan,
+          relaunchOnReset: admitted?.screenJudged === true,
+        }),
         dconfHoldsIdentity,
       ),
       text(`${environment}/SKILL.md`, renderSkill(plan)),
-      ...(plan.packageFile === null
-        ? []
-        : [
-            text(
-              `${environment}/${INSTALL_SCRIPT}`,
-              renderInstallScript(plan.packageFile),
-            ),
-          ]),
+      ...installFiles(plan).map(({ path, content }) =>
+        text(`${environment}/${path}`, content),
+      ),
       text("tasks/smoke.json", renderSmokeTask(plan)),
       ...(admitted?.files ?? []).map((file) => text(file.path, file.content)),
     ],
@@ -404,27 +407,20 @@ const runExport = async (
       evidenceId: evidence.evidence_id,
       seed: ends.seed,
       identity,
+      download: await readDownloadInstall(request.downloadInstall, signal),
     });
   const copies = retainedCopies(plan, seeds);
-  // A task's seed checks read the seeds as the bundle ships them, scrubbed.
-  const seedViews =
-    request.tasks.length === 0
-      ? new Map()
-      : await withRetainedContent(
-          request.capture,
-          (content) => shippedSeedViews(content, copies, identity, signal),
-          SEED_MAX_BYTES,
-        );
+  const reads = await taskReads(request, SEED_MAX_BYTES, {
+    copies,
+    files,
+    ends,
+    identity,
+    checkpoints,
+    signal,
+  });
   const admitted = await admitDesktopTask(
     request.tasks,
-    {
-      ...plan,
-      files,
-      identity,
-      ends,
-      seedViews,
-      seeded: new Set(seeds.keys()),
-    },
+    { ...plan, files, identity, ends, ...reads, seeded: new Set(seeds.keys()) },
     signal,
   );
   const { generated, readme } = bundleText(plan, admitted, dconf.holdsIdentity);
@@ -502,6 +498,7 @@ export const exportDesktopApplication = async (
         named: request.name !== undefined,
         tasks: request.tasks.length,
         package_url: request.packageUrl !== undefined,
+        download_install: request.downloadInstall !== undefined,
         extra_packages: [...(request.extraPackages ?? [])],
         seed_checkpoint: request.seedCheckpoint ?? null,
         end_checkpoint: request.endCheckpoint ?? null,

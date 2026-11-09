@@ -2,7 +2,14 @@ import { Readable } from "node:stream";
 
 import { z } from "zod";
 
+import type { DownloadInstall } from "../../domain/desktop/appDownloadInstall.js";
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
+import {
+  READER_RUNNER_SLACK_S,
+  readerTimeout,
+} from "../../domain/desktop/appTaskReaders.js";
+import { BUILD_REA_TIMEOUT_S } from "../../desktop/BuildComputerController.js";
+import { BuildComputerLongRuns } from "../../desktop/BuildComputerLongRuns.js";
 import type { desktopTaskSchema } from "../../domain/desktop/appTask.js";
 import { jsonValueSchema, type JsonValue } from "../../domain/jsonValue.js";
 import { err, ok, type Result } from "../../domain/result.js";
@@ -19,6 +26,7 @@ import {
   refused,
   reportedFailure,
   runRea,
+  WORK,
 } from "./DesktopBuildCommands.js";
 import {
   writeOutputTree,
@@ -118,43 +126,65 @@ export const exportBuild = async (
     readonly attempt: number;
     /** The URL a computer downloads the app's `.deb` from, when the capture says apt does not install it. */
     readonly packageUrl?: string;
+    readonly downloadInstall?: DownloadInstall;
     /** The packages the request named beside the app, which the bundle installs beside it too. */
     readonly extraPackages: readonly string[];
   },
   request: BuildExportRequest,
   signal: AbortSignal,
+  longRuns: BuildComputerLongRuns = new BuildComputerLongRuns(computer),
 ): Promise<Result<ExportedBuild, AnalysisError>> => {
   const { folder } = capture;
   const attempt = String(capture.attempt);
   const bundle = `${folder}/bundle-${attempt}`;
   const task = `${folder}/task-${attempt}.json`;
   const stdout = `${folder}/export-${attempt}.json`;
+  const downloadPath = `${folder}/download-install-${attempt}.json`;
+  const download = capture.downloadInstall;
   const taskFile = `${JSON.stringify(request.task, null, 2)}\n`;
   try {
-    const { stdoutBytes: bytes } = await runRea(
-      computer,
-      [
-        "export-desktop-application",
-        `${folder}/capture`,
-        bundle,
-        "--task",
-        task,
-        ...ENDS,
-        // The building agent made the seed in this computer for the task.
-        "--synthetic-seed",
-        ...(request.name === undefined ? [] : ["--name", request.name]),
-        ...(capture.packageUrl === undefined
-          ? []
-          : ["--package-url", capture.packageUrl]),
-        ...capture.extraPackages.flatMap((name) => ["--extra-package", name]),
-        "--json",
-      ],
-      {
-        stdout,
-        files: { [task]: taskFile },
-        signal,
+    const argv = [
+      "export-desktop-application",
+      `${folder}/capture`,
+      bundle,
+      "--task",
+      task,
+      ...ENDS,
+      // The building agent made the seed in this computer for the task.
+      "--synthetic-seed",
+      "--screens",
+      `${folder}/screens`,
+      ...(request.name === undefined ? [] : ["--name", request.name]),
+      ...(capture.packageUrl === undefined
+        ? []
+        : ["--package-url", capture.packageUrl]),
+      ...(download === undefined ? [] : ["--download-install", downloadPath]),
+      ...capture.extraPackages.flatMap((name) => ["--extra-package", name]),
+      "--json",
+    ];
+    // Export reads each declared reader at both checkpoints.
+    const timeoutS =
+      BUILD_REA_TIMEOUT_S +
+      2 *
+        (request.task.readers ?? []).reduce(
+          (sum, reader) => sum + readerTimeout(reader) + READER_RUNNER_SLACK_S,
+          0,
+        );
+    const options = {
+      stdout,
+      files: {
+        [task]: taskFile,
+        ...(download === undefined
+          ? {}
+          : { [downloadPath]: `${JSON.stringify(download, null, 2)}\n` }),
       },
-    );
+      timeoutS,
+      signal,
+    };
+    const { stdoutBytes: bytes } =
+      timeoutS + 60 <= 3600
+        ? await runRea(computer, argv, options)
+        : await longRuns.run(argv, { ...options, work: WORK });
     const output = await readOutput(computer, stdout, bytes, signal);
     if (output.kind === "failure")
       return err(
