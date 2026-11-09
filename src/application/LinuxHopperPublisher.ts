@@ -254,6 +254,13 @@ export class LinuxHopperPublisher {
           new HopperReleaseError(
             "integrity",
             `The signed ${family} package launcher SHA-256 ${mainExeHash} differs from the release main_exe_hash ${release.main_exe_hash}.`,
+            {
+              launcherDigestMismatch: {
+                packageFamily: family,
+                declaredSha256: release.main_exe_hash,
+                observedSha256: mainExeHash,
+              },
+            },
           ),
         );
       retainProof(packageProofs, proofKey, verified.value);

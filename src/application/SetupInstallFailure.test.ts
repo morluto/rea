@@ -102,3 +102,35 @@ it.each([
 ] as const)("retains %s as a distinct setup failure", (reason, code) => {
   expect(setupInstallFailure(reason).code).toBe(code);
 });
+
+describe("Linux Hopper launcher digest mismatch", () => {
+  const mismatch = {
+    packageFamily: "rpm",
+    declaredSha256: "74b5".padEnd(64, "0"),
+    observedSha256: "b41e".padEnd(64, "0"),
+  } as const;
+
+  it("names the feed and package digests instead of reporting a failed download", () => {
+    const result = setupInstallFailure("integrity", {
+      platform: "linux",
+      launcherDigestMismatch: mismatch,
+    });
+    if (result.status !== "failed") throw new Error("expected failure");
+    expect(result.code).toBe("integrity_mismatch");
+    expect(result.launcherDigestMismatch).toEqual(mismatch);
+    expect(result.remediation).toContain("signature verified");
+    expect(result.remediation).toContain(mismatch.observedSha256);
+    expect(result.remediation).toContain(mismatch.declaredSha256);
+    expect(result.remediation).toContain("stale feed metadata");
+    expect(result.remediation).not.toContain("failed integrity verification");
+  });
+
+  it("keeps the generic recovery for an integrity failure without package facts", () => {
+    expect(setupInstallFailure("integrity", { platform: "linux" })).toEqual({
+      status: "failed",
+      code: "integrity_mismatch",
+      remediation:
+        "The Hopper download failed integrity verification. Retry setup; if it repeats, update REA before installing.",
+    });
+  });
+});

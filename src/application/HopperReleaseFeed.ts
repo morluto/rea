@@ -114,10 +114,23 @@ const platforms = {
 } as const;
 const suffixes = { deb: ".deb", rpm: ".rpm", arch: ".pkg.tar.xz" } as const;
 
+/**
+ * The launcher digest a release feed declared next to the digest observed in
+ * its already authenticated package. Both values are retained so a caller can
+ * tell a stale feed field from an untrusted download without rerunning setup.
+ */
+export type HopperLauncherDigestMismatch = {
+  readonly packageFamily: LinuxPackageFamily;
+  readonly declaredSha256: string;
+  readonly observedSha256: string;
+};
+
 export class HopperReleaseError extends Error {
   readonly _tag = "HopperReleaseError";
   /** The vendor request whose transport failure produced this error. */
   readonly download: HopperRequestFailure | undefined;
+  /** Publisher-signed package facts, present when authentication already succeeded. */
+  readonly launcherDigestMismatch: HopperLauncherDigestMismatch | undefined;
   constructor(
     readonly reason:
       | "release_metadata"
@@ -130,11 +143,15 @@ export class HopperReleaseError extends Error {
       | "cleanup_failed"
       | "cache_missing",
     message: string,
-    options?: ErrorOptions & { readonly download?: HopperRequestFailure },
+    options?: ErrorOptions & {
+      readonly download?: HopperRequestFailure;
+      readonly launcherDigestMismatch?: HopperLauncherDigestMismatch;
+    },
   ) {
     super(message, options);
     this.name = this._tag;
     this.download = options?.download;
+    this.launcherDigestMismatch = options?.launcherDigestMismatch;
   }
 
   /** Describe a failed vendor request once, from the transport's observed facts. */

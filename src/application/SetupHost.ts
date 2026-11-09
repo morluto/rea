@@ -233,10 +233,12 @@ export const systemSetupHost = (
               packageFailure: result.packageFailure,
               platform: "linux",
               download: result.download,
+              launcherDigestMismatch: result.launcherDigestMismatch,
             });
             // A failed vendor request is already described by its owned facts.
             const detail =
-              result.download !== undefined
+              result.download !== undefined ||
+              result.launcherDigestMismatch !== undefined
                 ? undefined
                 : (result.verificationFailure?.message ??
                   result.pythonRuntimeFailure?.message ??

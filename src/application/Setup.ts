@@ -372,7 +372,7 @@ const runSetupWorkflow = async (
           remediation:
             combineRemediation(hopperFailure.remediation, result.remediation) ??
             hopperFailure.remediation,
-          ...hopperDownload(hopperFailure),
+          ...hopperInstallEvidence(hopperFailure),
         };
   if (clientFailure !== undefined)
     return withHopperFailure(await fail(clientFailure));
@@ -411,14 +411,21 @@ const runSetupWorkflow = async (
     ...(remediation === undefined ? {} : { remediation }),
     ...(hopperFailure === undefined
       ? {}
-      : { code: hopperFailure.code, ...hopperDownload(hopperFailure) }),
+      : {
+          code: hopperFailure.code,
+          ...hopperInstallEvidence(hopperFailure),
+        }),
   };
 };
 
-const hopperDownload = (
+const hopperInstallEvidence = (
   failure: SetupHopperInstallFailure,
-): Pick<SetupResult, "download"> =>
-  failure.download === undefined ? {} : { download: failure.download };
+): Pick<SetupResult, "download" | "launcherDigestMismatch"> => ({
+  ...(failure.download === undefined ? {} : { download: failure.download }),
+  ...(failure.launcherDigestMismatch === undefined
+    ? {}
+    : { launcherDigestMismatch: failure.launcherDigestMismatch }),
+});
 
 const installHopperAction = async (input: {
   readonly host: SetupHost;

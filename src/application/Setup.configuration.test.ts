@@ -293,6 +293,27 @@ describe("optional Hopper installation failures", () => {
       "download",
     );
   });
+
+  it("returns the launcher digest mismatch beside the setup code", async () => {
+    const launcherDigestMismatch = {
+      packageFamily: "rpm",
+      declaredSha256: "a".repeat(64),
+      observedSha256: "b".repeat(64),
+    } as const;
+    const host = new FakeSetupHost();
+    host.hopperInstallSucceeds = false;
+    host.hopperInstallFailure = {
+      status: "failed",
+      code: "integrity_mismatch",
+      remediation: "Package signature verified; feed main_exe_hash is stale.",
+      launcherDigestMismatch,
+    };
+    expect(await runSetup(options(true, true), host)).toMatchObject({
+      status: "needs_human",
+      code: "integrity_mismatch",
+      launcherDigestMismatch,
+    });
+  });
 });
 
 describe("configured Linux Hopper selection", () => {

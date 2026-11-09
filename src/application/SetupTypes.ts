@@ -2,7 +2,10 @@ import type { ClientConfigurationWriteProblem } from "./ClientConfigurationPubli
 import type { DoctorReport, DoctorScope, runDoctor } from "./Doctor.js";
 import type { LinuxDistribution } from "./LinuxHopper.js";
 import type { HopperRequestFailure } from "./HopperDownload.js";
-import type { HopperReleaseError } from "./HopperReleaseFeed.js";
+import type {
+  HopperLauncherDigestMismatch,
+  HopperReleaseError,
+} from "./HopperReleaseFeed.js";
 import type {
   SkillDestination,
   SkillInstallResult,
@@ -162,6 +165,8 @@ export interface SetupResult {
   readonly code?: SetupFailureCode;
   /** The Hopper vendor request (stage, URL and observed outcome) whose failure stopped installation. */
   readonly download?: HopperRequestFailure;
+  /** Release feed launcher digest versus the digest inside the authenticated package. */
+  readonly launcherDigestMismatch?: HopperLauncherDigestMismatch;
   /** Identified resources still retained after finalization; absent after confirmed release. */
   readonly cleanup?: AnalysisCleanupObservation | undefined;
 }

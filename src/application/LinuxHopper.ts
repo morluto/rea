@@ -26,6 +26,7 @@ import {
   HOPPER_DOWNLOAD_PREFIX,
   HOPPER_LINUX_PRIMARY_FINGERPRINT,
   HopperReleaseError,
+  type HopperLauncherDigestMismatch,
   type LinuxHopperRelease,
   type LinuxPackageFamily,
 } from "./HopperReleaseFeed.js";
@@ -241,6 +242,8 @@ export type LinuxHopperInstallResult =
       readonly packageFailure?: LinuxPackageInstallFailure;
       /** Publisher-owned failure, retained for the public setup diagnostic. */
       readonly verificationFailure?: HopperReleaseError;
+      /** Release feed launcher digest versus the digest inside the authenticated package. */
+      readonly launcherDigestMismatch?: HopperLauncherDigestMismatch;
       /** System-interpreter inspection, kept separate from package-manager output. */
       readonly pythonRuntimeFailure?: LinuxHopperPythonError;
       /** The operation that threw, retained separately from its outcome class. */
@@ -739,6 +742,9 @@ const publisherFailure = (
   status: "failed",
   reason,
   verificationFailure: error,
+  ...(error.launcherDigestMismatch === undefined
+    ? {}
+    : { launcherDigestMismatch: error.launcherDigestMismatch }),
   ...(error.download === undefined ? {} : { download: error.download }),
 });
 
