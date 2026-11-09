@@ -1,6 +1,7 @@
-import { readFile, stat } from "node:fs/promises";
-
+import { AnalysisError } from "../../domain/analysisErrorBase.js";
 import { AnalysisInputError } from "../../domain/analysisErrorCore.js";
+import { RegularFileCleanupFailure } from "../../filesystem/OwnedRegularFile.js";
+import { readRegularFileText } from "../RegularFileRead.js";
 import {
   downloadInstallFiles,
   downloadInstallSchema,
@@ -61,24 +62,38 @@ export const exportEnvironmentName = (
 /** The download a `--download-install` file names, as a build computer installed the app from it; none without the file. */
 export const readDownloadInstall = async (
   path: string | undefined,
+  signal?: AbortSignal,
 ): Promise<DownloadInstall | undefined> => {
   if (path === undefined) return undefined;
   const field = "download_install";
   const remediation =
     "Pass --download-install with a JSON file naming kind (appimage or tarball), desktop_entry, url, sha256 and architecture, and a tarball's program, as the build request named them.";
-  const size = await stat(path).then(
-    (entry) => (entry.isFile() ? entry.size : undefined),
-    () => undefined,
-  );
-  if (size === undefined || size > MAX_DOWNLOAD_INSTALL_BYTES)
-    throw refuse(
+  const unreadable = () =>
+    refuse(
       `--download-install ${path} is not a readable file of at most ${String(MAX_DOWNLOAD_INSTALL_BYTES)} bytes.`,
       field,
       remediation,
     );
+  let text: string;
+  try {
+    text = await readRegularFileText(path, {
+      signal,
+      admit: (state) => {
+        if (state.size > MAX_DOWNLOAD_INSTALL_BYTES) throw unreadable();
+      },
+    });
+  } catch (cause: unknown) {
+    if (
+      signal?.aborted === true ||
+      cause instanceof AnalysisError ||
+      cause instanceof RegularFileCleanupFailure
+    )
+      throw cause;
+    throw unreadable();
+  }
   let value: unknown;
   try {
-    value = JSON.parse(await readFile(path, "utf8"));
+    value = JSON.parse(text);
   } catch {
     throw refuse(
       `--download-install ${path} does not hold JSON.`,
