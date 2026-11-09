@@ -156,16 +156,13 @@ def _ensure_state_aliases(home: Path) -> None:
     for alias, target in aliases:
         link = home / alias
         destination = home / target
-        has_children = any(Path(alias) in Path(child).parents for child, _ in aliases)
         if link.is_symlink() and link.resolve() == destination.resolve():
-            if has_children:
-                destination.mkdir(parents=True, exist_ok=True)
+            destination.mkdir(parents=True, exist_ok=True)
             continue
         if os.path.lexists(link):
             raise FileExistsError(f"Cannot restore selected state alias; path already exists: {link}")
         link.parent.mkdir(parents=True, exist_ok=True)
-        if has_children:
-            destination.mkdir(parents=True, exist_ok=True)
+        destination.mkdir(parents=True, exist_ok=True)
         link.symlink_to(destination)
 
 
