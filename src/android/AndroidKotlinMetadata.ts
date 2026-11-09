@@ -48,6 +48,17 @@ export const readAndroidKotlinMetadata = async (
       coverage.classes_with_metadata - coverage.undecodable_classes ||
     sum(facts.kinds) !== sum(facts.versions) ||
     facts.matching_classes > coverage.classes_with_metadata ||
+    // Markers are counted from the same examined classes and ZIP directory.
+    facts.markers.class_prefixes.some(
+      (marker) => marker.classes > coverage.examined_classes,
+    ) ||
+    facts.markers.kotlin_module_entries.names.length >
+      facts.markers.kotlin_module_entries.count ||
+    facts.markers.kotlin_module_entries.truncated !==
+      facts.markers.kotlin_module_entries.names.length <
+        facts.markers.kotlin_module_entries.count ||
+    new Set(facts.markers.class_prefixes.map((marker) => marker.marker))
+      .size !== facts.markers.class_prefixes.length ||
     facts.classes.length > Math.min(limit, facts.matching_classes) ||
     // A shortfall below the requested limit must be an explicit retained-allowance gap.
     (facts.classes.length < Math.min(limit, facts.matching_classes) &&

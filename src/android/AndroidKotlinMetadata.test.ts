@@ -36,6 +36,26 @@ const facts = () => ({
   ],
   matching_classes: 1,
   classes: [{ ...listed } as Record<string, unknown>],
+  markers: {
+    basis: "candidate-static-markers",
+    kotlin_module_entries: {
+      count: 2,
+      names: [
+        "META-INF/app_release.kotlin_module",
+        "META-INF/domain.kotlin_module",
+      ],
+      truncated: false,
+    },
+    class_prefixes: [
+      { marker: "compose", prefix: "androidx.compose.", classes: 7 },
+      {
+        marker: "kotlinx_coroutines",
+        prefix: "kotlinx.coroutines.",
+        classes: 3,
+      },
+      { marker: "kotlin_coroutines", prefix: "kotlin.coroutines.", classes: 0 },
+    ],
+  },
   unknowns: [] as string[],
 });
 const tools = (
@@ -155,6 +175,44 @@ it("keeps usable facts and explicit incomplete DEX coverage", async () => {
       {},
     ),
   ).toEqual(source);
+});
+
+it("keeps candidate markers exactly as the producer observed them", async () => {
+  const source = facts();
+  const actual = await readAndroidKotlinMetadata(
+    tools(source, { limit: 100 }),
+    SNAPSHOT,
+    {},
+  );
+  expect(actual.markers).toEqual(source.markers);
+  expect(actual.markers.basis).toBe("candidate-static-markers");
+});
+
+it.each([
+  (source: ReturnType<typeof facts>) => {
+    source.markers.class_prefixes[0]!.classes = 41;
+  },
+  (source: ReturnType<typeof facts>) => {
+    source.markers.kotlin_module_entries.count = 1;
+  },
+  (source: ReturnType<typeof facts>) => {
+    source.markers.kotlin_module_entries.truncated = true;
+  },
+  (source: ReturnType<typeof facts>) => {
+    source.markers.class_prefixes.push(source.markers.class_prefixes[0]!);
+  },
+  (source: ReturnType<typeof facts>) => {
+    source.markers.basis = "runtime-use";
+  },
+  (source: ReturnType<typeof facts>) => {
+    source.markers.class_prefixes[0]!.marker = "jetpack";
+  },
+])("rejects inconsistent or over-claiming markers (%#)", async (mutate) => {
+  const source = facts();
+  mutate(source);
+  await expect(
+    readAndroidKotlinMetadata(tools(source, { limit: 100 }), SNAPSHOT, {}),
+  ).rejects.toMatchObject({ _tag: "AnalysisOutputError" });
 });
 
 it.each([

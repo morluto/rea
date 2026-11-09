@@ -526,6 +526,17 @@ detail rejects a view.
 - `coverage` counts DEX members, examined classes and classes with metadata.
   `versions` and `kinds` always cover every class; `matching_classes` counts the
   selection, and `classes` lists at most `limit` of them.
+- `markers` are static candidates, reported with `basis:
+  "candidate-static-markers"`. `kotlin_module_entries` counts the root
+  `META-INF/*.kotlin_module` entries in the APK ZIP directory and lists up to 64
+  of their names; their contents are not read. `class_prefixes` counts examined
+  classes whose names start with `androidx.compose.`, `kotlinx.coroutines.` or
+  `kotlin.coroutines.`, whether or not they carry metadata. A count shows that
+  classes with those names are present in the root DEX members. It does not show
+  that the app uses Compose or coroutines at runtime, which library version it
+  has, or that nothing else is present, and shrinking can remove these entries
+  and rename classes. For example, an APK can contain thousands of
+  `androidx.compose.` classes and no `kotlin_module` entries.
 - Each listed class carries raw annotation facts: `metadata_kind` (`k`), `kind`
   (class, file facade, synthetic class, multi-file facade or part, or unknown),
   `metadata_version` (`mv`), `package_name` (`pn`), `extra_int` (`xi`),

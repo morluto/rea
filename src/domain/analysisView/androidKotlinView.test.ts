@@ -48,6 +48,26 @@ const report = (overrides: Record<string, unknown> = {}) => ({
   ],
   matching_classes: 1200,
   classes: rows,
+  markers: {
+    basis: "candidate-static-markers",
+    kotlin_module_entries: {
+      count: 2,
+      names: [
+        "META-INF/app_release.kotlin_module",
+        "META-INF/domain.kotlin_module",
+      ],
+      truncated: false,
+    },
+    class_prefixes: [
+      { marker: "compose", prefix: "androidx.compose.", classes: 7 },
+      {
+        marker: "kotlinx_coroutines",
+        prefix: "kotlinx.coroutines.",
+        classes: 3,
+      },
+      { marker: "kotlin_coroutines", prefix: "kotlin.coroutines.", classes: 0 },
+    ],
+  },
   unknowns: [],
   ...overrides,
 });
@@ -99,6 +119,7 @@ it("summarizes every class with whole-APK histograms and a bounded preview", () 
   expect(view.summary.matching_classes).toBe(1200);
   expect(view.summary.retained_classes).toBe(1200);
   expect(view.summary.classes).toHaveLength(64);
+  expect(view.summary.markers).toEqual(report().markers);
   expect(view.summary.kinds.map((row) => row.classes)).toEqual([400, 400, 400]);
   expect(view.coverage).toMatchObject({ examined: 64, total: 1200 });
   expect(view.artifact).toEqual({

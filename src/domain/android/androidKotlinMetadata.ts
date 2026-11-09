@@ -114,6 +114,44 @@ export const androidKotlinClassSchema = z.strictObject({
   declaration: androidKotlinDeclarationSchema.exactOptional(),
 });
 
+/** Class-name prefixes counted as candidate markers, with their stable labels. */
+export const ANDROID_KOTLIN_CLASS_PREFIXES = [
+  { marker: "compose", prefix: "androidx.compose." },
+  { marker: "kotlinx_coroutines", prefix: "kotlinx.coroutines." },
+  { marker: "kotlin_coroutines", prefix: "kotlin.coroutines." },
+] as const;
+/** Most kotlin_module file names listed; the count always covers every entry. */
+export const ANDROID_KOTLIN_MODULE_NAME_LIMIT = 64;
+
+/**
+ * Static candidates only: file names in the APK ZIP directory and class-name
+ * prefixes in root DEX members. They never establish runtime use, a library
+ * version, or that nothing else is present.
+ */
+export const androidKotlinMarkersSchema = z.strictObject({
+  basis: z.literal("candidate-static-markers"),
+  kotlin_module_entries: z.strictObject({
+    /** Root META-INF/*.kotlin_module entries; their contents are not read. */
+    count: count,
+    names: z.array(z.string()).max(ANDROID_KOTLIN_MODULE_NAME_LIMIT),
+    /** True when some entries are counted but not named (limit or name length). */
+    truncated: z.boolean(),
+  }),
+  class_prefixes: z.array(
+    z.strictObject({
+      marker: z.enum(
+        ANDROID_KOTLIN_CLASS_PREFIXES.map((entry) => entry.marker) as [
+          (typeof ANDROID_KOTLIN_CLASS_PREFIXES)[number]["marker"],
+          ...(typeof ANDROID_KOTLIN_CLASS_PREFIXES)[number]["marker"][],
+        ],
+      ),
+      prefix: z.string(),
+      /** Examined classes whose name starts with the prefix, with or without metadata. */
+      classes: count,
+    }),
+  ),
+});
+
 /** Scope is standard root classes*.dex members, never runtime-loaded code. */
 export const androidKotlinMetadataFactsSchema = z.strictObject({
   scope: z.literal("apk-root-dex-kotlin-metadata"),
@@ -132,6 +170,7 @@ export const androidKotlinMetadataFactsSchema = z.strictObject({
   ),
   matching_classes: count,
   classes: z.array(androidKotlinClassSchema),
+  markers: androidKotlinMarkersSchema,
   unknowns: z.array(z.string()),
 });
 

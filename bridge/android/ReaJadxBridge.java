@@ -434,6 +434,36 @@ class ReaJadxBridge {
   }
 
   // ---- Kotlin metadata -------------------------------------------------------
+  /** Candidate markers: class-name prefixes counted over every examined class. */
+  private static final String[][] KOTLIN_CLASS_PREFIXES = {
+    {"compose", "androidx.compose."},
+    {"kotlinx_coroutines", "kotlinx.coroutines."},
+    {"kotlin_coroutines", "kotlin.coroutines."},
+  };
+  private static final int KOTLIN_MODULE_NAME_LIMIT = 64;
+  private static final int KOTLIN_MODULE_NAME_CHARS = 256;
+
+  /** Root META-INF/*.kotlin_module file names from the ZIP directory; contents are not read. */
+  private static Map<String, Object> kotlinModuleEntries(Path apk) {
+    List<String> names = new ArrayList<>();
+    int count = 0;
+    try (ZipFile archive = new ZipFile(apk.toFile())) {
+      var directory = archive.entries();
+      while (directory.hasMoreElements()) {
+        checkNativeInterrupted();
+        ZipEntry entry = directory.nextElement();
+        String name = entry.getName();
+        if (entry.isDirectory() || !name.startsWith("META-INF/") || !name.endsWith(".kotlin_module")
+            || name.indexOf('/', "META-INF/".length()) >= 0) continue;
+        count++;
+        if (names.size() < KOTLIN_MODULE_NAME_LIMIT && name.length() <= KOTLIN_MODULE_NAME_CHARS) names.add(name);
+      }
+    } catch (IOException failure) {
+      throw new IllegalArgumentException("APK ZIP Kotlin module listing could not finish its reader", failure);
+    }
+    return Map.of("count", count, "names", List.copyOf(names), "truncated", count > names.size());
+  }
+
   /** Rows are bounded by the retained JSON allowance as well as by the caller's limit. */
   private static final int KOTLIN_ROW_LIMIT = 100_000;
   private static final int KOTLIN_MEMBER_LIMIT = 200;
@@ -575,6 +605,7 @@ class ReaJadxBridge {
     int[] counters = new int[6]; // entries, examined entries, classes, with metadata, undecodable, matching
     long[] retainedBytes = {2048};
     boolean[] allowanceReached = {false};
+    int[] prefixCounts = new int[KOTLIN_CLASS_PREFIXES.length];
     readRootDexMembers(apk, "Kotlin metadata", "APK ZIP Kotlin metadata inventory could not finish its reader",
         new RootDexAccounting() {
           @Override public void dexEntryFound() { counters[0]++; }
@@ -589,6 +620,8 @@ class ReaJadxBridge {
               throw new IllegalArgumentException("Class definition has no reference type");
             counters[2]++;
             String className = type.substring(1, type.length() - 1).replace('/', '.');
+            for (int prefix = 0; prefix < KOTLIN_CLASS_PREFIXES.length; prefix++)
+              if (className.startsWith(KOTLIN_CLASS_PREFIXES[prefix][1])) prefixCounts[prefix]++;
             for (com.android.tools.smali.dexlib2.iface.Annotation annotation : cls.getAnnotations()) {
               if (!annotation.getType().equals("Lkotlin/Metadata;")) continue;
               counters[3]++;
@@ -675,6 +708,12 @@ class ReaJadxBridge {
         .map(entry -> Map.<String, Object>of("kind", entry.getKey(), "classes", entry.getValue())).toList());
     result.put("matching_classes", counters[5]);
     result.put("classes", List.copyOf(rows));
+    List<Map<String, Object>> prefixes = new ArrayList<>();
+    for (int prefix = 0; prefix < KOTLIN_CLASS_PREFIXES.length; prefix++)
+      prefixes.add(Map.of("marker", KOTLIN_CLASS_PREFIXES[prefix][0],
+          "prefix", KOTLIN_CLASS_PREFIXES[prefix][1], "classes", prefixCounts[prefix]));
+    result.put("markers", Map.of("basis", "candidate-static-markers",
+        "kotlin_module_entries", kotlinModuleEntries(apk), "class_prefixes", List.copyOf(prefixes)));
     result.put("unknowns", List.copyOf(unknowns));
     return result;
   }

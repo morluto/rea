@@ -39,6 +39,7 @@ export const androidKotlinSummarySchema = reportSchema
     versions: true,
     kinds: true,
     matching_classes: true,
+    markers: true,
   })
   .extend({
     retained_classes: z.int().nonnegative(),
@@ -128,6 +129,7 @@ export const projectAndroidKotlinView = (
         versions: report.versions,
         kinds: report.kinds,
         matching_classes: report.matching_classes,
+        markers: report.markers,
         retained_classes: report.classes.length,
         classes,
         class_coverage: pageViewCoverage(

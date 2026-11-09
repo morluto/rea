@@ -36,6 +36,26 @@ const facts: AndroidKotlinMetadataFacts = {
   kinds: [],
   matching_classes: 0,
   classes: [],
+  markers: {
+    basis: "candidate-static-markers",
+    kotlin_module_entries: {
+      count: 2,
+      names: [
+        "META-INF/app_release.kotlin_module",
+        "META-INF/domain.kotlin_module",
+      ],
+      truncated: false,
+    },
+    class_prefixes: [
+      { marker: "compose", prefix: "androidx.compose.", classes: 7 },
+      {
+        marker: "kotlinx_coroutines",
+        prefix: "kotlinx.coroutines.",
+        classes: 3,
+      },
+      { marker: "kotlin_coroutines", prefix: "kotlin.coroutines.", classes: 0 },
+    ],
+  },
   unknowns: [],
 };
 const request = (input: Record<string, unknown>) =>
