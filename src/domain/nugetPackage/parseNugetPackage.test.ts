@@ -458,6 +458,17 @@ describe("parseNugetPackage: coverage and refusals", () => {
     );
   });
 
+  it("ignores a foreign extension element that shares a metadata name", () => {
+    const text = NUSPEC.replace(
+      "<id>Example.Package</id>",
+      '<x:id xmlns:x="urn:extension">Forged</x:id><id>Example.Package</id>',
+    );
+    const package_ = parsed(
+      parse([member("Example.nuspec", { bytes: text.length, text })]),
+    );
+    expect(package_.nuspecs[0]?.id).toBe("Example.Package");
+  });
+
   it("accepts the packaging namespaces NuGet published before 2012", () => {
     for (const namespace of [
       "http://schemas.microsoft.com/packaging/2011/10/nuspec.xsd",

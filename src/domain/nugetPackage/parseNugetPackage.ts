@@ -154,13 +154,24 @@ const NUSPEC_NAMESPACES: ReadonlySet<string> = new Set([
   "http://schemas.microsoft.com/packaging/2013/05/nuspec.xsd",
 ]);
 
-/** Read the text of the first descendant with the given local name. */
+/**
+ * A nuspec's own elements carry the manifest root's namespace (or none, when
+ * the document declares no default namespace). Matching on the local name
+ * alone would let a foreign extension element such as `<x:id xmlns:x="urn:ext">`
+ * stand in for the real one.
+ */
+const hasNuspecName = (parent: Element, element: Element, localName: string) =>
+  element.localName === localName &&
+  (element.namespaceURI ?? null) === (parent.namespaceURI ?? null);
+
+/** Read the text of the first child with the given nuspec local name. */
 const textOf = (parent: Element, localName: string): string | null => {
   for (let i = 0; i < parent.childNodes.length; i += 1) {
     const child = parent.childNodes.item(i);
     if (child === null || child.nodeType !== 1) continue;
     const element = child as Element;
-    if (element.localName === localName) return element.textContent ?? null;
+    if (hasNuspecName(parent, element, localName))
+      return element.textContent ?? null;
   }
   return null;
 };
@@ -171,7 +182,7 @@ const childrenNamed = (parent: Element, localName: string): Element[] => {
     const child = parent.childNodes.item(i);
     if (child === null || child.nodeType !== 1) continue;
     const element = child as Element;
-    if (element.localName === localName) found.push(element);
+    if (hasNuspecName(parent, element, localName)) found.push(element);
   }
   return found;
 };
