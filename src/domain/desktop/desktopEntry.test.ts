@@ -46,6 +46,31 @@ describe("parseDesktopEntry", () => {
     });
   });
 
+  it("keeps a meaningful trailing space in Path, raw and escaped alike", () => {
+    const raw = parseDesktopEntry(
+      "[Desktop Entry]\nType=Application\nPath=/evidence/workspace \n",
+    );
+    expect(raw.ok && raw.value.path).toBe("/evidence/workspace ");
+
+    const escaped = parseDesktopEntry(
+      "[Desktop Entry]\nType=Application\nPath=/evidence/workspace\\s\n",
+    );
+    expect(escaped.ok && escaped.value.path).toBe("/evidence/workspace ");
+
+    // Both spellings name the same directory.
+    expect(raw.ok && escaped.ok && raw.value.path === escaped.value.path).toBe(
+      true,
+    );
+  });
+
+  it("drops whitespace around the key and equals sign, but not in the value", () => {
+    const parsed = parseDesktopEntry(
+      "[Desktop Entry]\n Type = Application\n\tName=App\n",
+    );
+    expect(parsed.ok && parsed.value.type).toBe("Application");
+    expect(parsed.ok && parsed.value.name).toBe("App");
+  });
+
   it("undoes value escapes, keeping escaped semicolons inside list items", () => {
     const parsed = parseDesktopEntry(
       "[Desktop Entry]\nName=Two\\sWords\nCategories=A\\;B;C\n",

@@ -85,16 +85,21 @@ export const parseDesktopEntry = (
   let group: string | undefined;
   let found = false;
   for (const raw of text.split(/\r?\n/u)) {
-    const line = raw.trim();
-    if (line.length === 0 || line.startsWith("#")) continue;
-    const header = GROUP.exec(line);
+    // Insignificant whitespace surrounds the key, `=`, group headers, and
+    // comments — but a string value's own trailing characters (including a
+    // literal space) are data, matching GLib. Trim the line ends only for
+    // detection; entry parsing keeps the value suffix.
+    const trimmed = raw.trim();
+    if (trimmed.length === 0 || trimmed.startsWith("#")) continue;
+    const header = GROUP.exec(trimmed);
     if (header?.groups !== undefined) {
       group = header.groups.name;
       found ||= group === "Desktop Entry";
       continue;
     }
-    const entry = ENTRY.exec(line);
-    if (group !== "Desktop Entry" || entry?.groups === undefined) continue;
+    if (group !== "Desktop Entry") continue;
+    const entry = ENTRY.exec(raw.replace(/^\s+/u, ""));
+    if (entry?.groups === undefined) continue;
     const { key, value } = entry.groups;
     if (key !== undefined && value !== undefined && !values.has(key))
       values.set(key, unescapeValue(value));
