@@ -177,7 +177,8 @@ describe("scrubSeed on JSON and XML", () => {
   });
 
   it("preserves XML names even when the exported reader treats the document as text", () => {
-    const xml = '<root><Ϳ/><item ubuntu="one" localhost="two">ubuntu</item></root>';
+    const xml =
+      '<root><Ϳ/><item ubuntu="one" localhost="two">ubuntu</item></root>';
     expect(detectStateFormat("m.xml", Buffer.from(xml))).toBe("text");
     expect(scrubbed(xml, "text", { ...GEANY, hostname: "ubuntu" }).text).toBe(
       '<root><Ϳ/><item ubuntu="one" localhost="two">localhost</item></root>',
