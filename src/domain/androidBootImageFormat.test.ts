@@ -259,7 +259,6 @@ it("splits a v4 vendor ramdisk table and a v3 section", () => {
       entrySize: 108,
       sectionOffset: section.offset,
       sectionSize: section.size,
-      ramdiskAddr: facts.ramdiskAddr,
     },
   );
   expect(rows.ok, JSON.stringify(rows)).toBe(true);
@@ -276,6 +275,10 @@ it("splits a v4 vendor ramdisk table and a v3 section", () => {
     offset: 4096,
     size: first.length,
   });
+  expect(rows.value.components.map((item) => item.loadAddress)).toEqual([
+    null,
+    null,
+  ]);
   const v3 = buildVendorBootImage({
     version: 3,
     pageSize: 2048,
@@ -316,7 +319,6 @@ it("rejects vendor table overlap, overrun, and an excessive entry count", () => 
     entrySize,
     sectionOffset: section.offset,
     sectionSize: section.size,
-    ramdiskAddr: facts.ramdiskAddr,
   };
   const rows = (source: Buffer) =>
     parseVendorRamdiskTable(
@@ -377,7 +379,6 @@ it("names unsafe vendor ramdisk paths and reports an uncovered section", () => {
     entrySize: 108,
     sectionOffset: 4096,
     sectionSize: 16,
-    ramdiskAddr: 0x8100_0000,
   });
   expect(result.ok).toBe(true);
   if (!result.ok) return;
@@ -404,7 +405,6 @@ it("names unsafe vendor ramdisk paths and reports an uncovered section", () => {
     entrySize: 208,
     sectionOffset: 4096,
     sectionSize: 4,
-    ramdiskAddr: null,
   });
   expect(wideRows.ok, JSON.stringify(wideRows)).toBe(true);
   if (!wideRows.ok) return;
@@ -430,7 +430,6 @@ it("keeps colliding vendor ramdisk names unique", () => {
       entrySize: 108,
       sectionOffset: 4096,
       sectionSize: names.length * 4,
-      ramdiskAddr: null,
     });
     expect(result.ok, JSON.stringify(result)).toBe(true);
     if (!result.ok) throw new Error("unreachable");

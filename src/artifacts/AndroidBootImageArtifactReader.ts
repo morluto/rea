@@ -123,7 +123,6 @@ export class AndroidBootImageArtifactReader extends PositionalArtifactReader {
       entrySize: header.vendorRamdiskTableEntrySize,
       sectionOffset: section.offset,
       sectionSize: section.size,
-      ramdiskAddr: header.ramdiskAddr,
     });
     if (!table.ok) throw parseFailure(table.error);
     return table.value;

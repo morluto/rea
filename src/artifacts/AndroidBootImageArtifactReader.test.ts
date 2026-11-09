@@ -171,7 +171,7 @@ it("extracts a v2 DTB, a v4 signature, and compressed ramdisks as stored", async
   ).toContain("not decompressed");
 });
 
-it("extracts two vendor ramdisks, the DTB, and bootconfig", async () => {
+it("extracts two vendor ramdisks without inventing fragment load addresses", async () => {
   const platform = Buffer.from("platform-bytes");
   const recovery = Buffer.from("recovery-bytes");
   const dtb = Buffer.from("vendor-dtb");
@@ -196,6 +196,7 @@ it("extracts two vendor ramdisks, the DTB, and bootconfig", async () => {
     image_kind: "vendor-boot",
     vendor_ramdisk_table_entry_count: 2,
     component_count: 4,
+    ramdisk_addr: 0x8100_0000,
   });
   const platformEntry = snapshot.occurrences.find(
     (row) => row.logical_path === "vendor_ramdisk/platform",
@@ -204,8 +205,13 @@ it("extracts two vendor ramdisks, the DTB, and bootconfig", async () => {
     role: "vendor-ramdisk",
     ramdisk_type: 1,
     ramdisk_type_name: "platform",
-    load_address: 0x8100_0000,
+    load_address: null,
   });
+  expect(
+    snapshot.occurrences.find(
+      (row) => row.logical_path === "vendor_ramdisk/recovery",
+    )?.format_metadata,
+  ).toMatchObject({ ramdisk_type_name: "recovery", load_address: null });
   expect(platformEntry?.source_location).toEqual({
     offset: 4096,
     length: platform.length,

@@ -949,7 +949,6 @@ const readVendorRamdiskTable = (
     readonly entrySize: number;
     readonly sectionOffset: number;
     readonly sectionSize: number;
-    readonly ramdiskAddr: number | null;
   },
 ): VendorRamdiskTableParse => {
   if (input.entryCount > 0 && input.entrySize < VENDOR_RAMDISK_ENTRY_SIZE)
@@ -987,7 +986,9 @@ const readVendorRamdiskTable = (
         vendorRamdiskPath(decoded.text, index, used),
         fileOffset,
         size,
-        input.ramdiskAddr,
+        // ramdisk_addr is the assembled section's base; a fragment's placement
+        // depends on bootloader selection, so it is not published per entry.
+        null,
         {
           index,
           ramdiskType,
@@ -1038,7 +1039,6 @@ export const parseVendorRamdiskTable = (
     readonly entrySize: number;
     readonly sectionOffset: number;
     readonly sectionSize: number;
-    readonly ramdiskAddr: number | null;
   },
 ): Result<VendorRamdiskTableParse, AndroidBootParseError> =>
   parsed(() => readVendorRamdiskTable(table, input));
