@@ -4,6 +4,7 @@ import type { AnalysisSnapshot } from "../../domain/analysisSnapshot.js";
 import type { BinaryTarget } from "../../domain/binaryTargetTypes.js";
 import type { Evidence } from "../../domain/evidence.js";
 import {
+  tryParseEvidence,
   withEvidenceProviderSelection,
   type ProviderSelectionProvenance,
 } from "../../domain/evidence.js";
@@ -129,8 +130,15 @@ export abstract class BinarySessionRecords {
       return err(new AnalysisCancelledError("record_evidence"));
     // Selection facts belong to the session that admitted the observation, so
     // every record stays attributable to the exact engine that produced it.
+    // Attribution parses to seal the rebound envelope, and a tampered record
+    // must still come back as the declared `Result` rather than a thrown
+    // schema error. Authenticate first so the parse inside attribution only
+    // sees a value the ledger's own reader would have accepted.
+    const authenticated = tryParseEvidence(evidence);
+    if (authenticated === undefined)
+      return this.#records.recordEvidence(evidence);
     const attributed = withEvidenceProviderSelection(
-      evidence,
+      authenticated,
       this.activeAnalysisBinding()?.providerSelection,
     );
     const recorded = this.#records.recordEvidence(attributed);
