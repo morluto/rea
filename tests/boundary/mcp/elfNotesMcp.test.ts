@@ -1,7 +1,7 @@
 import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect } from "vitest";
-import { toolContract } from "../../../src/contracts/toolContracts.js";
+import { BINARY_DIAGNOSTICS_TOOL_CONTRACTS } from "../../../src/contracts/native/binaryDiagnosticsToolContracts.js";
 import { createServer } from "../../../src/server/createServer.js";
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
@@ -15,6 +15,17 @@ import {
 } from "../../../src/native/elf/ElfNotes.fixture.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { mcpTest, type TestMcp } from "../../support/mcp/mcpFixture.js";
+
+const inspectElfNotesContract = BINARY_DIAGNOSTICS_TOOL_CONTRACTS.find(
+  (
+    candidate,
+  ): candidate is Extract<
+    (typeof BINARY_DIAGNOSTICS_TOOL_CONTRACTS)[number],
+    { readonly name: "inspect_elf_notes" }
+  > => candidate.name === "inspect_elf_notes",
+);
+if (inspectElfNotesContract === undefined)
+  throw new Error("Missing inspect_elf_notes contract");
 
 const connect = async (mcp: TestMcp) => {
   const session = createTestBinarySession(() => {
@@ -44,7 +55,7 @@ mcpTest(
         arguments: { path },
       });
       expect(response.isError, JSON.stringify(response.content)).not.toBe(true);
-      const evidence = toolContract("inspect_elf_notes").outputSchema.parse(
+      const evidence = inspectElfNotesContract.outputSchema.parse(
         response.structuredContent,
       );
       expect(evidence.normalized_result.format).toBe("elf32");
@@ -90,7 +101,7 @@ mcpTest(
         arguments: { path },
       });
       expect(response.isError, JSON.stringify(response.content)).not.toBe(true);
-      const evidence = toolContract("inspect_elf_notes").outputSchema.parse(
+      const evidence = inspectElfNotesContract.outputSchema.parse(
         response.structuredContent,
       );
       expect(evidence.normalized_result.tables[0]?.name).toBeNull();
@@ -198,7 +209,7 @@ mcpTest(
         arguments: { path },
       });
       expect(accepted.isError).not.toBe(true);
-      const evidence = toolContract("inspect_elf_notes").outputSchema.parse(
+      const evidence = inspectElfNotesContract.outputSchema.parse(
         accepted.structuredContent,
       );
       expect(evidence.normalized_result.entries[0]?.gnu?.build_id_hex).toBe(
@@ -239,7 +250,7 @@ mcpTest(
         arguments: { path },
       });
       expect(response.isError, JSON.stringify(response.content)).not.toBe(true);
-      const evidence = toolContract("inspect_elf_notes").outputSchema.parse(
+      const evidence = inspectElfNotesContract.outputSchema.parse(
         response.structuredContent,
       );
       expect(evidence.normalized_result.entries[0]?.android).toEqual({
