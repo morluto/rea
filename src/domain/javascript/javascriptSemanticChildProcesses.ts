@@ -33,7 +33,7 @@ import { compareUnicodeCodePoints } from "../unicodeCodePointOrder.js";
 import { traverseJavaScriptValueAst } from "./javascriptSemanticTraversal.js";
 import { range } from "./javascriptStaticAnalysisHelpers.js";
 import {
-  builtinDataEffectMethod,
+  builtinDataEffectIdentity,
   dataEffectLiteralString,
   dataEffectMemberCallee,
   assignedSemanticResultBindings,
@@ -52,6 +52,7 @@ interface ChildProcessAnalysis {
 type ChildSpawnContext = JavaScriptExpressionShapeResolver;
 
 interface SpawnCandidate {
+  readonly builtinAuthority?: "candidate";
   readonly node: t.CallExpression | t.OptionalCallExpression;
   readonly method: JavaScriptSemanticChildProcessSpawn["method"];
   readonly ownerCallableId: string | null;
@@ -106,8 +107,9 @@ const collectSpawns = (
     enter: (node, parent) => {
       callableStack.enter(node, parent);
       if (t.isCallExpression(node) || t.isOptionalCallExpression(node)) {
-        const method = childProcessMethod(node.callee, state);
-        if (method !== null) {
+        const identity = childProcessMethod(node.callee, state);
+        if (identity !== null) {
+          const { method, builtinAuthority } = identity;
           const projectedResultBindings = assignedSemanticResultBindings(
             node,
             ancestors,
@@ -116,6 +118,7 @@ const collectSpawns = (
           output.push({
             node,
             method,
+            ...(builtinAuthority === undefined ? {} : { builtinAuthority }),
             ownerCallableId: callableStack.callables.at(-1) ?? null,
             resultBindingId: scalarAssignedResultBinding(
               projectedResultBindings,
@@ -145,6 +148,9 @@ const immutableSpawn = (
   const { options, argvCount } = spawnArguments(candidate, context);
   const command = dataEffectLiteralString(candidate.node.arguments[0]);
   return {
+    ...(candidate.builtinAuthority === undefined
+      ? {}
+      : { builtinAuthority: candidate.builtinAuthority }),
     processId: spawnId(candidate),
     method: candidate.method,
     location: range(candidate.node),
@@ -225,6 +231,9 @@ const childInteraction = (
   const { kind, interactionMethod, eventName } = classification;
   const listener = node.arguments[1];
   return {
+    ...(linked.some((candidate) => candidate.builtinAuthority === "candidate")
+      ? { builtinAuthority: "candidate" as const }
+      : {}),
     interactionId: `child:${kind}:${String(node.start ?? -1)}:${String(node.end ?? -1)}`,
     kind,
     method: interactionMethod,
@@ -239,7 +248,11 @@ const childInteraction = (
       kind === "signal" ? killSignalName(node.arguments, state) : null,
     listenerLocation:
       kind === "listener" && t.isNode(listener) ? range(listener) : null,
-    resolution: complete ? "complete" : "partial",
+    resolution:
+      complete &&
+      linked.every((candidate) => candidate.builtinAuthority !== "candidate")
+        ? "complete"
+        : "partial",
   };
 };
 
@@ -288,14 +301,28 @@ const classifyInteraction = (
 const childProcessMethod = (
   callee: t.Node,
   state: JavaScriptSemanticAnalysisState,
-): JavaScriptSemanticChildProcessSpawn["method"] | null => {
-  const method = builtinDataEffectMethod(callee, state, [
+): {
+  readonly method: JavaScriptSemanticChildProcessSpawn["method"];
+  readonly builtinAuthority?: "candidate";
+} | null => {
+  const identity = builtinDataEffectIdentity(callee, state, [
     "child_process",
     "node:child_process",
   ]);
-  return (
-    CHILD_PROCESS_METHODS.find((candidate) => candidate === method) ?? null
-  );
+  const method =
+    identity?.path.length === 1
+      ? CHILD_PROCESS_METHODS.find(
+          (candidate) => candidate === identity.path[0],
+        )
+      : undefined;
+  return method === undefined
+    ? null
+    : {
+        method,
+        ...(identity?.builtinAuthority === undefined
+          ? {}
+          : { builtinAuthority: identity.builtinAuthority }),
+      };
 };
 
 const resolveChildCandidates = (
