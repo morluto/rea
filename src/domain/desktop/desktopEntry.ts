@@ -93,11 +93,18 @@ export const parseDesktopEntry = (
       found ||= group === "Desktop Entry";
       continue;
     }
-    const entry = ENTRY.exec(line);
+    // Full-line trimming is syntax-only: string-value suffixes are data.
+    const entry = ENTRY.exec(raw.trimStart());
     if (group !== "Desktop Entry" || entry?.groups === undefined) continue;
     const { key, value } = entry.groups;
     if (key !== undefined && value !== undefined && !values.has(key))
-      values.set(key, unescapeValue(value));
+      // Keep the existing enum/boolean token treatment before value unescaping.
+      values.set(
+        key,
+        unescapeValue(
+          key === "Type" || key === "Terminal" ? value.trimEnd() : value,
+        ),
+      );
   }
   if (!found) return err("missing_desktop_entry_group");
   const field = (key: string) => values.get(key) ?? null;

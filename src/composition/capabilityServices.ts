@@ -30,6 +30,7 @@ import { DesktopBuildComputers } from "../application/desktop/DesktopBuildComput
 import { createGoBinaryService } from "./go.js";
 import { createRustBinaryService } from "./rust.js";
 import { createBeamService } from "./erlang.js";
+import { createV8CodeCacheService } from "./v8CodeCache.js";
 import { createModelArtifactService } from "./model.js";
 import { createIl2cppMetadataService } from "./il2cpp.js";
 import { createElectronFuseService } from "./electronFuses.js";
@@ -44,6 +45,10 @@ import {
 } from "./javascriptRecovery.js";
 import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
 import { createReverseEngineeringService } from "./reverseEngineering.js";
+import type {
+  ReverseEngineeringService,
+  CommandProviderLaunchFailures,
+} from "../application/reverse/ReverseEngineeringService.js";
 import { FirmwareAnalysisService } from "../application/firmware/FirmwareAnalysisService.js";
 import {
   createFirmwareAnalysisProvider,
@@ -70,6 +75,7 @@ import {
   createPeImportsService,
   createNativeExportsService,
   createPeResourcesService,
+  createWindowsShortcutService,
   createRecordedCrashService,
   createBinaryLayoutService,
   pwntoolsHostSupported,
@@ -91,6 +97,7 @@ import type { ElectronFuseService } from "../application/electron/ElectronFuseSe
 import type { RustBinaryService } from "../application/rust/RustBinaryService.js";
 import type { PythonPycService } from "../application/python/PythonPycService.js";
 import type { BeamService } from "../application/erlang/BeamService.js";
+import type { V8CodeCacheService } from "../application/v8CodeCache/V8CodeCacheService.js";
 import type { RecordedCrashService } from "../application/binaryDiagnostics/RecordedCrashService.js";
 import type { BinaryLayoutService } from "../application/binaryDiagnostics/BinaryLayoutService.js";
 import type { BrowserObservationPort } from "../application/BrowserObservationPort.js";
@@ -128,6 +135,7 @@ export interface CapabilityServiceOptions {
   readonly rustBinary?: RustBinaryService;
   readonly pythonPyc?: PythonPycService;
   readonly erlangBeam?: BeamService;
+  readonly v8CodeCache?: V8CodeCacheService;
   readonly electronFuses?: ElectronFuseService;
   readonly recordedCrash?: RecordedCrashService;
   readonly firmwareAnalysis?: FirmwareAnalysisPort;
@@ -154,6 +162,7 @@ export interface CapabilityServiceOptions {
   readonly desktopBuildSettle?: BuildSettle;
   /** Where build computers look for unset settings; the host's PATH and REA cache unless a test isolates them. */
   readonly desktopBuildDefaults?: BuildComputerDefaults;
+  readonly reverseEngineering?: ReverseEngineeringService;
 }
 
 const tsharkLocatable = (environment: Readonly<NodeJS.ProcessEnv>): boolean => {
@@ -343,6 +352,9 @@ const modules = {
   erlangBeam: service(
     ({ options }) => options.erlangBeam ?? createBeamService(),
   ),
+  v8CodeCache: service(
+    ({ options }) => options.v8CodeCache ?? createV8CodeCacheService(),
+  ),
   modelArtifact: service(() => createModelArtifactService()),
   gpuCodeObjects: service(() => createGpuCodeObjectsService()),
   il2cppMetadata: service(
@@ -358,6 +370,7 @@ const modules = {
   binaryHardening: service(() => createBinaryHardeningService()),
   peCertificates: service(() => createPeCertificatesService()),
   peImports: service(() => createPeImportsService()),
+  windowsShortcut: service(() => createWindowsShortcutService()),
   electronFuses: service(
     ({ options }) => options.electronFuses ?? createElectronFuseService(),
   ),
@@ -390,8 +403,13 @@ const modules = {
     }),
   ),
   artifactResources: service(() => new ArtifactResourceScope()),
-  reverseEngineering: service(({ providerEnvironment }) =>
-    createReverseEngineeringService(providerEnvironment),
+  reverseEngineering: service(
+    ({ providerEnvironment, options }) =>
+      options.reverseEngineering ??
+      createReverseEngineeringService(providerEnvironment),
+    (_context, value) => ({
+      observeCommandProviderFailures: () => value.observedLaunchFailures(),
+    }),
   ),
   firmwareAnalysis: service(
     ({ environment, options }) =>
@@ -624,6 +642,7 @@ export const createCapabilityServices = (context: CapabilityHostContext) => {
   > = {};
   const probes: NonNullable<CapabilityAvailabilityFacts["probes"]> = {};
   const failureObservers: (() => OptionalProviderLoadFailures)[] = [];
+  const commandFailureObservers: (() => CommandProviderLaunchFailures)[] = [];
   const availability = { hostUnsupported, optionalFeatures };
   // This is a key-preserving map of a source-owned typed declaration, not an
   // external value parser or a generic operation dispatcher.
@@ -644,6 +663,10 @@ export const createCapabilityServices = (context: CapabilityHostContext) => {
       Object.assign(probes, instance.availability?.probes);
       const observeFailure = instance.availability?.observeProviderLoadFailures;
       if (observeFailure !== undefined) failureObservers.push(observeFailure);
+      const observeCommandFailure =
+        instance.availability?.observeCommandProviderFailures;
+      if (observeCommandFailure !== undefined)
+        commandFailureObservers.push(observeCommandFailure);
       return [
         id,
         instance.ownership === "host"
@@ -658,6 +681,8 @@ export const createCapabilityServices = (context: CapabilityHostContext) => {
     probes,
     observeProviderLoadFailures: (): OptionalProviderLoadFailures =>
       Object.assign({}, ...failureObservers.map((observe) => observe())),
+    observeCommandProviderFailures: (): CommandProviderLaunchFailures =>
+      Object.assign({}, ...commandFailureObservers.map((observe) => observe())),
     close: () => scope.close(),
   };
 };

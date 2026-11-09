@@ -292,6 +292,7 @@ export const readClientRegistrationInspections = async (
         compactInputSchemaByDefault(client) || client.name === "codex"
           ? await clientRegistrationEnvironmentDetailsWithBudget(
               parsed,
+              client.name,
               {},
               "effective",
               client.name === "kimi" || client.name === "codex"
@@ -388,6 +389,7 @@ export const readClientRegistrationInspections = async (
             ? undefined
             : recordedProviderSettings(
                 parsed,
+                client.name,
                 options.providerSettings,
                 options.platform,
                 options.ownedProviderSetting,
