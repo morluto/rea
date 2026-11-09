@@ -1377,14 +1377,16 @@ const compilerPaths = (
   const { compiler, linker } = splitForwardedLinkerFlags(flags);
   const literal = withoutLinkerSearchLists(flags);
   const literalLinker = splitForwardedLinkerFlags(literal).linker;
+  const compilerOperands = goToolFlagPaths(
+    compiler,
+    GO_COMPILER_PATH_FLAG,
+    format,
+  );
   return [
-    ...flagPaths(literal),
-    ...goRelativeFlagPaths(
-      compiler,
-      GO_COMPILER_PATH_FLAG,
-      format,
-      onAmbiguousLinkerR,
+    ...flagPaths(
+      literal.filter((field) => !compilerOperands.fields.has(field)),
     ),
+    ...compilerOperands.paths,
     ...goRelativeFlagPaths(
       literalLinker,
       LINKER_PATH_FLAG,

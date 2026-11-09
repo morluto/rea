@@ -2088,6 +2088,19 @@ describe("ReleaseExposureService Go linker path options", () => {
   });
 });
 
+describe("ReleaseExposureService compiler path separators", () => {
+  it.each(["/tmp/private,sdk", "/tmp/private=sdk"])(
+    "preserves a literal compiler argument %s",
+    async (path) => {
+      const report = await goReport(
+        goModule([{ key: "CGO_CFLAGS", value: `-I ${path}` }]),
+      );
+      const check = report.checks.find((item) => item.id === "go.build_paths");
+      expect(check?.observation.samples).toEqual([path]);
+    },
+  );
+});
+
 describe("ReleaseExposureService Go linker -r search list", () => {
   it.each([["-r=$ORIGIN/../lib -s -w"], ["-r ${ORIGIN}/lib:$ORIGIN"]])(
     "does not read the ELF loader-expanded entries in %s as build paths",
