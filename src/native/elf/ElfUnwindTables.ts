@@ -1,3 +1,4 @@
+import { admitElfLoadSegment } from "../../domain/elfProgramHeader.js";
 import { assertArtifactReadActive } from "../../artifacts/ArtifactFileOperation.js";
 import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
 import { readElfDynamicEntry } from "../../domain/elfDynamicEntry.js";
@@ -287,9 +288,27 @@ export const parseElfUnwindRanges = (
 
   // The section directory has already admitted every program header,
   // including a PN_XNUM count, or rejected the image.
-  const loads = directory.programs.flatMap((program) =>
-    program.type === 1 ? [programSpan(program)] : [],
-  );
+  const loads = directory.programs.flatMap((program) => {
+    if (program.type !== 1) return [];
+    const admitted = admitElfLoadSegment(
+      {
+        virtualAddress: program.virtual_address,
+        memorySize: program.memory_size,
+        fileSize: program.file_size,
+      },
+      directory.bits,
+    );
+    if (
+      !admitted.ok ||
+      program.file_offset + program.file_size > BigInt(bytes.length)
+    ) {
+      fail(
+        "An invalid PT_LOAD mapping was excluded from unwind address resolution.",
+      );
+      return [];
+    }
+    return [programSpan(program)];
+  });
   const gnuHeaders = directory.programs.flatMap((program) =>
     program.type === ELF_PT_GNU_EH_FRAME ? [programSpan(program)] : [],
   );
@@ -1002,7 +1021,14 @@ export const parseElfUnwindRanges = (
   });
   const pageCieIndexes = new Set(pageRows.map((range) => range.cie_index));
   const pageCies = cies.filter((cie) => pageCieIndexes.has(cie.index));
-  const agreement = headerAgreement(header, ranges, ehSection?.address, note);
+  const agreement = headerAgreement(
+    header,
+    ranges,
+    ehSection === undefined
+      ? undefined
+      : (vaForFileOffset(Number(ehSection.offset)) ?? undefined),
+    note,
+  );
 
   if (header.status === "absent" && frameStatus !== "unknown")
     note(HEADER_ABSENT);

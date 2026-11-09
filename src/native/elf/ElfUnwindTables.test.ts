@@ -1076,3 +1076,14 @@ it("names a range from an STT_GNU_IFUNC resolver symbol at its exact start", () 
     "A symbol name from an STT_GNU_IFUNC symbol names the resolver that starts at that address, not the implementation it selects at run time.",
   );
 });
+
+it("excludes load mappings whose file size exceeds memory size", () => {
+  const bytes = elfUnwindSectionlessFixture();
+  const phoff = Number(bytes.readBigUInt64LE(32));
+  bytes.writeBigUInt64LE(0n, phoff + 40);
+  const report = parse(bytes);
+  expect(report.coverage.status).toBe("incomplete");
+  expect(report.limitations).toContain(
+    "An invalid PT_LOAD mapping was excluded from unwind address resolution.",
+  );
+});
