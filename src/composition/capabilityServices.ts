@@ -26,6 +26,7 @@ import {
 } from "./evm.js";
 import { createSqliteDatabaseService } from "./sqlite.js";
 import { createDesktopApplicationService } from "./desktop.js";
+import { DesktopBuildComputers } from "../application/desktop/DesktopBuildComputers.js";
 import { createGoBinaryService } from "./go.js";
 import { createRustBinaryService } from "./rust.js";
 import { createBeamService } from "./erlang.js";
@@ -64,6 +65,7 @@ import { persistentDebuggerHostSupported } from "../process/PersistentDebuggerHo
 import { pcapCaptureHostSupported } from "../domain/pcap/pcapAnalysis.js";
 import {
   createPeLoadConfigService,
+  createBinaryHardeningService,
   createPeCertificatesService,
   createPeImportsService,
   createNativeExportsService,
@@ -317,6 +319,10 @@ const modules = {
     }),
   ),
   desktopApplication: service(() => createDesktopApplicationService()),
+  desktopBuildComputers: capability(
+    ({ providerEnvironment }) => new DesktopBuildComputers(providerEnvironment),
+    (value) => value.closeAll(),
+  ),
   goBinary: service(
     ({ options }) => options.goBinary ?? createGoBinaryService(),
   ),
@@ -338,6 +344,7 @@ const modules = {
   appleIps: service(() => createAppleIpsService()),
   kernelModule: service(() => createKernelModuleService()),
   peLoadConfig: service(() => createPeLoadConfigService()),
+  binaryHardening: service(() => createBinaryHardeningService()),
   peCertificates: service(() => createPeCertificatesService()),
   peImports: service(() => createPeImportsService()),
   electronFuses: service(

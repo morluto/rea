@@ -8,7 +8,7 @@ import { projectAnalysisError } from "../../domain/analysisErrorProjection.js";
 import { analysisErrorProjectionSchema } from "../../contracts/errorSchemas.js";
 import { inspectWebNetworkCaptureInputSchema } from "../../domain/webNetworkCapture.js";
 import { historicalCaptureFailure } from "./CaptureFailures.js";
-import { NODE_CAPTURE_PROCESS_MEMORY_LIMIT_BYTES } from "./CaptureRelease.js";
+import { NODE_CAPTURE_PROCESS_MEMORY_LIMIT_BYTES } from "../../../tests/fixtures/captureDecoderLimits.js";
 import { redactExplicitFailure } from "../../domain/explicitSensitiveFailure.js";
 import { OwnedCommandFailure } from "../../process/OwnedCommand.js";
 
@@ -356,4 +356,52 @@ it("preserves the exact cancellation reason and an earlier reader failure", () =
     { signal: controller.signal },
   );
   expect(changed._tag).toBe("AnalysisArtifactChangedError");
+});
+
+it.each(["ENOENT", "ENOTDIR", "ELOOP", "ENAMETOOLONG"])(
+  "reports an unresolvable selected capture path (%s) as capture_path input",
+  (code) => {
+    const input = inspectWebNetworkCaptureInputSchema.parse({
+      capture_path: "/selected/input.har",
+      format: "har",
+    });
+    const cause = Object.assign(
+      new Error(`${code}: lstat '/selected/input.har'`),
+      { code },
+    );
+    expect(
+      projectAnalysisError(
+        historicalCaptureFailure(input, cause, "capture-read"),
+      ),
+    ).toMatchObject({
+      code: "invalid_request",
+      category: "invalid_input",
+      details: {
+        issues: [
+          {
+            path: ["capture_path"],
+            message: expect.stringContaining(code),
+          },
+        ],
+      },
+    });
+  },
+);
+
+it("keeps physical capture read errors as provider failures", () => {
+  const input = inspectWebNetworkCaptureInputSchema.parse({
+    capture_path: "/selected/input.har",
+    format: "har",
+  });
+  const cause = Object.assign(new Error("EIO: read '/selected/input.har'"), {
+    code: "EIO",
+  });
+  expect(
+    projectAnalysisError(
+      historicalCaptureFailure(input, cause, "capture-read"),
+    ),
+  ).toMatchObject({
+    code: "execution_failure",
+    details: { diagnostics: { phase: "capture-read" } },
+  });
 });
