@@ -413,21 +413,17 @@ const locateIntelTrailers = async (
       const claimed = window.readBigUInt64LE(lengthAt);
       const sliceEnd = base + sliceSize;
       const offset = sentinelStart + INTEL_SENTINEL.length + 8;
-      if (
-        claimed > BigInt(Number.MAX_SAFE_INTEGER) ||
-        offset < base ||
-        offset > sliceEnd
-      )
-        continue;
-      const length = Number(claimed);
-      if (length < DENO_SECTION_MAGIC.length) continue;
+      if (offset < base || offset > sliceEnd) continue;
+      if (claimed < BigInt(DENO_SECTION_MAGIC.length)) continue;
+      // The marker is checked before the length is judged, so an oversized
+      // or unsafe length word cannot hide a confirmed trailer.
       const marker = await readExact(
         carrier,
         offset,
         DENO_SECTION_MAGIC.length,
       );
       if (marker === undefined || !marker.equals(DENO_SECTION_MAGIC)) continue;
-      if (length > sliceEnd - offset) {
+      if (claimed > BigInt(sliceEnd - offset)) {
         // A marker-confirmed trailer whose payload runs past the slice is a
         // truncated Deno app, whether or not it would enclose a confirmed
         // trailer. The sentinel may still be stored data of an enclosing
@@ -436,6 +432,7 @@ const locateIntelTrailers = async (
         truncated.push(sentinelStart);
         continue;
       }
+      const length = Number(claimed);
       const end = offset + length;
       const inside = (at: number): boolean => at >= offset && at < end;
       trailers = trailers.filter((trailer) => !inside(trailer.sentinelOffset));

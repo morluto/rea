@@ -1555,3 +1555,19 @@ it("rejects a universal Deno image whose FAT row misstates a slice's CPU", async
     },
   });
 });
+
+it("fails closed when the enclosing Intel trailer length is not a safe integer", async () => {
+  const { outer } = nestedIntelApp();
+  const bytes = denoIntelTrailer(outer);
+  // Only the outer length word changes; its d3n0l4nd marker stays readable.
+  bytes.writeBigUInt64LE(2n ** 53n, bytes.length - outer.length - 8);
+  await expect(
+    locateDenoStandalone(bytesHandle(bytes), bytes.length),
+  ).resolves.toMatchObject({
+    status: "present",
+    failure: {
+      reason: "format",
+      message: expect.stringContaining("trailer is truncated"),
+    },
+  });
+});
