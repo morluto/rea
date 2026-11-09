@@ -147,6 +147,7 @@ the exact commit messages and references from the release they describe.
 
 - [Offline API contract inventory](api-contracts.md)
 - [Bun standalone executables](bun-standalone.md)
+- [Deno compile executables](deno-standalone.md)
 - [Capability composition and ownership](capability-composition.md)
 - [.NET single-file bundles](dotnet-bundles.md)
 - [ESP flash images](esp-flash-image.md)

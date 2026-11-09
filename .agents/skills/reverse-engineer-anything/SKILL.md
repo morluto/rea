@@ -97,6 +97,12 @@ explicit path or endpoint and do not need it.
 - Bun `--compile` executable: `open_binary`, then `inspect_artifact`; the Bun
   module graph is the application layer. Extract stored modules and analyze the
   JavaScript. See [Bun standalone executables](https://github.com/morluto/rea/blob/main/docs/bun-standalone.md).
+- Deno `deno compile` executable: `open_binary`, then `inspect_artifact`; the
+  embedded virtual filesystem is the application layer. Extract stored files and
+  analyze compatible JavaScript. Environment-file values and CA certificate bytes
+  are retained in local Evidence with their counts and byte lengths. The npm
+  snapshot length is reported and not decoded, and the executable is not run. See
+  [Deno compile executables](https://github.com/morluto/rea/blob/main/docs/deno-standalone.md).
 - Apple app plist, Interface Builder, asset catalog, or keyed archive resources:
   `open_bundle_resources`, then the selected resource tool. This does not
   require `CFBundleExecutable` or a deep provider. Resource sessions have no

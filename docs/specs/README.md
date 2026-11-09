@@ -6,6 +6,11 @@ directory owns one `spec.md`, one `plan.md` and one `tasks.md`.
 Follow [documentation ownership and authoring](../development/documentation.md#feature-lifecycle)
 for the specification lifecycle, roadmap granularity and producer-owned contracts.
 
+## Artifacts
+
+- [Deno compile executable inventory and extraction](artifacts/deno-standalone/spec.md)
+  ([plan](artifacts/deno-standalone/plan.md), [tasks](artifacts/deno-standalone/tasks.md))
+
 ## Documentation
 
 - [Organization](documentation/organization/spec.md)
