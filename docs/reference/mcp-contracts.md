@@ -221,11 +221,12 @@ graph, while `search_scope.discovery` describes whether discovery of applicable
 direct relationships is established. A missing goal is `unknown` when either
 discovery or a relationship read is unestablished. A found path is shortest
 within the observed graph; undiscovered calls may produce a shorter path.
-`truncated` describes relationship reads, not unestablished discovery.
+`truncated` describes relationship reads, not unestablished discovery. Ghidra's recorded incoming references do not establish every computed caller; computed outgoing candidates likewise retain unknown callee discovery. IDA function-edge replies retain their observed truncation status while unclassified call targets remain unknown in discovery.
 `build_call_path` applies the same distinction to supplied function Evidence:
 its `search_scope.exhaustive` describes the supplied graph and
 `search_scope.observed_status` preserves that graph's result. Evidence without
 discovery metadata has unknown discovery. Cancellation remains a tool error.
+:docs/reference/mcp-contracts.md
 
 `trace_feature` validates each reference's containing-procedure resolution using
 the same contract as navigation context. Explicit absence remains a successful
@@ -989,6 +990,13 @@ dispatch to the provider client rather than reply completion, so a late reply
 from an older request does not override a newer outcome. Request deadlines and
 cancellations neither mark nor clear availability. A new provider client starts
 without these outcomes.
+
+Standalone command operations (such as `inspect_with_objdump` and
+`execute_rizin_command`) similarly reflect observed executable launch failures:
+an unprobed executable is reported available; once a launch failure is observed,
+discovery reports the operation unavailable with the executable remediation
+until a request for it dispatched later succeeds. Direct retry remains available
+without restarting REA.
 
 `detail` selects the projection and the result echoes it. The default
 `summary` keeps open state, target identity, the binding, current-route

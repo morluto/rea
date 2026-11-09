@@ -36,6 +36,8 @@ import {
 } from "../../contracts/decompileDirectory.js";
 import { createAnalysisProfile } from "../../domain/analysisProfile.js";
 import { createEvidence } from "../../domain/evidence.js";
+import { projectAnalysisError } from "../../domain/analysisErrorProjection.js";
+import { analysisErrorWithCleanupFailure } from "../../domain/analysisErrorCleanup.js";
 import {
   AnalysisCancelledError,
   AnalysisCapabilityUnavailableError,
@@ -1516,6 +1518,14 @@ describe("decompile_all late cancellation", () => {
     if (result.ok) return;
     expect(result.error).toBeInstanceOf(AnalysisCancelledError);
     expect(result.error.cause).toBe(reason);
+    expect(
+      projectAnalysisError(result.error).details?.diagnostics,
+    ).toMatchObject({
+      published_output: {
+        output_directory: directory(),
+        index_path: join(directory(), DECOMPILE_DIRECTORY_INDEX_NAME),
+      },
+    });
     // Finalization still completed, so the export resumes without new work.
     vi.restoreAllMocks();
     const next = harness();
@@ -1575,6 +1585,7 @@ describe("decompile_all cancelled publish loop", () => {
       controller.signal,
     );
     expect(result).toEqual(err(failure));
+    expect(failure.diagnostics?.published_output).toBeUndefined();
   });
 
   it("keeps a journal close failure primary when cancellation stops the publish loop", async () => {
@@ -1594,6 +1605,15 @@ describe("decompile_all cancelled publish loop", () => {
       controller.signal,
     );
     expect(result).toEqual(err(failure));
+    expect(projectAnalysisError(failure).details?.diagnostics).toMatchObject({
+      published_output: {
+        output_directory: directory(),
+        index_path: join(directory(), DECOMPILE_DIRECTORY_INDEX_NAME),
+      },
+    });
+    await expect(
+      readFile(join(directory(), DECOMPILE_DIRECTORY_INDEX_NAME), "utf8"),
+    ).resolves.toContain("functions");
   });
 
   it("reports the caller's reason when cancellation stops the publish loop and finalization succeeds", async () => {
@@ -1937,6 +1957,10 @@ describe("decompile_all provider cleanup ownership", () => {
         expect(failure.secondaryFailures[0]?.cause).toBe(callerReason);
       } else expect(failure.secondaryFailures).toHaveLength(0);
       expect(failure.partialObservation).toBe(partial);
+      expect(failure.diagnostics?.published_output).toEqual({
+        output_directory: directory(),
+        index_path: join(directory(), DECOMPILE_DIRECTORY_INDEX_NAME),
+      });
       expect(failure.capturedOutput?.stdout).toBe("retained provider output");
       expect(failure.cleanupIncomplete).toBe(true);
       expect(observed.at(-1)).toBe(operation);
@@ -1966,64 +1990,100 @@ describe("decompile_all mixed cleanup ownership", () => {
   const directory = useOutputDirectory();
   afterEach(() => vi.restoreAllMocks());
 
-  it("waits for both provider and journal cleanup owners after mixed finalization failures", async () => {
-    const { port } = harness();
-    const providerFailure = new AnalysisOutputError(
-      "procedure_info",
-      "provider cleanup failed",
-      {
-        cleanup: {
-          reason: "provider close denied",
-          resources: ["provider descriptor"],
+  it.each([false, true])(
+    "waits for provider and journal cleanup owners with a composed provider failure: %s",
+    async (composed) => {
+      const { port } = harness();
+      const providerCleanupFailure = new AnalysisOutputError(
+        "procedure_info",
+        "provider cleanup failed",
+        {
+          cleanup: {
+            reason: "provider close denied",
+            resources: ["provider descriptor"],
+          },
         },
-      },
-    );
-    const closeFailure = new AnalysisOutputError(
-      "decompile_all",
-      "journal cleanup failed",
-      {
-        cleanup: {
-          reason: "journal close denied",
-          resources: ["journal descriptor"],
+      );
+      const closeFailure = new AnalysisOutputError(
+        "decompile_all",
+        "journal cleanup failed",
+        {
+          cleanup: {
+            reason: "journal close denied",
+            resources: ["journal descriptor"],
+          },
         },
-      },
-    );
-    const providerLease = new AnalysisCleanupLease(
-      async () => undefined,
-      ["provider descriptor"],
-    );
-    const journalLease = new AnalysisCleanupLease(
-      async () => undefined,
-      ["journal descriptor"],
-    );
-    providerLease.bindCleanupError(providerFailure);
-    journalLease.bindCleanupError(closeFailure);
-    const close = DecompileExport.prototype.close;
-    vi.spyOn(DecompileExport.prototype, "close").mockImplementation(
-      async function (this: DecompileExport) {
-        await close.call(this);
-        return err(closeFailure);
-      },
-    );
-    const failing: AnalysisOperationPort = {
-      execute: (operation, parameters, options) =>
-        operation === "procedure_info"
-          ? Promise.resolve(err(providerFailure))
-          : port.execute(operation, parameters, options),
-    };
-    const result = await run(new EnhancedTools(failing), directory());
-    expect(result.ok).toBe(false);
-    if (result.ok) return;
-    expect(result.error.cleanupPrimary).toBe(providerFailure);
-    expect(result.error.cleanupResources).toEqual(
-      expect.arrayContaining(["provider descriptor", "journal descriptor"]),
-    );
-    await journalLease.release();
-    expect(closeFailure.cleanupIncomplete).toBe(false);
-    expect(result.error.cleanupIncomplete).toBe(true);
-    await providerLease.release();
-    expect(result.error.cleanupIncomplete).toBe(false);
-  });
+      );
+      const providerLease = new AnalysisCleanupLease(
+        async () => undefined,
+        ["provider descriptor"],
+      );
+      const journalLease = new AnalysisCleanupLease(
+        async () => undefined,
+        ["journal descriptor"],
+      );
+      providerLease.bindCleanupError(providerCleanupFailure);
+      const providerPrimary = new AnalysisOutputError(
+        "procedure_info",
+        "provider operation failed",
+        {
+          diagnostics: { provider_fact: "preserved" },
+        },
+      );
+      const providerFailure = composed
+        ? analysisErrorWithCleanupFailure(
+            providerPrimary,
+            providerCleanupFailure,
+            "procedure_info",
+          ).bindCleanupDependencies([providerCleanupFailure])
+        : providerCleanupFailure;
+      journalLease.bindCleanupError(closeFailure);
+      const close = DecompileExport.prototype.close;
+      vi.spyOn(DecompileExport.prototype, "close").mockImplementation(
+        async function (this: DecompileExport) {
+          await close.call(this);
+          return err(closeFailure);
+        },
+      );
+      const failing: AnalysisOperationPort = {
+        execute: (operation, parameters, options) =>
+          operation === "procedure_info"
+            ? Promise.resolve(err(providerFailure))
+            : port.execute(operation, parameters, options),
+      };
+      const result = await run(new EnhancedTools(failing), directory());
+      expect(result.ok).toBe(false);
+      if (result.ok) return;
+      expect(result.error.cleanupPrimary).toBe(providerFailure);
+      const receipt = {
+        published_output: {
+          output_directory: directory(),
+          index_path: join(directory(), DECOMPILE_DIRECTORY_INDEX_NAME),
+        },
+      };
+      expect(
+        projectAnalysisError(result.error).details?.diagnostics,
+      ).toMatchObject(receipt);
+      expect(result.error.cleanupResources).toEqual(
+        expect.arrayContaining(["provider descriptor", "journal descriptor"]),
+      );
+      await journalLease.release();
+      expect(closeFailure.cleanupIncomplete).toBe(false);
+      expect(result.error.cleanupIncomplete).toBe(true);
+      await providerLease.release();
+      expect(providerCleanupFailure.cleanupIncomplete).toBe(false);
+      expect(providerFailure.cleanupIncomplete).toBe(false);
+      expect(result.error.cleanupIncomplete).toBe(false);
+      expect(result.error.cleanupResources).toEqual([]);
+      expect(
+        projectAnalysisError(result.error).details?.diagnostics,
+      ).toMatchObject(receipt);
+      if (composed)
+        expect(
+          projectAnalysisError(result.error).details?.diagnostics,
+        ).toMatchObject({ provider_fact: "preserved" });
+    },
+  );
 });
 
 describe("decompile_all publication cleanup", () => {
@@ -2084,6 +2144,15 @@ describe("decompile_all publication cleanup", () => {
         message: "staging removal denied",
       });
       expect(result.error.cleanupIncomplete).toBe(false);
+      if (publication === "index")
+        expect(
+          projectAnalysisError(result.error).details?.diagnostics,
+        ).toMatchObject({
+          published_output: {
+            output_directory: directory(),
+            index_path: destination,
+          },
+        });
     },
   );
 });

@@ -280,6 +280,123 @@ taken 18, 23 and 21 turns for $0.70, $1.55 and $0.51 ($0.92). Cache reads
 fell from 585-714K tokens to 181-225K; the cost is mostly cache writes,
 which varied from 17K to 189K tokens whatever the turns.
 
+## Naming the app's state
+
+Run on macOS with source tests and gates; no build computer was started.
+Each test below failed on the head before this change, with only the tests
+and their fixtures added, and passes now.
+
+- `buildCaptureStatePathsMcp.test.ts`: `start_build_capture` with
+  `state_paths` passes the note's path to the capture as `--state-path`, the
+  draft covers it as a document with no notes, and an export with a check on
+  it is accepted; without it the draft is empty with `unowned_changes`
+  (the note, `unrelated`) and `no_document`, and the export's refusal names
+  `state_paths`. A path through `..`, the home itself and 17 paths are
+  refused by the schema, `/etc/hosts` by the computer, and none starts a
+  capture. Before, `state_paths` was an unknown argument.
+- `DesktopTaskDraftNotes.test.ts`: a draft with files has no notes; one with
+  no change between seed and end has only `no_change`; one whose changes lie
+  outside the owned paths lists five with their roles, desktop files last,
+  and counts two more, beside `no_document`.
+- `stateRoles.test.ts`: a selected file under a hidden folder of the home is
+  application state, elsewhere a document.
+- `DesktopApplicationExport.test.ts`, `appExportUnowned.test.ts`: the export's
+  limitations and README name folders the capture saw change outside the
+  owned paths, collapsed to their top folder and without desktop caches, up
+  to eight and a count, and the seeded lock file, WebKit storage and cache
+  folders.
+
+## Lock files, changed files and held-open folders
+
+Run on macOS with source tests and gates; no build computer was started. A
+hold-out LibreOffice Calc bundle seeded `~/.config/libreoffice/4/.lock` and
+showed no window at boot; its export also said nothing in `~/Documents` was
+seeded while `seed_files` held `Documents/q1-sales.ods`. Each test below
+failed on the head before this change, with only the tests and their
+fixtures added, and passes now.
+
+- `DesktopApplicationExport.test.ts`: a capture whose seed holds a profile
+  `.lock` and a document lock `.~lock.today.txt#` exports without either in
+  `seed_files` or the bundle, and lists both after "Left out of the seed" in
+  one limitation and the README; with `~/Documents` held open, its
+  limitation names `~/Documents/today.txt` as seeded from there.
+- `appExportUnowned.test.ts`: profile, browser and document locks are lock
+  files, and `*.lock` or `*.lck` only in a hidden folder, so `Cargo.lock`
+  and `yarn.lock` in a project are not; the capture's limitation names the
+  held-open folders from `~/`, and the export's names the seed files there
+  or says there are none.
+- `desktopCapture.test.ts`: a checkpoint's acknowledgement names its changed
+  files home-relative, the held-open document first, then state, then the
+  rest, without folders, and names ten of thirteen with three more.
+- `buildCaptureMcp.test.ts`: `mark_build_checkpoint` returns the changed
+  files the capture acknowledged.
+- `buildComputerMcp.test.ts`: a bundle's start that never got ready names
+  the lock files its seed holds; one without locks, or failing otherwise,
+  names none.
+
+The Linux-only capture test's acknowledgement now expects the changed state
+file; it is skipped on macOS and was not run.
+
+## Linked state paths, dconf changes, project lock files and older checkpoint replies
+
+Run on macOS with source tests and gates; no build computer was started.
+Each test below failed on the head before this change, with only the tests
+and their fixtures added, and passes now.
+
+- `buildCaptureStatePathsMcp.test.ts`: the computer refuses state paths that
+  a link leads out of the home, existing or not yet (through the nearest
+  existing folder, or a dangling link), or into `~/.rea-build`, and starts
+  nothing; a link that stays in the home is followed and the path passed to
+  the capture as named. Before, the first such path started a capture.
+- `DesktopCaptureScope.test.ts`: the capture scope records each selected
+  path as named beside the physical path it walks.
+- `DesktopApplicationExport.test.ts`: with `~/.config/MuseScore` selected as
+  a link to `~/settings/MuseScore` beside a selected note, the bundle's
+  launch opens the note. With only the capture's record of selected paths
+  added, the settings file was still a document and the launch opened none.
+- `DesktopTaskDraftNotes.test.ts`: a draft whose only change between `seed`
+  and `end` is to the app's keys in dconf carries `uncheckable_changes`
+  naming `~/.config/dconf/user`, not `no_change`; one where only another
+  group's keys changed still has `no_change`.
+- `appExportUnowned.test.ts`: `*.lock` and `*.lck` are locks only directly
+  in a state directory, so `Projects/.repo/Cargo.lock` is not; and 20,000
+  separate unowned folders collapse in tens of milliseconds, where comparing
+  every pair took 12.9 seconds.
+- `DesktopApplicationExport.test.ts`: `Projects/.repo/Cargo.lock` and
+  `.dotfiles/web/yarn.lock`, which the capture recognized as documents, and
+  a lock-named file the caller selected are seeded, a `*.lock` directly in a
+  state directory is left out, and the profile and document locks still are.
+- `buildCaptureMcp.test.ts`: checkpoints acknowledged without
+  `changed_files` and `more_changed_files`, as the previous REA in a build
+  computer does, are taken with both `null`, also when a lost reply is read
+  again from the capture's log. Before, the host refused the acknowledgement
+  although the checkpoint was taken.
+- `desktopCapture.test.ts`: a checkpoint's changed files name a document
+  under a selected path first, though the app did not hold it open, and
+  caches and browser-engine storage last, even one the app held open or in a
+  state directory, so ten KDE service-cache files no longer push the saved
+  document past the cut, as they did in a held-out Tellico build.
+- `DesktopApplicationExport.test.ts`: with `~/.config/MuseScore` selected as
+  a link to `~/Documents` and the note inside it selected itself, the
+  launch opens the note while the settings beside it stay the app's; before,
+  the link's hidden name made the note application state and the launch
+  opened none.
+- `DesktopTaskDraftNotes.test.ts`: a dconf database that changed but could
+  not be read gives `unreadable_changes` with the reader's error, not
+  `uncheckable_changes`.
+- `buildCaptureMcp.test.ts`: `stop_build_capture` on a capture whose only
+  change between `seed` and `end` is a dconf database the draft cannot read
+  (no `dconf` on its `PATH`) returns the `unreadable_changes` note with its
+  `error`; before, the build tool dropped the field.
+- `LinuxApplicationInventory.test.ts`: the inventory lists KDE's
+  `~/.config/<name>rc` before it exists, so a Tellico capture owns
+  `~/.config/tellicorc`, whose absence brought back Tip of the Day at boot;
+  `DesktopApplicationExport.test.ts` shows such a file, written during the
+  capture, owned and seeded (that test passed before, given the inventory).
+
+The capture's recording of selected paths runs only on Linux; its scope is
+tested on macOS, and the capture itself was not run.
+
 ## Limits of this verification
 
 - The witness acts were scripted by this agent from the task's prompt; no
