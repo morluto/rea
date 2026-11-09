@@ -145,12 +145,11 @@ const limitOf = async (bytes: Buffer): Promise<ArtifactReaderFailure> => {
 };
 
 it("refuses an asset table over its count bound before creating records", async () => {
-  const prefix = buildNodeSeaBlob({ assets: [{ name: "a", body: "" }] });
-  const count = Buffer.alloc(8);
-  count.writeBigUInt64LE(100_001n);
-  // Replace the declared count; the bound is checked before the table length.
-  const bytes = Buffer.concat([prefix.subarray(0, -25), count]);
-  const failure = await limitOf(bytes);
+  const assets = Array.from({ length: 100_001 }, (_, index) => ({
+    name: `asset-${String(index)}`,
+    body: "",
+  }));
+  const failure = await limitOf(buildNodeSeaBlob({ assets }));
   expect(failure).toMatchObject({
     reason: "limit",
     message: expect.stringMatching(

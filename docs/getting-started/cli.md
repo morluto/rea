@@ -439,6 +439,19 @@ descriptors, and a pefile-compatible import hash of the standard import table.
 A missing import directory is observed absence of that table. See
 [PE import and delay-load tables](../pe-imports.md).
 
+Inspect a Windows Shell Link (`.lnk`) without resolving or executing the
+target:
+
+```bash
+rea inspect-windows-shortcut /absolute/path/to/shortcut.lnk --json
+```
+
+The workflow reports header flags and FILETIMEs, IDList items, LinkInfo volume
+and network names, StringData arguments and icon location, ExtraData blocks
+including Tracker droid facts labelled derived, and derived observations such
+as argument length and a minimized ShowCommand. See
+[Windows Shell Link shortcuts](../guides/native/windows-shortcut.md).
+
 Inspect ELF PT_NOTE and SHT_NOTE tables without executing the image:
 
 ```bash
@@ -633,7 +646,9 @@ including relative spelling and symlink aliases. Its subject identifies the
 inspected artifact; `caller_input_path` does not change the Evidence ID or
 snapshot query. A replay reports the current invocation's path while leaving
 the saved Evidence unchanged. Provider inspections continue to include the
-established `parameters.input_path` field.
+established `parameters.input_path` field. Named auxiliary inputs use
+`caller_input_paths`; each value is a string or an ordered array of strings
+for repeated selections. Consumers must accept both forms.
 
 Importing an Evidence bundle refreshes retained request and subject display metadata.
 It preserves cached analysis results, including observations for other targets.

@@ -352,5 +352,24 @@ describe.skipIf(process.platform === "win32")(
       expect(paths).not.toContain(join(home, ".notesy"));
       expect(paths).not.toContain(join(home, ".other.ini"));
     });
+
+    it("adds KDE's ~/.config/<name>rc, which the application may first write during the capture", async () => {
+      const installed = await fixture();
+      const { home } = installed;
+      await mkdir(join(home, ".config"), { recursive: true });
+      await writeFile(join(home, ".config/org.example.notesrc"), "x\n");
+
+      const inventory = await inventoryOf("org.example.notes", installed);
+
+      expect(inventory.state_directories).toEqual(
+        expect.arrayContaining([
+          { path: join(home, ".config/notesrc"), exists_at_start: false },
+          {
+            path: join(home, ".config/org.example.notesrc"),
+            exists_at_start: true,
+          },
+        ]),
+      );
+    });
   },
 );

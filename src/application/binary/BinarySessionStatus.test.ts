@@ -133,6 +133,8 @@ const candidate = (
   },
   selected: true,
   capabilities,
+  selectionSource: "auto-single-candidate",
+  rejections: [],
 });
 
 const project = async (
@@ -688,6 +690,24 @@ describe("binary session summary projection", () => {
         diagnostics: { architecture: "arm64" },
       },
       selected: false,
+      selectionSource: null,
+      rejections: [
+        {
+          providerId: providerB.id,
+          origin: "availability",
+          code: "not_configured",
+          reason: "PROVIDER_B_HOME is not set.",
+          remediation: "Set PROVIDER_B_HOME; see docs/provider-b.md.",
+          diagnostics: { checks: [{ name: "configuration", ok: false }] },
+        },
+        {
+          providerId: providerB.id,
+          origin: "target",
+          code: "architecture_unsupported",
+          reason: "Provider B cannot select this slice.",
+          diagnostics: { architecture: "arm64" },
+        },
+      ],
     };
     const pending: AnalysisProviderCandidateStatus = {
       ...candidate(providerA, selectedCapabilities),
