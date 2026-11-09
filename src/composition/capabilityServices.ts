@@ -75,6 +75,7 @@ import {
   createPeImportsService,
   createNativeExportsService,
   createPeResourcesService,
+  createWindowsShortcutService,
   createRecordedCrashService,
   createBinaryLayoutService,
   pwntoolsHostSupported,
@@ -358,6 +359,7 @@ const modules = {
   binaryHardening: service(() => createBinaryHardeningService()),
   peCertificates: service(() => createPeCertificatesService()),
   peImports: service(() => createPeImportsService()),
+  windowsShortcut: service(() => createWindowsShortcutService()),
   electronFuses: service(
     ({ options }) => options.electronFuses ?? createElectronFuseService(),
   ),

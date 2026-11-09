@@ -17,6 +17,7 @@ product pages. The VitePress documentation source is this `docs/` tree.
 - [Go binary build metadata](guides/native/go-binaries.md)
 - [Offline binary diagnostics](guides/native/binary-diagnostics.md)
 - [Recorded crash evidence](guides/native/recorded-crashes.md)
+- [Windows Shell Link shortcuts](guides/native/windows-shortcut.md)
 
 ## JavaScript and Electron
 
