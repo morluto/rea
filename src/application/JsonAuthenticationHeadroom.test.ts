@@ -21,7 +21,7 @@ it("stops a bounded representation scan before visiting an over-budget tail", ()
 });
 describe("JSON authentication headroom", () => {
   it("measures source IDs without first constructing their array", () => {
-    const values = ["ev_123", null, 'escaped"\n😀'];
+    const values = ["ev_123", null, 'escaped\"\n😀'];
     const empty = estimateJsonStorage({ evidence_links: [] });
     const incremental = values.reduce((total, value, index) => {
       const entry = estimateJsonArrayScalarEntry(value, index > 0);

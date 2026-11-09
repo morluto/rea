@@ -308,7 +308,7 @@ const execRoute = async (
   const [command, operation] = requested?.split(":") ?? [];
   if (
     command !== argv[4] ||
-    (operation !== undefined && !argv[5]?.includes(`"${operation}"`))
+    (operation !== undefined && !argv[5]?.includes(`\"${operation}\"`))
   )
     return answer;
   if (dropReplies === undefined) return answer;
