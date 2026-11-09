@@ -375,9 +375,9 @@ operation `describe_desktop_application_task` and predicate type
     GnuCash's `<gnc:count-data>`, or, for a counter the change added, how
     many of one tag, more than one, it holds as children, as FreeCAD's
     `<ObjectDeps Count="2">`, while a count a user enters, as an item's
-    `<count>`, is an edit, and attributes the elements of one archive entry only
-    gained while another entry holds the edit, as LibreOffice fills in
-    `styles.xml` on save, and, while a change outside them is the edit, any
+    `<count>`, is an edit, and the `loext:tab-stop-distance` attributes
+    LibreOffice fills in `styles.xml` while another entry holds the edit,
+    and, while a change outside them is the edit, any
     change in `styles.xml`, in a document's style containers or its master,
     handout and notes pages, or to an attribute naming an automatic style
     (`P1`, `MT1`) at both ends, as Impress after a reload wraps its master pages' fields in a new `MT1` style and

@@ -352,7 +352,12 @@ export class DesktopBuildCapture {
         { timeoutS: 720, signal },
       );
     } catch (cause: unknown) {
-      return err({ failure: adapterError(START, errorText(cause), cause) });
+      return err({
+        failure:
+          cause instanceof AnalysisError
+            ? cause
+            : adapterError(START, errorText(cause), cause),
+      });
     }
     if (answer.refused !== undefined)
       return err({
@@ -448,7 +453,11 @@ export class DesktopBuildCapture {
         more_changed_files: more ?? null,
       });
     } catch (cause: unknown) {
-      return err(adapterError(MARK, errorText(cause), cause));
+      return err(
+        cause instanceof AnalysisError
+          ? cause
+          : adapterError(MARK, errorText(cause), cause),
+      );
     }
   }
 
