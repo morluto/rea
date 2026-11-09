@@ -135,6 +135,7 @@ it.each([
   "if (settle) h = await h;",
   "h = await (await h);",
   "h = await transform(h);",
+  'const ready = await h; eval("h = ready");',
 ])("keeps a candidate FileHandle after receiver write %s", (write) => {
   const result = operations(`
     import { open } from "node:fs/promises";
@@ -188,4 +189,12 @@ it("preserves ambiguity through a write from an unknown loader", () => {
       builtinAuthority: "candidate",
     }),
   ]);
+});
+
+it("keeps an awaited handle release uncertain after an opaque receiver write", () => {
+  expect(
+    releases(
+      `import {open} from "node:fs/promises";let h=await open("input.txt");eval("h = other");h.close();`,
+    ),
+  ).toEqual([{ method: "close", linked: 1, resolution: "partial" }]);
 });

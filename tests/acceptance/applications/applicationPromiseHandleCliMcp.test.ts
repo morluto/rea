@@ -9,7 +9,7 @@ import { connectLocalToolsMcp } from "../../fixtures/localToolsMcp.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
 
-cliTest.for(["promise", "awaited", "reassigned"] as const)(
+cliTest.for(["promise", "awaited", "reassigned", "opaque"] as const)(
   "distinguishes the FileHandle carrier %s through CLI and MCP",
   async (mode, { cli }) => {
     const { client, call } = await connectLocalToolsMcp({
@@ -27,10 +27,14 @@ cliTest.for(["promise", "awaited", "reassigned"] as const)(
       validateFormats: false,
     }).compile(definition.inputSchema);
     const root = await createTestTempDirectory("rea-promise-handle-");
-    const source =
-      mode === "reassigned"
-        ? `import { open } from "node:fs/promises";\nlet handle = open("input.txt", "r");\nhandle = await handle;\nhandle.close();\n`
-        : `import { open } from "node:fs/promises";\nconst handle = ${mode === "awaited" ? "await " : ""}open("input.txt", "r");\nhandle.close();\n`;
+    const bodies = {
+      promise: 'const handle = open("input.txt", "r");',
+      awaited: 'const handle = await open("input.txt", "r");',
+      reassigned: 'let handle = open("input.txt", "r"); handle = await handle;',
+      opaque:
+        'let handle = open("input.txt", "r"); const ready = await handle; eval("handle = ready");',
+    };
+    const source = `import {open} from "node:fs/promises";\n${bodies[mode]}\nhandle.close();\n`;
     const sha = createHash("sha256").update(source).digest("hex");
     await Promise.all([
       writeFile(
@@ -68,7 +72,7 @@ cliTest.for(["promise", "awaited", "reassigned"] as const)(
       expect
         .soft(graph.relations.filter(({ relation }) => relation === "releases"))
         .toHaveLength(mode === "promise" ? 0 : 1);
-      if (mode === "reassigned") {
+      if (mode === "reassigned" || mode === "opaque") {
         const resource = graph.nodes.find(({ kind }) => kind === "resource");
         expect
           .soft(

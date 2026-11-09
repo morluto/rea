@@ -14,6 +14,7 @@ import {
   unwrapJavaScriptExpression,
 } from "./javascriptAstValues.js";
 import { isUnmodifiedGlobalReference } from "./javascriptSemanticAmbientWrites.js";
+import { semanticOpaqueBindingReadMayHaveChanged } from "./javascriptSemanticOpaqueEffects.js";
 import { semanticBindingAtRead } from "./javascriptSemanticMutationInitializers.js";
 import {
   resolveSemanticBindingState,
@@ -393,6 +394,11 @@ const collectReleases = (
     const candidates =
       binding === undefined ? [] : (byBinding.get(binding.bindingId) ?? []);
     if (binding === undefined || candidates.length === 0) return;
+    const opaqueReceiver = semanticOpaqueBindingReadMayHaveChanged(
+      binding,
+      member.object,
+      context.state,
+    );
     const receiver = candidates.some(({ resultIsPromise }) => resultIsPromise)
       ? semanticBindingAtRead(binding, member.object, context.state).binding
       : binding;
@@ -405,6 +411,7 @@ const collectReleases = (
       (acquisition) =>
         releaseMethodsFor(acquisition).includes(method) &&
         (!acquisition.resultIsPromise ||
+          opaqueReceiver ||
           mayReceiveFulfilledHandle(
             receiver,
             acquisition,
@@ -427,6 +434,7 @@ const collectReleases = (
         ? { builtinAuthority: "candidate" as const }
         : {}),
       resolution:
+        !opaqueReceiver &&
         linked.length === 1 &&
         holdsOnlyAcquisitions(binding, linked, context.state)
           ? "complete"
