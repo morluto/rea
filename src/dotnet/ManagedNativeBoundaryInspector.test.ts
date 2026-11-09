@@ -524,9 +524,15 @@ it.each([
   },
 );
 
-it.each([true, false])(
-  "publishes InternalCall consistently with body admission: zero RVA %s",
-  (zeroRva) => {
+it.each([
+  { zeroRva: true, status: "absent", interpretation: "not-file-backed" },
+  { zeroRva: false, status: "partial", interpretation: "native-or-runtime" },
+])(
+  "publishes an InternalCall method as a runtime-provided boundary consistently with body admission (zero RVA: $zeroRva)",
+  ({ zeroRva, status, interpretation }) => {
+    // MethodImplOptions.InternalCall: the runtime implements the body. Core
+    // library FCalls carry this bit with IL code type and no RVA. A malformed
+    // row can keep IL flags and a file-backed RVA, which the runtime rejects.
     const { members, boundaries } = inspectImplementationFixture({
       implFlags: 0x1000,
       zeroRva,
@@ -539,16 +545,16 @@ it.each([true, false])(
         managed_kind: "managed",
         pinvoke_declared: false,
         boundary_kind: "runtime-provided",
-        body_interpretation: zeroRva ? "not-file-backed" : "native-or-runtime",
+        body_interpretation: interpretation,
       },
     ]);
     expect(boundaries.summary.native_implementation_count).toBe(1);
-    expect(members.methods[0]?.body.status).toBe(
-      zeroRva ? "absent" : "partial",
-    );
-    expect(members.methods[0]?.body.il_sha256).toBeNull();
-    if (zeroRva) expect(members.methods[0]?.body.issue).toBeNull();
-    else expect(members.methods[0]?.body.issue).toMatch(/CIL/u);
+    expect(members.methods[0]?.body).toMatchObject({
+      status,
+      il_sha256: null,
+    });
+    if (!zeroRva) expect(members.methods[0]?.body.issue).toMatch(/CIL/u);
+    else expect(members.methods[0]?.body.issue).toBeNull();
   },
 );
 

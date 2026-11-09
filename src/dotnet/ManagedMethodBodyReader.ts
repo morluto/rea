@@ -132,7 +132,7 @@ export const methodBody = (
     context.implementation.internalCall;
   if (native) {
     const issue =
-      "CIL decoding is unavailable for native, runtime, unmanaged, or P/Invoke implementations";
+      "CIL decoding is unavailable for native, runtime, InternalCall, unmanaged, or P/Invoke implementations";
     return {
       body: emptyMethodBody(rva, "partial", issue),
       tokenInstructions: [],
