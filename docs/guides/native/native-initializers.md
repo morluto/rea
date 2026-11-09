@@ -169,3 +169,10 @@ not the runtime order: `DT_FINI` is listed before `fini_array`, while the
 dynamic linker runs `fini_array` first, and `.ctors` runs in reverse order. A
 missing tag or section is observed absence of that declaration, not proof that
 no code runs before `main`.
+
+Legacy Mach-O bind lookup examines at most 4096 candidate runs per query and
+at most twice the file byte count across the decoded image's queries. These
+resource allowances bound sparse, overlapping run descriptions without expanding
+them into per-address objects. Exhaustion leaves pointer applicability unresolved
+and the report incomplete. Bind-stream parsing and initializer batches yield so
+other requests and cancellation can run.

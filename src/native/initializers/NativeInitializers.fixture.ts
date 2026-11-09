@@ -613,3 +613,42 @@ export const machoX8664ObjectInitializers = (): Buffer => {
   strings.copy(file, 0x270);
   return file;
 };
+
+/** Sparse bind runs bracket the initializer slots without binding any of them. */
+export const machoSparseBindInitializers = (count: number): Buffer => {
+  const uleb = (value: number): Buffer => {
+    let n = BigInt(value);
+    const out: number[] = [];
+    do {
+      const byte = Number(n & 127n);
+      n >>= 7n;
+      out.push(byte | (n > 0n ? 128 : 0));
+    } while (n > 0n);
+    return Buffer.from(out);
+  };
+  const parts: Buffer[] = [Buffer.from([0x51, 0x40, 0x5f, 0x78, 0])];
+  for (let index = 0; index < count; index++)
+    parts.push(
+      Buffer.from([0x71]),
+      uleb(index * 8),
+      Buffer.from([0xc0]),
+      uleb(2),
+      uleb(count * 32 - 8),
+    );
+  parts.push(Buffer.from([0]));
+  const stream = Buffer.concat(parts);
+  const dataSize = count * 64;
+  const bindOffset = 0x4000 + dataSize;
+  const image = Buffer.alloc(bindOffset + stream.length);
+  machoArm64LegacyRebaseInitializers().copy(image);
+  image.writeBigUInt64LE(BigInt(dataSize), 184 + 32);
+  image.writeBigUInt64LE(BigInt(dataSize), 184 + 48);
+  image.writeBigUInt64LE(0x100004000n + BigInt(count * 8), 256 + 32);
+  image.writeBigUInt64LE(BigInt(count * 8), 256 + 40);
+  image.writeUInt32LE(0x4000 + count * 8, 256 + 48);
+  image.writeUInt32LE(0, 548);
+  image.writeUInt32LE(bindOffset, 552);
+  image.writeUInt32LE(stream.length, 556);
+  stream.copy(image, bindOffset);
+  return image;
+};

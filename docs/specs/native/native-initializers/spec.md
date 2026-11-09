@@ -52,6 +52,9 @@ slot's location, resolved target and how that target was obtained. The
   Mach-O `LC_SYMTAB` commands; 1048576 section relocation records across all
   relocation sections; 1024-byte names. Reaching a bound makes the report
   `incomplete` with a limitation.
+- Legacy Mach-O bind lookup permits at most 4096 candidate runs per query
+  and twice the file byte count across image queries. Exhaustion leaves
+  affected pointers unresolved; stream parsing and slot batches yield.
 - Limitations are bounded: at most 24 distinct image observations, repeated
   per-row reasons reported once with a count, and at most 40 lines in total.
 - Section lookups for slot and target addresses use an index built once per

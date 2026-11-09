@@ -614,11 +614,7 @@ const loadWrites = async (
       if (clobbered.has(slot)) continue;
       const exact = slot === write.address && write.width === word;
       const previous = writes.get(slot);
-      if (
-        exact &&
-        (previous === undefined ||
-          (previous.value !== null && previous.value === write.value))
-      ) {
+      if (exact && previous === undefined) {
         writes.set(slot, write);
         continue;
       }

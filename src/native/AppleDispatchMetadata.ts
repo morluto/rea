@@ -61,7 +61,7 @@ import {
 import { inspectObjcClassImportBindings } from "./AppleObjcClassImportBindings.js";
 
 /** Decode validated little-endian 64-bit Apple Objective-C metadata without loading target code. */
-function* decodeAppleDispatchMetadataSteps(
+export function* decodeAppleDispatchMetadataSteps(
   bytes: Buffer,
   maxRecords: number,
   provenance: { path: string; sha256: string },
@@ -289,17 +289,6 @@ function* decodeAppleDispatchMetadataSteps(
   });
   return objcSwiftMetadataSchema.parse(result);
 }
-
-/** Synchronous decoding for direct in-process callers. */
-export const decodeAppleDispatchMetadata = (
-  ...args: Parameters<typeof decodeAppleDispatchMetadataSteps>
-): ObjcSwiftMetadata => {
-  const steps = decodeAppleDispatchMetadataSteps(...args);
-  for (;;) {
-    const next = steps.next();
-    if (next.done) return next.value;
-  }
-};
 
 const OPERATION = "inspect_native_dispatch_metadata";
 const MEBIBYTE = 1024 * 1024;

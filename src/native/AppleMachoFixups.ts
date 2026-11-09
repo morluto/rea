@@ -124,7 +124,13 @@ interface BindRun {
     | Extract<DecodedPointer, { readonly kind: "unsupported" }>;
 }
 
+const BIND_QUERY_CANDIDATES = 4096;
+const BIND_QUERY_LIMITATION =
+  "Legacy bind lookup candidate allowance exhausted; pointer applicability is unknown";
+
 interface BindRunIndex {
+  remaining: number;
+  exhausted: boolean;
   readonly runs: readonly BindRun[];
   /** Largest final bind address among runs up to the same index. */
   readonly prefixEnd: readonly bigint[];
@@ -627,7 +633,9 @@ const chainedFixups = (
       )
         return {
           kind: "unsupported",
-          reason: "A legacy fixup partially overlaps the pointer slot",
+          reason: binds.index.exhausted
+            ? BIND_QUERY_LIMITATION
+            : "A legacy fixup partially overlaps the pointer slot",
         };
       if (legacyBind !== undefined && legacyRebase !== undefined)
         return {
@@ -1087,11 +1095,11 @@ const setBindRegister = (
 };
 
 /** Interpret one `LC_DYLD_INFO` bind opcode stream into address -> import. */
-const readBindStream = (
+function* readBindStreamSteps(
   image: FixupImage,
   range: FixupCommands["binds"][number],
   binds: BindRun[],
-): void => {
+): Generator<void, void, void> {
   const { bytes } = image;
   const end = range.offset + range.size;
   if (end > bytes.length)
@@ -1171,7 +1179,9 @@ const readBindStream = (
     // bind the current pointer slot again with DO_BIND_ADD_ADDR_ULEB.
     state.address = (state.address + count * stride) & 0xffffffffffffffffn;
   };
+  let opcodes = 0;
   while (cursor.at < end) {
+    if (++opcodes % 4096 === 0) yield;
     const byte = bytes[cursor.at++] ?? 0;
     if (setBindRegister(image, { cursor, end }, state, byte)) continue;
     switch (byte & 0xf0) {
@@ -1202,10 +1212,13 @@ const readBindStream = (
         throw new RangeError(`Unsupported bind opcode 0x${byte.toString(16)}`);
     }
   }
-};
+}
 
 /** Index immutable bind runs once; it lives with this image's decoded fixups. */
-const indexBindRuns = (runs: readonly BindRun[]): BindRunIndex => {
+const indexBindRuns = (
+  runs: readonly BindRun[],
+  fileBytes: number,
+): BindRunIndex => {
   const sorted = [...runs].sort((a, b) =>
     a.start < b.start ? -1 : a.start > b.start ? 1 : 0,
   );
@@ -1216,7 +1229,12 @@ const indexBindRuns = (runs: readonly BindRun[]): BindRunIndex => {
     if (end > last) last = end;
     prefixEnd.push(last);
   }
-  return { runs: sorted, prefixEnd };
+  return {
+    runs: sorted,
+    prefixEnd,
+    remaining: fileBytes * 2,
+    exhausted: false,
+  };
 };
 
 /** Visit runs with a bind start in the inclusive interval, without expanding runs. */
@@ -1232,7 +1250,18 @@ function* bindRunsIn(
     if (index.runs[middle]!.start <= high) left = middle + 1;
     else right = middle;
   }
+  let candidates = 0;
   for (let at = left - 1; at >= 0 && index.prefixEnd[at]! >= low; at -= 1) {
+    if (
+      index.exhausted ||
+      index.remaining === 0 ||
+      candidates === BIND_QUERY_CANDIDATES
+    ) {
+      index.exhausted = true;
+      return;
+    }
+    index.remaining--;
+    candidates++;
     const run = index.runs[at]!;
     const first =
       low <= run.start ? 0n : (low - run.start + run.stride - 1n) / run.stride;
@@ -1253,6 +1282,8 @@ const resolveLegacyBind = (
       };
     match = run;
   }
+  if (index.exhausted)
+    return { kind: "unsupported", reason: BIND_QUERY_LIMITATION };
   return match === undefined
     ? undefined
     : match.binding.kind === "unsupported"
@@ -1260,16 +1291,16 @@ const resolveLegacyBind = (
       : { kind: "bind", ...match.binding.value };
 };
 
-const parseLegacyBinds = (
+function* parseLegacyBindsSteps(
   image: FixupImage,
   streams: FixupCommands["binds"],
-): BindFacts => {
+): Generator<void, BindFacts, void> {
   const runs: BindRun[] = [];
   const failures: string[] = [];
   let decoded = 0;
   for (const stream of streams) {
     try {
-      readBindStream(image, stream, runs);
+      yield* readBindStreamSteps(image, stream, runs);
       decoded++;
     } catch (cause: unknown) {
       failures.push(
@@ -1297,14 +1328,14 @@ const parseLegacyBinds = (
     failures.push(run.binding.reason);
   }
   return {
-    index: indexBindRuns(runs),
+    index: indexBindRuns(runs, image.bytes.length),
     failures,
     issues,
     examined: streams.length,
     decoded,
     complete,
   };
-};
+}
 
 /** Query retained legacy facts; never expand bind runs or read scalar padding. */
 const hasUnresolvedLegacyBytes = (
@@ -1315,10 +1346,12 @@ const hasUnresolvedLegacyBytes = (
   size: number,
 ): boolean => {
   if (size <= 0) return false;
-  if (!rebases.complete || !binds.complete) return true;
+  if (!rebases.complete || !binds.complete || binds.index.exhausted)
+    return true;
   const first = address - 7n;
   const end = address + BigInt(size);
   for (const _run of bindRunsIn(binds.index, first, end - 1n)) return true;
+  if (binds.index.exhausted) return true;
   if (rebases.membership !== null)
     for (let slot = first; slot < end; slot++) {
       const state = legacyRebaseState(segments, rebases.membership, slot);
@@ -1349,6 +1382,7 @@ const hasPartialLegacyPointerWrite = (
     if (at !== address || (first + 1n < run.count && at + run.stride <= high))
       return true;
   }
+  if (binds.index.exhausted) return true;
   if (rebases.membership !== null)
     for (let at = low; at <= high; at += 1n) {
       const state = legacyRebaseState(segments, rebases.membership, at);
@@ -1369,7 +1403,7 @@ export function* parsePointerFixupsSteps(
 ): Generator<void, PointerFixups, void> {
   const image = { bytes, segments, dylibs: commands.dylibs, baseAddress };
   const rebases = yield* parseLegacyRebasesSteps(image, commands.rebases);
-  const binds = parseLegacyBinds(image, commands.binds);
+  const binds = yield* parseLegacyBindsSteps(image, commands.binds);
   if (commands.chained !== null) {
     return chainedFixups(image, commands.chained, rebases, binds);
   }
@@ -1428,7 +1462,9 @@ export function* parsePointerFixupsSteps(
       )
         return {
           kind: "unsupported",
-          reason: "A legacy fixup partially overlaps the pointer slot",
+          reason: binds.index.exhausted
+            ? BIND_QUERY_LIMITATION
+            : "A legacy fixup partially overlaps the pointer slot",
         };
       if (match !== undefined && rebase !== undefined)
         return {

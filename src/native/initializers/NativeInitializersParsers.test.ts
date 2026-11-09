@@ -33,6 +33,7 @@ import {
   machoArm64FatInitializers,
   machoArm64Initializers,
   machoArm64LegacyRebaseInitializers,
+  machoSparseBindInitializers,
   machoX8664ObjectInitializers,
 } from "./NativeInitializers.fixture.js";
 import {
@@ -1335,4 +1336,65 @@ describe("Initializer address mapping", () => {
       "1 symbol name(s) exceeded the 1024-byte name budget and were not used.",
     );
   });
+});
+
+it("keeps a slot touched by an overrun section relocation unresolved", async () => {
+  const bytes = elfRelocatableCtors();
+  bytes.writeBigUInt64LE(4n, 0x318);
+  bytes.writeBigUInt64LE(0x10n, 0x220);
+  const report = await readNativeInitializers(bytes, artifact(bytes), {
+    path: "/artifacts/image",
+    offset: 0,
+    limit: 64,
+  });
+  expect(report.coverage.status).toBe("incomplete");
+  expect(
+    report.entries.find((entry) => entry.kind === "init_array"),
+  ).toMatchObject({ resolution: "unresolved", value_va: null });
+});
+
+it("keeps identical repeated dynamic writes unresolved", async () => {
+  const bytes = elf64PieInitializers();
+  bytes.writeBigUInt64LE(0x200n, 0x480);
+  bytes.writeBigUInt64LE(8n, 0x488);
+  bytes.writeBigInt64LE(0x100n, 0x490);
+  const report = await readNativeInitializers(bytes, artifact(bytes), {
+    path: "/artifacts/image",
+    offset: 0,
+    limit: 64,
+  });
+  expect(
+    report.entries.find((entry) => entry.slot_va === "0x200"),
+  ).toMatchObject({ resolution: "unresolved", value_va: null });
+});
+
+it("retains unknown coverage when sparse bind lookups exhaust their allowance", async () => {
+  const bytes = machoSparseBindInitializers(4097);
+  const report = await readNativeInitializers(bytes, artifact(bytes), {
+    path: "/artifacts/image",
+    offset: 0,
+    limit: 1,
+  });
+  expect(report.coverage.status).toBe("incomplete");
+  expect(report.entries[0]).toMatchObject({
+    resolution: "unresolved",
+    value_va: null,
+  });
+  expect(report.limitations.join("\n")).toContain(
+    "bind lookup candidate allowance exhausted",
+  );
+});
+
+it("yields and observes cancellation during sparse bind analysis", async () => {
+  const bytes = machoSparseBindInitializers(2048);
+  const controller = new AbortController();
+  setImmediate(() => controller.abort());
+  await expect(
+    readNativeInitializers(
+      bytes,
+      artifact(bytes),
+      { path: "/artifacts/image", offset: 0, limit: 1 },
+      controller.signal,
+    ),
+  ).rejects.toThrow(ArtifactReaderFailure);
 });

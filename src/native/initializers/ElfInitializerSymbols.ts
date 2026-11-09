@@ -485,8 +485,19 @@ export const sectionRelocations = (
       // An unknown type is assumed to write a whole word, so it still marks what it may touch.
       const span = elfRelocationWidth(input.machine, parsed.value.type) ?? word;
       if (span === 0) continue;
-      const written = recordTarget(input, target, parsed.value.offset, span);
-      if (written === null) continue;
+      const written = recordTarget(input, target, parsed.value.offset, 1);
+      if (written === null) {
+        skip(section);
+        continue;
+      }
+      const fullWrite =
+        recordTarget(input, target, parsed.value.offset, span) !== null;
+      if (!fullWrite) {
+        complete = false;
+        input.notes.add(
+          "A section relocation extends beyond its target mapping; affected slots are unresolved.",
+        );
+      }
       for (
         let next = firstOverlap(wanted, written, word);
         next < wanted.length;
@@ -495,7 +506,12 @@ export const sectionRelocations = (
         const slot = wanted[next];
         if (slot === undefined || slot >= written + span) break;
         if (clobbered.has(slot)) continue;
-        if (slot === written && span === word && !found.has(slot)) {
+        if (
+          fullWrite &&
+          slot === written &&
+          span === word &&
+          !found.has(slot)
+        ) {
           const inplace =
             encoding === "rel"
               ? readPointerWord(input.bytes, slot, input.bits, input.little)

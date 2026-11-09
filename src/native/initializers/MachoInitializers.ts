@@ -423,6 +423,7 @@ const decodePointer = (
       definedName: null,
     };
   }
+  note(scan, decoded.reason);
   return {
     method: "unresolved",
     value: null,
@@ -639,14 +640,14 @@ const objectSlot = (
   return objectSymbol(walk, relocation.symbol, stored);
 };
 
-const slotsOf = (
+const slotsOf = async (
   walk: SectionWalk,
   section: Extract<ImageSection, { format: "macho" }>,
   kind: NativeInitializerKind,
   detail: string,
   offsets: boolean,
   entries: CollectedInitializer[],
-): boolean => {
+): Promise<boolean> => {
   const stride = offsets ? 4 : walk.image.bits / 8;
   if (!section.file_backed) {
     note(
@@ -667,7 +668,10 @@ const slotsOf = (
     : undefined;
   for (let index = 0; index < count; index += 1) {
     if (entries.length >= MAX_NATIVE_INITIALIZER_ENTRIES) return true;
-    if (entries.length % 1024 === 0) assertArtifactReadActive(walk.signal);
+    if (index % 128 === 0) {
+      await immediate();
+      assertArtifactReadActive(walk.signal);
+    }
     const slotVa = section.address + BigInt(index * stride);
     const slotFile = section.offset + index * stride;
     const stored = readWord(walk.scan.bytes, slotFile, stride, little);
@@ -845,7 +849,7 @@ export const readMachoInitializers = async (
   for (const spec of SECTIONS) {
     for (const section of container.sections) {
       if (section.format !== "macho" || section.type !== spec.type) continue;
-      stopped = slotsOf(
+      stopped = await slotsOf(
         walk,
         section,
         spec.kind,
