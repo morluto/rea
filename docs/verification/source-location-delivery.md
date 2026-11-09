@@ -22,7 +22,7 @@ each mapped point. Inputs are the pinned public Actual Budget Theme, main
 [artifact manifest](source-map-budgets-2026-11-09/artifacts.json). Acquisition used
 verified cached public bytes and the existing acquisition helper's explicitly
 incomplete analyst-manifest construction. No application or browser was executed.
-The independent [VLQ oracle](source-map-budgets-2026-11-09/oracle.py) supplies the
+The independent [VLQ oracle](https://github.com/morluto/rea/blob/main/docs/verification/source-map-budgets-2026-11-09/oracle.py) supplies the
 expected source declarations, positions, alternatives and content digests.
 
 Both variants use the same compiled runtime, files and portable driver:

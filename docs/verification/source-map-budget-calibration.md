@@ -18,7 +18,7 @@ manifest and map, runs the actual owned source codec, checks every equal-positio
 match and embedded-source digest, and creates and serializes complete Evidence.
 The acquisition manifest is constructed and explicitly incomplete: it establishes
 no browser capture, runtime execution or deployment authenticity. The independent
-[Python VLQ oracle](source-map-budgets-2026-11-09/oracle.py) derives mapping positions
+[Python VLQ oracle](https://github.com/morluto/rea/blob/main/docs/verification/source-map-budgets-2026-11-09/oracle.py) derives mapping positions
 and counts directly from artifact bytes, separately from REA's decoder.
 
 ## Admission-only measurements before compact delivery
