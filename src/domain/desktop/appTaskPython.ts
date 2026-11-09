@@ -26,7 +26,8 @@ def _same(actual, expected) -> bool:
     if isinstance(expected, bool) or isinstance(actual, bool):
         return isinstance(expected, bool) and isinstance(actual, bool) and actual == expected
     if isinstance(expected, (int, float)):
-        return isinstance(actual, (int, float)) and actual == expected
+        # JSON numbers are binary64 even when their spelling became a Python int.
+        return isinstance(actual, (int, float)) and float(actual) == float(expected)
     return type(actual) is type(expected) and actual == expected
 
 
@@ -105,7 +106,7 @@ def _number(value):
     if isinstance(value, bool):
         return None
     if isinstance(value, (int, float)):
-        return value
+        return float(value)
     if not isinstance(value, str) or not NUMERAL.fullmatch(value):
         return None
     number = float(value)
@@ -227,7 +228,7 @@ def _near(at: str, found, expected, tolerance):
     within = f"within {_shown(tolerance)} of {_shown(expected)}"
     if number is None:
         return False, f"{at} is {_shown(found)}, not a number"
-    if abs(number - expected) <= tolerance:
+    if abs(number - float(expected)) <= float(tolerance):
         return True, f"{at} is {_shown(found)}, {within}"
     return False, f"{at} is {_shown(found)}, not {within}"
 
