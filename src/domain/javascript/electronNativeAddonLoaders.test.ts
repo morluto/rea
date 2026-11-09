@@ -360,3 +360,64 @@ describe("native addon path proofs, mutation guards, and projection budgets", ()
     expect(expandedEstimate).toBeGreaterThan(fallbackEstimate);
   });
 });
+
+it("rejects global process loaders/axes after node:process alias patches and handles require.resolve search paths", () => {
+  const patchedGlobalDlopen = analyzeJavaScriptStaticSource(`
+    import p from "node:process";
+    p.dlopen = () => {};
+    const holder = { exports: {} };
+    process.dlopen(holder, "/tmp/addon.node");
+    globalThis.process.dlopen(holder, "/tmp/addon.node");
+  `);
+  expect(patchedGlobalDlopen.electron.native_addon_bindings).toEqual([]);
+
+  const escapedProcessDlopen = analyzeJavaScriptStaticSource(`
+    import p from "node:process";
+    mutate(p);
+    const holder = { exports: {} };
+    process.dlopen(holder, "/tmp/addon.node");
+  `);
+  expect(escapedProcessDlopen.electron.native_addon_bindings).toEqual([]);
+
+  const patchedGlobalAxis = analyzeJavaScriptStaticSource(`
+    import { createRequire } from "node:module";
+    import p from "node:process";
+    p.platform = "custom";
+    const req = createRequire(import.meta.url);
+    export const a = req(\`./\${process.platform}/addon.node\`);
+    export const b = req(\`./\${globalThis.process.platform}/addon.node\`);
+  `);
+  expect(patchedGlobalAxis.electron.native_addon_bindings).toEqual([]);
+  expect(
+    patchedGlobalAxis.analysis_coverage?.semantics.unknown_findings,
+  ).toBeGreaterThan(0);
+
+  const rebasedResolve = analyzeCommonJsStaticFixture(`
+    const path = require("node:path");
+    process.dlopen(
+      module,
+      require.resolve("./addon.node", { paths: [path.join(__dirname, "native")] }),
+    );
+  `);
+  expect(rebasedResolve.electron.native_addon_bindings).toMatchObject([
+    {
+      specifier: "./addon.node",
+      resolution: {
+        kind: "candidates",
+        resolution_context: "filesystem-expression",
+        candidates: ["native/addon.node"],
+      },
+    },
+  ]);
+
+  const unknownResolveOptions = analyzeCommonJsStaticFixture(`
+    process.dlopen(
+      module,
+      require.resolve("./addon.node", { paths: [globalThis.customSearch] }),
+    );
+  `);
+  expect(unknownResolveOptions.electron.native_addon_bindings).toEqual([]);
+  expect(
+    unknownResolveOptions.analysis_coverage?.semantics.unknown_findings,
+  ).toBeGreaterThan(0);
+});

@@ -468,3 +468,58 @@ it("indexes native addon inventory once across repeated helper resolutions", () 
   ).toEqual(["pkg/build/Release/extra.node"]);
   expect(fullIterations).toBe(1);
 });
+
+it("resolves dlopen require.resolve search paths without linking sibling addon.node", async () => {
+  const root = await createTestTempDirectory("rea-dlopen-resolve-paths-");
+  await writeFixtureFiles(root, {
+    "package.json": JSON.stringify({ name: "dlopen-paths", main: "main.cjs" }),
+    "addon.node": "SIBLING_WRONG_BINARY",
+    "native/addon.node": "SELECTED_NATIVE_BINARY",
+    "main.cjs": [
+      'const { ipcMain } = require("electron");',
+      'const path = require("node:path");',
+      "const selectedMod = { exports: {} };",
+      'process.dlopen(selectedMod, require.resolve("./addon.node", { paths: [path.join(__dirname, "native")] }));',
+      "const unknownMod = { exports: {} };",
+      'process.dlopen(unknownMod, require.resolve("./addon.node", { paths: [globalThis.dynamicDir] }));',
+      'ipcMain.handle("native:run", () => selectedMod.exports.exec());',
+    ].join("\n"),
+  });
+
+  const analyzed = await analyzeJavaScriptApplication({
+    input_path: root,
+    format: "directory",
+  });
+  if (!analyzed.ok) throw analyzed.error;
+  const parsed = javascriptApplicationAnalysisResultSchema.parse(
+    analyzed.value.normalized_result,
+  );
+  expect(parsed.summary).toMatchObject({
+    native_addon_bindings: 1,
+    resolved_native_addon_bindings: 1,
+  });
+
+  const traced = traceApplicationFeatureEvidence({
+    application: analyzed.value,
+    seed: { kind: "module", value: "main.cjs" },
+    direction: "outgoing",
+    native_observations: [
+      createSimulatedNativeEvidence(
+        join(root, "addon.node"),
+        "SIBLING_WRONG_BINARY",
+      ),
+      createSimulatedNativeEvidence(
+        join(root, "native/addon.node"),
+        "SELECTED_NATIVE_BINARY",
+      ),
+    ],
+  });
+  if (!traced.ok) throw traced.error;
+  expect(traced.value.result.native_handoffs).toMatchObject([
+    {
+      artifact_path: "native/addon.node",
+      status: "evidence-linked",
+      artifact_sha256: sha256Hex("SELECTED_NATIVE_BINARY"),
+    },
+  ]);
+});

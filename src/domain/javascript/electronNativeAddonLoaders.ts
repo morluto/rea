@@ -15,12 +15,10 @@ import {
 import { resolveElectronOptionObject } from "./electronStaticOptionObjects.js";
 import {
   builtinDataEffectCallablePath,
+  isUnmodifiedGlobalProcessMember,
   semanticProcessHostAxis,
 } from "./javascriptSemanticDataEffectHelpers.js";
-import {
-  isUnmodifiedGlobalReference,
-  isUnmodifiedImportMetaUrl,
-} from "./javascriptSemanticAmbientWrites.js";
+import { isUnmodifiedImportMetaUrl } from "./javascriptSemanticAmbientWrites.js";
 import {
   isUnshadowedGlobal,
   semanticEffectTiming,
@@ -213,6 +211,64 @@ export const resolveDlopenCall = (
   };
 };
 
+export type RequireResolveSearchOptions =
+  | { readonly kind: "default" }
+  | {
+      readonly kind: "directory";
+      readonly directory: string;
+      readonly asarUnpacked: boolean;
+    }
+  | { readonly kind: "unresolved" };
+
+/** Resolve `require.resolve(request, options)` search paths when `options` is provided. */
+export const resolveRequireResolveSearchOptions = (
+  callArguments: readonly t.CallExpression["arguments"][number][] | undefined,
+  context: JavaScriptFindingContext,
+  bindings: JavaScriptSemanticAnalysisState,
+  site: t.Node,
+  loader: string,
+  sourceRelativePath: string | undefined,
+): RequireResolveSearchOptions => {
+  const args = callArguments ?? [];
+  if (args.length < 2) return { kind: "default" };
+  if (args.length !== 2 || loader === "factory-loader")
+    return { kind: "unresolved" };
+  const options = argumentNode(args[1]);
+  if (options === undefined || !t.isObjectExpression(options))
+    return { kind: "unresolved" };
+  if (options.properties.length === 0) return { kind: "default" };
+  if (options.properties.length !== 1) return { kind: "unresolved" };
+  const property = options.properties[0];
+  if (
+    !t.isObjectProperty(property) ||
+    semanticStaticPropertyKey(property.key, property.computed) !== "paths" ||
+    !t.isArrayExpression(property.value) ||
+    property.value.elements.length !== 1
+  )
+    return { kind: "unresolved" };
+  const directoryNode = property.value.elements[0];
+  if (directoryNode == null || t.isSpreadElement(directoryNode))
+    return { kind: "unresolved" };
+  if (
+    sourceRelativePath === undefined &&
+    context.pathIntrinsics?.(directoryNode, "source-directory") === true
+  )
+    return { kind: "default" };
+  const anchored = resolveSourceAnchoredDirectory(
+    directoryNode,
+    context,
+    bindings,
+    site,
+  );
+  return anchored === undefined
+    ? { kind: "unresolved" }
+    : {
+        kind: "directory",
+        directory: anchored.directory,
+        asarUnpacked: anchored.asarUnpacked,
+      };
+};
+
 const resolveDlopenRequireResolve = (
   filenameExpr: t.CallExpression | t.OptionalCallExpression,
   kind: "require" | "re-export",
@@ -240,10 +296,19 @@ const resolveDlopenRequireResolve = (
           timing !== "after" &&
           (effectKind === "member-write" || effectKind === "escape"),
       );
+  const searchOptions = resolveRequireResolveSearchOptions(
+    resolvedCall.arguments,
+    context,
+    bindings,
+    filenameExpr,
+    resolvedCall.loader,
+    resolvedCall.sourceRelativePath,
+  );
   if (
     resolveMemberChanged ||
     resolvedCall.loader === "unknown" ||
-    !resolvedCall.sourceRelative
+    !resolvedCall.sourceRelative ||
+    searchOptions.kind === "unresolved"
   ) {
     context.accumulator.unknownFindings += 1;
     return undefined;
@@ -253,9 +318,52 @@ const resolveDlopenRequireResolve = (
     resolveArg === undefined
       ? undefined
       : expandNativePathTemplate(resolveArg, context, bindings, filenameExpr);
-  if (expanded === undefined) {
+  if (
+    expanded === undefined ||
+    (expanded.base === "source-directory" &&
+      resolvedCall.loader === "factory-loader")
+  ) {
     context.accumulator.unknownFindings += 1;
     return undefined;
+  }
+  if (searchOptions.kind === "directory") {
+    if (expanded.base === "source-directory")
+      return {
+        specifier: expanded.display,
+        kind,
+        access,
+        resolution: {
+          kind: "candidates",
+          resolution_context: "filesystem-expression",
+          candidates: expanded.candidates,
+          ...(expanded.asarUnpacked ? { asar_unpacked: true } : {}),
+        },
+      };
+    if (
+      !expanded.candidates.every(
+        (candidate) =>
+          candidate.startsWith("./") || candidate.startsWith("../"),
+      )
+    ) {
+      context.accumulator.unknownFindings += 1;
+      return undefined;
+    }
+    const unpacked = Boolean(
+      expanded.asarUnpacked || searchOptions.asarUnpacked,
+    );
+    return {
+      specifier: expanded.display,
+      kind,
+      access,
+      resolution: {
+        kind: "candidates",
+        resolution_context: "filesystem-expression",
+        candidates: expanded.candidates.map((candidate) =>
+          posix.join(searchOptions.directory, candidate),
+        ),
+        ...(unpacked ? { asar_unpacked: true } : {}),
+      },
+    };
   }
   return {
     specifier: expanded.display,
@@ -675,8 +783,7 @@ const isProvenProcessDlopen = (
   callee: t.Node,
   bindings: JavaScriptSemanticAnalysisState,
 ): boolean => {
-  if (isUnmodifiedGlobalReference(callee, bindings, ["process", "dlopen"]))
-    return true;
+  if (isUnmodifiedGlobalProcessMember(callee, bindings, "dlopen")) return true;
   if (bindings.ambientWrites.covers(["global", "process", "dlopen"]))
     return false;
   const path = builtinDataEffectCallablePath(callee, bindings, [
@@ -784,7 +891,7 @@ const evaluatePathTemplateFact = (
       pieces: [{ kind: "text", value: "." }],
       base: "source-directory",
     };
-  const axis = hostAxisAt(node, bindings);
+  const axis = hostAxisAt(node, bindings, site);
   if (axis !== undefined)
     return { pieces: [{ kind: "host", axis }], base: "literal-path" };
   if (t.isIdentifier(node))
@@ -1292,14 +1399,15 @@ const compactPathPieces = (pieces: readonly PathPiece[]): PathPiece[] => {
 const hostAxisAt = (
   raw: t.Node,
   bindings: JavaScriptSemanticAnalysisState,
+  site: t.Node = raw,
   selectedProjection: readonly string[] = [],
   visited: ReadonlySet<string> = new Set(),
 ): HostAxis | undefined => {
   const node = unwrapJavaScriptExpression(raw).node;
   if (selectedProjection.length === 0) {
-    if (isUnmodifiedGlobalReference(node, bindings, ["process", "platform"]))
+    if (isUnmodifiedGlobalProcessMember(node, bindings, "platform", site))
       return "platform";
-    if (isUnmodifiedGlobalReference(node, bindings, ["process", "arch"]))
+    if (isUnmodifiedGlobalProcessMember(node, bindings, "arch", site))
       return "arch";
     if (t.isCallExpression(node) && node.arguments.length === 0) {
       const osPath = builtinDataEffectCallablePath(node.callee, bindings, [
@@ -1319,6 +1427,7 @@ const hostAxisAt = (
       : hostAxisAt(
           node.object,
           bindings,
+          site,
           [key, ...selectedProjection],
           visited,
         );
@@ -1327,6 +1436,7 @@ const hostAxisAt = (
     node,
     bindings,
     selectedProjection,
+    selectedProjection.length === 0 ? node : site,
   );
   if (processAxis !== undefined) return processAxis;
   if (!t.isIdentifier(node)) return undefined;
@@ -1347,6 +1457,7 @@ const hostAxisAt = (
   return hostAxisAt(
     stable.node,
     bindings,
+    selectedProjection.length === 0 ? node : site,
     [...stable.projection, ...selectedProjection],
     new Set([...visited, binding.bindingId]),
   );

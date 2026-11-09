@@ -22,6 +22,7 @@ import {
 } from "./javascriptSemanticPropertyPaths.js";
 
 import { semanticCallableIdForNode } from "./javascriptSemanticProjection.js";
+import { isUnmodifiedGlobalReference } from "./javascriptSemanticGlobalReference.js";
 import { semanticTopLevelEffectFollowsCapture } from "./javascriptSemanticMutationInitializers.js";
 import { createSemanticCallableIdStack } from "./javascriptSemanticCallableStack.js";
 import {
@@ -615,7 +616,7 @@ const BUILTIN_RECEIVER_METHODS: Readonly<Record<string, ReadonlySet<string>>> =
     http: new Set(["request", "get"]),
     https: new Set(["request", "get"]),
     child_process: new Set(["spawn", "exec", "execFile", "fork"]),
-    process: new Set(["cwd", "uptime", "hrtime", "nextTick"]),
+    process: new Set(["cwd", "uptime", "hrtime", "nextTick", "dlopen"]),
     timers: new Set([
       "setTimeout",
       "setInterval",
@@ -881,11 +882,22 @@ export const isSemanticProcessObject = (
   );
 };
 
+/** Check global `process.<member>` / `globalThis.process.<member>` against both ambient and `node:process` module effects. */
+export const isUnmodifiedGlobalProcessMember = (
+  node: t.Node,
+  state: JavaScriptSemanticAnalysisState,
+  member: string,
+  capture: t.Node = node,
+): boolean =>
+  isUnmodifiedGlobalReference(node, state, ["process", member]) &&
+  !requiredModuleChanged("process", [member], capture, state, true);
+
 /** Resolve an unmodified host axis (`platform` or `arch`) from `process` or `node:process`. */
 export const semanticProcessHostAxis = (
   node: t.Node,
   state: JavaScriptSemanticAnalysisState,
   selectedPath: readonly string[] = [],
+  capture: t.Node = node,
 ): "platform" | "arch" | undefined => {
   const required = semanticRequireOrigin(node, state);
   if (required !== undefined) {
@@ -895,7 +907,13 @@ export const semanticProcessHostAxis = (
       fullPath.length === 1 &&
       (fullPath[0] === "platform" || fullPath[0] === "arch") &&
       !state.ambientWrites.covers(["global", "process", fullPath[0]]) &&
-      !requiredModuleChanged(required.origin.specifier, fullPath, node, state)
+      !requiredModuleChanged(
+        required.origin.specifier,
+        fullPath,
+        capture,
+        state,
+        true,
+      )
       ? fullPath[0]
       : undefined;
   }
@@ -906,7 +924,7 @@ export const semanticProcessHostAxis = (
       (selectedPath[0] === "platform" || selectedPath[0] === "arch") &&
       !state.ambientWrites.covers(["global", "process", selectedPath[0]]) &&
       semanticGlobalProcessOrigin(node, state) !== undefined &&
-      !requiredModuleChanged("process", selectedPath, node, state)
+      !requiredModuleChanged("process", selectedPath, capture, state, true)
       ? selectedPath[0]
       : undefined;
   }
@@ -914,8 +932,9 @@ export const semanticProcessHostAxis = (
     binding,
     state,
     ["process", "node:process"],
-    node,
+    capture,
     selectedPath,
+    true,
   );
   const fullPath =
     resolved === null ? undefined : [...resolved, ...selectedPath];

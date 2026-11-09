@@ -1,8 +1,10 @@
+import { posix } from "node:path";
 import {
   isBrowserNetworkRequest,
   isFetchCall,
 } from "./javascriptNetworkRequests.js";
 import * as t from "@babel/types";
+import { resolveRequireResolveSearchOptions } from "./electronNativeAddonLoaders.js";
 import { isIntrinsicMapLookup } from "./javascriptSemanticMapOperations.js";
 import { traverseJavaScriptValueAst } from "./javascriptSemanticTraversal.js";
 import { semanticIdentifierRole } from "./javascriptSemanticProjection.js";
@@ -292,10 +294,22 @@ const requireCallSpecifier = (
     context.accumulator.factoryRequireBindingIds,
   );
   if (call === undefined || call.loader === "local") return null;
+  const searchOptions =
+    call.operation === "resolve"
+      ? resolveRequireResolveSearchOptions(
+          call.arguments,
+          context,
+          bindings,
+          node,
+          call.loader,
+          call.sourceRelativePath,
+        )
+      : ({ kind: "default" } as const);
   if (
     resolveMemberChanged ||
     call.loader === "unknown" ||
-    !call.sourceRelative
+    !call.sourceRelative ||
+    searchOptions.kind === "unresolved"
   ) {
     context.accumulator.unknownFindings += 1;
     return {
@@ -303,9 +317,33 @@ const requireCallSpecifier = (
       operation: resolveMemberChanged ? "load" : call.operation,
     };
   }
+  const specifier = argumentValue(call.arguments?.[0]);
+  if (searchOptions.kind === "directory") {
+    if (
+      searchOptions.asarUnpacked ||
+      specifier === undefined ||
+      (!specifier.startsWith("./") && !specifier.startsWith("../"))
+    ) {
+      context.accumulator.unknownFindings += 1;
+      return { specifier: undefined, operation: call.operation };
+    }
+    return {
+      operation: call.operation,
+      specifier,
+      resolutionBasePath: posix.join(
+        searchOptions.directory,
+        "__resolve_base__",
+      ),
+      ...(call.loader === "commonjs-loader" ||
+      call.loader === "factory-loader" ||
+      call.loader === "create-require"
+        ? { loader: call.loader }
+        : {}),
+    };
+  }
   return {
     operation: call.operation,
-    specifier: argumentValue(call.arguments?.[0]),
+    specifier,
     ...(call.sourceRelativePath === undefined
       ? {}
       : { resolutionBasePath: call.sourceRelativePath }),
