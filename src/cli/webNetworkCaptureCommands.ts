@@ -111,6 +111,12 @@ export const registerWebNetworkCaptureCommands = (
                       : { capture_timeout_ms: options.captureTimeoutMs }),
                   },
                   { signal },
+                  {
+                    capture: args.capturePath,
+                    ...(options.protobufSchema === undefined
+                      ? {}
+                      : { descriptor: options.protobufSchema }),
+                  },
                 ),
               service,
               providerId: "web-network-capture",

@@ -378,6 +378,7 @@ const runCapture = async (
   if (signal?.aborted === true && session.end_reason !== "cancelled")
     throw new AnalysisCancelledError(DESKTOP_OPERATION, {
       cause: signal.reason,
+      partialObservation: evidence,
     });
   return evidence;
 };
