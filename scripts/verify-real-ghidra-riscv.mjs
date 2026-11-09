@@ -142,7 +142,7 @@ const verifyUnmodelledRefusal = async () => {
     "rea_riscv_abi_half (returns _Float16, _Float16)",
     "rea_riscv_abi_empties (returns rea_riscv_abi_empties, rea_riscv_abi_empties)",
     "rea_riscv_abi_flexible (rea_riscv_abi_flexible)",
-    "rea_riscv_abi_padded (rea_riscv_abi_padded)",
+    "rea_riscv_abi_padded (rea_riscv_abi_padded, rea_riscv_abi_unnamed)",
     "rea_riscv_abi_vector (rea_riscv_abi_lanes)",
     "rea_riscv_abi_complex (complex, rea_riscv_abi_wrapped, rea_riscv_abi_aligned)",
     "function-pointer type _func_void_rea_riscv_abi_spread_int (rea_riscv_abi_spread)",

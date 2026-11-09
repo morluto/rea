@@ -433,6 +433,11 @@ public final class ReaGhidraRiscvCallingConvention extends GhidraScript {
     DataType value = strip(type);
     if (!(value instanceof Union) && !(value instanceof Array) && flatten(type, fields)) {
       long floats = fields.stream().filter(Boolean::booleanValue).count();
+      // DWARF omits unnamed bit-fields of nonzero width, which the psABI still counts:
+      // `struct { float f; unsigned : 1; }` takes fa0 and a0, yet Ghidra sees one float.
+      // Bytes that natural alignment does not explain may hold one, so a float there has no
+      // known class. An unnamed bit-field inside a named one's storage unit leaves no trace.
+      if (floats > 0 && unexplainedBytes(type)) return Kind.UNKNOWN;
       if (fields.size() == 1 && floats == 1) return Kind.FLOAT;
       if (fields.size() == 2 && floats == 2) return Kind.FLOAT_PAIR;
       if (fields.size() == 2 && floats == 1) return Kind.FLOAT_INTEGER;
@@ -533,6 +538,46 @@ public final class ReaGhidraRiscvCallingConvention extends GhidraScript {
         || type.getLength() > 4) return false;
     fields.add(false);
     return true;
+  }
+
+  /**
+   * Whether a structure, or one nested in it, has bytes that neither a member nor the padding
+   * that natural alignment adds before a member or at the end accounts for. Over-alignment, such
+   * as `__attribute__((aligned(8)))`, counts too: it cannot be told apart from an omitted field.
+   */
+  private static boolean unexplainedBytes(DataType type) {
+    type = strip(type);
+    if (type instanceof Array array) return unexplainedBytes(array.getDataType());
+    if (!(type instanceof Structure structure)) return false;
+    long end = 0;
+    long alignment = 1;
+    for (DataTypeComponent component : structure.getDefinedComponents()) {
+      if (component.getLength() == 0) continue;
+      long member = naturalAlignment(component.getDataType());
+      if (component.getOffset() > alignUp(end, member)) return true;
+      end = Math.max(end, (long) component.getOffset() + component.getLength());
+      alignment = Math.max(alignment, member);
+      if (unexplainedBytes(component.getDataType())) return true;
+    }
+    return structure.getLength() > alignUp(end, alignment);
+  }
+
+  /** C's alignment for a type, worked out from its members because Ghidra's DWARF import does not pack structures. */
+  private static long naturalAlignment(DataType type) {
+    type = strip(type);
+    if (type instanceof BitFieldDataType bitField) return naturalAlignment(bitField.getBaseDataType());
+    if (type instanceof Array array) return naturalAlignment(array.getDataType());
+    if (type instanceof Structure structure) {
+      long alignment = 1;
+      for (DataTypeComponent component : structure.getDefinedComponents())
+        alignment = Math.max(alignment, naturalAlignment(component.getDataType()));
+      return alignment;
+    }
+    return Math.max(1, type.getAlignment());
+  }
+
+  private static long alignUp(long value, long alignment) {
+    return (value + alignment - 1) / alignment * alignment;
   }
 
   private static DataType strip(DataType type) {

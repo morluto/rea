@@ -289,6 +289,13 @@ passes a type the prototype misplaces:
   uses these for an encoding it does not map, so the policy cannot know the
   value's class. `float _Complex`, which takes two float registers, arrives as a
   `qword`. The stock double-float lanes show it as an integer.
+- a value with a float whose structure has bytes that no member and no natural
+  alignment padding account for. DWARF omits an unnamed bit-field of nonzero
+  width, which the psABI still counts: Clang 19 passes
+  `struct { float f; unsigned : 1; }` in `fa0` and `a0`, and a following `int`
+  in `a1`, while Ghidra sees one float in 8 bytes. An over-aligned structure of
+  up to 8 bytes looks the same and is refused too. An unnamed bit-field inside
+  a named bit-field's storage unit leaves no trace, so the check cannot see it.
 
 A bit-field counts by its width, not its declared type, so a `float` beside
 `unsigned long long b : 1` takes a float and an integer register. The check
@@ -399,7 +406,8 @@ assembly sources:
   function that passes and returns a three-field structure, a `_Float16`
   function, a function-pointer type that passes the three-field structure,
   functions that pass a structure with a flexible array member, at the end of
-  the structure and inside its padding, a function that passes a GNU vector, a
+  the structure and inside its padding, the second beside a structure whose
+  unnamed bit-field DWARF omits, a function that passes a GNU vector, a
   function that passes `float _Complex` alone, in a structure and in an over-aligned structure, and, from `riscv-float-abi-empty.cpp`, a function that passes a structure with an
   array of one empty class. It also adds functions that pass a structure of one
   `float[2]`, a `float` beside a one-bit field of a 64-bit type, and two

@@ -191,8 +191,18 @@ struct rea_riscv_abi_padded {
     char tail[];
 };
 
-__attribute__((noinline)) float rea_riscv_abi_padded(struct rea_riscv_abi_padded value)
+/* DWARF omits the unnamed bit-field, but compilers count it: alone, the float
+ * would take fa0, the bit-field's word a0 and a following int a1. Ghidra sees
+ * one float in 8 bytes. It shares this function, so the refusal still names
+ * every misplaced signature. */
+struct rea_riscv_abi_unnamed {
+    float value;
+    unsigned : 1;
+};
+
+__attribute__((noinline)) float rea_riscv_abi_padded(struct rea_riscv_abi_padded value, struct rea_riscv_abi_unnamed unnamed)
 {
+    rea_riscv_abi_sink = *(volatile unsigned int *)&unnamed;
     return value.value;
 }
 
