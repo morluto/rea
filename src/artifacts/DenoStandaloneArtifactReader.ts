@@ -36,7 +36,7 @@ import {
   type DenoParsedSection,
   type DenoRemoteModule,
 } from "./deno/DenoSectionLayout.js";
-import { locateDenoStandalone } from "./deno/DenoStandaloneLocation.js";
+import { ArtifactEmbeddedFormatProbes } from "./ArtifactEmbeddedFormatProbes.js";
 import {
   DENO_CHILD_SUFFIXES,
   DENO_PATH_LENGTH_LIMITATION,
@@ -76,7 +76,7 @@ export class DenoStandaloneArtifactReader implements ArtifactReader {
   #closing = false;
 
   constructor(
-    path: string,
+    private readonly path: string,
     admitted?: StableRegularFileDescriptor | DenoStandaloneAdmission,
   ) {
     if (admitted !== undefined && "kind" in admitted) {
@@ -216,7 +216,11 @@ export class DenoStandaloneArtifactReader implements ArtifactReader {
     const source = await this.#source.readSelectedPath(signal);
     const probe =
       this.#admission?.probe ??
-      (await locateDenoStandalone(source.handle, source.initial.size, signal));
+      (await new ArtifactEmbeddedFormatProbes(
+        this.path,
+        source,
+        signal,
+      ).denoStandalone());
     if (probe.status === "absent")
       throw denoFormatFailure("no Deno compile section");
     if ("failure" in probe) throw probe.failure;

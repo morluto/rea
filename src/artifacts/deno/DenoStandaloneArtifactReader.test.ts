@@ -17,6 +17,7 @@ import { scanCanonicalArtifactInventory } from "../../../tests/fixtures/artifact
 import { artifactFormatDescriptor } from "../artifactFormats.js";
 import { ArtifactPathRegistry } from "../ArtifactPaths.js";
 import { DenoStandaloneArtifactReader } from "../DenoStandaloneArtifactReader.js";
+import { cArchiveExecutable } from "../pyinstaller/CArchive.fixture.js";
 import { DENO_SECTION_MAGIC } from "./DenoSectionLayout.js";
 import {
   locateDenoStandalone,
@@ -1432,6 +1433,41 @@ it("fails closed when the d3n0l4nd section is zero-fill", async () => {
       },
     });
   }
+});
+
+it("keeps a Deno helper inside a PyInstaller archive from claiming the outer image", async () => {
+  const archive = cArchiveExecutable({
+    layout: "2.1",
+    pythonVersion: 311,
+    members: [
+      {
+        name: "helper",
+        typeCode: "b",
+        payload: denoIntelTrailer(),
+        compress: false,
+      },
+    ],
+  });
+  const image = Buffer.concat([
+    denoMachO([], { architecture: "x64" }),
+    archive.subarray(64),
+  ]);
+  const result = await inventoryOf("outer", image);
+  expect(result.manifest.root_format).toBe("pyinstaller");
+});
+
+it("rejects a Deno section outside its segment virtual extent", async () => {
+  const image = denoMachO(buildDenoSection());
+  image.writeBigUInt64LE(1n, 32 + 72 + 32);
+  await expect(
+    locateDenoStandalone(bytesHandle(image), image.length),
+  ).resolves.toMatchObject({
+    status: "present",
+    failure: {
+      reason: "format",
+      message: expect.stringContaining("virtual extent"),
+    },
+  });
 });
 
 it("fails closed when the d3n0l4nd section exceeds its segment's file extent", async () => {

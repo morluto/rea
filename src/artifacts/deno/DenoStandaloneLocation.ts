@@ -113,6 +113,9 @@ interface Carrier {
   readonly handle: FileHandle;
   readonly fileSize: number;
   readonly signal: AbortSignal | undefined;
+  readonly archive:
+    | { readonly start: number; readonly end: number }
+    | undefined;
 }
 
 /**
@@ -130,9 +133,10 @@ export const locateDenoStandalone = async (
   handle: FileHandle,
   fileSize: number,
   signal?: AbortSignal,
+  archive?: { readonly start: number; readonly end: number },
 ): Promise<DenoStandaloneProbe> => {
   try {
-    const location = await findDenoSection(handle, fileSize, signal);
+    const location = await findDenoSection(handle, fileSize, signal, archive);
     return location === undefined
       ? { status: "absent" }
       : { status: "present", location };
@@ -150,9 +154,10 @@ const findDenoSection = async (
   handle: FileHandle,
   fileSize: number,
   signal?: AbortSignal,
+  archive?: { readonly start: number; readonly end: number },
 ): Promise<DenoStandaloneLocation | undefined> => {
   if (!Number.isSafeInteger(fileSize) || fileSize < 4) return undefined;
-  const carrier: Carrier = { handle, fileSize, signal };
+  const carrier: Carrier = { handle, fileSize, signal, archive };
   const prefix = await readExact(carrier, 0, Math.min(fileSize, 64));
   if (prefix === undefined || prefix.length < 4) return undefined;
   const thin = readMachoHeaderPrefixFacts(prefix).format;
@@ -231,6 +236,11 @@ const locateMachOSlice = async (
   if (identityIssue !== null) return { found: [], unread: identityIssue };
   const found: SectionRange[] = [];
   const owned: OwnedRange[] = [];
+  if (carrier.archive !== undefined)
+    owned.push({
+      start: BigInt(carrier.archive.start),
+      end: BigInt(carrier.archive.end),
+    });
   let confirmed = false;
   // A __SUI segment is libsui's, but only a d3n0l4nd section in it makes the
   // image Deno's. Damage, including a segment that cannot be parsed, is kept
@@ -332,11 +342,17 @@ const namesDenoSection = (body: Uint8Array, at: number): boolean =>
  */
 const denoSectionRange = (
   record: {
+    readonly address: bigint;
     readonly size: bigint;
     readonly offset: number;
     readonly flags: number;
   },
-  segment: { readonly fileOffset: bigint; readonly fileSize: bigint },
+  segment: {
+    readonly fileOffset: bigint;
+    readonly fileSize: bigint;
+    readonly address: bigint;
+    readonly memorySize: bigint;
+  },
   base: number,
   sliceSize: number,
   fileSize: number,
@@ -346,6 +362,15 @@ const denoSectionRange = (
   if (record.size > BigInt(Number.MAX_SAFE_INTEGER))
     throw denoCarrierFailure(
       "Mach-O d3n0l4nd section size is not a safe integer",
+    );
+  const virtualDelta = record.address - segment.address;
+  if (
+    virtualDelta < 0n ||
+    virtualDelta > segment.memorySize ||
+    record.size > segment.memorySize - virtualDelta
+  )
+    throw denoCarrierFailure(
+      "Mach-O d3n0l4nd section exceeds its segment's virtual extent",
     );
   const segmentDelta = BigInt(record.offset) - segment.fileOffset;
   if (
