@@ -1002,6 +1002,29 @@ describe("Mach-O fixup sources", () => {
     ).rejects.toThrow(ArtifactReaderFailure);
   });
 
+  it("keeps both initializer slots unresolved when a legacy bind crosses their boundary", async () => {
+    const bytes = machoArm64LegacyRebaseInitializers();
+    const bind = Buffer.from([
+      0x40,
+      ...Buffer.from("_foo\0"),
+      0x51,
+      0x71,
+      0x04,
+      0x90,
+      0x00,
+    ]);
+    bytes.writeBigUInt64LE(16n, 256 + 40);
+    bytes.writeUInt32LE(0, 548);
+    bytes.writeUInt32LE(0x3300, 552);
+    bytes.writeUInt32LE(bind.length, 556);
+    bind.copy(bytes, 0x3300);
+    const report = await read(bytes);
+    expect(report.entries.slice(0, 2).map((entry) => entry.resolution)).toEqual(
+      ["unresolved", "unresolved"],
+    );
+    expect(report.status).toBe("incomplete");
+  });
+
   it("does not resolve an initializer from a section offset that disagrees with its load mapping", async () => {
     const bytes = machoArm64LegacyRebaseInitializers();
     bytes.writeUInt32LE(0x4030, 256 + 48);

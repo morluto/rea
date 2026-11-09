@@ -124,8 +124,14 @@ interface BindRun {
     | Extract<DecodedPointer, { readonly kind: "unsupported" }>;
 }
 
-interface BindFacts {
+interface BindRunIndex {
   readonly runs: readonly BindRun[];
+  /** Largest final bind address among runs up to the same index. */
+  readonly prefixEnd: readonly bigint[];
+}
+
+interface BindFacts {
+  readonly index: BindRunIndex;
   readonly failures: readonly string[];
   readonly issues: readonly DecodeIssue[];
   readonly examined: number;
@@ -605,7 +611,7 @@ const chainedFixups = (
               raw,
               reason: `LC_DYLD_INFO pointer-fixup applicability was not completely decoded: ${applicabilityFailures.join("; ")}`,
             };
-      const legacyBind = resolveLegacyBind(binds.runs, address);
+      const legacyBind = resolveLegacyBind(binds.index, address);
       const legacyRebase = resolveLegacyRebase(
         segments,
         rebases.membership,
@@ -613,6 +619,16 @@ const chainedFixups = (
         raw,
       );
       if (legacyBind?.kind === "unsupported") return legacyBind;
+      if (legacyRebase?.kind === "unsupported") return legacyRebase;
+      if (
+        rebases.complete &&
+        binds.complete &&
+        hasPartialLegacyPointerWrite(segments, rebases, binds, address)
+      )
+        return {
+          kind: "unsupported",
+          reason: "A legacy fixup partially overlaps the pointer slot",
+        };
       if (legacyBind !== undefined && legacyRebase !== undefined)
         return {
           kind: "unsupported",
@@ -1188,25 +1204,54 @@ const readBindStream = (
   }
 };
 
+/** Index immutable bind runs once; it lives with this image's decoded fixups. */
+const indexBindRuns = (runs: readonly BindRun[]): BindRunIndex => {
+  const sorted = [...runs].sort((a, b) =>
+    a.start < b.start ? -1 : a.start > b.start ? 1 : 0,
+  );
+  const prefixEnd: bigint[] = [];
+  let last = -1n;
+  for (const run of sorted) {
+    const end = run.start + (run.count - 1n) * run.stride;
+    if (end > last) last = end;
+    prefixEnd.push(last);
+  }
+  return { runs: sorted, prefixEnd };
+};
+
+/** Visit runs with a bind start in the inclusive interval, without expanding runs. */
+function* bindRunsIn(
+  index: BindRunIndex,
+  low: bigint,
+  high: bigint,
+): Generator<BindRun> {
+  let left = 0;
+  let right = index.runs.length;
+  while (left < right) {
+    const middle = (left + right) >>> 1;
+    if (index.runs[middle]!.start <= high) left = middle + 1;
+    else right = middle;
+  }
+  for (let at = left - 1; at >= 0 && index.prefixEnd[at]! >= low; at -= 1) {
+    const run = index.runs[at]!;
+    const first =
+      low <= run.start ? 0n : (low - run.start + run.stride - 1n) / run.stride;
+    if (first < run.count && run.start + first * run.stride <= high) yield run;
+  }
+}
+
 const resolveLegacyBind = (
-  runs: readonly BindRun[],
+  index: BindRunIndex,
   address: bigint,
 ): PointerResolution | undefined => {
   let match: BindRun | undefined;
-  for (const run of runs) {
-    const distance = address - run.start;
-    if (
-      distance >= 0n &&
-      distance % run.stride === 0n &&
-      distance / run.stride < run.count
-    ) {
-      if (match !== undefined)
-        return {
-          kind: "unsupported",
-          reason: `Ambiguous bind records target pointer location 0x${address.toString(16)}`,
-        };
-      match = run;
-    }
+  for (const run of bindRunsIn(index, address, address)) {
+    if (match !== undefined)
+      return {
+        kind: "unsupported",
+        reason: `Ambiguous bind records target pointer location 0x${address.toString(16)}`,
+      };
+    match = run;
   }
   return match === undefined
     ? undefined
@@ -1252,7 +1297,7 @@ const parseLegacyBinds = (
     failures.push(run.binding.reason);
   }
   return {
-    runs,
+    index: indexBindRuns(runs),
     failures,
     issues,
     examined: streams.length,
@@ -1273,15 +1318,7 @@ const hasUnresolvedLegacyBytes = (
   if (!rebases.complete || !binds.complete) return true;
   const first = address - 7n;
   const end = address + BigInt(size);
-  for (const run of binds.runs) {
-    // An eight-byte bind overlaps [address,end) exactly when its start is
-    // in [address-7,end). Find the first such member without expanding it.
-    const index =
-      first <= run.start
-        ? 0n
-        : (first - run.start + run.stride - 1n) / run.stride;
-    if (index < run.count && run.start + index * run.stride < end) return true;
-  }
+  for (const _run of bindRunsIn(binds.index, first, end - 1n)) return true;
   if (rebases.membership !== null)
     for (let slot = first; slot < end; slot++) {
       const state = legacyRebaseState(segments, rebases.membership, slot);
@@ -1291,6 +1328,33 @@ const hasUnresolvedLegacyBytes = (
         state === REBASE_CONFLICT ||
         (state === REBASE_NON_POINTER && slot + 4n > address)
       )
+        return true;
+    }
+  return false;
+};
+
+/** A write starting elsewhere can cover part of an eight-byte pointer slot. */
+const hasPartialLegacyPointerWrite = (
+  segments: readonly Segment[],
+  rebases: RebaseFacts,
+  binds: BindFacts,
+  address: bigint,
+): boolean => {
+  const low = address - 7n;
+  const high = address + 7n;
+  for (const run of bindRunsIn(binds.index, low, high)) {
+    const first =
+      low <= run.start ? 0n : (low - run.start + run.stride - 1n) / run.stride;
+    const at = run.start + first * run.stride;
+    if (at !== address || (first + 1n < run.count && at + run.stride <= high))
+      return true;
+  }
+  if (rebases.membership !== null)
+    for (let at = low; at <= high; at += 1n) {
+      const state = legacyRebaseState(segments, rebases.membership, at);
+      if (typeof state !== "number" || state === REBASE_CONFLICT) return true;
+      if (state === REBASE_NON_POINTER && at + 4n > address) return true;
+      if (state === REBASE_POINTER && at !== address && at + 8n > address)
         return true;
     }
   return false;
@@ -1348,7 +1412,7 @@ export function* parsePointerFixupsSteps(
     hasUnresolvedLegacyBytes: (address, size) =>
       hasUnresolvedLegacyBytes(segments, rebases, binds, address, size),
     decode(address, raw) {
-      const match = resolveLegacyBind(binds.runs, address);
+      const match = resolveLegacyBind(binds.index, address);
       const rebase = resolveLegacyRebase(
         segments,
         rebases.membership,
@@ -1356,6 +1420,16 @@ export function* parsePointerFixupsSteps(
         raw,
       );
       if (match?.kind === "unsupported") return match;
+      if (rebase?.kind === "unsupported") return rebase;
+      if (
+        rebases.complete &&
+        binds.complete &&
+        hasPartialLegacyPointerWrite(segments, rebases, binds, address)
+      )
+        return {
+          kind: "unsupported",
+          reason: "A legacy fixup partially overlaps the pointer slot",
+        };
       if (match !== undefined && rebase !== undefined)
         return {
           kind: "unsupported",
@@ -1378,17 +1452,3 @@ export function* parsePointerFixupsSteps(
     },
   };
 }
-
-/** Synchronous adapter for callers that cannot yield between batches. */
-export const parsePointerFixups = (
-  bytes: Buffer,
-  commands: FixupCommands,
-  segments: readonly Segment[],
-  baseAddress: bigint,
-): PointerFixups => {
-  const steps = parsePointerFixupsSteps(bytes, commands, segments, baseAddress);
-  for (;;) {
-    const next = steps.next();
-    if (next.done) return next.value;
-  }
-};
