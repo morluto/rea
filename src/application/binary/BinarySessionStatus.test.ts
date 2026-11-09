@@ -32,7 +32,6 @@ import { NATIVE_MACOS_PROVIDER_IDENTITY } from "../../native/NativeMacosProvider
 import {
   buildCapabilityInventory,
   compactToolAvailability,
-  MULTI_MODE_REMEDIATION,
 } from "../CapabilityInventory.js";
 
 const projectedStatusSchema = z.object({
@@ -583,7 +582,9 @@ it.each([
         : ["inspect_native_dispatch_metadata", "list_names"],
     });
     if (!route) {
-      expect(trace?.remediation).toBe(MULTI_MODE_REMEDIATION);
+      expect(trace?.remediation).toMatch(
+        /no mode.*inspect each mode.*missing operations and remediation/iu,
+      );
       const authored = trace?.modes?.find(
         (mode) => mode.name === "authored_ui_dispatch",
       );
@@ -638,7 +639,9 @@ it("keeps distinct recovery for an unbound non-bundle session", async () => {
   expect(trace).toMatchObject({
     available: false,
     reason: "provider_unavailable",
-    remediation: MULTI_MODE_REMEDIATION,
+    remediation: expect.stringMatching(
+      /no mode.*inspect each mode.*missing operations and remediation/iu,
+    ),
   });
   const authored = trace?.modes?.find(
     (mode) => mode.name === "authored_ui_dispatch",

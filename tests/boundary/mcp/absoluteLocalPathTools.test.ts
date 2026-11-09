@@ -6,6 +6,9 @@ import { expect, it } from "vitest";
 import { JAVASCRIPT_RECOVERY_TOOL_CONTRACTS } from "../../../src/contracts/javascript/javascriptRecoveryToolContracts.js";
 import { BINARY_DIAGNOSTICS_TOOL_CONTRACTS } from "../../../src/contracts/native/binaryDiagnosticsToolContracts.js";
 import { WEB_SCRIPT_TOOL_CONTRACTS } from "../../../src/contracts/webScriptToolContracts.js";
+import { API_CONTRACT_TOOL_CONTRACTS } from "../../../src/contracts/apiContractToolContracts.js";
+import { PLAYWRIGHT_TRACE_TOOL_CONTRACTS } from "../../../src/contracts/playwrightTraceToolContracts.js";
+import { PYTHON_PYC_TOOL_CONTRACTS } from "../../../src/contracts/python/pythonPycToolContracts.js";
 import { RequestTrackingMcpServer } from "../../../src/server/RequestTrackingMcpServer.js";
 import { toolRegistrationOptions } from "../../../src/server/toolRegistrationOptions.js";
 
@@ -13,6 +16,9 @@ const CONTRACTS = [
   ...BINARY_DIAGNOSTICS_TOOL_CONTRACTS,
   ...WEB_SCRIPT_TOOL_CONTRACTS,
   ...JAVASCRIPT_RECOVERY_TOOL_CONTRACTS,
+  ...API_CONTRACT_TOOL_CONTRACTS,
+  ...PLAYWRIGHT_TRACE_TOOL_CONTRACTS,
+  ...PYTHON_PYC_TOOL_CONTRACTS,
 ];
 
 const PATH_FIELDS = {
@@ -20,6 +26,10 @@ const PATH_FIELDS = {
   inspect_elf_notes: ["path"],
   inspect_kernel_module: ["path"],
   inspect_byte_entropy: ["path"],
+  inspect_api_contract: ["path", "operations_path"],
+  inspect_devicetree: ["path"],
+  inspect_playwright_trace: ["path"],
+  inspect_python_pyc: ["path"],
   export_web_scripts: ["capture_path", "output_directory"],
   recover_javascript_sources: ["path", "output_directory", "additional_paths"],
 } as const;
@@ -37,6 +47,12 @@ const contractFor = (name: keyof typeof PATH_FIELDS) => {
 const validInput = (
   name: keyof typeof PATH_FIELDS,
 ): Record<string, unknown> => {
+  if (name === "inspect_api_contract")
+    return {
+      format: "graphql-sdl",
+      path: absoluteFile,
+      operations_path: absoluteFile,
+    };
   if (name === "export_web_scripts")
     return {
       capture_path: absoluteFile,
@@ -108,6 +124,11 @@ it("rejects one relative path field at a time on tools/list", async () => {
     "inspect_elf_notes.path",
     "inspect_kernel_module.path",
     "inspect_byte_entropy.path",
+    "inspect_api_contract.path",
+    "inspect_api_contract.operations_path",
+    "inspect_devicetree.path",
+    "inspect_playwright_trace.path",
+    "inspect_python_pyc.path",
     "export_web_scripts.capture_path",
     "export_web_scripts.output_directory",
     "recover_javascript_sources.path",

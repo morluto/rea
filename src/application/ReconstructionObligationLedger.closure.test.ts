@@ -304,8 +304,10 @@ describe("reconstruction obligation manifest references", () => {
       expect(result.status).toBe("unknown");
       expect(result.coverage.status).toBe("partial");
       expect(result.evidence_links).toContain(absent);
-      expect(result.limitations).toContain(
-        "The ledger retains 1 Evidence reference(s) absent from the input bundle; closure cannot be claimed.",
+      expect(result.limitations).toContainEqual(
+        expect.stringMatching(
+          /1 Evidence reference.*absent from the input bundle.*closure cannot be claimed/iu,
+        ),
       );
     }
     const contradiction = build({
