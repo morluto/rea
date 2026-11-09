@@ -16,7 +16,10 @@ import type { QueryRunner } from "./HostQuery.js";
 
 const FILE_MAX_BYTES = 1024 * 1024;
 
-/** A candidate key file that verified a release, and the bytes of it to retain. */
+const released = (release: readonly string[]): string =>
+  release[0] ?? "its release file";
+
+/** A candidate key file, or a key a sources entry holds, that verified a release, and the bytes of it to retain. */
 export interface VerifiedKey {
   readonly path: string;
   readonly bytes: Buffer;
@@ -24,6 +27,12 @@ export interface VerifiedKey {
   readonly format: "armored" | "binary";
   /** The verifying primary key's fingerprint. */
   readonly fingerprint: string;
+}
+
+/** A key a deb822 sources entry holds in its Signed-By field, named by the entry's sources file. */
+export interface HeldKey {
+  readonly path: string;
+  readonly bytes: Buffer;
 }
 
 /** Runs gpgv on one candidate keyring at a time, written into a private folder it owns. */
@@ -55,31 +64,53 @@ class GpgvKeyCheck {
     candidates: readonly string[],
     release: readonly string[],
   ): Promise<VerifiedKey | { readonly reason: string }> {
-    const released = release[0] ?? "its release file";
     const unreadable: string[] = [];
     for (const path of candidates) {
       const bytes = await this.#read(path);
       if (bytes === "unreadable") unreadable.push(path);
       if (typeof bytes === "string") continue;
-      const signature = await this.#verify(bytes, release);
-      if (signature === "missing")
-        return {
-          reason:
-            "gpgv is not installed, so no key could be checked against the repository's signature",
-        };
-      if (signature === undefined) continue;
-      const kept = verifyingKey(bytes, signature.primary);
-      if (!kept.ok)
-        return { reason: `${path} verifies ${released}, but ${kept.error}` };
-      return {
-        path,
-        ...kept.value,
-        sha256: createHash("sha256").update(kept.value.bytes).digest("hex"),
-        fingerprint: signature.primary,
-      };
+      const verified = await this.#verifying({ path, bytes }, release);
+      if (verified !== undefined) return verified;
     }
     return {
-      reason: `no candidate key (${candidates.join(", ")}) verifies ${released}${unreadable.length === 0 ? "" : `; unreadable: ${unreadable.join(", ")}`}`,
+      reason: `no candidate key (${candidates.join(", ")}) verifies ${released(release)}${unreadable.length === 0 ? "" : `; unreadable: ${unreadable.join(", ")}`}`,
+    };
+  }
+
+  /** The key a sources entry holds when it verifies the release, or why not. */
+  async heldVerifying(
+    key: HeldKey,
+    release: readonly string[],
+  ): Promise<VerifiedKey | { readonly reason: string }> {
+    return (
+      (await this.#verifying(key, release)) ?? {
+        reason: `the key the Signed-By field of ${key.path} holds does not verify ${released(release)}`,
+      }
+    );
+  }
+
+  /** The key with the bytes to retain when it verifies the release, why it cannot count, or undefined when it does not verify. */
+  async #verifying(
+    key: { readonly path: string; readonly bytes: Buffer },
+    release: readonly string[],
+  ): Promise<VerifiedKey | { readonly reason: string } | undefined> {
+    const signature = await this.#verify(key.bytes, release);
+    if (signature === "missing")
+      return {
+        reason:
+          "gpgv is not installed, so no key could be checked against the repository's signature",
+      };
+    if (signature === undefined) return undefined;
+    const kept = verifyingKey(key.bytes, signature.primary);
+    if (!kept.ok)
+      return {
+        reason: `${key.path} verifies ${released(release)}, but ${kept.error}`,
+      };
+    return {
+      path: key.path,
+      ...kept.value,
+      sha256: createHash("sha256").update(kept.value.bytes).digest("hex"),
+      fingerprint: signature.primary,
     };
   }
 
@@ -118,7 +149,9 @@ class GpgvKeyCheck {
 export const withGpgvKeyCheck = async <Value>(
   runQuery: QueryRunner,
   signal: AbortSignal | undefined,
-  use: (check: Pick<GpgvKeyCheck, "firstVerifying">) => Promise<Value>,
+  use: (
+    check: Pick<GpgvKeyCheck, "firstVerifying" | "heldVerifying">,
+  ) => Promise<Value>,
 ): Promise<Value> => {
   const check = new GpgvKeyCheck(runQuery, signal);
   let outcome:

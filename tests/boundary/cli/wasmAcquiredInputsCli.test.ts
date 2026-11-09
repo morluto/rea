@@ -6,8 +6,14 @@ import { z } from "zod";
 
 import { analysisErrorProjectionSchema } from "../../../src/contracts/errorSchemas.js";
 import { toolContract } from "../../../src/contracts/toolContracts.js";
-import { parseEvidence } from "../../../src/domain/evidence.js";
+import {
+  createEvidence,
+  parseEvidence,
+  withEvidenceCallerInputPath,
+} from "../../../src/domain/evidence.js";
+import { wasmArtifactFixture } from "../../fixtures/wasm/artifact.js";
 import { connectLocalToolsMcp } from "../../fixtures/localToolsMcp.js";
+import { advertisedMcpToolSchemas } from "../../fixtures/advertisedMcpTool.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
@@ -98,15 +104,18 @@ ${body}
     const invocation = await cli.run({
       arguments: [
         "inspect-wasm-artifact",
-        selected,
+        "./selected.wasm",
         "--candidate_paths",
-        candidate,
+        "./candidate.wasm",
+        "--candidate_paths",
+        "./candidate.wasm",
         "--glue_paths",
-        glue,
+        "./glue.js",
         "--format",
         "json",
       ],
       environment,
+      cwd: directory,
     });
     expect(invocation.exitCode, invocation.stderr).toBe(1);
     const cliError = analysisErrorProjectionSchema.parse(invocation.json);
@@ -114,12 +123,41 @@ ${body}
       code: "invalid_request",
       details: {
         partial_observation: {
+          caller_input_paths: {
+            candidate_paths: ["./candidate.wasm", "./candidate.wasm"],
+            glue_paths: ["./glue.js"],
+          },
           normalized_result: expected,
         },
       },
     });
 
     const { client, call } = await connectLocalToolsMcp(environment);
+    const schema = await advertisedMcpToolSchemas(
+      client,
+      "inspect_wasm_artifact",
+    );
+    const valid = withEvidenceCallerInputPath(
+      createEvidence(
+        undefined,
+        { id: "fixture-wabt", name: "fixture", version: "1" },
+        {
+          operation: "inspect_wasm_artifact",
+          parameters: {},
+          result: wasmArtifactFixture(),
+          confidence: "observed",
+        },
+      ),
+      "./selected.wasm",
+      {
+        candidate_paths: ["./candidate.wasm", "./candidate.wasm"],
+        glue_paths: ["./glue.js"],
+      },
+    );
+    expect(
+      schema.ajv.validate(schema.outputSchema, valid),
+      JSON.stringify(schema.ajv.errors),
+    ).toBe(true);
     const response = await call("inspect_wasm_artifact", {
       path: selected,
       candidate_paths: [candidate],

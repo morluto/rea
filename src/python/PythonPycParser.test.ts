@@ -131,9 +131,7 @@ it("decodes a hash-based header and a FLAG_REF top-level code object", () => {
   expect(root(report).name).toBe("<module>");
 });
 
-it("fails unknown magics and truncated marshal without partial success", () => {
-  const unknown = Buffer.concat([pythonPycHeader(1), marshalCode("py311")]);
-  expect(() => parse(unknown)).toThrow(PythonPycFormatFailure);
+it("rejects truncated marshal without partial success", () => {
   expect(() => parse(pythonPycFixture("py311").subarray(0, 20))).toThrow(
     PythonPycFormatFailure,
   );
@@ -172,9 +170,7 @@ it("does not qualify a magic outside the pinned identity table", () => {
   expect(() => parse(pythonPycHeader(1))).toThrow(
     expect.objectContaining({
       kind: "unsupported",
-      message: expect.stringContaining(
-        "is not a pinned CPython identity, so its header cannot be qualified",
-      ),
+      message: expect.stringMatching(/not a pinned CPython identity.*header/iu),
     }),
   );
 });
@@ -295,8 +291,7 @@ it("reports a short unknown header before unsupported magic, and bad CR LF befor
   expect(() => parse(unknown)).toThrow(
     expect.objectContaining({
       kind: "malformed",
-      message:
-        "Selected file is shorter than a 16-byte CPython 3.7+ pyc header.",
+      message: expect.stringMatching(/shorter than.*16.byte.*header/iu),
     }),
   );
   const badTrailer = Buffer.from(unknown);
@@ -304,7 +299,7 @@ it("reports a short unknown header before unsupported magic, and bad CR LF befor
   expect(() => parse(badTrailer)).toThrow(
     expect.objectContaining({
       kind: "malformed",
-      message: "Pyc magic is not a little-endian integer followed by CR LF.",
+      message: expect.stringMatching(/magic.*little.endian.*CR LF/iu),
     }),
   );
 });

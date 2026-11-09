@@ -7,18 +7,24 @@ import { captureDesktopApplication } from "../application/desktop/DesktopApplica
 import type { DesktopStateReaders } from "../application/desktop/DesktopApplicationState.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
 import type { Evidence } from "../domain/evidence.js";
+import { localPathStringSchema } from "../domain/localPath.js";
 import { err, ok } from "../domain/result.js";
 import { finishAnalysisCommand } from "./finishAnalysisCommand.js";
 import { projectCliAnalysisResult } from "./projectCliAnalysisResult.js";
 import { absoluteCallerPath } from "../filesystem/callerPath.js";
+import { cliDecimalField } from "./options.js";
 import { CLI_COMMANDS } from "../cliCommandNames.js";
 import { logCliCommand } from "../cliLogging.js";
-import { DESKTOP_CAPTURE_DEFAULTS } from "../domain/desktop/desktopCapture.js";
+import {
+  DESKTOP_CAPTURE_DEFAULTS,
+  type DesktopCaptureProgress,
+} from "../domain/desktop/desktopCapture.js";
 import { SessionRequestQueue } from "../desktop/DesktopSessionRequests.js";
 import { withCommandCancellation } from "./commandCancellation.js";
 import type { CliInstance } from "./types.js";
 
-const positive = (fallback: number) => z.int().positive().default(fallback);
+const positive = (fallback: number) =>
+  cliDecimalField(z.int().positive().default(fallback));
 
 /** Options of `capture-desktop-application`. */
 const captureOptions = z.object({
@@ -40,18 +46,17 @@ const captureOptions = z.object({
     .array(z.string())
     .optional()
     .describe("Argument appended to the launch command (repeatable)"),
-  output: z
-    .string()
-    .min(1)
-    .describe("New or empty directory for capture.json and retained content"),
+  output: localPathStringSchema.describe(
+    "New or empty directory for capture.json and retained content",
+  ),
   statePath: z
-    .array(z.string().min(1))
+    .array(localPathStringSchema)
     .optional()
     .describe(
       "File or directory whose starting content is retained in addition to the application's state directories; a file brings its SQLite write-ahead log and rollback journal (repeatable)",
     ),
   exclude: z
-    .array(z.string().min(1))
+    .array(localPathStringSchema)
     .optional()
     .describe("Path left out of every checkpoint walk (repeatable)"),
   maxDurationSeconds: positive(
@@ -66,8 +71,7 @@ const captureOptions = z.object({
   maxContentBytes: positive(DESKTOP_CAPTURE_DEFAULTS.maxContentBytes).describe(
     "Total retained content",
   ),
-  packageFile: z
-    .string()
+  packageFile: localPathStringSchema
     .optional()
     .describe(
       "The .deb file the application was installed from; its control fields, SHA-256 and size are recorded, never the file",
@@ -139,10 +143,12 @@ const registerDesktopExportCommand = (
     description:
       "Export a desktop application capture folder as an agentenv computer app bundle: class, env.toml, skill and seed",
     args: z.object({
-      capture: z
-        .string()
-        .describe("Folder written by capture-desktop-application"),
-      directory: z.string().describe("New or empty bundle directory"),
+      capture: localPathStringSchema.describe(
+        "Folder written by capture-desktop-application",
+      ),
+      directory: localPathStringSchema.describe(
+        "New or empty bundle directory",
+      ),
     }),
     options: z.object({
       name: z
@@ -152,7 +158,7 @@ const registerDesktopExportCommand = (
           "Environment name; defaults to one derived from the application",
         ),
       task: z
-        .array(z.string())
+        .array(localPathStringSchema)
         .optional()
         .describe(
           "Task file to validate against the capture and add with its verifier and eval; a capture yields one",
@@ -162,6 +168,12 @@ const registerDesktopExportCommand = (
         .optional()
         .describe(
           "http or https URL the computer downloads the captured --package-file from when the bundle is put, for an application installed from a .deb file",
+        ),
+      syntheticSeed: z
+        .boolean()
+        .default(false)
+        .describe(
+          "The seed was made for the task, as in a build computer, not taken from the user's own data; the README says so instead of keeping the bundle local",
         ),
       ...checkpointOptions,
     }),
@@ -189,6 +201,7 @@ const registerDesktopExportCommand = (
                     packageUrl: options.packageUrl,
                     seedCheckpoint: options.seedCheckpoint,
                     endCheckpoint: options.endCheckpoint,
+                    syntheticSeed: options.syntheticSeed,
                   },
                   readers,
                   signal,
@@ -210,9 +223,9 @@ const registerDesktopTaskCommand = (
     description:
       "Describe how a desktop application capture's files changed from the seed checkpoint to the end, with suggested checks and a task draft to complete for export-desktop-application --task",
     args: z.object({
-      capture: z
-        .string()
-        .describe("Folder written by capture-desktop-application"),
+      capture: localPathStringSchema.describe(
+        "Folder written by capture-desktop-application",
+      ),
     }),
     options: z.object(checkpointOptions),
     run: ({ args, options }) =>
@@ -251,9 +264,9 @@ const registerDesktopStateCommand = (
     description:
       "Read a desktop application capture folder into the application's state: roles, typed JSON views of each version and kinds of change",
     args: z.object({
-      capture: z
-        .string()
-        .describe("Folder written by capture-desktop-application"),
+      capture: localPathStringSchema.describe(
+        "Folder written by capture-desktop-application",
+      ),
     }),
     run: ({ args }) =>
       withCommandCancellation((signal) =>
@@ -325,10 +338,15 @@ export const registerDesktopCaptureCommands = (
                   environment,
                   callerDirectory: process.cwd(),
                   nextRequest: () => requests.next(),
-                  report: async (message) => {
-                    process.stderr.write(
-                      `${JSON.stringify({ rea_progress: { phase: "desktop_capture", message } })}\n`,
-                    );
+                  report: async (message, event) => {
+                    const progress: DesktopCaptureProgress = {
+                      rea_progress: {
+                        phase: "desktop_capture",
+                        message,
+                        ...(event === undefined ? {} : { event }),
+                      },
+                    };
+                    process.stderr.write(`${JSON.stringify(progress)}\n`);
                   },
                 },
                 signal,

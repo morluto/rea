@@ -69,7 +69,6 @@ interface McpDoctorOptions {
   readonly args: readonly string[];
   readonly cwd: string;
   readonly environment: Readonly<Record<string, string | undefined>>;
-  readonly deadlineMs?: number;
 }
 
 interface InventoryComparison {
@@ -112,10 +111,7 @@ export const runProductionMcpDoctor = async (options: McpDoctorOptions) => {
       },
     };
   const expectation = doctorExpectationForEnvironment(options.environment);
-  const budget = appliedDoctorBudget(
-    parsedBudgets.value.doctor,
-    options.deadlineMs,
-  );
+  const budget = parsedBudgets.value.doctor;
   const budgetMs = budget.milliseconds;
   const deadline = performance.now() + budgetMs;
   const controller = new AbortController();
@@ -228,7 +224,7 @@ class OwnedStdioClientTransport extends StdioClientTransport {
 }
 
 /** A valid scope can intentionally omit the target-free session request. */
-export const MCP_DOCTOR_SESSION_SCOPE_DETAIL =
+const MCP_DOCTOR_SESSION_SCOPE_DETAIL =
   "binary_session is outside the selected tool families; include the session family for request-flow and identity checks";
 
 /** Doctor expectations derived from the same environment the child inherits. */
@@ -410,7 +406,7 @@ export const runProductionMcpDoctorCli = async (
 };
 
 /** Compare exact names while retaining actionable mismatch locations. */
-export const compareInventory = (
+const compareInventory = (
   expectedNames: readonly string[],
   observedNames: readonly string[],
 ): InventoryComparison => {
@@ -685,23 +681,3 @@ const doctorTransportDetail = (
     (cause instanceof SdkError && cause.code === SdkErrorCode.RequestTimeout);
   return timedOut ? `${message} ${mcpDoctorDeadlineRecovery(budget)}` : message;
 };
-
-/**
- * `deadlineMs` is a caller-selected applied deadline, used by tests. Omitted
- * means the budget resolved from `REA_MCP_DOCTOR_DEADLINE_MS`.
- */
-const appliedDoctorBudget = (
-  resolved: McpPhaseBudget,
-  deadlineMs: number | undefined,
-): McpPhaseBudget =>
-  deadlineMs === undefined
-    ? resolved
-    : {
-        ...resolved,
-        milliseconds: deadlineMs,
-        source:
-          deadlineMs === resolved.defaultMilliseconds &&
-          resolved.source === "default"
-            ? "default"
-            : "setting",
-      };
