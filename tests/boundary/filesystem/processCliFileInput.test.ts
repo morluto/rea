@@ -1,18 +1,19 @@
-import { writeFile } from "node:fs/promises";
+import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { describe, expect, it, onTestFinished, vi } from "vitest";
 import {
   captureProcessScenarioFile,
   compareProcessEvidenceFiles,
-  PROCESS_UNEXPECTED_FAILURE_REMEDIATION,
 } from "../../../src/application/process/ProcessCli.js";
-import { JSON_BYTE_ORDER_MARK_MESSAGE } from "../../../src/application/Utf8JsonInput.js";
 import { createEvidence } from "../../../src/domain/evidence.js";
 import { PROCESS_PROVIDER } from "../../../src/domain/process/processEvidenceProvider.js";
 import { EMPTY_PROCESS_CAPTURE_EXAMPLE } from "../../../src/domain/process/processCaptureExample.js";
 import { OwnedFileHandle } from "../../../src/filesystem/OwnedFileHandle.js";
 import { ArtifactReaderFailure } from "../../../src/artifacts/ArtifactReader.js";
-import { analysisCliErrorEnvelopeSchema } from "../../../src/contracts/errorSchemas.js";
+import {
+  analysisCliErrorEnvelopeSchema,
+  analysisErrorProjectionSchema,
+} from "../../../src/contracts/errorSchemas.js";
 import { EvidenceFileError } from "../../../src/domain/evidenceErrors.js";
 import { err } from "../../../src/domain/result.js";
 import * as jsonFiles from "../../../src/application/JsonFiles.js";
@@ -54,7 +55,11 @@ describe("process CLI error projection", () => {
           retryable: false,
           message:
             "Process command could not complete: SECRET internal failure /private/path",
-          remediation: { action: PROCESS_UNEXPECTED_FAILURE_REMEDIATION },
+          remediation: {
+            action: expect.stringMatching(
+              /do not repeat.*input files.*rea doctor/iu,
+            ),
+          },
           details: {
             operation,
             provider_id: PROCESS_PROVIDER.id,
@@ -62,10 +67,15 @@ describe("process CLI error projection", () => {
           },
         });
         expect(JSON.stringify(projected)).not.toContain("stack");
-        expect(PROCESS_UNEXPECTED_FAILURE_REMEDIATION).not.toContain("SECRET");
-        expect(PROCESS_UNEXPECTED_FAILURE_REMEDIATION).not.toMatch(
-          /\bretry\b/iu,
-        );
+        const { error: _label, ...projection } =
+          analysisCliErrorEnvelopeSchema.parse(projected);
+        const action =
+          analysisErrorProjectionSchema.parse(projection).remediation.action;
+        expect(action).not.toContain("SECRET");
+        expect(action).not.toMatch(/\bretry\b/iu);
+        expect(
+          await readFile("docs/user-visible-errors.csv", "utf8"),
+        ).toContain(action);
       } finally {
         read.mockRestore();
       }
@@ -486,13 +496,17 @@ describe("process CLI UTF-8 input diagnostics", () => {
       "scenario.json",
     );
     await writeFile(path, '\uFEFF{"executable":"/bin/echo"}');
-    expect(await captureProcessScenarioFile(path)).toMatchObject({
+    const result = await captureProcessScenarioFile(path);
+    expect(result).toMatchObject({
       error: "Process command failed",
       code: "invalid_request",
       category: "invalid_input",
-      message: `Process input file is not valid UTF-8 JSON: ${path} (${JSON_BYTE_ORDER_MARK_MESSAGE}). Repair the file, then try again.`,
+      message: expect.stringMatching(
+        /byte-order mark.*UTF-8 without a byte-order mark/iu,
+      ),
       details: { issues: [{ path: ["input_file"], reason: "invalid_value" }] },
     });
+    expect(result).toMatchObject({ message: expect.stringContaining(path) });
   });
 });
 

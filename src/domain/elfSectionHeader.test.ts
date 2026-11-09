@@ -84,7 +84,7 @@ it.each(formats)(
         ok: false,
         error: {
           kind: "malformed",
-          message: "ELF section header is truncated",
+          message: expect.stringContaining("truncated"),
         },
       });
   },

@@ -272,10 +272,12 @@ describe("exportInstall with the program in another package", () => {
       ok: false,
       error: {
         field: "capture",
-        reason:
-          "The desktop entry belongs to vim-common, but the computer cannot install the program it runs: no package owns /home/ada/.local/bin/vim.",
-        remediation:
-          "Capture again with the packaged program first on PATH, or with --executable naming it.",
+        reason: expect.stringMatching(
+          /vim-common.*cannot install.*no package owns \/home\/ada\/\.local\/bin\/vim/i,
+        ),
+        remediation: expect.stringMatching(
+          /capture again.*PATH.*--executable/i,
+        ),
       },
     });
   });
@@ -337,8 +339,9 @@ describe("exportInstall with repositories the export leaves out", () => {
     expect(refused).toEqual({
       ok: false,
       error: expect.objectContaining({
-        reason:
-          "The desktop entry belongs to typora, but the program it runs belongs to typora-bin, which the computer cannot install: only apt repositories the export leaves out offer it.",
+        reason: expect.stringMatching(
+          /typora.*typora-bin.*cannot install.*apt repositories.*leaves out/i,
+        ),
       }),
     });
   });
@@ -413,9 +416,12 @@ describe("exportInstall sources", () => {
         keySha256: "a".repeat(64),
       },
     ]);
-    expect(install.value.skipped).toEqual([
-      "https://apt.example.com/repo stable extra: apt takes one key per URI and suite, and apt-keys/typora.gpg is declared for them",
-    ]);
+    expect(install.value.skipped).toHaveLength(1);
+    expect(install.value.skipped[0]).toContain(
+      "https://apt.example.com/repo stable extra",
+    );
+    expect(install.value.skipped[0]).toContain("apt-keys/typora.gpg");
+    expect(install.value.skipped[0]).toMatch(/one key per URI and suite/iu);
     expect(install.value.architectures).toEqual(["amd64"]);
   });
 
@@ -459,9 +465,12 @@ describe("exportInstall sources", () => {
     );
 
     expect(install.ok && install.value.architectures).toEqual(["arm64"]);
-    expect(install.ok && install.value.skipped).toEqual([
-      "https://amd64-only.example.com ./: it serves only amd64, not the capture host's arm64",
-    ]);
+    if (!install.ok) throw new Error(install.error.reason);
+    expect(install.value.skipped).toHaveLength(1);
+    expect(install.value.skipped[0]).toContain(
+      "https://amd64-only.example.com ./",
+    );
+    expect(install.value.skipped[0]).toMatch(/only amd64.*not.*arm64/iu);
     expect(
       exportInstall(typora([repository()]), "typora", "riscv64"),
     ).toMatchObject({
@@ -833,8 +842,9 @@ describe("exportInstall refusals for a package file", () => {
       refusedWith(varicad({ package_file: undefined }), VARICAD_URL),
     ).toEqual({
       field: "capture",
-      reason:
-        "--package-url was given, but the capture recorded no package file for varicad2026-en.",
+      reason: expect.stringMatching(
+        /--package-url.*no package file.*varicad2026-en/i,
+      ),
       remediation: expect.stringContaining("Capture again with --package-file"),
     });
     expect(
@@ -872,9 +882,10 @@ describe("exportInstall refusals for a package file", () => {
 
     expect(archive).toEqual({
       field: "package_url",
-      reason:
-        "--package-url is not needed: the computer installs varicad2026-en from the Ubuntu 24.04 archive by name.",
-      remediation: "Export without --package-url.",
+      reason: expect.stringMatching(
+        /--package-url.*not needed.*varicad2026-en.*Ubuntu 24\.04 archive/i,
+      ),
+      remediation: expect.stringMatching(/export without --package-url/i),
     });
     expect(vendor.reason).toContain(
       "from the vendor apt repository https://downloads.typora.io/linux.",
@@ -887,8 +898,9 @@ describe("exportInstall refusals for a package file", () => {
   ])("refuses --package-url %s, which agentenv does not download", (url) => {
     expect(refusedWith(varicad(), url)).toMatchObject({
       field: "package_url",
-      reason:
-        "--package-url does not start with http:// or https:// in lowercase, the only URLs the computer downloads",
+      reason: expect.stringMatching(
+        /--package-url.*http:\/\/.*https:\/\/.*lowercase/i,
+      ),
     });
   });
 

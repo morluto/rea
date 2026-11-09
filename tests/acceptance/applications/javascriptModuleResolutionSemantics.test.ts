@@ -150,3 +150,41 @@ console.log(JSON.stringify({
     }
   },
 );
+
+cliTest.for(["CLI", "stdio MCP"] as const)(
+  "selects import exports for uppercase loader suffixes through %s",
+  async (surface, { cli }) => {
+    const root = await createTestTempDirectory("rea-uppercase-import-");
+    await writeFixtureFiles(root, {
+      "uppercase.CJS": 'import "dual-condition";',
+      "uppercase.CTS": 'import "dual-condition";',
+      "node_modules/dual-condition/package.json": JSON.stringify({
+        exports: { import: "./import.mjs", require: "./require.cjs" },
+      }),
+      "node_modules/dual-condition/import.mjs": "export default 1;",
+      "node_modules/dual-condition/require.cjs": "module.exports = 2;",
+    });
+    const result = await analyzeJavaScriptDirectory(surface, cli, root);
+    expect(result.statistics.parse_failures).toBe(0);
+    const imports = result.graph.edges.filter(
+      (edge) =>
+        edge.relation === "imports" &&
+        edge.properties.specifier === "dual-condition",
+    );
+    for (const source of ["uppercase.CJS", "uppercase.CTS"])
+      expect(
+        imports.some(
+          ({ evidence }) =>
+            evidence.location.available &&
+            evidence.location.value.kind === "source-range" &&
+            evidence.location.value.source === source,
+        ),
+        source,
+      ).toBe(true);
+    for (const edge of imports)
+      expect(edge.properties).toMatchObject({
+        resolution_status: "resolved",
+        resolved_path: "node_modules/dual-condition/import.mjs",
+      });
+  },
+);

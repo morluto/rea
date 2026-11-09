@@ -1,3 +1,4 @@
+import type { Evidence } from "../domain/evidence.js";
 import type { ToolResultDelivery } from "./ToolResultDelivery.js";
 import type { EvidenceMcpServer } from "./EvidenceMcpServer.js";
 import type {
@@ -17,6 +18,7 @@ import type { ValidatedEnhancedCall } from "../application/EnhancedToolTypes.js"
 import {
   composedLimitationBudget,
   executeComposedWorkflow,
+  retainComposedWorkflowSources,
   createWorkflowEvidence,
   retainPartialWorkflowEvidence,
   workflowSnapshotRecord,
@@ -37,6 +39,7 @@ import { executeFunctionAnalysisEvidence } from "../application/FunctionAnalysis
 import type { WithAdmittedAnalysis } from "./analysisAdmission.js";
 import type { EvidenceLookup } from "../application/EvidenceInputResolver.js";
 import { retainAnalysisResultSources } from "../application/investigation/recordEvidenceSources.js";
+import type { RecoveryAdmission } from "../application/investigation/InvestigationRetention.js";
 import {
   requireAnalysisViewRetention,
   summarizeRetainedAnalysis,
@@ -57,6 +60,8 @@ export interface EnhancedToolRegistration {
       ) => AnalysisProfileCommitment | undefined)
     | undefined;
   readonly recordEvidence: EvidenceWriter["recordEvidence"] | undefined;
+  readonly admitRecovery?: RecoveryAdmission;
+  readonly evidenceForAnalysis?: (id: string) => Evidence | undefined;
   readonly evidenceById?: EvidenceLookup | undefined;
   readonly recordUnknown: UnknownRegistryPort["recordUnknown"] | undefined;
   readonly allowsSnapshotReplay:
@@ -288,10 +293,17 @@ const executeEnhancedTool = async (
         parameters,
         upstreamProfile: registration.analysisProfile?.(name),
       });
-      result = retainAnalysisResultSources(
-        name,
+      result = retainComposedWorkflowSources(
         registration.recordEvidence,
         result,
+        {
+          target: registration.activeTarget?.(),
+          operation: name,
+          parameters,
+          upstreamProfile: registration.analysisProfile?.(name),
+        },
+        registration.evidenceForAnalysis,
+        registration.admitRecovery,
       );
       const finish = async (
         response: CallToolResult,

@@ -28,7 +28,6 @@ import {
   type SpawnedOwnedProviderProcess,
 } from "../process/ProviderProcess.js";
 import {
-  applyDebuggerAdmissionOverride,
   resolveDebuggerSessionLimits,
   type DebuggerAdmissionLimit,
 } from "../config/debuggerSessionLimits.js";
@@ -488,8 +487,8 @@ class GdbProtocolFailureError extends Error {
   }
 }
 
-/** @internal Convert an unknown boundary failure without dropping non-Error values. */
-export const gdbErrorMessage = (cause: unknown): string =>
+/** Convert an unknown boundary failure without dropping non-Error values. */
+const gdbErrorMessage = (cause: unknown): string =>
   cause instanceof Error ? cause.message : String(cause);
 
 interface GdbSession {
@@ -586,8 +585,6 @@ export class GdbSessionManager {
   constructor(
     options: {
       readonly environment?: Readonly<NodeJS.ProcessEnv>;
-      /** @internal Test seam. Production uses REA_DEBUGGER_COMMAND_DEADLINE_MS. */
-      readonly commandTimeoutMs?: number;
       readonly startupTimeoutMs?: number;
       readonly platform?: NodeJS.Platform;
       readonly stopProcess?: typeof stopOwnedDebuggerProcess;
@@ -600,12 +597,6 @@ export class GdbSessionManager {
       ) => Promise<void>;
       /** @internal Read-only process identity observer for lifecycle tests. */
       readonly readInferiorProcessStartTime?: ProcessStartTimeReader;
-      /** @internal Test seam. Production uses REA_DEBUGGER_MAX_SESSIONS. */
-      readonly maxSessions?: number;
-      /** @internal Test seam. Production uses REA_DEBUGGER_MAX_PENDING_COMMANDS. */
-      readonly maxPendingCommands?: number;
-      /** @internal Test seam. Production uses REA_DEBUGGER_MAX_COMMAND_OUTPUT_BYTES. */
-      readonly maxCommandOutputBytes?: number;
       /**
        * @internal Test seam for startup and detach MI truncation.
        * Production uses the fixed control-reply budget.
@@ -616,10 +607,7 @@ export class GdbSessionManager {
     this.#environment = { ...(options.environment ?? process.env) };
     this.#command = this.#environment.REA_GDB_COMMAND ?? "gdb";
     const limits = resolveDebuggerSessionLimits(this.#environment);
-    this.#commandDeadline = applyDebuggerAdmissionOverride(
-      limits.commandDeadline,
-      options.commandTimeoutMs,
-    );
+    this.#commandDeadline = limits.commandDeadline;
     this.#commandTimeoutMs = this.#commandDeadline.value;
     this.#startupTimeoutMs = options.startupTimeoutMs ?? STARTUP_TIMEOUT_MS;
     this.#platform = options.platform ?? process.platform;
@@ -628,18 +616,9 @@ export class GdbSessionManager {
     this.#verifyInferiorOutputSink =
       options.verifyInferiorOutputSink ?? verifyGdbInferiorOutputSink;
     this.#readInferiorProcessStartTime = options.readInferiorProcessStartTime;
-    this.#maxSessions = applyDebuggerAdmissionOverride(
-      limits.maxSessions,
-      options.maxSessions,
-    );
-    this.#maxPendingCommands = applyDebuggerAdmissionOverride(
-      limits.maxPendingCommands,
-      options.maxPendingCommands,
-    );
-    this.#commandOutput = applyDebuggerAdmissionOverride(
-      limits.maxCommandOutputBytes,
-      options.maxCommandOutputBytes,
-    );
+    this.#maxSessions = limits.maxSessions;
+    this.#maxPendingCommands = limits.maxPendingCommands;
+    this.#commandOutput = limits.maxCommandOutputBytes;
     this.#maxCommandOutputBytes = this.#commandOutput.value;
     this.#controlReplyBytes =
       options.controlReplyBytes ?? DEBUGGER_CONTROL_REPLY_BYTES;
@@ -2464,7 +2443,7 @@ export const commandMayChangeInferiorOutput = (command: string): boolean => {
 };
 
 /** Await a serialized command turn, preserving the caller's cancellation reason. */
-export const waitForGdbCommandTurn = (
+const waitForGdbCommandTurn = (
   previous: Promise<void>,
   signal?: AbortSignal,
 ): Promise<void> => {

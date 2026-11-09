@@ -86,6 +86,10 @@ Claude Code, Codex, Cursor, Gemini CLI, Grok Build, കൂടാതെ [മറ�
 
 MCP സാധാരണയായി compact input schemas ഉപയോഗിക്കുന്നു. പൂർണ്ണ field guidance-ഉം nested validation details-ഉം വേണമെങ്കിൽ MCP registration-ൽ `REA_MCP_INPUT_SCHEMA_PROFILE=full` സജ്ജമാക്കുക. രണ്ടു profiles-ലും എല്ലാ tools-ഉം ഒരേ canonical server validation-ഉം നിലനിൽക്കും; MCP contracts guide കാണുക.
 
+തിരഞ്ഞെടുത്ത runtime-ഉം REA entry script-ഉം setup നേരിട്ട് രജിസ്റ്റർ ചെയ്യുന്നു. Package runner ഉപയോഗിക്കുമ്പോൾ അതിന്റെ cache entry-യും runtime-ഉം നിലനിർത്തുക; target project-ന് പുറത്തുള്ള വിശ്വസനീയമായ ഡയറക്ടറിയിൽ നിന്ന് package നേടുക. ഇൻസ്റ്റലേഷൻ ഗൈഡ് കാണുക.
+
+പൂർണ്ണ output schema-കൾ സ്ഥിരസ്ഥിതിയായി പരസ്യപ്പെടുത്തുന്നു. Client `tools/list` പരിമിതപ്പെടുത്തുന്നുവെങ്കിൽ MCP registration-ൽ `REA_MCP_OUTPUT_SCHEMA_PROFILE=compact` അല്ലെങ്കിൽ `off` സജ്ജമാക്കുക. Server validation-ഉം structured result-കളും പൂർണ്ണമായി നിലനിൽക്കും. MCP കരാർ ഗൈഡിലെ «Output schemas» കാണുക.
+
 ### നിങ്ങളുടെ agent-നോട് ആവശ്യപ്പെടുക
 
 ```text
@@ -159,6 +163,7 @@ REA-യ്ക്ക് Node.js 22.x (>=22.23.4), 24.x (>=24.22.1), അല്ല�
 | Rust binaries          | ഉൾച്ചേർത്ത cargo-auditable crate പേരുകൾ, versions, sources, dependency edges                   | Built-in static ELF/PE/thin Mach-O പരിശോധന; [Rust binaries](../rust-binaries.md)                                                                                 |
 | PE certificates        | Authenticode WIN_CERTIFICATE entries and PKCS#7 signer/X.509 identity fields                | Built-in static PE inspection; [PE certificates](../pe-certificates.md)                                                                                          |
 | PE imports             | Import and delay-load DLL names, ordinals, IAT RVAs and pefile import hash                  | Built-in static PE inspection; [PE imports](../pe-imports.md)                                                                                                    |
+| Windows shortcuts      | Shell Link target, arguments, working dir, ExtraData and Tracker droid facts                | Built-in static LNK inspection; [Windows shortcuts](../guides/native/windows-shortcut.md)                                                                        |
 | ELF notes              | PT_NOTE/SHT_NOTE owners, types, GNU build-id and ABI-tag fields                             | Built-in static ELF inspection; [ELF notes](../elf-notes.md)                                                                                                     |
 | Binary hardening       | PIE, NX, RELRO, CFG and related header flags for ELF, PE and Mach-O                         | Built-in static header inspection; [binary hardening](../binary-hardening.md)                                                                                    |
 | Linux kernel modules   | .modinfo keys, __versions CRCs, this_module presence, and signature trailer                 | Built-in static ELF inspection; [kernel modules](../kernel-modules.md)                                                                                           |
@@ -174,6 +179,7 @@ REA-യ്ക്ക് Node.js 22.x (>=22.23.4), 24.x (>=24.22.1), അല്ല�
 | Saved network captures | Requests, responses, പുറത്തുകാണുന്ന payload-ുകൾ, source locations                                  | HAR അല്ലെങ്കിൽ Fiddler Everywhere SAZ; native mitmproxy-നായി Linux-ൽ mitmdump; [capture guide](../guides/web/web-network-captures.md)                               |
 | .NET assemblies        | Metadata, CIL instructions, പ്രഖ്യാപിച്ച native dependencies, build comparisons                 | ഒന്നും ആവശ്യമില്ല (static മാത്രം); [managed-code guide](../guides/managed/managed-code-analysis.md)                                                                    |
 | Python packaged apps   | CArchive/PYZ entries, Python version, bytecode, resources and runtime options               | Static PyInstaller parsing; [Python guide](../python-packaged-applications.md)                                                                                   |
+| Deno compile binaries  | Virtual files, entry point, recorded options, npm snapshot length                           | Static inspection; [Deno compile executables](../deno-standalone.md)                                                                                             |
 | Android APKs           | Manifest declarations, classes, decompiled methods, references                              | Linux/macOS/Windows x64-ൽ Headless JADX-ഉം full JDK-ഉം; [Android guide](../guides/android/android-analysis.md)                                                   |
 | Android devices        | Devices, packages, processes, logs, dumps, screen captures, APK/file transfers              | Caller നൽകുന്ന adb (emulator അല്ലെങ്കിൽ hardware); [ADB guide](../guides/android/adb-device-analysis.md)                                                             |
 | JEB projects           | Engine-backed project units, artifact digests, type/method pseudo-code                      | MCP സേവനം നൽകുന്ന caller ആരംഭിച്ച JEB client; REA_JEB_MCP_URL ഉപയോഗിച്ച് തിരഞ്ഞെടുക്കുക; [JEB guide](../providers/jeb-analysis.md)                                        |

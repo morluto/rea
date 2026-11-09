@@ -14,6 +14,7 @@ import type { CallToolResult } from "@modelcontextprotocol/server";
 import { expect, it, vi } from "vitest";
 import { z } from "zod";
 
+import { seededLockStartNotice } from "../../../src/application/desktop/DesktopBuildComputers.js";
 import { toolContract } from "../../../src/contracts/toolContracts.js";
 import {
   buildComputerFakes as fakes,
@@ -209,6 +210,62 @@ it("reports the runner's failure with its output and leaves no helper behind", a
   );
   // The runner's own stdout went to the diagnostics, not the handshake.
   expect(JSON.stringify(error)).toContain("agentenv writing to stdout");
+});
+
+it("points a bundle's start that never got ready at the lock files its seed holds", async () => {
+  const { runner } = await fakes();
+  const start = async (failure: string, bundle: string) =>
+    parseMcpToolError(
+      await (
+        await connect({ ...runner.environment, FAKE_FAIL: failure })
+      ).callTool({
+        name: "start_build_computer",
+        arguments: { source: { kind: "bundle", path: bundle } },
+      }),
+    ).error.message;
+  const bundle = await bundleFolder();
+  const seed = join(bundle, "envs", "calc", "seed");
+  await mkdir(join(seed, ".config", "libreoffice", "4"), { recursive: true });
+  await mkdir(join(seed, "Documents"));
+  await writeFile(join(seed, ".config/libreoffice/4/.lock"), "[Lockdata]\n");
+  await writeFile(join(seed, "Documents/.~lock.q1.ods#"), ",user,localhost;\n");
+  await writeFile(join(seed, "Documents/q1.ods"), "PK");
+  const notReady =
+    "envs/calc: container/amd64: failed at probe: it didn't boot: the computer wasn't ready within 180 s (not ready: app calc: no window with class 'libreoffice-calc')";
+
+  const pointed = await start(notReady, bundle);
+  const unlocked = await start(notReady, await bundleFolder());
+  const otherFailure = await start(
+    "compose failed: no space left on device",
+    bundle,
+  );
+
+  const locks = [
+    "envs/calc/seed/.config/libreoffice/4/.lock",
+    "envs/calc/seed/Documents/.~lock.q1.ods#",
+  ];
+  expect(pointed).toContain(notReady);
+  expect(pointed).toContain(seededLockStartNotice(locks));
+  for (const lock of locks) expect(pointed).toContain(lock);
+  expect(unlocked).not.toContain(locks[0]);
+  expect(otherFailure).not.toContain(locks[0]);
+});
+
+it("points a final readiness failure at seeded locks", async () => {
+  const { runner } = await fakes({ readinessFails: true });
+  const bundle = await bundleFolder();
+  const seed = join(bundle, "envs", "calc", "seed", "Documents");
+  await mkdir(seed, { recursive: true });
+  await writeFile(join(seed, ".~lock.q1.ods#"), "lock");
+  const result = await (
+    await connect(runner.environment)
+  ).callTool({
+    name: "start_build_computer",
+    arguments: { source: { kind: "bundle", path: bundle } },
+  });
+  const { error } = parseMcpToolError(result);
+  expect(error.message).toContain("display check failed");
+  expect(error.message).toContain(".~lock.q1.ods#");
 });
 
 it("keeps the end of a long build's output, where its failure is", async () => {

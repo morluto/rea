@@ -70,6 +70,14 @@ trailer is observed absence, not proof the module is unsigned.
 When section names are incomplete, a missing named section is `unknown`
 rather than `absent`. An empty file-backed section is present and empty.
 
+`coverage.status` is `partial` when supported facts cannot all be examined or
+interpreted, including incomplete section names, malformed or unsupported
+metadata, and omitted duplicate named sections. When multiple `.modinfo`,
+`__versions`, `.gnu.linkonce.this_module`, `.init.text`, or `.exit.text`
+sections exist, the first is examined and a limitation identifies the omission.
+`complete` covers the supported inspection described here; it does not claim
+that `struct module`, symbol-table records, or certificate chains were decoded.
+
 ## Limits and failures
 
 The selected file is limited to 64 MiB by default (512 MiB maximum). At most

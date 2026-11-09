@@ -19,7 +19,6 @@ import { parseEnvironment } from "./environment.js";
 import { parseConfig } from "./parseConfig.js";
 import {
   CAPTURE_DECODER_OLD_GENERATION_SETTING,
-  captureDecoderHeapConstraint,
   DEFAULT_CAPTURE_DECODER_HEAP,
   parseCaptureDecoderHeap,
 } from "./captureDecoderHeap.js";
@@ -105,6 +104,18 @@ it("uses a valid REA_CAPTURE_DECODER_OLD_GENERATION_MIB override", async () => {
   );
   expect(projected.remediation.action).toContain("update_analysis_settings");
   expect(projected.remediation.action).toMatch(/restart REA/iu);
+  expect(projected.remediation.action).toContain(
+    "capture.decoder_old_generation_mib",
+  );
+  expect(projected.remediation.action).toMatch(/without a REA restart/iu);
+  expect(projected.remediation.action).toMatch(
+    /removes inherited NODE_OPTIONS/iu,
+  );
+  expect(projected.remediation.action).toMatch(/Bun.*V8 flags are ignored/iu);
+  expect(projected.remediation.action).toMatch(/Windows.*512 MiB reserve/iu);
+  expect(projected.remediation.action).toMatch(
+    /Other Bun hosts enforce no decoder heap limit/iu,
+  );
   if (process.versions.bun === undefined)
     expect(projected.details).toMatchObject({
       limit: {
@@ -231,20 +242,26 @@ it.each([
   const parsed = parseCaptureDecoderHeap(value);
   if (parsed.ok) throw new Error(`Accepted ${JSON.stringify(value)}`);
   expect(parsed.error).toBeInstanceOf(ConfigurationError);
+  expect(parsed.error.message).toContain(
+    CAPTURE_DECODER_OLD_GENERATION_SETTING,
+  );
+  expect(parsed.error.message).toMatch(/decimal integer/i);
+  expect(parsed.error.message).toMatch(/8 to 16384 MiB/i);
+  expect(parsed.error.message).toMatch(/default.*192 MiB/i);
+  expect(parsed.error.message).toMatch(/semi-space.*abort.*Node.*startup/i);
   expect(parsed.error.settings).toEqual([
     {
       setting: CAPTURE_DECODER_OLD_GENERATION_SETTING,
-      constraint: captureDecoderHeapConstraint,
+      constraint: parsed.error.message,
     },
   ]);
-  expect(parsed.error.message).toBe(captureDecoderHeapConstraint);
   const startup = parseEnvironment({
     REA_CAPTURE_DECODER_OLD_GENERATION_MIB: value,
   });
   if (startup.ok) throw new Error(`Startup accepted ${JSON.stringify(value)}`);
   expect(startup.error.settings).toContainEqual({
     setting: CAPTURE_DECODER_OLD_GENERATION_SETTING,
-    constraint: captureDecoderHeapConstraint,
+    constraint: parsed.error.message,
   });
   const config = parseConfig({
     REA_CAPTURE_DECODER_OLD_GENERATION_MIB: value,

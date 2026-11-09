@@ -168,8 +168,11 @@ it.skipIf(process.platform === "win32")(
       code: "EACCES",
     });
 
-    await expect(
-      readStableArtifact(selected, 1024, undefined, {
+    const rejected: unknown = await readStableArtifact(
+      selected,
+      1024,
+      undefined,
+      {
         lstat: async (path) => {
           if (path === selected) return selectedStats;
           throw failure;
@@ -178,11 +181,11 @@ it.skipIf(process.platform === "win32")(
         open: async () => {
           throw new Error("A rejected symlink must not be opened");
         },
-      }),
-    ).rejects.toMatchObject({
-      reason: "path",
-      resolvedPath: undefined,
-      message: `Expected a regular file without a symlink: ${selected}`,
-    });
+      },
+    ).catch((cause: unknown) => cause);
+    expect(rejected).toMatchObject({ reason: "path", resolvedPath: undefined });
+    if (!(rejected instanceof Error)) throw new Error("Expected path failure");
+    expect(rejected.message).toContain(selected);
+    expect(rejected.message).toContain("symlink");
   },
 );

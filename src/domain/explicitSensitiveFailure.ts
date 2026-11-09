@@ -279,6 +279,14 @@ const redactFailure = (
         ...(error.userMessage === undefined
           ? {}
           : { userMessage: text(error.userMessage) }),
+        ...(error.remediationAction === undefined
+          ? {}
+          : { remediationAction: text(error.remediationAction) }),
+        ...(error.fallbackRemediationAction === undefined
+          ? {}
+          : {
+              fallbackRemediationAction: text(error.fallbackRemediationAction),
+            }),
         ...(error.siblingOperations === undefined
           ? {}
           : { siblingOperations: error.siblingOperations }),

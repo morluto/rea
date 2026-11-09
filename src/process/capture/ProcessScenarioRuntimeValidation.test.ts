@@ -17,10 +17,7 @@ import {
   AnalysisInputError,
 } from "../../domain/analysisErrorCore.js";
 import { projectAnalysisError } from "../../domain/analysisErrorProjection.js";
-import {
-  resolveExecutable,
-  resolveProcessScenarioRuntimePaths,
-} from "./ProcessScenarioRuntimeValidation.js";
+import { resolveProcessScenarioRuntimePaths } from "./ProcessScenarioRuntimeValidation.js";
 import { processScenarioSchema } from "../../domain/process/processScenario.js";
 import { createTestTempDirectory } from "../../../tests/fixtures/temporaryDirectory.js";
 
@@ -33,7 +30,6 @@ it.skipIf(process.platform === "win32")(
     const command = "selected\\node";
     const selected = join(bin, command);
     await symlink(process.execPath, selected);
-    await expect(resolveExecutable(command, root, bin)).resolves.toBe(selected);
     const resolved = await resolveProcessScenarioRuntimePaths(
       processScenarioSchema.parse({
         executable: command,
@@ -53,7 +49,14 @@ it.skipIf(process.platform === "win32")(
       const alias = join(root, "chosen-node");
       await symlink(process.execPath, alias);
 
-      await expect(resolveExecutable(alias, root, "")).resolves.toBe(alias);
+      const resolved = await resolveProcessScenarioRuntimePaths(
+        processScenarioSchema.parse({
+          executable: alias,
+          working_directory: root,
+          environment: { PATH: "" },
+        }),
+      );
+      expect(resolved.executable).toBe(alias);
     } finally {
       await rm(root, { recursive: true, force: true });
     }
@@ -300,9 +303,14 @@ it.skipIf(SKIP_PERMISSIONS)(
     const tool = join(bin, "tool");
     await writeFile(tool, "#!/bin/sh\n", { mode: 0o755 });
     await withoutSearchPermission(denied, async () => {
-      await expect(
-        resolveExecutable("tool", root, [denied, bin].join(delimiter)),
-      ).resolves.toBe(tool);
+      const resolved = await resolveProcessScenarioRuntimePaths(
+        processScenarioSchema.parse({
+          executable: "tool",
+          working_directory: root,
+          environment: { PATH: [denied, bin].join(delimiter) },
+        }),
+      );
+      expect(resolved.executable).toBe(tool);
       const failure = await runtimePathOutcome({
         executable: "tool",
         working_directory: root,
@@ -365,7 +373,13 @@ it.skipIf(process.platform === "win32").each(["absolute", "relative", "PATH"])(
         : selection === "relative"
           ? "alias/../probe"
           : "probe";
-    const executable = await resolveExecutable(command, root, "alias/..");
+    const { executable } = await resolveProcessScenarioRuntimePaths(
+      processScenarioSchema.parse({
+        executable: command,
+        working_directory: root,
+        environment: { PATH: "alias/.." },
+      }),
+    );
     expect(await realpath(executable)).toBe(join(intended, "probe"));
     expect(execFileSync(executable, { encoding: "utf8", timeout: 2000 })).toBe(
       "intended",

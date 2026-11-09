@@ -84,6 +84,10 @@ Penyiapan mendukung Claude Code, Codex, Cursor, Gemini CLI, Grok Build, dan [age
 
 MCP menggunakan skema input ringkas secara default. Untuk petunjuk bidang lengkap dan validasi bertingkat, atur `REA_MCP_INPUT_SCHEMA_PROFILE=full` pada pendaftaran MCP. Kedua profil mempertahankan semua alat dan validasi server kanonis yang sama; lihat panduan kontrak MCP.
 
+Setup mencatat runtime yang dipilih dan skrip masuk REA secara langsung. Jika memakai package runner, pertahankan entri cache dan runtime tersebut; unduh paket dari direktori tepercaya di luar proyek target. Lihat panduan instalasi.
+
+Skema keluaran lengkap diumumkan secara default. Jika klien membatasi `tools/list`, atur `REA_MCP_OUTPUT_SCHEMA_PROFILE=compact` atau `off` dalam registrasi MCP. Validasi server dan hasil terstruktur tetap lengkap. Lihat «Output schemas» di panduan kontrak MCP.
+
 ### Minta agen Anda
 
 ```text
@@ -159,6 +163,7 @@ Alat tambahan dan dukungan sistem host bergantung pada target yang dianalisis:
 | Tata letak ELF offline     | Bagian, segmen, simbol/relokasi asli, dan kandidat mitigasi statis                                    | pwntools yang disediakan pemanggil pada Linux x64; [diagnostik biner](../guides/native/binary-diagnostics.md)                                                 |
 | PE certificates            | Authenticode WIN_CERTIFICATE entries and PKCS#7 signer/X.509 identity fields                          | Built-in static PE inspection; [PE certificates](../pe-certificates.md)                                                                                       |
 | PE imports                 | Import and delay-load DLL names, ordinals, IAT RVAs and pefile import hash                            | Built-in static PE inspection; [PE imports](../pe-imports.md)                                                                                                 |
+| Windows shortcuts          | Shell Link target, arguments, working dir, ExtraData and Tracker droid facts                          | Built-in static LNK inspection; [Windows shortcuts](../guides/native/windows-shortcut.md)                                                                     |
 | Artefak WASM               | Validasi, bagian, bentuk WAT import/ekspor yang tepat, dan WAT yang didekode                          | WABT 1.0.42 yang disediakan pemanggil; `inspect_wasm_artifact`                                                                                                |
 | Bytecode EVM               | Selector dispatch, offset byte, argumen yang disimpulkan, dan sifat mutabilitas                       | Pembawa data raw/hex lokal di Linux x64; [panduan EVM offline](../guides/evm/evm-bytecode.md)                                                                 |
 | Rust binaries              | Embedded cargo-auditable dependency list                                                              | [Rust binaries](../rust-binaries.md)                                                                                                                          |
@@ -175,6 +180,7 @@ Alat tambahan dan dukungan sistem host bergantung pada target yang dianalisis:
 | Capturan paket             | Endpoint, DNS, TLS SNI, distribusi protokol, dan permintaan HTTP                                      | tshark dan capinfos buatan pemanggil; [panduan pcap](../guides/data/pcap-analysis.md)                                                                         |
 | Assembly .NET              | Metadata, instruksi CIL, dependensi native yang dideklarasikan, dan perbandingan build                | Tidak ada (hanya analisis statis); [panduan kode terkelola](../guides/managed/managed-code-analysis.md)                                                       |
 | PyInstaller                | CArchive, PYZ, Python bytecode                                                                        | Static inspection; [Python packaged applications](../python-packaged-applications.md)                                                                         |
+| Deno compile binaries      | Virtual files, entry point, recorded options, npm snapshot length                                     | Static inspection; [Deno compile executables](../deno-standalone.md)                                                                                          |
 | APK Android                | Deklarasi manifest, kelas, metode hasil dekompilasi, dan referensi                                    | JADX mode headless dan JDK lengkap di Linux/macOS/Windows x64; [panduan Android](../guides/android/android-analysis.md)                                       |
 | Perangkat Android          | Perangkat, paket, proses, log, dump, tangkapan layar, serta transfer APK/berkas                       | adb buatan pemanggil (emulator atau perangkat); [panduan ADB](../guides/android/adb-device-analysis.md)                                                       |
 | Proyek JEB                 | Unit proyek bertenaga mesin, hash artefak, dan pseudokode tipe/metode                                 | Klien JEB yang dijalankan pemanggil dan menyajikan MCP, dipilih dengan REA_JEB_MCP_URL; [panduan JEB](../providers/jeb-analysis.md)                           |

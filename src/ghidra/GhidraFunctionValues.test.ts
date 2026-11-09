@@ -522,9 +522,15 @@ describe("Ghidra compact reference provenance", () => {
   it("distinguishes incoming references, examined emptiness and unavailable coverage at data addresses", () => {
     const instruction = {
       ...compactInstruction(),
-      address: "ram:00402000",
+      address: "ram:0x402000",
       status: "data",
       procedure: null,
+      containing_data: {
+        address: "ram:0x402000",
+        length: 4,
+        type_id: "/dword",
+        provenance: "ghidra-listing",
+      },
     };
     const reference = {
       ...compactReference(),

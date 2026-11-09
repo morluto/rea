@@ -801,6 +801,18 @@ describe("reference source import behavior", () => {
     }
   });
 
+  it.each([null, "stop import", { requested: "stop import" }])(
+    "preserves the caller's pre-admission cancellation reason %j",
+    async (reason) => {
+      const controller = new AbortController();
+      controller.abort(reason);
+      const result = await importTree("unopened-source", controller.signal);
+      if (result.ok) throw new Error("Expected cancellation");
+      expect(result.error.code).toBe("cancelled");
+      expect(result.error.cause).toBe(reason);
+    },
+  );
+
   it("records bounded local Git state without invoking Git", async () => {
     const parent = await createTestTempDirectory("rea-reference-git-");
     try {

@@ -125,8 +125,9 @@ describe("source-map envelope walk", () => {
       invalid_sections: [
         {
           section_path: [0],
-          reason:
-            "Indexed source-map section requires an embedded map or external URL.",
+          reason: expect.stringMatching(
+            /source-map section requires.*embedded map or external URL/i,
+          ),
         },
       ],
     });

@@ -4,20 +4,8 @@ import { expect, it } from "vitest";
 
 import { ArtifactReaderFailure } from "../ArtifactReader.js";
 import {
-  NODE_SEA_ASSET_COUNT,
-  NODE_SEA_ASSET_NAME_BYTES,
-  NODE_SEA_BAD_MAGIC,
-  NODE_SEA_EMPTY_CODE_PATH,
-  NODE_SEA_FUSE_CONFLICT,
-  NODE_SEA_FUSE_ABSENT,
-  NODE_SEA_FUSE_UNSET,
   NODE_SEA_MAGIC,
-  NODE_SEA_TRAILING_BYTES,
-  NODE_SEA_TRUNCATED,
-  NODE_SEA_UNKNOWN_EXTENSION,
-  NODE_SEA_UNKNOWN_FLAGS,
   decodeNodeSeaBlob,
-  nodeSeaAssetCollision,
   observeNodeSeaFuseMatches,
 } from "./NodeSeaBlob.js";
 import { buildNodeSeaBlob } from "./NodeSea.fixture.js";
@@ -31,44 +19,59 @@ const header = (flags: number, extension = 1): Buffer => {
 };
 
 it("rejects a blob that ends before the magic", async () => {
-  await expect(decodeNodeSeaBlob(Buffer.from([0x20, 0xda]))).rejects.toThrow(
-    NODE_SEA_TRUNCATED,
-  );
+  await expect(
+    decodeNodeSeaBlob(Buffer.from([0x20, 0xda])),
+  ).rejects.toMatchObject({
+    reason: "format",
+    message: expect.stringMatching(/Node SEA.*truncated/iu),
+  });
 });
 
 it("rejects a blob whose magic is not 0x143da20", async () => {
-  await expect(decodeNodeSeaBlob(Buffer.alloc(9))).rejects.toThrow(
-    NODE_SEA_BAD_MAGIC,
-  );
+  await expect(decodeNodeSeaBlob(Buffer.alloc(9))).rejects.toMatchObject({
+    reason: "format",
+    message: expect.stringMatching(/magic.*not.*0x143da20/iu),
+  });
 });
 
 it("rejects a header that ends before the extension byte", async () => {
-  await expect(decodeNodeSeaBlob(header(0).subarray(0, 8))).rejects.toThrow(
-    NODE_SEA_TRUNCATED,
-  );
+  await expect(
+    decodeNodeSeaBlob(header(0).subarray(0, 8)),
+  ).rejects.toMatchObject({
+    reason: "format",
+    message: expect.stringMatching(/Node SEA.*truncated/iu),
+  });
 });
 
 it("rejects unknown flag bits", async () => {
-  await expect(decodeNodeSeaBlob(header(1 << 5))).rejects.toThrow(
-    NODE_SEA_UNKNOWN_FLAGS,
-  );
+  await expect(decodeNodeSeaBlob(header(1 << 5))).rejects.toMatchObject({
+    reason: "format",
+    message: expect.stringMatching(/flags.*unknown bits/iu),
+  });
 });
 
 it("rejects an unknown exec argv extension", async () => {
-  await expect(decodeNodeSeaBlob(header(0, 9))).rejects.toThrow(
-    NODE_SEA_UNKNOWN_EXTENSION,
-  );
+  await expect(decodeNodeSeaBlob(header(0, 9))).rejects.toMatchObject({
+    reason: "format",
+    message: expect.stringMatching(/exec argv extension.*unknown/iu),
+  });
 });
 
 it("rejects an empty code path", async () => {
   await expect(
     decodeNodeSeaBlob(buildNodeSeaBlob({ codePath: "" })),
-  ).rejects.toThrow(NODE_SEA_EMPTY_CODE_PATH);
+  ).rejects.toMatchObject({
+    reason: "format",
+    message: expect.stringMatching(/code path.*empty/iu),
+  });
 });
 
 it("rejects a truncated length-prefixed field", async () => {
   const bytes = Buffer.concat([header(0), Buffer.alloc(4)]);
-  await expect(decodeNodeSeaBlob(bytes)).rejects.toThrow(NODE_SEA_TRUNCATED);
+  await expect(decodeNodeSeaBlob(bytes)).rejects.toMatchObject({
+    reason: "format",
+    message: expect.stringMatching(/Node SEA.*truncated/iu),
+  });
 });
 
 it("rejects colliding asset names", async () => {
@@ -81,7 +84,10 @@ it("rejects colliding asset names", async () => {
         ],
       }),
     ),
-  ).rejects.toThrow(nodeSeaAssetCollision("shared"));
+  ).rejects.toMatchObject({
+    reason: "format",
+    message: expect.stringMatching(/Node SEA asset name collides.*shared/iu),
+  });
 });
 
 it("retains an empty asset key as a raw Node SEA key", async () => {
@@ -90,6 +96,43 @@ it("retains an empty asset key as a raw Node SEA key", async () => {
   );
   expect(decoded.assets).toMatchObject([{ name: "", range: { length: 5 } }]);
 });
+
+it.each([
+  {
+    field: "code path",
+    build: (value: string) => buildNodeSeaBlob({ codePath: value }),
+    read: (blob: Awaited<ReturnType<typeof decodeNodeSeaBlob>>) =>
+      blob.codePath,
+  },
+  {
+    field: "asset name",
+    build: (value: string) =>
+      buildNodeSeaBlob({ assets: [{ name: value, body: "" }] }),
+    read: (blob: Awaited<ReturnType<typeof decodeNodeSeaBlob>>) =>
+      blob.assets[0]?.name,
+  },
+  {
+    field: "exec argument",
+    build: (value: string) => buildNodeSeaBlob({ execArgv: [value] }),
+    read: (blob: Awaited<ReturnType<typeof decodeNodeSeaBlob>>) =>
+      blob.execArgv[0],
+  },
+])(
+  "rejects invalid UTF-8 in $field while preserving a literal replacement character",
+  async ({ build, read }) => {
+    const valid = await decodeNodeSeaBlob(build("\ufffd"));
+    expect(read(valid)).toBe("\ufffd");
+
+    const malformed = build("fixture-marker");
+    const offset = malformed.indexOf("fixture-marker");
+    expect(offset).toBeGreaterThanOrEqual(0);
+    malformed[offset] = 0xff;
+    await expect(decodeNodeSeaBlob(malformed)).rejects.toMatchObject({
+      reason: "format",
+      message: expect.stringMatching(/not valid UTF-8/iu),
+    });
+  },
+);
 
 const limitOf = async (bytes: Buffer): Promise<ArtifactReaderFailure> => {
   try {
@@ -102,15 +145,16 @@ const limitOf = async (bytes: Buffer): Promise<ArtifactReaderFailure> => {
 };
 
 it("refuses an asset table over its count bound before creating records", async () => {
-  const prefix = buildNodeSeaBlob({ assets: [{ name: "a", body: "" }] });
-  const count = Buffer.alloc(8);
-  count.writeBigUInt64LE(100_001n);
-  // Replace the declared count; the bound is checked before the table length.
-  const bytes = Buffer.concat([prefix.subarray(0, -25), count]);
-  const failure = await limitOf(bytes);
+  const assets = Array.from({ length: 100_001 }, (_, index) => ({
+    name: `asset-${String(index)}`,
+    body: "",
+  }));
+  const failure = await limitOf(buildNodeSeaBlob({ assets }));
   expect(failure).toMatchObject({
     reason: "limit",
-    message: NODE_SEA_ASSET_COUNT,
+    message: expect.stringMatching(
+      /asset count.*100000.*no runtime override/iu,
+    ),
   });
 });
 
@@ -126,17 +170,52 @@ it("refuses asset names over the decoded name budget", async () => {
   );
   expect(failure).toMatchObject({
     reason: "limit",
-    message: NODE_SEA_ASSET_NAME_BYTES,
+    message: expect.stringMatching(
+      /asset names.*8388608.*no runtime override/iu,
+    ),
   });
 });
+
+it.each([
+  {
+    label: "count",
+    accepted: () => Array.from({ length: 4096 }, () => "x"),
+    args: () => Array.from({ length: 4097 }, () => "x"),
+    boundary: "capacity",
+    warning: /exec argv count.*4096.*no runtime override/iu,
+  },
+  {
+    label: "text",
+    accepted: () => ["x".repeat(1024 * 1024)],
+    args: () => ["x".repeat(1024 * 1024 + 1)],
+    boundary: "memory",
+    warning: /exec argv text.*1048576.*no runtime override/iu,
+  },
+])(
+  "admits exec argument $label at its bound and refuses more",
+  async ({ accepted, args, boundary, warning }) => {
+    const atLimit = accepted();
+    expect(
+      (await decodeNodeSeaBlob(buildNodeSeaBlob({ execArgv: atLimit })))
+        .execArgv,
+    ).toEqual(atLimit);
+    const failure = await limitOf(buildNodeSeaBlob({ execArgv: args() }));
+    expect(failure).toMatchObject({
+      reason: "limit",
+      boundary,
+      message: expect.stringMatching(warning),
+    });
+  },
+);
 
 it("rejects non-zero trailing bytes and keeps zero padding", async () => {
   const padded = buildNodeSeaBlob({ trailing: Buffer.alloc(8) });
   expect((await decodeNodeSeaBlob(padded)).codePath).toBe("sea.js");
   const dirty = Buffer.concat([padded, Buffer.from([1])]);
-  await expect(decodeNodeSeaBlob(dirty)).rejects.toThrow(
-    NODE_SEA_TRAILING_BYTES,
-  );
+  await expect(decodeNodeSeaBlob(dirty)).rejects.toMatchObject({
+    reason: "format",
+    message: expect.stringMatching(/trailing bytes/iu),
+  });
 });
 
 it("decodes flags, the main script, code cache, assets, and exec argv", async () => {
@@ -186,13 +265,15 @@ it("reports an absent, unset, set, or conflicting fuse sentinel", () => {
   expect(observeNodeSeaFuseMatches([])).toMatchObject({
     fuseState: "absent",
     fuseSentinel: null,
-    fuseContradiction: NODE_SEA_FUSE_ABSENT,
+    fuseContradiction: expect.stringMatching(
+      /no NODE_SEA_FUSE sentinel.*observed/iu,
+    ),
   });
   const unset = `NODE_SEA_FUSE_${"a".repeat(32)}:0`;
   expect(observeNodeSeaFuseMatches([unset, unset])).toMatchObject({
     fuseState: "unset",
     fuseSentinel: unset,
-    fuseContradiction: NODE_SEA_FUSE_UNSET,
+    fuseContradiction: expect.stringMatching(/NODE_SEA_FUSE sentinel.*unset/iu),
   });
   const set = `NODE_SEA_FUSE_${"b".repeat(32)}:1`;
   expect(observeNodeSeaFuseMatches([set])).toMatchObject({
@@ -203,7 +284,7 @@ it("reports an absent, unset, set, or conflicting fuse sentinel", () => {
   expect(observeNodeSeaFuseMatches([unset, set])).toMatchObject({
     fuseState: "conflicting",
     fuseSentinel: null,
-    fuseContradiction: NODE_SEA_FUSE_CONFLICT,
+    fuseContradiction: expect.stringMatching(/fuse sentinels disagree/iu),
   });
 });
 

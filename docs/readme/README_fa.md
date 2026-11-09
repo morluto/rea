@@ -76,6 +76,10 @@ npx rea-agents setup
 
 MCP به‌طور پیش‌فرض از schema ورودی فشرده استفاده می‌کند. برای راهنمای کامل فیلدها و اعتبارسنجی تو‌در‌تو، در ثبت MCP مقدار `REA_MCP_INPUT_SCHEMA_PROFILE=full` را تنظیم کنید. هر دو حالت همهٔ ابزارها و اعتبارسنجی استاندارد یکسان سرور را نگه می‌دارند؛ راهنمای قراردادهای MCP را ببینید.
 
+راه‌اندازی، محیط اجرای انتخاب‌شده و اسکریپت ورودی REA را مستقیماً ثبت می‌کند. اگر از اجراکنندهٔ بسته استفاده می‌کنید، ورودی حافظهٔ پنهان و محیط اجرا را حفظ کنید؛ بسته را از پوشه‌ای قابل اعتماد خارج از پروژهٔ هدف دریافت کنید. راهنمای نصب را ببینید.
+
+طرح‌های خروجی کامل به‌طور پیش‌فرض اعلام می‌شوند. اگر کلاینت `tools/list` را محدود می‌کند، در ثبت MCP مقدار `REA_MCP_OUTPUT_SCHEMA_PROFILE=compact` یا `off` را تنظیم کنید. اعتبارسنجی سرور و نتایج ساخت‌یافته کامل می‌مانند. بخش «Output schemas» در راهنمای قراردادهای MCP را ببینید.
+
 ### از ایجنت خود بپرسید
 
 ```text
@@ -149,6 +153,7 @@ REA به Node.js 22.x (>=22.23.4)، 24.x (>=24.22.1) یا 26+ (>=26.12.1)، به
 | ساختار ELF آفلاین       | بخش‌ها، سگمنت‌ها، نمادها و relocationهای اصلی و گزینه‌های احتمالی کاهش آسیب‌پذیری ایستا | pwntools تأمین‌شده توسط فراخواننده روی Linux x64؛ [تشخیص باینری](../guides/native/binary-diagnostics.md)                                                    |
 | PE certificates        | Authenticode WIN_CERTIFICATE entries and PKCS#7 signer/X.509 identity fields        | Built-in static PE inspection; [PE certificates](../pe-certificates.md)                                                                                    |
 | PE imports             | Import and delay-load DLL names, ordinals, IAT RVAs and pefile import hash          | Built-in static PE inspection; [PE imports](../pe-imports.md)                                                                                              |
+| Windows shortcuts      | Shell Link target, arguments, working dir, ExtraData and Tracker droid facts        | Built-in static LNK inspection; [Windows shortcuts](../guides/native/windows-shortcut.md)                                                                  |
 | بایت‌کد EVM             | selectorهای dispatch، offsetهای بایتی، آرگومان‌های استنباط‌شده و قابلیت تغییر وضعیت   | دادهٔ خام/hex محلی روی Linux x64؛ [راهنمای EVM آفلاین](../guides/evm/evm-bytecode.md)                                                                        |
 | Rust binaries          | Embedded cargo-auditable dependency list                                            | [Rust binaries](../rust-binaries.md)                                                                                                                       |
 | ELF notes              | PT_NOTE/SHT_NOTE owners, types, GNU build-id and ABI-tag fields                     | Built-in static ELF inspection; [ELF notes](../elf-notes.md)                                                                                               |
@@ -163,6 +168,7 @@ REA به Node.js 22.x (>=22.23.4)، 24.x (>=24.22.1) یا 26+ (>=26.12.1)، به
 | داده‌های ضبط‌شدهٔ شبکه    | درخواست‌ها، پاسخ‌ها، payloadهای آشکارشده و مکان آن‌ها در منبع                          | HAR / Fiddler Everywhere SAZ؛ ابزار mitmdump در لینوکس برای ضبط‌های بومی mitmproxy؛ [راهنمای ضبط شبکه](../guides/web/web-network-captures.md)               |
 | اسمبلی‌های .NET         | فراداده، دستورالعمل‌های CIL، وابستگی‌های بومی اعلام‌شده و مقایسهٔ buildها                | بررسی ایستا؛ [راهنمای کد مدیریت‌شده](../guides/managed/managed-code-analysis.md)                                                                            |
 | PyInstaller            | CArchive, PYZ, Python bytecode                                                      | Static inspection; [Python packaged applications](../python-packaged-applications.md)                                                                      |
+| Deno compile binaries  | Virtual files, entry point, recorded options, npm snapshot length                   | Static inspection; [Deno compile executables](../deno-standalone.md)                                                                                       |
 | فایل‌های APK اندروید    | تعاریف Manifest، کلاس‌ها، متدهای دیکامپایل‌شده و ارجاعات                               | JADX بدون رابط گرافیکی و JDK کامل در Linux/macOS/Windows x64؛ [راهنمای اندروید](../guides/android/android-analysis.md)                                     |
 | دستگاه‌های اندروید      | دستگاه‌ها، بسته‌ها، فرایندها، لاگ‌ها، دامپ‌ها، اسکرین‌شات‌ها و انتقال APK/فایل             | adb تأمین‌شده توسط فراخوان‌کننده (شبیه‌ساز یا دستگاه)؛ [راهنمای ADB](../guides/android/adb-device-analysis.md)                                                |
 | پروژه‌های JEB           | واحدهای پروژه از موتور، هش‌های مصنوع و شبه‌کدِ نوع/متد                                 | یک کلاینت JEB که توسط فراخوان‌کننده اجرا شده و MCP ارائه می‌دهد و با REA_JEB_MCP_URL انتخاب می‌شود؛ [راهنمای JEB](../providers/jeb-analysis.md)                |

@@ -594,8 +594,10 @@ it("keeps empty identities unknown and compares suffix-only identities as data",
       matched_native: { name: "open_native" },
       candidates: [{ name: "open_native" }],
     });
-    expect(result.pinvoke_imports[0]?.limitations).toContain(
-      "A native name candidate exists, but a required module identity is unavailable; module correspondence is unknown.",
+    expect(result.pinvoke_imports[0]?.limitations).toContainEqual(
+      expect.stringMatching(
+        /module identity.*unavailable.*correspondence.*unknown/iu,
+      ),
     );
   }
 

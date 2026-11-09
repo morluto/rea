@@ -2,10 +2,7 @@ import {
   primaryAnalysisError,
   type AnalysisError,
 } from "../../domain/analysisErrorBase.js";
-import { isAbsolute } from "node:path";
-import { AnalysisInputError } from "../../domain/analysisErrorCore.js";
 import { createEvidence } from "../../domain/evidence.js";
-import { err } from "../../domain/result.js";
 import { inspectPlaywrightTraceInputSchema } from "../../domain/playwrightTrace/playwrightTraceQuery.js";
 import {
   PLAYWRIGHT_TRACE_OPERATION as operation,
@@ -49,16 +46,6 @@ export class PlaywrightTraceService {
       signal,
     );
     if (!parsed.ok) return parsed;
-    if (!isAbsolute(parsed.value.path))
-      return err(
-        new AnalysisInputError(operation, undefined, [
-          {
-            path: ["path"],
-            reason: "invalid_format",
-            message: "Expected an absolute filesystem trace archive path.",
-          },
-        ]),
-      );
     const loaded = await this.port.inspect(parsed.value.path, signal);
     if (!loaded.ok) {
       const source =

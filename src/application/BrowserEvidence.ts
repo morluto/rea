@@ -164,6 +164,10 @@ const browserParameters = (
         : "target_id" in input && observedOrigin !== undefined
           ? [observedOrigin]
           : [],
+    ...("discovery_timeout_ms" in input &&
+    input.discovery_timeout_ms !== undefined
+      ? { discovery_timeout_ms: input.discovery_timeout_ms }
+      : {}),
     ...("command_timeout_ms" in input && input.command_timeout_ms !== undefined
       ? { command_timeout_ms: input.command_timeout_ms }
       : {}),
