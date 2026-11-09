@@ -172,9 +172,9 @@ operation `describe_desktop_application_task` and predicate type
     saved something, as Tellico's `<cdate>` of `<year>`, `<month>` and
     `<day>` (`cdate`, `mdate`, `created`, `modified`, `saved`, `updated`),
     which no check ever reads, while a date a user enters in parts, as a
-    birthday, is an edit like any other; and `upkeep`, attributes the
-    elements of one archive entry only gained while another entry holds the
-    edit, as LibreOffice fills in `styles.xml` on save. However much noise
+    birthday, is an edit like any other; and `upkeep`, the
+    `loext:tab-stop-distance` attributes LibreOffice fills in `styles.xml`
+    while another archive entry holds an edit. However much noise
     comes first, it never takes a check's place. When the change holds
     nothing else, the checks stay and a note flags them: up to three in a
     document, and as many as fit in the app's own state, where a view

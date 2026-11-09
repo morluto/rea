@@ -287,7 +287,7 @@ describe("draftTaskFiles upkeep in an archive", () => {
       ),
       entry(
         "styles.xml",
-        `<styles><style name="Text">${text}</style><style name="Heading">${heading}</style></styles>`,
+        `<styles xmlns:loext="urn:loext" xmlns:fo="urn:fo"><style name="Text">${text}</style><style name="Heading">${heading}</style></styles>`,
       ),
     ],
     entry_count: 2,
@@ -301,12 +301,12 @@ describe("draftTaskFiles upkeep in an archive", () => {
     return file;
   };
   const filled =
-    "/entries/[name=styles.xml]/view/root/children/[name=style][@name=Text]/children/[name=props]/attributes/tab-stop";
+    "/entries/[name=styles.xml]/view/root/children/[name=style][@name=Text]/children/[name=props]/attributes/loext:tab-stop-distance";
 
   it("demotes an attribute several elements gained while another entry holds the edit", () => {
     const file = drafted(
       archive("Spring Sale", "<props/>"),
-      archive("Summer Sale", `<props tab-stop="0in"/>`),
+      archive("Summer Sale", `<props loext:tab-stop-distance="0in"/>`),
     );
 
     expect(file.suggested.map(pointerOf)).toEqual([
@@ -320,7 +320,7 @@ describe("draftTaskFiles upkeep in an archive", () => {
   it("suggests an attribute an entry gained when nothing else changed, since that may be the edit", () => {
     const file = drafted(
       archive("Spring Sale", "<props/>"),
-      archive("Spring Sale", `<props tab-stop="0in"/>`),
+      archive("Spring Sale", `<props loext:tab-stop-distance="0in"/>`),
     );
 
     expect(file.suggested.map(pointerOf)).toEqual([
@@ -343,6 +343,16 @@ describe("draftTaskFiles upkeep in an archive", () => {
       size,
     ]);
     expect(file.values.every(({ note }) => note === undefined)).toBe(true);
+  });
+
+  it("keeps a formatting edit when another archive entry also changes", () => {
+    const file = drafted(
+      archive("Spring Sale", "<props/>"),
+      archive("Summer Sale", `<props fo:font-weight="bold"/>`),
+    );
+    expect(file.suggested.map(pointerOf)).toContain(
+      "/entries/[name=styles.xml]/view/root/children/[name=style][@name=Text]/children/[name=props]/attributes/fo:font-weight",
+    );
   });
 });
 

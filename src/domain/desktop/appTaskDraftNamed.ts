@@ -338,7 +338,7 @@ const equals = (
     value === undefined ||
     (isRecord(value) && Object.keys(value).length > 0) ||
     isStamp(value) ||
-    inSplitDate(ends.final, pointer) ||
+    (tree.xml(ends.final, pointer) && inSplitDate(ends.final, pointer)) ||
     isLayoutText(tree, ends.final, pointer, value)
   )
     return;
