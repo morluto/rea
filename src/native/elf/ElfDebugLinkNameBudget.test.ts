@@ -14,7 +14,10 @@ vi.mock("node:zlib", async (importOriginal) => {
   };
 });
 
-import { inspectElfDebugLinkInputSchema } from "../../domain/native/elfDebugLink.js";
+import {
+  ELF_DEBUG_LINK_CANDIDATE_BUDGET_LIMITATION,
+  inspectElfDebugLinkInputSchema,
+} from "../../domain/native/elfDebugLink.js";
 import {
   gnuDebuglinkCrc32,
   parseElfDebugLink,
@@ -33,8 +36,11 @@ afterEach(() => {
   zlib.inflated = 0;
 });
 
-/** Replace the trailing 64-bit little-endian `.shstrtab` with a zlib one of 1 MiB. */
-const withCompressedNames = (bytes: Buffer): Buffer => {
+/**
+ * Replace the trailing 64-bit little-endian `.shstrtab` with a compressed one
+ * declaring 1 MiB; type 1 is zlib, anything else no decoder supports.
+ */
+const withCompressedNames = (bytes: Buffer, compressionType = 1): Buffer => {
   const shoff = Number(bytes.readBigUInt64LE(40));
   const shnum = bytes.readUInt16LE(60);
   const header = shoff + (shnum - 1) * 64;
@@ -42,7 +48,7 @@ const withCompressedNames = (bytes: Buffer): Buffer => {
   const names = Buffer.alloc(DECODED_NAME_BYTES);
   bytes.copy(names, 0, namesOffset);
   const chdr = Buffer.alloc(24);
-  chdr.writeUInt32LE(1, 0);
+  chdr.writeUInt32LE(compressionType, 0);
   chdr.writeBigUInt64LE(BigInt(DECODED_NAME_BYTES), 8);
   chdr.writeBigUInt64LE(1n, 16);
   const table = Buffer.concat([chdr, deflateSync(names)]);
@@ -109,4 +115,48 @@ it("still decodes compressed names that fit the selected budget", () => {
   );
   expect(zlib.inflated).toBeGreaterThan(0);
   expect(report.debuglink.status).toBe("present");
+});
+
+it("keeps the build-id of an image whose names use an unsupported compression above the budget", () => {
+  const image = withCompressedNames(elfDebugLinkFixture(), 0x7fff);
+  const report = parseElfDebugLink(
+    image,
+    { path: "/artifacts/prog", sha256: "ab".repeat(32), bytes: image.length },
+    inputFor(image.length + 1),
+  );
+  expect(zlib.inflated).toBe(0);
+  expect(report.build_id.status).toBe("observed");
+  expect(report.limitations.join("\n")).toContain(
+    "compression type 32767 is unsupported",
+  );
+});
+
+it("keeps the build-id of a candidate whose names use an unsupported compression above the budget", () => {
+  const candidate = withCompressedNames(elfDebugCandidateFixture(), 0x7fff);
+  const image = elfDebugLinkFixture();
+  const input = inputFor(image.length + 1);
+  const report = parseElfDebugLink(
+    image,
+    { path: "/artifacts/prog", sha256: "ab".repeat(32), bytes: image.length },
+    input,
+  );
+  const verified = verifyElfDebugCandidate(
+    report,
+    {
+      path: "/artifacts/prog.debug",
+      sha256: "cd".repeat(32),
+      bytes: candidate.length,
+      crc32: gnuDebuglinkCrc32(candidate),
+      prefix: candidate,
+    },
+    input,
+  );
+  expect(zlib.inflated).toBe(0);
+  expect(report.build_id.hex).not.toBeNull();
+  expect(verified.verification?.build_id.candidate_hex).toBe(
+    report.build_id.hex,
+  );
+  expect(verified.limitations).not.toContain(
+    ELF_DEBUG_LINK_CANDIDATE_BUDGET_LIMITATION,
+  );
 });

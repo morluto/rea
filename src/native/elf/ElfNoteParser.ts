@@ -25,7 +25,10 @@ import {
   gnuNoteTypeName,
 } from "../../domain/native/elfNotes.js";
 import { BinaryFormatFailure } from "../metadata/BinaryContainer.js";
-import { decodeElfSectionNameTable } from "../metadata/ElfSectionNameTable.js";
+import {
+  decodeElfSectionNameTable,
+  readElfSectionNameTableHeader,
+} from "../metadata/ElfSectionNameTable.js";
 
 const PT_NOTE = 4;
 const SHT_NOTE = 7;
@@ -62,7 +65,8 @@ export class ElfNoteSectionNameBudgetFailure extends Error {
 /**
  * Refuse a compressed section-name table whose declared decoded size does not
  * fit the source-plus-decoded-names budget, before any decoder inflates it.
- * Structural problems are left to the decoders that own them.
+ * Only a compression header the owning decoder admits is charged; structural
+ * problems and unsupported compression are left to the decoders that own them.
  */
 export const assertElfSectionNameBudget = (
   bytes: Buffer,
@@ -83,21 +87,23 @@ export const assertElfSectionNameBudget = (
     header.elfClass,
     little,
   );
-  if (!parsed.ok || (parsed.value.flags & SHF_COMPRESSED) === 0n) return;
-  const wide = header.elfClass === 64;
-  const start = parsed.value.offset;
-  if (start > BigInt(bytes.length - (wide ? 16 : 8))) return;
-  const chdr = Number(start);
-  const declared = wide
-    ? little
-      ? bytes.readBigUInt64LE(chdr + 8)
-      : bytes.readBigUInt64BE(chdr + 8)
-    : BigInt(
-        little ? bytes.readUInt32LE(chdr + 4) : bytes.readUInt32BE(chdr + 4),
-      );
-  if (declared > BigInt(Math.max(0, maxFileBytes - bytes.length)))
+  if (!parsed.ok || parsed.value.offset > BigInt(bytes.length)) return;
+  const start = Number(parsed.value.offset);
+  const names = readElfSectionNameTableHeader(
+    bytes.subarray(
+      start,
+      parsed.value.size > BigInt(bytes.length - start)
+        ? bytes.length
+        : start + Number(parsed.value.size),
+    ),
+    parsed.value.flags,
+    header.elfClass,
+    little,
+  );
+  if (names.state !== "compressed") return;
+  if (names.declaredSize > BigInt(Math.max(0, maxFileBytes - bytes.length)))
     throw new ElfNoteSectionNameBudgetFailure(
-      BigInt(bytes.length) + declared,
+      BigInt(bytes.length) + names.declaredSize,
       maxFileBytes,
     );
 };
