@@ -151,6 +151,11 @@ import {
   rustBinaryViewContextSchema,
 } from "./rustBinaryView.js";
 import {
+  cycloneDxDocumentSchema,
+  cycloneDxSourceCoverageSchema,
+  cycloneDxViewRequestSchema,
+} from "./cyclonedxView.js";
+import {
   nativeFunctionMatchingViewRequestSchema,
   nativeFunctionMatchingViewItemsSchema,
 } from "./nativeFunctionMatchingView.js";
@@ -598,6 +603,16 @@ export const rustBinaryPageViewResultSchema = z.strictObject({
   view: rustBinaryViewRequestSchema,
   rust: rustBinarySummarySchema,
   page: rustBinaryViewPageSchema,
+});
+
+/** One CycloneDX 1.6 document. This view does not page. */
+export const cycloneDxViewResultSchema = z.strictObject({
+  ...viewResultBase,
+  kind: z.literal("cyclonedx"),
+  parent_operation: z.enum(["inspect_go_binary", "inspect_rust_binary"]),
+  view: cycloneDxViewRequestSchema,
+  source_coverage: cycloneDxSourceCoverageSchema,
+  document: cycloneDxDocumentSchema,
 });
 
 /** Summary `inspect_binary_layout` detail returns; no other view kind. */
@@ -1476,6 +1491,7 @@ export const analysisViewResultSchema = z.discriminatedUnion("kind", [
     page: goBinaryViewPageSchema,
   }),
   rustBinaryPageViewResultSchema,
+  cycloneDxViewResultSchema,
   z.strictObject({
     kind: z.literal("item"),
     view: itemViewSchema,

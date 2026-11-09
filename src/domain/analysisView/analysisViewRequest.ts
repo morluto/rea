@@ -23,6 +23,7 @@ import { gpuCodeObjectsViewRequestSchema } from "./gpuCodeObjectsView.js";
 import { modelArtifactViewRequestSchema } from "../model/modelArtifactQuery.js";
 import { rustBinaryViewRequestSchema } from "../rust/rustBinaryQuery.js";
 import { goBinaryViewRequestSchema } from "./goBinaryView.js";
+import { cycloneDxViewRequestSchema } from "./cyclonedxView.js";
 import { nativeFunctionMatchingViewRequestSchema } from "./nativeFunctionMatchingView.js";
 import { protobufViewRequestSchema } from "./protobufCaptureView.js";
 import { nativeInventoryViewRequestSchema } from "./nativeInventoryView.js";
@@ -99,6 +100,7 @@ export const analysisViewRequestSchema = z.discriminatedUnion("kind", [
   summaryViewSchema,
   goBinaryViewRequestSchema,
   rustBinaryViewRequestSchema,
+  cycloneDxViewRequestSchema,
   desktopViewRequestSchema,
   facetViewSchema,
   itemViewSchema,

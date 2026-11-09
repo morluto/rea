@@ -641,6 +641,11 @@ export const documentationSections = [
         route: "/rust-binaries",
       },
       {
+        text: "CycloneDX dependencies",
+        source: "guides/native/cyclonedx-view.md",
+        route: "/cyclonedx-view",
+      },
+      {
         text: "U-Boot legacy uImage containers",
         source: "uimage.md",
         route: "/uimage",
