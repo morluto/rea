@@ -146,7 +146,57 @@ cliTest.for(["CLI", "stdio MCP"] as const)(
 );
 
 cliTest.for(["CLI", "stdio MCP"] as const)(
-  "preserves definite rejection and unknown builtin admission through %s",
+  "preserves child-process rejection and unresolved admission through %s",
+  async (surface, { cli }) => {
+    const root = await createTestTempDirectory("rea-builtin-admission-");
+    const cases = [
+      ["rejected", 'const child=cp.spawn("tool",[],{cwd:5});', false],
+      [
+        "qualified",
+        'const child=cp.spawn("tool",[],{cwd:new globalThis.URL("file:///tmp/")});',
+        true,
+      ],
+      [
+        "unknown",
+        'const child=cp.spawn("tool",[],{cwd:new DirectoryURL()});',
+        true,
+      ],
+    ] as const;
+    for (const [name, body] of cases) {
+      await writeFile(
+        join(root, name + ".mjs"),
+        'import cp from "node:child_process";' +
+          "function entry(){" +
+          body +
+          "}",
+      );
+    }
+    const { semantic_graph: graph } = await analyzeJavaScriptDirectory(
+      surface,
+      cli,
+      root,
+    );
+    for (const [name, , retained] of cases) {
+      const nodes = graph.nodes.filter(
+        (node) =>
+          node.identity.module_path === name + ".mjs" &&
+          node.kind === "child-process",
+      );
+      expect(nodes, name).toHaveLength(retained ? 1 : 0);
+      const ids = new Set(nodes.map((node) => node.node_id));
+      const links = graph.relations.filter(
+        (relation) =>
+          relation.relation === "spawns" &&
+          (ids.has(relation.source_node_id) ||
+            ids.has(relation.target_node_id)),
+      );
+      expect(links, name).toHaveLength(retained ? 1 : 0);
+    }
+  },
+);
+
+cliTest.for(["CLI", "stdio MCP"] as const)(
+  "preserves TLS rejection and unresolved admission through %s",
   async (surface, { cli }) => {
     const root = await createTestTempDirectory("rea-builtin-admission-");
     const cases = [

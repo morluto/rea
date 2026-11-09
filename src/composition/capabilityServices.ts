@@ -81,8 +81,10 @@ import {
   pwntoolsHostSupported,
   createDevicetreeService,
   createElfNotesService,
+  createElfUnwindRangesService,
   createAppleIpsService,
   createKernelModuleService,
+  createKernelBuildConfigService,
 } from "./binaryDiagnostics.js";
 
 import type { PacketCaptureService } from "../application/captures/PacketCaptureService.js";
@@ -360,8 +362,10 @@ const modules = {
   nativeExports: service(() => createNativeExportsService()),
   devicetree: service(() => createDevicetreeService()),
   elfNotes: service(() => createElfNotesService()),
+  elfUnwindRanges: service(() => createElfUnwindRangesService()),
   appleIps: service(() => createAppleIpsService()),
   kernelModule: service(() => createKernelModuleService()),
+  kernelBuildConfig: service(() => createKernelBuildConfigService()),
   peLoadConfig: service(() => createPeLoadConfigService()),
   binaryHardening: service(() => createBinaryHardeningService()),
   peCertificates: service(() => createPeCertificatesService()),
