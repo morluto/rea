@@ -456,6 +456,79 @@ it.skipIf(process.platform === "win32")(
 );
 
 it.skipIf(process.platform === "win32")(
+  "verifies a client's custom docker and runtime archive without requiring the terminal's paths",
+  async () => {
+    const { root, bin, home } = await buildHost("rea-doctor-custom-paths-");
+    const docker = join(root, "custom-docker");
+    await program(
+      docker,
+      'if [ "$1" = info ]; then echo /tmp; else exit 0; fi',
+    );
+    await program(
+      join(bin, "docker"),
+      'if [ "$1" = info ]; then echo /tmp; else exit 0; fi',
+    );
+    await program(join(bin, "agent-env"), 'echo "agent-env 0.9.1431"');
+    const packed = join(root, "packed");
+    await mkdir(join(packed, "runtime", "scripts"), { recursive: true });
+    await writeFile(join(packed, "runtime", "scripts", "rea.mjs"), "");
+    await writeFile(
+      join(packed, "runtime", "package.json"),
+      JSON.stringify({ version: PRODUCT_IDENTITY.packageVersion }),
+    );
+    const archive = join(root, "custom.tar.gz");
+    await execute("tar", ["-czf", archive, "-C", packed, "runtime"]);
+    await writeFile(
+      join(home, ".claude.json"),
+      JSON.stringify({
+        mcpServers: {
+          rea: {
+            command: process.execPath,
+            args: ["/opt/rea/scripts/rea.mjs", "mcp"],
+            env: {
+              REA_DOCKER_COMMAND: docker,
+              REA_BUILD_COMPUTER_REA_ARCHIVE: archive,
+              REA_AGENT_ENV_COMMAND: join(bin, "agent-env"),
+            },
+          },
+        },
+      }),
+    );
+    const facts = await readFacts(
+      {
+        HOME: home,
+        USERPROFILE: home,
+        PATH: `${bin}:/usr/bin:/bin`,
+        XDG_CACHE_HOME: join(root, "cache"),
+      },
+      ["claude_code"],
+    );
+    expect(facts.registrations[0]).toMatchObject({
+      registered: true,
+      unrecorded: [],
+      unresolved: [],
+    });
+    expect(facts.registrations[0]?.differing ?? []).toEqual([]);
+    expect(facts.registrations[0]?.unchecked ?? []).toEqual([]);
+    expect(JSON.stringify(facts.registrations)).not.toContain(root);
+    await rm(archive);
+    expect(
+      (
+        await readFacts(
+          {
+            HOME: home,
+            USERPROFILE: home,
+            PATH: `${bin}:/usr/bin:/bin`,
+            XDG_CACHE_HOME: join(root, "cache"),
+          },
+          ["claude_code"],
+        )
+      ).registrations[0]?.differing,
+    ).toContain("REA_BUILD_COMPUTER_REA_ARCHIVE");
+  },
+);
+
+it.skipIf(process.platform === "win32")(
   "reads a refused daemon and names unrecorded settings without their values",
   async () => {
     const { root, bin, home } = await buildHost("rea-desktop-doctor-facts-");
