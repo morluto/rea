@@ -223,9 +223,9 @@ Then, with the task exactly as exported:
 beside the files and evaluates each check with REA's evaluator, the one the
 export validates tasks with and the exported verifier mirrors, one result per
 check. Once the files settle it runs the task's
-[readers](desktop-application-tasks.md#readers) in the computer through
+[readers](specs/desktop-app-environments/file-readers/spec.md) in the computer through
 `computer-exec/v1`, as the verifier does, and a check through a reader reads
-that reader's view. A task of [screen judges](desktop-application-tasks.md#screen-judges)
+that reader's view. A task of [screen judges](specs/desktop-app-environments/screen-judge/spec.md)
 reads no files: REA takes a screenshot and runs the bundle's own judge on it
 with the agentenv runner's Python and model endpoint. Like the verifier, it grades only once the app's files settle, since an
 app such as Gnote saves a few seconds after the last key. It reads `data/get`
