@@ -248,7 +248,7 @@ describe.skipIf(process.platform === "win32")(
       });
     });
 
-    it("refuses rather than launch a lower-priority entry when a subtree cannot be listed", async () => {
+    it("refuses a lower-priority entry when an applicable path cannot be probed", async () => {
       const { home, environment } = await fixture();
       const share = environment.XDG_DATA_DIRS;
       const applications = join(home, ".local/share/applications");
@@ -262,8 +262,8 @@ describe.skipIf(process.platform === "win32")(
         join(share, "applications/vendor-org.example.app.desktop"),
         "[Desktop Entry]\nType=Application\nName=Low\nExec=notes-app --low\n",
       );
-      // The readable file above is not enough: the subtree that holds the
-      // higher-priority entry has to be listable before absence is trusted.
+      // The exact higher-priority path cannot be examined without directory
+      // traversal permission; it must remain unknown rather than absent.
       await chmod(vendor, 0o000);
 
       try {
@@ -354,7 +354,7 @@ describe.skipIf(process.platform === "win32")(
 describe.skipIf(process.platform === "win32")(
   "remaining desktop file id controls",
   () => {
-    it("finds the entry before reporting an unreachable sibling as incomplete", async () => {
+    it("ignores an unreadable sibling that cannot encode the requested ID", async () => {
       const { home, environment } = await fixture();
       const applications = join(home, ".local/share/applications");
       const found = join(applications, "zz-vendor");
@@ -373,8 +373,8 @@ describe.skipIf(process.platform === "win32")(
           environment,
         });
 
-        // The sibling that cannot be listed may hold the entry too, but this
-        // root already answered, so the reachable answer is the one to use.
+        // This sibling cannot encode the requested ID and is irrelevant to
+        // selecting the known matching path.
         expect(inventory.desktop_entry).toMatchObject({
           id: "zz-vendor-org.example.app",
           name: "High",
@@ -383,6 +383,38 @@ describe.skipIf(process.platform === "win32")(
         await chmod(unreadable, 0o755);
       }
     });
+
+    it.skipIf(process.getuid?.() === 0)(
+      "finds a same-root spelling after an applicable probe fails",
+      async () => {
+        const { home, environment } = await fixture();
+        const applications = join(home, ".local/share/applications");
+        const blocked = join(home, "blocked");
+        await mkdir(join(blocked, "aa"), { recursive: true });
+        await mkdir(join(applications, "aa-bb"), { recursive: true });
+        await symlink(join(blocked, "aa"), join(applications, "aa"));
+        await writeFile(
+          join(applications, "aa-bb/app.desktop"),
+          "[Desktop Entry]\nType=Application\nName=Matched\nExec=notes-app\n",
+        );
+        await chmod(blocked, 0o000);
+        try {
+          await expect(stat(join(applications, "aa"))).rejects.toMatchObject({
+            code: "EACCES",
+          });
+          const inventory = await inventoryOf("aa-bb-app", {
+            home,
+            environment,
+          });
+          expect(inventory.desktop_entry).toMatchObject({
+            id: "aa-bb-app",
+            name: "Matched",
+          });
+        } finally {
+          await chmod(blocked, 0o755);
+        }
+      },
+    );
 
     it.each(["plain", "vendor-app", "loop-vendor-app"])(
       "ignores unrelated directory-link cycles when resolving %s in a later root",
@@ -480,7 +512,7 @@ describe.skipIf(process.platform === "win32")(
       const { home, environment } = await fixture();
       const share = environment.XDG_DATA_DIRS;
       const applications = join(home, ".local/share/applications");
-      // More nested directories than the bounded search may enter.
+      // An unrelated deep tree cannot change the requested ID's applicability.
       for (let index = 0; index < 6; index += 1)
         await mkdir(
           join(applications, ...Array<string>(index + 1).fill("deep")),
