@@ -48,6 +48,11 @@ export const registerSqliteCommands = (
       rowLimit: cliDecimalField(
         inspectSqliteDatabaseInputSchema.shape.row_limit,
       ).describe("Positive safe integer row count; default 20; requires table"),
+      rowOffset: cliDecimalField(
+        inspectSqliteDatabaseInputSchema.shape.row_offset,
+      ).describe(
+        "Non-negative safe integer rows to skip before the window; default 0; requires table",
+      ),
     }),
     run: ({ args, options }) =>
       withCommandCancellation((signal) =>
@@ -67,6 +72,9 @@ export const registerSqliteCommands = (
                   ...(options.rowLimit === undefined
                     ? {}
                     : { row_limit: options.rowLimit }),
+                  ...(options.rowOffset === undefined
+                    ? {}
+                    : { row_offset: options.rowOffset }),
                   ...(options.column === undefined
                     ? {}
                     : { columns: options.column }),

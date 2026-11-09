@@ -212,13 +212,9 @@ rea inspect-managed-members /absolute/path/Assembly.dll --type Namespace.Type \
 bundle format. Its parent directory must exist, and it never replaces an
 existing path. Relative paths resolve against the command's working directory.
 The option also works with complete delivery when a saved bundle is useful.
-Summary without a destination is rejected before analysis. A publication failure
-returns a typed error with the completed Evidence under
-`details.partial_observation`; it does not report successful summary delivery.
-Cancellation before publication prevents the new output. Once atomic
-publication has started, it can complete despite cancellation; a cancelled
-delivery then retains the committed path and byte count under
-`details.diagnostics.evidence_bundle`.
+Summary without a destination is rejected before analysis. For partial Evidence
+and committed-file receipts after failure or cancellation, see
+[Evidence publication and source recovery](../../reference/mcp-contracts.md#evidence-publication-and-source-recovery).
 
 Copy `normalized_result.parent_evidence_id` from the summary into the
 `source.evidence_id` field of the `managed-members` request above, then save that
@@ -654,7 +650,8 @@ unchanged signature. Comparison retains exact byte-based pairs for malformed
 signatures, including empty, truncated, or invalid headers, but reports them as
 unknown with a `signature-malformed` limitation when no change is observed.
 This applies to historical Evidence without signature-resolution attestation as
-well. Runtime-provided methods are counted separately in
+well. Runtime-provided methods have the Runtime code type or the InternalCall
+implementation flag, as core library FCalls do. They are counted separately in
 `native_implementations.runtime_provided`; they have no file-backed native body
 for this workflow to map and do not increase `native_body_unresolved`. Historical
 verification Evidence without this separate count leaves it unknown (`null`).
