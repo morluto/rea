@@ -867,3 +867,85 @@ it("invalidates shallow-frozen Electron member aliases when a shared method is o
     }),
   ]);
 });
+
+it("records resolution_sources for substituted nested functions and constants while leaving inline leaves unmarked", () => {
+  const analysis = analyzeJavaScriptStaticSource(`
+      import { contextBridge, ipcRenderer } from "electron";
+
+      const ping = () => ipcRenderer.invoke("ping");
+      const version = 1;
+      contextBridge.exposeInMainWorld("substitutedLeafApi", { ping, version });
+      contextBridge.exposeInMainWorld("inlineLeafApi", {
+        ping: () => ipcRenderer.invoke("inline"),
+        version: 1,
+      });
+    `);
+
+  expect(analysis.parse_status).toBe("complete");
+  expect(analysis.electron.context_bridge_apis).toMatchObject([
+    {
+      api_key: "substitutedLeafApi",
+      api_status: "object-literal",
+      members: ["ping", "version"],
+      unknown_members: 0,
+      resolution_sources: [expect.any(Object), expect.any(Object)],
+    },
+    {
+      api_key: "inlineLeafApi",
+      api_status: "object-literal",
+      members: ["ping", "version"],
+      unknown_members: 0,
+    },
+  ]);
+  expect(analysis.electron.context_bridge_apis[1]).not.toHaveProperty(
+    "resolution_sources",
+  );
+});
+
+it("tracks member overwrites through returned properties and wrapped objects while preserving rest-array, reassigned-parameter, and generator-return isolation", () => {
+  const source = `
+      const { contextBridge, ipcRenderer } = require("electron");
+      function pick(x) { return x.ipc; }
+      const wrap = (x) => ({ ipc: x.ipc });
+      function collect(...args) { return args; }
+      function resetParam(x) { x = {}; return x; }
+      function* values() { yield {}; return ipcRenderer; }
+
+      const picked = Object.freeze({ ipc: pick({ ipc: ipcRenderer }) });
+      picked.ipc.invoke = () => 0;
+
+      const wrapped = Array.from([{ ipc: ipcRenderer }], wrap);
+      wrapped[0].ipc.sendSync = () => 0;
+
+      const restValues = collect(ipcRenderer);
+      restValues.send = () => 0;
+
+      const reset = resetParam(ipcRenderer);
+      reset.send = () => 0;
+
+      for (const item of values()) item.send = () => 0;
+
+      const holder = Object.freeze({ ipc: ipcRenderer });
+      contextBridge.exposeInMainWorld("api", {
+        overwrittenPicked: () => holder.ipc.invoke("fake-invoke"),
+        overwrittenWrapped: () => holder.ipc.sendSync("fake-sync"),
+        intactSend: () => holder.ipc.send("real-send"),
+      });
+    `;
+  const parsed = parseJavaScriptSource(source, "preload.cjs");
+  if (parsed === null) throw new Error("Expected CommonJS parse");
+  const analysis = analyzeParsedJavaScriptStaticSource(source, parsed);
+
+  expect(analysis.parse_status).toBe("complete");
+  const bridgeCalls = (analysis.electron.call_paths ?? []).filter(
+    ({ entry_kind }) => entry_kind === "bridge-member",
+  );
+  expect(bridgeCalls).toEqual([
+    expect.objectContaining({
+      entry_kind: "bridge-member",
+      entry: "api.intactSend",
+      channel: "real-send",
+      terminal: "electron.ipcRenderer.send",
+    }),
+  ]);
+});

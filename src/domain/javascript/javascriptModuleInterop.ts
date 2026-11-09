@@ -138,7 +138,7 @@ export const createSemanticModuleInterop = (
         const { root, members } = electronMemberPath(current);
         if (members.some((member) => member === null)) return finish(undefined);
         suffix = [...(members as readonly string[]), ...suffix];
-        for (const global of ["Object", "Function", "Reflect"])
+        for (const global of ["Object", "Function", "Reflect", "Array"])
           if (isUnshadowedGlobal(root, state, global))
             return finish(["intrinsic", global, ...suffix]);
         for (const global of ["globalThis", "global", "window", "self"])

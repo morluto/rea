@@ -77,6 +77,7 @@ const isProvenNonEnumerableLeaf = (
   node: t.Node,
   state: JavaScriptSemanticAnalysisState,
   seen = new Set<t.Node>(),
+  recordSource?: (node: t.Node) => void,
 ): boolean => {
   const current = unwrapJavaScriptExpression(node).node;
   if (seen.has(current)) return false;
@@ -104,22 +105,30 @@ const isProvenNonEnumerableLeaf = (
   )
     return true;
   const frozen = unwrapUnmodifiedObjectFreezeArgument(current, state);
-  if (frozen !== undefined)
-    return isProvenNonEnumerableLeaf(frozen, state, seen);
+  if (frozen !== undefined) {
+    const ok = isProvenNonEnumerableLeaf(frozen, state, seen, recordSource);
+    if (ok) recordSource?.(unwrapJavaScriptExpression(frozen).node);
+    return ok;
+  }
   if (t.isConditionalExpression(current))
     return (
-      isProvenNonEnumerableLeaf(current.consequent, state, seen) &&
-      isProvenNonEnumerableLeaf(current.alternate, state, seen)
+      isProvenNonEnumerableLeaf(
+        current.consequent,
+        state,
+        seen,
+        recordSource,
+      ) &&
+      isProvenNonEnumerableLeaf(current.alternate, state, seen, recordSource)
     );
   if (t.isLogicalExpression(current))
     return (
-      isProvenNonEnumerableLeaf(current.left, state, seen) &&
-      isProvenNonEnumerableLeaf(current.right, state, seen)
+      isProvenNonEnumerableLeaf(current.left, state, seen, recordSource) &&
+      isProvenNonEnumerableLeaf(current.right, state, seen, recordSource)
     );
   if (t.isSequenceExpression(current)) {
     const last = current.expressions.at(-1);
     return last !== undefined
-      ? isProvenNonEnumerableLeaf(last, state, seen)
+      ? isProvenNonEnumerableLeaf(last, state, seen, recordSource)
       : false;
   }
   return false;
@@ -138,7 +147,11 @@ type ExpressionResolution =
       readonly substituted: boolean;
     }
   | { readonly kind: "invalid-or-cyclic" }
-  | { readonly kind: "non-object-leaf" };
+  | {
+      readonly kind: "non-object-leaf";
+      readonly leaf: t.Node;
+      readonly substituted: boolean;
+    };
 
 const resolveContextBridgeValue = (
   input: t.Node,
@@ -146,6 +159,7 @@ const resolveContextBridgeValue = (
   index: JavaScriptBindingIndex,
   activeNodes: ReadonlySet<t.Node>,
   budget: ContextBridgeMemberBudget,
+  recordSource?: (node: t.Node) => void,
 ): ExpressionResolution => {
   let current = unwrapJavaScriptExpression(input).node;
   const nextActive = new Set(activeNodes);
@@ -170,8 +184,13 @@ const resolveContextBridgeValue = (
     if (!t.isIdentifier(current)) break;
     const binding = index.bindingForReferenceAt(current);
     if (binding === undefined)
-      return isProvenNonEnumerableLeaf(current, index.bindings)
-        ? { kind: "non-object-leaf" }
+      return isProvenNonEnumerableLeaf(
+        current,
+        index.bindings,
+        new Set(),
+        recordSource,
+      )
+        ? { kind: "non-object-leaf", leaf: current, substituted }
         : { kind: "invalid-or-cyclic" };
     if (seenBindings.has(binding.bindingId))
       return { kind: "invalid-or-cyclic" };
@@ -204,8 +223,13 @@ const resolveContextBridgeValue = (
     t.isFunctionDeclaration(current)
   )
     return { kind: "function", fn: current, substituted };
-  return isProvenNonEnumerableLeaf(current, index.bindings)
-    ? { kind: "non-object-leaf" }
+  return isProvenNonEnumerableLeaf(
+    current,
+    index.bindings,
+    new Set(),
+    recordSource,
+  )
+    ? { kind: "non-object-leaf", leaf: current, substituted }
     : { kind: "invalid-or-cyclic" };
 };
 
@@ -240,6 +264,7 @@ export const resolveContextBridgeApi = (
     index,
     new Set(),
     budget,
+    recordSource,
   );
   if (root.kind === "function") {
     if (root.substituted) recordSource(root.fn);
@@ -269,7 +294,12 @@ export const resolveContextBridgeApi = (
       unwrapUnmodifiedObjectFreezeArgument(unwrapped, index.bindings) ===
         undefined
     ) {
-      return isProvenNonEnumerableLeaf(unwrapped, index.bindings)
+      return isProvenNonEnumerableLeaf(
+        unwrapped,
+        index.bindings,
+        new Set(),
+        recordSource,
+      )
         ? { kind: "leaf" }
         : { kind: "unknown" };
     }
@@ -279,6 +309,7 @@ export const resolveContextBridgeApi = (
       index,
       new Set([...root.activeNodes, ...activeNodes]),
       budget,
+      recordSource,
     );
     if (resolved.kind === "object") {
       if (resolved.substituted) recordSource(resolved.object);
@@ -288,8 +319,14 @@ export const resolveContextBridgeApi = (
         activeNodes: resolved.activeNodes,
       };
     }
-    if (resolved.kind === "function" || resolved.kind === "non-object-leaf")
+    if (resolved.kind === "function") {
+      if (resolved.substituted) recordSource(resolved.fn);
       return { kind: "leaf" };
+    }
+    if (resolved.kind === "non-object-leaf") {
+      if (resolved.substituted) recordSource(resolved.leaf);
+      return { kind: "leaf" };
+    }
     return { kind: "unknown" };
   };
   const collected = collectContextBridgeMembers(

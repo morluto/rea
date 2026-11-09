@@ -365,8 +365,10 @@ const buildSyntheticContextBridgeGraph = async () => {
       const subObj = { notify: (msg) => ipcRenderer.send("items:notify", msg) };
       const desktopApi = Object.freeze({ nested: subObj });
       const uploadItem = async (payload) => ipcRenderer.invoke("items:upload", payload);
+      const pingItem = () => ipcRenderer.invoke("items:upload", "ping");
       contextBridge.exposeInMainWorld("DesktopApi", desktopApi);
       contextBridge.exposeInMainWorld("uploadItem", uploadItem);
+      contextBridge.exposeInMainWorld("PingApi", { ping: pingItem });
       contextBridge.exposeInMainWorld("InlineApi", { ready: true });
     `,
     "preload.cjs",
@@ -421,10 +423,10 @@ it("projects constant-resolved and callable contextBridge exposures with IPC pai
 
   expect(electronSummary).toMatchObject({
     electron_semantics: "recovered",
-    context_bridge_apis: 3,
-    exposed_api_members: 3,
+    context_bridge_apis: 4,
+    exposed_api_members: 4,
     ipc: expect.objectContaining({
-      paired_renderer_transmissions: 2,
+      paired_renderer_transmissions: 3,
     }),
   });
 
@@ -436,6 +438,9 @@ it("projects constant-resolved and callable contextBridge exposures with IPC pai
   );
   const uploadNode = bridgeNodes.find(
     (node) => node.observations[0]?.label === "uploadItem",
+  );
+  const pingNode = bridgeNodes.find(
+    (node) => node.observations[0]?.label === "PingApi",
   );
   const inlineNode = bridgeNodes.find(
     (node) => node.observations[0]?.label === "InlineApi",
@@ -463,6 +468,21 @@ it("projects constant-resolved and callable contextBridge exposures with IPC pai
     properties: {
       api_status: "function",
       members: [],
+      unknown_members: 0,
+      resolution_sources: [expect.objectContaining({ source: "preload.cjs" })],
+    },
+    evidence: expect.objectContaining({
+      authority: "static-relationship-inference",
+      state: "inferred",
+      extractor: expect.objectContaining({
+        operation: "resolve-context-bridge-constant-api",
+      }),
+    }),
+  });
+  expect(pingNode?.observations[0]).toMatchObject({
+    properties: {
+      api_status: "object-literal",
+      members: ["ping"],
       unknown_members: 0,
       resolution_sources: [expect.objectContaining({ source: "preload.cjs" })],
     },
