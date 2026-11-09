@@ -929,6 +929,13 @@ const limitNativeSample = (
  * executable beside the archive could be a helper.
  */
 const ANY_SIBLING_RANK = 2;
+/**
+ * A dotted name such as `my.app` is sampled after plain siblings, but it can
+ * still be the host, so its extension does not rule it out.
+ */
+const DOTTED_SIBLING_RANK = 3;
+/** Shared library names, which a loader maps into a host rather than runs. */
+const SHARED_LIBRARY_NAME = /\.(?:dll|dylib|node|so(?:\.\d+)*)$/iu;
 
 const electronExecutableRank = (
   images: readonly ReleaseExposureNativeImage[],
@@ -950,14 +957,17 @@ const electronExecutableRank = (
       if (!inLayout(folder, image.path)) continue;
       const name = nativeBasename(image.path);
       const lower = name.toLowerCase();
-      let score = 3;
       // The framework binary carries a bundle's fuses.
-      if (bundle !== null && lower === "electron framework") score = 0;
-      else if (lower === folderName || lower === `${folderName}.exe`) score = 0;
-      else if (lower === "electron" || lower === "electron.exe") score = 1;
+      if (bundle !== null && lower === "electron framework")
+        remember(image.path, 0);
+      else if (lower === folderName || lower === `${folderName}.exe`)
+        remember(image.path, 0);
+      else if (lower === "electron" || lower === "electron.exe")
+        remember(image.path, 1);
       else if (lower.endsWith(".exe") || !name.includes("."))
-        score = ANY_SIBLING_RANK;
-      if (score <= ANY_SIBLING_RANK) remember(image.path, score);
+        remember(image.path, ANY_SIBLING_RANK);
+      else if (!SHARED_LIBRARY_NAME.test(name))
+        remember(image.path, DOTTED_SIBLING_RANK);
     }
   }
   return ranked;

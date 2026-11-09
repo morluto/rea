@@ -1147,6 +1147,49 @@ describe("ReleaseExposureService hosts without an ASAR layout", () => {
       ).not.toContain(dropped);
     },
   );
+  it("samples a dotted executable inside an ASAR layout as a possible host", async () => {
+    const { service, desktop, electronFuses } = owners(
+      directoryScan([
+        "/work/app/a/helper",
+        "/work/app/a/libone.so",
+        "/work/app/a/libtwo.so",
+        "/work/app/a/libthree.so",
+        "/work/app/a/my.app",
+      ]),
+    );
+    const report = electronDesktopReport();
+    desktop.inspect.mockResolvedValue(
+      ok(
+        evidence({
+          ...report,
+          files: [
+            {
+              ...report.files[0],
+              path: "a/resources/app.asar",
+              local_path: "/work/app/a/resources/app.asar",
+            },
+          ],
+        }),
+      ),
+    );
+    electronFuses.inspect.mockImplementation(async (input) =>
+      ok(
+        evidence(
+          fuseReport(
+            (input as { path?: string }).path === "/work/app/a/my.app"
+              ? []
+              : [slice(0)],
+          ),
+        ),
+      ),
+    );
+    expect((await runAsNode(service))?.status).toBe("unknown");
+    expect(
+      electronFuses.inspect.mock.calls.map(
+        (call) => (call[0] as { path?: string }).path,
+      ),
+    ).toContain("/work/app/a/my.app");
+  });
 });
 
 describe("ReleaseExposureService Electron host identity", () => {
