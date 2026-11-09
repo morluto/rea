@@ -63,6 +63,7 @@ const ipcEndpointKey = (value: ElectronIpcFinding): string =>
     value.side,
     value.operation,
     value.channel,
+    value.loader_authority ?? "proven",
     javascriptSourceRangeKey(value.location),
   ]);
 
@@ -205,7 +206,12 @@ interface BridgeExposure {
 }
 
 const bridgeExposureKey = (value: ElectronContextBridgeFinding): string =>
-  JSON.stringify([value.world, value.api_key, value.api_key_expression]);
+  JSON.stringify([
+    value.world,
+    value.api_key,
+    value.api_key_expression,
+    value.loader_authority ?? "proven",
+  ]);
 
 const bridgeContributionKey = (value: ElectronContextBridgeFinding): string =>
   JSON.stringify([value.world_id, value.members, value.unknown_members]);
@@ -234,6 +240,7 @@ const mergeBridgeExposures = (
 });
 
 interface PathContext {
+  readonly loader_authority?: "candidate";
   readonly entryNode: t.Node;
   /** Source ranges of the local calls this path made since its entry. */
   readonly calls: string[];
@@ -423,11 +430,15 @@ export function* collectElectronWrappedCallPathsSteps(
       accumulator.unknownFindings += 1;
       return null;
     }
+    const authorityContext =
+      value.kind === "external" && value.loaderAuthority === "candidate"
+        ? { ...context, loader_authority: "candidate" as const }
+        : context;
     return (
       value.conditions?.reduce(
         (current, branch) => condition(current, branch.node, branch.positive),
-        context,
-      ) ?? context
+        authorityContext,
+      ) ?? authorityContext
     );
   };
   // Duplicate checks consult only facts at the same endpoint and call site.
@@ -873,6 +884,9 @@ export function* collectElectronWrappedCallPathsSteps(
   ): void => {
     if (context.entryKind === null) return;
     const path: ElectronCallPath = {
+      ...(context.loader_authority === "candidate"
+        ? { loader_authority: "candidate" as const }
+        : {}),
       entry_kind: context.entryKind,
       entry: context.entry,
       ...(context.entryKind !== "bridge-member" ||
@@ -958,6 +972,9 @@ export function* collectElectronWrappedCallPathsSteps(
         ? undefined
         : range(context.entryNode);
     const findingContext = {
+      ...(context.loader_authority === "candidate"
+        ? { loader_authority: "candidate" as const }
+        : {}),
       module_key: null,
       location,
       ...(invocationLocation === undefined
@@ -1223,6 +1240,9 @@ export function* collectElectronWrappedCallPathsSteps(
       // call contributes a separate API per key it is invoked with.
       const inventory = bridgeMemberInventory(object);
       const finding: ElectronContextBridgeFinding = {
+        ...(context.loader_authority === "candidate"
+          ? { loader_authority: "candidate" as const }
+          : {}),
         world: exposure.world,
         world_id: worldId,
         api_key: key.value,

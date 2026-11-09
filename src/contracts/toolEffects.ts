@@ -290,11 +290,15 @@ const TOOL_EFFECT_AUDIT: Readonly<Record<string, EffectAudit>> = {
   inspect_pe_resources: evidence,
   inspect_pe_certificates: evidence,
   inspect_pe_imports: evidence,
+  inspect_windows_shortcut: evidence,
   inspect_native_exports: evidence,
   inspect_elf_notes: evidence,
+  inspect_elf_unwind_ranges: evidence,
   inspect_apple_ips: evidence,
   inspect_devicetree: evidence,
   inspect_kernel_module: evidence,
+  inspect_kernel_build_config: evidence,
+  inspect_v8_code_cache: evidence,
   inspect_pe_load_config: evidence,
   inspect_binary_hardening: evidence,
   inspect_analysis_view: evidence,
@@ -752,6 +756,42 @@ const TOOL_EFFECT_AUDIT: Readonly<Record<string, EffectAudit>> = {
     accessesNetwork: true,
     changesUiState: true,
     executesForeignCode: true,
+    idempotent: false,
+  }),
+  // Downloads package lists and launches the app inside the computer.
+  start_build_capture: effects({
+    mutatesSession: true,
+    launchesProcess: true,
+    accessesNetwork: true,
+    changesUiState: true,
+    executesForeignCode: true,
+    idempotent: false,
+  }),
+  mark_build_checkpoint: effects({
+    mutatesSession: true,
+    accessesNetwork: true,
+    idempotent: false,
+  }),
+  // Closes the app and drafts the task with REA inside the computer.
+  stop_build_capture: effects({
+    mutatesSession: true,
+    launchesProcess: true,
+    accessesNetwork: true,
+    changesUiState: true,
+    idempotent: false,
+  }),
+  export_build_environment: effects({
+    mutatesSession: true,
+    writesFilesystem: true,
+    launchesProcess: true,
+    accessesNetwork: true,
+    idempotent: false,
+  }),
+  // A witness stage records the display and writes its record on this host.
+  check_build_task: effects({
+    mutatesSession: true,
+    writesFilesystem: true,
+    accessesNetwork: true,
     idempotent: false,
   }),
   close_build_computer: effects({

@@ -8,7 +8,7 @@ import { projectAnalysisError } from "../../domain/analysisErrorProjection.js";
 import { analysisErrorProjectionSchema } from "../../contracts/errorSchemas.js";
 import { inspectWebNetworkCaptureInputSchema } from "../../domain/webNetworkCapture.js";
 import { historicalCaptureFailure } from "./CaptureFailures.js";
-import { NODE_CAPTURE_PROCESS_MEMORY_LIMIT_BYTES } from "./CaptureRelease.js";
+import { NODE_CAPTURE_PROCESS_MEMORY_LIMIT_BYTES } from "../../../tests/fixtures/captureDecoderLimits.js";
 import { redactExplicitFailure } from "../../domain/explicitSensitiveFailure.js";
 import { OwnedCommandFailure } from "../../process/OwnedCommand.js";
 

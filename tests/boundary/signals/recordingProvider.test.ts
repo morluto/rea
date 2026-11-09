@@ -1274,7 +1274,6 @@ it.each([
     {},
     { signal: f.controller.signal },
   );
-  expect(result.ok).toBe(false);
   if (result.ok) throw new Error("Expected failure");
   expect(result.error).toMatchObject({
     operation: "inspect_signal_decoders",

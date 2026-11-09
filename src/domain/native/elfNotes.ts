@@ -1,7 +1,7 @@
 import { z } from "zod";
 
 import { digestSchema } from "../digests.js";
-import { localPathStringSchema } from "../localPath.js";
+import { absoluteLocalPathStringSchema } from "../localPath.js";
 
 const uint = z.number().int().min(0).max(0xffffffff);
 const range = z.strictObject({ offset: uint, bytes: uint });
@@ -86,7 +86,7 @@ export const coreNoteTypeName = (type: number): ElfNoteTypeName => {
 
 /** Complete bounded inspection of ELF PT_NOTE and SHT_NOTE tables. */
 export const inspectElfNotesInputSchema = z.strictObject({
-  path: localPathStringSchema.describe(
+  path: absoluteLocalPathStringSchema.describe(
     "Absolute filesystem path to an ELF image",
   ),
   max_file_bytes: z

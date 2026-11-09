@@ -178,6 +178,19 @@ const handleOutputFailure = (socket, state) => {
 };
 
 const handleRequest = (socket, server, request, state) => {
+  if (state.mode.startsWith("checkpoint")) {
+    if (request.method === "set_address_name") {
+      state.checkpointDirty = true;
+      socket.write(
+        JSON.stringify({ id: request.id, ok: true, result: "renamed" }) + "\n",
+      );
+      return;
+    }
+    if (request.method === "checkpoint_program") {
+      void handleCheckpoint(socket, request, state);
+      return;
+    }
+  }
   if (request.method === "ping") {
     handlePing(socket, request, state);
     return;
@@ -374,6 +387,63 @@ const handleRequest = (socket, server, request, state) => {
   }
 };
 
+async function handleCheckpoint(socket, request, state) {
+  const { path, force } = request.params;
+  if (!force && !state.checkpointDirty) {
+    socket.write(
+      JSON.stringify({ id: request.id, ok: true, result: { saved: false } }) +
+        "\n",
+    );
+    return;
+  }
+  if (
+    !force &&
+    state.mode === "checkpoint_fail_close" &&
+    !state.failedCheckpoint
+  ) {
+    state.failedCheckpoint = true;
+    await writeFile(path, "controlled incomplete packed Program");
+    socket.write(
+      JSON.stringify({
+        id: request.id,
+        ok: false,
+        error: {
+          code: "checkpoint_failed",
+          message: "Controlled checkpoint failure",
+        },
+      }) + "\n",
+    );
+    return;
+  }
+  await writeFile(
+    path,
+    `fixture checkpoint ${state.checkpointDirty ? "edited" : "initial"}`,
+  );
+  if (
+    (force && state.mode === "checkpoint_hold_startup") ||
+    (!force && state.mode === "checkpoint_hold_close")
+  ) {
+    await new Promise((resolve) => {
+      const release = (message) => {
+        if (message === "release_checkpoint") {
+          process.off("message", release);
+          resolve();
+        }
+      };
+      process.on("message", release);
+      process.send?.({ event: "checkpoint-held" });
+    });
+  }
+  state.checkpointDirty = false;
+  socket.write(
+    JSON.stringify({
+      id: request.id,
+      ok: true,
+      result: { saved: true, path },
+    }) + "\n",
+  );
+}
+
 const handlePing = (socket, request, state) => {
   if (
     ["import_identity_unavailable", "import_identity_mismatch"].includes(
@@ -566,6 +636,7 @@ const inventoryResultFor = (method, params) => {
             },
           ],
           skipped_not_loaded: [],
+          skipped_overlays: [],
         },
         complete: !paged,
         next_cursor: paged ? "fixture-second-page" : null,

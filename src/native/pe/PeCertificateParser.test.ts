@@ -105,6 +105,21 @@ it("reports unsigned attribute OIDs and incomplete nested coverage", () => {
   }
 });
 
+it.each([false, true])(
+  "rejects a misaligned certificate table (PE32+ = %s)",
+  (plus) => {
+    const aligned = peCertificateFixture(plus, undefined, undefined, true);
+    expect(parse(aligned).coverage.status).toBe("complete");
+    const shifted = Buffer.concat([
+      aligned.subarray(0, 0x200),
+      Buffer.alloc(1),
+      aligned.subarray(0x200),
+    ]);
+    shifted.writeUInt32LE(0x201, 0x98 + (plus ? 112 : 96) + 4 * 8);
+    expect(() => parse(shifted)).toThrow(/certificate table offset.*aligned/u);
+  },
+);
+
 it("accepts only zero eight-byte alignment padding included in dwLength", () => {
   for (const plus of [false, true]) {
     const bytes = peCertificateFixture(plus, undefined, undefined, true);
@@ -226,8 +241,8 @@ it("retains certificate and signer facts for ASCII TeletexString names", () => {
   expect(report.entries[0]?.pkcs7?.signers[0]?.issuer?.text).toBe(
     "commonName=Plain Name, organizationName=Plain Org",
   );
-  expect(report.limitations).toContain(
-    "TeletexString values use OpenSSL's ISO-8859-1 compatibility mapping; this is not a full T.61 decoder.",
+  expect(report.limitations).toContainEqual(
+    expect.stringMatching(/TeletexString.*ISO.8859.1.*not a full T.61/iu),
   );
 });
 

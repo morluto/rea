@@ -488,8 +488,8 @@ describe.skipIf(process.platform !== "darwin")(
           },
         });
         expect(wrongKind.isError).toBe(true);
-        expect(JSON.stringify(wrongKind.content)).toContain(
-          "Mach-O inspection supports summary and macho views.",
+        expect(JSON.stringify(wrongKind.content)).toMatch(
+          /summary and macho views/iu,
         );
       },
     );

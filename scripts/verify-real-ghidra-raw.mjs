@@ -760,7 +760,12 @@ async function verifyCrossBlockProject(target, targetSha256) {
       !all.matches.some((match) => match.address.startsWith("overlay_test:")),
     );
     assert.ok(
-      all.searched.skipped_not_loaded.some(
+      !all.searched.skipped_not_loaded.some(
+        (block) => block.segment === "overlay_test",
+      ),
+    );
+    assert.ok(
+      all.searched.skipped_overlays.some(
         (block) => block.segment === "overlay_test",
       ),
     );

@@ -499,7 +499,6 @@ it("reports snapshot descriptor cleanup immediately and resolves its exact error
     await client.close();
   });
   const result = await client.hashTargetSnapshot();
-  expect(result.ok).toBe(false);
   if (result.ok) throw new Error("Expected snapshot final close failure");
   expect(result.error.cleanupFailure?.cleanupIncomplete).toBe(true);
   expect(result.error.partialObservation).toMatchObject({
@@ -537,7 +536,6 @@ it("preserves completed snapshot hashing and exact cancellation during descripto
     });
   onTestFinished(() => close.mockRestore());
   const result = await client.hashTargetSnapshot(controller.signal);
-  expect(result.ok).toBe(false);
   if (result.ok) throw new Error("Expected final-close cancellation");
   expect(result.error.kind).toBe("cancelled");
   expect(result.error.cancellation?.reason).toBe(reason);
@@ -662,7 +660,6 @@ it("preserves snapshot cancellation and completed hash while final close also fa
     close.mockRestore();
   });
   const result = await client.hashTargetSnapshot(controller.signal);
-  expect(result.ok).toBe(false);
   if (result.ok) throw new Error("Expected cancellation and cleanup failure");
   expect(result.error.kind).toBe("cancelled");
   expect(result.error.cancellation?.reason).toBe(reason);
@@ -769,7 +766,6 @@ it("keeps a snapshot read failure primary across late cancellation and failed cl
     close.mockRestore();
   });
   const result = await client.hashTargetSnapshot(controller.signal);
-  expect(result.ok).toBe(false);
   if (result.ok) throw new Error("Expected read and cleanup failure");
   expect(result.error.kind).toBe("protocol");
   expect(result.error.cancellation).toBeUndefined();

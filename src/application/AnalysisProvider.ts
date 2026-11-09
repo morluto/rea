@@ -20,6 +20,10 @@ import type {
 } from "../domain/evidence.js";
 import { jsonValueSchema } from "../domain/jsonValue.js";
 import {
+  pseudocodeAbsenceSchema,
+  type PseudocodeAbsence,
+} from "../domain/native/pseudocodeAbsence.js";
+import {
   analysisSourceDescriptorSchema,
   type AnalysisSourceDescriptor,
 } from "../domain/analysisSource.js";
@@ -27,6 +31,7 @@ import type { ProgressReporter } from "./ProgressReporter.js";
 import type { ProviderRejectionCode } from "../domain/providerSelection.js";
 import type { ProcessLineageObservation } from "../process/ProcessOwnership.js";
 import type { ProviderOperationHealth } from "../domain/providerOperationHealth.js";
+import type { ProviderReleaseVerification } from "../domain/providerReleaseVerification.js";
 import {
   relationshipCoverageSchema,
   type RelationshipCoverage,
@@ -65,6 +70,8 @@ export type AnalysisOperation =
 /** Atomic successful provider observation with exact producing provenance. */
 export interface AnalysisExecution extends AnalysisObservation {
   readonly provider: ProviderIdentity;
+  /** Provider-observed cause of a null pseudocode result, when known. */
+  readonly pseudocodeAbsence?: PseudocodeAbsence;
   /**
    * Compact provider-owned facts for this execution. This is not an Evidence
    * record and is not restored by snapshot replay; consumers must treat its
@@ -82,6 +89,22 @@ export interface AnalysisExecution extends AnalysisObservation {
    * output.
    */
   readonly referencesTruncated?: boolean;
+  /** The producer needs this observation retained as source Evidence for composed workflows. */
+  readonly requiresSourceEvidence?: true;
+  /** Known reference-discovery gaps; absent means coverage was not reported. */
+  readonly referenceCoverageGaps?: readonly {
+    readonly code: string;
+    readonly scope: "image" | "observation";
+    readonly description: string;
+  }[];
+  /** Typed source facts for this live xref observation; absent means unreported. */
+  readonly referenceClassifications?: readonly {
+    readonly sourceAddress: string;
+    readonly targetAddress: string;
+    readonly kind: "stored_pointer";
+    readonly provenance: string;
+    readonly width: number;
+  }[];
   /**
    * Sibling operations known to be unavailable at the provider level when this
    * operation answered from a standalone or fallback path.
@@ -91,12 +114,16 @@ export interface AnalysisExecution extends AnalysisObservation {
 
 interface CreateAnalysisExecutionOptions {
   readonly rawResult?: unknown;
+  readonly pseudocodeAbsence?: PseudocodeAbsence;
   readonly sourceDescriptor?: AnalysisSourceDescriptor;
   readonly analysisProfile?: AnalysisProfileCommitment;
   readonly cachePolicy?: "live";
   readonly limitations?: readonly string[];
   readonly relationshipCoverage?: RelationshipCoverage;
   readonly referencesTruncated?: boolean;
+  readonly requiresSourceEvidence?: true;
+  readonly referenceClassifications?: AnalysisExecution["referenceClassifications"];
+  readonly referenceCoverageGaps?: AnalysisExecution["referenceCoverageGaps"];
   readonly siblingUnavailability?: AnalysisCapabilityUnavailableError;
   readonly locations?: readonly EvidenceLocation[];
   readonly sourceEvidence?: readonly Evidence[];
@@ -132,6 +159,13 @@ export function createAnalysisExecution(
         ? null
         : jsonValueSchema.parse(options.rawResult),
     provider,
+    ...(options.pseudocodeAbsence === undefined
+      ? {}
+      : {
+          pseudocodeAbsence: pseudocodeAbsenceSchema.parse(
+            options.pseudocodeAbsence,
+          ),
+        }),
     ...(options.sourceDescriptor === undefined
       ? {}
       : {
@@ -156,6 +190,15 @@ export function createAnalysisExecution(
     ...(options.referencesTruncated === undefined
       ? {}
       : { referencesTruncated: options.referencesTruncated }),
+    ...(options.requiresSourceEvidence === undefined
+      ? {}
+      : { requiresSourceEvidence: options.requiresSourceEvidence }),
+    ...(options.referenceCoverageGaps === undefined
+      ? {}
+      : { referenceCoverageGaps: options.referenceCoverageGaps }),
+    ...(options.referenceClassifications === undefined
+      ? {}
+      : { referenceClassifications: options.referenceClassifications }),
     ...(options.siblingUnavailability === undefined
       ? {}
       : { siblingUnavailability: options.siblingUnavailability }),
@@ -249,6 +292,11 @@ export interface ProviderIdentity {
 /** Typed analysis profile resolved before provider startup; null means unresolved. */
 export interface AnalysisProfileResolution {
   readonly profile: AnalysisProfileCommitment | null;
+  /** Readiness fact for the resolved selection; omitted means not reported. */
+  readonly releaseVerification?: ProviderReleaseVerification;
+
+  /** Closing a client can publish state that invalidates a previewed profile. */
+  readonly refreshAfterRetirement?: true;
   /** Keep provider-private facts bound to this selection without Evidence serialization. */
   readonly createClient?: AnalysisProviderBoundClientFactory;
 }
@@ -309,12 +357,17 @@ export type CapabilityDescriptor = CapabilityAvailability & {
    * exclusions apply to every policy.
    */
   readonly cachePolicy?: "snapshot" | "live";
+  readonly independentDecompile?: true;
   /** Exact source profile for an operation implemented by a versioned local reader. */
   readonly analysisProfile?: AnalysisProfileCommitment;
   readonly provider: ProviderIdentity;
   readonly operation: Exclude<AnalysisOperation, "health">;
   readonly effects: CapabilityEffects;
   readonly limitations: readonly string[];
+  /** Whether analyze_function can supply value flow for some procedures. */
+  readonly nativeValueFlow?:
+    | { readonly status: "supported" }
+    | { readonly status: "unavailable"; readonly reason: string };
 };
 
 /** Factory and capability declaration for an analysis implementation. */

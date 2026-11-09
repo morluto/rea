@@ -74,6 +74,21 @@ it("names the configurable regex deadline and the effective worker heap", () => 
     readLaunchNodeOptions(),
   );
   expect(REGEX_MATCHING_LIMITATION).toBe(regexMatchingLimitation(heap));
+  expect(REGEX_MATCHING_LIMITATION).toMatch(
+    /5000 ms matching deadline \(source default\)/iu,
+  );
+  expect(REGEX_MATCHING_LIMITATION).toMatch(
+    /128 MiB worker heap request \(source default\)/iu,
+  );
+  expect(REGEX_MATCHING_LIMITATION).toMatch(
+    /regex\.matching_deadline_ms.*regex\.worker_heap_request_mib/iu,
+  );
+  if (heap.kind === "effective")
+    expect(REGEX_MATCHING_LIMITATION).toContain(`effective ${heap.mib} MiB`);
+  else
+    expect(REGEX_MATCHING_LIMITATION).toMatch(
+      /effective old-generation heap.*not established/iu,
+    );
   const deadline = projectAnalysisError(
     regexMatchingDeadlineError("search_procedures"),
   );

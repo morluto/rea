@@ -767,9 +767,12 @@ cliTest(
       )?.slices[0]?.dyld_environment,
     ).toEqual(settings);
     expect(
-      trace.findings.find(({ kind }) => kind === "dyld-environment-present")
-        ?.explanation,
-    ).toContain("entries in this non-executable root are observations");
+      trace.findings.find(({ kind }) => kind === "dyld-environment-present"),
+    ).toMatchObject({
+      image: "Contents/Frameworks/libcore.dylib",
+      basis: "derived",
+      explanation: expect.stringContaining(settings[0]!),
+    });
   },
 );
 

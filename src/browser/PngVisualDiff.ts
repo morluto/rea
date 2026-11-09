@@ -98,9 +98,29 @@ export const comparePngScreenshots = (
   };
 };
 
+/**
+ * Whether every pixel of a PNG has one RGBA value, decoded with the
+ * comparison's checks and encodings within the working-memory budget it
+ * keeps for a pair; undefined when the PNG cannot be decoded so.
+ */
+export const isOneColourPng = (dataBase64: string): boolean | undefined => {
+  let rgba: Buffer;
+  try {
+    const plan = parsePng({ data_base64: dataBase64 }, "image");
+    admitPngPair(plan, plan);
+    rgba = decodePng(plan).rgba;
+  } catch {
+    return undefined;
+  }
+  const first = rgba.readUInt32BE(0);
+  for (let offset = 4; offset < rgba.length; offset += 4)
+    if (rgba.readUInt32BE(offset) !== first) return false;
+  return true;
+};
+
 const parsePng = (
-  artifact: WebScreenshotArtifact,
-  field: "before" | "after",
+  artifact: Pick<WebScreenshotArtifact, "data_base64">,
+  field: "before" | "after" | "image",
 ): ParsedPng => {
   const bytes = decodeCanonicalBase64(artifact.data_base64);
   if (bytes === undefined || !hasPngSignature(bytes))

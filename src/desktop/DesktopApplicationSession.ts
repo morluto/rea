@@ -4,6 +4,7 @@ import { setTimeout as delay } from "node:timers/promises";
 import { AnalysisCleanupLease } from "../artifacts/AnalysisCleanupLease.js";
 import {
   checkpointNameRefusal,
+  type DesktopCaptureEvent,
   type DesktopSession,
 } from "../domain/desktop/desktopCapture.js";
 import { ownedCommandResources } from "../process/OwnedCommand.js";
@@ -27,6 +28,7 @@ import {
 } from "./DesktopSessionObservations.js";
 import type { WindowSample, X11WindowObserver } from "./X11WindowObserver.js";
 
+/** The most of the launched process's stderr a session keeps: its latest bytes, where a failing app's last words are. */
 const STDERR_BYTES = 8 * 1024;
 const TERMINATION_GRACE_MS = 5_000;
 
@@ -81,7 +83,11 @@ export interface DesktopSessionPlan {
     atMs: number,
     openedFiles: ReadonlySet<string>,
   ) => Promise<void>;
-  readonly report: (message: string) => Promise<void>;
+  /** Progress text, with the event a driver waits on when there is one. */
+  readonly report: (
+    message: string,
+    event?: DesktopCaptureEvent,
+  ) => Promise<void>;
   readonly signal: AbortSignal | undefined;
 }
 
@@ -134,6 +140,7 @@ const sampleSession = async (
     observations.announced = true;
     await plan.report(
       "The application window is open. Send an empty line or `checkpoint <name>` to record its state, or `stop` to finish.",
+      { kind: "window_open" },
     );
   }
   return applicationWindows;
@@ -161,7 +168,11 @@ const requestCheckpoint = async (
 ): Promise<void> => {
   const refusal = checkpointNameRefusal(name, taken);
   if (refusal !== undefined) {
-    await plan.report(`${refusal} No checkpoint was recorded.`);
+    await plan.report(`${refusal} No checkpoint was recorded.`, {
+      kind: "checkpoint_refused",
+      name: name ?? "",
+      reason: refusal,
+    });
     return;
   }
   const chosen = name ?? `checkpoint-${String(observations.now())}`;
@@ -302,7 +313,10 @@ const launch = async (
       cleanup:
         spawned.cleanup ?? (() => cleanupOwnedProcessGroup(spawned.ownership)),
     },
-    { maxDiagnosticBytes: { stdout: 0, stderr: STDERR_BYTES } },
+    {
+      maxDiagnosticBytes: { stdout: 0, stderr: STDERR_BYTES },
+      diagnosticRetention: "tail",
+    },
   );
   return { spawned, supervisor };
 };

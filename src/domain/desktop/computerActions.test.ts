@@ -67,4 +67,15 @@ describe("computer actions", () => {
       error: { field: "x", accepted: ["text", "screenshot"] },
     });
   });
+
+  it("resets the app's data rather than calling a driver tool, taking only a screenshot afterwards", () => {
+    expect(driverCall("reset", { screenshot: true })).toEqual({
+      ok: true,
+      value: { tool: "data/reset", arguments: { screenshot: true } },
+    });
+    expect(driverCall("reset", { keys: ["Enter"] })).toEqual({
+      ok: false,
+      error: { field: "keys", accepted: ["screenshot"] },
+    });
+  });
 });
