@@ -50,6 +50,34 @@ export const ANDROID_TOOL_CONTRACTS = [
     ],
   },
   {
+    name: "inspect_android_kotlin_metadata",
+    ...toolContractMetadata("inspect_android_kotlin_metadata"),
+    description:
+      "Report which classes in an explicit local APK carry kotlin.Metadata, from the raw annotations in its standard root classes*.dex members: per-DEX coverage, a metadata-version histogram, a declaration-kind histogram (class, file facade, synthetic class, multi-file facade/part, unknown) and listed classes with raw k/mv/pn/xi facts. Optional package_prefix and limit (default 100, maximum 500) narrow the listed classes; histograms and counts always cover every class. Select class_name to decode that exact class's declaration: class kind, modality, visibility, data/value/fun-interface flags, functions with suspend/inline/operator, nullable return and receiver types and their JVM/DEX prototypes (the same descriptors inspect_android_class reports), and properties with var/const and types. Malformed or undecodable metadata stays explicit and a class without metadata is not proof it was not Kotlin. Does not load the decompiler or execute the APK. Requires caller-supplied JADX MCP JAR and JDK.",
+    kind: "android-provider",
+    inputSchema: androidInputSchemas.inspect_android_kotlin_metadata,
+    outputSchema: evidenceResultOf(
+      androidResultSchemas.inspect_android_kotlin_metadata,
+    ),
+    examples: [
+      {
+        title: "Summarize Kotlin usage in a package",
+        input: {
+          path: "/tmp/Example.apk",
+          package_prefix: "com.example",
+          limit: 50,
+        },
+      },
+      {
+        title: "Decode one class as Kotlin",
+        input: {
+          path: "/tmp/Example.apk",
+          class_name: "com.example.api.ApiService",
+        },
+      },
+    ],
+  },
+  {
     name: "inspect_android_package",
     ...toolContractMetadata("inspect_android_package"),
     description:

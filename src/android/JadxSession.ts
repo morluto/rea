@@ -48,7 +48,9 @@ import {
   JADX_RELEASE,
   JADX_PROVIDER_IDENTITY,
   JADX_LIMITATIONS,
+  JADX_KOTLIN_METADATA_LIMITATIONS,
 } from "./JadxRelease.js";
+import { readAndroidKotlinMetadata } from "./AndroidKotlinMetadata.js";
 
 type JadxCall = {
   readonly operation: string;
@@ -179,7 +181,8 @@ export class JadxSession {
           `Expected engine ${JADX_RELEASE.version}; JAR reported ${runtime.engine_reported_version}.`,
         );
       const loaded =
-        request.operation === "inspect_android_jni_bindings"
+        request.operation === "inspect_android_jni_bindings" ||
+        request.operation === "inspect_android_kotlin_metadata"
           ? undefined
           : (this.#loaded ??
             jadxLoadSchema.parse(
@@ -209,6 +212,12 @@ export class JadxSession {
         loaded,
         engine,
         mapping,
+        ...(request.operation !== "inspect_android_kotlin_metadata"
+          ? {}
+          : {
+              kotlinMetadata: (selection) =>
+                readAndroidKotlinMetadata(tools, snapshot, selection),
+            }),
         ...(request.operation !== "inspect_android_jni_bindings"
           ? {}
           : {
@@ -291,7 +300,9 @@ export class JadxSession {
           limitations:
             request.operation === "inspect_android_jni_bindings"
               ? []
-              : [...JADX_LIMITATIONS, ...androidMappingLimitations(mapping)],
+              : request.operation === "inspect_android_kotlin_metadata"
+                ? [...JADX_KOTLIN_METADATA_LIMITATIONS]
+                : [...JADX_LIMITATIONS, ...androidMappingLimitations(mapping)],
           locations:
             request.operation === "inspect_android_package"
               ? [{ kind: "artifact-path", path: "AndroidManifest.xml" }]

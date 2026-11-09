@@ -529,6 +529,11 @@ const TOOL_EFFECT_AUDIT: Readonly<Record<string, EffectAudit>> = {
     launchesProcess: true,
     writesFilesystem: true,
   }),
+  inspect_android_kotlin_metadata: effects({
+    mutatesSession: true,
+    launchesProcess: true,
+    writesFilesystem: true,
+  }),
   trace_android_references: effects({
     mutatesSession: true,
     launchesProcess: true,

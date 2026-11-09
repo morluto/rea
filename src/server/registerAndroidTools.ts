@@ -123,6 +123,12 @@ export const registerAndroidTools = (
       withAdmittedAnalysis,
     )(methodContract),
   );
+  const kotlinContract = toolContract("inspect_android_kotlin_metadata");
+  server.registerTool(
+    kotlinContract.name,
+    toolRegistrationOptions(kotlinContract),
+    handler(kotlinContract),
+  );
   const referencesContract = toolContract("trace_android_references");
   server.registerTool(
     referencesContract.name,

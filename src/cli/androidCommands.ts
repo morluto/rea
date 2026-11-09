@@ -202,6 +202,37 @@ export const registerAndroidCommands = (
         args.path,
       ),
   });
+  cli.command(CLI_COMMANDS.inspectAndroidKotlinMetadata, {
+    description:
+      "Report kotlin.Metadata coverage and Kotlin declarations in an APK without executing it",
+    args: z.object({ path }),
+    options: z.object({
+      className:
+        androidInputSchemas.inspect_android_kotlin_metadata.shape.class_name,
+      packagePrefix:
+        androidInputSchemas.inspect_android_kotlin_metadata.shape
+          .package_prefix,
+      limit: cliIntegerArgument(1)
+        .optional()
+        .describe("Maximum listed classes (default 100, maximum 500)"),
+    }),
+    run: ({ args, options }) =>
+      execute(
+        CLI_COMMANDS.inspectAndroidKotlinMetadata,
+        "inspect_android_kotlin_metadata",
+        {
+          path: args.path,
+          ...(options.className === undefined
+            ? {}
+            : { class_name: options.className }),
+          ...(options.packagePrefix === undefined
+            ? {}
+            : { package_prefix: options.packagePrefix }),
+          ...(options.limit === undefined ? {} : { limit: options.limit }),
+        },
+        args.path,
+      ),
+  });
   cli.command(CLI_COMMANDS.inspectAndroidClass, {
     description: "Inspect one exact APK class's member inventory",
     args: z.object({ path, className }),

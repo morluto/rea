@@ -15,6 +15,10 @@ import {
   androidJniReportSchema,
 } from "./androidJniBindings.js";
 import { androidJniViewRequestSchema } from "./androidJniQuery.js";
+import {
+  androidKotlinMetadataFactsSchema,
+  androidKotlinMetadataSelectionSchema,
+} from "./androidKotlinMetadata.js";
 
 const target = {
   path: localPathStringSchema.describe(
@@ -37,6 +41,8 @@ const mappingPath = {
 export const androidInputSchemas = {
   inspect_android_package: z.strictObject(target),
   inspect_android_jni_bindings: androidJniSelectionSchema.extend(target),
+  inspect_android_kotlin_metadata:
+    androidKotlinMetadataSelectionSchema.extend(target),
   search_android_classes: z.strictObject({
     ...target,
     query: z
@@ -121,6 +127,10 @@ export const androidRequestSchema = z.discriminatedUnion("operation", [
   z.strictObject({
     operation: z.literal("inspect_android_jni_bindings"),
     input: androidInputSchemas.inspect_android_jni_bindings,
+  }),
+  z.strictObject({
+    operation: z.literal("inspect_android_kotlin_metadata"),
+    input: androidInputSchemas.inspect_android_kotlin_metadata,
   }),
   z.strictObject({
     operation: z.literal("inspect_android_package"),
@@ -221,6 +231,8 @@ const common = { engine };
 /** Portable observations with explicit decompiler and identity limitations. */
 export const androidResultSchemas = {
   inspect_android_jni_bindings: androidJniReportSchema.extend(common),
+  inspect_android_kotlin_metadata:
+    androidKotlinMetadataFactsSchema.extend(common),
   inspect_android_package: z.strictObject({
     ...common,
     package_name: z.string().nullable(),
