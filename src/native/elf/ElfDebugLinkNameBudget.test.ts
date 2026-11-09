@@ -61,6 +61,29 @@ const withCompressedNames = (bytes: Buffer, compressionType = 1): Buffer => {
   return image;
 };
 
+const EXTENDED_SECTION_COUNT = 0xff00;
+
+/**
+ * Move the 64-bit little-endian section table to the end, padded with null
+ * entries to an extended count that only section zero declares (e_shnum = 0).
+ */
+const withExtendedSectionCount = (bytes: Buffer): Buffer => {
+  const shoff = Number(bytes.readBigUInt64LE(40));
+  const shnum = bytes.readUInt16LE(60);
+  const start = Math.ceil(bytes.length / 8) * 8;
+  const table = Buffer.alloc(EXTENDED_SECTION_COUNT * 64);
+  bytes.copy(table, 0, shoff, shoff + shnum * 64);
+  table.writeBigUInt64LE(BigInt(EXTENDED_SECTION_COUNT), 32);
+  const image = Buffer.concat([
+    bytes,
+    Buffer.alloc(start - bytes.length),
+    table,
+  ]);
+  image.writeBigUInt64LE(BigInt(start), 40);
+  image.writeUInt16LE(0, 60);
+  return image;
+};
+
 const inputFor = (maxFileBytes: number) =>
   inspectElfDebugLinkInputSchema.parse({
     path: "/artifacts/prog",
@@ -157,6 +180,48 @@ it("keeps the build-id of a candidate whose names use an unsupported compression
     report.build_id.hex,
   );
   expect(verified.limitations).not.toContain(
+    ELF_DEBUG_LINK_CANDIDATE_BUDGET_LIMITATION,
+  );
+});
+
+it("refuses compressed image names above the budget when only section zero declares the count", () => {
+  const image = withExtendedSectionCount(
+    withCompressedNames(elfDebugLinkFixture()),
+  );
+  expect(() =>
+    parseElfDebugLink(
+      image,
+      { path: "/artifacts/prog", sha256: "ab".repeat(32), bytes: image.length },
+      inputFor(image.length + 1),
+    ),
+  ).toThrow(ElfNoteSectionNameBudgetFailure);
+  expect(zlib.inflated).toBe(0);
+});
+
+it("leaves compressed candidate names undecoded when only section zero declares the count", () => {
+  const candidate = withExtendedSectionCount(
+    withCompressedNames(elfDebugCandidateFixture()),
+  );
+  const image = elfDebugLinkFixture();
+  const input = inputFor(candidate.length + 1);
+  const report = parseElfDebugLink(
+    image,
+    { path: "/artifacts/prog", sha256: "ab".repeat(32), bytes: image.length },
+    input,
+  );
+  const verified = verifyElfDebugCandidate(
+    report,
+    {
+      path: "/artifacts/prog.debug",
+      sha256: "cd".repeat(32),
+      bytes: candidate.length,
+      crc32: gnuDebuglinkCrc32(candidate),
+      prefix: candidate,
+    },
+    input,
+  );
+  expect(zlib.inflated).toBe(0);
+  expect(verified.limitations).toContain(
     ELF_DEBUG_LINK_CANDIDATE_BUDGET_LIMITATION,
   );
 });

@@ -25,6 +25,7 @@ import {
   gnuNoteTypeName,
 } from "../../domain/native/elfNotes.js";
 import { BinaryFormatFailure } from "../metadata/BinaryContainer.js";
+import { readElfTableDeclarationsFromBuffer } from "../metadata/NativeSectionDirectory.js";
 import {
   decodeElfSectionNameTable,
   readElfSectionNameTableHeader,
@@ -72,14 +73,14 @@ export const assertElfSectionNameBudget = (
   bytes: Buffer,
   maxFileBytes: number,
 ): void => {
-  const fixed = readElfFixedHeader(bytes);
-  if (!fixed.ok) return;
-  const header = fixed.value;
+  // The image directory's own declarations, so extended section counts and
+  // name indexes in section zero are charged exactly as the decoder sees them.
+  const declarations = readElfTableDeclarationsFromBuffer(bytes);
+  if (!declarations.ok) return;
+  const { header, sections } = declarations.value;
   const little = header.byteOrder === "little";
-  const raw = readElfRawTableDeclarations(bytes, header);
-  if (!raw.ok) return;
-  const { offset, width, count, namesIndex } = raw.value.sections;
-  if (count === 0 || namesIndex === 0 || namesIndex >= count) return;
+  const { offset, width, count, namesIndex } = sections;
+  if (count === 0 || namesIndex === 0) return;
   const at = offset + BigInt(namesIndex) * BigInt(width);
   if (at > BigInt(bytes.length - width)) return;
   const parsed = readElfSectionHeader(

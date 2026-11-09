@@ -438,6 +438,10 @@ export const readElfDirectoryFromBuffer = (
 ): ElfSectionDirectory =>
   driveFromBuffer(bytes, readElfSectionDirectory(bytes.length));
 
+/** Resolve ELF table declarations, including extended counts in section zero, from these bytes. */
+export const readElfTableDeclarationsFromBuffer = (bytes: Buffer) =>
+  driveFromBuffer(bytes, readElfTableDeclarations(bytes, bytes.length));
+
 /** Reject a program or section payload the declared tables place outside these bytes. */
 export const assertElfDeclaredRangesFromBuffer = (bytes: Buffer): void => {
   const checked = driveFromBuffer(
