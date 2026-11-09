@@ -276,6 +276,46 @@ export interface ElectronProtocolFinding {
   readonly location: JavaScriptSourceRange;
 }
 
+/** Source of a script's bytes: an inert path expression or dynamic syntax. */
+export type ElectronDynamicCodeSource =
+  | {
+      readonly source_path: string;
+      readonly source_path_base?:
+        | "source-directory"
+        | "literal-path"
+        | undefined;
+      readonly source_resolution_context: JavaScriptStaticPathContext;
+      readonly source_expression: null;
+    }
+  | {
+      readonly source_path: null;
+      readonly source_resolution_context: null;
+      readonly source_expression: string;
+    };
+
+/**
+ * Source syntax for one node:vm compilation. Cache declaration does not establish
+ * accepted bytes or runtime execution.
+ */
+export interface ElectronDynamicCodeFinding {
+  readonly api: "vm.Script" | "vm.compileFunction";
+  /**
+   * Whether cachedData is declared, proven absent, or unresolved in options.
+   */
+  readonly cached_data_status: "declared" | "absent" | "unknown";
+  /** The option or positional argument naming the backing cache artifact. */
+  readonly cached_data: ElectronDynamicCodeSource;
+  /**
+   * The source text argument when it is inert syntax, which is the case a
+   * bytecode-cache handoff replaces at runtime.
+   */
+  readonly source_text: ElectronStaticValue;
+  readonly module_key: string | null;
+  /** Recovered factory runtime; absent in older or unbundled findings. */
+  readonly module_runtime?: string;
+  readonly location: JavaScriptSourceRange;
+}
+
 /** All Electron-specific facts collected during one shared AST traversal. */
 export interface ElectronStaticFindings {
   /** Calls that may replace the application path used by Electron loadFile. */
@@ -287,6 +327,8 @@ export interface ElectronStaticFindings {
   readonly utility_processes: readonly ElectronUtilityProcessFinding[];
   readonly native_addon_bindings: readonly ElectronNativeAddonBindingFinding[];
   readonly protocols: readonly ElectronProtocolFinding[];
+  /** `node:vm` compilations whose code may come from an opaque bytecode cache. */
+  readonly dynamic_code?: readonly ElectronDynamicCodeFinding[];
   /** Source-bound candidate paths through bundled exports and IPC closures. */
   readonly call_paths?: readonly ElectronCallPath[];
 }

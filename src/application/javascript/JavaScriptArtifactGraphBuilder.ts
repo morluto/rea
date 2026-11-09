@@ -1,3 +1,4 @@
+import { isPossibleCachedDataCompilation } from "../../domain/javascript/electronDynamicCodeFacts.js";
 import type { ElectronBoundarySummary } from "../../domain/javascript/javascriptApplicationAnalysis.js";
 import {
   electronIncompleteSourceCount,
@@ -432,6 +433,15 @@ const graphLimitations = (
     )
       ? [
           "Native member names are requested by JavaScript syntax and are not verified binary exports in this workflow.",
+        ]
+      : []),
+    ...(context.analysis.files.some(({ javascript }) =>
+      (javascript?.electron.dynamic_code ?? []).some(
+        isPossibleCachedDataCompilation,
+      ),
+    )
+      ? [
+          "A node:vm compilation may receive cachedData; static syntax does not establish cache acceptance or execution, and possible cached logic remains unknown rather than absent.",
         ]
       : []),
     ...(coverage === "complete"
