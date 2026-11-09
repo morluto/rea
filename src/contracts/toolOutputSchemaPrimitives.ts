@@ -345,16 +345,34 @@ const providerTargetSupport = z.discriminatedUnion("status", [
   }),
 ]);
 
+/** Where a selected provider's choice came from; never a priority or fallback. */
+const analysisProviderSelectionSource = z.enum([
+  "request",
+  "environment",
+  "auto-single-candidate",
+]);
+
+const providerSelectionRejection = z.object({
+  provider_id: z.string(),
+  origin: z.enum(["availability", "target"]),
+  code: z.string().min(1),
+  reason: z.string().min(1),
+  remediation: providerRemediation.exactOptional(),
+  diagnostics: jsonObjectSchema,
+});
+
 /** Complete candidate facts, including provider-owned diagnostics and capability sets. */
 export const analysisProviderCandidate = z.object({
   provider: providerIdentity,
   availability: providerAvailability,
   target_support: providerTargetSupport,
   selected: z.boolean(),
+  selection_source: analysisProviderSelectionSource.nullable(),
+  rejections: z.array(providerSelectionRejection),
   capabilities: z.array(providerCapabilitySet),
 });
 
-/** Summary candidate: the same status, code, and reason without remediation, diagnostics or capabilities. */
+/** Summary candidate: the same status, code, reason and rejection codes without remediation, diagnostics or capabilities. */
 export const analysisProviderCandidateSummary = z.strictObject({
   provider: providerIdentity,
   availability: z.discriminatedUnion("status", [
@@ -368,6 +386,15 @@ export const analysisProviderCandidateSummary = z.strictObject({
     providerTargetSupportStates.unsupported.strict(),
   ]),
   selected: z.boolean(),
+  selection_source: analysisProviderSelectionSource.nullable(),
+  rejections: z.array(
+    z.strictObject({
+      provider_id: z.string(),
+      origin: z.enum(["availability", "target"]),
+      code: z.string().min(1),
+      reason: z.string().min(1),
+    }),
+  ),
 });
 
 const clientFeatureNameSchema = z.enum([

@@ -8,6 +8,7 @@ import {
   playwrightTracePathFixture,
 } from "../../fixtures/playwrightTrace.js";
 import { connectLocalToolsMcp } from "../../fixtures/localToolsMcp.js";
+import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { advertisedMcpToolSchemas } from "../../fixtures/advertisedMcpTool.js";
 import { parseEvidence, type Evidence } from "../../../src/domain/evidence.js";
 import { playwrightTraceSchema } from "../../../src/domain/playwrightTrace/playwrightTrace.js";
@@ -429,5 +430,45 @@ cliTest(
         .summary.network,
     ).toBe(3);
     expect(requests).toBe(0);
+  },
+);
+
+cliTest(
+  "retains partial MCP Evidence when a trace stream fails after earlier streams were read",
+  async () => {
+    const fixture = await playwrightTraceFixture({ level: 0 });
+    const bytes = await readFile(fixture.path);
+    // A stored network byte breaks only that member's ZIP CRC.
+    const offset = bytes.indexOf(Buffer.from('"method":"GET"'));
+    expect(offset).toBeGreaterThan(0);
+    bytes[offset + 10] = 80;
+    await writeFile(fixture.path, bytes);
+    const { call } = await connectLocalToolsMcp({
+      REA_MCP_TOOL_FAMILIES: "application,session",
+      PLAYWRIGHT_BROWSERS_PATH: "/rea-no-browser-required",
+    });
+    const failed = parseMcpToolError(
+      await call("inspect_playwright_trace", {
+        path: fixture.path,
+        detail: "complete",
+      }),
+    );
+    const reference = failed.error.details?.partial_observation;
+    expect(reference).toEqual({
+      kind: "retained-evidence",
+      evidence_id: expect.any(String),
+    });
+    const { evidence_id } = reference as { evidence_id: string };
+    const page = await call("inspect_analysis_view", {
+      source: { kind: "retained-evidence", evidence_id },
+      view: { kind: "playwright-trace", collection: "events", fields: [] },
+    });
+    expect(page.isError, JSON.stringify(page.content)).not.toBe(true);
+    expect(
+      parseEvidence(page.structuredContent).normalized_result,
+    ).toMatchObject({
+      coverage: { total: 20, exhausted: true },
+      source_coverage: { interpretation: "partial" },
+    });
   },
 );

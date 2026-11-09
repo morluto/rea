@@ -234,9 +234,19 @@ describe("GodotPckArtifactReader", () => {
     });
   });
 
-  it("rejects oversized encoded path metadata before allocating its declared bytes", async () => {
+  it("reports an oversized path that cannot fit in the pack as malformed", async () => {
     const bytes = buildGodotPck(2, members);
     bytes.writeUInt32LE(0xffff_ffff, 100);
+    await withReader(bytes, async (reader) => {
+      await expect(list(reader)).rejects.toMatchObject({
+        reason: "format",
+      });
+    });
+  });
+
+  it("refuses a fully framed path over the metadata budget", async () => {
+    const path = "a".repeat(Math.floor((64 * 1024 * 1024) / 18) + 1);
+    const bytes = buildGodotPck(2, [{ path, data: "" }]);
     await withReader(bytes, async (reader) => {
       await expect(list(reader)).rejects.toMatchObject({
         reason: "limit",

@@ -4,8 +4,13 @@ import { join } from "node:path";
 import type { CallToolResult } from "@modelcontextprotocol/server";
 import { expect, it, vi } from "vitest";
 
+import type {
+  BuildSettle,
+  SettleClock,
+} from "../../../src/application/desktop/DesktopBuildSettle.js";
 import { isPortableBundleName } from "../../../src/application/environment/environmentBundle.js";
 import { toolContract } from "../../../src/contracts/toolContracts.js";
+import type { SettleTiming } from "../../../src/domain/desktop/appSettle.js";
 import { parseDesktopTask } from "../../../src/domain/desktop/appTask.js";
 import {
   renderTaskSteps,
@@ -70,6 +75,7 @@ const witnessed = async (
   slowReset = 0,
   options: FakeComputerOptions = {},
   task: unknown = TASK,
+  settle?: BuildSettle,
 ) => {
   const app: FakeApp = {
     name: "notes",
@@ -79,7 +85,7 @@ const witnessed = async (
     unreadyAfterReset: slowReset,
   };
   const { computer, runner } = await buildComputerFakes({ ...options, app });
-  const client = await connectBuildServer(runner.environment);
+  const client = await connectBuildServer(runner.environment, settle);
   const bundle = await taskBundle(task, app.name);
   const id = await startBuildComputer(client, { kind: "bundle", path: bundle });
   const directory = join(await createTestTempDirectory("witness-"), "add-eggs");
@@ -675,3 +681,175 @@ it("sends progress while a reset waits for the relaunched app", async () => {
   expect(reset.isError, JSON.stringify(reset)).not.toBe(true);
   expect(progress.length).toBeGreaterThan(0);
 }, 30_000);
+
+/** The shipped timing scaled down a tenfold: a read every 50 ms, a 300 ms window, a 1.5 s bound. */
+const SETTLE: SettleTiming = { intervalMs: 50, windowMs: 300, boundMs: 1500 };
+
+/**
+ * SETTLE on a clock that only the settle's waits and the app's `pass` move,
+ * so where each read falls against the bound is exact however loaded the
+ * host: a read takes no time unless the app passes some, and a timeout aborts
+ * when the clock passes its end, which `fired` notes.
+ */
+const clocked = () => {
+  let now = 0;
+  const fired: number[] = [];
+  const timeouts = new Set<{ end: number; controller: AbortController }>();
+  const pass = (ms: number) => {
+    const until = now + ms;
+    const due = [...timeouts]
+      .filter(({ end }) => end <= until)
+      .sort((left, right) => left.end - right.end);
+    for (const timeout of due) {
+      timeouts.delete(timeout);
+      now = Math.max(now, timeout.end);
+      fired.push(now);
+      timeout.controller.abort(new DOMException("timed out", "TimeoutError"));
+    }
+    now = until;
+  };
+  const clock: SettleClock = {
+    now: () => now,
+    delay: async (ms, signal) => {
+      signal.throwIfAborted();
+      pass(ms);
+    },
+    timeout: (ms) => {
+      const controller = new AbortController();
+      timeouts.add({ end: now + ms, controller });
+      return controller.signal;
+    },
+  };
+  return { settle: { ...SETTLE, clock }, now: () => now, pass, fired };
+};
+
+it("grades a stage on what the app saves after the check starts, with progress while it waits", async () => {
+  const witness = await witnessed(0, {}, TASK, clocked().settle);
+  const { app, check, directory } = witness;
+  expect(
+    parsed(await check({ stage: "seed", directory })).witness,
+  ).toMatchObject({ held: true });
+  await witness.act("type", { text: "eggs\n" });
+  // The app saves on its own timer, a few reads into the check, as Gnote saves after the last key.
+  let gets = 0;
+  app.onGet = () => {
+    gets += 1;
+    if (gets === 3) app.state = lines("milk", "eggs");
+  };
+  const progress: unknown[] = [];
+  const edited = parsed(
+    await witness.client.callTool(
+      {
+        name: "check_build_task",
+        arguments: { computer_id: witness.id, task: TASK, stage: "after_edit" },
+      },
+      { onprogress: (update) => progress.push(update) },
+    ),
+  );
+  expect(edited).toMatchObject({
+    passed: 1,
+    settled: true,
+    witness: { stage: "after_edit", held: true, next_stage: "near_miss" },
+  });
+  expect(gets).toBeGreaterThan(3);
+  expect(progress.length).toBeGreaterThan(0);
+});
+
+it("grades files still changing at the bound on the last read, and records that they did not settle", async () => {
+  // A seed that passes every check ends the witness, so the bundle holds that task.
+  const passing = {
+    ...TASK,
+    checks: [
+      { kind: "lines_present", file: "Documents/today.txt", lines: ["milk"] },
+    ],
+  };
+  const { settle, now } = clocked();
+  const { app, check, directory } = await witnessed(0, {}, passing, settle);
+  const reads: number[] = [];
+  // Every read finds the file changed, with eggs on even reads only.
+  app.onGet = () => {
+    reads.push(now());
+    app.state = lines(
+      "milk",
+      ...(reads.length % 2 === 0 ? ["eggs"] : []),
+      String(reads.length),
+    );
+  };
+  const plain = parsed(await check({ task: TASK }));
+  // A read every interval, the last an interval before the bound, which is where the next would start.
+  expect(reads).toEqual(
+    Array.from(
+      { length: SETTLE.boundMs / SETTLE.intervalMs },
+      (_, index) => index * SETTLE.intervalMs,
+    ),
+  );
+  expect(plain).toMatchObject({
+    settled: false,
+    read_cut: false,
+    passed: reads.length % 2 === 0 ? 1 : 0,
+  });
+
+  // The seed's record shows the stage unsettled.
+  const seed = parsed(await check({ stage: "seed", directory }));
+  expect(seed.settled).toBe(false);
+  expect(
+    seed.witness?.record?.stages.map(({ stage, settled }) => [stage, settled]),
+  ).toEqual([["seed", false]]);
+});
+
+it("grades an app that saved before the check within the window plus one interval", async () => {
+  const { app, check } = await witnessed(0, {}, TASK, clocked().settle);
+  app.state = lines("milk", "eggs");
+  const plain = parsed(await check({}));
+  expect(plain).toMatchObject({ passed: 1, settled: true });
+  const gets = app.methods.filter((method) => method === "data/get").length;
+  expect(gets).toBeLessThanOrEqual(SETTLE.windowMs / SETTLE.intervalMs + 2);
+});
+
+it("counts a slow read's changed files as quiet only from when it returned them", async () => {
+  const { settle, pass } = clocked();
+  const { app, check } = await witnessed(0, {}, TASK, settle);
+  let gets = 0;
+  app.onGet = () => {
+    gets += 1;
+    // The second read starts early and returns a save late; another save lands four reads after it.
+    if (gets === 2) {
+      pass(240);
+      app.state = lines("milk", "eggs");
+    }
+    if (gets === 6) app.state = lines("milk", "eggs", "flour");
+  };
+  const both = {
+    ...TASK,
+    checks: [
+      {
+        kind: "lines_present",
+        file: "Documents/today.txt",
+        lines: ["eggs", "flour"],
+      },
+    ],
+  };
+  expect(parsed(await check({ task: both }))).toMatchObject({
+    passed: 1,
+    settled: true,
+    read_cut: false,
+  });
+});
+
+it("ends reads slower than the bound at the bound, grading the last completed read", async () => {
+  const { settle, now, pass, fired } = clocked();
+  const { app, check } = await witnessed(0, {}, TASK, settle);
+  const slow = (SETTLE.boundMs * 2) / 3;
+  const reads: number[] = [];
+  // Each read takes two thirds of the bound; only the first returns eggs.
+  app.onGet = () => {
+    reads.push(now());
+    pass(slow);
+    app.state = reads.length === 1 ? lines("milk", "eggs") : lines("milk");
+  };
+  const plain = parsed(await check({}));
+  // The second read starts as the first returns, and the bound cuts it before it returns.
+  expect(reads).toEqual([0, slow]);
+  expect(fired).toEqual([SETTLE.boundMs]);
+  expect(plain).toMatchObject({ passed: 1, settled: false, read_cut: true });
+});

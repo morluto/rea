@@ -65,6 +65,7 @@ const REQUIRED_NUMERIC_FIELDS = [
   "inspect-byte-entropy options.blockSize",
   "inspect-elf-notes options.maxFileBytes",
   "inspect-rust-binary options.maxInferredCrates",
+  "inspect-native-initializers options.limit",
   "inspect-web-page options.observationMs",
   "observe-web-execution options.observationMs",
   "extract-firmware options.maxDepth",
