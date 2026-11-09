@@ -223,9 +223,9 @@ never makes a path the application's own, so `~/poedit.lock` is neither owned
 nor named among the folders the bundle does not own.
 Elsewhere such a file may be a project's own, such as `Cargo.lock` or
 `yarn.lock`, which pin dependencies, and is seeded, even under a folder whose
-name starts with a dot. A file the state view makes a document, or one named
-itself by `--state-path` or an absolute `--argument`, is never left out,
-whatever its name. A limitation and the README list them, up to
+name starts with a dot. A document is kept unless it is a lock named for a
+recorded file beside it. A file named itself by `--state-path` or an absolute
+`--argument` is kept whatever its name. A limitation and the README list them, up to
 eight and a count, after "Left out of the seed". They stay under the owned
 paths, so `data/get` returns the lock the running app holds, and `data/reset`
 restores the seed without them.
