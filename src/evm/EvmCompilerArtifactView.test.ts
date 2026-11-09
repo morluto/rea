@@ -12,7 +12,10 @@ import {
   type AnalysisViewParent,
 } from "../domain/analysisView/analysisView.js";
 
-const compilerParent = (object?: string): AnalysisViewParent => {
+const compilerParent = (
+  object?: string,
+  extras: { bytecode?: Record<string, unknown>; errors?: unknown[] } = {},
+): AnalysisViewParent => {
   const selection = {
     source_unit: "a.sol",
     contract_name: "C",
@@ -23,7 +26,12 @@ const compilerParent = (object?: string): AnalysisViewParent => {
       contracts: {
         "a.sol": {
           C: {
-            evm: { bytecode: object === undefined ? {} : { object } },
+            evm: {
+              bytecode: {
+                ...extras.bytecode,
+                ...(object === undefined ? {} : { object }),
+              },
+            },
             metadata: JSON.stringify({
               compiler: { version: "0.8.30" },
               settings: { optimizer: { enabled: true } },
@@ -31,7 +39,9 @@ const compilerParent = (object?: string): AnalysisViewParent => {
           },
         },
       },
-      errors: [{ severity: "error", message: "Recorded compiler diagnostic" }],
+      errors: extras.errors ?? [
+        { severity: "error", message: "Recorded compiler diagnostic" },
+      ],
     }),
   );
   const selected = selectSolcArtifact(carrier, selection);
@@ -480,3 +490,71 @@ it.each(["link_references", "immutable_references"] as const)(
     ).toBe(false);
   },
 );
+
+it.each([
+  "links",
+  "immutables",
+  "cross-facet",
+  "object",
+  "diagnostics",
+  "contract",
+])("rejects overlapping compiler syntax ranges: %s", (scenario) => {
+  const parent = compilerParent("60006000f3", {
+    bytecode: {
+      linkReferences: {
+        "lib.sol": {
+          L: [
+            { start: 0, length: 1 },
+            { start: 0, length: 1 },
+          ],
+        },
+      },
+      immutableReferences: {
+        "0": [
+          { start: 0, length: 1 },
+          { start: 0, length: 1 },
+        ],
+      },
+    },
+    errors: [{ severity: "warning" }, { severity: "warning" }],
+  });
+  const artifact = (parent.normalizedResult as EvmInterface).compiler_artifact!;
+  // Byte spans may overlap; the distinct source JSON records cannot.
+  artifact.link_references!.reverse();
+  expect(projectAnalysisView(parent, { kind: "summary" }).ok).toBe(true);
+  const links = artifact.link_references!;
+  const immutables = artifact.immutable_references!;
+  const diagnostics = artifact.diagnostics!;
+  switch (scenario) {
+    case "links":
+      links[1]!.source_range = {
+        ...links[0]!.source_range,
+        start: links[0]!.source_range.start + 1,
+        end: links[0]!.source_range.end + 1,
+      };
+      break;
+    case "immutables":
+      immutables[1]!.source_range = { ...immutables[0]!.source_range };
+      break;
+    case "cross-facet":
+      immutables[0]!.source_range = { ...links[0]!.source_range };
+      break;
+    case "object":
+      artifact.object_range!.start = links[0]!.source_range.start;
+      break;
+    case "diagnostics":
+      diagnostics[1]!.source_range = { ...diagnostics[0]!.source_range };
+      break;
+    case "contract": {
+      const width =
+        diagnostics[0]!.source_range.end - diagnostics[0]!.source_range.start;
+      diagnostics[0]!.source_range = {
+        ...diagnostics[0]!.source_range,
+        start: artifact.contract_range.start,
+        end: artifact.contract_range.start + width,
+      };
+      break;
+    }
+  }
+  expect(projectAnalysisView(parent, { kind: "summary" }).ok).toBe(false);
+});

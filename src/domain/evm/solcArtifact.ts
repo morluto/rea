@@ -17,6 +17,16 @@ export type CompilerSelection = z.infer<typeof compilerSelectionSchema>;
 const coordinate = z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER);
 const spanLength = (range: { start: number; end: number }) =>
   range.end - range.start;
+type SyntaxRange = { start: number; end: number };
+const overlaps = (left: SyntaxRange, right: SyntaxRange) =>
+  left.start < right.end && right.start < left.end;
+/** Source rows may be reordered, but distinct JSON values cannot intersect. */
+const disjoint = (ranges: readonly SyntaxRange[]) => {
+  const ordered = ranges.toSorted((left, right) => left.start - right.start);
+  return ordered.every(
+    (range, index) => index === 0 || !overlaps(ordered[index - 1]!, range),
+  );
+};
 /** JSON syntax coordinates in the strictly decoded original carrier. */
 export const solcSourceRangeSchema = z
   .strictObject({
@@ -92,6 +102,9 @@ export const solcCompilerDiagnosticsSchema = z
             "Diagnostic facts and coordinates must match the retained JSON value",
         });
     }
+  })
+  .refine((values) => disjoint(values.map((value) => value.source_range)), {
+    message: "Diagnostic source ranges overlap",
   })
   .nullable();
 
@@ -201,13 +214,35 @@ export const solcArtifactSchema = z
     if (
       value.metadata.source_range !== null &&
       value.bytecode_range !== null &&
-      value.metadata.source_range.start < value.bytecode_range.end &&
-      value.bytecode_range.start < value.metadata.source_range.end
+      overlaps(value.metadata.source_range, value.bytecode_range)
     )
       context.addIssue({
         code: "custom",
         path: ["metadata", "source_range"],
         message: "Sibling metadata and bytecode source ranges overlap",
+      });
+    if (
+      !disjoint([
+        ...(value.object_range === null ? [] : [value.object_range]),
+        ...[
+          ...(value.link_references ?? []),
+          ...(value.immutable_references ?? []),
+        ].map((reference) => reference.source_range),
+      ])
+    )
+      context.addIssue({
+        code: "custom",
+        message: "Bytecode object and reference source ranges overlap",
+      });
+    if (
+      value.diagnostics?.some((diagnostic) =>
+        overlaps(value.contract_range, diagnostic.source_range),
+      )
+    )
+      context.addIssue({
+        code: "custom",
+        path: ["diagnostics"],
+        message: "Diagnostic source range overlaps selected contract",
       });
   })
   .superRefine((value, context) => {
