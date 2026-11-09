@@ -5,7 +5,10 @@ import {
 } from "../../artifacts/StableArtifactFailure.js";
 import { isSelectedRegularFileError } from "../../filesystem/RegularFile.js";
 import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
-import { readStableArtifact } from "../../artifacts/readStableArtifact.js";
+import {
+  type StableArtifactSnapshot,
+  readStableArtifact,
+} from "../../artifacts/readStableArtifact.js";
 import {
   artifactFilePrimaryFacts,
   type ArtifactFilePrimaryFacts,
@@ -65,9 +68,10 @@ export class AppleIpsProvider implements AppleIpsPort {
   }
 
   async inspect(input: InspectAppleIpsInput, options?: ExecutionOptions) {
+    let snapshot: StableArtifactSnapshot | undefined;
     try {
       return await this.#resources.run(async () => {
-        const snapshot = await readStableArtifact(
+        snapshot = await readStableArtifact(
           input.path,
           input.max_file_bytes,
           options?.signal,
@@ -88,7 +92,7 @@ export class AppleIpsProvider implements AppleIpsPort {
         return ok(report);
       });
     } catch (cause) {
-      return err(appleIpsFailure(cause, input));
+      return err(appleIpsFailure(cause, input, snapshot));
     }
   }
 }
@@ -269,6 +273,7 @@ const appleIpsFailurePrimary = (
 const appleIpsFailure = (
   cause: unknown,
   input: InspectAppleIpsInput,
+  snapshot?: StableArtifactSnapshot,
 ): AnalysisError => {
   const primary = appleIpsFailurePrimary(
     artifactFilePrimaryFacts(cause),
@@ -280,5 +285,6 @@ const appleIpsFailure = (
     input.path,
     APPLE_IPS_PROVIDER.id,
     OPERATION,
+    snapshot,
   );
 };

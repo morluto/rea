@@ -93,11 +93,18 @@ export const parseDesktopEntry = (
       found ||= group === "Desktop Entry";
       continue;
     }
-    const entry = ENTRY.exec(line);
+    // Full-line trimming is syntax-only: string-value suffixes are data.
+    const entry = ENTRY.exec(raw.trimStart());
     if (group !== "Desktop Entry" || entry?.groups === undefined) continue;
     const { key, value } = entry.groups;
     if (key !== undefined && value !== undefined && !values.has(key))
-      values.set(key, unescapeValue(value));
+      // Keep the existing enum/boolean token treatment before value unescaping.
+      values.set(
+        key,
+        unescapeValue(
+          key === "Type" || key === "Terminal" ? value.trimEnd() : value,
+        ),
+      );
   }
   if (!found) return err("missing_desktop_entry_group");
   const field = (key: string) => values.get(key) ?? null;
@@ -206,6 +213,12 @@ export interface DesktopExecContext {
 }
 
 const FILE_FIELD_CODES = new Set(["%f", "%F", "%u", "%U"]);
+
+/** Whether an `Exec` value takes files: it holds a `%f`, `%F`, `%u` or `%U` field code. */
+export const execTakesFiles = (exec: string): boolean => {
+  const tokens = tokenizeDesktopExec(exec);
+  return tokens.ok && tokens.value.some((token) => FILE_FIELD_CODES.has(token));
+};
 
 /**
  * Expand field codes for a launch with no files, then append caller arguments.

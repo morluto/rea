@@ -116,6 +116,7 @@ import { AppleIpsProvider } from "../../src/native/apple/AppleIpsProvider.js";
 import { KernelModuleProvider } from "../../src/native/elf/KernelModuleProvider.js";
 import { PeCertificatesProvider } from "../../src/native/pe/PeCertificatesProvider.js";
 import { PeImportsProvider } from "../../src/native/pe/PeImportsProvider.js";
+import { WindowsShortcutProvider } from "../../src/native/windows/WindowsShortcutProvider.js";
 import { NativeExportsProvider } from "../../src/native/exports/NativeExportsProvider.js";
 import { BeamProvider } from "../../src/erlang/BeamProvider.js";
 import { inspectElfNotesInputSchema } from "../../src/domain/native/elfNotes.js";
@@ -123,6 +124,7 @@ import { inspectAppleIpsInputSchema } from "../../src/domain/native/appleIps.js"
 import { inspectKernelModuleInputSchema } from "../../src/domain/native/kernelModule.js";
 import { inspectPeCertificatesInputSchema } from "../../src/domain/native/peCertificates.js";
 import { inspectPeImportsInputSchema } from "../../src/domain/native/peImports.js";
+import { inspectWindowsShortcutInputSchema } from "../../src/domain/native/windowsShortcut.js";
 import { inspectNativeExportsInputSchema } from "../../src/domain/native/nativeExports.js";
 import { inspectErlangBeamInputSchema } from "../../src/domain/erlang/beam.js";
 import { ModelArtifactProvider } from "../../src/model/ModelArtifactProvider.js";
@@ -1006,6 +1008,7 @@ const stableArtifactProviders = [
   ["release exposure", () => new ReleaseExposureReader()],
   ["binary hardening", () => new BinaryHardeningProvider()],
   ["PE imports", () => new PeImportsProvider()],
+  ["Windows shortcut", () => new WindowsShortcutProvider()],
   ["native exports", () => new NativeExportsProvider()],
   ["Python pyc", () => new PythonPycProvider()],
 ] as const;
@@ -1059,6 +1062,11 @@ const inspectFileFailure = (
   if (provider instanceof PeImportsProvider)
     return provider.inspect(
       inspectPeImportsInputSchema.parse({ path }),
+      options,
+    );
+  if (provider instanceof WindowsShortcutProvider)
+    return provider.inspect(
+      inspectWindowsShortcutInputSchema.parse({ path }),
       options,
     );
   if (provider instanceof NativeExportsProvider)

@@ -137,7 +137,7 @@ export const exportBuild = async (
       ),
     );
   try {
-    const bytes = await runRea(
+    const { stdoutBytes: bytes } = await runRea(
       computer,
       [
         "export-desktop-application",
@@ -146,6 +146,8 @@ export const exportBuild = async (
         "--task",
         task,
         ...ENDS,
+        // The building agent made the seed in this computer for the task.
+        "--synthetic-seed",
         ...(request.name === undefined ? [] : ["--name", request.name]),
         ...(capture.packageUrl === undefined
           ? []

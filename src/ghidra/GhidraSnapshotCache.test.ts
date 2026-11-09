@@ -308,6 +308,16 @@ describe("Ghidra relationship coverage replay", () => {
 describe("Ghidra snapshot profile admission", () => {
   it.each([
     {
+      parameter: "value_flow_effect_scope",
+      current: "pcode-load-store-explicit-v1",
+      legacy: undefined,
+    },
+    {
+      parameter: "byte_search_coverage",
+      current: "separate-loaded-overlays-v1",
+      legacy: undefined,
+    },
+    {
       parameter: "inventory_search_projection",
       current: "provider-inventory-facts-v1",
       legacy: undefined,
