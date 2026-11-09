@@ -150,31 +150,38 @@ try {
   await exec(compiler, [...jumpTableFlags, sourcePath, "-o", jumpTablePath]);
   const crossTargets = [];
   if (aarch64JumpTableOnly) {
-    const relativeSource = fileURLToPath(
-      new URL("../tests/conformance/ghidra/relative-switch.S", import.meta.url),
-    );
-    for (const entrySize of [1, 2]) {
-      for (const format of [
-        "elf",
-        ...(expectedNativeTarget.architecture === "arm64" ? ["mach-o"] : []),
-      ]) {
-        const targetPath = join(
-          fixtureRoot,
-          `relative-${entrySize}-${format}.o`,
-        );
-        await exec(clang, [
-          ...(format === "elf" ? ["--target=aarch64-linux-gnu"] : []),
-          `-DREA_ENTRY_BYTES=${entrySize}`,
-          "-c",
-          relativeSource,
-          "-o",
-          targetPath,
-        ]);
-        crossTargets.push([
-          targetPath,
-          `relative-${entrySize}`,
-          { format, architecture: "arm64" },
-        ]);
+    // relative-switch-gcc.S shares relative-switch.S's symbol and case oracle,
+    // with GCC's SXTB/SXTH extended-register dispatch instead of clang's LSL.
+    for (const [shape, fixture] of [
+      ["", "relative-switch.S"],
+      ["gcc-", "relative-switch-gcc.S"],
+    ]) {
+      const relativeSource = fileURLToPath(
+        new URL(`../tests/conformance/ghidra/${fixture}`, import.meta.url),
+      );
+      for (const entrySize of [1, 2]) {
+        for (const format of [
+          "elf",
+          ...(expectedNativeTarget.architecture === "arm64" ? ["mach-o"] : []),
+        ]) {
+          const targetPath = join(
+            fixtureRoot,
+            `relative-${shape}${entrySize}-${format}.o`,
+          );
+          await exec(clang, [
+            ...(format === "elf" ? ["--target=aarch64-linux-gnu"] : []),
+            `-DREA_ENTRY_BYTES=${entrySize}`,
+            "-c",
+            relativeSource,
+            "-o",
+            targetPath,
+          ]);
+          crossTargets.push([
+            targetPath,
+            `relative-${shape}${entrySize}`,
+            { format, architecture: "arm64" },
+          ]);
+        }
       }
     }
     const signedRelativeSource = fileURLToPath(
