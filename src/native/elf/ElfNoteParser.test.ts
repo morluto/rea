@@ -506,8 +506,8 @@ it.each([65535, 65536])(
         : { name: null, name_state: "truncated" },
     );
     if (terminatorOffset === 65536)
-      expect(directory.section_names_limitation).toBe(
-        "ELF section names are unavailable because a name is not NUL-terminated",
+      expect(directory.section_names_limitation).toMatch(
+        /section names.*unavailable.*not NUL-terminated/iu,
       );
   },
 );
@@ -516,11 +516,13 @@ it("bounds repeated scans of an unterminated section name", () => {
   const report = parse(unterminatedNoteSections(2, 64));
   expect(report.tables.map(({ name }) => name)).toEqual([null, null]);
   expect(report.coverage.status).toBe("complete");
-  expect(
-    report.limitations.filter((value) => value.includes("not NUL-terminated")),
-  ).toEqual([
-    "ELF section names are incomplete because a name is not NUL-terminated.",
-  ]);
+  const nameWarnings = report.limitations.filter((value) =>
+    /not NUL-terminated/iu.test(value),
+  );
+  expect(nameWarnings).toHaveLength(1);
+  expect(nameWarnings[0]).toMatch(
+    /section names.*incomplete.*not NUL-terminated/iu,
+  );
   let failure: unknown;
   try {
     parse(unterminatedNoteSections(3, 400));

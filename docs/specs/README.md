@@ -15,3 +15,8 @@ for the specification lifecycle, roadmap granularity and producer-owned contract
 
 - [Android boot and vendor_boot images](firmware/android-boot-image/spec.md)
   ([plan](firmware/android-boot-image/plan.md), [tasks](firmware/android-boot-image/tasks.md))
+
+## Native
+
+- [Go static string-header literal recovery](native/go-string-literals/spec.md)
+  ([plan](native/go-string-literals/plan.md), [tasks](native/go-string-literals/tasks.md))

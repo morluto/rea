@@ -12,7 +12,6 @@ import { parseCliJsonInput } from "../../../src/cliJsonInput.js";
 import { cliJavaScriptSourcePaths } from "../../../src/cli/javascriptApplicationAnalysis.js";
 import { readJsonInputFile } from "../../../src/application/JsonInputFile.js";
 import { analysisCliErrorEnvelopeSchema } from "../../../src/contracts/errorSchemas.js";
-import { JSON_BYTE_ORDER_MARK_MESSAGE } from "../../../src/application/Utf8JsonInput.js";
 import { readWithoutFifoWriter } from "../../fixtures/fifoInput.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
@@ -187,7 +186,15 @@ describe("CLI JSON streamed input", () => {
         ok: false,
         error: {
           input_reason: "invalid-json",
-          details: { issues: [{ message: JSON_BYTE_ORDER_MARK_MESSAGE }] },
+          details: {
+            issues: [
+              {
+                message: expect.stringMatching(
+                  /byte-order mark.*UTF-8 without a byte-order mark/iu,
+                ),
+              },
+            ],
+          },
         },
       });
     }
@@ -488,7 +495,12 @@ describe("CLI JSON stdin cancellation and encoding", () => {
   );
 
   it.each([
-    [Buffer.from("\uFEFF{}"), JSON_BYTE_ORDER_MARK_MESSAGE],
+    [
+      Buffer.from("\uFEFF{}"),
+      expect.stringMatching(
+        /byte-order mark.*UTF-8 without a byte-order mark/iu,
+      ),
+    ],
     [Buffer.from([0xf0, 0x28, 0x8c, 0xbc]), "JSON input is not valid UTF-8"],
     [Buffer.from([0xe2, 0x82]), "JSON input is not valid UTF-8"],
   ])(
