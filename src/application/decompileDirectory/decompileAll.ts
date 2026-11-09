@@ -210,6 +210,7 @@ export const decompileAll = async (
       ? undefined
       : { output_directory: session.root, index_path: publishedIndex };
   if (primary !== undefined) {
+    let failure = primary;
     if (
       isAborted(signal) &&
       !(
@@ -225,22 +226,15 @@ export const decompileAll = async (
       primary !== closed.error &&
       closed.error.cleanupIncomplete
     ) {
-      const combined = analysisErrorWithCleanupFailure(
+      failure = analysisErrorWithCleanupFailure(
         primary,
         closed.error,
         "decompile_all",
       ).bindCleanupDependencies([primary, closed.error]);
-      // The composed error is projected until cleanup resolves; afterward its
-      // primary is projected, so both owners must retain the same receipt.
-      if (publishedOutput !== undefined)
-        combined.retainPrimaryDiagnostics({
-          published_output: publishedOutput,
-        });
-      return err(combined);
     }
     if (publishedOutput !== undefined)
-      primary.retainPrimaryDiagnostics({ published_output: publishedOutput });
-    return err(primary);
+      failure.retainPrimaryDiagnostics({ published_output: publishedOutput });
+    return err(failure);
   }
   // Finalization succeeded, so committed files and the index are usable on
   // resume, but a caller abort that stopped the loop or arrived meanwhile is
