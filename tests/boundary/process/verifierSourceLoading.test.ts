@@ -18,7 +18,7 @@ const scriptUrl = (path: string) =>
 processTest(
   "uses the pinned TypeScript compiler when Node rejects transform mode",
   async ({ processes }) => {
-    const source = `
+    const source = String.raw`
 import assert from "node:assert/strict";
 import { createRequire } from "node:module";
 import { resolve } from "node:path";
