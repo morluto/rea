@@ -32,6 +32,7 @@ export const KUNA_DOCTOR_SETTINGS = [
   // The cache root falls back to these when REA_KUNA_CACHE_DIR is unset, so an
   // unresolved expression in either leaves the probed directory unknown.
   "HOME",
+  "USERPROFILE",
   "XDG_CACHE_HOME",
   "REA_KUNA_CACHE_MAX_BYTES",
   "REA_KUNA_PROJECT_TIMEOUT_MS",
@@ -47,7 +48,8 @@ export const KUNA_DOCTOR_SETTINGS = [
  * environment a child already inherits.
  */
 export const KUNA_REGISTRATION_SETTINGS = KUNA_DOCTOR_SETTINGS.filter(
-  (name) => name !== "HOME" && name !== "XDG_CACHE_HOME",
+  (name) =>
+    name !== "HOME" && name !== "USERPROFILE" && name !== "XDG_CACHE_HOME",
 );
 
 /** Project Kuna readiness into the doctor contract without writing anything. */

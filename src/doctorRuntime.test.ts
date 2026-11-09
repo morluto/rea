@@ -995,8 +995,8 @@ test("keeps a Qwen PATH expression unresolved for provider readiness", async () 
   }
 });
 
-it.each(["REA_KUNA_COMMAND", "REA_KUNA_JOBS"] as const)(
-  "keeps unresolved %s unknown even with an explicit Kuna cache",
+it.each(["REA_KUNA_COMMAND", "REA_KUNA_JOBS", "USERPROFILE"] as const)(
+  "keeps unresolved %s unknown when it affects Kuna readiness",
   async (unknown) => {
     const home = await createTestTempDirectory("rea-dsh-kuna-unknown-");
     const kuna = join(home, "kuna");
@@ -1016,7 +1016,9 @@ it.each(["REA_KUNA_COMMAND", "REA_KUNA_JOBS"] as const)(
         "        command: rea",
         "        args: [mcp]",
         "        env:",
-        `          REA_KUNA_CACHE_DIR: ${join(home, "cache")}`,
+        ...(unknown === "USERPROFILE"
+          ? ["          HOME: ''", "          USERPROFILE: !!js caller.home"]
+          : [`          REA_KUNA_CACHE_DIR: ${join(home, "cache")}`]),
         `          REA_KUNA_COMMAND: ${unknown === "REA_KUNA_COMMAND" ? "!!js caller.command" : kuna}`,
         ...(unknown === "REA_KUNA_JOBS"
           ? ["          REA_KUNA_JOBS: !!js caller.jobs"]
@@ -1112,5 +1114,18 @@ test.skipIf(process.platform !== "win32")(
     } finally {
       await host.close?.();
     }
+  },
+);
+
+test.each([
+  [{}, true],
+  [{ HOME: "/selected/home" }, false],
+  [{ REA_KUNA_CACHE_DIR: "/selected/cache" }, false],
+])(
+  "tracks USERPROFILE only when Kuna's home fallback needs it: %j",
+  (environment, expected) => {
+    expect(
+      settingAffectsProbe("kuna", "USERPROFILE", environment, "linux"),
+    ).toBe(expected);
   },
 );

@@ -213,10 +213,21 @@ export const settingAffectsProbe = (
       // Only cache-location defaults are decided by REA_KUNA_CACHE_DIR. An
       // unresolved command, job or timeout setting still leaves the probe's
       // answer unknown, so those keep reporting unknown.
-      if (name !== "HOME" && name !== "XDG_CACHE_HOME") return true;
+      if (
+        name !== "HOME" &&
+        name !== "USERPROFILE" &&
+        name !== "XDG_CACHE_HOME"
+      )
+        return true;
       // A literal cache directory decides the root on its own.
       if (read("REA_KUNA_CACHE_DIR") !== undefined) return false;
       if (name === "XDG_CACHE_HOME") return platform !== "darwin";
+      if (
+        name === "USERPROFILE" &&
+        platform !== "win32" &&
+        (read("HOME")?.length ?? 0) > 0
+      )
+        return false;
       return true;
     }
     default:
