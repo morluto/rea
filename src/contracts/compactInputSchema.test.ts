@@ -229,19 +229,27 @@ it("inlines the Kimi/Moonshot-rejected reference pattern from #9581", () => {
   // target is a oneOf whose branches contain another $ref ("detected
   // infinite recursion without termination condition"), even though none
   // of these schemas actually recurse. The compact presentation inlines
-  // the whole shape, so Kimi accepts the advertised schema.
+  // the whole shape, removing the locally reproduced rejected reference pattern.
   const trigger = {
     type: "object",
     properties: { c: { $ref: "#/$defs/u" } },
     $defs: {
       u: {
         oneOf: [
-          { type: "object", properties: { a: { $ref: "#/$defs/s" } } },
-          { type: "object", properties: { a: { $ref: "#/$defs/t" } } },
+          {
+            type: "object",
+            properties: { a: { $ref: "#/$defs/s" } },
+            required: ["a"],
+          },
+          {
+            type: "object",
+            properties: { a: { $ref: "#/$defs/t" } },
+            required: ["a"],
+          },
         ],
       },
       s: { type: "string" },
-      t: { type: "string" },
+      t: { type: "number" },
     },
   };
   const { schema, presentation } = compactAdvertisedInputSchema(
@@ -256,14 +264,17 @@ it("inlines the Kimi/Moonshot-rejected reference pattern from #9581", () => {
   const ajv = new Ajv2020({ strict: false });
   const canonical = ajv.compile(trigger);
   const compact = ajv.compile(schema);
-  for (const input of [
-    { c: { a: "text" } },
-    { c: { a: 7 } },
-    { c: {} },
-    {},
-    { c: null },
-  ])
-    expect(compact(input)).toBe(canonical(input));
+  for (const [input, expected] of [
+    [{ c: { a: "text" } }, true],
+    [{ c: { a: 7 } }, true],
+    [{ c: { a: false } }, false],
+    [{ c: {} }, false],
+    [{}, true],
+    [{ c: null }, false],
+  ] as const) {
+    expect(canonical(input)).toBe(expected);
+    expect(compact(input)).toBe(expected);
+  }
 });
 
 describe("strict gateway compatibility", () => {

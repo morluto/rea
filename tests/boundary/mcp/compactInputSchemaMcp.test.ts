@@ -157,6 +157,44 @@ const moonshotRejectedReferences = (
     .map(({ path }) => path);
 };
 
+it("distinguishes rejected references from allowed references and literal data", () => {
+  const union = {
+    oneOf: [
+      { type: "object", properties: { a: { $ref: "#/$defs/s" } } },
+      { type: "object", properties: { a: { $ref: "#/$defs/t" } } },
+    ],
+  };
+  const definitions = { s: { type: "string" }, t: { type: "number" } };
+  const rejected = {
+    type: "object",
+    properties: { c: { $ref: "#/$defs/u" } },
+    $defs: { ...definitions, u: union },
+  };
+  expect(moonshotRejectedReferences(rejected)).toEqual(["$.properties.c.$ref"]);
+  expect(
+    moonshotRejectedReferences({
+      type: "object",
+      properties: { c: { $ref: "#/$defs/s" } },
+      $defs: definitions,
+    }),
+  ).toEqual([]);
+  expect(
+    moonshotRejectedReferences({
+      type: "object",
+      properties: { c: { $ref: "#/$defs/a~1b~0c" } },
+      $defs: { ...definitions, "a/b~c": union },
+    }),
+  ).toEqual(["$.properties.c.$ref"]);
+  expect(
+    moonshotRejectedReferences({
+      const: rejected,
+      enum: [rejected],
+      default: rejected,
+      examples: [rejected],
+    }),
+  ).toEqual([]);
+});
+
 const listToolsThroughTransport = async (
   server: EvidenceMcpServer,
 ): Promise<readonly AdvertisedTool[]> => {
