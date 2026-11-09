@@ -10,6 +10,7 @@ import { join } from "node:path";
 
 import { describe, expect, it, vi } from "vitest";
 import * as hostFiles from "../../desktop/HostFileRead.js";
+import { RegularFileCleanupFailure } from "../../filesystem/OwnedRegularFile.js";
 import {
   SolveCancelledError,
   SolveCleanupError,
@@ -268,6 +269,110 @@ it("returns a typed failure if difficulty preflight encounters an I/O error", as
     expect(calls).toEqual([]);
   } finally {
     spy.mockRestore();
+  }
+});
+
+it.each([
+  ["tasks/add-eggs.json", 1, false],
+  ["difficulty.json", 1, false],
+  ["README.md", 2, true],
+] as const)(
+  "retains the failed close of %s, including cancellation during finalization",
+  async (suffix, occurrence, cancel) => {
+    const bundle = await bundleWith("add-eggs");
+    const work = new DesktopBuildOwnedWork();
+    const controller = new AbortController();
+    const reason = new Error("cancel during close");
+    const original = hostFiles.readHostFile;
+    let reads = 0;
+    let closes = 0;
+    const spy = vi
+      .spyOn(hostFiles, "readHostFile")
+      .mockImplementation(async (path, ...rest) => {
+        if (path.endsWith(suffix) && ++reads === occurrence) {
+          if (cancel) controller.abort(reason);
+          throw hostFiles.hostCloseFailure(
+            new RegularFileCleanupFailure({
+              path,
+              owner: {
+                close: async () => {
+                  if (++closes === 1) throw new Error("still busy");
+                },
+              } as never,
+              outcome: { kind: "completed", value: Buffer.from("read") },
+              cleanupCause: new Error("close failed"),
+              ...(cancel ? { completionCancellation: { reason } } : {}),
+            }),
+          );
+        }
+        return original(path, ...rest);
+      });
+    try {
+      const result = await measureBuildTask(
+        request(bundle, "add-eggs"),
+        counting().solver,
+        controller.signal,
+        undefined,
+        work.resources,
+      );
+      expect(result.ok).toBe(false);
+      if (result.ok) throw new Error("Expected cleanup failure");
+      expect(result.error.cleanupIncomplete).toBe(true);
+      expect(result.error.cleanupResources).toContain(join(bundle, suffix));
+      if (cancel) {
+        expect(result.error._tag).toBe("AnalysisCancelledError");
+        expect(result.error.partialObservation).toMatchObject({
+          kind: "partial-task-measurement",
+          solves: [{}, {}, {}],
+        });
+      }
+      expect(await work.close()).toHaveLength(1);
+      expect(result.error.cleanupIncomplete).toBe(true);
+      expect(await work.close()).toEqual([]);
+      expect(result.error.cleanupIncomplete).toBe(false);
+    } finally {
+      spy.mockRestore();
+      await work.close();
+    }
+  },
+);
+
+it("keeps an input read failure primary when cancellation also arrives during close", async () => {
+  const bundle = await bundleWith("add-eggs");
+  const work = new DesktopBuildOwnedWork();
+  const controller = new AbortController();
+  const original = hostFiles.readHostFile;
+  const spy = vi
+    .spyOn(hostFiles, "readHostFile")
+    .mockImplementation(async (path, ...rest) => {
+      if (!path.endsWith("tasks/add-eggs.json")) return original(path, ...rest);
+      controller.abort(new Error("cancel"));
+      throw hostFiles.hostCloseFailure(
+        new RegularFileCleanupFailure({
+          path,
+          owner: { close: async () => {} } as never,
+          outcome: { kind: "failed", cause: new Error("read failed") },
+          cleanupCause: new Error("close failed"),
+        }),
+      );
+    });
+  try {
+    const result = await measureBuildTask(
+      request(bundle, "add-eggs"),
+      counting().solver,
+      controller.signal,
+      undefined,
+      work.resources,
+    );
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("Expected failure");
+    expect(result.error._tag).toBe("ProviderAdapterError");
+    expect(result.error.cleanupIncomplete).toBe(true);
+    expect(await work.close()).toEqual([]);
+    expect(result.error.cleanupIncomplete).toBe(false);
+  } finally {
+    spy.mockRestore();
+    await work.close();
   }
 });
 

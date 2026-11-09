@@ -1,5 +1,9 @@
 import { createHash } from "node:crypto";
 import { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
+import {
+  ArtifactFileCleanupFailure,
+  bindArtifactFileCleanup,
+} from "../../artifacts/ArtifactFileOperation.js";
 import { RegularFileCapacityError } from "../../filesystem/readStableFileBytes.js";
 import {
   guestFileAnswerCeiling,
@@ -346,6 +350,37 @@ export const measureBuildTask = async (
       "outcome" in cause.report
     )
       solves.push(solveRecord(cause.report));
+    if (cause instanceof ArtifactFileCleanupFailure) {
+      const cleanup = cause.cleanup ?? {
+        reason: "an input handle could not be closed",
+        resources: [cause.fileCleanupFailure.path],
+      };
+      for (const lease of cause.cleanupLeases ?? [cause.cleanupLease])
+        resources.retain({
+          kind: "lease",
+          resource: cause.fileCleanupFailure.path,
+          lease,
+        });
+      const cancelled =
+        cause.cancellation !== undefined ||
+        (signal.aborted &&
+          cause.fileCleanupFailure.outcome.kind === "completed");
+      const failure = cancelled
+        ? new AnalysisCancelledError(MEASURE, {
+            cause:
+              cause.cancellation === undefined
+                ? signal.reason
+                : cause.cancellation.reason,
+            cleanup,
+          })
+        : new ProviderAdapterError(AGENTENV_PROVIDER, MEASURE, {
+            userMessage: `Measuring ${request.task} could not close an input file.`,
+            cause,
+            cleanup,
+          });
+      bindArtifactFileCleanup(cause, failure);
+      return err(retainSolves(failure));
+    }
     const failure =
       cause instanceof AnalysisError
         ? cause
