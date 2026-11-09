@@ -137,7 +137,6 @@ describe("IDA registration descriptor ownership", () => {
     const result = await readIdaConfiguration(path, {
       resourceScope: owner,
     });
-    expect(result.ok).toBe(false);
     if (result.ok) throw new Error("expected close failure");
     expect(result.error.cleanupIncomplete).toBe(true);
     expect(retained).toHaveLength(1);
@@ -298,7 +297,6 @@ it.each(["env", "headers"] as const)(
         : { url: "http://127.0.0.1:8745/mcp" };
     await writeFile(path, JSON.stringify({ ...transport, [field]: mapping }));
     const result = await read(path);
-    expect(result.ok).toBe(true);
     if (!result.ok) throw result.error;
     const parsed =
       field === "env" && "env" in result.value

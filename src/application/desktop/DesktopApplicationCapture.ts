@@ -1,4 +1,4 @@
-import { arch } from "node:os";
+import { arch, hostname, userInfo } from "node:os";
 import { dirname } from "node:path";
 
 import { AnalysisCancelledError } from "../../domain/analysisErrorCore.js";
@@ -6,9 +6,11 @@ import {
   projectAnalysisError,
   type AnalysisErrorProjection,
 } from "../../domain/analysisErrorProjection.js";
-import type {
-  DesktopApplicationCapture,
-  DesktopSession,
+import {
+  checkpointTaken,
+  type DesktopApplicationCapture,
+  type DesktopCaptureEvent,
+  type DesktopSession,
 } from "../../domain/desktop/desktopCapture.js";
 import { isWithinAny } from "../../domain/desktop/desktopStateDiff.js";
 import { createEvidence, type Evidence } from "../../domain/evidence.js";
@@ -74,7 +76,11 @@ export interface DesktopCaptureHost {
   /** Directory relative executables and paths are resolved from. */
   readonly callerDirectory: string;
   readonly nextRequest: () => SessionRequest | undefined;
-  readonly report: (message: string) => Promise<void>;
+  /** Progress text, with the event a driver waits on when there is one. */
+  readonly report: (
+    message: string,
+    event?: DesktopCaptureEvent,
+  ) => Promise<void>;
 }
 
 /** Safe failure returned to the CLI adapter. */
@@ -83,6 +89,21 @@ export interface DesktopCaptureErrorOutput extends AnalysisErrorProjection {
 }
 
 const unique = (paths: readonly string[]) => [...new Set(paths)];
+
+/** The host's name and the user's, each left out when the system cannot say, as for a user with no passwd entry. */
+const hostIdentity = (): { hostname?: string; user?: string } => {
+  const name = hostname();
+  let user: string | undefined;
+  try {
+    user = userInfo().username;
+  } catch {
+    user = undefined;
+  }
+  return {
+    ...(name.length === 0 ? {} : { hostname: name }),
+    ...(user === undefined || user.length === 0 ? {} : { user }),
+  };
+};
 
 const limitationsFor = (
   session: DesktopSession,
@@ -240,8 +261,18 @@ const recordCapture = async (
     store,
   );
   const recorder = new CheckpointRecorder(scope, store);
+  const acknowledge = async () => {
+    const taken = recorder.checkpoints.at(-1);
+    if (taken === undefined) return;
+    const event = checkpointTaken(taken);
+    await host.report(
+      `Recorded checkpoint ${taken.name}: ${String(event.changes)} change(s), ${String(event.retained_files)} file(s) retained.`,
+      event,
+    );
+  };
   await host.report("Recording the starting state.");
   await recorder.record("baseline", "baseline", 0, signal);
+  await acknowledge();
   await host.report(`Launching ${inventory.argv.join(" ")}.`);
   const outcome = await runDesktopSession({
     argv: inventory.argv,
@@ -257,6 +288,7 @@ const recordCapture = async (
       await host.report(`Recording checkpoint ${name}.`);
       recorder.openedFiles = openedFiles;
       await recorder.record(name, trigger, atMs, signal);
+      await acknowledge();
     },
     report: host.report,
     signal,
@@ -273,12 +305,14 @@ const recordCapture = async (
       architecture: arch(),
       display: admitted.display,
       home,
+      ...hostIdentity(),
     },
     application,
     session,
     state: {
       roots: [...scope.roots],
       content_roots: [...scope.contentRoots],
+      baseline_non_files: recorder.baselineNonFiles,
       state_directories: [...scope.stateDirectories],
       excluded: [...scope.excluded],
       checkpoints: recorder.checkpoints,

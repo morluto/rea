@@ -75,7 +75,10 @@ import {
   type CdpTargetSession,
 } from "./CdpTargetSession.js";
 import { capturePage, type CapturedPage } from "./CdpPageCapture.js";
-import { selectedCdpCommandTimeoutMs } from "../domain/browserDeadline.js";
+import {
+  selectedCdpCommandTimeoutMs,
+  selectedCdpDiscoveryTimeoutMs,
+} from "../domain/browserDeadline.js";
 import { fetchWebSourceMaps } from "./WebSourceMapFetcher.js";
 import { authorizeCdpTarget } from "./CdpAuthorizedTarget.js";
 import { observeCdpSession } from "./CdpObservationSession.js";
@@ -144,11 +147,16 @@ export class CdpBrowserProvider implements BrowserObservationPort {
         input.cdp_endpoint,
         "list_browser_targets",
         options.signal,
-        undefined,
+        selectedCdpDiscoveryTimeoutMs(input.discovery_timeout_ms),
         this.#owner,
+        undefined,
+        { reuseBrowserSocket: true },
       );
-      if (endpoint.connection !== undefined)
-        await this.#owner.finish(endpoint.connection);
+      if (endpoint.connection !== undefined) {
+        if (endpoint.reusableBrowserSocket === true)
+          await this.#owner.releaseBrowserSocket(endpoint.connection);
+        else await this.#owner.finish(endpoint.connection);
+      }
       const { discovery } = endpoint;
       const selected = selectTargets(
         discovery,
@@ -391,11 +399,15 @@ interface CdpTargetOperationSession<Input> {
   readonly progress?: NonNullable<ExecutionOptions["progress"]>;
 }
 
-/** Authorize one discovered target, run work in its session, and close REA's socket. */
+/** Authorize one discovered target, run work in its session, and release or close REA's socket. */
 const withTargetSession = async <
   Input extends Pick<
     InspectWebPageInput,
-    "cdp_endpoint" | "target_id" | "allowed_origins" | "command_timeout_ms"
+    | "cdp_endpoint"
+    | "target_id"
+    | "allowed_origins"
+    | "discovery_timeout_ms"
+    | "command_timeout_ms"
   >,
   Output,
 >(
@@ -406,6 +418,9 @@ const withTargetSession = async <
   owner: CdpTargetSessionOwner,
   partialObservation?: (output: Output) => AnalysisPartialObservation,
 ): Promise<Output> => {
+  const discoveryTimeoutMs = selectedCdpDiscoveryTimeoutMs(
+    input.discovery_timeout_ms,
+  );
   const commandTimeoutMs = selectedCdpCommandTimeoutMs(
     input.command_timeout_ms,
   );
@@ -413,11 +428,13 @@ const withTargetSession = async <
     input.cdp_endpoint,
     operation,
     options.signal,
-    undefined,
+    discoveryTimeoutMs,
     owner,
     commandTimeoutMs,
+    { reuseBrowserSocket: true },
   );
   let targetSession: CdpTargetSession | undefined;
+  let attachAttempted = false;
   let outcome: Result<Output, unknown>;
   let cleanupFailure: AnalysisError | undefined;
   try {
@@ -431,23 +448,25 @@ const withTargetSession = async <
       input.allowed_origins.length > 0
         ? input
         : { ...input, allowed_origins: [...allowedOrigins] };
-    targetSession =
-      endpoint.connection === undefined
-        ? await openCdpTargetSession(
-            endpoint.discovery,
-            target,
-            operation,
-            options.signal,
-            { commandTimeoutMs },
-            owner,
-          )
-        : await attachCdpTargetSession(
-            endpoint.connection,
-            target,
-            operation,
-            options.signal,
-            owner,
-          );
+    if (endpoint.connection === undefined) {
+      targetSession = await openCdpTargetSession(
+        endpoint.discovery,
+        target,
+        operation,
+        options.signal,
+        { commandTimeoutMs },
+        owner,
+      );
+    } else {
+      attachAttempted = true;
+      targetSession = await attachCdpTargetSession(
+        endpoint.connection,
+        target,
+        operation,
+        options.signal,
+        owner,
+      );
+    }
     outcome = ok(
       await work({
         connection: targetSession.connection,
@@ -471,12 +490,20 @@ const withTargetSession = async <
         CLEANUP_DOMAINS,
         options.signal,
         owner,
+        endpoint.reusableBrowserSocket === true,
       );
     if (
       endpoint.connection !== undefined &&
       endpoint.connection !== targetSession?.connection
-    )
-      await owner.finish(endpoint.connection);
+    ) {
+      if (endpoint.reusableBrowserSocket === true) {
+        if (attachAttempted)
+          await owner.evictBrowserSocket(endpoint.connection);
+        else await owner.releaseBrowserSocket(endpoint.connection);
+      } else {
+        await owner.finish(endpoint.connection);
+      }
+    }
   } catch (cause: unknown) {
     cleanupFailure =
       cause instanceof AnalysisError

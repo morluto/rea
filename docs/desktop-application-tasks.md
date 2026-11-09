@@ -27,9 +27,15 @@ operation `describe_desktop_application_task` and predicate type
   window class.
 - `owned_paths`: the paths the export owns, the only ones whose files the
   app's `data/get` serves and checks can read.
-- `files`: each file under them whose state differs between the capture's
-  first and last version, with its home path, role, both versions and the net
-  change between them, from the state view's own diff (`lines`, `values`,
+- `checkpoints`: the two checkpoints compared, `baseline` for the seed and
+  `final` for the end. They are the capture's first and last unless
+  `--seed-checkpoint` and `--end-checkpoint` name others, as for the
+  [export](desktop-application-export.md#the-seed-checkpoint), which takes
+  the same options; a name the capture does not hold, or an end before the
+  seed, is refused.
+- `files`: each file under them whose state differs between those
+  checkpoints, with its home path, role, its versions at both (`baseline` and
+  `final`, the last recorded at or before each) and the net change between them, from the state view's own diff (`lines`, `values`,
   `keys` or `rows` with what was added, removed and changed, or `created`,
   `deleted`, `format`, `content`, `unreadable`; `content` also when the
   views hold only part of a file and match while the file changed). A
@@ -44,10 +50,24 @@ operation `describe_desktop_application_task` and predicate type
   role `document`, or of the app's own state files when no document changed.
   A text file gains `lines_present` for its new lines and `lines_absent` for
   lines it lost (when either is at most ten), and `line_count` for each line
-  holding a letter whose count changed; JSON, XML and key files gain
+  holding a letter whose count changed; JSON and key files gain
   `value_equals` and `value_absent` by pointer; SQLite tables gain rows added,
-  changed and removed, by primary key, and their new row count. Values that
-  look like a time the app stamps are left out.
+  changed and removed, by primary key, and their new row count. An XML file,
+  and the JSON, key file and XML views of a zip archive's entries, gain checks
+  by [selectors](#pointers-and-selectors) and never through an element by
+  position: in XML, first [`text_equals`](#whole-text) for each element whose
+  text changed, then an element added whole that it exists, one removed whole
+  that it is absent, then values changed, added and removed, an entry or a
+  JSON value added whole through its members, and an empty array or object as
+  it is. The text check names the paragraph rather than a run inside it: it
+  goes up from an element sitting in its parent's text, and from one named by
+  its tag or position alone to the nearest ancestor named by an attribute, as
+  AbiWord's `p` by its `xid`; the text nodes and runs inside it get no other
+  check, but an element holding no text that is added or removed there, such
+  as an image or a line break, keeps its own, since the text check never
+  reads it. Whitespace an app lays out between elements is not checked, and
+  values that look like a time the app stamps, in ISO 8601 or as C's
+  `asctime` writes it (`Thu Nov  5 09:20:31 2026`), are left out.
 
 The suggestions are a starting point. Keep the ones that say what the user
 did; drop the ones that only follow from how the app saves its file. A LibreCAD
@@ -86,8 +106,10 @@ file, in the shapes of the state view.
 | `lines_present` | `lines`                                                      | Every listed line is a whole line of the text view                       |
 | `lines_absent`  | `lines`                                                      | None of the listed lines is                                              |
 | `line_count`    | `exact` or `contains`; `equals`, `at_least` or `at_most`     | The number of lines equal to `exact`, or holding `contains`, compares so |
-| `value_equals`  | `pointer`, `value`                                           | The JSON pointer names a value equal to `value`                          |
+| `value_equals`  | `pointer`, `value`; optional `tolerance`                     | The pointer names a value equal to `value`, or within `tolerance` of it  |
 | `value_absent`  | `pointer`                                                    | The pointer names no value                                               |
+| `text_equals`   | `pointer`, `value`; optional `normalize_whitespace`          | The XML element's [whole text](#whole-text) equals `value`               |
+| `text_contains` | `pointer`, `value`; optional `normalize_whitespace`          | The XML element's whole text holds `value`                               |
 | `row_present`   | `table`, `where`                                             | A row of the SQLite table has every column in `where` equal              |
 | `row_absent`    | `table`, `where`                                             | No row does                                                              |
 | `row_count`     | `table`; optional `where`; `equals`, `at_least` or `at_most` | The number of rows, or of rows matching `where`, compares so             |
@@ -98,37 +120,197 @@ The rules both evaluators follow:
   `value_absent` and `row_absent` pass on it and a count is 0.
 - A file that has no view (binary, over the read limit, or unreadable) fails
   every check but `file_present` and `file_absent`. Line checks need a text
-  view and row checks a SQLite view; another format fails.
+  view, row checks a SQLite view and text checks an XML view, in a file or an
+  archive entry; another format fails.
 - Equality is JSON equality: numbers by value, never a boolean for a number,
   objects by their keys whatever their order, arrays in order.
 - Pointers follow RFC 6901 (`~1` for `/`, `~0` for `~`) and must start with
-  `/`. Key files read as `{"groups": {"GROUP": {"KEY": "VALUE"}}}`, so a
-  setting is `/groups/GROUP/KEY`; XML as
-  `{"root": {"name", "attributes", "children"}}`; SQLite as `{"tables": {"TABLE": {"columns", "rows"}}}`.
+  `/`; on an array a segment may be a selector, below. Key files read as
+  `{"groups": {"GROUP": {"KEY": "VALUE"}}}`, so a setting is
+  `/groups/GROUP/KEY`; XML as `{"root": {"name", "attributes", "children"}}`;
+  SQLite as `{"tables": {"TABLE": {"columns", "rows"}}}`; a zip archive as
+  `{"entries": [{"name", "format", "view", …}]}`.
+- With `tolerance`, a non-negative number, `value` must be a number, and the
+  value found passes when it is a number, or a string that is a decimal
+  numeral such as `"5.0000000000000000"`, at most `tolerance` from `value`.
+  `tolerance: 0` compares numerically, so `"1.2500"` equals `1.25`. Anything
+  else fails as not a number.
 - `contains` matches a line that holds it anywhere, case and all. Checks take
   no regular expressions: a pattern run on what the agent wrote could stall
   the verifier, and JavaScript and Python read some patterns differently.
 - A check decided by what a view leaves out (`lines_absent`, `value_absent`,
-  `row_absent`, the counts, and `value_equals` of a whole object or array)
-  fails when that view is truncated; a check satisfied by what the view holds
-  is decided on it.
+  `row_absent`, the counts, `value_equals` of a whole object or array, and
+  the text checks of an element) fails when that view is truncated; a check
+  satisfied by what the view holds is decided on it. An element's text is not:
+  the reader may have dropped text from between the runs it kept, so
+  `text_contains` fails on a truncated view even where the kept runs hold its
+  value. A text node or attribute value is whole, and decided.
 
 The export refuses, naming the check, a file outside the owned paths, a file
-spelled with a leading slash, `.` or `..`, a pointer into a text file or into
-XML that uses namespaces (the verifier's reader names them differently), the
-empty pointer (the whole file), a value that names the captured home, and a
-value that looks like an ISO 8601 date and time. Other volatile content, such
-as a counter the app bumps on every save, is for the author to leave out.
+spelled with a leading slash, `.` or `..`, a pointer into a file that is text
+at the seed, as the bundle ships it, or at the end checkpoint, the empty
+pointer (the whole file), a value that names the captured home, or the
+capture host's name or `user@host` anywhere (which the
+[export removes from the seed](desktop-application-export.md#host-name-and-user)), a
+`tolerance` with a value that is not a number, an empty `text_contains`
+value, or one of only whitespace with `normalize_whitespace`, and a value that
+looks like a date and time, in ISO 8601 or `asctime`'s form. Other volatile
+content, such as a
+counter the app bumps on every save, is for the author to leave out.
+
+## Pointers and selectors
+
+An app that rewrites a document moves things: FreeCAD 1.0 records more
+properties than 0.21, so a hole's radius sits at another position among its
+siblings, and a plate's entry moves once a hole is added before it. A pointer
+segment applied to an array may therefore name a member by what it holds
+rather than by its position:
+
+- `[KEY=VALUE]` names the member whose string field `KEY` is `VALUE`, such as
+  a zip entry by `[name=Document.xml]` or an XML element by its tag,
+  `[name=Object]`.
+- `[@KEY=VALUE]` names the member whose `attributes` hold `KEY="VALUE"`, as
+  the XML view keeps an element's attributes.
+- Conditions can follow one another, `[name=Object][@name=Hole]`, and all must
+  hold. They compare strings only, the selector is escaped like any pointer
+  segment (`~1` for `/`), and a value cannot hold `][`.
+
+A selector must name exactly one member. When several match, or none does
+before the last segment, the check fails and says which selector matched what.
+When the last segment's selector matches none, the pointer names no value:
+`value_absent` passes, which is how a check says an element was removed, and
+`value_equals` fails. On an object, a bracketed segment is an ordinary key.
+
+A FreeCAD task that checks the user cut a 10 mm hole through the plate, in
+FreeCAD 0.21 and 1.0 alike:
+
+```json
+{
+  "name": "cut-hole",
+  "prompt": "Cut a 10 mm hole through the middle of the plate and save it.",
+  "checks": [
+    {
+      "id": "cut",
+      "kind": "value_equals",
+      "file": "Documents/plate.FCStd",
+      "pointer": "/entries/[name=Document.xml]/view/root/children/[name=Objects]/children/[name=Object][@type=Part::Cut]/attributes/type",
+      "value": "Part::Cut"
+    },
+    {
+      "id": "radius",
+      "kind": "value_equals",
+      "file": "Documents/plate.FCStd",
+      "pointer": "/entries/[name=Document.xml]/view/root/children/[name=ObjectData]/children/[name=Object][@name=Hole]/children/[name=Properties]/children/[name=Property][@name=Radius]/children/[name=Float]/attributes/value",
+      "value": 5,
+      "tolerance": 0.01
+    }
+  ]
+}
+```
+
+Before the edit the archive has no `Part::Cut` and no `Hole`, so both checks
+fail on the seed; after it, `Radius` is `"5.0000000000000000"` and both pass.
+A check decided by what a view leaves out depends, in an archive, on the entry
+its pointer goes into: it fails when that entry's view is missing or
+truncated, or when the entry is not listed and the listing is truncated. A
+selector must see every member to know it names one, so a check whose pointer
+searches an array the view may hold only part of fails as undecided: any array
+of a truncated XML view, of a truncated entry's view, or the listing when it
+is cut. A position is decided on what the view holds. Like a file, an entry
+that has no view (binary, not read, or a database or archive inside the
+archive) fails every check into its `view`; its `null` there is no value, while
+an entry holding the JSON document `null` reads as `null`. Checks on its `name`,
+`size`, `sha256` and `format` still read.
+
+XML that uses namespaces is named as the document spells it, in both
+evaluators: an element or attribute by its prefixed name, such as `text:p`
+or `inkscape:label`, an element in a default namespace by its bare name, such
+as `svg`, and namespace declarations as the attributes `xmlns` and
+`xmlns:PREFIX`. Text is a string among an element's `children`. These checks
+hold a poster's headline in an Inkscape SVG and a date in a LibreOffice Writer
+document:
+
+```json
+[
+  {
+    "id": "headline",
+    "kind": "value_equals",
+    "file": "Pictures/poster.svg",
+    "pointer": "/root/children/[name=g][@inkscape:label=Layer 1]/children/[name=text][@id=headline]/children/[name=tspan]/children/0",
+    "value": "Summer Bake Sale"
+  },
+  {
+    "id": "date",
+    "kind": "value_equals",
+    "file": "Documents/flyer.odt",
+    "pointer": "/entries/[name=content.xml]/view/root/children/[name=office:body]/children/[name=office:text]/children/[name=text:p][@text:style-name=Subtitle]/children/0",
+    "value": "Monday 24 November"
+  }
+]
+```
+
+Inkscape writes a line of text as a `tspan` inside its `text` element, and
+Writer keeps a paragraph's style in `text:style-name`. A prefix is the one the
+document uses, so a check names the prefixes the app writes.
+
+## Whole text
+
+A text node is only the stretch of text between two pieces of markup, and
+apps split a paragraph into runs as they save it. AbiWord wraps text typed
+into a reopened document in `c` elements, so changing a time to `3:30` saves
+`<p>The team meeting starts at <c>3</c>:<c>30</c> in room 4.</p>`; Writer,
+which records revision IDs by default, writes text typed in one session as
+`text:span` runs. A `value_equals` on the paragraph's `children/0` then reads
+`"The team meeting starts at "` and fails. `text_equals` and `text_contains`
+read the element's whole text instead:
+
+```json
+{
+  "id": "time",
+  "kind": "text_equals",
+  "file": "Documents/meeting.abw",
+  "pointer": "/root/children/[name=section]/children/[name=p][@xid=3]",
+  "value": "The team meeting starts at 3:30 in room 4."
+}
+```
+
+- The pointer names an element of an XML view, in a file or in an archive
+  entry's `view`, or a text node or attribute value in one, whose text is its
+  value. Another format, a pointer into an archive outside an XML entry's
+  view, or any other value fails, an element's `name` and the `doctype`'s
+  fields included: they are strings of the view, not text of the document.
+- An element's text is XPath's `string()` of what the view keeps: every text
+  node in it and in its descendants, CDATA included, in document order, with
+  nothing between them. The view drops whitespace-only text between child
+  elements only in an element that holds no other text, outside
+  `xml:space="preserve"`, so the space between two runs of a paragraph is
+  part of its text. Elements that stand for characters, such as Writer's
+  `text:s`, `text:tab` and `text:line-break`, add none.
+- `text_equals` passes when the text equals `value` exactly, case and all;
+  `text_contains` when it holds `value`, as a time within a sentence, so the
+  check holds whatever the rest of the sentence says.
+- `normalize_whitespace: true` collapses each run of XML whitespace (space,
+  tab, carriage return, line feed) in both the text and `value` to one space
+  and trims both ends before comparing, as XPath's `normalize-space()` does,
+  for an app that reflows text or a value written across lines. A no-break
+  space is not whitespace there.
 
 ## Validation and export
 
 `rea export-desktop-application <capture> <directory> --task <task.json>`
-evaluates the checks on the capture's state view: on the first version of
-each file, which is the seed, and on its last version, the captured end state.
+evaluates the checks on the capture's state view: on each file as it was at
+the seed checkpoint, which is the seed, as the bundle ships it with the
+capture host's name and user removed, and at the end checkpoint, the
+captured end state. Those are the capture's first and last checkpoints unless
+`--seed-checkpoint` and `--end-checkpoint` name others.
 It refuses a task whose every check passes on the seed, and a check that fails
-on the end state, with that check's reason. A capture yields one task, so the
-option is taken once. The result's `task` names the task, its number of checks
-and those that fail on the seed. A refused task writes no bundle.
+on the end state, with that check's reason. Only a failure on what the seed's
+view shows counts: a task whose checks fail on the seed only because a view
+could not be read or may have left out what they look for, such as a line past
+the 5,000 a text view keeps, is refused, naming each failure. A capture yields
+one task, so the option is taken once. The result's `task` names the task, its
+number of checks and those that fail on what the seed shows. A refused task
+writes no bundle.
 
 The bundle then holds, besides the app and `tasks/smoke.json`:
 

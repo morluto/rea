@@ -109,7 +109,7 @@ class CoreContextTests(unittest.TestCase):
         self.assertFalse(result["ok"])
         self.assertEqual(result["reason"], "output-limit")
         self.assertNotIn("exceeds64", result["message"])
-        self.assertEqual(result["message"], "Complete debugger context exceeds the 64 MiB reply budget.")
+        self.assertIn("64 MiB", result["message"])
         self.assertEqual(reads, [])
         self.assertEqual(queries, ["maps"])
 

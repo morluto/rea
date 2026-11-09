@@ -249,7 +249,11 @@ describe.each([
                     kind: "retained-evidence",
                     evidence_id: partial.evidence_id,
                   }
-                : partial,
+                : {
+                    kind: "inline-evidence",
+                    retention: "unknown",
+                    evidence: partial,
+                  },
           }),
         );
         expect(attempts).toEqual([partial]);

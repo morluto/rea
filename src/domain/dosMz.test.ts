@@ -8,15 +8,17 @@ import {
   dosMzDeclaredImageByteLength,
   parseDeclaredMzHeaderEvidence,
   withMzWindowsHeaderSignature,
-  parseDosMzHeader,
   parseMzHeaderEvidence,
 } from "./dosMz.js";
+
+const dosHeader = (bytes: Buffer, fileSize = bytes.length) =>
+  parseMzHeaderEvidence(bytes, fileSize).dos;
 
 describe("DOS MZ load-module validation", () => {
   it("separates initialized module and appended overlay bytes", () => {
     const image = dosMz(480);
     const bytes = Buffer.concat([image, Buffer.from("overlay")]);
-    expect(parseDosMzHeader(bytes)).toEqual({
+    expect(dosHeader(bytes)).toEqual({
       ok: true,
       value: {
         headerBytes: 32,
@@ -47,7 +49,7 @@ describe("DOS MZ load-module validation", () => {
       ok: true,
       value: { format: "dos-mz" },
     });
-    expect(parseDosMzHeader(bytes)).toMatchObject({
+    expect(dosHeader(bytes)).toMatchObject({
       ok: true,
       value: { headerBytes: 96, relocationCount: 2, moduleBytes: 128 },
     });
@@ -55,8 +57,8 @@ describe("DOS MZ load-module validation", () => {
 
   it("uses the actual file length rather than the bounded prefix length", () => {
     const bytes = dosMz(8192);
-    expect(parseDosMzHeader(bytes.subarray(0, 64), bytes.length).ok).toBe(true);
-    expect(parseDosMzHeader(bytes.subarray(0, 64))).toMatchObject({
+    expect(dosHeader(bytes.subarray(0, 64), bytes.length).ok).toBe(true);
+    expect(dosHeader(bytes.subarray(0, 64))).toMatchObject({
       ok: false,
       error: "truncated DOS MZ load module",
     });
@@ -114,7 +116,7 @@ describe("DOS MZ load-module validation", () => {
       ok: true,
       value: { format: "pe", architecture: "x86_64" },
     });
-    expect(parseDosMzHeader(bytes).ok).toBe(false);
+    expect(dosHeader(bytes).ok).toBe(false);
   });
 
   it.each([
@@ -156,18 +158,16 @@ describe("DOS MZ load-module validation", () => {
   ] as const)("rejects invalid %s", (_name, damage, error) => {
     const bytes = dosMz();
     damage(bytes);
-    expect(parseDosMzHeader(bytes)).toEqual({ ok: false, error });
+    expect(dosHeader(bytes)).toEqual({ ok: false, error });
   });
 
   it("rejects a truncated relocation table even when the file size is known", () => {
     const bytes = dosMz();
     bytes.writeUInt16LE(1, 6);
-    expect(parseDosMzHeader(bytes.subarray(0, 30), bytes.length)).toMatchObject(
-      {
-        ok: false,
-        error: "truncated DOS MZ relocation table",
-      },
-    );
+    expect(dosHeader(bytes.subarray(0, 30), bytes.length)).toMatchObject({
+      ok: false,
+      error: "truncated DOS MZ relocation table",
+    });
   });
 });
 
@@ -402,7 +402,7 @@ it("retains ordered DOS relocation aliases and their source/module target coordi
   bytes.writeUInt16LE(0, 38);
   bytes.writeUInt16LE(17, 40);
   bytes.writeUInt16LE(0, 42);
-  const parsed = parseDosMzHeader(bytes);
+  const parsed = dosHeader(bytes);
   if (!parsed.ok) throw new Error(parsed.error);
   expect(parsed.value.relocations).toEqual([
     { segment: 1, offset: 0, moduleOffset: 16, fileOffset: 80 },
@@ -418,7 +418,7 @@ it("retains ordered DOS relocation aliases and their source/module target coordi
     moduleOffset: 16,
     fileOffset: 80,
   });
-  expect(parseDosMzHeader(bytes)).toEqual({
+  expect(dosHeader(bytes)).toEqual({
     ok: false,
     error: "DOS MZ relocation 1 points outside its load module",
   });
@@ -436,10 +436,11 @@ it("retains fixed declarations while requesting only a source-bounded relocation
   const bytes = extendedRelocationImage();
   const prefix = bytes.subarray(0, 64);
   const evidence = parseMzHeaderEvidence(prefix, bytes.length);
-  expect(evidence.declarations).toEqual(readDosMzDeclarations(prefix));
   expect(evidence.declarations).toMatchObject({
     ok: true,
     value: {
+      lastPageBytes: 32,
+      pages: 17,
       headerBytes: 4112,
       relocationCount: 2,
       relocationTableOffset: 4096,
@@ -470,7 +471,7 @@ it("does not request absent or out-of-bounds relocation records", () => {
     parseMzHeaderEvidence(zero.subarray(0, 64), zero.length)
       .relocationTableRead,
   ).toBeUndefined();
-  expect(parseDosMzHeader(zero).ok).toBe(true);
+  expect(dosHeader(zero).ok).toBe(true);
   const outsideHeader = extendedRelocationImage();
   outsideHeader.writeUInt16LE(5000, 24);
   const headerEvidence = parseMzHeaderEvidence(
@@ -505,16 +506,16 @@ it("keeps independent malformed declarations and the established DOS error prece
     ok: false,
     error: "invalid DOS MZ page count or final-page size",
   });
-  expect(parseDosMzHeader(bytes, bytes.length - 1)).toEqual({
+  expect(dosHeader(bytes, bytes.length - 1)).toEqual({
     ok: false,
     error: "invalid DOS MZ file length",
   });
   bytes.writeUInt16LE(17, 4);
-  expect(parseDosMzHeader(bytes.subarray(0, 64), bytes.length)).toEqual({
+  expect(dosHeader(bytes.subarray(0, 64), bytes.length)).toEqual({
     ok: false,
     error: "truncated DOS MZ relocation table",
   });
-  expect(parseDosMzHeader(bytes)).toEqual({
+  expect(dosHeader(bytes)).toEqual({
     ok: false,
     error: "DOS MZ entry point lies outside its initialized load module",
   });
