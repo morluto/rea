@@ -10,11 +10,12 @@ import type {
   JavaScriptSemanticResourceOperation,
 } from "./javascriptSemanticIr.js";
 import {
-  isNullishJavaScriptSyntax,
   readExactJavaScriptLiteral,
-  semanticStaticPropertyKey,
+  isObjectPrototypeSetter,
+  primitiveOwnKeys,
   semanticStaticPropertyName,
   staticJavaScriptTruthiness,
+  staticObjectPropertyReader,
   unwrapJavaScriptExpression,
 } from "./javascriptAstValues.js";
 import { isUnmodifiedGlobalReference } from "./javascriptSemanticAmbientWrites.js";
@@ -565,67 +566,50 @@ const TLS_PROTOCOL_VERSIONS = new Set([
 ]);
 
 /**
- * The options object `tls.connect` actually reads for each supported call shape.
- *
- * `normalizeConnectArgs` copies at most one options object, so a later object argument is
- * not merged into the version lookup. Measured on Node 24.22.1:
- *
- * | call | read |
- * | --- | --- |
- * | `(443, {minVersion: "TLSv1.2"}, {minVersion: "nope"})` | SOCKET — the third argument is ignored |
- * | `(443, {minVersion: "nope"}, {minVersion: "TLSv1.2"})` | THREW |
- * | `(443, "127.0.0.1", {minVersion: "nope"})` | THREW — the host fills slot 1 |
- * | `({port: 443, minVersion: "nope"}, {minVersion: "TLSv1.2"})` | SOCKET — the second object wins |
- *
- * So an object in slot 0 is merged with slot 1, and a port or path in slot 0 makes the
- * first object among slots 1 and 2 the only one read. A spread argument shifts those
- * positions, so it leaves the answer undecided rather than picking a wrong slot.
+ * Node merges argument 1 when it is a non-null object, otherwise argument 2.
+ * Keep object identity separate from whether its option members are known.
  */
 const tlsOptionsObjects = (
   node: t.CallExpression | t.OptionalCallExpression,
+  state: JavaScriptSemanticAnalysisState,
 ): readonly (t.ObjectExpression | "unknown")[] | undefined => {
-  const args = node.arguments;
-  if (args.some((argument) => t.isSpreadElement(argument))) return undefined;
-  // A non-object argument in a slot `tls.connect` copies means the merged value is not
-  // settled by this syntax, so it is unknown rather than absent. Measured on Node
-  // 24.22.1, `const o = {minVersion: "TLSv1.2"}; tls.connect({port: 443, minVersion:
-  // "nope"}, o)` connects, while the same call with a rejected binding throws.
+  if (node.arguments.some((argument) => t.isSpreadElement(argument)))
+    return undefined;
   const slot = (
     index: number,
   ):
-    | { readonly object: t.ObjectExpression }
-    | { readonly other: true }
-    | undefined => {
-    const argument = args[index];
-    if (argument === undefined) return undefined;
+    | { kind: "object"; value: t.ObjectExpression | "unknown" | undefined }
+    | { kind: "non-object" | "unknown" } => {
+    const argument = node.arguments[index];
+    if (argument === undefined) return { kind: "non-object" };
     const value = unwrapJavaScriptExpression(argument as t.Node).node;
-    return t.isObjectExpression(value) ? { object: value } : { other: true };
+    if (t.isObjectExpression(value)) return { kind: "object", value };
+    if (t.isArrayExpression(value) || t.isRegExpLiteral(value))
+      return { kind: "object", value: undefined };
+    if (t.isNewExpression(value)) return { kind: "object", value: "unknown" };
+    if (
+      t.isFunctionExpression(value) ||
+      t.isArrowFunctionExpression(value) ||
+      t.isClassExpression(value) ||
+      t.isUnaryExpression(value) ||
+      t.isTemplateLiteral(value) ||
+      readExactJavaScriptLiteral(value).found ||
+      isNullishPlaceholder(value, state)
+    )
+      return { kind: "non-object" };
+    return { kind: "unknown" };
   };
   const first = slot(0);
-  if (first !== undefined && "object" in first) {
-    const second = slot(1);
-    return second !== undefined && "object" in second
-      ? [first.object, second.object]
-      : second === undefined
-        ? [first.object]
-        : [first.object, "unknown"];
-  }
-  // A port or path occupies slot 0. A string in slot 1 is the host, so the options
-  // object is slot 2; measured on Node 24.22.1, \`tls.connect(443, "127.0.0.1",
-  // {minVersion: "nope"})\` throws. An object in slot 1 is the options itself. Anything
-  // else in that slot is a value this reader cannot settle, so it stays unknown.
+  if (first.kind === "unknown") return undefined;
+  const objects: (t.ObjectExpression | "unknown")[] =
+    first.kind === "object" && first.value !== undefined ? [first.value] : [];
   const second = slot(1);
-  if (second === undefined) return [];
-  if ("object" in second) return [second.object];
-  const host = args[1];
-  const hostIsString =
-    host !== undefined &&
-    (t.isStringLiteral(unwrapJavaScriptExpression(host as t.Node).node) ||
-      t.isTemplateLiteral(unwrapJavaScriptExpression(host as t.Node).node));
-  if (!hostIsString) return ["unknown"];
-  const third = slot(2);
-  if (third === undefined) return [];
-  return "object" in third ? [third.object] : ["unknown"];
+  if (second.kind === "unknown") return undefined;
+  const selected = second.kind === "object" ? second : slot(2);
+  if (selected.kind === "unknown") objects.push("unknown");
+  else if (selected.kind === "object" && selected.value !== undefined)
+    objects.push(selected.value);
+  return objects;
 };
 
 /**
@@ -655,8 +639,28 @@ const rejectsTlsProtocolVersionLiteral = (
   state: JavaScriptSemanticAnalysisState,
 ): boolean => {
   if (specifier !== "tls") return false;
-  const objects = tlsOptionsObjects(node);
+  const objects = tlsOptionsObjects(node, state);
   if (objects === undefined) return false;
+  const firstArgument = node.arguments[0];
+  const target =
+    firstArgument === undefined
+      ? undefined
+      : unwrapJavaScriptExpression(firstArgument as t.Node).node;
+  // Node assigns overrides into the first options object. An unresolved
+  // prototype may absorb those writes through an inherited setter.
+  if (
+    t.isObjectExpression(target) &&
+    target.properties.some(
+      (property) =>
+        !t.isSpreadElement(property) &&
+        isObjectPrototypeSetter(property) &&
+        t.isObjectProperty(property) &&
+        primitiveOwnKeys(property.value, (value) =>
+          isNullishPlaceholder(value, state),
+        ) === null,
+    )
+  )
+    return false;
   // An accessor anywhere in the merged objects can write a member in an order this
   // reader cannot replay, so every member stays undecided — including a plain method,
   // which a getter can replace before Node copies it. Measured on Node 24.22.1,
@@ -668,43 +672,26 @@ const rejectsTlsProtocolVersionLiteral = (
         (property) => t.isObjectMethod(property) && property.kind !== "method",
       ),
   );
-  const effective = (
-    member: string,
-  ): t.Node | "unknown" | "rejects" | undefined => {
-    let read: t.Node | "unknown" | "rejects" | undefined;
-    for (const options of objects) {
-      if (options === "unknown") {
+  const readers = objects.map((options) =>
+    options === "unknown"
+      ? "unknown"
+      : staticObjectPropertyReader(options, (value) =>
+          isNullishPlaceholder(value, state),
+        ),
+  );
+  const effective = (member: string): t.Node | "unknown" | undefined => {
+    let read: t.Node | "unknown" | undefined;
+    for (const reader of readers) {
+      if (reader === "unknown") {
         read = "unknown";
         continue;
       }
-      for (const property of options.properties) {
-        if (t.isSpreadElement(property)) {
-          read = "unknown";
-          continue;
-        }
-        // An exact computed key names the same member; only an unresolvable one is
-        // unknown. `semanticStaticPropertyKey` is the nullable owner:
-        // `semanticStaticPropertyName` encodes an unresolved key as `""`, which would
-        // read as a member literally named empty. Measured on Node 24.22.1,
-        // `const k = "minVersion"; {minVersion: "nope", [k]: "TLSv1.2"}` connects and
-        // `{["minVersion"]: "nope"}` throws.
-        const name = semanticStaticPropertyKey(property.key, property.computed);
-        if (name === null) {
-          read = "unknown";
-          continue;
-        }
-        if (name !== member) continue;
-        if (t.isObjectMethod(property)) {
-          // A plain method is a value Node never reads as a version name; an accessor
-          // runs a body, so its result is not this literal.
-          read =
-            property.kind === "method" && !accessorWritten
-              ? "rejects"
-              : "unknown";
-          continue;
-        }
-        read = accessorWritten ? "unknown" : property.value;
-      }
+      const property = reader(member);
+      if (property.status === "missing") continue;
+      read =
+        property.status !== "explicit" || accessorWritten
+          ? "unknown"
+          : property.value;
     }
     return read;
   };
@@ -712,32 +699,26 @@ const rejectsTlsProtocolVersionLiteral = (
   // already treats `-0` as falsy. Measured on Node 24.22.1,
   // `{secureContext: -0, minVersion: "nope"}` throws while a real context connects.
   const context = effective("secureContext");
-  if (context === "unknown" || context === "rejects") return false;
-  if (context !== undefined && staticJavaScriptTruthiness(context) !== false)
+  if (context === "unknown") return false;
+  if (
+    context !== undefined &&
+    !isNullishPlaceholder(context, state) &&
+    staticJavaScriptTruthiness(context) !== false
+  )
     return false;
   const rejectsValue = (value: t.Node): boolean => {
     const read = unwrapJavaScriptExpression(value).node;
     // `null` and `undefined` mean "not given", which Node accepts.
-    if (isNullishJavaScriptSyntax(read)) return false;
+    if (isNullishPlaceholder(read, state)) return false;
     if (t.isStringLiteral(read)) return !TLS_PROTOCOL_VERSIONS.has(read.value);
     if (t.isTemplateLiteral(read) && read.expressions.length === 0) {
       const cooked = read.quasis[0]?.value.cooked;
       if (cooked === null || cooked === undefined) return false;
       return !TLS_PROTOCOL_VERSIONS.has(cooked);
     }
-    // A unary operator over a settled operand is itself a settled primitive, and the
-    // only primitive Node accepts here is a version string. The shared literal reader
-    // prices `-1` and `+1` but not `!0`, `~~0`, `!!0` or `typeof 1`, so those are
-    // decided here. Measured on Node 24.22.1, each of them throws
-    // `ERR_TLS_INVALID_PROTOCOL_VERSION`; `void <expr>` is `undefined` and connects.
-    if (t.isUnaryExpression(read)) {
-      if (read.operator === "void") return false;
-      const operand = unwrapJavaScriptExpression(read.argument).node;
-      if (t.isNumericLiteral(operand) || t.isBigIntLiteral(operand))
-        return true;
-      if (read.operator === "!" || read.operator === "~") return true;
-      if (read.operator === "typeof") return true;
-    }
+    // Numeric, boolean and typeof results cannot equal an admitted version
+    // string. `void` is the accepted undefined/default case.
+    if (t.isUnaryExpression(read)) return read.operator !== "void";
     // `NaN` and `Infinity` are unshadowed globals and neither is a version name, the
     // same way the adjacent port filter treats them.
     if (
@@ -749,6 +730,7 @@ const rejectsTlsProtocolVersionLiteral = (
     if (readExactJavaScriptLiteral(read).found) return true;
     // Every other statically known shape is truthy and not a string, so the call throws.
     if (
+      t.isObjectMethod(read) ||
       t.isNumericLiteral(read) ||
       t.isBooleanLiteral(read) ||
       t.isBigIntLiteral(read) ||
@@ -766,7 +748,6 @@ const rejectsTlsProtocolVersionLiteral = (
   for (const member of ["minVersion", "maxVersion"] as const) {
     const read = effective(member);
     if (read === undefined || read === "unknown") continue;
-    if (read === "rejects") return true;
     if (rejectsValue(read)) return true;
   }
   return false;

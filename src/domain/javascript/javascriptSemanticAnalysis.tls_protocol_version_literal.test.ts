@@ -302,3 +302,52 @@ it.each([
     { kind: "acquire", method: "connect" },
   ]);
 });
+
+it.each([
+  `tls.connect({port:443,minVersion:"nope"},()=>{})`,
+  `tls.connect({port:443,minVersion:"nope",...{}})`,
+  `tls.connect({port:443,...{minVersion:"nope"}})`,
+  `tls.connect({port:443,...{...{minVersion:"nope"}}})`,
+  `tls.connect({port:443,minVersion:"nope",...0})`,
+  `tls.connect({port:443,minVersion:"nope",secureContext:undefined})`,
+  `tls.connect({port:443,minVersion:"nope",secureContext:void 0})`,
+  `tls.connect({port:443,minVersion:-value})`,
+  `tls.connect({port:443,minVersion:delete options.version})`,
+])("keeps TLS rejection and linked release consistent: %s", (call) => {
+  const semantics = analyzeJavaScriptSemantics(
+    `import tls from "node:tls";function g(){const socket=${call};socket.destroy();}`,
+  );
+  expect(semantics.resourceOperations).toEqual([]);
+});
+
+it.each([
+  `tls.connect(443,null,{minVersion:"nope"})`,
+  `tls.connect(443,()=>{}, {minVersion:"nope"})`,
+])("reads TLS override after a known non-object argument: %s", (call) => {
+  expect(acquisitionsFor(call)).toEqual([]);
+});
+it.each([
+  `tls.connect({port:443,minVersion:"nope"},()=>{}, {minVersion:"TLSv1.2"})`,
+  `tls.connect({port:443,minVersion:"TLSv1.2"},[], {minVersion:"nope"})`,
+  `tls.connect(options,{minVersion:"nope"})`,
+])("preserves effective accepted or unresolved TLS options: %s", (call) => {
+  expect(acquisitionsFor(call)).toHaveLength(1);
+});
+
+it("keeps a TLS version override unknown when the merge target may absorb it", () => {
+  expect(
+    acquisitionsFor(
+      `tls.connect({port:443,secureContext:false,__proto__:{set minVersion(value){}}},{minVersion:"nope"})`,
+    ),
+  ).toHaveLength(1);
+});
+it.each(["null", "0"])(
+  "rejects the override when prototype %s cannot absorb it",
+  (prototype) => {
+    expect(
+      acquisitionsFor(
+        `tls.connect({port:443,secureContext:false,__proto__:${prototype}},{minVersion:"nope"})`,
+      ),
+    ).toEqual([]);
+  },
+);

@@ -240,7 +240,7 @@ const PROPERTYLESS_BINARY = new Set([
 ]);
 
 /** Operator results are primitive even when their value is not statically known. */
-const primitiveOwnKeys = (
+export const primitiveOwnKeys = (
   node: t.Node,
   isNullish?: (node: t.Node) => boolean,
 ): "indices" | "none" | null => {
