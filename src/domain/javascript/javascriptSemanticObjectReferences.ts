@@ -20,6 +20,7 @@ import {
   type GetterQueryJob,
 } from "./javascriptSemanticGetterQueries.js";
 import { expandSemanticGetterResult } from "./javascriptSemanticGetterResultWalker.js";
+import { javaScriptTaggedTemplateRawStrings } from "./javascriptIntrinsicInvocation.js";
 
 import type { JavaScriptSemanticObjectReference } from "./javascriptSemanticObjectReference.js";
 
@@ -877,10 +878,16 @@ export const semanticArrayPropertyReferences = (
 ): readonly JavaScriptSemanticObjectReference[] => {
   const [key, ...remaining] = path;
   const selected = key ?? null;
+  const rawStrings = javaScriptTaggedTemplateRawStrings(node);
+  const rawReferences =
+    rawStrings !== undefined && semanticPropertyPathKeyMatches(selected, "raw")
+      ? [{ node: rawStrings, path: remaining }]
+      : [];
   const selectedIndex =
     typeof selected === "object" ? null : semanticArrayIndex(selected);
-  if (typeof selected !== "object" && selectedIndex === null) return [];
-  const references: JavaScriptSemanticObjectReference[] = [];
+  if (typeof selected !== "object" && selectedIndex === null)
+    return rawReferences;
+  const references: JavaScriptSemanticObjectReference[] = [...rawReferences];
   let minimumIndex = 0;
   let uncertainIndex = false;
   for (const element of node.elements) {

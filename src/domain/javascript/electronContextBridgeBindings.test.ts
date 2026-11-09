@@ -1223,3 +1223,151 @@ it("preserves copy-time identities across Object.values and Array.from, tagged-t
     "real-post",
   ]);
 });
+
+it("captures projected return values at synchronous call boundaries while keeping nested mutations and lazy generators live", () => {
+  const safeSource = `
+      const { contextBridge, ipcRenderer } = require("electron");
+
+      function pick(x) {
+        return x.ipc;
+      }
+      function pickDestructured(x) {
+        const { ipc } = x;
+        return ipc;
+      }
+      const src = { ipc: {} };
+      const saved = pick(src);
+      const savedDestructured = pickDestructured(src);
+      src.ipc = ipcRenderer;
+      saved.invoke = () => 0;
+      savedDestructured.send = () => 0;
+
+      const box = {};
+      const nestedSrc = { ipc: box };
+      const savedNested = pick(nestedSrc);
+      box.fn = ipcRenderer;
+      savedNested.fn.sendToHost = () => 0;
+
+      function* lazyGen(x) {
+        yield x.ipc;
+      }
+      const genSrc = { ipc: {} };
+      const iter = lazyGen(genSrc);
+      genSrc.ipc = ipcRenderer;
+      for (const yielded of iter) {
+        yielded.sendSync = () => 0;
+      }
+
+      contextBridge.exposeInMainWorld("api", {
+        intactInvoke: () => ipcRenderer.invoke("real-invoke"),
+        intactSend: () => ipcRenderer.send("real-send"),
+        overwrittenHost: () => ipcRenderer.sendToHost("fake-host"),
+        overwrittenSync: () => ipcRenderer.sendSync("fake-sync"),
+      });
+    `;
+  const parsed = parseJavaScriptSource(safeSource, "preload.cjs");
+  if (parsed === null) throw new Error("Expected CommonJS parse");
+  const analysis = analyzeParsedJavaScriptStaticSource(safeSource, parsed);
+
+  expect(analysis.parse_status).toBe("complete");
+  expect(analysis.electron.ipc.map(({ channel }) => channel)).toEqual([
+    "real-invoke",
+    "real-send",
+  ]);
+});
+
+it("resolves named intrinsic sources before their call escape, forwarded default frames, and tagged-template .raw slots", () => {
+  const source = `
+      const e = require("electron");
+      const { contextBridge, ipcRenderer } = e;
+
+      const namedValsSrc = { a: ipcRenderer, b: {} };
+      const vals = Object.values(namedValsSrc);
+      vals[1].invoke = () => 0;
+
+      const namedAssignOverride = { ipc: {} };
+      const merged = Object.assign({ ipc: ipcRenderer }, namedAssignOverride);
+      merged.ipc.send = () => 0;
+
+      const namedArrayLike = { __proto__: null, 0: {}, length: 1, extra: ipcRenderer };
+      Array.from(namedArrayLike)[0].postMessage = () => 0;
+
+      function pickDefault(x = e) {
+        return x;
+      }
+      function outerDefined(x) {
+        return pickDefault(x);
+      }
+      function outerCopy(xs) {
+        return Array.from(xs);
+      }
+      const definedRes = outerDefined({});
+      definedRes.ipcRenderer = {};
+      const copiedRes = outerCopy([{}]);
+      copiedRes[0].sendToHost = () => 0;
+
+      function tagRaw({ raw = e }) {
+        return raw;
+      }
+      const rawRes = tagRaw\`x\`;
+      Reflect.set(rawRes, "ipcRenderer", {});
+
+      const mutatedBeforeSrc = { b: {} };
+      mutatedBeforeSrc[String(Date.now())] = ipcRenderer;
+      const mutatedVals = Object.values(mutatedBeforeSrc);
+      mutatedVals[1].sendSync = () => 0;
+
+      contextBridge.exposeInMainWorld("api", {
+        intactInvoke: () => ipcRenderer.invoke("real-invoke"),
+        intactSend: () => ipcRenderer.send("real-send"),
+        intactPost: () => ipcRenderer.postMessage("real-post", "*"),
+        intactHost: () => ipcRenderer.sendToHost("real-host"),
+        overwrittenSync: () => ipcRenderer.sendSync("fake-sync"),
+      });
+    `;
+  const parsed = parseJavaScriptSource(source, "preload.cjs");
+  if (parsed === null) throw new Error("Expected CommonJS parse");
+  const analysis = analyzeParsedJavaScriptStaticSource(source, parsed);
+
+  expect(analysis.parse_status).toBe("complete");
+  expect(analysis.electron.ipc.map(({ channel }) => channel)).toEqual([
+    "real-invoke",
+    "real-send",
+    "real-post",
+    "real-host",
+  ]);
+});
+
+it("retains default activation when an outer frame mutates or omits a forwarded argument", () => {
+  const source = `
+      const e = require("electron");
+      const { contextBridge, ipcRenderer } = e;
+
+      function pickIpc(x = ipcRenderer) {
+        return x;
+      }
+      function outerOmitted(x) {
+        return pickIpc(x);
+      }
+      function outerMutated(o) {
+        o.a = undefined;
+        return pickIpc(o.a);
+      }
+      outerOmitted().invoke = () => 0;
+      outerMutated({ a: {} }).send = () => 0;
+
+      contextBridge.exposeInMainWorld("api", {
+        overwrittenInvoke: () => ipcRenderer.invoke("fake-invoke"),
+        overwrittenSend: () => ipcRenderer.send("fake-send"),
+        intactHost: () => ipcRenderer.sendToHost("real-host"),
+      });
+    `;
+  const parsed = parseJavaScriptSource(source, "preload.cjs");
+  if (parsed === null) throw new Error("Expected CommonJS parse");
+  const analysis = analyzeParsedJavaScriptStaticSource(source, parsed);
+
+  expect(analysis.parse_status).toBe("complete");
+  expect(analysis.electron.ipc.map(({ channel }) => channel)).toEqual([
+    "real-host",
+  ]);
+});

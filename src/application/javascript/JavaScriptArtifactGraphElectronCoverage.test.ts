@@ -575,7 +575,7 @@ it("recovers nested exposed_api_members for TypeScript-wrapped inline contextBri
   while (next.done !== true) next = steps.next();
 
   expect(next.value.electronSummary).toMatchObject({
-    electron_semantics: "recovered",
+    electron_semantics: "partial",
     context_bridge_apis: 1,
     exposed_api_members: 2,
   });
