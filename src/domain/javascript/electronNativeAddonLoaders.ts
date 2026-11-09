@@ -2065,17 +2065,14 @@ const appendAnchoredJoinFact = (
   const suffixSegments = parts
     .slice(anchorIndex + 1)
     .map((part) => part.pieces);
-  const nextSteps: readonly AnchoredTemplateStep[] =
-    suffixSegments.length === 0 && !stripTrailingSeparator
-      ? anchoredStepsFromFact(anchor)
-      : [
-          ...anchoredStepsFromFact(anchor),
-          {
-            kind: "join",
-            segments: suffixSegments,
-            ...(stripTrailingSeparator ? { stripTrailingSeparator: true } : {}),
-          },
-        ];
+  const nextSteps: readonly AnchoredTemplateStep[] = [
+    ...anchoredStepsFromFact(anchor),
+    {
+      kind: "join",
+      segments: suffixSegments,
+      ...(stripTrailingSeparator ? { stripTrailingSeparator: true } : {}),
+    },
+  ];
   if (stepsRequiresOrderedEvaluation(nextSteps)) {
     const preview = renderAnchoredPreviewPieces(nextSteps);
     if (preview === undefined) return undefined;

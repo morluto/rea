@@ -702,11 +702,13 @@ it("preserves trailing directory separators in path joins and URLs while allowin
 
 it("preserves string-operation order before ASAR path normalization and charges repeated member payloads per target", () => {
   const ordered = analyzeCommonJsStaticFixture(`
+    const path = require("node:path");
     const load = require("node-gyp-build");
     const concatAddon = require((__dirname + "/../app.asar/addon.node").replace("app.asar", "app.asar.unpacked"));
+    const singleJoinAddon = require(path.join(__dirname + "/../app.asar/joined.node").replace("app.asar", "app.asar.unpacked"));
     const templateAddon = require(\`\${__dirname}/../app.asar/tpl.node\`.replace("app.asar", "app.asar.unpacked"));
     const concatHelper = load((__dirname + "/../app.asar/pkg").replace("app.asar", "app.asar.unpacked"));
-    void concatAddon, templateAddon, concatHelper;
+    void concatAddon, singleJoinAddon, templateAddon, concatHelper;
   `);
   expect(ordered.electron.native_addon_bindings).toEqual(
     expect.arrayContaining([
@@ -721,6 +723,23 @@ it("preserves string-operation order before ASAR path normalization and charges 
           asar_unpacked_candidate_steps: [
             [
               { kind: "concat", value: "/../app.asar/addon.node" },
+              { kind: "replace_asar_unpacked" },
+            ],
+          ],
+        },
+      }),
+      expect.objectContaining({
+        specifier: "../app.asar/joined.node",
+        resolution: {
+          kind: "candidates",
+          lookup: "commonjs",
+          resolution_context: "filesystem-expression",
+          candidates: ["../app.asar/joined.node"],
+          asar_unpacked: true,
+          asar_unpacked_candidate_steps: [
+            [
+              { kind: "concat", value: "/../app.asar/joined.node" },
+              { kind: "join", segments: [] },
               { kind: "replace_asar_unpacked" },
             ],
           ],

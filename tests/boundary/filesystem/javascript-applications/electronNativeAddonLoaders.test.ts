@@ -1266,6 +1266,8 @@ it("evaluates string replacement before parent-segment normalization for concate
   const unpackedJoined = "unpacked-joined-addon-binary";
   const packedReplaceAll = "packed-replace-all-decoy-binary";
   const unpackedReplaceAll = "unpacked-replace-all-addon-binary";
+  const packedSingleJoin = "packed-single-join-decoy-binary";
+  const unpackedSingleJoin = "unpacked-single-join-addon-binary";
 
   await writeFixtureFiles(root, {
     "resources/app.asar/package.json": JSON.stringify({
@@ -1279,7 +1281,8 @@ it("evaluates string replacement before parent-segment normalization for concate
       const b = require(\`\${__dirname}/../app.asar/template.node\`.replace("app.asar", "app.asar.unpacked"));
       const c = require(path.join(__dirname, "../app.asar/joined.node").replace("app.asar", "app.asar.unpacked"));
       const d = require((__dirname + "/../app.asar/all.node").replaceAll("app.asar", "app.asar.unpacked"));
-      ipcMain.handle("order:check", () => [a.run(), b.run(), c.run(), d.run()]);
+      const e = require(path.join(__dirname + "/../app.asar/single-join.node").replace("app.asar", "app.asar.unpacked"));
+      ipcMain.handle("order:check", () => [a.run(), b.run(), c.run(), d.run(), e.run()]);
     `,
     "resources/app.asar/concat.node": packedConcat,
     "resources/app.asar.unpacked/concat.node": unpackedConcat,
@@ -1289,6 +1292,8 @@ it("evaluates string replacement before parent-segment normalization for concate
     "resources/app.asar.unpacked/joined.node": unpackedJoined,
     "resources/app.asar/all.node": packedReplaceAll,
     "resources/app.asar.unpacked/all.node": unpackedReplaceAll,
+    "resources/app.asar/single-join.node": packedSingleJoin,
+    "resources/app.asar.unpacked/single-join.node": unpackedSingleJoin,
   });
 
   const analyzed = await analyzeJavaScriptApplication({ input_path: root });
@@ -1310,6 +1315,10 @@ it("evaluates string replacement before parent-segment normalization for concate
       join(root, "resources/app.asar.unpacked/all.node"),
       unpackedReplaceAll,
     ),
+    createSimulatedNativeEvidence(
+      join(root, "resources/app.asar.unpacked/single-join.node"),
+      unpackedSingleJoin,
+    ),
   ];
   const traced = traceApplicationFeatureEvidence({
     application: analyzed.value,
@@ -1328,6 +1337,7 @@ it("evaluates string replacement before parent-segment normalization for concate
   expect([...byPath.keys()].sort()).toEqual([
     "resources/app.asar.unpacked/all.node",
     "resources/app.asar.unpacked/joined.node",
+    "resources/app.asar.unpacked/single-join.node",
     "resources/app.asar/concat.node",
     "resources/app.asar/template.node",
   ]);
@@ -1345,6 +1355,12 @@ it("evaluates string replacement before parent-segment normalization for concate
   });
   expect(byPath.get("resources/app.asar.unpacked/all.node")).toMatchObject({
     artifact_sha256: sha256Hex(unpackedReplaceAll),
+    status: "evidence-linked",
+  });
+  expect(
+    byPath.get("resources/app.asar.unpacked/single-join.node"),
+  ).toMatchObject({
+    artifact_sha256: sha256Hex(unpackedSingleJoin),
     status: "evidence-linked",
   });
 });
