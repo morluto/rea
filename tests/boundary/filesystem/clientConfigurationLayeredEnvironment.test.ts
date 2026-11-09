@@ -164,6 +164,7 @@ it.skipIf(process.platform !== "win32").each([
     if (!sources.ok) throw new Error(sources.error.detail);
     const environment = clientRegistrationEnvironmentDetails(
       effectiveClientConfiguration(sources.value),
+      undefined,
     );
     if (!environment.ok) throw environment.error;
     expect(environment.value.timeoutInputs?.analysisProvider).toBe("ghidra");

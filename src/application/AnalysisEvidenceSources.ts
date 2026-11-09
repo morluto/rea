@@ -37,8 +37,10 @@ export type SourceClosureOmission = {
 /** Bounded failure handoff for a completed observation whose bundle never committed. */
 export type UndeliveredSourceClosure = {
   readonly publication: "not_published";
-  /** Every cited record is in `records` or embedded in the observation itself. */
+  /** The embedded source list was read and every cited record is in `records` or the observation. */
   readonly complete: boolean;
+  /** The embedded producer source list could not be read, so closure remains unknown. */
+  readonly collection_failure?: string;
   readonly records: Evidence[];
   readonly omitted_count: number;
   readonly omitted: SourceClosureOmission[];
@@ -102,10 +104,11 @@ const collectSourceClosure = (
     records.push(record);
     inlineBytes -= bytes;
   }
-  if (closure.size === 1) return undefined;
+  if (closure.size === 1 && inspection.ok) return undefined;
   return {
     publication: "not_published",
-    complete: omittedCount === 0,
+    complete: inspection.ok && omittedCount === 0,
+    ...(inspection.ok ? {} : { collection_failure: inspection.error.name }),
     records,
     omitted_count: omittedCount,
     omitted,
