@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   decodeChainedPointer,
   parsePointerFixups,
+  type FixupCommands,
 } from "./AppleMachoFixups.js";
 import type { Segment } from "./AppleMachoSelection.js";
 
@@ -1643,6 +1644,29 @@ describe("legacy pointer fixup streams", () => {
       library_ordinal: 0,
       library: null,
     });
+  });
+});
+
+describe("lazy bind streams", () => {
+  it("rejects repeated bind opcodes in lazy streams", () => {
+    const lazy = Buffer.from([
+      0x71, // SET_SEGMENT_AND_OFFSET segment 1 + 8
+      0x08,
+      0x40,
+      ...Buffer.from("_shared\0"),
+      0xc0, // DO_bind_uleb_times_skipping_uleb - should be rejected in lazy
+      0x02,
+      0x00,
+      0x00,
+    ]);
+    const commands: FixupCommands = {
+      chained: null,
+      binds: [{ offset: 0, size: lazy.length, stream: "lazy" }],
+      rebases: [],
+      dylibs: [],
+    };
+    const fixups = parsePointerFixups(lazy, commands, SEGMENTS, BASE);
+    expect(fixups.failures[0]).toMatch(/lazy bind streams do not support/i);
   });
 });
 
