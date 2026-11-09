@@ -159,3 +159,29 @@ it("retains awaited promise reads without treating an unawaited promise as cache
     );
   }
 });
+
+it.each(["void 0", "undefined"])(
+  "keeps disabled cache value %s out of possible cache boundaries",
+  (value) => {
+    const analysis = analyze(
+      `const vm = require("node:vm"); new vm.Script(source, { cachedData: ${value} }); vm.compileFunction(source, [], { cachedData: ${value} });`,
+    );
+    expect(
+      analysis.electron.dynamic_code?.map(
+        ({ cached_data_status }) => cached_data_status,
+      ),
+    ).toEqual(["absent", "absent"]);
+    expect(
+      analysis.electron.dynamic_code?.[0]?.cached_data.source_expression,
+    ).toBe(value);
+  },
+);
+
+it("does not confuse a shadowed undefined value with a disabled cache", () => {
+  const analysis = analyze(
+    'const vm = require("node:vm"); function load(undefined) { new vm.Script(source, { cachedData: undefined }); }',
+  );
+  expect(analysis.electron.dynamic_code?.[0]?.cached_data_status).toBe(
+    "declared",
+  );
+});

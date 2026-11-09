@@ -521,7 +521,8 @@ The [feature specification](../../specs/javascript/v8-cached-data/spec.md) defin
 the static admission and uncertainty contract.
 
 A `node:vm` compilation reports whether `cachedData` is declared, absent or
-unknown. Source syntax alone does not establish valid cache bytes, V8 acceptance
+unknown. Explicitly supplied undefined bytes are treated as absent; shadowed
+identifiers remain declarations. Source syntax alone does not establish valid cache bytes, V8 acceptance
 or execution. The summary counts declared compilations, not executions.
 
 A proven synchronous filesystem read or awaited promise-based read supplies a

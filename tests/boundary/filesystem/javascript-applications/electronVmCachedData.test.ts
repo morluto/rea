@@ -160,3 +160,30 @@ it("does not resolve a cwd-relative filesystem cache to an inventoried source si
     resolved_cache_path: null,
   });
 });
+
+it("omits opaque-cache graph boundaries for proven undefined cache bytes", async () => {
+  const root = await vmFixture(
+    'const vm = require("node:vm"); new vm.Script(source, { cachedData: void 0 });',
+  );
+  const result = await reconstructJavaScriptArtifact({ input_path: root });
+  const graph = parseJavaScriptApplicationGraph(result.graph);
+  expect(
+    graph.nodes.some(({ observations }) =>
+      observations.some(
+        ({ properties }) =>
+          properties.compilation_boundary === "v8-cached-data",
+      ),
+    ),
+  ).toBe(false);
+});
+
+it("does not count source-only VM compilation as recovered Electron semantics", async () => {
+  const root = await vmFixture(
+    'const electron = require("electron"); const vm = require("node:vm"); new vm.Script(source);',
+  );
+  const result = await analyzeJavaScriptApplication({ input_path: root });
+  if (!result.ok) throw result.error;
+  expect(parseEvidence(result.value).normalized_result).toMatchObject({
+    summary: { electron_semantics: "empty", v8_cached_data_compilations: 0 },
+  });
+});

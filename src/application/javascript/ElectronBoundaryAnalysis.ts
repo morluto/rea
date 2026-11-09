@@ -1,3 +1,4 @@
+import { isPossibleCachedDataCompilation } from "../../domain/javascript/electronDynamicCodeFacts.js";
 import type { JavaScriptJsonDocuments } from "./JavaScriptJsonDocuments.js";
 import { compareUnicodeCodePoints } from "../../domain/unicodeCodePointOrder.js";
 import type { ElectronIpcFinding } from "../../domain/javascript/electronStaticAnalysisTypes.js";
@@ -189,7 +190,9 @@ export const electronBoundaryFactCount = (
             provenElectronFinding,
           ).length +
           javascript.electron.protocols.filter(provenElectronFinding).length +
-          (javascript.electron.dynamic_code ?? []).length),
+          (javascript.electron.dynamic_code ?? []).filter(
+            isPossibleCachedDataCompilation,
+          ).length),
     0,
   );
 

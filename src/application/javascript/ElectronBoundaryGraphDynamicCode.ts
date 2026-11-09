@@ -1,3 +1,4 @@
+import { isPossibleCachedDataCompilation } from "../../domain/javascript/electronDynamicCodeFacts.js";
 import { javascriptSourceRangeKey } from "../../domain/javascript/javascriptSourceCoordinates.js";
 import type {
   ElectronDynamicCodeFinding,
@@ -47,7 +48,7 @@ export const addElectronDynamicCodeBoundaries = (
 
 const addDynamicCodeSite = (input: DynamicCodeInput): void => {
   const { context, file, value, coverage } = input;
-  if (value.cached_data_status === "absent") return;
+  if (!isPossibleCachedDataCompilation(value)) return;
   const source = electronFindingSourceNode(
     context,
     file,

@@ -121,6 +121,10 @@ function* addCompilation(input: DynamicCodeInput): Generator<void, void> {
             ? { status: "dynamic" as const }
             : staticObjectProperty(resolved, "cachedData");
         })();
+  const disabled =
+    lookup.status === "explicit" &&
+    !t.isNullLiteral(unwrapJavaScriptExpression(lookup.value).node) &&
+    context.expressionShapes.isNullish(lookup.value);
   const cachedData: ElectronDynamicCodeSource =
     lookup.status === "explicit"
       ? sourceOf(input, lookup.value)
@@ -145,7 +149,9 @@ function* addCompilation(input: DynamicCodeInput): Generator<void, void> {
       api,
       cached_data_status:
         lookup.status === "explicit"
-          ? "declared"
+          ? disabled
+            ? "absent"
+            : "declared"
           : lookup.status === "missing"
             ? "absent"
             : "unknown",

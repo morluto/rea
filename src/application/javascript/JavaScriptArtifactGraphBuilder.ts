@@ -1,3 +1,4 @@
+import { isPossibleCachedDataCompilation } from "../../domain/javascript/electronDynamicCodeFacts.js";
 import type { ElectronBoundarySummary } from "../../domain/javascript/javascriptApplicationAnalysis.js";
 import {
   electronSemanticsState,
@@ -430,7 +431,7 @@ const graphLimitations = (
       : []),
     ...(context.analysis.files.some(({ javascript }) =>
       (javascript?.electron.dynamic_code ?? []).some(
-        (site) => site.cached_data_status !== "absent",
+        isPossibleCachedDataCompilation,
       ),
     )
       ? [

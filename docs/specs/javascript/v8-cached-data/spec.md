@@ -20,7 +20,7 @@ Node separates compilation, cache rejection and subsequent execution; see the
   default/namespace imports and proven CommonJS bindings use the same owner.
   Replaced methods do not establish VM authority.
 - `cached_data_status` is `declared` for an explicit cachedData property,
-  `absent` for proven omission, and `unknown` for unresolved options or argument
+  `absent` for proven omission or a proven undefined cache value, and `unknown` for unresolved options or argument
   spreads that can supply or shift the options position. Declaration does not
   prove a valid runtime value or successful cache use.
 - A proven `fs.readFileSync` or awaited `fs/promises.readFile` can identify a
