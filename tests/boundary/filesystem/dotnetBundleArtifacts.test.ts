@@ -63,7 +63,7 @@ it.each([
       },
     ]);
     if (kind === "count")
-      fixture.bytes.writeUInt32LE(maximum + 1, fixture.headerOffset + 8);
+      fixture.bytes.writeUInt32LE(maximum + 1, fixture.fields.entryCount);
     await writeFile(path, fixture.bytes);
     const handle = await open(path, "r");
     try {
@@ -268,22 +268,30 @@ it.each([
     "format",
   ],
   ["truncated", () => dotnetBundleFixture().bytes.subarray(0, -2), "format"],
-  ...(
-    [
-      ["count", 8],
-      ["config-offset", 26],
-      ["member-size", 74],
-    ] as const
-  ).map(
-    ([field, offset]) =>
+  ...(["count", "config-offset", "member-size"] as const).map(
+    (field) =>
       [
         `negative ${field}`,
         () => {
-          const fixture = dotnetBundleFixture();
+          const fixture = dotnetBundleFixture(
+            undefined,
+            6,
+            "a longer bundle identity",
+          );
+          const member = fixture.fields.entries[0]!;
+          const config = fixture.fields.configuration!;
+          expect(fixture.bytes.readInt32LE(fixture.fields.entryCount)).toBe(1);
+          expect(fixture.bytes.readBigInt64LE(config.deps.offset)).toBe(0n);
+          expect(fixture.bytes.readBigInt64LE(member.size)).toBe(
+            BigInt(Buffer.byteLength("owned assembly bytes")),
+          );
           if (field === "count")
-            fixture.bytes.writeInt32LE(-1, fixture.headerOffset + offset);
+            fixture.bytes.writeInt32LE(-1, fixture.fields.entryCount);
           else
-            fixture.bytes.writeBigInt64LE(-1n, fixture.headerOffset + offset);
+            fixture.bytes.writeBigInt64LE(
+              -1n,
+              field === "config-offset" ? config.deps.offset : member.size,
+            );
           return fixture.bytes;
         },
         "format",
@@ -614,14 +622,15 @@ it.each([3, 4])(
     const fixture = dotnetBundleFixture([
       { path: "config.json", bytes: Buffer.from("{}"), fileType },
     ]);
-    // Three UInt32 fields and the fixture's BinaryWriter string precede the
-    // deps.json/runtimeconfig.json offset-size pairs, followed by UInt64 flags.
-    const configuration =
-      fixture.headerOffset + 12 + 1 + Buffer.byteLength("owned-fixture");
-    const selected = configuration + (fileType - 3) * 16;
-    fixture.bytes.writeBigUInt64LE(BigInt(fixture.offsets[0]!), selected);
-    fixture.bytes.writeBigUInt64LE(2n, selected + 8);
-    fixture.bytes.writeBigUInt64LE(1n, configuration + 32);
+    const configuration = fixture.fields.configuration!;
+    const selected =
+      fileType === 3 ? configuration.deps : configuration.runtimeConfig;
+    fixture.bytes.writeBigUInt64LE(
+      BigInt(fixture.offsets[0]!),
+      selected.offset,
+    );
+    fixture.bytes.writeBigUInt64LE(2n, selected.size);
+    fixture.bytes.writeBigUInt64LE(1n, configuration.flags);
     await writeFile(path, fixture.bytes);
     const handle = await open(path, "r+");
     try {
@@ -634,7 +643,7 @@ it.each([3, 4])(
           )
         ).files,
       ).toMatchObject([{ path: "config.json", fileType, size: 2 }]);
-      fixture.bytes.writeBigUInt64LE(3n, selected + 8);
+      fixture.bytes.writeBigUInt64LE(3n, selected.size);
       await handle.write(fixture.bytes, 0, fixture.bytes.length, 0);
       await expect(
         readDotnetBundle(handle, fixture.bytes.length, fixture.headerOffset),
