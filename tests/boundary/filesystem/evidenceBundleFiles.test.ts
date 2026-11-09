@@ -39,7 +39,6 @@ import {
   withEvidenceCallerInputPath,
 } from "../../../src/domain/evidence.js";
 import { writeTextParts } from "../../../src/application/JsonFiles.js";
-import { JSON_BYTE_ORDER_MARK_MESSAGE } from "../../../src/application/Utf8JsonInput.js";
 import { failFileReadAfterAbort } from "../../support/failFileReadAfterAbort.js";
 import { holdFirstFileRead } from "../../support/holdFirstFileRead.js";
 import { JsonInputPhysicalReadFailure } from "../../../src/application/JsonInputFile.js";
@@ -346,13 +345,24 @@ it.each([0, 9 * 1024 * 1024])(
     if (result.ok) throw new Error("Expected strict JSON BOM rejection");
     expect(projectAnalysisError(result.error)).toMatchObject({
       code: "evidence_integrity_mismatch",
-      message: JSON_BYTE_ORDER_MARK_MESSAGE,
-      remediation: { action: JSON_BYTE_ORDER_MARK_MESSAGE },
+      message: expect.stringMatching(
+        /byte-order mark.*UTF-8 without a byte-order mark/iu,
+      ),
+      remediation: {
+        action: expect.stringMatching(
+          /byte-order mark.*UTF-8 without a byte-order mark/iu,
+        ),
+      },
       details: {
         path,
         reason: "invalid-json",
         content_issues: [
-          { reason: "invalid_format", message: JSON_BYTE_ORDER_MARK_MESSAGE },
+          {
+            reason: "invalid_format",
+            message: expect.stringMatching(
+              /byte-order mark.*UTF-8 without a byte-order mark/iu,
+            ),
+          },
         ],
       },
     });

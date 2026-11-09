@@ -633,7 +633,9 @@ including relative spelling and symlink aliases. Its subject identifies the
 inspected artifact; `caller_input_path` does not change the Evidence ID or
 snapshot query. A replay reports the current invocation's path while leaving
 the saved Evidence unchanged. Provider inspections continue to include the
-established `parameters.input_path` field.
+established `parameters.input_path` field. Named auxiliary inputs use
+`caller_input_paths`; each value is a string or an ordered array of strings
+for repeated selections. Consumers must accept both forms.
 
 Importing an Evidence bundle refreshes retained request and subject display metadata.
 It preserves cached analysis results, including observations for other targets.

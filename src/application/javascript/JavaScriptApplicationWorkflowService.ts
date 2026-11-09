@@ -36,6 +36,7 @@ import { compareSourceToBundle } from "../../domain/javascript/sourceToBundleCom
 import type { SourceToBundleComparisonResult } from "../../domain/javascript/sourceToBundleComparisonSchemas.js";
 import {
   applicationGraphEvidenceInputError,
+  applicationGraphSubjectTarget,
   parseApplicationGraphEvidence,
   parseNativeApplicationEvidence,
   type ApplicationGraphEvidenceSource,
@@ -132,6 +133,7 @@ export const traceApplicationFeatureEvidence = (
     direction: input.direction,
   });
   const evidence = createApplicationFeatureTraceEvidence(
+    applicationGraphSubjectTarget(source),
     {
       application_evidence_id: source.evidence.evidence_id,
       native_evidence_ids: nativeEvidence.map(({ evidence_id: id }) => id),

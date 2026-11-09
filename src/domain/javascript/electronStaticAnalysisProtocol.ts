@@ -7,6 +7,7 @@ import type {
 } from "./electronStaticAnalysisTypes.js";
 import {
   boundedExpression,
+  electronCandidateAuthority,
   electronCalleePath,
   electronStaticValue,
 } from "./electronStaticAnalysisValues.js";
@@ -269,6 +270,7 @@ const addProtocol = (
   const scheme = schemeValue(context, input.scheme, located);
   if (scheme.status === "dynamic") context.accumulator.unknownFindings += 1;
   const finding: ElectronProtocolFinding = {
+    ...electronCandidateAuthority(input.node.callee, context),
     api: input.api,
     role: input.role,
     scheme,

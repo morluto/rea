@@ -35,6 +35,8 @@ import {
 
 /** Predicate shared by ordinary provider analysis observations. */
 export const ANALYSIS_EVIDENCE_PREDICATE = "rea.analysis";
+export const MISSING_EVIDENCE_SUBJECT_LIMITATION =
+  "Artifact identity is unavailable for this observation.";
 
 /** Provider identity schema shared by evidence-bearing persistence formats. */
 export const providerSchema = z.strictObject({
@@ -86,8 +88,12 @@ const executionEnvironmentSchema = z.strictObject({
 });
 const callerInputPathsSchema = z.record(
   nulFreeStringSchema,
-  nulFreeStringSchema,
+  z.union([nulFreeStringSchema, z.array(nulFreeStringSchema)]),
 );
+/** Caller-selected auxiliary paths, retaining ordered repeated options. */
+export type CallerInputPaths = Readonly<
+  Record<string, string | readonly string[]>
+>;
 
 const evidenceBaseSchema = z
   .object({
@@ -105,7 +111,7 @@ const evidenceBaseSchema = z
     caller_input_paths: callerInputPathsSchema
       .exactOptional()
       .describe(
-        "Verbatim auxiliary input paths keyed by argument name; caller assertions outside semantic identity.",
+        "Verbatim auxiliary input paths keyed by argument name; repeated selections retain their order. Caller assertions are outside semantic identity.",
       ),
     raw_result: jsonValueSchema.nullable(),
     normalized_result: jsonValueSchema,
@@ -182,16 +188,40 @@ export interface EvidenceSubjectTarget {
   readonly sha256: string;
   readonly format: z.infer<typeof subjectSchema>["format"];
   readonly architecture?: BinaryArchitecture;
+  /** Preserve an existing Evidence subject's display name when deriving observations. */
+  readonly name?: string;
 }
+
+/** Preserve the complete subject when deriving a new Evidence observation. */
+export const evidenceSubjectTarget = (
+  subject: Evidence["subject"],
+): EvidenceSubjectTarget | undefined =>
+  subject === null
+    ? undefined
+    : {
+        path: subject.local_path,
+        sha256: subject.digest.sha256,
+        format: subject.format,
+        name: subject.name,
+        ...(subject.architecture === null
+          ? {}
+          : { architecture: subject.architecture }),
+      };
+
+const sameEvidenceSubjectTargetIdentity = (
+  subject: EvidenceSubjectTarget,
+  target: EvidenceSubjectTarget,
+): boolean =>
+  subject.sha256 === target.sha256 &&
+  subject.format === target.format &&
+  (subject.architecture ?? null) === (target.architecture ?? null);
 
 /** Rebind a matching immutable artifact subject to the caller's selected path. */
 export const rebindEvidenceSubjectTargetPath = (
   subject: EvidenceSubjectTarget,
   target: EvidenceSubjectTarget,
 ): EvidenceSubjectTarget =>
-  subject.sha256 === target.sha256 &&
-  subject.format === target.format &&
-  (subject.architecture ?? null) === (target.architecture ?? null)
+  sameEvidenceSubjectTargetIdentity(subject, target)
     ? { ...subject, path: target.path }
     : subject;
 
@@ -322,21 +352,18 @@ export const rebindEvidenceToTargetPath = (
 ): Evidence => {
   const subject = evidence.subject;
   if (subject === null) return evidence;
-  const rebound = rebindEvidenceSubjectTargetPath(
-    {
-      path: subject.local_path,
-      sha256: subject.digest.sha256,
-      format: subject.format,
-      ...(subject.architecture === null
-        ? {}
-        : { architecture: subject.architecture }),
-    },
-    target,
-  );
-  if (rebound.path === subject.local_path) return evidence;
+  if (
+    !sameEvidenceSubjectTargetIdentity(evidenceSubjectTarget(subject)!, target)
+  )
+    return evidence;
+  if (
+    target.path === subject.local_path &&
+    (target.name === undefined || target.name === subject.name)
+  )
+    return evidence;
   const reboundSubject = subjectSchema.parse({
     ...subject,
-    name: basename(target.path) || "artifact",
+    name: target.name ?? (basename(target.path) || "artifact"),
     local_path: target.path,
   });
   const reboundEvidence = { ...evidence, subject: reboundSubject };
@@ -352,7 +379,7 @@ export const rebindEvidenceToTargetPath = (
 export const withEvidenceCallerInputPath = (
   evidence: Evidence,
   rawPath: string,
-  additionalPaths?: Readonly<Record<string, string>>,
+  additionalPaths?: CallerInputPaths,
 ): Evidence => {
   const callerInputPath = nulFreeStringSchema.parse(rawPath);
   const owned = immutableEvidence(evidence);
@@ -454,7 +481,8 @@ export function* createImmutableEvidenceSteps(
   });
 }
 
-const normalizeEvidenceObservation = (
+/** Borrow input collections for admission; callers account for a missing-subject limitation separately. */
+export const evidenceEnvelopeForAdmission = (
   target: EvidenceSubjectTarget | BinaryTarget | undefined,
   provider: EvidenceProvider,
   observation: EvidenceObservationInput,
@@ -463,21 +491,17 @@ const normalizeEvidenceObservation = (
     target === undefined
       ? null
       : {
-          name: basename(target.path) || "artifact",
+          name:
+            ("name" in target ? target.name : undefined) ??
+            (basename(target.path) || "artifact"),
           digest: { sha256: target.sha256 },
           format: target.format,
           architecture: target.architecture ?? null,
           local_path: target.path,
         };
-  const semantic = {
-    subject:
-      subject === null
-        ? null
-        : {
-            digest: subject.digest,
-            format: subject.format,
-            architecture: subject.architecture,
-          },
+  return {
+    evidence_id: `ev_${"0".repeat(64)}`,
+    subject,
     provider: {
       id: provider.id,
       name: provider.name,
@@ -492,21 +516,32 @@ const normalizeEvidenceObservation = (
     confidence: observation.confidence ?? "observed",
     authority: observation.authority ?? "shipped-artifact",
     environment: observation.environment ?? null,
-    limitations: [
-      ...(target === undefined
-        ? [
-            observation.subjectUnavailableReason ??
-              "Artifact identity is unavailable for this observation.",
-          ]
-        : []),
-      ...(observation.limitations ?? []),
-    ],
+    limitations: observation.limitations ?? [],
     ...(observation.relationshipCoverage === undefined
       ? { relationship_coverage: null }
       : { relationship_coverage: observation.relationshipCoverage }),
-    locations: [...(observation.locations ?? [])],
-    evidence_links: [...(observation.evidenceLinks ?? [])],
+    locations: observation.locations ?? [],
+    evidence_links: observation.evidenceLinks ?? [],
   };
+};
+
+const normalizeEvidenceObservation = (
+  target: EvidenceSubjectTarget | BinaryTarget | undefined,
+  provider: EvidenceProvider,
+  observation: EvidenceObservationInput,
+) => {
+  const borrowed = evidenceEnvelopeForAdmission(target, provider, observation);
+  const envelope =
+    target === undefined
+      ? {
+          ...borrowed,
+          limitations: [
+            observation.subjectUnavailableReason ??
+              MISSING_EVIDENCE_SUBJECT_LIMITATION,
+            ...borrowed.limitations,
+          ],
+        }
+      : borrowed;
   const sharedResult =
     typeof observation.result === "object" &&
     observation.result !== null &&
@@ -514,11 +549,7 @@ const normalizeEvidenceObservation = (
   const selectedSchema = sharedResult
     ? evidenceSchema.safeExtend({ normalized_result: immutableResultSchema })
     : evidenceSchema;
-  const normalized = selectedSchema.parse({
-    ...semantic,
-    evidence_id: `ev_${"0".repeat(64)}`,
-    subject,
-  });
+  const normalized = selectedSchema.parse(envelope);
   // The envelope has already been parsed into an independent snapshot. Only
   // its derived identifier changes here; parsing again clones the full payload
   // and recomputes the same digest while the previous snapshot is still live.
