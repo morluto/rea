@@ -182,6 +182,9 @@ export const reconstructJavaScriptArtifact = async (
           : { fileNodes: input.max_semantic_nodes_per_file }),
       });
       const sourceLimits = {
+        ...(input.semantic_precision === undefined
+          ? {}
+          : { semanticPrecision: input.semantic_precision }),
         heapMb:
           input.max_heap_mb ??
           overrides?.["javascript.max_heap_mb"] ??

@@ -1,3 +1,4 @@
+import { javaScriptSemanticPrecisionSchema } from "./javascript/javascriptSemanticPrecision.js";
 import { z } from "zod";
 import { browserExclusionSchema } from "./browserCompleteness.js";
 import { webPageInspectionSchema } from "./browserObservationSchemas.js";
@@ -41,6 +42,11 @@ const webBundleTotalTimeoutDescription = `Total analysis deadline phase: maximum
 export const analyzeWebBundleInputSchema = inspectWebPageWithSourceInputSchema
   .safeExtend({
     fetch_source_maps: z.boolean().default(false),
+    semantic_precision: javaScriptSemanticPrecisionSchema
+      .exactOptional()
+      .describe(
+        "Per-script semantic evaluator budgets; omitted fields preserve defaults. Independent of worker memory, deadlines and reply budgets.",
+      ),
     max_heap_mb: z
       .number()
       .int()

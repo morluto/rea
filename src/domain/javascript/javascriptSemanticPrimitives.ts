@@ -1,3 +1,7 @@
+import {
+  JAVASCRIPT_SEMANTIC_PRECISION_DEFAULTS,
+  type JavaScriptSemanticPrecision,
+} from "./javascriptSemanticPrecision.js";
 import type {
   JavaScriptSemanticPrimitive,
   JavaScriptSemanticValue,
@@ -5,7 +9,6 @@ import type {
 import { compareUnicodeCodePoints } from "../unicodeCodePointOrder.js";
 import { semanticPrimitiveKey } from "./javascriptSemanticProvenance.js";
 import {
-  SEMANTIC_PRIMITIVE_CANDIDATE_LIMIT,
   exceedsSemanticPrimitiveStringByteBudget,
   semanticResourceLimitUnknown,
 } from "./javascriptSemanticResourceLimits.js";
@@ -13,6 +16,7 @@ import {
 /** Normalize one bounded collection of possible primitive values. */
 export const semanticPrimitiveSet = (
   values: readonly JavaScriptSemanticPrimitive[],
+  precision: JavaScriptSemanticPrecision = JAVASCRIPT_SEMANTIC_PRECISION_DEFAULTS,
 ): JavaScriptSemanticValue => {
   let uniqueValues: Set<JavaScriptSemanticPrimitive> | undefined;
   for (const value of values) {
@@ -30,13 +34,13 @@ export const semanticPrimitiveSet = (
     // or canonical-key allocation. Check strings before retaining the value.
     if (values.length === 1)
       return typeof value === "string" &&
-        exceedsSemanticPrimitiveStringByteBudget([value])
-        ? semanticResourceLimitUnknown("primitive-bytes")
+        exceedsSemanticPrimitiveStringByteBudget([value], precision)
+        ? semanticResourceLimitUnknown("primitive-bytes", precision)
         : { status: "literal", value };
     uniqueValues ??= new Set<JavaScriptSemanticPrimitive>();
     uniqueValues.add(value);
-    if (uniqueValues.size > SEMANTIC_PRIMITIVE_CANDIDATE_LIMIT)
-      return semanticResourceLimitUnknown("primitive-candidates");
+    if (uniqueValues.size > precision.primitive_candidates)
+      return semanticResourceLimitUnknown("primitive-candidates", precision);
   }
   if (uniqueValues === undefined) return { status: "union", values: [] };
   if (
@@ -44,9 +48,10 @@ export const semanticPrimitiveSet = (
       [...uniqueValues].flatMap((value) =>
         typeof value === "string" ? [value] : [],
       ),
+      precision,
     )
   )
-    return semanticResourceLimitUnknown("primitive-bytes");
+    return semanticResourceLimitUnknown("primitive-bytes", precision);
   const unique = [...uniqueValues]
     .map((value) => ({ key: semanticPrimitiveKey(value), value }))
     .sort((left, right) => compareUnicodeCodePoints(left.key, right.key))
