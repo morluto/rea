@@ -884,59 +884,78 @@ const selectTargetSliceUuid = async (
   return err(targetUuidAbsentRejection(state, input.architecture));
 };
 
+type NormalizedMemberFailure =
+  | { readonly kind: "skip" }
+  | { readonly kind: "failed"; readonly cause: unknown };
+
 const normalizeMemberFailure = (
   failureCause: unknown,
   memberPath: string,
   state: AdmissionState,
   memberAdmitted: boolean,
-): unknown => {
+): NormalizedMemberFailure => {
   const rawCause =
     failureCause instanceof OwnedRegularFileOperationFailure
       ? failureCause.operationCause
       : failureCause;
-  if (state.signal?.aborted === true && rawCause === state.signal.reason)
-    return new AnalysisCancelledError("resolve_binary_target", {
-      cause: rawCause,
-    });
+  if (
+    state.signal?.aborted === true &&
+    (failureCause === state.signal.reason || rawCause === state.signal.reason)
+  )
+    return {
+      kind: "failed",
+      cause: new AnalysisCancelledError("resolve_binary_target", {
+        cause: state.signal.reason,
+      }),
+    };
   if (
     rawCause instanceof AnalysisCancelledError ||
     rawCause instanceof AnalysisArtifactChangedError ||
     rawCause instanceof BinaryTargetError
   )
-    return rawCause;
+    return { kind: "failed", cause: rawCause };
   if (rawCause instanceof RegularFileOperationCancelled)
-    return new AnalysisCancelledError("resolve_binary_target", {
-      cause: rawCause.reason,
-    });
+    return {
+      kind: "failed",
+      cause: new AnalysisCancelledError("resolve_binary_target", {
+        cause: rawCause.reason,
+      }),
+    };
   if (
     rawCause instanceof RegularFileChangedError ||
     (memberAdmitted && isSelectedRegularFileError(rawCause))
   )
-    return new AnalysisArtifactChangedError(
-      "open_binary",
-      memberPath,
-      "the dSYM DWARF member changed while being read",
-      { cause: rawCause },
-    );
+    return {
+      kind: "failed",
+      cause: new AnalysisArtifactChangedError(
+        "open_binary",
+        memberPath,
+        "the dSYM DWARF member changed while being read",
+        { cause: rawCause },
+      ),
+    };
   const ioFailure = companionIoFailure(
     memberPath,
     "reading the dSYM DWARF member",
     rawCause,
     memberAdmitted,
   );
-  if (ioFailure !== undefined) return ioFailure;
+  if (ioFailure !== undefined) return { kind: "failed", cause: ioFailure };
   if (
     !memberAdmitted &&
     (rawCause instanceof NonRegularFileReadError ||
       isExpectedAdmissionPathFailure(rawCause))
   ) {
     return state.signal?.aborted === true
-      ? new AnalysisCancelledError("resolve_binary_target", {
-          cause: state.signal.reason,
-        })
-      : undefined;
+      ? {
+          kind: "failed",
+          cause: new AnalysisCancelledError("resolve_binary_target", {
+            cause: state.signal.reason,
+          }),
+        }
+      : { kind: "skip" };
   }
-  return rawCause;
+  return { kind: "failed", cause: rawCause };
 };
 
 const normalizeMemberCleanupFailure = (
@@ -946,28 +965,35 @@ const normalizeMemberCleanupFailure = (
   memberAdmitted: boolean,
 ): RegularFileCleanupFailure<undefined> => {
   const rawOutcome = failure.outcome;
-  let primary: unknown;
+  let outcome:
+    | { readonly kind: "completed"; readonly value: undefined }
+    | { readonly kind: "failed"; readonly cause: unknown };
   if (rawOutcome.kind === "completed") {
     const result = rawOutcome.value as Result<
       MachODebugCompanion | null,
       DebugCompanionRejection
     >;
-    if (!result.ok)
-      primary = debugCompanionRejectedError(state.targetPath, result.error);
+    outcome = result.ok
+      ? { kind: "completed", value: undefined }
+      : {
+          kind: "failed",
+          cause: debugCompanionRejectedError(state.targetPath, result.error),
+        };
   } else {
-    primary = normalizeMemberFailure(
+    const normalized = normalizeMemberFailure(
       rawOutcome.cause,
       memberPath,
       state,
       memberAdmitted,
     );
+    outcome =
+      normalized.kind === "skip"
+        ? { kind: "completed", value: undefined }
+        : { kind: "failed", cause: normalized.cause };
   }
   const rebuilt = new RegularFileCleanupFailure({
     ...failure,
-    outcome:
-      primary === undefined
-        ? { kind: "completed", value: undefined }
-        : { kind: "failed", cause: primary },
+    outcome,
   });
   return failure instanceof RetainedRegularFileCleanupFailure
     ? new RetainedRegularFileCleanupFailure(rebuilt, failure)
@@ -1003,14 +1029,17 @@ const readMemberWithBorrowedResources = async (
     throwIfCancelled(state.signal);
     return completion.value;
   } catch (cause: unknown) {
-    if (!(cause instanceof RegularFileCleanupFailure)) {
-      const primary = normalizeMemberFailure(
+    if (
+      !(cause instanceof RegularFileCleanupFailure) ||
+      (state.signal?.aborted === true && cause === state.signal.reason)
+    ) {
+      const normalized = normalizeMemberFailure(
         cause,
         memberPath,
         state,
         memberAdmitted,
       );
-      if (primary !== undefined) throw primary;
+      if (normalized.kind === "failed") throw normalized.cause;
       return ok(null);
     }
     const normalized = normalizeMemberCleanupFailure(
@@ -1031,18 +1060,11 @@ const readMemberWithBorrowedResources = async (
     if (retried.failure !== undefined) throw retried.failure;
     if (cause.outcome.kind === "failed") {
       // Every failure after openRegularFile admits the member (memberAdmitted === true)
-      // keeps normalized.outcome.kind === "failed" and rethrows here; ok(null) is
-      // reached only when openRegularFile rejected a non-regular or unopenable
-      // directory entry before reading and retryRegularFileCleanup closed its handle.
+      // produces normalized.outcome.kind === "failed" and rethrows here; ok(null) is
+      // reached only when normalizeMemberFailure returned { kind: "skip" } for a
+      // pre-admission NonRegularFileReadError / expected path failure and
+      // retryRegularFileCleanup closed its handle.
       if (normalized.outcome.kind === "failed") throw normalized.outcome.cause;
-      const cancellation =
-        cause.operationFailure === undefined
-          ? regularFileCancellation(cause)
-          : undefined;
-      if (cancellation !== undefined)
-        throw new AnalysisCancelledError("resolve_binary_target", {
-          cause: cancellation.reason,
-        });
       throwIfCancelled(state.signal);
       return ok(null);
     }

@@ -132,6 +132,11 @@ import {
 } from "../../src/domain/analysisErrorCore.js";
 import { projectAnalysisError } from "../../src/domain/analysisErrorProjection.js";
 import { BinaryTargetError } from "../../src/domain/configurationErrors.js";
+import { OwnedFileHandle } from "../../src/filesystem/OwnedFileHandle.js";
+import {
+  OwnedRegularFileOperationFailure,
+  RegularFileCleanupFailure,
+} from "../../src/filesystem/OwnedRegularFile.js";
 import {
   RegularFileChangedError,
   RegularFileOperationCancelled,
@@ -580,12 +585,13 @@ it("normalizes RegularFileOperationCancelled and read faults across member close
   await caught.owner.close();
 
   // With borrowed resources, when initial close fails and retry succeeds after a
-  // read or stability fault (including an admission-path code such as EACCES once
-  // the member handle has been admitted), readMemberWithBorrowedResources must
-  // rethrow the normalized error rather than returning ok(null) / uuid_mismatch.
+  // read or stability fault (including an admission-path code such as EACCES or
+  // ENOENT once the member handle has been admitted), readMemberWithBorrowedResources
+  // must rethrow the normalized error rather than returning ok(null) / uuid_mismatch.
   for (const readFault of [
     errno("EIO"),
     errno("EACCES"),
+    errno("ENOENT"),
     new RegularFileChangedError(fixture.member),
   ]) {
     const resources = new ArtifactResourceScope();
@@ -601,7 +607,10 @@ it("normalizes RegularFileOperationCancelled and read faults across member close
     });
     expect(retried.ok).toBe(false);
     if (retried.ok) return;
-    if (readFault instanceof RegularFileChangedError) {
+    if (
+      readFault instanceof RegularFileChangedError ||
+      (readFault as { code?: string }).code === "ENOENT"
+    ) {
       expect(retried.error).toBeInstanceOf(AnalysisArtifactChangedError);
       expect(retried.error).toMatchObject({ path: fixture.member });
     } else {
@@ -615,6 +624,50 @@ it("normalizes RegularFileOperationCancelled and read faults across member close
     }
     await resources.close();
   }
+
+  // Opaque caller abort reasons shaped like RegularFileCleanupFailure or
+  // OwnedRegularFileOperationFailure must remain AnalysisCancelledError and must
+  // not transfer foreign descriptor ownership or masquerade as member I/O errors.
+  let foreignCloseCalls = 0;
+  const foreignCleanupReason = new RegularFileCleanupFailure({
+    path: "/foreign/descriptor",
+    owner: new OwnedFileHandle({
+      fd: -1,
+      close: async () => {
+        foreignCloseCalls += 1;
+        throw new Error("foreign close should not be called");
+      },
+    } as unknown as FileHandle),
+    outcome: { kind: "completed", value: { ok: true, value: null } },
+    cleanupCause: new Error("foreign cleanup cause"),
+  });
+  for (const opaqueReason of [
+    foreignCleanupReason,
+    new OwnedRegularFileOperationFailure(errno("EIO")),
+  ]) {
+    const controller = new AbortController();
+    const resources = new ArtifactResourceScope();
+    fault.openPath = fixture.member;
+    fault.memberReadFailure = undefined;
+    fault.memberCloseFailure = undefined;
+    fault.onMemberClose = undefined;
+    fault.onOpenHandle = (openedPath) => {
+      if (openedPath === fixture.member) controller.abort(opaqueReason);
+    };
+    const cancelled = await parseBinaryTarget(fixture.target, {
+      dsymPath: fixture.dsymPath,
+      resources,
+      signal: controller.signal,
+    });
+    expect(cancelled.ok).toBe(false);
+    if (cancelled.ok) return;
+    expect(cancelled.error).toBeInstanceOf(AnalysisCancelledError);
+    expect(cancelled.error.cause).toBe(opaqueReason);
+    expect(cancelled.error.cleanupIncomplete).toBe(false);
+    await resources.close();
+  }
+  expect(foreignCloseCalls).toBe(0);
+  fault.onOpenHandle = undefined;
 
   // Conversely, when openRegularFile rejects a non-regular entry before reading
   // (NonRegularFileReadError) and its initial close fails while retry close
