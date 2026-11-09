@@ -779,6 +779,11 @@ function* readRebaseStreamSteps(
   let segmentOffset = 0n;
   let type = 0;
   let visits = 0;
+  // dyld keeps the cursor in a uint64_t, so ULEB deltas wrap to encode
+  // backward steps; addRun still bounds every emitted slot to the segment.
+  const advance = (delta: bigint): void => {
+    segmentOffset = (segmentOffset + delta) & 0xffffffffffffffffn;
+  };
   function* addRun(count: bigint, skip: bigint): Generator<void, void, void> {
     if (count === 0n) return;
     if (type === 0 || type > 3)
@@ -814,7 +819,7 @@ function* readRebaseStreamSteps(
       );
     // dyld advances after the final record too; that cursor may legally be
     // one past the segment because it is only bounds-checked on the next emit.
-    segmentOffset += count * stride;
+    advance(count * stride);
   }
   let opcodes = 0;
   while (cursor.at < end) {
@@ -846,10 +851,10 @@ function* readRebaseStreamSteps(
         break;
       }
       case 0x30: // REBASE_OPCODE_ADD_ADDR_ULEB
-        segmentOffset += uleb(bytes, cursor, end, "rebase", index);
+        advance(uleb(bytes, cursor, end, "rebase", index));
         break;
       case 0x40: // REBASE_OPCODE_ADD_ADDR_IMM_SCALED
-        segmentOffset += BigInt(immediate) * REBASE_POINTER_SIZE;
+        advance(BigInt(immediate) * REBASE_POINTER_SIZE);
         break;
       case 0x50: // REBASE_OPCODE_DO_REBASE_IMM_TIMES
         yield* addRun(BigInt(immediate), 0n);
@@ -863,7 +868,7 @@ function* readRebaseStreamSteps(
       case 0x70: {
         // REBASE_OPCODE_DO_REBASE_ADD_ADDR_ULEB
         yield* addRun(1n, 0n);
-        segmentOffset += uleb(bytes, cursor, end, "rebase", index);
+        advance(uleb(bytes, cursor, end, "rebase", index));
         break;
       }
       case 0x80: {

@@ -44,6 +44,17 @@ const repeatedBlock = (data: Buffer): Buffer => {
 };
 
 describe("UnityFS allocation and malformed-input boundaries", () => {
+  it("rejects an oversized directory extending past the physical file", async () => {
+    const bytes = buildUnityFs([{ path: "data", data: "x" }]);
+    bytes.writeUInt32BE(17 * 1024 * 1024, 40);
+    const reader = new UnityFsArtifactReader(await fixture(bytes));
+    try {
+      await expect(entries(reader)).rejects.toMatchObject({ reason: "format" });
+    } finally {
+      await reader.close();
+    }
+  });
+
   it.each(["encoded", "decoded"] as const)(
     "admits the %s directory budget before reading or decoding it",
     async (kind) => {

@@ -833,6 +833,14 @@ it.each([
   ],
   ["src/adb/AdbConfiguration.ts", { code: true, runtime: true, package: true }],
   [
+    "src/application/binaryDiagnostics/ByteEntropyService.ts",
+    { code: true, runtime: true, package: true },
+  ],
+  [
+    "tests/acceptance/byteEntropyWindowsIdentity.test.ts",
+    { code: true, runtime: true, package: true },
+  ],
+  [
     "src/apktool/ApktoolConfiguration.ts",
     { code: true, runtime: true, package: true },
   ],
