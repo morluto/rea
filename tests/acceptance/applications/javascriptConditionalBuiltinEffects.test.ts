@@ -211,6 +211,21 @@ cliTest.for(["CLI", "stdio MCP"] as const)(
         true,
       ],
       [
+        "constructor-target",
+        'class O {port=443;set minVersion(value){}};const socket=tls.connect(new O(),{secureContext:false,minVersion:"nope"});socket.destroy();',
+        true,
+      ],
+      [
+        "class-source",
+        'const socket=tls.connect({port:443,minVersion:"nope"},null,class {static minVersion="TLSv1.2"});socket.destroy();',
+        true,
+      ],
+      [
+        "copied-prototype",
+        'const socket=tls.connect({port:443,secureContext:false},{["__proto__"]:{set minVersion(value){}},minVersion:"nope"});socket.destroy();',
+        true,
+      ],
+      [
         "unknown",
         'const socket=tls.connect({port:443,minVersion:"nope",...options});socket.destroy();',
         true,

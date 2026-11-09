@@ -16,6 +16,7 @@ import {
   semanticStaticPropertyName,
   staticJavaScriptTruthiness,
   staticObjectPropertyReader,
+  staticObjectCopyPropertyReader,
   unwrapJavaScriptExpression,
 } from "./javascriptAstValues.js";
 import { isUnmodifiedGlobalReference } from "./javascriptSemanticAmbientWrites.js";
@@ -627,51 +628,59 @@ const TLS_PROTOCOL_VERSIONS = new Set([
   "TLSv1.3",
 ]);
 
-/**
- * Node merges argument 1 when it is a non-null object, otherwise argument 2.
- * Keep object identity separate from whether its option members are known.
- */
-const tlsOptionsObjects = (
+/** Select Node's merge target and source without conflating typeof with own keys. */
+const tlsOptionMerge = (
   node: t.CallExpression | t.OptionalCallExpression,
   state: JavaScriptSemanticAnalysisState,
-): readonly (t.ObjectExpression | "unknown")[] | undefined => {
+):
+  | {
+      readonly target: t.ObjectExpression | "fresh" | "unknown";
+      readonly source: t.Node | undefined;
+    }
+  | undefined => {
   if (node.arguments.some((argument) => t.isSpreadElement(argument)))
     return undefined;
-  const slot = (
-    index: number,
-  ):
-    | { kind: "object"; value: t.ObjectExpression | "unknown" | undefined }
-    | { kind: "non-object" | "unknown" } => {
-    const argument = node.arguments[index];
-    if (argument === undefined) return { kind: "non-object" };
-    const value = unwrapJavaScriptExpression(argument as t.Node).node;
-    if (t.isObjectExpression(value)) return { kind: "object", value };
-    if (t.isArrayExpression(value) || t.isRegExpLiteral(value))
-      return { kind: "object", value: undefined };
-    if (t.isNewExpression(value)) return { kind: "object", value: "unknown" };
+  const argument = (index: number): t.Node | undefined => {
+    const value = node.arguments[index];
+    return value === undefined
+      ? undefined
+      : unwrapJavaScriptExpression(value as t.Node).node;
+  };
+  const objectKind = (
+    value: t.Node | undefined,
+  ): "object" | "non-object" | "unknown" => {
+    if (value === undefined) return "non-object";
+    if (
+      t.isObjectExpression(value) ||
+      t.isArrayExpression(value) ||
+      t.isRegExpLiteral(value) ||
+      t.isNewExpression(value)
+    )
+      return "object";
     if (
       t.isFunctionExpression(value) ||
       t.isArrowFunctionExpression(value) ||
       t.isClassExpression(value) ||
-      t.isUnaryExpression(value) ||
-      t.isTemplateLiteral(value) ||
-      readExactJavaScriptLiteral(value).found ||
-      isNullishPlaceholder(value, state)
+      primitiveOwnKeys(value, (child) => isNullishPlaceholder(child, state)) !==
+        null
     )
-      return { kind: "non-object" };
-    return { kind: "unknown" };
+      return "non-object";
+    return "unknown";
   };
-  const first = slot(0);
-  if (first.kind === "unknown") return undefined;
-  const objects: (t.ObjectExpression | "unknown")[] =
-    first.kind === "object" && first.value !== undefined ? [first.value] : [];
-  const second = slot(1);
-  if (second.kind === "unknown") return undefined;
-  const selected = second.kind === "object" ? second : slot(2);
-  if (selected.kind === "unknown") objects.push("unknown");
-  else if (selected.kind === "object" && selected.value !== undefined)
-    objects.push(selected.value);
-  return objects;
+  const first = argument(0);
+  const firstKind = objectKind(first);
+  const second = argument(1);
+  const secondKind = objectKind(second);
+  if (firstKind === "unknown" || secondKind === "unknown") return undefined;
+  return {
+    target:
+      firstKind === "non-object"
+        ? "fresh"
+        : t.isObjectExpression(first)
+          ? first
+          : "unknown",
+    source: secondKind === "object" ? second : argument(2),
+  };
 };
 
 /**
@@ -701,53 +710,42 @@ const rejectsTlsProtocolVersionLiteral = (
   state: JavaScriptSemanticAnalysisState,
 ): boolean => {
   if (specifier !== "tls") return false;
-  const objects = tlsOptionsObjects(node, state);
-  if (objects === undefined) return false;
-  const firstArgument = node.arguments[0];
-  const target =
-    firstArgument === undefined
-      ? undefined
-      : unwrapJavaScriptExpression(firstArgument as t.Node).node;
-  // Node assigns overrides into the first options object. An unresolved
-  // prototype may absorb those writes through an inherited setter.
+  const merge = tlsOptionMerge(node, state);
+  if (merge === undefined || merge.target === "unknown") return false;
+  const isNullish = (value: t.Node) => isNullishPlaceholder(value, state);
+  const target = merge.target === "fresh" ? undefined : merge.target;
+  // A known source value proves the final option only when target writes are
+  // ordinary. Target prototypes and copied __proto__ can absorb later writes.
   if (
-    t.isObjectExpression(target) &&
-    target.properties.some(
+    target?.properties.some(
       (property) =>
         !t.isSpreadElement(property) &&
         isObjectPrototypeSetter(property) &&
         t.isObjectProperty(property) &&
-        primitiveOwnKeys(property.value, (value) =>
-          isNullishPlaceholder(value, state),
-        ) === null,
+        primitiveOwnKeys(property.value, isNullish) === null,
     )
   )
     return false;
-  // An accessor anywhere in the merged objects can write a member in an order this
-  // reader cannot replay, so every member stays undecided — including a plain method,
-  // which a getter can replace before Node copies it. Measured on Node 24.22.1,
-  // `{get side() { this.minVersion = "TLSv1.2"; }, minVersion() {}}` connects.
-  const accessorWritten = objects.some(
-    (options) =>
-      options !== "unknown" &&
-      options.properties.some(
-        (property) => t.isObjectMethod(property) && property.kind !== "method",
-      ),
+  const sourceReader = staticObjectCopyPropertyReader(merge.source, isNullish);
+  const copiedPrototype = sourceReader("__proto__");
+  if (
+    copiedPrototype.status === "dynamic" ||
+    (copiedPrototype.status === "explicit" &&
+      primitiveOwnKeys(copiedPrototype.value, isNullish) === null)
+  )
+    return false;
+  const objects = [target, merge.source].filter(
+    (value): value is t.ObjectExpression => t.isObjectExpression(value),
   );
-  const readers = objects.map((options) =>
-    options === "unknown"
-      ? "unknown"
-      : staticObjectPropertyReader(options, (value) =>
-          isNullishPlaceholder(value, state),
-        ),
+  const accessorWritten = objects.some((options) =>
+    options.properties.some(
+      (property) => t.isObjectMethod(property) && property.kind !== "method",
+    ),
   );
+  const readers = [staticObjectPropertyReader(target, isNullish), sourceReader];
   const effective = (member: string): t.Node | "unknown" | undefined => {
     let read: t.Node | "unknown" | undefined;
     for (const reader of readers) {
-      if (reader === "unknown") {
-        read = "unknown";
-        continue;
-      }
       const property = reader(member);
       if (property.status === "missing") continue;
       read =

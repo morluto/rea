@@ -351,3 +351,39 @@ it.each(["null", "0"])(
     ).toEqual([]);
   },
 );
+
+it.each([
+  `class O {port=443;set minVersion(value){}};const socket=tls.connect(new O(),{secureContext:false,minVersion:"nope"});socket.destroy();`,
+  `const socket=tls.connect({port:443,minVersion:"nope"},null,class {static minVersion="TLSv1.2"});socket.destroy();`,
+  `const socket=tls.connect({port:443,secureContext:false},{["__proto__"]:{set minVersion(value){}},minVersion:"nope"});socket.destroy();`,
+])(
+  "preserves uncertain target assignments and enumerable sources: %s",
+  (body) => {
+    const ir = analyzeJavaScriptSemantics(
+      `import tls from "node:tls";function g(){${body}}`,
+    );
+    expect(
+      ir.resourceOperations.filter((value) => value.kind === "acquire"),
+    ).toHaveLength(1);
+    expect(
+      ir.resourceOperations.filter((value) => value.kind === "release"),
+    ).toHaveLength(1);
+  },
+);
+it.each([
+  `tls.connect({port:443,minVersion:"nope"},class {static minVersion="TLSv1.2"})`,
+  `tls.connect({port:443,secureContext:false},{["__proto__"]:null,minVersion:"nope"})`,
+  `tls.connect({port:443,secureContext:false},{["__proto__"]:0,minVersion:"nope"})`,
+])("retains definite rejection for the actual selected source: %s", (call) => {
+  expect(acquisitionsFor(call)).toEqual([]);
+});
+
+it.each([
+  'tls.connect({port:443,minVersion:"nope"},null,null)',
+  'tls.connect({port:443,minVersion:"nope"},null,5)',
+  'tls.connect({port:443,minVersion:"nope"},null,"TLSv1.2")',
+  'tls.connect({port:443,minVersion:"nope"},null,()=>{})',
+  'tls.connect({port:443,minVersion:"nope"},{__proto__:{minVersion:"TLSv1.2"}})',
+])("copies only enumerable own option properties: %s", (call) => {
+  expect(acquisitionsFor(call)).toEqual([]);
+});
