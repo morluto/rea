@@ -80,11 +80,17 @@ const resolveRoot = async (
   signal?: AbortSignal,
 ): Promise<Result<string, ReferenceSourceImportError>> => {
   if (isAborted(signal))
-    return err(failure("cancelled", "Reference source import cancelled"));
+    return err({
+      ...failure("cancelled", "Reference source import cancelled"),
+      cause: signal?.reason,
+    });
   try {
     const metadata = await stat(requestedRoot);
     if (isAborted(signal))
-      return err(failure("cancelled", "Reference source import cancelled"));
+      return err({
+        ...failure("cancelled", "Reference source import cancelled"),
+        cause: signal?.reason,
+      });
     if (!metadata.isDirectory())
       return err(
         failure(
@@ -94,11 +100,17 @@ const resolveRoot = async (
       );
     const canonicalRoot = await realpath(requestedRoot);
     if (isAborted(signal))
-      return err(failure("cancelled", "Reference source import cancelled"));
+      return err({
+        ...failure("cancelled", "Reference source import cancelled"),
+        cause: signal?.reason,
+      });
     return ok(canonicalRoot);
   } catch (cause: unknown) {
     if (isAborted(signal))
-      return err(failure("cancelled", "Reference source import cancelled"));
+      return err({
+        ...failure("cancelled", "Reference source import cancelled"),
+        cause: signal?.reason,
+      });
     const rootFailure = rootFilesystemFailure(
       cause,
       "Reference source root could not be resolved",
@@ -242,7 +254,11 @@ const readIgnoreCase = async (
   } catch (cause: unknown) {
     if (readFailure !== undefined) return err(readFailure);
     if (isAborted(signal) || isIgnorePolicyCancellation(cause))
-      return err(failure("cancelled", "Reference source import cancelled"));
+      return err({
+        ...failure("cancelled", "Reference source import cancelled"),
+        cause:
+          signal?.aborted === true ? signal.reason : ignorePolicyCause(cause),
+      });
     return err({
       ...failure(
         "io",
