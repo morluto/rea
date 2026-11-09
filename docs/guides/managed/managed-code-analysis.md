@@ -654,7 +654,8 @@ unchanged signature. Comparison retains exact byte-based pairs for malformed
 signatures, including empty, truncated, or invalid headers, but reports them as
 unknown with a `signature-malformed` limitation when no change is observed.
 This applies to historical Evidence without signature-resolution attestation as
-well. Runtime-provided methods are counted separately in
+well. Runtime-provided methods have the Runtime code type or the InternalCall
+implementation flag, as core library FCalls do. They are counted separately in
 `native_implementations.runtime_provided`; they have no file-backed native body
 for this workflow to map and do not increase `native_body_unresolved`. Historical
 verification Evidence without this separate count leaves it unknown (`null`).
