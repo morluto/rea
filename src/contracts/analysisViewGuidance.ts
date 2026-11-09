@@ -208,6 +208,9 @@ or a stable page.
 
 ## inspect_analysis_view: JavaScript modules and facts
 
+For an exact module's item facts or original code, search guidance for
+"read module without repeating analysis" and follow that retained-parent workflow.
+
 Module pages include assets, bundled and source modules; use node_id for ambiguous or
 unavailable paths. Typed module references use view {kind: "javascript", collection:
 "modules", projection: "references", where: {path: "main.js", kind:

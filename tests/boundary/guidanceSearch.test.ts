@@ -9,7 +9,7 @@ it("finds and retrieves the selected section from the generated package bundle",
   const resources = new ArtifactResourceScope();
   try {
     const result = await searchGuidance(
-      { query: "exact JavaScript module" },
+      { query: "exact JavaScript module without repeating analysis" },
       resources,
     );
     if (!result.ok) throw result.error;
@@ -46,6 +46,47 @@ it("finds and retrieves the selected section from the generated package bundle",
       heading: match.heading,
       locator: match.locator,
       content: expect.stringContaining("node_id"),
+    });
+  } finally {
+    await resources.close();
+  }
+});
+
+it("keeps workflow and selector guidance reachable for a broad module query", async () => {
+  const resources = new ArtifactResourceScope();
+  try {
+    const result = await searchGuidance(
+      { query: "exact JavaScript module" },
+      resources,
+    );
+    if (!result.ok) throw result.error;
+    if (result.value.status !== "matches")
+      throw new Error("Expected guidance matches");
+    const workflow = result.value.matches.find(
+      ({ guide, heading }) =>
+        guide === "references/javascript-applications.md" &&
+        heading === "Read a module without repeating analysis",
+    );
+    expect(workflow).toBeDefined();
+    const selectors = result.value.matches.find(
+      ({ guide, heading }) =>
+        guide === "tools/inspect_analysis_view.md" &&
+        heading === "inspect_analysis_view: JavaScript modules and facts",
+    );
+    expect(selectors).toBeDefined();
+    if (selectors === undefined) throw new Error("Expected selector guidance");
+    const read = await readGuidanceSection(
+      { locator: selectors.locator },
+      resources,
+    );
+    if (!read.ok) throw read.error;
+    expect(read.value).toMatchObject({
+      status: "section",
+      guide: selectors.guide,
+      heading: selectors.heading,
+      content: expect.stringContaining(
+        "read module without repeating analysis",
+      ),
     });
   } finally {
     await resources.close();
