@@ -1,11 +1,12 @@
 import * as t from "@babel/types";
 
 import {
+  javaScriptExpressionWrapperTarget,
   semanticStaticPropertyKey,
   runtimeFunctionParameters,
   unwrapJavaScriptExpression,
 } from "./javascriptAstValues.js";
-import { semanticMethodDefinitionExpression } from "./javascriptSemanticEvaluationOrder.js";
+import { semanticStableBindingInitializedBeforeRead } from "./javascriptSemanticMutationInitializers.js";
 import { moduleFactory } from "./javascriptStaticAnalysisHelpers.js";
 import { semanticIdentifierRole } from "./javascriptSemanticProjection.js";
 import {
@@ -172,7 +173,7 @@ const collectLoaderCandidates = (
         !isUnreassignedBinding(outerBinding, "variable", state) ||
         hasTopLevelReferenceBeforeInitializer(
           body,
-          outerBinding.bindingId,
+          outerBinding,
           declaration,
           state,
         )
@@ -255,41 +256,120 @@ const unreassignedBindingId = (
     : undefined;
 };
 
-const hasTopLevelReferenceBeforeInitializer = (
+const inertUnaryOperators = new Set(["void", "typeof", "!"]);
+
+const isDeferredClosureNode = (
+  node: t.Node,
+): node is
+  | t.FunctionDeclaration
+  | t.FunctionExpression
+  | t.ArrowFunctionExpression
+  | t.ObjectMethod =>
+  t.isFunctionDeclaration(node) ||
+  t.isFunctionExpression(node) ||
+  t.isArrowFunctionExpression(node) ||
+  (t.isObjectMethod(node) && !node.computed && node.kind === "method");
+
+const isInsideDeferredClosureBody = (
+  node: t.Node,
+  root: t.BlockStatement,
+  parents: WeakMap<t.Node, t.Node>,
+): boolean => {
+  let child: t.Node = node;
+  for (
+    let current = parents.get(node);
+    current !== undefined && current !== root;
+    child = current, current = parents.get(current)
+  ) {
+    if (isDeferredClosureNode(current) && child === current.body) return true;
+  }
+  return false;
+};
+
+const isInertLiteralNode = (node: t.Node): boolean =>
+  t.isStringLiteral(node) ||
+  t.isNumericLiteral(node) ||
+  t.isBooleanLiteral(node) ||
+  t.isNullLiteral(node) ||
+  t.isBigIntLiteral(node) ||
+  t.isRegExpLiteral(node) ||
+  (t.isTemplateLiteral(node) && node.expressions.length === 0);
+
+const isInertPrefixNode = (node: t.Node): boolean => {
+  if (
+    isDeferredClosureNode(node) ||
+    isInertLiteralNode(node) ||
+    javaScriptExpressionWrapperTarget(node) !== undefined
+  )
+    return true;
+  if (
+    t.isBlockStatement(node) ||
+    t.isVariableDeclaration(node) ||
+    t.isExpressionStatement(node) ||
+    t.isEmptyStatement(node) ||
+    t.isIdentifier(node)
+  )
+    return true;
+  if (t.isVariableDeclarator(node)) return t.isIdentifier(node.id);
+  if (t.isObjectExpression(node))
+    return node.properties.every((p) => !t.isSpreadElement(p));
+  if (t.isArrayExpression(node))
+    return node.elements.every((e) => e === null || !t.isSpreadElement(e));
+  if (t.isObjectProperty(node)) return !node.computed;
+  return t.isUnaryExpression(node) && inertUnaryOperators.has(node.operator);
+};
+
+const hasOnlyInertPrefixBeforeDeclarator = (
   body: t.BlockStatement,
-  targetBindingId: string,
   declarator: t.VariableDeclarator,
   state: JavaScriptSemanticAnalysisState,
 ): boolean => {
-  const readyAt = declarator.end ?? Number.POSITIVE_INFINITY;
+  const limit = declarator.start ?? Number.POSITIVE_INFINITY;
+  let inert = true;
+  traverseJavaScriptValueAst(body, state.erasedSyntaxNodes, {
+    skip: (node) =>
+      !inert ||
+      node === declarator ||
+      (node !== body && (node.start ?? Number.POSITIVE_INFINITY) >= limit) ||
+      isDeferredClosureNode(node),
+    enter: (node) => {
+      if (!isInertPrefixNode(node)) inert = false;
+    },
+  });
+  return inert;
+};
+
+const hasTopLevelReferenceBeforeInitializer = (
+  body: t.BlockStatement,
+  outerBinding: JavaScriptSemanticBindingState,
+  declarator: t.VariableDeclarator,
+  state: JavaScriptSemanticAnalysisState,
+): boolean => {
+  let inertPrefix: boolean | undefined;
   let before = false;
   traverseJavaScriptValueAst(body, state.erasedSyntaxNodes, {
-    skip: (node) => {
-      if (
-        before ||
-        t.isFunctionDeclaration(node) ||
-        t.isFunctionExpression(node) ||
-        t.isArrowFunctionExpression(node)
-      )
-        return true;
-      const parent = state.parentsByNode.get(node);
-      return (
-        (t.isObjectMethod(parent) ||
-          t.isClassMethod(parent) ||
-          t.isClassPrivateMethod(parent)) &&
-        !semanticMethodDefinitionExpression(parent, node)
-      );
-    },
+    skip: (node) => before || node === declarator.init,
     enter: (node, parent, readAncestors) => {
       if (
         !t.isIdentifier(node) ||
         parent === null ||
         node === declarator.id ||
-        (node.start ?? -1) >= readyAt ||
-        semanticIdentifierRole(node, parent, readAncestors) === null
+        semanticIdentifierRole(node, parent, readAncestors) === null ||
+        bindingId(state, node) !== outerBinding.bindingId
       )
         return;
-      if (bindingId(state, node) === targetBindingId) before = true;
+      if (semanticStableBindingInitializedBeforeRead(outerBinding, node, state))
+        return;
+      if (!isInsideDeferredClosureBody(node, body, state.parentsByNode)) {
+        before = true;
+        return;
+      }
+      inertPrefix ??= hasOnlyInertPrefixBeforeDeclarator(
+        body,
+        declarator,
+        state,
+      );
+      if (!inertPrefix) before = true;
     },
   });
   return before;

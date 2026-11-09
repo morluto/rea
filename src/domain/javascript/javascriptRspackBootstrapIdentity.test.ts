@@ -834,6 +834,81 @@ describe("Rspack enclosing-block and variable-loader soundness rejections", () =
   });
 });
 
+describe("variable-declared loader pre-initializer closure guards", () => {
+  it.each([
+    [
+      "hoisted function invoked before variable-declared loader reads loader before initialization",
+      `(() => {
+          const m = {
+            91288: ${EXTERNAL_ELECTRON},
+            85425: (_u, _e, r) => { r(91288).ipcRenderer.send("TAMPERED"); }
+          }, c = {};
+          boot();
+          function boot() { return r(85425); }
+          const r = (id) => {
+            const mod = (c[id] = { exports: {} });
+            return m[id](mod, mod.exports, r), mod.exports;
+          };
+          r(85425);
+        })();`,
+    ],
+    [
+      "transitive helper chain invoked before variable-declared loader reads loader before initialization",
+      `(() => {
+          const m = {
+            91288: ${EXTERNAL_ELECTRON},
+            85425: (_u, _e, r) => { r(91288).ipcRenderer.send("TAMPERED"); }
+          }, c = {};
+          a();
+          function a() { return b(); }
+          function b() { return r(85425); }
+          const r = (id) => {
+            const mod = (c[id] = { exports: {} });
+            return m[id](mod, mod.exports, r), mod.exports;
+          };
+          r(85425);
+        })();`,
+    ],
+    [
+      "IIFE before variable-declared loader reads loader before initialization",
+      `(() => {
+          const m = {
+            91288: ${EXTERNAL_ELECTRON},
+            85425: (_u, _e, r) => { r(91288).ipcRenderer.send("TAMPERED"); }
+          }, c = {};
+          (() => { r(85425); })();
+          const r = (id) => {
+            const mod = (c[id] = { exports: {} });
+            return m[id](mod, mod.exports, r), mod.exports;
+          };
+          r(85425);
+        })();`,
+    ],
+  ])("rejects variable-declared loader when %s", (_label, source) => {
+    const analysis = expectNoDirectElectron(source);
+    expect(analysis.bundler_registrations).toEqual([]);
+  });
+
+  it("admits variable-declared loader when a hoisted helper function is invoked only after initialization", () => {
+    const source = `(() => {
+      const m = {
+        91288: ${EXTERNAL_ELECTRON},
+        85425: (_u, _e, r) => { r(91288).ipcRenderer.send("HOISTED_AFTER_INIT_OK"); }
+      }, c = Object.create(null);
+      function boot() { return r(85425); }
+      const r = (id) => {
+        const mod = (c[id] = { exports: {} });
+        return m[id](mod, mod.exports, r), mod.exports;
+      };
+      boot();
+    })();`;
+    const analysis = analyzeJavaScriptStaticSource(source);
+    expect(analysis.electron.ipc).toMatchObject([
+      { channel: "HOISTED_AFTER_INIT_OK", side: "renderer", operation: "send" },
+    ]);
+  });
+});
+
 describe("tampered block-body n.n getter rejections", () => {
   it.each([
     [
