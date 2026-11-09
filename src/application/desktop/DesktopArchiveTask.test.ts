@@ -183,7 +183,7 @@ it.each([
     if (accepted) {
       if (result instanceof Error) throw result;
       expect(result.normalized_result).toMatchObject({
-        task: { failing_on_seed: ["check-1"] },
+        tasks: [{ failing_on_seed: ["check-1"] }],
       });
     } else {
       expect(result).toBeInstanceOf(Error);

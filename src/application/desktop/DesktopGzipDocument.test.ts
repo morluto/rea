@@ -299,7 +299,7 @@ describe("gzip seeds as shipped", () => {
     const { result, directory } = await exportBudget(folder);
     if (result instanceof Error) throw result;
     expect(result.normalized_result).toMatchObject({
-      task: { failing_on_seed: ["rent"] },
+      tasks: [{ failing_on_seed: ["rent"] }],
       scrubbed_files: [SEED],
     });
     const shipped = await readFile(join(directory, SEED));
