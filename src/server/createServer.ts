@@ -19,9 +19,12 @@ import { snapshotEnvironment } from "../process/snapshotEnvironment.js";
 import { captureProviderEnvironment } from "./providerEnvironment.js";
 import { createByteEntropyService } from "../composition/binaryDiagnostics.js";
 import { registerElfNotesTool } from "./registerElfNotesTool.js";
+import { registerNativeInitializersTool } from "./registerNativeInitializersTool.js";
+import { registerElfUnwindRangesTool } from "./registerElfUnwindRangesTool.js";
 import { registerAppleIpsTool } from "./registerAppleIpsTool.js";
 import { registerKernelModuleTool } from "./registerKernelModuleTool.js";
 import { registerElfDependenciesTool } from "./registerElfDependenciesTool.js";
+import { registerKernelBuildConfigTool } from "./registerKernelBuildConfigTool.js";
 import { registerPeLoadConfigTool } from "./registerPeLoadConfigTool.js";
 import { registerBinaryHardeningTool } from "./registerBinaryHardeningTool.js";
 import { registerPeCertificatesTool } from "./registerPeCertificatesTool.js";
@@ -220,9 +223,12 @@ export const createServer = (
     nativeExports,
     devicetree,
     elfNotes,
+    nativeInitializers,
+    elfUnwindRanges,
     appleIps,
     kernelModule,
     elfDependencies,
+    kernelBuildConfig,
     peLoadConfig,
     binaryHardening,
     peCertificates,
@@ -501,6 +507,20 @@ export const createServer = (
         recordEvidence,
         analysisAdmission,
       );
+      registerNativeInitializersTool(
+        server,
+        nativeInitializers,
+        toolLogger,
+        recordEvidence,
+        analysisAdmission,
+      );
+      registerElfUnwindRangesTool(
+        server,
+        elfUnwindRanges,
+        toolLogger,
+        recordEvidence,
+        analysisAdmission,
+      );
       registerAppleIpsTool(
         server,
         appleIps,
@@ -521,6 +541,13 @@ export const createServer = (
         toolLogger,
         recordEvidence,
         evidenceById,
+        analysisAdmission,
+      );
+      registerKernelBuildConfigTool(
+        server,
+        kernelBuildConfig,
+        toolLogger,
+        recordEvidence,
         analysisAdmission,
       );
       registerPeLoadConfigTool(

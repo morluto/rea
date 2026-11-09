@@ -18,12 +18,18 @@ import { WindowsShortcutService } from "../application/binaryDiagnostics/Windows
 import { WindowsShortcutProvider } from "../native/windows/WindowsShortcutProvider.js";
 import { ElfNotesService } from "../application/binaryDiagnostics/ElfNotesService.js";
 import { ElfNotesProvider } from "../native/elf/ElfNotesProvider.js";
+import { NativeInitializersService } from "../application/binaryDiagnostics/NativeInitializersService.js";
+import { NativeInitializersProvider } from "../native/initializers/NativeInitializersProvider.js";
+import { ElfUnwindRangesService } from "../application/binaryDiagnostics/ElfUnwindRangesService.js";
+import { ElfUnwindRangesProvider } from "../native/elf/ElfUnwindRangesProvider.js";
 import { AppleIpsService } from "../application/binaryDiagnostics/AppleIpsService.js";
 import { AppleIpsProvider } from "../native/apple/AppleIpsProvider.js";
 import { KernelModuleService } from "../application/binaryDiagnostics/KernelModuleService.js";
 import { KernelModuleProvider } from "../native/elf/KernelModuleProvider.js";
 import { ElfDependenciesService } from "../application/binaryDiagnostics/ElfDependenciesService.js";
 import { ElfDependenciesProvider } from "../native/elf/ElfDependenciesProvider.js";
+import { KernelBuildConfigService } from "../application/binaryDiagnostics/KernelBuildConfigService.js";
+import { KernelBuildConfigProvider } from "../native/elf/KernelBuildConfigProvider.js";
 import type { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
 import { NativeExportsService } from "../application/binaryDiagnostics/NativeExportsService.js";
 import { NativeExportsProvider } from "../native/exports/NativeExportsProvider.js";
@@ -58,12 +64,22 @@ export const createNativeExportsService = (): NativeExportsService =>
 export const createElfNotesService = (): ElfNotesService =>
   new ElfNotesService(new ElfNotesProvider());
 
+/** Portable ELF and Mach-O initializer and finalizer listing with no engine. */
+export const createNativeInitializersService = (): NativeInitializersService =>
+  new NativeInitializersService(new NativeInitializersProvider());
+/** Portable ELF unwind-range inspection with no engine or disassembler. */
+export const createElfUnwindRangesService = (): ElfUnwindRangesService =>
+  new ElfUnwindRangesService(new ElfUnwindRangesProvider());
+
 /** Portable Apple .ips inspection with no engine, Xcode or target acquisition. */
 export const createAppleIpsService = (): AppleIpsService =>
   new AppleIpsService(new AppleIpsProvider());
 /** Portable Linux kernel-module metadata inspection with no engine or host `modinfo`. */
 export const createKernelModuleService = (): KernelModuleService =>
   new KernelModuleService(new KernelModuleProvider());
+/** Portable Linux kernel banner and embedded build-config inspection with no engine or host tools. */
+export const createKernelBuildConfigService = (): KernelBuildConfigService =>
+  new KernelBuildConfigService(new KernelBuildConfigProvider());
 
 /** Portable ELF dynamic-dependency inspection with no loader or host `ldd`. */
 export const createElfDependenciesService = (): ElfDependenciesService =>
