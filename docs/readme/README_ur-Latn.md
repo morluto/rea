@@ -99,6 +99,10 @@ set karein. Dono profiles mein tamam tools aur canonical server validation
 maujood rehte hain. MCP contracts guide ka "Compact input schema profile"
 section dekhein.
 
+Setup chuna hua runtime aur REA entry script seedha register karta hai. Package runner use karne par uski cache entry aur runtime barqarar rakhein; package target project se bahar kisi bharosemand directory se hasil karein. Installation guide dekhein.
+
+Mukammal output schemas default mein advertise hote hain. Agar client `tools/list` ko limit karta hai to MCP registration mein `REA_MCP_OUTPUT_SCHEMA_PROFILE=compact` ya `off` set karein. Server validation aur structured results mukammal rehte hain. MCP contracts guide ka “Output schemas” section dekhein.
+
 ### Apne agent se kahein
 
 ```text
@@ -226,6 +230,7 @@ Mazeed tools aur host support target par depend karte hain:
 | Packages aur resources  | File inventories, digests, plists, Apple bundle structure aur extracted resources                 | [Artifact aur JavaScript guide](../guides/javascript/javascript-artifact-reconstruction.md), [Apple applications](../guides/apple/apple-application-analysis.md) |
 | Process behavior        | Terminal output, interactions, exit aur filesystem observations aur runs ka comparison            | Native PTY ke saath Linux/macOS; [process capture](../guides/runtime/process-capture.md)                                                                         |
 | PyInstaller executables | CArchive members, Python version, entry scripts aur extracted bytecode                            | Koi additional tool nahi (sirf static analysis); [Python packaged applications](../python-packaged-applications.md)                                              |
+| Deno compile binaries   | Virtual files, entry point, recorded options, npm snapshot length                                 | Static inspection; [Deno compile executables](../deno-standalone.md)                                                                                             |
 
 Static JavaScript aur .NET inspection di hui files ko application chalaye baghair
 parhti hai. Runtime capture aapki user permissions se selected target ko chalata
