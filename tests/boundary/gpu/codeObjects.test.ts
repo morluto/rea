@@ -410,8 +410,10 @@ it("retains kernels from conflicting AMDGPU notes without choosing either note o
       inspection: "partial",
     },
   ]);
-  expect(result.value.objects[0]?.limitations).toContain(
-    "AMDGPU notes declare conflicting processor targets; processor identity is unknown",
+  expect(result.value.objects[0]?.limitations).toContainEqual(
+    expect.stringMatching(
+      /conflicting processor targets.*identity is unknown/iu,
+    ),
   );
   expect(result.value.coverage).toMatchObject({
     discovery: "partial",
@@ -499,14 +501,17 @@ it.each([
   const inventory = await inspect(bytes, { analysis: "inventory" });
   if (!inventory.ok) throw inventory.error;
   const row = inventory.value.objects.find((value) => value.kind === "amdgpu")!;
-  expect(row.target).not.toBeNull();
-  const selected = await inspect(bytes, { targets: [row.target!] });
+  const expectedTarget = targetId.endsWith("opaque")
+    ? "amdgcn-amd-amdhsa--gfx900"
+    : "gfx900";
+  expect(row.target).toBe(expectedTarget);
+  const selected = await inspect(bytes, { targets: [expectedTarget] });
   if (!selected.ok) throw selected.error;
   expect(selected.value.kernels).toHaveLength(1);
   expect(
     selected.value.objects.find((value) => value.kind === "amdgpu"),
   ).toMatchObject({
-    target: row.target,
+    target: expectedTarget,
     payload_target: "amdgcn-amd-amdhsa--gfx900",
     target_consistency: targetId.endsWith("opaque")
       ? "single-source"
@@ -563,8 +568,8 @@ it("bounds standalone AMD note discovery before retaining metadata", async () =>
     target: "gfx900",
     inspection: "capacity",
   });
-  expect(result.value.objects[0]!.limitations).toContain(
-    "AMDGPU ELF note discovery exceeds the 8 MiB retained metadata budget",
+  expect(result.value.objects[0]!.limitations).toContainEqual(
+    expect.stringMatching(/note discovery.*8 MiB.*metadata budget/iu),
   );
   expect(result.value.kernels).toEqual([]);
 });
@@ -1021,7 +1026,9 @@ it("preserves standalone PTX BOM and trailing NUL bytes in the retained text art
   const bytes = Buffer.from("\uFEFF" + ptxFixture + "\0");
   const result = await inspect(bytes);
   if (!result.ok) throw result.error;
-  expect(Buffer.from(result.value.ptx_artifacts[0]!.text)).toEqual(bytes);
+  expect(
+    Buffer.compare(Buffer.from(result.value.ptx_artifacts[0]!.text), bytes),
+  ).toBe(0);
   expect(result.value.ptx_artifacts[0]!.byte_length).toBe(bytes.length);
 });
 it("rejects a changed full-file identity before applying positional object selection", async () => {
@@ -1079,6 +1086,32 @@ it("retains an embedded CCOB with a corrupted signature as unsupported", async (
     }),
   );
 });
+it.each([
+  ["unknown COFF machine", 0xffff],
+  ["x86 machine with a PE32+ optional header", 0x14c],
+] as const)(
+  "discovers PE GPU sections with %s",
+  async (_description, machine) => {
+    const bytes = peGpuFixture();
+    const pe = bytes.readUInt32LE(60);
+    bytes.writeUInt16LE(machine, pe + 4);
+    const result = await inspect(bytes);
+    if (!result.ok) throw result.error;
+    expect(result.value.format).toBe("pe");
+    expect(result.value.artifact.sha256).toBe(
+      createHash("sha256").update(bytes).digest("hex"),
+    );
+    expect(result.value.coverage).toMatchObject({
+      discovery: "complete",
+      payloads: "complete",
+    });
+    expect(result.value.kernels.map(({ name }) => name)).toEqual([
+      "add_one",
+      "add_one",
+    ]);
+    expect(result.value.ptx_artifacts[0]!.text).toBe(ptxFixture);
+  },
+);
 it("does not dispatch a high-bit-corrupted DOS signature to the PE parser", async () => {
   const bytes = peGpuFixture(Buffer.from(ptxFixture));
   bytes[0] = bytes[0]! | 0x80;

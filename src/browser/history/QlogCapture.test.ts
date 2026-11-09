@@ -134,6 +134,21 @@ it("keeps incomplete fields unknown and FIN without bytes as metadata", () => {
   expect(traces[0]?.loss_declarations[0]?.packet_number.state).toBe("unknown");
 });
 
+it("marks non-string frame types incomplete without hiding their recorded values", () => {
+  const { decoded, traces } = facts(
+    capture([
+      event([{ frame_type: 0 }, frame(0, 5)]),
+      event([{ frame_type: false }], "transport:packet_received"),
+      event([{ frame_type: "extension:custom" }]),
+    ]),
+  );
+  expect(traces[0]?.incomplete_fact_records).toEqual([0, 1]);
+  expect(traces[0]?.streams[0]?.unique_bytes).toBe("5");
+  expect(decoded.records[0]?.reported).toMatchObject({
+    data: { frames: [{ frame_type: 0 }, frame(0, 5)] },
+  });
+});
+
 it.each([
   { fin: undefined, incomplete: [0] },
   { fin: null, incomplete: [0] },
@@ -331,6 +346,23 @@ it.each([
     expect(traces[0]?.loss_declarations).toHaveLength(losses);
   },
 );
+
+it("counts hidden payloads only for events interpreted as transport facts", () => {
+  const text = capture([
+    { name: "extension:custom", time: 0, data: { body: "ordinary" } },
+    event([frame(0, 10, false)]),
+    { name: "recovery:packet_lost", time: 2, data: { packet_number: 5 } },
+  ]);
+  const control = facts(text);
+  expect(control.traces[0]?.incomplete_fact_records).toEqual([]);
+  const hidden = facts(text, ["data"]);
+  expect(hidden.traces[0]?.incomplete_fact_records).toEqual([1, 2]);
+  expect(hidden.decoded.records.map((record) => record.reported)).toEqual([
+    { name: "extension:custom", time: 0 },
+    { name: "transport:packet_sent", time: 1791819895000.25 },
+    { name: "recovery:packet_lost", time: 2 },
+  ]);
+});
 
 it("omits a hidden derived total for a stream with more contributions than call arguments allow", () => {
   const events = Array.from({ length: 130 }, (_, index) =>

@@ -1,3 +1,4 @@
+import { GPU_CODE_OBJECTS_PROVIDER_IDENTITY } from "./GpuCodeObjectsProviderIdentity.js";
 import { lstat, type FileHandle } from "node:fs/promises";
 import type { GpuCodeObjectsPort } from "../application/gpu/GpuCodeObjectsPort.js";
 import {
@@ -46,16 +47,12 @@ import {
 } from "./GpuSource.js";
 import { GpuInventory } from "./GpuInventory.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
+import { selectedFileTargetError } from "../artifacts/RegularFileErrorProjection.js";
 import {
   isSelectedRegularFileError,
   sameRegularFileState,
 } from "../filesystem/RegularFile.js";
 
-export const GPU_CODE_OBJECTS_PROVIDER_IDENTITY = {
-  id: "gpu-code-objects",
-  name: "REA static GPU code-object reader",
-  version: "1",
-} as const;
 const OPERATION = "inspect_gpu_code_objects";
 
 /** One admitted descriptor and bounded report at a time; retained cleanup blocks new work. */
@@ -102,7 +99,7 @@ export class GpuCodeObjectsProvider implements GpuCodeObjectsPort {
             input.path,
             this.#resources,
             options?.signal,
-            (file) =>
+            ({ handle: file }) =>
               this.#read(file, input, options?.signal, (value) => {
                 progress = value;
               }),
@@ -173,7 +170,7 @@ export class GpuCodeObjectsProvider implements GpuCodeObjectsPort {
           { cause: primary },
         );
       else if (isSelectedRegularFileError(primary))
-        error = new BinaryTargetError(input.path, primary.message, { cause });
+        error = selectedFileTargetError(input.path, primary, cause);
       else if (
         origin === "owned-or-classified" &&
         primary instanceof ArtifactReaderFailure &&

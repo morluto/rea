@@ -10,8 +10,8 @@ import { EnhancedTools } from "./EnhancedTools.js";
 import type { BinaryArchitecture } from "../domain/binaryTargetTypes.js";
 import { objcSwiftMetadataSchema } from "../domain/native/objcSwiftMetadata.js";
 import { err, ok } from "../domain/result.js";
-import { AnalysisCapabilityUnavailableError } from "../domain/analysisErrorCore.js";
 import {
+  AnalysisCapabilityUnavailableError,
   AnalysisOutputError,
   AnalysisCancelledError,
 } from "../domain/analysisErrorCore.js";
@@ -444,7 +444,6 @@ describe("EnhancedTools cancellation ownership", () => {
       controller.signal,
     );
 
-    expect(result.ok).toBe(false);
     if (result.ok) throw new Error("Pre-cancelled observation was accepted");
     expect(result.error).toBeInstanceOf(AnalysisCancelledError);
     expect(result.error.cause).toBe(reason);

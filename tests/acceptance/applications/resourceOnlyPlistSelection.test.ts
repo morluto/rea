@@ -69,7 +69,11 @@ it.skipIf(process.platform !== "darwin")(
       code: "invalid_request",
       details: { issues: [{ path: ["path"] }] },
     });
-    expect(await readFile(sourcePath)).toEqual(Buffer.from(source));
-    expect(await readFile(decoyPath)).toEqual(Buffer.from(decoy));
+    expect(
+      Buffer.compare(await readFile(sourcePath), Buffer.from(source)),
+    ).toBe(0);
+    expect(Buffer.compare(await readFile(decoyPath), Buffer.from(decoy))).toBe(
+      0,
+    );
   },
 );

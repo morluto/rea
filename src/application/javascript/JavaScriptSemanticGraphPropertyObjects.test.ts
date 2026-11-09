@@ -94,21 +94,15 @@ it("keeps a later non-literal writer's value unknown", () => {
   expect(slotStates(graph)).toContain("config.ACCEL:unknown");
 });
 
-it("folds the last of repeated top-level literal assignments", () => {
+it("keeps intersecting container writers unknown instead of selecting a positional winner", () => {
   const graph = graphForJavaScript(`
     const Game = {};
     Game.config = { ACCEL: 0.001 };
     Game.config = { ACCEL: 0.25 };
     export function accel() { return Game.config.ACCEL; }
   `);
-  expect(slotStates(graph)).toEqual(["config.ACCEL:literal", "config:object"]);
-  const trace = queryJavaScriptSemanticGraph(graph, {
-    seed: { kind: "literal", value: 0.25 },
-    direction: "forward-influence",
-    include_ambiguous_dynamic_edges: true,
-    expected: null,
-  });
-  expect(trace.status).toBe("found");
+  expect(slotStates(graph)).toContain("config.ACCEL:unknown");
+  expect(slotStates(graph)).not.toContain("config.ACCEL:literal");
 });
 
 it("models nested property paths and arrays", () => {
@@ -155,9 +149,9 @@ it("does not synthesize containers on null receivers", () => {
   expect(slotStates(graph)).toContain("config.ACCEL:unknown");
 });
 
-it("keeps the folded value unknown once the container reference is read out", () => {
+it("keeps a stored container unknown after its alias escapes", () => {
   const graph = graphForJavaScript(
-    "const Game = {};\nGame.config = { ACCEL: 0.001 };\nconst ref = Game.config;\nexport function accel() { return Game.config.ACCEL; }",
+    "const Game = {};\nGame.config = { ACCEL: 0.001 };\nconst ref = Game.config;\nuse(ref);\nexport function accel() { return Game.config.ACCEL; }",
   );
   expect(slotStates(graph)).toContain("config.ACCEL:unknown");
 });
@@ -180,17 +174,15 @@ it("does not apply a folded value to reads before the assignment", () => {
   const graph = graphForJavaScript(
     "const Game = { config: { x: 1 } };\nconst before = Game.config.x;\nGame.config = { x: 2 };\nexport function accel() { return Game.config.x; }",
   );
-  // The folded literal reaches the later read through candidate edges (the
-  // initializer-written container keeps mutation-unknown presence, so a fully
-  // resolved chain through both writers needs follow-up); the positional
-  // application guarantees the earlier read never claims the folded value.
+  // A shared final-state slot cannot represent two observed value versions.
+  // Keep it uncertain instead of connecting a later literal to the earlier read.
   const foldedTrace = queryJavaScriptSemanticGraph(graph, {
     seed: { kind: "literal", value: 2 },
     direction: "forward-influence",
     include_ambiguous_dynamic_edges: true,
     expected: null,
   });
-  expect(foldedTrace.nodes.map((node) => node.label)).toContain(
+  expect(foldedTrace.nodes.map((node) => node.label)).not.toContain(
     "read:/config/x",
   );
 });

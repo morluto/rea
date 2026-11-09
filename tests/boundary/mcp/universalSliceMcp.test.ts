@@ -227,8 +227,9 @@ sliceTest(
         issues: [
           {
             path: ["architecture"],
-            message:
-              "architecture arm64 was selected, but the file is not a universal Mach-O; omit architecture.",
+            message: expect.stringMatching(
+              /architecture arm64.*not a universal Mach-O.*omit architecture/i,
+            ),
           },
         ],
       },
@@ -355,6 +356,7 @@ sliceTest(
       ...thinReport.auditable_metadata,
       file_offset: (thinReport.auditable_metadata?.file_offset ?? 0) + offset,
     });
+    expect(thinReport.rustc_commit?.hashes.length).toBeGreaterThan(0);
     expect(report.rustc_commit?.hashes).toEqual(
       thinReport.rustc_commit?.hashes.map((entry) => ({
         ...entry,

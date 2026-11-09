@@ -9,6 +9,7 @@ import {
 import {
   admitScenarioCaptureParent,
   scenarioCaptureRecords,
+  scenarioContentMediaType,
 } from "./scenarioCaptureRecords.js";
 import { EnvironmentManifestAccumulator } from "./EnvironmentManifestAccumulator.js";
 
@@ -28,6 +29,90 @@ const manifestLimitations = (
   return result.value.limitations;
 };
 
+describe("scenario Content-Type evidence", () => {
+  it.each(
+    [
+      ["application/json", "application/octet-stream"],
+      ["application/octet-stream", "application/json"],
+      ["application/json", null],
+      [null, "application/json"],
+      ["application/json", "application/octet-stream", "application/json"],
+    ].map((values) => ({ values })),
+  )(
+    "keeps conflicting or excluded Content-Type declarations unknown: $values",
+    ({ values }) => {
+      const capture = scenarioCaptureFixture([
+        {
+          method: "GET",
+          url: "/download",
+          status: 200,
+          responseHeaders: values.map((value, index) => ({
+            name: index % 2 === 0 ? "Content-Type" : "content-type",
+            value,
+          })),
+        },
+      ]);
+      const original = JSON.stringify(capture);
+      const content = capture.events.items.find(
+        (event) =>
+          event.kind === "network-content" && event.phase === "response",
+      );
+      if (content?.kind !== "network-content")
+        throw new Error("Missing content");
+      expect(scenarioContentMediaType(content)).toBeUndefined();
+      for (const purpose of ["manifest", "replay"] as const) {
+        const projected = scenarioCaptureRecords(capture, purpose);
+        expect(projected.records[0]?.reported).toMatchObject({
+          response: { status: 200, content: { mimeType: "" } },
+        });
+        const accumulator = new EnvironmentManifestAccumulator();
+        for (const record of projected.records) {
+          const added = accumulator.add(
+            record,
+            projected.responseBodies.get(record.ordinal),
+          );
+          if (!added.ok) throw added.error;
+        }
+        const manifest = accumulator.finish();
+        if (!manifest.ok) throw manifest.error;
+        expect(manifest.value.tools).toEqual([]);
+      }
+      expect(JSON.stringify(capture)).toBe(original);
+    },
+  );
+
+  it("retains agreeing repeated Content-Type values and independently captured body metadata", () => {
+    const capture = scenarioCaptureFixture([
+      {
+        method: "GET",
+        url: "/headers",
+        status: 200,
+        responseHeaders: [
+          { name: "Content-Type", value: "application/json" },
+          { name: "content-type", value: "application/json" },
+        ],
+      },
+      {
+        method: "GET",
+        url: "/body",
+        status: 200,
+        body: "{}",
+        mediaType: "application/json",
+        responseHeaders: [
+          { name: "Content-Type", value: "application/json" },
+          { name: "content-type", value: null },
+        ],
+      },
+    ]);
+    const projected = scenarioCaptureRecords(capture, "manifest");
+    expect(projected.records).toHaveLength(2);
+    for (const record of projected.records)
+      expect(record.reported).toMatchObject({
+        response: { content: { mimeType: "application/json" } },
+      });
+  });
+});
+
 describe("scenarioCaptureRecords", () => {
   it("projects each transaction, in request order, as a HAR-shaped record with its retained bytes", () => {
     const projected = scenarioCaptureRecords(
@@ -40,7 +125,11 @@ describe("scenarioCaptureRecords", () => {
     ]);
     const user = projected.records[1];
     expect(user?.reported).toEqual({
-      request: { method: "GET", url: "http://127.0.0.1:3101/api/users/2" },
+      request: {
+        method: "GET",
+        url: "http://127.0.0.1:3101/api/users/2",
+        bodySize: -1,
+      },
       response: {
         status: 200,
         content: {
@@ -71,11 +160,37 @@ describe("scenarioCaptureRecords", () => {
       request: { url: null },
     });
     expect(projected.records[7]?.reported).toEqual({
-      request: { method: "GET", url: "http://127.0.0.1:3101/api/slow" },
+      request: {
+        method: "GET",
+        url: "http://127.0.0.1:3101/api/slow",
+        bodySize: -1,
+      },
     });
-    expect(manifestLimitations(projected)).toContain(
-      "1 of 7 scenario transactions with a usable request line retained no response body; tools citing them replay only the recorded status and content type, either of which may be absent.",
+    expect(manifestLimitations(projected)).toContainEqual(
+      expect.stringMatching(
+        /1 of 7.*usable request line.*no response body.*status and content type.*may be absent/iu,
+      ),
     );
+  });
+
+  it("records a hidden request body as absent only when the request names no Content-Type", () => {
+    const toggle = {
+      method: "PUT",
+      url: "/api/entries/1/bookmark",
+      status: 204,
+      requestBodyHidden: true,
+    } as const;
+    const projected = scenarioCaptureRecords(
+      scenarioCaptureFixture([
+        { ...toggle, requestHeaderNames: ["accept", "authorization"] },
+        { ...toggle, requestHeaderNames: ["accept", "Content-Type"] },
+      ]),
+      "manifest",
+    );
+    expect(projected.records.map((entry) => entry.reported)).toMatchObject([
+      { request: { bodySize: 0 } },
+      { request: { bodySize: -1 } },
+    ]);
   });
 
   it("leaves a transaction that cannot be attributed to one request and response unrepresented", () => {
@@ -169,6 +284,7 @@ it("reserves retained request-body expansion before schema decoding or projectio
   try {
     const projected = admitScenarioCaptureParent(
       {
+        predicateType: "rea.browser-scenario-capture",
         evidenceId: `ev_${"a".repeat(64)}`,
         operation: "capture_browser_scenario",
         normalizedResult: capture,
@@ -217,6 +333,7 @@ it("reserves request text even when another event's body was not captured", () =
     // The capture's containers fit this budget; only its request text does not.
     const projected = admitScenarioCaptureParent(
       {
+        predicateType: "rea.browser-scenario-capture",
         evidenceId: `ev_${"a".repeat(64)}`,
         operation: "capture_browser_scenario",
         normalizedResult: { ...capture, events: { ...capture.events, items } },
@@ -251,4 +368,41 @@ it("does not decode request text when projecting replay records", () => {
   } finally {
     decoder.mockRestore();
   }
+});
+
+it("distinguishes a retained empty request from missing or redacted request bytes", () => {
+  const captured = scenarioCaptureFixture([
+    {
+      method: "POST",
+      url: "/api/items/1/archive",
+      status: 204,
+      requestBody: "",
+      requestMediaType: "application/json",
+    },
+  ]);
+  expect(
+    scenarioCaptureRecords(captured, "manifest").records[0]?.reported,
+  ).toMatchObject({ request: { bodySize: 0 } });
+  const redacted = {
+    ...captured,
+    events: {
+      ...captured.events,
+      items: captured.events.items.map((event) =>
+        event.kind === "network-content" &&
+        event.phase === "request" &&
+        event.body.state === "captured"
+          ? { ...event, body: { ...event.body, redacted: true } }
+          : event,
+      ),
+    },
+  };
+  expect(
+    scenarioCaptureRecords(redacted, "manifest").records[0]?.reported,
+  ).toMatchObject({ request: { bodySize: -1 } });
+  const missing = scenarioCaptureFixture([
+    { method: "POST", url: "/api/items/1/archive", status: 204 },
+  ]);
+  expect(
+    scenarioCaptureRecords(missing, "manifest").records[0]?.reported,
+  ).toMatchObject({ request: { bodySize: -1 } });
 });

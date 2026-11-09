@@ -1,4 +1,4 @@
-import { expect, it as test } from "vitest";
+import { expect, it as test, vi } from "vitest";
 
 import { projectAnalysisError } from "../../../../src/domain/analysisErrorProjection.js";
 import { inspectKunaInstallationOwned as inspectKunaInstallation } from "./kunaResourceScope.js";
@@ -119,19 +119,17 @@ it("says why Kuna cannot answer instead of a generic unavailable message", async
         operation: "procedure_assembly",
         parameters: { procedure: "0x2000" },
         message:
-          "Kuna's export lists no code at 0x2000; import slots and data entries have no listing.",
+          /no code at 0x2000.*import slots and data entries.*no listing/i,
       },
       {
         operation: "procedure_callers",
         parameters: { procedure: "0x1004" },
-        message:
-          "Kuna's graph has no function node at 0x1004; its relationships are unknown.",
+        message: /no function node at 0x1004.*relationships are unknown/i,
       },
       {
         operation: "list_segments",
         parameters: {},
-        message:
-          "Kuna answers procedure and string queries, pseudocode, assembly and references; this operation needs another provider.",
+        message: /operation needs another provider/i,
       },
     ] as const;
     for (const { operation, parameters, message } of cases) {
@@ -139,11 +137,106 @@ it("says why Kuna cannot answer instead of a generic unavailable message", async
       if (result.ok) throw new Error(`${operation} unexpectedly succeeded`);
       expect(projectAnalysisError(result.error)).toMatchObject({
         code: "capability_unavailable",
-        message,
+        message: expect.stringMatching(message),
         retryable: false,
       });
     }
   } finally {
     expect(await client.close()).toEqual({ ok: true, value: null });
   }
+});
+
+it("preserves a caller reason when a target command is already cancelled", async () => {
+  const { kuna, target, cacheRoot } = await session(
+    "rea-kuna-command-preabort-",
+  );
+  const installed = await inspectKunaInstallation({
+    REA_KUNA_COMMAND: kuna,
+    REA_KUNA_CACHE_DIR: cacheRoot,
+  });
+  if (!installed.ok) throw new Error(installed.error.reason);
+  const controller = new AbortController();
+  const reason = { caller: "before target command admission" };
+  controller.abort(reason);
+  const callsBefore = await fakeKunaCalls(kuna);
+  const releaseRun = vi.fn();
+  const commands = new KunaTargetCommands(target, {
+    signal: controller.signal,
+  });
+  try {
+    const result = await commands.run({
+      installation: installed.value,
+      operation: "list_procedures",
+      arguments: (input) => ["functions", input, "--json"],
+      deadline: { setting: "REA_KUNA_TIMEOUT_MS", ms: 10_000 },
+      outputBytes: 100,
+      signal: controller.signal,
+      releaseRun,
+    });
+    if (result.ok) throw new Error("Expected pre-aborted command to cancel");
+    expect(result.error._tag).toBe("AnalysisCancelledError");
+    expect(result.error.cause).toBe(reason);
+    expect(releaseRun).toHaveBeenCalledOnce();
+    expect(await fakeKunaCalls(kuna)).toEqual(callsBefore);
+  } finally {
+    expect(await commands.close()).toEqual({ ok: true, value: null });
+  }
+});
+
+it("preserves the lifetime reason when workspace preparation is already cancelled", async () => {
+  const { kuna, target } = await session("rea-kuna-prepare-preabort-");
+  const controller = new AbortController();
+  const reason = { caller: "before workspace preparation" };
+  controller.abort(reason);
+  const callsBefore = await fakeKunaCalls(kuna);
+  const commands = new KunaTargetCommands(target, {
+    signal: controller.signal,
+  });
+  try {
+    const result = await commands.prepare();
+    if (result.ok) throw new Error("Expected cancelled preparation");
+    expect(result.error).toMatchObject({
+      _tag: "AnalysisCancelledError",
+      operation: "kuna:workspace",
+    });
+    expect(result.error.cause).toBe(reason);
+    expect(await fakeKunaCalls(kuna)).toEqual(callsBefore);
+  } finally {
+    expect(await commands.close()).toEqual({ ok: true, value: null });
+  }
+});
+
+it("does not invent a caller cause when closed without cancellation", async () => {
+  const { kuna, target, cacheRoot } = await session("rea-kuna-command-closed-");
+  const installed = await inspectKunaInstallation({
+    REA_KUNA_COMMAND: kuna,
+    REA_KUNA_CACHE_DIR: cacheRoot,
+  });
+  if (!installed.ok) throw new Error(installed.error.reason);
+  const controller = new AbortController();
+  const callsBefore = await fakeKunaCalls(kuna);
+  const releaseRun = vi.fn();
+  const commands = new KunaTargetCommands(target, {
+    signal: controller.signal,
+  });
+  expect(await commands.close()).toEqual({ ok: true, value: null });
+  const preparation = await commands.prepare();
+  if (preparation.ok) throw new Error("Expected closed preparation to cancel");
+  expect(preparation.error._tag).toBe("AnalysisCancelledError");
+  expect(preparation.error.cause).toBeUndefined();
+  const result = await commands.run({
+    installation: installed.value,
+    operation: "list_procedures",
+    arguments: (input) => ["functions", input, "--json"],
+    deadline: { setting: "REA_KUNA_TIMEOUT_MS", ms: 10_000 },
+    outputBytes: 100,
+    signal: controller.signal,
+    releaseRun,
+  });
+  if (result.ok) throw new Error("Expected closed command to cancel");
+  expect(result.error._tag).toBe("AnalysisCancelledError");
+  expect(result.error.cause).toBeUndefined();
+  expect(releaseRun).toHaveBeenCalledOnce();
+  expect(await fakeKunaCalls(kuna)).toEqual(callsBefore);
+  expect(await commands.close()).toEqual({ ok: true, value: null });
 });

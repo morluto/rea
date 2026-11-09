@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { browserExclusionSchema } from "./browserCompleteness.js";
+import { webPageInspectionSchema } from "./browserObservationSchemas.js";
 import { javaScriptRouteInventorySchema } from "./javascript/javascriptRouteInventory.js";
 
 import {
@@ -253,6 +254,8 @@ const originalSourceSchema = z.object({
   artifact: webTextArtifactSchema.nullable(),
 });
 const originalModuleEdgeSchema = z.object({
+  // Historical observations omit this link to original_sources declarations.
+  declaration_index: z.int().min(0).optional(),
   from_source: z.string(),
   kind: z.enum(["static_import", "dynamic_import", "require"]),
   specifier: z.string(),
@@ -280,6 +283,11 @@ const parsedSourceMapShape = {
   original_module_edges: z.array(originalModuleEdgeSchema),
   mappings: z.array(sourceMapMappingSchema),
 };
+const responseIdentitySchema = z.object({
+  sha256: z.string().regex(/^[a-f0-9]{64}$/u),
+  bytes: z.int().min(0),
+  representation: z.literal("fetch-response-body-bytes"),
+});
 
 const sourceMapSchema = z.union([
   z.object({
@@ -297,7 +305,18 @@ const sourceMapSchema = z.union([
   z.object({
     ...sourceMapContextShape,
     ...parsedSourceMapShape,
-    status: z.enum(["fetch_failed", "invalid", "policy_filtered"]),
+    status: z.enum(["fetch_failed", "invalid"]),
+    artifact: z.null(),
+    /** Older observations omit this; completed bytes need it only when text is absent. */
+    response_identity: responseIdentitySchema.exactOptional(),
+    original_sources: emptyArraySchema,
+    original_module_edges: emptyArraySchema,
+    mappings: emptyArraySchema,
+    limitation: z.string(),
+  }),
+  z.object({
+    ...sourceMapContextShape,
+    status: z.literal("policy_filtered"),
     artifact: z.null(),
     original_sources: emptyArraySchema,
     original_module_edges: emptyArraySchema,
@@ -372,6 +391,26 @@ export const webSourceMapsSchema = z
 
 export type WebSourceMapItem = z.infer<typeof sourceMapSchema>;
 export type WebSourceMaps = z.infer<typeof webSourceMapsSchema>;
+
+/** Completed fetch facts retained when source-map acquisition stops early. */
+export const webSourceMapFetchPartialObservationSchema = z.object({
+  kind: z.literal("web-source-map-fetch"),
+  source_maps: webSourceMapsSchema,
+});
+export type WebSourceMapFetchPartialObservation = z.infer<
+  typeof webSourceMapFetchPartialObservationSchema
+>;
+
+/** Captured page and completed maps before bundle analysis has begun. */
+export const webBundleAcquisitionPartialObservationSchema = z.object({
+  kind: z.literal("web-bundle-acquisition"),
+  inspection: webPageInspectionSchema,
+  source_maps: webSourceMapsSchema,
+  analysis_status: z.literal("not_performed"),
+});
+export type WebBundleAcquisitionPartialObservation = z.infer<
+  typeof webBundleAcquisitionPartialObservationSchema
+>;
 
 /** Provider-neutral result of JavaScript bundle reverse engineering. */
 export const webBundleAnalysisSchema = z.object({

@@ -5,8 +5,6 @@ import { parseEnvironment } from "./environment.js";
 import { parseConfig } from "./parseConfig.js";
 import {
   BRIDGE_MAX_REQUEST_BYTES_SETTING,
-  bridgeMaxRequestBytesConstraint,
-  bridgeMaxRequestBytesRecovery,
   DEFAULT_BRIDGE_MAX_REQUEST,
   DEFAULT_BRIDGE_MAX_REQUEST_BYTES,
   MAXIMUM_BRIDGE_MAX_REQUEST_BYTES,
@@ -34,14 +32,6 @@ it("keeps the 16 MiB ceiling when the setting is unset", () => {
   const environment = parseEnvironment({});
   if (!environment.ok) throw new Error("doctor rejected an unset ceiling");
   expect(environment.value.REA_BRIDGE_MAX_REQUEST_BYTES).toBeUndefined();
-  const recovery = bridgeMaxRequestBytesRecovery(DEFAULT_BRIDGE_MAX_REQUEST);
-  expect(recovery).toContain(
-    `The effective ${BRIDGE_MAX_REQUEST_BYTES_SETTING} value is ${String(DEFAULT_BRIDGE_MAX_REQUEST_BYTES)} bytes (source default; default ${String(DEFAULT_BRIDGE_MAX_REQUEST_BYTES)}, floor ${String(MINIMUM_BRIDGE_MAX_REQUEST_BYTES)}, maximum ${String(MAXIMUM_BRIDGE_MAX_REQUEST_BYTES)}).`,
-  );
-  expect(recovery).toContain(
-    `Set ${BRIDGE_MAX_REQUEST_BYTES_SETTING} in the environment that starts REA`,
-  );
-  expect(recovery).not.toContain("no runtime override");
 });
 
 it("accepts a caller-selected ceiling inside the floor and maximum", () => {
@@ -55,9 +45,6 @@ it("accepts a caller-selected ceiling inside the floor and maximum", () => {
   });
   if (!environment.ok) throw new Error("doctor rejected a valid ceiling");
   expect(environment.value.REA_BRIDGE_MAX_REQUEST_BYTES).toBe(8192);
-  expect(
-    bridgeMaxRequestBytesRecovery(parsed.value.bridgeMaxRequestBytes),
-  ).toContain("source setting");
 });
 
 it("sets the maximum to the serialized string bound minus the framing LF", () => {
@@ -131,10 +118,16 @@ it.each([
   const parsed = parseBridgeMaxRequestBytes(value);
   expect(parsed.ok).toBe(false);
   if (parsed.ok) return;
+  expect(parsed.error.message).toContain(BRIDGE_MAX_REQUEST_BYTES_SETTING);
+  expect(parsed.error.message).toMatch(/positive decimal integer/i);
+  expect(parsed.error.message).toMatch(/7464 to 536870887 bytes/i);
+  expect(parsed.error.message).toMatch(/default.*16777216 bytes/i);
+  expect(parsed.error.message).toMatch(/symbol.name/i);
+  expect(parsed.error.message).toMatch(/framing/i);
   expect(parsed.error.settings).toEqual([
     {
       setting: BRIDGE_MAX_REQUEST_BYTES_SETTING,
-      constraint: bridgeMaxRequestBytesConstraint,
+      constraint: parsed.error.message,
     },
   ]);
   expect(projectAnalysisError(parsed.error).code).toBe("configuration_invalid");
@@ -142,6 +135,16 @@ it.each([
   const doctor = parseEnvironment({
     [BRIDGE_MAX_REQUEST_BYTES_SETTING]: value,
   });
-  expect(startup.ok).toBe(false);
-  expect(doctor.ok).toBe(false);
+  if (startup.ok) throw new Error(`Startup accepted ${JSON.stringify(value)}`);
+  expect(startup.error._tag).toBe("ConfigurationError");
+  expect(startup.error.settings).toContainEqual({
+    setting: BRIDGE_MAX_REQUEST_BYTES_SETTING,
+    constraint: parsed.error.message,
+  });
+  if (doctor.ok) throw new Error(`Doctor accepted ${JSON.stringify(value)}`);
+  expect(doctor.error._tag).toBe("ConfigurationError");
+  expect(doctor.error.settings).toContainEqual({
+    setting: BRIDGE_MAX_REQUEST_BYTES_SETTING,
+    constraint: parsed.error.message,
+  });
 });

@@ -1,4 +1,5 @@
 import { absoluteCallerPath } from "../filesystem/callerPath.js";
+import { readFileHandleRange } from "../filesystem/readFileHandleRange.js";
 import { stat } from "node:fs/promises";
 import { basename, dirname, isAbsolute, resolve } from "node:path";
 import type { BinaryTarget } from "../domain/binaryTargetTypes.js";
@@ -35,7 +36,7 @@ import {
   withArtifactRegularFile,
 } from "../artifacts/ArtifactFileOperation.js";
 import type { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
-import { NATIVE_MACOS_PROVIDER_IDENTITY as IDENTITY } from "./NativeMacOSProviderMetadata.js";
+import { NATIVE_MACOS_PROVIDER_IDENTITY as IDENTITY } from "./NativeMacosProviderIdentity.js";
 import {
   MAX_NATIVE_PLIST_BYTES,
   NATIVE_PLIST_INPUT_ALLOWANCE,
@@ -283,7 +284,7 @@ const readPlistFile = async <Value>(
         input.selection.path,
         input.resources,
         input.signal,
-        read,
+        ({ handle }) => read(handle),
         "follow",
       ),
     );
@@ -356,17 +357,19 @@ export const plistSourceFormat = async (
   if (/\bJSON\b/iu.test(description)) return ok("json");
   if (!/\btext\b/iu.test(description)) return ok("unknown");
   return readPlistFile(input, async (file) => {
-    const head = Buffer.alloc(PLIST_MARKUP_PROBE_BYTES);
-    const { bytesRead } = await file.read(head, 0, head.length, 0);
+    const head = await readFileHandleRange(
+      file,
+      0,
+      PLIST_MARKUP_PROBE_BYTES,
+      () => assertArtifactReadActive(input.signal),
+    );
     const encoding =
       head[0] === 0xff && head[1] === 0xfe
         ? "utf-16le"
         : head[0] === 0xfe && head[1] === 0xff
           ? "utf-16be"
           : "utf-8";
-    const text = new TextDecoder(encoding)
-      .decode(head.subarray(0, bytesRead))
-      .trimStart();
+    const text = new TextDecoder(encoding).decode(head).trimStart();
     return /^<(?:[!?]|(?:plist|dict|array|string|integer|real|data|date|true|false)[\s/>])/u.test(
       text,
     )

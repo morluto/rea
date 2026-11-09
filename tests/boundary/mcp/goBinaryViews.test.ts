@@ -1,8 +1,6 @@
 import { readFile, unlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { expect } from "vitest";
-import { Ajv2020 } from "ajv/dist/2020.js";
-import type { AnySchema } from "ajv";
+import { afterAll, expect } from "vitest";
 import type { Client } from "@modelcontextprotocol/client";
 import {
   createEvidence,
@@ -20,11 +18,15 @@ import {
   createGoBinaryFixture,
   GO_MODULE_TEXT,
 } from "../../fixtures/go/image.js";
+import { createGoRodataStringFixture } from "../../fixtures/go/rodataStringImage.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 import { mcpTest } from "../../support/mcp/mcpFixture.js";
 
 type Operation = "inspect_go_binary" | "inspect_analysis_view";
+const schemaValidation = createMcpSchemaValidation();
+afterAll(() => schemaValidation.clear());
 const goViewTest = mcpTest.extend<{
   goViews: {
     client: Client;
@@ -53,9 +55,10 @@ const goViewTest = mcpTest.extend<{
     try {
       const client = await mcp.connect(
         createServer({ kind: "session", session }),
+        undefined,
+        schemaValidation,
       );
       const catalog = await client.listTools();
-      const ajv = new Ajv2020({ strict: false });
       const schemas = new Map(
         catalog.tools
           .filter(
@@ -64,31 +67,33 @@ const goViewTest = mcpTest.extend<{
               tool.name === "inspect_analysis_view",
           )
           .map((tool) => {
-            const output = tool.outputSchema as AnySchema;
-            expect(tool.outputSchema?.$schema).toBe(
+            const output = tool.outputSchema;
+            if (output === undefined)
+              throw new Error(`Missing ${tool.name} output schema`);
+            expect(output.$schema).toBe(
               "https://json-schema.org/draft/2020-12/schema",
             );
-            expect(ajv.validateSchema(output)).toBe(true);
-            return [
-              tool.name,
-              {
-                input: ajv.compile(tool.inputSchema),
-                output: ajv.compile(output),
-              },
-            ] as const;
+            expect(schemaValidation.assertions.validateSchema(output)).toBe(
+              true,
+            );
+            expect(
+              schemaValidation.assertions.validateSchema(tool.inputSchema),
+            ).toBe(true);
+            return [tool.name, tool] as const;
           }),
       );
       const call = async (name: Operation, input: Record<string, unknown>) => {
-        const schema = schemas.get(name)!;
-        expect(schema.input(input), JSON.stringify(schema.input.errors)).toBe(
-          true,
-        );
-        const reply = await client.callTool({ name, arguments: input });
-        expect(reply.isError, JSON.stringify(reply)).not.toBe(true);
+        const tool = schemas.get(name);
+        if (tool === undefined) throw new Error(`Missing ${name} tool`);
         expect(
-          schema.output(reply.structuredContent),
-          JSON.stringify(schema.output.errors),
+          schemaValidation.getValidator(tool.inputSchema)(input).valid,
+          `${name} rejected its valid input`,
         ).toBe(true);
+        const reply = await client.callTool(
+          { name, arguments: input },
+          { toolDefinition: tool },
+        );
+        expect(reply.isError, JSON.stringify(reply)).not.toBe(true);
         return parseEvidence(reply.structuredContent);
       };
       await use({ client, root, path, bytes: fixture.bytes, call });
@@ -183,7 +188,7 @@ goViewTest(
         },
       },
     });
-    expect(await readFile(path)).toEqual(bytes);
+    expect(Buffer.compare(await readFile(path), bytes)).toBe(0);
     await unlink(path);
     const source = {
       kind: "retained-evidence",
@@ -315,7 +320,10 @@ goViewTest(
         },
       },
     });
-    expect(invalid.isError).toBe(true);
+    expect(parseMcpToolError(invalid).error).toMatchObject({
+      code: "invalid_request",
+      category: "invalid_input",
+    });
   },
 );
 
@@ -378,5 +386,87 @@ mcpTest(
     } finally {
       await session.close();
     }
+  },
+);
+
+goViewTest(
+  "pages and filters retained Go string_literals through MCP views",
+  async ({ goViews: { client, root, call } }) => {
+    const path = join(root, "strings.elf");
+    const fixture = createGoRodataStringFixture({
+      format: "elf",
+      rodata: Buffer.from(
+        "ListResourceProvidersgenaihttps://example.invalid/v1",
+        "utf8",
+      ),
+      headers: [
+        { section: "data", offsetInSection: 0, ptr: 0x102000n, len: 21n },
+        { section: "data", offsetInSection: 16, ptr: 0x102015n, len: 5n },
+        { section: "data", offsetInSection: 32, ptr: 0x10201an, len: 26n },
+      ],
+    });
+    await writeFile(path, fixture.bytes);
+
+    const summary = goBinarySummaryViewResultSchema.parse(
+      (
+        await call("inspect_go_binary", {
+          path,
+          include_string_literals: true,
+          detail: "summary",
+        })
+      ).normalized_result,
+    );
+    expect(summary.source_coverage.string_literals).toBe("complete");
+    expect(summary.summary.string_literals).toMatchObject({
+      evidence_kind: "inferred",
+      available_count: 3,
+      discovered_count: 3,
+      truncated: false,
+    });
+
+    const source = {
+      kind: "retained-evidence",
+      evidence_id: summary.parent_evidence_id,
+    };
+    const page = goPage(
+      await call("inspect_analysis_view", {
+        source,
+        view: {
+          kind: "go",
+          collection: "string_literals",
+          contains: "genai",
+          fields: ["value", "location"],
+        },
+      }),
+    );
+    expect(page.page).toEqual({
+      collection: "string_literals",
+      rows: [
+        {
+          index: 1,
+          value: "genai",
+          location: { offset: fixture.rodataOffset + 21, bytes: 5 },
+        },
+      ],
+    });
+
+    const unrequestedSummary = goBinarySummaryViewResultSchema.parse(
+      (await call("inspect_go_binary", { path, detail: "summary" }))
+        .normalized_result,
+    );
+    expect(unrequestedSummary.source_coverage.string_literals).toBe(
+      "not-requested",
+    );
+    const refused = await client.callTool({
+      name: "inspect_analysis_view",
+      arguments: {
+        source: {
+          kind: "retained-evidence",
+          evidence_id: unrequestedSummary.parent_evidence_id,
+        },
+        view: { kind: "go", collection: "string_literals" },
+      },
+    });
+    expect(parseMcpToolError(refused).error.code).toBe("invalid_request");
   },
 );

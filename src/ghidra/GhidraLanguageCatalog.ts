@@ -82,7 +82,7 @@ const readLanguageDefinitionFile = (
     path,
     resources,
     signal,
-    async (file) => {
+    async ({ handle: file }) => {
       const bytes = await readBoundedFileBytes(file, MAX_LDEFS_BYTES, {
         signal,
         cancellationFailure: (reason) =>

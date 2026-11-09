@@ -8,6 +8,7 @@ import {
   open,
   readdir,
   realpath,
+  stat,
   type FileHandle,
 } from "node:fs/promises";
 import { basename, dirname, isAbsolute, join } from "node:path";
@@ -17,6 +18,7 @@ import { streamChunkToBuffer } from "./StreamBytes.js";
 
 import {
   ArtifactPathRegistry,
+  DestinationPathUnrepresentableFailure,
   destinationCaseCollision,
   normalizeArtifactPath,
 } from "./ArtifactPaths.js";
@@ -99,7 +101,7 @@ export class SafeOutputTree {
     options: { readonly acceptExistingEmpty?: boolean } = {},
   ): Promise<SafeOutputTree> {
     const { requested, canonicalOutput } =
-      await this.#resolveDestination(outputRoot);
+      await this.resolveDestination(outputRoot);
     let created = true;
     await mkdir(canonicalOutput, { mode: 0o700 }).catch((cause: unknown) => {
       if (!isAlreadyExists(cause)) throw cause;
@@ -107,10 +109,9 @@ export class SafeOutputTree {
         created = false;
         return;
       }
-      throw new SafeOutputTreeDestinationRefusal(
-        "Extraction output root already exists",
-        { cause },
-      );
+      throw new SafeOutputTreeDestinationRefusal("Output root already exists", {
+        cause,
+      });
     });
     const tree = new SafeOutputTree(canonicalOutput, platform, requested);
     tree.#createdRoot = created;
@@ -146,7 +147,7 @@ export class SafeOutputTree {
 
   /** Read-only early admission; create() still rechecks and acquires exclusively. */
   static async checkDestination(outputRoot: string): Promise<void> {
-    const { canonicalOutput } = await this.#resolveDestination(outputRoot);
+    const { canonicalOutput } = await this.resolveDestination(outputRoot);
     const existing = await lstat(canonicalOutput).catch((cause: unknown) => {
       if (cause instanceof Error && "code" in cause && cause.code === "ENOENT")
         return undefined;
@@ -156,15 +157,13 @@ export class SafeOutputTree {
         ["ENOTDIR", "EACCES", "EPERM"].includes(String(cause.code))
       )
         throw new SafeOutputTreeDestinationRefusal(
-          "Extraction output path is unavailable",
+          "Output path is unavailable",
           { cause },
         );
       throw cause;
     });
     if (existing !== undefined)
-      throw new SafeOutputTreeDestinationRefusal(
-        "Extraction output root already exists",
-      );
+      throw new SafeOutputTreeDestinationRefusal("Output root already exists");
     await access(
       dirname(canonicalOutput),
       constants.W_OK | constants.X_OK,
@@ -175,43 +174,51 @@ export class SafeOutputTree {
         ["EACCES", "EPERM", "ENOENT", "ENOTDIR"].includes(String(cause.code))
       )
         throw new SafeOutputTreeDestinationRefusal(
-          "Extraction output parent is not writable",
+          "Output parent is not writable",
           { cause },
         );
       throw cause;
     });
   }
 
-  static async #resolveDestination(outputRoot: string) {
+  /** Resolve an admissible parent without acquiring output; create rechecks it. */
+  static async resolveDestination(outputRoot: string) {
     if (!isAbsolute(outputRoot))
       throw new SafeOutputTreeDestinationRefusal(
-        "Extraction output root must be absolute",
+        "Output root must be absolute",
       );
     // Path syntax follows the host; `platform` selects only the name policy.
     const requested = absoluteCallerPath(outputRoot);
     const name = basename(requested);
     if (name === "." || name === "..")
-      throw new SafeOutputTreeDestinationRefusal(
-        "Invalid extraction output root",
-      );
-    const parent = await realpath(dirname(requested)).catch(
-      (cause: unknown) => {
-        if (
-          cause instanceof Error &&
-          "code" in cause &&
-          ["ENOENT", "ENOTDIR", "EACCES", "EPERM"].includes(String(cause.code))
-        )
-          throw new SafeOutputTreeDestinationRefusal(
-            "Extraction output parent is unavailable",
-            { cause },
-          );
-        throw new ArtifactReaderFailure(
-          "unavailable",
-          "Extraction output parent is unavailable",
+      throw new SafeOutputTreeDestinationRefusal("Invalid output directory");
+    let parent: string;
+    try {
+      const selectedParent = dirname(requested);
+      // Darwin realpath can collapse file/.. despite stat rejecting that
+      // traversal. Admit the selected directory before canonicalizing it.
+      if (!(await stat(selectedParent)).isDirectory())
+        throw new SafeOutputTreeDestinationRefusal(
+          "Output parent must be a directory",
+        );
+      parent = await realpath(selectedParent);
+    } catch (cause: unknown) {
+      if (cause instanceof SafeOutputTreeDestinationRefusal) throw cause;
+      if (
+        cause instanceof Error &&
+        "code" in cause &&
+        ["ENOENT", "ENOTDIR", "EACCES", "EPERM"].includes(String(cause.code))
+      )
+        throw new SafeOutputTreeDestinationRefusal(
+          "Output parent is unavailable",
           { cause },
         );
-      },
-    );
+      throw new ArtifactReaderFailure(
+        "unavailable",
+        "Output parent is unavailable",
+        { cause },
+      );
+    }
     const canonicalOutput = join(parent, name);
     return { requested, canonicalOutput };
   }
@@ -258,6 +265,8 @@ export class SafeOutputTree {
           constants.O_NOFOLLOW,
         0o600,
       ).catch(async (cause: unknown) => {
+        if (hasUnrepresentableName(cause))
+          throw new DestinationPathUnrepresentableFailure(path, { cause });
         if (isAlreadyExists(cause))
           await throwIfDestinationCaseCollision(parent.path, path, cause);
         throw new ArtifactReaderFailure(
@@ -400,7 +409,7 @@ export class SafeOutputTree {
     if (closeFailures.length > 0) {
       const closeFailure = new AggregateError(
         closeFailures,
-        "Extraction output directory handles could not be closed",
+        "Output directory handles could not be closed",
       );
       const cleanup = ArtifactReaderFailure.cleanupObservation(
         closeFailure,
@@ -469,14 +478,14 @@ export class SafeOutputTree {
     if (!complete)
       throw new ArtifactReaderFailure(
         "integrity",
-        `Extraction output cleanup could not be verified${removalFailure === undefined ? "" : `: ${removalFailure instanceof Error ? removalFailure.message : String(removalFailure)}`}`,
+        `Output cleanup could not be verified${removalFailure === undefined ? "" : `: ${removalFailure instanceof Error ? removalFailure.message : String(removalFailure)}`}`,
         {
           cause: removalFailure,
           cleanup: {
             reason:
               removalFailure instanceof Error
                 ? removalFailure.message
-                : "Extraction output root remains after rollback",
+                : "Output root remains after rollback",
             resources: [this.#outputRoot],
           },
         },
@@ -542,7 +551,7 @@ export class SafeOutputTree {
   ): Promise<readonly DirectoryLineageEntry[]> {
     const parts = relativePath.split("/");
     if (parts.pop() === undefined)
-      throw new ArtifactReaderFailure("path", "Invalid extraction path");
+      throw new ArtifactReaderFailure("path", "Invalid output path");
     let current = this.#outputRoot;
     let logicalParent = "";
     const lineage: DirectoryLineageEntry[] = [
@@ -560,6 +569,10 @@ export class SafeOutputTree {
       const creation = await mkdir(current, { mode: 0o700 }).then(
         () => ({ kind: "created" }) as const,
         (cause: unknown) => {
+          if (hasUnrepresentableName(cause))
+            throw new DestinationPathUnrepresentableFailure(logicalPath, {
+              cause,
+            });
           if (!isAlreadyExists(cause)) throw cause;
           return { kind: "existing", cause } as const;
         },
@@ -626,7 +639,7 @@ export class SafeOutputTree {
     if (this.#rootIdentity === undefined)
       throw new ArtifactReaderFailure(
         "path",
-        `Extraction output root identity is unknown: ${this.#outputRoot}`,
+        `Output root identity is unknown: ${this.#outputRoot}`,
       );
     return this.#rootIdentity;
   }
@@ -705,7 +718,7 @@ const writeAll = async (
     if (bytesWritten === 0)
       throw new ArtifactReaderFailure(
         "unavailable",
-        "Extraction output stopped accepting bytes",
+        "Output stopped accepting bytes",
       );
     offset += bytesWritten;
   }
@@ -766,3 +779,6 @@ const throwIfDestinationCaseCollision = async (
   );
   if (failure !== undefined) throw failure;
 };
+
+const hasUnrepresentableName = (cause: unknown): boolean =>
+  cause instanceof Error && "code" in cause && cause.code === "ENAMETOOLONG";

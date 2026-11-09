@@ -3,7 +3,10 @@ import { createHash } from "node:crypto";
 import { join } from "node:path";
 import { expect } from "vitest";
 import { toolContract } from "../../src/contracts/toolContracts.js";
-import { appleIpsBytes } from "../fixtures/binaryDiagnostics/appleIps.js";
+import {
+  appleIpsBytes,
+  appleIpsRosettaBytes,
+} from "../fixtures/binaryDiagnostics/appleIps.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 import { cliTest } from "../support/cli/cliFixture.js";
 
@@ -81,6 +84,113 @@ cliTest(
     expect(evidence.normalized_result.images[0]?.uuid).toBe(
       "AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA",
     );
+  },
+);
+
+cliTest(
+  "preserves empty IPS source text through CLI and stdio MCP",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-apple-ips-empty-");
+    const path = join(root, "empty.ips");
+    await writeFile(
+      path,
+      '{"bug_type":"309","":0}\n{"procName":"","osVersion":"","threads":[{"threadState":{"":0},"frames":[{"symbol":""}]}],"usedImages":[{"arch":"","uuid":"","path":""}],"":0}',
+    );
+    const cliReply = await cli.run({
+      arguments: ["inspect-apple-ips", path, "--json"],
+    });
+    expect(cliReply.exitCode, cliReply.stderr).toBe(0);
+    const call = await cli.sharedMcpCall?.();
+    if (call === undefined) throw new Error("Expected a stdio MCP session");
+    const mcpReply = await call("inspect_apple_ips", { path });
+    expect(mcpReply.isError, JSON.stringify(mcpReply.content)).not.toBe(true);
+    for (const reply of [cliReply.json, mcpReply.structuredContent]) {
+      const report =
+        toolContract("inspect_apple_ips").outputSchema.parse(
+          reply,
+        ).normalized_result;
+      expect(report.metadata.unlisted_keys).toEqual([""]);
+      expect(report.unlisted_body_keys).toEqual([""]);
+      expect(report.process.name).toBe("");
+      expect(report.process.os_version).toEqual({ form: "text", text: "" });
+      expect(report.threads[0]?.registers[0]?.name).toBe("");
+      expect(report.threads[0]?.frames[0]?.recorded_symbol).toBe("");
+      expect(report.images[0]).toMatchObject({
+        arch: "",
+        uuid: null,
+        uuid_unknown: true,
+        path: "",
+      });
+      expect(report.coverage.type_mismatches).toContainEqual(
+        expect.objectContaining({
+          path: "body.usedImages[0].uuid",
+          recorded_value: "",
+        }),
+      );
+      expect(report.classification.status).toBe("unclassified");
+    }
+  },
+);
+
+cliTest(
+  "keeps producer-shaped Rosetta registers through CLI and stdio MCP",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-apple-ips-rosetta-");
+    const path = join(root, "translated.ips");
+    await writeFile(path, appleIpsRosettaBytes());
+    const cliReply = await cli.run({
+      arguments: ["inspect-apple-ips", path, "--json"],
+    });
+    expect(cliReply.exitCode, cliReply.stderr).toBe(0);
+    const call = await cli.sharedMcpCall?.();
+    if (call === undefined) throw new Error("Expected a stdio MCP session");
+    const mcpReply = await call("inspect_apple_ips", { path });
+    expect(mcpReply.isError, JSON.stringify(mcpReply.content)).not.toBe(true);
+    for (const reply of [cliReply.json, mcpReply.structuredContent]) {
+      const report =
+        toolContract("inspect_apple_ips").outputSchema.parse(
+          reply,
+        ).normalized_result;
+      expect(report.threads[0]?.state_flavor).toBe("x86_THREAD_STATE");
+      expect(report.threads[0]?.registers.map(({ name }) => name)).toEqual([
+        "rbp",
+        "r12",
+        "rosetta.tmp2",
+        "rosetta.tmp1",
+        "rosetta.tmp0",
+        "rbx",
+      ]);
+      expect(report.threads[0]?.registers[2]?.value.decimal).toBe(
+        "140706223703876",
+      );
+      expect(report.coverage).toMatchObject({
+        status: "complete",
+        registers: 6,
+        type_mismatches: [],
+      });
+    }
+
+    const malformedPath = join(root, "translated-malformed.ips");
+    await writeFile(malformedPath, appleIpsRosettaBytes("invalid"));
+    const malformedReply = await cli.run({
+      arguments: ["inspect-apple-ips", malformedPath, "--json"],
+    });
+    expect(malformedReply.exitCode, malformedReply.stderr).toBe(0);
+    const malformed = toolContract("inspect_apple_ips").outputSchema.parse(
+      malformedReply.json,
+    ).normalized_result;
+    expect(malformed.coverage).toMatchObject({
+      status: "partial",
+      registers: 5,
+      type_mismatches: [
+        {
+          path: "body.threads[0].threadState.rosetta.tmp1.value",
+          expected: "integer",
+          observed: "string",
+        },
+      ],
+    });
+    expect(malformed.threads[0]?.registers.at(-1)?.name).toBe("rbx");
   },
 );
 

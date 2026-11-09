@@ -3,10 +3,7 @@ import {
   semanticPropertyPointer,
 } from "../../domain/javascript/javascriptSemanticSlots.js";
 import { digestCanonicalValue } from "../../domain/canonicalDigest.js";
-import type {
-  JavaScriptSemanticBinding,
-  JavaScriptSemanticIr,
-} from "../../domain/javascript/javascriptSemanticIr.js";
+import type { JavaScriptSemanticBinding } from "../../domain/javascript/javascriptSemanticIr.js";
 import type {
   JavaScriptSemanticProperty,
   JavaScriptSemanticValue,
@@ -17,7 +14,6 @@ import {
   addSemanticGraphUnknown,
 } from "./JavaScriptSemanticGraphConstruction.js";
 import type { SemanticFlowProjectionContext } from "./JavaScriptSemanticGraphFlowProjection.js";
-import { foldedAssignedContainerValues } from "./JavaScriptSemanticGraphAssignedValues.js";
 import {
   observedSemanticEvidence,
   unknownSemanticEvidence,
@@ -27,7 +23,6 @@ import {
 export const projectSemanticValues = (
   context: SemanticFlowProjectionContext,
 ): void => {
-  projectAssignedContainerValues(context);
   for (const binding of context.ir.bindings) {
     const bindingNode = context.bindingNodes.get(binding.bindingId);
     if (bindingNode === undefined) continue;
@@ -38,95 +33,151 @@ export const projectSemanticValues = (
       target: bindingNode,
       path: [],
     });
+    if (binding.initializerValue !== undefined)
+      projectInitializerCandidates(
+        context,
+        binding,
+        binding.initializerValue,
+        binding.value,
+        [],
+      );
   }
 };
 
-/**
- * Model unconditional top-level `X.p = { container }` like an initializer
- * for that property slot. Multiple top-level writers to one path keep only
- * the last assignment's value; conditional or in-function writes already
- * carry candidate influence edges and stay value-unknown.
- */
-/** Nested container value covering `path` inside the assigned leaf value. */
-const objectSlotValue = (
-  path: readonly string[],
-  fullPath: readonly string[],
-  value: JavaScriptSemanticValue,
-): JavaScriptSemanticValue => {
-  let current = value;
-  for (let depth = path.length; depth < fullPath.length; depth += 1) {
-    const container = semanticContainer(current);
-    if (container === null)
-      return { status: "unknown", reason: "not-a-container" };
-    const next = container.slots.find((slot) => slot.name === fullPath[depth]);
-    if (next === undefined)
-      return { status: "unknown", reason: "assigned-value-partial-coverage" };
-    current = next.value;
-  }
-  return current;
-};
-
-const projectAssignedContainerValues = (
+/** Preserve possible initializer flow when later effects make a slot unknown. */
+const projectInitializerCandidates = (
   context: SemanticFlowProjectionContext,
+  binding: JavaScriptSemanticBinding,
+  initial: JavaScriptSemanticValue,
+  current: JavaScriptSemanticValue,
+  path: readonly string[],
 ): void => {
-  for (const folded of foldedAssignedContainerValues(context)) {
-    const binding = context.ir.bindings.find(
-      (candidate) => candidate.bindingId === folded.receiverBindingId,
-    );
-    const bindingNode = context.bindingNodes.get(folded.receiverBindingId);
-    if (binding === undefined || bindingNode === undefined) continue;
-    // Materialize each ancestor slot so the container slot itself reports
-    // object/array status; projecting from the binding alone would leave the
-    // property slot unknown and stop read resolution at the container.
-    let parent: ReturnType<typeof semanticPropertySlot> | null = null;
-    for (let depth = 1; depth <= folded.propertyPath.length; depth += 1) {
-      const path = folded.propertyPath.slice(0, depth);
-      const slotName = path[path.length - 1];
-      if (slotName === undefined) break;
-      const slot = semanticPropertySlot(context, binding.bindingId, path, {
-        name: slotName,
-        presence: "present",
-        value:
-          depth === folded.propertyPath.length
-            ? folded.value
-            : nestedAssignedValue(path, folded.propertyPath, folded.value),
-      });
-      addSemanticGraphRelation(context.state, {
-        source: parent ?? bindingNode,
+  const initialContainer = semanticContainer(initial);
+  const currentContainer = semanticContainer(current);
+  if (initialContainer === null || currentContainer === null) return;
+  const currentByName = new Map<string, JavaScriptSemanticProperty>();
+  for (const property of currentContainer.slots)
+    if (!currentByName.has(property.name))
+      currentByName.set(property.name, property);
+  for (const initialProperty of initialContainer.slots) {
+    const currentProperty = currentByName.get(initialProperty.name);
+    if (
+      initialProperty.presence !== "present" ||
+      currentProperty === undefined ||
+      currentProperty.presence === "absent"
+    )
+      continue;
+    const propertyPath = [...path, initialProperty.name];
+    if (currentProperty.value.status === "unknown") {
+      const slot = semanticPropertySlot(
+        context,
+        binding.bindingId,
+        propertyPath,
+        currentProperty,
+      );
+      projectUnknownInitializer({
+        context,
+        binding,
+        initial: initialProperty.value,
+        unknown: currentProperty.value,
         target: slot,
-        relation: "writes-property",
-        resolution: "resolved",
+        path: propertyPath,
       });
-      if (depth === folded.propertyPath.length)
-        projectValue({
-          context,
-          binding,
-          value: folded.value,
-          target: slot,
-          path,
-        });
-      parent = slot;
+    } else {
+      projectInitializerCandidates(
+        context,
+        binding,
+        initialProperty.value,
+        currentProperty.value,
+        propertyPath,
+      );
     }
   }
 };
 
-/** Nested container value covering `path` inside the assigned leaf value. */
-const nestedAssignedValue = (
-  path: readonly string[],
-  fullPath: readonly string[],
-  value: JavaScriptSemanticValue,
-): JavaScriptSemanticValue => {
-  let current = value;
-  for (let depth = path.length; depth < fullPath.length; depth += 1) {
-    const container = semanticContainer(current);
-    if (container === null)
-      return { status: "unknown", reason: "not-a-container" };
-    const next = container.slots.find((slot) => slot.name === fullPath[depth]);
-    if (next === undefined)
-      return { status: "unknown", reason: "assigned-value-partial-coverage" };
-    current = next.value;
+/** Retain initializer descendants as candidates without asserting the unknown receiver still exists. */
+const projectUnknownInitializer = ({
+  context,
+  binding,
+  initial,
+  unknown,
+  target,
+  path,
+}: {
+  context: SemanticFlowProjectionContext;
+  binding: JavaScriptSemanticBinding;
+  initial: JavaScriptSemanticValue;
+  unknown: Extract<
+    JavaScriptSemanticValue,
+    { status: "unknown" | "ambiguous" | "cycle" }
+  >;
+  target: ReturnType<typeof semanticPropertySlot>;
+  path: readonly string[];
+}): void => {
+  if (target === null) return;
+  const values =
+    initial.status === "literal"
+      ? [initial.value]
+      : initial.status === "union"
+        ? initial.values
+        : [];
+  for (const value of values) {
+    const literal = addLiteralNode(
+      context,
+      binding,
+      value,
+      `property:${semanticPropertyPointer(path)}`,
+    );
+    addSemanticGraphRelation(context.state, {
+      source: literal,
+      target,
+      relation: "defines",
+      resolution: "candidate",
+    });
+    if (literal !== null)
+      addSemanticGraphUnknown(context.state, {
+        node_id: literal.node_id,
+        family: "data-flow",
+        relation_kinds: ["defines"],
+        reason: "unknown-value",
+        detail: `The initializer may no longer determine this property: ${unknown.reason}`,
+        candidate_node_ids: [target.node_id],
+        evidence: unknownSemanticEvidence(
+          context.file,
+          binding.definitions[0]?.location ?? null,
+        ),
+      });
   }
-  return current;
+  const container = semanticContainer(initial);
+  if (container === null) return;
+  for (const property of container.slots) {
+    if (property.presence !== "present") continue;
+    const propertyPath = [...path, property.name];
+    const slot = semanticPropertySlot(
+      context,
+      binding.bindingId,
+      propertyPath,
+      {
+        name: property.name,
+        presence: "unknown-coverage",
+        value: unknown,
+      },
+    );
+    addSemanticGraphRelation(context.state, {
+      source: target,
+      target: slot,
+      relation: "writes-property",
+      resolution: "candidate",
+    });
+    projectUnknownInitializer({
+      context,
+      binding,
+      initial: property.value,
+      unknown,
+      target: slot,
+      path: propertyPath,
+    });
+  }
 };
 
 interface ValueProjectionInput {

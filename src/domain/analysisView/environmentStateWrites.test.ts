@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 
 import type { JsonValue } from "../jsonValue.js";
+import { webNetworkCaptureSchema } from "../webNetworkCapture.js";
+import { EnvironmentStateAccumulator } from "./EnvironmentStateAccumulator.js";
 import {
   timedCaptureEvidence,
   type TimedCaptureRow,
@@ -49,6 +51,131 @@ const ISO_SECONDS = {
 
 const stateOf = (rows: readonly TimedCaptureRow[]): StateView =>
   environmentStateViewOf(timedCaptureEvidence(rows));
+
+it("retains learned clock rules but withholds their serving when the global clock is unknown", () => {
+  const baseline = stateOf(BOOK_ROWS);
+  const unknown = stateOf([
+    ...BOOK_ROWS,
+    ["GET", "/api/health", { ready: true }, 200, undefined, -1],
+  ]);
+  expect(baseline.write_clock).not.toBeNull();
+  expect(unknown.write_clock).toBeNull();
+  const generatesClock = (plan: StateView["writes"][number]) =>
+    plan.rules.some((rule) =>
+      ["clock", "held-clock", "nested-clock"].includes(rule.rule),
+    );
+  const clockPlans = baseline.writes.filter(
+    (plan) => plan.served && generatesClock(plan),
+  );
+  expect(clockPlans.length).toBeGreaterThan(0);
+  for (const plan of clockPlans)
+    expect(
+      unknown.writes.find((candidate) => candidate.tool === plan.tool),
+    ).toEqual({
+      ...plan,
+      served: false,
+      reason: "unknown-clock",
+    });
+  const independent = baseline.writes.filter(
+    (plan) => plan.served && !generatesClock(plan),
+  );
+  expect(independent.length).toBeGreaterThan(0);
+  for (const plan of independent)
+    expect(
+      unknown.writes.find((candidate) => candidate.tool === plan.tool),
+    ).toEqual(plan);
+});
+
+it.each(["delete", "mismatched-query"])(
+  "does not parse unused request content for %s under a bounded state allowance",
+  (kind) => {
+    const payload = { unused: "x".repeat(96 * 1024) };
+    const changed = renamedBook(FIRST_BOOK, "Renamed", 3);
+    const rows: TimedCaptureRow[] =
+      kind === "delete"
+        ? [
+            ...BOOK_INIT_ROWS,
+            ["DELETE", "/api/books/2", "", 204, payload],
+            ["GET", "/api/books/2", BOOK_NOT_FOUND, 404],
+          ]
+        : [
+            ...BOOK_INIT_ROWS,
+            [
+              "PATCH",
+              "/api/books/1?mode=one",
+              changed,
+              200,
+              { name: "Renamed" },
+            ],
+            ["GET", "/api/books/1", changed],
+            ["PATCH", "/api/books/2?mode=two", SECOND_BOOK, 200, payload],
+          ];
+    const capture = webNetworkCaptureSchema.parse(
+      timedCaptureEvidence(rows).normalized_result,
+    );
+    const accumulator = new EnvironmentStateAccumulator(512 * 1024);
+    for (const record of capture.records) {
+      const added = accumulator.add(record);
+      if (!added.ok) throw added.error;
+    }
+    const state = accumulator.finishState();
+    expect(state).toMatchObject({ ok: true });
+    if (!state.ok) throw state.error;
+    expect(
+      state.value.writes.find(
+        (write) => write.effect === (kind === "delete" ? "delete" : "update"),
+      ),
+    ).toMatchObject({ served: true });
+  },
+);
+
+describe("structured values an earlier update kept", () => {
+  it.each([false, true])(
+    "refuses a later derived rule that changes an earlier kept value (array: %s)",
+    (array) => {
+      const content = (text: string): JsonValue =>
+        array ? [{ text }] : { children: [{ text }] };
+      const entry = (id: number, edited: boolean) => ({
+        id,
+        title: edited ? "Edited" : "Original",
+        content: content(edited ? "Edited body text." : "Original body text."),
+      });
+      const initial: TimedCaptureRow[] = [
+        ["GET", "/api/posts", [entry(1, false), entry(2, false)]],
+        ["GET", "/api/posts/1", entry(1, false)],
+        ["GET", "/api/posts/2", entry(2, false)],
+      ];
+      const edit = (id: number, changed: boolean): TimedCaptureRow[] => {
+        const after = { ...entry(id, changed), title: "Edited" };
+        return [
+          [
+            "PATCH",
+            `/api/posts/${id}`,
+            after,
+            200,
+            { title: "Edited", html: "<p>Edited body text.</p>" },
+          ],
+          ["GET", `/api/posts/${id}`, after],
+        ];
+      };
+      const plan = (rows: TimedCaptureRow[]) =>
+        stateOf([...initial, ...rows]).writes.find(
+          (write) => write.tool === "patch_posts_by_id",
+        );
+      expect(plan([...edit(1, true), ...edit(2, true)])).toMatchObject({
+        served: true,
+      });
+      expect(plan([...edit(1, false), ...edit(2, true)])).toMatchObject({
+        served: false,
+        reason: "unexplained-change",
+      });
+      expect(plan([...edit(1, true), ...edit(2, false)])).toMatchObject({
+        served: false,
+        reason: "unexplained-change",
+      });
+    },
+  );
+});
 
 const planOf = (state: StateView, tool: string) => {
   const plan = state.writes.find((candidate) => candidate.tool === tool);
@@ -636,7 +763,6 @@ describe("unserved write plans", () => {
       stateOf(sending()),
       stateOf(sending([{ name: "Third Book" }])),
       recorded("application/x-www-form-urlencoded", "name=Third+Book"),
-      recorded("application/json", '{"__proto__":{},"name":"Third Book"}'),
       recorded(
         "application/json",
         '{"name":"Third Book","copies":12345678901234567890}',
@@ -1938,3 +2064,597 @@ describe("field selections the gate reads as serving answers them", () => {
     });
   });
 });
+
+/** A create and an update whose bodies and responses wrap the book in a one-element array. */
+const ENVELOPED_ROWS: readonly TimedCaptureRow[] = [
+  ...BOOK_INIT_ROWS,
+  [
+    "POST",
+    "/api/books",
+    { books: [THIRD_BOOK] },
+    201,
+    { books: [{ name: "Third Book" }] },
+  ],
+  ["GET", "/api/books/3", THIRD_BOOK],
+  [
+    "PATCH",
+    "/api/books/1",
+    { books: [RENAMED_BOOK] },
+    200,
+    { books: [{ name: "Renamed Book" }] },
+  ],
+  ["GET", "/api/books/1", RENAMED_BOOK],
+];
+
+/** A card whose edit info an update restamps: its response and its read-back name instants milliseconds apart. */
+const cardEdit = (milliseconds: number) => ({
+  at: new Date(Date.parse(bookClock(3)) + milliseconds).toISOString(),
+  by: "rea",
+});
+const FIRST_CARD = {
+  id: 1,
+  name: "First Card",
+  edit: { at: "2026-10-01T09:00:00.000Z", by: "rea" },
+};
+const SECOND_CARD = { ...FIRST_CARD, id: 2, name: "Second Card" };
+
+describe("values an application stamps", () => {
+  it("serves a create and an update whose bodies wrap the book in a one-element array, as the capture sent them", () => {
+    const state = stateOf(ENVELOPED_ROWS);
+    expect(planOf(state, "post_books")).toMatchObject({
+      served: true,
+      body: { accepted: ["name"], envelope: "books" },
+    });
+    expect(planOf(state, "patch_books_by_id")).toMatchObject({
+      served: true,
+      body: { accepted: ["name"], envelope: "books" },
+    });
+  });
+
+  it("serves an update that restamps a nested clock, storing the instant its read-back shows", () => {
+    const edited = { ...FIRST_CARD, name: "First Card (edited)" };
+    const state = stateOf([
+      ["GET", "/api/cards", [FIRST_CARD, SECOND_CARD]],
+      ["GET", "/api/cards/1", FIRST_CARD],
+      ["GET", "/api/cards/2", SECOND_CARD],
+      [
+        "PUT",
+        "/api/cards/1",
+        { ...edited, edit: cardEdit(64) },
+        200,
+        { name: "First Card (edited)" },
+      ],
+      ["GET", "/api/cards/1", { ...edited, edit: cardEdit(53) }],
+    ]);
+    expect(planOf(state, "put_cards_by_id")).toMatchObject({
+      served: true,
+      rules: expect.arrayContaining([
+        expect.objectContaining({
+          field: "edit",
+          rule: "nested-clock",
+          members: ["at"],
+        }),
+      ]),
+    });
+  });
+
+  it("serves creates whose read-backs store a nested clock at another instant than their responses spell", () => {
+    // Each response stamps the edit in milliseconds; its read-back stores microseconds a few milliseconds earlier.
+    const card = (id: number, seconds: number, at: string) => ({
+      id,
+      name: `Card ${String(id)}`,
+      edit: { at, by: "rea" },
+    });
+    const answered = (seconds: number) =>
+      new Date(Date.parse(bookClock(seconds)) + 30).toISOString();
+    const stored = (seconds: number, micro: string) =>
+      `${bookClock(seconds).slice(0, -1)}.${micro}Z`;
+    const state = stateOf([
+      ["GET", "/api/cards", [FIRST_CARD, SECOND_CARD]],
+      ["GET", "/api/cards/1", FIRST_CARD],
+      ["GET", "/api/cards/2", SECOND_CARD],
+      ["POST", "/api/cards", card(3, 3, answered(3)), 201, { name: "Card 3" }],
+      ["GET", "/api/cards/3", card(3, 3, stored(3, "020123"))],
+      ["POST", "/api/cards", card(4, 5, answered(5)), 201, { name: "Card 4" }],
+      ["GET", "/api/cards/4", card(4, 5, stored(5, "021456"))],
+    ]);
+    expect(planOf(state, "post_cards")).toMatchObject({
+      served: true,
+      checked_record_ordinals: [4, 6],
+      rules: expect.arrayContaining([
+        expect.objectContaining({ field: "edit", rule: "nested-clock" }),
+      ]),
+    });
+  });
+});
+
+describe("nested clocks another recorded call kept", () => {
+  const CARD_INIT_ROWS: TimedCaptureRow[] = [
+    ["GET", "/api/cards", [FIRST_CARD, SECOND_CARD]],
+    ["GET", "/api/cards/1", FIRST_CARD],
+    ["GET", "/api/cards/2", SECOND_CARD],
+  ];
+  /** The first card renamed, with its edit stamped 64 ms into the given exchange's second, or kept as it was. */
+  const card = (name: string, stampedAt?: number) => ({
+    ...FIRST_CARD,
+    name,
+    edit:
+      stampedAt === undefined
+        ? FIRST_CARD.edit
+        : {
+            at: new Date(Date.parse(bookClock(stampedAt)) + 64).toISOString(),
+            by: "rea",
+          },
+  });
+  const put = (written: ReturnType<typeof card>): TimedCaptureRow[] => [
+    ["PUT", "/api/cards/1", written, 200, { name: written.name }],
+    ["GET", "/api/cards/1", written],
+  ];
+  const verdictOf = (rows: readonly TimedCaptureRow[]) =>
+    planOf(stateOf([...CARD_INIT_ROWS, ...rows]), "put_cards_by_id");
+
+  it("serves no update whose nested clock another recorded call kept, before or after the call that stamped it", () => {
+    expect(
+      verdictOf([...put(card("Edited", 3)), ...put(card("Renamed", 5))]),
+    ).toMatchObject({ served: true });
+    const stamped = card("Edited", 3);
+    expect(
+      verdictOf([...put(stamped), ...put({ ...stamped, name: "Renamed" })]),
+    ).toMatchObject({ served: false, reason: "unexplained-change" });
+    expect(
+      verdictOf([...put(card("Edited")), ...put(card("Renamed", 5))]),
+    ).toMatchObject({ served: false, reason: "unexplained-change" });
+  });
+});
+
+/** A book with tags, as an application that keeps tags as a set lists them. */
+const tagged = (entry: Book, tags: string[]): Book => ({ ...entry, tags });
+const TAGGED_INIT_ROWS: TimedCaptureRow[] = [
+  [
+    "GET",
+    "/api/books",
+    [tagged(FIRST_BOOK, ["alpha", "beta"]), tagged(SECOND_BOOK, ["gamma"])],
+  ],
+  ["GET", "/api/books/1", tagged(FIRST_BOOK, ["alpha", "beta"])],
+  ["GET", "/api/books/2", tagged(SECOND_BOOK, ["gamma"])],
+  [
+    "PATCH",
+    "/api/books/2",
+    tagged(SECOND_BOOK, ["zeta", "delta"]),
+    200,
+    { tags: ["zeta", "delta"] },
+  ],
+];
+
+describe("array fields a view lists sorted", () => {
+  it("serves an update whose read-back lists the written tags sorted, and every view of the type sorts them", () => {
+    const state = stateOf([
+      ...TAGGED_INIT_ROWS,
+      ["GET", "/api/books/2", tagged(SECOND_BOOK, ["delta", "zeta"])],
+    ]);
+    expect(planOf(state, "patch_books_by_id")).toMatchObject({
+      served: true,
+      checked_record_ordinals: [4],
+    });
+    for (const tool of ["get_books_by_id", "get_books"])
+      expect(state.views.find((view) => view.tool === tool)).toMatchObject({
+        sorted_arrays: ["tags"],
+      });
+  });
+
+  it("learns no sorting from a read after another the gate counted listed the field unsorted", () => {
+    const state = stateOf([
+      ...TAGGED_INIT_ROWS,
+      ["GET", "/api/books/2", tagged(SECOND_BOOK, ["zeta", "delta"])],
+      [
+        "PATCH",
+        "/api/books/1",
+        tagged(FIRST_BOOK, ["omega", "beta"]),
+        200,
+        { tags: ["omega", "beta"] },
+      ],
+      ["GET", "/api/books/1", tagged(FIRST_BOOK, ["beta", "omega"])],
+    ]);
+    expect(planOf(state, "patch_books_by_id")).toMatchObject({
+      served: false,
+      reason: "contradicted",
+    });
+    expect(
+      state.views.find((view) => view.tool === "get_books_by_id"),
+    ).not.toHaveProperty("sorted_arrays");
+  });
+
+  it("learns no sorting from a read whose order fits the values held first, then the new ones as written", () => {
+    // `alpha` was held before the update and `zeta` was not: a store ordering tags by when it made them lists them so too.
+    const state = stateOf([
+      ...TAGGED_INIT_ROWS.slice(0, 3),
+      [
+        "PATCH",
+        "/api/books/2",
+        tagged(SECOND_BOOK, ["zeta", "alpha"]),
+        200,
+        { tags: ["zeta", "alpha"] },
+      ],
+      ["GET", "/api/books/2", tagged(SECOND_BOOK, ["alpha", "zeta"])],
+    ]);
+    expect(planOf(state, "patch_books_by_id")).toMatchObject({
+      served: false,
+      reason: "contradicted",
+    });
+    expect(
+      state.views.find((view) => view.tool === "get_books_by_id"),
+    ).not.toHaveProperty("sorted_arrays");
+  });
+
+  it("keeps the written order a read-back shows, though every initial array was sorted", () => {
+    const state = stateOf([
+      ...TAGGED_INIT_ROWS,
+      ["GET", "/api/books/2", tagged(SECOND_BOOK, ["zeta", "delta"])],
+    ]);
+    expect(planOf(state, "patch_books_by_id")).toMatchObject({
+      served: true,
+      checked_record_ordinals: [4],
+    });
+    expect(
+      state.views.find((view) => view.tool === "get_books_by_id"),
+    ).not.toHaveProperty("sorted_arrays");
+  });
+});
+
+/** A book on a shelf, in a collection per shelf whose ids repeat across shelves. */
+const shelved = (tags: string[]) => ({ id: 1, name: "Shelved Book", tags });
+
+describe("evidence a learned sort keeps answering to", () => {
+  it("drops a sort a view learned once a later counted read lists the field as written", () => {
+    const state = stateOf([
+      ...TAGGED_INIT_ROWS,
+      ["GET", "/api/books/2", tagged(SECOND_BOOK, ["delta", "zeta"])],
+      [
+        "GET",
+        "/api/books",
+        [
+          tagged(FIRST_BOOK, ["alpha", "beta"]),
+          tagged(SECOND_BOOK, ["zeta", "delta"]),
+        ],
+      ],
+    ]);
+    expect(planOf(state, "patch_books_by_id")).toMatchObject({
+      served: true,
+      checked_record_ordinals: [4],
+    });
+    expect(
+      state.views.find((view) => view.tool === "get_books_by_id"),
+    ).toMatchObject({ sorted_arrays: ["tags"] });
+    expect(
+      state.views.find((view) => view.tool === "get_books"),
+    ).not.toHaveProperty("sorted_arrays");
+  });
+
+  it("learns no sorting from another collection's entity under the read's id", () => {
+    // Shelf 1's read-back fits `alpha`, held before the update, then `zeta` as written; shelf 2's book shares its id.
+    const state = stateOf([
+      ["GET", "/api/shelves/1/books", [shelved(["alpha", "beta"])]],
+      ["GET", "/api/shelves/1/books/1", shelved(["alpha", "beta"])],
+      ["GET", "/api/shelves/2/books", [shelved(["beta", "gamma"])]],
+      ["GET", "/api/shelves/2/books/1", shelved(["beta", "gamma"])],
+      [
+        "PATCH",
+        "/api/shelves/1/books/1",
+        shelved(["zeta", "alpha"]),
+        200,
+        { tags: ["zeta", "alpha"] },
+      ],
+      ["GET", "/api/shelves/1/books/1", shelved(["alpha", "zeta"])],
+    ]);
+    expect(state.writes).toEqual([
+      expect.objectContaining({ served: false, reason: "contradicted" }),
+    ]);
+    for (const view of state.views)
+      expect(view).not.toHaveProperty("sorted_arrays");
+  });
+});
+
+describe("initial order", () => {
+  it("orders a collection as a whole list line that applies no sort lists it, after an item read and filtered or sorted lines", () => {
+    const alpha = book(1, "Alpha", "2026-10-01T09:00:00Z");
+    const charlie = book(2, "Charlie", "2026-10-01T10:00:00Z");
+    const bravo = book(3, "Bravo", "2026-10-01T11:00:00Z");
+    const state = stateOf([
+      ["GET", "/api/books/2", charlie],
+      ["GET", "/api/books?name=Alpha", [alpha]],
+      ["GET", "/api/books?ordering=name", [alpha, bravo, charlie]],
+      ["GET", "/api/books", [bravo, alpha, charlie]],
+      ["GET", "/api/books/1", alpha],
+      ["GET", "/api/books/3", bravo],
+    ]);
+    expect(
+      state.entities
+        .filter((entity) => entity.type === "/api/books")
+        .map((entity) => entity.id),
+    ).toEqual(["3", "1", "2"]);
+  });
+});
+
+describe("insert rules the recorded order cannot settle", () => {
+  const listed = (id: string, name: string, created: string) => ({
+    id,
+    name,
+    created_at: created,
+  });
+  const rowsFor = (
+    members: { id: string; name: string; created_at: string }[],
+    created: { id: string; name: string; created_at: string },
+  ): TimedCaptureRow[] => [
+    ["GET", "/api/items", members],
+    ...members.map((member): TimedCaptureRow => [
+      "GET",
+      `/api/items/${member.id}`,
+      member,
+    ]),
+    ["POST", "/api/items", created, 201, { name: created.name }],
+    ["GET", `/api/items/${created.id}`, created],
+  ];
+
+  it("places a create last, not by identity, when its identities are random UUIDs", () => {
+    const at = "2026-10-01T09:00:00Z";
+    const plan = planOf(
+      stateOf(
+        rowsFor(
+          [
+            listed("1c0e8a2b-7f3d-4e9a-b1c2-d3e4f5a6b7c8", "Delta", at),
+            listed("5a6b7c8d-9e0f-4a1b-8c2d-3e4f5a6b7c8d", "Alpha", at),
+            listed("9b2f1c3e-0d4a-4b6e-8f1a-2c3d4e5f6a7b", "Charlie", at),
+          ],
+          listed("e5d6e7f8-1a2b-4c3d-9e4f-5a6b7c8d9e0f", "Echo", bookClock(4)),
+        ),
+      ),
+      "post_items",
+    );
+    expect(plan).toMatchObject({ served: true, insert: { rule: "last" } });
+  });
+
+  it("keeps sorting by an identity a creation clock follows", () => {
+    const plan = planOf(
+      environmentStateViewOf(
+        timedCaptureEvidence(
+          rowsFor(
+            [
+              listed(
+                "6ad47b491023b50001087124",
+                "Alpha",
+                "2026-10-01T09:00:00Z",
+              ),
+              listed(
+                "6ad47b491023b50001087125",
+                "Bravo",
+                "2026-10-01T10:00:00Z",
+              ),
+            ],
+            listed("6ad47b491023b50001087130", "Charlie", bookClock(3)),
+          ),
+        ),
+        ["opaque-token"],
+      ),
+      "post_items",
+    );
+    expect(plan).toMatchObject({
+      served: true,
+      insert: { rule: "sorted", field: "id", direction: "ascending" },
+    });
+  });
+
+  it("places a create last when the orders the list admits put it in different places", () => {
+    const plan = planOf(
+      stateOf(
+        rowsFor(
+          [
+            listed("2", "Alpha", "2026-10-01T10:00:00Z"),
+            listed("1", "Delta", "2026-10-01T09:00:00Z"),
+          ],
+          listed("3", "Bravo", bookClock(3)),
+        ),
+      ),
+      "post_items",
+    );
+    expect(plan).toMatchObject({ served: true, insert: { rule: "last" } });
+  });
+});
+
+/** A task whose modified clock is stored in whole seconds. */
+const task = (id: number, name: string, modifiedAt: string) => ({
+  id,
+  name,
+  modifiedAt,
+});
+const OLD_CLOCK = "2026-10-01T09:00:00Z";
+
+describe("clocks an update may stamp in its own second", () => {
+  const sameSecond: TimedCaptureRow[] = [
+    [
+      "GET",
+      "/api/tasks",
+      [task(1, "First", bookClock(3)), task(2, "Second", OLD_CLOCK)],
+    ],
+    ["GET", "/api/tasks/1", task(1, "First", bookClock(3))],
+    ["GET", "/api/tasks/2", task(2, "Second", OLD_CLOCK)],
+    [
+      "PATCH",
+      "/api/tasks/1",
+      task(1, "Renamed", bookClock(3)),
+      200,
+      { name: "Renamed" },
+    ],
+    ["GET", "/api/tasks/1", task(1, "Renamed", bookClock(3))],
+  ];
+
+  it("confirms no update that left an unsent clock as it was in the second it ran", () => {
+    expect(planOf(stateOf(sameSecond), "patch_tasks_by_id")).toMatchObject({
+      served: false,
+      reason: "unconfirmed",
+    });
+  });
+
+  it("serves the update once another call shows it stamping the clock", () => {
+    const plan = planOf(
+      stateOf([
+        ...sameSecond,
+        [
+          "PATCH",
+          "/api/tasks/2",
+          task(2, "Second (renamed)", bookClock(5)),
+          200,
+          { name: "Second (renamed)" },
+        ],
+        ["GET", "/api/tasks/2", task(2, "Second (renamed)", bookClock(5))],
+      ]),
+      "patch_tasks_by_id",
+    );
+    expect(plan).toMatchObject({
+      served: true,
+      checked_record_ordinals: [4, 6],
+    });
+    expect(plan.rules).toContainEqual(
+      expect.objectContaining({ field: "modifiedAt", rule: "clock" }),
+    );
+  });
+});
+
+/** A book with an `archived` flag, which an item action sets. */
+const withArchived = (entity: Book, archived: boolean): Book => ({
+  ...entity,
+  archived,
+});
+
+/** A post whose `status` goes with whether it has a publication clock. */
+const post = (id: number, status: string, publishedAt: string | null) => ({
+  id,
+  title: `Post ${id}`,
+  status,
+  published_at: publishedAt,
+});
+
+describe("recorded calls serving would refuse", () => {
+  it("serves no action that only a call sent with another query showed setting its field", () => {
+    const archived = withArchived(FIRST_BOOK, true);
+    // Serving pins toggle=true, so the call sent with toggle=false shows nothing of what serving does.
+    const plan = planOf(
+      stateOf([
+        [
+          "GET",
+          "/api/books",
+          [withArchived(FIRST_BOOK, false), withArchived(SECOND_BOOK, false)],
+        ],
+        ["GET", "/api/books/1", withArchived(FIRST_BOOK, false)],
+        ["GET", "/api/books/2", withArchived(SECOND_BOOK, false)],
+        ["POST", "/api/books/1/archive?toggle=true", archived],
+        ["GET", "/api/books/1", archived],
+        ["POST", "/api/books/1/archive?toggle=false", archived],
+        ["GET", "/api/books/1", archived],
+      ]),
+      "post_books_archive_by_id",
+    );
+    expect(plan).toMatchObject({ served: false, reason: "unconfirmed" });
+  });
+
+  it("confirms no document write by a call sent with another query than serving pins", () => {
+    // The dry run changed nothing; the read after the real call shows only what that call did.
+    const plan = planOf(
+      stateOf([
+        ["GET", "/api/settings", { theme: "light", lang: "en" }],
+        [
+          "PATCH",
+          "/api/settings?dry_run=true",
+          { theme: "dark", lang: "en" },
+          200,
+          { theme: "dark" },
+        ],
+        [
+          "PATCH",
+          "/api/settings?dry_run=false",
+          { theme: "dark", lang: "en" },
+          200,
+          { theme: "dark" },
+        ],
+        ["GET", "/api/settings", { theme: "dark", lang: "en" }],
+      ]),
+      "patch_settings",
+    );
+    expect(plan).toMatchObject({ served: false, checked_record_ordinals: [] });
+  });
+
+  it("confirms no delete by a call sent with another query than serving pins", () => {
+    const plan = planOf(
+      stateOf([
+        ...BOOK_INIT_ROWS,
+        ["DELETE", "/api/books/2?dry_run=true", "", 204],
+        ["DELETE", "/api/books/1?dry_run=false", "", 204],
+        ["GET", "/api/books/1", BOOK_NOT_FOUND, 404],
+      ]),
+      "delete_books_by_id",
+    );
+    expect(plan).toMatchObject({ served: false, checked_record_ordinals: [] });
+  });
+
+  it("keeps a create's dependent state pinned when another call does not prove its result", () => {
+    const draft = post(3, "draft", null);
+    const sent = { title: "Post 3", status: "draft" };
+    const others: TimedCaptureRow[] = [
+      ["POST", "/api/posts", { detail: "Invalid." }, 422, { status: "x" }],
+      ["POST", "/api/posts", "", 204, { title: "Post 4", status: "published" }],
+      [
+        "POST",
+        "/api/posts?import=true",
+        post(4, "published", bookClock(6)),
+        201,
+        { title: "Post 4", status: "published" },
+      ],
+    ];
+    for (const other of others) {
+      const plan = planOf(
+        stateOf([
+          [
+            "GET",
+            "/api/posts",
+            [
+              post(1, "published", "2026-10-01T09:00:00Z"),
+              post(2, "published", "2026-10-01T10:00:00Z"),
+            ],
+          ],
+          ["GET", "/api/posts/1", post(1, "published", "2026-10-01T09:00:00Z")],
+          ["GET", "/api/posts/2", post(2, "published", "2026-10-01T10:00:00Z")],
+          ["POST", "/api/posts", draft, 201, sent],
+          ["GET", "/api/posts/3", draft],
+          other,
+        ]),
+        "post_posts",
+      );
+      expect(plan.served, other[1]).toBe(true);
+      expect(plan.body?.fixed, other[1]).toEqual([
+        { member: "status", sent: "draft" },
+      ]);
+    }
+  });
+});
+
+it.each(["__proto__", "constructor"])(
+  "learns a confirmed update of an own %s field",
+  (field) => {
+    const initial = {
+      id: 1,
+      name: "One",
+      ...Object.fromEntries([[field, { label: "old" }]]),
+    };
+    const body = Object.fromEntries([[field, { label: "stored" }]]);
+    const updated = { ...initial, ...body };
+    const state = stateOf([
+      ["GET", "/api/items", [initial, { id: 2, name: "Two" }]],
+      ["GET", "/api/items/1", initial],
+      ["PATCH", "/api/items/1", updated, 200, body],
+      ["GET", "/api/items/1", updated],
+    ]);
+    expect(planOf(state, "patch_items_by_id")).toMatchObject({
+      served: true,
+      rules: expect.arrayContaining([{ rule: "echo", field }]),
+    });
+  },
+);

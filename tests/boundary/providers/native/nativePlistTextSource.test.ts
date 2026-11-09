@@ -76,7 +76,7 @@ it.for<TextSourceCase>([
       reason: "unrepresentable",
     },
     limitations: [
-      expect.stringContaining("1 XML scalar value(s) could not be established"),
+      expect.stringMatching(/1 XML scalar.*could not be established/iu),
     ],
     conversions: [],
   },
@@ -212,5 +212,5 @@ it.for<TextSourceCase>([
       (item) => item.format === "json" && item.exitCode === 1,
     ),
   );
-  expect(await readFile(path)).toEqual(fixture.bytes);
+  expect(Buffer.compare(await readFile(path), fixture.bytes)).toBe(0);
 });

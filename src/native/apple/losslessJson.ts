@@ -254,7 +254,7 @@ class Parser {
           throw new LosslessJsonFailure(
             `Expected a JSON object key at offset ${String(this.position)}`,
           );
-        this.skipString();
+        this.parseString();
         this.skipWhitespace();
         this.expect(":");
         this.skipValue(depth + 1);
@@ -295,7 +295,7 @@ class Parser {
       }
     }
     if (ch === '"') {
-      this.skipString();
+      this.parseString();
       return;
     }
     if (ch === "-" || (ch !== undefined && isDigit(ch.charCodeAt(0)))) {
@@ -309,13 +309,40 @@ class Parser {
   private parseString(): string {
     const start = this.position;
     const escaped = this.skipString();
-    if (!escaped) return this.text.slice(start + 1, this.position - 1);
-    // A decoded JSON string cannot contain more code units than its literal.
-    // The input's byte allowance bounds this allocation, including dense escapes.
-    const decoded: unknown = JSON.parse(this.text.slice(start, this.position));
+    const decoded: unknown = escaped
+      ? // A decoded JSON string cannot contain more code units than its literal.
+        // The input's byte allowance bounds this allocation, including dense escapes.
+        JSON.parse(this.text.slice(start, this.position))
+      : this.text.slice(start + 1, this.position - 1);
     if (typeof decoded !== "string")
       throw new LosslessJsonFailure("Expected a JSON string");
-    return decoded;
+    return this.requirePairedSurrogates(decoded);
+  }
+
+  /**
+   * JSON admits \uXXXX escapes for unpaired surrogates, but the decoded text is
+   * not valid Unicode. Evidence carrying one would report malformed text as
+   * complete, so the parser refuses the string like any other malformed input.
+   * A high surrogate followed by its low surrogate escape stays valid text.
+   */
+  private requirePairedSurrogates(value: string): string {
+    for (let index = 0; index < value.length; index += 1) {
+      const unit = value.charCodeAt(index);
+      if (unit >= 0xd800 && unit <= 0xdbff) {
+        const next = index + 1 < value.length ? value.charCodeAt(index + 1) : 0;
+        if (next < 0xdc00 || next > 0xdfff)
+          throw new LosslessJsonFailure(
+            "JSON string contains an unpaired surrogate",
+          );
+        index += 1;
+        continue;
+      }
+      if (unit >= 0xdc00 && unit <= 0xdfff)
+        throw new LosslessJsonFailure(
+          "JSON string contains an unpaired surrogate",
+        );
+    }
+    return value;
   }
 
   private skipString(): boolean {

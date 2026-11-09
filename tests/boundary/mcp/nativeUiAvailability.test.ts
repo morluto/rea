@@ -11,6 +11,7 @@ import type {
   AnalysisClient,
   AnalysisProvider,
   CapabilityDescriptor,
+  AnalysisOperation,
 } from "../../../src/application/AnalysisProvider.js";
 import { createAnalysisExecution } from "../../../src/application/AnalysisProvider.js";
 import type { AnalysisError } from "../../../src/domain/analysisErrorBase.js";
@@ -27,7 +28,6 @@ import { nativeInvestigationTraceSchema } from "../../../src/domain/native/nativ
 import { thinMach } from "../../../src/domain/binaryTarget.fixture.js";
 import type { JsonValue } from "../../../src/domain/jsonValue.js";
 import { err, ok, type Result } from "../../../src/domain/result.js";
-import type { AnalysisOperation } from "../../../src/application/AnalysisProvider.js";
 import { toolContract } from "../../../src/contracts/toolContracts.js";
 import { expandToolAvailability } from "../../../src/contracts/toolOutputSchemaPrimitives.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";

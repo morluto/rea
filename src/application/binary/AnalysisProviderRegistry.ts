@@ -1,4 +1,4 @@
-import { ProviderInspectionScope } from "../../providers/ProviderInspectionScope.js";
+import { ProviderInspectionScope } from "../ProviderInspectionScope.js";
 import { AnalysisCleanupLease } from "../../artifacts/AnalysisCleanupLease.js";
 import { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
 import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
@@ -11,8 +11,9 @@ import {
   analysisProviderIdSchema,
   analysisProviderSelectorSchema,
   type AnalysisProviderSelector,
-} from "../../contracts/providerSelection.js";
+} from "../../domain/providerSelection.js";
 import type { AnalysisProfileCommitment } from "../../domain/analysisProfile.js";
+import type { ProviderReleaseVerification } from "../../domain/providerReleaseVerification.js";
 import type { BinaryTarget } from "../../domain/binaryTargetTypes.js";
 import {
   AnalysisCancelledError,
@@ -35,17 +36,26 @@ import type {
   AnalysisProviderCandidate,
   AnalysisProviderBoundClientFactory,
   AnalysisProviderInspectionOptions,
+  AnalysisProviderReadinessSnapshot,
   CapabilityDescriptor,
   ProviderAvailability,
   ProviderIdentity,
   ProviderTargetSupport,
+  RetainedResourceScope,
 } from "../AnalysisProvider.js";
 import {
   evaluateAnalysisProviderCandidate,
   type AnalysisProviderCandidateEvaluation,
 } from "./AnalysisProviderEvaluation.js";
+import { withCandidateRejections } from "./AnalysisProviderCandidateDiagnostics.js";
 import { compareUnicodeCodePoints } from "../../domain/unicodeCodePointOrder.js";
-import type { RetainedResourceScope } from "../AnalysisProvider.js";
+import { ownedProcessPrerequisiteAvailability } from "../ownedProcessAvailability.js";
+
+/** Where a selected provider's choice came from; never a priority or fallback. */
+export type AnalysisProviderSelectionSource =
+  | "request"
+  | "environment"
+  | "auto-single-candidate";
 
 /** Deterministic discovery truth for one configured deep provider. */
 export interface AnalysisProviderCandidateStatus {
@@ -69,14 +79,21 @@ export interface AnalysisProviderCandidateStatus {
       };
   readonly selected: boolean;
   readonly capabilities: readonly CapabilityDescriptor[];
+  /** How this candidate became selected; null when it was not selected. */
+  readonly selectionSource: AnalysisProviderSelectionSource | null;
+  /** Stable availability and target-support reasons that excluded this candidate. */
+  readonly rejections: readonly ProviderSelectionRejection[];
 }
 
 /** One immutable deep-provider binding selected before client startup. */
 export interface AnalysisProviderBinding {
   readonly provider: AnalysisProviderCandidate;
   readonly identity: ProviderIdentity & { readonly version: string };
-  readonly selectionSource: "request" | "environment" | "auto-single-candidate";
+  readonly selectionSource: AnalysisProviderSelectionSource;
   readonly profile: AnalysisProfileCommitment;
+  readonly releaseVerification?: ProviderReleaseVerification;
+
+  readonly refreshAfterRetirement?: true;
   readonly createClient?: AnalysisProviderBoundClientFactory;
   /** The provider's capabilities, attributed to its resolved identity. */
   readonly capabilities: readonly CapabilityDescriptor[];
@@ -249,16 +266,15 @@ export class AnalysisProviderRegistry {
     const distinct = [...new Set(failures)];
     if (distinct.length === 0) return ok(null);
     if (distinct.length === 1) return err(distinct[0]!);
-    return err(
-      new ProviderCleanupError(
-        "rea",
-        [...new Set(distinct.flatMap((failure) => failure.cleanupResources))],
-        { reason: distinct.map((failure) => failure.message).join("; ") },
-        { cause: new AggregateError(distinct) },
-      ).bindCleanupDependencies(
-        distinct.filter((failure) => failure.cleanupIncomplete),
-      ),
+    const failure = new ProviderCleanupError(
+      "rea",
+      [...new Set(distinct.flatMap((failure) => failure.cleanupResources))],
+      { reason: distinct.map((failure) => failure.message).join("; ") },
+      { cause: new AggregateError(distinct) },
     );
+    if (distinct.every((failure) => failure.cleanupIncomplete))
+      failure.bindCleanupDependencies(distinct);
+    return err(failure);
   }
 
   /** List the unique deep-operation declarations without probing candidates. */
@@ -304,6 +320,8 @@ export class AnalysisProviderRegistry {
         capabilities: provider
           .capabilities()
           .map((capability) => structuredClone(capability)),
+        selectionSource: null,
+        rejections: [],
       }));
     const scope = new ProviderInspectionScope();
     const discovery = new SharedStartupAttempt<
@@ -597,7 +615,10 @@ export class AnalysisProviderRegistry {
     );
     if (!evaluation.ok) return evaluation;
     const evaluated = evaluation.value;
-    const statuses = replaceCandidate(baseline, evaluated.status);
+    const statuses = replaceCandidate(
+      baseline,
+      withCandidateRejections(evaluated.status),
+    );
     const refusal = evaluated.profileError;
     // A selected provider refusing the target is a selection outcome that keeps the
     // refusal's reason, recovery and evidence; unconfirmed cleanup stays with the refusal.
@@ -688,7 +709,9 @@ export class AnalysisProviderRegistry {
           signal,
         ),
       );
-    const statuses = evaluations.map(({ status }) => status);
+    const statuses = evaluations.map(({ status }) =>
+      withCandidateRejections(status),
+    );
     const usable = evaluations.filter(
       (
         evaluation,
@@ -733,21 +756,32 @@ const candidateStatus = async (
   const { signal, scope, resourceScope, operation } = context;
   if (signal.aborted)
     throw new AnalysisCancelledError(operation, { cause: signal.reason });
-  const readiness =
-    provider.inspectReadinessSnapshot === undefined
-      ? {
-          availability: await provider.inspectAvailability({
+  let readiness: AnalysisProviderReadinessSnapshot;
+  try {
+    readiness =
+      provider.inspectReadinessSnapshot === undefined
+        ? {
+            availability: await provider.inspectAvailability({
+              signal,
+              scope,
+              resourceScope,
+            }),
+            capabilities: provider.capabilities(),
+          }
+        : await provider.inspectReadinessSnapshot({
             signal,
             scope,
             resourceScope,
-          }),
-          capabilities: provider.capabilities(),
-        }
-      : await provider.inspectReadinessSnapshot({
-          signal,
-          scope,
-          resourceScope,
-        });
+          });
+  } catch (cause: unknown) {
+    // Status reports the gap per provider; execution keeps the prerequisite's owner.
+    const availability =
+      operation === "binary_session"
+        ? ownedProcessPrerequisiteAvailability(cause)
+        : undefined;
+    if (availability === undefined) throw cause;
+    readiness = { availability, capabilities: provider.capabilities() };
+  }
   return await projectCandidateStatus(provider, target, readiness, {
     signal,
     scope,
@@ -764,7 +798,7 @@ const projectCandidateStatus = async (
   },
   options: AnalysisProviderInspectionOptions,
 ): Promise<AnalysisProviderCandidateStatus> => {
-  return {
+  return withCandidateRejections({
     provider: structuredClone(provider.identity()),
     availability: cloneAvailability(readiness.availability),
     targetSupport:
@@ -785,7 +819,9 @@ const projectCandidateStatus = async (
     capabilities: readiness.capabilities.map((capability) =>
       structuredClone(capability),
     ),
-  };
+    selectionSource: null,
+    rejections: [],
+  });
 };
 
 const signalIsAborted = (signal: AbortSignal | undefined): boolean =>
@@ -793,7 +829,7 @@ const signalIsAborted = (signal: AbortSignal | undefined): boolean =>
 
 const selectedResult = (
   requestedProviderId: string,
-  source: AnalysisProviderBinding["selectionSource"],
+  source: AnalysisProviderSelectionSource,
   evaluated: AnalysisProviderCandidateEvaluation & {
     readonly profile: AnalysisProfileCommitment;
     readonly createClient?: AnalysisProviderBoundClientFactory;
@@ -805,12 +841,13 @@ const selectedResult = (
     ...capability,
     provider: structuredClone(identity),
   }));
-  const selectedStatus = {
+  const selectedStatus = withCandidateRejections({
     ...evaluated.status,
     provider: structuredClone(identity),
     selected: true,
     capabilities,
-  } satisfies AnalysisProviderCandidateStatus;
+    selectionSource: source,
+  });
   return {
     requestedProviderId,
     binding: {
@@ -818,6 +855,15 @@ const selectedResult = (
       identity: structuredClone(identity),
       selectionSource: source,
       profile: structuredClone(evaluated.profile),
+      ...(evaluated.releaseVerification === undefined
+        ? {}
+        : {
+            releaseVerification: structuredClone(evaluated.releaseVerification),
+          }),
+
+      ...(evaluated.refreshAfterRetirement === undefined
+        ? {}
+        : { refreshAfterRetirement: evaluated.refreshAfterRetirement }),
       ...(evaluated.createClient === undefined
         ? {}
         : { createClient: evaluated.createClient }),
@@ -859,29 +905,15 @@ const selectionError = (
     reason,
     requestedProviderId,
     candidateIds: candidateChoices.map(({ provider }) => provider.id),
-    rejections: candidateRejections(
+    rejections: selectionRejections(
       options.rejectionCandidates ?? candidateChoices,
     ),
   });
 
-const candidateRejections = (
+const selectionRejections = (
   candidates: readonly AnalysisProviderCandidateStatus[],
 ): readonly ProviderSelectionRejection[] =>
-  candidates.flatMap((candidate) =>
-    [
-      ...(candidate.availability.status === "unavailable"
-        ? [candidate.availability]
-        : []),
-      ...(candidate.targetSupport.status === "unsupported"
-        ? [candidate.targetSupport]
-        : []),
-    ].map((rejection) => ({
-      providerId: candidate.provider.id,
-      code: rejection.code,
-      reason: rejection.reason,
-      diagnostics: structuredClone(rejection.diagnostics),
-    })),
-  );
+  candidates.flatMap(({ rejections }) => rejections);
 
 const cloneAvailability = (
   availability: AnalysisProviderCandidateStatus["availability"],

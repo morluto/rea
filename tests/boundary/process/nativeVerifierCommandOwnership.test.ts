@@ -211,7 +211,7 @@ it.skipIf(process.platform === "win32")(
       expect(report.failure.stderr).toBe("native verifier diagnostics\n");
       expect(report.labExists).toBe(true);
       expect(report.artifactAtCompletion).toBe(artifact.toString("base64"));
-      expect(await readFile(artifactPath)).toEqual(artifact);
+      expect(Buffer.compare(await readFile(artifactPath), artifact)).toBe(0);
       expect(report.liveAtCompletion).toEqual([]);
     } finally {
       await writeFile(

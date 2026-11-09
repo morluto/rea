@@ -98,7 +98,15 @@ export class WebNetworkCaptureService {
         );
       }
       if (partialFailure !== undefined) {
-        loaded.error.partialObservation = undefined;
+        const rejected = loaded.error.partialObservation;
+        for (
+          let owner: AnalysisError | undefined = loaded.error;
+          owner !== undefined;
+          owner = owner.cleanupPrimary
+        ) {
+          if (owner.partialObservation === rejected)
+            owner.partialObservation = undefined;
+        }
         partialFailure.retainSecondaryFailure(loaded.error);
         return failure(
           loaded.error.cleanupIncomplete
@@ -155,16 +163,25 @@ export class WebNetworkCaptureService {
     const selected =
       input.record_ordinals ?? value.records.map(({ ordinal }) => ordinal);
     const records = [];
-    for (const ordinal of selected) {
+    for (const [index, ordinal] of selected.entries()) {
       const record = safeValue.records[ordinal];
+      // A selection past the capture's records is a caller range fault.
       if (record === undefined)
         return err(
           new AnalysisInputError(OPERATION, undefined, [
-            {
-              path: ["record_ordinals"],
-              reason: "invalid_format",
-              message: `Producer ordinal ${ordinal} is outside the retained capture (${value.total_records} records).`,
-            },
+            value.total_records === 0
+              ? {
+                  path: ["record_ordinals", index],
+                  reason: "invalid_value",
+                  message: "The selected capture contains no records.",
+                }
+              : {
+                  path: ["record_ordinals", index],
+                  reason: "out_of_range",
+                  minimum: 0,
+                  maximum: value.total_records - 1,
+                  message: `Producer ordinal ${ordinal} is outside the retained capture (${value.total_records} records).`,
+                },
           ]),
         );
       records.push({

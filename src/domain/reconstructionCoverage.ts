@@ -20,8 +20,7 @@ import {
   recommendedReconstructionProbes,
   type ReconstructionEvaluationContext,
 } from "./reconstructionCoverageEvaluation.js";
-import { digestSchema } from "./../domain/digests.js";
-import { prefixedDigestSchema } from "./../domain/digests.js";
+import { digestSchema, prefixedDigestSchema } from "./../domain/digests.js";
 import { digestCanonicalValue } from "./canonicalDigest.js";
 import {
   offsetDateTimeInstantFromEpochMilliseconds,
@@ -235,7 +234,10 @@ export const readReconstructionCoverageData = (
         })),
       ),
     );
-  const bundle = readEvidenceBundle(parsed.data.evidence_bundle);
+  const bundle = readEvidenceBundle(parsed.data.evidence_bundle, {
+    operation: "evaluate_reconstruction_coverage",
+    path: [...path, "evidence_bundle"],
+  });
   if (!bundle.ok) return bundle;
   const coverage = { ...parsed.data, evidence_bundle: bundle.value };
   try {

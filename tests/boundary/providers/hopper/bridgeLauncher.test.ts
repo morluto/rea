@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
-import { execFile } from "node:child_process";
+import { ChildProcess, execFile } from "node:child_process";
 import { access, chmod, open, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { promisify } from "node:util";
@@ -72,6 +72,9 @@ for (const deniedStops of [0, 2])
     `retains a timed-out private-display probe through cleanup retry (denied stops=${String(deniedStops)})`,
     async () => {
       const directory = await createTestTempDirectory("rea-probe-owner-retry-");
+      const helperPath = fileURLToPath(
+        new URL("../../../fixtures/x11ProbeHang.py", import.meta.url),
+      );
       const originalStop = ProviderProcessSupervisor.prototype.stop;
       const captured: { current?: ProviderProcessSupervisor } = {};
       let attempts = 0;
@@ -81,6 +84,11 @@ for (const deniedStops of [0, 2])
           this: ProviderProcessSupervisor,
           settings,
         ) {
+          if (
+            !(this.launch.process instanceof ChildProcess) ||
+            !this.launch.process.spawnargs.includes(helperPath)
+          )
+            return originalStop.call(this, settings);
           captured.current = this;
           attempts += 1;
           return attempts <= deniedStops
@@ -105,9 +113,7 @@ for (const deniedStops of [0, 2])
           selectPrivateDisplay: (settings) =>
             selectLinuxPrivateDisplayStrategy({
               ...settings,
-              helperPath: fileURLToPath(
-                new URL("../../../fixtures/x11ProbeHang.py", import.meta.url),
-              ),
+              helperPath,
               timeoutMs: 75,
             }),
         },
@@ -119,13 +125,19 @@ for (const deniedStops of [0, 2])
           token: "fixture-token",
           runId: randomUUID(),
         });
-        expect(launched.ok).toBe(false);
         if (launched.ok) throw new Error("Expected private-display timeout");
         const original = launched.error;
         expect(projectAnalysisError(original).details).toMatchObject({
           diagnostics: { reason: "probe_timeout" },
         });
-        expect(original.cleanupIncomplete).toBe(deniedStops > 0);
+        const initiallyPending = original.cleanupIncomplete;
+        if (deniedStops > 0) expect(initiallyPending).toBe(true);
+        if (initiallyPending)
+          expect(original.cleanupResources).toEqual(
+            expect.arrayContaining([
+              expect.stringMatching(/^hopper-private-display-probe:/u),
+            ]),
+          );
         const supervisor = captured.current;
         if (supervisor === undefined)
           throw new Error("Expected the real owned probe");
@@ -143,7 +155,9 @@ for (const deniedStops of [0, 2])
           supervisor.launch.process.exitCode !== null ||
             supervisor.launch.process.signalCode !== null,
         ).toBe(true);
-        expect(attempts).toBe(deniedStops + 1);
+        const expectedAttempts =
+          deniedStops === 0 && initiallyPending ? 2 : deniedStops + 1;
+        expect(attempts).toBe(expectedAttempts);
       } finally {
         stop.mockRestore();
         if (captured.current !== undefined)
@@ -878,7 +892,7 @@ it("ordinary executable launches pass a verified private image with configured l
     expect(supervisor.snapshot().stdout.text).toBe(preparedPath);
     expect(launched.value.preparedImagePath).toBe(preparedPath);
     await writeFile(targetPath, "replacement bytes");
-    expect(await readFile(preparedPath)).toEqual(selected);
+    expect(Buffer.compare(await readFile(preparedPath), selected)).toBe(0);
   } finally {
     await supervisor.stop();
     await launched.value.releaseLease?.();

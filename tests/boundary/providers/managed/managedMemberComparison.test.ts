@@ -14,13 +14,13 @@ import {
 import { parseBinaryTarget } from "../../../../src/application/BinaryTargetResolver.js";
 import { managedMemberComparisonResultSchema } from "../../../../src/domain/managed/managedMemberComparison.js";
 import { readManagedMemberEvidence } from "../../../../src/domain/managed/managedMemberComparisonMatch.js";
+import { comparisonLimitations } from "../../../../src/domain/managed/managedMemberComparisonCoverage.js";
 import { createEvidence } from "../../../../src/domain/evidence.js";
 import { projectAnalysisError } from "../../../../src/domain/analysisErrorProjection.js";
-import { jsonValueSchema } from "../../../../src/domain/jsonValue.js";
-import { compareManagedMembersInputSchema } from "../../../../src/domain/managed/managedMemberComparison.js";
+
 import { inspectManagedMembersBytes } from "../../../../src/dotnet/ManagedMemberInspector.js";
-import { managedPeFixtureTarget } from "../../../../src/dotnet/ManagedPe.fixture.js";
 import {
+  managedPeFixtureTarget,
   buildManagedNestedTypeFixture,
   buildManagedPeFixture,
 } from "../../../../src/dotnet/ManagedPe.fixture.js";
@@ -29,7 +29,62 @@ import {
   readManagedSnapshot,
 } from "../../../../src/dotnet/ManagedSnapshot.js";
 import * as boundedFileBytes from "../../../../src/process/BoundedFileBytes.js";
+import { primaryAnalysisError } from "../../../../src/domain/analysisErrorBase.js";
 import { buildManagedMemberCapacityFixture } from "../../../fixtures/managedMemberCapacity.js";
+
+it("preserves a selected comparison source digest contradiction through failed close and retry", async () => {
+  const root = await createTestTempDirectory(
+    "rea-managed-comparison-identity-close-",
+  );
+  const leftPath = join(root, "left.dll");
+  const rightPath = join(root, "right.dll");
+  const bytes = buildManagedPeFixture();
+  await Promise.all([writeFile(leftPath, bytes), writeFile(rightPath, bytes)]);
+  const resources = new ArtifactResourceScope();
+  let blocked = false;
+  const nativeClose = OwnedFileHandle.prototype.close;
+  const close = vi
+    .spyOn(OwnedFileHandle.prototype, "close")
+    .mockImplementation(async function (this: OwnedFileHandle) {
+      if (blocked) throw new Error("comparison descriptor close denied");
+      await nativeClose.call(this);
+    });
+  try {
+    const result = await compareManagedMemberPaths(
+      { leftPath, rightPath },
+      {
+        readSnapshot: async (path, operation, options) => {
+          const changed = Buffer.from(bytes);
+          changed[changed.length - 1] =
+            changed.readUInt8(changed.length - 1) ^ 1;
+          await writeFile(path, changed);
+          blocked = true;
+          return readManagedSnapshot(path, operation, options);
+        },
+      },
+      resources,
+    );
+    if (result.ok)
+      throw new Error("Expected changed selected comparison source");
+    expect(primaryAnalysisError(result.error)._tag).toBe(
+      "AnalysisArtifactChangedError",
+    );
+    expect(result.error.partialObservation).toMatchObject({
+      kind: "file-snapshot-hash",
+      path: leftPath,
+      bytes: bytes.length,
+    });
+    expect(result.error.cleanupIncomplete).toBe(true);
+    await expect(resources.close()).rejects.toBeDefined();
+    blocked = false;
+    await resources.close();
+    expect(result.error.cleanupIncomplete).toBe(false);
+  } finally {
+    blocked = false;
+    await resources.close();
+    close.mockRestore();
+  }
+});
 
 it("keeps missing members unknown when the opposite inspection retains only types", async () => {
   const directory = await createTestTempDirectory(
@@ -37,11 +92,27 @@ it("keeps missing members unknown when the opposite inspection retains only type
   );
   const completePath = join(directory, "complete.dll");
   const limitedPath = join(directory, "limited.dll");
-  await writeFile(
-    completePath,
-    buildManagedPeFixture({ additionalEmptyTypes: 2 }),
+  const completeBytes = buildManagedPeFixture({ additionalEmptyTypes: 2 });
+  const limitedBytes = buildManagedMemberCapacityFixture();
+  await writeFile(completePath, completeBytes);
+  await writeFile(limitedPath, limitedBytes);
+  const complete = inspectManagedMembersBytes(
+    completeBytes,
+    managedPeFixtureTarget(completeBytes, completePath),
+    { userStrings: false },
   );
-  await writeFile(limitedPath, buildManagedMemberCapacityFixture());
+  const limited = inspectManagedMembersBytes(
+    limitedBytes,
+    managedPeFixtureTarget(limitedBytes, limitedPath),
+    { userStrings: false },
+  );
+  expect(limited.coverage.issues).toContainEqual(
+    expect.objectContaining({
+      code: "resource-limit",
+      scope: "metadata.representation",
+      offset: expect.any(Number),
+    }),
+  );
   for (const [leftPath, rightPath] of [
     [completePath, limitedPath],
     [limitedPath, completePath],
@@ -59,6 +130,30 @@ it("keeps missing members unknown when the opposite inspection retains only type
     expect(report.fields).toHaveLength(1);
     expect(report.methods[0]?.status).toBe("unknown");
     expect(report.fields[0]?.status).toBe("unknown");
+    const sources =
+      leftPath === completePath
+        ? ([complete, limited] as const)
+        : ([limited, complete] as const);
+    for (const [side, source] of [
+      [report.left, sources[0]],
+      [report.right, sources[1]],
+    ] as const)
+      expect(side.resource_limits).toEqual(
+        source.coverage.issues.filter(({ code }) => code === "resource-limit"),
+      );
+    expect(report.limitations).toEqual(comparisonLimitations(...sources));
+    const limitedSide = leftPath === limitedPath ? "left" : "right";
+    expect(report.limitations).toContainEqual(
+      expect.stringMatching(
+        new RegExp(
+          `${limitedSide}.*metadata\\.representation.*do not establish absence`,
+          "i",
+        ),
+      ),
+    );
+    expect(report.limitations).toContainEqual(
+      expect.stringMatching(/smaller selection.*type_names.*--type/i),
+    );
   }
 });
 
@@ -139,17 +234,15 @@ const compare = (
       {
         operation: "inspect_managed_members",
         parameters: {},
-        result: jsonValueSchema.parse(change?.(inspection) ?? inspection),
+        result: change?.(inspection) ?? inspection,
         confidence: "observed",
         authority: "shipped-artifact",
       },
     );
-  const result = executeManagedMemberComparison(
-    compareManagedMembersInputSchema.parse({
-      left: observe(left, edit.left),
-      right: observe(right, edit.right),
-    }),
-  );
+  const result = executeManagedMemberComparison({
+    left: observe(left, edit.left),
+    right: observe(right, edit.right),
+  });
   if (!result.ok) throw result.error;
   return managedMemberComparisonResultSchema.parse(
     result.value.evidence.normalized_result,
@@ -220,6 +313,19 @@ const pairs = (comparison: ReturnType<typeof compare>) => {
 };
 const original = nestedInspection();
 const swapped = nestedInspection({ swapEnclosing: true });
+
+it("preserves unrecorded resource-limit facts in historical comparison manifests", () => {
+  const current = compare(original, swapped);
+  expect(current.left.resource_limits).toEqual([]);
+  expect(current.right.resource_limits).toEqual([]);
+  const historical = structuredClone(current);
+  delete historical.left.resource_limits;
+  delete historical.right.resource_limits;
+  const parsed = managedMemberComparisonResultSchema.parse(historical);
+  expect(parsed.left).not.toHaveProperty("resource_limits");
+  expect(parsed.right).not.toHaveProperty("resource_limits");
+  expect(parsed.summary).toEqual(current.summary);
+});
 
 it("does not equate missing nested parents with genuinely top-level types", () => {
   const missing = nestedInspection({ nestedClassRows: [] });
@@ -475,14 +581,14 @@ describe("managed member comparison subject identity", () => {
       {
         operation: "inspect_managed_members",
         parameters: {},
-        result: jsonValueSchema.parse({
+        result: {
           ...inspection,
           artifact: { ...inspection.artifact, sha256: otherDigest },
           identity_scope: {
             ...inspection.identity_scope,
             requires_artifact_sha256: otherDigest,
           },
-        }),
+        },
       },
     );
     const aligned = createEvidence(
@@ -563,11 +669,11 @@ describe("managed call-target comparison", () => {
         {
           operation: "inspect_managed_members",
           parameters: {},
-          result: jsonValueSchema.parse({
+          result: {
             ...inspection,
             call_edges:
               alterEdges?.(inspection.call_edges) ?? inspection.call_edges,
-          }),
+          },
           confidence: "observed",
           authority: "shipped-artifact",
         },
@@ -589,12 +695,10 @@ describe("managed call-target comparison", () => {
             : edge,
         ),
     );
-    const result = executeManagedMemberComparison(
-      compareManagedMembersInputSchema.parse({
-        left,
-        right: rightWithOneUnknownTarget,
-      }),
-    );
+    const result = executeManagedMemberComparison({
+      left,
+      right: rightWithOneUnknownTarget,
+    });
     if (!result.ok) throw result.error;
     const report = managedMemberComparisonResultSchema.parse(
       result.value.evidence.normalized_result,
@@ -610,9 +714,10 @@ describe("managed call-target comparison", () => {
       "/fixture/no-edges.dll",
       () => [],
     );
-    const unknown = executeManagedMemberComparison(
-      compareManagedMembersInputSchema.parse({ left, right: unavailableEdges }),
-    );
+    const unknown = executeManagedMemberComparison({
+      left,
+      right: unavailableEdges,
+    });
     if (!unknown.ok) throw unknown.error;
     expect(
       managedMemberComparisonResultSchema.parse(
@@ -636,19 +741,19 @@ describe("managed member comparison path workflow", () => {
         {
           operation: "inspect_managed_members",
           parameters: {},
-          result: jsonValueSchema.parse({
+          result: {
             ...inspection,
             coverage: { ...inspection.coverage, state: "partial" },
-          }),
+          },
           confidence: "observed",
           authority: "shipped-artifact",
         },
       );
     };
-    const input = compareManagedMembersInputSchema.parse({
+    const input = {
       left: observe(0xff, "/tmp/partial-left.dll"),
       right: observe(0xfe, "/tmp/partial-right.dll"),
-    });
+    };
     const result = executeManagedMemberComparison(input);
     if (!result.ok) throw result.error;
     const comparison = managedMemberComparisonResultSchema.parse(

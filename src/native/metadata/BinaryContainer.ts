@@ -1,3 +1,5 @@
+import type { PeDataDirectory } from "../../domain/peOptionalHeader.js";
+
 /** Distinguish corrupt recognized binaries from containers outside parser coverage. */
 export class BinaryFormatFailure extends Error {
   constructor(
@@ -28,6 +30,18 @@ export class BinaryResourceFailure extends Error {
   ) {
     super(message);
     this.name = "BinaryResourceFailure";
+  }
+}
+
+/** A bounded read could not establish termination; it does not prove invalid text. */
+export class BinaryStringReadLimitFailure extends BinaryFormatFailure {
+  constructor(readonly maximumBytes: number) {
+    // Preserve the existing broad failure contract for legacy callers while
+    // allowing coverage-aware consumers to distinguish a limit from corruption.
+    super(
+      "malformed",
+      `String termination was not established within its ${String(maximumBytes)}-byte read allowance`,
+    );
   }
 }
 
@@ -71,6 +85,7 @@ export type ImageSection = {
       /** Null when the ELF name table is unavailable or this name is unreadable. */
       readonly name: string | null;
       readonly type: number;
+      readonly flags: bigint;
       readonly address: bigint;
       readonly declared_range: {
         readonly offset: bigint;
@@ -91,6 +106,7 @@ export type ImageSection = {
       readonly name: string;
       readonly section_name: string;
       readonly type: number;
+      readonly flags: number;
       readonly address: bigint;
       readonly declared_range: {
         readonly offset: bigint;
@@ -120,10 +136,7 @@ interface BinaryContainerFacts {
    */
   readonly pe_header_mapping?: FileMapping;
   /** PE optional-header data directories, indexed as declared. */
-  readonly pe_data_directories?: readonly {
-    readonly virtual_address: number;
-    readonly size: number;
-  }[];
+  readonly pe_data_directories?: readonly PeDataDirectory[];
   /** Mach-O load-command observation, when available. */
   readonly macho_chained_fixups?: boolean;
   /** Section-name lookup was incomplete; absence by name is not established. */
@@ -143,6 +156,7 @@ export type BinaryContainer = BinaryContainerFacts &
         readonly format: "elf";
         readonly elf: {
           readonly machine: number;
+          readonly type: number;
           readonly dynamicSegments: readonly ElfDynamicSegment[];
         };
       }
@@ -577,10 +591,7 @@ const readMappedString = (
     chunks.push(chunk);
     length += size;
   }
-  throw new BinaryFormatFailure(
-    "malformed",
-    `String is unterminated or longer than ${String(maximumBytes)} bytes`,
-  );
+  throw new BinaryStringReadLimitFailure(maximumBytes);
 };
 
 /** Recognize a wholly zero-filled span while refusing even partial file aliases. */

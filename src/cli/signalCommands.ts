@@ -1,3 +1,4 @@
+import { projectCliAnalysisResult } from "./projectCliAnalysisResult.js";
 import { inspectSignalDecodersInputSchema } from "../domain/signals/signalDecoders.js";
 import { z } from "incur";
 import type { SignalRecordingService } from "../application/signals/SignalRecordingService.js";
@@ -13,6 +14,8 @@ import type { Logger } from "pino";
 import type { CliInstance } from "./types.js";
 import { withCommandCancellation } from "./commandCancellation.js";
 import { finishAnalysisCommand } from "./finishAnalysisCommand.js";
+import { finishCliEvidenceCommand } from "./cliEvidenceCallerPath.js";
+import { cliDecimalField, cliDecimalShape } from "./options.js";
 import { localPathStringSchema } from "../domain/localPath.js";
 import { absoluteCallerPath } from "../filesystem/callerPath.js";
 export const registerSignalCommands = (
@@ -28,16 +31,18 @@ export const registerSignalCommands = (
     description: "Search installed sigrok decoders or selected decoder help",
     options: z
       .object({
-        ...inspectSignalDecodersInputSchema.shape,
-        limit: z
-          .number()
-          .int()
-          .positive()
-          .max(Number.MAX_SAFE_INTEGER)
-          .optional()
-          .describe(
-            "Maximum matching decoders or help lines to return; defaults to 50",
-          ),
+        ...cliDecimalShape(inspectSignalDecodersInputSchema.shape),
+        limit: cliDecimalField(
+          z
+            .number()
+            .int()
+            .positive()
+            .max(Number.MAX_SAFE_INTEGER)
+            .optional()
+            .describe(
+              "Maximum matching decoders or help lines to return; defaults to 50",
+            ),
+        ),
         all: z
           .boolean()
           .default(false)
@@ -64,7 +69,7 @@ export const registerSignalCommands = (
             "sigrok-recording",
             "inspect_signal_decoders",
             signal,
-          ),
+          ).then(projectCliAnalysisResult),
         ),
       ),
   });
@@ -76,13 +81,15 @@ export const registerSignalCommands = (
     }),
     options: z
       .object({
-        ...signalRecordingOptionsSchema.shape,
-        line_limit: z
-          .number()
-          .int()
-          .positive()
-          .optional()
-          .describe("Returned output lines per page; default 50"),
+        ...cliDecimalShape(signalRecordingOptionsSchema.shape),
+        line_limit: cliDecimalField(
+          z
+            .number()
+            .int()
+            .positive()
+            .optional()
+            .describe("Returned output lines per page; default 50"),
+        ),
         all_lines: z
           .boolean()
           .default(false)
@@ -105,7 +112,8 @@ export const registerSignalCommands = (
     run: ({ args, options: { all_lines, ...options } }) =>
       withCommandCancellation((signal) =>
         logCliCommand(logger, CLI_COMMANDS.decodeSignalRecording, async () => {
-          return finishAnalysisCommand(
+          return finishCliEvidenceCommand(
+            args.path,
             () =>
               service.decode(
                 {
@@ -119,7 +127,7 @@ export const registerSignalCommands = (
             "sigrok-recording",
             "decode_signal_recording",
             signal,
-          );
+          ).then(projectCliAnalysisResult);
         }),
       ),
   });

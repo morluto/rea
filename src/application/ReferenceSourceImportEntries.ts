@@ -124,6 +124,7 @@ const UNKNOWN_PACKAGE: PackageMetadata = {
 const readPackageMetadata = (
   read: ReferenceSourceRead,
   exclusions: HistoricalSourceGraphInput["exclusions"],
+  unobservedPath: (path: string) => boolean,
 ): {
   readonly packages: ReadonlyMap<string, PackageMetadata>;
   readonly pathLookup: ReferenceSourcePathLookup;
@@ -173,6 +174,22 @@ const readPackageMetadata = (
             : { state: "none" },
       });
     } catch {
+      packages.set(directory, UNKNOWN_PACKAGE);
+    }
+  }
+  // An incomplete directory cannot establish that its manifest is absent.
+  const uncertainDirectories = [
+    ...(read.rootFailure === undefined ? [] : ["."]),
+    ...read.entries
+      .filter(
+        (entry) => entry.kind === "directory" && entry.status === "failed",
+      )
+      .map(({ path }) => path),
+  ];
+  for (const directory of uncertainDirectories) {
+    const path = posix.join(directory, "package.json");
+    if (!packages.has(directory) && unobservedPath(path)) {
+      manifestPaths.push(path);
       packages.set(directory, UNKNOWN_PACKAGE);
     }
   }
@@ -226,7 +243,76 @@ interface SpecifierContext {
   readonly lookupPath: ReferenceSourcePathLookup;
   readonly packages: ReadonlyMap<string, PackageMetadata>;
   readonly packageManifestPathLookup: ReferenceSourcePathLookup;
+  readonly unobservedPath: (path: string) => boolean;
 }
+
+/** Earlier unobserved candidates must not be treated as absent. */
+const selectObservedCandidate = (
+  candidates: readonly string[],
+  context: SpecifierContext,
+): Result<string | undefined, undefined> => {
+  const selected = context.lookupPath.resolveCandidates(candidates);
+  for (const candidate of candidates) {
+    const resolved = context.lookupPath.resolve(candidate);
+    if (resolved === selected && selected !== undefined) break;
+    if (
+      (context.lookupPath.has(candidate) && resolved === undefined) ||
+      context.unobservedPath(candidate)
+    )
+      return err(undefined);
+  }
+  return ok(selected);
+};
+
+/** The closest directory observation owns whether an absent child was examined. */
+const unobservedReferencePath = (
+  read: ReferenceSourceRead,
+  exclusions: HistoricalSourceGraphInput["exclusions"],
+): ((path: string) => boolean) => {
+  const observed = createReferenceSourcePathLookup(
+    read.entries.map(({ path }) => path),
+  );
+  const unavailable = createReferenceSourcePathLookup([
+    ...read.entries
+      .filter(
+        (entry) =>
+          entry.kind !== "directory" &&
+          (entry.status === "failed" || entry.kind === "symlink"),
+      )
+      .map(({ path }) => path),
+    ...exclusions
+      .filter((entry) => entry.entry_kind !== "directory")
+      .map(({ path }) => path),
+  ]);
+  const excludedDirectories = createReferenceSourcePathLookup(
+    exclusions
+      .filter((entry) => entry.entry_kind === "directory")
+      .map(({ path }) => path),
+  );
+  const directories = new Map(
+    read.entries
+      .filter((entry) => entry.kind === "directory")
+      .map((entry) => [entry.path, entry.status]),
+  );
+  const directoryLookup = createReferenceSourcePathLookup(directories.keys());
+  return (path) => {
+    if (unavailable.has(path)) return true;
+    if (observed.has(path)) return false;
+    for (
+      let parent = posix.dirname(path);
+      parent !== "." && parent !== "/";
+      parent = posix.dirname(parent)
+    ) {
+      if (excludedDirectories.has(parent)) return true;
+      const directory = directoryLookup.resolve(parent);
+      if (directory !== undefined)
+        return directories.get(directory) === "failed";
+      // A canonical collision cannot establish which directory was examined.
+      if (directoryLookup.has(parent)) return true;
+    }
+    return read.rootFailure !== undefined;
+  };
+};
 
 const packageMainForDirectory = (
   directory: string,
@@ -269,9 +355,9 @@ const selectPackageMain = (
   // package, and a trailing separator does not make the entry a directory.
   if (posix.isAbsolute(manifest.main))
     return { to: posix.normalize(manifest.main), resolution: "unresolved" };
-  const target = posix
-    .normalize(posix.join(packageDirectory, manifest.main))
-    .replace(/(?<=.)\/+$/u, "");
+  // Joining "." strips the trailing separator run with path semantics; a
+  // lookbehind regex kept separators behind line terminators (main "lib\n/").
+  const target = posix.join(posix.join(packageDirectory, manifest.main), ".");
   // Node would load a declared entry outside the imported root.
   if (logicalPathEscapesRoot(target))
     return { to: target, resolution: "unresolved" };
@@ -291,7 +377,9 @@ const selectPackageMain = (
             .filter((suffix) => suffix !== "")
             .map((suffix) => posix.join(target, `index${suffix}`)),
         ];
-  const selected = context.lookupPath.resolveCandidates(candidates);
+  const selection = selectObservedCandidate(candidates, context);
+  if (!selection.ok) return { to: packageDirectory, resolution: "unresolved" };
+  const selected = selection.value;
   return selected === undefined
     ? indexFallback === undefined
       ? { to: packageDirectory, resolution: "unresolved" }
@@ -390,14 +478,39 @@ const resolveInternalSpecifier = (
         ({ path }) => path,
       ),
     );
-  const match = context.lookupPath.resolveCandidates(candidates);
+  const selection = selectObservedCandidate(candidates, context);
+  if (!selection.ok) {
+    // Node consults a known package main before probing directory indexes.
+    // Incomplete index coverage cannot invalidate that observed declaration.
+    if (
+      mode === "runtime-require" &&
+      packageMainForDirectory(normalized, context)?.main.state === "declared"
+    ) {
+      const files = directoryReference
+        ? ok(undefined)
+        : selectObservedCandidate(
+            nodeRequireFileCandidates(normalized),
+            context,
+          );
+      if (files.ok && files.value === undefined)
+        return selectPackageMain(normalized, undefined, context, mode);
+    }
+    return { to: normalized, resolution: "unresolved" };
+  }
+  const match = selection.value;
   if (match === undefined)
     return packageMainForDirectory(normalized, context) !== undefined
       ? selectPackageMain(normalized, undefined, context, mode)
       : { to: normalized, resolution: "unresolved" };
+  // posix.normalize preserves the specifier's trailing slash while
+  // dirname(match) never carries one; derive the directory identity with path
+  // semantics (joining "." collapses trailing slashes, including ones a regex
+  // would keep behind a line terminator) so a trailing-slash reference still
+  // reaches package-main selection the same way the plain spelling does.
+  const directory = posix.join(normalized, ".");
   const resolvedThroughIndex =
     posix.basename(match).startsWith("index.") &&
-    posix.dirname(match).normalize("NFC") === normalized.normalize("NFC");
+    posix.dirname(match).normalize("NFC") === directory.normalize("NFC");
   return resolvedThroughIndex
     ? selectPackageMain(posix.dirname(match), match, context, mode)
     : { to: match, resolution: "internal" };
@@ -528,7 +641,6 @@ const appendReadEntry = (
 /** Convert bounded reader observations into graph entries and parsed edges. */
 export const parseReferenceSourceEntries = (
   read: ReferenceSourceRead,
-  filePaths: ReadonlySet<string>,
   exclusions: HistoricalSourceGraphInput["exclusions"],
   signal?: AbortSignal,
 ): ParsedReferenceSourceEntries => {
@@ -542,9 +654,19 @@ export const parseReferenceSourceEntries = (
     output.limitations.push(
       `Reference root enumeration is incomplete: ${read.rootFailure.message}`,
     );
-  const packageInventory = readPackageMetadata(read, exclusions);
+  const unobservedPath = unobservedReferencePath(read, exclusions);
+  const packageInventory = readPackageMetadata(
+    read,
+    exclusions,
+    unobservedPath,
+  );
   const context: SpecifierContext = {
-    lookupPath: createReferenceSourcePathLookup(filePaths),
+    lookupPath: createReferenceSourcePathLookup(
+      read.entries
+        .filter((entry) => entry.status === "read" && entry.kind === "file")
+        .map((entry) => entry.path),
+    ),
+    unobservedPath,
     packages: packageInventory.packages,
     packageManifestPathLookup: packageInventory.pathLookup,
   };

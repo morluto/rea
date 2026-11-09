@@ -7,7 +7,11 @@ interface TrailerFacts {
 }
 
 type TrailerFailure = TrailerFacts & {
-  readonly kind: "invalid-utf8-value" | "invalid-name" | "invalid-value";
+  readonly kind:
+    | "invalid-utf8-value"
+    | "invalid-name"
+    | "invalid-value"
+    | "invalid-boundary";
   readonly reason: string;
 };
 
@@ -36,9 +40,15 @@ export const parseGrpcWebTrailers = (
     const lineExaminedBytes = hasSeparator ? end + 2 : lineEnd;
     if (lineEnd === start) {
       if (!hasSeparator) break;
+      if (lineExaminedBytes < bytes.length)
+        return err({
+          ...facts(),
+          examined_bytes: lineExaminedBytes,
+          kind: "invalid-boundary",
+          reason: "gRPC-web trailer block has bytes after a blank line",
+        });
       examinedBytes = lineExaminedBytes;
-      start = end + 2;
-      continue;
+      break;
     }
     let colon = start;
     while (colon < lineEnd && bytes[colon] !== 58) colon += 1;
@@ -84,9 +94,13 @@ export const parseGrpcWebTrailers = (
             "gRPC-web trailer field value contains a forbidden control character",
         });
     }
+    // RFC 9110 section 5.5: a field value excludes surrounding whitespace.
+    let valueEnd = lineEnd;
+    while (valueEnd > valueStart && [9, 32].includes(bytes[valueEnd - 1]!))
+      valueEnd -= 1;
     let value: string;
     try {
-      value = decoder.decode(bytes.subarray(valueStart, lineEnd));
+      value = decoder.decode(bytes.subarray(valueStart, valueEnd));
     } catch (cause) {
       if (!(cause instanceof TypeError)) throw cause;
       decoder = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true });

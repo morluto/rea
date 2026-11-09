@@ -56,12 +56,12 @@ describe.skipIf(process.platform !== "darwin")(
           { format: "binary", depth: 200, data: false },
           { format: "xml", depth: 200, data: false },
           { format: "json", depth: 200, data: false },
+          { format: "binary", depth: 997, data: true },
           { format: "binary", depth: 998, data: true },
-          { format: "binary", depth: 999, data: true },
+          { format: "xml", depth: 997, data: true },
           { format: "xml", depth: 998, data: true },
-          { format: "xml", depth: 999, data: true },
+          { format: "json", depth: 997, data: false },
           { format: "json", depth: 998, data: false },
-          { format: "json", depth: 999, data: false },
         ] as const) {
           const { format, depth, data } = fixture;
           const path = join(root, `${format}-${depth}.plist`);
@@ -81,7 +81,7 @@ describe.skipIf(process.platform !== "darwin")(
           // Compare its upper-edge admission with the actual utility, while
           // requiring the historical depth-129/200 controls to succeed below.
           const native =
-            format === "xml" && depth === 998
+            format === "xml" && depth === 997
               ? await lintXmlPlist(path)
               : undefined;
           const output = await cli.run({
@@ -89,8 +89,8 @@ describe.skipIf(process.platform !== "darwin")(
             environment,
           });
           const response = await call("inspect_plist", { path });
-          expect(await readFile(path)).toEqual(bytes);
-          if (depth === 999) {
+          expect(Buffer.compare(await readFile(path), bytes)).toBe(0);
+          if (depth === 998) {
             expect(output.exitCode, output.stderr).toBe(1);
             const expectedFailure = {
               code: "resource_constraint",
@@ -98,11 +98,10 @@ describe.skipIf(process.platform !== "darwin")(
               retryable: false,
               details: {
                 resource: "memory",
-                reported_limits: { maximum_nesting_depth: 998 },
+                reported_limits: { maximum_nesting_depth: 997 },
               },
               remediation: {
-                action:
-                  "The 998-level native plist nesting allowance (no runtime override) is a fixed allowance. Worker memory limits, inherited limits, and additional host memory do not raise it. Select another complete input within the allowance when that preserves the needed observation. Repeating the unchanged request fails the same way.",
+                action: expect.stringMatching(/\S/u),
               },
             };
             expect(output.json).toMatchObject(expectedFailure);

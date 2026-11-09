@@ -43,8 +43,9 @@ export const createGhidraEndpoint = async (
     runtimeRoot,
     transport === "unix-socket" ? "bridge.sock" : "bridge-endpoint.json",
   );
-  // sockaddr_un includes a terminating NUL: macOS has 104 bytes, Linux 108.
-  const maximumPathBytes = platform === "darwin" ? 103 : 107;
+  // OpenJDK NIO reserves two bytes of sockaddr_un.sun_path, which has 104
+  // bytes on macOS and 108 on Linux, even for ordinary pathname sockets.
+  const maximumPathBytes = platform === "darwin" ? 102 : 106;
   if (
     transport !== "unix-socket" ||
     Buffer.byteLength(path, "utf8") <= maximumPathBytes
@@ -102,7 +103,7 @@ export const observeGhidraEndpoint = async (
         endpoint.path,
         resources,
         options.signal,
-        async (file) => {
+        async ({ handle: file }) => {
           const initial = await file.stat({ bigint: true });
           assertArtifactReadActive(options.signal);
           if (initial.size > BigInt(MAX_TCP_ENDPOINT_BYTES))

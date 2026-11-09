@@ -13,6 +13,7 @@ import { contextBridgeExposureArguments } from "./javascriptContextBridgeExposur
 import {
   boundedExpression,
   collectContextBridgeMembers,
+  electronCandidateAuthority,
   electronCalleePath,
   electronStaticValue,
 } from "./electronStaticAnalysisValues.js";
@@ -63,7 +64,7 @@ const needsConstantOptions = (node: t.NewExpression): boolean => {
   const lookup = staticObjectProperty(options, "webPreferences");
   return (
     lookup.status === "explicit" &&
-    t.isIdentifier(unwrapJavaScriptExpression(lookup.property.value).node)
+    t.isIdentifier(unwrapJavaScriptExpression(lookup.value).node)
   );
 };
 
@@ -83,7 +84,7 @@ export function* finishElectronBrowserWindowsSteps(
       const lookup = staticObjectProperty(options, "webPreferences");
       return (
         lookup.status === "explicit" &&
-        hasElectronOptionObjectCandidate(lookup.property.value, index)
+        hasElectronOptionObjectCandidate(lookup.value, index)
       );
     })
   )
@@ -117,7 +118,7 @@ const inspectBrowserWindow = (
   const lookup = staticObjectProperty(resolvedOptions, "webPreferences");
   const declaredPreferences =
     lookup.status === "explicit"
-      ? unwrapJavaScriptExpression(lookup.property.value).node
+      ? unwrapJavaScriptExpression(lookup.value).node
       : undefined;
   const resolvedPreferences =
     (index && resolveElectronOptionObject(declaredPreferences, node, index)) ??
@@ -139,6 +140,7 @@ const inspectBrowserWindow = (
   );
   context.accumulator.unknownFindings += collected.unknown;
   const finding: ElectronBrowserWindowFinding = {
+    ...electronCandidateAuthority(node.callee, context),
     options_status:
       resolvedOptions === undefined
         ? "missing"
@@ -155,6 +157,7 @@ const inspectBrowserWindow = (
     location: range(node),
   };
   if (
+    finding.loader_authority !== "candidate" &&
     finding.preload_path !== null &&
     finding.preload_resolution_context !== null
   )
@@ -215,14 +218,14 @@ const collectWebPreferences = (
   const effectivePreload = staticObjectProperty(object, "preload");
   const preloadPath =
     effectivePreload.status === "explicit"
-      ? staticPath(effectivePreload.property.value, pathIntrinsics)
+      ? staticPath(effectivePreload.value, pathIntrinsics)
       : undefined;
   const preload: ElectronBrowserWindowPreload =
     effectivePreload.status === "explicit" && preloadPath !== undefined
       ? {
           preload_path: preloadPath,
           preload_resolution_context: staticPathResolutionContext(
-            effectivePreload.property.value,
+            effectivePreload.value,
             pathIntrinsics,
           ),
         }
@@ -305,6 +308,7 @@ const inspectContextBridge = (
         ? { api_key: key.value, api_key_expression: null }
         : { api_key: null, api_key_expression: null };
   const finding: ElectronContextBridgeFinding = {
+    ...electronCandidateAuthority(node.callee, context),
     ...apiKey,
     world: exposure.world,
     world_id: worldId,
@@ -344,8 +348,8 @@ const inspectUtilityProcess = (
   // A nullish serviceName selects Electron's default display name.
   const declaredName =
     serviceNameProperty.status === "explicit" &&
-    !shapes.isNullish(serviceNameProperty.property.value)
-      ? serviceNameProperty.property.value
+    !shapes.isNullish(serviceNameProperty.value)
+      ? serviceNameProperty.value
       : undefined;
   const serviceName =
     declaredName === undefined
@@ -373,6 +377,7 @@ const inspectUtilityProcess = (
           module_expression: null,
         };
   const finding: ElectronUtilityProcessFinding = {
+    ...electronCandidateAuthority(node.callee, context),
     ...moduleReference,
     service_name: serviceName ?? null,
     module_key: null,

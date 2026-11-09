@@ -76,6 +76,7 @@ const expectReloadsUnchanged = (books: Served): void => {
 describe("confirmed write response bodies", () => {
   it.each<{
     name: string;
+    status?: number;
     content: Record<string, JsonValue>;
     shape: "recorded" | "empty";
     bodyRecorded: boolean;
@@ -97,6 +98,23 @@ describe("confirmed write response bodies", () => {
       bodyRecorded: false,
     },
     {
+      name: "205 without retained text",
+      status: 205,
+      content: { mimeType: "text/html" },
+      shape: "recorded",
+      bodyRecorded: false,
+    },
+    ...[undefined, null].map((text) => ({
+      name: `zero-size HTML with ${text === null ? "null" : "omitted"} text`,
+      content: {
+        mimeType: "text/html",
+        size: 0,
+        ...(text === null ? { text } : {}),
+      },
+      shape: "recorded" as const,
+      bodyRecorded: false,
+    })),
+    {
       name: "known empty text",
       content: { mimeType: "application/json", size: 0, text: "" },
       shape: "empty",
@@ -104,7 +122,7 @@ describe("confirmed write response bodies", () => {
     },
   ])(
     "preserves $name when serving a confirmed document write",
-    ({ content, shape, bodyRecorded }) => {
+    ({ content, shape, bodyRecorded, status = 200 }) => {
       const entries: Record<string, JsonValue>[] = [
         {
           request: { method: "GET", url: "http://app.example/api/settings" },
@@ -125,7 +143,7 @@ describe("confirmed write response bodies", () => {
               text: '{"theme":"dark"}',
             },
           },
-          response: { status: 200, content },
+          response: { status, content },
         },
         {
           request: { method: "GET", url: "http://app.example/api/settings" },
@@ -169,7 +187,7 @@ describe("confirmed write response bodies", () => {
       const write = respond(patch, { body: { theme: "blue" } });
       if (!write.ok) throw write.error;
       expect(write.value).toMatchObject({
-        status: 200,
+        status,
         body: null,
         replay: {
           record_ordinal: 1,
@@ -920,18 +938,18 @@ describe("served catalog", () => {
       "patch_books_by_id",
       "post_books",
     ]);
-    expect(described.get("post_books")?.description).toContain(
-      'creates an entity of /api/books in the served environment state (body members "name"; required: "name"), modelled on the recorded calls',
+    expect(described.get("post_books")?.description).toMatch(
+      /creates an entity.*\/api\/books.*"name".*required.*"name"/iu,
     );
-    expect(described.get("patch_books_by_id")?.description).toContain(
-      'changes the entity the path names in the served environment state (body members "name"; send at least one)',
+    expect(described.get("patch_books_by_id")?.description).toMatch(
+      /changes the entity.*path.*"name".*send at least one/iu,
     );
     expect(described.get("delete_books_by_id")?.description).toContain(
       "removes the entity the path names from the served environment state",
     );
     expect(described.get("post_books")?.annotations.readOnlyHint).toBe(false);
-    expect(described.get("get_books")?.description).toContain(
-      "answers from the served environment state where the state backs this tool",
+    expect(described.get("get_books")?.description).toMatch(
+      /answers.*served environment state.*state backs this tool/iu,
     );
   });
 
@@ -2023,6 +2041,180 @@ describe("path values of creates read under another path", () => {
   });
 });
 
+/** A card whose token is a NanoID and whose edit info a create stamps, created at exchange 3 and read back. */
+const tokenCard = (id: number, token: string, at: string) => ({
+  id,
+  name: `Card ${String(id)}`,
+  token,
+  edit: { at, by: "rea" },
+});
+const CARD_ROWS: readonly TimedCaptureRow[] = [
+  [
+    "GET",
+    "/api/cards",
+    [
+      tokenCard(1, "chYl65ZvCJ9U6yNk-YyqK", "2026-10-01T09:00:00.000Z"),
+      tokenCard(2, "Qx81mP0aZkT3vB7n-Lw2e", "2026-10-01T10:00:00.000Z"),
+    ],
+  ],
+  [
+    "GET",
+    "/api/cards/1",
+    tokenCard(1, "chYl65ZvCJ9U6yNk-YyqK", "2026-10-01T09:00:00.000Z"),
+  ],
+  [
+    "GET",
+    "/api/cards/2",
+    tokenCard(2, "Qx81mP0aZkT3vB7n-Lw2e", "2026-10-01T10:00:00.000Z"),
+  ],
+  [
+    "POST",
+    "/api/cards",
+    tokenCard(3, "cdMLcknG-Lcu6oWL-3ZgA", `${bookClock(3).slice(0, -1)}.030Z`),
+    201,
+    { name: "Card 3" },
+  ],
+  [
+    "GET",
+    "/api/cards/3",
+    tokenCard(3, "cdMLcknG-Lcu6oWL-3ZgA", `${bookClock(3).slice(0, -1)}.030Z`),
+  ],
+];
+
+/** Notes whose update sends html the application stores nowhere and derives the excerpt from, and sends back the clock it read. */
+const note = (id: number, title: string, excerpt: string) => ({
+  id,
+  title,
+  excerpt,
+  updated_at: bookClock(3),
+});
+const EDITED_NOTE = note(1, "First (edited)", "Edited body text.");
+const NOTE_ROWS: readonly TimedCaptureRow[] = [
+  [
+    "GET",
+    "/api/notes",
+    [note(1, "First", "Old body text."), note(2, "Second", "Custom excerpt.")],
+  ],
+  ["GET", "/api/notes/1", note(1, "First", "Old body text.")],
+  ["GET", "/api/notes/2", note(2, "Second", "Custom excerpt.")],
+  [
+    "PATCH",
+    "/api/notes/1?source=html",
+    EDITED_NOTE,
+    200,
+    {
+      title: "First (edited)",
+      html: "<p>Edited body text.</p>",
+      updated_at: bookClock(3),
+    },
+  ],
+  ["GET", "/api/notes/1", EDITED_NOTE],
+];
+
+describe("served values an application stamps", () => {
+  it("takes an enveloped body as the capture sent it, and refuses one sent bare", () => {
+    const books = servedFrom([
+      ...BOOK_INIT_ROWS,
+      [
+        "PATCH",
+        "/api/books/1",
+        { books: [renamedBook(FIRST_BOOK, "Renamed Book", 3)] },
+        200,
+        { books: [{ name: "Renamed Book" }] },
+      ],
+      ["GET", "/api/books/1", renamedBook(FIRST_BOOK, "Renamed Book", 3)],
+    ]);
+    const before = books.snapshot();
+    expect(
+      books.refusal("patch_books_by_id", {
+        id: "2",
+        body: { name: "Second Edition" },
+      }).message,
+    ).toContain('wrapped as {"books":[{...}]}');
+    expect(books.snapshot()).toBe(before);
+    const answered = books.answer("patch_books_by_id", {
+      id: "2",
+      body: { books: [{ name: "Second Edition" }] },
+    });
+    expect(answered).toMatchObject({
+      status: 200,
+      body: {
+        books: [{ id: 2, name: "Second Edition", slug: "second-edition" }],
+      },
+    });
+    expect(books.answer("get_books_by_id", { id: "2" }).body).toMatchObject({
+      name: "Second Edition",
+    });
+  });
+
+  it("generates a token spelled like the type's and stamps the edit info with the served clock", () => {
+    const cards = servedFrom(CARD_ROWS);
+    const created = cards.answer("post_cards", { body: { name: "Card 4" } })
+      .body as { token: string; edit: { at: string; by: string } };
+    expect(created.token).toMatch(
+      /^[A-Za-z0-9]{8}-[A-Za-z0-9]{7}-[A-Za-z0-9]{4}$/u,
+    );
+    expect([
+      "chYl65ZvCJ9U6yNk-YyqK",
+      "Qx81mP0aZkT3vB7n-Lw2e",
+      "cdMLcknG-Lcu6oWL-3ZgA",
+    ]).not.toContain(created.token);
+    expect(created.edit.by).toBe("rea");
+    expect(created.edit.at).not.toBe(`${bookClock(3).slice(0, -1)}.030Z`);
+    expect(created.edit.at).toMatch(
+      /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/u,
+    );
+  });
+
+  it("derives a value only on an entity holding what it was derived from, with the recorded query and the held clock", () => {
+    const notes = servedFrom(NOTE_ROWS);
+    const edit = (
+      id: string,
+      updated: string,
+      query: { source?: string } = { source: "html" },
+    ) => ({
+      id,
+      ...query,
+      body: {
+        title: "Renamed",
+        html: "<p>Edited body text.</p>",
+        updated_at: updated,
+      },
+    });
+    const before = notes.snapshot();
+    expect(
+      notes.refusal("patch_notes_by_id", edit("2", bookClock(3))).message,
+    ).toContain("derives excerpt");
+    expect(
+      notes.refusal(
+        "patch_notes_by_id",
+        edit("1", bookClock(3), { source: "markdown" }),
+      ).message,
+    ).toContain("takes only the query its recording sent (source=html)");
+    expect(
+      notes.refusal("patch_notes_by_id", edit("1", "2026-01-01T00:00:00Z"))
+        .message,
+    ).toContain("must repeat the value the entity holds");
+    expect(notes.snapshot()).toBe(before);
+    const answered = notes.answer("patch_notes_by_id", edit("1", bookClock(3)));
+    expect(answered).toMatchObject({
+      status: 200,
+      body: { id: 1, title: "Renamed", excerpt: "Edited body text." },
+    });
+    expect((answered.body as { updated_at: string }).updated_at).not.toBe(
+      bookClock(3),
+    );
+    // Without the member the value derives from, the update keeps the excerpt the note holds.
+    expect(
+      notes.answer("patch_notes_by_id", {
+        id: "2",
+        source: "html",
+        body: { title: "Second (renamed)", updated_at: bookClock(3) },
+      }).body,
+    ).toMatchObject({ title: "Second (renamed)", excerpt: "Custom excerpt." });
+  });
+});
+
 describe("path fields of creates read under another path", () => {
   it("fills a linked create's path field from its exemplar decoded once, whichever accepted spelling the call uses", () => {
     const note = (id: number, title: string) => ({
@@ -2059,5 +2251,37 @@ describe("path fields of creates read under another path", () => {
         .rea_state.entities.filter((entity) => entity.fields.title === "Delta");
       expect(created).toMatchObject([{ fields: { project: "team%31" } }]);
     }
+  });
+});
+
+describe("array fields a view lists sorted", () => {
+  it("answers the update with the written order and later reads with it sorted", () => {
+    const tagged = (entry: Book, tags: string[]): Book => ({ ...entry, tags });
+    const books = servedFrom([
+      [
+        "GET",
+        "/api/books",
+        [tagged(FIRST_BOOK, ["alpha", "beta"]), tagged(SECOND_BOOK, ["gamma"])],
+      ],
+      ["GET", "/api/books/1", tagged(FIRST_BOOK, ["alpha", "beta"])],
+      ["GET", "/api/books/2", tagged(SECOND_BOOK, ["gamma"])],
+      [
+        "PATCH",
+        "/api/books/2",
+        tagged(SECOND_BOOK, ["zeta", "delta"]),
+        200,
+        { tags: ["zeta", "delta"] },
+      ],
+      ["GET", "/api/books/2", tagged(SECOND_BOOK, ["delta", "zeta"])],
+    ]);
+    expect(
+      books.answer("patch_books_by_id", {
+        id: "1",
+        body: { tags: ["omega", "beta"] },
+      }).body,
+    ).toMatchObject({ tags: ["omega", "beta"] });
+    expect(books.answer("get_books_by_id", { id: "1" }).body).toMatchObject({
+      tags: ["beta", "omega"],
+    });
   });
 });

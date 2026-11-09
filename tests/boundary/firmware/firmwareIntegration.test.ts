@@ -13,7 +13,7 @@ import { FirmwareProvider } from "../../../src/firmware/FirmwareProvider.js";
 import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
 import { AnalysisError } from "../../../src/domain/analysisErrorBase.js";
 import { toolContract } from "../../../src/contracts/toolContracts.js";
-import { ToolResultDelivery } from "../../../src/server/toolResult.js";
+import { createToolResultDelivery } from "../../../src/server/toolResult.js";
 import { SafeOutputTree } from "../../../src/artifacts/SafeOutputTree.js";
 import { SafeOutputTreeCreationFailure } from "../../../src/artifacts/SafeOutputTreeCreationFailure.js";
 
@@ -72,7 +72,7 @@ vi.mock("node:fs/promises", async (importOriginal) => {
   };
 });
 
-const delivery = new ToolResultDelivery(STDIO_DEFAULT_MAX_BUFFER_SIZE);
+const delivery = createToolResultDelivery(STDIO_DEFAULT_MAX_BUFFER_SIZE);
 
 const it = test.skipIf(process.platform !== "linux");
 
@@ -720,6 +720,7 @@ it.each(["depth", "dependency", "link"])(
           relative_path: "escape",
           kind: "symlink",
           link_target: "/etc/passwd",
+          link_target_hex: Buffer.from("/etc/passwd", "utf8").toString("hex"),
         },
       ]);
       expect(gapsWithContinuations(normalized)).toEqual([

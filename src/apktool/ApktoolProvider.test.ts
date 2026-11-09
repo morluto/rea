@@ -14,6 +14,10 @@ import { join } from "node:path";
 import { describe, expect, onTestFinished, test, vi } from "vitest";
 
 import { ApktoolProvider } from "./ApktoolProvider.js";
+import {
+  LinuxOwnedProcessPrerequisiteError,
+  systemProcessOwnershipHost,
+} from "../process/ProcessOwnershipObservation.js";
 import { ApktoolWorkspace } from "./ApktoolWorkspace.js";
 import { ApktoolResourceAnalysisService } from "../application/apktool/ApktoolResourceAnalysisService.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
@@ -93,7 +97,6 @@ const refusedBy = async (
   request: ApktoolRequest,
 ): Promise<ReturnType<typeof projectAnalysisError>> => {
   const result = await provider.execute(request);
-  expect(result.ok).toBe(false);
   if (result.ok) throw new Error("expected a refusal");
   return projectAnalysisError(result.error);
 };
@@ -250,7 +253,7 @@ sdkInfo:
       coverage: "complete",
     },
   });
-  expect(await readFile(apk.path)).toEqual(original);
+  expect(Buffer.compare(await readFile(apk.path), original)).toBe(0);
 });
 
 it.each([
@@ -579,7 +582,6 @@ it("still refuses invalid UTF-8 bytes in decoded strings", async () => {
     operation: "decode_android_resources",
     input: { path: apk.path, include_strings: true },
   });
-  expect(result.ok).toBe(false);
   if (result.ok) throw new Error("expected a refusal");
   expect(projectAnalysisError(result.error)).toMatchObject({
     code: "unreadable_output",
@@ -782,8 +784,8 @@ it("uses an owned APK snapshot and framework cache and resolves regional locales
     format: "apk",
     digest: { sha256: apk.sha256 },
   });
-  expect(observation.value.limitations).not.toContain(
-    "Artifact identity is unavailable for this observation.",
+  expect(observation.value.limitations).not.toContainEqual(
+    expect.stringMatching(/artifact identity.*unavailable/iu),
   );
   expect(await readFile(apk.path, "utf8")).toBe("changed original");
   const result = apktoolResultSchemas.decode_android_resources.parse(
@@ -1553,12 +1555,12 @@ it("discloses qualified and unfamiliar strings tables while preserving exact loc
         locale: locale ?? null,
         coverage: "complete",
       });
-      expect(result.value.limitations).toContain(
-        `Other strings tables are not selected by locale; their resource configuration suffixes are preserved without inferring Android runtime matching: ${tables
-          .map((suffix) => JSON.stringify(`values-${suffix}`))
-          .sort()
-          .join(", ")}`,
+      const otherTables = result.value.limitations.find((line) =>
+        line.includes("values-unknown_CONFIGURATION"),
       );
+      expect(otherTables).toMatch(/without inferring.*runtime matching/iu);
+      for (const suffix of tables)
+        expect(otherTables).toContain(JSON.stringify(`values-${suffix}`));
       if (locale === undefined)
         expect(result.value.result).toMatchObject({
           strings: [
@@ -1568,8 +1570,8 @@ it("discloses qualified and unfamiliar strings tables while preserving exact loc
         });
       else if (locale === "en-rUS") {
         expect(result.value.result).toMatchObject({ strings: [] });
-        expect(result.value.limitations).toContain(
-          "No strings.xml was found for locale en-rUS",
+        expect(result.value.limitations).toContainEqual(
+          expect.stringMatching(/strings\.xml.*locale en-rUS/iu),
         );
       } else
         expect(result.value.result).toMatchObject({
@@ -1689,8 +1691,9 @@ it.each([
       });
       const limitations = result.value.limitations.join("\n");
       if (kind === "unsupported") {
-        expect(limitations).toContain(
-          "String entries omitted due to unsupported markup or missing names: 2",
+        expect(limitations).toMatch(/omitted[^\n]*2/iu);
+        expect(limitations).toMatch(
+          /omitted.*unsupported markup.*missing names/iu,
         );
         expect(limitations).not.toContain("entry counts are unknown");
       } else {
@@ -1710,3 +1713,36 @@ it.each([
     }
   },
 );
+
+it("reports the owned-process prerequisite as Apktool unavailability, not a probe failure", async () => {
+  const { command } = await writeApktoolStub(() => VERSION_BLOCK);
+  vi.spyOn(systemProcessOwnershipHost, "prepare").mockImplementation(
+    async () => {
+      throw new LinuxOwnedProcessPrerequisiteError(
+        new Error("spawn ps ENOENT"),
+      );
+    },
+  );
+  onTestFinished(() => {
+    vi.restoreAllMocks();
+  });
+
+  const availability = await providerOver(command).inspectAvailability();
+  expect(availability).toMatchObject({
+    status: "unavailable",
+    code: "runtime_unavailable",
+    reason: expect.stringContaining("spawn ps ENOENT") as unknown,
+    diagnostics: { stage: "ownership_preparation" },
+  });
+  expect(availability.reason).toContain("procps");
+
+  const projected = await refusedBy(providerOver(command), {
+    operation: "inspect_apktool_client",
+    input: {},
+  });
+  expect(projected).toMatchObject({ code: "capability_unavailable" });
+  expect(projected.details).toMatchObject({
+    provider_id: "process-ownership",
+    reason: expect.stringContaining("spawn ps ENOENT") as unknown,
+  });
+});

@@ -7,7 +7,6 @@ import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import type {
   AnalysisClient,
-  ExecutionOptions,
   RetainedResourceScope,
 } from "../application/AnalysisProvider.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
@@ -16,7 +15,7 @@ import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
 import { err, ok, type Result } from "../domain/result.js";
 import { SharedStartupAttempt } from "../process/SharedStartupAttempt.js";
-import { closeAnalysisClient } from "./AnalysisClientCleanup.js";
+import { closeAnalysisClient } from "../application/AnalysisClientCleanup.js";
 
 /** Own deferred client creation while callers wait independently and close joins it. */
 export class AnalysisClientCreation {
@@ -96,6 +95,7 @@ export class AnalysisClientCreation {
       this.#clientLease = undefined;
     }
     let attempt = this.#attempt;
+    const draining = attempt?.signal.aborted === true;
     if (attempt === undefined) {
       this.#failure = undefined;
       attempt = new SharedStartupAttempt((ownerSignal) =>
@@ -104,8 +104,9 @@ export class AnalysisClientCreation {
       const owned = attempt;
       this.#attempt = owned;
       void owned.promise.then((result) => {
+        if (this.#attempt !== owned) return;
         if (!result.ok) this.#failure = result.error;
-        if (this.#attempt === owned) this.#attempt = undefined;
+        this.#attempt = undefined;
       });
     }
     const waited = await attempt.wait(signal);
@@ -113,6 +114,15 @@ export class AnalysisClientCreation {
       return err(
         new AnalysisCancelledError(operation, { cause: signal?.reason }),
       );
+    if (
+      draining &&
+      !signal?.aborted &&
+      !waited.value.ok &&
+      waited.value.error instanceof AnalysisCancelledError &&
+      !waited.value.error.cleanupIncomplete &&
+      waited.value.error.cause === attempt.signal.reason
+    )
+      return this.acquire(operation, signal);
     if (!waited.value.ok)
       return err(
         analysisClientFailureForOperation(
@@ -206,9 +216,7 @@ export class AnalysisClientCreation {
   }
 
   close(
-    options?: Pick<ExecutionOptions, "progress"> & {
-      readonly retainDocument?: boolean;
-    },
+    options?: Parameters<AnalysisClient["close"]>[0],
   ): Promise<Result<null, AnalysisError>> {
     this.#closed = true;
     this.#closeOptions = options;

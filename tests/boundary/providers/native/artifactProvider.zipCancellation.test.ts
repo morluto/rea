@@ -102,9 +102,12 @@ it("preserves a real ZIP stream's caller cancellation through extraction rollbac
       containment_verified: true,
       artifacts: [expect.objectContaining({ relative_path: "member.bin" })],
     });
-    expect(await readFile(join(controlOutput, "member.bin"))).toEqual(
-      Buffer.from(bytes),
-    );
+    expect(
+      Buffer.compare(
+        await readFile(join(controlOutput, "member.bin")),
+        Buffer.from(bytes),
+      ),
+    ).toBe(0);
     expect(await client.close()).toMatchObject({ ok: true });
   } finally {
     writeSpy.mockRestore();

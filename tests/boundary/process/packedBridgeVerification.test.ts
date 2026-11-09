@@ -40,6 +40,19 @@ const hopper = packedFiles[0]!;
 const validSource =
   '# Unicode source: 雨\nraise RuntimeError("Packed source must never execute")\n';
 
+const expectedPythonCommandFailure = (diagnostic: string | RegExp) => ({
+  name: "VerifierCommandExitError",
+  code: 1,
+  snapshot: {
+    stderr: {
+      text:
+        typeof diagnostic === "string"
+          ? expect.stringContaining(diagnostic)
+          : expect.stringMatching(diagnostic),
+    },
+  },
+});
+
 async function fixture(source: string = validSource, omitHopper = false) {
   const scratch = await createTestWorkspace("rea-packed-bridge-");
   const directory = scratch.root;
@@ -115,7 +128,7 @@ try {
   await verifyPackedBridge({ ...JSON.parse(process.env.REA_PACKED_VERIFY_INPUT), commands });
   console.log(JSON.stringify({ accepted: true }));
 } catch (error) {
-  console.log(JSON.stringify({ accepted: false, stderr: String(error.stderr) }));
+  console.log(JSON.stringify({ accepted: false, name: error.name, code: error.code, stderr: error.snapshot?.stderr?.text }));
 }
 }, [() => commands === undefined ? root.close() : commands.close()]);`,
       ],
@@ -137,10 +150,17 @@ try {
       },
     );
     const observation = z
-      .object({ accepted: z.boolean(), stderr: z.string().optional() })
+      .object({
+        accepted: z.boolean(),
+        name: z.string().optional(),
+        code: z.number().optional(),
+        stderr: z.string().optional(),
+      })
       .parse(JSON.parse(result.stdout));
     expect(observation).toMatchObject({
       accepted: false,
+      name: "VerifierCommandExitError",
+      code: 1,
       stderr: expect.stringContaining("SyntaxError"),
     });
     await expect(access(marker)).rejects.toMatchObject({ code: "ENOENT" });
@@ -163,17 +183,17 @@ it.each(packedFiles)(
 
 it("rejects a missing actual Python member even when the listing advertises it", async () => {
   const input = await fixture(validSource, true);
-  await expect(verifyPackedBridge(input)).rejects.toMatchObject({
-    stderr: expect.stringContaining(hopper),
-  });
+  await expect(verifyPackedBridge(input)).rejects.toMatchObject(
+    expectedPythonCommandFailure(hopper),
+  );
   expect(await readdir(input.workspace)).toEqual([]);
 });
 
 it("reports invalid packed Python syntax with the member filename", async () => {
   const input = await fixture("def broken(:\n");
-  await expect(verifyPackedBridge(input)).rejects.toMatchObject({
-    stderr: expect.stringMatching(/hopper_bridge\.py[\s\S]*SyntaxError/u),
-  });
+  await expect(verifyPackedBridge(input)).rejects.toMatchObject(
+    expectedPythonCommandFailure(/hopper_bridge\.py[\s\S]*SyntaxError/u),
+  );
   expect(await readdir(input.workspace)).toEqual([]);
 });
 
@@ -197,11 +217,13 @@ it.each(["valid", "invalid"] as const)(
       const parsed = verifyPackedBridge({ tarball, packedFiles, commands });
       if (kind === "valid") await parsed;
       else
-        await expect(parsed).rejects.toMatchObject({
-          stderr: expect.stringContaining("SyntaxError"),
-        });
+        await expect(parsed).rejects.toMatchObject(
+          expectedPythonCommandFailure("SyntaxError"),
+        );
       expect(await readdir(root.path)).toEqual(["pack"]);
-      expect(await readFile(tarball)).toEqual(await readFile(input.tarball));
+      expect(
+        Buffer.compare(await readFile(tarball), await readFile(input.tarball)),
+      ).toBe(0);
     }, [() => (commands === undefined ? root.close() : commands.close())]);
     await expect(access(root.path)).rejects.toMatchObject({ code: "ENOENT" });
   },
@@ -230,9 +252,9 @@ it.each(["symlink", "hardlink", "directory"])(
       hopper,
       kind,
     ]);
-    await expect(verifyPackedBridge(input)).rejects.toMatchObject({
-      stderr: expect.stringContaining(`${hopper} is not a regular file`),
-    });
+    await expect(verifyPackedBridge(input)).rejects.toMatchObject(
+      expectedPythonCommandFailure(`${hopper} is not a regular file`),
+    );
     expect(await readdir(input.workspace)).toEqual([]);
   },
 );
@@ -240,8 +262,8 @@ it.each(["symlink", "hardlink", "directory"])(
 it("rejects malformed archives without writing to the caller's workspace", async () => {
   const input = await fixture();
   await writeFile(input.tarball, "not a tar archive\n");
-  await expect(verifyPackedBridge(input)).rejects.toMatchObject({
-    stderr: expect.stringContaining("ReadError"),
-  });
+  await expect(verifyPackedBridge(input)).rejects.toMatchObject(
+    expectedPythonCommandFailure("ReadError"),
+  );
   expect(await readdir(input.workspace)).toEqual([]);
 });

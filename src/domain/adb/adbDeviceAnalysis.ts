@@ -59,10 +59,12 @@ const activityExtraStringValueSchema = z
   .max(2048)
   .regex(/^[^\x00]*$/u, "Extra values cannot contain NUL");
 const activityExtraNonEmptyValueSchema = activityExtraStringValueSchema.min(1);
+/** Maximum typed extras admitted for one Android activity request. */
+export const MAX_ADB_ACTIVITY_EXTRAS = 16;
 // Android's `am start --ef` parses this text with Float.valueOf. Keep the
 // caller's spelling intact while admitting Java FloatValue forms.
 const javaFloatValuePattern =
-  /^[\x01-\x20]*[+\-]?(?:NaN|Infinity|(?:(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+\-]?\d+)?[fFdD]?|0[xX](?:[\da-fA-F]+(?:\.[\da-fA-F]*)?|\.[\da-fA-F]+)[pP][+\-]?\d+[fFdD]?))[\x01-\x20]*$/u;
+  /^[\x01-\x20]*(?:\+|-)?(?:NaN|Infinity|(?:(?:\d+(?:\.\d*)?|\.\d+)(?:[eE](?:\+|-)?\d+)?[fFdD]?|0[xX](?:[\da-fA-F]+(?:\.[\da-fA-F]*)?|\.[\da-fA-F]+)[pP](?:\+|-)?\d+[fFdD]?))[\x01-\x20]*$/u;
 const activityExtraSchema = z.discriminatedUnion("type", [
   z.strictObject({
     key: activityExtraKeySchema,
@@ -335,7 +337,7 @@ export const adbInputSchemas = {
       .describe("Explicit component to start (-n)"),
     extras: z
       .array(activityExtraSchema)
-      .max(16)
+      .max(MAX_ADB_ACTIVITY_EXTRAS)
       .default([])
       .describe("Typed intent extras (--es/--ez/--ei/--el/--ef)"),
   }),

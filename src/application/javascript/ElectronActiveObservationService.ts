@@ -60,6 +60,21 @@ const resolveInputPath = async (
   selected: string,
 ): Promise<Result<string, PathAdmissionFailure>> => {
   try {
+    // Darwin realpath can collapse file/.. even though native lookup rejects
+    // that traversal. Admit the selected path before canonicalizing it.
+    const metadata = await stat(selected);
+    if (field === "application_root" && !metadata.isDirectory()) {
+      const cause = new Error("not a directory");
+      return err({
+        kind: "invalid",
+        issue: {
+          path: [field],
+          reason: "invalid_value",
+          message: `application_root ${selected} is not a directory`,
+        },
+        cause,
+      });
+    }
     return ok(await realpath(selected));
   } catch (cause: unknown) {
     return err(
@@ -186,9 +201,10 @@ export const captureElectronScenario = async (
     ? {
         ok: true,
         value: createElectronActiveEvidence(
-          canonical.value,
+          input,
           captured.value,
           provider.identity(),
+          canonical.value,
         ),
       }
     : captured;

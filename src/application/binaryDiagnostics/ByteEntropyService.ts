@@ -1,7 +1,6 @@
 import { createHash } from "node:crypto";
 import { constants } from "node:fs";
 import { open, stat } from "node:fs/promises";
-import { isAbsolute } from "node:path";
 import type { ExecutionOptions } from "../AnalysisProvider.js";
 import { BYTE_ENTROPY_PROVIDER } from "../../domain/investigationProviders.js";
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
@@ -14,7 +13,6 @@ import {
   AnalysisResourceConstraintError,
 } from "../../domain/analysisErrorCore.js";
 import { createEvidence, type Evidence } from "../../domain/evidence.js";
-import { analysisInputErrorFromIssues } from "../../domain/inputIssueProjection.js";
 import {
   byteEntropySchema,
   computeBlockEntropy,
@@ -38,6 +36,7 @@ import { analysisErrorWithCleanupFailure } from "../../domain/analysisErrorClean
 import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
 import { sameRegularFileState } from "../../filesystem/RegularFile.js";
 import { completeProviderEvidence } from "../ProviderOperationExecution.js";
+import { parseAnalysisInput } from "../AnalysisInput.js";
 
 /** Bound retained result rows before constructing the Evidence representation. */
 export const MAX_BYTE_ENTROPY_BLOCKS = 32_768;
@@ -97,22 +96,14 @@ export class ByteEntropyService {
     rawInput: unknown,
     options?: ExecutionOptions,
   ): Promise<Result<Evidence, AnalysisError>> {
-    if (options?.signal?.aborted)
-      return err(
-        new AnalysisCancelledError(OPERATION, { cause: options.signal.reason }),
-      );
-    const parsed = inspectByteEntropyInputSchema.safeParse(rawInput);
-    if (!parsed.success)
-      return err(
-        analysisInputErrorFromIssues(OPERATION, parsed.error.issues, rawInput, {
-          cause: parsed.error,
-        }),
-      );
-    const input = parsed.data;
-    if (!isAbsolute(input.path))
-      return err(
-        invalid("path", "Expected an absolute filesystem path on this host."),
-      );
+    const parsed = parseAnalysisInput(
+      OPERATION,
+      rawInput,
+      inspectByteEntropyInputSchema,
+      options?.signal,
+    );
+    if (!parsed.ok) return parsed;
+    const input = parsed.value;
     const evidenceFromReport = (report: ByteEntropy): Evidence =>
       createEvidence(
         { path: input.path, format: "file", sha256: report.artifact.sha256 },

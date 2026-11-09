@@ -77,39 +77,6 @@ describe("bundle comparison explicit cross-pairs", () => {
 });
 
 describe("bundle comparison", () => {
-  it("does not report display-only bundle differences as unexplained changes", () => {
-    const target = {
-      path: "/left/artifact.elf",
-      sha256: "a".repeat(64),
-      format: "elf" as const,
-      architecture: "x86_64" as const,
-    };
-    const record = createEvidence(target, PROVIDER, {
-      operation: "observe",
-      parameters: {},
-      result: { observed: true },
-      confidence: "observed",
-      authority: "shipped-artifact",
-    });
-    const left = createEvidenceBundle([record]);
-    const rightRecord = {
-      ...record,
-      subject: {
-        ...record.subject!,
-        name: "renamed.elf",
-        local_path: "/right/renamed.elf",
-      },
-    };
-    const right = { ...left, records: [rightRecord] };
-    const result = compareBundles(left, right);
-    expect(result).toMatchObject({
-      status: "unchanged",
-      summary: { records_unchanged: 1, unresolved: 0 },
-      changes: [],
-    });
-    expect(result.left_bundle_sha256).not.toBe(result.right_bundle_sha256);
-  });
-
   it("accepts long caller-selected bundle paths", () => {
     const path = `/${"deep/".repeat(1_000)}bundle.json`;
     expect(
@@ -172,8 +139,10 @@ describe("bundle comparison", () => {
       ]),
     });
     expect(first.changes).toHaveLength(3);
-    expect(first.limitations).toContain(
-      "EvidenceBundle has no inventory completeness marker; one-sided membership remains unknown.",
+    expect(first.limitations).toContainEqual(
+      expect.stringMatching(
+        /no inventory completeness marker.*membership remains unknown/i,
+      ),
     );
   });
 
@@ -293,9 +262,11 @@ describe("bundle comparison history", () => {
       expect.objectContaining({
         classification: "unknown",
         conclusion_kind: "unresolved_branch",
-        limitations: [
-          "EvidenceBundle has no inventory completeness marker; one-sided history membership remains unknown.",
-        ],
+        limitations: expect.arrayContaining([
+          expect.stringMatching(
+            /no inventory completeness marker.*history membership remains unknown/i,
+          ),
+        ]),
       }),
     );
   });

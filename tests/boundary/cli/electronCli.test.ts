@@ -85,7 +85,7 @@ it(
         isolation: "none",
       },
       limitations: expect.arrayContaining([
-        "Browser host platform and architecture were not observed.",
+        expect.stringMatching(/platform.*architecture.*not observed/iu),
       ]),
       normalized_result: {
         targets: [{ target_id: "electron-page" }],
@@ -148,19 +148,13 @@ it(
     expect(invalidPageInspect.signal).toBeNull();
     expect(invalidPageInspect.exitCode).toBe(1);
     expect(invalidPageInspect.json).toMatchObject({
-      error: "Electron analysis failed",
-      code: "invalid_request",
-      category: "invalid_input",
-      details: {
-        operation: "inspect_electron_page",
-        issues: [
-          {
-            path: ["target_id"],
-            reason: "out_of_range",
-            minimum: 1,
-          },
-        ],
-      },
+      code: "VALIDATION_ERROR",
+      fieldErrors: [
+        {
+          code: "too_small",
+          path: "targetId",
+        },
+      ],
     });
   },
   INTEGRATION_TEST_TIMEOUT_MS,
@@ -270,7 +264,11 @@ it(
         summary: {
           browser_windows: 3,
           context_bridge_apis: 2,
-          ipc: { paired_renderer_transmissions: 4 },
+          ipc: {
+            paired_renderer_transmissions: 0,
+            ambiguous_renderer_transmissions: 7,
+            unpaired_literal_renderer_transmissions: 0,
+          },
         },
       },
     });
@@ -326,7 +324,13 @@ describe("Electron CLI artifact behavior", () => {
         normalized_result: {
           input_path: root,
           format: "directory",
-          summary: { ipc: { paired_renderer_transmissions: 4 } },
+          summary: {
+            ipc: {
+              paired_renderer_transmissions: 0,
+              ambiguous_renderer_transmissions: 7,
+              unpaired_literal_renderer_transmissions: 0,
+            },
+          },
         },
       });
     },

@@ -37,8 +37,8 @@ it("whole executable copying rejects pre-copy replacement and retains captured b
     );
     expect(captured).toEqual({ ok: true, value: capturedPath });
     await writeFile(source, replacement);
-    expect(await readFile(capturedPath)).toEqual(selected);
-    expect(await readFile(source)).toEqual(replacement);
+    expect(Buffer.compare(await readFile(capturedPath), selected)).toBe(0);
+    expect(Buffer.compare(await readFile(source), replacement)).toBe(0);
   } finally {
     await resources.close();
   }

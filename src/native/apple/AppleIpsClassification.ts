@@ -40,7 +40,9 @@ const exceptionMatches = (exception: AppleIps["exception"]): Match[] => {
   const subtype = exception?.subtype ?? null;
   if (subtype === null) return [];
   const typeField =
-    type === null ? [] : [{ name: "exception.type", value: type }];
+    type === null || type === ""
+      ? []
+      : [{ name: "exception.type", value: type }];
   const fields = [...typeField, { name: "exception.subtype", value: subtype }];
   const matches: Match[] =
     type === "EXC_GUARD"
@@ -66,7 +68,7 @@ const dyldMatches = (termination: AppleIps["termination"]): Match[] => {
       rule: "dyld_missing_library",
       fields: [
         { name: "termination.namespace", value: "DYLD" },
-        ...(indicator === null
+        ...(indicator === null || indicator === ""
           ? []
           : [{ name: "termination.indicator", value: indicator }]),
         ...(missingLibrary === undefined

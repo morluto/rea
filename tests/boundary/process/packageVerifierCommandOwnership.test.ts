@@ -10,6 +10,46 @@ import { systemProcessOwnershipHost } from "../../../src/process/ProcessOwnershi
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { processTest } from "../../support/process/processFixture.js";
 
+processTest.skipIf(process.platform === "win32")(
+  "releases a cold source loader before verifying command cleanup",
+  async ({ processes }) => {
+    const commandsModule = pathToFileURL(
+      resolve("scripts/lib/verify-package-commands.mjs"),
+    ).href;
+    const verifierModule = pathToFileURL(
+      resolve("scripts/lib/verifier-run.mjs"),
+    ).href;
+    const result = await processes.run(
+      process.execPath,
+      [
+        "--input-type=module",
+        "-e",
+        `
+      import { mkdtemp, rm } from "node:fs/promises";
+      import { tmpdir } from "node:os";
+      import { join } from "node:path";
+      import { createPackageVerifierCommands } from ${JSON.stringify(commandsModule)};
+      import { createVerifierRun, completeVerifierRun } from ${JSON.stringify(verifierModule)};
+      const run = createVerifierRun();
+      const path = await mkdtemp(join(tmpdir(), "rea-cold-verifier-"));
+      const commands = await createPackageVerifierCommands({ workspace: { path, close: () => rm(path, { recursive: true, force: true }) } });
+      try {
+        await commands.exec(process.execPath, ["-e", "process.stdout.write('ok')"]);
+      } finally {
+        await commands.close();
+      }
+      console.log(JSON.stringify(await completeVerifierRun(run)));
+    `,
+      ],
+      { env: { ...process.env, TSX_DISABLE_CACHE: "1" }, timeoutMs: 20_000 },
+    );
+    expect(result.exitCode, result.stderr).toBe(0);
+    expect(JSON.parse(result.stdout)).toMatchObject({
+      process_lineage: { status: "verified", descendants: [] },
+    });
+  },
+);
+
 const descendantSource = `
 import { appendFileSync, existsSync, writeFileSync } from "node:fs";
 const record = (entry) => appendFileSync(process.env.OWNER_EVENTS, JSON.stringify(entry) + "\\n");

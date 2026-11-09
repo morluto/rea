@@ -1,10 +1,11 @@
 import { spawnSync } from "node:child_process";
-import { access, mkdir, readFile, writeFile } from "node:fs/promises";
-import { dirname, join, sep } from "node:path";
+import { access, chmod, mkdir, readFile, writeFile } from "node:fs/promises";
+import { delimiter, dirname, join, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { expect, it } from "vitest";
 import { z } from "zod";
 
+import { writeRepositoryOxlintConfiguration } from "../../fixtures/oxlintConfiguration.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 const script = fileURLToPath(
@@ -26,12 +27,20 @@ const fixture = async () => {
   );
   return root;
 };
-const invoke = (root: string, mode: string, ...arguments_: string[]) =>
+const invokeWithEnvironment = (
+  root: string,
+  mode: string,
+  environment: NodeJS.ProcessEnv,
+  ...arguments_: string[]
+) =>
   spawnSync(process.execPath, [script, mode, ...arguments_], {
     cwd: root,
     encoding: "utf8",
     timeout: 15_000,
+    env: environment,
   });
+const invoke = (root: string, mode: string, ...arguments_: string[]) =>
+  invokeWithEnvironment(root, mode, process.env, ...arguments_);
 const lintDiagnostics = async (root: string) =>
   z
     .object({
@@ -68,7 +77,6 @@ it("covers the lint inventory and root tool configs in resolved cache inputs", (
       join(repository, "node_modules/turbo/bin/turbo"),
       "run",
       "lint",
-      "lint:built",
       "knip",
       "--dry=json",
     ],
@@ -91,10 +99,8 @@ it("covers the lint inventory and root tool configs in resolved cache inputs", (
       ),
     })
     .parse(JSON.parse(dry.stdout));
-  const lintTasks = tasks.filter(({ task }) =>
-    ["lint", "lint:built"].includes(task),
-  );
-  expect(lintTasks).toHaveLength(2);
+  const lintTasks = tasks.filter(({ task }) => task === "lint");
+  expect(lintTasks).toHaveLength(1);
   for (const task of lintTasks)
     expect(
       files.filter((file) => !Object.hasOwn(task.inputs, file)),
@@ -147,10 +153,121 @@ it("keeps lint errors failing and visible alongside the retained warnings", asyn
   );
 });
 
+it("preserves cross-file typed errors and explicit worker choices", async () => {
+  const root = await fixture();
+  await Promise.all([
+    writeFile(join(root, "package.json"), '{"type":"module"}'),
+    writeFile(
+      join(root, "tsconfig.json"),
+      JSON.stringify({
+        compilerOptions: {
+          module: "NodeNext",
+          target: "ES2023",
+          lib: ["ES2023"],
+          strict: true,
+          types: [],
+        },
+        include: ["src/**/*.ts"],
+      }),
+    ),
+    writeFile(
+      join(root, ".oxlintrc.json"),
+      JSON.stringify({
+        plugins: ["typescript"],
+        rules: {
+          "no-unused-vars": "warn",
+          "typescript/no-floating-promises": "error",
+          "typescript/switch-exhaustiveness-check": "error",
+        },
+      }),
+    ),
+    writeFile(
+      join(root, "src/types.ts"),
+      'export type State = "ready" | "failed";\n' +
+        "export function pending(): Promise<void> { return Promise.resolve(); }\n",
+    ),
+  ]);
+  const caller = join(root, "src/caller.ts");
+  const source =
+    'import { pending, type State } from "./types.js";\n' +
+    "const forgotten = 1;\n";
+  await writeFile(
+    caller,
+    source +
+      "pending();\n" +
+      'export function inspect(state: State) { switch (state) { case "ready": return 1; } }\n',
+  );
+  const diagnostics: string[][] = [];
+  const typedEnvironment = {
+    ...process.env,
+    PATH: [join(repository, "node_modules", ".bin"), process.env.PATH]
+      .filter((path) => path !== undefined)
+      .join(delimiter),
+  };
+  for (const workers of [undefined, "2"]) {
+    const result = invokeWithEnvironment(root, "typed-lint", {
+      ...typedEnvironment,
+      GOMAXPROCS: workers,
+      OXC_LOG: "debug",
+    });
+    expect(result.error).toBeUndefined();
+    expect(result.status, result.stderr).toBe(1);
+    expect(result.stderr).toContain(
+      `Starting linter with ${workers ?? "1"} workers`,
+    );
+    expect(result.stdout).toContain("2 errors, 1 warnings");
+    const report = z
+      .object({
+        number_of_files: z.number(),
+        diagnostics: z.array(
+          z.object({ code: z.string(), severity: z.string() }).passthrough(),
+        ),
+      })
+      .parse(
+        JSON.parse(
+          await readFile(
+            join(root, ".cache/static-checks/typed-oxlint.json"),
+            "utf8",
+          ),
+        ),
+      );
+    expect(report.number_of_files).toBe(2);
+    expect(
+      report.diagnostics
+        .filter(({ severity }) => severity === "error")
+        .map(({ code }) => code)
+        .sort(),
+    ).toEqual([
+      "typescript(no-floating-promises)",
+      "typescript(switch-exhaustiveness-check)",
+    ]);
+    diagnostics.push(
+      report.diagnostics.map((item) => JSON.stringify(item)).sort(),
+    );
+  }
+  expect(diagnostics[1]).toEqual(diagnostics[0]);
+  await writeFile(
+    caller,
+    source +
+      "await pending();\n" +
+      'export function inspect(state: State) { switch (state) { case "ready": return 1; case "failed": return 0; } }\n',
+  );
+  const corrected = invokeWithEnvironment(root, "typed-lint", {
+    ...typedEnvironment,
+    GOMAXPROCS: undefined,
+  });
+  expect(corrected.error).toBeUndefined();
+  expect(corrected.status, corrected.stderr).toBe(0);
+  expect(corrected.stdout).toContain("0 errors, 1 warnings");
+});
+
 it("excludes translation staging while retaining authored website errors", async () => {
   const root = await fixture();
-  for (const name of [".gitignore", ".oxlintrc.json"])
-    await writeFile(join(root, name), await readFile(join(repository, name)));
+  await writeFile(
+    join(root, ".gitignore"),
+    await readFile(join(repository, ".gitignore")),
+  );
+  await writeRepositoryOxlintConfiguration(root);
   const authored = "website/public/assets/authored.js";
   const staged =
     "website/.i18n-regression/site/examples/notes-electron/main.js";
@@ -188,6 +305,37 @@ it("keeps malformed source failing with its parser diagnostic", async () => {
     expect.objectContaining({ severity: "error" }),
   );
 });
+
+it.skipIf(process.platform === "win32" || process.getuid?.() === 0)(
+  "retains location-free lint I/O errors without inventing a source location",
+  async () => {
+    const root = await fixture();
+    const source = join(root, "src/unreadable.js");
+    await writeFile(source, "debugger;\n");
+    await chmod(source, 0);
+    try {
+      const result = invoke(root, "lint", source);
+      expect(result.error).toBeUndefined();
+      expect(result.status).toBe(1);
+      expect(result.stdout).toContain("1 files, 1 errors, 0 warnings");
+      expect(result.stdout).toContain("Full diagnostics:");
+      const report = JSON.parse(
+        await readFile(join(root, ".cache/static-checks/oxlint.json"), "utf8"),
+      );
+      expect(report.diagnostics).toEqual([
+        {
+          message: expect.stringContaining("Permission denied"),
+          severity: "error",
+          labels: [],
+        },
+      ]);
+      expect(report.diagnostics[0].message).toContain(source);
+      expect(result.stderr).toBe(`lint: ${report.diagnostics[0].message}\n`);
+    } finally {
+      await chmod(source, 0o600);
+    }
+  },
+);
 
 it("preserves the duplication threshold and complete clone locations", async () => {
   const root = await fixture();

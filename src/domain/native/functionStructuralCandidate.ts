@@ -1,5 +1,5 @@
 import type { Evidence } from "../evidence.js";
-import type { FunctionDossier } from "../hopperValues.js";
+import type { FunctionDossier } from "../native/functionDossier.js";
 import { digestCanonicalValue } from "../canonicalDigest.js";
 import { normalizeCfg } from "../functionComparisonNormalization.js";
 import { hasStableNativeSymbol } from "./nativeSymbol.js";

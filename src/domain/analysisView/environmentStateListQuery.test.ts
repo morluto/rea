@@ -374,3 +374,30 @@ describe("queries the state can always answer", () => {
     });
   });
 });
+
+describe("parameters that ask for an order", () => {
+  it("reads a sort field in any spelling as a sort, never as a parameter without effect", () => {
+    expect(explainLine(line("?_sort=id&_order=DESC", [4, 3, 2, 1]))).toEqual({
+      _sort: { role: "sort" },
+      _order: { role: "direction" },
+    });
+    expect(
+      explainLine(line("?sortKey=id&sortDirection=descending", [4, 3, 2, 1])),
+    ).toEqual({
+      sortKey: { role: "sort" },
+      sortDirection: { role: "direction" },
+    });
+    // A sort value naming no field leaves the line unexplained rather than without effect.
+    expect(explainLine(line("?_sort=newest", [1, 2, 3, 4]))).toBeUndefined();
+  });
+
+  it("reads a direction name given no direction as an ordinary parameter", () => {
+    expect(explainLine(line("?direction=shared-by", [1, 2, 3, 4]))).toEqual({
+      direction: { role: "inert", values: ["shared-by"] },
+    });
+    expect(explainLine(line("?reverse=false", [1, 2, 3, 4]))).toEqual({
+      reverse: { role: "inert", values: ["false"] },
+    });
+    expect(explainLine(line("?reverse=true", [1, 2, 3, 4]))).toBeUndefined();
+  });
+});

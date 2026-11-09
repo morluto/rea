@@ -1,3 +1,4 @@
+import { projectCliAnalysisResult } from "../../../src/cli/projectCliAnalysisResult.js";
 import { EventEmitter } from "node:events";
 import { expect, it } from "vitest";
 import { WasmArtifactService } from "../../../src/application/wasm/WasmArtifactService.js";
@@ -31,7 +32,7 @@ it("delivers cancellation with completed WASM Evidence through the CLI boundary"
         "wabt-artifact",
         "inspect_wasm_artifact",
         signal,
-      ),
+      ).then(projectCliAnalysisResult),
     {
       on: events.on.bind(events),
       off: events.off.bind(events),

@@ -4,11 +4,13 @@ import {
   containsDelimited,
   delimitedOffsets,
   formatClock,
+  generatedIntegerDigits,
   integerOf,
   isUuid,
   readClock,
   replaceDelimited,
   respellClock,
+  seededInteger,
   seededToken,
   seededUuid,
   sequenceNumber,
@@ -69,9 +71,23 @@ it.each<[string, number, ClockFormat, number?]>([
 ])(
   "reads the ISO clock %s with its spelling",
   (text, ms, format, subMillisecond = 0) => {
-    expect(readClock(text)).toEqual({ ms, subMillisecond, format });
+    expect(readClock(text)).toEqual({
+      ms,
+      subMillisecond,
+      format,
+      fixedWidth: false,
+    });
   },
 );
+
+it.each<[string, boolean]>([
+  ["2026-03-04T05:06:07.120Z", true],
+  ["2026-03-04T05:06:07.000Z", true],
+  ["2026-03-04T05:06:07.12Z", false],
+  ["2026-03-04T05:06:07Z", false],
+])("reads whether the fraction of %s shows a fixed width", (text, fixed) => {
+  expect(readClock(text)?.fixedWidth).toBe(fixed);
+});
 
 it.each([
   "0001-02-29T00:00:00Z",
@@ -153,11 +169,17 @@ it.each<[JsonValue | undefined, ReturnType<typeof readClock>]>([
       ms: WHOLE_SECOND,
       subMillisecond: 0,
       format: { kind: "epoch", unit: "s" },
+      fixedWidth: true,
     },
   ],
   [
     WITH_MS,
-    { ms: WITH_MS, subMillisecond: 0, format: { kind: "epoch", unit: "ms" } },
+    {
+      ms: WITH_MS,
+      subMillisecond: 0,
+      format: { kind: "epoch", unit: "ms" },
+      fixedWidth: true,
+    },
   ],
   [999_999_999, undefined],
   [99_999_999_999, undefined],
@@ -412,4 +434,43 @@ it("respells a clock at another offset with its own fraction digits, across a da
   expect(respellClock(epochMs, iso("T", 3, "+00:00"))).toBe(
     "2026-10-21T17:06:13.250+00:00",
   );
+});
+
+const TRIMMED_9: ClockFormat = {
+  kind: "iso",
+  separator: "T",
+  fraction: 9,
+  zone: "Z",
+  trimmed: true,
+};
+
+it("spells a trimmed format without trailing fraction zeros, and without the point when none remain", () => {
+  expect(formatClock(WITH_MS, TRIMMED_9)).toBe("2026-03-04T05:06:07.123Z");
+  expect(formatClock(WHOLE_SECOND, TRIMMED_9)).toBe("2026-03-04T05:06:07Z");
+  expect(respellClock("2026-03-04T05:06:07.120000Z", TRIMMED_9)).toBe(
+    "2026-03-04T05:06:07.12Z",
+  );
+});
+
+it("seeds integers as long as the recorded one, keeping its JSON kind and a safe number", () => {
+  const number = seededInteger("seed", 1656166527623168);
+  expect(typeof number).toBe("number");
+  expect(Number.isSafeInteger(number)).toBe(true);
+  expect(String(number)).toMatch(/^[1-8]\d{15}$/u);
+  expect(seededInteger("seed", 1656166527623168)).toBe(number);
+  expect(seededInteger("other", 1656166527623168)).not.toBe(number);
+  expect(seededInteger("seed", "1234567890123456789")).toMatch(
+    /^[1-9]\d{18}$/u,
+  );
+});
+
+it.each<[JsonValue, string | undefined]>([
+  [1656166527623168, "1656166527623168"],
+  ["1234567890123456789", "1234567890123456789"],
+  [123456789, undefined],
+  ["0123456789012", undefined],
+  [-1656166527623168, undefined],
+  [1.5e15 + 0.5, undefined],
+])("reads %j as a generated integer's digits", (value, expected) => {
+  expect(generatedIntegerDigits(value)).toBe(expected);
 });

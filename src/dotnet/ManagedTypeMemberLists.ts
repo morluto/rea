@@ -1,12 +1,16 @@
 import type { ManagedParseIssue } from "../domain/managed/managedArtifact.js";
 import { managedDecodeBudget } from "./ManagedDecodeBudget.js";
 import type { ManagedMetadataLayout } from "./ManagedMetadataLayout.js";
-import { metadataRowCursor, metadataToken } from "./ManagedMetadataHeaps.js";
+import { metadataToken } from "./ManagedMetadataHeaps.js";
 import {
-  memberListIndexSize,
   memberListTable,
   validatedMemberListStart,
 } from "./ManagedMemberPointers.js";
+
+import {
+  readTypeDefinitionRowFacts,
+  type TypeDefinitionRowFacts,
+} from "./ManagedTypeDefinitionRows.js";
 
 export type MemberDefinitionTable = 4 | 6;
 
@@ -23,6 +27,7 @@ export interface TypeMemberListRange {
 }
 
 export interface TypeMemberListEntry {
+  readonly source: TypeDefinitionRowFacts;
   readonly field: TypeMemberListRange;
   readonly method: TypeMemberListRange;
 }
@@ -39,33 +44,33 @@ export const readTypeMemberListFacts = (
 ): TypeMemberListFacts => {
   const fields = memberListTable(layout, 4);
   const methods = memberListTable(layout, 6);
-  const rows: { field: TypeMemberListStart; method: TypeMemberListStart }[] =
-    [];
+  const rows: {
+    source: TypeDefinitionRowFacts;
+    field: TypeMemberListStart;
+    method: TypeMemberListStart;
+  }[] = [];
   const issues: ManagedParseIssue[] = [];
   const types = layout.table(2);
   const typeCount = types?.rowCount ?? 0;
-  // Peak retained shape includes both the parsed-start and range arrays, their
-  // nested records, plus each eventual JSON object/key projection. Malformed
+  // Peak retained shape includes shared scalar source facts, the parsed-start
+  // and range arrays, plus each eventual JSON object/key projection. Malformed
   // row diagnostics are admitted separately before they are allocated.
   managedDecodeBudget(layout).reserve(
-    typeCount * 512 + 256,
+    typeCount * 640 + 256,
     types?.offset ?? null,
   );
   for (let row = 1; row <= typeCount; row += 1) {
-    const cursor = metadataRowCursor(bytes, layout, 2, row);
-    cursor.readUInt32();
-    cursor.readIndex(layout.stringIndexSize);
-    cursor.readIndex(layout.stringIndexSize);
-    cursor.readIndex(layout.codedIndexSize("TypeDefOrRef"));
+    const source = readTypeDefinitionRowFacts(bytes, layout, row);
     const field = {
-      offset: cursor.offset,
-      raw: cursor.readIndex(memberListIndexSize(layout, 4)),
+      offset: source.fieldListOffset,
+      raw: source.fieldListRaw,
     };
     const method = {
-      offset: cursor.offset,
-      raw: cursor.readIndex(memberListIndexSize(layout, 6)),
+      offset: source.methodListOffset,
+      raw: source.methodListRaw,
     };
     const entry = {
+      source,
       field: { ...field, value: validatedMemberListStart(field.raw, fields) },
       method: {
         ...method,
@@ -89,33 +94,40 @@ export const readTypeMemberListFacts = (
   }
   const nonmonotonicFields = new Set<number>();
   const nonmonotonicMethods = new Set<number>();
-  for (let index = 0; index + 1 < rows.length; index += 1) {
-    const current = rows[index];
-    const next = rows[index + 1];
-    if (current === undefined || next === undefined) continue;
-    for (const [name, before, after, affected] of [
-      ["FieldList", current.field, next.field, nonmonotonicFields],
-      ["MethodList", current.method, next.method, nonmonotonicMethods],
-    ] as const)
+  const previousKnown = { field: -1, method: -1 };
+  for (const [index, entry] of rows.entries()) {
+    for (const [name, member, affected] of [
+      ["FieldList", "field", nonmonotonicFields],
+      ["MethodList", "method", nonmonotonicMethods],
+    ] as const) {
+      const after = entry[member];
+      // An invalid coordinate cannot establish a range endpoint, but it
+      // cannot hide a decrease between the surrounding valid coordinates.
+      if (after.value === null) continue;
+      const preceding = previousKnown[member];
+      const before = rows[preceding]?.[member];
+      previousKnown[member] = index;
       if (
+        before !== undefined &&
         before.value !== null &&
-        after.value !== null &&
         after.value < before.value
       ) {
         managedDecodeBudget(layout).reserve(512, after.offset);
+        affected.add(preceding);
         affected.add(index);
-        affected.add(index + 1);
         issues.push({
           code: "invalid-row",
-          scope: `metadata.TypeDef:${metadataToken(2, index + 2)}`,
+          scope: `metadata.TypeDef:${metadataToken(2, index + 1)}`,
           offset: after.offset,
-          detail: `TypeDef ${name} start ${String(after.raw)} decreases from preceding start ${String(before.raw)}; adjacent member ranges are unknown`,
+          detail: `TypeDef ${name} start ${String(after.raw)} decreases from preceding start ${String(before.raw)}; affected member ranges are unknown`,
         });
       }
+    }
   }
   const entries: TypeMemberListEntry[] = rows.map((entry, index) => {
     const next = rows[index + 1];
     return {
+      source: entry.source,
       field: {
         start: {
           ...entry.field,

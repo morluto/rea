@@ -6,8 +6,16 @@ import { err, ok } from "../domain/result.js";
 import * as pythonRuntime from "./LinuxHopperPython.js";
 import {
   linuxHopperInstallDisclosure,
+  linuxPackageManagerCommands,
   systemLinuxHopperInstallHost,
 } from "./LinuxHopper.js";
+
+/** Package transactions that install Hopper before any runtime library repair. */
+const debCommands = linuxPackageManagerCommands(
+  "deb",
+  "/tmp/verified-hopper.deb",
+  false,
+).length;
 
 const missingPython = {
   interpreter: "/usr/bin/python3",
@@ -37,13 +45,13 @@ describe("Linux Hopper package runtime", () => {
     {
       name: "installs and verifies the matching future Python library",
       inspections: [ok(missingPython), ok(readyPython)],
-      packageCalls: 2,
+      packageCalls: debCommands + 1,
       status: "installed",
     },
     {
       name: "skips the extra APT command for an already loadable library",
       inspections: [ok(readyPython)],
-      packageCalls: 1,
+      packageCalls: debCommands,
       status: "installed",
     },
     {
@@ -54,13 +62,13 @@ describe("Linux Hopper package runtime", () => {
           library: { status: "unknown", reason: "No INSTSONAME" },
         } satisfies pythonRuntime.LinuxHopperPythonRuntime),
       ],
-      packageCalls: 1,
+      packageCalls: debCommands,
       status: "runtime_unavailable",
     },
     {
       name: "rejects APT success when the library still cannot load",
       inspections: [ok(missingPython), ok(missingPython)],
-      packageCalls: 2,
+      packageCalls: debCommands + 1,
       status: "runtime_unavailable",
     },
     {
@@ -73,7 +81,7 @@ describe("Linux Hopper package runtime", () => {
           ),
         ),
       ],
-      packageCalls: 1,
+      packageCalls: debCommands,
       status: "runtime_unavailable",
     },
   ])("$name", async ({ inspections, packageCalls, status }) => {
@@ -97,9 +105,9 @@ describe("Linux Hopper package runtime", () => {
       ).toMatchObject({ status });
       expect(command).toHaveBeenCalledTimes(packageCalls);
       expect(inspect).toHaveBeenCalledTimes(inspections.length);
-      if (packageCalls === 2) {
+      if (packageCalls > debCommands) {
         const isRoot = process.getuid?.() === 0;
-        expect(command.mock.calls[1]?.slice(0, 2)).toEqual([
+        expect(command.mock.calls[debCommands]?.slice(0, 2)).toEqual([
           isRoot ? "apt-get" : "pkexec",
           [...(isRoot ? [] : ["apt-get"]), "install", "-y", "libpython3.14"],
         ]);
@@ -128,10 +136,10 @@ describe("Linux Hopper package runtime", () => {
       stderr: "original package error",
       outputTruncated: true,
     };
-    const command = vi
-      .spyOn(boundedCommands, "execFileBoundedOutput")
-      .mockResolvedValueOnce(commandSuccess)
-      .mockResolvedValueOnce(failed);
+    const command = vi.spyOn(boundedCommands, "execFileBoundedOutput");
+    for (let index = 0; index < debCommands; index++)
+      command.mockResolvedValueOnce(commandSuccess);
+    command.mockResolvedValueOnce(failed);
     const inspect = vi
       .spyOn(pythonRuntime, "inspectLinuxHopperPythonRuntime")
       .mockResolvedValue(ok(missingPython));
@@ -139,7 +147,7 @@ describe("Linux Hopper package runtime", () => {
       expect(
         await host.installPackage("deb", "/tmp/verified-hopper.deb"),
       ).toMatchObject({ status: "failed", failure: failed });
-      expect(command).toHaveBeenCalledTimes(2);
+      expect(command).toHaveBeenCalledTimes(debCommands + 1);
       expect(inspect).toHaveBeenCalledTimes(1);
     } finally {
       try {
@@ -184,7 +192,7 @@ describe("Linux Hopper package mapping", () => {
           message: expect.stringContaining(path),
         },
       });
-      expect(command).toHaveBeenCalledTimes(1);
+      expect(command).toHaveBeenCalledTimes(debCommands);
       expect(inspect).toHaveBeenCalledTimes(1);
     } finally {
       try {
@@ -197,13 +205,62 @@ describe("Linux Hopper package mapping", () => {
   });
 });
 
+describe("Linux Hopper package transaction failures", () => {
+  it.each(Array.from({ length: debCommands }, (_, index) => index + 1))(
+    "stops after failed install transaction %i without inspecting Python",
+    async (failing) => {
+      const directory = await createTestTempDirectory(
+        "rea-linux-install-failure-",
+      );
+      const host = systemLinuxHopperInstallHost(
+        { XDG_CACHE_HOME: directory },
+        async () => undefined,
+      );
+      const failed = {
+        exitCode: 100,
+        stdout: "",
+        stderr: "transaction " + String(failing) + " failed",
+        outputTruncated: false,
+      };
+      let calls = 0;
+      const command = vi
+        .spyOn(boundedCommands, "execFileBoundedOutput")
+        .mockImplementation(async () =>
+          ++calls === failing ? failed : commandSuccess,
+        );
+      const inspect = vi.spyOn(
+        pythonRuntime,
+        "inspectLinuxHopperPythonRuntime",
+      );
+      try {
+        expect(
+          await host.installPackage("deb", "/tmp/verified-hopper.deb"),
+        ).toMatchObject({
+          status: "failed",
+          failure: { exitCode: 100, stderr: failed.stderr },
+        });
+        expect(command).toHaveBeenCalledTimes(failing);
+        expect(inspect).not.toHaveBeenCalled();
+      } finally {
+        try {
+          await host.close?.();
+        } finally {
+          inspect.mockRestore();
+          command.mockRestore();
+        }
+      }
+    },
+  );
+});
+
 describe("Linux Hopper package cancellation and disclosure", () => {
   it.each([
     { phase: "before", commands: 0, inspections: 0 },
     { phase: "first transaction", commands: 1, inspections: 0 },
-    { phase: "query", commands: 1, inspections: 1 },
-    { phase: "runtime transaction", commands: 2, inspections: 1 },
-    { phase: "verification", commands: 2, inspections: 2 },
+    { phase: "archive transaction", commands: debCommands, inspections: 0 },
+    { phase: "query", commands: debCommands, inspections: 1 },
+    { phase: "runtime transaction", commands: debCommands + 1, inspections: 1 },
+    { phase: "verification", commands: debCommands + 1, inspections: 2 },
   ])(
     "honors cancellation at $phase without starting the next stage",
     async ({ phase, commands, inspections }) => {
@@ -224,7 +281,9 @@ describe("Linux Hopper package cancellation and disclosure", () => {
           commandCount++;
           if (
             (phase === "first transaction" && commandCount === 1) ||
-            (phase === "runtime transaction" && commandCount === 2)
+            (phase === "archive transaction" && commandCount === debCommands) ||
+            (phase === "runtime transaction" &&
+              commandCount === debCommands + 1)
           )
             controller.abort(cause);
           return commandSuccess;
@@ -267,8 +326,8 @@ describe("Linux Hopper package cancellation and disclosure", () => {
 
   it("discloses the conditional privileged library install without returning probe code", () => {
     const disclosure = linuxHopperInstallDisclosure("deb", false);
-    expect(disclosure.commands).toHaveLength(2);
-    expect(disclosure.commands[1]).toBe(
+    expect(disclosure.commands).toHaveLength(debCommands + 1);
+    expect(disclosure.commands[debCommands]).toBe(
       'pkexec apt-get install -y "<libpython matching /usr/bin/python3, if not loadable>"',
     );
     expect(linuxHopperInstallDisclosure("rpm", false).commands).toHaveLength(1);

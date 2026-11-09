@@ -12,7 +12,6 @@ import {
   createEvidenceBundle,
   type EvidenceBundle,
 } from "../domain/evidenceBundle.js";
-import { jsonValueSchema } from "../domain/jsonValue.js";
 import {
   reconstructionObligationLedgerSchema,
   type ReconstructionObligationLedgerInput,
@@ -47,12 +46,10 @@ export const processEvidence = (
     predicateType: "rea.process-capture",
     operation: "capture_process_scenario",
     parameters: {},
-    result: jsonValueSchema.parse(
-      processCaptureSchema.parse({
-        ...EMPTY_PROCESS_CAPTURE_EXAMPLE,
-        ...overrides,
-      }),
-    ),
+    result: processCaptureSchema.parse({
+      ...EMPTY_PROCESS_CAPTURE_EXAMPLE,
+      ...overrides,
+    }),
     confidence: "observed",
     authority: "controlled-replay",
   });
@@ -70,9 +67,7 @@ export const boundProofEvidence = (
       predicateType: "rea.reconstruction-proof",
       operation: "verify_reconstruction_obligations",
       parameters: {},
-      result: jsonValueSchema.parse(
-        reconstructionObligationProofSchema.parse(result),
-      ),
+      result: reconstructionObligationProofSchema.parse(result),
       confidence: "observed",
       authority,
     },

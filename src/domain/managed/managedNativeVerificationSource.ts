@@ -1,4 +1,5 @@
-import { z } from "zod";
+import { getEvidenceInputContract } from "../evidenceInputContract.js";
+import { managedNativeVerificationRequestSchema } from "./managedNativeVerificationSchemas.js";
 
 import type { Evidence } from "../evidence.js";
 import { AnalysisInputError } from "../analysisErrorCore.js";
@@ -7,8 +8,8 @@ import { EvidenceIntegrityError } from "../evidenceErrors.js";
 import { analysisInputErrorFromIssues } from "../inputIssueProjection.js";
 import { readEvidence, readEvidencePayload } from "../evidenceValidation.js";
 import { err, ok, type Result } from "../result.js";
-import { functionDossierSchema } from "../hopperValues.js";
-import { inspectMachoSchema } from "../native/nativeInspection.js";
+import { functionDossierSchema } from "../native/functionDossier.js";
+import { retainedInspectMachoSchema } from "../native/nativeInspection.js";
 import {
   managedNativeBoundaryInspectionSchema,
   type ManagedNativeBoundaryInspection,
@@ -19,10 +20,9 @@ import type { NativeSymbol } from "./managedNativeVerificationSchemas.js";
 const OPERATION = "verify_managed_native_boundaries" as const;
 const MANAGED_OPERATION = "inspect_managed_native_boundaries" as const;
 
-const requestFrameSchema = z.strictObject({
-  managed_boundaries: z.unknown(),
-  native_observations: z.array(z.unknown()).min(1),
-});
+const requestFrameSchema = getEvidenceInputContract(
+  managedNativeVerificationRequestSchema,
+).frameSchema;
 
 export interface ManagedNativeVerificationSource {
   readonly managedEvidence: Evidence;
@@ -34,6 +34,11 @@ export interface ManagedNativeObservationFacts {
   readonly evidence: Evidence;
   readonly symbols: readonly NativeSymbol[];
   readonly supported: boolean;
+  /** Coverage of an export inventory; function observations are targeted. */
+  readonly exportCoverage?: {
+    readonly exhaustive: boolean;
+    readonly limitations: readonly string[];
+  };
 }
 
 const inputFailure = (
@@ -55,13 +60,17 @@ const readNativeObservation = (
   const evidence = read.value;
   if (evidence.operation === "inspect_macho") {
     const payload = readEvidencePayload(
-      inspectMachoSchema,
+      retainedInspectMachoSchema,
       evidence.normalized_result,
     );
     if (!payload.ok) return payload;
     return ok({
       evidence,
       supported: true,
+      exportCoverage: {
+        exhaustive: payload.value.exports.exhaustive,
+        limitations: payload.value.exports.limitations,
+      },
       symbols: payload.value.exports.items.map((symbol) => ({
         evidence_id: evidence.evidence_id,
         operation: evidence.operation,

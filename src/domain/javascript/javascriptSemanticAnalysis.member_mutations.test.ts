@@ -1,3 +1,5 @@
+import { onlyBinding } from "./javascriptSemanticAnalysis.fixture.js";
+import { semanticSlotAtPath } from "./javascriptSemanticSlots.js";
 import { describe, expect, it } from "vitest";
 
 import { analyzeJavaScriptSemantics } from "./javascriptSemanticAnalysis.js";
@@ -955,3 +957,88 @@ it.each([
     ).toMatchObject({ status: "unknown" });
   },
 );
+
+describe("post-declaration literal containers at the semantic owner", () => {
+  it.each([
+    ["function", "function Game() {}"],
+    ["object", "const Game = {}"],
+    ["ordinary initialized slot", "const Game = { config: null }"],
+  ])(
+    "retains a proven %s receiver's container in immutable binding facts",
+    (_name, declaration) => {
+      const ir = analyzeJavaScriptSemantics(
+        `${declaration}; Game.config = { ACCEL: 0.001 }; export function accel() { return Game.config.ACCEL; }`,
+      );
+      expect(
+        semanticSlotAtPath(onlyBinding(ir, "Game").value, ["config", "ACCEL"]),
+      ).toMatchObject({
+        presence: "present",
+        value: { status: "literal", value: 0.001 },
+      });
+    },
+  );
+  it.each([
+    [
+      "setter",
+      "const Game = { set config(value) {} }; Game.config = { ACCEL: 0.001 };",
+    ],
+    [
+      "inherited setter",
+      "const Game = { __proto__: { set config(value) {} } }; Game.config = { ACCEL: 0.001 };",
+    ],
+    [
+      "unresolved descriptor",
+      "const Game = { [key]: getValue() }; Game.config = { ACCEL: 0.001 };",
+    ],
+    [
+      "receiver rebind",
+      "let Game = {}; Game.config = { ACCEL: 0.001 }; Game = getOther();",
+    ],
+    [
+      "earlier local activation",
+      "const Game = {}; function early() { return Game.config.ACCEL; } const before = early(); Game.config = { ACCEL: 0.001 };",
+    ],
+    [
+      "escaped receiver",
+      "const Game = {}; Game.config = { ACCEL: 0.001 }; use(Game);",
+    ],
+    [
+      "escaped alias",
+      "const Game = {}; Game.config = { ACCEL: 0.001 }; const ref = Game.config; use(ref);",
+    ],
+    [
+      "parent replacement",
+      "const Game = {}; Game.config = {}; Game.config.limits = { ACCEL: 0.001 }; Game.config = {};",
+    ],
+  ])("does not invent stored literals for %s", (_name, setup) => {
+    const ir = analyzeJavaScriptSemantics(
+      `${setup} export function accel() { return Game.config.ACCEL; }`,
+    );
+    expect(
+      semanticSlotAtPath(onlyBinding(ir, "Game").value, ["config", "ACCEL"])
+        .value.status,
+    ).not.toBe("literal");
+  });
+  it("retains an earlier copied primitive without applying a later container to its read", () => {
+    const ir = analyzeJavaScriptSemantics(
+      "const Game = { config: { ACCEL: 1 } }; const before = Game.config.ACCEL; Game.config = { ACCEL: 2 }; export function accel() { return Game.config.ACCEL; }",
+    );
+    expect(onlyBinding(ir, "before").value).toEqual({
+      status: "literal",
+      value: 1,
+    });
+    expect(
+      semanticSlotAtPath(onlyBinding(ir, "Game").value, ["config", "ACCEL"])
+        .value.status,
+    ).toBe("unknown");
+  });
+  it("does not mistake a local alias declaration for a reference escape", () => {
+    const ir = analyzeJavaScriptSemantics(
+      "const Game = {}; Game.config = { ACCEL: 0.001 }; const ref = Game.config; export function accel() { return Game.config.ACCEL; }",
+    );
+    expect(
+      semanticSlotAtPath(onlyBinding(ir, "Game").value, ["config", "ACCEL"])
+        .value,
+    ).toEqual({ status: "literal", value: 0.001 });
+  });
+});

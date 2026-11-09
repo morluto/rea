@@ -14,20 +14,24 @@ import { collectJavaScriptSemanticPromises } from "./javascriptSemanticPromises.
 import { collectJavaScriptSemanticObjects } from "./javascriptSemanticObjects.js";
 import { collectJavaScriptSemanticResources } from "./javascriptSemanticResources.js";
 import type { JavaScriptSemanticAnalysisState } from "./javascriptSemanticState.js";
-import { evaluateSemanticExpression } from "./javascriptSemanticValues.js";
-import { semanticBranchMayBeSkipped } from "./javascriptSemanticEvaluationOrder.js";
 
 import { createSemanticCallableIdStack } from "./javascriptSemanticCallableStack.js";
-import {
-  traverseJavaScriptAstSteps,
-  traverseJavaScriptValueAstSteps,
-} from "./javascriptSemanticTraversal.js";
+import { traverseJavaScriptValueAstSteps } from "./javascriptSemanticTraversal.js";
 import { range } from "./javascriptStaticAnalysisHelpers.js";
-import { unwrapJavaScriptExpression } from "./javascriptAstValues.js";
+import {
+  readExactJavaScriptLiteral,
+  unwrapJavaScriptExpression,
+} from "./javascriptAstValues.js";
+import { semanticPrimitiveSet } from "./javascriptSemanticPrimitives.js";
+import { JAVASCRIPT_ANALYSIS_RESOURCE_DEFAULTS } from "./javascriptAnalysisResourceControls.js";
 
 type DerivedSemanticAnalysis = Pick<
   JavaScriptSemanticIr,
   | "assignmentFlows"
+  | "expressionFlows"
+  | "initializerFlows"
+  | "literalReturns"
+  | "expressionFlowsTruncated"
   | "argumentFlows"
   | "callResultFlows"
   | "callReturnFlows"
@@ -58,6 +62,7 @@ export function* collectJavaScriptDerivedSemanticsSteps(
   callables: readonly JavaScriptSemanticCallable[],
   references: readonly JavaScriptSemanticReference[],
   parserPartial: boolean,
+  expressionNodeBudget: number = JAVASCRIPT_ANALYSIS_RESOURCE_DEFAULTS.semanticNodesPerFile,
 ): Generator<void, DerivedSemanticAnalysis> {
   const calls = collectJavaScriptSemanticCalls(program, state, callables);
   yield;
@@ -102,6 +107,13 @@ export function* collectJavaScriptDerivedSemanticsSteps(
     state,
     callables,
   );
+  const expressionFlows = yield* collectExpressionFlowsSteps(
+    program,
+    state,
+    callables,
+    expressionNodeBudget,
+  );
+  const initializerFlows = expressionFlows.initializers;
   const functionFingerprints =
     yield* collectJavaScriptSemanticFingerprintsSteps({
       state,
@@ -118,6 +130,10 @@ export function* collectJavaScriptDerivedSemanticsSteps(
     });
   return {
     assignmentFlows,
+    expressionFlows: expressionFlows.expressions,
+    initializerFlows,
+    literalReturns: expressionFlows.literalReturns,
+    expressionFlowsTruncated: expressionFlows.truncated,
     ...calls,
     promiseOperations,
     ...asyncEffects,
@@ -127,6 +143,164 @@ export function* collectJavaScriptDerivedSemanticsSteps(
     objectOperations,
     functionFingerprints,
   };
+}
+
+const isInfluenceExpression = (node: t.Node): boolean =>
+  t.isBinaryExpression(node) ||
+  t.isLogicalExpression(node) ||
+  t.isUnaryExpression(node) ||
+  t.isTemplateLiteral(node) ||
+  t.isConditionalExpression(node) ||
+  t.isSequenceExpression(node);
+
+/** One cooperative pass retains only immediate value operands, not subtree ranges. */
+function* collectExpressionFlowsSteps(
+  program: t.Program,
+  state: JavaScriptSemanticAnalysisState,
+  callables: readonly JavaScriptSemanticCallable[],
+  budget: number,
+): Generator<
+  void,
+  {
+    expressions: JavaScriptSemanticIr["expressionFlows"];
+    initializers: JavaScriptSemanticIr["initializerFlows"];
+    literalReturns: JavaScriptSemanticIr["literalReturns"];
+    truncated: boolean;
+  }
+> {
+  const expressions: JavaScriptSemanticIr["expressionFlows"][number][] = [];
+  const initializers: JavaScriptSemanticIr["initializerFlows"][number][] = [];
+  const literalReturns: JavaScriptSemanticIr["literalReturns"][number][] = [];
+  const candidates: { node: t.Node; ownerCallableId: string | null }[] = [];
+  let truncated = false;
+  const stack = createSemanticCallableIdStack(
+    new Set(callables.map((item) => item.callableId)),
+  );
+  yield* traverseJavaScriptValueAstSteps(program, state.erasedSyntaxNodes, {
+    enter: (node, parent) => {
+      stack.enter(node, parent);
+      const returnValue = t.isReturnStatement(node)
+        ? node.argument
+        : t.isArrowFunctionExpression(node) && !t.isBlockStatement(node.body)
+          ? node.body
+          : null;
+      if (returnValue != null) {
+        const expression = unwrapJavaScriptExpression(returnValue).node;
+        const exact = readExactJavaScriptLiteral(expression);
+        if (exact.found) {
+          const value = semanticPrimitiveSet([exact.value]);
+          if (value.status === "literal" && literalReturns.length < budget)
+            literalReturns.push({
+              location: range(expression),
+              value: value.value,
+            });
+          else if (value.status === "literal") truncated = true;
+          else if (
+            value.status === "unknown" &&
+            value.resourceLimit === "primitive-bytes"
+          )
+            state.valueResourceLimits.add("primitive-bytes");
+        }
+      }
+      if (
+        t.isVariableDeclarator(node) &&
+        t.isIdentifier(node.id) &&
+        node.init != null
+      ) {
+        const init = unwrapJavaScriptExpression(node.init).node;
+        if (isInfluenceExpression(init)) {
+          if (initializers.length < budget)
+            initializers.push({ target: range(node.id), source: range(init) });
+          else truncated = true;
+        }
+      }
+      if (
+        isInfluenceExpression(node) &&
+        !(t.isTemplateLiteral(node) && t.isTaggedTemplateExpression(parent))
+      )
+        if (candidates.length < budget)
+          candidates.push({
+            node,
+            ownerCallableId: stack.callables.at(-1) ?? null,
+          });
+        else truncated = true;
+    },
+    exit: (node) => stack.exit(node),
+  });
+  let processedOperands = 0;
+  for (const [
+    candidateIndex,
+    { node, ownerCallableId },
+  ] of candidates.entries()) {
+    if (candidateIndex % 64 === 0) yield;
+    let operator: string;
+    let values: readonly t.Node[];
+    if (t.isBinaryExpression(node) || t.isLogicalExpression(node)) {
+      operator = node.operator;
+      values = [node.left, node.right];
+    } else if (t.isUnaryExpression(node)) {
+      operator = node.operator;
+      values = [node.argument];
+    } else if (t.isTemplateLiteral(node)) {
+      operator = "template";
+      values = node.expressions;
+    } else if (t.isConditionalExpression(node)) {
+      operator = "?:";
+      values = [node.test, node.consequent, node.alternate];
+    } else if (t.isSequenceExpression(node)) {
+      operator = ",";
+      values = node.expressions;
+    } else continue;
+    const operands: JavaScriptSemanticIr["expressionFlows"][number]["operands"][number][] =
+      [];
+    for (const [index, value] of values.entries()) {
+      if (processedOperands >= budget) {
+        truncated = true;
+        break;
+      }
+      if (processedOperands % 64 === 0) yield;
+      processedOperands += 1;
+      const conditional =
+        (t.isLogicalExpression(node) && index === 1) ||
+        (t.isConditionalExpression(node) && index > 0);
+      // Earlier sequence expressions may change the final result via side effects.
+      const unsupported =
+        (t.isUnaryExpression(node) &&
+          (node.operator === "void" || node.operator === "delete")) ||
+        (t.isSequenceExpression(node) && index !== values.length - 1);
+      const operand = unwrapJavaScriptExpression(value).node;
+      const exact = readExactJavaScriptLiteral(operand);
+      const literal = exact.found ? semanticPrimitiveSet([exact.value]) : null;
+      if (
+        literal?.status === "unknown" &&
+        literal.resourceLimit === "primitive-bytes"
+      )
+        state.valueResourceLimits.add("primitive-bytes");
+      operands.push({
+        location: range(operand),
+        conditional,
+        kind: unsupported
+          ? "unsupported"
+          : t.isIdentifier(operand)
+            ? "reference"
+            : literal?.status === "literal"
+              ? "literal"
+              : isInfluenceExpression(operand)
+                ? "expression"
+                : "unsupported",
+        ...(!unsupported && literal?.status === "literal"
+          ? { literal: literal.value }
+          : {}),
+      });
+    }
+    expressions.push({
+      location: range(node),
+      operator,
+      ownerCallableId,
+      operands,
+    });
+  }
+  return { expressions, initializers, literalReturns, truncated };
 }
 
 /** Keep assignment syntax in the IR so graph consumers never reparse source. */
@@ -139,19 +313,9 @@ function* collectAssignmentFlowsSteps(
   const stack = createSemanticCallableIdStack(
     new Set(callables.map((item) => item.callableId)),
   );
-  // A node inside any branch position that evaluation may skip (if bodies,
-  // destructuring defaults, logical right sides, optional-chain arguments)
-  // makes every assignment below it ordering-uncertain.
-  let conditionalDepth = 0;
   yield* traverseJavaScriptValueAstSteps(program, state.erasedSyntaxNodes, {
     enter: (node, parent) => {
       stack.enter(node, parent);
-      if (
-        parent !== null &&
-        parent !== undefined &&
-        semanticBranchMayBeSkipped(parent, node)
-      )
-        conditionalDepth += 1;
       if (!t.isAssignmentExpression(node)) return;
       const target = unwrapJavaScriptExpression(node.left).node;
       // Destructuring has its own property-selection owner.
@@ -164,71 +328,9 @@ function* collectAssignmentFlowsSteps(
           t.isIdentifier(source) || t.isMemberExpression(source),
         operator: node.operator,
         ownerCallableId: stack.callables.at(-1) ?? null,
-        ...assignedContainerValue(node.operator, target, source, {
-          conditional: conditionalDepth > 0,
-          ownerCallableId: stack.callables.at(-1) ?? null,
-          state,
-        }),
       });
     },
-    exit: (node, parent) => {
-      if (
-        parent !== null &&
-        parent !== undefined &&
-        semanticBranchMayBeSkipped(parent, node)
-      )
-        conditionalDepth -= 1;
-      stack.exit(node);
-    },
+    exit: (node) => stack.exit(node),
   });
   return flows;
 }
-
-/**
- * The static value an unconditional top-level `X.p = {…}` stores, so the
- * graph can model later property assignments like initializers. Only a
- * direct literal container is captured; conditional placement, compound
- * operators, computed keys and destructuring keep the value unknown.
- */
-
-const assignedContainerValue = (
-  operator: string,
-  target: t.Node,
-  source: t.Node,
-  options: {
-    readonly conditional: boolean;
-    readonly ownerCallableId: string | null;
-    readonly state: JavaScriptSemanticAnalysisState;
-  },
-): Pick<JavaScriptSemanticIr["assignmentFlows"][number], "assignedValue"> => {
-  // Compound and logical operators write conditionally or compute a new
-  // value; only a plain `=` stores the literal container itself.
-  if (operator !== "=") return {};
-  if (options.conditional || options.ownerCallableId !== null) return {};
-  if (!t.isMemberExpression(target) || target.computed) return {};
-  const propertyPath = staticPropertyPath(target);
-  if (propertyPath === null) return {};
-  if (!t.isObjectExpression(source) && !t.isArrayExpression(source)) return {};
-  return {
-    assignedValue: {
-      receiverName: propertyPath.receiverName,
-      propertyPath: propertyPath.path,
-      value: evaluateSemanticExpression(source, options.state),
-    },
-  };
-};
-
-/** Splits `X.a.b` into the receiver binding name and the static path. */
-const staticPropertyPath = (
-  member: t.MemberExpression,
-): { receiverName: string; path: readonly string[] } | null => {
-  const path: string[] = [];
-  let node: t.Node = member;
-  while (t.isMemberExpression(node)) {
-    if (node.computed || !t.isIdentifier(node.property)) return null;
-    path.unshift(node.property.name);
-    node = unwrapJavaScriptExpression(node.object).node;
-  }
-  if (!t.isIdentifier(node)) return null;
-  return { receiverName: node.name, path };
-};

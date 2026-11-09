@@ -1,11 +1,16 @@
+import { analysisSettingLimit } from "../domain/analysisSettingDefinitions.js";
 import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
+import { stableArtifactInputRecovery } from "../artifacts/StableArtifactFailure.js";
 import {
   artifactFileCancellationCause,
   bindArtifactFileCleanup,
 } from "../artifacts/ArtifactFileOperation.js";
 import { boundedUtf8Text } from "../process/boundedUtf8Text.js";
 import type { ProviderProcessSnapshot } from "../process/ProviderProcess.js";
-import { AnalysisError } from "../domain/analysisErrorBase.js";
+import {
+  AnalysisError,
+  type AnalysisCapturedOutput,
+} from "../domain/analysisErrorBase.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import {
   AnalysisCancelledError,
@@ -23,11 +28,13 @@ import {
   RuntimeControlUnavailableError,
   runtimeControlCapabilityError,
 } from "../process/RuntimeControlUnavailableError.js";
+import { WabtAdmissionError } from "./WabtAdmissionError.js";
 import {
   DEFAULT_WASM_COMMAND_TIMEOUT_MS,
   MAX_WASM_COMMAND_TIMEOUT_MS,
 } from "../domain/wasm/wasmArtifact.js";
 import {
+  WABT_ACCEPTED_RANGE,
   WABT_LIMITS,
   WABT_PROVIDER_IDENTITY,
   WABT_VERSION,
@@ -41,12 +48,14 @@ export type WabtVersionProbe = {
   readonly executable_path: string;
   readonly tool: string;
   readonly expected_version: typeof WABT_VERSION;
+  readonly accepted_releases: string;
 };
 
 type WabtFailureContext = {
   readonly commandTimeoutMs: number;
   readonly versionProbe?: WabtVersionProbe;
   readonly inputField?: readonly (string | number)[];
+  readonly observedOutput?: AnalysisCapturedOutput | undefined;
 };
 
 /** Configuration is captured by the server; fixing files and changing its environment are distinct repairs. */
@@ -61,7 +70,7 @@ export const wabtConfigurationRecoveryAction = (cause?: unknown): string => {
         : code === "ENOENT"
           ? "The reported configured tool is missing. "
           : "";
-  return `${action}Set absolute REA_WABT_BIN_DIRECTORY to a directory that contains wasm-validate, wasm-objdump and wasm2wat from WABT ${WABT_VERSION}; each --version must report ${WABT_VERSION} on stdout with empty stderr. Correct the reported tool path, access or release before retrying, not the WASM input. Set this in the shell for the next CLI call, or in the MCP server launch environment and restart that server; a shell export does not update a running MCP server. Do not repeat the unchanged call or install tools implicitly.`;
+  return `${action}Set absolute REA_WABT_BIN_DIRECTORY to a directory that contains wasm-validate, wasm-objdump and wasm2wat from one WABT installation; each --version must report ${WABT_ACCEPTED_RANGE} on stdout with empty stderr. Releases in that range other than ${WABT_VERSION} are admitted and reported as the observed banner. Correct the reported tool path, access or release before retrying, not the WASM input. Set this in the shell for the next CLI call, or in the MCP server launch environment and restart that server; a shell export does not update a running MCP server. Do not repeat the unchanged call or install tools implicitly.`;
 };
 /** Past the output budget, retained text is a prefix of an oversized stream; keep a bounded excerpt of each. */
 const outputLimitExcerpt = (snapshot: ProviderProcessSnapshot) => ({
@@ -98,8 +107,12 @@ const classifyWabtFailure = (
   if (cause instanceof AnalysisError) return cause;
   const artifactCleanup =
     cause instanceof ArtifactReaderFailure ? cause.cleanup : undefined;
-  const cleanupOptions =
-    artifactCleanup === undefined ? {} : { cleanup: artifactCleanup };
+  const artifactOptions = {
+    ...(artifactCleanup === undefined ? {} : { cleanup: artifactCleanup }),
+    ...(execution?.observedOutput === undefined
+      ? {}
+      : { capturedOutput: execution.observedOutput }),
+  };
   const reason = cause instanceof Error ? cause.message : String(cause);
   if (
     (cause instanceof ArtifactReaderFailure && cause.reason === "cancelled") ||
@@ -110,7 +123,7 @@ const classifyWabtFailure = (
         cause instanceof ArtifactReaderFailure
           ? artifactFileCancellationCause(cause)
           : cause,
-      ...cleanupOptions,
+      ...artifactOptions,
     });
   if (cause instanceof OwnedCommandFailure) {
     const capturedOutput =
@@ -134,6 +147,11 @@ const classifyWabtFailure = (
     const timeout =
       cause.reason === "timeout"
         ? new AnalysisTimeoutError("inspect_wasm_artifact", timeoutMs, {
+            limit: analysisSettingLimit(
+              "wasm.command_timeout_ms",
+              timeoutMs,
+              undefined,
+            ),
             ...options,
             // The cleanup wrapper retains output once; its nested primary needs only recovery facts.
             capturedOutput:
@@ -218,23 +236,36 @@ const classifyWabtFailure = (
       cause.message,
       {
         cause,
-        ...cleanupOptions,
+        ...artifactOptions,
         userMessage: `Configured WABT tools exceed the ${String(WABT_LIMITS.toolBytes)}-byte tool allowance. This release has no runtime override.`,
         remediationAction: `The WABT tool allowance is ${String(WABT_LIMITS.toolBytes)} bytes. This release has no runtime override. command_timeout_ms and REA_WABT_BIN_DIRECTORY do not raise it. Select tools within the allowance. Do not repeat the unchanged call.`,
       },
     );
-  if (phase === "configuration")
+  if (phase === "configuration") {
+    const admission = cause instanceof WabtAdmissionError ? cause : undefined;
     return new AnalysisCapabilityUnavailableError(
       WABT_PROVIDER_IDENTITY.id,
       "inspect_wasm_artifact",
-      reason,
+      admission?.code ?? reason,
       {
         cause,
-        ...cleanupOptions,
-        userMessage: reason,
+        ...artifactOptions,
+        ...(admission === undefined
+          ? {}
+          : {
+              diagnostics: {
+                code: admission.code,
+                ...admission.detail,
+              },
+            }),
+        userMessage:
+          admission === undefined
+            ? reason
+            : "WABT configuration cannot be used",
         remediationAction: wabtConfigurationRecoveryAction(cause),
       },
     );
+  }
   if (
     phase === "artifact" &&
     cause instanceof ArtifactReaderFailure &&
@@ -248,7 +279,7 @@ const classifyWabtFailure = (
       { maximum_input_bytes: WABT_LIMITS.inputBytes },
       {
         cause,
-        ...cleanupOptions,
+        ...artifactOptions,
         retryable: false,
         remediationAction: `Select a suitable stable artifact within the reported ${String(WABT_LIMITS.inputBytes)}-byte input byte allowance. This release has no runtime override. command_timeout_ms does not raise it. Do not truncate required bytes; retrying the unchanged oversized input will fail again.`,
       },
@@ -262,7 +293,7 @@ const classifyWabtFailure = (
       "inspect_wasm_artifact",
       path,
       reason,
-      { cause, ...cleanupOptions },
+      { cause, ...artifactOptions },
     );
   if (
     phase === "artifact" &&
@@ -274,12 +305,18 @@ const classifyWabtFailure = (
       "inspect_wasm_artifact",
       path,
       cause.code,
-      { cause, ...cleanupOptions },
+      { cause, ...artifactOptions },
     );
   if (phase === "artifact")
     return new AnalysisInputError(
       "inspect_wasm_artifact",
-      { cause, ...cleanupOptions },
+      {
+        cause,
+        ...artifactOptions,
+        ...(cause instanceof ArtifactReaderFailure
+          ? stableArtifactInputRecovery(cause)
+          : {}),
+      },
       [
         {
           path: [...(execution?.inputField ?? ["path"])],
@@ -290,6 +327,6 @@ const classifyWabtFailure = (
     );
   return new AnalysisOutputError("inspect_wasm_artifact", reason, {
     cause,
-    ...cleanupOptions,
+    ...artifactOptions,
   });
 };

@@ -4,14 +4,13 @@ import type { Logger } from "pino";
 import type { CutterBridgeService } from "../cutter/CutterBridgeService.js";
 import type { EvidenceWriter } from "../application/investigation/InvestigationRecordPort.js";
 import { toolContract } from "../contracts/toolContracts.js";
-import { evidenceSchema } from "../domain/evidence.js";
 import {
   runWithExternalMutationAdmission,
   type ExternalMutationAdmission,
 } from "./externalMutationAdmission.js";
 import { logToolExecution } from "./toolLogging.js";
 import { toolRegistrationOptions } from "./toolRegistrationOptions.js";
-import type { ToolResultDelivery } from "./toolResult.js";
+import type { ToolResultDelivery } from "./ToolResultDelivery.js";
 
 /** Register Cutter discovery and command tools against their named contracts. */
 export const registerCutterTools = (
@@ -56,22 +55,12 @@ export const registerCutterTools = (
         (value) => value,
         () => service.retryCleanup(),
       );
-      if (!result.ok) {
-        const partial = evidenceSchema.safeParse(
-          result.error.partialObservation,
+      if (!result.ok)
+        return delivery.toPartialErrorToolResult(
+          result.error,
+          command.returnsTargetContent,
+          recordEvidence,
         );
-        if (partial.success) {
-          const recorded = recordEvidence?.(partial.data);
-          if (recorded !== undefined)
-            return delivery.toRecordedPartialErrorToolResult(
-              result.error,
-              partial.data.evidence_id,
-              recorded,
-              command.returnsTargetContent,
-            );
-        }
-        return delivery.toCallToolResult(result, command);
-      }
       return delivery.toEvidenceToolResult(
         result.value,
         command,

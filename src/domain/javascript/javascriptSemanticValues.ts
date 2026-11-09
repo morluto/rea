@@ -18,6 +18,9 @@ import {
   semanticBindingEffectFollowsCapture,
   semanticBindingPrecedesCapture,
   semanticBindingAtRead,
+  semanticEffectTiming,
+  semanticUnconditionalTopLevelEffect,
+  semanticLocalFunctionActivationAt,
 } from "./javascriptSemanticMutationInitializers.js";
 
 import {
@@ -28,6 +31,7 @@ import {
 import {
   invalidateSemanticEscapedPath,
   invalidateSemanticMutationPaths,
+  storeSemanticLiteralContainer,
 } from "./javascriptSemanticMutationValues.js";
 
 import type { JavaScriptBindingProvenance } from "./javascriptSemanticIr.js";
@@ -41,8 +45,9 @@ import {
   resolveSemanticBindingState,
   type JavaScriptSemanticAnalysisState,
   type JavaScriptSemanticBindingState,
+  type JavaScriptSemanticMemberEffect,
 } from "./javascriptSemanticState.js";
-import { semanticRequireOrigin } from "./javascriptSemanticRequireOrigin.js";
+import { readSemanticRequireOriginCandidate } from "./javascriptSemanticRequireOriginSlot.js";
 import { compareUnicodeCodePoints } from "../unicodeCodePointOrder.js";
 import {
   readExactJavaScriptLiteral,
@@ -189,6 +194,20 @@ const capturedBindingValuesByState = new WeakMap<
   JavaScriptSemanticAnalysisState,
   WeakMap<t.Node, Map<string, JavaScriptSemanticValue>>
 >();
+
+// The lexical reference owner supplies actual read sites once; graph projection never infers ordering.
+const bindingReadsByState = new WeakMap<
+  JavaScriptSemanticAnalysisState,
+  ReadonlyMap<string, readonly t.Node[]>
+>();
+
+export const retainSemanticValueReadSites = (
+  state: JavaScriptSemanticAnalysisState,
+  reads: ReadonlyMap<string, readonly t.Node[]>,
+): void => {
+  bindingReadsByState.set(state, reads);
+  clearSemanticValueCaches(state);
+};
 
 /** Discard every state-owned value derived before the effects boundary changed. */
 export const clearSemanticValueCaches = (
@@ -519,6 +538,7 @@ const evaluateBinding = (
   let callerIndependent = false;
   let depthDependent = false;
   let evaluated: MemoizedEvaluation<JavaScriptSemanticValue>;
+  let retainedStores: ReadonlySet<JavaScriptSemanticMemberEffect> = new Set();
   try {
     evaluated = collectEvaluationDependencies(binding, context, () => {
       const nested = nestedContext(context);
@@ -539,7 +559,9 @@ const evaluateBinding = (
           if (isPrimitive(captured)) value = captured;
         }
       }
-      return value;
+      const stored = retainStoredContainers(binding, value, nested);
+      retainedStores = stored.effects;
+      return stored.value;
     });
     value = evaluated.value;
     // A cycle among bindings this one reads is part of its value. A cycle
@@ -556,15 +578,16 @@ const evaluateBinding = (
     value,
     binding.memberWrites
       .filter(
-        ({ node }) =>
-          context.capturePoint === undefined ||
-          node === undefined ||
-          !semanticBindingEffectFollowsCapture(
-            binding,
-            context.capturePoint,
-            node,
-            context.state.parentsByNode,
-          ),
+        (effect) =>
+          !retainedStores.has(effect) &&
+          (context.capturePoint === undefined ||
+            effect.node === undefined ||
+            !semanticBindingEffectFollowsCapture(
+              binding,
+              context.capturePoint,
+              effect.node,
+              context.state.parentsByNode,
+            )),
       )
       .map(({ path }) => path),
   );
@@ -682,11 +705,7 @@ const evaluateExpressionValue = (
     const binding = resolveSemanticBindingState(context.state, node, node.name);
     if (binding === undefined)
       return { status: "unknown", reason: `Unbound identifier ${node.name}.` };
-    const read = semanticBindingAtRead(
-      binding,
-      node,
-      context.state.parentsByNode,
-    );
+    const read = semanticBindingAtRead(binding, node, context.state);
     if (
       read.status === "unresolved" &&
       binding.mutable &&
@@ -721,8 +740,10 @@ const evaluateExpressionValue = (
   if (t.isTemplateLiteral(node)) return evaluateTemplate(node, context);
   if (t.isConditionalExpression(node) || t.isLogicalExpression(node))
     return mergeValues(
-      semanticSelectedBranches(node, context).map((branch) =>
-        evaluateExpression(branch, nestedContext(context)),
+      semanticSelectedBranches(node, context).map(
+        (branch) =>
+          branch.value ??
+          evaluateExpression(branch.node, nestedContext(context)),
       ),
     );
   if (t.isObjectExpression(node)) return evaluateObject(node, context);
@@ -774,27 +795,39 @@ const evaluateTemplate = (
   return primitiveSet(candidates);
 };
 
+/**
+ * A branch that may produce the expression's value. A logical left operand
+ * carries the value its selection already evaluated, so value consumers reuse
+ * it instead of re-evaluating that operand; re-evaluating it at every level of
+ * a left-nested `a || b || c` chain doubles the work per operand.
+ */
+interface SemanticSelectedBranch {
+  readonly node: t.Node;
+  readonly value?: JavaScriptSemanticValue;
+}
+
 /** Value and provenance selection consume the same established branch facts. */
 const semanticSelectedBranches = (
   node: t.ConditionalExpression | t.LogicalExpression,
   context: EvaluationContext,
-): readonly t.Node[] => {
+): readonly SemanticSelectedBranch[] => {
   if (t.isConditionalExpression(node)) {
     const test = evaluateExpression(node.test, nestedContext(context));
     const choice = semanticCondition(test, Boolean);
     return choice === undefined
-      ? [node.consequent, node.alternate]
-      : [choice ? node.consequent : node.alternate];
+      ? [{ node: node.consequent }, { node: node.alternate }]
+      : [{ node: choice ? node.consequent : node.alternate }];
   }
-  const left = evaluateExpression(node.left, nestedContext(context));
+  const value = evaluateExpression(node.left, nestedContext(context));
+  const left = { node: node.left, value };
   const choice = logicalRightOperand(
     node.operator,
-    semanticCondition(left, Boolean),
-    semanticCondition(left, (value) => value === null, false),
+    semanticCondition(value, Boolean),
+    semanticCondition(value, (candidate) => candidate === null, false),
   );
   return choice === undefined
-    ? [node.left, node.right]
-    : [choice ? node.right : node.left];
+    ? [left, { node: node.right }]
+    : [choice ? { node: node.right } : left];
 };
 
 /** All retained alternatives must agree before discarding a branch. */
@@ -968,6 +1001,119 @@ const evaluateArray = (
         unknownItems: false,
         omittedItems: 0,
       };
+};
+
+/** Use the mutation owner's receiver, capture and effect facts to retain literal stores. */
+const retainStoredContainers = (
+  binding: JavaScriptSemanticBindingState,
+  initial: JavaScriptSemanticValue,
+  context: EvaluationContext,
+): {
+  readonly value: JavaScriptSemanticValue;
+  readonly effects: ReadonlySet<JavaScriptSemanticMemberEffect>;
+} => {
+  const effects = new Set<JavaScriptSemanticMemberEffect>();
+  const reads = bindingReadsByState.get(context.state)?.get(binding.bindingId);
+  if (
+    reads === undefined ||
+    binding.memberWrites.length === 0 ||
+    (initial.status !== "object" &&
+      initial.status !== "array" &&
+      !(initial.status === "unknown" && definitelyDefinedValues.has(initial)))
+  )
+    return { value: initial, effects };
+  // Prefix counts reject intersecting writers without rescanning all effects per candidate.
+  const prefixes = new Map<string, number>();
+  const exact = new Map<string, number>();
+  for (const effect of binding.memberWrites) {
+    if (
+      effect.path.length === 0 ||
+      effect.path.some((key) => key === null || typeof key === "object")
+    )
+      return { value: initial, effects };
+    const path = effect.path.map(String);
+    for (let depth = 1; depth <= path.length; depth++) {
+      const key = JSON.stringify(path.slice(0, depth));
+      prefixes.set(key, (prefixes.get(key) ?? 0) + 1);
+    }
+    const key = JSON.stringify(path);
+    exact.set(key, (exact.get(key) ?? 0) + 1);
+  }
+  let value: JavaScriptSemanticValue =
+    initial.status === "unknown"
+      ? {
+          status: "object",
+          properties: [],
+          unknownProperties: false,
+          omittedProperties: 0,
+        }
+      : initial;
+  for (const effect of binding.memberWrites) {
+    const node = effect.node;
+    if (
+      !t.isAssignmentExpression(node, { operator: "=" }) ||
+      effect.receiverIdentity !== "definite" ||
+      !semanticUnconditionalTopLevelEffect(node, context.state.parentsByNode)
+    )
+      continue;
+    const path = effect.path.map(String);
+    const overlapping =
+      (prefixes.get(JSON.stringify(path)) ?? 0) +
+      path
+        .slice(0, -1)
+        .reduce(
+          (sum, _, index) =>
+            sum + (exact.get(JSON.stringify(path.slice(0, index + 1))) ?? 0),
+          0,
+        );
+    if (overlapping !== 1) continue;
+    // A single final-state slot must not attribute a later store to an earlier read.
+    if (
+      reads.some((read) => {
+        const timing = semanticEffectTiming(read, node, context.state);
+        if (timing !== "unknown") return timing === "after";
+        const activation = semanticLocalFunctionActivationAt(
+          read,
+          node,
+          context.state,
+        );
+        return (
+          activation.kind === "unknown" ||
+          (activation.kind === "observed" && activation.relation === "before")
+        );
+      })
+    )
+      continue;
+    if (
+      context.capturePoint !== undefined &&
+      semanticEffectTiming(context.capturePoint, node, context.state) !==
+        "before"
+    )
+      continue;
+    const source =
+      effect.assignedSources?.length === 1
+        ? effect.assignedSources[0]
+        : undefined;
+    if (source === undefined || source.projection.length !== 0) continue;
+    const expression = unwrapJavaScriptExpression(source.node).node;
+    if (!t.isObjectExpression(expression) && !t.isArrayExpression(expression))
+      continue;
+    const assigned = evaluateCapturedExpression(
+      expression,
+      nestedContext(context),
+    );
+    if (assigned.status !== "object" && assigned.status !== "array") continue;
+    const stored = storeSemanticLiteralContainer(value, path, assigned);
+    if (stored !== undefined) {
+      value = stored;
+      effects.add(effect);
+    }
+  }
+  if (effects.size === 0) return { value: initial, effects };
+  // A function's retained own stores do not enumerate its callable/native properties.
+  if (initial.status === "unknown" && value.status === "object")
+    value = { ...value, unknownProperties: true, omittedProperties: null };
+  return { value, effects };
 };
 
 const evaluateMember = (
@@ -1220,17 +1366,18 @@ const provenanceForBindingInitializers = (
   } finally {
     context.bindings.delete(binding.bindingId);
   }
-  if (resolved.status !== "module" || initializer.projection.length === 0)
+  if (resolved.origins.length === 0 || initializer.projection.length === 0)
     return resolved;
-  return semanticOriginsProvenance(
-    resolved.origins.map((origin) => ({
-      ...origin,
-      importedPath: [
-        ...origin.importedPath,
-        ...initializer.projection.map((segment) => String(segment)),
-      ],
-    })),
-  );
+  const projected = resolved.origins.map((origin) => ({
+    ...origin,
+    importedPath: [
+      ...origin.importedPath,
+      ...initializer.projection.map((segment) => String(segment)),
+    ],
+  }));
+  return resolved.status === "ambiguous"
+    ? semanticAmbiguousProvenance(projected, resolved.reason)
+    : semanticOriginsProvenance(projected);
 };
 
 const provenanceForExpression = (
@@ -1263,7 +1410,7 @@ const provenanceForExpression = (
       expressionDepth: context.expressionDepth + unwrapped.depth,
     });
   }
-  const required = semanticRequireOrigin(node, context.state);
+  const required = readSemanticRequireOriginCandidate(node, context.state);
   if (required !== undefined)
     return semanticOriginsProvenance([required.origin]);
   if (t.isSequenceExpression(node)) {
@@ -1309,18 +1456,18 @@ const provenanceForExpression = (
     }
     const base = provenanceForExpression(current, nestedContext(context));
     const path = members.reverse();
-    return base.status !== "module"
-      ? base
-      : semanticOriginsProvenance(
-          base.origins.map((origin) => ({
-            ...origin,
-            importedPath: [...origin.importedPath, ...path],
-          })),
-        );
+    if (base.origins.length === 0) return base;
+    const projected = base.origins.map((origin) => ({
+      ...origin,
+      importedPath: [...origin.importedPath, ...path],
+    }));
+    return base.status === "ambiguous"
+      ? semanticAmbiguousProvenance(projected, base.reason)
+      : semanticOriginsProvenance(projected);
   }
   if (t.isConditionalExpression(node) || t.isLogicalExpression(node)) {
     const candidates = semanticSelectedBranches(node, context).map((branch) =>
-      provenanceForExpression(branch, nestedContext(context)),
+      provenanceForExpression(branch.node, nestedContext(context)),
     );
     const origins = uniqueSemanticOrigins(
       candidates.flatMap((candidate) => candidate.origins),
@@ -1363,7 +1510,7 @@ const provenanceForBindingAtRead = (
   const { binding: snapshot } = semanticBindingAtRead(
     binding,
     read,
-    context.state.parentsByNode,
+    context.state,
   );
   if (snapshot === binding) return provenanceForBinding(binding, context);
   if (context.bindings.has(binding.bindingId))

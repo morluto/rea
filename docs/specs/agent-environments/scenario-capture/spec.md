@@ -61,7 +61,8 @@ change.
 
 - No new browser action: scenarios still cover what the UI requests plus GET
   reads through `goto`. A fetch or script action would be a new effect and
-  needs its own scope decision.
+  needs its own scope decision. (The `request` action was later scoped and
+  added by [environment-prompt](../environment-prompt/spec.md).)
 - No change to what the scenario redacts. Values the application returns in
   response bodies are retained, as they are in HAR captures.
 - The api-surface view keeps HAR parents only.

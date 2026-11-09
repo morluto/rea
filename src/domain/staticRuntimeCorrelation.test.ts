@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 import { ARTIFACT_COMPARISON_EXAMPLE } from "../contracts/artifactComparisonExample.js";
-import { INVESTIGATION_EXAMPLES } from "../contracts/investigationExamples.js";
+import {
+  INVESTIGATION_EXAMPLES,
+  FUNCTION_COMPARISON_EVIDENCE,
+} from "../contracts/investigationExamples.js";
 import {
   artifactComparisonResultSchema,
   compareArtifacts,
@@ -11,7 +14,7 @@ import { createEvidence, type Evidence } from "./evidence.js";
 import { functionComparisonResultSchema } from "./functionComparisonSchemas.js";
 import { jsonValueSchema, type JsonValue } from "./jsonValue.js";
 import { FUNCTION_COMPARISON_EXAMPLE } from "../contracts/functionComparisonExample.js";
-import { functionDossierSchema } from "./hopperValues.js";
+import { functionDossierSchema } from "./native/functionDossier.js";
 import { compareFunctions } from "./functionComparison.js";
 import { functionSnapshotFixture } from "./functionDossierEvidence.fixture.js";
 import {
@@ -20,10 +23,7 @@ import {
   staticRuntimeCorrelationResultSchema,
 } from "./staticRuntimeCorrelation.js";
 
-const staticComparison =
-  INVESTIGATION_EXAMPLES.find_changed_behavior.comparisons[0];
-if (staticComparison === undefined)
-  throw new Error("Missing static comparison fixture");
+const staticComparison = FUNCTION_COMPARISON_EVIDENCE;
 
 const artifactComparison = createEvidence(
   undefined,
@@ -35,11 +35,9 @@ const artifactComparison = createEvidence(
       left_evidence_ids: [ARTIFACT_COMPARISON_EXAMPLE.left.evidence_id],
       right_evidence_ids: [ARTIFACT_COMPARISON_EXAMPLE.right.evidence_id],
     },
-    result: jsonValueSchema.parse(
-      compareArtifacts(
-        ARTIFACT_COMPARISON_EXAMPLE.left,
-        ARTIFACT_COMPARISON_EXAMPLE.right,
-      ),
+    result: compareArtifacts(
+      ARTIFACT_COMPARISON_EXAMPLE.left,
+      ARTIFACT_COMPARISON_EXAMPLE.right,
     ),
     confidence: "derived",
     authority: "analyst-inference",
@@ -157,10 +155,10 @@ it("keeps text, assembly and unavailable CFG caveats on their selected correlati
     {
       operation: source.operation,
       parameters: source.parameters,
-      result: jsonValueSchema.parse({
+      result: {
         ...functionDossierSchema.parse(source.normalized_result),
         basic_blocks: [{ start: "0x1000", end: "0x1000", successors: [] }],
-      }),
+      },
       confidence: source.confidence,
       authority: source.authority,
     },
@@ -178,7 +176,7 @@ it("keeps text, assembly and unavailable CFG caveats on their selected correlati
       left_evidence_id: left.evidence_id,
       right_evidence_id: right.evidence_id,
     },
-    result: jsonValueSchema.parse(computed),
+    result: computed,
     confidence: "derived",
     authority: "analyst-inference",
     limitations: computed.limitations,

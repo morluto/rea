@@ -2,11 +2,41 @@ import { expect, it } from "vitest";
 import { readGoBinaryImage } from "../../go/GoBinaryImage.js";
 import { readPeImage } from "./PeImage.js";
 import { pe } from "../../domain/binaryTarget.fixture.js";
+import { parseMzHeaderEvidence } from "../../domain/dosMz.js";
 import { BinaryFormatFailure } from "./BinaryContainer.js";
+import { readBinaryContainer } from "./readBinaryContainer.js";
 import {
   createGoBinaryFixture,
   setGoPeVirtualSize,
 } from "../../../tests/fixtures/go/image.js";
+
+for (const bits of [32, 64] as const) {
+  it.each([
+    ["ZZ", Buffer.from("ZZ")],
+    ["high-bit MZ", Buffer.from([0xcd, 0xda])],
+  ] as const)(
+    `rejects %s before reading PE${String(bits)} facts`,
+    (_, prefix) => {
+      const { bytes } = createGoBinaryFixture({ format: "pe", bits });
+      prefix.copy(bytes);
+      const declarations = parseMzHeaderEvidence(bytes).declarations;
+      if (declarations.ok) throw new Error("Expected invalid MZ declarations");
+      expect(() => readPeImage(bytes)).toThrow(
+        expect.objectContaining({
+          kind: "malformed",
+          message: declarations.error,
+        }),
+      );
+    },
+  );
+
+  it(`reads PE${String(bits)} without requiring a valid DOS load module`, () => {
+    const { bytes } = createGoBinaryFixture({ format: "pe", bits });
+    bytes.writeUInt16LE(0, 4);
+    expect(parseMzHeaderEvidence(bytes).dos.ok).toBe(false);
+    expect(readPeImage(bytes)).toMatchObject({ format: "pe", bits });
+  });
+}
 
 it("classifies a confirmed overlapping PE as an unsupported layout", () => {
   try {
@@ -19,7 +49,7 @@ it("classifies a confirmed overlapping PE as an unsupported layout", () => {
   }
 });
 
-it("keeps a DOS-valid but unsigned Windows-header candidate unresolved", () => {
+it("reports complete DOS MZ images as outside the PE reader", () => {
   const bytes = Buffer.alloc(128);
   bytes.write("MZ", 0, "ascii");
   bytes.writeUInt16LE(128, 2);
@@ -29,9 +59,23 @@ it("keeps a DOS-valid but unsigned Windows-header candidate unresolved", () => {
   bytes.writeUInt16LE(28, 24);
   bytes.write("ABCD", 60, "ascii");
   expect(() => readPeImage(bytes)).toThrow(
-    "MZ Windows new-header candidate is unresolved",
+    "DOS MZ images are outside the supported ELF, PE and thin Mach-O formats",
   );
 });
+
+it.each(["NE", "LE", "LX"])(
+  "recognizes %s without requiring a PE COFF header",
+  (signature) => {
+    const bytes = pe(0x014c).subarray(0, 66);
+    bytes.write(signature, 64, "ascii");
+    expect(() => readBinaryContainer(bytes)).toThrow(
+      expect.objectContaining({
+        kind: "unsupported",
+        message: expect.stringContaining(signature),
+      }),
+    );
+  },
+);
 
 it.each([32, 64] as const)(
   "uses raw-size fallback for PE%d Go build-info and keeps RVA mappings intact",
@@ -39,7 +83,7 @@ it.each([32, 64] as const)(
     for (const encoding of ["inline", "pointer"] as const) {
       const fixture = createGoBinaryFixture({ format: "pe", bits, encoding });
       const expected = readGoBinaryImage(fixture.bytes).build_info;
-      expect(expected).not.toBeNull();
+      expect(expected).toMatchObject({ go_version: "go1.26.0" });
       setGoPeVirtualSize(fixture.bytes, 0);
 
       const container = readPeImage(fixture.bytes);
@@ -68,9 +112,31 @@ it.each([32, 64] as const)(
   },
 );
 
+it.each([32, 64] as const)(
+  "retains PE%d declared image base and alignments in native image facts",
+  (bits) => {
+    const { bytes } = createGoBinaryFixture({ format: "pe", bits });
+    const optional = bytes.readUInt32LE(0x3c) + 24;
+    const imageBase = bits === 64 ? 0xfedcba9876540000n : 0x87650000n;
+    if (bits === 64) bytes.writeBigUInt64LE(imageBase, optional + 24);
+    else bytes.writeUInt32LE(Number(imageBase), optional + 28);
+    // These remain declarations; alignment policy belongs to image consumers.
+    bytes.writeUInt32LE(0, optional + 32);
+    bytes.writeUInt32LE(0xffffffff, optional + 36);
+    const container = readPeImage(bytes);
+    expect(container.image_base).toBe(imageBase);
+    expect(container.pe_header_mapping.address).toBe(imageBase);
+    expect(container.mappings[0]?.address).toBe(imageBase + 0x400n);
+    expect(container.pe_section_alignment).toBe(0);
+    expect(container.pe_file_alignment).toBe(0xffffffff);
+    expect(container.sections[0]?.file_alignment).toBe(0xffffffff);
+  },
+);
+
 it("keeps Go fallback candidates when a PE section has no printable name", () => {
   const fixture = createGoBinaryFixture({ format: "pe", bits: 64 });
   const expected = readGoBinaryImage(fixture.bytes).build_info;
+  expect(expected).toMatchObject({ go_version: "go1.26.0" });
   const pe = fixture.bytes.readUInt32LE(0x3c);
   const section = pe + 24 + fixture.bytes.readUInt16LE(pe + 20);
   fixture.bytes.fill(0, section, section + 8);
@@ -142,6 +208,17 @@ it.each([0x014c, 0x8664] as const)(
     );
   },
 );
+
+it("reads DllCharacteristics from the optional header", () => {
+  const bytes = pe(0x8664);
+  const peOffset = bytes.readUInt32LE(60);
+  bytes.writeUInt16LE(0x4160, peOffset + 24 + 70);
+  expect(readPeImage(bytes)).toMatchObject({
+    dll_characteristics: 0x4160,
+    pe_optional_header_file_offset: peOffset + 24,
+    dll_characteristics_file_offset: peOffset + 24 + 70,
+  });
+});
 
 it.each([0xffff, 0x8664 ^ 0x7b79])(
   "retains raw unknown machine %s without managed override proof",

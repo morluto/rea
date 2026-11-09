@@ -14,6 +14,9 @@ cannot. This increment adds the view kind only; serving from the state, loading
 another state through the AgentEnv data plane and modelling write effects are
 later increments.
 
+Safe `HEAD`, `OPTIONS` and `TRACE` tools have recorded views with reason
+`method-replay`; state rendering currently applies only to `GET` reads.
+
 ## Requirements
 
 - Accept `inspect_web_network_capture` HAR parents and
@@ -81,6 +84,15 @@ later increments.
   the state holds (APIs that omit empty or false members), no view of the type
   requires it.
   Never treat an envelope that is itself an entity as a list.
+- A top-level UUID or clock member that differs on every repeat of a path's
+  successful GET lines with no write between, and across the capture differed
+  on at least two repeats and never stayed the same, is minted per response
+  there (a request id). A view names it in `per_response_members` only when
+  every concrete path the view answers independently proves it minted. A
+  collection's proof does not establish that its item paths mint the same
+  member. The shared envelope compares without these common members, and
+  serving keeps their recorded values; an unproved envelope difference stays
+  recorded rather than borrowing another path's value.
 - Merge observations into one entity per collection and identity: item views'
   latest values win over list views', differing views keep their own values,
   and a value that changed between repeats of one request line with no recorded
@@ -97,14 +109,35 @@ later increments.
   under the view's separator, with its own fraction digits padded with zeros to
   the view's width and none dropped; an epoch spelling is computed from the
   instant.
+- An item or list view names in `sorted_arrays` the fields it lists as string
+  arrays in code-point order whatever order they were written in (tags kept as
+  a set). Only the write gate learns it. A field is a candidate when every
+  initial entity shows it as a sorted string array or null, one with two
+  distinct strings, and no read the gate counts has listed it unsorted with two
+  distinct strings. It is learned from a counted read that fails with the
+  stored order and passes with the field sorted, and only when that read lists
+  a written array in an order that is neither the written one nor values the
+  initial state held first, then the new ones as written (an application
+  ordering by tag id or creation shows that order too). The stored value keeps
+  the written order, so a write's own answer echoes it; every view of the type
+  for which the field is still a candidate sorts it as well.
+- A collection's initial order is the order of the first line that lists every
+  entity any initial read shows in it and names no sort, direction (`sort[]`,
+  `_sort`, `sort-column`, `sortKey`, `orderBy` and like spellings) or random
+  parameter (`random`, `rand`, `shuffle`, `seed`); a collection without such a
+  line keeps its entities' earliest sightings.
 - A list has `all` membership only when no item-total envelope member (`total`,
-  `count` and their compounds, not page counts) differs from the number of
-  entities it lists and no `has_more`, `next` or next-page token is set.
+  `count` and their compounds, not page counts), at the top level or in a
+  top-level object beside the list such as `pageInfo.totalRows`, differs from
+  the number of entities it lists and no `has_more`, `next` or next-page token
+  is set. Such a member that equals the number listed is a counter; a nested
+  one is named by its pointer (`/pageInfo/totalRows`), and members beside it
+  such as `isLastPage` stay as recorded.
 - Keep an item or list plan only when it reproduces each request line's latest
   initial recording from the state, comparing JSON values without regard to
   member order; otherwise record the tool with a reason. Parse bodies only when
-  JSON-like, UTF-8, at most 256 KiB, exactly representable and free of
-  `__proto__` members.
+  JSON-like, UTF-8, at most 256 KiB and exactly representable. Preserve all own
+  JSON members, including `__proto__`, through extraction and normalization.
 - Mark the Evidence inferred; state unknowns for authorization, response
   semantics and write effects.
 - Charge the manifest's admission and grouping, every record line, every body

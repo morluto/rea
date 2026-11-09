@@ -1,5 +1,9 @@
 # Native directory decompilation verification — 2026-10-23
 
+The [2026-10-26 follow-up](https://github.com/morluto/rea/blob/72454004772f826440c5e21002f4dd52b4ad43c0/experiments/analysis-efficiency/decompile-directory.md)
+adds a 14,338-function real-provider capacity run, cross-session project reuse,
+and a correction preserving historical source Evidence through shared workflows.
+
 The completed analyst task is to export the bound provider's function inventory
 as one local pseudocode file per non-external function, with names, body ranges,
 provider/profile identity and the limitations of each used observation. The

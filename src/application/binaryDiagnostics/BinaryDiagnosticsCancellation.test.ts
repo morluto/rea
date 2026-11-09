@@ -1,9 +1,11 @@
 import { expect, it } from "vitest";
 import { ElfNotesService } from "./ElfNotesService.js";
+import { KernelModuleService } from "./KernelModuleService.js";
 import { PeCertificatesService } from "./PeCertificatesService.js";
 import { PeImportsService } from "./PeImportsService.js";
 import {
   ELF_NOTES_PROVIDER,
+  KERNEL_MODULE_PROVIDER,
   PE_CERTIFICATES_PROVIDER,
   PE_IMPORTS_PROVIDER,
 } from "../../domain/investigationProviders.js";
@@ -28,6 +30,11 @@ it.each([
   [
     "ELF notes",
     () => new ElfNotesService({ identity: ELF_NOTES_PROVIDER, inspect }),
+  ],
+  [
+    "kernel module",
+    () =>
+      new KernelModuleService({ identity: KERNEL_MODULE_PROVIDER, inspect }),
   ],
 ] as const)(
   "preserves an early cancellation reason for %s before validation",

@@ -3,6 +3,7 @@ import type { GpuSource } from "./GpuSource.js";
 import type { AmdGpuTargetIdentity } from "./AmdGpuTarget.js";
 export type GpuPayloadTarget = {
   readonly value: string | null;
+  readonly amdMetadata?: GpuObject["amd_target_metadata"];
   readonly cudaHeader?: GpuObject["cuda_target_header"];
   readonly limitation?: string;
 } & (
@@ -38,6 +39,7 @@ export const gpuObject = (
     target: null,
     payload_target: null,
     cuda_target_header: null,
+    amd_target_metadata: null,
     target_consistency: "unexamined",
     bundle_id: null,
     compression: "none",

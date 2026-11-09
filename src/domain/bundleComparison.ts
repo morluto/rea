@@ -4,13 +4,13 @@ import { z } from "zod";
 
 import {
   parseEvidenceBundle,
+  referencedEvidenceIds,
   serializeEvidenceBundle,
   type EvidenceBundle,
 } from "./evidenceBundle.js";
 import { AnalysisInputError } from "./analysisErrorCore.js";
 import type { ResidualUnknown } from "./residualUnknown.js";
-import { digestSchema } from "./../domain/digests.js";
-import { prefixedDigestSchema } from "./../domain/digests.js";
+import { digestSchema, prefixedDigestSchema } from "./../domain/digests.js";
 import { comparisonStatusSchema } from "./comparisonStatus.js";
 import { localPathStringSchema } from "./localPath.js";
 
@@ -302,16 +302,7 @@ const histories = (unknowns: readonly ResidualUnknown[]) => {
 };
 
 const historyEvidenceIds = (history: readonly ResidualUnknown[]): string[] =>
-  [
-    ...new Set(
-      history.flatMap((item) => [
-        ...item.supporting_evidence_ids,
-        ...item.contradicting_evidence_ids,
-        ...item.mutation_evidence_ids,
-        ...(item.resolution?.evidence_ids ?? []),
-      ]),
-    ),
-  ].sort(ascii);
+  [...new Set(history.flatMap(referencedEvidenceIds))].sort(ascii);
 
 const bundleDigest = (bundle: EvidenceBundle): string =>
   createHash("sha256").update(serializeEvidenceBundle(bundle)).digest("hex");

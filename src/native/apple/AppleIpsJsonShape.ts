@@ -86,6 +86,7 @@ const threadShape = (
             "imageIndex",
             "imageOffset",
             "symbol",
+            "symbolLocation",
             "inline",
           ),
         },
@@ -96,6 +97,13 @@ const threadShape = (
         members: {
           flavor: SCALAR,
           x: { kind: "array", items: register, beforeItem: take.registers },
+          // Rosetta-translated processes nest their translator registers.
+          rosetta: {
+            kind: "object",
+            members: {},
+            rest: register,
+            beforeRest: take.registers,
+          },
         },
         rest: register,
         beforeRest: take.registers,
@@ -114,7 +122,14 @@ const terminationShape = (): JsonShape => {
   return {
     kind: "object",
     members: {
-      ...scalarMembers("namespace", "code", "indicator"),
+      ...scalarMembers(
+        "namespace",
+        "code",
+        "indicator",
+        "flags",
+        "byPid",
+        "byProc",
+      ),
       reasons: {
         kind: "array",
         items: SCALAR,
@@ -142,6 +157,7 @@ export const ipsBodyShape = (input: InspectAppleIpsInput): JsonShape => {
         "procName",
         "procPath",
         "pid",
+        "parentPid",
         "parentProc",
         "cpuType",
         "translated",
@@ -173,6 +189,7 @@ export const ipsBodyShape = (input: InspectAppleIpsInput): JsonShape => {
             "base",
             "size",
             "uuid",
+            "name",
             "path",
           ),
         },
@@ -193,6 +210,8 @@ export const IPS_METADATA_SHAPE: JsonShape = {
     "bundleID",
     "incident_id",
     "name",
+    "build_version",
+    "platform",
   ),
   beforeUnlisted: unlistedKeys,
 };

@@ -33,48 +33,63 @@ import { parseNativeExports } from "../../../src/native/exports/NativeExportPars
 import { createNativeExportsService } from "../../../src/composition/binaryDiagnostics.js";
 import { registerNativeExportsTool } from "../../../src/server/registerNativeExportsTool.js";
 
-it("refuses a native exports summary before file admission when retention is unavailable", async () => {
-  const service = createNativeExportsService();
-  const server = new EvidenceMcpServer(
-    { name: "exports-preflight", version: "1" },
-    {},
-    undefined,
-    createToolResultDelivery(undefined),
-  );
-  registerNativeExportsTool(server, service, silentLogger);
-  const client = new Client({ name: "exports-preflight-client", version: "1" });
-  onTestFinished(async () => {
-    await client.close();
-    await server.close();
-    await service.close();
-  });
-  const [clientTransport, serverTransport] =
-    InMemoryTransport.createLinkedPair();
-  await server.connect(serverTransport);
-  await client.connect(clientTransport);
-  const schemas = await advertisedMcpToolSchemas(
-    client,
-    "inspect_native_exports",
-  );
-  expect(
-    schemas.ajv.validate(schemas.inputSchema, {
-      path: "/absent/native-library.so",
-      detail: "summary",
-    }),
-  ).toBe(true);
-  const refused = await client.callTool({
-    name: "inspect_native_exports",
-    arguments: { path: "/absent/native-library.so", detail: "summary" },
-  });
-  expect(parseMcpToolError(refused).error).toMatchObject({
-    code: "capability_unavailable",
-  });
-  const complete = await client.callTool({
-    name: "inspect_native_exports",
-    arguments: { path: "/absent/native-library.so" },
-  });
-  expect(parseMcpToolError(complete).error.code).toBe("invalid_request");
-});
+it.each(["inspect_native_exports", "inspect_byte_entropy"] as const)(
+  "refuses %s summary before file admission when retention is unavailable",
+  async (name) => {
+    const service =
+      name === "inspect_native_exports"
+        ? createNativeExportsService()
+        : new ByteEntropyService();
+    const server = new EvidenceMcpServer(
+      { name: "exports-preflight", version: "1" },
+      {},
+      undefined,
+      createToolResultDelivery(undefined),
+    );
+    if (service instanceof ByteEntropyService)
+      registerByteEntropyTool(
+        server,
+        service,
+        silentLogger,
+        undefined,
+        undefined,
+        undefined,
+      );
+    else registerNativeExportsTool(server, service, silentLogger);
+    const client = new Client({
+      name: "exports-preflight-client",
+      version: "1",
+    });
+    onTestFinished(async () => {
+      await client.close();
+      await server.close();
+      await service.close();
+    });
+    const [clientTransport, serverTransport] =
+      InMemoryTransport.createLinkedPair();
+    await server.connect(serverTransport);
+    await client.connect(clientTransport);
+    const schemas = await advertisedMcpToolSchemas(client, name);
+    expect(
+      schemas.ajv.validate(schemas.inputSchema, {
+        path: "/absent/native-library.so",
+        detail: "summary",
+      }),
+    ).toBe(true);
+    const refused = await client.callTool({
+      name,
+      arguments: { path: "/absent/native-library.so", detail: "summary" },
+    });
+    expect(parseMcpToolError(refused).error).toMatchObject({
+      code: "capability_unavailable",
+    });
+    const complete = await client.callTool({
+      name,
+      arguments: { path: "/absent/native-library.so" },
+    });
+    expect(parseMcpToolError(complete).error.code).toBe("invalid_request");
+  },
+);
 
 it.each([false, true])(
   "preserves a completed byte report through MCP cleanup failure and retry (retained=%s)",
@@ -199,7 +214,7 @@ it.each([false, true])(
   },
 );
 
-it("advertises exact valid schemas and records inline layout without a binary target", async () => {
+it("records inline layout with compact schemas and canonical path checks", async () => {
   const value = binaryLayoutFixture();
   let providerClosed = false;
   let providerCalls = 0;
@@ -240,7 +255,6 @@ it("advertises exact valid schemas and records inline layout without a binary ta
   );
   const { ajv, inputSchema } = schemas;
   expect(ajv.validate(inputSchema, { path: value.artifact.path })).toBe(true);
-  expect(ajv.validate(inputSchema, { path: "relative.elf" })).toBe(false);
   expect(
     ajv.validate(inputSchema, {
       path: value.artifact.path,
@@ -279,14 +293,11 @@ it("advertises exact valid schemas and records inline layout without a binary ta
     parent_evidence_id: evidence.evidence_id,
     summary: { format: "elf", bytes: value.artifact.bytes },
   });
-  expect(
-    (
-      await client.callTool({
-        name: "inspect_binary_layout",
-        arguments: { path: "relative.elf" },
-      })
-    ).isError,
-  ).toBe(true);
+  const relative = await client.callTool({
+    name: "inspect_binary_layout",
+    arguments: { path: "relative.elf" },
+  });
+  expect(parseMcpToolError(relative).error.code).toBe("invalid_request");
   expect(providerCalls).toBe(1);
 });
 
@@ -391,9 +402,6 @@ it("records a portable export inventory through MCP without a binary target", as
     "inspect_native_exports",
   );
   expect(schemas.ajv.validate(schemas.inputSchema, { path })).toBe(true);
-  expect(
-    schemas.ajv.validate(schemas.inputSchema, { path: "relative.so" }),
-  ).toBe(false);
   const response = await client.callTool({
     name: "inspect_native_exports",
     arguments: { path },
@@ -426,4 +434,12 @@ it("records a portable export inventory through MCP without a binary target", as
     }),
     "observed",
   );
+  const relative = await client.callTool({
+    name: "inspect_native_exports",
+    arguments: { path: "relative.so" },
+  });
+  expect(parseMcpToolError(relative).error).toMatchObject({
+    code: "invalid_request",
+    details: { issues: [{ path: ["path"], reason: "invalid_format" }] },
+  });
 });

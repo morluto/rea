@@ -139,7 +139,9 @@ for (const scenario of cases)
         appliedActions: [],
       });
       if ("syntax" in scenario) {
-        expect(setup.json).toMatchObject({ remediation: expect.any(String) });
+        expect(setup.json).toMatchObject({
+          remediation: expect.stringMatching(/\S/u),
+        });
         if (scenario.syntax === "JSON")
           expect(setup.stdout).toContain("Invalid JSON/JSONC");
       } else {
@@ -166,7 +168,7 @@ for (const scenario of cases)
       });
       if (!("syntax" in scenario))
         expect(uninstall.stdout).not.toContain("not valid JSON");
-      expect(await readFile(config)).toEqual(original);
+      expect(Buffer.compare(await readFile(config), original)).toBe(0);
       expect(await readdir(dirname(config))).toEqual([
         scenario.path.split("/").at(-1),
       ]);
@@ -178,6 +180,9 @@ cliTest.skipIf(process.platform === "win32" || process.getuid?.() === 0)(
   async ({ cli }) => {
     const home = await createTestTempDirectory(
       "rea-doctor-denied-registration-",
+    );
+    const moduleCache = await createTestTempDirectory(
+      "rea-doctor-swift-cache-",
     );
     const locked = join(home, "owned-denied");
     const target = join(locked, "client.json");
@@ -202,6 +207,7 @@ cliTest.skipIf(process.platform === "win32" || process.getuid?.() === 0)(
           HOME: home,
           USERPROFILE: home,
           XDG_CONFIG_HOME: join(home, ".config"),
+          REA_DARWIN_MODULE_CACHE_PATH: moduleCache,
         },
       });
       expect(result.exitCode).toBe(1);
@@ -222,6 +228,9 @@ cliTest.skipIf(process.platform === "win32" || process.getuid?.() === 0)(
       await chmod(locked, 0o700);
     }
     expect(await readFile(target, "utf8")).toBe(original);
-    expect(await readdir(home)).toEqual([".claude.json", "owned-denied"]);
+    expect((await readdir(home)).sort()).toEqual([
+      ".claude.json",
+      "owned-denied",
+    ]);
   },
 );
