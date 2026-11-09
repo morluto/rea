@@ -211,7 +211,7 @@ export const decompileAll = async (
       : { output_directory: session.root, index_path: publishedIndex };
   if (primary !== undefined) {
     if (publishedOutput !== undefined)
-      primary.retainDiagnostics({ published_output: publishedOutput });
+      primary.retainPrimaryDiagnostics({ published_output: publishedOutput });
     if (
       isAborted(signal) &&
       !(
@@ -235,7 +235,9 @@ export const decompileAll = async (
       // The composed error is projected until cleanup resolves; afterward its
       // primary is projected, so both owners must retain the same receipt.
       if (publishedOutput !== undefined)
-        combined.retainDiagnostics({ published_output: publishedOutput });
+        combined.retainPrimaryDiagnostics({
+          published_output: publishedOutput,
+        });
       return err(combined);
     }
     return err(primary);
@@ -246,7 +248,7 @@ export const decompileAll = async (
   if (isAborted(signal)) {
     const failure = cancelled(signal);
     if (publishedOutput !== undefined)
-      failure.retainDiagnostics({ published_output: publishedOutput });
+      failure.retainPrimaryDiagnostics({ published_output: publishedOutput });
     return err(failure);
   }
   const manifest = decompileDirectoryManifestSchema.safeParse(

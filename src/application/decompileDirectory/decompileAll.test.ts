@@ -1,3 +1,4 @@
+import { analysisErrorWithCleanupFailure } from "../../domain/analysisErrorCleanup.js";
 import {
   mkdir,
   readFile,
@@ -1991,7 +1992,7 @@ describe("decompile_all mixed cleanup ownership", () => {
 
   it("waits for both provider and journal cleanup owners after mixed finalization failures", async () => {
     const { port } = harness();
-    const providerFailure = new AnalysisOutputError(
+    const providerCleanup = new AnalysisOutputError(
       "procedure_info",
       "provider cleanup failed",
       {
@@ -2001,6 +2002,16 @@ describe("decompile_all mixed cleanup ownership", () => {
         },
       },
     );
+    const originalFailure = new AnalysisOutputError(
+      "procedure_info",
+      "provider operation failed",
+      { diagnostics: { operation_fact: "retained" } },
+    );
+    const providerFailure = analysisErrorWithCleanupFailure(
+      originalFailure,
+      providerCleanup,
+      "procedure_info",
+    ).bindCleanupDependencies([providerCleanup]);
     const closeFailure = new AnalysisOutputError(
       "decompile_all",
       "journal cleanup failed",
@@ -2019,7 +2030,7 @@ describe("decompile_all mixed cleanup ownership", () => {
       async () => undefined,
       ["journal descriptor"],
     );
-    providerLease.bindCleanupError(providerFailure);
+    providerLease.bindCleanupError(providerCleanup);
     journalLease.bindCleanupError(closeFailure);
     const close = DecompileExport.prototype.close;
     vi.spyOn(DecompileExport.prototype, "close").mockImplementation(
@@ -2053,8 +2064,15 @@ describe("decompile_all mixed cleanup ownership", () => {
     await journalLease.release();
     expect(closeFailure.cleanupIncomplete).toBe(false);
     expect(result.error.cleanupIncomplete).toBe(true);
+    expect(
+      projectAnalysisError(result.error).details?.diagnostics,
+    ).toMatchObject(receipt);
     await providerLease.release();
     expect(result.error.cleanupIncomplete).toBe(false);
+    expect(originalFailure.diagnostics).toMatchObject({
+      ...receipt,
+      operation_fact: "retained",
+    });
     expect(
       projectAnalysisError(result.error).details?.diagnostics,
     ).toMatchObject(receipt);
