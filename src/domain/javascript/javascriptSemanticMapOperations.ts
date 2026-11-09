@@ -34,9 +34,12 @@ const isIntrinsicMapOperation = (
     (purpose !== "receiver" ||
       (method !== "has" &&
         method !== "clear" &&
-        // set returns this. Until that result identity is retained by its
-        // owner, only a discarded result proves no receiver escapes through it.
-        (method !== "set" ||
+        // set returns this, and iterators retain entries. Until their result
+        // identities are retained, only discarded results prove no escape.
+        ((method !== "set" &&
+          method !== "keys" &&
+          method !== "values" &&
+          method !== "entries") ||
           !t.isExpressionStatement(bindings.parentsByNode.get(node)))))
   )
     return false;

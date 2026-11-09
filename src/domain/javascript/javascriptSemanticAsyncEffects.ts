@@ -283,9 +283,33 @@ const eventsClassPath = (path: JavaScriptSemanticPropertyPath): boolean => {
   return true;
 };
 
+/** A function's default prototype.constructor pair can reach the function again. */
+const constructorBackReferenceEnd = (
+  path: JavaScriptSemanticPropertyPath,
+  start = 0,
+  limit = path.length,
+): number => {
+  let end = start;
+  while (
+    end + 1 < limit &&
+    path[end] === "prototype" &&
+    path[end + 1] === "constructor"
+  )
+    end += 2;
+  return end;
+};
+
 /** The initializer object owns the `.call` slot Node reads during allocation. */
-const eventsInitializerPath = (path: JavaScriptSemanticPropertyPath): boolean =>
-  path.at(-1) === "init" && eventsClassPath(path.slice(0, -1));
+const eventsInitializerPath = (
+  path: JavaScriptSemanticPropertyPath,
+): boolean => {
+  const initializer = path.indexOf("init");
+  return (
+    initializer >= 0 &&
+    eventsClassPath(path.slice(0, initializer)) &&
+    constructorBackReferenceEnd(path, initializer + 1) === path.length
+  );
+};
 
 const reachesEventsClassSurface = (
   binding: JavaScriptSemanticBindingState,
@@ -386,12 +410,17 @@ const indexEventEmitterSharedEffects = (
     // A named initializer import owns its own records, rather than paths on a
     // class binding. Consume the provenance owner's retained origins, including
     // candidate origins: uncertainty can withdraw this proof, never create it.
-    const initializerWrites = binding.memberWrites.filter(
-      ({ path }) =>
-        affectsBuiltinPath(path, ["call"]) || path.at(0) === "__proto__",
-    );
+    const initializerWrites = binding.memberWrites.filter(({ path }) => {
+      // A write replaces its last slot, not the value previously stored there.
+      const selected = path.slice(
+        constructorBackReferenceEnd(path, 0, path.length - 1),
+      );
+      return (
+        affectsBuiltinPath(selected, ["call"]) || selected.at(0) === "__proto__"
+      );
+    });
     const initializerObjectEscapes = binding.escapedPaths.filter(
-      ({ path }) => path.length === 0,
+      ({ path }) => constructorBackReferenceEnd(path) === path.length,
     );
     if (
       (initializerWrites.length > 0 || initializerObjectEscapes.length > 0) &&

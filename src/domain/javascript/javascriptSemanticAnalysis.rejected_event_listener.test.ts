@@ -1486,3 +1486,73 @@ e.on("ready");`),
     ).toEqual([]);
   },
 );
+
+it.each([
+  "configure(EventEmitter.init.prototype.constructor);",
+  "configure(init.prototype.constructor);",
+  "configure(EventEmitter.init.prototype.constructor.prototype.constructor);",
+  "const initialize = init.prototype.constructor; configure(initialize);",
+  "init.prototype.constructor.call = wrapper;",
+  "init.prototype.constructor.prototype.constructor.call = wrapper;",
+])("orders initializer back-reference effects: %s", (mutation) => {
+  const source = (
+    before: boolean,
+  ) => `import { EventEmitter, init } from "node:events";
+import { configure, wrapper } from "./patch.js";
+${before ? mutation : ""}
+const e = new EventEmitter();
+${before ? "" : mutation}
+e.on("ready");`;
+  expect(eventsForSource(source(true))).toContainEqual({
+    kind: "register",
+    method: "on",
+    eventName: "ready",
+  });
+  expect(eventsForSource(source(false))).toEqual([]);
+});
+
+it.each([
+  "configure(EventEmitter.init.prototype.constructor.call);",
+  "configure(init.prototype.constructor.call);",
+  "init.prototype.constructor.tag = wrapper;",
+  "init.prototype.constructor = wrapper;",
+  "init.prototype.constructor.prototype.constructor = wrapper;",
+  "delete init.prototype.constructor;",
+  "delete init.prototype.constructor.prototype.constructor;",
+])("preserves unrelated initializer back-reference values: %s", (mutation) => {
+  expect(
+    eventsForSource(`import { EventEmitter, init } from "node:events";
+import { configure, wrapper } from "./patch.js";
+${mutation}
+const e = new EventEmitter();
+e.on("ready");`),
+  ).toEqual([]);
+});
+
+it.each([
+  ["namespace", 'import * as ns from "events";', "ns.init"],
+  ["default", 'import ns from "events";', "ns.init"],
+  ["builtin getter", "", 'process.getBuiltinModule("events").init'],
+  ["awaited namespace", "", '(await import("events")).init'],
+  ["awaited default", "", '(await import("events")).default.init'],
+])(
+  "orders existing %s initializer back-reference facts",
+  (_name, header, initializer) => {
+    const effect = `configure(${initializer}.prototype.constructor);`;
+    const source = (
+      before: boolean,
+    ) => `import { EventEmitter } from "node:events";
+import { configure } from "./configure.js";
+${header}
+${before ? effect : ""}
+const e = new EventEmitter();
+${before ? "" : effect}
+e.on("ready");`;
+    expect(eventsForSource(source(true))).toContainEqual({
+      kind: "register",
+      method: "on",
+      eventName: "ready",
+    });
+    expect(eventsForSource(source(false))).toEqual([]);
+  },
+);

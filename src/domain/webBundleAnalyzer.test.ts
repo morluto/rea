@@ -234,6 +234,66 @@ it.each([
     "const records = new Map(); new Map().set(...expose(records)); records.get('/accounts');",
     true,
   ],
+  [
+    "const records = new Map(); new Map().keys(); records.get('/accounts');",
+    false,
+  ],
+  [
+    "const records = new Map(); const other = new Map(); other.keys(); records.delete('/accounts');",
+    false,
+  ],
+  [
+    "const records = new Map(); Map.prototype.keys = patch; new Map().keys(); records.get('/accounts');",
+    true,
+  ],
+  [
+    "const records = new Map(); const other = new Map(); other.keys = patch; other.keys(); records.get('/accounts');",
+    true,
+  ],
+  [
+    "const records = new Map(); consume(new Map().keys()); records.get('/accounts');",
+    true,
+  ],
+  [
+    "const records = new Map(); new Map().values(); records.get('/accounts');",
+    false,
+  ],
+  [
+    "const records = new Map(); const other = new Map(); other.values(); records.delete('/accounts');",
+    false,
+  ],
+  [
+    "const records = new Map(); Map.prototype.values = patch; new Map().values(); records.get('/accounts');",
+    true,
+  ],
+  [
+    "const records = new Map(); const other = new Map(); other.values = patch; other.values(); records.get('/accounts');",
+    true,
+  ],
+  [
+    "const records = new Map(); consume(new Map().values()); records.get('/accounts');",
+    true,
+  ],
+  [
+    "const records = new Map(); new Map().entries(); records.get('/accounts');",
+    false,
+  ],
+  [
+    "const records = new Map(); const other = new Map(); other.entries(); records.delete('/accounts');",
+    false,
+  ],
+  [
+    "const records = new Map(); Map.prototype.entries = patch; new Map().entries(); records.get('/accounts');",
+    true,
+  ],
+  [
+    "const records = new Map(); const other = new Map(); other.entries = patch; other.entries(); records.get('/accounts');",
+    true,
+  ],
+  [
+    "const records = new Map(); consume(new Map().entries()); records.get('/accounts');",
+    true,
+  ],
   ["client.get('/accounts');", true],
   ["eval('Map.prototype.get = fetch'); new Map().get('/accounts');", true],
 ] as const)(
