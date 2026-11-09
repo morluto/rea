@@ -1333,6 +1333,31 @@ it("fails closed when a readable D3N0L4ND resource sits beside an unreadable RT_
   });
 });
 
+it("fails closed when a readable D3N0L4ND resource sits beside a non-directory RT_RCDATA branch", async () => {
+  const fixture = peResourceFixture(
+    true,
+    [
+      { type: 10, name: "D3N0L4ND", language: 1, payload: buildDenoSection() },
+      { type: 11, name: "OTHER", language: 1, payload: Buffer.from("x") },
+    ],
+    1024 * 1024,
+  );
+  // Turn the second root type entry into a duplicate RT_RCDATA branch whose
+  // target is marked as data rather than a names directory.
+  const duplicate = 0x400 + 16 + 8;
+  fixture.bytes.writeUInt32LE(10, duplicate);
+  fixture.bytes.writeUInt32LE(
+    fixture.bytes.readUInt32LE(duplicate + 4) & 0x7fff_ffff,
+    duplicate + 4,
+  );
+  await expect(
+    locateDenoStandalone(bytesHandle(fixture.bytes), fixture.bytes.length),
+  ).resolves.toMatchObject({
+    status: "present",
+    failure: { reason: "format" },
+  });
+});
+
 it("fails closed when a D3N0L4ND payload is not file-backed", async () => {
   const fixture = peResourceFixture(true, [
     { type: 10, name: "D3N0L4ND", language: 1, payload: Buffer.from("x") },

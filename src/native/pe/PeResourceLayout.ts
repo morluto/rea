@@ -329,8 +329,9 @@ interface NamedResourceWalk {
 
 /**
  * Targets of the `name` entries under each `typeId` type directory. A type
- * branch whose names directory, or a name entry whose string, cannot be read
- * is recorded in `walk` rather than treated as absent.
+ * branch that is not a directory, whose names directory cannot be read, or a
+ * name entry whose string cannot be read is recorded in `walk` rather than
+ * treated as absent.
  */
 async function* namedResourceTargets(
   tree: PeResourceTree,
@@ -346,8 +347,10 @@ async function* namedResourceTargets(
       types.subarray(at, at + PE_RESOURCE_ENTRY_BYTES),
     );
     if (type.identity.kind !== "id" || type.identity.id !== typeId) continue;
-    if (type.target.kind !== "directory") continue;
-    const names = await tree.directory(type.target.offset);
+    const names =
+      type.target.kind === "directory"
+        ? await tree.directory(type.target.offset)
+        : undefined;
     if (names === undefined) {
       walk.unresolved = true;
       continue;
