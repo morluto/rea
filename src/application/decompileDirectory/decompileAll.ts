@@ -94,6 +94,22 @@ interface PublishState {
   outputIoStreak: number;
 }
 
+/** Cleanup retries can expose any primary in the existing provider chain. */
+const retainPublishedOutput = (
+  failure: AnalysisError,
+  output:
+    | { readonly output_directory: string; readonly index_path: string }
+    | undefined,
+): void => {
+  if (output === undefined) return;
+  for (
+    let owner: AnalysisError | undefined = failure;
+    owner !== undefined;
+    owner = owner.cleanupPrimary
+  )
+    owner.retainDiagnostics({ published_output: output });
+};
+
 /**
  * Write one pseudocode file per selected function and return only a manifest.
  * Files already committed stay in place when a later function fails or the
@@ -210,8 +226,7 @@ export const decompileAll = async (
       ? undefined
       : { output_directory: session.root, index_path: publishedIndex };
   if (primary !== undefined) {
-    if (publishedOutput !== undefined)
-      primary.retainDiagnostics({ published_output: publishedOutput });
+    let failure = primary;
     if (
       isAborted(signal) &&
       !(
@@ -227,26 +242,21 @@ export const decompileAll = async (
       primary !== closed.error &&
       closed.error.cleanupIncomplete
     ) {
-      const combined = analysisErrorWithCleanupFailure(
+      failure = analysisErrorWithCleanupFailure(
         primary,
         closed.error,
         "decompile_all",
       ).bindCleanupDependencies([primary, closed.error]);
-      // The composed error is projected until cleanup resolves; afterward its
-      // primary is projected, so both owners must retain the same receipt.
-      if (publishedOutput !== undefined)
-        combined.retainDiagnostics({ published_output: publishedOutput });
-      return err(combined);
     }
-    return err(primary);
+    retainPublishedOutput(failure, publishedOutput);
+    return err(failure);
   }
   // Finalization succeeded, so committed files and the index are usable on
   // resume, but a caller abort that stopped the loop or arrived meanwhile is
   // not a success. Report it with the caller's own reason.
   if (isAborted(signal)) {
     const failure = cancelled(signal);
-    if (publishedOutput !== undefined)
-      failure.retainDiagnostics({ published_output: publishedOutput });
+    retainPublishedOutput(failure, publishedOutput);
     return err(failure);
   }
   const manifest = decompileDirectoryManifestSchema.safeParse(
