@@ -543,6 +543,7 @@ const workflowAvailabilityFor = (
     name === "inspect_python_pyc" ||
     name === "inspect_apple_ips" ||
     name === "inspect_erlang_beam" ||
+    name === "inspect_v8_code_cache" ||
     name === "inspect_electron_fuses"
   )
     return { reason: "available", remediation: null };
@@ -621,7 +622,11 @@ const workflowAvailabilityFor = (
         };
   if (name === "inspect_pe_resources" || name === "inspect_native_exports")
     return { reason: "available", remediation: null };
-  if (name === "inspect_pe_certificates" || name === "inspect_pe_imports")
+  if (
+    name === "inspect_pe_certificates" ||
+    name === "inspect_pe_imports" ||
+    name === "inspect_windows_shortcut"
+  )
     return { reason: "available", remediation: null };
   if (
     name === "inspect_elf_notes" ||

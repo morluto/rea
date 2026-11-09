@@ -7,7 +7,10 @@ import {
 import { isSelectedRegularFileError } from "../../filesystem/RegularFile.js";
 import { fixedNativeAllowance } from "../../domain/native/nativeDeadlines.js";
 import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
-import { readStableArtifact } from "../../artifacts/readStableArtifact.js";
+import {
+  type StableArtifactSnapshot,
+  readStableArtifact,
+} from "../../artifacts/readStableArtifact.js";
 import {
   artifactFilePrimaryFacts,
   type ArtifactFilePrimaryFacts,
@@ -55,9 +58,10 @@ export class PeResourcesProvider implements PeResourcesPort {
   }
 
   async inspect(input: InspectPeResourcesInput, options?: ExecutionOptions) {
+    let snapshot: StableArtifactSnapshot | undefined;
     try {
       return await this.#resources.run(async () => {
-        const snapshot = await readStableArtifact(
+        snapshot = await readStableArtifact(
           input.path,
           input.max_file_bytes,
           options?.signal,
@@ -78,7 +82,7 @@ export class PeResourcesProvider implements PeResourcesPort {
         );
       });
     } catch (cause) {
-      return err(peResourcesFailure(cause, input));
+      return err(peResourcesFailure(cause, input, snapshot));
     }
   }
 }
@@ -215,7 +219,11 @@ const peResourcesFailurePrimary = (
   );
 };
 
-const peResourcesFailure = (cause: unknown, input: InspectPeResourcesInput) => {
+const peResourcesFailure = (
+  cause: unknown,
+  input: InspectPeResourcesInput,
+  snapshot?: StableArtifactSnapshot,
+) => {
   const primary = peResourcesFailurePrimary(
     artifactFilePrimaryFacts(cause),
     input,
@@ -226,5 +234,6 @@ const peResourcesFailure = (cause: unknown, input: InspectPeResourcesInput) => {
     input.path,
     PE_RESOURCES_PROVIDER.id,
     "inspect_pe_resources",
+    snapshot,
   );
 };
