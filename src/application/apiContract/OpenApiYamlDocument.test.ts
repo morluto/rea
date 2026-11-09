@@ -389,6 +389,68 @@ it("refuses keys that only collide after they are projected to member names", as
   ).toContain("non-scalar mapping key");
 });
 
+it("resolves a mapping-key alias against the anchor binding preceding it", async () => {
+  // The alias binds to the sequence anchored before it, which is not a
+  // expressible member name, even though the same anchor is redefined to a
+  // scalar afterwards. Resolving against the later binding would accept a
+  // document whose key `toJS` stringifies to text the source never wrote.
+  const laterScalar = await importText(
+    "alias-redefined.yaml",
+    [
+      "openapi: 3.0.4",
+      'info: {title: Owned API, version: "1"}',
+      "first: &served [a]",
+      "paths:",
+      "  /pets:",
+      "    additionalOperations:",
+      "      *served : {get: {operationId: aliased}}",
+      "second: &served /new",
+    ].join("\n"),
+    "openapi-yaml",
+  );
+  expect(contractError(laterScalar)).toContain("non-scalar mapping key");
+});
+
+it("names a null mapping key by the projection toJS writes", async () => {
+  const nullKey = await importText(
+    "null-key.yaml",
+    [
+      "openapi: 3.0.4",
+      'info: {title: Owned API, version: "1"}',
+      "paths:",
+      "  additionalOperations:",
+      "    null: {get: {operationId: unquoted}}",
+      '    "null": {post: {operationId: quoted}}',
+    ].join("\n"),
+    "openapi-yaml",
+  );
+  // An unquoted `null` projects to the empty member name, so it does not
+  // collide with the distinct quoted `"null"` member beside it.
+  expect(nullKey.ok).toBe(true);
+});
+
+it("refuses an integer key the parser has already rounded", async () => {
+  const unsafe = await importText(
+    "unsafe-integer-key.yaml",
+    [
+      "openapi: 3.0.4",
+      'info: {title: Owned API, version: "1"}',
+      "paths:",
+      "  /pets:",
+      "    additionalOperations:",
+      "      9007199254740993: {get: {operationId: rounded}}",
+    ].join("\n"),
+    "openapi-yaml",
+  );
+  expect(contractError(unsafe)).toContain(
+    "integer mapping key beyond the exactly-representable range",
+  );
+  if (unsafe.ok) throw new Error("expected a refusal");
+  expect(unsafe.error).toMatchObject({
+    issues: [{ path: ["path"], reason: "invalid_format" }],
+  });
+});
+
 it("returns a typed refusal for nesting deeper than the decoder's own stack", async () => {
   const depth = 2000;
   const nested = `openapi: "3.0.4"\npaths: ${"[".repeat(depth)}1${"]".repeat(depth)}\n`;

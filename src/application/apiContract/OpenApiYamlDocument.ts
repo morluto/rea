@@ -6,6 +6,7 @@ import {
   isScalar,
   LineCounter,
   parseDocument,
+  type Alias,
   type Node,
 } from "yaml";
 
@@ -42,17 +43,49 @@ function* yamlNodes(root: unknown): Generator<Node> {
 }
 
 /**
- * Anchor name to its first named node, in document order. Built iteratively
+ * Anchor name to its bindings, ordered by source position. Built iteratively
  * for the same reason `yamlNodes` is: the recursive walk overflows on a deeply
  * nested document before the refusal can be reported.
+ *
+ * `yamlNodes` visits nodes in reverse serialization order, so the walk cannot
+ * establish which binding a given alias sees: YAML scopes an anchor to the
+ * bindings preceding the alias, and a later redefinition of the same name must
+ * not shadow it. Ordering by `range` recovers that document order.
  */
-const yamlAnchors = (root: unknown): Map<string, Node> => {
-  const anchors = new Map<string, Node>();
+const yamlAnchors = (root: unknown): Map<string, readonly Node[]> => {
+  const anchors = new Map<string, Node[]>();
   for (const node of yamlNodes(root)) {
     const anchor = (node as { readonly anchor?: string }).anchor;
-    if (anchor !== undefined && !anchors.has(anchor)) anchors.set(anchor, node);
+    if (anchor === undefined) continue;
+    const bindings = anchors.get(anchor);
+    if (bindings === undefined) anchors.set(anchor, [node]);
+    else bindings.push(node);
   }
+  for (const bindings of anchors.values())
+    bindings.sort(
+      (left, right) => (left.range?.[0] ?? 0) - (right.range?.[0] ?? 0),
+    );
   return anchors;
+};
+
+/**
+ * The binding an alias resolves to: the last anchor of that name starting
+ * before the alias, which is the scope `toJS` projects.
+ */
+const resolveAlias = (
+  alias: Alias,
+  anchors: Map<string, readonly Node[]>,
+  source: string,
+): Node | undefined => {
+  const bindings = anchors.get(source);
+  if (bindings === undefined) return undefined;
+  const position = alias.range?.[0] ?? Number.POSITIVE_INFINITY;
+  let resolved: Node | undefined;
+  for (const binding of bindings) {
+    if ((binding.range?.[0] ?? 0) >= position) break;
+    resolved = binding;
+  }
+  return resolved;
 };
 
 const invalidDocument = (path: string, message: string): AnalysisError =>
@@ -208,9 +241,11 @@ export const decodeOpenApiYaml = (
         );
       // `Alias.resolve(document)` walks the whole document recursively and can
       // overflow on a deeply nested one, so keys resolve from this iterative
-      // table built before the scan. An anchor is its first named node, which
-      // is the scope `yaml` itself resolves an alias against.
-      const resolved = isAlias(key) ? anchors.get(key.source) : key;
+      // table built before the scan. Each alias binds to the last anchor of that
+      // name preceding it, which is the scope `yaml` itself resolves against.
+      const resolved = isAlias(key)
+        ? resolveAlias(key, anchors, key.source)
+        : key;
       if (
         resolved === undefined ||
         !isScalar(resolved) ||
@@ -231,7 +266,26 @@ export const decodeOpenApiYaml = (
       // `"1"` both become the property `"1"`, and an alias key can name one a
       // literal already names. `uniqueKeys` compares source nodes, so it
       // accepts both and `toJS` keeps only the later value.
-      const member = String(resolved.value);
+      //
+      // The name has to match `toJS`'s own projection (`stringifyKey`): a null
+      // key becomes the empty member name, not `"null"`, so an unquoted `null`
+      // and a quoted `"null"` are distinct members. An integer the parser has
+      // already rounded would otherwise name a member the source never wrote,
+      // so an unsafe one is refused rather than projected under the rounded
+      // value.
+      const scalar: { readonly value: unknown } = resolved;
+      if (
+        typeof scalar.value === "number" &&
+        Number.isInteger(scalar.value) &&
+        !Number.isSafeInteger(scalar.value)
+      )
+        return err(
+          invalidDocument(
+            path,
+            "OpenAPI YAML uses an integer mapping key beyond the exactly-representable range; the JSON profile cannot name that member without changing its value",
+          ),
+        );
+      const member = scalar.value === null ? "" : String(scalar.value);
       if (projected.has(member))
         return err(
           duplicateKeyDiagnostic(
