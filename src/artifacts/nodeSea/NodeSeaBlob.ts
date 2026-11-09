@@ -255,8 +255,7 @@ class BlobCursor {
   }
 
   async assets(signal?: AbortSignal): Promise<NodeSeaAsset[]> {
-    const count = this.#count(MAX_ASSET_COUNT, NODE_SEA_ASSET_COUNT);
-    if (count * 16 > this.remaining) throw formatFailure(NODE_SEA_TRUNCATED);
+    const count = this.#count(MAX_ASSET_COUNT, 16, NODE_SEA_ASSET_COUNT);
     const seen = new Set<string>();
     const assets: NodeSeaAsset[] = [];
     let nameBytes = 0;
@@ -280,8 +279,7 @@ class BlobCursor {
   }
 
   async execArgv(signal?: AbortSignal): Promise<string[]> {
-    const count = this.#count(MAX_EXEC_ARGV, NODE_SEA_EXEC_ARGV_COUNT);
-    if (count * 8 > this.remaining) throw formatFailure(NODE_SEA_TRUNCATED);
+    const count = this.#count(MAX_EXEC_ARGV, 8, NODE_SEA_EXEC_ARGV_COUNT);
     const values: string[] = [];
     let textBytes = 0;
     const charge = (bytes: number): void => {
@@ -326,10 +324,10 @@ class BlobCursor {
     return Number(value);
   }
 
-  #count(limit: number, message: string): number {
+  #count(limit: number, minimumRowBytes: number, message: string): number {
     if (this.remaining < 8) throw formatFailure(NODE_SEA_TRUNCATED);
     const value = this.#demand(8).readBigUInt64LE(0);
-    if (value > BigInt(Number.MAX_SAFE_INTEGER))
+    if (value > BigInt(Math.floor(this.remaining / minimumRowBytes)))
       throw formatFailure(NODE_SEA_TRUNCATED);
     const count = Number(value);
     if (count > limit) throw limitFailure(message, "capacity");

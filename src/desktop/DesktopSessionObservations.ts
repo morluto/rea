@@ -297,9 +297,20 @@ export const recordWindows = async (
   let application = 0;
   const at = observations.now();
   for (const window of windows) {
-    const belongs = observations.belongs(window);
-    if (belongs && window.pid !== null && observations.matching.byPid)
-      await trackProcess(observations, window.pid, signal);
+    const nameMatches = matchesWindowNames(window, observations.matching.names);
+    let belongs = nameMatches;
+    if (window.pid !== null && observations.matching.byPid) {
+      if (nameMatches) {
+        await trackProcess(observations, window.pid, signal);
+      } else {
+        const known = observations.tracked(window.pid);
+        if (known?.alive === true) {
+          const stat = await observations.procfs.stat(window.pid, signal);
+          known.alive = running(stat) && stat.startTime === known.startTime;
+          belongs = known.alive;
+        }
+      }
+    }
     const record = observations.windows.get(window.id) ?? {
       id: window.id,
       instance: window.instance,

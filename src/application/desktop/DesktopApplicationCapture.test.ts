@@ -20,6 +20,7 @@ import {
 } from "../../domain/desktop/desktopCapture.js";
 import type { SessionRequest } from "../../desktop/DesktopApplicationSession.js";
 import { OwnedFileHandle } from "../../filesystem/OwnedFileHandle.js";
+import { CaptureFile } from "./DesktopCaptureOutput.js";
 import {
   captureDesktopApplication,
   type DesktopCaptureRequest,
@@ -224,6 +225,44 @@ describe("captureDesktopApplication refusals", () => {
     expect(await readdir(output)).toEqual([]);
   });
 });
+
+it.skipIf(process.platform !== "linux")(
+  "returns the published evidence when cancellation arrives during publication",
+  async () => {
+    const { root, home, environment } = await fixture();
+    const output = join(root, "out");
+    const statePath = join(home, ".config/fakeapp/state.ini");
+    const controller = new AbortController();
+    const publish = CaptureFile.prototype.publish;
+    const spy = vi
+      .spyOn(CaptureFile.prototype, "publish")
+      .mockImplementation(async function (this: CaptureFile, evidence) {
+        const path = await publish.call(this, evidence);
+        controller.abort("cancelled after publication");
+        return path;
+      });
+    try {
+      const result = await captureDesktopApplication(
+        request(output),
+        host(environment, () =>
+          readFileSyncSafe(statePath) === "count=1\n"
+            ? { kind: "stop" }
+            : undefined,
+        ),
+        controller.signal,
+      );
+      if (!("error" in result)) throw new Error("Expected cancellation");
+      const published = JSON.parse(
+        await readFile(join(output, "capture.json"), "utf8"),
+      );
+      expect(result.code).toBe("cancelled");
+      expect(result.details?.partial_observation).toEqual(published);
+    } finally {
+      spy.mockRestore();
+    }
+  },
+  30_000,
+);
 
 describe.skipIf(process.platform !== "linux")(
   "captureDesktopApplication on Linux",
