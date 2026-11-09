@@ -886,6 +886,12 @@ printed. The witness runs the readers in the witness computer through
 does the same in the solving agent's computer, under the run's grant of the
 computer's control token. The README lists each reader's command.
 
+When the readers' combined time budget exceeds one computer command, the
+export runs as an owned job and waits for it through bounded calls. If the
+export is cancelled or the job does not stop within its budget, REA retains
+the job until its supervisor confirms it ended; retry the export or close the
+build computer to retry stopping it.
+
 The witness and verifier remove each reader's temporary copy after its
 command finishes. If removal fails, they report the owned folder rather than
 score the task. The witness retries cleanup on the next check or when the

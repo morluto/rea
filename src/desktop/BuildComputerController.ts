@@ -77,7 +77,15 @@ export type ControlledComputer = Pick<
  */
 export const runBuildController = async (
   computer: ControlledComputer,
-  command: "start" | "mark" | "stop" | "run" | "list",
+  command:
+    | "start"
+    | "mark"
+    | "stop"
+    | "run"
+    | "list"
+    | "run-begin"
+    | "run-poll"
+    | "run-cancel",
   argumentsJson: Readonly<Record<string, JsonValue>>,
   options: { readonly timeoutS: number; readonly signal?: AbortSignal },
 ): Promise<Readonly<Record<string, unknown>>> => {
@@ -143,6 +151,10 @@ export const answerSchema = z.looseObject({
   /** Why the controller refused a request before acting on it, such as a state path outside the home. */
   refused: z.string().optional(),
   absent: z.boolean().optional(),
+  started: z.boolean().optional(),
+  pending: z.boolean().optional(),
+  finished: z.boolean().optional(),
+  cancelled: z.boolean().optional(),
   line: z.string().optional(),
   exited: z.int().optional(),
   timed_out: z.boolean().optional(),

@@ -215,6 +215,10 @@ const liveComputer = (
 ): HeldComputer => {
   const actions = new BuildComputerActionLog();
   const turns = new DesktopBuildTurns();
+  const capture = new DesktopBuildCapture(
+    computer,
+    source.kind === "request" ? source : undefined,
+  );
   const witness = new DesktopBuildWitness(
     computer,
     actions,
@@ -240,14 +244,25 @@ const liveComputer = (
   return {
     computer,
     release: async () => {
-      const readers = await witness.readers.release();
-      if (!readers.verified) return readers;
-      const [judge, computerResult] = await Promise.all([
+      const [commands, readers, judge] = await Promise.all([
+        attempt(() => capture.longRuns.release()),
+        attempt(() => witness.readers.release()),
         attempt(() => grading.judge.close()),
-        closedComputer === undefined
-          ? attempt(() => computer.close())
-          : Promise.resolve(closedComputer),
       ]);
+      if (!commands.verified || !readers.verified) {
+        const failed = [commands, readers, judge].filter(
+          (result) => !result.verified,
+        );
+        return {
+          verified: false,
+          reason: failed.map((result) => result.reason).join("; "),
+          resources: [...new Set(failed.flatMap((result) => result.resources))],
+        };
+      }
+      const computerResult =
+        closedComputer === undefined
+          ? await attempt(() => computer.close())
+          : closedComputer;
       if (computerResult.verified) closedComputer = computerResult;
       const failed = [judge, computerResult].filter(
         (result) => !result.verified,
@@ -263,10 +278,7 @@ const liveComputer = (
     actions,
     steps: {
       computer,
-      capture: new DesktopBuildCapture(
-        computer,
-        source.kind === "request" ? source : undefined,
-      ),
+      capture,
       witness,
       turns,
     },

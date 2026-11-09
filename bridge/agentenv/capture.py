@@ -290,6 +290,187 @@ def run(arguments: dict) -> int:
                  "stderr": done.stderr[-TAIL_BYTES:].decode("utf-8", "replace")})
 
 
+# The controller is sent with python -c, so a detached supervisor needs its
+# own source. It alone holds the child process handle and signals its group.
+LONG_RUN = r'''
+import json, os, signal, subprocess, sys, threading, time
+job = sys.argv[1]
+result = {}
+child = None
+drainer = None
+stderr_tail, stderr_errors = bytearray(), []
+
+def drain(stream):
+    try:
+        while chunk := stream.read1(65536):
+            stderr_tail.extend(chunk)
+            del stderr_tail[:-4096]
+    except OSError as error:
+        stderr_errors.append(str(error))
+    finally:
+        try:
+            stream.close()
+        except OSError as error:
+            stderr_errors.append(str(error))
+
+def timed_out_marker():
+    try:
+        open(os.path.join(job, "timed_out"), "x").close()
+    except FileExistsError:
+        pass
+
+try:
+    request = json.loads("".join(sys.argv[2:]))
+    if os.path.exists(os.path.join(job, "cancel")):
+        result = {"absent": True}
+    else:
+        with open(request["stdout"], "wb") as out:
+            child = subprocess.Popen(request["argv"], cwd=request["home"], stdin=subprocess.DEVNULL,
+                                     stdout=out, stderr=subprocess.PIPE, start_new_session=True)
+            drainer = threading.Thread(target=drain, args=(child.stderr,), daemon=True)
+            drainer.start()
+            deadline = time.monotonic() + request["timeout_s"]
+            interrupted = False
+            timed_out = False
+            while child.poll() is None:
+                timed_out = timed_out or time.monotonic() >= deadline
+                if not interrupted and (timed_out or os.path.exists(os.path.join(job, "cancel"))):
+                    interrupted = True
+                    if timed_out:
+                        timed_out_marker()
+                    try:
+                        os.killpg(child.pid, signal.SIGINT)
+                    except OSError:
+                        pass
+                time.sleep(0.2)
+            # A descendant can still hold stderr after the leader exits. Do
+            # not publish completion until that stream has actually closed.
+            while drainer.is_alive():
+                drainer.join(0.2)
+                if time.monotonic() >= deadline:
+                    timed_out = True
+                    timed_out_marker()
+            result = {"exit_code": child.returncode, "stdout_bytes": os.path.getsize(request["stdout"]),
+                      "timed_out": timed_out, "cancelled": interrupted and not timed_out,
+                      "stderr": bytes(stderr_tail).decode("utf-8", "replace")}
+            if stderr_errors:
+                result["error"] = f"The REA command's stderr could not be read: {stderr_errors[0]}"
+except Exception as error:
+    result["error"] = f"The REA command supervisor failed: {error}"
+    # Keep the child handle until it exits, including when cancellation arrives
+    # after an unexpected supervisor error.
+    while child is not None and child.poll() is None:
+        if os.path.exists(os.path.join(job, "cancel")):
+            try:
+                os.killpg(child.pid, signal.SIGINT)
+            except OSError:
+                pass
+        time.sleep(0.2)
+    if drainer is not None and drainer.ident is not None:
+        drainer.join()
+    if child is not None:
+        result.setdefault("exit_code", child.returncode)
+        result.setdefault("stderr", bytes(stderr_tail).decode("utf-8", "replace"))
+        try:
+            result.setdefault("stdout_bytes", os.path.getsize(request["stdout"]))
+        except OSError:
+            pass
+if child is None or child.poll() is not None:
+    temporary = os.path.join(job, "result.tmp")
+    with open(temporary, "w", encoding="utf-8") as out:
+        json.dump(result, out)
+    os.replace(temporary, os.path.join(job, "result.json"))
+'''
+
+
+def run_begin(arguments: dict) -> int:
+    """Start one long REA command in its own capture-owned job folder."""
+    rea = shutil.which("rea")
+    if rea is None:
+        return _say({"error": "REA is not installed in this computer"})
+    job = os.path.abspath(arguments["job"])
+    os.makedirs(os.path.dirname(job), exist_ok=True)
+    try:
+        os.mkdir(job, 0o700)
+    except FileExistsError:
+        return _say({"refused": "the command job folder is already used"})
+    process = None
+    try:
+        with open(os.path.join(job, "owner"), "x", encoding="ascii") as out:
+            out.write(arguments["token"])
+        for path, text in arguments.get("files", {}).items():
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            with open(path, "w", encoding="utf-8") as handle:
+                handle.write(text)
+        os.makedirs(os.path.dirname(arguments["stdout"]), exist_ok=True)
+        request = json.dumps({"argv": [rea, *arguments["argv"]], "stdout": arguments["stdout"],
+                              "home": os.path.expanduser("~"), "timeout_s": arguments["timeout_s"]})
+        chunks = [request[i:i + 60000] for i in range(0, len(request), 60000)]
+        with open(os.path.join(job, "supervisor.log"), "wb") as log:
+            process = subprocess.Popen([sys.executable, "-I", "-c", LONG_RUN, job, *chunks], cwd=os.path.expanduser("~"),
+                                       env=_environment(os.path.abspath(arguments["work"])), stdin=subprocess.DEVNULL,
+                                       stdout=log, stderr=log, start_new_session=True)
+    except (OSError, ValueError) as error:
+        stage = "did not start" if process is None else "started but its setup did not finish"
+        result = {"error": f"The REA command supervisor {stage}: {error}"}
+        if process is None:
+            temporary = os.path.join(job, "result.tmp")
+            with open(temporary, "w", encoding="utf-8") as out:
+                json.dump(result, out)
+            os.replace(temporary, os.path.join(job, "result.json"))
+        return _say(result)
+    return _say({"started": True})
+
+
+def _run_result(job: str):
+    try:
+        with open(os.path.join(job, "result.json"), encoding="utf-8") as source:
+            return json.load(source)
+    except FileNotFoundError:
+        return None
+
+
+def _owns_run(job: str, token: str) -> bool:
+    try:
+        with open(os.path.join(job, "owner"), encoding="ascii") as owner:
+            return owner.read() == token
+    except OSError:
+        return False
+
+
+def run_poll(arguments: dict) -> int:
+    job = os.path.abspath(arguments["job"])
+    if not _owns_run(job, arguments["token"]):
+        return _say({"error": "the command job ownership is not confirmed"})
+    deadline = time.monotonic() + arguments.get("timeout_s", 30)
+    while (result := _run_result(job)) is None and time.monotonic() < deadline:
+        time.sleep(POLL_S)
+    if result is None:
+        pending = {"pending": True, "timed_out": os.path.exists(os.path.join(job, "timed_out"))}
+        progress = _tail(os.path.join(job, "supervisor.log"))
+        return _say({**pending, **({"progress": progress} if progress else {})})
+    return _say({"finished": True, **result})
+
+
+def run_cancel(arguments: dict) -> int:
+    job = os.path.abspath(arguments["job"])
+    os.makedirs(os.path.dirname(job), exist_ok=True)
+    try:
+        os.mkdir(job, 0o700)
+    except FileExistsError:
+        pass
+    else:
+        # A late begin cannot launch into a folder cancellation claimed.
+        with open(os.path.join(job, "owner"), "x", encoding="ascii") as owner:
+            owner.write(arguments["token"])
+        return _say({"absent": True})
+    if not _owns_run(job, arguments["token"]):
+        return _say({"error": "the command job ownership is not confirmed"})
+    with open(os.path.join(job, "cancel"), "a", encoding="utf-8"):
+        pass
+    return run_poll(arguments)
+
+
 def listing(arguments: dict) -> int:
     """Every regular file under a folder, by its path relative to the home, with its size and SHA-256.
 
@@ -328,7 +509,8 @@ def listing(arguments: dict) -> int:
     return _say({"listing_bytes": os.path.getsize(output)})
 
 
-COMMANDS = {"start": start, "mark": mark, "stop": stop, "run": run, "list": listing}
+COMMANDS = {"start": start, "mark": mark, "stop": stop, "run": run, "list": listing,
+            "run-begin": run_begin, "run-poll": run_poll, "run-cancel": run_cancel}
 
 if __name__ == "__main__":
     sys.exit(COMMANDS[sys.argv[1]](json.loads("".join(sys.argv[2:]))))

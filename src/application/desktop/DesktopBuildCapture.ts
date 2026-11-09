@@ -20,6 +20,7 @@ import { err, ok, type Result } from "../../domain/result.js";
 import { AGENTENV_PROVIDER } from "../../desktop/AgentEnvComputerHelper.js";
 import type { AgentEnvComputer } from "../../desktop/AgentEnvComputer.js";
 import type { ControlledComputer } from "../../desktop/BuildComputerController.js";
+import { BuildComputerLongRuns } from "../../desktop/BuildComputerLongRuns.js";
 import {
   endedCapture,
   notAnswered,
@@ -262,6 +263,7 @@ const unreleasedError = (
  * can be asked again after a lost answer.
  */
 export class DesktopBuildCapture {
+  readonly longRuns: BuildComputerLongRuns;
   #count = 0;
   #run: CaptureRun | undefined;
   readonly #entry: string | undefined;
@@ -273,6 +275,7 @@ export class DesktopBuildCapture {
     private readonly computer: CaptureComputer,
     request: BuildRequest | undefined,
   ) {
+    this.longRuns = new BuildComputerLongRuns(computer);
     this.#entry = request?.desktop_entry;
     this.#packageFile =
       request?.install.kind === "package_file"
@@ -578,6 +581,7 @@ export class DesktopBuildCapture {
       },
       input,
       signal,
+      this.longRuns,
     );
   }
 }
