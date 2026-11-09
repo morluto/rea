@@ -96,8 +96,8 @@ operation `describe_desktop_application_task` and predicate type
   in `.log` remain eligible for checks.
   A text file gains `lines_present` for its new lines and `lines_absent` for
   lines it lost (when either is at most ten), and `line_count` for each line
-  holding a letter whose count changed; a new line holding a value REA
-  recognizes as generated, such as a named epoch time or `ID_329023692`, gets a
+  holding a letter whose count changed; a new line holding an XML attribute
+  REA recognizes as generated, such as a named epoch time or `ID_329023692`, gets a
   `line_count` of the lines `contains` its text up to that value, as
   `<node TEXT="Water filter" ID="`, at the end's number, where both views
   hold the whole file, instead of a `lines_present` another save would
