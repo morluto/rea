@@ -3775,6 +3775,10 @@ describe("ReleaseExposureReader Node shebang scripts", () => {
     ["#!/usr/bin/env -Snode --no-warnings"],
     ["#!/usr/bin/env --unset NODE_OPTIONS -- node"],
     ["#!/usr/bin/env -S -- MODE=production node"],
+    ["#!/usr/bin/env -S NODE_OPTIONS='--conditions development' node"],
+    ['#!/usr/bin/env -S NODE_OPTIONS="--conditions development" node'],
+    ["#!/usr/bin/env -S\tNODE_OPTIONS='a\tb' \"node\" --no-warnings"],
+    ['#!/usr/bin/env -S MODE="a\\_b" node # launcher'],
     ["#!/usr/local/bin/node --no-warnings"],
     ["#! /usr/bin/nodejs"],
   ])("reads the map of %j in a directory", async (shebang) => {
@@ -3896,6 +3900,9 @@ describe("ReleaseExposureReader Node shebang scripts", () => {
     ["#!/usr/bin/env python3"],
     ["#!/usr/bin/env nodemon"],
     ["#!/opt/node/bin/python3 node"],
+    ["#!/usr/bin/env -S LABEL='a node b' deno"],
+    ["#!/usr/bin/env -S MODE=a\\_deno node"],
+    ["#!/usr/bin/env -S MODE='unterminated node"],
   ])("does not read %j as JavaScript", async (shebang) => {
     const root = await shebangRoot();
     await writeFile(join(root, "runner"), script(shebang));

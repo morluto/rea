@@ -1595,9 +1595,10 @@ const shebangUndecided = (header: Buffer | null): boolean =>
 const hasNodeShebang = (prefix: Buffer): boolean => {
   if (prefix.toString("latin1", 0, 2) !== "#!") return false;
   const [line = ""] = prefix.toString("latin1", 2).split("\n", 1);
-  const [interpreter = "", ...args] = line.trim().split(/[ \t]+/u);
+  const [, interpreter = "", operands = ""] =
+    /^(\S*)[ \t]*(.*)$/su.exec(line.trim()) ?? [];
   const program =
-    basename(interpreter) === "env" ? envProgram(args) : interpreter;
+    basename(interpreter) === "env" ? envProgram(operands) : interpreter;
   return program !== undefined && /^node(?:js)?$/u.test(basename(program));
 };
 
@@ -1612,31 +1613,126 @@ const ENV_OPTION_WITH_ARGUMENT = new Set([
 
 /**
  * The program an `env` shebang runs: the first field that is neither an
- * option, an option's argument, nor a `NAME=value` setting. `-S` splits the
- * rest of the line, so its attached text is read as the next fields.
+ * option, an option's argument, nor a `NAME=value` setting. `-S` takes the
+ * rest of the line as one string and splits it as `env` does, so quoted
+ * spaces stay inside their field.
  */
-const envProgram = (args: string[]): string | undefined => {
-  const fields = [...args];
-  while (fields.length > 0) {
-    const field = fields.shift() ?? "";
+const envProgram = (operands: string): string | undefined => {
+  const fields: string[] = [];
+  let rest = operands;
+  const next = (): string | undefined => {
+    if (fields.length > 0) return fields.shift();
+    const [, field, after = ""] = /^[ \t]*([^ \t]+)(.*)$/su.exec(rest) ?? [];
+    rest = after;
+    return field;
+  };
+  for (let field = next(); field !== undefined; field = next()) {
     // Past `--` nothing is an option, but settings still come first.
-    if (field === "--") return fields.find((rest) => !rest.includes("="));
+    if (field === "--") {
+      for (let word = next(); word !== undefined; word = next())
+        if (!word.includes("=")) return word;
+      return undefined;
+    }
     if (ENV_OPTION_WITH_ARGUMENT.has(field)) {
-      fields.shift();
+      next();
       continue;
     }
-    if (/^-[0iv]*S./u.test(field)) {
-      fields.unshift(field.slice(field.indexOf("S") + 1));
-      continue;
-    }
-    if (field.startsWith("--split-string=")) {
-      fields.unshift(field.slice("--split-string=".length));
+    const attached =
+      /^-[0iv]*S(.*)$/su.exec(field)?.[1] ??
+      (field.startsWith("--split-string=")
+        ? field.slice("--split-string=".length)
+        : undefined);
+    if (attached !== undefined) {
+      // The kernel passes the whole line as one operand, so an `-S` read from
+      // the line itself owns everything after it, separators included.
+      const fromLine = fields.length === 0;
+      const words = splitEnvString(fromLine ? attached + rest : attached);
+      if (words === undefined) return undefined;
+      if (fromLine) rest = "";
+      fields.unshift(...words);
       continue;
     }
     if (field.startsWith("-") || field.includes("=")) continue;
     return field;
   }
   return undefined;
+};
+
+/** Escapes `env -S` accepts outside single quotes, as GNU coreutils reads them. */
+const ENV_SPLIT_ESCAPES: Readonly<Record<string, string>> = {
+  "\\": "\\",
+  "'": "'",
+  '"': '"',
+  "#": "#",
+  $: "$",
+  f: "\f",
+  n: "\n",
+  r: "\r",
+  t: "\t",
+  v: "\v",
+};
+
+/**
+ * Split an `env -S` string on its unquoted spaces and tabs. Single quotes keep
+ * text literally but for `\\` and `\'`; double quotes and bare text take the
+ * escapes above, `\_` separates fields outside quotes and is a space inside
+ * them, `\c` ends the string, and a `#` that starts a field begins a comment.
+ * `${NAME}` stays as written: it can only change a value, never which field is
+ * the program. A string `env` itself rejects, such as an unterminated quote or
+ * an unknown escape, runs nothing.
+ */
+const splitEnvString = (text: string): string[] | undefined => {
+  const fields: string[] = [];
+  let field: string | null = null;
+  let quote: "'" | '"' | null = null;
+  const end = (): void => {
+    if (field !== null) fields.push(field);
+    field = null;
+  };
+  for (let index = 0; index < text.length; index += 1) {
+    const character = text[index] ?? "";
+    if (quote === "'") {
+      const escaped = text[index + 1];
+      if (character === "'") quote = null;
+      else if (character === "\\" && (escaped === "\\" || escaped === "'")) {
+        field += escaped;
+        index += 1;
+      } else field += character;
+      continue;
+    }
+    if (character === "\\") {
+      const escaped = text[index + 1];
+      index += 1;
+      if (escaped === "c") {
+        if (quote !== null) return undefined;
+        break;
+      }
+      if (escaped === "_") {
+        if (quote === null) end();
+        else field += " ";
+        continue;
+      }
+      const value =
+        escaped === undefined ? undefined : ENV_SPLIT_ESCAPES[escaped];
+      if (value === undefined) return undefined;
+      field = (field ?? "") + value;
+      continue;
+    }
+    if (quote === '"') {
+      if (character === '"') quote = null;
+      else field += character;
+      continue;
+    }
+    if (character === " " || character === "\t") end();
+    else if (character === "#" && field === null) break;
+    else if (character === "'" || character === '"') {
+      quote = character;
+      field ??= "";
+    } else field = (field ?? "") + character;
+  }
+  if (quote !== null) return undefined;
+  end();
+  return fields;
 };
 
 /**
