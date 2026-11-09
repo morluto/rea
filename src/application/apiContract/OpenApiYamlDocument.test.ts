@@ -164,7 +164,20 @@ it("rejects composition failures and non-scalar keys without escaping the Result
       "openapi-yaml",
     ),
   );
-  expect(unresolved).toContain("could not be composed");
+  expect(unresolved).toContain("unresolved alias");
+  expect(unresolved).not.toContain("*missing");
+
+  // The `yaml` refusal names the alias source verbatim, so a credential-bearing
+  // source must not reach the diagnostic.
+  const credentialAlias = contractError(
+    await importText(
+      "credential-alias.yaml",
+      'openapi: 3.0.4\ninfo:\n  title: Owned API\n  version: "1"\npaths: *https://user:s3cret@example.test/spec\n',
+      "openapi-yaml",
+    ),
+  );
+  expect(credentialAlias).toContain("unresolved alias");
+  expect(credentialAlias).not.toContain("s3cret");
 
   const tagged = contractError(
     await importText(

@@ -227,11 +227,16 @@ export const decodeOpenApiYaml = (
   } catch (cause: unknown) {
     // An unresolved alias reference and an alias expansion over the count
     // bound both throw out of `toJS`; they are expected refusals of this
-    // document, not defects of the process.
+    // document, not defects of the process. The thrown message names the alias
+    // source verbatim, which can carry credentials in a URL, so the alias
+    // failure is stated without echoing the document.
     return err(
       invalidDocument(
         path,
-        `OpenAPI YAML could not be composed into a document: ${cause instanceof Error ? cause.message : "unknown composition error"}`,
+        cause instanceof ReferenceError &&
+          cause.message.startsWith("Unresolved alias")
+          ? "OpenAPI YAML has an unresolved alias; anchors must be defined before the alias that references them"
+          : `OpenAPI YAML could not be composed into a document: ${cause instanceof Error ? cause.message : "unknown composition error"}`,
       ),
     );
   }
