@@ -5,6 +5,7 @@ import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import { expect } from "vitest";
 import { z } from "incur";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
+import { parseMcpToolError } from "../fixtures/mcpToolError.js";
 import { cliTest } from "../support/cli/cliFixture.js";
 
 cliTest.skipIf(process.platform !== "darwin")(
@@ -61,11 +62,30 @@ cliTest.skipIf(process.platform !== "darwin")(
       expect(apktoolGroup).toMatchObject({
         available: false,
         reason: "provider_unavailable",
-        remediation: expect.stringContaining(
-          "macOS process ownership helper compilation failed",
-        ),
+        remediation: expect.stringContaining("Swift compiler configuration"),
       });
-      expect(apktoolGroup?.remediation).toContain("missing-developer");
+      const failedProbe = await client.callTool({
+        name: "inspect_apktool_client",
+        arguments: {},
+      });
+      const failure = parseMcpToolError(failedProbe).error;
+      expect(failure).toMatchObject({
+        code: "execution_failure",
+        retryable: false,
+        details: {
+          provider_id: "apktool",
+          operation: "inspect_apktool_client",
+          diagnostics: {
+            stage: "ownership_preparation",
+            compiler_outcome: { outcome: "exited", code: 1 },
+          },
+          captured_output: {
+            exit_code: 1,
+            stderr: expect.stringContaining(join(root, "missing-developer")),
+          },
+        },
+      });
+      await expect(client.ping()).resolves.toEqual({});
     } finally {
       await client.close();
       await transport.close();

@@ -11,6 +11,9 @@ import type { ConfigurationError } from "../domain/configurationErrors.js";
 import { inspectIdaWorkspaceReadiness } from "./IdaWorkspaceReadiness.js";
 import type { RetainedResourceScope } from "../application/AnalysisProvider.js";
 
+/** Client settings consulted by this readiness probe. */
+export const IDA_DOCTOR_SETTINGS = ["REA_IDA_MCP_CONFIG"] as const;
+
 /** Check the registration without launching IDA, and retain only the configuration file reference. */
 export const inspectIdaRegistration = async (
   path: string | undefined,
@@ -54,7 +57,7 @@ export const inspectIdaRegistration = async (
             : "IDA MCP registration is not configured.",
         remediation: valid
           ? null
-          : "Set REA_IDA_MCP_CONFIG to your upstream IDA MCP registration JSON; see docs/ida-provider.md.",
+          : "Set REA_IDA_MCP_CONFIG to your upstream IDA MCP registration JSON; see docs/providers/ida-provider.md.",
         classification:
           path === undefined ? "missing_analysis_engine" : "config_drift",
       },
@@ -84,7 +87,7 @@ const inspectPrivateWorkspace = async (
       ? privacy.remediation
       : unusable === undefined
         ? null
-        : "Set workspaceRoot to an existing directory REA can create entries in, or omit it to use the system temporary directory; see docs/ida-provider.md.",
+        : "Set workspaceRoot to an existing directory REA can create entries in, or omit it to use the system temporary directory; see docs/providers/ida-provider.md.",
     classification:
       !privacy.available && privacy.code === "runtime_missing"
         ? "missing_dependency"

@@ -149,8 +149,8 @@ it("reruns ambiguous imported observations without changing their historical Evi
   const replayed = await session.execute("inspect_managed_artifact", {});
   if (!replayed.ok) throw replayed.error;
   expect(replayed.value.result).toEqual(observed.value.result);
-  expect(replayed.value.limitations).toContain(
-    "Loaded from a local REA analysis snapshot; this call did not re-run the provider.",
+  expect(replayed.value.limitations).toContainEqual(
+    expect.stringMatching(/snapshot.*did not re.run the provider/iu),
   );
   const controlClosed = await session.close();
   if (!controlClosed.ok) throw controlClosed.error;
@@ -178,8 +178,8 @@ it("reruns ambiguous imported observations without changing their historical Evi
   const fresh = await session.execute("inspect_managed_artifact", {});
   if (!fresh.ok) throw fresh.error;
   expect(fresh.value.result).toEqual(observed.value.result);
-  expect(fresh.value.limitations).not.toContain(
-    "Loaded from a local REA analysis snapshot; this call did not re-run the provider.",
+  expect(fresh.value.limitations).not.toContainEqual(
+    expect.stringMatching(/snapshot.*did not re.run the provider/iu),
   );
   expect(session.evidenceById(original.evidence_id)).toEqual(original);
   expect(session.evidenceById(alternative.evidence_id)).toEqual(alternative);

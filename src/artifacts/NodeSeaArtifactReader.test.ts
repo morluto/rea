@@ -12,18 +12,10 @@ import { expect, it, vi } from "vitest";
 import * as artifactPaths from "./ArtifactPaths.js";
 
 import { NodeSeaArtifactReader } from "./NodeSeaArtifactReader.js";
+import { artifactFormatDescriptor } from "./artifactFormats.js";
 import { ArtifactResourceScope } from "./ArtifactResourceScope.js";
 import { extractArtifact } from "./extraction/ArtifactExtraction.js";
-import {
-  NODE_SEA_BAD_MAGIC,
-  NODE_SEA_DUPLICATE_BLOB,
-  NODE_SEA_FUSE_CONFLICT,
-  NODE_SEA_FUSE_ABSENT,
-  NODE_SEA_FUSE_UNSET,
-  NODE_SEA_MAGIC,
-  NODE_SEA_TRUNCATED,
-  NODE_SEA_UNKNOWN_FLAGS,
-} from "./nodeSea/NodeSeaBlob.js";
+import { NODE_SEA_MAGIC } from "./nodeSea/NodeSeaBlob.js";
 import {
   NODE_SEA_FUSE_HASH,
   buildNodeSeaBlob,
@@ -32,10 +24,11 @@ import {
   nodeSeaPe,
   nodeSeaUniversal,
 } from "./nodeSea/NodeSea.fixture.js";
-import { elfNoteFixture } from "../native/elf/ElfNotes.fixture.js";
+import { elfNote, elfNoteFixture } from "../native/elf/ElfNotes.fixture.js";
 import { peResourceFixture } from "../native/pe/PeResources.fixture.js";
 import { locateNodeSea } from "./nodeSea/NodeSeaLocation.js";
 import { MAX_INSPECT_PE_FILE_BYTES } from "../domain/native/peResources.js";
+import { openRegularFile } from "../filesystem/RegularFile.js";
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
 import { scanCanonicalArtifactInventory } from "../../tests/fixtures/artifactInventory.js";
 
@@ -66,10 +59,14 @@ it.each([
   const snapshot = await scanCanonicalArtifactInventory(path);
   expect(snapshot.manifest.root_format).toBe("node-sea");
   expect(snapshot.coverage.status).toBe("complete");
-  expect(snapshot.limitations).toContain(
-    "Node SEA inventory establishes the injected blob, flags, fuse sentinel, main script, optional code cache, snapshot, and assets. V8 snapshots and code cache are not deserialized, and the application is not executed.",
+  const limitation = artifactFormatDescriptor("node-sea")?.readerLimitation;
+  if (limitation === undefined) throw new Error("Missing Node SEA limitation");
+  expect(snapshot.limitations).toContain(limitation);
+  expect(limitation).toMatch(/snapshots.*code cache.*not deserialized/iu);
+  expect(limitation).toMatch(/application.*not executed/iu);
+  expect(snapshot.limitations).not.toContainEqual(
+    expect.stringMatching(/NODE_SEA_FUSE sentinel.*unset/iu),
   );
-  expect(snapshot.limitations).not.toContain(NODE_SEA_FUSE_UNSET);
   const root = snapshot.occurrences.find((row) => row.logical_path === ".");
   expect(root).toMatchObject({ artifact_kind: "container" });
   expect(root?.format_metadata).toMatchObject({
@@ -219,22 +216,26 @@ it.each([
   "reports a %s fuse as a contradiction",
   async (_label, fuse, state, sentinel) => {
     const reason =
-      state === "absent" ? NODE_SEA_FUSE_ABSENT : NODE_SEA_FUSE_UNSET;
+      state === "absent"
+        ? /no NODE_SEA_FUSE sentinel.*observed/iu
+        : /NODE_SEA_FUSE sentinel.*unset/iu;
     const snapshot = await scanCanonicalArtifactInventory(
       await writeCarrier(
         "fuse",
         nodeSeaElf({ ...(fuse === undefined ? {} : { fuse }), main: script }),
       ),
     );
-    expect(
-      snapshot.occurrences.find((row) => row.logical_path === ".")
-        ?.format_metadata,
-    ).toMatchObject({
+    const metadata = snapshot.occurrences.find(
+      (row) => row.logical_path === ".",
+    )?.format_metadata;
+    expect(metadata).toMatchObject({
       fuse_state: state,
       fuse_sentinel: sentinel,
-      fuse_contradiction: reason,
+      fuse_contradiction: expect.stringMatching(reason),
     });
-    expect(snapshot.limitations).toContain(reason);
+    const contradiction = (metadata as { fuse_contradiction: string })
+      .fuse_contradiction;
+    expect(snapshot.limitations).toContain(contradiction);
     expect(snapshot.coverage.status).toBe("complete");
   },
 );
@@ -243,15 +244,17 @@ it("reports disagreeing fuse sentinels", async () => {
   const snapshot = await scanCanonicalArtifactInventory(
     await writeCarrier("conflict", nodeSeaPe({ fuse: "conflicting" })),
   );
-  expect(
-    snapshot.occurrences.find((row) => row.logical_path === ".")
-      ?.format_metadata,
-  ).toMatchObject({
+  const metadata = snapshot.occurrences.find(
+    (row) => row.logical_path === ".",
+  )?.format_metadata;
+  expect(metadata).toMatchObject({
     fuse_state: "conflicting",
     fuse_sentinel: null,
-    fuse_contradiction: NODE_SEA_FUSE_CONFLICT,
+    fuse_contradiction: expect.stringMatching(/fuse sentinels disagree/iu),
   });
-  expect(snapshot.limitations).toContain(NODE_SEA_FUSE_CONFLICT);
+  const contradiction = (metadata as { fuse_contradiction: string })
+    .fuse_contradiction;
+  expect(snapshot.limitations).toContain(contradiction);
 });
 
 it("leaves a Mach-O, ELF, or PE without a SEA slot in its native format", async () => {
@@ -306,8 +309,7 @@ it.each([false, true])(
         if (sea)
           await expect(located).rejects.toMatchObject({
             reason: "limit",
-            message:
-              "Node SEA PE inspection exceeds the 512 MiB PE parser input ceiling",
+            message: expect.stringMatching(/PE.*512 MiB/iu),
           });
         else await expect(located).resolves.toBeUndefined();
       } finally {
@@ -353,12 +355,18 @@ it("fails closed when the located blob is truncated, has a bad magic, or unknown
         nodeSeaElf({ blob: Buffer.from([0x20, 0xda, 0x43]) }),
       ),
     ),
-  ).rejects.toMatchObject({ reason: "format", message: NODE_SEA_TRUNCATED });
+  ).rejects.toMatchObject({
+    reason: "format",
+    message: expect.stringMatching(/Node SEA.*truncated/iu),
+  });
   await expect(
     scanCanonicalArtifactInventory(
       await writeCarrier("bad-magic", nodeSeaMachO({ blob: Buffer.alloc(16) })),
     ),
-  ).rejects.toMatchObject({ reason: "format", message: NODE_SEA_BAD_MAGIC });
+  ).rejects.toMatchObject({
+    reason: "format",
+    message: expect.stringMatching(/magic.*not.*0x143da20/iu),
+  });
   const unknown = Buffer.alloc(9);
   unknown.writeUInt32LE(NODE_SEA_MAGIC, 0);
   unknown.writeUInt32LE(1 << 5, 4);
@@ -369,7 +377,7 @@ it("fails closed when the located blob is truncated, has a bad magic, or unknown
     ),
   ).rejects.toMatchObject({
     reason: "format",
-    message: NODE_SEA_UNKNOWN_FLAGS,
+    message: expect.stringMatching(/flags.*unknown bits/iu),
   });
 });
 
@@ -385,7 +393,7 @@ it("fails closed when two different blobs are declared", async () => {
     ),
   ).rejects.toMatchObject({
     reason: "format",
-    message: NODE_SEA_DUPLICATE_BLOB,
+    message: expect.stringMatching(/Node SEA blob.*declared more than once/iu),
   });
   await expect(
     scanCanonicalArtifactInventory(
@@ -396,7 +404,10 @@ it("fails closed when two different blobs are declared", async () => {
         }),
       ),
     ),
-  ).rejects.toMatchObject({ message: NODE_SEA_DUPLICATE_BLOB });
+  ).rejects.toMatchObject({
+    reason: "format",
+    message: expect.stringMatching(/Node SEA blob.*declared more than once/iu),
+  });
 });
 
 it("keeps one blob when the same bytes are declared twice", async () => {
@@ -411,6 +422,71 @@ it("keeps one blob when the same bytes are declared twice", async () => {
   expect(
     snapshot.occurrences.filter((row) => row.logical_path === "sea.js"),
   ).toHaveLength(1);
+});
+
+/** ELF64 whose `count` PT_NOTE program headers all declare the same notes. */
+const repeatedNoteElf = (count: number, notes: Buffer): Buffer => {
+  const noteOffset = 64 + count * 56;
+  const bytes = Buffer.alloc(noteOffset + notes.length);
+  bytes.writeUInt32LE(0x464c457f, 0);
+  bytes[4] = 2;
+  bytes[5] = 1;
+  bytes[6] = 1;
+  bytes.writeUInt16LE(3, 0x10);
+  bytes.writeUInt16LE(62, 0x12);
+  bytes.writeUInt32LE(1, 0x14);
+  bytes.writeBigUInt64LE(64n, 0x20);
+  bytes.writeUInt16LE(64, 0x34);
+  bytes.writeUInt16LE(56, 0x36);
+  bytes.writeUInt16LE(count, 0x38);
+  bytes.writeUInt16LE(64, 0x3a);
+  for (let index = 0; index < count; index += 1) {
+    const at = 64 + index * 56;
+    bytes.writeUInt32LE(4, at);
+    bytes.writeBigUInt64LE(BigInt(noteOffset), at + 8);
+    bytes.writeBigUInt64LE(BigInt(notes.length), at + 32);
+    bytes.writeBigUInt64LE(BigInt(notes.length), at + 40);
+    bytes.writeBigUInt64LE(4n, at + 48);
+  }
+  notes.copy(bytes, noteOffset);
+  return bytes;
+};
+
+it("reads repeated PT_NOTE declarations at most once per note the file holds", async () => {
+  // 4 KiB of zero bytes is 341 empty 12-byte notes.
+  const empty = Buffer.alloc(4096);
+  const unconfirmed = repeatedNoteElf(64, empty);
+  const handle = await open(
+    await writeCarrier("repeated-notes", unconfirmed),
+    "r",
+  );
+  const read = vi.spyOn(handle, "read");
+  try {
+    await expect(
+      locateNodeSea(handle, unconfirmed.length),
+    ).resolves.toBeUndefined();
+    // The prefix, the ELF header and 64 program headers, then the notes.
+    expect(read.mock.calls.length).toBeLessThanOrEqual(
+      2 + 64 + Math.floor(unconfirmed.length / 12),
+    );
+  } finally {
+    await handle.close();
+  }
+  const blob = buildNodeSeaBlob({ main: script, codePath: "sea.js" });
+  const confirmed = repeatedNoteElf(
+    64,
+    Buffer.concat([elfNote("NODE_SEA_BLOB", 0, blob), empty]),
+  );
+  await expect(
+    scanCanonicalArtifactInventory(
+      await writeCarrier("repeated-sea-notes", confirmed),
+    ),
+  ).rejects.toMatchObject({
+    reason: "format",
+    message: expect.stringMatching(
+      /ELF note tables.*more notes than the file holds/iu,
+    ),
+  });
 });
 
 it("extracts the main script and assets without executing them", async () => {
@@ -594,7 +670,7 @@ it("rejects missing Mach-O load commands after a confirmed SEA section", async (
     scanCanonicalArtifactInventory(await writeCarrier("commands", bytes)),
   ).rejects.toMatchObject({
     reason: "format",
-    message: "Node SEA Mach-O load commands are truncated",
+    message: expect.stringMatching(/Mach-O.*load commands.*truncated/iu),
   });
 });
 
@@ -616,6 +692,42 @@ it("rejects forged entries and changed carrier identity, then closes idempotentl
   } finally {
     await reader.close();
     await reader.close();
+  }
+});
+
+it("reports a member that ends after the carrier recheck as an integrity failure", async () => {
+  const path = await writeCarrier("ended", nodeSeaElf());
+  const descriptor = await openRegularFile(path, { symlinks: "reject" });
+  const reader = new NodeSeaArtifactReader(path, descriptor);
+  try {
+    const entries = [];
+    for await (const entry of reader.entries()) entries.push(entry);
+    const entry = entries[0];
+    if (entry === undefined) throw new Error("Missing main script");
+    // open() rechecks the carrier's identity; the file then ends mid-member.
+    const read = descriptor.handle.read.bind(descriptor.handle);
+    let calls = 0;
+    const truncated = vi
+      .spyOn(descriptor.handle, "read")
+      .mockImplementation((...args: unknown[]) => {
+        calls += 1;
+        if (calls > 1)
+          return Promise.resolve({ bytesRead: 0, buffer: args[0] });
+        args[2] = 3;
+        return Reflect.apply(read, descriptor.handle, args);
+      });
+    try {
+      await expect(buffer(await reader.open(entry))).rejects.toMatchObject({
+        reason: "integrity",
+        message: expect.stringContaining("sea.js"),
+      });
+      expect(calls).toBe(2);
+    } finally {
+      truncated.mockRestore();
+    }
+  } finally {
+    await reader.close();
+    await descriptor.handle.close();
   }
 });
 
@@ -838,5 +950,41 @@ it.each(["valid replacement", "malformed blob"] as const)(
     ).rejects.toMatchObject({ reason: "integrity" });
     expect(created).toBeInstanceOf(NodeSeaArtifactReader);
     expect(created?.formatMetadata()).toBeUndefined();
+  },
+);
+
+it.each([
+  {
+    field: "assets",
+    count: 100_001n,
+    blob: buildNodeSeaBlob({ assets: [{ name: "a", body: "" }] }),
+  },
+  {
+    field: "exec argv",
+    count: 4097n,
+    blob: buildNodeSeaBlob({ execArgv: ["a"] }),
+  },
+])(
+  "reports a truncated $field table as malformed through the reader",
+  async ({ count, blob }) => {
+    const declared = Buffer.alloc(8);
+    declared.writeBigUInt64LE(count);
+    // Each case has one optional table immediately after the common fields.
+    const tableOffset = buildNodeSeaBlob().length;
+    const truncated = Buffer.concat([blob.subarray(0, tableOffset), declared]);
+    const path = await writeCarrier(
+      "truncated-sea",
+      nodeSeaElf({ blob: truncated, fuse: "set" }),
+    );
+    const reader = new NodeSeaArtifactReader(path);
+    try {
+      await expect(async () => {
+        for await (const _entry of reader.entries()) {
+          /* consume */
+        }
+      }).rejects.toMatchObject({ reason: "format" });
+    } finally {
+      await reader.close();
+    }
   },
 );

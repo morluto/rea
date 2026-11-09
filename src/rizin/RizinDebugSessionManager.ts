@@ -3,8 +3,18 @@ import { persistentDebuggerHostSupported } from "../process/PersistentDebuggerHo
 import { randomUUID } from "node:crypto";
 import { isUtf8 } from "node:buffer";
 import { open, readlink, realpath, stat } from "node:fs/promises";
-import { constants as fsConstants } from "node:fs";
+import { constants as fsConstants, type Stats } from "node:fs";
 import { isatty } from "node:tty";
+import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
+import { AnalysisCleanupLease } from "../artifacts/AnalysisCleanupLease.js";
+import { bindArtifactFileCleanup } from "../artifacts/ArtifactFileOperation.js";
+import { OwnedFileHandle } from "../filesystem/OwnedFileHandle.js";
+import {
+  RegularFileCleanupFailure,
+  regularFileCancellation,
+  withOwnedFileHandle,
+} from "../filesystem/OwnedRegularFile.js";
+import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 
 import {
   AnalysisCancelledError,
@@ -25,7 +35,6 @@ import {
   type SpawnedOwnedProviderProcess,
 } from "../process/ProviderProcess.js";
 import {
-  applyDebuggerAdmissionOverride,
   debuggerControlReplyOutput,
   resolveDebuggerSessionLimits,
   type DebuggerAdmissionLimit,
@@ -129,9 +138,6 @@ interface RizinCommandInterruption {
   readonly capture: RizinCommandCapture;
 }
 
-export const isRizinCommandDeadlineExpired = (remainingMs: number): boolean =>
-  remainingMs <= 0;
-
 interface RizinCommandTimeoutEvidenceInput {
   readonly sessionId: string;
   readonly command: string;
@@ -139,22 +145,22 @@ interface RizinCommandTimeoutEvidenceInput {
   readonly inferiorTty: string;
   readonly cleanupFailure: string | undefined;
   readonly launchProvenance: RizinLaunchProvenance;
-  readonly deadline?: DebuggerAdmissionLimit;
+  readonly deadline: DebuggerAdmissionLimit;
 }
 
-export const rizinCommandTimeoutLimitation = (
+const rizinCommandTimeoutLimitation = (
   deadline: DebuggerAdmissionLimit,
 ): string =>
   `The command timed out before its completion marker at ${String(deadline.value)} ms (deadlineExpired). ${debuggerAdmissionRecovery(deadline)} Retained output is partial and completion is unknown.`;
 
-export const createRizinCommandTimeoutEvidence = ({
+const createRizinCommandTimeoutEvidence = ({
   sessionId,
   command,
   result,
   inferiorTty,
   cleanupFailure,
   launchProvenance,
-  deadline = resolveDebuggerSessionLimits({}).commandDeadline,
+  deadline,
 }: RizinCommandTimeoutEvidenceInput): Evidence =>
   createRizinCommandEvidence({
     sessionId,
@@ -250,6 +256,7 @@ class RizinFrameTimeoutError extends Error {
 /** Owns persistent Rizin debugger processes independently from BinarySession. */
 export class RizinDebugSessionManager {
   readonly #sessions = new Map<string, RizinDebugSession>();
+  readonly #ttyResources = new ArtifactResourceScope();
   #activeStarts = 0;
   #sessionReservations = 0;
   readonly #environment: Readonly<NodeJS.ProcessEnv>;
@@ -270,16 +277,8 @@ export class RizinDebugSessionManager {
   constructor(
     environment: Readonly<NodeJS.ProcessEnv> = process.env,
     options: {
-      /** @internal Test seam. Production uses REA_DEBUGGER_COMMAND_DEADLINE_MS. */
-      readonly frameTimeoutMs?: number;
       /** @internal Test seam; production callers should use the 30 s default. */
       readonly startupTimeoutMs?: number;
-      /** @internal Test seam. Production uses REA_DEBUGGER_MAX_SESSIONS. */
-      readonly maxSessions?: number;
-      /** @internal Test seam. Production uses REA_DEBUGGER_MAX_PENDING_COMMANDS. */
-      readonly maxPendingCommands?: number;
-      /** @internal Test seam. Production uses REA_DEBUGGER_MAX_COMMAND_OUTPUT_BYTES. */
-      readonly maxCommandOutputBytes?: number;
       readonly platform?: NodeJS.Platform;
       readonly stopProcess?: typeof stopOwnedDebuggerProcess;
       readonly spawnProcess?: typeof spawnOwnedProviderProcess;
@@ -288,24 +287,12 @@ export class RizinDebugSessionManager {
     this.#environment = { ...environment };
     this.#command = environment.REA_RIZIN_COMMAND ?? "rizin";
     const limits = resolveDebuggerSessionLimits(this.#environment);
-    this.#commandDeadline = applyDebuggerAdmissionOverride(
-      limits.commandDeadline,
-      options.frameTimeoutMs,
-    );
+    this.#commandDeadline = limits.commandDeadline;
     this.#frameTimeoutMs = this.#commandDeadline.value;
     this.#startupTimeoutMs = options.startupTimeoutMs ?? STARTUP_TIMEOUT_MS;
-    this.#maxSessions = applyDebuggerAdmissionOverride(
-      limits.maxSessions,
-      options.maxSessions,
-    );
-    this.#maxPendingCommands = applyDebuggerAdmissionOverride(
-      limits.maxPendingCommands,
-      options.maxPendingCommands,
-    );
-    this.#commandOutput = applyDebuggerAdmissionOverride(
-      limits.maxCommandOutputBytes,
-      options.maxCommandOutputBytes,
-    );
+    this.#maxSessions = limits.maxSessions;
+    this.#maxPendingCommands = limits.maxPendingCommands;
+    this.#commandOutput = limits.maxCommandOutputBytes;
     this.#maxCommandOutputBytes = this.#commandOutput.value;
     this.#platform = options.platform ?? process.platform;
     this.#stopProcess = options.stopProcess ?? stopOwnedDebuggerProcess;
@@ -332,7 +319,7 @@ export class RizinDebugSessionManager {
             path: ["inferior_tty"],
             reason: "missing_argument",
             message:
-              "Select a persistent readable and writable Linux terminal for inferior output.",
+              "Select a persistent readable and writable Linux terminal for inferior input and output.",
           },
         ]),
       );
@@ -398,38 +385,99 @@ export class RizinDebugSessionManager {
     let ttyPath: string;
     let ttyDevice: number;
     let ttyInode: number;
+    let ttyLease: AnalysisCleanupLease | undefined;
+    try {
+      await this.#ttyResources.retryCleanup();
+    } catch (cause: unknown) {
+      const cleanup = new ProviderCleanupError(
+        "rizin",
+        this.#ttyResources.cleanupResources,
+        {},
+        { operation: "start_rizin_debug_session", cause },
+      );
+      bindArtifactFileCleanup(cause, cleanup);
+      return err(cleanup);
+    }
     try {
       ttyPath = await realpath(input.inferior_tty);
       const ttyHandle = await open(
         ttyPath,
         fsConstants.O_RDWR | fsConstants.O_NOCTTY | fsConstants.O_NONBLOCK,
       );
-      try {
-        const ttyStat = await ttyHandle.stat();
-        if (
-          !isatty(ttyHandle.fd) ||
-          (ttyStat.mode & fsConstants.S_IFMT) !== fsConstants.S_IFCHR
-        )
-          throw new Error("The selected inferior_tty is not a character TTY.");
-        ttyDevice = ttyStat.dev;
-        ttyInode = ttyStat.ino;
-      } finally {
-        await ttyHandle.close();
-      }
-    } catch (cause) {
-      return err(
-        new AnalysisInputError(
-          "start_rizin_debug_session",
-          { cause, diagnostics: { inferior_tty: input.inferior_tty } },
-          [
-            {
-              path: ["inferior_tty"],
-              reason: "invalid_value",
-              message: `Cannot use selected terminal ${input.inferior_tty}: ${cause instanceof Error ? cause.message : String(cause)}`,
-            },
-          ],
-        ),
+      const tty = await withOwnedFileHandle(
+        ttyPath,
+        new OwnedFileHandle(ttyHandle),
+        {
+          ...(signal === undefined ? {} : { signal }),
+          retainFailedClose: (owner) => {
+            ttyLease = new AnalysisCleanupLease(() => owner.close(), [ttyPath]);
+            this.#ttyResources.retain({
+              kind: "lease",
+              resource: ttyPath,
+              lease: ttyLease,
+            });
+          },
+        },
+        async (handle) => {
+          const ttyStat = await handle.stat();
+          if (
+            !isatty(handle.fd) ||
+            (ttyStat.mode & fsConstants.S_IFMT) !== fsConstants.S_IFCHR
+          )
+            throw new Error(
+              "The selected inferior_tty is not a character TTY.",
+            );
+          return { device: ttyStat.dev, inode: ttyStat.ino };
+        },
       );
+      ttyDevice = tty.device;
+      ttyInode = tty.inode;
+    } catch (cause) {
+      const primaryCause =
+        cause instanceof RegularFileCleanupFailure &&
+        cause.outcome.kind === "failed"
+          ? cause.outcome.cause
+          : cause;
+      const cancellation = regularFileCancellation(cause);
+      const primary =
+        cancellation === undefined
+          ? new AnalysisInputError(
+              "start_rizin_debug_session",
+              {
+                cause: primaryCause,
+                diagnostics: { inferior_tty: input.inferior_tty },
+              },
+              [
+                {
+                  path: ["inferior_tty"],
+                  reason: "invalid_value",
+                  message: `Cannot use selected terminal ${input.inferior_tty}: ${primaryCause instanceof Error ? primaryCause.message : String(primaryCause)}`,
+                },
+              ],
+            )
+          : rizinCancellation(
+              "start_rizin_debug_session",
+              undefined,
+              cancellation.reason,
+            );
+      if (!(cause instanceof RegularFileCleanupFailure)) return err(primary);
+      const cleanup = new ProviderCleanupError(
+        "rizin",
+        [ttyPath!],
+        {},
+        { operation: "start_rizin_debug_session", cause: cause.cleanupCause },
+      );
+      const error =
+        cause.outcome.kind === "failed" || cancellation !== undefined
+          ? analysisErrorWithCleanupFailure(
+              primary,
+              cleanup,
+              "start_rizin_debug_session",
+            )
+          : cleanup;
+      ttyLease?.bindCleanupError(cleanup);
+      if (error !== cleanup) ttyLease?.bindCleanupError(error);
+      return err(error);
     }
     // TTY identity validation is asynchronous. Cancellation may arrive while
     // realpath/open/stat are pending, and must prevent the debugger spawn.
@@ -445,6 +493,10 @@ export class RizinDebugSessionManager {
       "-N",
       "-0",
       "-d",
+      // Rizin reads REA's commands from its own stdin. Without this key the
+      // target inherits that stream and, once resumed, reads those commands.
+      "-R",
+      `stdin=${ttyPath}`,
       "-R",
       `stdout=${ttyPath}`,
       "-R",
@@ -1019,6 +1071,21 @@ export class RizinDebugSessionManager {
   }
 
   async retryCleanupFailures(): Promise<Result<null, AnalysisError>> {
+    try {
+      await this.#ttyResources.retryCleanup();
+    } catch (cause: unknown) {
+      const error = new ProviderCleanupError(
+        "rizin",
+        this.#ttyResources.cleanupResources,
+        {},
+        {
+          operation: "start_rizin_debug_session",
+          cause,
+        },
+      );
+      bindArtifactFileCleanup(cause, error);
+      return err(error);
+    }
     for (const session of this.#sessions.values()) {
       if (session.cleanupFailures.size === 0) continue;
       const stopped = await this.#stopDebuggerOnly(session);
@@ -1043,11 +1110,20 @@ export class RizinDebugSessionManager {
         this.#startDrainWaiters.push(resolve),
       );
     for (const session of this.#sessions.values()) session.closing = true;
-    return closeOwnedDebuggerSessions(
-      this.#sessions,
-      (session) => this.#stopDebuggerOnly(session),
-      "Rizin",
+    const outcomes = await Promise.allSettled([
+      closeOwnedDebuggerSessions(
+        this.#sessions,
+        (session) => this.#stopDebuggerOnly(session),
+        "Rizin",
+      ),
+      this.#ttyResources.close(),
+    ]);
+    const failures = outcomes.flatMap((outcome) =>
+      outcome.status === "rejected" ? [outcome.reason] : [],
     );
+    if (failures.length === 1) throw failures[0];
+    if (failures.length > 1)
+      throw new AggregateError(failures, "Rizin cleanup remains incomplete");
   }
 
   #receive(session: RizinDebugSession, chunk: Buffer): void {
@@ -1284,6 +1360,7 @@ export class RizinDebugSessionManager {
     );
     await this.#verifyDebuggerExitPolicy(session);
     await this.#verifyInferiorOutputDescriptors(session, pid);
+    await this.#verifyInferiorStdinIsolated(session, pid);
     await this.#runInternalCommand(session, `o- ${fd}`);
     const after = parseRizinPtraceRows(
       await this.#runInternalCommand(session, "olj"),
@@ -1341,6 +1418,34 @@ export class RizinDebugSessionManager {
           `Inferior descriptor ${descriptor} is not routed to the selected TTY.`,
         );
     }
+  }
+
+  /**
+   * Detach resumes the inferior, which would then read the commands that must
+   * confirm the detach. Only sharing the command stream is refused: a target may
+   * close or replace its own stdin, and neither can consume those commands.
+   */
+  async #verifyInferiorStdinIsolated(
+    session: RizinDebugSession,
+    pid: string,
+  ): Promise<void> {
+    let inferiorStdin: Stats;
+    try {
+      inferiorStdin = await stat(`/proc/${pid}/fd/0`);
+    } catch (cause) {
+      if ((cause as NodeJS.ErrnoException).code === "ENOENT") return;
+      throw cause;
+    }
+    const commandStream = await stat(
+      `/proc/${String(session.launched.process.pid)}/fd/0`,
+    );
+    if (
+      inferiorStdin.dev === commandStream.dev &&
+      inferiorStdin.ino === commandStream.ino
+    )
+      throw new Error(
+        "Inferior stdin is the Rizin command stream rather than the selected TTY; detaching would let the target consume debugger commands.",
+      );
   }
 
   async #synchronizeCleanup(session: RizinDebugSession): Promise<void> {
@@ -1758,7 +1863,7 @@ const waitForCommandFrames = async (
       });
     }
     const remaining = deadline - Date.now();
-    if (isRizinCommandDeadlineExpired(remaining))
+    if (remaining <= 0)
       return err({
         kind: "timeout",
         cause: new RizinFrameTimeoutError(),
@@ -1815,7 +1920,7 @@ const waitForCommandFrames = async (
   }
 };
 
-export const truncateUtf8 = (value: string, maximumBytes: number): string => {
+const truncateUtf8 = (value: string, maximumBytes: number): string => {
   if (maximumBytes <= 0) return "";
   // A UTF-16 code unit needs at most three UTF-8 bytes. Buffer.write stops
   // before a partial character; only decode bytes it actually initialized.

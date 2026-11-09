@@ -429,6 +429,8 @@ it("compares recoverable symlink bytes across old and current captures", () => {
     return {
       ...base,
       filesystem_effects: [effect],
+      files_before: [target],
+      files_after: [target],
       filesystem_checkpoints: base.filesystem_checkpoints.map((checkpoint) => ({
         ...checkpoint,
         files: [target],
@@ -978,6 +980,53 @@ it("refuses mixed terminal observation versions even with PID and port rules dis
     expect.objectContaining({
       issues: [
         expect.objectContaining({ expected: ["terminal_observation_version"] }),
+      ],
+    }),
+  );
+});
+
+it("refuses mixed path normalization versions even with PID and port rules disabled", () => {
+  const base = emptyCapture();
+  const scenario = processScenarioSchema.parse({
+    executable: "/usr/bin/true",
+    normalization: { pids: false, ports: false, paths: true },
+  });
+  const committed = processScenarioCommitment(
+    scenario,
+    base.manifest.selected_executable_sha256 ?? undefined,
+  );
+  const contract = processComparisonContract(scenario);
+  expect(contract.path_normalization_version).toBe(
+    "path-component-boundaries-v4",
+  );
+  const capture = parseProcessCapture({
+    ...base,
+    normalization: scenario.normalization,
+    manifest: {
+      ...base.manifest,
+      scenario: committed,
+      full_scenario_sha256: digestProcessCommitment(committed),
+      normalization_sha256: digestProcessCommitment(scenario.normalization),
+      comparison_contract: contract,
+      comparison_contract_sha256: digestProcessCommitment(contract),
+    },
+  });
+  const legacyContract = {
+    ...contract,
+    path_normalization_version: "path-component-boundaries-v3",
+  };
+  const legacy = parseProcessCapture({
+    ...capture,
+    manifest: {
+      ...capture.manifest,
+      comparison_contract: legacyContract,
+      comparison_contract_sha256: digestProcessCommitment(legacyContract),
+    },
+  });
+  expect(() => compareProcessCaptures(capture, legacy)).toThrow(
+    expect.objectContaining({
+      issues: [
+        expect.objectContaining({ expected: ["path_normalization_version"] }),
       ],
     }),
   );

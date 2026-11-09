@@ -85,9 +85,45 @@ canonical hexadecimal form), `EXC_GUARD` subtypes,
 pointer-authentication suffixes, and dyld missing-library strings. A report
 that matches none of those rules is `unclassified`.
 
-Opened Mach-O and dSYM UUID joins remain unobserved. Symbol names printed
-inside the report are recorded claims and are not verified. Linux ELF cores
-use the separate [recorded crash](recorded-crashes.md) workflow.
+## Joining frames to the crashed Mach-O or dSYM
+
+Pass `join_path` (`--join-path` in the CLI) to select one local Mach-O
+executable or dSYM. UUID bytes in the report and the artifact's `LC_UUID` load
+commands are compared in hexadecimal, so an uppercase `dwarfdump --uuid` value
+and a lowercase report `uuid` match.
+
+```bash
+rea inspect-apple-ips /absolute/path/to/report.ips \
+  --join-path /absolute/path/to/App.app/Contents/MacOS/App --json
+```
+
+Shared-cache image sources `S` and `C` remain unjoined: UUID agreement does not
+establish that a standalone image has the cached layout.
+
+For a FAT container every slice is examined. An image joins only when exactly
+one slice has that UUID **and** an architecture that agrees with the report's
+`arch`; `arm64` and `arm64e` stay distinct, and an all-zero UUID never joins. A
+UUID match with a different architecture, more than one compatible slice, or a
+slice without a readable `__TEXT` segment is reported as a rejected image with
+its reason and stays unjoined rather than being guessed.
+
+`join.status` is `selected` with the artifact path, SHA-256, byte length, every
+slice's offset, arch, CPU type and subtype, UUID, and `__TEXT` vmaddr, plus
+`image_matches`, per-frame results, and join-specific limitations. A joined
+frame reports `static_address`, the slice `__TEXT` vmaddr plus the frame's
+recorded `imageOffset`, in decimal and hexadecimal. An unjoined frame reports
+a reason instead; an unknown image UUID, an absent `imageIndex` row, and a
+frame without `imageOffset` all stay unjoined rather than treated as aligned.
+
+An artifact that is not a Mach-O image or FAT container reports
+`join.status: "unreadable"` with a typed reason and leaves every report fact
+intact. Symbol names printed inside the report stay recorded claims. Function
+or symbol lookup at a joined static address, and matching dSYM symbol tables,
+are not performed by this step.
+
+Symbol names printed inside the report are recorded claims and are not
+verified. Linux ELF cores use the separate
+[recorded crash](guides/native/recorded-crashes.md) workflow.
 
 ## Limits and failures
 
@@ -120,4 +156,27 @@ success or truncated integer facts.
 rea inspect-apple-ips /absolute/path/to/report.ips --max-integer-text-bytes 16777216 --json
 ```
 
-This workflow does not execute a target, launch atos, or search for dSYMs.
+`max_join_bytes` (`--max-join-bytes`) independently bounds the join artifact
+read, defaulting to 64 MiB. This workflow does not execute a target, launch
+atos, or search for dSYMs.
+
+## Join admission and failures
+
+The join uses the shared Mach-O container, slice, command-table and segment
+readers. Slice extents and `sizeofcmds` bound every identity observation; duplicate
+UUIDs or malformed commands cannot select the first plausible value. Unreadable
+join results retain the successfully read artifact's path, SHA-256 and byte count.
+
+The integer-text allowance spans the report and join, including repeated integer
+facts and derived static addresses. Reservation precedes derived address
+expansion. If a selected join read, interpretation or allowance fails, the error
+retains the completed IPS report. Join read limits and recovery use
+`max_join_bytes`, even when the report and join paths are identical. Cancellation
+retains the caller's reason independently of those completed facts.
+
+When a failure follows a completed join-file read, `partial_observation` retains
+both the decoded report and a `join_artifact` receipt with the independently
+observed path, SHA-256 and byte count. Frame rejection reasons reference
+`join.limitations`; source-sized architecture diagnostics are retained once per
+image rather than copied into every frame. Universal-image admission includes
+the shared reader's supported hidden ARM64 row and rejects overlapping slices.

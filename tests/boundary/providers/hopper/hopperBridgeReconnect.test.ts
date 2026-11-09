@@ -53,6 +53,12 @@ it.skipIf(process.platform === "win32")(
         thread_released: true,
       })),
       {
+        mode: "lost-shutdown-reply",
+        requests: ["health", "shutdown_document", "shutdown_document"],
+        listener_removed: true,
+        thread_released: true,
+      },
+      {
         mode: "authenticated-idle",
         requests: [
           "health",

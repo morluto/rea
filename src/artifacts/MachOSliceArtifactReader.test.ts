@@ -324,8 +324,9 @@ describe("MachOSliceArtifactReader", () => {
       reader.entries()[Symbol.asyncIterator]().next(),
     ).rejects.toMatchObject({
       reason: "format",
-      message:
-        "lipo did not produce readable architecture records: lipo output contained no architectures",
+      message: expect.stringMatching(
+        /lipo.*readable architecture records.*no architectures/i,
+      ),
       cause: new TypeError("lipo output contained no architectures"),
     });
   });
@@ -529,8 +530,10 @@ describe("universal slices outside the structural index", () => {
       ["slices/ppc", 4096],
       ["slices/arm64", 8192],
     ]);
-    expect(entries[0]?.limitations).toContain(
-      "Structural Mach-O facts were unsupported (big-endian Mach-O slices are not supported); slice range is based on lipo output.",
+    expect(entries[0]?.limitations).toContainEqual(
+      expect.stringMatching(
+        /big.endian Mach.O.*not supported.*slice range.*lipo/iu,
+      ),
     );
   });
 

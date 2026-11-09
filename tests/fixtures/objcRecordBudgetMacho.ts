@@ -76,3 +76,11 @@ export const objcRecordBudgetMacho = (
   bytes.write("protocolMethod\0", 0x9a0);
   return bytes;
 };
+
+/** A class adopts the fixture protocol through a separately counted list. */
+export const objcAdoptedProtocolCountMacho = (count: bigint): Buffer => {
+  const bytes = objcRecordBudgetMacho("class");
+  bytes.writeBigUInt64LE(base + 0x6b8n, 0x328);
+  bytes.writeBigUInt64LE(count, 0x6b8);
+  return bytes;
+};

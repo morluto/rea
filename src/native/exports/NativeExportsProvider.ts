@@ -1,10 +1,14 @@
 import {
   projectStableArtifactFailure,
+  stableArtifactInputRecovery,
   projectArtifactCloseFailure,
 } from "../../artifacts/StableArtifactFailure.js";
 import { isSelectedRegularFileError } from "../../filesystem/RegularFile.js";
 import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
-import { readStableArtifact } from "../../artifacts/readStableArtifact.js";
+import {
+  type StableArtifactSnapshot,
+  readStableArtifact,
+} from "../../artifacts/readStableArtifact.js";
 import {
   artifactFilePrimaryFacts,
   type ArtifactFilePrimaryFacts,
@@ -57,9 +61,10 @@ export class NativeExportsProvider implements NativeExportsPort {
   }
 
   async inspect(input: InspectNativeExportsInput, options?: ExecutionOptions) {
+    let snapshot: StableArtifactSnapshot | undefined;
     try {
       return await this.#resources.run(async () => {
-        const snapshot = await readStableArtifact(
+        snapshot = await readStableArtifact(
           input.path,
           input.max_file_bytes,
           options?.signal,
@@ -76,7 +81,7 @@ export class NativeExportsProvider implements NativeExportsPort {
         return ok(report);
       });
     } catch (cause) {
-      return err(nativeExportsFailure(cause, input));
+      return err(nativeExportsFailure(cause, input, snapshot));
     }
   }
 }
@@ -160,9 +165,11 @@ const nativeExportsFailurePrimary = (
         },
       );
     if (cause.reason === "path" || cause.reason === "format")
-      return new AnalysisInputError(OPERATION, { cause }, [
-        { path: ["path"], reason: "invalid_format", message: cause.message },
-      ]);
+      return new AnalysisInputError(
+        OPERATION,
+        { cause, ...stableArtifactInputRecovery(cause) },
+        [{ path: ["path"], reason: "invalid_format", message: cause.message }],
+      );
   }
   if (cause instanceof Error && "code" in cause) {
     if (cause.code === "EACCES" || cause.code === "EPERM")
@@ -190,6 +197,7 @@ const nativeExportsFailurePrimary = (
 const nativeExportsFailure = (
   cause: unknown,
   input: InspectNativeExportsInput,
+  snapshot?: StableArtifactSnapshot,
 ): AnalysisError => {
   const primary = nativeExportsFailurePrimary(
     artifactFilePrimaryFacts(cause),
@@ -201,5 +209,6 @@ const nativeExportsFailure = (
     input.path,
     NATIVE_EXPORTS_PROVIDER.id,
     OPERATION,
+    snapshot,
   );
 };

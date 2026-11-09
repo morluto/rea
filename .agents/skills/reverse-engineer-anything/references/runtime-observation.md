@@ -47,10 +47,10 @@ keeps capture-local timing as provenance without treating scheduler or observer
 latency as a behavior change; use an exact `trace_spec` event when timing is part
 of the analyst question.
 
-Detailed contracts and prerequisites: [Frida](https://github.com/morluto/rea/blob/main/docs/frida-instrumentation.md),
+Detailed contracts and prerequisites: [Frida](https://github.com/morluto/rea/blob/main/docs/guides/runtime/frida-instrumentation.md),
 [GDB/Rizin/Cutter](https://github.com/morluto/rea/blob/main/docs/reverse-engineering-tools.md),
-[process capture](https://github.com/morluto/rea/blob/main/docs/process-capture.md),
-and [native calls/UI](https://github.com/morluto/rea/blob/main/docs/native-investigation.md#native-desktop-observation).
+[process capture](https://github.com/morluto/rea/blob/main/docs/guides/runtime/process-capture.md),
+and [native calls/UI](https://github.com/morluto/rea/blob/main/docs/guides/native/native-investigation.md#native-desktop-observation).
 
 ## Browser and Electron
 
@@ -136,5 +136,5 @@ Inspect native `.saz` snapshots with `inspect_web_network_capture` and
 traffic analysis, connect Everywhere's separate MCP server and use its
 advertised session tools with an explicit `sessionsSource` (`LiveTraffic` or
 `AgentCalls`). Preserve existing sessions and filters when inspecting a
-recorded run. See the [capture and MCP guide](https://github.com/morluto/rea/blob/main/docs/web-network-captures.md)
+recorded run. See the [capture and MCP guide](https://github.com/morluto/rea/blob/main/docs/guides/web/web-network-captures.md)
 for the workflow and Telerik's public setup and traffic-debugging skills.

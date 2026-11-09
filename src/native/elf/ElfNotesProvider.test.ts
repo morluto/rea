@@ -52,7 +52,6 @@ describe("ELF note provider failures", () => {
     const path = join(root, "program");
     await writeFile(path, elfNoteTablePastEnd());
     const result = await inspect(path);
-    expect(result.ok).toBe(false);
     if (result.ok) throw new Error("Expected invalid input");
     expect(result.error).toBeInstanceOf(AnalysisInputError);
     expect(result.error).toMatchObject({
@@ -74,15 +73,12 @@ describe("ELF note provider failures", () => {
     const path = join(root, "extended-count.elf");
     await writeFile(path, elfExtendedSectionCountFixture());
     const result = await inspect(path);
-    expect(result.ok).toBe(false);
     if (result.ok) throw new Error("Expected an unsupported target");
     expect(result.error).toBeInstanceOf(AnalysisUnsupportedTargetError);
-    expect(result.error.message).toContain(
-      "ELF extended numbering is unsupported",
-    );
+    expect(result.error.message).toMatch(/extended.*number/iu);
     expect(projectAnalysisError(result.error)).toMatchObject({
       code: "unsupported_target",
-      message: expect.stringContaining("ELF extended numbering is unsupported"),
+      message: result.error.message,
     });
   });
 
@@ -97,7 +93,6 @@ describe("ELF note provider failures", () => {
       }),
     );
     const result = await inspect(path);
-    expect(result.ok).toBe(false);
     if (result.ok) throw new Error("Expected a text budget refusal");
     const error = result.error as AnalysisResourceConstraintError;
     expect(error.resource).toBe("memory");
@@ -117,7 +112,6 @@ describe("ELF note provider failures", () => {
     const path = join(root, "program");
     await writeFile(path, elfNoteFixture({ ownership: "program" }));
     const result = await inspect(path, { max_file_bytes: 64 });
-    expect(result.ok).toBe(false);
     if (result.ok) throw new Error("Expected a file-size refusal");
     const error = result.error as AnalysisResourceConstraintError;
     expect(error.resource).toBe("file-size");
@@ -139,7 +133,6 @@ describe("ELF note provider failures", () => {
     await writeFile(path, bytes);
 
     const refused = await inspect(path, { max_file_bytes: bytes.length + 1 });
-    expect(refused.ok).toBe(false);
     if (refused.ok) throw new Error("Expected section-name admission refusal");
     expect(refused.error).toBeInstanceOf(AnalysisResourceConstraintError);
     if (!(refused.error instanceof AnalysisResourceConstraintError))

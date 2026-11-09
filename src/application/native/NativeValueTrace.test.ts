@@ -1,6 +1,10 @@
 import { createAnalysisExecutionEvidence } from "../../domain/analysisObservation.js";
 import { describe, expect, it } from "vitest";
-import { traceNativeValues } from "./NativeValueTrace.js";
+import {
+  traceNativeValues as traceNativeValuesCore,
+  UNRECORDED_NATIVE_VALUE_FLOW,
+} from "./NativeValueTrace.js";
+import { executeComposedWorkflow } from "../WorkflowEvidence.js";
 import {
   createAnalysisExecution,
   type AnalysisOperationPort,
@@ -26,6 +30,27 @@ import {
   valueTraceProvider as provider,
   valueTraceSubject as subject,
 } from "./NativeValueTrace.fixture.js";
+
+const traceNativeValues: typeof traceNativeValuesCore = async (
+  source,
+  parameters,
+  signal,
+) => {
+  const result = await executeComposedWorkflow(source, (observed) =>
+    traceNativeValuesCore(observed, parameters, signal),
+  );
+  return result.ok ? ok(result.value.result) : result;
+};
+
+it("does not return a source ID without an Evidence owner", async () => {
+  const result = await traceNativeValuesCore(valueTraceDiamond().port, {
+    procedure: "0x1000",
+  });
+  expect(result.ok).toBe(false);
+  if (!result.ok)
+    expect(result.error._tag).toBe("AnalysisCapabilityUnavailableError");
+});
+
 const analysis: AnalysisOperationPort = {
   execute: async (operation, parameters) => {
     if (operation === "resolve_native_call_targets")
@@ -139,7 +164,6 @@ describe("native value trace seed admission", () => {
       },
       { procedure: "missing" },
     );
-    expect(result.ok).toBe(false);
     if (result.ok) throw new Error("Expected seed failure");
     expect(result.error).toBe(failure);
     expect(attempted).toEqual([["analyze_function", { procedure: "missing" }]]);
@@ -168,11 +192,46 @@ describe("native value trace seed admission", () => {
         expect.objectContaining({ address: base.procedure.address }),
       ],
       unknowns: [
-        expect.objectContaining({
-          reason: "Provider has no native def-use model",
-        }),
+        {
+          procedure: base.procedure.address,
+          address: null,
+          reason: UNRECORDED_NATIVE_VALUE_FLOW,
+        },
       ],
     });
+  });
+
+  it("preserves an explicit unavailable reason for that procedure", async () => {
+    const base = functionDossierSchema.parse(ghidraFunctionDossier());
+    const providerReason = "selected procedure has no p-code model";
+    const result = await traceNativeValues(
+      {
+        execute: async () =>
+          ok(
+            createAnalysisExecution(
+              {
+                ...base,
+                native_value_flow: {
+                  available: false,
+                  reason: providerReason,
+                  limitations: [],
+                },
+              },
+              provider,
+              { subject },
+            ),
+          ),
+      },
+      { procedure: base.procedure.address },
+    );
+    if (!result.ok) throw result.error;
+    expect(nativeValueTraceSchema.parse(result.value).unknowns).toEqual([
+      {
+        procedure: base.procedure.address,
+        address: null,
+        reason: providerReason,
+      },
+    ]);
   });
 });
 
@@ -503,6 +562,53 @@ describe("native value failed-callee traversal", () => {
       reason: "Edge budget reached",
     });
   });
+});
+
+it("preserves and deduplicates source value-flow limitations across analyzed functions", async () => {
+  const base = functionDossierSchema.parse(ghidraFunctionDossier());
+  const caller = functionDossierSchema.parse(
+    nativeFlowDossier(base, {
+      address: "0x1000",
+      name: "caller",
+      operations: [node("call", "0x1000", "CALL")],
+      parameters: [],
+    }),
+  );
+  const callee = functionDossierSchema.parse(
+    nativeFlowDossier(base, {
+      address: "0x2000",
+      name: "callee",
+      operations: [],
+      parameters: [],
+    }),
+  );
+  if (
+    !caller.native_value_flow?.available ||
+    !callee.native_value_flow?.available
+  )
+    throw new Error("Expected available fixture value flow");
+  caller.native_value_flow.limitations = ["Shared provider caveat."];
+  callee.native_value_flow.limitations = [
+    "Shared provider caveat.",
+    "Callee-specific caveat.",
+  ];
+  const result = await traceNativeValues(
+    callBindingAnalysis({
+      callerAddress: "0x1000",
+      calleeAddress: "0x2000",
+      caller,
+      callee,
+    }),
+    { procedure: "0x1000", max_functions: 2 },
+  );
+  if (!result.ok) throw result.error;
+  const limitations = nativeValueTraceSchema.parse(result.value).limitations;
+  expect(limitations).toContain(
+    "Fixture (fixture 1) analyze_function: Callee-specific caveat.",
+  );
+  expect(
+    limitations.filter((item) => item.includes("Shared provider caveat.")),
+  ).toEqual(["Fixture (fixture 1) analyze_function: Shared provider caveat."]);
 });
 
 describe("native value call-binding fan-out", () => {

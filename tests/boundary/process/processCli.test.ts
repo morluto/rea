@@ -1,4 +1,4 @@
-import { readFile, readdir, writeFile } from "node:fs/promises";
+import { access, readFile, readdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -77,7 +77,10 @@ describe("documented process CLI workflow", () => {
     async ({ cli }) => {
       const root = await createTestTempDirectory("rea-process-cli-");
       const guide = await readFile(
-        new URL("../../../docs/process-capture.md", import.meta.url),
+        new URL(
+          "../../../docs/guides/runtime/process-capture.md",
+          import.meta.url,
+        ),
         "utf8",
       );
       const recipe = /```sh\nrea capture-process ([^\n]+)\n```/u.exec(
@@ -315,8 +318,9 @@ describe("process CLI errors", () => {
             path: ["arguments", 0],
             reason: "invalid_format",
             expected: "regex",
-            message:
-              "Values passed to operating-system APIs cannot contain NUL",
+            message: expect.stringMatching(
+              /operating.system.*cannot contain NUL/i,
+            ),
           },
         ],
       },
@@ -379,6 +383,36 @@ describe("process CLI evidence validation", () => {
     ).toContain("minimal-capture");
   });
 
+  it("plans the minimal scenario without launching it", async () => {
+    const root = await createTestTempDirectory("rea-process-cli-");
+    const scenario = join(root, "scenario.json");
+    const marker = join(root, "launched");
+    await writeFile(
+      scenario,
+      JSON.stringify({
+        executable: process.execPath,
+        arguments: [
+          "-e",
+          "require('node:fs').writeFileSync(process.argv[1], 'launched')",
+          marker,
+        ],
+        dry_run: true,
+      }),
+    );
+
+    const evidence = await captureProcessScenarioFile(scenario);
+    expect(evidence).toMatchObject({
+      predicate_type: "rea.process-scenario-plan",
+      operation: "capture_process_scenario",
+      normalized_result: {
+        status: "planned",
+        ambient_environment: "inherited-at-run",
+        scenario: { executable: process.execPath },
+      },
+    });
+    await expect(access(marker)).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
   it("rejects unrelated capture evidence", async () => {
     const root = await createTestTempDirectory("rea-process-cli-");
     const invalidCapture = join(root, "invalid-capture.json");
@@ -421,8 +455,9 @@ describe("process CLI evidence validation", () => {
       code: "invalid_request",
       retryable: false,
       category: "invalid_input",
-      message:
-        "Capture evidence is not from the current process-capture workflow. Create new capture evidence, then try again.",
+      message: expect.stringMatching(
+        /capture evidence.*not from.*process-capture.*create new capture evidence/i,
+      ),
       details: {
         operation: "compare_process_captures",
         issues: [{ path: ["left"], reason: "invalid_value" }],

@@ -10,6 +10,7 @@ import {
   analysisProviderCandidate,
   analysisProviderCandidateSummary,
   expandProviderCapabilities,
+  expandToolAvailability,
   sessionProviderFacts,
   type ProviderCapabilitySet,
 } from "../../contracts/toolOutputSchemaPrimitives.js";
@@ -30,7 +31,7 @@ import {
 import { NATIVE_MACOS_PROVIDER_IDENTITY } from "../../native/NativeMacosProviderIdentity.js";
 import {
   buildCapabilityInventory,
-  MULTI_MODE_REMEDIATION,
+  compactToolAvailability,
 } from "../CapabilityInventory.js";
 
 const projectedStatusSchema = z.object({
@@ -74,7 +75,9 @@ type DescriptorOptions = {
   | {
       readonly available: false;
       readonly reason?: string;
-      readonly availabilityCode?: "architecture_unsupported";
+      readonly availabilityCode?:
+        | "architecture_unsupported"
+        | "unsupported_host";
     }
 );
 
@@ -130,6 +133,8 @@ const candidate = (
   },
   selected: true,
   capabilities,
+  selectionSource: "auto-single-candidate",
+  rejections: [],
 });
 
 const project = async (
@@ -226,6 +231,7 @@ const expectedRouteCapabilities: ProviderCapabilitySet[] = [
         available: false,
         reason: "Runtime operation failure",
         availability_code: null,
+        runtime_unavailable: true,
       },
       {
         operations: ["read_bytes"],
@@ -253,6 +259,7 @@ const expectedExpandedRouteCapabilities = [
     available: false,
     reason: "Runtime operation failure",
     availability_code: null,
+    runtime_unavailable: true,
     effects: MUTATING_EFFECTS,
     limitations: ["Shared limitation"],
   },
@@ -577,7 +584,9 @@ it.each([
         : ["inspect_native_dispatch_metadata", "list_names"],
     });
     if (!route) {
-      expect(trace?.remediation).toBe(MULTI_MODE_REMEDIATION);
+      expect(trace?.remediation).toMatch(
+        /no mode.*inspect each mode.*missing operations and remediation/iu,
+      );
       const authored = trace?.modes?.find(
         (mode) => mode.name === "authored_ui_dispatch",
       );
@@ -632,7 +641,9 @@ it("keeps distinct recovery for an unbound non-bundle session", async () => {
   expect(trace).toMatchObject({
     available: false,
     reason: "provider_unavailable",
-    remediation: MULTI_MODE_REMEDIATION,
+    remediation: expect.stringMatching(
+      /no mode.*inspect each mode.*missing operations and remediation/iu,
+    ),
   });
   const authored = trace?.modes?.find(
     (mode) => mode.name === "authored_ui_dispatch",
@@ -668,7 +679,8 @@ describe("binary session summary projection", () => {
       availability: {
         status: "unavailable",
         code: "not_configured",
-        reason: "Set PROVIDER_B_HOME; see docs/provider-b.md.",
+        reason: "PROVIDER_B_HOME is not set.",
+        remediation: "Set PROVIDER_B_HOME; see docs/provider-b.md.",
         diagnostics: { checks: [{ name: "configuration", ok: false }] },
       },
       targetSupport: {
@@ -678,6 +690,24 @@ describe("binary session summary projection", () => {
         diagnostics: { architecture: "arm64" },
       },
       selected: false,
+      selectionSource: null,
+      rejections: [
+        {
+          providerId: providerB.id,
+          origin: "availability",
+          code: "not_configured",
+          reason: "PROVIDER_B_HOME is not set.",
+          remediation: "Set PROVIDER_B_HOME; see docs/provider-b.md.",
+          diagnostics: { checks: [{ name: "configuration", ok: false }] },
+        },
+        {
+          providerId: providerB.id,
+          origin: "target",
+          code: "architecture_unsupported",
+          reason: "Provider B cannot select this slice.",
+          diagnostics: { architecture: "arm64" },
+        },
+      ],
     };
     const pending: AnalysisProviderCandidateStatus = {
       ...candidate(providerA, selectedCapabilities),
@@ -726,7 +756,7 @@ describe("binary session summary projection", () => {
         availability: {
           status: "unavailable",
           code: "not_configured",
-          reason: "Set PROVIDER_B_HOME; see docs/provider-b.md.",
+          reason: "PROVIDER_B_HOME is not set.",
         },
         target_support: {
           status: "unsupported",
@@ -737,6 +767,13 @@ describe("binary session summary projection", () => {
       },
     ]);
     expect(JSON.stringify(raw)).not.toContain("diagnostics");
+    // Complete detail keeps the owner's repair; summary omits it.
+    expect(
+      complete.analysis_provider_candidates[1]?.availability,
+    ).toMatchObject({
+      remediation: "Set PROVIDER_B_HOME; see docs/provider-b.md.",
+    });
+    expect(JSON.stringify(raw)).not.toContain("PROVIDER_B_HOME;");
     expect(
       analysisProviderCandidate
         .array()
@@ -774,4 +811,190 @@ it("narrows summary capabilities without inventing omitted candidate facts", asy
     code: null,
     reason: "No target is open.",
   });
+});
+
+it("groups readiness repairs exactly and drops one replaced by a runtime observation", async () => {
+  const unavailable = (
+    operation: CapabilityDescriptor["operation"],
+    remediation: string,
+  ): CapabilityDescriptor => {
+    const declared = descriptor(providerA, operation, [], {
+      available: false,
+      reason: "Configured registration is invalid.",
+    });
+    if (declared.available) throw new Error("Expected an unavailable fixture");
+    return { ...declared, remediation };
+  };
+  const status = await project(
+    [
+      unavailable("procedure_info", "Correct REA_FIXTURE_CONFIG."),
+      unavailable("read_bytes", "Correct REA_FIXTURE_CONFIG."),
+      unavailable("list_names", "Unset REA_FIXTURE_CACHE."),
+      unavailable("xrefs", "Correct REA_FIXTURE_CONFIG."),
+    ],
+    [],
+    new Map([["xrefs", { reason: "Runtime operation failure" }]]),
+  );
+  const groups = status.capabilities.flatMap(({ groups }) => groups);
+  expect(groups).toEqual([
+    expect.objectContaining({
+      operations: ["list_names"],
+      remediation: "Unset REA_FIXTURE_CACHE.",
+    }),
+    expect.objectContaining({
+      operations: ["procedure_info", "read_bytes"],
+      reason: "Configured registration is invalid.",
+      remediation: "Correct REA_FIXTURE_CONFIG.",
+    }),
+    expect.not.objectContaining({ remediation: expect.anything() }),
+  ]);
+  expect(groups[2]).toMatchObject({
+    operations: ["xrefs"],
+    reason: "Runtime operation failure",
+  });
+  const inventory = new Map(
+    buildCapabilityInventory(
+      { open: true, kind: "executable", capabilities: status.capabilities },
+      { processCaptureEnabled: true },
+    ).map((entry) => [entry.name, entry]),
+  );
+  expect(inventory.get("procedure_info")?.remediation).toBe(
+    "Correct REA_FIXTURE_CONFIG.",
+  );
+  // A static or runtime-only refusal has no separate repair to prefer.
+  expect(inventory.get("xrefs")?.remediation).toBe("Runtime operation failure");
+  // A scoped registration narrows operations without dropping their repair.
+  const scoped = projectedStatusSchema.parse(
+    restrictAdvertisedCapabilities(
+      status,
+      (operation) => operation === "procedure_info",
+    ),
+  );
+  expect(scoped.capabilities.flatMap(({ groups }) => groups)).toEqual([
+    expect.objectContaining({
+      operations: ["procedure_info"],
+      remediation: "Correct REA_FIXTURE_CONFIG.",
+    }),
+  ]);
+});
+
+it("keeps independent decompilation and value flow in distinct capability groups", async () => {
+  const status = await projectStatus(
+    [
+      {
+        ...descriptor(providerA, "procedure_pseudo_code", []),
+        independentDecompile: true,
+      },
+      {
+        ...descriptor(providerA, "analyze_function", []),
+        nativeValueFlow: { status: "supported" as const },
+      },
+      descriptor(providerA, "xrefs", []),
+    ],
+    [],
+  );
+  const projected = z
+    .object({ capabilities: sessionProviderFacts.shape.capabilities })
+    .parse(status);
+  const capabilities = expandProviderCapabilities(projected.capabilities);
+  expect(
+    capabilities.find((item) => item.operation === "procedure_pseudo_code"),
+  ).toMatchObject({ independent_decompile: true });
+  expect(
+    capabilities.find((item) => item.operation === "analyze_function"),
+  ).toMatchObject({ native_value_flow: { status: "supported" } });
+  expect(
+    capabilities.find((item) => item.operation === "xrefs"),
+  ).not.toHaveProperty("independent_decompile");
+  expect(
+    capabilities.find((item) => item.operation === "xrefs"),
+  ).not.toHaveProperty("native_value_flow");
+});
+
+it.each([
+  { detail: "summary", supported: true },
+  { detail: "complete", supported: true },
+  { detail: "summary", supported: false },
+  { detail: "complete", supported: false },
+] as const)(
+  "retains routed value-flow ownership and runtime failures in $detail discovery when supported=$supported",
+  async ({ detail, supported }) => {
+    const source = {
+      ...descriptor(providerA, "analyze_function", []),
+      nativeValueFlow: supported
+        ? { status: "supported" as const }
+        : { status: "unavailable" as const, reason: "No value flow." },
+    };
+    const resolver = descriptor(providerB, "resolve_native_call_targets", []);
+    const providerC = { id: "provider-c", name: "Provider C", version: "3" };
+    const unselected = {
+      ...descriptor(providerC, "analyze_function", []),
+      nativeValueFlow: { status: "unavailable" as const, reason: "Unselected" },
+    };
+    const status = await projectStatus(
+      [source, resolver],
+      [{ ...candidate(providerC, [unselected]), selected: false }],
+      {
+        target: dispatchTarget("elf"),
+        detail,
+        runtimeUnavailability: new Map([
+          ["resolve_native_call_targets", { reason: "Resolver failed." }],
+        ]),
+      },
+    );
+    const projected = z
+      .object({ capabilities: sessionProviderFacts.shape.capabilities })
+      .parse(status);
+    const route = expandProviderCapabilities(projected.capabilities);
+    expect(
+      route.find((item) => item.operation === "analyze_function"),
+    ).toMatchObject({
+      provider: providerA,
+      native_value_flow: { status: supported ? "supported" : "unavailable" },
+    });
+    const inventory = buildCapabilityInventory(status, {
+      processCaptureEnabled: false,
+    });
+    const item = expandToolAvailability(
+      compactToolAvailability(inventory, detail),
+    ).find((candidate) => candidate.name === "trace_native_values");
+    expect(item).toMatchObject({
+      available: false,
+      reason: "provider_unavailable",
+      remediation: expect.stringContaining("Resolver failed."),
+      value_flow_support: {
+        status: supported ? "supported" : "unavailable",
+        provider_id: providerA.id,
+      },
+    });
+    if (!supported) expect(item?.remediation).toContain("No value flow.");
+  },
+);
+
+it("preserves an unsupported resolver host alongside unavailable value flow", async () => {
+  const source = {
+    ...descriptor(providerA, "analyze_function", []),
+    nativeValueFlow: {
+      status: "unavailable" as const,
+      reason: "No value flow.",
+    },
+  };
+  const resolver = {
+    ...descriptor(providerB, "resolve_native_call_targets", [], {
+      available: false,
+      reason: "Resolver host is unsupported.",
+      availabilityCode: "unsupported_host",
+    }),
+    remediation: "Use a supported resolver host.",
+  };
+  const status = await projectStatus([source, resolver], [], {
+    target: dispatchTarget("elf"),
+    detail: "summary",
+  });
+  const item = buildCapabilityInventory(status, {
+    processCaptureEnabled: false,
+  }).find((entry) => entry.name === "trace_native_values");
+  expect(item).toMatchObject({ available: false, reason: "unsupported_host" });
+  expect(item?.remediation).toContain("No value flow.");
+  expect(item?.remediation).toContain("Use a supported resolver host.");
 });

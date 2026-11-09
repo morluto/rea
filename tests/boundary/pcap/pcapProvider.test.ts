@@ -211,7 +211,6 @@ it.each(["stdout", "stderr"] as const)(
       operation: "inspect_pcap_capture",
       input: { path },
     });
-    expect(result.ok).toBe(false);
     if (result.ok) throw new Error("Expected malformed producer encoding");
     expect(projectAnalysisError(result.error)).toMatchObject({
       code: "unreadable_output",
@@ -243,7 +242,6 @@ posixIt.each(["stdout", "stderr"] as const)(
       operation: "inspect_pcap_client",
       input: {},
     });
-    expect(result.ok).toBe(false);
     if (result.ok) throw new Error("Expected malformed version output");
     expect(projectAnalysisError(result.error)).toMatchObject({
       code: "unreadable_output",
@@ -265,7 +263,6 @@ it.each(["stdout", "stderr"] as const)(
       operation: "inspect_pcap_capture",
       input: { path },
     });
-    expect(result.ok).toBe(false);
     if (result.ok) throw new Error("Expected malformed producer encoding");
     expect(projectAnalysisError(result.error)).toMatchObject({
       code: "unreadable_output",
@@ -468,6 +465,17 @@ it("names the prlimit selection when the Linux limiter is unusable", async () =>
     },
   });
   onTestFinished(() => provider.close());
+  // Readiness keeps the limiter owner's repair instead of Wireshark advice.
+  const availability = await provider.inspectAvailability();
+  expect(availability).toMatchObject({
+    status: "unavailable",
+    reason: expect.stringContaining("Cannot establish the selected Linux"),
+    remediation: expect.stringMatching(
+      /REA_TSHARK_PRLIMIT_COMMAND.*\/usr\/bin\/prlimit.*absolute.*executable.*util-linux prlimit/iu,
+    ),
+  });
+  if (availability.status !== "unavailable")
+    throw new Error("Expected an unavailable limiter");
   const result = await provider.execute({
     operation: "inspect_pcap_capture",
     input: { path: "/not-opened/capture.pcap" },
@@ -480,6 +488,7 @@ it("names the prlimit selection when the Linux limiter is unusable", async () =>
   });
   expect(projected.message).toContain("must be absolute");
   expect(projected.message).toContain("Check that REA_TSHARK_PRLIMIT_COMMAND");
+  expect(projected.remediation.action).toBe(availability.remediation);
 });
 
 it("rejects directory and non-prlimit selections before opening the capture", async () => {
@@ -918,7 +927,6 @@ it.each([false, true])(
       input: { path },
     });
     try {
-      expect(result.ok).toBe(false);
       if (result.ok) throw new Error("Cleanup failure cannot return success");
       expect(projectAnalysisError(result.error)).toMatchObject({
         code: "cleanup_incomplete",

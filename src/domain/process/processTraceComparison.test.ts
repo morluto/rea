@@ -15,9 +15,13 @@ import {
 
 import { compareProcessCaptures } from "./processComparison.js";
 import {
-  compareProcessTraces,
+  evaluateProcessTraceComparison,
   processTraceOutcomesDiffer,
 } from "./processTraceComparison.js";
+
+const compareProcessTraces = (
+  ...args: Parameters<typeof evaluateProcessTraceComparison>
+) => evaluateProcessTraceComparison(...args).result;
 
 const traced = (
   left: ReturnType<typeof capture>,

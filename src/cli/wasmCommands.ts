@@ -7,6 +7,7 @@ import { z } from "incur";
 import { wasmArtifactModule } from "../composition/wasm.js";
 import { logCliCommand } from "../cliLogging.js";
 import type { Logger } from "pino";
+import { cliDecimalField } from "./options.js";
 import type { CliInstance } from "./types.js";
 import { withCommandCancellation } from "./commandCancellation.js";
 import { absoluteCallerPath } from "../filesystem/callerPath.js";
@@ -71,7 +72,9 @@ export const registerWasmCommands = (
       path: localPathStringSchema.describe("Local WASM artifact"),
     }),
     options: z.object({
-      commandTimeoutMs: inspectWasmArtifactInputSchema.shape.command_timeout_ms,
+      commandTimeoutMs: cliDecimalField(
+        inspectWasmArtifactInputSchema.shape.command_timeout_ms,
+      ),
       glue_paths: wasmArtifactPathsSchema(localPathStringSchema)
         .optional()
         .describe("Selected local JavaScript glue paths"),
@@ -104,6 +107,17 @@ export const registerWasmCommands = (
             "wabt-artifact",
             "inspect_wasm_artifact",
             signal,
+            options.glue_paths === undefined &&
+              options.candidate_paths === undefined
+              ? undefined
+              : {
+                  ...(options.glue_paths === undefined
+                    ? {}
+                    : { glue_paths: options.glue_paths }),
+                  ...(options.candidate_paths === undefined
+                    ? {}
+                    : { candidate_paths: options.candidate_paths }),
+                },
           ).then(projectCliAnalysisResult),
         ),
       ),

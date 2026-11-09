@@ -391,12 +391,7 @@ const commandFailure = (
     primary = new AnalysisTimeoutError(operation, ms, {
       ...details,
       userMessage: `kuna ${subcommand} did not finish within ${setting} (${String(ms)} ms).`,
-      // The same run takes as long again, so only a longer deadline helps.
-      remediationAction: `Raise ${setting} in the environment that starts REA, then restart REA; it reads Kuna settings when it starts.${
-        subcommand === "decompile"
-          ? " Within a session, pseudocode is also read from the project export once it finishes."
-          : ""
-      }`,
+      remediationAction: `Raise ${setting} in the environment that starts REA, then restart REA; it reads Kuna settings when it starts.`,
     });
   }
   // The same input overflows the same fixed buffer; waiting cannot help.

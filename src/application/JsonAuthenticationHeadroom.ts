@@ -6,6 +6,18 @@ import { err, ok, type Result } from "../domain/result.js";
 /** Authentication clones parsed JSON and hashes its canonical commitment. */
 const AUTHENTICATION_COPIES = 2;
 
+/** Incremental storage of a string or null appended to an already measured array. */
+export const estimateJsonArrayScalarEntry = (
+  value: string | null,
+  hasPrevious: boolean,
+): { valueBytes: number; serializedUtf16Bytes: number } => ({
+  valueBytes: 16 + (value === null ? 16 : 64 + value.length * 2),
+  serializedUtf16Bytes:
+    ((value === null ? 4 : jsonStringCodeUnits(value)) +
+      (hasPrevious ? 1 : 0)) *
+    2,
+});
+
 /**
  * Parsed storage and optional UTF-16 serialization work. A bounded value scan
  * returns only a lower bound after exceeding maximumValueBytes.
@@ -77,11 +89,20 @@ export const requireAuthenticationHeadroom = (
     readonly path: string;
     readonly description: string;
     readonly availableBytes?: number;
+    readonly additional?: {
+      readonly valueBytes: number;
+      readonly serializedUtf16Bytes: number;
+    };
   },
 ): Result<void, AnalysisResourceConstraintError> => {
   const availableBytes =
     options.availableBytes ?? getHeapStatistics().total_available_size;
-  const { valueBytes, serializedUtf16Bytes } = estimateJsonStorage(value);
+  const estimate = estimateJsonStorage(value);
+  const valueBytes =
+    estimate.valueBytes + (options.additional?.valueBytes ?? 0);
+  const serializedUtf16Bytes =
+    estimate.serializedUtf16Bytes +
+    (options.additional?.serializedUtf16Bytes ?? 0);
   // Canonical hashing and manifest normalization can still encode scalars or
   // metadata; account for their escaped representations before allocating them.
   const requiredBytes =

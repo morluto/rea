@@ -6,12 +6,14 @@ import { silentLogger } from "../logger.js";
 import { ghidraProfileInstallationHost as host } from "./GhidraInstallation.fixture.js";
 import { GhidraProvider } from "./GhidraProvider.js";
 
-// Digests commit to the current shared policy, including the instruction status
-// revision that prevents reuse of snapshots with the previous ambiguous result.
+// Digests commit to the current shared policy, including the instruction
+// status, load-image relocation-symbol, procedure search, byte-search and
+// bit-field base-type and inventory-search revisions that prevent reuse of snapshots with earlier
+// results.
 const RAW_DIGESTS = {
-  "6502": "bf79f425a94feb3d4150b6fe31f446dfb299af974c123cf3d4eaebdfe02319d6",
+  "6502": "2878a9daeb48e08755a5a840044a9f1c9f19784b92d6c08c1d27eca5b27d675a",
   "x86-disabled-analyzer":
-    "a89f116ac233a91a8a7fae5e7a24cc72126ee1c33219c79bb20e95cc440b2fae",
+    "480aa8cac604f14abbb6e6fc909378faa27b44a06fd36f3db6a8c67248277980",
 } as const;
 
 const configFor = (environment: NodeJS.ProcessEnv) => {
@@ -46,7 +48,14 @@ describe("raw-binary analysis profile digest", () => {
       load_image_evidence: "independent-raw-mapping-context-v4",
       load_image_observations:
         "source-mappings-entry-context-relocation-symbol-v3",
-      instruction_status: "unlisted-address-without-decode-v1",
+      instruction_status: "unlisted-and-containing-code-data-v3",
+      inventory_search_projection: "provider-inventory-facts-v1",
+      value_flow_effect_scope: "pcode-load-store-explicit-v1",
+      byte_search_boundary: "contiguous-eligible-initialized-blocks-v1",
+      byte_search_coverage: "separate-loaded-overlays-v1",
+      data_type_observations: "bit-field-base-and-lookup-v1",
+      instruction_references:
+        "exact-address-incoming-without-synthetic-entry-v3",
       analyzer_preset: "ghidra-default",
     });
   });
@@ -66,6 +75,9 @@ describe("raw-binary analysis profile digest", () => {
       RAW_DIGESTS["x86-disabled-analyzer"],
     );
     expect(resolved.value.profile?.parameters).toMatchObject({
+      inventory_search_projection: "provider-inventory-facts-v1",
+      value_flow_effect_scope: "pcode-load-store-explicit-v1",
+      byte_search_coverage: "separate-loaded-overlays-v1",
       analysis_options: {
         disabled_analyzers: ["Aggressive Instruction Finder"],
       },
