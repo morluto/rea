@@ -32,6 +32,16 @@ it("keeps a captured file URL without appending the same document", () => {
   ).toEqual({ argv, opens: { kind: "captured" } });
 });
 
+it("retargets a file URL with repeated slashes under the captured home", () => {
+  const command = launchCommand(
+    ["app", "file:///home//ada/Documents/poster%20one.svg?mode=edit#page"],
+    HOME,
+    HOME,
+  );
+  expect(command[2]).toContain("/Documents/poster%20one.svg?mode=edit#page");
+  expect(command[2]).not.toContain("/home//ada");
+});
+
 it("recognizes a captured relative filename containing a colon", () => {
   const argv = ["app", "Budget:2026.svg"];
   expect(

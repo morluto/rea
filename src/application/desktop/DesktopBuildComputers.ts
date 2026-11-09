@@ -245,7 +245,7 @@ const withSeededLocks = async (
   if (
     source.kind !== "bundle" ||
     !(cause instanceof ComputerStartFailure) ||
-    !NOT_READY.test(cause.message)
+    (cause.stage !== "readiness" && !NOT_READY.test(cause.message))
   )
     return cause;
   const locks = await seededLockFiles(source.path);
@@ -255,6 +255,7 @@ const withSeededLocks = async (
         `${cause.message} ${seededLockStartNotice(locks)}`,
         cause.remediation,
         cause.cause === undefined ? undefined : { cause: cause.cause },
+        cause.stage,
       );
 };
 
