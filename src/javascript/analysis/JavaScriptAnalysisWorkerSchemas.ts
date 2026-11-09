@@ -329,6 +329,7 @@ const electron = z
             z.strictObject({
               kind: z.literal("candidates"),
               loader: z.literal("dlopen").exactOptional(),
+              lookup: z.enum(["commonjs", "exact-file"]).exactOptional(),
               resolution_context: pathContext,
               candidates: strings,
               resolution_base_path: z.string().exactOptional(),

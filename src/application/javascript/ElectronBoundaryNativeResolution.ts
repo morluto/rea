@@ -315,6 +315,14 @@ type CandidateNativeResolution = Extract<
   { readonly kind: "candidates" }
 >;
 
+const candidateRuntimePathKind = (
+  resolution: CandidateNativeResolution,
+): "exact-file" | "node-entrypoint" =>
+  resolution.lookup === "exact-file" ||
+  (resolution.lookup === undefined && resolution.loader === "dlopen")
+    ? "exact-file"
+    : "node-entrypoint";
+
 const resolveCandidateSingleOutcome = (
   input: ElectronNativeAddonResolverInput,
   sourcePath: string,
@@ -339,7 +347,7 @@ const resolveCandidateSingleOutcome = (
         sourcePath: baseSourcePath,
         context: "filesystem-expression",
         moduleKind: finding.module_kind,
-        runtimePathKind: "exact-file",
+        runtimePathKind: candidateRuntimePathKind(resolution),
         ...(resolution.loader === undefined
           ? {}
           : { loader: resolution.loader }),
@@ -476,7 +484,7 @@ const resolveAsarUnpackedFinding = (
         sourcePath,
         context: "filesystem-expression",
         moduleKind: finding.module_kind,
-        runtimePathKind: "exact-file",
+        runtimePathKind: candidateRuntimePathKind(resolution),
         ...(resolution.loader === undefined
           ? {}
           : { loader: resolution.loader }),
@@ -543,7 +551,7 @@ const resolveSinglePathOutcome = (
     readonly sourcePath: string;
     readonly context: "module-specifier" | "filesystem-expression";
     readonly moduleKind?: "import" | "require";
-    readonly runtimePathKind?: "exact-file";
+    readonly runtimePathKind?: "exact-file" | "node-entrypoint";
     readonly loader?: "dlopen";
   },
 ): SinglePathResolutionOutcome => {
@@ -590,7 +598,7 @@ const resolveSinglePath = (
     readonly sourcePath: string;
     readonly context: "module-specifier" | "filesystem-expression";
     readonly moduleKind?: "import" | "require";
-    readonly runtimePathKind?: "exact-file";
+    readonly runtimePathKind?: "exact-file" | "node-entrypoint";
     readonly loader?: "dlopen";
   },
 ): string | undefined => {

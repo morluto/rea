@@ -207,6 +207,7 @@ export const resolveDlopenCall = (
     resolution: {
       kind: "candidates",
       loader: "dlopen",
+      lookup: "exact-file",
       resolution_context: "filesystem-expression",
       // Relative/absolute literal strings in process.dlopen depend on cwd or
       // host mount layout unless anchored to the source file's directory.
@@ -356,6 +357,7 @@ const resolveDlopenRequireResolve = (
         resolution: {
           kind: "candidates",
           loader: "dlopen",
+          lookup: "commonjs",
           resolution_context: "filesystem-expression",
           candidates: expanded.candidates,
           ...(expanded.asarUnpacked === undefined
@@ -393,6 +395,7 @@ const resolveDlopenRequireResolve = (
         resolution: {
           kind: "candidates",
           loader: "dlopen",
+          lookup: "commonjs",
           resolution_context: "filesystem-expression",
           candidates: rebasedCandidates,
           asar_unpacked: true,
@@ -407,6 +410,7 @@ const resolveDlopenRequireResolve = (
       resolution: {
         kind: "candidates",
         loader: "dlopen",
+        lookup: "commonjs",
         resolution_context: "filesystem-expression",
         candidates: expanded.candidates.map((candidate) =>
           posix.join(searchOptions.directory, candidate),
@@ -423,6 +427,7 @@ const resolveDlopenRequireResolve = (
         ? {
             kind: "candidates",
             loader: "dlopen",
+            lookup: "commonjs",
             resolution_context: "filesystem-expression",
             candidates: expanded.candidates,
             ...(expanded.asarUnpacked === undefined
@@ -774,6 +779,7 @@ const resolveRequireNativeCall = (
       expanded.base === "source-directory"
         ? {
             kind: "candidates",
+            lookup: "commonjs",
             resolution_context: "filesystem-expression",
             candidates: expanded.candidates,
             ...(expanded.asarUnpacked === undefined

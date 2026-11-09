@@ -233,6 +233,7 @@ export type ElectronNativeAddonResolution =
   | {
       readonly kind: "candidates";
       readonly loader?: "dlopen";
+      readonly lookup?: "commonjs" | "exact-file";
       readonly resolution_context: JavaScriptStaticPathContext;
       readonly candidates: readonly string[];
       readonly resolution_base_path?: string;

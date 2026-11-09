@@ -399,6 +399,7 @@ const resolutionKey = (
   return [
     "candidates",
     resolution.loader ?? null,
+    resolution.lookup ?? null,
     resolution.resolution_context,
     resolution.candidates,
     resolution.resolution_base_path ?? null,

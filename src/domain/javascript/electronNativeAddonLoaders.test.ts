@@ -149,6 +149,7 @@ describe("native addon dlopen and host-axis template recovery", () => {
           resolution: {
             kind: "candidates",
             loader: "dlopen",
+            lookup: "exact-file",
             resolution_context: "filesystem-expression",
             candidates: ["native/bridge.node"],
           },
@@ -169,6 +170,7 @@ describe("native addon dlopen and host-axis template recovery", () => {
           resolution: {
             kind: "candidates",
             loader: "dlopen",
+            lookup: "exact-file",
             resolution_context: "filesystem-expression",
             candidates: [],
           },
@@ -282,6 +284,7 @@ describe("native addon path proofs, mutation guards, and projection budgets", ()
           specifier: "native/bridge-${arch}.node",
           resolution: {
             kind: "candidates",
+            lookup: "commonjs",
             resolution_context: "filesystem-expression",
             candidates: [
               "native/bridge-arm64.node",
@@ -294,6 +297,7 @@ describe("native addon path proofs, mutation guards, and projection budgets", ()
           specifier: "native/addon.node",
           resolution: {
             kind: "candidates",
+            lookup: "commonjs",
             resolution_context: "filesystem-expression",
             candidates: ["native/addon.node"],
           },
@@ -316,6 +320,7 @@ describe("native addon path proofs, mutation guards, and projection budgets", ()
         specifier: "./native dir/${platform}/space addon.node",
         resolution: {
           kind: "candidates",
+          lookup: "commonjs",
           resolution_context: "filesystem-expression",
           candidates: [
             "./native dir/darwin/space addon.node",
@@ -465,6 +470,7 @@ it("rejects global process loaders/axes after node:process alias patches and han
       resolution: {
         kind: "candidates",
         loader: "dlopen",
+        lookup: "exact-file",
         resolution_context: "filesystem-expression",
         candidates: [],
       },

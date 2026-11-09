@@ -688,10 +688,14 @@ it("stops unpacked fallback when packed app.asar resolves a non-native module wh
   const appRoot = join(root, "app");
   const nestedAsar = join(appRoot, "resources/app.asar");
   const decoyUnpackedBytes = "loose-unpacked-decoy-never-loaded-by-node";
+  const decoyAnchoredBytes =
+    "loose-unpacked-anchored-decoy-shadowed-by-packed-js";
   const decoyDarwinUnpackedBytes =
     "loose-unpacked-darwin-decoy-shadowed-by-packed-js";
   const genuineLinuxUnpackedBytes =
     "loose-unpacked-genuine-miss-linux-addon-bytes";
+  const directDlopenUnpackedBytes =
+    "loose-unpacked-direct-dlopen-exact-file-bytes";
 
   await writeFixtureFiles(asarSource, {
     "package.json": JSON.stringify({
@@ -699,12 +703,20 @@ it("stops unpacked fallback when packed app.asar resolves a non-native module wh
       main: "index.cjs",
     }),
     "index.cjs": [
+      'const path = require("node:path");',
       'const { ipcMain } = require("electron");',
       'const packedJs = require("./addon.node");',
+      'const anchoredJs = require(path.join(__dirname, "anchored.node"));',
+      "const dlopenResolvedHolder = { exports: {} };",
+      'process.dlopen(dlopenResolvedHolder, require.resolve(path.join(__dirname, "anchored.node")));',
+      "const dlopenDirectHolder = { exports: {} };",
+      'process.dlopen(dlopenDirectHolder, path.join(__dirname, "direct.node"));',
       "const platformAddon = require(`./plat-${process.platform}.node`);",
-      'ipcMain.handle("asar:check", () => [packedJs, platformAddon]);',
+      'ipcMain.handle("asar:check", () => [packedJs, anchoredJs, dlopenResolvedHolder.exports, dlopenDirectHolder.exports, platformAddon]);',
     ].join("\n"),
     "addon.node.js": "module.exports = { mockedInJs: true };",
+    "anchored.node.js": "module.exports = { anchoredJsShim: true };",
+    "direct.node.js": "module.exports = { ignoredByDirectDlopen: true };",
     "plat-darwin.node.js": "module.exports = { darwinJsShim: true };",
   });
   await mkdir(join(appRoot, "resources"), { recursive: true });
@@ -717,6 +729,8 @@ it("stops unpacked fallback when packed app.asar resolves a non-native module wh
     }),
     "main.cjs": 'require("./resources/app.asar/index.cjs");\n',
     "resources/app.asar.unpacked/addon.node": decoyUnpackedBytes,
+    "resources/app.asar.unpacked/anchored.node": decoyAnchoredBytes,
+    "resources/app.asar.unpacked/direct.node": directDlopenUnpackedBytes,
     "resources/app.asar.unpacked/plat-darwin.node": decoyDarwinUnpackedBytes,
     "resources/app.asar.unpacked/plat-linux.node": genuineLinuxUnpackedBytes,
   });
@@ -730,8 +744,8 @@ it("stops unpacked fallback when packed app.asar resolves a non-native module wh
     analyzed.value.normalized_result,
   );
   expect(parsed.summary).toMatchObject({
-    native_addon_bindings: 2,
-    resolved_native_addon_bindings: 1,
+    native_addon_bindings: 5,
+    resolved_native_addon_bindings: 2,
   });
 
   const traced = traceApplicationFeatureEvidence({
@@ -744,6 +758,14 @@ it("stops unpacked fallback when packed app.asar resolves a non-native module wh
         decoyUnpackedBytes,
       ),
       createSimulatedNativeEvidence(
+        join(appRoot, "resources/app.asar.unpacked/anchored.node"),
+        decoyAnchoredBytes,
+      ),
+      createSimulatedNativeEvidence(
+        join(appRoot, "resources/app.asar.unpacked/direct.node"),
+        directDlopenUnpackedBytes,
+      ),
+      createSimulatedNativeEvidence(
         join(appRoot, "resources/app.asar.unpacked/plat-darwin.node"),
         decoyDarwinUnpackedBytes,
       ),
@@ -754,7 +776,16 @@ it("stops unpacked fallback when packed app.asar resolves a non-native module wh
     ],
   });
   if (!traced.ok) throw traced.error;
-  expect(traced.value.result.native_handoffs).toMatchObject([
+  expect(
+    [...traced.value.result.native_handoffs].sort((left, right) =>
+      (left.artifact_path ?? "").localeCompare(right.artifact_path ?? ""),
+    ),
+  ).toMatchObject([
+    {
+      artifact_path: "resources/app.asar.unpacked/direct.node",
+      status: "evidence-linked",
+      artifact_sha256: sha256Hex(directDlopenUnpackedBytes),
+    },
     {
       artifact_path: "resources/app.asar.unpacked/plat-linux.node",
       status: "evidence-linked",
