@@ -553,3 +553,94 @@ it("preserves exact app.asar replacement scope and bindings .node suffix normali
     ]),
   );
 });
+
+it("admits normalized sequence, generic invocation, and named dlopen callables", () => {
+  const cjs = analyzeCommonJsStaticFixture(`
+    const path = require("node:path");
+    const load = require("node-gyp-build");
+    const bindings = require("bindings");
+    const { open } = (0, require)("./addon.node");
+    const gypAddon = (0, load)(__dirname);
+    const reflectedGyp = Reflect.apply(load, null, [path.join(__dirname, "sub")]);
+    const helperAddon = (0, bindings)("native_mod");
+    (0, process.dlopen)(module, path.join(__dirname, "seq.node"));
+    void open, gypAddon, reflectedGyp, helperAddon;
+  `);
+  expect(cjs.electron.native_addon_bindings).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({
+        specifier: "./addon.node",
+        binding_kind: "require",
+        members: ["open"],
+        namespace_access: false,
+      }),
+      expect.objectContaining({
+        specifier: "node-gyp-build:.",
+        binding_kind: "require",
+        resolution: { kind: "node-gyp-build", directory: "." },
+      }),
+      expect.objectContaining({
+        specifier: "node-gyp-build:sub",
+        binding_kind: "require",
+        resolution: { kind: "node-gyp-build", directory: "sub" },
+      }),
+      expect.objectContaining({
+        specifier: "native_mod.node",
+        binding_kind: "require",
+        resolution: {
+          kind: "bindings",
+          addon_name: "native_mod.node",
+          module_root: null,
+        },
+      }),
+      expect.objectContaining({
+        specifier: "seq.node",
+        binding_kind: "re-export",
+        resolution: {
+          kind: "candidates",
+          loader: "dlopen",
+          lookup: "exact-file",
+          resolution_context: "filesystem-expression",
+          candidates: ["seq.node"],
+        },
+      }),
+    ]),
+  );
+
+  const esm = analyzeJavaScriptStaticSource(`
+    import path from "node:path";
+    import { dlopen, dlopen as openNative } from "node:process";
+    import load from "node-gyp-build";
+    const mod = { exports: {} };
+    dlopen(mod, path.join(import.meta.dirname, "named.node"));
+    (0, openNative)(mod, path.join(import.meta.dirname, "aliased.node"));
+    export const addon = (0, load)(import.meta.dirname);
+  `);
+  expect(esm.electron.native_addon_bindings).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({
+        specifier: "named.node",
+        binding_kind: "require",
+        resolution: expect.objectContaining({
+          kind: "candidates",
+          loader: "dlopen",
+          candidates: ["named.node"],
+        }),
+      }),
+      expect.objectContaining({
+        specifier: "aliased.node",
+        binding_kind: "require",
+        resolution: expect.objectContaining({
+          kind: "candidates",
+          loader: "dlopen",
+          candidates: ["aliased.node"],
+        }),
+      }),
+      expect.objectContaining({
+        specifier: "node-gyp-build:.",
+        binding_kind: "require",
+        resolution: { kind: "node-gyp-build", directory: "." },
+      }),
+    ]),
+  );
+});

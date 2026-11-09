@@ -24,14 +24,21 @@ import {
   isUnshadowedGlobal,
   semanticEffectTiming,
 } from "./javascriptSemanticMutationInitializers.js";
-import { semanticRequireCallAt } from "./javascriptSemanticRequireOrigin.js";
+import {
+  loaderInvocationInterop,
+  semanticRequireCallAt,
+} from "./javascriptSemanticRequireOrigin.js";
 import {
   resolveSemanticBindingState,
   semanticStableInitializer,
   type JavaScriptBindingIndex,
   type JavaScriptSemanticAnalysisState,
+  type JavaScriptSemanticBindingState,
 } from "./javascriptSemanticState.js";
-import { evaluateSemanticExpression } from "./javascriptSemanticValues.js";
+import {
+  evaluateSemanticExpression,
+  evaluateSemanticProvenance,
+} from "./javascriptSemanticValues.js";
 import { javaScriptRuntimeContext } from "./javascriptSourceParser.js";
 import {
   argumentNode,
@@ -92,44 +99,99 @@ export const isNativeSpecifier = (
   return path.toLowerCase().endsWith(".node");
 };
 
-const hasDlopenCalleeSyntax = (
-  call: t.CallExpression | t.OptionalCallExpression,
-): boolean => {
-  if (call.arguments.length < 2) return false;
-  const callee = unwrapJavaScriptExpression(call.callee).node;
-  if (!t.isMemberExpression(callee) && !t.isOptionalMemberExpression(callee))
+const unwrapFinalCallee = (node: t.Node): t.Node => {
+  let current = unwrapJavaScriptExpression(node).node;
+  while (t.isSequenceExpression(current)) {
+    const last = current.expressions.at(-1);
+    if (last === undefined) break;
+    current = unwrapJavaScriptExpression(last).node;
+  }
+  return current;
+};
+
+const isBoundCallExpression = (node: t.Node): boolean => {
+  const unwrapped = unwrapJavaScriptExpression(node).node;
+  if (!t.isCallExpression(unwrapped) && !t.isOptionalCallExpression(unwrapped))
     return false;
+  const inner = unwrapFinalCallee(unwrapped.callee);
   return (
-    semanticStaticPropertyKey(callee.property, callee.computed) === "dlopen"
+    (t.isMemberExpression(inner) || t.isOptionalMemberExpression(inner)) &&
+    semanticStaticPropertyKey(inner.property, inner.computed) === "bind"
   );
 };
 
-/** Fast syntax check for `*.dlopen(module, filename)` calls. */
+const bindingMayHoldProcessDlopen = (
+  binding: JavaScriptSemanticBindingState,
+  bindings: JavaScriptSemanticAnalysisState,
+): boolean => {
+  if (
+    binding.directOrigins.length === 0 &&
+    binding.referenceInitializers.length === 0
+  ) {
+    if (binding.initializers.length === 0) return false;
+    if (binding.initializers.length === 1) {
+      const init = unwrapJavaScriptExpression(
+        binding.initializers[0]!.node,
+      ).node;
+      if (t.isFunction(init) || t.isNewExpression(init)) return false;
+      if (isBoundCallExpression(init) || t.isObjectExpression(init))
+        return true;
+    }
+  }
+  return evaluateSemanticProvenance(binding, bindings).origins.some(
+    (origin) => origin.specifier.replace(/^node:/u, "") === "process",
+  );
+};
+
+const mayReferenceProcessDlopen = (
+  callee: t.Node,
+  bindings: JavaScriptSemanticAnalysisState,
+): boolean => {
+  if (t.isMemberExpression(callee) || t.isOptionalMemberExpression(callee)) {
+    const method = semanticStaticPropertyKey(callee.property, callee.computed);
+    if (method === "dlopen" || method === "call" || method === "apply")
+      return true;
+    if (!t.isIdentifier(callee.object)) return false;
+    const binding = resolveSemanticBindingState(
+      bindings,
+      callee.object,
+      callee.object.name,
+    );
+    return (
+      binding !== undefined && bindingMayHoldProcessDlopen(binding, bindings)
+    );
+  }
+  if (t.isIdentifier(callee)) {
+    const binding = resolveSemanticBindingState(bindings, callee, callee.name);
+    return (
+      binding !== undefined && bindingMayHoldProcessDlopen(binding, bindings)
+    );
+  }
+  if (t.isCallExpression(callee) || t.isOptionalCallExpression(callee))
+    return isBoundCallExpression(callee);
+  return t.isAssignmentExpression(callee);
+};
+
+/** Fast admission check for `process.dlopen` and `node:process` `dlopen` calls. */
 export const isDlopenCallCandidate = (
   node: t.Node | null | undefined,
-): node is t.CallExpression | t.OptionalCallExpression =>
-  (t.isCallExpression(node) || t.isOptionalCallExpression(node)) &&
-  hasDlopenCalleeSyntax(node);
+  bindings?: JavaScriptSemanticAnalysisState,
+): node is t.CallExpression | t.OptionalCallExpression => {
+  if (!t.isCallExpression(node) && !t.isOptionalCallExpression(node))
+    return false;
+  const callee = unwrapFinalCallee(node.callee);
+  if (t.isFunction(callee)) return false;
+  return bindings === undefined
+    ? !t.isSuper(callee) && !t.isImport(callee)
+    : mayReferenceProcessDlopen(callee, bindings);
+};
 
-/** Fast syntax check for value sites that may invoke a native addon loader. */
+/** Fast admission check for value sites that may invoke a native addon loader. */
 export const mayInvokeNativeLoader = (
   node: t.Node | null | undefined,
 ): boolean => {
   const call = nativeCallReceiver(node);
-  if (
-    call === undefined ||
-    call.arguments.length > 3 ||
-    hasDlopenCalleeSyntax(call)
-  )
-    return false;
-  const callee = unwrapJavaScriptExpression(call.callee).node;
-  return (
-    t.isIdentifier(callee) ||
-    t.isMemberExpression(callee) ||
-    t.isOptionalMemberExpression(callee) ||
-    t.isCallExpression(callee) ||
-    t.isOptionalCallExpression(callee)
-  );
+  return call !== undefined && !t.isFunction(unwrapFinalCallee(call.callee));
 };
 
 export const nativeCallReceiver = (
@@ -144,6 +206,43 @@ export const nativeCallReceiver = (
     : undefined;
 };
 
+const genericInvocationMemberChanged = (
+  node: t.CallExpression | t.OptionalCallExpression,
+  index: JavaScriptBindingIndex,
+): boolean => {
+  let member = unwrapFinalCallee(node.callee);
+  while (t.isMemberExpression(member) || t.isOptionalMemberExpression(member)) {
+    const key = semanticStaticPropertyKey(member.property, member.computed);
+    if (
+      (key === "call" || key === "apply") &&
+      t.isExpression(member.object) &&
+      index
+        .effectsForReferenceAt(node, member.object, [key])
+        .effects.some(
+          ({ kind, timing }) =>
+            timing !== "after" &&
+            (kind === "member-write" || kind === "escape"),
+        )
+    )
+      return true;
+    member = unwrapFinalCallee(member.object);
+  }
+  return false;
+};
+
+const dlopenInvocationAt = (
+  node: t.CallExpression | t.OptionalCallExpression,
+  bindings: JavaScriptSemanticAnalysisState,
+) => {
+  const interop = loaderInvocationInterop(bindings);
+  const invocation = interop.intrinsicInvocation(node, (callee) =>
+    isProvenProcessDlopen(callee, bindings)
+      ? ["process-dlopen"]
+      : interop.intrinsicPath(callee),
+  );
+  return invocation?.path[0] === "process-dlopen" ? invocation : undefined;
+};
+
 /** Resolve `process.dlopen(module, filename[, flags])` when `process.dlopen` is proven. */
 export const resolveDlopenCall = (
   node: t.CallExpression | t.OptionalCallExpression,
@@ -151,9 +250,18 @@ export const resolveDlopenCall = (
   index: JavaScriptBindingIndex,
 ): ResolvedDlopenCall | undefined => {
   const { bindings } = index;
-  if (!isProvenProcessDlopen(node.callee, bindings)) return undefined;
-  const rawModule = argumentNode(node.arguments[0]);
-  const rawFilename = argumentNode(node.arguments[1]);
+  const invocation = dlopenInvocationAt(node, bindings);
+  if (invocation === undefined) return undefined;
+  if (
+    invocation.kind === "opaque" ||
+    invocation.arguments === undefined ||
+    genericInvocationMemberChanged(node, index)
+  ) {
+    context.accumulator.unknownFindings += 1;
+    return undefined;
+  }
+  const rawModule = argumentNode(invocation.arguments[0]);
+  const rawFilename = argumentNode(invocation.arguments[1]);
   if (
     rawModule === undefined ||
     rawFilename === undefined ||
@@ -306,7 +414,7 @@ const resolveDlopenRequireResolve = (
   )
     return "not-require-resolve";
   if (resolvedCall.loader === "local") return undefined;
-  const callee = unwrapJavaScriptExpression(filenameExpr.callee).node;
+  const callee = unwrapFinalCallee(filenameExpr.callee);
   const resolveMemberChanged =
     resolvedCall.memberUnproven === true ||
     ((t.isMemberExpression(callee) || t.isOptionalMemberExpression(callee)) &&
@@ -467,7 +575,7 @@ export const resolveNativeLoaderCall = (
   }
   if (
     (!t.isCallExpression(node) && !t.isOptionalCallExpression(node)) ||
-    hasDlopenCalleeSyntax(node)
+    dlopenInvocationAt(node, bindings) !== undefined
   )
     return undefined;
   const access: NativeMemberAccess = {
@@ -475,23 +583,34 @@ export const resolveNativeLoaderCall = (
     namespaceAccess: !hasMemberAccess,
     dynamicMemberAccess: hasMemberAccess && member === null,
   };
-  const helper = provenHelperPackage(node.callee, bindings);
-  if (helper === "node-gyp-build")
-    return resolveNodeGypBuildCall(
-      node,
-      context,
-      bindings,
-      hasMemberAccess,
-      access,
-    );
-  if (helper === "bindings")
-    return resolveBindingsHelperCall(
-      node,
-      context,
-      index,
-      hasMemberAccess,
-      access,
-    );
+  const helper = helperInvocationAt(node, bindings);
+  if (helper !== undefined) {
+    if (
+      helper.invocation.kind === "opaque" ||
+      helper.invocation.arguments === undefined ||
+      genericInvocationMemberChanged(node, index)
+    ) {
+      context.accumulator.unknownFindings += 1;
+      return undefined;
+    }
+    return helper.pkg === "node-gyp-build"
+      ? resolveNodeGypBuildCall(
+          node,
+          helper.invocation.arguments,
+          context,
+          bindings,
+          hasMemberAccess,
+          access,
+        )
+      : resolveBindingsHelperCall(
+          node,
+          helper.invocation.arguments,
+          context,
+          index,
+          hasMemberAccess,
+          access,
+        );
+  }
   return resolveRequireNativeCall(
     node,
     context,
@@ -516,8 +635,27 @@ const provenHelperPackage = (
   return undefined;
 };
 
+const helperInvocationAt = (
+  node: t.CallExpression | t.OptionalCallExpression,
+  bindings: JavaScriptSemanticAnalysisState,
+) => {
+  const interop = loaderInvocationInterop(bindings);
+  const invocation = interop.intrinsicInvocation(node, (callee) => {
+    const pkg = provenHelperPackage(callee, bindings);
+    return pkg !== undefined
+      ? ["native-helper", pkg]
+      : interop.intrinsicPath(callee);
+  });
+  const pkg = invocation?.path[1];
+  return invocation?.path[0] === "native-helper" &&
+    (pkg === "node-gyp-build" || pkg === "bindings")
+    ? { pkg, invocation }
+    : undefined;
+};
+
 const resolveNodeGypBuildCall = (
   node: t.CallExpression | t.OptionalCallExpression,
+  callArguments: readonly t.CallExpression["arguments"][number][],
   context: JavaScriptFindingContext,
   bindings: JavaScriptSemanticAnalysisState,
   hasMemberAccess: boolean,
@@ -525,11 +663,11 @@ const resolveNodeGypBuildCall = (
 ): ResolvedNativeLoaderCall | undefined => {
   // Without an explicit directory argument, node-gyp-build resolves from
   // process.cwd() rather than the caller's module directory.
-  if (node.arguments.length !== 1 || t.isSpreadElement(node.arguments[0])) {
+  if (callArguments.length !== 1 || t.isSpreadElement(callArguments[0])) {
     context.accumulator.unknownFindings += 1;
     return undefined;
   }
-  const arg0 = argumentNode(node.arguments[0]);
+  const arg0 = argumentNode(callArguments[0]);
   if (arg0 === undefined) {
     context.accumulator.unknownFindings += 1;
     return undefined;
@@ -569,17 +707,18 @@ const resolveNodeGypBuildCall = (
 
 const resolveBindingsHelperCall = (
   node: t.CallExpression | t.OptionalCallExpression,
+  callArguments: readonly t.CallExpression["arguments"][number][],
   context: JavaScriptFindingContext,
   index: JavaScriptBindingIndex,
   hasMemberAccess: boolean,
   access: NativeMemberAccess,
 ): ResolvedNativeLoaderCall | undefined => {
   const { bindings } = index;
-  if (node.arguments.length !== 1 || t.isSpreadElement(node.arguments[0])) {
+  if (callArguments.length !== 1 || t.isSpreadElement(callArguments[0])) {
     context.accumulator.unknownFindings += 1;
     return undefined;
   }
-  const arg0 = argumentNode(node.arguments[0]);
+  const arg0 = argumentNode(callArguments[0]);
   if (arg0 === undefined) {
     context.accumulator.unknownFindings += 1;
     return undefined;
@@ -654,31 +793,12 @@ const resolveBindingsHelperCall = (
         moduleRootUnpackedScope = resolved.asarUnpackedScope;
       }
     } else if (key === "path") {
-      const valueNode = unwrapJavaScriptExpression(prop.value).node;
-      if (isUnshadowedGlobal(valueNode, bindings, "undefined")) {
-        pathOnly = false;
-      } else if (
-        t.isObjectExpression(valueNode) ||
-        t.isArrayExpression(valueNode) ||
-        t.isFunction(valueNode)
-      ) {
-        pathOnly = true;
-      } else if (
-        (t.isIdentifier(valueNode) ||
-          t.isMemberExpression(valueNode) ||
-          t.isOptionalMemberExpression(valueNode)) &&
-        index.referenceMayHaveChangedAt(node, valueNode)
-      ) {
+      const evaluatedPath = evaluateBindingsPathOption(prop.value, node, index);
+      if (evaluatedPath === undefined) {
         context.accumulator.unknownFindings += 1;
         return undefined;
-      } else {
-        const evaluated = evaluateSemanticExpression(valueNode, bindings, node);
-        if (evaluated.status !== "literal") {
-          context.accumulator.unknownFindings += 1;
-          return undefined;
-        }
-        pathOnly = Boolean(evaluated.value);
       }
+      pathOnly = evaluatedPath;
     } else {
       context.accumulator.unknownFindings += 1;
       return undefined;
@@ -712,6 +832,30 @@ const resolveBindingsHelperCall = (
         : { asar_unpacked_scope: moduleRootUnpackedScope }),
     },
   };
+};
+
+const evaluateBindingsPathOption = (
+  rawValue: t.Node,
+  site: t.Node,
+  index: JavaScriptBindingIndex,
+): boolean | undefined => {
+  const valueNode = unwrapJavaScriptExpression(rawValue).node;
+  if (isUnshadowedGlobal(valueNode, index.bindings, "undefined")) return false;
+  if (
+    t.isObjectExpression(valueNode) ||
+    t.isArrayExpression(valueNode) ||
+    t.isFunction(valueNode)
+  )
+    return true;
+  if (
+    (t.isIdentifier(valueNode) ||
+      t.isMemberExpression(valueNode) ||
+      t.isOptionalMemberExpression(valueNode)) &&
+    index.referenceMayHaveChangedAt(site, valueNode)
+  )
+    return undefined;
+  const evaluated = evaluateSemanticExpression(valueNode, index.bindings, site);
+  return evaluated.status === "literal" ? Boolean(evaluated.value) : undefined;
 };
 
 const resolveRequireNativeCall = (
@@ -945,7 +1089,9 @@ const isProvenProcessDlopen = (
   callee: t.Node,
   bindings: JavaScriptSemanticAnalysisState,
 ): boolean => {
-  if (isUnmodifiedGlobalProcessMember(callee, bindings, "dlopen")) return true;
+  const unwrapped = unwrapFinalCallee(callee);
+  if (isUnmodifiedGlobalProcessMember(unwrapped, bindings, "dlopen"))
+    return true;
   if (bindings.ambientWrites.covers(["global", "process", "dlopen"]))
     return false;
   const path = builtinDataEffectCallablePath(callee, bindings, [

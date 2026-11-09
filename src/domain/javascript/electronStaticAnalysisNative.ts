@@ -40,6 +40,7 @@ import type { JavaScriptReceiverIndex } from "./javascriptSemanticAnalysis.js";
 import {
   resolveSemanticBindingState,
   type JavaScriptBindingIndex,
+  type JavaScriptSemanticAnalysisState,
 } from "./javascriptSemanticState.js";
 import type { JavaScriptFindingContext } from "./javascriptStaticAnalysisState.js";
 
@@ -59,11 +60,12 @@ interface NativeBindingInput {
 export const inspectElectronNativeNode = (
   node: t.Node,
   context: JavaScriptFindingContext,
+  bindings?: JavaScriptSemanticAnalysisState,
 ): void => {
   if (t.isImportDeclaration(node)) inspectImport(node, context);
   else if (t.isExportNamedDeclaration(node)) inspectNamedExport(node, context);
   else if (t.isExportAllDeclaration(node)) inspectExportAll(node, context);
-  else if (isDlopenCallCandidate(node))
+  else if (isDlopenCallCandidate(node, bindings))
     context.accumulator.pendingNativeAddonBindings.push(node);
   else if (t.isVariableDeclarator(node) || t.isAssignmentExpression(node)) {
     const value = t.isVariableDeclarator(node) ? node.init : node.right;

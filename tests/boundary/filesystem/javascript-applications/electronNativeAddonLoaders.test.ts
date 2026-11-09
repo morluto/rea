@@ -793,3 +793,91 @@ it("stops unpacked fallback when packed app.asar resolves a non-native module wh
     },
   ]);
 });
+
+it("resolves native handoffs across sequence-wrapped callables and named node:process dlopen imports", async () => {
+  const appRoot = await createTestTempDirectory(
+    "rea-native-normalized-callables-",
+  );
+  const directBytes = "direct-seq-addon";
+  const gypBytes = "gyp-seq-addon";
+  const dlopenBytes = "named-dlopen-addon";
+
+  await writeFixtureFiles(appRoot, {
+    "package.json": JSON.stringify({
+      name: "normalized-callables-app",
+      main: "main.cjs",
+    }),
+    "main.cjs": `
+      const { ipcMain } = require("electron");
+      const { open } = (0, require)("./direct.node");
+      const load = require("node-gyp-build");
+      const { initGyp } = (0, load)(__dirname);
+      import("./esm-dlopen.mjs");
+      ipcMain.handle("native:test", () => [open, initGyp]);
+    `,
+    "esm-dlopen.mjs": `
+      import path from "node:path";
+      import { dlopen } from "node:process";
+      const mod = { exports: {} };
+      dlopen(mod, path.join(import.meta.dirname, "dlopened.node"));
+      export default mod.exports;
+    `,
+    "direct.node": directBytes,
+    "build/Release/addon.node": gypBytes,
+    "dlopened.node": dlopenBytes,
+  });
+
+  const analyzed = await analyzeJavaScriptApplication({
+    input_path: appRoot,
+    format: "directory",
+  });
+  if (!analyzed.ok) throw analyzed.error;
+  const parsed = javascriptApplicationAnalysisResultSchema.parse(
+    analyzed.value.normalized_result,
+  );
+  expect(parsed.summary).toMatchObject({
+    native_addon_bindings: 3,
+    resolved_native_addon_bindings: 3,
+  });
+
+  const traced = traceApplicationFeatureEvidence({
+    application: analyzed.value,
+    seed: { kind: "module", value: "main.cjs" },
+    direction: "outgoing",
+    native_observations: [
+      createSimulatedNativeEvidence(join(appRoot, "direct.node"), directBytes),
+      createSimulatedNativeEvidence(
+        join(appRoot, "build/Release/addon.node"),
+        gypBytes,
+      ),
+      createSimulatedNativeEvidence(
+        join(appRoot, "dlopened.node"),
+        dlopenBytes,
+      ),
+    ],
+  });
+  if (!traced.ok) throw traced.error;
+  expect(
+    [...traced.value.result.native_handoffs].sort((left, right) =>
+      (left.artifact_path ?? "").localeCompare(right.artifact_path ?? ""),
+    ),
+  ).toMatchObject([
+    {
+      artifact_path: "build/Release/addon.node",
+      status: "evidence-linked",
+      artifact_sha256: sha256Hex(gypBytes),
+      requested_exports: ["initGyp"],
+    },
+    {
+      artifact_path: "direct.node",
+      status: "evidence-linked",
+      artifact_sha256: sha256Hex(directBytes),
+      requested_exports: ["open"],
+    },
+    {
+      artifact_path: "dlopened.node",
+      status: "evidence-linked",
+      artifact_sha256: sha256Hex(dlopenBytes),
+    },
+  ]);
+});

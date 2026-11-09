@@ -4,6 +4,7 @@ import { inspectElectronBrowserNode } from "./electronStaticAnalysisBrowser.js";
 import { inspectElectronIpcNode } from "./electronStaticAnalysisIpc.js";
 import { inspectElectronNativeNode } from "./electronStaticAnalysisNative.js";
 import { inspectElectronProtocolNode } from "./electronStaticAnalysisProtocol.js";
+import type { JavaScriptSemanticAnalysisState } from "./javascriptSemanticState.js";
 import type { JavaScriptFindingContext } from "./javascriptStaticAnalysisState.js";
 import {
   electronCandidateAuthority,
@@ -16,10 +17,11 @@ import { range } from "./javascriptStaticAnalysisHelpers.js";
 export const inspectElectronStaticNode = (
   node: t.Node,
   context: JavaScriptFindingContext,
+  bindings?: JavaScriptSemanticAnalysisState,
 ): void => {
   inspectElectronBrowserNode(node, context);
   inspectElectronIpcNode(node, context);
-  inspectElectronNativeNode(node, context);
+  inspectElectronNativeNode(node, context, bindings);
   const path =
     t.isCallExpression(node) || t.isOptionalCallExpression(node)
       ? (electronCalleePath(node.callee, context) ??
