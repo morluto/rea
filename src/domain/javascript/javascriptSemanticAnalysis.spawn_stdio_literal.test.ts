@@ -1,0 +1,53 @@
+import { expect, it } from "vitest";
+
+import { analyzeJavaScriptSemantics } from "./javascriptSemanticAnalysis.js";
+
+/**
+ * `node:child_process` validates a literal `stdio` string before it creates anything, so a
+ * rejected value throws from the call itself and no child exists.
+ *
+ * Measured on Node 24.22.1: `"pipe"`, `"overlapped"`, `"inherit"` and `"ignore"` start a
+ * child, while `"ipc"`, `"PIPE"`, `"pipe "`, `"pipeline"`, `"stream"` and `"stdio"` throw
+ * `ERR_INVALID_ARG_VALUE`. The set is exact and case-sensitive. `fork` appends `"ipc"` to a
+ * string and splits it, so an empty string becomes the lone element `"ipc"`, which `fork`
+ * refuses — `spawn(..., {stdio: ""})` still starts a child.
+ */
+const spawnsFor = (body: string) =>
+  analyzeJavaScriptSemantics(
+    `import cp from "node:child_process";\nfunction g() { ${body}; }`,
+  ).childProcessSpawns;
+
+it.each([
+  [`cp.spawn("x", [], { stdio: "bad" })`],
+  [`cp.spawn("x", [], { stdio: "PIPE" })`],
+  [`cp.spawn("x", [], { stdio: "pipe " })`],
+  [`cp.spawn("x", [], { stdio: "ipc" })`],
+  [`cp.spawn("x", [], { stdio: "pipeline" })`],
+  [`cp.spawn("x", [], { stdio: "stdio" })`],
+  [`cp.fork("x", [], { stdio: "bad" })`],
+  [`cp.fork("x", [], { stdio: "" })`],
+  [`cp.execFile("x", [], { stdio: "bad" })`],
+] as const)("emits no spawn for a rejected stdio string: %s", (call) => {
+  expect(spawnsFor(call)).toEqual([]);
+});
+
+it.each([
+  [`cp.spawn("x", [], { stdio: "pipe" })`],
+  [`cp.spawn("x", [], { stdio: "overlapped" })`],
+  [`cp.spawn("x", [], { stdio: "inherit" })`],
+  [`cp.spawn("x", [], { stdio: "ignore" })`],
+  [`cp.spawn("x", [], { stdio: "" })`],
+  [`cp.fork("x", [], { stdio: "pipe" })`],
+  // `exec` spreads its options and validates none of them.
+  [`cp.exec("x", { stdio: "bad" })`],
+] as const)("keeps the spawn for an accepted stdio string: %s", (call) => {
+  expect(spawnsFor(call)).toHaveLength(1);
+});
+
+it.each([
+  // A binding is not a literal, so this file leaves the answer to the runtime.
+  [`const s = "bad"; cp.spawn("x", [], { stdio: s })`],
+  [`cp.spawn("x", [], { stdio: ["pipe"] })`],
+] as const)("leaves an undecided stdio undecided: %s", (call) => {
+  expect(spawnsFor(call)).toHaveLength(1);
+});
