@@ -317,6 +317,12 @@ describe("evaluateTaskChecks", () => {
           file: "Documents/photo.png",
           lines: ["x"],
         },
+        {
+          id: "gzip",
+          kind: "value_absent",
+          file: "Documents/bomb.gnumeric",
+          pointer: "/root/attributes/x",
+        },
       ] as never,
       new Map(Object.entries(CHECK_VIEWS)),
     );
@@ -328,6 +334,7 @@ describe("evaluateTaskChecks", () => {
       ["cut", false, true],
       ["shown", false, undefined],
       ["binary", false, undefined],
+      ["gzip", false, true],
     ]);
   });
 });
@@ -521,6 +528,77 @@ describe("evaluateTaskChecks text on a cut view", () => {
       cut,
       ["page.xml", "/root/children/1"],
     );
+  });
+});
+
+describe("evaluateTaskChecks numeric element text", () => {
+  const grade = (file: string, pointer: string, value: number) =>
+    evaluateTaskChecks(
+      [
+        {
+          id: "c",
+          kind: "value_equals",
+          file,
+          pointer,
+          value,
+          tolerance: 0.001,
+        } as never,
+      ],
+      new Map(Object.entries(CHECK_VIEWS)),
+    )[0];
+
+  it("accepts an equivalent or split decimal on a whole cell, and refuses a cut cell or a JSON object", () => {
+    const cell = (row: string) =>
+      `/root/children/[name=Cell][@Row=${row}][@Col=3]`;
+    expect(grade("Documents/budget.xml", cell("2"), 437.8)?.passed).toBe(true);
+    expect(grade("Documents/budget.xml", cell("5"), 437.8)?.passed).toBe(true);
+    expect(grade("Documents/budget.xml", cell("5"), 437.89)?.passed).toBe(
+      false,
+    );
+    expect(
+      grade("Documents/budget.xml", cell("6"), 400)?.undecided,
+    ).toBeUndefined();
+    expect(grade("Documents/cut-number.xml", "/root", 437.8)).toMatchObject({
+      passed: false,
+      undecided: true,
+    });
+    const shaped = grade(".config/notes/settings.json", "/shaped", 437.8);
+    expect(shaped?.passed).toBe(false);
+    expect(shaped?.undecided).toBeUndefined();
+    expect(shaped?.description).toContain("not a number");
+  });
+
+  it("decides a numeral text node in a cut view, because that node was kept whole", () => {
+    const [outcome] = evaluateTaskChecks(
+      [
+        {
+          id: "c",
+          kind: "value_equals",
+          file: "n.xml",
+          pointer: "/root/children/0",
+          value: 437.8,
+          tolerance: 0.001,
+        } as never,
+      ],
+      new Map([
+        [
+          "n.xml",
+          {
+            format: "xml",
+            view: {
+              root: {
+                name: "Cell",
+                attributes: {},
+                children: ["437.80"],
+              },
+              truncated: true,
+            },
+          },
+        ],
+      ]),
+    );
+    expect(outcome?.passed).toBe(true);
+    expect(outcome?.undecided).toBeUndefined();
   });
 });
 

@@ -6,6 +6,11 @@ directory owns one `spec.md`, one `plan.md` and one `tasks.md`.
 Follow [documentation ownership and authoring](../development/documentation.md#feature-lifecycle)
 for the specification lifecycle, roadmap granularity and producer-owned contracts.
 
+## Artifacts
+
+- [Deno compile executable inventory and extraction](artifacts/deno-standalone/spec.md)
+  ([plan](artifacts/deno-standalone/plan.md), [tasks](artifacts/deno-standalone/tasks.md))
+
 ## Documentation
 
 - [Organization](documentation/organization/spec.md)
@@ -15,3 +20,7 @@ for the specification lifecycle, roadmap granularity and producer-owned contract
 
 - [Go static string-header literal recovery](native/go-string-literals/spec.md)
   ([plan](native/go-string-literals/plan.md), [tasks](native/go-string-literals/tasks.md))
+- [ELF unwind function ranges](native/elf-unwind-ranges/spec.md)
+  ([plan](native/elf-unwind-ranges/plan.md), [tasks](native/elf-unwind-ranges/tasks.md))
+- [Linux kernel build config](native/kernel-build-config/spec.md)
+  ([plan](native/kernel-build-config/plan.md), [tasks](native/kernel-build-config/tasks.md))
