@@ -361,6 +361,7 @@ cliTest(
       const directory = join(root, scenario.name);
       await mkdir(directory);
       await writeFile(join(directory, "main.js"), source);
+      await writeFile(join(directory, "package.json"), '{"type":"commonjs"}');
       const runtime = [false, true].map((flag) =>
         runtimeChannels(source, flag),
       );
@@ -456,6 +457,7 @@ cliTest(
       const directory = join(root, name);
       await mkdir(directory);
       await writeFile(join(directory, "main.js"), source);
+      await writeFile(join(directory, "package.json"), '{"type":"commonjs"}');
       const response = await call("analyze_javascript_application", {
         input_path: directory,
         format: "directory",
