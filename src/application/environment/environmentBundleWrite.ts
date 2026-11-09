@@ -6,7 +6,9 @@ import { Readable } from "node:stream";
 import {
   AnalysisInputError,
   AnalysisAccessDeniedError,
+  AnalysisArtifactChangedError,
 } from "../../domain/analysisErrorCore.js";
+import type { EnvironmentBundlePublication } from "../../domain/environmentBundleExport.js";
 import { AnalysisCleanupLease } from "../../artifacts/AnalysisCleanupLease.js";
 import { ArtifactFileCleanupFailure } from "../../artifacts/ArtifactFileOperation.js";
 import { RegularFileCleanupFailure } from "../../filesystem/OwnedRegularFile.js";
@@ -100,6 +102,21 @@ export interface BundleTarball {
   readonly handle: FileHandle;
   readonly size: number;
 }
+
+/** Report a changed selected tarball with any already-published bundle. */
+export const changedArtifact = (
+  cause: RegularFileChangedError,
+  publication?: EnvironmentBundlePublication,
+): AnalysisArtifactChangedError =>
+  new AnalysisArtifactChangedError(
+    ENVIRONMENT_EXPORT_OPERATION,
+    cause.path,
+    cause.message,
+    {
+      cause,
+      ...(publication === undefined ? {} : { partialObservation: publication }),
+    },
+  );
 
 /** Read and hash the admitted instance, checking its complete length without retaining its contents. */
 export const bundleTarballDigest = async (
@@ -203,7 +220,17 @@ const writeBundleFiles = async (
       lease: { release: () => owner.closeHandles() },
     });
     if (closed.kind === "failed")
-      throw resources.cleanupFailure(outcome, [closed]);
+      throw resources.cleanupFailure(
+        outcome,
+        [closed],
+        owner.published && written !== undefined
+          ? {
+              kind: "environment-bundle-publication",
+              directory: input.directory,
+              files: written,
+            }
+          : undefined,
+      );
   }
   if (outcome.kind === "failed") {
     if (owner?.published === true && written !== undefined) return written;
@@ -279,12 +306,30 @@ export const withBundleTarball = async <Value>(
 };
 
 /** Retain one tarball instance across planning output writes and final stability verification. */
-export const writeEnvironmentBundle = (
+export const writeEnvironmentBundle = async (
   input: EnvironmentExportInput,
   plan: EnvironmentBundlePlan,
-): Promise<readonly WrittenBundleFile[]> =>
-  plan.packageSource.kind === "tarball"
-    ? withBundleTarball(plan.packageSource.path, (tarball) =>
-        writeBundleFiles(input, plan, tarball),
-      )
-    : writeBundleFiles(input, plan);
+): Promise<readonly WrittenBundleFile[]> => {
+  if (plan.packageSource.kind !== "tarball")
+    return writeBundleFiles(input, plan);
+  let published: readonly WrittenBundleFile[] | undefined;
+  try {
+    return await withBundleTarball(plan.packageSource.path, async (tarball) => {
+      published = await writeBundleFiles(input, plan, tarball);
+      return published;
+    });
+  } catch (cause: unknown) {
+    if (published !== undefined) {
+      const publication: EnvironmentBundlePublication = {
+        kind: "environment-bundle-publication",
+        directory: input.directory,
+        files: published,
+      };
+      if (cause instanceof ArtifactReaderFailure)
+        cause.retainPartialObservation(publication);
+      if (cause instanceof RegularFileChangedError)
+        throw changedArtifact(cause, publication);
+    }
+    throw cause;
+  }
+};

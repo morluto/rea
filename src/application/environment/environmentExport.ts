@@ -5,7 +5,6 @@ import { AnalysisError } from "../../domain/analysisErrorBase.js";
 import { analysisErrorWithCleanupFailure } from "../../domain/analysisErrorCleanup.js";
 import {
   AnalysisAccessDeniedError,
-  AnalysisArtifactChangedError,
   AnalysisInputError,
   AnalysisOutputError,
   AnalysisResourceConstraintError,
@@ -27,6 +26,7 @@ import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
 import {
   BundleFileHostFailure,
   bundleTarballDigest,
+  changedArtifact,
   packageTarballRefusal,
   withBundleTarball,
   writeEnvironmentBundle,
@@ -149,6 +149,10 @@ const accessDeniedError = (
     if (code === "EACCES" || code === "EPERM") {
       const options = {
         cause,
+        ...(cause instanceof ArtifactReaderFailure &&
+        cause.partialObservation !== undefined
+          ? { partialObservation: cause.partialObservation }
+          : {}),
         ...(diagnostics === undefined ? {} : { diagnostics }),
         ...(cause instanceof ArtifactReaderFailure &&
         cause.cleanup !== undefined
@@ -388,16 +392,6 @@ const packageSourceValue = (source: EnvironmentPackageSource): JsonValue =>
     ? { kind: "registry", specifier: source.specifier }
     : { kind: "tarball", path: source.path };
 
-const changedArtifact = (
-  cause: RegularFileChangedError,
-): AnalysisArtifactChangedError =>
-  new AnalysisArtifactChangedError(
-    ENVIRONMENT_EXPORT_OPERATION,
-    cause.path,
-    cause.message,
-    { cause },
-  );
-
 /** A reader failure as an output refusal that keeps an unconfirmed cleanup bound to its owner. */
 const readerFailureError = (
   cause: ArtifactReaderFailure,
@@ -409,6 +403,9 @@ const readerFailureError = (
     host === undefined ? cause.message : `${cause.message}: ${host.message}`,
     {
       cause,
+      ...(cause.partialObservation === undefined
+        ? {}
+        : { partialObservation: cause.partialObservation }),
       // Only a host failure gets host recovery; an integrity or other
       // refusal keeps its own message without disk-space advice.
       ...(cause.cleanup !== undefined
