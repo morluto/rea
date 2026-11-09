@@ -338,7 +338,14 @@ it("rejects vendor table overlap, overrun, and an excessive entry count", () => 
   const capacity = failed(
     declareVendorRamdiskCount(buildVendorBootImage({ version: 4 }), 4097),
   );
-  expect(capacity).toMatchObject({ _tag: "AndroidBootCapacityFailure" });
+  expect(capacity).toMatchObject({
+    _tag: "AndroidBootCapacityFailure",
+    limit: {
+      name: "Android vendor ramdisk table entry count",
+      maximum: 4096,
+      unit: "entries",
+    },
+  });
   expect(capacity.message).toContain("4096");
   expect(
     failed(

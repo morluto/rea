@@ -66,10 +66,17 @@ it("rejects an excessive vendor ramdisk count before reading the table", async (
   const reader = new AndroidBootImageArtifactReader(path, admitted);
   const reads = vi.spyOn(admitted.handle, "read");
   try {
-    await expect(entries(reader)).rejects.toMatchObject({
-      reason: "limit",
-      boundary: "capacity",
-    });
+    const failure: unknown = await entries(reader).then(
+      () => undefined,
+      (cause: unknown) => cause,
+    );
+    expect(failure).toMatchObject({ reason: "limit", boundary: "capacity" });
+    const recovery = (failure as { userMessage?: string }).userMessage ?? "";
+    expect(recovery).toContain(
+      "Android vendor ramdisk table entry count of 4096 entries is a fixed allowance",
+    );
+    expect(recovery).toContain("This release has no runtime override.");
+    expect(recovery).toContain("additional host memory do not raise it");
     expect(reads).toHaveBeenCalledTimes(1);
   } finally {
     await reader.close();

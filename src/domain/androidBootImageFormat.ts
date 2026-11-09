@@ -127,17 +127,38 @@ export interface AvbFooterFacts {
 
 export type AndroidBootParseError =
   | { readonly _tag: "AndroidBootFormatFailure"; readonly message: string }
-  | { readonly _tag: "AndroidBootCapacityFailure"; readonly message: string };
+  | {
+      readonly _tag: "AndroidBootCapacityFailure";
+      readonly message: string;
+      readonly limit: AndroidBootFixedLimit;
+    };
+
+/** A fixed parser ceiling, named so readers can report shared recovery. */
+export interface AndroidBootFixedLimit {
+  readonly name: string;
+  readonly maximum: number;
+  readonly unit: string;
+}
 
 class FormatError extends Error {}
-class CapacityError extends Error {}
+class CapacityError extends Error {
+  constructor(
+    message: string,
+    readonly limit: AndroidBootFixedLimit,
+  ) {
+    super(message);
+  }
+}
 
 const formatError = (message: string): never => {
   throw new FormatError(message);
 };
 
-const capacityError = (message: string): never => {
-  throw new CapacityError(message);
+const capacityError = (
+  message: string,
+  limit: AndroidBootFixedLimit,
+): never => {
+  throw new CapacityError(message, limit);
 };
 
 const parsed = <T>(read: () => T): Result<T, AndroidBootParseError> => {
@@ -150,6 +171,7 @@ const parsed = <T>(read: () => T): Result<T, AndroidBootParseError> => {
       return err({
         _tag: "AndroidBootCapacityFailure",
         message: cause.message,
+        limit: cause.limit,
       });
     throw cause;
   }
@@ -229,6 +251,11 @@ const requireHeaderSize = (
   if (value > MAX_HEADER_SIZE)
     capacityError(
       `header_size ${value} exceeds the ${MAX_HEADER_SIZE} byte header bound`,
+      {
+        name: "Android boot image header_size",
+        maximum: MAX_HEADER_SIZE,
+        unit: "bytes",
+      },
     );
   if (!Number.isInteger(value) || value < minimum || value > maximum)
     formatError(
@@ -715,10 +742,20 @@ const parseVendorTableHeader = (
   if (entryCount > MAX_VENDOR_RAMDISKS)
     capacityError(
       `vendor ramdisk table declares more than ${MAX_VENDOR_RAMDISKS} entries`,
+      {
+        name: "Android vendor ramdisk table entry count",
+        maximum: MAX_VENDOR_RAMDISKS,
+        unit: "entries",
+      },
     );
   if (entrySize > MAX_RAMDISK_ENTRY_SIZE)
     capacityError(
       `vendor ramdisk table entry size ${entrySize} exceeds the ${MAX_RAMDISK_ENTRY_SIZE} byte entry bound`,
+      {
+        name: "Android vendor ramdisk table entry size",
+        maximum: MAX_RAMDISK_ENTRY_SIZE,
+        unit: "bytes",
+      },
     );
   if (entryCount > 0 && entrySize < VENDOR_RAMDISK_ENTRY_SIZE)
     formatError(

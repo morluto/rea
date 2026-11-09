@@ -7,6 +7,7 @@ import { ArtifactFileSource } from "./ArtifactFileSource.js";
 import { assertArtifactReadActive } from "./ArtifactFileOperation.js";
 import {
   ArtifactReaderFailure,
+  artifactFixedLimitFailure,
   copyArtifactEntry,
   sameArtifactEntry,
   type ArtifactEntry,
@@ -367,10 +368,11 @@ const formatFailure = (
 
 const parseFailure = (failure: AndroidBootParseError): ArtifactReaderFailure =>
   failure._tag === "AndroidBootCapacityFailure"
-    ? new ArtifactReaderFailure("limit", failure.message, {
-        boundary: "capacity",
-        cause: failure,
-      })
+    ? artifactFixedLimitFailure(
+        failure.limit.name,
+        failure.limit.maximum,
+        failure.limit.unit,
+      )
     : formatFailure(failure.message, { cause: failure });
 
 const entryFor = (
