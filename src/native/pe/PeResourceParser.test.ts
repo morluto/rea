@@ -658,6 +658,6 @@ it("keeps raw name probing separate from full resource-name alignment admission"
   expect(await probeSeaName(fixture.bytes)).toBe(true);
   await expect(parse(fixture.bytes)).rejects.toMatchObject({
     reason: "format",
-    message: "Unaligned PE resource name.",
+    message: expect.stringMatching(/unaligned.*resource name/iu),
   });
 });

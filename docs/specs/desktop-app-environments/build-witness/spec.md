@@ -84,6 +84,12 @@ and the recording and writes the record as Evidence.
   and the export's limitations name what the Trash held at the seed; a
   start from a bundle folder writes no bytecode into it; the first
   screenshot waits, briefly and bounded, until the frame is not one colour.
+- Gaps of the blind validation's solve runs: the exported app opens the
+  seed's one document at launch, when its desktop entry takes files, so a
+  solving agent starts in the document rather than on the app's start
+  screen; and `export_build_environment` passes `--synthetic-seed`, so the
+  README says the seed was made for the task instead of calling it the
+  user's real data.
 
 - Gaps of the second review: calls on one computer (actions, capture
   steps, checks and close) run one at a time in arrival order, so a stage's
@@ -94,11 +100,12 @@ and the recording and writes the record as Evidence.
   want of a readable or whole view is `undecided` and proves nothing; a
   stage only such checks would settle files nothing and can be checked
   again. Undecided includes a failure to find a line, row or value that may
-  lie in what a cut view left out; a check that passes on what the view kept
-  stays decided. The export likewise keeps a task only when a check fails on
-  what the seed's view shows. The controller writes a folder's file list to a
-  file that REA reads through `data/get`, so a large bundle's list is not cut
-  at the 1 MiB of a command's output.
+  lie in what a cut view left out, and any text check of an element in a cut
+  view, which may have lost text from between the element's runs; any other
+  check that passes on what the view kept stays decided. The export likewise keeps a task only when a check
+  fails on what the seed's view shows. The controller writes a folder's file
+  list to a file that REA reads through `data/get`, so a large bundle's list
+  is not cut at the 1 MiB of a command's output.
 - The witness reads the build computer's bounded action log: its stage rules
   use the log's count and the last applied action of each kind, and the
   record holds the entries the log keeps, `actions_dropped`, and a

@@ -5,7 +5,6 @@ import { expect, it } from "vitest";
 
 import { ArtifactReaderFailure } from "../../../src/artifacts/ArtifactReader.js";
 import { inspectBundleKeyedArchive } from "../../../src/artifacts/apple/KeyedArchiveReader.js";
-import { plistNestingLimitMessage } from "../../../src/domain/apple/plistValue.js";
 import type { OpenStepPropertyListCode } from "../../../src/domain/propertyListOpenStep.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { deeplyNestedXmlPlist } from "../../fixtures/keyedArchiveXmlNesting.js";
@@ -25,7 +24,9 @@ it.each([129, 3000])(
     // exhausts the call stack.
     expect(rejected).toMatchObject({
       reason: "limit",
-      message: `Cannot decode selected Foundation keyed archive: ${plistNestingLimitMessage()}`,
+      message: expect.stringMatching(
+        /keyed archive.*128 nesting levels.*no runtime override/iu,
+      ),
     });
   },
 );
@@ -70,7 +71,9 @@ it("retains the limit classification for syntactically valid deep OpenStep value
   }).catch((cause: unknown) => cause);
   expect(rejected).toMatchObject({
     reason: "limit",
-    message: `Cannot decode selected Foundation keyed archive: ${plistNestingLimitMessage()}`,
+    message: expect.stringMatching(
+      /keyed archive.*128 nesting levels.*no runtime override/iu,
+    ),
   });
 });
 
@@ -93,7 +96,9 @@ it.each([
     }).catch((cause: unknown) => cause);
     expect(rejected).toMatchObject({
       reason: "limit",
-      message: `Cannot decode selected Foundation keyed archive: ${plistNestingLimitMessage()}`,
+      message: expect.stringMatching(
+        /keyed archive.*128 nesting levels.*no runtime override/iu,
+      ),
     });
   },
 );

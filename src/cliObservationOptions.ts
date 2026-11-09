@@ -1,7 +1,10 @@
 import { javascriptRouteDeliveryOptions } from "./cli/javascriptRouteDelivery.js";
 import { z } from "incur";
 import { cliDecimalField } from "./cli/options.js";
-import { webRuntimeCommandTimeoutSchema } from "./domain/browserDeadline.js";
+import {
+  browserDiscoveryTimeoutSchema,
+  webRuntimeCommandTimeoutSchema,
+} from "./domain/browserDeadline.js";
 import { javaScriptAnalysisResourceControlsSchema } from "./domain/javascript/javascriptAnalysisResourceControls.js";
 import { javaScriptTimeoutPolicySchema } from "./domain/javascript/javascriptApplicationAnalysis.js";
 import { javaScriptSourcePathsSchema } from "./domain/javascript/javascriptSourceSelection.js";
@@ -26,6 +29,20 @@ export const browserScopeOptions = {
   commandTimeoutMs: cliDecimalField(webRuntimeCommandTimeoutSchema),
 };
 
+/** Shared options for passive browser commands that also accept discovery_timeout_ms. */
+export const passiveBrowserScopeOptions = {
+  ...browserScopeOptions,
+  discoveryTimeoutMs: cliDecimalField(browserDiscoveryTimeoutSchema),
+};
+
+/** Keep an omitted discovery deadline absent so Evidence records the caller selection only. */
+export const selectedDiscoveryTimeout = (
+  discoveryTimeoutMs: number | undefined,
+): { readonly discovery_timeout_ms?: number } =>
+  discoveryTimeoutMs === undefined
+    ? {}
+    : { discovery_timeout_ms: discoveryTimeoutMs };
+
 /** Keep an omitted command deadline absent so Evidence records the caller selection only. */
 export const selectedCommandTimeout = (
   commandTimeoutMs: number | undefined,
@@ -35,7 +52,7 @@ export const selectedCommandTimeout = (
     : { command_timeout_ms: commandTimeoutMs };
 
 export const browserPageInspectionOptions = z.object({
-  ...browserScopeOptions,
+  ...passiveBrowserScopeOptions,
   observationMs: observationDuration(500),
   includeAccessibilityText: z
     .boolean()
