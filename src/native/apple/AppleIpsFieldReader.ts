@@ -81,6 +81,42 @@ export class FieldReader {
     return this.#retain(value, value.toString(), reserved);
   }
 
+  /** Charge each serialized appearance of a borrowed integer, without reinterpreting it. */
+  retainIntegerReference(
+    value: RecordedInteger | null,
+  ): RecordedInteger | null {
+    const bytes = appleIpsIntegerTextBytes(value);
+    if (bytes > this.maximumIntegerTextBytes - this.#integerTextBytes)
+      throw new AppleIpsResourceFailure(
+        "integer_text",
+        this.maximumIntegerTextBytes,
+        "Repeated join integer exceeds the retained text allowance",
+      );
+    this.#integerTextBytes += bytes;
+    return value;
+  }
+
+  recordedUnsigned64(value: bigint): RecordedInteger {
+    const reserved = this.#reserve(20, true);
+    const result = this.#retain(value, value.toString(), reserved);
+    this.#integers.set(result, value);
+    return result;
+  }
+
+  decimalText64(value: bigint): string {
+    const reserved = this.#reserve(20, false);
+    const result = value.toString();
+    this.#integerTextBytes -= reserved - result.length * 2;
+    return result;
+  }
+
+  hexText32(value: number): string {
+    const reserved = this.#reserve(10, false);
+    const result = `0x${value.toString(16)}`;
+    this.#integerTextBytes -= reserved - result.length * 2;
+    return result;
+  }
+
   mismatch(path: string, expected: string, value: LosslessJson | undefined) {
     this.mismatches.push({ path, expected, observed: observedType(value) });
   }

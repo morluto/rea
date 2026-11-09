@@ -78,14 +78,9 @@ public final class NativeAotExtension {
                 new FrozenObjectAnnotator(program, manager).analyze(located.directory(), scan.getPointerLocations(), monitor, log);
             }
             monitor.checkCancelled();
-            report.addProperty("method_tables", manager.getMethodTableCount());
             JsonObject coverage = auditFrozenObjects(program, scan.getPointerLocations(), monitor);
-            report.add("coverage", coverage);
             if (coverage.get("frozen_objects_annotated").getAsInt() != coverage.get("frozen_object_candidates").getAsInt())
                 diagnostics.add("Some frozen-object candidates lack committed instance annotations; inspect coverage counts and Ghidra diagnostics.");
-            report.addProperty("status", diagnostics.isEmpty() ? "complete" : "partial");
-            report.add("reason", JsonNull.INSTANCE);
-            report.add("derived_memory", derivedRange.deepCopy());
             JsonArray tables = new JsonArray();
             for (var mt : manager.getMethodTables()) {
                 monitor.checkCancelled();
@@ -94,6 +89,13 @@ public final class NativeAotExtension {
                 identity.addProperty("type", mt.getMTType().getPathName());
                 tables.add(identity);
             }
+            // Publish recovery facts only after every fallible recovery and audit step.
+            // A failed transaction is rolled back, so it cannot report committed metadata.
+            report.addProperty("method_tables", manager.getMethodTableCount());
+            report.add("coverage", coverage);
+            report.addProperty("status", diagnostics.isEmpty() ? "complete" : "partial");
+            report.add("reason", JsonNull.INSTANCE);
+            report.add("derived_memory", derivedRange.deepCopy());
             report.add("types", tables);
             commit = true;
             return finish(log);
