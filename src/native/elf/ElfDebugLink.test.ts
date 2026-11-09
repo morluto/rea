@@ -14,6 +14,7 @@ import {
   inspectElfDebugLinkInputSchema,
 } from "../../domain/native/elfDebugLink.js";
 import { gnuBuildIdNote } from "./ElfNotes.fixture.js";
+import { parseElfNotes } from "./ElfNoteParser.js";
 import {
   continueGnuDebuglinkCrc32,
   gnuDebuglinkCrc32,
@@ -240,6 +241,19 @@ it("reports conflicting build-ids without selecting a lookup path", () => {
   expect(report.build_id.status).toBe("conflict");
   expect(report.build_id.hex).toBeNull();
   expect(report.build_id.ids).toEqual([FIXTURE_BUILD_ID_HEX, "aa".repeat(20)]);
+  // Each contributing note keeps its file ranges so a conflict is traceable.
+  const [first, second] = report.build_id.sources;
+  expect(report.build_id.sources.map((source) => source.hex)).toEqual([
+    FIXTURE_BUILD_ID_HEX,
+    "aa".repeat(20),
+  ]);
+  expect(first?.descriptor).toEqual({
+    offset: (first?.note.offset ?? 0) + 16,
+    bytes: 20,
+  });
+  expect(second?.note.offset).toBe(
+    (first?.note.offset ?? 0) + (first?.note.bytes ?? 0),
+  );
   expect(report.lookup_paths.some((entry) => entry.kind === "build_id")).toBe(
     false,
   );
@@ -292,6 +306,28 @@ it("preserves parent-directory segments and omits a slash name", () => {
   );
   expect(slashed.lookup_paths.map((entry) => entry.kind)).toEqual(["build_id"]);
   expect(slashed.limitations).toContain(ELF_DEBUG_LINK_NAME_SEGMENT_LIMITATION);
+});
+
+it("refuses an oversized GNU build-id from its raw size without hex-encoding it", () => {
+  const notes = gnuBuildIdNote("cd".repeat(257), true);
+  const image = elfDebugLinkFixture({ notes });
+  const decoded = parseElfNotes(
+    image,
+    { path: artifactPath, sha256: digest, bytes: image.length },
+    { path: artifactPath, max_file_bytes: image.length, max_entries: 32 },
+    { maxGnuBuildIdBytes: 256 },
+  );
+  expect(decoded.entries[0]).toMatchObject({
+    descsz: 257,
+    gnu: { build_id_hex: null },
+  });
+  expect(parse(image).build_id).toMatchObject({
+    status: "unknown",
+    hex: null,
+    ids: [],
+    sources: [],
+    reason: "build_id_exceeds_limit",
+  });
 });
 
 it("keeps debuglink facts when the note table is malformed", () => {

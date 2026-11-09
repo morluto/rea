@@ -43,6 +43,7 @@ const DEBUG_SECTION_NAMES = [
 ] as const;
 const XZ_MAGIC = Buffer.from([0xfd, 0x37, 0x7a, 0x58, 0x5a, 0x00]);
 const CRC_CHUNK = 65536;
+const GNU_BUILD_ID_NOTE_TYPE = 3;
 
 const fits = (offset: bigint, size: bigint, fileLength: number): boolean =>
   offset >= 0n &&
@@ -384,7 +385,7 @@ const unknownBuildId = (
     | "build_id_exceeds_limit",
   limitation: string | null,
 ): ObservedBuildId => ({
-  buildId: { status: "unknown", hex: null, ids: [], reason },
+  buildId: { status: "unknown", hex: null, ids: [], sources: [], reason },
   limitation,
 });
 
@@ -395,11 +396,16 @@ const observeBuildId = (
 ): ObservedBuildId => {
   let notes: ReturnType<typeof parseElfNotes>;
   try {
-    notes = parseElfNotes(bytes, artifact, {
-      path: artifact.path,
-      max_file_bytes: input.max_file_bytes,
-      max_entries: input.max_entries,
-    });
+    notes = parseElfNotes(
+      bytes,
+      artifact,
+      {
+        path: artifact.path,
+        max_file_bytes: input.max_file_bytes,
+        max_entries: input.max_entries,
+      },
+      { maxGnuBuildIdBytes: MAX_ELF_DEBUG_ALT_BUILD_ID_BYTES },
+    );
   } catch (cause) {
     if (isRethrownBudget(cause)) throw cause;
     if (cause instanceof ArtifactReaderFailure && cause.reason === "format")
@@ -417,19 +423,36 @@ const observeBuildId = (
     throw cause;
   }
   const ids: string[] = [];
+  const sources: BuildId["sources"] = [];
   for (const entry of notes.entries) {
+    if (entry.owner !== "GNU" || entry.type !== GNU_BUILD_ID_NOTE_TYPE)
+      continue;
+    // The parser leaves oversized descriptors undecoded, so judge the raw size.
+    if (entry.descsz > MAX_ELF_DEBUG_ALT_BUILD_ID_BYTES)
+      return unknownBuildId(
+        "build_id_exceeds_limit",
+        "A GNU build-id exceeds 256 bytes and was not copied.",
+      );
     const hex = entry.gnu?.build_id_hex;
     if (hex === null || hex === undefined || hex.length === 0) continue;
     if (!ids.includes(hex)) ids.push(hex);
+    sources.push({
+      hex,
+      table_kind: entry.table_kind,
+      table_index: entry.table_index,
+      note: entry.location,
+      descriptor: entry.descriptor.location,
+    });
   }
-  if (ids.some((id) => id.length > MAX_ELF_DEBUG_ALT_BUILD_ID_BYTES * 2))
-    return unknownBuildId(
-      "build_id_exceeds_limit",
-      "A GNU build-id exceeds 256 bytes and was not copied.",
-    );
   if (ids.length === 0)
     return {
-      buildId: { status: "absent", hex: null, ids: [], reason: null },
+      buildId: {
+        status: "absent",
+        hex: null,
+        ids: [],
+        sources: [],
+        reason: null,
+      },
       limitation: null,
     };
   if (ids.length > 1)
@@ -438,13 +461,14 @@ const observeBuildId = (
         status: "conflict",
         hex: null,
         ids,
+        sources,
         reason: "multiple_build_ids",
       },
       limitation: ELF_DEBUG_LINK_MULTIPLE_BUILD_IDS_LIMITATION,
     };
   const hex = ids[0] ?? null;
   return {
-    buildId: { status: "observed", hex, ids, reason: null },
+    buildId: { status: "observed", hex, ids, sources, reason: null },
     limitation: null,
   };
 };
@@ -598,7 +622,13 @@ const readCandidateIdentity = (
       identity: {
         notElf: false,
         elfMalformed: true,
-        buildId: { status: "unknown", hex: null, ids: [], reason: null },
+        buildId: {
+          status: "unknown",
+          hex: null,
+          ids: [],
+          sources: [],
+          reason: null,
+        },
         candidateHex: null,
       },
       budgetExceeded: false,
@@ -611,7 +641,13 @@ const readCandidateIdentity = (
       identity: {
         notElf: true,
         elfMalformed: false,
-        buildId: { status: "absent", hex: null, ids: [], reason: null },
+        buildId: {
+          status: "absent",
+          hex: null,
+          ids: [],
+          sources: [],
+          reason: null,
+        },
         candidateHex: null,
       },
       budgetExceeded: false,
@@ -625,7 +661,13 @@ const readCandidateIdentity = (
       identity: {
         notElf: false,
         elfMalformed: false,
-        buildId: { status: "unknown", hex: null, ids: [], reason: null },
+        buildId: {
+          status: "unknown",
+          hex: null,
+          ids: [],
+          sources: [],
+          reason: null,
+        },
         candidateHex: null,
       },
       budgetExceeded: false,
@@ -644,6 +686,7 @@ const readCandidateIdentity = (
     status: "unknown",
     hex: null,
     ids: [],
+    sources: [],
     reason: null,
   };
   return {

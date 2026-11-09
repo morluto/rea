@@ -40,6 +40,8 @@ interface TextBudget {
   scanned: number;
   readonly hashes: Map<string, string>;
   readonly scans: Map<string, number>;
+  /** GNU build-id descriptors above this many bytes are not hex-encoded. */
+  readonly maxGnuBuildIdBytes?: number | undefined;
 }
 
 /** Caller can raise max_file_bytes to admit the decoded section-name table. */
@@ -245,6 +247,11 @@ const decodeGnu = (
 ): ElfNotes["entries"][number]["gnu"] => {
   if (owner !== "GNU") return null;
   if (type === 3 && descriptor.length > 0) {
+    if (
+      text.maxGnuBuildIdBytes !== undefined &&
+      descriptor.length > text.maxGnuBuildIdBytes
+    )
+      return { build_id_hex: null, abi_tag: null, gold_version: null };
     chargeText(text, descriptor.length * 2);
     return {
       build_id_hex: descriptor.toString("hex"),
@@ -609,11 +616,18 @@ const decodeCore = (
   return null;
 };
 
+/** Optional decoding bounds for consumers that retain only part of a note. */
+export interface ElfNoteParseOptions {
+  /** Leave larger GNU build-ids undecoded; `descsz` still reports their size. */
+  readonly maxGnuBuildIdBytes?: number;
+}
+
 /** Decode PT_NOTE and SHT_NOTE tables from one in-memory ELF image. */
 export const parseElfNotes = (
   bytes: Buffer,
   artifact: ElfNotes["artifact"],
   input: InspectElfNotesInput,
+  options: ElfNoteParseOptions = {},
 ): ElfNotes => {
   const fixed = readElfFixedHeader(bytes);
   if (!fixed.ok) return fail(fixed.error);
@@ -665,6 +679,7 @@ export const parseElfNotes = (
     scanned: 0,
     hashes: new Map(),
     scans: new Map(),
+    maxGnuBuildIdBytes: options.maxGnuBuildIdBytes,
   };
   let shstrtab: Buffer | null = null;
   const sectionNameLimitations = new Set<string>();

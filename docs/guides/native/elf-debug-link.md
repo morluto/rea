@@ -36,6 +36,8 @@ length. `debuglink` reports the `.gnu_debuglink` file name and CRC32.
 bytes that follow it. `build_id` reports the GNU build-id from `PT_NOTE` and
 `SHT_NOTE` tables. The same build-id from both tables is one observation.
 Distinct build-ids stay in `ids` and none is selected.
+`sources` lists each contributing GNU build-id note with its table kind and
+index and the note and descriptor file ranges.
 
 `lookup_paths` lists conventional GNU/Linux strings:
 

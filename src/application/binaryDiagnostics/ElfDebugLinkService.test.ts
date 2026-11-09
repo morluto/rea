@@ -45,7 +45,7 @@ const report: ElfDebugLink = {
     xz_magic: null,
     reason: null,
   },
-  build_id: { status: "absent", hex: null, ids: [], reason: null },
+  build_id: { status: "absent", hex: null, ids: [], sources: [], reason: null },
   lookup_paths: [],
   candidate: null,
   verification: null,
@@ -117,6 +117,7 @@ it("rejects a report whose type name, lookup paths, or verification disagree", a
       status: "observed",
       hex: "abcd",
       ids: ["abcd"],
+      sources: [],
       reason: null,
     },
     lookup_paths: deriveDebugFileLookupPaths({

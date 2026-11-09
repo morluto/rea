@@ -209,10 +209,20 @@ const debugdataSchema = z.strictObject({
   reason: z.enum(DEBUGDATA_REASONS).nullable(),
 });
 
+/** One GNU build-id note that contributed an id, with its file ranges. */
+const buildIdSourceSchema = z.strictObject({
+  hex: buildIdHex,
+  table_kind: z.enum(["program", "section"]),
+  table_index: uint,
+  note: range,
+  descriptor: range,
+});
+
 const buildIdSchema = z.strictObject({
   status: z.enum(["observed", "absent", "unknown", "conflict"]),
   hex: buildIdHex.nullable(),
   ids: z.array(buildIdHex),
+  sources: z.array(buildIdSourceSchema),
   reason: z.enum(BUILD_ID_REASONS).nullable(),
 });
 

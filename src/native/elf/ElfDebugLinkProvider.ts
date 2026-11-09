@@ -139,11 +139,17 @@ const ELF_HEADER_PREFIX_BYTES = 64;
 /**
  * A candidate that is missing, unreadable, changed while streamed, or above
  * the whole-file ceiling cannot be compared. Path-shape refusals, cancellation,
- * and descriptor close failures still fail the call.
+ * and descriptor close failures, including a close that failed after an
+ * integrity or limit refusal, still fail the call.
  */
 const candidateUnreadable = (cause: unknown): boolean => {
+  // A failed close keeps the original reason beside the cleanup observation;
+  // it must stay a failure so the pending handle remains visible.
   if (cause instanceof ArtifactReaderFailure)
-    return cause.reason === "integrity" || cause.reason === "limit";
+    return (
+      cause.cleanup === undefined &&
+      (cause.reason === "integrity" || cause.reason === "limit")
+    );
   if (!(cause instanceof Error) || !("code" in cause)) return false;
   return (
     cause.code === "ENOENT" ||
