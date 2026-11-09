@@ -1,4 +1,4 @@
-import { chmod, mkdir, symlink, writeFile } from "node:fs/promises";
+import { chmod, mkdir, stat, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { describe, expect, it } from "vitest";
@@ -287,7 +287,73 @@ describe.skipIf(process.platform === "win32")(
         await chmod(vendor, 0o755);
       }
     });
+  },
+);
 
+describe.skipIf(process.platform === "win32")(
+  "unresolved desktop entry link targets",
+  () => {
+    it
+      .skipIf(process.getuid?.() === 0)
+      .each(["directory", "flat-file", "nested-file"] as const)(
+      "refuses a lower-priority entry when a %s link target cannot be examined",
+      async (kind) => {
+        const { home, environment } = await fixture();
+        const applications = join(home, ".local/share/applications");
+        const blocked = join(home, "blocked");
+        const target = join(blocked, "vendor");
+        await mkdir(target, { recursive: true });
+        await mkdir(applications, { recursive: true });
+        await writeFile(
+          join(target, "app.desktop"),
+          "[Desktop Entry]\nType=Application\nName=High\nExec=notes-app\n",
+        );
+        await writeFile(
+          join(environment.XDG_DATA_DIRS, "applications/vendor-app.desktop"),
+          "[Desktop Entry]\nType=Application\nName=Low\nExec=notes-app\n",
+        );
+        let link: string;
+        if (kind === "directory") {
+          link = join(applications, "vendor");
+          await symlink(target, link);
+        } else {
+          if (kind === "nested-file") await mkdir(join(applications, "vendor"));
+          link = join(
+            applications,
+            kind === "flat-file" ? "vendor-app.desktop" : "vendor/app.desktop",
+          );
+          await symlink(join(target, "app.desktop"), link);
+        }
+        await chmod(blocked, 0o000);
+        try {
+          const probe = await stat(link).then(
+            () => undefined,
+            (cause: unknown) => cause,
+          );
+          expect(probe).toMatchObject({ code: "EACCES" });
+          const result = await inspectLinuxApplication({
+            desktopEntry: "vendor-app",
+            executable: undefined,
+            arguments: [],
+            environment,
+            home,
+            callerDirectory: home,
+          });
+          expect(result).toMatchObject({
+            ok: false,
+            error: { reason: "desktop_entry_search_incomplete" },
+          });
+        } finally {
+          await chmod(blocked, 0o755);
+        }
+      },
+    );
+  },
+);
+
+describe.skipIf(process.platform === "win32")(
+  "remaining desktop file id controls",
+  () => {
     it("finds the entry before reporting an unreachable sibling as incomplete", async () => {
       const { home, environment } = await fixture();
       const applications = join(home, ".local/share/applications");

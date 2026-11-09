@@ -111,9 +111,22 @@ const NESTED_SEARCH_MAX_DEPTH = 4;
 /** How many directory entries one applications directory search may examine. */
 const NESTED_SEARCH_MAX_ENTRIES = 4096;
 
-const isFile = async (path: string): Promise<boolean> =>
-  // Flatpak exports and Nix profiles install entries as links to the file.
-  (await stat(path).catch(() => undefined))?.isFile() === true;
+type DesktopPathKind = "file" | "directory" | "other" | "absent";
+
+/** Only missing paths establish absence; failed identity probes remain unresolved. */
+const desktopPathKind = async (
+  path: string,
+): Promise<Result<DesktopPathKind, unknown>> => {
+  try {
+    const facts = await stat(path);
+    return ok(
+      facts.isFile() ? "file" : facts.isDirectory() ? "directory" : "other",
+    );
+  } catch (cause: unknown) {
+    const code = (cause as NodeJS.ErrnoException).code;
+    return code === "ENOENT" || code === "ENOTDIR" ? ok("absent") : err(cause);
+  }
+};
 
 /**
  * The entry in `applicationsDirectory` whose desktop file id is `id`, when one
@@ -129,18 +142,6 @@ const isFile = async (path: string): Promise<boolean> =>
  * the entry, and selecting a lower-priority root would launch a different
  * application under the same id.
  */
-const isDirectoryEntry = async (
-  directory: string,
-  entry: Awaited<ReturnType<typeof opendir>> extends AsyncIterable<infer Entry>
-    ? Entry
-    : never,
-): Promise<boolean> => {
-  if (entry.isDirectory()) return true;
-  if (entry.isFile()) return false;
-  const stats = await stat(join(directory, entry.name)).catch(() => undefined);
-  return stats?.isDirectory() === true;
-};
-
 const findNestedDesktopEntry = async (
   applicationsDirectory: string,
   id: string,
@@ -168,26 +169,33 @@ const findNestedDesktopEntry = async (
       continue;
     }
     for await (const entry of handle) {
+      signal?.throwIfAborted();
       // The budget is charged while enumerating, because readdir would
       // materialize every name in a huge directory before any check ran.
       examined += 1;
-      if (examined > NESTED_SEARCH_MAX_ENTRIES) {
+      if (examined > NESTED_SEARCH_MAX_ENTRIES) return { truncated: true };
+      const path = join(directory.path, entry.name);
+      const kind = entry.isDirectory()
+        ? ok("directory" as const)
+        : entry.isFile()
+          ? ok("file" as const)
+          : await desktopPathKind(path);
+      signal?.throwIfAborted();
+      if (!kind.ok) {
         incomplete = true;
-        break;
+        continue;
       }
-      const isDirectory = await isDirectoryEntry(directory.path, entry);
-      if (entry.name.endsWith(".desktop") && !isDirectory) {
+      if (entry.name.endsWith(".desktop") && kind.value === "file") {
         // A directory may be named `*.desktop`; the spec still forms the ids
         // of the entries inside it from their full path, so only a file is a
         // candidate here.
-        const path = join(directory.path, entry.name);
         const encoded = relative(applicationsDirectory, path).replaceAll(
           "/",
           "-",
         );
-        if (encoded === id && (await isFile(path))) return { path };
+        if (encoded === id) return { path };
       }
-      if (!isDirectory) continue;
+      if (kind.value !== "directory") continue;
       if (directory.depth >= NESTED_SEARCH_MAX_DEPTH) {
         incomplete = true;
         continue;
@@ -214,10 +222,15 @@ const locateDesktopEntry = async (
   for (const directory of searched) {
     signal?.throwIfAborted();
     const path = join(directory, id);
-    if (await isFile(path))
+    const kind = await desktopPathKind(path);
+    signal?.throwIfAborted();
+    if (!kind.ok)
+      return err({ reason: "desktop_entry_search_incomplete", searched });
+    if (kind.value === "file")
       return ok({ path, id: id.slice(0, -".desktop".length) });
     // A nested entry in this directory outranks a flat one in a later root.
     const nested = await findNestedDesktopEntry(directory, id, signal);
+    signal?.throwIfAborted();
     if (nested !== undefined && "path" in nested)
       return ok({ path: nested.path, id: id.slice(0, -".desktop".length) });
     // The bounded search did not establish absence, so a later root must not
