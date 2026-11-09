@@ -21,6 +21,8 @@ const PATH_SCOPES = {
   python: [
     "bridge/**/*.py",
     "tests/support/analysis-efficiency/**",
+    "tests/test_windows_quicktools.py",
+    "tools/windows/**",
     "scripts/run-python-tests.py",
   ],
   packet_capture: [
