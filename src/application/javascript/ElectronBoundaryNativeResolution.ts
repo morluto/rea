@@ -12,7 +12,10 @@ import type {
   ElectronAsarUnpackedRewriteScope,
   ElectronNativeAddonBindingFinding,
 } from "../../domain/javascript/electronStaticAnalysisTypes.js";
-import type { JavaScriptArtifactFile } from "../../domain/javascript/javascriptArtifactFiles.js";
+import type {
+  JavaScriptArtifactFile,
+  JavaScriptUnanalyzedArtifactLookup,
+} from "../../domain/javascript/javascriptArtifactFiles.js";
 import { isNativeAddonModuleTarget } from "../../domain/javascript/javascriptModuleResolutionMode.js";
 import type { JavaScriptJsonDocuments } from "./JavaScriptJsonDocuments.js";
 import { resolveArtifactPathByContext } from "./JavaScriptArtifactPathResolution.js";
@@ -21,6 +24,7 @@ export interface ElectronNativeAddonResolverInput {
   readonly files: ReadonlyMap<string, JavaScriptArtifactFile>;
   readonly jsonDocuments: JavaScriptJsonDocuments;
   readonly directoryPaths?: ReadonlySet<string> | undefined;
+  readonly unanalyzedFiles?: JavaScriptUnanalyzedArtifactLookup | undefined;
 }
 
 export interface ElectronNativeAddonResolver {
@@ -68,8 +72,25 @@ export const createElectronNativeAddonResolver = (
       let resolved: readonly string[];
       if (finding.resolution?.asar_unpacked === true) {
         resolved = resolveAsarUnpackedFinding(state, file.path, finding);
+      } else if (finding.resolution === undefined) {
+        resolved = resolveDirectSpecifierWithUnpackedFallback(
+          state.input,
+          file.path,
+          finding,
+        );
+      } else if (finding.resolution.kind === "candidates") {
+        resolved = resolveCandidatesWithUnpackedFallback(
+          state.input,
+          file.path,
+          finding,
+          finding.resolution,
+        );
       } else {
-        const direct = resolveFromSourcePath(state, file.path, finding);
+        const direct = resolveHelperFromSourcePath(
+          state,
+          file.path,
+          finding.resolution,
+        );
         if (direct.length > 0) {
           resolved = direct;
         } else {
@@ -77,7 +98,11 @@ export const createElectronNativeAddonResolver = (
           resolved =
             unpackedSourcePath === undefined
               ? []
-              : resolveFromSourcePath(state, unpackedSourcePath, finding);
+              : resolveHelperFromSourcePath(
+                  state,
+                  unpackedSourcePath,
+                  finding.resolution,
+                );
         }
       }
       if (byPath === undefined) {
@@ -231,23 +256,14 @@ const scanBindingsTargets = (
   return matched;
 };
 
-const resolveFromSourcePath = (
+const resolveHelperFromSourcePath = (
   state: NativeAddonResolverState,
   sourcePath: string,
-  finding: ElectronNativeAddonBindingFinding,
+  resolution: Extract<
+    NonNullable<ElectronNativeAddonBindingFinding["resolution"]>,
+    { readonly kind: "node-gyp-build" | "bindings" }
+  >,
 ): readonly string[] => {
-  const resolution = finding.resolution;
-  if (resolution === undefined) {
-    const resolved = resolveSinglePath(state.input, {
-      declaredPath: finding.specifier,
-      sourcePath,
-      context: "module-specifier",
-      moduleKind: finding.module_kind,
-    });
-    return resolved === undefined ? [] : [resolved];
-  }
-  if (resolution.kind === "candidates")
-    return resolveCandidatePaths(state.input, sourcePath, finding, resolution);
   if (resolution.kind === "node-gyp-build") {
     const searchRoot = resolveHelperSearchRoot(
       state,
@@ -270,15 +286,42 @@ const resolveFromSourcePath = (
     : scanBindingsTargets(state, searchRoot, resolution.addon_name);
 };
 
-const resolveCandidatePaths = (
+const resolveDirectSpecifierWithUnpackedFallback = (
   input: ElectronNativeAddonResolverInput,
   sourcePath: string,
   finding: ElectronNativeAddonBindingFinding,
-  resolution: Extract<
-    NonNullable<ElectronNativeAddonBindingFinding["resolution"]>,
-    { readonly kind: "candidates" }
-  >,
 ): readonly string[] => {
+  const direct = resolveSinglePathOutcome(input, {
+    declaredPath: finding.specifier,
+    sourcePath,
+    context: "module-specifier",
+    moduleKind: finding.module_kind,
+  });
+  if (direct.kind === "native") return [direct.path];
+  if (direct.kind !== "not-found") return [];
+  const unpackedSourcePath = siblingAsarUnpackedSourcePath(sourcePath);
+  if (unpackedSourcePath === undefined) return [];
+  const fallback = resolveSinglePathOutcome(input, {
+    declaredPath: finding.specifier,
+    sourcePath: unpackedSourcePath,
+    context: "module-specifier",
+    moduleKind: finding.module_kind,
+  });
+  return fallback.kind === "native" ? [fallback.path] : [];
+};
+
+type CandidateNativeResolution = Extract<
+  NonNullable<ElectronNativeAddonBindingFinding["resolution"]>,
+  { readonly kind: "candidates" }
+>;
+
+const resolveCandidateSingleOutcome = (
+  input: ElectronNativeAddonResolverInput,
+  sourcePath: string,
+  finding: ElectronNativeAddonBindingFinding,
+  resolution: CandidateNativeResolution,
+  candidate: string,
+): SinglePathResolutionOutcome => {
   const baseSourcePath =
     resolution.resolution_context === "module-specifier" &&
     resolution.resolution_base_path !== undefined
@@ -289,31 +332,80 @@ const resolveCandidatePaths = (
           ),
         )
       : sourcePath;
-  if (logicalPathEscapesRoot(baseSourcePath)) return [];
-  const matched = resolution.candidates.flatMap((candidate) => {
-    const resolved =
-      resolution.resolution_context === "filesystem-expression"
-        ? resolveSinglePath(input, {
-            declaredPath: candidate,
-            sourcePath: baseSourcePath,
-            context: "filesystem-expression",
-            moduleKind: finding.module_kind,
-            runtimePathKind: "exact-file",
-            ...(resolution.loader === undefined
-              ? {}
-              : { loader: resolution.loader }),
-          })
-        : resolveSinglePath(input, {
-            declaredPath: candidate,
-            sourcePath: baseSourcePath,
-            context: "module-specifier",
-            moduleKind: finding.module_kind,
-            ...(resolution.loader === undefined
-              ? {}
-              : { loader: resolution.loader }),
-          });
-    return resolved === undefined ? [] : [resolved];
-  });
+  if (logicalPathEscapesRoot(baseSourcePath)) return { kind: "non-native" };
+  return resolution.resolution_context === "filesystem-expression"
+    ? resolveSinglePathOutcome(input, {
+        declaredPath: candidate,
+        sourcePath: baseSourcePath,
+        context: "filesystem-expression",
+        moduleKind: finding.module_kind,
+        runtimePathKind: "exact-file",
+        ...(resolution.loader === undefined
+          ? {}
+          : { loader: resolution.loader }),
+      })
+    : resolveSinglePathOutcome(input, {
+        declaredPath: candidate,
+        sourcePath: baseSourcePath,
+        context: "module-specifier",
+        moduleKind: finding.module_kind,
+        ...(resolution.loader === undefined
+          ? {}
+          : { loader: resolution.loader }),
+      });
+};
+
+const resolveCandidatesWithUnpackedFallback = (
+  input: ElectronNativeAddonResolverInput,
+  sourcePath: string,
+  finding: ElectronNativeAddonBindingFinding,
+  resolution: CandidateNativeResolution,
+): readonly string[] => {
+  const unpackedSourcePath = siblingAsarUnpackedSourcePath(sourcePath);
+  const matched: string[] = [];
+  for (const candidate of resolution.candidates) {
+    const direct = resolveCandidateSingleOutcome(
+      input,
+      sourcePath,
+      finding,
+      resolution,
+      candidate,
+    );
+    if (direct.kind === "native") {
+      matched.push(direct.path);
+      continue;
+    }
+    if (direct.kind !== "not-found" || unpackedSourcePath === undefined)
+      continue;
+    const fallback = resolveCandidateSingleOutcome(
+      input,
+      unpackedSourcePath,
+      finding,
+      resolution,
+      candidate,
+    );
+    if (fallback.kind === "native") matched.push(fallback.path);
+  }
+  return [...new Set(matched)].sort(compareUnicodeCodePoints);
+};
+
+const resolveCandidatePaths = (
+  input: ElectronNativeAddonResolverInput,
+  sourcePath: string,
+  finding: ElectronNativeAddonBindingFinding,
+  resolution: CandidateNativeResolution,
+): readonly string[] => {
+  const matched: string[] = [];
+  for (const candidate of resolution.candidates) {
+    const outcome = resolveCandidateSingleOutcome(
+      input,
+      sourcePath,
+      finding,
+      resolution,
+      candidate,
+    );
+    if (outcome.kind === "native") matched.push(outcome.path);
+  }
   return [...new Set(matched)].sort(compareUnicodeCodePoints);
 };
 
@@ -439,6 +531,58 @@ const resolveRewrittenAnchoredPath = (
   return finalJoined === "" ? "." : finalJoined;
 };
 
+type SinglePathResolutionOutcome =
+  | { readonly kind: "native"; readonly path: string }
+  | { readonly kind: "non-native" }
+  | { readonly kind: "not-found" };
+
+const resolveSinglePathOutcome = (
+  input: ElectronNativeAddonResolverInput,
+  options: {
+    readonly declaredPath: string;
+    readonly sourcePath: string;
+    readonly context: "module-specifier" | "filesystem-expression";
+    readonly moduleKind?: "import" | "require";
+    readonly runtimePathKind?: "exact-file";
+    readonly loader?: "dlopen";
+  },
+): SinglePathResolutionOutcome => {
+  const resolution = resolveArtifactPathByContext({
+    declaredPath: options.declaredPath,
+    sourcePath: options.sourcePath,
+    context: options.context,
+    files: input.files,
+    jsonDocuments: input.jsonDocuments,
+    ...(input.directoryPaths === undefined
+      ? {}
+      : { directoryPaths: input.directoryPaths }),
+    ...(input.unanalyzedFiles === undefined
+      ? {}
+      : { unanalyzedFiles: input.unanalyzedFiles }),
+    ...(options.moduleKind === undefined
+      ? {}
+      : { moduleKind: options.moduleKind }),
+    ...(options.runtimePathKind === undefined
+      ? {}
+      : { runtimePathKind: options.runtimePathKind }),
+  });
+  if (resolution.resolution_status === "resolved") {
+    const validTarget =
+      options.loader === "dlopen"
+        ? isNativeAddonFile(resolution.resolved_path, input.files)
+        : isNativeAddonModuleTarget(
+            resolution.resolved_path,
+            input.files.get(resolution.resolved_path)?.kind,
+          );
+    return validTarget
+      ? { kind: "native", path: resolution.resolved_path }
+      : { kind: "non-native" };
+  }
+  return resolution.resolution_status === "not-found"
+    ? { kind: "not-found" }
+    : { kind: "non-native" };
+};
+
 const resolveSinglePath = (
   input: ElectronNativeAddonResolverInput,
   options: {
@@ -450,28 +594,8 @@ const resolveSinglePath = (
     readonly loader?: "dlopen";
   },
 ): string | undefined => {
-  const resolved = resolveArtifactPathByContext({
-    declaredPath: options.declaredPath,
-    sourcePath: options.sourcePath,
-    context: options.context,
-    files: input.files,
-    jsonDocuments: input.jsonDocuments,
-    ...(input.directoryPaths === undefined
-      ? {}
-      : { directoryPaths: input.directoryPaths }),
-    ...(options.moduleKind === undefined
-      ? {}
-      : { moduleKind: options.moduleKind }),
-    ...(options.runtimePathKind === undefined
-      ? {}
-      : { runtimePathKind: options.runtimePathKind }),
-  }).resolved_path;
-  const validTarget =
-    resolved !== null &&
-    (options.loader === "dlopen"
-      ? isNativeAddonFile(resolved, input.files)
-      : isNativeAddonModuleTarget(resolved, input.files.get(resolved)?.kind));
-  return validTarget ? resolved : undefined;
+  const outcome = resolveSinglePathOutcome(input, options);
+  return outcome.kind === "native" ? outcome.path : undefined;
 };
 
 const isNodeModulesPackageBoundary = (directory: string): boolean => {

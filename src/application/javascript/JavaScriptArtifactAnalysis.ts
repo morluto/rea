@@ -407,6 +407,7 @@ const emptyArtifactAnalysis = (
             files: new Map(fileSet.files.map((file) => [file.path, file])),
             jsonDocuments,
             directoryPaths,
+            unanalyzedFiles: fileSet.unanalyzed_files,
           }),
         }),
     files: [],

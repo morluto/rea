@@ -679,3 +679,86 @@ it("traces sibling unpacked require, outside-wrapper rewritten directories, nest
     status: "evidence-linked",
   });
 });
+
+it("stops unpacked fallback when packed app.asar resolves a non-native module while preserving fallback for genuine misses", async () => {
+  const root = await createTestTempDirectory(
+    "rea-asar-non-native-stops-unpacked-fallback-",
+  );
+  const asarSource = join(root, "asar-src");
+  const appRoot = join(root, "app");
+  const nestedAsar = join(appRoot, "resources/app.asar");
+  const decoyUnpackedBytes = "loose-unpacked-decoy-never-loaded-by-node";
+  const decoyDarwinUnpackedBytes =
+    "loose-unpacked-darwin-decoy-shadowed-by-packed-js";
+  const genuineLinuxUnpackedBytes =
+    "loose-unpacked-genuine-miss-linux-addon-bytes";
+
+  await writeFixtureFiles(asarSource, {
+    "package.json": JSON.stringify({
+      name: "inner-asar",
+      main: "index.cjs",
+    }),
+    "index.cjs": [
+      'const { ipcMain } = require("electron");',
+      'const packedJs = require("./addon.node");',
+      "const platformAddon = require(`./plat-${process.platform}.node`);",
+      'ipcMain.handle("asar:check", () => [packedJs, platformAddon]);',
+    ].join("\n"),
+    "addon.node.js": "module.exports = { mockedInJs: true };",
+    "plat-darwin.node.js": "module.exports = { darwinJsShim: true };",
+  });
+  await mkdir(join(appRoot, "resources"), { recursive: true });
+  await createPackageWithOptions(asarSource, nestedAsar, {});
+
+  await writeFixtureFiles(appRoot, {
+    "package.json": JSON.stringify({
+      name: "outer-app",
+      main: "main.cjs",
+    }),
+    "main.cjs": 'require("./resources/app.asar/index.cjs");\n',
+    "resources/app.asar.unpacked/addon.node": decoyUnpackedBytes,
+    "resources/app.asar.unpacked/plat-darwin.node": decoyDarwinUnpackedBytes,
+    "resources/app.asar.unpacked/plat-linux.node": genuineLinuxUnpackedBytes,
+  });
+
+  const analyzed = await analyzeJavaScriptApplication({
+    input_path: appRoot,
+    format: "directory",
+  });
+  if (!analyzed.ok) throw analyzed.error;
+  const parsed = javascriptApplicationAnalysisResultSchema.parse(
+    analyzed.value.normalized_result,
+  );
+  expect(parsed.summary).toMatchObject({
+    native_addon_bindings: 2,
+    resolved_native_addon_bindings: 1,
+  });
+
+  const traced = traceApplicationFeatureEvidence({
+    application: analyzed.value,
+    seed: { kind: "module", value: "main.cjs" },
+    direction: "outgoing",
+    native_observations: [
+      createSimulatedNativeEvidence(
+        join(appRoot, "resources/app.asar.unpacked/addon.node"),
+        decoyUnpackedBytes,
+      ),
+      createSimulatedNativeEvidence(
+        join(appRoot, "resources/app.asar.unpacked/plat-darwin.node"),
+        decoyDarwinUnpackedBytes,
+      ),
+      createSimulatedNativeEvidence(
+        join(appRoot, "resources/app.asar.unpacked/plat-linux.node"),
+        genuineLinuxUnpackedBytes,
+      ),
+    ],
+  });
+  if (!traced.ok) throw traced.error;
+  expect(traced.value.result.native_handoffs).toMatchObject([
+    {
+      artifact_path: "resources/app.asar.unpacked/plat-linux.node",
+      status: "evidence-linked",
+      artifact_sha256: sha256Hex(genuineLinuxUnpackedBytes),
+    },
+  ]);
+});

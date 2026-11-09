@@ -40,6 +40,7 @@ export const addElectronNativeBoundaries = (
       files: context.filesByPath,
       jsonDocuments: context.analysis.jsonDocuments,
       directoryPaths: context.directoryPaths,
+      unanalyzedFiles: context.unanalyzedFiles,
     });
   for (const analyzed of context.analysis.files) {
     const { file, javascript } = analyzed;
