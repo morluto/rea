@@ -77,6 +77,7 @@ it("rejects section expansion before reading or allocating section records", asy
     maximum: 64 * 1024 * 1024,
     unit: "projected_bytes",
   });
+  expect(offsets).toEqual(expect.arrayContaining([0, 32]));
   expect(offsets.every((offset) => offset < 104)).toBe(true);
 });
 

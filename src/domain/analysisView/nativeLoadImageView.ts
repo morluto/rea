@@ -23,6 +23,7 @@ import {
   boundedViewMessages,
   completeWithinViewCoverage,
   pageViewCoverage,
+  unavailableViewCoverage,
 } from "./analysisViewCoverage.js";
 
 const observation = nativeLoadImageObservationSchema.shape;
@@ -198,6 +199,10 @@ const selectRows = (source: readonly (Row | string)[], view: PageRequest) => {
 };
 
 /** Query the owner's parsed historical observations without reopening the target. */
+/** A selected historical relocation row omitted its symbol field. */
+export const RELOCATION_SYMBOL_UNRECORDED =
+  "The relocation symbol was not recorded for at least one selected row.";
+
 export const projectNativeLoadImageView = (
   parent: AnalysisViewParent,
   admitted: AdmittedView,
@@ -290,27 +295,27 @@ export const projectNativeLoadImageView = (
           ? report.sections
           : undefined
         : observed[view.collection];
-  const page = selectRows(selected ?? [], view);
+  const page = selected === undefined ? undefined : selectRows(selected, view);
   const symbolUnrecorded =
     view.collection === "relocations" &&
     (view.fields === undefined ||
       view.fields.some((field: string) => field === "symbol")) &&
-    page.rows.some(({ record }) => !("symbol" in record));
+    (page?.rows.some(({ record }) => !("symbol" in record)) ?? false);
   return ok({
     ...shared,
     unknowns: symbolUnrecorded
-      ? [
-          ...shared.unknowns,
-          "The relocation symbol was not recorded for at least one selected row.",
-        ]
+      ? [...shared.unknowns, RELOCATION_SYMBOL_UNRECORDED]
       : shared.unknowns,
     kind: "native-load-image" as const,
     verification_status: report.status,
     view,
     items: nativeLoadImageViewItemsSchema.parse({
       collection: view.collection,
-      rows: selected === undefined ? null : page.rows,
+      rows: page?.rows ?? null,
     }),
-    coverage: pageViewCoverage(view.offset, page.rows.length, page.total),
+    coverage:
+      page === undefined
+        ? unavailableViewCoverage()
+        : pageViewCoverage(view.offset, page.rows.length, page.total),
   });
 };

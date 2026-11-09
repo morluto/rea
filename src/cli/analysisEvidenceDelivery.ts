@@ -6,6 +6,7 @@ import {
 import type { AnalysisViewRequest } from "../domain/analysisView/analysisView.js";
 import { z } from "incur";
 import {
+  isImmutableEvidence,
   parseEvidence,
   withEvidenceCallerInputPath,
   type Evidence,
@@ -16,7 +17,10 @@ import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import { redactExplicitFailure } from "../domain/explicitSensitiveFailure.js";
 import { err, ok, type Result } from "../domain/result.js";
 import { AnalysisInputError } from "../domain/analysisErrorCore.js";
-import { createEvidenceBundle } from "../domain/evidenceBundle.js";
+import {
+  createEvidenceBundle,
+  createImmutableEvidenceBundle,
+} from "../domain/evidenceBundle.js";
 import {
   evidenceDeliveryCommitted,
   publishEvidenceDelivery,
@@ -32,6 +36,7 @@ import {
 import { analysisInputErrorFromIssues } from "../domain/inputIssueProjection.js";
 import type { ZodSafeParseResult } from "zod";
 import { bindCliEvidenceCallerPath } from "./cliEvidenceCallerPath.js";
+import type { AnalysisResultWithSources } from "../application/investigation/recordEvidenceSources.js";
 
 export const analysisEvidenceDeliveryOptions = {
   detail: z
@@ -54,6 +59,8 @@ interface CliEvidenceDelivery {
   readonly evidenceOutput: string | undefined;
   /** Exact one-shot CLI target spelling, when this invocation selects a file. */
   readonly callerInputPath?: string;
+  /** Verbatim named auxiliary path choices for the same direct invocation. */
+  readonly callerInputPaths?: Readonly<Record<string, string>>;
   /** Derived workflows publish their selected source closure with the result. */
   readonly sourceEvidence?: readonly Evidence[];
   /** Invocation exclusions cover final cleanup and publication paths/diagnostics. */
@@ -154,7 +161,11 @@ export const deliverCliAnalysisEvidence = async (
   const complete = await finishAnalysisCommand(
     input.callerInputPath === undefined
       ? run
-      : bindCliEvidenceCallerPath(input.callerInputPath, run),
+      : bindCliEvidenceCallerPath(
+          input.callerInputPath,
+          run,
+          input.callerInputPaths,
+        ),
     service,
     providerId,
     operation,
@@ -203,17 +214,28 @@ const withUndeliveredSourceClosure = (
 
 /** Publish already finalized CLI analysis without opening a second provider/session. */
 export const publishCliAnalysisEvidence = async (
-  result: Result<Evidence, JsonValue>,
+  result: AnalysisResultWithSources<Evidence, JsonValue>,
   input: CliEvidenceDelivery,
 ): Promise<JsonValue> => {
   const { operation, signal, detail, evidenceOutput } = input;
+  // Failure reporting uses the same captured sources as publication. A trace
+  // carries them on the result, while other commands pass them on the input.
+  const capturedSources = [
+    ...(input.sourceEvidence ?? []),
+    ...(result.sourceEvidence ?? []),
+  ];
+  const closureInput =
+    capturedSources.length === 0
+      ? input
+      : { ...input, sourceEvidence: capturedSources };
   const projectFailure = (error: AnalysisError) =>
     projectAnalysisError(
       redactExplicitFailure(error, input.sensitiveValues ?? []),
     );
   const undelivered = (error: AnalysisError) =>
-    withUndeliveredSourceClosure(projectFailure(error), input);
-  if (!result.ok) return withUndeliveredSourceClosure(result.error, input);
+    withUndeliveredSourceClosure(projectFailure(error), closureInput);
+  if (!result.ok)
+    return withUndeliveredSourceClosure(result.error, closureInput);
   const complete = parseEvidence(result.value);
   const inputError = cliEvidenceDeliveryInputError(input);
   if (inputError !== undefined) {
@@ -236,18 +258,29 @@ export const publishCliAnalysisEvidence = async (
   // inspect_analysis_view calls own their own input and do not inherit it.
   const selected =
     detail === "summary" && complete.caller_input_path !== undefined
-      ? withEvidenceCallerInputPath(delivered.value, complete.caller_input_path)
+      ? withEvidenceCallerInputPath(
+          delivered.value,
+          complete.caller_input_path,
+          complete.caller_input_paths,
+        )
       : delivered.value;
   const inspectionSources = analysisEvidenceSources(complete);
   if (!inspectionSources.ok) return undelivered(inspectionSources.error);
+  const records = [
+    ...new Map(
+      [...capturedSources, ...inspectionSources.value].map((record) => [
+        record.evidence_id,
+        record,
+      ]),
+    ).values(),
+  ];
+  // Only skip the writer's heap check when every record is already sealed.
+  // A mutable producer record must retain the existing allocation check.
+  const bundle = records.every(isImmutableEvidence)
+    ? createImmutableEvidenceBundle(records)
+    : createEvidenceBundle(records);
   const published = await publishEvidenceDelivery({
-    bundle: createEvidenceBundle([
-      ...new Map(
-        [...(input.sourceEvidence ?? []), ...inspectionSources.value].map(
-          (record) => [record.evidence_id, record],
-        ),
-      ).values(),
-    ]),
+    bundle,
     complete,
     delivered: selected,
     outputPath: absoluteCallerPath(evidenceOutput),

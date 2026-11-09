@@ -595,7 +595,6 @@ it("rejects a target that is not a readable file", async () => {
       operation: "identify_flutter_build",
       input: { path: "/nonexistent/app.apk" },
     });
-    expect(result.ok).toBe(false);
     if (result.ok) throw new Error("expected a refusal");
     return projectAnalysisError(result.error);
   })();
@@ -1202,7 +1201,6 @@ it.each(["identify_flutter_build", "inspect_dart_aot"] as const)(
       close.mockRestore();
     });
     const result = await provider.execute({ operation, input: { path } });
-    expect(result.ok).toBe(false);
     if (result.ok) throw new Error("Expected retained reader cleanup");
     expect(result.error.cleanupIncomplete).toBe(true);
     expect(result.error.partialObservation).toMatchObject({ operation });
@@ -1236,6 +1234,31 @@ it.each(["identify_flutter_build", "inspect_dart_aot"] as const)(
     expect(removeRoot).toHaveBeenCalledTimes(1);
   },
 );
+
+it("qualifies unlabeled Dart-shaped strings as candidates", async () => {
+  const candidate = "1.2.3 (stable) (unrelated string)";
+  const path = await buildApk("dart-pattern.apk", [
+    { path: "lib/arm64-v8a/libapp.so", bytes: aotImage() },
+    {
+      path: "lib/arm64-v8a/libflutter.so",
+      bytes: Buffer.concat([libflutter(), Buffer.from(`\0${candidate}\0`)]),
+    },
+  ]);
+  const provider = new FlutterBuildProvider();
+  onTestFinished(() => provider.close());
+  const result = await provider.execute({
+    operation: "identify_flutter_build",
+    input: { path },
+  });
+  if (!result.ok) throw result.error;
+  const value = flutterResultSchemas.identify_flutter_build.parse(
+    result.value.result,
+  );
+  expect(value.abis[0]?.libflutter.dart_version).toBe(candidate);
+  expect(result.value.limitations.join(" ")).toContain(
+    "a matching unrelated string may be reported",
+  );
+});
 
 it("reports omitted Dart labels independently of toolchain labels", async () => {
   const path = await buildApk("dart-label.apk", [
@@ -1633,7 +1656,6 @@ it.each([false, true])(
       { operation: "identify_flutter_build", input: { path } },
       { signal: controller.signal },
     );
-    expect(result.ok).toBe(false);
     if (result.ok) throw new Error("Expected owned cleanup failure");
     expect(result.error.cleanupIncomplete).toBe(true);
     expect(result.error.cleanupResources).toEqual([retainedRoot]);
@@ -1734,7 +1756,6 @@ it("preserves source admission failure when cancellation arrives during its root
     },
     { signal: controller.signal },
   );
-  expect(result.ok).toBe(false);
   if (result.ok) throw new Error("Expected missing selected source");
   expect(result.error).not.toBeInstanceOf(AnalysisCancelledError);
   expect(result.error).toMatchObject({ _tag: "AnalysisInputError" });
@@ -1871,7 +1892,6 @@ it("does not create a replacement snapshot when cancelled during cleanup retry",
   const cancelled = await provider.execute(request, {
     signal: controller.signal,
   });
-  expect(cancelled.ok).toBe(false);
   if (cancelled.ok) throw new Error("Expected cancellation");
   expect(projectAnalysisError(cancelled.error).code).toBe("cancelled");
   expect(cancelled.error.cause).toBe(reason);

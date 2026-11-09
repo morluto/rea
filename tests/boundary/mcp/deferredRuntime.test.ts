@@ -20,6 +20,10 @@ import { TOOL_FAMILY_DEFINITIONS } from "../../../src/contracts/toolFamilies.js"
 import { evidenceSchema } from "../../../src/domain/evidence.js";
 import { analysisViewResultSchema } from "../../../src/domain/analysisView/analysisView.js";
 import { SERVER_START_FAILED } from "../../../src/main/messages.js";
+import { HOT_TOOL_NAMES } from "../../../src/catalogDiscovery.js";
+import { DatabaseSync } from "node:sqlite";
+import { Ajv2020 } from "ajv/dist/2020.js";
+import type { AnySchemaObject } from "ajv";
 
 const connect = async (
   mode: "legacy" | "auto",
@@ -57,7 +61,120 @@ const connect = async (
 };
 
 it.each([
+  { mode: "legacy", environment: {} },
+  { mode: "auto", environment: {} },
+  { mode: "legacy", environment: { REA_MCP_OUTPUT_SCHEMA_PROFILE: "off" } },
+  {
+    mode: "auto",
+    environment: {
+      REA_MCP_OUTPUT_SCHEMA_PROFILE: "compact",
+      REA_MCP_TOOL_FAMILIES: "session,application,artifact",
+    },
+  },
+] as const)(
+  "discovers and executes cold tools with $mode and $environment",
+  async ({ mode, environment }) => {
+    const directory = await createTestTempDirectory("rea-cold-sqlite-");
+    const path = join(directory, "app.db");
+    const database = new DatabaseSync(path);
+    try {
+      database.exec(
+        "CREATE TABLE catalog_probe (id INTEGER PRIMARY KEY, name TEXT); INSERT INTO catalog_probe VALUES (7, 'pelican');",
+      );
+    } finally {
+      database.close();
+    }
+    const { client, stderr } = await connect(mode, {
+      ...environment,
+      REA_MCP_TOOL_CATALOG_PROFILE: "hot-cold",
+    });
+    const initial = await client.listTools();
+    expect(new Set(initial.tools.map(({ name }) => name))).toEqual(
+      new Set([...HOT_TOOL_NAMES, "discover_tools"]),
+    );
+    const ajv = new Ajv2020({ strict: false });
+    for (const tool of initial.tools) {
+      expect(ajv.validateSchema(tool.inputSchema)).toBe(true);
+      if (tool.outputSchema !== undefined)
+        expect(ajv.validateSchema(tool.outputSchema as AnySchemaObject)).toBe(
+          true,
+        );
+    }
+    const call = async (name: string, args: Record<string, unknown>) => {
+      if (environment.REA_MCP_OUTPUT_SCHEMA_PROFILE === "off") {
+        const definition = (await client.listTools()).tools.find(
+          (tool) => tool.name === name,
+        );
+        if (definition === undefined)
+          throw new Error(`Not advertised: ${name}`);
+        return client.callTool(
+          { name, arguments: args },
+          { toolDefinition: definition },
+        );
+      }
+      return artifactMcpCall(client, { name, arguments: args });
+    };
+    const invalid = await call("discover_tools", {
+      names: ["inspect_sqlite_database", "missing_tool"],
+    });
+    expect(invalid.isError).toBe(true);
+    expect(await client.listTools()).toEqual(initial);
+    const loaded = await call("discover_tools", {
+      names: ["list_unknowns", "list_unknowns"],
+    });
+    expect(loaded.structuredContent).toMatchObject({
+      loaded_count: initial.tools.length + 1,
+      total_matches: 1,
+      tools: [{ name: "list_unknowns" }],
+    });
+    expect((await call("list_unknowns", {})).isError).not.toBe(true);
+    const materialized = await client.listTools();
+    expect(materialized.tools).toHaveLength(initial.tools.length + 1);
+    expect(
+      materialized.tools.find(({ name }) => name === "inspect_sqlite_database"),
+    ).toBeUndefined();
+    const found = await call("discover_tools", { query: "sqlite", limit: 1 });
+    expect(found.structuredContent).toMatchObject({
+      total_matches: 1,
+      tools: [{ name: "inspect_sqlite_database" }],
+    });
+    const advertisedSqlite = (await client.listTools()).tools.find(
+      ({ name }) => name === "inspect_sqlite_database",
+    );
+    expect(found.structuredContent).toMatchObject({
+      tools: [{ input_schema: advertisedSqlite?.inputSchema }],
+    });
+    const result = await call("inspect_sqlite_database", {
+      path,
+      table: "catalog_probe",
+      columns: ["id", "name"],
+      row_limit: 1,
+    });
+    expect(result.isError).not.toBe(true);
+    expect(JSON.stringify(result.structuredContent)).toContain("pelican");
+    expect(JSON.stringify(result.structuredContent)).toContain("evidence_id");
+    expect((await client.listTools()).tools).toHaveLength(
+      initial.tools.length + 2,
+    );
+    if ("REA_MCP_TOOL_FAMILIES" in environment) {
+      expect(
+        (await call("discover_tools", { names: ["current_address"] })).isError,
+      ).toBe(true);
+      expect((await client.listTools()).tools).toHaveLength(
+        initial.tools.length + 2,
+      );
+    }
+    expect(stderr()).toBe("");
+  },
+);
+
+it.each([
   { name: "deferred", environment: {}, eager: false },
+  {
+    name: "hot/cold deferred",
+    environment: { REA_MCP_TOOL_CATALOG_PROFILE: "hot-cold" },
+    eager: false,
+  },
   {
     name: "compact deferred",
     environment: { REA_MCP_INPUT_SCHEMA_PROFILE: "compact" },
@@ -113,8 +230,15 @@ registerHooks({
     const { client, stderr } = await connect("legacy", environment, [
       `--import=${hook}`,
     ]);
-    const discovery = await client.listTools();
+    let discovery = await client.listTools();
     await client.listPrompts();
+    if (environment.REA_MCP_TOOL_CATALOG_PROFILE === "hot-cold") {
+      await client.callTool({
+        name: "discover_tools",
+        arguments: { names: ["list_unknowns"] },
+      });
+      discovery = await client.listTools();
+    }
     expect(await loadedModules()).toEqual(
       new Set(eager ? ["entrypoint", ...modules] : ["entrypoint"]),
     );
@@ -670,23 +794,41 @@ const copyCompiledPackage = async (prefix: string): Promise<string> => {
   return directory;
 };
 
+/**
+ * Modules `record-mcp-catalog.mjs` loads before it owns cleanup. The fixture
+ * replaces every one of these; an import outside the list fails closed.
+ */
+const RECORDER_RUNTIME_MODULES = [
+  "server/createServer.js",
+  "composition/binary.js",
+  "config/parseConfig.js",
+  "logger.js",
+  "contracts/promptContracts.js",
+  "contracts/toolContracts.js",
+  "domain/evidenceInputContract.js",
+] as const;
+
 // Recorder cleanup tests replace every runtime import through their loader
 // hook. Keep only resolvable sentinels so an unmodeled import fails closed.
 const createRecorderCleanupFixture = async (): Promise<string> => {
   const directory = await createTestTempDirectory("rea-catalog-cleanup-");
   await mkdir(join(directory, "scripts"), { recursive: true });
-  await cp(
-    resolve("scripts/record-mcp-catalog.mjs"),
-    join(directory, "scripts/record-mcp-catalog.mjs"),
-  );
+  const scriptPath = resolve("scripts/record-mcp-catalog.mjs");
+  const imported = [
+    ...((await readFile(scriptPath, "utf8")).matchAll(/read\("([^"]+)"\)/g) ??
+      []),
+  ].map((match) => match[1]);
+  if (
+    imported.length !== RECORDER_RUNTIME_MODULES.length ||
+    imported.some((name, index) => name !== RECORDER_RUNTIME_MODULES[index])
+  ) {
+    throw new Error(
+      `record-mcp-catalog.mjs runtime imports ${JSON.stringify(imported)} do not match the cleanup fixture ${JSON.stringify(RECORDER_RUNTIME_MODULES)}`,
+    );
+  }
+  await cp(scriptPath, join(directory, "scripts/record-mcp-catalog.mjs"));
   await cp(resolve("package.json"), join(directory, "package.json"));
-  for (const path of [
-    "server/createServer.js",
-    "composition/binary.js",
-    "config/parseConfig.js",
-    "logger.js",
-    "contracts/promptContracts.js",
-  ]) {
+  for (const path of RECORDER_RUNTIME_MODULES) {
     const file = join(directory, "dist", path);
     await mkdir(dirname(file), { recursive: true });
     await writeFile(
@@ -771,6 +913,11 @@ it.each([
       "/dist/logger.js": "export const silentLogger = {};",
       "/dist/contracts/promptContracts.js":
         "export const PROMPT_CONTRACTS = [];",
+      // The recorder derives Evidence-input names from these contracts. This
+      // fault injection has no tools, so the derived list stays empty.
+      "/dist/contracts/toolContracts.js": "export const TOOL_CONTRACTS = [];",
+      "/dist/domain/evidenceInputContract.js":
+        "export const getEvidenceInputContract = () => ({ hasEvidenceReferenceAlternative: false });",
     };
     const clientModule = `data:text/javascript,${encodeURIComponent(`
 export class Client {
@@ -803,6 +950,9 @@ registerHooks({
   },
 });
 `)}`;
+    expect(
+      Object.keys(replacements).map((path) => path.slice("/dist/".length)),
+    ).toEqual([...RECORDER_RUNTIME_MODULES]);
     const child = spawnSync(
       process.execPath,
       [`--import=${hook}`, join(directory, "scripts/record-mcp-catalog.mjs")],

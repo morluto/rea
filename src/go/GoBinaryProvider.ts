@@ -2,6 +2,7 @@ import { GO_BINARY_PROVIDER_IDENTITY } from "./GoBinaryProviderIdentity.js";
 import {
   projectStableArtifactFailure,
   projectArtifactCloseFailure,
+  stableArtifactInputRecovery,
 } from "../artifacts/StableArtifactFailure.js";
 import { isSelectedRegularFileError } from "../filesystem/RegularFile.js";
 import { readStableArtifact } from "../artifacts/readStableArtifact.js";
@@ -28,6 +29,7 @@ import {
 import {
   goBinarySchema,
   type GoBinary,
+  type GoStringLiterals,
   type InspectGoBinaryInput,
 } from "../domain/go/goBinary.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
@@ -113,9 +115,11 @@ const failureForPrimary = (
         },
       );
     if (cause.reason === "path")
-      return new AnalysisInputError(OPERATION, { cause }, [
-        { path: ["path"], reason: "invalid_format", message: cause.message },
-      ]);
+      return new AnalysisInputError(
+        OPERATION,
+        { cause, ...stableArtifactInputRecovery(cause) },
+        [{ path: ["path"], reason: "invalid_format", message: cause.message }],
+      );
   }
   if (cause instanceof Error && "code" in cause) {
     if (cause.code === "EACCES" || cause.code === "EPERM")
@@ -164,10 +168,16 @@ const outputLimit = (path: string) =>
 const limitationsFor = (
   info: GoBinaryImage["build_info"],
   sectionNamesLimitation: string | undefined,
+  stringLiterals: GoStringLiterals | undefined,
+  machoChainedFixups: boolean | undefined,
 ): string[] => [
   "Embedded build metadata is observed file content, not proof of compiler identity, dependency authenticity or runtime behavior.",
-  "Only Go build information is inspected; function names, source mappings, type metadata and decompiled code are not recovered.",
-  "Resource guards bound stable artifact reads and cumulative header searches to 256 MiB each, aggregate embedded strings to 1 MiB, structural table decoding to 16 MiB and complete metadata payloads to 8 MiB; these are not operating-system memory or CPU limits.",
+  stringLiterals === undefined
+    ? "Only Go build information is inspected; function names, source mappings, type metadata and decompiled code are not recovered."
+    : "Only Go build information and inferred static (ptr, len) string-header candidates are inspected; function names, source mappings, type metadata and decompiled code are not recovered.",
+  stringLiterals === undefined
+    ? "Resource guards bound stable artifact reads and cumulative header searches to 256 MiB each, aggregate embedded strings to 1 MiB, structural table decoding to 16 MiB and complete metadata payloads to 8 MiB; these are not operating-system memory or CPU limits."
+    : "Resource guards bound stable artifact reads and cumulative header searches to 256 MiB each, aggregate embedded build-info strings to 1 MiB, structural table decoding to 16 MiB, static string-header scanning to 64 MiB, recovered string literals to 512 KiB (up to 4,096 bytes each) and complete metadata payloads to 8 MiB; these are not operating-system memory or CPU limits.",
   ...(info !== null && (info.go_version === null || info.module_text === null)
     ? [
         "Some embedded Go strings contain non-UTF8 bytes; undecodable text is null and exact source bytes are preserved as base64.",
@@ -189,6 +199,21 @@ const limitationsFor = (
         "Some embedded module-text records could not be parsed completely; their original lines are preserved and additional metadata remains unknown.",
       ]
     : []),
+  ...(stringLiterals === undefined
+    ? []
+    : [
+        "Recovered string_literals are inferred from pointer-aligned (ptr, len) pairs in non-executable mapped data pointing to printable UTF-8 slices within single read-only spans; compiler-inlined or stack-constructed strings without static headers, unapplied relocation addends and runtime reachability are not established.",
+        ...(machoChainedFixups === true
+          ? [
+              "This Mach-O declares LC_DYLD_CHAINED_FIXUPS; rebase-encoded pointer slots in writable data may not hold raw virtual addresses statically, so (ptr, len) recovery can miss writable-section string headers.",
+            ]
+          : []),
+        ...(stringLiterals.truncated
+          ? [
+              "Recovered string_literals were truncated at the configured item, 512 KiB aggregate-byte or 64 MiB scan budget; additional static (ptr, len) candidates may exist.",
+            ]
+          : []),
+      ]),
 ];
 
 /** Locate image-relative build-info ranges in the selected file. */
@@ -209,6 +234,24 @@ const inFile = (
           ...info.module_location,
           offset: info.module_location.offset + fileOffset,
         },
+      };
+
+const inFileStringLiterals = (
+  literals: GoStringLiterals | undefined,
+  fileOffset: number,
+): GoStringLiterals | undefined =>
+  literals === undefined || fileOffset === 0
+    ? literals
+    : {
+        ...literals,
+        items: literals.items.map((item) => ({
+          ...item,
+          location: {
+            ...item.location,
+            offset: item.location.offset + fileOffset,
+          },
+          first_header_offset: item.first_header_offset + fileOffset,
+        })),
       };
 
 /** Stable in-process metadata inspection without subprocesses, temporary files or Go installation. */
@@ -249,12 +292,22 @@ export class GoBinaryProvider implements GoBinaryPort {
           snapshot.bytes,
           input.architecture,
         );
-        const image = readGoBinaryImage(selected.bytes);
+        const image = readGoBinaryImage(selected.bytes, {
+          includeStringLiterals: input.include_string_literals === true,
+          maxStringLiterals: input.max_string_literals,
+          checkActive: () => assertArtifactReadActive(options?.signal),
+        });
         const {
           section_names_limitation: sectionNamesLimitation,
+          macho_chained_fixups: machoChainedFixups,
+          string_literals: rawStringLiterals,
           ...publicImage
         } = image;
         const info = inFile(image.build_info, selected.fileOffset);
+        const stringLiterals = inFileStringLiterals(
+          rawStringLiterals,
+          selected.fileOffset,
+        );
         const report = {
           ...publicImage,
           artifact: {
@@ -266,7 +319,15 @@ export class GoBinaryProvider implements GoBinaryPort {
             ? {}
             : { selected_slice: selected.selection }),
           build_info: info,
-          limitations: limitationsFor(info, sectionNamesLimitation),
+          ...(stringLiterals === undefined
+            ? {}
+            : { string_literals: stringLiterals }),
+          limitations: limitationsFor(
+            info,
+            sectionNamesLimitation,
+            stringLiterals,
+            machoChainedFixups,
+          ),
         };
         if (Buffer.byteLength(JSON.stringify(report), "utf8") > OUTPUT_BYTES)
           throw outputLimit(input.path);

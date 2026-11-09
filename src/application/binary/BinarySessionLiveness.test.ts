@@ -115,9 +115,14 @@ it("keeps unbound observations out of persisted target snapshots", async () => {
   const parameters = { document: "0", address: "0x1000" };
   expect((await session.open(process.execPath)).ok).toBe(true);
   const bound = await session.execute("address_name", parameters);
-  expect(bound.ok).toBe(true);
+  if (!bound.ok) throw bound.error;
   const child = deep.created[0];
-  if (child === undefined || !bound.ok) throw new Error("Expected bound read");
+  if (child === undefined) throw new Error("Expected bound read");
+  const liveReplay = await session.execute("address_name", parameters);
+  if (!liveReplay.ok) throw liveReplay.error;
+  expect(
+    liveReplay.value.sourceEvidence?.map((source) => source.evidence_id),
+  ).toEqual([bound.value.evidenceId]);
   child.execute = () =>
     Promise.resolve(
       ok(
@@ -169,13 +174,14 @@ it("keeps unbound observations out of persisted target snapshots", async () => {
     ).ok,
   ).toBe(true);
   const replay = await session.execute("address_name", parameters);
-  expect(replay.ok).toBe(true);
-  if (replay.ok) {
-    expect(replay.value.evidenceId).toBe(bound.value.evidenceId);
-    expect(replay.value.limitations).toContain(
-      "Loaded from a local REA analysis snapshot; this call did not re-run the provider.",
-    );
-  }
+  if (!replay.ok) throw replay.error;
+  expect(replay.value.evidenceId).toBe(bound.value.evidenceId);
+  expect(
+    replay.value.sourceEvidence?.map((source) => source.evidence_id),
+  ).toEqual([bound.value.evidenceId]);
+  expect(replay.value.limitations).toContainEqual(
+    expect.stringMatching(/snapshot.*did not re.run the provider/iu),
+  );
 });
 
 describe("BinarySession open liveness", () => {

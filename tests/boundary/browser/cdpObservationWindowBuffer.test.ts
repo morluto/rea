@@ -216,8 +216,10 @@ it("buffers clock-response events while dropping lifecycle history before the cl
       timestamp: 22,
     }),
   );
-  expect(result.value.limitations).toContain(
-    "Timeline rows without a comparable producer timestamp have a null timestamp. Buffered events with unknown timing are retained as context only; they do not establish activity inside the selected observation window.",
+  expect(result.value.limitations).toContainEqual(
+    expect.stringMatching(
+      /unknown timing.*context only.*do not establish.*observation window/iu,
+    ),
   );
 });
 

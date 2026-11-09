@@ -99,7 +99,15 @@ export class WebNetworkCaptureService {
         );
       }
       if (partialFailure !== undefined) {
-        loaded.error.partialObservation = undefined;
+        const rejected = loaded.error.partialObservation;
+        for (
+          let owner: AnalysisError | undefined = loaded.error;
+          owner !== undefined;
+          owner = owner.cleanupPrimary
+        ) {
+          if (owner.partialObservation === rejected)
+            owner.partialObservation = undefined;
+        }
         partialFailure.retainSecondaryFailure(loaded.error);
         return failure(
           loaded.error.cleanupIncomplete

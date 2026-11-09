@@ -10,16 +10,34 @@ export const workflowAnalysisProfile = (
   upstream: AnalysisProfileCommitment,
   operation?: AnalysisOperation,
 ): AnalysisProfileCommitment =>
-  createAnalysisProfile(REA_WORKFLOW_PROVIDER, {
-    upstream_analysis_profile: upstream,
-    source_limitations: "provider-operation-caveats-v1",
-    ...(operation === "binary_overview"
-      ? { workflow_revision: 5 }
-      : operation === "batch_decompile"
-        ? { workflow_revision: 4 }
-        : operation === "trace_feature"
-          ? { workflow_revision: 4 }
-          : operation === "get_call_graph"
-            ? { workflow_revision: 3 }
+  createAnalysisProfile(
+    REA_WORKFLOW_PROVIDER,
+    workflowAnalysisProfileParameters(upstream, operation),
+  );
+
+/** The owned profile shape, with null allowed when estimating its envelope. */
+export const workflowAnalysisProfileParameters = (
+  upstream: AnalysisProfileCommitment | null,
+  operation?: AnalysisOperation,
+) => ({
+  upstream_analysis_profile: upstream,
+  source_limitations: "provider-operation-caveats-v1",
+  ...(operation === "trace_native_values"
+    ? {
+        value_flow_limitations: "provider-attributed-v1",
+        value_flow_absence: "recorded-versus-unavailable-v1",
+      }
+    : {}),
+  ...(operation === "binary_overview"
+    ? { workflow_revision: 5 }
+    : operation === "batch_decompile"
+      ? { workflow_revision: 4 }
+      : operation === "trace_feature"
+        ? { workflow_revision: 9 }
+        : operation === "get_call_graph"
+          ? { workflow_revision: 3 }
+          : operation === "trace_call_path" ||
+              operation === "trace_native_values"
+            ? { workflow_revision: 2 }
             : { workflow_revision: 1 }),
-  });
+});

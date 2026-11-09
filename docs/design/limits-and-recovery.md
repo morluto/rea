@@ -3,7 +3,7 @@
 This guide explains the runtime settings design for maintainers and developers:
 who owns each value, when an update takes effect, how providers enforce it, and
 how to extend the system. The public tool contract is in
-[MCP contracts](../mcp-contracts.md#editable-analysis-settings); recorded runtime
+[MCP contracts](../reference/mcp-contracts.md#editable-analysis-settings); recorded runtime
 checks and their limitations are in the
 [verification report](../verification/runtime-analysis-settings.md).
 
@@ -121,9 +121,22 @@ launch environment affects the next REA process.
 is the byte-budget shape: a decimal safe integer with a 10 MiB floor
 (`MINIMUM_RESPONSE_BYTES`), the same shared schema, and no silent fallback. A
 change needs a REA restart and a matching client receive buffer. It does not
-raise REA's reserved string limit or Node's string ceiling. The setup
-allowlist does not copy this setting. A new headroom setting should, following
-the regex deadline.
+raise REA's reserved string limit or Node's string ceiling. Like the regex
+deadline, it is in `SELECTED_REGISTRATION_SETTINGS`, so setup forwards an
+explicit selection into the client registration.
+
+Windows ChangeTime admission waits out a fresh timestamp before recording a
+baseline. `REA_WINDOWS_CHANGE_TIME_DRIFT_MS` (default 2000 ms, floor 1 ms,
+maximum 60000 ms), `REA_WINDOWS_CHANGE_TIME_SETTLE_POLL_MS` (default 25 ms,
+floor 1 ms, maximum 1000 ms), and `REA_WINDOWS_CHANGE_TIME_SETTLE_MAX_POLLS`
+(default 40, floor 1, maximum 1000) are launch settings. Unset keeps those
+defaults. An invalid value is a configuration error: it names the setting, the
+rejected value, source `setting`, the default, the floor, and the maximum, and
+says to set a positive decimal integer in the environment that starts REA and
+then restart REA. There is no runtime override. Setup forwards an explicit
+selection. When the poll budget runs out, admission keeps the last observation
+instead of failing the readable file. Raising a setting only changes how long
+that wait can last. It does not change Windows ChangeTime itself.
 
 A per-call budget can have a runtime default without having an environment
 setting. JavaScript `max_heap_mb`
@@ -386,7 +399,7 @@ application points, and resulting behavior. Check that adapters deliver the
 canonical recovery guidance, with independent assertions for its underlying
 facts. Avoid freezing prose or deriving all expected values from the same
 registry used by the implementation; either can hide the wrong failure.
-See [test design](../testing.md#test-design-and-pruning) for the assertion policy.
+See [test design](../development/testing.md#test-design-and-pruning) for the assertion policy.
 
 Runtime checks cover atomic validation, stale writes, reset, runtime isolation,
 accepted-operation snapshots, and explicit argument precedence. Public MCP

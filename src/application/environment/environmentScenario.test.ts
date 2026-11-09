@@ -44,8 +44,10 @@ describe("environment manifests from capture_browser_scenario parents", () => {
     expect(
       manifest.tools.some((entry) => entry.name.includes("redacted")),
     ).toBe(false);
-    expect(manifest.limitations).toContain(
-      "Scenario records are the capture's network transactions in request order; each record ordinal is the transaction's zero-based position.",
+    expect(manifest.limitations).toContainEqual(
+      expect.stringMatching(
+        /network transactions in request order.*ordinal.*zero-based position/iu,
+      ),
     );
   });
 

@@ -308,8 +308,38 @@ describe("Ghidra relationship coverage replay", () => {
 describe("Ghidra snapshot profile admission", () => {
   it.each([
     {
+      parameter: "value_flow_effect_scope",
+      current: "pcode-load-store-explicit-v1",
+      legacy: undefined,
+    },
+    {
+      parameter: "byte_search_coverage",
+      current: "separate-loaded-overlays-v1",
+      legacy: undefined,
+    },
+    {
+      parameter: "inventory_search_projection",
+      current: "provider-inventory-facts-v1",
+      legacy: undefined,
+    },
+    {
+      parameter: "data_type_observations",
+      current: "bit-field-base-and-lookup-v1",
+      legacy: undefined,
+    },
+    {
+      parameter: "byte_search_boundary",
+      current: "contiguous-eligible-initialized-blocks-v1",
+      legacy: undefined,
+    },
+    {
       parameter: "instruction_status",
-      current: "unlisted-address-without-decode-v1",
+      current: "unlisted-and-containing-code-data-v3",
+      legacy: "unlisted-address-without-decode-v1",
+    },
+    {
+      parameter: "instruction_status",
+      current: "unlisted-and-containing-code-data-v3",
       legacy: undefined,
     },
     {
@@ -319,13 +349,23 @@ describe("Ghidra snapshot profile admission", () => {
     },
     {
       parameter: "instruction_references",
-      current: "exact-address-incoming-without-synthetic-entry-v2",
+      current: "exact-address-incoming-without-synthetic-entry-v3",
+      legacy: "exact-address-incoming-without-synthetic-entry-v2",
+    },
+    {
+      parameter: "instruction_references",
+      current: "exact-address-incoming-without-synthetic-entry-v3",
       legacy: "exact-address-incoming-v1",
     },
     {
       parameter: "instruction_references",
-      current: "exact-address-incoming-without-synthetic-entry-v2",
+      current: "exact-address-incoming-without-synthetic-entry-v3",
       legacy: undefined,
+    },
+    {
+      parameter: "function_references",
+      current: "complete-body-and-entry-reference-manager-v3",
+      legacy: "complete-body-and-entry-reference-manager-v2",
     },
     {
       parameter: "call_relationship_coverage",
