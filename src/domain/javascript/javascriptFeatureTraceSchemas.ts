@@ -105,7 +105,9 @@ export const traceApplicationFeatureInputSchema = z
   .strictObject({
     application: evidenceSchema,
     native_observations: z.array(evidenceSchema).default([]),
-    seed: applicationFeatureSeedSchema,
+    seed: applicationFeatureSeedSchema.describe(
+      'Typed literal starting point. kind is one of node-id, route, string, channel, module, native-export, or api; value is the literal text. match defaults to contains for string seeds and exact otherwise; an empty value requires match exact. api seeds may add entry_path. Example: {"kind":"module","value":"search.js","match":"exact"}.',
+    ),
     semantic_page: z
       .strictObject({
         offset: z.int().nonnegative().default(0),
