@@ -494,6 +494,9 @@ const locateElfNotes = async (carrier: Carrier): Promise<SectionRange[]> => {
   const { programs, sections } = raw.value;
   if (programs.count === PN_XNUM)
     damaged("ELF extended program numbering is unsupported");
+  // A zero e_shnum with a section table moves the count into section zero.
+  if (sections.count === 0 && sections.offset !== 0n)
+    damaged("ELF extended section numbering is unsupported");
   const programHeaders =
     programs.count === PN_XNUM
       ? undefined

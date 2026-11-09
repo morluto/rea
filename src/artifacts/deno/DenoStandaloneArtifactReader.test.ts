@@ -848,6 +848,12 @@ it.each([
     }),
   ],
   [
+    "extended section numbering",
+    patched(gnuElf("section"), (image) => {
+      image.writeUInt16LE(0, ELF64_SHNUM);
+    }),
+  ],
+  [
     "a non-canonical program header size",
     patched(gnuElf("program"), (image) => {
       image.writeUInt16LE(72, ELF64_PHENTSIZE);
@@ -885,6 +891,18 @@ const suiNote = (section = buildDenoSection()): Buffer => {
 
 it("fails closed when a confirmed SUI note shares a damaged table", async () => {
   const bytes = gnuElf("program", Buffer.concat([suiNote(), damagedNote()]));
+  await expect(
+    locateDenoStandalone(bytesHandle(bytes), bytes.length),
+  ).resolves.toMatchObject({
+    status: "present",
+    failure: { reason: "format" },
+  });
+});
+
+it("fails closed when a SUI note sits beside extended section numbering", async () => {
+  const bytes = patched(gnuElf("both", suiNote()), (image) => {
+    image.writeUInt16LE(0, ELF64_SHNUM);
+  });
   await expect(
     locateDenoStandalone(bytesHandle(bytes), bytes.length),
   ).resolves.toMatchObject({
