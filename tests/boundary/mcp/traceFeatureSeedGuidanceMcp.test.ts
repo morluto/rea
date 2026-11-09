@@ -14,14 +14,23 @@ const SEED_KINDS = [
   "api",
 ];
 
-const advertisedSeed = async (profile: "full" | "compact") => {
+const advertisedSeed = async (
+  profile: "full" | "compact",
+  parentEnvironment: NodeJS.ProcessEnv = process.env,
+) => {
+  const environment: NodeJS.ProcessEnv = {
+    ...parentEnvironment,
+    REA_MCP_INPUT_SCHEMA_PROFILE: profile,
+    REA_MCP_TOOL_CATALOG_PROFILE: "full",
+  };
+  delete environment.REA_MCP_TOOL_FAMILIES;
   const harness = await createApplicationMcpHarness({
     session: createTestBinarySession(() => {
       throw new Error("tools/list must not acquire a binary provider");
     }),
     serverOptions: {
       logger: silentLogger,
-      environment: { ...process.env, REA_MCP_INPUT_SCHEMA_PROFILE: profile },
+      environment,
     },
     clientIdentity: { name: "trace-seed-guidance", version: "1" },
   });
@@ -37,10 +46,22 @@ const advertisedSeed = async (profile: "full" | "compact") => {
 // The compact profile reduces this schema to shallow properties, which drops
 // the seed union and its kind enums. The field description must still name
 // every accepted kind so an agent can form a valid seed without the source.
-it.each(["full", "compact"] as const)(
-  "names every trace seed kind in the advertised seed field (%s profile)",
-  async (profile) => {
-    const seed = await advertisedSeed(profile);
+it.each([
+  ["full", false],
+  ["compact", false],
+  ["full", true],
+  ["compact", true],
+] as const)(
+  "names every trace seed kind (%s schema, restricted parent: %s)",
+  async (profile, restricted) => {
+    const parent = restricted
+      ? {
+          ...process.env,
+          REA_MCP_TOOL_FAMILIES: "native",
+          REA_MCP_TOOL_CATALOG_PROFILE: "hot-cold",
+        }
+      : process.env;
+    const seed = await advertisedSeed(profile, parent);
     expect(seed).toBeDefined();
     for (const kind of SEED_KINDS) expect(seed?.description).toContain(kind);
   },
