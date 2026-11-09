@@ -231,6 +231,9 @@ export const analysisClientFailureForOperation = (
         ...(cause.remediationAction === undefined
           ? {}
           : { remediationAction: cause.remediationAction }),
+        ...(cause.fallbackRemediationAction === undefined
+          ? {}
+          : { fallbackRemediationAction: cause.fallbackRemediationAction }),
         ...(cause.siblingOperations === undefined
           ? {}
           : { siblingOperations: cause.siblingOperations }),

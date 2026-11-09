@@ -22,6 +22,7 @@ export interface DoctorDiagnostics {
 export const collectDoctorDiagnostics = async (
   target: string | undefined,
   host: DoctorHost,
+  clients: readonly string[] = [],
 ): Promise<DoctorDiagnostics> => {
   const checks: DoctorCheck[] = [nodeCheck(host)];
   checks.push(await hostCheck(host));
@@ -34,7 +35,7 @@ export const collectDoctorDiagnostics = async (
   const hopperVersionCheck = await optionalHopperVersionCheck(host, hopperPath);
   if (hopperVersionCheck !== undefined) checks.push(hopperVersionCheck);
 
-  const providerInspections = await host.providerInspections?.();
+  const providerInspections = await host.providerInspections?.(clients ?? []);
   if (providerInspections !== undefined)
     checks.push(...providerInspections.flatMap(providerDoctorChecks));
 

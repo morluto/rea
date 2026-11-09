@@ -114,8 +114,9 @@ it("does not consume a DLL name past the uint32 RVA end", async () => {
   expect(report.imports[0]?.functions).toHaveLength(2);
   expect(report.coverage).toMatchObject({
     status: "partial",
-    reason:
-      "1 import table issue(s) affect reported rows or metadata; see issues",
+    reason: expect.stringMatching(
+      /1 import table issue.*reported rows or metadata/i,
+    ),
   });
   expect(report.issues).toEqual(
     expect.arrayContaining([

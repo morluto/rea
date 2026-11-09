@@ -272,6 +272,12 @@ regular files only and rejects symbolic links.
 
 ## Byte entropy triage
 
+Entropy admission preserves the caller's spelling in `caller_input_path`. On
+Windows, the selected regular file's case-only filesystem spelling is used
+consistently in committed paths through both CLI and MCP. Symlink, junction and
+short-name aliases are not replaced with a different path. General path
+normalization remains lexical and does not probe source-discovered paths.
+
 `inspect_byte_entropy` / `inspect-byte-entropy` profiles any local regular file
 without an analysis engine, execution, extraction or network access.
 

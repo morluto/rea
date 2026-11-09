@@ -142,6 +142,18 @@ it("keeps missing members unknown when the opposite inspection retains only type
         source.coverage.issues.filter(({ code }) => code === "resource-limit"),
       );
     expect(report.limitations).toEqual(comparisonLimitations(...sources));
+    const limitedSide = leftPath === limitedPath ? "left" : "right";
+    expect(report.limitations).toContainEqual(
+      expect.stringMatching(
+        new RegExp(
+          `${limitedSide}.*metadata\\.representation.*do not establish absence`,
+          "i",
+        ),
+      ),
+    );
+    expect(report.limitations).toContainEqual(
+      expect.stringMatching(/smaller selection.*type_names.*--type/i),
+    );
   }
 });
 

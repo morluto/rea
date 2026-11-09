@@ -12,7 +12,6 @@ import {
   DEFAULT_REGEX_WORKER_HEAP_REQUEST,
   parseRegexWorkerHeapRequest,
   REGEX_WORKER_HEAP_REQUEST_SETTING,
-  regexWorkerHeapRequestConstraint,
   regexWorkerHeapRequestRecovery,
 } from "./regexWorkerHeapRequest.js";
 import {
@@ -66,6 +65,20 @@ it("keeps the 128 MiB request when the setting is unset", () => {
     },
   });
   expect(projected.remediation.action).toContain(recovery);
+  expect(projected.remediation.action).toContain(
+    REGEX_WORKER_HEAP_REQUEST_SETTING,
+  );
+  expect(projected.remediation.action).toContain("128 MiB");
+  expect(projected.remediation.action).toContain("source default");
+  expect(projected.remediation.action).toContain("update_analysis_settings");
+  expect(projected.remediation.action).toContain(
+    "regex.worker_heap_request_mib",
+  );
+  expect(projected.remediation.action).toContain("--max-old-space-size");
+  expect(projected.remediation.action).toContain("NODE_OPTIONS");
+  expect(projected.remediation.action).toMatch(/restart REA/i);
+  expect(projected.remediation.action).toMatch(/without a REA restart/i);
+  expect(projected.remediation.action).toMatch(/overrides this request/i);
 });
 
 it("uses a valid REA_REGEX_WORKER_HEAP_REQUEST_MIB override", () => {
@@ -140,20 +153,24 @@ it.each([
   const parsed = parseRegexWorkerHeapRequest(value);
   if (parsed.ok) throw new Error(`Accepted ${JSON.stringify(value)}`);
   expect(parsed.error).toBeInstanceOf(ConfigurationError);
+  expect(parsed.error.message).toContain(REGEX_WORKER_HEAP_REQUEST_SETTING);
+  expect(parsed.error.message).toMatch(/decimal integer/i);
+  expect(parsed.error.message).toMatch(/7 to 16384 MiB/i);
+  expect(parsed.error.message).toMatch(/default.*128 MiB/i);
+  expect(parsed.error.message).toMatch(/abort.*worker.*startup/i);
   expect(parsed.error.settings).toEqual([
     {
       setting: "REA_REGEX_WORKER_HEAP_REQUEST_MIB",
-      constraint: regexWorkerHeapRequestConstraint,
+      constraint: parsed.error.message,
     },
   ]);
-  expect(parsed.error.message).toBe(regexWorkerHeapRequestConstraint);
   const startup = parseEnvironment({
     REA_REGEX_WORKER_HEAP_REQUEST_MIB: value,
   });
   if (startup.ok) throw new Error(`Startup accepted ${JSON.stringify(value)}`);
   expect(startup.error.settings).toContainEqual({
     setting: REGEX_WORKER_HEAP_REQUEST_SETTING,
-    constraint: regexWorkerHeapRequestConstraint,
+    constraint: parsed.error.message,
   });
   const config = parseConfig({ REA_REGEX_WORKER_HEAP_REQUEST_MIB: value });
   if (config.ok)

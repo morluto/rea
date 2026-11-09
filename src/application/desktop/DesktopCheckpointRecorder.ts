@@ -45,6 +45,10 @@ const sameVersion = (left: DesktopPathState, right: DesktopPathState) =>
 /** Walks, diffs and retains state for each checkpoint in turn. */
 export class CheckpointRecorder {
   readonly checkpoints: DesktopCheckpoint[] = [];
+  readonly baselineNonFiles: {
+    path: string;
+    type: "directory" | "symlink" | "other";
+  }[] = [];
   /** Mount points any walk recorded without entering. */
   readonly mountPoints = new Set<string>();
   #previous: DesktopWalk = EMPTY_WALK;
@@ -122,9 +126,12 @@ export class CheckpointRecorder {
     let changes: DesktopCheckpoint["changes"] = [];
     let unconfirmed = 0;
     if (trigger === "baseline") {
-      for (const [path, state] of walk.entries)
+      for (const [path, state] of walk.entries) {
+        if (state.type !== "file")
+          this.baselineNonFiles.push({ path, type: state.type });
         if (state.type === "file" && isWithinAny(path, contentRoots))
           await this.#retain(path, state, retained, signal);
+      }
     } else
       ({ changes, unconfirmed } = await this.#changes(walk, retained, signal));
     this.#previous = walk;
