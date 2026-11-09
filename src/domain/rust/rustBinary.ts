@@ -12,6 +12,9 @@ import {
   machoTargetSelectionSchema,
 } from "../apple/machoTargetSelection.js";
 import {
+  MAX_CARGO_GIT_SLUG_BYTES,
+  MAX_CARGO_REGISTRY_INDEX_BYTES,
+  MAX_CARGO_SEMVER_BYTES,
   isValidCargoRegistryIndex,
   isValidCargoSemver,
   minimumInferredCrateMatchBytes,
@@ -89,10 +92,14 @@ export const rustcCommitSchema = z.strictObject({
 
 /** One distinct Cargo crate fingerprint inferred from read-only source paths. */
 export const rustInferredCrateSchema = z.strictObject({
-  name: z.string().min(1).max(128),
-  version: z.string().min(5).max(128).nullable(),
+  name: z.string().min(1).max(MAX_CARGO_GIT_SLUG_BYTES),
+  version: z.string().min(5).max(MAX_CARGO_SEMVER_BYTES).nullable(),
   source_kind: rustInferredCrateSourceKindSchema,
-  registry_index: z.string().min(1).max(128).nullable(),
+  registry_index: z
+    .string()
+    .min(1)
+    .max(MAX_CARGO_REGISTRY_INDEX_BYTES)
+    .nullable(),
   checkout_id: cargoGitCheckoutId.nullable(),
   revision: shortOrFullHexHash.nullable(),
   first_file_offset: index,

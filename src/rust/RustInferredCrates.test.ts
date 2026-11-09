@@ -856,3 +856,95 @@ it("yields between scan windows so queued event-loop AbortSignal callbacks cance
   expect(activeChecks).toBeGreaterThanOrEqual(3);
   expect(activeChecks).toBeLessThan(12);
 });
+
+it("recovers Cargo Git checkout slugs longer than 128 bytes and marks over-cap checkouts truncated", () => {
+  const readOnlyElfContainer = (buf: Buffer): BinaryContainer => ({
+    format: "elf",
+    elf: { machine: 62, type: 2, dynamicSegments: [] },
+    architecture: "amd64",
+    bits: 64,
+    byte_order: "little",
+    mappings: [{ address: 0x400000n, offset: 0, size: buf.length }],
+    zero_fills: [],
+    sections: [
+      {
+        format: "elf",
+        name: ".rodata",
+        offset: 0,
+        size: buf.length,
+        type: 1,
+        flags: 2n,
+        address: 0x400000n,
+        declared_range: { offset: 0n, size: BigInt(buf.length) },
+        compressed: false,
+        read_only: true,
+        file_backed: true,
+      },
+    ],
+    load_regions: [
+      {
+        mapping: { address: 0x400000n, offset: 0, size: buf.length },
+        memory_size: BigInt(buf.length),
+        read: true,
+        write: false,
+        execute: false,
+      },
+    ],
+  });
+  const slug150 = "r".repeat(150);
+  const slug1024 = "s".repeat(1024);
+  const bytes = Buffer.from(
+    [
+      `/cargo/git/checkouts/${slug150}-0123456789abcdef/a1b2c3d/src/lib.rs`,
+      `/cargo/git/checkouts/${slug1024}-fedcba9876543210/0123456789abcdef/src/lib.rs`,
+      `/cargo/git/checkouts/${"x".repeat(1200)}/not_a_checkout`,
+    ].join("\0") + "\0",
+    "latin1",
+  );
+  const recovered = recoverRustSourceFingerprints(
+    bytes,
+    readOnlyElfContainer(bytes),
+  );
+  expect(recovered.inferred_crates.truncated).toBe(false);
+  expect(recovered.inferred_crates.discovered_count).toBe(2);
+  expect(
+    recovered.inferred_crates.items.map(({ name, checkout_id }) => ({
+      name,
+      checkout_id,
+    })),
+  ).toEqual([
+    { name: slug150, checkout_id: "0123456789abcdef" },
+    { name: slug1024, checkout_id: "fedcba9876543210" },
+  ]);
+  expect(
+    rustBinarySchema.safeParse({
+      artifact: {
+        path: "/artifacts/long-git",
+        sha256: "a".repeat(64),
+        bytes: bytes.length,
+      },
+      format: "elf",
+      architecture: "amd64",
+      bits: 64,
+      byte_order: "little",
+      auditable_metadata: null,
+      rustc_commit: null,
+      inferred_crates: recovered.inferred_crates,
+      rustc_versions: recovered.rustc_versions,
+      limitations: [],
+    }).success,
+  ).toBe(true);
+
+  const overCapSlug = "z".repeat(1100);
+  const overCapBytes = Buffer.from(
+    `/cargo/git/checkouts/${overCapSlug}-0123456789abcdef/a1b2c3d/src/lib.rs\0`,
+    "latin1",
+  );
+  const overCapResult = recoverRustSourceFingerprints(
+    overCapBytes,
+    readOnlyElfContainer(overCapBytes),
+  );
+  expect(overCapResult.inferred_crates.items).toEqual([]);
+  expect(overCapResult.inferred_crates.discovered_count).toBe(0);
+  expect(overCapResult.inferred_crates.truncated).toBe(true);
+});

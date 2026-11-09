@@ -54,6 +54,14 @@ const isSemverIdentByte = (code: number): boolean =>
 
 const U64_MAX_DECIMAL = "18446744073709551615";
 
+export const MAX_CARGO_CRATE_NAME_BYTES = 256;
+export const MAX_CARGO_SEMVER_BYTES = 256;
+export const MAX_CARGO_REGISTRY_CRATE_DIR_BYTES =
+  MAX_CARGO_CRATE_NAME_BYTES + 1 + MAX_CARGO_SEMVER_BYTES;
+export const MAX_CARGO_REGISTRY_INDEX_BYTES = 512;
+export const MAX_CARGO_GIT_SLUG_BYTES = 1024;
+export const MAX_CARGO_GIT_CHECKOUT_DIR_BYTES = MAX_CARGO_GIT_SLUG_BYTES + 17;
+
 const exceedsU64MaxText = (text: string, start: number): boolean => {
   for (let index = 0; index < U64_MAX_DECIMAL.length; index += 1) {
     const digit = text.charCodeAt(start + index);
@@ -126,7 +134,7 @@ const readDotSeparatedIdentifiers = (
 
 /** Linear SemVer 2.0 check matching Cargo package version syntax. */
 export const isValidCargoSemver = (text: string): boolean => {
-  if (text.length < 5 || text.length > 128) return false;
+  if (text.length < 5 || text.length > MAX_CARGO_SEMVER_BYTES) return false;
   let cursor = readSemverCoreNumber(text, 0);
   if (cursor < 0 || text.charCodeAt(cursor) !== 0x2e) return false;
   cursor = readSemverCoreNumber(text, cursor + 1);
@@ -153,7 +161,8 @@ export const isValidCargoSemver = (text: string): boolean => {
 export const splitCargoRegistryCrateSegment = (
   segment: string,
 ): { readonly name: string; readonly version: string } | null => {
-  if (segment.length < 7 || segment.length > 257) return null;
+  if (segment.length < 7 || segment.length > MAX_CARGO_REGISTRY_CRATE_DIR_BYTES)
+    return null;
   const first = segment.charCodeAt(0);
   if (!isAsciiAlnum(first) && first !== 0x5f) return null;
   for (let index = 1; index <= segment.length - 6; index += 1) {
@@ -161,7 +170,7 @@ export const splitCargoRegistryCrateSegment = (
     if (!isCrateNameByte(code)) return null;
     if (
       code === 0x2d &&
-      index <= 128 &&
+      index <= MAX_CARGO_CRATE_NAME_BYTES &&
       isAsciiDigit(segment.charCodeAt(index + 1))
     ) {
       const version = segment.slice(index + 1);
@@ -176,7 +185,7 @@ export const splitCargoRegistryCrateSegment = (
 export const isValidCargoRegistryIndex = (segment: string): boolean => {
   if (
     segment.length < 1 ||
-    segment.length > 128 ||
+    segment.length > MAX_CARGO_REGISTRY_INDEX_BYTES ||
     segment === "." ||
     segment === ".."
   )
@@ -196,7 +205,11 @@ export const splitCargoGitCheckoutSegments = (
   readonly checkout_id: string;
   readonly revision: string;
 } | null => {
-  if (checkoutDir.length < 18 || checkoutDir.length > 145) return null;
+  if (
+    checkoutDir.length < 18 ||
+    checkoutDir.length > MAX_CARGO_GIT_CHECKOUT_DIR_BYTES
+  )
+    return null;
   const separatorIndex = checkoutDir.length - 17;
   if (checkoutDir.charCodeAt(separatorIndex) !== 0x2d) return null;
   for (let index = separatorIndex + 1; index < checkoutDir.length; index += 1) {

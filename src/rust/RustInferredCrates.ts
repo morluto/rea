@@ -10,11 +10,15 @@ import {
   type RustcVersions,
 } from "../domain/rust/rustBinary.js";
 import {
+  MAX_CARGO_GIT_CHECKOUT_DIR_BYTES,
+  MAX_CARGO_REGISTRY_CRATE_DIR_BYTES,
+  MAX_CARGO_REGISTRY_INDEX_BYTES,
   isCargoGitSlugByte,
   isCrateNameByte,
   isLowerHex,
   isRegistryOrGitSlugByte,
   isValidCargoRegistryIndex,
+  isValidCargoSemver,
   parseRustcVersionBannerAt,
   splitCargoGitCheckoutSegments,
   splitCargoRegistryCrateSegment,
@@ -160,15 +164,159 @@ const matchesAscii = (
 const isRegistryCrateDirByte = (byte: number): boolean =>
   isCrateNameByte(byte) || byte === 0x2e || byte === 0x2b;
 
+const MAX_OVERLONG_CARGO_LOOKAHEAD_BYTES = 4096;
+
 type ParsedCargoCrateCandidate = Omit<
   RustInferredCrate,
   "first_file_offset" | "reference_count"
 >;
 
+const hasUnboundedRegistryCrateShape = (segment: string): boolean => {
+  const first = segment.charCodeAt(0);
+  if (
+    (first < 0x30 || first > 0x39) &&
+    (first < 0x41 || first > 0x5a) &&
+    (first < 0x61 || first > 0x7a) &&
+    first !== 0x5f
+  )
+    return false;
+  for (let index = 1; index <= segment.length - 6; index += 1) {
+    const code = segment.charCodeAt(index);
+    if (!isCrateNameByte(code)) return false;
+    if (code === 0x2d && isValidCargoSemver(segment.slice(index + 1)))
+      return true;
+  }
+  return false;
+};
+
+const hasValidGitCheckoutTailAndRevision = (
+  region: Buffer,
+  checkoutStart: number,
+  checkoutEnd: number,
+): boolean => {
+  if (
+    checkoutEnd - checkoutStart < 18 ||
+    !isPathSeparator(region[checkoutEnd] ?? 0)
+  )
+    return false;
+  const separatorOffset = checkoutEnd - 17;
+  if (region[separatorOffset] !== 0x2d) return false;
+  for (let offset = separatorOffset + 1; offset < checkoutEnd; offset += 1) {
+    if (!isLowerHex(region[offset] ?? 0)) return false;
+  }
+  const revStart = checkoutEnd + 1;
+  let revEnd = revStart;
+  const maxRevEnd = Math.min(region.length, revStart + 41);
+  while (revEnd < maxRevEnd && isLowerHex(region[revEnd] ?? 0)) revEnd += 1;
+  return (
+    revEnd - revStart >= 7 &&
+    revEnd - revStart <= 40 &&
+    isPathSeparator(region[revEnd] ?? 0)
+  );
+};
+
+const parseCargoRegistryCrateAt = (
+  region: Buffer,
+  kindStart: number,
+): ParsedCargoCrateCandidate | "overlong" | null => {
+  const indexStart = kindStart + 13;
+  let indexEnd = indexStart;
+  const maxIndexLookahead = Math.min(
+    region.length,
+    indexStart + MAX_OVERLONG_CARGO_LOOKAHEAD_BYTES,
+  );
+  while (
+    indexEnd < maxIndexLookahead &&
+    isRegistryOrGitSlugByte(region[indexEnd] ?? 0)
+  )
+    indexEnd += 1;
+  if (indexEnd === indexStart || !isPathSeparator(region[indexEnd] ?? 0))
+    return null;
+
+  const crateStart = indexEnd + 1;
+  let crateEnd = crateStart;
+  const maxCrateLookahead = Math.min(
+    region.length,
+    crateStart + MAX_OVERLONG_CARGO_LOOKAHEAD_BYTES,
+  );
+  while (
+    crateEnd < maxCrateLookahead &&
+    isRegistryCrateDirByte(region[crateEnd] ?? 0)
+  )
+    crateEnd += 1;
+  if (crateEnd - crateStart < 7 || !isPathSeparator(region[crateEnd] ?? 0))
+    return null;
+
+  if (
+    indexEnd - indexStart > MAX_CARGO_REGISTRY_INDEX_BYTES ||
+    crateEnd - crateStart > MAX_CARGO_REGISTRY_CRATE_DIR_BYTES
+  ) {
+    const indexSlice = region.toString("latin1", indexStart, indexEnd);
+    const crateSlice = region.toString("latin1", crateStart, crateEnd);
+    return indexSlice !== "." &&
+      indexSlice !== ".." &&
+      hasUnboundedRegistryCrateShape(crateSlice)
+      ? "overlong"
+      : null;
+  }
+
+  const registryIndex = region.toString("latin1", indexStart, indexEnd);
+  if (!isValidCargoRegistryIndex(registryIndex)) return null;
+  const split = splitCargoRegistryCrateSegment(
+    region.toString("latin1", crateStart, crateEnd),
+  );
+  if (split === null) return null;
+  return {
+    name: split.name,
+    version: split.version,
+    source_kind: "registry",
+    registry_index: registryIndex,
+    checkout_id: null,
+    revision: null,
+  };
+};
+
+const parseCargoGitCheckoutAt = (
+  region: Buffer,
+  kindStart: number,
+): ParsedCargoCrateCandidate | "overlong" | null => {
+  const checkoutStart = kindStart + 14;
+  let checkoutEnd = checkoutStart;
+  const maxCheckoutLookahead = Math.min(
+    region.length,
+    checkoutStart + MAX_OVERLONG_CARGO_LOOKAHEAD_BYTES,
+  );
+  while (
+    checkoutEnd < maxCheckoutLookahead &&
+    isCargoGitSlugByte(region[checkoutEnd] ?? 0)
+  )
+    checkoutEnd += 1;
+  if (!hasValidGitCheckoutTailAndRevision(region, checkoutStart, checkoutEnd))
+    return null;
+  if (checkoutEnd - checkoutStart > MAX_CARGO_GIT_CHECKOUT_DIR_BYTES)
+    return "overlong";
+  const revStart = checkoutEnd + 1;
+  let revEnd = revStart;
+  while (revEnd < region.length && isLowerHex(region[revEnd] ?? 0)) revEnd += 1;
+  const split = splitCargoGitCheckoutSegments(
+    region.toString("latin1", checkoutStart, checkoutEnd),
+    region.toString("latin1", revStart, revEnd),
+  );
+  if (split === null) return null;
+  return {
+    name: split.name,
+    version: null,
+    source_kind: "git",
+    registry_index: null,
+    checkout_id: split.checkout_id,
+    revision: split.revision,
+  };
+};
+
 const parseCargoCrateAt = (
   region: Buffer,
   start: number,
-): ParsedCargoCrateCandidate | null => {
+): ParsedCargoCrateCandidate | "overlong" | null => {
   if (!hasCargoPathBoundary(region, start)) return null;
   const afterCargo = start + CARGO_TOKEN.length;
   if (afterCargo >= region.length || !isPathSeparator(region[afterCargo] ?? 0))
@@ -179,96 +327,16 @@ const parseCargoCrateAt = (
     isPathSeparator(region[kindStart + 8] ?? 0) &&
     matchesAscii(region, kindStart + 9, "src") &&
     isPathSeparator(region[kindStart + 12] ?? 0)
-  ) {
-    const indexStart = kindStart + 13;
-    let indexEnd = indexStart;
-    const maxIndexEnd = Math.min(region.length, indexStart + 129);
-    while (
-      indexEnd < maxIndexEnd &&
-      isRegistryOrGitSlugByte(region[indexEnd] ?? 0)
-    )
-      indexEnd += 1;
-    if (
-      indexEnd === indexStart ||
-      indexEnd - indexStart > 128 ||
-      !isPathSeparator(region[indexEnd] ?? 0)
-    )
-      return null;
-    const registryIndex = region.toString("latin1", indexStart, indexEnd);
-    if (!isValidCargoRegistryIndex(registryIndex)) return null;
-
-    const crateStart = indexEnd + 1;
-    let crateEnd = crateStart;
-    const maxCrateEnd = Math.min(region.length, crateStart + 258);
-    while (
-      crateEnd < maxCrateEnd &&
-      isRegistryCrateDirByte(region[crateEnd] ?? 0)
-    )
-      crateEnd += 1;
-    if (
-      crateEnd - crateStart < 7 ||
-      crateEnd - crateStart > 257 ||
-      !isPathSeparator(region[crateEnd] ?? 0)
-    )
-      return null;
-    const split = splitCargoRegistryCrateSegment(
-      region.toString("latin1", crateStart, crateEnd),
-    );
-    if (split === null) return null;
-    return {
-      name: split.name,
-      version: split.version,
-      source_kind: "registry",
-      registry_index: registryIndex,
-      checkout_id: null,
-      revision: null,
-    };
-  }
+  )
+    return parseCargoRegistryCrateAt(region, kindStart);
 
   if (
     matchesAscii(region, kindStart, "git") &&
     isPathSeparator(region[kindStart + 3] ?? 0) &&
     matchesAscii(region, kindStart + 4, "checkouts") &&
     isPathSeparator(region[kindStart + 13] ?? 0)
-  ) {
-    const checkoutStart = kindStart + 14;
-    let checkoutEnd = checkoutStart;
-    const maxCheckoutEnd = Math.min(region.length, checkoutStart + 146);
-    while (
-      checkoutEnd < maxCheckoutEnd &&
-      isCargoGitSlugByte(region[checkoutEnd] ?? 0)
-    )
-      checkoutEnd += 1;
-    if (
-      checkoutEnd - checkoutStart < 18 ||
-      checkoutEnd - checkoutStart > 145 ||
-      !isPathSeparator(region[checkoutEnd] ?? 0)
-    )
-      return null;
-    const revStart = checkoutEnd + 1;
-    let revEnd = revStart;
-    const maxRevEnd = Math.min(region.length, revStart + 41);
-    while (revEnd < maxRevEnd && isLowerHex(region[revEnd] ?? 0)) revEnd += 1;
-    if (
-      revEnd - revStart < 7 ||
-      revEnd - revStart > 40 ||
-      !isPathSeparator(region[revEnd] ?? 0)
-    )
-      return null;
-    const split = splitCargoGitCheckoutSegments(
-      region.toString("latin1", checkoutStart, checkoutEnd),
-      region.toString("latin1", revStart, revEnd),
-    );
-    if (split === null) return null;
-    return {
-      name: split.name,
-      version: null,
-      source_kind: "git",
-      registry_index: null,
-      checkout_id: split.checkout_id,
-      revision: split.revision,
-    };
-  }
+  )
+    return parseCargoGitCheckoutAt(region, kindStart);
 
   return null;
 };
@@ -303,7 +371,9 @@ function* scanWindowCargoCandidates(
     if ((cargoHits & (CANCELLATION_STRIDE - 1)) === 0) yield;
     const matchStart = windowStart + at;
     const parsed = parseCargoCrateAt(region, matchStart);
-    if (parsed !== null) {
+    if (parsed === "overlong") {
+      state.cratesOverflowed = true;
+    } else if (parsed !== null) {
       const key = JSON.stringify([
         parsed.source_kind,
         parsed.name,
