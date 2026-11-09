@@ -1,7 +1,7 @@
 <div align="center" dir="rtl">
 
 [English](../../README.md) · [简体中文](README_zh.md) · [繁體中文](README_zh-TW.md) · [日本語](README_ja.md) · [한국어](README_ko.md) · [Türkçe](README_tr.md) · [Русский](README_ru.md) · [Tiếng Việt](README_vi.md) · [ไทย](README_th.md) · [Deutsch](README_de.md) · [Español](README_es.md) · [Français](README_fr.md) · [Українська](README_uk.md) · [Polski](README_pl.md) · [Português (Brasil)](README_pt-BR.md) · [العربية](README_ar.md) · **فارسی** · [Bahasa Indonesia](README_id.md) · [Italiano](README_it.md)
-· [Ελληνικά](README_el.md) · [മലയാളം](README_ml.md) · [Roman Urdu](README_ur-Latn.md) · [Română](README_ro.md)
+· [Ελληνικά](README_el.md) · [മലയാളം](README_ml.md) · [Roman Urdu](README_ur-Latn.md) · [Română](README_ro.md) · [Български](README_bg.md)
 
 # REA: مهندسی معکوس هر چیزی
 
@@ -75,6 +75,10 @@ npx rea-agents setup
 راه‌اندازی از Claude Code، Codex، Cursor، Gemini CLI، Grok Build و [ایجنت‌های دیگر](../getting-started/installation.md#supported-agents) پشتیبانی می‌کند. برای پیکربندی ارائه‌دهنده و ثبت دستی MCP، [نصب و راه‌اندازی](../getting-started/installation.md) را ببینید.
 
 MCP به‌طور پیش‌فرض از schema ورودی فشرده استفاده می‌کند. برای راهنمای کامل فیلدها و اعتبارسنجی تو‌در‌تو، در ثبت MCP مقدار `REA_MCP_INPUT_SCHEMA_PROFILE=full` را تنظیم کنید. هر دو حالت همهٔ ابزارها و اعتبارسنجی استاندارد یکسان سرور را نگه می‌دارند؛ راهنمای قراردادهای MCP را ببینید.
+
+راه‌اندازی، محیط اجرای انتخاب‌شده و اسکریپت ورودی REA را مستقیماً ثبت می‌کند. اگر از اجراکنندهٔ بسته استفاده می‌کنید، ورودی حافظهٔ پنهان و محیط اجرا را حفظ کنید؛ بسته را از پوشه‌ای قابل اعتماد خارج از پروژهٔ هدف دریافت کنید. راهنمای نصب را ببینید.
+
+طرح‌های خروجی کامل به‌طور پیش‌فرض اعلام می‌شوند. اگر کلاینت `tools/list` را محدود می‌کند، در ثبت MCP مقدار `REA_MCP_OUTPUT_SCHEMA_PROFILE=compact` یا `off` را تنظیم کنید. اعتبارسنجی سرور و نتایج ساخت‌یافته کامل می‌مانند. بخش «Output schemas» در راهنمای قراردادهای MCP را ببینید.
 
 ### از ایجنت خود بپرسید
 
@@ -266,6 +270,12 @@ REA محیطی آمادهٔ اجرا همراه با یک آزمون ساده ب
 [راهنمای ساخت محیط](https://rea.tools/guides/rl-environments/) ·
 [مرجع محیط‌ها](../agent-environments.md) ·
 [نمایش را در X ببینید](https://x.com/reatools/status/2112574822584918075?s=20)
+
+### محیط‌های برنامه‌های دسکتاپ
+
+REA می‌تواند برای یک برنامهٔ دسکتاپ Linux هم محیط بسازد که عامل با تصویر صفحه، ماوس و صفحه‌کلید از آن استفاده می‌کند. از یک درخواست یک‌خطی، مثل «یک محیط Gnote برایم بساز که در آن عامل روغن زیتون را به یادداشت فهرست خرید اضافه کند»، عامل شما برنامه را روی یک رایانهٔ ساخت محلی نصب می‌کند، کار را می‌نویسد، محیط را صادر می‌کند و کار را روی یک رایانهٔ تازه بررسی می‌کند. دستگاهی که آن را می‌سازد به Linux روی amd64 یا arm64، Docker و نسخه‌ای از چارچوب agentenv که راهنما تعیین کرده نیاز دارد.
+
+[راه‌اندازی محیط‌های برنامه‌های دسکتاپ](../desktop-build-computer.md)
 
 ## پرسش‌های متداول
 

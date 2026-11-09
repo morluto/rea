@@ -53,6 +53,10 @@ import {
   elfNotesSchema,
 } from "../../domain/native/elfNotes.js";
 import {
+  inspectNativeInitializersInputSchema,
+  nativeInitializersSchema,
+} from "../../domain/native/nativeInitializers.js";
+import {
   inspectElfUnwindRangesInputSchema,
   elfUnwindRangesSchema,
 } from "../../domain/native/elfUnwindRanges.js";
@@ -138,11 +142,27 @@ export const BINARY_DIAGNOSTICS_TOOL_CONTRACTS = [
   },
 
   {
+    name: "inspect_native_initializers",
+    ...toolContractMetadata("inspect_native_initializers"),
+    kind: "native-provider",
+    description:
+      "List the initializer and finalizer functions declared by one explicit local ELF32/ELF64 or Mach-O image (thin, or one selected universal slice) without executing it or opening a disassembler. ELF: DT_PREINIT_ARRAY, DT_INIT, DT_INIT_ARRAY, DT_FINI, DT_FINI_ARRAY and legacy .ctors/.dtors, with section fallback for relocatable and static images. Mach-O: S_MOD_INIT_FUNC_POINTERS, S_INIT_FUNC_OFFSETS and S_MOD_TERM_FUNC_POINTERS. Each paged entry gives the slot address and file offset, the resolved target address, file offset, containing section, an exact-address symbol name when one exists, and how the value was resolved (raw, RELATIVE addend, RELR, symbol plus addend, chained fixup, offset table, or unresolved import). Slots that relocations or fixups do not establish are reported unresolved, never as their stored zero. A missing tag or section is observed absence of that declaration, not proof that no code runs before main.",
+    inputSchema: inspectNativeInitializersInputSchema,
+    outputSchema: evidenceResultOf(nativeInitializersSchema),
+    examples: [
+      {
+        title: "List ELF or Mach-O static constructors and finalizers",
+        input: { path: "/artifacts/program" },
+      },
+    ],
+  },
+
+  {
     name: "inspect_elf_notes",
     ...toolContractMetadata("inspect_elf_notes"),
     kind: "native-provider",
     description:
-      "Inspect one explicit local ELF32/ELF64 image's PT_NOTE program headers and SHT_NOTE sections without executing it or opening a disassembler. Returns note-table file ranges, owners, types, descriptor SHA-256 and hex previews, plus GNU build-id, ABI-tag and gold-version fields and Linux CORE process, mapping, signal, and auxv notes when those descriptors match. A missing table is observed absence of those declarations, not proof the image never carried notes in another container. Reads a stable regular file; malformed ELF headers, truncated notes and exhausted budgets return no partial success. Portable on supported Node hosts; no debug package or catalog is required.",
+      "Inspect one explicit local ELF32/ELF64 image's PT_NOTE program headers and SHT_NOTE sections without executing it or opening a disassembler. Returns note-table file ranges, owners, types, descriptor SHA-256 and hex previews, plus GNU build-id, ABI-tag and gold-version fields, Linux CORE process, mapping, signal, and auxv notes, and Android .note.android.ident API-level and NDK version/build fields when those descriptors match. A missing table is observed absence of those declarations, not proof the image never carried notes in another container. Reads a stable regular file; malformed ELF headers, truncated notes and exhausted budgets return no partial success. Portable on supported Node hosts; no debug package or catalog is required.",
     inputSchema: inspectElfNotesInputSchema,
     outputSchema: evidenceResultOf(elfNotesSchema),
     examples: [

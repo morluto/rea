@@ -5,8 +5,8 @@ import { pathToFileURL } from "node:url";
 import { describe, expect, it } from "vitest";
 
 import type { DesktopTaskCheck } from "../../../src/domain/desktop/appTask.js";
-import { elementText } from "../../../src/domain/desktop/appTaskChecks.js";
 import { xmlView } from "../../../src/domain/desktop/stateFormats.js";
+import { elementText } from "../../../src/domain/desktop/viewPointer.js";
 import type { JsonValue } from "../../../src/domain/jsonValue.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import {
@@ -144,6 +144,48 @@ describe("XML with a DOCTYPE in the exported module", () => {
     expect(ours[5]).toMatchObject({
       doctype: { name: "a", public_id: null, system_id: "x\ny\nz\n" },
     });
+  });
+
+  it("reads text that opens with an element as XML when it is well formed, whatever the file is called, alike in both", async () => {
+    const saved = (name: string, text: string) => ({
+      name,
+      bytes: new TextEncoder().encode(text),
+    });
+    const files = [
+      saved(
+        "weekend-trip.mm",
+        '<map version="freeplane 1.7.0">\n<node TEXT="Weekend Trip" ID="ID_1"><node TEXT="Packing" ID="ID_2"/></node>\n</map>\n',
+      ),
+      saved("notes.txt", "<b>bold</b> and <i>italic</b>\n"),
+      saved("plain.txt", "  <todo><item>milk</item></todo>\n"),
+    ];
+    await expectSameFileViews(files);
+
+    const formats = await Promise.all(
+      files.map(async (file) => (await typescriptFileView(file)).format),
+    );
+    expect(formats).toEqual(["xml", "text", "xml"]);
+  });
+
+  it("reads text that opens with a DOCTYPE naming no internal subset and then an element as XML, as KmPlot's plots, alike in both", async () => {
+    const saved = (name: string, text: string) => ({
+      name,
+      bytes: new TextEncoder().encode(text),
+    });
+    const files = [
+      saved(
+        "lesson_plots.fkt",
+        '<!DOCTYPE kmpdoc>\n<kmpdoc version="4">\n    <function type="cartesian"><equation-0 step="0.05">h(x) = 2x + 1</equation-0></function>\n</kmpdoc>\n',
+      ),
+      saved("entities.fkt", '<!DOCTYPE a [<!ENTITY e "boom">]>\n<a>&e;</a>\n'),
+      saved("broken.fkt", "<!DOCTYPE a>\n<a><b></a>\n"),
+    ];
+    await expectSameFileViews(files);
+
+    const formats = await Promise.all(
+      files.map(async (file) => (await typescriptFileView(file)).format),
+    );
+    expect(formats).toEqual(["xml", "text", "text"]);
   });
 
   it("never reads the DTD a DOCTYPE names: neither its entities nor its default attributes apply", async () => {

@@ -1,16 +1,16 @@
 import type { JsonValue } from "../jsonValue.js";
-import type { DesktopTaskCheckInput } from "./appTask.js";
-import { elementText, isXmlElement } from "./appTaskChecks.js";
+import { collapseWhitespace, type DesktopTaskCheckInput } from "./appTask.js";
 import {
   holdsSplitDate,
   isBookkeeping,
   isStamp,
   isVolatileValue,
 } from "./appTaskDraftNoise.js";
+import { isPlacedItem, placedItemCheck } from "./appTaskDraftItems.js";
 import { valueEqualsCheck } from "./appTaskDraftScalars.js";
 import { rankAttributes } from "./attributeRank.js";
 import type { DesktopStateDifference } from "./stateChanges.js";
-import { resolvePointer } from "./viewPointer.js";
+import { elementText, isXmlElement, resolvePointer } from "./viewPointer.js";
 
 /** The pointers a diff lists, of every kind. */
 type Listed = Pick<DesktopStateDifference, "added" | "changed" | "removed">;
@@ -35,6 +35,8 @@ export interface TextPlacement {
 /** Text checks for the elements whose text changed, and the pointers those checks make redundant: text and whole runs holding text in them, or an element added whole checked itself, not an attribute or name of an element both ends hold, nor an element holding no text, as an image or a break. */
 export interface WholeTextSuggestions {
   readonly suggestions: readonly DesktopTaskCheckInput[];
+  /** Kept positioned items associated with the selected text checks. */
+  readonly guards: readonly DesktopTaskCheckInput[];
   /** Elements whose text changed that no check took, because every place for one held more text than the limit. */
   readonly long: readonly string[];
   readonly covers: (pointer: string) => boolean;
@@ -102,20 +104,20 @@ const namedByIdentifier = (pointer: string) => {
  */
 const textlessAt = (pointer: string, ends: Ends) =>
   [ends.baseline, ends.final].some((view) => {
-    const value = resolvePointer(view, pointer);
+    const value = resolvePointer(view, pointer, "xml");
     return isXmlElement(value) && elementText(value) === "";
   });
 
 /** Whether both ends hold an element at a pointer. */
 const keptAt = (element: string, ends: Ends) =>
   [ends.baseline, ends.final].every((view) =>
-    isXmlElement(resolvePointer(view, element)),
+    isXmlElement(resolvePointer(view, element, "xml")),
   );
 
 /** Whether an element holds text of its own, at either end. */
 const mixedAt = (element: string, ends: Ends) =>
   [ends.baseline, ends.final].some((view) =>
-    holdsText(resolvePointer(view, element)),
+    holdsText(resolvePointer(view, element, "xml")),
   );
 
 /** Where a text check may go: an element as the diff names it, the pointer the check names it by, and whether an identifier is in that pointer. */
@@ -132,8 +134,8 @@ interface Candidate {
  */
 const byOwnAttribute = (element: string, ends: Ends): Candidate | undefined => {
   const parent = parentOf(element);
-  const before = resolvePointer(ends.baseline, element);
-  const after = resolvePointer(ends.final, element);
+  const before = resolvePointer(ends.baseline, element, "xml");
+  const after = resolvePointer(ends.final, element, "xml");
   if (parent === undefined || !isXmlElement(before) || !isXmlElement(after))
     return undefined;
   const attributes = attributesOf(after);
@@ -161,12 +163,40 @@ const byOwnAttribute = (element: string, ends: Ends): Candidate | undefined => {
     const selector = `[name=${after.name}][@${key}=${value}]`;
     const pointer = `${parent}/children/${selector.replaceAll("~", "~0").replaceAll("/", "~1")}`;
     if (
-      resolvePointer(ends.baseline, pointer) === before &&
-      resolvePointer(ends.final, pointer) === after
+      resolvePointer(ends.baseline, pointer, "xml") === before &&
+      resolvePointer(ends.final, pointer, "xml") === after
     )
       return { element, pointer, identifier: isIdentifier(key) };
   }
   return undefined;
+};
+
+/**
+ * Whether the element at a pointer is a field its tag names in a record of
+ * two or more fields holding text, at both ends, as QElectroTech's `<text>`
+ * beside `<info_name>` in a `<dynamic_elmt_text>`: a check reads it, not the
+ * record's text, which would join its fields; a Draw shape's one paragraph
+ * beside its geometry is the shape's text.
+ */
+const isField = (pointer: string, ends: Ends) => {
+  const parent = parentOf(pointer);
+  const tag = /^\[name=(?<tag>[^\]]+)\]$/u.exec(pointer.split("/").at(-1) ?? "")
+    ?.groups?.tag;
+  return (
+    parent !== undefined &&
+    tag !== undefined &&
+    [ends.baseline, ends.final].every((view) => {
+      const record = resolvePointer(view, parent, "xml");
+      const fields = isXmlElement(record)
+        ? record.children.filter(isXmlElement)
+        : [];
+      return (
+        holdsFields(record) &&
+        fields.filter((field) => elementText(field).trim() !== "").length > 1 &&
+        fields.filter(({ name }) => name === tag).length === 1
+      );
+    })
+  );
 };
 
 /** How far a text check climbs from an element no attribute names to an ancestor its tag names. */
@@ -220,7 +250,8 @@ export const holdsNoisyText = (
  * Where a text check goes for an element whose text changed, best first, so
  * the check names the paragraph, which a later save keeps, rather than a run
  * it may split or merge: up from an element in mixed content (its parent
- * holds text beside it, at either end) to the nearest that is not, then, from
+ * holds text beside it, at either end) to the nearest that is not, which a
+ * field its tag names in a record of fields (`isField`) stays; then, from
  * one named by tag or position alone, to the nearest ancestor named by an
  * attribute, as AbiWord's `p` by its `xid`, where one is below the document's
  * root. An element passed on the way that an identifier of its own names, the
@@ -239,6 +270,8 @@ const outsideRuns = (pointer: string, ends: Ends): readonly Candidate[] => {
     parent = parentOf(current)
   )
     current = parent;
+  if (isField(current, ends))
+    return [{ element: current, pointer: current, identifier: false }];
   const passed: string[] = [];
   let named = current;
   while (!namedByAttribute(named)) {
@@ -251,10 +284,10 @@ const outsideRuns = (pointer: string, ends: Ends): readonly Candidate[] => {
       // A record directly under the document can still hold a save time. Leave a formatting run out when the paragraph remains.
       if (
         stopped !== undefined &&
-        holdsNoisyText(resolvePointer(ends.final, stopped))
+        holdsNoisyText(resolvePointer(ends.final, stopped, "xml"))
       ) {
         const narrower = withoutRuns(chain, (element) =>
-          holdsNoisyText(resolvePointer(ends.final, element)),
+          holdsNoisyText(resolvePointer(ends.final, element, "xml")),
         );
         if (narrower.length > 0)
           return narrower.map((element) => ({
@@ -271,7 +304,7 @@ const outsideRuns = (pointer: string, ends: Ends): readonly Candidate[] => {
     named = parent;
   }
   const noisy = (element: string) =>
-    holdsNoisyText(resolvePointer(ends.final, element));
+    holdsNoisyText(resolvePointer(ends.final, element, "xml"));
   // An ancestor whose text joins a timestamp fails a later save that only restamps it.
   if (noisy(named)) {
     const narrower = withoutRuns(
@@ -343,21 +376,64 @@ const recordLike = (value: JsonValue | undefined): boolean =>
 const TEXT_TAG = /^(?:p|h|h[1-6]|para|simpara|li|text|tspan|span|a)$/u;
 
 /**
+ * A tag of inline formatting, by its local name: bold, italic and the like,
+ * a span, link or code run, or Gnote's `size:` and `link:` runs. A record
+ * whose fields are only such, as `<list-item><bold>olive oil</bold>`, is text.
+ */
+const INLINE_TAG =
+  /^(?:b|i|u|s|em|strong|bold|italic|underline|strikethrough|emphasis|span|a|code|sub|sup|small|big|mark|font|tt|monospace|highlight|link)$/u;
+const INLINE_PREFIX = /^(?:size|link):/u;
+
+const isInline = (name: string) =>
+  INLINE_PREFIX.test(name) ||
+  INLINE_TAG.test((name.split(":").at(-1) ?? name).toLowerCase());
+
+/**
  * Whether an element holds fields: only elements, layout whitespace aside, as
  * Tellico's `<entry>` holds `<title>` and `<publisher>`, or a record holds
  * repeated `<field>` elements, whatever they are called; unless it is text
- * made of runs: its tag names a paragraph or other text (`TEXT_TAG`), or a
- * child's text opens or closes with whitespace, as a sentence splits into
- * runs, `Meet ` and a linked `Monday`, where a field holds a value whole.
+ * made of runs: its tag names a paragraph or other text (`TEXT_TAG`), its
+ * elements are all inline formatting (`INLINE_TAG`), or a child's text opens
+ * or closes with a space, as a sentence splits into runs, `Meet ` and a
+ * linked `Monday`, where a field holds a value whole; a line break and
+ * indentation the app lays out after a field's text, as KmPlot's, is none.
  */
 export const holdsFields = (value: JsonValue | undefined): boolean =>
   recordLike(value) &&
   isXmlElement(value) &&
   !TEXT_TAG.test(value.name.split(":").at(-1) ?? value.name) &&
+  !value.children.every(
+    (child) => !isXmlElement(child) || isInline(child.name),
+  ) &&
   !value.children.some((child) => {
     const text = isXmlElement(child) ? elementText(child) : "";
-    return text.trim() !== "" && text.trim() !== text;
+    // A space, not a line break the app lays out, at either edge splits a sentence.
+    return /^[ \t]+\S|\S[ \t]+$/u.test(text);
   });
+
+/** Whether an element at a pointer sits in a paragraph or other text, an ancestor's tag naming one (`TEXT_TAG`), as Word's `<w:r>` run in its `<w:p>`. */
+const inText = (view: JsonValue | null, pointer: string): boolean => {
+  for (
+    let parent = parentOf(pointer);
+    parent !== undefined;
+    parent = parentOf(parent)
+  ) {
+    const element = resolvePointer(view, parent, "xml");
+    if (
+      isXmlElement(element) &&
+      TEXT_TAG.test(element.name.split(":").at(-1) ?? element.name)
+    )
+      return true;
+  }
+  return false;
+};
+
+/** Whether an element at a pointer is a record: it `holdsFields`, and sits in no paragraph, where it is a run of its text. */
+export const isRecordAt = (
+  view: JsonValue | null,
+  pointer: string,
+  value: JsonValue | undefined,
+): boolean => holdsFields(value) && !inText(view, pointer);
 
 /**
  * Whether the kept ancestor of a record added or removed whole is a list of
@@ -365,11 +441,21 @@ export const holdsFields = (value: JsonValue | undefined): boolean =>
  * holds no text of its own, and another element of that tag with text that
  * both ends hold alike, as Tellico's `<collection>` holds the other entries.
  */
-const listOf = (holder: string, element: JsonValue, ends: Ends) => {
-  if (!isXmlElement(element) || !holdsFields(element) || mixedAt(holder, ends))
+const listOf = (
+  holder: string,
+  pointer: string,
+  element: JsonValue,
+  ends: Ends,
+) => {
+  if (
+    !isXmlElement(element) ||
+    !isRecordAt(ends.final, pointer, element) ||
+    !isRecordAt(ends.baseline, pointer, element) ||
+    mixedAt(holder, ends)
+  )
     return false;
   const like = (view: JsonValue | null) => {
-    const list = resolvePointer(view, holder);
+    const list = resolvePointer(view, holder, "xml");
     return isXmlElement(list)
       ? list.children.flatMap((child) =>
           isXmlElement(child) &&
@@ -416,7 +502,8 @@ const textHolder = (
 ) => {
   const kept = keptAncestor(pointer, ends);
   const unnamed = removed && /^\d+$/u.test(pointer.split("/").at(-1) ?? "");
-  const listed = kept !== undefined && !unnamed && listOf(kept, element, ends);
+  const listed =
+    kept !== undefined && !unnamed && listOf(kept, pointer, element, ends);
   return { holder: listed ? undefined : kept, listed };
 };
 
@@ -424,6 +511,8 @@ const textHolder = (
 interface Placed {
   readonly element: string;
   readonly check: DesktopTaskCheckInput;
+  /** Positioned items can supply checks of their kept siblings. */
+  readonly guards?: readonly DesktopTaskCheckInput[];
 }
 
 /** What text checks read: the file, its two ends, and where checks go. */
@@ -432,6 +521,10 @@ interface TextContext {
   readonly ends: Ends;
   readonly place: TextPlacement;
 }
+
+/** Whether text is one line the app lays out between line breaks. */
+const isLaidOutLine = (value: string) =>
+  /[\r\n]/u.test(value) && !/[\r\n]/u.test(value.trim());
 
 /**
  * The check of an element's whole text: a decimal held as the element's one
@@ -445,9 +538,18 @@ export const wholeTextCheck = (
   value: string,
   before: string | undefined,
 ): DesktopTaskCheckInput => {
-  const numeric = valueEqualsCheck(file, pointer, value, before);
+  // A line between breaks is still that line. Trim it before the decimal test so `\\n437.8\\n` stays a number within tolerance.
+  const comparable = isLaidOutLine(value) ? value.trim() : value;
+  const earlier =
+    before !== undefined && isLaidOutLine(before) ? before.trim() : before;
+  // The element's joined text, not its first text node. A later save may split `437.8` into `437.` and a run holding `8`. When that text is a decimal, compare the number within the usual tolerance, so `437.80` and a long float still match.
+  const numeric = valueEqualsCheck(file, pointer, comparable, earlier);
   if ("tolerance" in numeric) return numeric;
-  return { kind: "text_equals", file, pointer, value };
+  // One line the app lays out between line breaks, as KmPlot's formula before its next element, compares with its whitespace collapsed.
+  const laidOut = isLaidOutLine(value)
+    ? { value: collapseWhitespace(value), normalize_whitespace: true }
+    : { value };
+  return { kind: "text_equals", file, pointer, ...laidOut };
 };
 
 /** The element a candidate names in the final view, whole, at the pointer `name` gives it. */
@@ -457,7 +559,9 @@ const candidateAt = (
 ) => {
   const pointer = place.name(named);
   const now =
-    pointer === undefined ? undefined : resolvePointer(ends.final, pointer);
+    pointer === undefined
+      ? undefined
+      : resolvePointer(ends.final, pointer, "xml");
   return pointer === undefined || !isXmlElement(now)
     ? undefined
     : { pointer, now };
@@ -467,7 +571,8 @@ const candidateAt = (
  * The text check a candidate takes: an element the final view holds whole at
  * the pointer `name` gives it, its text at most the limit, no timestamp and
  * holding no date stamped in parts, and changed from the baseline's or, for
- * an element `added` whole, absent there.
+ * an element `added` whole, absent there; never a line the app only laid
+ * out anew, which a check comparing collapsed whitespace finds at the seed.
  */
 const textCheck = (
   context: TextContext,
@@ -477,11 +582,18 @@ const textCheck = (
   const found = candidateAt(context, candidate);
   if (found === undefined) return undefined;
   const { pointer, now } = found;
-  const before = resolvePointer(context.ends.baseline, pointer);
+  const before = resolvePointer(context.ends.baseline, pointer, "xml");
   if (!added && !isXmlElement(before)) return undefined;
+  // A timestamp between other text is not part of the check. Joining across it asks for text the file never contains.
+  if (holdsNoisyText(now)) return undefined;
   const value = elementText(now);
   const old = isXmlElement(before) ? elementText(before) : undefined;
+  const relaidOut =
+    old !== undefined &&
+    isLaidOutLine(value) &&
+    collapseWhitespace(old) === collapseWhitespace(value);
   return value !== old &&
+    !relaidOut &&
     value.length <= context.place.limit.chars &&
     !isStamp(value) &&
     !holdsNoisyText(now) &&
@@ -512,12 +624,14 @@ const textHolders = (change: Listed, ends: Ends, place: TextPlacement) => {
   const holders = new Set<string>();
   /** Elements added whole holding text, each with the ancestor checked for it, if any. */
   const added = new Map<string, string | undefined>();
+  /** Items placed by their own position, added whole. */
+  const items: string[] = [];
   const note = (
     pointer: string,
     view: JsonValue | null,
     how: "changed" | "added" | "removed",
   ) => {
-    const value = resolvePointer(view, pointer);
+    const value = resolvePointer(view, pointer, "xml");
     const parent = parentOf(pointer);
     // Noise, such as a time the app stamps, never makes its ancestor's whole text a check.
     if (place.noise(pointer)) return;
@@ -534,6 +648,11 @@ const textHolders = (change: Listed, ends: Ends, place: TextPlacement) => {
       !isWhitespace(elementText(value)) &&
       place.inTree(pointer)
     ) {
+      // An item placed by its own position is no run of its list's text.
+      if (isPlacedItem(view, pointer)) {
+        if (how === "added") items.push(pointer);
+        return;
+      }
       const { holder, listed } = textHolder(
         pointer,
         value,
@@ -552,7 +671,7 @@ const textHolders = (change: Listed, ends: Ends, place: TextPlacement) => {
   }
   for (const pointer of change.added) note(pointer, ends.final, "added");
   for (const pointer of change.removed) note(pointer, ends.baseline, "removed");
-  return { holders, added };
+  return { holders, added, items };
 };
 
 /**
@@ -573,7 +692,7 @@ export const wholeTextSuggestions = (
   ends: Ends,
   place: TextPlacement,
 ): WholeTextSuggestions => {
-  const { holders, added } = textHolders(change, ends, place);
+  const { holders, added, items } = textHolders(change, ends, place);
   const context = { file, ends, place };
   const checks = new Map<string, Placed | undefined>();
   const check = (candidate: Candidate) => {
@@ -607,6 +726,13 @@ export const wholeTextSuggestions = (
     if (found !== undefined && !placed.includes(found)) placed.push(found);
   };
   for (const holder of holders) keep(climb(holder));
+  for (const item of items)
+    keep(
+      placedItemCheck(
+        { file, ends, name: place.name, chars: place.limit.chars },
+        item,
+      ),
+    );
   for (const [element, holder] of added)
     if (holder === undefined || climb(holder) === undefined)
       keep(
@@ -624,6 +750,7 @@ export const wholeTextSuggestions = (
     .slice(0, place.limit.suggestions);
   return {
     suggestions: suggested.map(({ check }) => check),
+    guards: suggested.flatMap(({ guards }) => guards ?? []),
     long: [...long],
     covers: (pointer) => {
       if (
