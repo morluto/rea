@@ -881,3 +881,208 @@ it("resolves native handoffs across sequence-wrapped callables and named node:pr
     },
   ]);
 });
+
+it("restricts default bindings() search to standard tries without matching package-root or 2-segment lib/binding files", async () => {
+  const appRoot = await createTestTempDirectory("rea-bindings-default-tries-");
+  const rootDecoyBytes = "package-root-decoy-addon";
+  const twoSegDecoyBytes = "two-segment-lib-binding-decoy";
+  const validAbiBytes = "three-segment-node-pre-gyp-addon";
+
+  await writeFixtureFiles(appRoot, {
+    "package.json": JSON.stringify({
+      name: "bindings-tries-app",
+      main: "main.cjs",
+    }),
+    "main.cjs": `
+      const { ipcMain } = require("electron");
+      const decoyOnly = require("./node_modules/decoy-pkg/index.cjs");
+      const validPreGyp = require("./node_modules/pregyp-pkg/index.cjs");
+      ipcMain.handle("bindings:test", () => [decoyOnly, validPreGyp]);
+    `,
+    "node_modules/decoy-pkg/package.json": JSON.stringify({
+      name: "decoy-pkg",
+      main: "index.cjs",
+    }),
+    "node_modules/decoy-pkg/index.cjs": `
+      const bindings = require("bindings");
+      module.exports = bindings("addon");
+    `,
+    "node_modules/decoy-pkg/addon.node": rootDecoyBytes,
+    "node_modules/decoy-pkg/lib/binding/addon.node": twoSegDecoyBytes,
+    "node_modules/pregyp-pkg/package.json": JSON.stringify({
+      name: "pregyp-pkg",
+      main: "index.cjs",
+    }),
+    "node_modules/pregyp-pkg/index.cjs": `
+      const bindings = require("bindings");
+      module.exports = bindings("addon").open;
+    `,
+    "node_modules/pregyp-pkg/addon.node": rootDecoyBytes,
+    "node_modules/pregyp-pkg/lib/binding/addon.node": twoSegDecoyBytes,
+    "node_modules/pregyp-pkg/lib/binding/node-v127-darwin-arm64/addon.node":
+      validAbiBytes,
+  });
+
+  const analyzed = await analyzeJavaScriptApplication({
+    input_path: appRoot,
+    format: "directory",
+  });
+  if (!analyzed.ok) throw analyzed.error;
+  const parsed = javascriptApplicationAnalysisResultSchema.parse(
+    analyzed.value.normalized_result,
+  );
+  expect(parsed.summary).toMatchObject({
+    native_addon_bindings: 2,
+    resolved_native_addon_bindings: 1,
+  });
+
+  const traced = traceApplicationFeatureEvidence({
+    application: analyzed.value,
+    seed: { kind: "module", value: "main.cjs" },
+    direction: "outgoing",
+    native_observations: [
+      createSimulatedNativeEvidence(
+        join(appRoot, "node_modules/decoy-pkg/addon.node"),
+        rootDecoyBytes,
+      ),
+      createSimulatedNativeEvidence(
+        join(appRoot, "node_modules/decoy-pkg/lib/binding/addon.node"),
+        twoSegDecoyBytes,
+      ),
+      createSimulatedNativeEvidence(
+        join(
+          appRoot,
+          "node_modules/pregyp-pkg/lib/binding/node-v127-darwin-arm64/addon.node",
+        ),
+        validAbiBytes,
+      ),
+    ],
+  });
+  if (!traced.ok) throw traced.error;
+  expect(traced.value.result.native_handoffs).toEqual([
+    expect.objectContaining({
+      artifact_path:
+        "node_modules/pregyp-pkg/lib/binding/node-v127-darwin-arm64/addon.node",
+      status: "evidence-linked",
+      artifact_sha256: sha256Hex(validAbiBytes),
+      requested_exports: ["open"],
+    }),
+  ]);
+});
+
+it("does not select sibling .node files for trailing-separator directory requests in path.join or rewritten app.asar.unpacked paths", async () => {
+  const appRoot = await createTestTempDirectory(
+    "rea-trailing-slash-native-dir-request-",
+  );
+  const packedSiblingBytes = "packed-sibling-file-not-directory";
+  const unpackedSiblingBytes = "unpacked-sibling-file-not-directory";
+
+  await writeFixtureFiles(appRoot, {
+    "resources/app.asar/package.json": JSON.stringify({
+      name: "trailing-slash-app",
+      main: "main.cjs",
+    }),
+    "resources/app.asar/main.cjs": `
+      const { ipcMain } = require("electron");
+      const path = require("node:path");
+      const directDirReq = require(path.join(__dirname, "addon.node/"));
+      const unpackedDirReq = require(
+        path.join(__dirname.replace("app.asar", "app.asar.unpacked"), "addon.node/"),
+      );
+      ipcMain.handle("native:dir", () => [directDirReq, unpackedDirReq]);
+    `,
+    "resources/app.asar/addon.node": packedSiblingBytes,
+    "resources/app.asar.unpacked/addon.node": unpackedSiblingBytes,
+  });
+
+  const analyzed = await analyzeJavaScriptApplication({
+    input_path: appRoot,
+    format: "directory",
+  });
+  if (!analyzed.ok) throw analyzed.error;
+  const parsed = javascriptApplicationAnalysisResultSchema.parse(
+    analyzed.value.normalized_result,
+  );
+  expect(parsed.summary).toMatchObject({
+    native_addon_bindings: 0,
+    resolved_native_addon_bindings: 0,
+  });
+
+  const traced = traceApplicationFeatureEvidence({
+    application: analyzed.value,
+    seed: { kind: "module", value: "resources/app.asar/main.cjs" },
+    direction: "outgoing",
+    native_observations: [
+      createSimulatedNativeEvidence(
+        join(appRoot, "resources/app.asar/addon.node"),
+        packedSiblingBytes,
+      ),
+      createSimulatedNativeEvidence(
+        join(appRoot, "resources/app.asar.unpacked/addon.node"),
+        unpackedSiblingBytes,
+      ),
+    ],
+  });
+  if (!traced.ok) throw traced.error;
+  expect(traced.value.result.native_handoffs).toEqual([]);
+
+  const mkEntry = (path: string): JavaScriptArtifactFile => ({
+    path,
+    sha256: sha256Hex(path),
+    container_sha256: "0".repeat(64),
+    bytes: 16,
+    inventory_artifact_id: "dir-req-fixture",
+    kind: path.endsWith(".node") ? "native-addon" : "javascript",
+    unpacked: path.includes("app.asar.unpacked"),
+    text: { included: false, reason: "not-applicable" },
+  });
+  const sourceFile = mkEntry("resources/app.asar/main.cjs");
+  const resolver = createElectronNativeAddonResolver({
+    files: new Map([
+      [sourceFile.path, sourceFile],
+      [
+        "resources/app.asar/addon.node",
+        mkEntry("resources/app.asar/addon.node"),
+      ],
+      [
+        "resources/app.asar.unpacked/addon.node",
+        mkEntry("resources/app.asar.unpacked/addon.node"),
+      ],
+    ]),
+    jsonDocuments: new JavaScriptJsonDocuments(),
+  });
+  const baseFinding = {
+    module_kind: "require" as const,
+    binding_kind: "require" as const,
+    specifier: "addon.node/",
+    members: [],
+    namespace_access: true,
+    dynamic_member_access: false,
+    module_key: null,
+    location: { start: { line: 1, column: 0 }, end: { line: 1, column: 10 } },
+  };
+  expect(
+    resolver.resolve(sourceFile, {
+      ...baseFinding,
+      resolution: {
+        kind: "candidates",
+        lookup: "commonjs",
+        resolution_context: "filesystem-expression",
+        candidates: ["addon.node/"],
+      },
+    }),
+  ).toEqual([]);
+  expect(
+    resolver.resolve(sourceFile, {
+      ...baseFinding,
+      resolution: {
+        kind: "candidates",
+        lookup: "commonjs",
+        resolution_context: "filesystem-expression",
+        candidates: ["addon.node/"],
+        asar_unpacked: true,
+        asar_unpacked_scope: { directory: "." },
+      },
+    }),
+  ).toEqual([]);
+});

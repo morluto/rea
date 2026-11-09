@@ -200,7 +200,8 @@ const resolveHelperSearchRoot = (
       posix.join(sourceDir, explicitDirectory),
     );
     if (logicalPathEscapesRoot(joined)) return undefined;
-    return joined === "" ? "." : joined;
+    const stripped = joined.replace(/\/+$/u, "");
+    return stripped === "" ? "." : stripped;
   }
   return findEnclosingPackageRoot(state, sourceDir, fallbackMarkerDirs);
 };
@@ -425,7 +426,7 @@ const resolveAsarUnpackedFinding = (
   const resolution = finding.resolution;
   if (resolution === undefined) return [];
   if (resolution.kind === "node-gyp-build") {
-    const searchRoot = resolveRewrittenAnchoredPath(
+    const searchRoot = resolveRewrittenAnchoredDirectory(
       sourcePath,
       resolution.directory,
       resolution.asar_unpacked_scope,
@@ -437,7 +438,7 @@ const resolveAsarUnpackedFinding = (
   }
   if (resolution.kind === "bindings") {
     if (resolution.module_root !== null) {
-      const searchRoot = resolveRewrittenAnchoredPath(
+      const searchRoot = resolveRewrittenAnchoredDirectory(
         sourcePath,
         resolution.module_root,
         resolution.asar_unpacked_scope,
@@ -447,7 +448,7 @@ const resolveAsarUnpackedFinding = (
         ? []
         : scanBindingsTargets(state, searchRoot, resolution.addon_name);
     }
-    const rewrittenDir = resolveRewrittenAnchoredPath(
+    const rewrittenDir = resolveRewrittenAnchoredDirectory(
       sourcePath,
       ".",
       resolution.asar_unpacked_scope,
@@ -475,7 +476,15 @@ const resolveAsarUnpackedFinding = (
         resolution.asar_unpacked_replace_all,
       );
       if (rewrittenPath === undefined || rewrittenPath === ".") return [];
-      const relativeToSource = posix.relative(sourceDir, rewrittenPath);
+      const relativeRaw = posix.relative(sourceDir, rewrittenPath);
+      const relativeToSource =
+        rewrittenPath.endsWith("/") &&
+        relativeRaw !== "" &&
+        !relativeRaw.endsWith("/")
+          ? `${relativeRaw}/`
+          : relativeRaw === "" && rewrittenPath.endsWith("/")
+            ? "./"
+            : relativeRaw;
       const declaredPath = relativeToSource.startsWith(".")
         ? relativeToSource
         : `./${relativeToSource}`;
@@ -537,6 +546,23 @@ const resolveRewrittenAnchoredPath = (
   );
   if (logicalPathEscapesRoot(finalJoined)) return undefined;
   return finalJoined === "" ? "." : finalJoined;
+};
+
+const resolveRewrittenAnchoredDirectory = (
+  sourcePath: string,
+  targetRelPath: string,
+  scope: ElectronAsarUnpackedRewriteScope | undefined,
+  replaceAll = false,
+): string | undefined => {
+  const rewritten = resolveRewrittenAnchoredPath(
+    sourcePath,
+    targetRelPath,
+    scope,
+    replaceAll,
+  );
+  if (rewritten === undefined) return undefined;
+  const stripped = rewritten.replace(/\/+$/u, "");
+  return stripped === "" ? "." : stripped;
 };
 
 type SinglePathResolutionOutcome =
@@ -626,7 +652,7 @@ const isArchiveContainerBoundary = (directory: string): boolean => {
 const matchesBindingsSearchDirectory = (
   dirSegments: readonly string[],
 ): boolean => {
-  if (dirSegments.length === 0) return true;
+  if (dirSegments.length === 0) return false;
   if (dirSegments.length === 1)
     return (
       dirSegments[0] === "build" ||
@@ -638,8 +664,7 @@ const matchesBindingsSearchDirectory = (
     return (
       ((first === "build" || first === "out") &&
         (second === "Release" || second === "Debug")) ||
-      (first === "build" && second === "default") ||
-      (first === "lib" && second === "binding")
+      (first === "build" && second === "default")
     );
   }
   if (dirSegments.length === 3) {

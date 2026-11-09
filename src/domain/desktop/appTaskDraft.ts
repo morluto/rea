@@ -1,20 +1,29 @@
 import type { JsonValue } from "../jsonValue.js";
 import { isTimestamp, type DesktopTaskCheckInput } from "./appTask.js";
+import { fileNotes, type FileNote } from "./appTaskDraftFileNotes.js";
+import { lineGuards } from "./appTaskDraftLineGuards.js";
 import {
   ARCHIVE,
-  escapeToken,
   innermost,
-  namedSuggestions,
+  namedDraft,
+  presenceValues,
   XML_FILE,
+  type NamedFacts,
 } from "./appTaskDraftNamed.js";
+import { rowSuggestions } from "./appTaskDraftRows.js";
+import {
+  draftValues,
+  oneEnd,
+  withinDraftBudget,
+  type DraftValue,
+} from "./appTaskDraftValues.js";
 import {
   versionAt,
   type DesktopStatePath,
   type StateEnds,
 } from "./desktopState.js";
-import { countTaskRows } from "./appTaskChecks.js";
-import { diffStateViews, sqliteRowIdentity } from "./stateChanges.js";
-import { resolvePointer } from "./viewPointer.js";
+import { diffNamedMembers, diffStateViews } from "./stateChanges.js";
+import { escapeToken, resolvePointer } from "./viewPointer.js";
 
 type Version = DesktopStatePath["versions"][number];
 type Suggestion = DesktopTaskCheckInput;
@@ -135,20 +144,95 @@ const keyPointers = (
     ),
   );
 
+/** A file's draft: its suggested checks, the values its change holds, guards, and the facts its notes rest on. */
+interface FileDraft {
+  readonly suggested: readonly Suggestion[];
+  readonly values: readonly DraftValue[];
+  readonly valuesCut: boolean;
+  readonly guards: readonly Suggestion[];
+  readonly facts?: NamedFacts;
+}
+
+const NO_VALUES = { values: [], valuesCut: false, guards: [] } as const;
+
+/** A JSON or key file's change at pointers into its view, an absent end's view null; a key file's diff names `group/key`. */
+const plainChange = (
+  format: "json" | "keyfile",
+  baseline: Version,
+  final: Version,
+) => {
+  if (format === "json") return diffNamedMembers(baseline.view, final.view);
+  const change = diffStateViews(format, baseline.view, final.view);
+  const pointers = keyPointers([baseline.view, final.view]);
+  const at = (entries: readonly string[]) =>
+    entries.flatMap((entry) => pointers.get(entry) ?? []);
+  return {
+    ...change,
+    added: at(change.added),
+    changed: at(change.changed),
+    removed: at(change.removed),
+  };
+};
+
+/** The values a JSON or key file's change holds; every pointer is the document's, and none is noise. */
+const plainValues = (
+  change: ReturnType<typeof plainChange>,
+  baseline: Version,
+  final: Version,
+) =>
+  draftValues(change, {
+    ends: versions(baseline, final),
+    listed: () => true,
+    noise: () => undefined,
+    format: () => "json",
+    referenceRoots: () => [],
+  });
+
+/**
+ * The values of a file created or deleted, apart from the check of its
+ * presence: what its one end holds, added or removed, in an XML file,
+ * archive, JSON or key file, within the limits a changed file's have.
+ */
+const presenceOnly = (
+  baseline: Version,
+  final: Version,
+): Pick<FileDraft, "values" | "valuesCut"> => {
+  const created = !baseline.present;
+  const format = (created ? final : baseline).format;
+  const listed =
+    format === "zip" || format === "xml"
+      ? presenceValues(
+          versions(baseline, final),
+          format === "zip" ? ARCHIVE : XML_FILE,
+          created,
+        )
+      : format === "json" || format === "keyfile"
+        ? plainValues(
+            oneEnd(plainChange(format, baseline, final), created),
+            baseline,
+            final,
+          )
+        : { values: [], cut: false };
+  return { values: listed.values, valuesCut: listed.cut };
+};
+
 const valueSuggestions = (
   file: string,
   baseline: Version,
   final: Version,
-): Suggestion[] => {
+  document: boolean,
+): FileDraft => {
   const format = final.format;
-  if (format === "zip" || format === "xml")
-    return namedSuggestions(
+  if (format === "zip" || format === "xml") {
+    return namedDraft(
       file,
       versions(baseline, final),
       format === "zip" ? ARCHIVE : XML_FILE,
-      LIMIT,
+      { limit: LIMIT, document },
     );
-  if (format !== "json" && format !== "keyfile") return [];
+  }
+  if (format !== "json" && format !== "keyfile")
+    return { suggested: [], ...NO_VALUES };
   const change = diffStateViews(format, baseline.view, final.view);
   const pointers = keyPointers([baseline.view, final.view]);
   const pointer = (entry: string) =>
@@ -173,178 +257,48 @@ const valueSuggestions = (
     if (at !== undefined && at !== "")
       suggestions.push({ kind: "value_absent", file, pointer: at });
   }
-  return suggestions;
-};
-
-interface TableView {
-  readonly columns: readonly string[];
-  readonly key: readonly string[];
-  readonly rows: readonly (readonly JsonValue[])[];
-}
-
-const tableViews = (version: Version): ReadonlyMap<string, TableView> => {
-  const tables = new Map<string, TableView>();
-  const view = version.present ? version.view : null;
-  if (!isRecord(view) || !isRecord(view.tables)) return tables;
-  for (const [name, table] of Object.entries(view.tables)) {
-    if (!isRecord(table) || table.truncated !== false) continue;
-    const strings = (value: JsonValue | undefined) =>
-      Array.isArray(value)
-        ? value.filter((item) => typeof item === "string")
-        : [];
-    tables.set(name, {
-      columns: strings(table.columns),
-      key: strings(table.primary_key),
-      rows: Array.isArray(table.rows) ? table.rows.filter(Array.isArray) : [],
-    });
-  }
-  return tables;
-};
-
-/** Column values of a row, without volatile values or the columns left out. */
-const rowWhere = (
-  table: TableView,
-  row: readonly JsonValue[],
-  keep: (column: string) => boolean,
-): Record<string, JsonValue> =>
-  Object.fromEntries(
-    table.columns.flatMap((column, index) => {
-      const value = row[index] ?? null;
-      return keep(column) && !isTimestamp(value) ? [[column, value]] : [];
-    }),
+  const { values, cut } = plainValues(
+    plainChange(format, baseline, final),
+    baseline,
+    final,
   );
-
-/** Match uniquely keyed rows separately from multiset row conditions. */
-const keyedRows = (table: TableView) =>
-  new Map(
-    table.rows.flatMap((row) => {
-      const identity = sqliteRowIdentity(table.columns, table.key, row);
-      return identity.keyed ? [[identity.value, row] as const] : [];
-    }),
-  );
-
-/** The predicates a task can express after volatile values are omitted. */
-const rowConditions = (table: TableView) => {
-  const conditions = new Map<string, Record<string, JsonValue>>();
-  for (const row of table.rows) {
-    if (sqliteRowIdentity(table.columns, table.key, row).keyed) continue;
-    const where = rowWhere(table, row, () => true);
-    if (Object.keys(where).length === 0) continue;
-    conditions.set(JSON.stringify(where), where);
-  }
-  return conditions;
+  return { suggested: suggestions, values, valuesCut: cut, guards: [] };
 };
 
-const unkeyedRowSuggestions = (
-  file: string,
-  table: string,
-  baseline: TableView,
-  final: TableView,
-): Suggestion[] => {
-  const conditions = new Map([
-    ...rowConditions(final),
-    ...rowConditions(baseline),
-  ]);
-  const suggestions: Suggestion[] = [];
-  for (const where of conditions.values()) {
-    const previous = countTaskRows(baseline.columns, baseline.rows, where);
-    const count = countTaskRows(final.columns, final.rows, where);
-    if (previous === count) continue;
-    if (count === 0)
-      suggestions.push({ kind: "row_absent", file, table, where });
-    else if (previous === 0)
-      suggestions.push({ kind: "row_present", file, table, where });
-    else
-      suggestions.push({
-        kind: "row_count",
-        file,
-        table,
-        where,
-        equals: count,
-      });
-  }
-  return suggestions;
-};
-
-const rowSuggestions = (
-  file: string,
-  baseline: Version,
-  final: Version,
-): Suggestion[] => {
-  const before = tableViews(baseline);
-  const suggestions: Suggestion[] = [];
-  const push = (
-    kind: "row_present" | "row_absent",
-    table: string,
-    where: Record<string, JsonValue>,
-  ) => {
-    if (Object.keys(where).length > 0)
-      suggestions.push({ kind, file, table, where });
-  };
-  for (const [name, table] of tableViews(final)) {
-    const old = before.get(name) ?? { ...table, rows: [] };
-    const oldRows = keyedRows(old);
-    const newRows = keyedRows(table);
-    for (const [id, row] of newRows) {
-      const previous = oldRows.get(id);
-      if (previous === undefined)
-        push(
-          "row_present",
-          name,
-          rowWhere(table, row, (column) => !table.key.includes(column)),
-        );
-      else if (JSON.stringify(previous) !== JSON.stringify(row))
-        push(
-          "row_present",
-          name,
-          rowWhere(
-            table,
-            row,
-            (column) =>
-              table.key.includes(column) ||
-              JSON.stringify(row[table.columns.indexOf(column)]) !==
-                JSON.stringify(previous[old.columns.indexOf(column)]),
-          ),
-        );
-    }
-    for (const [id, row] of oldRows)
-      if (!newRows.has(id))
-        push(
-          "row_absent",
-          name,
-          rowWhere(old, row, (column) => old.key.includes(column)),
-        );
-    suggestions.push(...unkeyedRowSuggestions(file, name, old, table));
-    if (old.rows.length !== table.rows.length)
-      suggestions.push({
-        kind: "row_count",
-        file,
-        table: name,
-        equals: table.rows.length,
-      });
-  }
-  return suggestions;
-};
-
-/** Checks that express how a file changed from its baseline to its final version. */
+/** Checks that express how a file changed from its baseline to its final version, with the values, guards and facts beside them. */
 const suggestedChecks = (
   file: string,
   baseline: Version,
   final: Version,
-): readonly Suggestion[] => {
-  if (!final.present) return [{ kind: "file_absent", file }];
+  document: boolean,
+): FileDraft => {
+  if (!final.present)
+    return {
+      suggested: [{ kind: "file_absent", file }],
+      ...NO_VALUES,
+      ...presenceOnly(baseline, final),
+    };
   const created: Suggestion[] = baseline.present
     ? []
     : [{ kind: "file_present", file }];
-  const content =
+  const content: FileDraft =
     final.format === "text"
-      ? textSuggestions(file, baseline, final)
+      ? {
+          ...NO_VALUES,
+          suggested: textSuggestions(file, baseline, final),
+          guards: baseline.present
+            ? lineGuards(file, linesOf(baseline), linesOf(final))
+            : [],
+        }
       : !baseline.present
-        ? []
+        ? { suggested: [], ...NO_VALUES, ...presenceOnly(baseline, final) }
         : final.format === "sqlite"
-          ? rowSuggestions(file, baseline, final)
-          : valueSuggestions(file, baseline, final);
-  return [...created, ...content].slice(0, MAX_SUGGESTIONS);
+          ? { suggested: rowSuggestions(file, baseline, final), ...NO_VALUES }
+          : valueSuggestions(file, baseline, final, document);
+  return {
+    ...content,
+    suggested: [...created, ...content.suggested].slice(0, MAX_SUGGESTIONS),
+  };
 };
 
 /** How a file changed from its baseline to its final version, or undefined when it ends as it began. */
@@ -372,7 +326,10 @@ const netChange = (baseline: Version, final: Version) => {
     return { kind: "unreadable" };
   if (baseline.format !== final.format) return { kind: "format" };
   if (final.format === "binary") return { kind: "content" };
-  const difference = diffStateViews(final.format, baseline.view, final.view);
+  // XML members are listed by the selectors naming them, as checks name them.
+  const difference = diffStateViews(final.format, baseline.view, final.view, {
+    named: true,
+  });
   if (
     difference.added_count +
       difference.removed_count +
@@ -399,20 +356,24 @@ export interface TaskDraftFile {
   readonly final: ReturnType<typeof draftVersion>;
   readonly change: NonNullable<ReturnType<typeof netChange>>;
   readonly suggested: readonly Suggestion[];
+  /** The values the change added, changed and removed, at the pointers a check names them by. */
+  readonly values: readonly DraftValue[];
+  /** Whether a limit left values out. */
+  readonly values_cut: boolean;
+  /** Checks that the rest stays as it was, for an author to add by choice. */
+  readonly guards: readonly Suggestion[];
+  /** Why the file's suggestions are thin, when they are. */
+  readonly notes: readonly FileNote[];
 }
 
-/**
- * Each file under the owned paths whose state differs between its versions at
- * the seed and end checkpoints, with suggested checks for the files the user
- * worked on: documents, or the app's own state when no document changed.
- */
-export const draftTaskFiles = (
+/** Each file `include` takes whose state differs between its versions at the seed and end checkpoints, by home path. */
+export const changedStateFiles = (
   files: ReadonlyMap<string, DesktopStatePath>,
-  served: (home: string) => boolean,
   ends: StateEnds,
-): readonly TaskDraftFile[] => {
-  const changed = [...files]
-    .filter(([home]) => served(home))
+  include: (home: string) => boolean = () => true,
+) =>
+  [...files]
+    .filter(([home]) => include(home))
     .flatMap(([home, path]) => {
       const baseline = versionAt(path, ends.seed);
       const final = versionAt(path, ends.end);
@@ -427,15 +388,50 @@ export const draftTaskFiles = (
         : [{ home, path, baseline, final, change }];
     })
     .sort((left, right) => (left.home < right.home ? -1 : 1));
+
+/** The format a change's file has at its end, for its notes. */
+const changeShape = (change: TaskDraftFile["change"], final: Version) => ({
+  kind: "kind" in change ? change.kind : "values",
+  complete: "complete" in change ? change.complete : undefined,
+  format: final.format,
+});
+
+/**
+ * Each file under the owned paths whose state differs between its versions at
+ * the seed and end checkpoints, with suggested checks, values, guards and
+ * notes for the files the user worked on: documents, or the app's own state
+ * when no document changed. Values stay within the draft's byte budget, in
+ * file order.
+ */
+export const draftTaskFiles = (
+  files: ReadonlyMap<string, DesktopStatePath>,
+  served: (home: string) => boolean,
+  ends: StateEnds,
+): readonly TaskDraftFile[] => {
+  const changed = changedStateFiles(files, ends, served);
   const role = changed.some(({ path }) => path.role === "document")
     ? "document"
     : "application_state";
-  return changed.map(({ home, path, baseline, final, change }) => ({
-    file: home,
-    role: path.role,
-    baseline: draftVersion(baseline, path.role === role),
-    final: draftVersion(final, path.role === role),
-    change,
-    suggested: path.role === role ? suggestedChecks(home, baseline, final) : [],
-  }));
+  return withinDraftBudget(
+    changed.map(({ home, path, baseline, final, change }) => {
+      const drafted = path.role === role;
+      const draft: FileDraft = drafted
+        ? suggestedChecks(home, baseline, final, role === "document")
+        : { suggested: [], ...NO_VALUES };
+      return {
+        file: home,
+        role: path.role,
+        baseline: draftVersion(baseline, drafted),
+        final: draftVersion(final, drafted),
+        change,
+        suggested: draft.suggested,
+        values: draft.values,
+        values_cut: draft.valuesCut,
+        guards: draft.guards,
+        notes: drafted
+          ? fileNotes(home, changeShape(change, final), draft.facts)
+          : [],
+      };
+    }),
+  );
 };

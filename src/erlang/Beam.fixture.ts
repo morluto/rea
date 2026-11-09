@@ -98,6 +98,18 @@ export const erlangBeamDeclaredRowsFixture = (
   return concat(Buffer.from("FOR1", "latin1"), u32(form.length), form);
 };
 
+/** BEAM table frames with all declared fixed-width row bytes present. */
+export const erlangBeamRowsFixture = (
+  counts: readonly (readonly ["ExpT" | "ImpT" | "FunT", number])[],
+): Buffer =>
+  erlangBeamChunksFixture(
+    counts.map(([name, count]) => {
+      const payload = Buffer.alloc(4 + count * (name === "FunT" ? 24 : 12));
+      payload.writeUInt32BE(count);
+      return [name, payload] as const;
+    }),
+  );
+
 /** BEAM form whose atom table exceeds a caller-selected atom budget. */
 export const erlangBeamManyAtomsFixture = (count: number): Buffer => {
   const names = Array.from(

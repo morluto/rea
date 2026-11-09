@@ -992,6 +992,11 @@ const asarUnpackedResolutionProps = (
   };
 };
 
+const normalizeAnchoredDirectory = (value: string): string => {
+  const normalized = posix.normalize(value);
+  return normalized === "/" ? "/" : normalized.replace(/\/+$/u, "") || ".";
+};
+
 const resolveSourceAnchoredDirectory = (
   raw: t.Node,
   context: JavaScriptFindingContext,
@@ -1015,7 +1020,7 @@ const resolveSourceAnchoredDirectory = (
     fileExpr?.base === "source-directory" &&
     isRelativeSubpath(fileExpr.path)
   ) {
-    const normalized = posix.normalize(fileExpr.path);
+    const normalized = normalizeAnchoredDirectory(fileExpr.path);
     return {
       directory: normalized,
       displayDirectory: normalized,
@@ -1056,7 +1061,7 @@ const resolveSourceAnchoredDirectory = (
     fact.pieces[0]?.kind === "text" &&
     isRelativeSubpath(fact.pieces[0].value)
   ) {
-    const directory = posix.normalize(fact.pieces[0].value);
+    const directory = normalizeAnchoredDirectory(fact.pieces[0].value);
     const rewrite = fact.asarUnpacked;
     if (rewrite !== undefined) {
       if (rewrite.hasPostRewriteSuffix && rewrite.scopeDirectory === undefined)
@@ -1064,7 +1069,9 @@ const resolveSourceAnchoredDirectory = (
       const scope = asarUnpackedScopeFromRewrite(rewrite);
       const displayDirectory =
         rewrite.hasPostRewriteSuffix && rewrite.scopeDirectory !== undefined
-          ? posix.normalize(posix.join(rewrite.scopeDirectory, directory))
+          ? normalizeAnchoredDirectory(
+              posix.join(rewrite.scopeDirectory, directory),
+            )
           : directory;
       return {
         directory,
@@ -1326,15 +1333,23 @@ const evaluateTemplateLiteralFact = (
   }
   const compacted = compactPathPieces(pieces);
   if (leadingAnchored !== undefined) {
-    const first = compacted[0];
-    if (first?.kind !== "text" || !first.value.startsWith("/"))
-      return undefined;
+    if (!anchoredFactAllowsSuffix(leadingAnchored, compacted)) return undefined;
     return normalizeJoinedTemplateSegments(
       [leadingAnchored, { pieces: compacted, base: "literal-path" }],
       "source-directory",
     );
   }
   return { pieces: compacted, base: "literal-path" };
+};
+
+const anchoredFactAllowsSuffix = (
+  anchored: NativePathTemplateFact,
+  suffix: readonly PathPiece[],
+): boolean => {
+  const last = anchored.pieces.at(-1);
+  if (last?.kind === "text" && last.value.endsWith("/")) return true;
+  const first = suffix[0];
+  return first?.kind === "text" && first.value.startsWith("/");
 };
 
 const evaluateConcatenationFact = (
@@ -1376,9 +1391,7 @@ const evaluateConcatenationFact = (
   }
   const compacted = compactPathPieces(pieces);
   if (leading.base === "source-directory") {
-    const first = compacted[0];
-    if (first?.kind !== "text" || !first.value.startsWith("/"))
-      return undefined;
+    if (!anchoredFactAllowsSuffix(leading, compacted)) return undefined;
     return normalizeJoinedTemplateSegments(
       [leading, { pieces: compacted, base: "literal-path" }],
       "source-directory",
@@ -1420,7 +1433,7 @@ const evaluatePathCallFact = (
       inner.pieces.length === 1 &&
       inner.pieces[0]?.kind === "text" &&
       isRelativeSubpath(inner.pieces[0].value)
-        ? posix.normalize(inner.pieces[0].value)
+        ? normalizeAnchoredDirectory(inner.pieces[0].value)
         : undefined;
     return {
       pieces: inner.pieces,
@@ -1489,20 +1502,33 @@ const evaluateFileUrlCallFact = (
   depth: number,
   visitedBindings: ReadonlySet<string>,
 ): NativePathTemplateFact | undefined => {
+  const arg0 =
+    node.arguments.length === 1 ? argumentNode(node.arguments[0]) : undefined;
+  const unwrappedUrl =
+    arg0 === undefined ? undefined : unwrapJavaScriptExpression(arg0).node;
+  const sourceUrl =
+    unwrappedUrl !== undefined &&
+    t.isNewExpression(unwrappedUrl) &&
+    context.pathIntrinsics?.(unwrappedUrl, "source-url") === true
+      ? staticSourceRelativeUrlPath(unwrappedUrl)
+      : undefined;
   const staticFile = staticFileExpressionPath(node, context.pathIntrinsics);
-  if (staticFile !== undefined)
+  if (staticFile !== undefined) {
+    const preservedPath =
+      sourceUrl?.directory === true && !staticFile.path.endsWith("/")
+        ? `${staticFile.path}/`
+        : staticFile.path;
     return {
-      pieces: [{ kind: "text", value: staticFile.path }],
+      pieces: [{ kind: "text", value: preservedPath }],
       base:
         staticFile.base === "source-directory" &&
-        !isRelativeSubpath(staticFile.path)
+        !isRelativeSubpath(preservedPath)
           ? "literal-path"
           : staticFile.base,
     };
-  if (node.arguments.length !== 1) return undefined;
-  const arg0 = argumentNode(node.arguments[0]);
+  }
   if (arg0 === undefined) return undefined;
-  const urlNode = unwrapJavaScriptExpression(arg0).node;
+  const urlNode = unwrappedUrl!;
   if (
     !t.isNewExpression(urlNode) ||
     urlNode.arguments.length !== 2 ||
@@ -1666,7 +1692,7 @@ const evaluatePathResolveFact = (
     }
   }
   if (base === undefined) return undefined;
-  return normalizeJoinedTemplateSegments(reversed.reverse(), base);
+  return normalizeJoinedTemplateSegments(reversed.reverse(), base, true);
 };
 
 const rewriteLiteralAsarPieces = (
@@ -1696,9 +1722,18 @@ const isEmptyOrDotPart = (part: NativePathTemplateFact): boolean =>
   part.pieces[0]?.kind === "text" &&
   (part.pieces[0].value === "" || part.pieces[0].value === ".");
 
+const maybeStripTrailingSeparator = (
+  joined: string,
+  stripTrailingSeparator: boolean,
+): string =>
+  !stripTrailingSeparator || joined === "/"
+    ? joined
+    : joined.replace(/\/$/u, "");
+
 const normalizeJoinedTemplateSegments = (
   parts: readonly NativePathTemplateFact[],
   base: "source-directory" | "literal-path",
+  stripTrailingSeparator = false,
 ): NativePathTemplateFact | undefined => {
   const PLATFORM_TOKEN = "__rea_host_platform_token__";
   const ARCH_TOKEN = "__rea_host_arch_token__";
@@ -1735,12 +1770,13 @@ const normalizeJoinedTemplateSegments = (
         ...(anchorRewrite.hasPostRewriteSuffix ? [encoded[anchorIndex]!] : []),
         ...encoded.slice(anchorIndex + 1),
       ];
-      const suffixJoined = posix.join(...suffixEncoded);
-      const suffixTrimmed =
-        suffixJoined === "/" ? suffixJoined : suffixJoined.replace(/\/$/u, "");
+      const suffixJoined = maybeStripTrailingSeparator(
+        posix.join(...suffixEncoded),
+        stripTrailingSeparator,
+      );
       return {
         pieces: splitTokenizedTemplatePieces(
-          suffixTrimmed,
+          suffixJoined,
           PLATFORM_TOKEN,
           ARCH_TOKEN,
         ),
@@ -1752,18 +1788,22 @@ const normalizeJoinedTemplateSegments = (
         },
       };
     }
-    const joined = posix.join(...encoded);
-    const trimmed = joined === "/" ? joined : joined.replace(/\/$/u, "");
+    const joined = maybeStripTrailingSeparator(
+      posix.join(...encoded),
+      stripTrailingSeparator,
+    );
     return {
-      pieces: splitTokenizedTemplatePieces(trimmed, PLATFORM_TOKEN, ARCH_TOKEN),
+      pieces: splitTokenizedTemplatePieces(joined, PLATFORM_TOKEN, ARCH_TOKEN),
       base: "source-directory",
       asarUnpacked: anchorRewrite,
     };
   }
-  const joined = posix.join(...encoded);
-  const trimmed = joined === "/" ? joined : joined.replace(/\/$/u, "");
+  const joined = maybeStripTrailingSeparator(
+    posix.join(...encoded),
+    stripTrailingSeparator,
+  );
   return {
-    pieces: splitTokenizedTemplatePieces(trimmed, PLATFORM_TOKEN, ARCH_TOKEN),
+    pieces: splitTokenizedTemplatePieces(joined, PLATFORM_TOKEN, ARCH_TOKEN),
     base,
   };
 };

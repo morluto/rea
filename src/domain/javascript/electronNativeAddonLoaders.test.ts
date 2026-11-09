@@ -644,3 +644,58 @@ it("admits normalized sequence, generic invocation, and named dlopen callables",
     ]),
   );
 });
+
+it("preserves trailing directory separators in path joins and URLs while allowing path.resolve normalization", () => {
+  const cjs = analyzeCommonJsStaticFixture(`
+    const path = require("node:path");
+    const load = require("node-gyp-build");
+    const dirOnlyJoin = require(path.join(__dirname, "addon.node/"));
+    const dirOnlyRewritten = require(
+      path.join(__dirname.replace("app.asar", "app.asar.unpacked"), "addon.node/"),
+    );
+    const dirOnlyTemplate = require(\`\${__dirname}/addon.node/\`);
+    const dirOnlyConcat = require(__dirname + "/addon.node/");
+    const resolvedTrimmed = require(path.resolve(__dirname, "resolved.node/"));
+    const prefixWithSlash = path.join(__dirname, "native/");
+    const joinedAfterSlash = require(prefixWithSlash + "child.node");
+    const helperSubSlash = load(path.join(__dirname, "sub/"));
+    void dirOnlyJoin, dirOnlyRewritten, dirOnlyTemplate, dirOnlyConcat, resolvedTrimmed, joinedAfterSlash, helperSubSlash;
+  `);
+  expect(cjs.parse_status).toBe("complete");
+  expect(cjs.electron.native_addon_bindings).toHaveLength(3);
+  expect(cjs.electron.native_addon_bindings).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({
+        specifier: "resolved.node",
+        resolution: {
+          kind: "candidates",
+          lookup: "commonjs",
+          resolution_context: "filesystem-expression",
+          candidates: ["resolved.node"],
+        },
+      }),
+      expect.objectContaining({
+        specifier: "native/child.node",
+        resolution: {
+          kind: "candidates",
+          lookup: "commonjs",
+          resolution_context: "filesystem-expression",
+          candidates: ["native/child.node"],
+        },
+      }),
+      expect.objectContaining({
+        specifier: "node-gyp-build:sub",
+        resolution: { kind: "node-gyp-build", directory: "sub" },
+      }),
+    ]),
+  );
+
+  const esm = analyzeJavaScriptStaticSource(`
+    import { createRequire } from "node:module";
+    import { fileURLToPath } from "node:url";
+    const req = createRequire(import.meta.url);
+    export const skipped = req(fileURLToPath(new URL("./addon.node/", import.meta.url)));
+  `);
+  expect(esm.parse_status).toBe("complete");
+  expect(esm.electron.native_addon_bindings).toEqual([]);
+});

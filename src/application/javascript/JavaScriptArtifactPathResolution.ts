@@ -1538,7 +1538,9 @@ const resolveCandidate = (
 };
 
 const commonJsDirectoryRequest = (input: ResolveArtifactPathInput): boolean =>
-  input.context === "module-specifier" &&
+  (input.context === "module-specifier" ||
+    (input.context === "filesystem-expression" &&
+      input.runtimePathKind === "node-entrypoint")) &&
   input.moduleKind === "require" &&
   (input.declaredPath.endsWith("/") ||
     /(?:^|\/)\.{1,2}$/u.test(input.declaredPath));

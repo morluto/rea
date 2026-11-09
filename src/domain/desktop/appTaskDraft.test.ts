@@ -1370,6 +1370,33 @@ const listing = (entries: JsonValue[]): JsonValue => ({
 });
 
 describe("draftTaskFiles archives added to whole", () => {
+  it("checks JSON values that resemble XML elements using the entry format", () => {
+    const file = "Documents/a.zip";
+    const before = listing([zipEntry("a.json", "json", {})]);
+    const saved = (label: string) =>
+      listing([
+        zipEntry("a.json", "json", {
+          element: { name: "Cell", attributes: {}, children: [], label },
+        }),
+      ]);
+    const [result] = draft({
+      [file]: path("document", "zip", before, saved("keep")),
+    });
+    const checks = result?.suggested ?? [];
+    expect(checks).toContainEqual({
+      kind: "value_equals",
+      file,
+      pointer: "/entries/[name=a.json]/view/element/label",
+      value: "keep",
+    });
+    expect(passing(file, checks, saved("keep"), "zip").every(Boolean)).toBe(
+      true,
+    );
+    expect(passing(file, checks, saved("wrong"), "zip").every(Boolean)).toBe(
+      false,
+    );
+  });
+
   it("suggests checks inside a JSON value or a readable entry added whole", () => {
     const [file] = draft({
       "Documents/a.zip": path(
@@ -1496,8 +1523,8 @@ describe("draftTaskFiles archive elements by identity", () => {
       {
         kind: "value_equals",
         file: "Documents/plate.zip",
-        pointer: `${objects}/[name=Object][@name=Hole001]/name`,
-        value: "Object",
+        pointer: `${objects}/[name=Object][@name=Hole001]/attributes/type`,
+        value: "Part::Cylinder",
       },
       {
         kind: "value_absent",
@@ -1733,8 +1760,8 @@ describe("draftTaskFiles archives", () => {
       {
         kind: "value_equals",
         file: "Documents/plate.FCStd",
-        pointer: `${objects}/[name=Object][@name=Hole]/name`,
-        value: "Object",
+        pointer: `${objects}/[name=Object][@name=Hole]/attributes/type`,
+        value: "Part::Cylinder",
       },
       {
         kind: "value_absent",

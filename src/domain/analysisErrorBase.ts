@@ -1,9 +1,11 @@
+import type { AppleIpsPartialObservation } from "./native/appleIps.js";
 import type { PlaywrightTrace } from "./playwrightTrace/playwrightTrace.js";
 import type { GraphqlContract } from "./apiContract/graphqlContract.js";
 import type { SavedAnalysisSnapshotPartialObservation } from "./savedAnalysisSnapshot.js";
 import type { AnalysisSettingLimit } from "./analysisSettings.js";
 import type { JsonValue } from "./jsonValue.js";
 import type { AnalysisCleanupRetry } from "./analysisErrorRecovery.js";
+import type { EnvironmentBundlePublication } from "./environmentBundleExport.js";
 
 /** Stable tags exposed by safe analysis-error projections. */
 const ANALYSIS_ERROR_TAGS = [
@@ -174,7 +176,10 @@ export abstract class AnalysisError extends Error {
   readonly invocationDiagnostics:
     | Readonly<Record<string, JsonValue>>
     | undefined;
-  readonly capturedOutput: AnalysisCapturedOutput | undefined;
+  #capturedOutput: AnalysisCapturedOutput | undefined;
+  get capturedOutput(): AnalysisCapturedOutput | undefined {
+    return this.#capturedOutput;
+  }
   readonly cleanup: AnalysisCleanupObservation | undefined;
   cleanupIncomplete: boolean;
   #ownedCleanupResources: readonly string[];
@@ -198,7 +203,7 @@ export abstract class AnalysisError extends Error {
       options?.invocationDiagnostics === undefined
         ? undefined
         : structuredClone(options.invocationDiagnostics);
-    this.capturedOutput =
+    this.#capturedOutput =
       options?.capturedOutput === undefined
         ? undefined
         : { ...options.capturedOutput };
@@ -369,6 +374,12 @@ export abstract class AnalysisError extends Error {
     return this;
   }
 
+  /** Keep command output observed before this error without replacing the owner. */
+  retainCapturedOutput(output: AnalysisCapturedOutput): this {
+    this.#capturedOutput ??= { ...output };
+    return this;
+  }
+
   /** Preserve the exact committed prefix when automatic question publication stops. */
   retainWorkflowUnknownPublication(
     publication: WorkflowUnknownPublication,
@@ -502,10 +513,12 @@ export type AnalysisPartialObservation =
   | ArtifactInventoryPartialObservation
   | ArtifactExtractionPartialObservation
   | WebScriptExportPartialObservation
+  | EnvironmentBundlePublication
   | JavaScriptRecoveryPartialObservation
   | Evidence
   | BinaryLayout
   | RecordedCrash
+  | AppleIpsPartialObservation
   | RecordedCrashPartialObservation
   | AndroidPartialObservation
   | FirmwarePartialObservation

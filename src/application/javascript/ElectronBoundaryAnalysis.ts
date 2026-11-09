@@ -1,3 +1,4 @@
+import { isPossibleCachedDataCompilation } from "../../domain/javascript/electronDynamicCodeFacts.js";
 import type { JavaScriptJsonDocuments } from "./JavaScriptJsonDocuments.js";
 import { compareUnicodeCodePoints } from "../../domain/unicodeCodePointOrder.js";
 import type { ElectronIpcFinding } from "../../domain/javascript/electronStaticAnalysisTypes.js";
@@ -6,7 +7,10 @@ import {
   ELECTRON_REFERENCE_KINDS,
 } from "../../domain/javascript/javascriptElectronMemberWrites.js";
 import type { ElectronBoundarySummary } from "../../domain/javascript/javascriptApplicationAnalysis.js";
-import type { JavaScriptArtifactAnalysis } from "./JavaScriptArtifactAnalysisTypes.js";
+import type {
+  AnalyzedJavaScriptArtifactFile,
+  JavaScriptArtifactAnalysis,
+} from "./JavaScriptArtifactAnalysisTypes.js";
 import type { JavaScriptArtifactFile } from "../../domain/javascript/javascriptArtifactFiles.js";
 import { createElectronNativeAddonResolver } from "./ElectronBoundaryNativeResolution.js";
 import {
@@ -129,7 +133,7 @@ export const createElectronIpcContext = (
 };
 
 /**
- * Whether any analyzed source loads an Electron module.
+ * Whether one analyzed source loads an Electron module.
  *
  * `analysis_coverage.applicability.electron` is the domain owner of this
  * question: it already excludes a `type-import`, a `require.resolve` that only
@@ -140,42 +144,51 @@ export const createElectronIpcContext = (
  * Historical evidence may predate that field, so the retained references answer
  * the same question for those files.
  */
-export const electronModuleReferenced = (
-  analysis: JavaScriptArtifactAnalysis,
-): boolean =>
-  analysis.files.some(({ javascript, semantic }) => {
-    const applicability = javascript?.analysis_coverage?.applicability.electron;
-    if (applicability !== undefined) return applicability === "observed";
-    const links = semantic?.ir.moduleLinks;
-    if (
-      links !== undefined &&
-      links.some(
-        ({ specifier, kind, loaderAuthority }) =>
-          kind !== "type-import" &&
-          loaderAuthority !== "candidate" &&
-          specifier !== null &&
-          ELECTRON_MODULE.test(specifier),
-      )
-    )
-      return true;
-    return (javascript?.references ?? []).some(
-      ({ specifier, kind, operation, loader_authority }) =>
-        operation === "load" &&
-        loader_authority !== "candidate" &&
-        ELECTRON_REFERENCE_KINDS.has(kind) &&
+const electronModuleReferencedBy = ({
+  javascript,
+  semantic,
+}: AnalyzedJavaScriptArtifactFile): boolean => {
+  const applicability = javascript?.analysis_coverage?.applicability.electron;
+  if (applicability !== undefined) return applicability === "observed";
+  const links = semantic?.ir.moduleLinks;
+  if (
+    links !== undefined &&
+    links.some(
+      ({ specifier, kind, loaderAuthority }) =>
+        kind !== "type-import" &&
+        loaderAuthority !== "candidate" &&
         specifier !== null &&
         ELECTRON_MODULE.test(specifier),
-    );
-  });
+    )
+  )
+    return true;
+  return (javascript?.references ?? []).some(
+    ({ specifier, kind, operation, loader_authority }) =>
+      operation === "load" &&
+      loader_authority !== "candidate" &&
+      ELECTRON_REFERENCE_KINDS.has(kind) &&
+      specifier !== null &&
+      ELECTRON_MODULE.test(specifier),
+  );
+};
 
-/** Every Electron boundary fact family the graph reports. */
+/** Whether any analyzed source loads an Electron module. */
+export const electronModuleReferenced = (
+  analysis: JavaScriptArtifactAnalysis,
+): boolean => analysis.files.some(electronModuleReferencedBy);
+
+/**
+ * Every Electron boundary fact family the graph reports. A rejected
+ * application projection keeps its static facts on the file node only, so
+ * those facts are not part of the reported boundary surface.
+ */
 export const electronBoundaryFactCount = (
   analysis: JavaScriptArtifactAnalysis,
 ): number =>
   analysis.files.reduce(
-    (count, { javascript }) =>
+    (count, { javascript, application_projection_failure }) =>
       count +
-      (javascript === null
+      (javascript === null || application_projection_failure !== undefined
         ? 0
         : javascript.electron.browser_windows.filter(provenElectronFinding)
             .length +
@@ -189,7 +202,10 @@ export const electronBoundaryFactCount = (
           javascript.electron.native_addon_bindings.filter(
             provenElectronFinding,
           ).length +
-          javascript.electron.protocols.filter(provenElectronFinding).length),
+          javascript.electron.protocols.filter(provenElectronFinding).length +
+          (javascript.electron.dynamic_code ?? []).filter(
+            isPossibleCachedDataCompilation,
+          ).length),
     0,
   );
 
@@ -220,18 +236,57 @@ export const hasCandidateElectronFindings = (
   );
 
 /**
- * Whether the Electron boundary summary came back empty. `undefined` means no
- * analyzed source names Electron, which is unknown rather than absent: unread
- * sources and dynamic module names can hide its use.
+ * A completed static pass can still stop early, for example at the Electron
+ * wrapper expansion budget. Syntax recovery and examination facts jointly own that verdict.
+ */
+const electronExaminationLimited = ({
+  javascript,
+}: AnalyzedJavaScriptArtifactFile): boolean => {
+  if (javascript === null) return false;
+  const status = javascript.analysis_coverage?.examination.status;
+  const syntax = javascript.analysis_coverage?.syntax.status;
+  return (
+    javascript.parse_status !== "complete" ||
+    (syntax !== undefined && syntax !== "complete") ||
+    (status !== undefined && status !== "complete")
+  );
+};
+
+/**
+ * Electron-loading sources whose boundary facts may be missing from the
+ * report: their analysis was interrupted or not started, their application
+ * projection was rejected for the result budget, or their static examination
+ * stopped at a resource limit or retained only partial syntax/semantics.
+ */
+export const electronIncompleteSourceCount = (
+  analysis: JavaScriptArtifactAnalysis,
+): number =>
+  analysis.files.filter(
+    (file) =>
+      (file.analysis_failure !== undefined ||
+        file.application_projection_failure !== undefined ||
+        electronExaminationLimited(file)) &&
+      electronModuleReferencedBy(file),
+  ).length;
+
+/**
+ * Whether the Electron boundary summary came back empty or incomplete.
+ * `undefined` means no analyzed source names Electron, which is unknown rather
+ * than absent: unread sources and dynamic module names can hide its use.
+ * `partial` means some facts were reported while other Electron-loading
+ * sources were not fully examined or reported, so missing windows, preloads,
+ * bridges, or IPC operations from those sources are unknown.
  */
 export const electronSemanticsState = (
   analysis: JavaScriptArtifactAnalysis,
-): "recovered" | "empty" | undefined =>
+): "recovered" | "partial" | "empty" | undefined =>
   electronModuleReferenced(analysis) === false
     ? undefined
     : electronBoundaryFactCount(analysis) === 0
       ? "empty"
-      : "recovered";
+      : electronIncompleteSourceCount(analysis) > 0
+        ? "partial"
+        : "recovered";
 
 /** Summarize static Electron findings without treating gaps as absence. */
 export const summarizeElectronBoundaries = (
@@ -355,6 +410,8 @@ export const summarizeElectronBoundaries = (
         }),
     ).length,
     native_addon_bindings: nativeBindings.length,
+    v8_cached_data_compilations:
+      countDeclaredCachedDataCompilations(javascript),
     resolved_native_addon_bindings: nativeBindings.filter(
       ({ file, finding }) =>
         nativeAddonResolver.resolve(file, finding).length > 0,
@@ -362,6 +419,20 @@ export const summarizeElectronBoundaries = (
     protocol_registrations: protocolCount,
   };
 };
+
+const countDeclaredCachedDataCompilations = (
+  javascript: readonly NonNullable<
+    AnalyzedJavaScriptArtifactFile["javascript"]
+  >[],
+): number =>
+  javascript.reduce(
+    (count, { electron }) =>
+      count +
+      (electron.dynamic_code ?? []).filter(
+        ({ cached_data_status }) => cached_data_status === "declared",
+      ).length,
+    0,
+  );
 
 const compatibleIpcModes = (
   transmission: ElectronIpcFinding,
