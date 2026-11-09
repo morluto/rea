@@ -1487,3 +1487,49 @@ it("fails closed on a truncated __SUI section record that names d3n0l4nd", async
     locateDenoStandalone(bytesHandle(other), other.length),
   ).resolves.toEqual({ status: "absent" });
 });
+
+it("fails closed on nonzero bytes after the last note in a SUI note table", async () => {
+  const nameLength = Buffer.alloc(2);
+  nameLength.writeUInt16LE("d3n0l4nd".length);
+  const sui = elfNote(
+    "SUI",
+    0x53554901,
+    Buffer.concat([
+      nameLength,
+      Buffer.from("d3n0l4nd", "latin1"),
+      buildDenoSection(),
+    ]),
+  );
+  const withTail = (notes: Buffer, tail: Buffer): Buffer =>
+    elfNoteFixture({
+      notes: Buffer.concat([notes, tail]),
+      ownership: "program",
+      type: 2,
+    });
+  // Eleven bytes are too few for another note header.
+  const dirty = withTail(sui, Buffer.alloc(11, 0xff));
+  await expect(
+    locateDenoStandalone(bytesHandle(dirty), dirty.length),
+  ).resolves.toMatchObject({
+    status: "present",
+    failure: {
+      reason: "format",
+      message: expect.stringContaining("trailing non-zero bytes"),
+    },
+  });
+  const padded = withTail(sui, Buffer.alloc(11));
+  await expect(
+    locateDenoStandalone(bytesHandle(padded), padded.length),
+  ).resolves.toMatchObject({
+    status: "present",
+    location: { embedding: "elf-note" },
+  });
+  // Without a SUI note the same tail leaves the ELF to native inventory.
+  const native = withTail(
+    elfNote("GNU", 1, Buffer.from("build-id")),
+    Buffer.alloc(11, 0xff),
+  );
+  await expect(
+    locateDenoStandalone(bytesHandle(native), native.length),
+  ).resolves.toEqual({ status: "absent" });
+});

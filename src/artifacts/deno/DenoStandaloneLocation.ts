@@ -689,6 +689,18 @@ const scanElfNoteTable = async (
     }
     cursor += layout.next;
   }
+  // Fewer than 12 bytes remain. Zero padding is accepted; anything else is
+  // unaccounted table data, which is Deno's only if a SUI note is confirmed.
+  if (cursor < table.length) {
+    const tail = await readExact(
+      carrier,
+      table.offset + cursor,
+      table.length - cursor,
+    );
+    if (tail === undefined) return stop("ELF note table is truncated", notes);
+    if (tail.some((byte) => byte !== 0))
+      return stop("ELF note table has trailing non-zero bytes", notes);
+  }
   return notes;
 };
 
