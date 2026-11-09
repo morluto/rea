@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { runInNewContext } from "node:vm";
 
-import { analyzeJavaScriptStaticSource } from "./javascriptStaticAnalysis.js";
+import { analyzeJavaScriptStaticSource as analyzeUnknownHostSource } from "./javascriptStaticAnalysis.js";
+import { analyzeCommonJsStaticFixture as analyzeJavaScriptStaticSource } from "../../../tests/fixtures/javascriptCommonJsAnalysis.js";
 
 // Webpack 5 standalone bootstrap with an Electron external, as emitted for
 // `target: "electron-main"`.
@@ -30,6 +31,17 @@ const expectUnresolved = (source: string) => {
     ),
   ).toEqual([]);
 };
+
+it("does not claim Electron host identity from an unbound require in unknown context", () => {
+  const analysis = analyzeUnknownHostSource(bootstrap(EXTERNAL, CONSUMER));
+  expect(analysis.electron.browser_windows).toContainEqual(
+    expect.objectContaining({
+      preload_path: "./preload.js",
+      loader_authority: "candidate",
+    }),
+  );
+  expect(analysis.analysis_coverage?.applicability.electron).toBe("unknown");
+});
 
 describe("Electron identity through Webpack externals", () => {
   it.each([

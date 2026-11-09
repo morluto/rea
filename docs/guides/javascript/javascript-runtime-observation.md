@@ -114,7 +114,8 @@ caller cancellation still reports cancellation.
 The direct observations are:
 
 - `Debugger.scriptParsed`, establishing that a bounded script location was
-  parsed in the observed execution context;
+  parsed with the reported execution-context ID; association with a particular
+  context lifetime is known only when its creation was observed;
 - `Debugger.scriptFailedToParse`, retained only as a bounded invalid-script
   count in `scripts.parse_failed_total`. A well-formed parse-failure
   event is distinct from malformed protocol data and does not make loaded
@@ -163,8 +164,13 @@ and collection overhead, and projected URL fields. Each CDP message also has a
 16 MiB transport limit. A message over that limit fails with `payload_limit`;
 when the aggregate budget is reached, later metadata events are dropped and
 the partial result reports `events_dropped`, `truncated: true`, and
-`retained_metadata_budget_exceeded`. Repeated context transitions update the
-current context record instead of accumulating duplicate objects. Scripts are
+`retained_metadata_budget_exceeded`. Context records retain each observed lifetime, and scripts refer to the context
+lifetime active when parsed. The reported numeric execution-context ID is
+retained separately on both records; a script with no observed context creation
+has an unknown context key. Repeated transitions within one lifetime update its
+record; the state records the last observed lifecycle event and does not prove
+that the context is still live. This changes context keys and Evidence identities from older captures;
+recapture observations to obtain lifetime associations. Scripts are
 validated after capture, deduplicated by stable metadata, and canonically
 sorted. Wall-clock timestamps and protocol script IDs are excluded from the
 durable result, so identical inputs and captured metadata produce the same
