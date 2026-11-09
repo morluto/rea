@@ -622,7 +622,11 @@ process.stdout.write(JSON.stringify({executable:basename(process.execPath),abiVe
       assert.equal(await exists(heldPath), true);
       assert.throws(
         () => retryRuntime.writeFile("after-close.txt", "forbidden"),
-        /cleanup is pending/u,
+        Error,
+      );
+      assert.equal(
+        await exists(join(retryRuntime.observation.path, "after-close.txt")),
+        false,
       );
       holder.child.stdin.end("\n");
       const [exitCode] = await holder.closed;

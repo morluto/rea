@@ -44,14 +44,21 @@ cliTest(
   },
 );
 
-cliTest(
-  "builds the bundle the three CLI steps build, byte for byte",
-  async ({ cli }) => {
+cliTest.for(["absolute", "relative"] as const)(
+  "builds the bundle the three CLI steps build, byte for byte (%s capture path)",
+  async (pathKind, { cli }) => {
     const root = await createTestTempDirectory("rea-environment-build-cli-");
     const har = join(root, "grafana.har");
+    const callerPath = pathKind === "relative" ? "grafana.har" : har;
     await writeFile(har, JSON.stringify(environmentManifestHar()));
     const built = await cli.run({
-      arguments: ["environment-build", har, join(root, "built"), "--json"],
+      arguments: [
+        "environment-build",
+        callerPath,
+        join(root, "built"),
+        "--json",
+      ],
+      cwd: root,
       timeoutMs: 60_000,
     });
     expect(built.exitCode, built.stderr).toBe(0);
@@ -67,11 +74,12 @@ cliTest(
     const inspected = await cli.run({
       arguments: [
         "inspect-web-network-capture",
-        har,
+        callerPath,
         "har",
         "--format",
         "json",
       ],
+      cwd: root,
     });
     expect(inspected.exitCode, inspected.stderr).toBe(0);
     const capture = join(root, "capture.json");

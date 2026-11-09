@@ -334,7 +334,7 @@ const conflictingRules = (): JsonValue =>
 
 /** Inspect a HAR as inspect-web-network-capture does and serialize the Evidence as it prints it; a refusal is the command's output. */
 const inspectBuildHar = async (
-  capturePath: string,
+  capture: { readonly path: string; readonly callerPath: string },
   captureTimeoutMs: number | undefined,
   environment: Readonly<NodeJS.ProcessEnv>,
   signal: AbortSignal,
@@ -350,13 +350,14 @@ const inspectBuildHar = async (
     () =>
       service.inspect(
         {
-          capture_path: capturePath,
+          capture_path: capture.path,
           format: "har",
           ...(captureTimeoutMs === undefined
             ? {}
             : { capture_timeout_ms: captureTimeoutMs }),
         },
         { signal },
+        { capture: capture.callerPath },
       ),
     service,
     "web-network-capture",
@@ -370,7 +371,7 @@ const inspectBuildHar = async (
     });
   const file = await environmentExportEvidenceFile(
     "evidence",
-    capturePath,
+    capture.path,
     inspected.value,
     ENVIRONMENT_BUILD_OPERATION,
   );
@@ -417,7 +418,7 @@ const buildEnvironmentCommand = async (
   if (kind.value === "har") {
     progress("inspect");
     const inspected = await inspectBuildHar(
-      capturePath,
+      { path: capturePath, callerPath: input.capture },
       input.captureTimeoutMs,
       environment,
       signal,
