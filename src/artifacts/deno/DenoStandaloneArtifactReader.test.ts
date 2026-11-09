@@ -1433,3 +1433,29 @@ it("rejects a universal Deno image whose sibling holds an unparseable segment co
     locateDenoStandalone(bytesHandle(native), native.length),
   ).resolves.toEqual({ status: "absent" });
 });
+
+it("fails closed on a confirmed SUI note whose descriptor size exceeds its table", async () => {
+  const oversized = (name: string): Buffer => {
+    const bytes = denoElf();
+    const owner = bytes.indexOf(Buffer.from("SUI\0", "latin1"));
+    // descsz is the second word of the 12-byte note header before the owner.
+    bytes.writeUInt32LE(0x7fff_fff0, owner - 8);
+    bytes.write(name, owner + 4 + 2, "latin1");
+    return bytes;
+  };
+  const deno = oversized("d3n0l4nd");
+  await expect(
+    locateDenoStandalone(bytesHandle(deno), deno.length),
+  ).resolves.toMatchObject({
+    status: "present",
+    failure: {
+      reason: "format",
+      message: expect.stringContaining("exceeds its table"),
+    },
+  });
+  // A SUI note naming another section keeps the damage native.
+  const other = oversized("notdeno!");
+  await expect(
+    locateDenoStandalone(bytesHandle(other), other.length),
+  ).resolves.toEqual({ status: "absent" });
+});

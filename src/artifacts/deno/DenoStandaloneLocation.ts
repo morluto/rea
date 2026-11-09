@@ -638,14 +638,20 @@ const scanElfNoteTable = async (
     if (!parsed.ok) return stop(parsed.error.message, notes);
     const { namesz, descsz, type } = parsed.value;
     const layout = elfNoteLayout(namesz, descsz, table.alignment);
+    const sui = namesz === ELF_NOTE_OWNER.length && type === ELF_NOTE_TYPE;
     if (
       !Number.isSafeInteger(layout.descriptor) ||
       !Number.isSafeInteger(layout.next) ||
       layout.next < 12 ||
       layout.next > table.length - cursor
-    )
+    ) {
+      // The owner and descriptor name are read within the table, apart from
+      // the claimed extent, so a confirmed Deno note still fails closed.
+      if (sui && (await confirmsSuiNote(carrier, table, cursor, layout)))
+        throw denoCarrierFailure("ELF SUI note entry exceeds its table");
       return stop("ELF note entry exceeds its table", notes);
-    if (namesz === ELF_NOTE_OWNER.length && type === ELF_NOTE_TYPE) {
+    }
+    if (sui) {
       const name = await readExact(carrier, table.offset + cursor + 12, namesz);
       if (name === undefined) return stop("ELF note name is truncated", notes);
       if (name.equals(ELF_NOTE_OWNER)) {
@@ -660,6 +666,31 @@ const scanElfNoteTable = async (
     cursor += layout.next;
   }
   return notes;
+};
+
+/** Whether a SUI note whose extent was rejected still names `d3n0l4nd`. */
+const confirmsSuiNote = async (
+  carrier: Carrier,
+  table: ElfNoteTable,
+  cursor: number,
+  layout: { readonly descriptor: number },
+): Promise<boolean> => {
+  const wanted = layout.descriptor + 2 + SECTION_NAME_BYTES.length;
+  if (!Number.isSafeInteger(wanted) || wanted > table.length - cursor)
+    return false;
+  const at = table.offset + cursor;
+  const name = await readExact(carrier, at + 12, ELF_NOTE_OWNER.length);
+  if (name === undefined || !name.equals(ELF_NOTE_OWNER)) return false;
+  const prefix = await readExact(
+    carrier,
+    at + layout.descriptor,
+    2 + SECTION_NAME_BYTES.length,
+  );
+  return (
+    prefix !== undefined &&
+    prefix.readUInt16LE(0) === SECTION_NAME_BYTES.length &&
+    prefix.subarray(2).equals(SECTION_NAME_BYTES)
+  );
 };
 
 const readSuiRange = async (
