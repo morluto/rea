@@ -44,6 +44,11 @@ export const documentationSections = [
         route: "/binary-diagnostics",
       },
       {
+        text: "ELF and Mach-O initializer functions",
+        source: "guides/native/native-initializers.md",
+        route: "/native-initializers",
+      },
+      {
         text: "Recorded crash evidence",
         source: "guides/native/recorded-crashes.md",
         route: "/recorded-crashes",
@@ -524,11 +529,6 @@ export const documentationSections = [
         route: "/electron-fuses",
       },
       { text: "ELF note tables", source: "elf-notes.md", route: "/elf-notes" },
-      {
-        text: "ELF and Mach-O initializer functions",
-        source: "native-initializers.md",
-        route: "/native-initializers",
-      },
       {
         text: "Erlang BEAM files",
         source: "erlang-beam.md",

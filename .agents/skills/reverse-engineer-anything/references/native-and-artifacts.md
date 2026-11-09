@@ -197,7 +197,7 @@ through RELATIVE, RELR and section relocations, and Mach-O slots through
 chained fixups. Keep each entry's `resolution`: `unresolved` means the value was
 not established, and `unresolved_import` names an external symbol. Page with
 `offset` and `limit`. See
-[ELF and Mach-O initializer functions](https://github.com/morluto/rea/blob/main/docs/native-initializers.md).
+[ELF and Mach-O initializer functions](https://github.com/morluto/rea/blob/main/docs/guides/native/native-initializers.md).
 
 ## Apple IPS crash reports
 

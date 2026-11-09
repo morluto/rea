@@ -7,7 +7,7 @@ Analysts reviewing a native image need the functions it declares to run before
 `inspect_native_initializers` / `inspect-native-initializers` lists the
 initializer and finalizer slots of one local ELF or Mach-O image, with each
 slot's location, resolved target and how that target was obtained. The
-[user guide](../../../native-initializers.md) documents the result.
+[user guide](../../../guides/native/native-initializers.md) documents the result.
 
 ## Requirements
 
@@ -22,9 +22,18 @@ slot's location, resolved target and how that target was obtained. The
   `S_MOD_TERM_FUNC_POINTERS`.
 - Resolve values through RELATIVE and RELR dynamic relocations, then section
   REL / RELA records for slots no dynamic relocation covers, then the stored
-  word when relocation coverage is known. Mach-O uses chained-fixup rebases
-  and `__init_offsets` image-base offsets. Anything else is `unresolved`, never
-  a stored zero.
+  word when relocation coverage is known. Mach-O uses chained-fixup rebases,
+  `LC_DYLD_INFO` rebases (reported separately), `MH_OBJECT` section
+  relocations and `__init_offsets` image-base offsets. Anything else is
+  `unresolved`, never a stored zero.
+- Relocation coverage is per slot. A slot that a dynamic relocation only
+  partly overwrites or writes more than once is `unresolved`. A slot with no
+  relocation found is `unresolved` when a dynamic table, or a section table
+  that could reach it, was not fully read; such a `.ctors` slot is not dropped
+  as a sentinel. A linked image's non-`SHF_ALLOC` relocation sections were
+  applied at link time and are not reapplied. A Mach-O stored pointer word is
+  used only when no undecoded bind stream or external relocation could
+  replace it.
 - Relocatable objects (`ET_REL`) report section-relative offsets and say so.
 - `.ctors` / `.dtors` sentinels are 0 and all ones at the image's pointer width;
   they are omitted and counted in a limitation.
@@ -33,7 +42,9 @@ slot's location, resolved target and how that target was obtained. The
   every load segment.
 - Names are exact untrusted file text marked `observed-untrusted`. A target is
   named only by a defined symbol whose value equals it, or by the import name
-  of an unresolved symbolic relocation or chained bind.
+  of an unresolved symbolic relocation or chained bind. An unreadable name
+  (missing string table or offset outside it) is reported as no name and makes
+  the report `incomplete`.
 - Bounds: 64 MiB default file budget (512 MiB maximum); 65536 slots in total;
   65536 symbols across all ELF symbol tables; 65536 symbols across all
   Mach-O `LC_SYMTAB` commands; 1048576 section relocation records across all
@@ -48,7 +59,8 @@ slot's location, resolved target and how that target was obtained. The
   omitted sentinels; `total_entries` is set only when the inventory is complete.
 - Malformed headers, multiple `PT_DYNAMIC` segments and truncated dynamic
   sections fail without partial success. Cancellation is honored during slot
-  collection and the section relocation walk.
+  collection, the section relocation walk and the dynamic relocation walk,
+  which yields to other work at the shared reader's step boundaries.
 
 ## Acceptance
 
@@ -56,9 +68,11 @@ Parser tests cover ELF64 PIE (RELA, RELR, imports, `DT_INIT` / `DT_FINI`),
 ELF32 REL in-place addends, `ET_REL` section relocations and sentinels,
 unsupported relocation machines, slot, symbol and relocation budgets,
 over-long names, tallied repeated observations, a near-maximal section table
-with a full slot budget, cancellation in the relocation walk, Mach-O chained
-fixups, `__init_offsets`, the shared and repeated `LC_SYMTAB` budget, and
-universal slices. CLI acceptance, filesystem boundary
+with a full slot budget, cancellation in the relocation walks, skipped section
+relocation tables, partly overwritten slots, retained link-time relocations,
+unreadable names, Mach-O chained fixups, `LC_DYLD_INFO` rebases, 32-bit images
+with undecoded binds, `MH_OBJECT` section relocations, `__init_offsets`, the
+shared and repeated `LC_SYMTAB` budget, and universal slices. CLI acceptance, filesystem boundary
 and MCP boundary tests exercise the public workflows and Evidence output.
 
 ## Out of scope
@@ -66,4 +80,6 @@ and MCP boundary tests exercise the public workflows and Evidence output.
 Executing the image or proving that a listed address runs; runtime ordering
 (file order is reported); disassembling initializer bodies; PE/COFF TLS
 callbacks; Android packed relocations and machines other than x86-64, i386,
-AArch64 and 32-bit ARM for relocation decoding.
+AArch64 and 32-bit ARM for relocation decoding; Mach-O fixup decoding for
+images other than little-endian 64-bit arm64 and x86-64, and legacy
+`LC_DYSYMTAB` external relocations.

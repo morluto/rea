@@ -459,7 +459,7 @@ rea inspect-native-initializers /absolute/path/to/program --json
 The workflow reports `DT_INIT`, init/fini arrays, legacy `.ctors`/`.dtors`, and
 Mach-O `__mod_init_func`, `__init_offsets` and `__mod_term_func` entries with
 their resolved targets. Universal Mach-O files need `--architecture`. See
-[ELF and Mach-O initializer functions](../native-initializers.md).
+[ELF and Mach-O initializer functions](../guides/native/native-initializers.md).
 
 Inspect an Apple `.ips` crash report without executing a target:
 

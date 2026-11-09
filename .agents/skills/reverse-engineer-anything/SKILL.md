@@ -305,7 +305,7 @@ explicit path or endpoint and do not need it.
   disassembler. Preserve slot and target addresses, the `resolution` of each
   entry, and its limitations. An `unresolved` slot is not a zero pointer, and a
   missing table is not proof that no constructor exists. See the
-  [initializer guide](https://github.com/morluto/rea/blob/main/docs/native-initializers.md).
+  [initializer guide](https://github.com/morluto/rea/blob/main/docs/guides/native/native-initializers.md).
 - Apple `.ips` crash reports: `inspect_apple_ips` with the explicit local
   file. This built-in target-free inspection requires no Xcode, atos, or
   pwntools. Preserve first-line metadata, `bug_type` as a string, process and

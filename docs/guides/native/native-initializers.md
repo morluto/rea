@@ -66,6 +66,7 @@ Each `entries[]` item reports:
 | `relr`              | A `DT_RELR` packed relative relocation                               |
 | `symbol_addend`     | A section relocation against a defined symbol plus its addend        |
 | `chained_fixup`     | A Mach-O chained-fixup rebase target                                 |
+| `dyld_info_rebase`  | A Mach-O `LC_DYLD_INFO` rebase opcode target                         |
 | `offset_table`      | A 32-bit `__init_offsets` value added to the image base              |
 | `unresolved_import` | A relocation or bind against an undefined symbol                     |
 | `unresolved`        | A slot whose value this inspection cannot establish                  |
@@ -77,11 +78,35 @@ For PIE executables and shared objects the array slots are usually zero on
 disk. A slot is reported `unresolved`, never as its stored zero, when the
 dynamic relocation tables use an encoding this inspection does not decode
 (for example Android packed relocations or an unsupported machine). Relative
-relocations are decoded for x86-64, i386, AArch64 and 32-bit ARM.
+relocations are decoded for x86-64, i386, AArch64 and 32-bit ARM. A slot is
+also `unresolved` when a dynamic relocation writes only part of it, starts
+inside it, or writes it more than once with different values.
+
+Section `REL` / `RELA` tables are applied to slots that no dynamic relocation
+covers. When such a table is skipped for an unexpected entry size, cannot be
+read, or lies past the record budget, every slot it could reach that has no
+relocation found is `unresolved`, and a `.ctors` slot is not dropped as a
+sentinel. In a relocatable object a table reaches only the section named by
+its `sh_info`. In a linked image, a relocation section without `SHF_ALLOC`
+(such as one kept by `--emit-relocs`) was already applied by the static
+linker, so the slot's stored word is used rather than applying the record
+again.
 
 In a relocatable object (`ET_REL`) every section starts at address 0. Slot
 and value addresses are offsets inside the named section, and a limitation
 says so.
+
+Mach-O pointer slots are decoded through chained fixups or `LC_DYLD_INFO`
+opcodes for linked little-endian arm64 and x86-64 images. Other linked images,
+including 32-bit ones, have no fixup decoder here: their stored word is used
+only when the image declares no `LC_DYLD_INFO` bind stream, and a pointer slot
+is `unresolved` otherwise. Legacy external relocations (`LC_DYSYMTAB`
+`nextrel`) are not decoded, so they make an otherwise raw pointer slot
+`unresolved` in any image. In an object file (`MH_OBJECT`), each section's own
+relocation entries set the slot: a pointer-width `UNSIGNED` entry against a
+defined symbol gives `symbol_addend`, one against an undefined symbol gives
+`unresolved_import`, a section-ordinal entry keeps the stored address, and any
+other entry leaves the slot `unresolved`.
 
 `.ctors` and `.dtors` values `0` and `-1` are list sentinels and are omitted.
 `-1` means all ones at the image's pointer width: `0xffffffff` in ELF32 and
@@ -104,6 +129,13 @@ names come from at most 65536 symbols across all `LC_SYMTAB` commands
 together; a repeated `LC_SYMTAB` over the same ranges is ignored with a
 limitation. Reaching any of these budgets makes the report `incomplete` with a
 limitation.
+
+A symbol name that cannot be read, because its string table is missing or its
+offset lies outside the table, is reported as no name and makes the report
+`incomplete` with a counted limitation. Name offset 0 is the empty name.
+
+The dynamic relocation tables are read in steps that yield to other work and
+observe cancellation, so a large `DT_RELR` table does not block the server.
 
 `limitations` lists the standing limitations, then at most 24 distinct
 observations from the image. Reasons a crafted table can repeat per row, such
