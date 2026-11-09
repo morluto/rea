@@ -125,6 +125,87 @@ it.each([
   expect(acquisitionsFor(call)).toEqual([]);
 });
 it.each([
+  [
+    "a falsy boolean secure context",
+    `tls.connect({ port: 443, secureContext: false, minVersion: "nope" })`,
+  ],
+  [
+    "a zero secure context",
+    `tls.connect({ port: 443, secureContext: 0, minVersion: "nope" })`,
+  ],
+  [
+    "an empty-string secure context",
+    `tls.connect({ port: 443, secureContext: "", minVersion: "nope" })`,
+  ],
+  [
+    "a rejected version in the first of three objects",
+    `tls.connect(443, { minVersion: "nope" }, { minVersion: "TLSv1.2" })`,
+  ],
+  [
+    "a rejected version after port and host",
+    `tls.connect(443, "127.0.0.1", { minVersion: "nope" })`,
+  ],
+  [
+    "a rejected version written after a good one",
+    `tls.connect({ port: 443, minVersion: "TLSv1.2" }, { minVersion: "nope" })`,
+  ],
+  [
+    "an exact computed key",
+    `tls.connect({ port: 80, ["minVersion"]: "nope" })`,
+  ],
+  ["an unmodified NaN version", `tls.connect({ port: 80, minVersion: NaN })`],
+  [
+    "an unmodified Infinity version",
+    `tls.connect({ port: 80, minVersion: Infinity })`,
+  ],
+] as const)("emits no socket acquisition for %s", (_name, call) => {
+  // A falsy secure context does not bypass version parsing; Node copies at most one options
+  // object so a third argument is ignored; an exact computed key names the same member; and
+  // an unshadowed NaN or Infinity is a non-string version. Measured on Node 24.22.1.
+  expect(acquisitionsFor(call)).toEqual([]);
+});
+
+it.each([
+  [
+    "a supplied secure context",
+    `tls.connect({ port: 443, secureContext: {}, minVersion: "nope" })`,
+  ],
+  [
+    "an unreadable secure context",
+    `const f = {}; tls.connect({ port: 443, secureContext: f, minVersion: "nope" })`,
+  ],
+  [
+    "a good version in the first of three objects",
+    `tls.connect(443, { minVersion: "TLSv1.2" }, { minVersion: "nope" })`,
+  ],
+  [
+    "a good version written after a rejected one",
+    `tls.connect({ port: 443, minVersion: "nope" }, { minVersion: "TLSv1.2" })`,
+  ],
+  [
+    "an accessor that writes the version",
+    `tls.connect({ port: 80, get side() { this.minVersion = "TLSv1.2"; }, minVersion: "nope" })`,
+  ],
+  [
+    "a setter that absorbs a later version",
+    `tls.connect({ port: 80, set minVersion(_) {} }, { minVersion: "nope" })`,
+  ],
+  [
+    "a shadowed NaN version",
+    `const NaN = {}; tls.connect({ port: 80, minVersion: NaN })`,
+  ],
+  [
+    "a spread beside a rejected version",
+    `const o = {}; tls.connect({ port: 80, ...o, minVersion: "nope" })`,
+  ],
+] as const)("keeps the socket acquisition for %s", (_name, call) => {
+  // Only a truthy context bypasses parsing, the second object wins when slot 0 is an
+  // object, and an accessor runs a body this reader does not replay.
+  expect(acquisitionsFor(call)).toEqual([
+    { kind: "acquire", method: "connect" },
+  ]);
+});
+it.each([
   ["an unknown version name", `tls.connect({ port: 80, minVersion: "nope" })`],
   ["the TLSv1.0 spelling", `tls.connect({ port: 80, minVersion: "TLSv1.0" })`],
   ["a lower-case name", `tls.connect({ port: 80, minVersion: "tlsv1.2" })`],
@@ -163,8 +244,8 @@ it.each([
     `const o = { minVersion: "nope" }; tls.connect({ port: 80, ...o })`,
   ],
   [
-    "a version supplied by a computed key",
-    `tls.connect({ port: 80, ["minVersion"]: "nope" })`,
+    "a version supplied by an unresolvable computed key",
+    `const k = "minVersion"; tls.connect({ port: 80, [k]: "nope" })`,
   ],
   ["net ignoring the member", `net.connect({ port: 80, minVersion: "nope" })`],
 ] as const)("keeps the socket acquisition for %s", (_name, call) => {
