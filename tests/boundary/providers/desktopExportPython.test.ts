@@ -72,10 +72,30 @@ it("detects Unicode XML names in both state readers while rejecting non-XML text
     ["map.dat", '<地图 名称="甲"><节点/></地图>'],
     ["map.dat", '<!DOCTYPE 地图 SYSTEM "map.dtd"><地图/>'],
     ["map.dat", "<máp/>"],
+    ["map.dat", "<Ϳ>new</Ϳ>"],
+    ["map.xml", "<root><Ϳ/></root>"],
+    ["map.xml", '<root aͿ="x"/>'],
+    ["map.xml", "<𐀀/>"],
+    ["map.dat", "<á/>"],
+    ["map.dat", "<root><?Ϳ value?></root>"],
+    ["map.dat", "<!DOCTYPE Ϳ><root/>"],
     ["map.dat", "<地图><节点></地图>"],
     ["note.dat", "<ada@example.test>\nBuy milk"],
   ] as const;
-  const expected = ["xml", "xml", "xml", "text", "text"];
+  const expected = [
+    "xml",
+    "xml",
+    "xml",
+    "text",
+    "text",
+    "text",
+    "text",
+    "xml",
+    "text",
+    "text",
+    "text",
+    "text",
+  ];
   expect(pythonFormats(files)).toEqual(expected);
   expect(
     files.map(([name, text]) =>
@@ -283,6 +303,18 @@ _ensure_state_aliases(home)
     }),
   ).toThrow();
   expect(await readFile(join(other, "settings"), "utf8")).toBe("preserve");
+
+  const empty = join(root, "empty-home");
+  await mkdir(empty);
+  const emptySeed = join(root, "empty-seed");
+  await mkdir(emptySeed);
+  execPython(["-I", "-B", "-c", program, emptySeed, empty], {
+    encoding: "utf8",
+  });
+  await writeFile(join(empty, "settings", "new.ini"), "new settings");
+  expect(
+    await readFile(join(empty, ".config", "notes", "new.ini"), "utf8"),
+  ).toBe("new settings");
 });
 
 /** A stand-in xprop answering the root window list and each window's class and state from a table. */
