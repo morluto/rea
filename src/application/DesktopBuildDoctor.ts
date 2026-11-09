@@ -1,5 +1,6 @@
 import { DESKTOP_EXPORT_FRAMEWORK_VERSION } from "../domain/desktop/appExport.js";
 import type { execFileOutput } from "../process/ExecFileOutput.js";
+import type { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
 import type { ClientRegistrationStatus } from "./ClientRegistrationStatus.js";
 import type { DoctorCheck, DoctorHost, DoctorSkillState } from "./Doctor.js";
 import { nodeCheck } from "./DoctorDiagnostics.js";
@@ -61,14 +62,16 @@ export interface DesktopBuildFacts {
   }[];
   /** Build settings this terminal's environment sets. */
   readonly environmentSettings: readonly string[];
-  /** Where a solve endpoint is configured, if anywhere. */
-  readonly solveEndpoint: string | undefined;
+  /** Where a solve endpoint is configured; null means its configuration is unknown. */
+  readonly solveEndpoint: string | null | undefined;
   /** Names of agentenv sandbox containers; undefined when Docker was not reachable. */
   readonly leftoverContainers: readonly string[] | undefined;
 }
 
 /** What a facts reader gets from doctor: its environment, bounded runner and registration reader. */
 export interface DesktopBuildFactsInput {
+  readonly signal: AbortSignal;
+  readonly resources: ArtifactResourceScope;
   readonly environment: Readonly<NodeJS.ProcessEnv>;
   readonly platform: NodeJS.Platform;
   readonly run: typeof execFileOutput;
@@ -420,15 +423,17 @@ const skillCheck = (skill: DesktopBuildContext["skill"]): DoctorCheck =>
     },
   );
 
-const solveEndpointCheck = (where: string | undefined): DoctorCheck =>
+const solveEndpointCheck = (where: string | null | undefined): DoctorCheck =>
   result(
     "solve-endpoint",
-    where !== undefined,
-    where === undefined
-      ? "No model endpoint is configured for solver runs."
-      : `Solver runs use the model endpoint in ${where}.`,
+    where !== undefined && where !== null,
+    where === null
+      ? "REA could not determine whether agentenv has a model endpoint configured."
+      : where === undefined
+        ? "No model endpoint is configured for solver runs."
+        : `A model endpoint is configured in ${where}; its availability was not checked.`,
     {
-      classification: "missing_dependency",
+      classification: where === null ? "unknown" : "missing_dependency",
       remediation:
         "For solver runs, export LITELLM_BASE_URL and LITELLM_API_KEY in the shell that starts the agent, or set base_url and api_key under [model] in .agentenv/config.toml.",
     },

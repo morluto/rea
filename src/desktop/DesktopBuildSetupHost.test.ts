@@ -1,4 +1,4 @@
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readFile, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { expect, it, vi } from "vitest";
@@ -14,6 +14,36 @@ import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
 
 const program = (path: string, body: string) =>
   writeFile(path, `#!/bin/sh\n${body}\n`, { mode: 0o755 });
+
+it.skipIf(process.platform === "win32")(
+  "preserves the selected archive through symlink and parent traversal",
+  async () => {
+    const root = await createTestTempDirectory("rea-setup-selected-archive-");
+    await mkdir(join(root, "elsewhere", "child"), { recursive: true });
+    await symlink(join(root, "elsewhere", "child"), join(root, "link"));
+    await writeFile(join(root, "archive.tar.xz"), "wrong archive");
+    await writeFile(
+      join(root, "elsewhere", "archive.tar.xz"),
+      "selected archive",
+    );
+    const selected = `${root}/link/../archive.tar.xz`;
+    const resources = new ArtifactResourceScope();
+    try {
+      const facts = await systemDesktopBuildSetupHost(
+        { ...process.env, REA_BUILD_COMPUTER_REA_ARCHIVE: selected },
+        process.platform,
+        undefined,
+        resources,
+      ).facts([]);
+      expect(facts.settings.REA_BUILD_COMPUTER_REA_ARCHIVE).toBe(selected);
+      expect(
+        await readFile(facts.settings.REA_BUILD_COMPUTER_REA_ARCHIVE!, "utf8"),
+      ).toBe("selected archive");
+    } finally {
+      await resources.close();
+    }
+  },
+);
 
 it.skipIf(process.platform === "win32")(
   "retains installer output and its command failure when cancelled",

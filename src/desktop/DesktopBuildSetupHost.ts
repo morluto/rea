@@ -7,6 +7,7 @@ import { fileURLToPath } from "node:url";
 import type { DoctorHost } from "../application/Doctor.js";
 import type { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
 import { assertSetupActive } from "../application/SetupCancellation.js";
+import { absoluteCallerPath } from "../filesystem/callerPath.js";
 import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
 import type {
   DesktopBuildSetupFacts,
@@ -197,7 +198,7 @@ const readSetupFacts = async (
   const selected = BUILD_COMPUTER_SETTINGS.filter(
     (name) => (environment[name] ?? "") !== "",
   );
-  const settings = await absoluteSettings(environment, archive);
+  const settings = await absoluteSettings(environment, archive, platform);
   const agentEnv = settings.REA_AGENT_ENV_COMMAND;
   const uv = await programOnPath("uv", environment);
   const uvBin =
@@ -240,6 +241,7 @@ const readSetupFacts = async (
 const absoluteSettings = async (
   environment: Readonly<NodeJS.ProcessEnv>,
   archive: string,
+  platform: NodeJS.Platform,
 ): Promise<Record<string, string>> => {
   const settings: Record<string, string> = {};
   for (const [name, program] of [
@@ -257,7 +259,9 @@ const absoluteSettings = async (
   }
   const selectedArchive = environment[ARCHIVE] ?? "";
   settings[ARCHIVE] =
-    selectedArchive === "" ? archive : resolve(selectedArchive);
+    selectedArchive === ""
+      ? archive
+      : absoluteCallerPath(selectedArchive, { platform });
   return settings;
 };
 
