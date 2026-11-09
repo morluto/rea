@@ -24,15 +24,18 @@ import {
   semanticKnownArrayIterationAt,
   semanticSelectedReferenceSlot,
 } from "./javascriptSemanticReferenceSources.js";
+import { semanticOpaqueBindingReadMayHaveChanged } from "./javascriptSemanticOpaqueEffects.js";
 import { semanticArrayPropertyReferences } from "./javascriptSemanticObjectReferences.js";
 import {
   semanticNormalizeCapturedSelections,
+  semanticProjectedSourceFactsAtRead,
   semanticProjectedSourcesAtRead,
   semanticShiftCapturedSelections,
   type SemanticCapturedSelection,
 } from "./javascriptSemanticProjectedSources.js";
 import { SEMANTIC_ALIAS_SELECTION_LIMIT } from "./javascriptSemanticResourceLimits.js";
 import {
+  semanticArrayIndex,
   semanticPropertyPathKeyMatches,
   type JavaScriptSemanticPropertyPath,
 } from "./javascriptSemanticPropertyPaths.js";
@@ -43,6 +46,7 @@ import {
 } from "./javascriptSemanticAliasSelections.js";
 import {
   resolveSemanticBindingState,
+  semanticResolutionBlocked,
   type JavaScriptSemanticAnalysisState,
   type JavaScriptSemanticBindingState,
 } from "./javascriptSemanticState.js";
@@ -78,6 +82,8 @@ export interface SemanticReturnedReferenceResult {
   >;
   /** Callables reached after context widening where positional arguments could not be preserved. */
   readonly widenedCallables?: ReadonlySet<t.Function>;
+  /** Whether the callee may evaluate to `undefined` or a callable outside `callables`. */
+  readonly unresolvedCallable?: boolean;
   /** A visible invocation-method mutation prevents a source-local result proof. */
   readonly unresolvedInvocation?: boolean;
   /** Both states close the supported source-local may-target graph. Widened joins projections without dropping represented targets; it does not claim runtime completeness. */
@@ -160,25 +166,34 @@ export const createSemanticReturnedReferences = (
       Map<string, number | undefined>
     >();
     const expanded = new WeakMap<t.Node, Set<string>>();
+    const includeResultMetadata = options?.includeResultMetadata === true;
     let additionalContexts = 0;
     let contextsWidened = false;
+    let unresolvedCallable = false;
     const result: {
       references: readonly SemanticReturnedReference[];
       callables: ReadonlySet<t.Function>;
-      callableInvocations: ReadonlyMap<
+      callableInvocations?: ReadonlyMap<
         t.Function,
         readonly JavaScriptSourceInvocationContext[]
       >;
-      widenedCallables: ReadonlySet<t.Function>;
+      widenedCallables?: ReadonlySet<t.Function>;
       precision: SemanticReturnedReferenceResult["precision"];
+      unresolvedCallable?: boolean;
       unresolvedInvocation?: boolean;
-    } = {
-      references: [],
-      callables: functions,
-      callableInvocations,
-      widenedCallables,
-      precision: "exact",
-    };
+    } = includeResultMetadata
+      ? {
+          references: [],
+          callables: functions,
+          callableInvocations,
+          widenedCallables,
+          precision: "exact",
+        }
+      : {
+          references: [],
+          callables: functions,
+          precision: "exact",
+        };
     // The invocation owner retains the actual callable receiver. A bare alias
     // of fn.call has lost that receiver and cannot execute fn by itself.
     const nativeArrayIteration = (array: t.ArrayExpression) =>
@@ -299,6 +314,7 @@ export const createSemanticReturnedReferences = (
         }
       }
       if (contextsWidened) {
+        unresolvedCallable = true;
         path = undefined;
         capturedSelections = undefined;
         invocationContext = undefined;
@@ -329,20 +345,29 @@ export const createSemanticReturnedReferences = (
       const current = work.pop();
       if (current === undefined) break;
       const { node } = current;
+      if (current.path === undefined) unresolvedCallable = true;
       // An exact empty selection with an invocation is the value being called,
       // not a container whose callable children are potential escape targets.
       // Ordinary objects and arrays cannot supply that callable receiver. An
       // unknown projection still visits the full closure after budget widening.
       if (
-        current.invocation !== undefined &&
+        (current.invocation !== undefined ||
+          consumption !== "potential-reference") &&
         current.path?.length === 0 &&
         (t.isObjectExpression(node) || t.isArrayExpression(node))
       )
         continue;
       const pending: Candidate[] = [];
       if (t.isIdentifier(node)) {
+        if (semanticResolutionBlocked(state, node, node.name)) {
+          unresolvedCallable = true;
+          if (sourceGenericInvocation && current.path?.length === 0)
+            result.unresolvedInvocation = true;
+          continue;
+        }
         const binding = resolveSemanticBindingState(state, node, node.name);
         if (binding === undefined) {
+          unresolvedCallable = true;
           if (sourceGenericInvocation && current.path?.length === 0)
             result.unresolvedInvocation = true;
           continue;
@@ -351,27 +376,41 @@ export const createSemanticReturnedReferences = (
           writes: binding.memberWrites.length,
           escapes: binding.escapedPaths.length,
         });
+        if (
+          binding.directOrigins.length > 0 ||
+          semanticOpaqueBindingReadMayHaveChanged(binding, node, state)
+        )
+          unresolvedCallable = true;
         if (current.path !== undefined) {
-          if (
-            sourceGenericInvocation &&
-            current.path.length > 0 &&
-            semanticProjectedSourcesAtRead(
-              binding,
-              node,
-              current.path,
-              state,
-              true,
-              // The current invocation receives its callee before its own
-              // opaque effects; earlier captured member reads keep their site.
-              invocation !== undefined &&
-                current.readAt ===
-                  unwrapJavaScriptExpression(invocation.callee).node
-                ? invocation
-                : (current.readAt ?? node),
-              current.capturedSelections,
-            ) === undefined
+          const strictFacts = semanticProjectedSourceFactsAtRead(
+            binding,
+            node,
+            current.path,
+            state,
+            true,
+            // The current invocation receives its callee before its own
+            // opaque effects; earlier captured member reads keep their site.
+            invocation !== undefined &&
+              current.readAt ===
+                unwrapJavaScriptExpression(invocation.callee).node
+              ? invocation
+              : (current.readAt ?? node),
+            current.capturedSelections,
+          );
+          if (current.path.length === 0) {
+            if (
+              !semanticBindingAtRead(binding, node, state)
+                .hasDefiniteInitializer
+            )
+              unresolvedCallable = true;
+          } else if (strictFacts === undefined) {
+            unresolvedCallable = true;
+            if (sourceGenericInvocation) result.unresolvedInvocation = true;
+          } else if (
+            strictFacts.retainsOrigin &&
+            !semanticBindingAtRead(binding, node, state).hasDefiniteInitializer
           )
-            result.unresolvedInvocation = true;
+            unresolvedCallable = true;
           const selectedSources = semanticProjectedSourcesAtRead(
             binding,
             node,
@@ -414,6 +453,7 @@ export const createSemanticReturnedReferences = (
             continue;
           }
           result.precision = "widened";
+          unresolvedCallable = true;
           if (sourceGenericInvocation) result.unresolvedInvocation = true;
         }
         const selected = semanticBindingAtRead(binding, node, state).binding;
@@ -456,9 +496,13 @@ export const createSemanticReturnedReferences = (
           t.isMemberExpression(receiver) ||
           t.isOptionalMemberExpression(receiver)
         ) {
-          path.push(
-            semanticStaticPropertyKey(receiver.property, receiver.computed),
+          if (t.isOptionalMemberExpression(receiver)) unresolvedCallable = true;
+          const segment = semanticStaticPropertyKey(
+            receiver.property,
+            receiver.computed,
           );
+          if (segment === null) unresolvedCallable = true;
+          path.push(segment);
           receiver = unwrapJavaScriptExpression(receiver.object).node;
         }
         pending.push({
@@ -495,6 +539,7 @@ export const createSemanticReturnedReferences = (
       } else if (t.isSequenceExpression(node)) {
         const last = node.expressions.at(-1);
         if (last !== undefined) pending.push({ ...current, node: last });
+        else unresolvedCallable = true;
       } else if (t.isFunction(node)) {
         if (current.path === undefined || current.path.length === 0) {
           functions.add(node);
@@ -521,6 +566,7 @@ export const createSemanticReturnedReferences = (
             (method): method is "call" | "apply" =>
               method === "call" || method === "apply",
           );
+          if (methods.length === 0) unresolvedCallable = true;
           for (const method of methods) {
             const selected = resolveJavaScriptGenericInvocation(
               method,
@@ -533,17 +579,44 @@ export const createSemanticReturnedReferences = (
                 path: [],
                 invocation: selected.context,
               });
-            else if (current.invocation.receiverUnknown)
+            else {
+              unresolvedCallable = true;
+              if (current.invocation.receiverUnknown)
+                result.unresolvedInvocation = true;
+            }
+            if (inheritedInvocationChanged(method)) {
+              unresolvedCallable = true;
               result.unresolvedInvocation = true;
-            if (inheritedInvocationChanged(method))
-              result.unresolvedInvocation = true;
+            }
           }
+        } else {
+          unresolvedCallable = true;
         }
       } else if (t.isObjectExpression(node))
-        selectObjectTargets(node, current, pending, objectTargets);
+        selectObjectTargets(node, current, pending, objectTargets, () => {
+          unresolvedCallable = true;
+        });
       else if (t.isArrayExpression(node)) {
         const [key, ...path] = current.path ?? [];
         if (current.path !== undefined && key !== undefined) {
+          const definiteElementHit = semanticAliasSelectionChoices(key).every(
+            (choice) => {
+              if (choice === null || typeof choice === "object") return false;
+              const idx = semanticArrayIndex(choice);
+              return (
+                idx !== null &&
+                idx < node.elements.length &&
+                node.elements[idx] !== null &&
+                node.elements[idx] !== undefined &&
+                !node.elements
+                  .slice(0, idx + 1)
+                  .some(
+                    (element) => element !== null && t.isSpreadElement(element),
+                  )
+              );
+            },
+          );
+          if (!definiteElementHit) unresolvedCallable = true;
           for (const choice of semanticAliasSelectionChoices(key))
             for (const source of semanticArrayPropertyReferences(node, [
               choice,
@@ -623,9 +696,12 @@ export const createSemanticReturnedReferences = (
                 ) ?? [],
             });
         });
-      } else if (t.isNewExpression(node))
+      } else if (t.isNewExpression(node)) {
+        unresolvedCallable = true;
         pending.push({ ...current, node: node.callee });
-      else if (t.isClass(node)) {
+      } else if (t.isClass(node)) {
+        if (current.path === undefined || current.path.length > 0)
+          unresolvedCallable = true;
         const [key, ...path] = current.path ?? [];
         for (const member of node.body.body) {
           if (t.isClassMethod(member)) {
@@ -684,6 +760,11 @@ export const createSemanticReturnedReferences = (
         }
         if (node.superClass !== null && node.superClass !== undefined)
           pending.push({ ...current, node: node.superClass });
+      } else if (
+        current.path?.length !== 0 ||
+        !isDefinitelyDefinedNonCallableLeaf(node)
+      ) {
+        unresolvedCallable = true;
       }
       for (let index = pending.length - 1; index >= 0; index--) {
         const child = pending[index];
@@ -715,7 +796,7 @@ export const createSemanticReturnedReferences = (
           (consumption !== "potential-reference" && kind !== "return")
             ? []
             : [
-                options?.includeResultMetadata === true
+                includeResultMetadata
                   ? {
                       node,
                       projection: delegated ? [null] : [],
@@ -727,6 +808,8 @@ export const createSemanticReturnedReferences = (
       );
     });
     result.references = output;
+    if (includeResultMetadata && unresolvedCallable)
+      result.unresolvedCallable = true;
     results.set(callee, {
       result,
       invocation,
@@ -743,11 +826,21 @@ export const createSemanticReturnedReferences = (
   };
 };
 
+const isDefinitelyDefinedNonCallableLeaf = (node: t.Node): boolean =>
+  t.isStringLiteral(node) ||
+  t.isNumericLiteral(node) ||
+  t.isBooleanLiteral(node) ||
+  t.isBigIntLiteral(node) ||
+  t.isNullLiteral(node) ||
+  t.isRegExpLiteral(node) ||
+  t.isTemplateLiteral(node);
+
 const selectObjectTargets = (
   node: t.ObjectExpression,
   item: Candidate,
   pending: Candidate[],
   indexes: WeakMap<t.ObjectExpression, ObjectTargetIndex>,
+  markUnresolved: () => void,
 ): void => {
   const [key, ...path] = item.path ?? [];
   const childPath = item.path === undefined ? undefined : path;
@@ -758,6 +851,7 @@ const selectObjectTargets = (
         { ...item, path: [choice, ...path] },
         pending,
         indexes,
+        markUnresolved,
       );
     return;
   }
@@ -765,6 +859,14 @@ const selectObjectTargets = (
     const index = objectTargetIndex(node, indexes);
     const property = index.propertyByName.get(String(key));
     if (property !== undefined) {
+      const isPrototypeSetter =
+        t.isObjectProperty(property) &&
+        !property.computed &&
+        !property.shorthand &&
+        String(key) === "__proto__";
+      const isAccessor =
+        t.isObjectMethod(property) && property.kind !== "method";
+      if (isPrototypeSetter || isAccessor) markUnresolved();
       const unknowns: ObjectTargetUnknown[] = [];
       for (
         let unknown = index.trailingUnknownsByProperty.get(property);
@@ -772,6 +874,7 @@ const selectObjectTargets = (
         unknown = unknown.previous
       )
         unknowns.push(unknown);
+      if (unknowns.length > 0) markUnresolved();
       for (const { node: unknown } of unknowns.reverse())
         pending.push({
           ...item,
@@ -799,6 +902,7 @@ const selectObjectTargets = (
       return;
     }
   }
+  if (item.path === undefined || item.path.length > 0) markUnresolved();
   let replaced = false;
   for (const property of [...node.properties].reverse()) {
     if (replaced) break;

@@ -102,7 +102,9 @@ import { collectJavaScriptDerivedSemanticsSteps } from "./javascriptSemanticDeri
 import {
   evaluateSemanticProvenance,
   clearSemanticValueCaches,
+  semanticValueDefinitelyDefined,
 } from "./javascriptSemanticValues.js";
+import { compareUnicodeCodePoints } from "../unicodeCodePointOrder.js";
 import {
   collectJavaScriptIdentityWritesSteps,
   electronExportPath,
@@ -150,7 +152,9 @@ import {
 } from "./javascriptSemanticPropertyPaths.js";
 import {
   semanticKnownArrayIterationAt,
+  semanticReferenceIterationUnknown,
   semanticReferenceSourcesInactive,
+  semanticSelectedReferenceSlot,
 } from "./javascriptSemanticReferenceSources.js";
 import {
   createSemanticReturnedReferences,
@@ -1020,8 +1024,12 @@ export function* indexJavaScriptElectronIdentitySteps(
       : undefined;
   };
   const returnQueries: ElectronMemberWriteReturnQueries = {
-    direct: createSemanticReturnedReferences(state, "direct-call"),
-    awaited: createSemanticReturnedReferences(state, "awaited-call"),
+    direct: createSemanticReturnedReferences(state, "direct-call", {
+      includeResultMetadata: true,
+    }),
+    awaited: createSemanticReturnedReferences(state, "awaited-call", {
+      includeResultMetadata: true,
+    }),
     potential: createSemanticReturnedReferences(state, "potential-reference", {
       includeResultMetadata: true,
     }),
@@ -1165,6 +1173,7 @@ interface ElectronMemberWriteCallFrame {
     string,
     readonly InvocationParameterSource[]
   >;
+  readonly inactiveDefaultNodes: ReadonlySet<t.Node>;
   readonly receiverCallables: ReadonlySet<t.Function>;
   readonly receiverSources: readonly t.Expression[];
   readonly parentFrame?: ElectronMemberWriteCallFrame | undefined;
@@ -1474,14 +1483,357 @@ const bindRestParameterSources = (
   }
 };
 
+interface InvocationDefaultSlotSource {
+  readonly node: t.Node;
+  readonly projection: JavaScriptSemanticPropertyPath;
+  readonly iterationSources?: readonly InvocationDefaultSlotSource[];
+}
+
+type InvocationDefaultSlotState =
+  | "omitted"
+  | "unknown"
+  | { readonly kind: "source"; readonly source: InvocationDefaultSlotSource };
+
+const registerPatternBindings = (
+  pattern: t.Node,
+  state: JavaScriptSemanticAnalysisState,
+  mapped: Map<string, InvocationParameterSource[]>,
+): void => {
+  const unwrapped = t.isTSParameterProperty(pattern)
+    ? pattern.parameter
+    : unwrapJavaScriptExpression(pattern).node;
+  if (t.isIdentifier(unwrapped)) {
+    const binding = resolveSemanticBindingState(
+      state,
+      unwrapped,
+      unwrapped.name,
+    );
+    if (binding !== undefined && !mapped.has(binding.bindingId))
+      mapped.set(binding.bindingId, []);
+    return;
+  }
+  if (t.isAssignmentPattern(unwrapped)) {
+    registerPatternBindings(unwrapped.left, state, mapped);
+    return;
+  }
+  if (t.isRestElement(unwrapped)) {
+    registerPatternBindings(unwrapped.argument, state, mapped);
+    return;
+  }
+  if (t.isObjectPattern(unwrapped)) {
+    for (const prop of unwrapped.properties)
+      if (t.isRestElement(prop))
+        registerPatternBindings(prop.argument, state, mapped);
+      else registerPatternBindings(prop.value, state, mapped);
+    return;
+  }
+  if (t.isArrayPattern(unwrapped)) {
+    for (const elem of unwrapped.elements)
+      if (elem !== null) registerPatternBindings(elem, state, mapped);
+  }
+};
+
+const collectPatternDefaultNodes = (
+  params: readonly t.Node[],
+): readonly t.Node[] => {
+  const defaults: t.Node[] = [];
+  const visit = (pattern: t.Node): void => {
+    const unwrapped = t.isTSParameterProperty(pattern)
+      ? pattern.parameter
+      : unwrapJavaScriptExpression(pattern).node;
+    if (t.isAssignmentPattern(unwrapped)) {
+      defaults.push(unwrapped.right);
+      visit(unwrapped.left);
+      return;
+    }
+    if (t.isRestElement(unwrapped)) {
+      visit(unwrapped.argument);
+      return;
+    }
+    if (t.isObjectPattern(unwrapped)) {
+      for (const prop of unwrapped.properties)
+        visit(t.isRestElement(prop) ? prop.argument : prop.value);
+      return;
+    }
+    if (t.isArrayPattern(unwrapped)) {
+      for (const elem of unwrapped.elements) if (elem !== null) visit(elem);
+    }
+  };
+  for (const param of params) visit(param);
+  return defaults;
+};
+
+const isDefinitelyUndefinedExpression = (
+  node: t.Node,
+  state: JavaScriptSemanticAnalysisState,
+): boolean => {
+  const unwrapped = unwrapJavaScriptExpression(node).node;
+  if (t.isUnaryExpression(unwrapped, { operator: "void" })) return true;
+  return (
+    t.isIdentifier(unwrapped, { name: "undefined" }) &&
+    !semanticResolutionBlocked(state, unwrapped, "undefined") &&
+    resolveSemanticBindingState(state, unwrapped, "undefined") === undefined
+  );
+};
+
+const isInvocationSlotDefinitelyUndefined = (
+  source: InvocationDefaultSlotSource,
+  state: JavaScriptSemanticAnalysisState,
+  callSite: t.Node,
+): boolean => {
+  if (
+    source.projection.length === 0 &&
+    isDefinitelyUndefinedExpression(source.node, state)
+  )
+    return true;
+  if (semanticReferenceIterationUnknown(source, state)) return false;
+  return (
+    semanticSelectedReferenceSlot(source, state, callSite)?.presence ===
+    "absent"
+  );
+};
+
+const isInvocationSlotDefinitelyDefined = (
+  source: InvocationDefaultSlotSource,
+  state: JavaScriptSemanticAnalysisState,
+  callSite: t.Node,
+): boolean => {
+  if (semanticReferenceIterationUnknown(source, state)) return false;
+  const slot = semanticSelectedReferenceSlot(source, state, callSite);
+  return (
+    slot?.presence === "present" && semanticValueDefinitelyDefined(slot.value)
+  );
+};
+
+const markActivePatternDefaults = (
+  pattern: t.Node,
+  slotState: InvocationDefaultSlotState,
+  callSite: t.Node,
+  state: JavaScriptSemanticAnalysisState,
+  active: Set<t.Node>,
+): void => {
+  const target = t.isTSParameterProperty(pattern)
+    ? pattern.parameter
+    : unwrapJavaScriptExpression(pattern).node;
+  if (t.isAssignmentPattern(target)) {
+    const defaultSlot: InvocationDefaultSlotState = {
+      kind: "source",
+      source: { node: target.right, projection: [] },
+    };
+    if (slotState === "omitted") {
+      active.add(target.right);
+      markActivePatternDefaults(
+        target.left,
+        defaultSlot,
+        callSite,
+        state,
+        active,
+      );
+      return;
+    }
+    if (slotState === "unknown") {
+      active.add(target.right);
+      markActivePatternDefaults(
+        target.left,
+        "unknown",
+        callSite,
+        state,
+        active,
+      );
+      markActivePatternDefaults(
+        target.left,
+        defaultSlot,
+        callSite,
+        state,
+        active,
+      );
+      return;
+    }
+    if (
+      isInvocationSlotDefinitelyUndefined(slotState.source, state, callSite)
+    ) {
+      active.add(target.right);
+      markActivePatternDefaults(
+        target.left,
+        defaultSlot,
+        callSite,
+        state,
+        active,
+      );
+      return;
+    }
+    if (isInvocationSlotDefinitelyDefined(slotState.source, state, callSite)) {
+      markActivePatternDefaults(
+        target.left,
+        slotState,
+        callSite,
+        state,
+        active,
+      );
+      return;
+    }
+    active.add(target.right);
+    markActivePatternDefaults(target.left, slotState, callSite, state, active);
+    markActivePatternDefaults(
+      target.left,
+      defaultSlot,
+      callSite,
+      state,
+      active,
+    );
+    return;
+  }
+  if (t.isObjectPattern(target)) {
+    for (const prop of target.properties) {
+      if (t.isRestElement(prop)) {
+        markActivePatternDefaults(
+          prop.argument,
+          "unknown",
+          callSite,
+          state,
+          active,
+        );
+        continue;
+      }
+      const key = semanticStaticPropertyKey(prop.key, prop.computed);
+      const childSlot: InvocationDefaultSlotState =
+        key !== null && typeof slotState === "object"
+          ? {
+              kind: "source",
+              source: {
+                ...slotState.source,
+                projection: [...slotState.source.projection, key],
+              },
+            }
+          : "unknown";
+      markActivePatternDefaults(prop.value, childSlot, callSite, state, active);
+    }
+    return;
+  }
+  if (t.isArrayPattern(target)) {
+    const iter =
+      typeof slotState === "object"
+        ? [
+            ...(slotState.source.iterationSources ?? []),
+            {
+              node: slotState.source.node,
+              projection: slotState.source.projection,
+            },
+          ]
+        : undefined;
+    target.elements.forEach((elem, idx) => {
+      if (elem === null) return;
+      if (t.isRestElement(elem)) {
+        markActivePatternDefaults(
+          elem.argument,
+          "unknown",
+          callSite,
+          state,
+          active,
+        );
+        return;
+      }
+      const childSlot: InvocationDefaultSlotState =
+        typeof slotState === "object"
+          ? {
+              kind: "source",
+              source: {
+                node: slotState.source.node,
+                projection: [...slotState.source.projection, idx],
+                ...(iter === undefined ? {} : { iterationSources: iter }),
+              },
+            }
+          : "unknown";
+      markActivePatternDefaults(elem, childSlot, callSite, state, active);
+    });
+  }
+};
+
+const markActiveRestDefaults = (
+  pattern: t.Node,
+  expanded: readonly (t.Expression | t.SpreadElement | t.ArgumentPlaceholder)[],
+  restStartIndex: number,
+  firstSpread: number,
+  callSite: t.Node,
+  state: JavaScriptSemanticAnalysisState,
+  active: Set<t.Node>,
+): void => {
+  const target = unwrapJavaScriptExpression(pattern).node;
+  if (t.isArrayPattern(target)) {
+    target.elements.forEach((elem, elemIdx) => {
+      if (elem === null) return;
+      const argIndex = restStartIndex + elemIdx;
+      if (t.isRestElement(elem)) {
+        markActiveRestDefaults(
+          elem.argument,
+          expanded,
+          argIndex,
+          firstSpread,
+          callSite,
+          state,
+          active,
+        );
+        return;
+      }
+      if (firstSpread < 0 || argIndex < firstSpread) {
+        const arg = expanded[argIndex];
+        if (arg === undefined)
+          markActivePatternDefaults(elem, "omitted", callSite, state, active);
+        else if (t.isExpression(arg))
+          markActivePatternDefaults(
+            elem,
+            { kind: "source", source: { node: arg, projection: [] } },
+            callSite,
+            state,
+            active,
+          );
+        else
+          markActivePatternDefaults(elem, "unknown", callSite, state, active);
+        return;
+      }
+      markActivePatternDefaults(elem, "unknown", callSite, state, active);
+    });
+    return;
+  }
+  if (t.isObjectPattern(target))
+    markActivePatternDefaults(target, "unknown", callSite, state, active);
+};
+
 const bindArrayFromMapperParameters = (
-  iterable: t.Expression,
+  iterable: t.Expression | undefined,
   callables: ReadonlySet<t.Function>,
   state: JavaScriptSemanticAnalysisState,
-): Map<string, InvocationParameterSource[]> => {
+): {
+  readonly parameterSources: Map<string, InvocationParameterSource[]>;
+  readonly inactiveDefaultNodes: ReadonlySet<t.Node>;
+} => {
   const mapParams = new Map<string, InvocationParameterSource[]>();
+  const inactiveDefaults = new Set<t.Node>();
   for (const callable of callables) {
-    const [firstParam] = runtimeFunctionParameters(callable);
+    const params = runtimeFunctionParameters(callable);
+    for (const param of params)
+      registerPatternBindings(param, state, mapParams);
+    // Index parameter (index 1) of Array.from's mapFn is always a non-negative integer.
+    const indexParam = params[1];
+    if (
+      indexParam !== undefined &&
+      !t.isRestElement(indexParam) &&
+      t.isAssignmentPattern(
+        t.isTSParameterProperty(indexParam)
+          ? indexParam.parameter
+          : unwrapJavaScriptExpression(indexParam).node,
+      )
+    ) {
+      const assignPattern = (
+        t.isTSParameterProperty(indexParam)
+          ? indexParam.parameter
+          : unwrapJavaScriptExpression(indexParam).node
+      ) as t.AssignmentPattern;
+      if (t.isIdentifier(assignPattern.left))
+        inactiveDefaults.add(assignPattern.right);
+    }
+    if (iterable === undefined) continue;
+    const [firstParam] = params;
     if (firstParam === undefined) continue;
     if (!t.isRestElement(firstParam)) {
       bindParameterPatternSources(
@@ -1555,7 +1907,10 @@ const bindArrayFromMapperParameters = (
       }
     }
   }
-  return mapParams;
+  return {
+    parameterSources: mapParams,
+    inactiveDefaultNodes: inactiveDefaults,
+  };
 };
 
 const nonArrowReceiverCallables = (
@@ -1585,20 +1940,28 @@ const mapInvocationParameterSources = (
   fallbackArguments:
     | readonly t.CallExpression["arguments"][number][]
     | undefined,
+  callSite: t.Node,
   state: JavaScriptSemanticAnalysisState,
 ): {
   readonly parameterSources: ReadonlyMap<
     string,
     readonly InvocationParameterSource[]
   >;
+  readonly inactiveDefaultNodes: ReadonlySet<t.Node>;
   readonly receiverSources: readonly t.Expression[];
   readonly hasOpaqueArguments: boolean;
 } => {
   const mapped = new Map<string, InvocationParameterSource[]>();
+  const inactiveDefaults = new Set<t.Node>();
   const receiverSources: t.Expression[] = [];
   let hasOpaqueArguments = false;
   if (returned.callables.size === 0)
-    return { parameterSources: mapped, receiverSources, hasOpaqueArguments };
+    return {
+      parameterSources: mapped,
+      inactiveDefaultNodes: inactiveDefaults,
+      receiverSources,
+      hasOpaqueArguments,
+    };
   const fallbackExpanded =
     fallbackArguments === undefined
       ? undefined
@@ -1606,13 +1969,18 @@ const mapInvocationParameterSources = (
           semanticKnownArrayIterationAt(array, state),
         );
   for (const callable of returned.callables) {
-    if (returned.widenedCallables?.has(callable)) hasOpaqueArguments = true;
+    const callableWidened = returned.widenedCallables?.has(callable) === true;
+    if (callableWidened) hasOpaqueArguments = true;
     const contexts =
       returned.callableInvocations?.get(callable) ??
       (fallbackExpanded === undefined
         ? []
         : [{ receiver: undefined, arguments: fallbackExpanded }]);
     const params = runtimeFunctionParameters(callable);
+    for (const param of params) registerPatternBindings(param, state, mapped);
+    const allDefaults = collectPatternDefaultNodes(params);
+    const activeDefaults = new Set<t.Node>();
+    let callableArgsComplete = !callableWidened && contexts.length > 0;
     for (const context of contexts) {
       if (context.receiver !== undefined && t.isExpression(context.receiver))
         receiverSources.push(context.receiver);
@@ -1620,26 +1988,63 @@ const mapInvocationParameterSources = (
       const expanded = context.arguments;
       if (expanded === undefined) {
         hasOpaqueArguments = true;
+        callableArgsComplete = false;
         continue;
       }
-      if (expanded.length === 0) continue;
       const firstSpread = expanded.findIndex((arg) => t.isSpreadElement(arg));
       params.forEach((param, index) => {
         if (t.isRestElement(param)) {
-          bindRestParameterSources(
-            param.argument,
-            expanded,
-            index,
-            firstSpread,
-            state,
-            mapped,
-          );
+          if (expanded.length > 0)
+            bindRestParameterSources(
+              param.argument,
+              expanded,
+              index,
+              firstSpread,
+              state,
+              mapped,
+            );
+          if (allDefaults.length > 0 && callableArgsComplete)
+            markActiveRestDefaults(
+              param.argument,
+              expanded,
+              index,
+              firstSpread,
+              callSite,
+              state,
+              activeDefaults,
+            );
           return;
         }
         if (firstSpread < 0 || index < firstSpread) {
           const arg = expanded[index];
           if (arg !== undefined && t.isExpression(arg))
             bindParameterPatternSources(param, arg, [], state, mapped);
+          if (allDefaults.length > 0 && callableArgsComplete) {
+            if (arg === undefined)
+              markActivePatternDefaults(
+                param,
+                "omitted",
+                callSite,
+                state,
+                activeDefaults,
+              );
+            else if (t.isExpression(arg))
+              markActivePatternDefaults(
+                param,
+                { kind: "source", source: { node: arg, projection: [] } },
+                callSite,
+                state,
+                activeDefaults,
+              );
+            else
+              markActivePatternDefaults(
+                param,
+                "unknown",
+                callSite,
+                state,
+                activeDefaults,
+              );
+          }
           return;
         }
         for (const arg of expanded.slice(firstSpread)) {
@@ -1654,10 +2059,27 @@ const mapInvocationParameterSources = (
           else if (t.isExpression(arg))
             bindParameterPatternSources(param, arg, [], state, mapped);
         }
+        if (allDefaults.length > 0 && callableArgsComplete)
+          markActivePatternDefaults(
+            param,
+            "unknown",
+            callSite,
+            state,
+            activeDefaults,
+          );
       });
     }
+    if (callableArgsComplete) {
+      for (const defaultNode of allDefaults)
+        if (!activeDefaults.has(defaultNode)) inactiveDefaults.add(defaultNode);
+    }
   }
-  return { parameterSources: mapped, receiverSources, hasOpaqueArguments };
+  return {
+    parameterSources: mapped,
+    inactiveDefaultNodes: inactiveDefaults,
+    receiverSources,
+    hasOpaqueArguments,
+  };
 };
 
 const enqueueOpaqueInvocationArguments = (
@@ -1704,6 +2126,7 @@ const createNextCallFrame = (
   callReadAt: t.Node,
   parentFrame: ElectronMemberWriteCallFrame | undefined,
   parameterSources: ReadonlyMap<string, readonly InvocationParameterSource[]>,
+  inactiveDefaultNodes: ReadonlySet<t.Node>,
   receiverCallables: ReadonlySet<t.Function>,
   receiverSources: readonly t.Expression[],
 ): {
@@ -1712,6 +2135,7 @@ const createNextCallFrame = (
 } => {
   if (
     parameterSources.size === 0 &&
+    inactiveDefaultNodes.size === 0 &&
     (receiverCallables.size === 0 || receiverSources.length === 0)
   )
     return { frame: parentFrame, overflowed: false };
@@ -1732,6 +2156,7 @@ const createNextCallFrame = (
       callReadAt,
       depth,
       parameterSources,
+      inactiveDefaultNodes,
       receiverCallables,
       receiverSources,
       parentFrame,
@@ -1875,13 +2300,113 @@ const enqueueNonIdentifierMemberWriteSources = (
         return;
       }
       if (ns === "intrinsic" && obj === "Object" && method === "assign") {
+        if (callArgs.length === 0) return;
         const [target, ...sources] = callArgs;
-        if (target !== undefined && t.isExpression(target))
-          pending.push({ ...current, node: target, capturedSelections });
-        if (current.suffix.length > 0) {
-          for (const src of sources)
-            if (t.isExpression(src))
-              pending.push({ ...current, node: src, capturedSelections });
+        if (target === undefined) return;
+        if (t.isSpreadElement(target)) {
+          enqueueOpaqueInvocationArguments(callArgs, current, pending);
+          return;
+        }
+        if (current.suffix.length === 0) {
+          if (t.isExpression(target))
+            pending.push({ ...current, node: target, capturedSelections });
+          return;
+        }
+        const [firstSegment, ...remainingSuffix] = current.suffix;
+        for (const choice of semanticAliasSelectionChoices(firstSegment!)) {
+          const canPrune = objectAssignTargetAllowsOverwrite(
+            target,
+            choice,
+            state,
+            interop,
+          );
+          const overwritten = new Set<string>();
+          let covered = false;
+          const withExcluded = (
+            segment: typeof choice,
+          ): JavaScriptSemanticPropertyPath[number] => {
+            if (overwritten.size === 0) return segment;
+            if (segment === null)
+              return {
+                excludedKeys: [...overwritten].sort(compareUnicodeCodePoints),
+              };
+            if (typeof segment === "object")
+              return {
+                ...segment,
+                excludedKeys: [
+                  ...new Set([...segment.excludedKeys, ...overwritten]),
+                ].sort(compareUnicodeCodePoints),
+              };
+            return segment;
+          };
+          for (let idx = sources.length - 1; idx >= 0; idx -= 1) {
+            const src = sources[idx]!;
+            const selectedChoice = withExcluded(choice);
+            if (t.isSpreadElement(src)) {
+              pending.push({
+                node: src.argument,
+                suffix: [null, selectedChoice, ...remainingSuffix],
+                readAt: current.readAt ?? node,
+                capturedSelections: [
+                  ...(semanticShiftCapturedSelections(capturedSelections, 1) ??
+                    []),
+                  { at: src.argument, depth: 2, ownEnumerable: true },
+                ],
+                awaitDepths: current.awaitDepths,
+                iteratedDepths: current.iteratedDepths,
+                iteratedElementDepths: current.iteratedElementDepths,
+                callFrame: current.callFrame,
+              });
+              if (!semanticKnownArrayIterationAt(src.argument, state))
+                pending.push(
+                  {
+                    node: src.argument,
+                    suffix: [selectedChoice, ...remainingSuffix],
+                    readAt: current.readAt ?? node,
+                    callFrame: current.callFrame,
+                  },
+                  {
+                    node: src.argument,
+                    suffix: [],
+                    readAt: current.readAt ?? node,
+                    callFrame: current.callFrame,
+                  },
+                );
+              continue;
+            }
+            if (!t.isExpression(src)) continue;
+            pending.push({
+              ...current,
+              node: src,
+              suffix: [selectedChoice, ...remainingSuffix],
+              readAt: current.readAt ?? node,
+              capturedSelections: [
+                ...(capturedSelections ?? []),
+                { at: src, depth: 1, ownEnumerable: true },
+              ],
+            });
+            if (!canPrune) continue;
+            const definedKeys = definiteObjectAssignSourceKeys(
+              src,
+              state,
+              interop,
+            );
+            if (choice !== null && typeof choice !== "object") {
+              if (definedKeys.has(String(choice))) {
+                covered = true;
+                break;
+              }
+            } else {
+              for (const definedKey of definedKeys) overwritten.add(definedKey);
+            }
+          }
+          if (!covered && t.isExpression(target))
+            pending.push({
+              ...current,
+              node: target,
+              suffix: [withExcluded(choice), ...remainingSuffix],
+              capturedSelections,
+            });
         }
         return;
       }
@@ -1998,22 +2523,34 @@ const enqueueNonIdentifierMemberWriteSources = (
             );
             return;
           }
-          const unwrappedMapFn = unwrapJavaScriptExpression(mapFn).node;
-          const isExplicitUndefined =
-            t.isIdentifier(unwrappedMapFn, { name: "undefined" }) &&
-            !semanticResolutionBlocked(state, unwrappedMapFn, "undefined") &&
-            resolveSemanticBindingState(state, unwrappedMapFn, "undefined") ===
-              undefined;
-          if (isExplicitUndefined) {
+          if (isDefinitelyUndefinedExpression(mapFn, state)) {
             enqueueDirectCopy();
             return;
           }
-          if (!t.isFunction(unwrappedMapFn)) enqueueDirectCopy();
-          const mapped = returnQueries.direct(mapFn);
-          const mapParams =
+          const isElementIterated =
+            current.iteratedDepths?.includes(elementSuffix.length) === true;
+          const isElementIteratedItem =
+            current.iteratedElementDepths?.includes(elementSuffix.length) ===
+            true;
+          const isElementAwaited =
+            current.awaitDepths?.includes(elementSuffix.length) === true;
+          const mapped = isElementIterated
+            ? returnQueries.potential(mapFn)
+            : isElementAwaited
+              ? returnQueries.awaited(mapFn)
+              : returnQueries.direct(mapFn);
+          if (mapped.unresolvedCallable || mapped.unresolvedInvocation)
+            enqueueDirectCopy();
+          const {
+            parameterSources: mapParams,
+            inactiveDefaultNodes: mapInactiveDefaults,
+          } = bindArrayFromMapperParameters(
             iterable !== undefined && t.isExpression(iterable)
-              ? bindArrayFromMapperParameters(iterable, mapped.callables, state)
-              : new Map<string, InvocationParameterSource[]>();
+              ? iterable
+              : undefined,
+            mapped.callables,
+            state,
+          );
           const mapReceiverSources =
             thisArg !== undefined && t.isExpression(thisArg) ? [thisArg] : [];
           const { frame: mapCallFrame, overflowed: mapFrameOverflow } =
@@ -2023,19 +2560,39 @@ const enqueueNonIdentifierMemberWriteSources = (
               current.readAt ?? node,
               current.callFrame,
               mapParams,
+              mapInactiveDefaults,
               nonArrowReceiverCallables(mapped.callables),
               mapReceiverSources,
             );
+          const filteredMapAwaitDepths = isElementAwaited
+            ? current.awaitDepths?.filter(
+                (depth) => depth !== elementSuffix.length,
+              )
+            : current.awaitDepths;
           for (const ref of mapped.references) {
+            const isGeneratorResult =
+              ref.resultKind === "iterator" ||
+              ref.resultKind === "async-iterator";
+            if (isElementIterated && isGeneratorResult && ref.kind !== "yield")
+              continue;
+            const refElementSuffix =
+              isElementIteratedItem &&
+              isGeneratorResult &&
+              elementSuffix.length > 0
+                ? elementSuffix.slice(1)
+                : elementSuffix;
             pending.push({
               node: ref.node,
-              suffix: [...ref.projection, ...elementSuffix],
+              suffix: [...ref.projection, ...refElementSuffix],
               readAt: current.readAt ?? node,
               capturedSelections: semanticShiftCapturedSelections(
                 capturedSelections,
                 ref.projection.length,
               ),
-              awaitDepths: current.awaitDepths,
+              ...(filteredMapAwaitDepths === undefined ||
+              filteredMapAwaitDepths.length === 0
+                ? {}
+                : { awaitDepths: filteredMapAwaitDepths }),
               iteratedDepths: current.iteratedDepths,
               iteratedElementDepths: current.iteratedElementDepths,
               callFrame: mapCallFrame,
@@ -2043,8 +2600,8 @@ const enqueueNonIdentifierMemberWriteSources = (
           }
           if (
             mapFrameOverflow ||
-            mapped.unresolvedInvocation ||
-            (mapped.callables.size === 0 && mapped.references.length === 0)
+            mapped.unresolvedCallable ||
+            mapped.unresolvedInvocation
           )
             enqueueOpaqueInvocationArguments(
               callArgs,
@@ -2066,8 +2623,12 @@ const enqueueNonIdentifierMemberWriteSources = (
       : isAwaited
         ? returnQueries.awaited(node.callee, node)
         : returnQueries.direct(node.callee, node);
-    const { parameterSources, receiverSources, hasOpaqueArguments } =
-      mapInvocationParameterSources(returned, node.arguments, state);
+    const {
+      parameterSources,
+      inactiveDefaultNodes,
+      receiverSources,
+      hasOpaqueArguments,
+    } = mapInvocationParameterSources(returned, node.arguments, node, state);
     const { frame: nextCallFrame, overflowed: callFrameOverflow } =
       createNextCallFrame(
         allocateFrameId,
@@ -2075,6 +2636,7 @@ const enqueueNonIdentifierMemberWriteSources = (
         current.readAt ?? node,
         current.callFrame,
         parameterSources,
+        inactiveDefaultNodes,
         nonArrowReceiverCallables(returned.callables),
         receiverSources,
       );
@@ -2236,15 +2798,292 @@ const enqueueNonIdentifierMemberWriteSources = (
   }
 };
 
+const objectAssignTargetAllowsOverwrite = (
+  expr: t.Node,
+  choice: JavaScriptSemanticPropertyPath[number],
+  state: JavaScriptSemanticAnalysisState,
+  interop: ReturnType<typeof createSemanticModuleInterop>,
+  visited: ReadonlySet<t.Node> = new Set(),
+): boolean => {
+  const node = unwrapJavaScriptExpression(expr).node;
+  if (visited.has(node)) return false;
+  const nextVisited = new Set(visited);
+  nextVisited.add(node);
+  if (t.isCallExpression(node) || t.isOptionalCallExpression(node)) {
+    const inv = interop.intrinsicInvocation(node);
+    if (inv?.kind === "known") {
+      if (inv.path.join(".") === "intrinsic.Object.create") {
+        const args = inv.arguments ?? [];
+        if (
+          args.length === 1 &&
+          args[0] !== undefined &&
+          t.isNullLiteral(unwrapJavaScriptExpression(args[0]).node)
+        )
+          return true;
+      }
+      if (inv.path.join(".") === "intrinsic.Object.assign") {
+        const [innerTarget] = inv.arguments ?? [];
+        return (
+          innerTarget !== undefined &&
+          t.isExpression(innerTarget) &&
+          objectAssignTargetAllowsOverwrite(
+            innerTarget,
+            choice,
+            state,
+            interop,
+            nextVisited,
+          )
+        );
+      }
+    }
+    return false;
+  }
+  const objectPrototypeMutated = state.ambientWriteEffects.some(
+    (effect) =>
+      effect.path.length <= 4 &&
+      effect.path
+        .slice(0, 3)
+        .every(
+          (seg, idx) =>
+            seg === null ||
+            semanticPropertyPathKeyMatches(
+              seg,
+              ["global", "Object", "prototype"][idx] ?? "",
+            ),
+        ) &&
+      (effect.path.length < 4 ||
+        choice === null ||
+        typeof choice === "object" ||
+        semanticPropertyPathKeyMatches(effect.path[3]!, String(choice))),
+  );
+  if (objectPrototypeMutated) return false;
+  if (t.isObjectExpression(node)) {
+    for (const prop of node.properties) {
+      if (t.isSpreadElement(prop)) continue;
+      const name = semanticStaticPropertyKey(prop.key, prop.computed);
+      if (
+        t.isObjectProperty(prop) &&
+        !prop.computed &&
+        !prop.shorthand &&
+        name === "__proto__"
+      )
+        return false;
+      if (
+        t.isObjectMethod(prop) &&
+        (prop.kind === "get" || prop.kind === "set") &&
+        (name === null ||
+          choice === null ||
+          typeof choice === "object" ||
+          semanticPropertyPathKeyMatches(choice, name))
+      )
+        return false;
+    }
+    return true;
+  }
+  if (t.isConditionalExpression(node)) {
+    return (
+      objectAssignTargetAllowsOverwrite(
+        node.consequent,
+        choice,
+        state,
+        interop,
+        nextVisited,
+      ) &&
+      objectAssignTargetAllowsOverwrite(
+        node.alternate,
+        choice,
+        state,
+        interop,
+        nextVisited,
+      )
+    );
+  }
+  if (t.isSequenceExpression(node)) {
+    const last = node.expressions.at(-1);
+    return (
+      last !== undefined &&
+      objectAssignTargetAllowsOverwrite(
+        last,
+        choice,
+        state,
+        interop,
+        nextVisited,
+      )
+    );
+  }
+  if (
+    t.isIdentifier(node) &&
+    !semanticResolutionBlocked(state, node, node.name)
+  ) {
+    const binding = resolveSemanticBindingState(state, node, node.name);
+    if (
+      binding !== undefined &&
+      !binding.mutable &&
+      binding.initializers.length === 1 &&
+      binding.referenceInitializers.length === 0 &&
+      binding.escapedPaths.length === 0 &&
+      binding.initializers[0]?.projection.length === 0 &&
+      semanticBindingAtRead(binding, node, state).hasDefiniteInitializer
+    ) {
+      return objectAssignTargetAllowsOverwrite(
+        binding.initializers[0].node,
+        choice,
+        state,
+        interop,
+        nextVisited,
+      );
+    }
+  }
+  return false;
+};
+
+const definiteObjectAssignSourceKeys = (
+  expr: t.Node,
+  state: JavaScriptSemanticAnalysisState,
+  interop: ReturnType<typeof createSemanticModuleInterop>,
+  visited: ReadonlySet<t.Node> = new Set(),
+): ReadonlySet<string> => {
+  const unfrozen = unwrapUnmodifiedObjectFreezeArgument(expr, state) ?? expr;
+  const node = unwrapJavaScriptExpression(unfrozen).node;
+  if (visited.has(node)) return new Set();
+  const nextVisited = new Set(visited);
+  nextVisited.add(node);
+  if (t.isObjectExpression(node)) {
+    const keys = new Set<string>();
+    for (const prop of node.properties) {
+      if (t.isSpreadElement(prop)) {
+        for (const spreadKey of definiteObjectAssignSourceKeys(
+          prop.argument,
+          state,
+          interop,
+          nextVisited,
+        ))
+          keys.add(spreadKey);
+        continue;
+      }
+      const name = semanticStaticPropertyKey(prop.key, prop.computed);
+      if (
+        name !== null &&
+        !(
+          t.isObjectProperty(prop) &&
+          !prop.computed &&
+          !prop.shorthand &&
+          name === "__proto__"
+        )
+      )
+        keys.add(name);
+    }
+    return keys;
+  }
+  if (t.isConditionalExpression(node)) {
+    const consequentKeys = definiteObjectAssignSourceKeys(
+      node.consequent,
+      state,
+      interop,
+      nextVisited,
+    );
+    const alternateKeys = definiteObjectAssignSourceKeys(
+      node.alternate,
+      state,
+      interop,
+      nextVisited,
+    );
+    return new Set([...consequentKeys].filter((k) => alternateKeys.has(k)));
+  }
+  if (t.isSequenceExpression(node)) {
+    const last = node.expressions.at(-1);
+    return last === undefined
+      ? new Set()
+      : definiteObjectAssignSourceKeys(last, state, interop, nextVisited);
+  }
+  if (
+    t.isIdentifier(node) &&
+    !semanticResolutionBlocked(state, node, node.name)
+  ) {
+    const binding = resolveSemanticBindingState(state, node, node.name);
+    if (
+      binding !== undefined &&
+      !binding.mutable &&
+      binding.initializers.length === 1 &&
+      binding.referenceInitializers.length === 0 &&
+      binding.memberWrites.length === 0 &&
+      binding.escapedPaths.length === 0 &&
+      binding.initializers[0]?.projection.length === 0 &&
+      semanticBindingAtRead(binding, node, state).hasDefiniteInitializer
+    )
+      return definiteObjectAssignSourceKeys(
+        binding.initializers[0].node,
+        state,
+        interop,
+        nextVisited,
+      );
+  }
+  if (t.isCallExpression(node) || t.isOptionalCallExpression(node)) {
+    const inv = interop.intrinsicInvocation(node);
+    if (
+      inv?.kind === "known" &&
+      inv.path.join(".") === "intrinsic.Object.assign"
+    ) {
+      const args = inv.arguments ?? [];
+      if (args.length === 0) return new Set();
+      const [innerTarget, ...innerSources] = args;
+      if (innerTarget === undefined || t.isSpreadElement(innerTarget))
+        return new Set();
+      const keys = new Set<string>(
+        definiteObjectAssignSourceKeys(
+          innerTarget,
+          state,
+          interop,
+          nextVisited,
+        ),
+      );
+      if (
+        objectAssignTargetAllowsOverwrite(
+          innerTarget,
+          null,
+          state,
+          interop,
+          nextVisited,
+        )
+      ) {
+        for (const innerSrc of innerSources)
+          if (t.isExpression(innerSrc))
+            for (const srcKey of definiteObjectAssignSourceKeys(
+              innerSrc,
+              state,
+              interop,
+              nextVisited,
+            ))
+              keys.add(srcKey);
+      }
+      return keys;
+    }
+  }
+  return new Set();
+};
+
+const inactiveDefaultNodesForBinding = (
+  bindingId: string,
+  callFrame: ElectronMemberWriteCallFrame | undefined,
+): ReadonlySet<t.Node> | undefined => {
+  for (let frame = callFrame; frame !== undefined; frame = frame.parentFrame) {
+    if (frame.parameterSources.has(bindingId))
+      return frame.inactiveDefaultNodes;
+  }
+  return undefined;
+};
+
 const enqueueFallbackBindingMemberWriteSources = (
   binding: JavaScriptSemanticBindingState,
   snapshot: JavaScriptSemanticBindingState,
   node: t.Identifier,
   current: ElectronMemberWriteCandidate,
+  inactiveDefaults: ReadonlySet<t.Node> | undefined,
   state: JavaScriptSemanticAnalysisState,
   pending: ElectronMemberWriteCandidate[],
 ): void => {
   for (const source of snapshot.initializers) {
+    if (inactiveDefaults?.has(source.node)) continue;
     if (semanticReferenceSourcesInactive(source, state)) continue;
     pending.push({
       node: source.node,
@@ -2258,6 +3097,7 @@ const enqueueFallbackBindingMemberWriteSources = (
   }
   const [key, ...remaining] = current.suffix;
   for (const source of snapshot.referenceInitializers) {
+    if (inactiveDefaults?.has(source.node)) continue;
     if (semanticReferenceSourcesInactive(source, state)) continue;
     for (const choice of key === undefined
       ? [undefined]
@@ -2522,6 +3362,10 @@ const electronMemberWriteExports = (
       current.readAt ?? node,
       capturedSelections,
     );
+    const inactiveDefaults = inactiveDefaultNodesForBinding(
+      binding.bindingId,
+      current.callFrame,
+    );
     enqueueCallFrameParameterMatches(
       binding,
       bindingRead.hasDefiniteInitializer,
@@ -2532,7 +3376,8 @@ const electronMemberWriteExports = (
     );
     const projected = projectedFacts?.sources;
     if (projected !== undefined) {
-      for (const source of projected)
+      for (const source of projected) {
+        if (inactiveDefaults?.has(source.node)) continue;
         enqueue({
           node: source.node,
           suffix: source.path,
@@ -2550,6 +3395,7 @@ const electronMemberWriteExports = (
           iteratedElementDepths: current.iteratedElementDepths,
           callFrame: current.callFrame,
         });
+      }
       continue;
     }
     enqueueFallbackBindingMemberWriteSources(
@@ -2557,6 +3403,7 @@ const electronMemberWriteExports = (
       snapshot,
       node,
       current,
+      inactiveDefaults,
       state,
       nextPending,
     );

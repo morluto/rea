@@ -949,3 +949,72 @@ it("tracks member overwrites through returned properties and wrapped objects whi
     }),
   ]);
 });
+
+it("preserves Electron exports across fresh Array.from mappers, overwritten Object.assign sources, and unused parameter defaults while invalidating active defaults and surviving copies", () => {
+  const source = `
+      const { contextBridge, ipcRenderer } = require("electron");
+      function empty() { return {}; }
+      const mappers = { empty };
+      function pick(x = ipcRenderer, { nested = ipcRenderer } = { nested: {} }) {
+        return { x, nested };
+      }
+      function pickFallback(x = ipcRenderer) { return x; }
+
+      const mappedFresh = Array.from([ipcRenderer], mappers.empty);
+      mappedFresh[0].invoke = () => 0;
+
+      const overwrittenAssign = Object.assign({}, { ipc: ipcRenderer }, { ipc: {} });
+      overwrittenAssign.ipc.send = () => 0;
+
+      const unusedDefault = pick({});
+      unusedDefault.x.sendToHost = () => 0;
+      unusedDefault.nested.invoke = () => 0;
+
+      const activeDefault = pickFallback();
+      activeDefault.sendSync = () => 0;
+
+      const survivingAssign = Object.assign({}, { ipc: ipcRenderer }, { other: {} });
+      survivingAssign.ipc.postMessage = () => 0;
+
+      contextBridge.exposeInMainWorld("api", {
+        intactInvoke: () => ipcRenderer.invoke("real-invoke"),
+        intactSend: () => ipcRenderer.send("real-send"),
+        intactHost: () => ipcRenderer.sendToHost("real-host"),
+        overwrittenDefault: () => ipcRenderer.sendSync("fake-sync"),
+        overwrittenAssign: () => ipcRenderer.postMessage("fake-post"),
+      });
+    `;
+  const parsed = parseJavaScriptSource(source, "preload.cjs");
+  if (parsed === null) throw new Error("Expected CommonJS parse");
+  const analysis = analyzeParsedJavaScriptStaticSource(source, parsed);
+
+  expect(analysis.parse_status).toBe("complete");
+  expect(analysis.electron.ipc.map(({ channel }) => channel)).toEqual([
+    "real-invoke",
+    "real-send",
+    "real-host",
+  ]);
+  const bridgeCalls = (analysis.electron.call_paths ?? []).filter(
+    ({ entry_kind }) => entry_kind === "bridge-member",
+  );
+  expect(bridgeCalls).toEqual([
+    expect.objectContaining({
+      entry_kind: "bridge-member",
+      entry: "api.intactHost",
+      channel: "real-host",
+      terminal: "electron.ipcRenderer.sendToHost",
+    }),
+    expect.objectContaining({
+      entry_kind: "bridge-member",
+      entry: "api.intactInvoke",
+      channel: "real-invoke",
+      terminal: "electron.ipcRenderer.invoke",
+    }),
+    expect.objectContaining({
+      entry_kind: "bridge-member",
+      entry: "api.intactSend",
+      channel: "real-send",
+      terminal: "electron.ipcRenderer.send",
+    }),
+  ]);
+});
