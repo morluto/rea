@@ -16,6 +16,8 @@ import { PeImportsService } from "../application/binaryDiagnostics/PeImportsServ
 import { PeImportsProvider } from "../native/pe/PeImportsProvider.js";
 import { PeRichHeaderService } from "../application/binaryDiagnostics/PeRichHeaderService.js";
 import { PeRichHeaderProvider } from "../native/pe/PeRichHeaderProvider.js";
+import { WindowsShortcutService } from "../application/binaryDiagnostics/WindowsShortcutService.js";
+import { WindowsShortcutProvider } from "../native/windows/WindowsShortcutProvider.js";
 import { ElfNotesService } from "../application/binaryDiagnostics/ElfNotesService.js";
 import { ElfNotesProvider } from "../native/elf/ElfNotesProvider.js";
 import { AppleIpsService } from "../application/binaryDiagnostics/AppleIpsService.js";
@@ -48,6 +50,10 @@ export const createPeImportsService = (): PeImportsService =>
 /** Portable PE Rich header inspection with no engine or Visual Studio installation. */
 export const createPeRichHeaderService = (): PeRichHeaderService =>
   new PeRichHeaderService(new PeRichHeaderProvider());
+
+/** Portable Shell Link inspection with no COM, engine or target resolution. */
+export const createWindowsShortcutService = (): WindowsShortcutService =>
+  new WindowsShortcutService(new WindowsShortcutProvider());
 
 /** Portable PE/ELF export tables with no engine, toolchain or target acquisition. */
 export const createNativeExportsService = (): NativeExportsService =>
