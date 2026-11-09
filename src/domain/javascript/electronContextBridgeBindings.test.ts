@@ -556,7 +556,7 @@ it("rejects TDZ read-before-init, uninvoked parameters, shadowed bindings, and c
       api_key: "ClassicObj",
       api_status: "dynamic",
       members: ["bridgeObj"],
-      unknown_members: 0,
+      unknown_members: 1,
     },
   ]);
   expect(
@@ -1114,5 +1114,112 @@ it("recovers nested symbolic bridge members for TypeScript-wrapped inline contex
       channel: "cts:ping",
       terminal: "electron.ipcRenderer.invoke",
     }),
+  ]);
+});
+
+it("marks contextBridge getter and setter accessors as dynamic with unknown_members while keeping object methods complete", () => {
+  const accessorAnalysis = analyzeJavaScriptStaticSource(`
+      import { contextBridge, ipcRenderer } from "electron";
+
+      const makeNested = () => ({ hidden: () => ipcRenderer.invoke("hidden:call") });
+      const getterApi = {
+        get nested() {
+          return makeNested();
+        },
+      };
+      const accessorPairApi = {
+        get pair() {
+          return makeNested();
+        },
+        set pair(_value: unknown) {},
+      };
+
+      contextBridge.exposeInMainWorld("getterApi", getterApi);
+      contextBridge.exposeInMainWorld("accessorPairApi", accessorPairApi);
+    `);
+
+  expect(accessorAnalysis.parse_status).toBe("partial");
+  expect(accessorAnalysis.electron.context_bridge_apis).toMatchObject([
+    {
+      api_key: "getterApi",
+      api_status: "dynamic",
+      members: ["nested"],
+      unknown_members: 1,
+    },
+    {
+      api_key: "accessorPairApi",
+      api_status: "dynamic",
+      members: ["pair"],
+      unknown_members: 1,
+    },
+  ]);
+
+  const methodAnalysis = analyzeJavaScriptStaticSource(`
+      import { contextBridge, ipcRenderer } from "electron";
+
+      const methodApi = {
+        ping() {
+          return ipcRenderer.invoke("method:ping");
+        },
+      };
+
+      contextBridge.exposeInMainWorld("methodApi", methodApi);
+    `);
+
+  expect(methodAnalysis.parse_status).toBe("complete");
+  expect(methodAnalysis.electron.context_bridge_apis).toMatchObject([
+    {
+      api_key: "methodApi",
+      api_status: "object-literal",
+      members: ["ping"],
+      unknown_members: 0,
+    },
+  ]);
+});
+
+it("preserves copy-time identities across Object.values and Array.from, tagged-template defaults, and unresolved callables", () => {
+  const source = `
+      const { contextBridge, ipcRenderer } = require("electron");
+
+      const src = { ipc: {} };
+      const vals = Object.values(src);
+      src.ipc = ipcRenderer;
+      vals[0].invoke = () => 0;
+
+      const xs = [{}];
+      const directCopy = Array.from(xs);
+      const mappedCopy = Array.from(xs, (item) => item);
+      xs[0] = ipcRenderer;
+      directCopy[0].send = () => 0;
+      mappedCopy[0].sendToHost = () => 0;
+
+      function tag(_strings, fallback = ipcRenderer) {
+        return fallback;
+      }
+      const taggedDefined = tag\`\${{}}\`;
+      taggedDefined.postMessage = () => 0;
+
+      const pick = globalThis.pick || (() => ({}));
+      const picked = pick(ipcRenderer);
+      picked.sendSync = () => 0;
+
+      contextBridge.exposeInMainWorld("api", {
+        intactInvoke: () => ipcRenderer.invoke("real-invoke"),
+        intactSend: () => ipcRenderer.send("real-send"),
+        intactHost: () => ipcRenderer.sendToHost("real-host"),
+        intactPost: () => ipcRenderer.postMessage("real-post", "*"),
+        overwrittenSync: () => ipcRenderer.sendSync("fake-sync"),
+      });
+    `;
+  const parsed = parseJavaScriptSource(source, "preload.cjs");
+  if (parsed === null) throw new Error("Expected CommonJS parse");
+  const analysis = analyzeParsedJavaScriptStaticSource(source, parsed);
+
+  expect(analysis.parse_status).toBe("complete");
+  expect(analysis.electron.ipc.map(({ channel }) => channel)).toEqual([
+    "real-invoke",
+    "real-send",
+    "real-host",
+    "real-post",
   ]);
 });

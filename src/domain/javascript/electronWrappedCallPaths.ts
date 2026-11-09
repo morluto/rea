@@ -899,6 +899,14 @@ export function* collectElectronWrappedCallPathsSteps(
             !variant.conditions?.length
           )
             visit(variant, path, prefixDepth + 1, pathBytes, shared);
+          else if (
+            variant.kind === "unknown" ||
+            ((variant.kind === "object" ||
+              variant.kind === "record" ||
+              variant.kind === "namespace") &&
+              Boolean(variant.conditions?.length))
+          )
+            unknown += 1;
         if (remainingVisits < 0) return;
       }
     };

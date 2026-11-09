@@ -283,11 +283,11 @@ const collectMembersAt = (
     if (gated) budget.remainingBytes -= pathBytes;
     const path = prefixDepth === 0 ? name : `${prefixPath}.${name}`;
     state.members.push(path);
-    if (
-      !t.isObjectProperty(property) ||
-      effective.lastDynamicOrSpreadIndex > index
-    )
+    if (effective.lastDynamicOrSpreadIndex > index) continue;
+    if (!t.isObjectProperty(property)) {
+      if (property.kind !== "method") state.unknown += 1;
       continue;
+    }
     if (resolveNestedProperty !== undefined) {
       const nested = resolveNestedProperty(property.value, activeNodes);
       if (nested.kind === "object")
