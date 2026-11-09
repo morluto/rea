@@ -55,14 +55,8 @@ it.each([
   expect(spawnsFor(call)).toHaveLength(1);
 });
 
-/**
- * `cwd` and `argv0` must be a string when they are supplied at all.
- *
- * Measured on Node 24.22.1: `{cwd: 5}`, `{cwd: true}`, `{cwd: {}}`, `{cwd: []}` and
- * `{cwd: 0}` throw `ERR_INVALID_ARG_TYPE` on `spawn`, `fork`, `execFile` and `exec` alike,
- * while `{cwd: "/tmp"}` and `{cwd: null}` start a child. `argv0` behaves the same way.
- * `env` is not in the set: Node accepts any `env` value.
- */
+// Invalid literal paths and argv0 values fail before child creation. Unknown
+// constructor results are covered separately and must retain their candidates.
 it.each([
   [`cp.spawn("x", [], { cwd: 5 })`],
   [`cp.spawn("x", [], { cwd: true })`],
@@ -99,15 +93,7 @@ it.each([
   expect(spawnsFor(call)).toHaveLength(1);
 });
 
-/**
- * `cwd` is a path, so Node also accepts a byte array or a file `URL` there, while `argv0`
- * is an argument string only.
- *
- * Measured on Node 24.22.1: `{cwd: new Uint8Array([47, 116, 109, 112])}` and
- * `{cwd: new Buffer("/tmp")}` start a child on all four methods, while the same
- * constructors throw `ERR_INVALID_ARG_TYPE` for `argv0`. `new URL("file:///tmp/")` throws
- * `ERR_INVALID_FILE_URL_PATH` on Windows, so a `URL` context stays undecided here.
- */
+// Constructor names cannot establish the returned cwd value or its validity.
 it.each([
   [`cp.spawn("x", [], { cwd: new Uint8Array([47, 116, 109, 112]) })`],
   [`cp.spawn("x", [], { cwd: new Buffer("/tmp") })`],
@@ -117,7 +103,7 @@ it.each([
     `class DirectoryURL { constructor() { return new URL("file:///tmp/"); } }; cp.spawn("x", [], { cwd: new DirectoryURL() })`,
   ],
   [`cp.spawn("x", [], { cwd: new Foo("/tmp") })`],
-] as const)("keeps the spawn for a path-shaped cwd: %s", (call) => {
+] as const)("keeps unresolved cwd constructor candidates: %s", (call) => {
   expect(spawnsFor(call)).toHaveLength(1);
 });
 
