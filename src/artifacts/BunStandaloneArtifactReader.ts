@@ -11,7 +11,10 @@ import type {
 import { jsonValueByteLength } from "../domain/jsonValueByteLength.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import { readFileHandleChunks } from "../filesystem/readFileHandleChunks.js";
-import { assertArtifactReadActive } from "./ArtifactFileOperation.js";
+import {
+  artifactReadCancelledBy,
+  assertArtifactReadActive,
+} from "./ArtifactFileOperation.js";
 import {
   normalizeArtifactPath,
   ArtifactPathRegistry,
@@ -53,11 +56,16 @@ interface BunModuleDestination {
 export class BunStandaloneArtifactReader implements ArtifactReader {
   readonly format = "bun-standalone" as const;
   readonly #scope = new ArtifactResourceScope();
-  readonly #entries = new Map<string, ArtifactEntry>();
+  #entries = new Map<string, ArtifactEntry>();
   readonly #streams = new Set<Readable>();
   readonly #source: ArtifactFileSource;
   #admission: BunStandaloneAdmission | undefined;
-  #prepared: Promise<void> | undefined;
+  #prepared:
+    | {
+        readonly signal: AbortSignal | undefined;
+        readonly promise: Promise<void>;
+      }
+    | undefined;
   #header: BunStandaloneMetadata | undefined;
   #closing = false;
 
@@ -96,8 +104,27 @@ export class BunStandaloneArtifactReader implements ArtifactReader {
   ): AsyncIterable<ArtifactEntry> {
     await this.#scope.run(async () => {
       this.#assertOpen(signal);
-      this.#prepared ??= this.#prepare(signal);
-      await this.#prepared;
+      for (;;) {
+        const pending = (this.#prepared ??= {
+          signal,
+          promise: this.#prepare(signal),
+        });
+        try {
+          await pending.promise;
+          break;
+        } catch (cause: unknown) {
+          if (this.#prepared === pending) this.#prepared = undefined;
+          if (
+            pending.signal !== signal &&
+            signal?.aborted !== true &&
+            artifactReadCancelledBy(cause, pending.signal)
+          ) {
+            this.#assertOpen(signal);
+            continue;
+          }
+          throw cause;
+        }
+      }
       await this.#source.readSelectedPath(signal);
     });
     let index = 0;
@@ -239,6 +266,7 @@ export class BunStandaloneArtifactReader implements ArtifactReader {
     let retainedBytes = jsonValueByteLength(header, MAX_BUN_RETAINED_BYTES);
     if (retainedBytes > MAX_BUN_RETAINED_BYTES)
       throw bunMetadataBytesLimit(retainedBytes);
+    const entries = new Map<string, ArtifactEntry>();
     let declaredPlaintext = 0n;
     const expansionBudget = BigInt(
       artifactExpansionBudgetBytes(located.graph.payloadLength),
@@ -277,11 +305,12 @@ export class BunStandaloneArtifactReader implements ArtifactReader {
         );
         if (retainedBytes > MAX_BUN_RETAINED_BYTES)
           throw bunMetadataBytesLimit(retainedBytes);
-        this.#entries.set(entry.adapterKey, entry);
+        entries.set(entry.adapterKey, entry);
       }
     }
     await this.#source.readSelectedPath(signal);
     this.#assertOpen(signal);
+    this.#entries = entries;
     this.#header = header;
     this.#admission = undefined;
   }
