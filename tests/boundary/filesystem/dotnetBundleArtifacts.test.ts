@@ -268,6 +268,27 @@ it.each([
     "format",
   ],
   ["truncated", () => dotnetBundleFixture().bytes.subarray(0, -2), "format"],
+  ...(
+    [
+      ["count", 8],
+      ["config-offset", 26],
+      ["member-size", 74],
+    ] as const
+  ).map(
+    ([field, offset]) =>
+      [
+        `negative ${field}`,
+        () => {
+          const fixture = dotnetBundleFixture();
+          if (field === "count")
+            fixture.bytes.writeInt32LE(-1, fixture.headerOffset + offset);
+          else
+            fixture.bytes.writeBigInt64LE(-1n, fixture.headerOffset + offset);
+          return fixture.bytes;
+        },
+        "format",
+      ] as const,
+  ),
   [
     "unknown version",
     () => dotnetBundleFixture(undefined, 7).bytes,
