@@ -191,7 +191,7 @@ describes this file only and does not establish that a separate debug file is
 absent. Partial coverage includes a declared `.debug_info` that was not read,
 such as an undecodable section or a `.dwo` object. A present `.gnu_debuglink` is named and not decoded. Child DIEs,
 types, line tables, and location expressions are not read. See
-[DWARF compile units](https://github.com/morluto/rea/blob/main/docs/dwarf-units.md).
+[DWARF compile units](https://github.com/morluto/rea/blob/main/docs/guides/native/dwarf-units.md).
 
 ## Apple IPS crash reports
 

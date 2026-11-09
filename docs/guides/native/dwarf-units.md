@@ -71,5 +71,5 @@ unresolved. The abbreviation offset selects a table only when `.debug_abbrev`
 holds one table. Otherwise, as in `ld -r` output, `abbrev_offset` is null, the
 unit reports `unapplied_relocation`, and its DIE is not read.
 
-The [verification record](verification/dwarf-units-2026-10-31.md) lists the
+The [verification record](../../verification/dwarf-units-2026-10-31.md) lists the
 compiled variants compared with a DWARF dumper.

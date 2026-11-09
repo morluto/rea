@@ -520,7 +520,7 @@ export const documentationSections = [
       },
       {
         text: "DWARF compile units",
-        source: "dwarf-units.md",
+        source: "guides/native/dwarf-units.md",
         route: "/dwarf-units",
       },
       {

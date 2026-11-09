@@ -305,7 +305,7 @@ explicit path or endpoint and do not need it.
   applies to this file only. Per-unit gaps stay in `issues`. Child DIEs, types,
   line tables, and location expressions are not read. Universal Mach-O
   requires `architecture`. See the
-  [DWARF compile units guide](https://github.com/morluto/rea/blob/main/docs/dwarf-units.md).
+  [DWARF compile units guide](https://github.com/morluto/rea/blob/main/docs/guides/native/dwarf-units.md).
 - Apple `.ips` crash reports: `inspect_apple_ips` with the explicit local
   file. This built-in target-free inspection requires no Xcode, atos, or
   pwntools. Preserve first-line metadata, `bug_type` as a string, process and

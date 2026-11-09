@@ -461,7 +461,7 @@ the source file, compilation directory, producer, language, and `dwo_name`.
 `offset` and `limit` page the units. Absent `.debug_info` describes this file
 only, and a declared section that could not be decoded is partial coverage. Pass `--architecture` for a universal Mach-O. A `.dSYM` bundle is not
 opened; pass the DWARF file inside it. See
-[DWARF compile units](dwarf-units.md).
+[DWARF compile units](../guides/native/dwarf-units.md).
 
 Inspect an Apple `.ips` crash report without executing a target:
 
