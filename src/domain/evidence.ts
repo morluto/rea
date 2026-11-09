@@ -88,8 +88,12 @@ const executionEnvironmentSchema = z.strictObject({
 });
 const callerInputPathsSchema = z.record(
   nulFreeStringSchema,
-  nulFreeStringSchema,
+  z.union([nulFreeStringSchema, z.array(nulFreeStringSchema)]),
 );
+/** Caller-selected auxiliary paths, retaining ordered repeated options. */
+export type CallerInputPaths = Readonly<
+  Record<string, string | readonly string[]>
+>;
 
 const evidenceBaseSchema = z
   .object({
@@ -107,7 +111,7 @@ const evidenceBaseSchema = z
     caller_input_paths: callerInputPathsSchema
       .exactOptional()
       .describe(
-        "Verbatim auxiliary input paths keyed by argument name; caller assertions outside semantic identity.",
+        "Verbatim auxiliary input paths keyed by argument name; repeated selections retain their order. Caller assertions are outside semantic identity.",
       ),
     raw_result: jsonValueSchema.nullable(),
     normalized_result: jsonValueSchema,
@@ -375,7 +379,7 @@ export const rebindEvidenceToTargetPath = (
 export const withEvidenceCallerInputPath = (
   evidence: Evidence,
   rawPath: string,
-  additionalPaths?: Readonly<Record<string, string>>,
+  additionalPaths?: CallerInputPaths,
 ): Evidence => {
   const callerInputPath = nulFreeStringSchema.parse(rawPath);
   const owned = immutableEvidence(evidence);
