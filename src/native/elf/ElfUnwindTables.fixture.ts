@@ -18,6 +18,8 @@ export const UNWIND_DUPLICATE_VA = 0x405000;
 export const UNWIND_CAP_SYMTAB_ENTRIES = 40000;
 /** `.dynsym` entries in the combined symbol-cap fixture; `alpha` is last. */
 export const UNWIND_CAP_DYNSYM_ENTRIES = 30000;
+/** First start of the `suffixNames` FDEs, 4 bytes apart. */
+export const UNWIND_SUFFIX_VA = 0x410000;
 
 export interface ElfUnwindFixtureOptions {
   readonly bits?: 32 | 64;
@@ -106,6 +108,14 @@ export interface ElfUnwindFixtureOptions {
    * `UNWIND_FN_A`, all naming one `bytes`-byte string.
    */
   readonly sharedName?: { readonly symbols: number; readonly bytes: number };
+  /**
+   * Append this many 4-byte FDEs from `UNWIND_SUFFIX_VA`, each named by a
+   * distinct suffix of one 65535-byte string, so the names are long and
+   * pairwise different.
+   */
+  readonly suffixNames?: number;
+  /** Append this many `S` letters to the first CIE's augmentation. */
+  readonly longAugmentation?: number;
 }
 
 class Writer {
@@ -287,6 +297,8 @@ const buildUnwindFrame = (
     };
     readonly indirectStart?: boolean;
     readonly nullPersonality?: boolean;
+    readonly suffixFdes?: number;
+    readonly longAugmentation?: number;
   },
 ): BuiltFrame => {
   const w = new Writer(little);
@@ -316,13 +328,7 @@ const buildUnwindFrame = (
   w.u32(0);
   w.u8(options.version3 ? 3 : 1);
   w.bytes(
-    unknown
-      ? options.signalFrame
-        ? "zXRS\0"
-        : "zXR\0"
-      : options.signalFrame
-        ? "zRS\0"
-        : "zR\0",
+    `${unknown ? "zXR" : "zR"}${options.signalFrame ? "S" : ""}${"S".repeat(options.longAugmentation ?? 0)}\0`,
   );
   w.uleb(1);
   w.sleb(-4);
@@ -407,6 +413,8 @@ const buildUnwindFrame = (
     end(cie);
   }
 
+  writeSuffixFdes(w, cie0, ehVa, options.suffixFdes ?? 0);
+
   const finished = options.truncate ? fdeOffsets[1]! + 4 : w.length;
   if (!options.truncate) w.u32(0);
   if (options.trailingByte && !options.truncate) w.u8(1);
@@ -414,6 +422,25 @@ const buildUnwindFrame = (
     ? Buffer.from(w.finish().subarray(0, finished))
     : w.finish();
   return { bytes, fdeOffsets };
+};
+
+/** 4-byte FDEs from `UNWIND_SUFFIX_VA` under the CIE at `cie`. */
+const writeSuffixFdes = (
+  w: Writer,
+  cie: number,
+  ehVa: number,
+  count: number,
+): void => {
+  for (let index = 0; index < count; index += 1) {
+    const at = w.length;
+    w.u32(0);
+    w.u32(w.length - cie);
+    w.i32(UNWIND_SUFFIX_VA + index * 4 - (ehVa + w.length));
+    w.i32(4);
+    w.uleb(0);
+    w.u8(0);
+    w.patchU32(at, w.length - (at + 4));
+  }
 };
 
 /** Search-table rows as `[initial location, FDE index]`. */
@@ -537,6 +564,36 @@ const buildSharedNameSymbolTable = (
     const at = index * width;
     const value = UNWIND_FN_A + (index - 1) * 2;
     write32(symbols, at, 1, little);
+    if (bits === 64) {
+      symbols[at + 4] = 0x12;
+      write16(symbols, at + 6, 1, little);
+      writeWord(symbols, at + 8, value, bits, little);
+    } else {
+      writeWord(symbols, at + 4, value, bits, little);
+      symbols[at + 12] = 0x12;
+      write16(symbols, at + 14, 1, little);
+    }
+  }
+  return { symbols, strings };
+};
+
+/** One function symbol per `suffixNames` FDE, each at its own name suffix. */
+const buildSuffixNameSymbolTable = (
+  bits: 32 | 64,
+  little: boolean,
+  count: number,
+): { readonly symbols: Buffer; readonly strings: Buffer } => {
+  const strings = Buffer.concat([
+    Buffer.from([0]),
+    Buffer.alloc(65535, "s"),
+    Buffer.from([0]),
+  ]);
+  const width = bits === 64 ? 24 : 16;
+  const symbols = Buffer.alloc(width * (count + 1));
+  for (let index = 0; index < count; index += 1) {
+    const at = (index + 1) * width;
+    const value = UNWIND_SUFFIX_VA + index * 4;
+    write32(symbols, at, 1 + index, little);
     if (bits === 64) {
       symbols[at + 4] = 0x12;
       write16(symbols, at + 6, 1, little);
@@ -724,6 +781,8 @@ export const elfUnwindFixture = (
         extraCies: options.extraCies ?? 0,
         indirectStart: options.indirectStart ?? false,
         nullPersonality: options.nullPersonality ?? false,
+        suffixFdes: options.suffixNames ?? 0,
+        longAugmentation: options.longAugmentation ?? 0,
         ...(options.unsignedPcrel === undefined
           ? {}
           : { unsignedPcrel: { ...options.unsignedPcrel, bits } }),
@@ -745,7 +804,9 @@ export const elfUnwindFixture = (
       ? null
       : options.sharedName !== undefined
         ? buildSharedNameSymbolTable(bits, little, options.sharedName)
-        : buildSymbolTable(bits, little);
+        : options.suffixNames !== undefined
+          ? buildSuffixNameSymbolTable(bits, little, options.suffixNames)
+          : buildSymbolTable(bits, little);
   const debug =
     options.debugFrame === false || !unwind ? null : Buffer.alloc(4);
   const sections: SectionSpec[] = [

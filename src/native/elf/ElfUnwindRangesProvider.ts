@@ -35,7 +35,10 @@ import {
   BinaryFormatFailure,
   BinaryResourceFailure,
 } from "../metadata/BinaryContainer.js";
-import { parseElfUnwindRanges } from "./ElfUnwindTables.js";
+import {
+  ElfUnwindSymbolTextFailure,
+  parseElfUnwindRanges,
+} from "./ElfUnwindTables.js";
 
 const OPERATION = "inspect_elf_unwind_ranges";
 
@@ -105,6 +108,19 @@ const elfUnwindFailurePrimary = (
   input: InspectElfUnwindRangesInput,
 ) => {
   const { cause, origin } = facts;
+  // The page's symbol-name text allowance is fixed; only a smaller page avoids it.
+  if (cause instanceof ElfUnwindSymbolTextFailure)
+    return new AnalysisResourceConstraintError(
+      OPERATION,
+      "capacity",
+      cause.message,
+      { limit: input.limit, maximum_bytes: cause.maximumBytes },
+      {
+        cause,
+        retryable: false,
+        remediationAction: `Request a smaller limit than ${String(input.limit)}, or page with offset; the ${String(cause.maximumBytes)}-byte symbol-name text allowance is fixed, and max_ranges and max_file_bytes do not raise it.`,
+      },
+    );
   if (cause instanceof BinaryResourceFailure)
     return new AnalysisResourceConstraintError(
       OPERATION,

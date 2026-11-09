@@ -104,6 +104,9 @@ pointers are not dereferenced. An FDE whose initial location is indirect names
 a pointer slot, not its function, so it is not reported as a range; a
 limitation counts those FDEs and coverage is `incomplete`. An indirect
 `eh_frame_ptr` does not locate `.eh_frame`, and the header is `incomplete`.
+A search table with an indirect encoding is not read: the header is
+`incomplete`, the comparison is `unavailable`, and the table does not bound a
+header-located `.eh_frame`.
 
 An encoded pointer whose stored value is zero is a null pointer, as libgcc
 reads it: no PC-relative, text, data, or function base is added and an
@@ -158,8 +161,9 @@ partial success. One page returns at most 4096 ranges. Symbol lookup stops
 after 65536 entries across `.symtab` and `.dynsym` combined. Reaching that
 cap keeps `coverage.status` at `incomplete`. Only symbols at decoded FDE
 starts are kept, and a name is decoded only for a returned range. The names
-on one page share a fixed 16 MiB text allowance; a page that exceeds it fails,
-and a smaller `limit` avoids it.
+on one page share a fixed 16 MiB text allowance; a page that exceeds it fails
+with a resource error whose recovery is a smaller `limit`, because
+`max_ranges` and `max_file_bytes` do not raise it.
 
 Malformed ELF headers fail without partial success. This workflow does not
 execute the image, evaluate CFA programs, or follow indirect pointers.

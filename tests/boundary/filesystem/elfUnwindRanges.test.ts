@@ -91,6 +91,34 @@ describe("ELF unwind range stable filesystem boundary", () => {
     }
   });
 
+  it("tells a caller over the symbol-name text allowance to request a smaller page", async () => {
+    const root = await createTestTempDirectory("rea-elf-unwind-names-");
+    const path = join(root, "program");
+    await writeFile(
+      path,
+      elfUnwindFixture({ header: "absent", suffixNames: 300 }),
+    );
+    const service = createElfUnwindRangesService();
+    try {
+      const result = await service.inspect({ path, limit: 300 });
+      if (result.ok) throw new Error("Expected symbol-name text failure");
+      expect(result.error).toMatchObject({
+        _tag: "AnalysisResourceConstraintError",
+        retryable: false,
+      });
+      const remediation =
+        "remediationAction" in result.error
+          ? result.error.remediationAction
+          : undefined;
+      expect(remediation).toContain("smaller limit than 300");
+      expect(remediation).not.toContain("Raise max_ranges");
+      const smaller = await service.inspect({ path, limit: 200 });
+      expect(smaller.ok).toBe(true);
+    } finally {
+      await service.close();
+    }
+  });
+
   it("returns typed resource and cancellation failures", async () => {
     const root = await createTestTempDirectory("rea-elf-unwind-budget-");
     const path = join(root, "program");

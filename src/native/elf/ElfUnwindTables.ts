@@ -25,6 +25,13 @@ import {
 } from "../metadata/NativeSectionDirectory.js";
 
 const DW_EH_PE_OMIT = 0xff;
+/** CIE augmentation letters, compared as bytes. */
+const AUG_Z = 0x7a;
+const AUG_L = 0x4c;
+const AUG_P = 0x50;
+const AUG_R = 0x52;
+const AUG_S = 0x53;
+const AUG_B = 0x42;
 const SHT_SYMTAB = 2;
 const SHT_DYNAMIC = 6;
 const SHT_NOBITS = 8;
@@ -75,6 +82,8 @@ const indirectFdeLimitation = (count: number): string =>
   count === 1
     ? "1 FDE has an indirect initial location that was not dereferenced; its function start is unknown and it was skipped."
     : `${String(count)} FDEs have indirect initial locations that were not dereferenced; their function starts are unknown and they were skipped.`;
+const INDIRECT_TABLE =
+  "The .eh_frame_hdr search table uses an indirect encoding that was not dereferenced; it was not compared with the decoded FDEs.";
 const INDIRECT_FRAME_POINTER =
   "The .eh_frame_hdr eh_frame_ptr is indirect and was not dereferenced, so it does not locate .eh_frame.";
 
@@ -108,7 +117,8 @@ interface Personality {
 interface CieRecord {
   readonly index: number;
   readonly version: 1 | 3;
-  readonly augmentation: { readonly text: string; readonly trust: "untrusted" };
+  /** Augmentation bytes before their NUL, decoded only for returned CIEs. */
+  readonly augmentation: Buffer;
   readonly code_alignment: number;
   readonly data_alignment: number;
   readonly return_address_register: number;
@@ -217,6 +227,21 @@ const placeSection = (
     };
   return { location: declared, problem: null };
 };
+
+/**
+ * Symbol names for one page exceeded their fixed text allowance. Unlike the
+ * record budgets, max_ranges does not raise it; a smaller page avoids it.
+ */
+export class ElfUnwindSymbolTextFailure extends Error {
+  readonly maximumBytes = MAX_ELF_UNWIND_SYMBOL_TEXT_BYTES;
+
+  constructor() {
+    super(
+      `ELF unwind symbol names on this page exceed the ${String(MAX_ELF_UNWIND_SYMBOL_TEXT_BYTES)}-byte symbol-name text allowance.`,
+    );
+    this.name = "ElfUnwindSymbolTextFailure";
+  }
+}
 
 /** Read .eh_frame/.eh_frame_hdr function ranges. Truncation stays incomplete. */
 export const parseElfUnwindRanges = (
@@ -824,6 +849,7 @@ export const parseElfUnwindRanges = (
       let undecoded = false;
       if (isCie) {
         const cie = decodeCie({
+          bytes,
           recordStart,
           recordEnd,
           body: body + idWidth,
@@ -1008,7 +1034,10 @@ export const parseElfUnwindRanges = (
     cies: pageCies.map((cie) => ({
       index: cie.index,
       version: cie.version,
-      augmentation: cie.augmentation,
+      augmentation: {
+        text: cie.augmentation.toString("latin1"),
+        trust: "untrusted" as const,
+      },
       code_alignment: cie.code_alignment,
       data_alignment: cie.data_alignment,
       return_address_register: cie.return_address_register,
@@ -1256,6 +1285,18 @@ const decodeHeader = (
       ehFramePointer: pointer.address,
     };
   }
+  // Indirect table entries name pointer slots, not starts or FDEs. They are
+  // not followed, so the table is neither compared nor used as a scan bound.
+  if ((tableEnc & 0x80) !== 0) {
+    fail(INDIRECT_TABLE);
+    return {
+      ...base,
+      version,
+      eh_frame_pointer: hex(pointer.address),
+      ehFramePointer: pointer.address,
+      fde_count: count,
+    };
+  }
   // The declared count is target-controlled: bound rows by the caller's
   // max_ranges budget and by how many rows the section bytes can hold before
   // allocating any, and report a capped table as incomplete.
@@ -1363,6 +1404,7 @@ const minimumEncodedBytes = (encoding: number, addressSize: 4 | 8): number => {
 };
 
 const decodeCie = (args: {
+  readonly bytes: Buffer;
   readonly recordStart: number;
   readonly recordEnd: number;
   readonly body: number;
@@ -1380,6 +1422,7 @@ const decodeCie = (args: {
   readonly fail: (text: string) => void;
 }): Omit<CieRecord, "index"> | "unknown-augmentation" | null => {
   const {
+    bytes,
     recordStart,
     recordEnd,
     body,
@@ -1398,14 +1441,15 @@ const decodeCie = (args: {
     return null;
   }
   let cursor = body + 1;
-  let augmentation = "";
-  while (cursor < recordEnd) {
-    const byte = readU8(cursor, recordEnd);
-    cursor += 1;
-    if (byte === null) break;
-    if (byte === 0) break;
-    augmentation += String.fromCharCode(byte);
-  }
+  // One bounded NUL search inside the record. The text stays a view of the
+  // record bytes, so a long target-controlled augmentation is never built up
+  // character by character.
+  const terminator = bytes.subarray(cursor, recordEnd).indexOf(0);
+  const augmentation = bytes.subarray(
+    cursor,
+    terminator < 0 ? recordEnd : cursor + terminator,
+  );
+  cursor = terminator < 0 ? recordEnd : cursor + terminator + 1;
   if (version !== 1 && version !== 3) {
     fail(`CIE version ${String(version)} is not decoded.`);
     return null;
@@ -1444,7 +1488,7 @@ const decodeCie = (args: {
     fail("A CIE return-address register does not fit an integer.");
     return null;
   }
-  const hasZ = augmentation.startsWith("z");
+  const hasZ = augmentation[0] === AUG_Z;
   let augEnd = cursor;
   if (hasZ) {
     const length = readLeb(cursor, recordEnd, false);
@@ -1469,9 +1513,9 @@ const decodeCie = (args: {
   let pointer = encodingOf(0);
   let signal = false;
   let bKey = false;
-  const letters = hasZ ? augmentation.slice(1) : augmentation;
+  const letters = hasZ ? augmentation.subarray(1) : augmentation;
   for (const letter of letters) {
-    if (letter === "L") {
+    if (letter === AUG_L) {
       const raw = readU8(cursor, hasZ ? augEnd : recordEnd);
       if (raw === null) {
         fail("A CIE augmentation is truncated.");
@@ -1479,7 +1523,7 @@ const decodeCie = (args: {
       }
       lsda = encodingOf(raw);
       cursor += 1;
-    } else if (letter === "P") {
+    } else if (letter === AUG_P) {
       const raw = readU8(cursor, hasZ ? augEnd : recordEnd);
       if (raw === null) {
         fail("A CIE augmentation is truncated.");
@@ -1501,7 +1545,7 @@ const decodeCie = (args: {
         indirect: encoded.indirect,
       };
       cursor = encoded.next;
-    } else if (letter === "R") {
+    } else if (letter === AUG_R) {
       const raw = readU8(cursor, hasZ ? augEnd : recordEnd);
       if (raw === null) {
         fail("A CIE augmentation is truncated.");
@@ -1509,8 +1553,8 @@ const decodeCie = (args: {
       }
       pointer = encodingOf(raw);
       cursor += 1;
-    } else if (letter === "S") signal = true;
-    else if (letter === "B") bKey = true;
+    } else if (letter === AUG_S) signal = true;
+    else if (letter === AUG_B) bKey = true;
     else {
       // The augmentation data length would let a z CIE skip unknown data, but
       // the encodings of letters after an unknown one cannot be located, so
@@ -1531,7 +1575,7 @@ const decodeCie = (args: {
   }
   return {
     version,
-    augmentation: { text: augmentation, trust: "untrusted" },
+    augmentation,
     code_alignment: codeAlignment,
     data_alignment: dataAlignment,
     return_address_register: returnAddress,
@@ -1803,11 +1847,7 @@ const symbolNameDecoder = (): ((name: SymbolName) => string) => {
     if (cached !== undefined) return cached;
     charged += name.contentBytes;
     if (charged > MAX_ELF_UNWIND_SYMBOL_TEXT_BYTES)
-      throw new ArtifactReaderFailure(
-        "limit",
-        `ELF unwind symbol names on this page exceed the ${String(MAX_ELF_UNWIND_SYMBOL_TEXT_BYTES)}-byte retained-text allowance; request a smaller limit.`,
-        { boundary: "capacity" },
-      );
+      throw new ElfUnwindSymbolTextFailure();
     const text = elfStringTableText(name) ?? "";
     decoded.set(name, text);
     return text;

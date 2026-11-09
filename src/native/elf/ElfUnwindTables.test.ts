@@ -6,7 +6,10 @@ import {
   elfUnwindRangesSchema,
   inspectElfUnwindRangesInputSchema,
 } from "../../domain/native/elfUnwindRanges.js";
-import { parseElfUnwindRanges } from "./ElfUnwindTables.js";
+import {
+  ElfUnwindSymbolTextFailure,
+  parseElfUnwindRanges,
+} from "./ElfUnwindTables.js";
 import {
   UNWIND_FN_A,
   UNWIND_FN_A_SIZE,
@@ -15,6 +18,7 @@ import {
   UNWIND_HDR_VA,
   UNWIND_LSDA,
   UNWIND_PERSONALITY,
+  UNWIND_SUFFIX_VA,
   elfUnwindAbsentFixture,
   elfUnwindFixture,
   elfUnwindSectionlessFixture,
@@ -930,5 +934,70 @@ it("reports coverage incomplete when a duplicate PT_GNU_EH_FRAME is ignored", ()
   expect(report.coverage.status).toBe("incomplete");
   expect(report.limitations).toContain(
     "Multiple PT_GNU_EH_FRAME program headers were declared; only the first was decoded.",
+  );
+});
+
+it("bounds the symbol-name text decoded for one page by its own allowance", () => {
+  const bytes = elfUnwindFixture({ header: "absent", suffixNames: 300 });
+  const page = parse(bytes, { limit: 200 });
+  expect(page.ranges).toHaveLength(200);
+  expect(page.ranges[2]).toMatchObject({
+    start: address(UNWIND_SUFFIX_VA),
+    symbol: { text: "s".repeat(65535) },
+  });
+  expect(() => parse(bytes, { limit: 300 })).toThrow(
+    ElfUnwindSymbolTextFailure,
+  );
+});
+
+it("reads a long CIE augmentation as one byte slice instead of building it per character", () => {
+  const letters = 1 << 20;
+  const bytes = elfUnwindFixture({
+    header: "match",
+    longAugmentation: letters,
+  });
+  const fromCharCode = vi.spyOn(String, "fromCharCode");
+  try {
+    const report = parse(bytes, { limit: 1 });
+    expect(report.cies[0]).toMatchObject({
+      augmentation: { text: `zRS${"S".repeat(letters)}` },
+      signal_frame: true,
+    });
+    expect(report.coverage.status).toBe("complete");
+    expect(fromCharCode.mock.calls.length).toBeLessThan(1000);
+  } finally {
+    fromCharCode.mockRestore();
+  }
+});
+
+it("does not compare or bound by an .eh_frame_hdr search table with an indirect encoding", () => {
+  const bytes = elfUnwindFixture({ header: "match" });
+  bytes[findSection(bytes, ".eh_frame_hdr").offset + 3] = 0xbb;
+  const report = parse(bytes);
+  expect(report.ranges.map((range) => range.start)).toEqual([
+    address(UNWIND_FN_A),
+    address(UNWIND_FN_B),
+  ]);
+  expect(report.eh_frame_hdr).toMatchObject({
+    status: "incomplete",
+    table_entries: 0,
+    fde_count: 2,
+  });
+  expect(report.coverage).toMatchObject({
+    status: "incomplete",
+    eh_frame_hdr_agreement: "unavailable",
+  });
+  expect(report.limitations).toContain(
+    "The .eh_frame_hdr search table uses an indirect encoding that was not dereferenced; it was not compared with the decoded FDEs.",
+  );
+
+  const sectionless = elfUnwindSectionlessFixture({
+    unterminated: "decodable",
+  });
+  sectionless[Number(sectionless.readBigUInt64LE(64 + 56 + 8)) + 3] = 0xbb;
+  const unbounded = parse(sectionless);
+  expect(unbounded.coverage.status).toBe("incomplete");
+  expect(unbounded.limitations).not.toContain(
+    "The .eh_frame located only through the .eh_frame_hdr eh_frame_ptr has no section bounds and no terminator after the last FDE its search table names; bytes after that FDE were not decoded.",
   );
 });

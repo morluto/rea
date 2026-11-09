@@ -46,8 +46,9 @@ these files.
    `.got`, and an unresolved base leaves the record out with coverage
    `incomplete`. Indirect pointers are not dereferenced: an FDE with an
    indirect initial location is skipped with a counted limitation, and an
-   indirect `eh_frame_ptr` does not locate `.eh_frame`. Both leave coverage
-   `incomplete`.
+   indirect `eh_frame_ptr` does not locate `.eh_frame`, and a search table
+   with an indirect encoding is neither compared nor used as a scan bound.
+   Each leaves coverage `incomplete`.
 5. A 64-bit extended length keeps the `.eh_frame` CIE ID and pointer at 4
    bytes.
 6. An FDE with a zero initial location is a discarded function. It is counted
@@ -60,7 +61,7 @@ these files.
 9. Budgets bound the file size, CIE and FDE counts, page size and the symbol
    lookup across `.symtab` and `.dynsym`. Only symbols at decoded FDE starts
    are kept, names are decoded only for the returned page, and that text has a
-   fixed 16 MiB allowance. Only the first `PT_GNU_EH_FRAME` is read; a
+   fixed 16 MiB allowance whose recovery is a smaller `limit`. Only the first `PT_GNU_EH_FRAME` is read; a
    duplicate one that supplies the header makes coverage `incomplete`. Section and symbol lookups use
    indexes built once per image, so cost does not grow as sections times
    entries. Address translation uses `SHF_ALLOC` sections, then
