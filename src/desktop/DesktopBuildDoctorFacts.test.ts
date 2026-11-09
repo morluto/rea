@@ -577,4 +577,24 @@ it("recognizes a gzip runtime archive with a different top folder", async () => 
     [],
   );
   expect(facts.archive).toMatchObject({ path: archive, status: "current" });
+
+  const python = (await execute("which", ["python3"])).stdout.trim();
+  const runner = join(bin, "agent-env");
+  await writeFile(runner, `#!${python}\nprint('agent-env 0.9.1431')\n`, {
+    mode: 0o755,
+  });
+  const withoutSystemPython = await readFacts(
+    {
+      HOME: home,
+      USERPROFILE: home,
+      PATH: bin,
+      REA_AGENT_ENV_COMMAND: runner,
+      REA_BUILD_COMPUTER_REA_ARCHIVE: archive,
+    },
+    [],
+  );
+  expect(withoutSystemPython.archive).toMatchObject({
+    path: archive,
+    status: "current",
+  });
 });
