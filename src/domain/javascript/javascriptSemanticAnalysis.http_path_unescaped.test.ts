@@ -68,3 +68,25 @@ it.each([["/a\u00ffb"], ["/a\u00a0b"], ["/a\u007fb"]] as const)(
     ).toHaveLength(1);
   },
 );
+
+it.each([
+  // A spread after the options slot cannot move it, so the call still throws. Measured on
+  // Node 24.22.1.
+  [`const cbs = [() => {}]; http.request({ host: "h", path: "/a b" }, ...cbs)`],
+  [
+    `const cbs = [() => {}]; http.request("http://h/", { path: "/a b" }, ...cbs)`,
+  ],
+] as const)(
+  "emits no request when a spread follows the options: %s",
+  (call) => {
+    expect(requestsFor(call)).toEqual([]);
+  },
+);
+
+it("keeps the request when a spread precedes the options slot", () => {
+  // Here the spread can supply the options itself, so the position is unresolved.
+  const operations = analyzeJavaScriptSemantics(
+    `import http from "node:http";\nfunction f() { const a = [{ host: "h" }]; http.request(...a, { path: "/a b" }); }`,
+  ).requestOperations;
+  expect(operations).toHaveLength(1);
+});

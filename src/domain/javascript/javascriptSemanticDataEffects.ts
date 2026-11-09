@@ -610,15 +610,23 @@ const rejectsHttpPathLiteral = (
   method: JavaScriptSemanticRequestOperation["method"],
 ): boolean => {
   if (method !== "get" && method !== "request") return false;
-  if (node.arguments.some((argument) => t.isSpreadElement(argument)))
-    return false;
   const first = node.arguments[0];
-  const firstValue =
-    first === undefined ? undefined : unwrapJavaScriptExpression(first).node;
+  if (first === undefined) return false;
+  const firstValue = unwrapJavaScriptExpression(first).node;
+  const optionsIndex = t.isObjectExpression(firstValue) ? 0 : 1;
+  // Only a spread at or before the options slot can move it. Measured on Node 24.22.1,
+  // `http.request({path: "/a b"}, ...callbacks)` still throws ERR_UNESCAPED_CHARACTERS,
+  // because expanding a later argument cannot change the object Node already picked.
+  for (let index = 0; index <= optionsIndex; index++)
+    if (
+      index < node.arguments.length &&
+      t.isSpreadElement(node.arguments[index]!)
+    )
+      return false;
   const options =
-    firstValue !== undefined && t.isObjectExpression(firstValue)
+    optionsIndex === 0
       ? firstValue
-      : unwrapJavaScriptExpression(node.arguments[1] ?? first!).node;
+      : unwrapJavaScriptExpression(node.arguments[1] ?? first).node;
   if (!t.isObjectExpression(options)) return false;
   const lookup = staticObjectProperty(options, "path");
   if (lookup.status !== "explicit") return false;
