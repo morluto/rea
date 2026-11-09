@@ -5,6 +5,8 @@ import { expect, it } from "vitest";
 
 import {
   className,
+  environmentName,
+  renderEnvToml,
   renderAppClass,
   type DesktopAppExportPlan,
 } from "../../../src/domain/desktop/appExport.js";
@@ -23,16 +25,80 @@ const plan: DesktopAppExportPlan = {
   packageFile: null,
   electron: false,
   command: ["notes"],
+  opens: { kind: "empty" },
   windowClass: "Notes",
   paths: ["Documents"],
   capturedHome: "/home/fixture",
   seedCheckpoint: "seed",
+  syntheticSeed: false,
   seedFiles: [],
   textSeeds: [],
   unseededFiles: [],
+  leftOutLocks: [],
+  unownedFolders: [],
+  runtimeSeeds: [],
   dconf: "",
   captureEvidenceId: "fixture",
 };
+
+it("reserves FileExistsError while preserving the accepted environment name", () => {
+  const name = environmentName("file-exists-error", () => true);
+  expect(name).toBe("file-exists-error");
+  expect(className(name)).toBe("FileExistsErrorApp");
+  expect(renderEnvToml({ name, className: className(name) })).toContain(
+    'module = "file_exists_error_app.py:FileExistsErrorApp"',
+  );
+});
+
+it("keeps an occupied selected alias as a built-in FileExistsError", async () => {
+  const root = await createTestTempDirectory("desktop-alias-class-name-");
+  const module = join(root, "app.py");
+  const probe = join(root, "probe.py");
+  const name = "file-exists-error";
+  await writeFile(
+    module,
+    renderAppClass({
+      ...plan,
+      name,
+      className: className(name),
+      stateAliases: [{ alias: "occupied", target: "destination" }],
+    }),
+  );
+  await writeFile(
+    probe,
+    `import ast, json
+from pathlib import Path
+root = Path(__file__).parent
+tree = ast.parse((root / "app.py").read_text(encoding="utf-8"))
+tree.body = [node for node in tree.body if not isinstance(node, ast.ImportFrom)
+             or not (node.module or "").startswith("agentenv_protocol")]
+for node in ast.walk(tree):
+    if isinstance(node, (ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)):
+        node.decorator_list = []
+scope = {"__file__": str(root / "app.py"), "ComputerAppEnvironment": object}
+exec(compile(tree, str(root / "app.py"), "exec"), scope)
+occupied = root / "occupied"
+occupied.write_bytes(b"preserve existing data")
+try:
+    scope["_ensure_state_aliases"](root)
+except FileExistsError as error:
+    assert "Cannot restore selected state alias" in str(error)
+else:
+    raise AssertionError("expected the built-in FileExistsError")
+assert occupied.read_bytes() == b"preserve existing data"
+assert not (root / "destination").exists()
+print(json.dumps({"preserved": True}))
+`,
+  );
+  const result = JSON.parse(
+    execFileSync(
+      process.platform === "win32" ? "python" : "python3",
+      ["-I", "-B", "-X", "utf8", probe],
+      { encoding: "utf8" },
+    ),
+  );
+  expect(result).toEqual({ preserved: true });
+});
 
 it.each([
   "value-error",
