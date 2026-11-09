@@ -39,7 +39,7 @@ cliTest(
       });
       expect(endpoint?.observations[0]?.evidence.limitations).toEqual(
         expect.arrayContaining([
-          expect.stringContaining("receiver does not establish a network call"),
+          expect.stringContaining("identity is unproven"),
         ]),
       );
       expect(
