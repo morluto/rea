@@ -52,19 +52,22 @@ it("refuses a valid array or map past the decoder limit as a capacity failure", 
   };
   expect(readAmdMetadata(array(65536))).toHaveLength(65536);
   expect(() => readAmdMetadata(array(65537))).toThrow(BinaryResourceFailure);
-  const pairs = 65537;
-  const map = Buffer.alloc(5);
-  map[0] = 0xdf;
-  map.writeUInt32BE(pairs, 1);
-  const entries = Array.from({ length: pairs }, (_, index) => {
-    const key = `k${String(index)}`;
-    return Buffer.concat([
-      Buffer.from([0xa0 | key.length]),
-      Buffer.from(key),
-      Buffer.from([0xc0]),
-    ]);
-  });
-  expect(() => readAmdMetadata(Buffer.concat([map, ...entries]))).toThrow(
-    BinaryResourceFailure,
+  const map = (pairs: number) => {
+    const header = Buffer.alloc(5);
+    header[0] = 0xdf;
+    header.writeUInt32BE(pairs, 1);
+    const entries = Array.from({ length: pairs }, (_, index) => {
+      const key = `k${String(index)}`;
+      return Buffer.concat([
+        Buffer.from([0xa0 | key.length]),
+        Buffer.from(key),
+        Buffer.from([0xc0]),
+      ]);
+    });
+    return Buffer.concat([header, ...entries]);
+  };
+  expect(Object.keys(readAmdMetadata(map(65536)) as object)).toHaveLength(
+    65536,
   );
+  expect(() => readAmdMetadata(map(65537))).toThrow(BinaryResourceFailure);
 });

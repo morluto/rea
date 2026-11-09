@@ -1446,6 +1446,12 @@ it.each([
     inspection: "capacity",
   },
   {
+    container: "65,536-pair map",
+    length: 65536,
+    map: true,
+    inspection: "inventory",
+  },
+  {
     container: "65,537-pair map",
     length: 65537,
     map: true,

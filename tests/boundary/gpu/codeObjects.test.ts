@@ -584,6 +584,18 @@ it.each([
     inspection: "capacity",
   },
   {
+    container: "65,536-pair map",
+    metadata: {
+      "amdhsa.extra": Object.fromEntries(
+        Array.from({ length: 65536 }, (_, index) => [
+          `k${String(index)}`,
+          null,
+        ]),
+      ),
+    },
+    inspection: "inventory",
+  },
+  {
     container: "65,537-pair map",
     metadata: {
       "amdhsa.extra": Object.fromEntries(
