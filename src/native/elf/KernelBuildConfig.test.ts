@@ -139,6 +139,22 @@ it("accepts a string value longer than 4096 characters", async () => {
   ).toMatchObject({ status: "present", matched_count: 1 });
 });
 
+it.each(["disabled", "assigned"])(
+  "retains a long %s config name",
+  async (kind) => {
+    const name = `CONFIG_${"A".repeat(260)}`;
+    const option = kind === "disabled" ? `# ${name} is not set` : `${name}=y`;
+    const bytes = framed(gzipSync(Buffer.from(`${option}\nCONFIG_OK=y\n`)));
+    const report = await parse(bytes, { name });
+    expect(report.config).toMatchObject({
+      status: "present",
+      option_count: 2,
+      matched_count: 1,
+      entries: [{ name, kind: kind === "disabled" ? "not_set" : "y" }],
+    });
+  },
+);
+
 it("keeps the strict grammar for malformed quoted values", async () => {
   for (const value of [
     '"open',

@@ -27,9 +27,6 @@ const IKCFG_ST = Buffer.from("IKCFG_ST");
 const IKCFG_ED = Buffer.from("IKCFG_ED");
 const BANNER_PREFIX = Buffer.from("Linux version ");
 const BANNER_TEXT_BYTES = 512;
-const MAX_NAME_BYTES = 256;
-/** `# ` + a longest name + ` is not set`. */
-const UNSET_LINE_BYTES = MAX_NAME_BYTES + 13;
 /** IKCFG_ST + gzip candidates inflated per search; a kernel carries one. */
 const MAX_CONFIG_CANDIDATES = 16;
 /** Total inflated bytes across all candidates, as a multiple of max_config_bytes. */
@@ -313,6 +310,20 @@ const classifyValue = async (
   return text === null ? null : { kind: "string", value: text };
 };
 
+/** Config names are bounded by the inflated config, not an independent name cap. */
+const validConfigName = async (
+  name: string,
+  signal: AbortSignal | undefined,
+): Promise<boolean> => {
+  if (!name.startsWith("CONFIG_") || name.length === 7) return false;
+  for (let start = 7; start < name.length; start += TURN_STRIDE) {
+    if (start > 7) await yieldTurn(signal);
+    if (!/^[A-Za-z0-9_]+$/u.test(name.slice(start, start + TURN_STRIDE)))
+      return false;
+  }
+  return true;
+};
+
 /**
  * Strict `.config` grammar: every non-blank line is a comment, a
  * `# CONFIG_X is not set` line, or `CONFIG_X=value`. Anything else rejects the
@@ -348,26 +359,19 @@ const parseConfigText = async (
     );
     start = end + 1;
     if (/^[ \t]*$/u.test(line)) continue;
-    // Only a line short enough to hold a bounded name can be either form, so
-    // the patterns never scan a long value.
-    const unset =
-      line.length <= UNSET_LINE_BYTES
-        ? /^# (CONFIG_[A-Za-z0-9_]+) is not set$/u.exec(line)
-        : null;
-    if (unset !== null) {
-      const name = unset[1] ?? "";
-      if (name.length > MAX_NAME_BYTES) return null;
-      push({ name, kind: "not_set", value: null, trust: UNTRUSTED });
+    if (line.startsWith("#")) {
+      if (line.startsWith("# CONFIG_") && line.endsWith(" is not set")) {
+        const name = line.slice(2, -11);
+        if (await validConfigName(name, signal))
+          push({ name, kind: "not_set", value: null, trust: UNTRUSTED });
+      }
       continue;
     }
-    if (line.startsWith("#")) continue;
-    const set = /^(CONFIG_[A-Za-z0-9_]+)=/u.exec(
-      line.slice(0, MAX_NAME_BYTES + 1),
-    );
-    if (set === null) return null;
-    const name = set[1] ?? "";
-    if (name.length > MAX_NAME_BYTES) return null;
-    const value = await classifyValue(line.slice(set[0].length), signal);
+    const separator = line.indexOf("=");
+    if (separator < 0) return null;
+    const name = line.slice(0, separator);
+    if (!(await validConfigName(name, signal))) return null;
+    const value = await classifyValue(line.slice(separator + 1), signal);
     if (value === null) return null;
     push({ name, kind: value.kind, value: value.value, trust: UNTRUSTED });
   }
