@@ -10,6 +10,7 @@ import type {
 } from "./ElectronBoundaryAnalysis.js";
 import {
   addElectronInferenceEdge,
+  ELECTRON_CANDIDATE_LIMITATION,
   electronFindingSourceNode,
 } from "./ElectronBoundaryGraphContext.js";
 import {
@@ -64,6 +65,9 @@ export const addElectronCallPaths = (
                 module_runtime: step.module_runtime,
                 conditions: path.conditions,
                 resolution: "candidate",
+                ...(path.loader_authority === "candidate"
+                  ? { loader_authority: "candidate" }
+                  : {}),
               },
               evidence: staticInferenceEvidence({
                 sha256: file.sha256,
@@ -71,8 +75,14 @@ export const addElectronCallPaths = (
                 range: step.location,
                 operation: "substitute-electron-wrapper",
                 coverage,
+                ...(path.loader_authority === "candidate"
+                  ? { confidence: "low" as const }
+                  : {}),
                 limitations: [
                   "Lexical wrapper substitution is a static candidate; guards, runtime overrides and execution remain unverified.",
+                  ...(path.loader_authority === "candidate"
+                    ? [ELECTRON_CANDIDATE_LIMITATION]
+                    : []),
                 ],
               }),
             },
@@ -98,6 +108,7 @@ export const addElectronCallPaths = (
           coverage,
           relation: "contains",
           operation: "locate-electron-wrapper-path",
+          loaderAuthority: path.loader_authority,
           properties: {
             path_id: pathId,
             entry: path.entry,
@@ -123,6 +134,7 @@ export const addElectronCallPaths = (
             ? "maps_to"
             : "calls",
           operation: "trace-electron-wrapper-path",
+          loaderAuthority: path.loader_authority,
           properties: {
             path_id: pathId,
             entry: path.entry,
@@ -161,6 +173,11 @@ export const addElectronCallPaths = (
     );
     for (const from of sources)
       for (const to of targets) {
+        if (
+          from.path.loader_authority === "candidate" ||
+          to.path.loader_authority === "candidate"
+        )
+          continue;
         const source = from.nodes.at(-1),
           target = to.nodes[0];
         if (!source || !target) continue;

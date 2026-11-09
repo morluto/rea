@@ -29,14 +29,16 @@ changed later. Each path records the evidence the capture holds about it:
 | `selected_path`          | It lies under a `--state-path` or absolute `--argument` of the capture    |
 | `dconf_application_keys` | It is a dconf database holding groups whose path names the application    |
 | `desktop_service`        | It lies where desktop services and toolkits keep shared files, or caches  |
+| `desktop_trash`          | It lies in the desktop Trash, `~/.local/share/Trash`                      |
 
 A folder beside a state directory whose name differs from it only in letter
 case counts as that state directory, so a profile the application first
 creates during the capture, such as GIMP's `~/.config/GIMP` beside the
 candidate `~/.config/gimp`, is its state too.
 
-The role follows from the reasons, in this order: `application_state` for
-application keys in dconf, or a state directory outside shared desktop
+The role follows from the reasons, in this order: `shared_desktop` for a file
+in the desktop Trash, which the user deleted, whatever else names it;
+`application_state` for application keys in dconf, or a state directory outside shared desktop
 locations; `document` for a file named in a window title or selected by the
 caller, even if the application holds it open; `application_state` for another
 open file outside shared locations; `shared_desktop` for other files in shared
@@ -126,7 +128,15 @@ could misstate its committed rows. The capture records them under its content
 roots, which include both beside a database selected on its own, when its
 baseline walk listed every directory, read every path, entered no other
 device, did not stop early and recorded what it left out, and wherever they change; an excluded log, and any elsewhere, is
-unknown, since an unchanged file and a missing one look alike. A table
+unknown, since an unchanged file and a missing one look alike. After an
+incomplete checkpoint, a database or sidecar without an explicit
+later change remains unconfirmed even if a later walk completes. REA does not
+combine that older file with a newly recorded member of the SQLite set. The
+historical versions remain listed; the affected SQLite view has a `view_error`.
+A baseline non-file at a sidecar path, or a non-directory ancestor, cannot
+establish an absent file. Captures without the required baseline non-file
+inventory must be made again before inspection.
+A table
 that cannot be read keeps its `error` in place of its rows, and changes to that
 database are marked incomplete. dconf
 databases are read with `dconf dump /` against a private file profile, so the

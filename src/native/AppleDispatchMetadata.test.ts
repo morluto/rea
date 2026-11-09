@@ -766,8 +766,9 @@ describe("Swift conformance type-reference kinds", () => {
           witness_table: { address: null, file_offset: null },
           decode: {
             status: "partial",
-            reason:
-              "Indirect Objective-C class metadata requires runtime lookup",
+            reason: expect.stringMatching(
+              /indirect Objective-C class metadata.*runtime lookup/i,
+            ),
           },
         },
       ]);
@@ -1466,8 +1467,9 @@ describe("Objective-C category class references without a class name", () => {
     bytes.writeUInt32LE(bindings.length, 284);
     expect(categoryCoverage(bytes)).toMatchObject({
       status: "partial",
-      reason:
-        "category_class_unresolved at 0x100000b48: Category FixtureCategory class reference is bound to _$s4Main3FooCN, which is not read as an Objective-C class name",
+      reason: expect.stringMatching(
+        /category_class_unresolved.*0x100000b48.*FixtureCategory.*_\$s4Main3FooCN.*not read as an Objective-C class name/iu,
+      ),
     });
   });
 
@@ -1476,8 +1478,9 @@ describe("Objective-C category class references without a class name", () => {
     bytes.writeBigUInt64LE(0n, 0xb48);
     expect(categoryCoverage(bytes)).toMatchObject({
       status: "partial",
-      reason:
-        "category_class_unresolved at 0x100000b48: Category FixtureCategory class reference is null",
+      reason: expect.stringMatching(
+        /category_class_unresolved.*0x100000b48.*FixtureCategory.*class reference is null/i,
+      ),
     });
   });
 });

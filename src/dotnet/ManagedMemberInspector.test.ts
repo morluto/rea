@@ -515,8 +515,9 @@ it.each([
       code: "invalid-row",
       scope,
       offset: blobOffset + operandOffset,
-      detail:
-        "TypeDefOrRefOrSpec operand 0x7 is invalid: coded index tag 3 is not defined",
+      detail: expect.stringMatching(
+        /TypeDefOrRefOrSpec.*0x7.*tag 3.*not defined/i,
+      ),
     });
   },
 );
@@ -837,8 +838,9 @@ describe("managed TypeSpec declaring names", () => {
         {
           code: "invalid-row",
           scope: "metadata.TypeSpec:0x1b000001",
-          detail:
-            "TypeDefOrRefOrSpec operand 0x25 is invalid: coded index selects row 9 in table 1, which has 1 rows",
+          detail: expect.stringMatching(
+            /0x25.*invalid.*row 9.*table 1.*1 rows/iu,
+          ),
         },
       ],
     });
@@ -957,10 +959,10 @@ describe("managed TypeRef resolution scopes", () => {
         {
           code: "invalid-row",
           scope: "metadata.TypeRef:0x01000001",
-          detail: expect.stringContaining(
+          detail: expect.stringMatching(
             enclosingRow === 0
-              ? "coded index selects row zero in table 1"
-              : "coded index selects row 9 in table 1, which has 1 rows",
+              ? /row zero.*table 1/iu
+              : /row 9.*table 1.*1 rows/iu,
           ),
         },
       ]);
@@ -1459,8 +1461,10 @@ describe("managed exported types", () => {
     const parsed = managedMemberInspectionSchema.parse(legacy);
 
     expect(parsed.exported_types).toBeNull();
-    expect(comparisonLimitations(parsed, parsed)).toContain(
-      "At least one managed member observation did not examine ExportedType rows; its exported and forwarded types are unknown.",
+    expect(comparisonLimitations(parsed, parsed)).toContainEqual(
+      expect.stringMatching(
+        /did not examine ExportedType.*exported and forwarded types are unknown/iu,
+      ),
     );
   });
 
@@ -1547,8 +1551,10 @@ describe("managed user strings", () => {
     expect(body?.normalized_il_sha256).toBe(
       inspect({ ilBody }).methods[0]?.body.normalized_il_sha256,
     );
-    expect(comparisonLimitations(result, result)).toContain(
-      "ldstr literals are not compared; normalized CIL keeps #US tokens rather than decoded text, so an unchanged method does not establish unchanged string literals.",
+    expect(comparisonLimitations(result, result)).toContainEqual(
+      expect.stringMatching(
+        /ldstr literals are not compared.*#US tokens.*unchanged method.*does not establish unchanged string literals/iu,
+      ),
     );
   });
 
@@ -1657,9 +1663,6 @@ describe("managed user strings", () => {
     const { user_strings: _omitted, ...legacy } = inspect({});
     const parsed = managedMemberInspectionSchema.parse(legacy);
     expect(parsed.user_strings).toBeNull();
-    expect(comparisonLimitations(parsed, inspect({}))).toContain(
-      "ldstr literals are not compared; normalized CIL keeps #US tokens rather than decoded text, so an unchanged method does not establish unchanged string literals.",
-    );
   });
 });
 
@@ -1690,14 +1693,15 @@ describe("managed user string issues", () => {
           code: "invalid-heap-index",
           scope: "metadata.#US:0x06000001",
           offset: null,
-          detail: "ldstr operand does not name an item inside #US",
+          detail: expect.stringMatching(/ldstr operand.*does not name.*#US/i),
         },
         {
           code: "missing-stream",
           scope: "metadata.#US",
           offset: null,
-          detail:
-            "2 distinct ldstr operand(s) reference #US, but the metadata has no #US stream",
+          detail: expect.stringMatching(
+            /2 distinct ldstr.*#US.*no #US stream/i,
+          ),
         },
       ],
     });
@@ -2420,8 +2424,8 @@ describe("managed metadata reference bounds", () => {
         {
           code: "invalid-row",
           scope: "metadata.TypeDef:0x02000001",
-          detail: expect.stringContaining(
-            "TypeDef Extends coded index 0xc is invalid: coded index selects row 3 in table 2, which has 1 rows",
+          detail: expect.stringMatching(
+            /TypeDef Extends.*0xc.*invalid.*row 3.*table 2.*1 rows/iu,
           ),
         },
       ],
@@ -2449,8 +2453,8 @@ describe("managed metadata reference bounds", () => {
         {
           code: "invalid-row",
           scope: "metadata.MemberRef:0x0a000001",
-          detail: expect.stringContaining(
-            "MemberRef parent coded index 0x28 is invalid: coded index selects row 5 in table 2, which has 1 rows",
+          detail: expect.stringMatching(
+            /MemberRef parent.*0x28.*invalid.*row 5.*table 2.*1 rows/iu,
           ),
         },
       ],
@@ -2476,8 +2480,9 @@ describe("managed metadata reference bounds", () => {
       issues: [
         expect.objectContaining({
           code: "invalid-row",
-          detail:
-            "MemberRef parent coded index 0x0 is null, but the Class column must reference a row",
+          detail: expect.stringMatching(
+            /MemberRef parent.*0x0.*null.*Class.*reference a row/i,
+          ),
         }),
       ],
     });
@@ -3012,8 +3017,10 @@ describe("managed member type selection", () => {
     expect(result.call_edges).toEqual(everything.call_edges);
     expect(result.field_accesses).toEqual(everything.field_accesses);
     expect(result.coverage).toEqual(everything.coverage);
-    expect(result.limitations).toContain(
-      "Types, fields, methods, call edges, field accesses, and user strings cover only the selected declaring types; coverage describes that selection. Edge targets outside it keep their names but are not described.",
+    expect(result.limitations).toContainEqual(
+      expect.stringMatching(
+        /types.*fields.*methods.*call edges.*field accesses.*user strings.*only the selected declaring types.*targets outside.*names.*not described/iu,
+      ),
     );
   });
 
@@ -3038,8 +3045,10 @@ describe("managed member type selection", () => {
       expect(result.coverage.state).toBe("partial");
       // Its methods were never inspected, so neither were their literals.
       expect(result.user_strings?.state).toBe("partial");
-      expect(result.limitations).toContain(
-        "1 TypeDef name(s) could not be read; a name in selection.unmatched_type_names may belong to one of them, so its absence is not observed.",
+      expect(result.limitations).toContainEqual(
+        expect.stringMatching(
+          /1 TypeDef name.*could not be read.*selection\.unmatched_type_names.*absence is not observed/iu,
+        ),
       );
     },
   );

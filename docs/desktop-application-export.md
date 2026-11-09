@@ -25,6 +25,9 @@ a `.deb` file; see [Applications from a .deb file](#applications-from-a-deb-file
 `--seed-checkpoint` names the checkpoint whose state seeds the bundle, the
 baseline by default, and `--end-checkpoint` the one a task must pass on, the
 capture's last by default; see [The seed checkpoint](#the-seed-checkpoint).
+`--synthetic-seed` says the seed was made for the task, as a build agent makes
+it in a [build computer](desktop-build-witness.md), rather than taken from the
+user's own data; see [A seed made for the task](#a-seed-made-for-the-task).
 
 The command returns Evidence with operation `export_desktop_application` and
 predicate type `rea.desktop-application-export`, listing the environment name,
@@ -118,11 +121,23 @@ The class declares:
   taskbar or says it is a splash, and an app whose splash shows first would
   otherwise count as ready before its own window opens. Arguments that are the captured home or under it, and
   `<option>=<path>` values under it, are respelled under the computer user's
-  `$HOME`. agentenv starts the app in its own folder, so when an argument, or
-  the program's own path such as `./app`, is relative the command first
-  changes to the captured working directory
-  (`"$HOME"` when that was the home), and still starts if that folder is
-  missing. The export refuses a capture that saw no application window.
+  `$HOME`. agentenv starts the app in its own folder, where an open or save
+  dialog would show the framework's files, so the command first changes to the
+  captured working directory (`"$HOME"` when that was the home, as for a
+  desktop entry without `Path`), which a relative argument or program path
+  such as `./app` also needs, and still starts if that folder is missing. The
+  export refuses a capture that saw no application window.
+- The seed's document, opened at launch, so the app shows it rather than its
+  start screen: when the seed holds exactly one file the state view gives the
+  `document` role, and the desktop entry's `Exec` takes files (a `%f`, `%F`,
+  `%u` or `%U` field code), its path under `$HOME` is appended to the command.
+  A command that already names a document, absolute or from its working
+  directory, as one captured with `--argument <file>` does, is kept as it is;
+  a settings path under the home does not count. A seed with no document launches
+  as captured. With several, no desktop entry or an `Exec` that takes no file,
+  the app launches as captured and the README and the result's limitations say
+  why. A reset
+  relaunches the app, so it opens the document again.
 - For an Electron application (the capture found its fuse sentinel or a
   `resources/app.asar`), `--no-sandbox` right after the program unless the
   command already has it: Chromium's sandbox needs user namespaces the
@@ -154,7 +169,10 @@ retain is not seeded: one in the state view without retained content at that
 checkpoint, or one the capture omitted (for example too large or past the
 content budget). The result lists them in `unseeded_files` and the README
 names them. When the application held files open in folders whose starting
-content the capture did not retain, a limitation names those folders.
+content the capture did not retain, a limitation names those folders. The
+desktop Trash, `~/.local/share/Trash`, is never the application's, so a file
+the user moved there is neither owned nor seeded, even when a window title
+names it; a limitation lists the files the Trash held at the seed.
 
 The application's dconf keys at the seed, if any, are written once when the
 app first starts, also for an application that owns no files, and the class adds
@@ -180,6 +198,16 @@ A file's state at a checkpoint is its last version recorded at or before it.
 The export refuses a name the capture does not hold exactly once, and an end
 checkpoint taken before the seed checkpoint; `inspect-desktop-application-state`
 lists the names in `capture.checkpoints`.
+
+## A seed made for the task
+
+By default the seed is the user's real data: the README and the result's
+limitations say to keep the bundle local and not publish it. With
+`--synthetic-seed` they say instead that the seed was made for the task, and
+to read `envs/<name>/seed/` before publishing the bundle; the export cannot
+tell the two apart, so the flag is the caller's word. `export_build_environment`
+passes it, since the building agent makes the seed in the build computer. The
+Evidence records it as `synthetic_seed`.
 
 ## Host name and user
 
@@ -306,8 +334,8 @@ entry it does not read. The module reads the central directory itself, as REA
 does, and shows `zipfile` only the records it lists, reading each entry in
 bounded chunks no further than a byte past its declared size. A JSON file
 holding a number JavaScript cannot read exactly, such as an integer above 2^53,
-or nested more than 500 levels deep, gets an `error` instead of a view, as in
-REA, while text that is not one JSON
+or whose retained value nests more than 500 levels deep, gets an `error` instead of a view, as in
+REA. Duplicate keys keep their last value before the depth check. Text that is not one JSON
 document, such as JSON Lines, stays text. Format detection follows REA's
 rules. Files larger than 64 MiB get an `error` instead of a view
 and are not read. XML is read with Python's `expat` twice: with namespace
@@ -333,6 +361,7 @@ when a DOCTYPE names a DTD. Known differences remain:
   and then gives the file an `error`, and so does a table or column name that
   is not UTF-8.
 
-The seed is the user's real data. Keep the bundle local and do not publish it.
+Unless it was [made for the task](#a-seed-made-for-the-task), the seed is the
+user's real data. Keep the bundle local and do not publish it.
 The class was checked against agentenv-framework 0.9.1431 with
 `python -m agentenv_protocol.computer._declare` and `agent-env run --dry-run`.

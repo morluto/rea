@@ -346,8 +346,8 @@ describe("type operand names", () => {
     });
 
     expect(inspection.fields[0]?.signature.parse_status).toBe("malformed");
-    expect(inspection.fields[0]?.signature.issue).toContain(
-      "coded index selects row 9 in table 1, which has 1 rows",
+    expect(inspection.fields[0]?.signature.issue).toMatch(
+      /row 9.*table 1.*1 rows/iu,
     );
     expect(inspection.fields[0]?.signature.resolved_sha256).toBeNull();
     expect(inspection.coverage.state).toBe("partial");

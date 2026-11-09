@@ -6,6 +6,7 @@ import type { ExecutionOptions } from "../AnalysisProvider.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
 import {
   createEvidence,
+  evidenceSubjectTarget,
   type Evidence,
   type EvidenceSubjectTarget,
 } from "../../domain/evidence.js";
@@ -90,12 +91,5 @@ const subjectTarget = (
     input.boundaries?.evidence.subject;
   if (subject === undefined || subject === null || subject.format !== "pe")
     return undefined;
-  return {
-    path: subject.local_path,
-    sha256: subject.digest.sha256,
-    format: "pe",
-    ...(subject.architecture === null
-      ? {}
-      : { architecture: subject.architecture }),
-  };
+  return evidenceSubjectTarget(subject);
 };

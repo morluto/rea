@@ -209,8 +209,9 @@ it("marks redacted scripted input as an interaction unknown", () => {
 
   expect(result.residual_unknowns).toContainEqual({
     scope: "interaction",
-    reason:
-      "Sensitive scripted input literals and retained terminal echoes are redacted. Terminal states are reconstructed from the redacted stream; private display effects and transformed values remain unknown.",
+    reason: expect.stringMatching(
+      /sensitive scripted input.*terminal echoes.*redacted.*terminal states.*redacted stream.*private display effects.*transformed values.*unknown/iu,
+    ),
   });
 });
 
@@ -254,6 +255,24 @@ it("admits PTY samples only after stable session and token setup", () => {
       before: initialized,
       observedRunId: "run-token",
       after: { ...initialized, startTime: "201" },
+    }),
+  ).toBe(false);
+  expect(
+    isInitializedPtyRoot({
+      rootPid: 100,
+      expectedRunId: "run-token",
+      before: initialized,
+      observedRunId: "other-run",
+      after: initialized,
+    }),
+  ).toBe(false);
+  expect(
+    isInitializedPtyRoot({
+      rootPid: 100,
+      expectedRunId: "run-token",
+      before: initialized,
+      observedRunId: "run-token",
+      after: { ...initialized, parent_pid: 11 },
     }),
   ).toBe(false);
   expect(

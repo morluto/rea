@@ -4,8 +4,9 @@ import { Cli, z } from "incur";
 import { browserCliError } from "./browserCliError.js";
 import { createBrowserObservationProvider } from "../composition/browserObservation.js";
 import {
-  browserScopeOptions,
+  passiveBrowserScopeOptions,
   selectedCommandTimeout,
+  selectedDiscoveryTimeout,
 } from "../cliObservationOptions.js";
 import {
   captureWebScreenshot,
@@ -34,6 +35,7 @@ import {
 import type { JsonValue } from "../domain/jsonValue.js";
 import { parseCliJsonInput } from "../cliJsonInput.js";
 import type { Logger } from "pino";
+import { cliDomainInput } from "./domainInput.js";
 import { cliDecimalField } from "./options.js";
 import { CLI_COMMANDS } from "../cliCommandNames.js";
 import { withCommandCancellation } from "./commandCancellation.js";
@@ -57,13 +59,15 @@ const registerWebMcp = (
   cli.command(CLI_COMMANDS.discoverWebMcpTools, {
     description: "Passively discover page-declared WebMCP tools",
     args: z.object({
-      endpoint: z
-        .string()
-        .describe("Loopback CDP HTTP endpoint or browser WebSocket URL"),
-      targetId: z.string().describe("Target ID from list-browser-targets"),
+      endpoint: cliDomainInput(
+        discoverWebMcpToolsInputSchema.shape.cdp_endpoint,
+      ),
+      targetId: discoverWebMcpToolsInputSchema.shape.target_id.describe(
+        "Target ID from list-browser-targets",
+      ),
     }),
     options: z.object({
-      ...browserScopeOptions,
+      ...passiveBrowserScopeOptions,
       observationMs: cliDecimalField(
         discoverWebMcpToolsInputSchema.shape.observation_ms,
       ).describe("Observation duration in milliseconds"),
@@ -77,6 +81,7 @@ const registerWebMcp = (
             allowed_origins: options.allowedOrigins,
             target_id: args.targetId,
             observation_ms: options.observationMs,
+            ...selectedDiscoveryTimeout(options.discoveryTimeoutMs),
             ...selectedCommandTimeout(options.commandTimeoutMs),
           };
           const parsed = discoverWebMcpToolsInputSchema.safeParse(input);
@@ -172,13 +177,15 @@ const registerScreenshot = (
     description:
       "Capture one visible page viewport within the supplied origin scope",
     args: z.object({
-      endpoint: z
-        .string()
-        .describe("Loopback CDP HTTP endpoint or browser WebSocket URL"),
-      targetId: z.string().describe("Target ID from list-browser-targets"),
+      endpoint: cliDomainInput(
+        captureWebScreenshotInputSchema.shape.cdp_endpoint,
+      ),
+      targetId: captureWebScreenshotInputSchema.shape.target_id.describe(
+        "Target ID from list-browser-targets",
+      ),
     }),
     options: z.object({
-      ...browserScopeOptions,
+      ...passiveBrowserScopeOptions,
     }),
     run: ({ args, options }) =>
       withCommandCancellation((signal) =>
@@ -188,6 +195,7 @@ const registerScreenshot = (
             cdp_endpoint: args.endpoint,
             allowed_origins: options.allowedOrigins,
             target_id: args.targetId,
+            ...selectedDiscoveryTimeout(options.discoveryTimeoutMs),
             ...selectedCommandTimeout(options.commandTimeoutMs),
           };
           const parsed = captureWebScreenshotInputSchema.safeParse(input);

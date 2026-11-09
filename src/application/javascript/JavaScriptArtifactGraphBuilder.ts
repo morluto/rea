@@ -1,5 +1,11 @@
 import type { ElectronBoundarySummary } from "../../domain/javascript/javascriptApplicationAnalysis.js";
-import { electronSemanticsState } from "./ElectronBoundaryAnalysis.js";
+import {
+  electronSemanticsState,
+  createElectronIpcContext,
+  hasCandidateElectronFindings,
+  summarizeElectronBoundaries,
+  type ElectronIpcContext,
+} from "./ElectronBoundaryAnalysis.js";
 import { ELECTRON_IDENTITY_LIMITATION } from "../../domain/javascript/javascriptElectronMemberWrites.js";
 import type { ArtifactInventorySnapshot } from "../../domain/artifactInventorySnapshot.js";
 import {
@@ -47,11 +53,6 @@ import {
 } from "./JavaScriptArtifactGraphStructure.js";
 import { addJavaScriptBundlerNodes } from "./JavaScriptArtifactGraphBundlers.js";
 import { addElectronBoundaries } from "./ElectronBoundaryGraph.js";
-import {
-  createElectronIpcContext,
-  summarizeElectronBoundaries,
-  type ElectronIpcContext,
-} from "./ElectronBoundaryAnalysis.js";
 
 /**
  * Build a validated application graph with cooperative immutable ownership.
@@ -381,6 +382,11 @@ const graphLimitations = (
     "CommonJS and ESM binding relationships were recovered from inert syntax and resolved only within the inventoried artifact container.",
     "Webpack/Rspack factories were recovered from AST literals; REA did not invoke push handlers or bundle bootstrap code.",
     "Static imports, entrypoints, workers, endpoints, and storage relationships do not prove runtime execution.",
+    ...(hasCandidateElectronFindings(context.analysis)
+      ? [
+          "Conditional Electron findings are retained in the graph but excluded from proven boundary summary counts; their loader identity remains unknown.",
+        ]
+      : []),
     ...(context.analysis.files.some(({ javascript }) =>
       javascript?.limitations.includes(ELECTRON_IDENTITY_LIMITATION),
     )
