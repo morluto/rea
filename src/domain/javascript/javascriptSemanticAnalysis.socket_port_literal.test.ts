@@ -627,6 +627,60 @@ it.each([
   ]);
 });
 it.each([
+  [`tls.connect({ port: 80, socket: +0 })`],
+  [`tls.connect({ port: 80, socket: -0 })`],
+  [`tls.connect({ port: 80, socket: !true })`],
+  [`tls.connect({ port: 80, socket: !1 })`],
+  [`tls.connect({ port: 80, socket: !!0 })`],
+  [`tls.connect({ port: 80, socket: void 1 })`],
+  [`tls.connect({ port: 80, socket: ~~0 })`],
+  [`tls.connect({ port: 80, socket: 0 * 5 })`],
+  [`tls.connect({ port: 80, socket: "" + "" })`],
+  [`tls.connect({ port: 80, socket: 0n })`],
+  [`tls.connect({ port: 80, socket: NaN })`],
+] as const)(
+  "keeps a socket acquisition for a falsy socket expression: %s",
+  (call) => {
+    // TLS skips wrapping a falsy `socket`, so the valid port decides and the call connects.
+    // Measured on Node 24.22.1. A two-valued "is it a falsy literal" answer missed every
+    // expression above, which dropped real acquisitions.
+    expect(socketAcquisitionsFor(call)).toEqual([
+      { kind: "acquire", method: "connect" },
+    ]);
+  },
+);
+
+it.each([
+  [`tls.connect({ port: 80, socket: ~0 })`],
+  [`tls.connect({ port: 80, socket: -1 })`],
+  [`tls.connect({ port: 80, socket: !!1 })`],
+  [`tls.connect({ port: 80, socket: 1 * 5 })`],
+  [`tls.connect({ port: 80, socket: "x" })`],
+  [`tls.connect({ port: 80, socket: {} })`],
+  [`tls.connect({ port: 80, socket: [] })`],
+  [`tls.connect({ port: 80, socket: () => {} })`],
+  [`tls.connect({ port: 80, socket: /x/ })`],
+] as const)(
+  "emits no acquisition for a truthy non-stream socket: %s",
+  (call) => {
+    // A truthy literal cannot be a `net.Socket`, so the wrap throws `TypeError` whatever
+    // the port says. Measured on Node 24.22.1.
+    expect(socketAcquisitionsFor(call)).toEqual([]);
+  },
+);
+
+it.each([
+  [`const s = {}; tls.connect({ port: 80, socket: s })`],
+  [`tls.connect({ port: 80, socket: String("x") })`],
+  [`tls.connect({ port: 80, socket: new String("x") })`],
+] as const)("leaves an unreadable socket undecided: %s", (call) => {
+  // A binding or a call result may be a real stream, and `new PassThrough()` connects
+  // while `new String("x")` throws — both are `new`, so shape alone cannot decide it.
+  expect(socketAcquisitionsFor(call)).toEqual([
+    { kind: "acquire", method: "connect" },
+  ]);
+});
+it.each([
   [`tls.connect({ port: -1, socket: {} })`],
   [`tls.connect({ port: -1, socket: { __proto__: null } })`],
   [`tls.connect({ port: -1, socket: { __proto__: {} } })`],

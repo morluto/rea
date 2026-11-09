@@ -891,31 +891,105 @@ const rejectsOptionsPortLiteral = (
 };
 
 /**
- * A literal whose `ToBoolean` is false, so Node's `socket` read skips the wrap entirely.
+ * A statically known primitive, folded the way the runtime folds it.
  *
- * Measured on Node 24.22.1, `{port: 80, socket: null}`, `{… socket: false}`,
- * `{… socket: 0}` and `{… socket: ""}` all connect, while `{… socket: {}}` and every other
- * truthy literal throw `TypeError` from the stream check.
+ * Only shapes whose value is fixed by the syntax are read: literals, an exactly readable
+ * template, a unary operator over another foldable operand, and the unmodified numeric
+ * globals. A call, a member read or an identifier binding stays unknown, because its value
+ * is not settled by this expression.
+ *
+ * This is the one truthiness reader the `socket` decision uses. A two-valued
+ * "is it falsy" answer cannot work: `+0`, `-0`, `!true`, `~~0` and `0 * 5` are all falsy
+ * on Node 24.22.1 yet none of them is a falsy literal, and treating them as truthy
+ * dropped real sockets.
  */
-const isStaticallyFalsyOptionLiteral = (value: t.Node): boolean => {
-  if (t.isNullLiteral(value)) return true;
-  if (t.isBooleanLiteral(value)) return !value.value;
-  if (t.isNumericLiteral(value)) return value.value === 0;
-  if (t.isBigIntLiteral(value)) return value.value === 0n;
-  if (t.isStringLiteral(value)) return value.value.length === 0;
-  if (t.isTemplateLiteral(value) && value.expressions.length === 0) {
+const staticConstantValue = (
+  node: t.Node,
+  state: JavaScriptSemanticAnalysisState,
+):
+  | { readonly found: true; readonly value: unknown }
+  | { readonly found: false } => {
+  const value = unwrapJavaScriptExpression(node).node;
+  if (t.isStringLiteral(value)) return { found: true, value: value.value };
+  if (t.isNumericLiteral(value)) return { found: true, value: value.value };
+  if (t.isBooleanLiteral(value)) return { found: true, value: value.value };
+  if (t.isNullLiteral(value)) return { found: true, value: null };
+  if (t.isBigIntLiteral(value)) return { found: true, value: value.value };
+  if (t.isTemplateLiteral(value)) {
+    if (value.expressions.length !== 0) return { found: false };
     const cooked = value.quasis[0]?.value.cooked;
-    return cooked === "" || cooked === null || cooked === undefined;
+    return cooked === null || cooked === undefined
+      ? { found: false }
+      : { found: true, value: cooked };
   }
-  if (t.isIdentifier(value)) return value.name === "undefined";
+  if (t.isIdentifier(value)) {
+    // A binding named `undefined` can hold anything, so the global is confirmed the same
+    // way `NaN` and `Infinity` are.
+    if (
+      (value.name === "undefined" ||
+        value.name === "NaN" ||
+        value.name === "Infinity") &&
+      isUnmodifiedGlobalReference(value, state, value.name)
+    )
+      return {
+        found: true,
+        value:
+          value.name === "undefined"
+            ? undefined
+            : value.name === "NaN"
+              ? Number.NaN
+              : Number.POSITIVE_INFINITY,
+      };
+    return { found: false };
+  }
   if (t.isUnaryExpression(value)) {
-    if (value.operator === "void") return true;
-    if (value.operator === "-") {
-      const operand = unwrapJavaScriptExpression(value.argument).node;
-      return t.isNumericLiteral(operand) && operand.value === 0;
+    if (value.operator === "void") return { found: true, value: undefined };
+    const operand = staticConstantValue(value.argument, state);
+    if (!operand.found) return { found: false };
+    switch (value.operator) {
+      case "!":
+        return { found: true, value: !operand.value };
+      case "-":
+        return typeof operand.value === "number" ||
+          typeof operand.value === "bigint"
+          ? { found: true, value: -(operand.value as number) }
+          : { found: false };
+      case "+":
+        return typeof operand.value === "number"
+          ? { found: true, value: operand.value }
+          : { found: false };
+      case "~":
+        return typeof operand.value === "number" ||
+          typeof operand.value === "bigint"
+          ? { found: true, value: ~(operand.value as number) }
+          : { found: false };
+      case "typeof":
+        return { found: true, value: typeof operand.value };
+      default:
+        return { found: false };
     }
   }
-  return false;
+  // `0 * 5` and `"" + ""` are constant, so a binary operator over two folded operands is
+  // read the same way the unary forms are.
+  if (t.isBinaryExpression(value)) {
+    const left = staticConstantValue(value.left, state);
+    if (!left.found) return { found: false };
+    const right = staticConstantValue(value.right, state);
+    if (!right.found) return { found: false };
+    switch (value.operator) {
+      case "*":
+        return typeof left.value === "number" && typeof right.value === "number"
+          ? { found: true, value: left.value * right.value }
+          : { found: false };
+      case "+":
+        return typeof left.value === "string" && typeof right.value === "string"
+          ? { found: true, value: left.value + right.value }
+          : { found: false };
+      default:
+        return { found: false };
+    }
+  }
+  return { found: false };
 };
 
 /**
@@ -953,8 +1027,16 @@ const optionsRescuePort = (
       // An absent member is not a wrapped stream, so the port is validated.
       if (isAbsentOptionValue(value, state)) return "validates";
       // A truthy literal cannot be a `net.Socket`, so the wrap throws instead.
+      // A shape whose truthiness is not settled here may still be a stream, so keep
+      // the answer open rather than deciding against a real socket.
+      const folded = staticConstantValue(value, state);
+      if (folded.found) return Boolean(folded.value) ? "rejects" : "validates";
+      // A literal that may inherit the stream methods through `__proto__` is a real
+      // stream to Node, so it must stay open rather than be rejected on shape.
       if (!isExactlyReadableLiteral(value, state)) return "unknown";
-      return isStaticallyFalsyOptionLiteral(value) ? "validates" : "rejects";
+      // What is left is a value this file can read exactly but not fold, such as
+      // `new String("x")`: a wrapper object is truthy and is not a stream.
+      return "rejects";
     }
   }
   return "validates";
