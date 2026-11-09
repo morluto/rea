@@ -15,7 +15,6 @@ import { machoArchitectureName } from "../../domain/apple/machoCpuIdentity.js";
 import type {
   AppleIps,
   AppleIpsJoin,
-  RecordedInteger,
 } from "../../domain/native/appleIps.js";
 
 /**
