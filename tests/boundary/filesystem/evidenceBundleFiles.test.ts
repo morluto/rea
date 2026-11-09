@@ -54,7 +54,10 @@ import { publishCliAnalysisEvidence } from "../../../src/cli/analysisEvidenceDel
 import { EMPTY_PROCESS_CAPTURE_EXAMPLE } from "../../../src/domain/process/processCaptureExample.js";
 import { PROCESS_PROVIDER } from "../../../src/domain/process/processEvidenceProvider.js";
 import * as processCaptureParsing from "../../../src/domain/process/processCaptureParsing.js";
-import type { JsonValue } from "../../../src/domain/jsonValue.js";
+import {
+  jsonObjectSchema,
+  type JsonValue,
+} from "../../../src/domain/jsonValue.js";
 
 vi.mock("node:v8", async (importOriginal) => {
   const actual = await importOriginal<typeof import("node:v8")>();
@@ -297,7 +300,22 @@ it("retains a malformed artifact parent and refuses publication through both del
       evidenceOutput: join(root, "cli.json"),
     },
   );
-  expect(cli).toEqual(projected);
+  const output = jsonObjectSchema.parse(cli);
+  const { source_closure: sourceClosure, ...details } = jsonObjectSchema.parse(
+    output.details,
+  );
+  expect({ ...output, details }).toEqual(projected);
+  expect(sourceClosure).toEqual({
+    publication: "not_published",
+    complete: false,
+    collection_failure: "Error",
+    records: [],
+    omitted_count: 0,
+    omitted: [],
+    recovery: expect.stringMatching(
+      /No bundle was written.*retains nothing after exit.*new observation and may differ/u,
+    ),
+  });
   expect(JSON.stringify(projected)).toContain(evidence.evidence_id);
   expect(await readdir(root)).toEqual([]);
 });
