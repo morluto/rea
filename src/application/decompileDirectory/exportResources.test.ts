@@ -68,3 +68,42 @@ it.each([false, true])(
     }
   },
 );
+
+it("retains the source failure's parsed facts and cancellation identity", () => {
+  const reason = { request: "cancel after publication" };
+  const details = {
+    logicalPath: "source",
+    unpacked: false,
+    declaredSha256: null,
+    calculatedSha256: null,
+  } as const;
+  const admission = {
+    kind: "asar-header",
+    maximumBytes: 123,
+    source: "setting",
+  } as const;
+  const original = new ArtifactReaderFailure(
+    "cancelled",
+    "interrupted",
+    {
+      cause: reason,
+      cancellation: { reason },
+      userMessage: "Selected publication was interrupted.",
+      resolvedPath: "/resolved/source",
+      boundary: "capacity",
+      admission,
+    },
+    details,
+  );
+  const published = new ExportPublishedCleanupFailure(
+    "/output/index",
+    original,
+  );
+  expect(published.cancellation?.reason).toBe(reason);
+  expect(published.userMessage).toBe(original.userMessage);
+  expect(published.resolvedPath).toBe(original.resolvedPath);
+  expect(published.boundary).toBe(original.boundary);
+  expect(published.admission).toEqual(admission);
+  expect(published.details).toEqual(details);
+  expect(published.cause).toBe(original);
+});

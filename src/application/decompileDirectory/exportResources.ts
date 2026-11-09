@@ -35,12 +35,26 @@ export class ExportPublishedCleanupFailure extends ArtifactReaderFailure {
     readonly publishedPath: string,
     failure: ArtifactReaderFailure,
   ) {
-    super(failure.reason, failure.message, {
-      cause: failure,
-      cleanup: failure.cleanup,
-      cleanupLeases: failure.cleanupLeases,
-      partialObservation: failure.partialObservation,
-    });
+    super(
+      failure.reason,
+      failure.message,
+      {
+        cause: failure,
+        userMessage: failure.userMessage,
+        resolvedPath: failure.resolvedPath,
+        cancellation: failure.cancellation,
+        cleanup: failure.cleanup,
+        cleanupLeases: failure.cleanupLeases,
+        partialObservation: failure.partialObservation,
+        ...(failure.boundary === undefined
+          ? {}
+          : { boundary: failure.boundary }),
+        ...(failure.admission === undefined
+          ? {}
+          : { admission: failure.admission }),
+      },
+      failure.details,
+    );
   }
 }
 
