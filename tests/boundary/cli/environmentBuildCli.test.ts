@@ -4,6 +4,7 @@ import { join, sep } from "node:path";
 import { expect } from "vitest";
 
 import { environmentManifestHar } from "../../fixtures/historicalHar.js";
+import { parseEvidence } from "../../../src/domain/evidence.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
 
@@ -63,6 +64,15 @@ cliTest(
       state: { served: true },
       warnings: [],
     });
+    const builtEvidence = parseEvidence(
+      JSON.parse(
+        await readFile(
+          join(root, "built", "envs", "grafana-example", "evidence.json"),
+          "utf8",
+        ),
+      ),
+    );
+    expect(builtEvidence.caller_input_path).toBe(har);
 
     const inspected = await cli.run({
       arguments: [
