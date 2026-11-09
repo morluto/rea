@@ -141,7 +141,7 @@ variants of one file remain separate observations. Older Evidence may omit
 
 ## Node and Electron roles
 
-The caller declares one role: `node`, `electron-main`, `electron-preload`, or
+The caller may declare one role: `node`, `electron-main`, `electron-preload`, or
 `electron-renderer`. Node and Electron-main declarations require a protocol
 target of type `node`; preload and renderer declarations require `page`.
 Inspector does not authenticate the operating-system PID or distinguish an
