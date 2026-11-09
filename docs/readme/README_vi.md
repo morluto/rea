@@ -199,7 +199,7 @@ Kiểm tra tĩnh JavaScript và .NET đọc các tệp được cung cấp mà k
 
 Với tệp nhị phân lớn, tăng hạn khởi động bằng `REA_GHIDRA_STARTUP_TIMEOUT_MS` hoặc `REA_HOPPER_STARTUP_TIMEOUT_MS`.
 
-Định dạng mã máy và nền tảng chạy REA được hỗ trợ khác nhau tùy trình phân tích. Xem [thiết lập Hopper và Ghidra](../getting-started/installation.md#hopper), [hướng dẫn IDA](../providers/ida-provider.md), [Kuna](../kuna-provider.md) và [hỗ trợ Ghidra thử nghiệm trên Windows](../providers/windows-ghidra-p0.md). Ghidra cũng hỗ trợ [phân tích DOS 16 bit](../providers/ghidra-dos.md). Để chọn trình phân tích, xem [hướng dẫn CLI](../getting-started/cli.md#choose-a-provider). Kiểm tra [khả năng sử dụng theo bản phát hành](../getting-started/installation.md#released-package-and-main) đối với tính năng được bổ sung sau phiên bản npm mới nhất.
+Định dạng mã máy và nền tảng chạy REA được hỗ trợ khác nhau tùy trình phân tích. Xem [thiết lập Hopper và Ghidra](../getting-started/installation.md#hopper), [hướng dẫn IDA](../providers/ida-provider.md), [hướng dẫn JEB](../providers/jeb-analysis.md), [Kuna](../kuna-provider.md) và [hỗ trợ Ghidra thử nghiệm trên Windows](../providers/windows-ghidra-p0.md). Ghidra cũng hỗ trợ [phân tích DOS 16 bit](../providers/ghidra-dos.md). Để chọn trình phân tích, xem [hướng dẫn CLI](../getting-started/cli.md#choose-a-provider). Kiểm tra [khả năng sử dụng theo bản phát hành](../getting-started/installation.md#released-package-and-main) đối với tính năng được bổ sung sau phiên bản npm mới nhất.
 
 ## Các nghiên cứu điển hình
 

@@ -7,6 +7,7 @@ import { fileURLToPath } from "node:url";
 import { inspectJadxProvider } from "./android/JadxDoctor.js";
 import { inspectSystemGhidraProvider } from "./ghidra/GhidraDoctor.js";
 import { inspectIdaRegistration } from "./ida/IdaDoctor.js";
+import { inspectJebRegistration } from "./jeb/JebDoctor.js";
 import { inspectKunaProvider } from "./kuna/KunaDoctor.js";
 import { readIdaConfiguration } from "./ida/IdaConfiguration.js";
 import { selectLinuxPrivateDisplayStrategy } from "./hopper/LinuxPrivateDisplayProbe.js";
@@ -25,6 +26,7 @@ export const createSystemDoctorHost = (
   environment: Readonly<NodeJS.ProcessEnv> = process.env,
   signal?: AbortSignal,
 ): DoctorHost => {
+  const jebRegistration = inspectJebRegistration(environment);
   const registrationReads = new WeakMap<
     RetainedResourceScope,
     Map<string, ReturnType<typeof readIdaConfiguration>>
@@ -91,6 +93,7 @@ export const createSystemDoctorHost = (
               inspectionSignal,
             ),
       ),
+      jebRegistration,
       await inspectJadxProvider(environment, resourceScope, inspectionSignal),
       await inspectKunaProvider(environment, process.platform, {
         resourceScope,

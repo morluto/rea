@@ -199,7 +199,7 @@ Para inspecionar binários nativos offline, o REA também oferece suporte ao GNU
 
 Para binários grandes, aumente o prazo de inicialização com `REA_GHIDRA_STARTUP_TIMEOUT_MS` ou `REA_HOPPER_STARTUP_TIMEOUT_MS`.
 
-Os formatos nativos e os sistemas anfitriões compatíveis variam por provedor. Consulte [configuração do Hopper e Ghidra](../getting-started/installation.md#hopper), o [guia do IDA](../providers/ida-provider.md), [Kuna](../kuna-provider.md) e o [suporte experimental ao Ghidra no Windows](../providers/windows-ghidra-p0.md). O Ghidra também oferece [análise de DOS de 16 bits](../providers/ghidra-dos.md). Para selecionar um provedor, consulte o [guia da CLI](../getting-started/cli.md#choose-a-provider). Verifique a [disponibilidade nas versões](../getting-started/installation.md#released-package-and-main) das funcionalidades adicionadas após a versão mais recente no npm.
+Os formatos nativos e os sistemas anfitriões compatíveis variam por provedor. Consulte [configuração do Hopper e Ghidra](../getting-started/installation.md#hopper), o [guia do IDA](../providers/ida-provider.md), [guia de JEB](../providers/jeb-analysis.md), [Kuna](../kuna-provider.md) e o [suporte experimental ao Ghidra no Windows](../providers/windows-ghidra-p0.md). O Ghidra também oferece [análise de DOS de 16 bits](../providers/ghidra-dos.md). Para selecionar um provedor, consulte o [guia da CLI](../getting-started/cli.md#choose-a-provider). Verifique a [disponibilidade nas versões](../getting-started/installation.md#released-package-and-main) das funcionalidades adicionadas após a versão mais recente no npm.
 
 ## Casos de uso
 

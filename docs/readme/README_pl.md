@@ -199,7 +199,7 @@ Do analizy offline natywnych plików binarnych REA obsługuje również GNU objd
 
 Dla dużych plików zwiększ czas uruchomienia przez `REA_GHIDRA_STARTUP_TIMEOUT_MS` lub `REA_HOPPER_STARTUP_TIMEOUT_MS`.
 
-Obsługiwane formaty natywne i platformy zależą od dostawcy analizy. Zobacz [konfigurację Hoppera i Ghidry](../getting-started/installation.md#hopper), [przewodnik IDA](../providers/ida-provider.md), [Kuna](../kuna-provider.md) oraz [eksperymentalną obsługę Ghidry w systemie Windows](../providers/windows-ghidra-p0.md). Ghidra obsługuje też [analizę 16-bitowego DOS-a](../providers/ghidra-dos.md). Wybór dostawcy opisuje [przewodnik CLI](../getting-started/cli.md#choose-a-provider). Sprawdź [dostępność w wydaniach](../getting-started/installation.md#released-package-and-main) dla funkcji dodanych po najnowszym wydaniu npm.
+Obsługiwane formaty natywne i platformy zależą od dostawcy analizy. Zobacz [konfigurację Hoppera i Ghidry](../getting-started/installation.md#hopper), [przewodnik IDA](../providers/ida-provider.md), [przewodnik JEB](../providers/jeb-analysis.md), [Kuna](../kuna-provider.md) oraz [eksperymentalną obsługę Ghidry w systemie Windows](../providers/windows-ghidra-p0.md). Ghidra obsługuje też [analizę 16-bitowego DOS-a](../providers/ghidra-dos.md). Wybór dostawcy opisuje [przewodnik CLI](../getting-started/cli.md#choose-a-provider). Sprawdź [dostępność w wydaniach](../getting-started/installation.md#released-package-and-main) dla funkcji dodanych po najnowszym wydaniu npm.
 
 ## Przykłady zastosowań
 

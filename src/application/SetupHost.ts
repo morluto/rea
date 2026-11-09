@@ -210,7 +210,6 @@ export const systemSetupHost = (
           diagnosis.providerInspections?.some(
             ({ configured }) => configured,
           ) === true ||
-          providerEnvironment.REA_JEB_MCP_URL !== undefined ||
           (requestedProvider.success && requestedProvider.data !== "auto"),
         providerEnvironment,
         doctor: diagnosis,

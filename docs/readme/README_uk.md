@@ -199,7 +199,7 @@ REA потребує Node.js 22.x (>=22.23.4), 24.x (>=24.22.1) або 26+ (>=26
 
 Для великих файлів збільште час запуску через `REA_GHIDRA_STARTUP_TIMEOUT_MS` або `REA_HOPPER_STARTUP_TIMEOUT_MS`.
 
-Нативні формати й підтримка систем відрізняються залежно від провайдера. Дивіться [налаштування Hopper і Ghidra](../getting-started/installation.md#hopper), [посібник IDA](../providers/ida-provider.md), [Kuna](../kuna-provider.md) та [експериментальну підтримку Ghidra у Windows](../providers/windows-ghidra-p0.md). Ghidra також підтримує [аналіз 16-бітного DOS](../providers/ghidra-dos.md). Для вибору провайдера дивіться [посібник CLI](../getting-started/cli.md#choose-a-provider). Для функцій, доданих після найновішої версії в npm, перевірте [доступність у випусках](../getting-started/installation.md#released-package-and-main).
+Нативні формати й підтримка систем відрізняються залежно від провайдера. Дивіться [налаштування Hopper і Ghidra](../getting-started/installation.md#hopper), [посібник IDA](../providers/ida-provider.md), [посібник JEB](../providers/jeb-analysis.md), [Kuna](../kuna-provider.md) та [експериментальну підтримку Ghidra у Windows](../providers/windows-ghidra-p0.md). Ghidra також підтримує [аналіз 16-бітного DOS](../providers/ghidra-dos.md). Для вибору провайдера дивіться [посібник CLI](../getting-started/cli.md#choose-a-provider). Для функцій, доданих після найновішої версії в npm, перевірте [доступність у випусках](../getting-started/installation.md#released-package-and-main).
 
 ## Приклади
 

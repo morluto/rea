@@ -245,7 +245,7 @@ or update either provider.
 Native formats and host support vary by provider. See
 [Hopper and Ghidra setup](docs/getting-started/installation.md#hopper), the
 [IDA guide](docs/providers/ida-provider.md) (including an optional native MCP bridge), the
-[Kuna decompiler guide](docs/kuna-provider.md), and
+[JEB guide](docs/providers/jeb-analysis.md), the [Kuna decompiler guide](docs/kuna-provider.md), and
 [experimental Windows Ghidra support](docs/providers/windows-ghidra-p0.md).
 Ghidra also supports [16-bit DOS analysis](docs/providers/ghidra-dos.md).
 For large binaries, raise the provider's startup deadline with

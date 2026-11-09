@@ -63,6 +63,8 @@ const activityExtraNonEmptyValueSchema = activityExtraStringValueSchema.min(1);
 export const MAX_ADB_ACTIVITY_EXTRAS = 16;
 // Android's `am start --ef` parses this text with Float.valueOf. Keep the
 // caller's spelling intact while admitting Java FloatValue forms.
+// Signs stay outside character classes so lint fixes cannot break JSON Schema
+// consumers that compile the advertised pattern with JavaScript's v flag.
 const javaFloatValuePattern =
   /^[\x01-\x20]*(?:\+|-)?(?:NaN|Infinity|(?:(?:\d+(?:\.\d*)?|\.\d+)(?:[eE](?:\+|-)?\d+)?[fFdD]?|0[xX](?:[\da-fA-F]+(?:\.[\da-fA-F]*)?|\.[\da-fA-F]+)[pP](?:\+|-)?\d+[fFdD]?))[\x01-\x20]*$/u;
 const activityExtraSchema = z.discriminatedUnion("type", [
