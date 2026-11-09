@@ -110,8 +110,9 @@ partway through is charged its full per-candidate allowance, since its partial
 output is not measured. When that search budget runs
 out before a config is accepted, the config is `incomplete` with reason
 `config_search_exhausted` instead of failing or reporting an absent config.
-Cancellation is checked between candidates, between banner hits, and while
-scanning long text; one inflate call runs to its output bound once started.
+Inflation runs off the event loop and every scan yields to it at least once per
+MiB, so a cancellation that arrives while the image is being parsed is honored
+at the next check. One inflate call runs to its output bound once started.
 
 Results that could not search or read the kernel bytes stay `incomplete`,
 `malformed`, or `unsupported` and are never

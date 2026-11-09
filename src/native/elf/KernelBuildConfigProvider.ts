@@ -66,7 +66,7 @@ export class KernelBuildConfigProvider implements KernelBuildConfigPort {
           this.#resources,
         );
         return ok(
-          parseKernelBuildConfig(
+          await parseKernelBuildConfig(
             snapshot.bytes,
             {
               path: input.path,

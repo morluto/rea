@@ -51,7 +51,9 @@ these files.
    `max_config_bytes` fails the budget only when no later candidate is
    accepted.
 8. Cancellation is checked between candidates, between banner hits, while
-   scanning long text and while parsing config lines.
+   scanning long text and while parsing config lines. Inflation runs off the
+   event loop and each scan yields to it at least once per MiB, so a live
+   cancellation reaches those checks.
 9. Banner text and config values are marked target-derived and untrusted.
 10. MCP requires an absolute path. The CLI resolves relative paths against the
     working directory.

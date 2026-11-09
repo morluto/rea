@@ -26,7 +26,10 @@ import { parseKernelBuildConfig } from "../../native/elf/KernelBuildConfig.js";
 const identity = KERNEL_BUILD_CONFIG_PROVIDER;
 const path = "/artifacts/vmlinux";
 
-const reportOf = (bytes: Buffer, extra: object = {}): KernelBuildConfig =>
+const reportOf = (
+  bytes: Buffer,
+  extra: object = {},
+): Promise<KernelBuildConfig> =>
   parseKernelBuildConfig(
     bytes,
     { path, sha256: "a".repeat(64), bytes: bytes.length },
@@ -45,7 +48,7 @@ it("rejects a relative path and extra arguments before reading", async () => {
     identity,
     inspect: () => {
       calls += 1;
-      return Promise.resolve(ok(reportOf(kernelBuildConfigFixture())));
+      return reportOf(kernelBuildConfigFixture()).then(ok);
     },
   });
   const relative = await service.inspect({ path: "vmlinux" });
@@ -69,7 +72,7 @@ it.each([
 ] as const)(
   "records parser output for %s as observed Evidence",
   async (_label, make, format) => {
-    const report = make();
+    const report = await make();
     const result = await serviceFor(report).inspect({ path });
     if (!result.ok) throw result.error;
     expect(result.value).toMatchObject({
@@ -81,7 +84,7 @@ it.each([
 );
 
 it("records file ranges only for file-space locations", async () => {
-  const report = reportOf(bzImageGzipFixture());
+  const report = await reportOf(bzImageGzipFixture());
   const result = await serviceFor(report).inspect({ path });
   if (!result.ok) throw result.error;
   const ranges = result.value.locations?.filter(
@@ -133,8 +136,8 @@ it.each([
   ],
   [
     "a malformed config reported with complete coverage",
-    (): KernelBuildConfig => {
-      const malformed = reportOf(nonConfigGzipFixture());
+    async (): Promise<KernelBuildConfig> => {
+      const malformed = await reportOf(nonConfigGzipFixture());
       return {
         ...malformed,
         coverage: { ...malformed.coverage, status: "complete" },
@@ -143,8 +146,8 @@ it.each([
   ],
   [
     "an incomplete config carrying a malformed reason",
-    (): KernelBuildConfig => {
-      const truncated = reportOf(truncatedKernelConfigFixture());
+    async (): Promise<KernelBuildConfig> => {
+      const truncated = await reportOf(truncatedKernelConfigFixture());
       return {
         ...truncated,
         config: { ...truncated.config, reason: "config_text_invalid" },
@@ -153,16 +156,16 @@ it.each([
   ],
 ] as const)("rejects %s", async (_label, mutate) => {
   const result = await serviceFor(
-    mutate(reportOf(kernelBuildConfigFixture())),
+    await mutate(await reportOf(kernelBuildConfigFixture())),
   ).inspect({ path });
   if (result.ok) throw new Error("Expected malformed provider output");
   expect(result.error).toBeInstanceOf(AnalysisOutputError);
 });
 
 it("rejects a report whose page disagrees with the caller page", async () => {
-  const result = await serviceFor(reportOf(kernelBuildConfigFixture())).inspect(
-    { path, limit: 1 },
-  );
+  const result = await serviceFor(
+    await reportOf(kernelBuildConfigFixture()),
+  ).inspect({ path, limit: 1 });
   if (result.ok) throw new Error("Expected malformed provider output");
   expect(result.error).toBeInstanceOf(AnalysisOutputError);
 });

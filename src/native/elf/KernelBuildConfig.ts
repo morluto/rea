@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
-import { crc32, inflateRawSync } from "node:zlib";
+import { setImmediate as nextTurn } from "node:timers/promises";
+import { crc32, inflateRaw } from "node:zlib";
 
 import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
 import { assertArtifactReadActive } from "../../artifacts/ArtifactFileOperation.js";
@@ -28,8 +29,8 @@ const MAX_NAME_BYTES = 256;
 const MAX_CONFIG_CANDIDATES = 16;
 /** Total inflated bytes across all candidates, as a multiple of max_config_bytes. */
 const CONFIG_SEARCH_BUDGET_FACTOR = 4;
-/** Printable bytes scanned between cancellation checks. */
-const CANCEL_STRIDE = 0x10000;
+/** Bytes scanned between event-loop turns, so a live abort can be delivered. */
+const TURN_STRIDE = 0x100000;
 const UNTRUSTED = "target-derived-untrusted" as const;
 
 const sha256 = (bytes: Buffer): string =>
@@ -39,6 +40,15 @@ const codeOf = (error: unknown): string | null =>
   error instanceof Error && "code" in error && typeof error.code === "string"
     ? error.code
     : null;
+
+/**
+ * Let pending signals and requests run, then honor an abort they raised. The
+ * scans are otherwise synchronous, so without a turn no abort could land.
+ */
+const yieldTurn = async (signal: AbortSignal | undefined): Promise<void> => {
+  await nextTurn();
+  assertArtifactReadActive(signal);
+};
 
 const budget = (knob: Knob, limit: number): never => {
   throw new ArtifactReaderFailure(
@@ -129,30 +139,47 @@ const gzipHeaderEnd = (
  * input by passing a subarray. Bytes after the member are not consumed, so the
  * caller can require the next bytes to be a marker.
  */
-const inflateGzipMember = (
+interface Inflated {
+  readonly buffer: Buffer;
+  readonly engine: { readonly bytesWritten: number };
+}
+
+const inflateBounded = (
+  input: Buffer,
+  maxOutputLength: number,
+): Promise<Inflated> =>
+  new Promise((resolve, reject) => {
+    inflateRaw(input, { maxOutputLength, info: true }, (error, result) => {
+      if (error === null) resolve(result as unknown as Inflated);
+      else reject(error);
+    });
+  });
+
+const inflateGzipMember = async (
   bytes: Buffer,
   start: number,
   maxOutput: number,
-): GzipMember => {
+  signal: AbortSignal | undefined,
+): Promise<GzipMember> => {
   const body = gzipHeaderEnd(bytes, start);
   if (body === null) return { kind: "truncated", spent: 0 };
   if (body === "invalid") return { kind: "invalid", spent: 0 };
   let output: Buffer;
   let consumed: number;
   try {
-    const inflated = inflateRawSync(bytes.subarray(body), {
-      maxOutputLength: maxOutput,
-      info: true,
-    }) as unknown as { buffer: Buffer; engine: { bytesWritten: number } };
+    // zlib runs off the event loop, so an abort raised meanwhile is seen below.
+    const inflated = await inflateBounded(bytes.subarray(body), maxOutput);
     output = inflated.buffer;
     consumed = inflated.engine.bytesWritten;
   } catch (error) {
+    assertArtifactReadActive(signal);
     const code = codeOf(error);
     if (code === "ERR_BUFFER_TOO_LARGE") return { kind: "limit" };
     return code === "Z_BUF_ERROR"
       ? { kind: "truncated", spent: maxOutput }
       : { kind: "invalid", spent: maxOutput };
   }
+  assertArtifactReadActive(signal);
   const trailer = body + consumed;
   if (trailer + 8 > bytes.length)
     return { kind: "truncated", spent: output.length };
@@ -223,11 +250,11 @@ const classifyValue = (
  * are scanned one at a time, so no per-line array is built ahead of the
  * max_entries check.
  */
-const parseConfigText = (
+const parseConfigText = async (
   bytes: Buffer,
   maxEntries: number,
   signal: AbortSignal | undefined,
-): readonly Entry[] | null => {
+): Promise<readonly Entry[] | null> => {
   const text = decodeText(bytes);
   if (text === null || text.length === 0) return null;
   const entries: Entry[] = [];
@@ -236,8 +263,13 @@ const parseConfigText = (
     entries.push(entry);
   };
   let lines = 0;
+  let turnAt = TURN_STRIDE;
   for (let start = 0; start < text.length;) {
     if ((lines++ & 0x3ff) === 0) assertArtifactReadActive(signal);
+    if (start >= turnAt) {
+      turnAt = start + TURN_STRIDE;
+      await yieldTurn(signal);
+    }
     const newline = text.indexOf("\n", start);
     const end = newline < 0 ? text.length : newline;
     const line = text.slice(
@@ -297,12 +329,14 @@ interface MalformedConfig extends ConfigBlob {
  * times `max_config_bytes` of inflated output are spent; past that the search
  * is `exhausted` rather than silently stopped.
  */
-const findConfig = (
+const findConfig = async (
   bytes: Buffer,
   maxOutput: number,
   maxEntries: number,
   signal: AbortSignal | undefined,
-): AcceptedConfig | MalformedConfig | "absent" | "truncated" | "exhausted" => {
+): Promise<
+  AcceptedConfig | MalformedConfig | "absent" | "truncated" | "exhausted"
+> => {
   let from = 0;
   let truncated = false;
   let malformed: MalformedConfig | null = null;
@@ -311,10 +345,15 @@ const findConfig = (
   let oversized = false;
   // Next IKCFG_ED at or after the current candidate; -1 once none remains.
   let closing: number | null = null;
+  let turnAt = TURN_STRIDE;
   for (;;) {
     assertArtifactReadActive(signal);
     const marker = bytes.indexOf(IKCFG_ST, from);
     if (marker < 0) break;
+    if (marker >= turnAt) {
+      turnAt = marker + TURN_STRIDE;
+      await yieldTurn(signal);
+    }
     from = marker + 1;
     const gzipAt = marker + IKCFG_ST.length;
     if (codecAt(bytes, gzipAt) !== "gzip") continue;
@@ -328,7 +367,7 @@ const findConfig = (
     candidates += 1;
     const limit = Math.min(maxOutput, remaining);
     const span = closing < 0 ? bytes : bytes.subarray(0, closing);
-    const member = inflateGzipMember(span, gzipAt, limit);
+    const member = await inflateGzipMember(span, gzipAt, limit, signal);
     if (member.kind === "limit") {
       if (limit < maxOutput) return "exhausted";
       // A member past max_config_bytes may be a decoy, so a later framed
@@ -364,7 +403,7 @@ const findConfig = (
     };
     const entries =
       member.kind === "member"
-        ? parseConfigText(member.output, maxEntries, signal)
+        ? await parseConfigText(member.output, maxEntries, signal)
         : null;
     if (member.kind === "member" && entries !== null)
       return {
@@ -433,12 +472,13 @@ const isPrintable = (value: number): boolean => value >= 0x20 && value <= 0x7e;
  * shares that run's terminator, so each run is scanned once and the search
  * resumes after it: the scan is linear in the searched bytes.
  */
-const findBanner = (
+const findBanner = async (
   bytes: Buffer,
   space: Space,
   signal: AbortSignal | undefined,
-): Report["banner"] => {
+): Promise<Report["banner"]> => {
   let from = 0;
+  let turnAt = TURN_STRIDE;
   for (;;) {
     assertArtifactReadActive(signal);
     const at = bytes.indexOf(BANNER_PREFIX, from);
@@ -446,7 +486,11 @@ const findBanner = (
     let end = at + BANNER_PREFIX.length;
     while (end < bytes.length && isPrintable(bytes[end] ?? 0)) {
       end += 1;
-      if (end % CANCEL_STRIDE === 0) assertArtifactReadActive(signal);
+      if (end % TURN_STRIDE === 0) await yieldTurn(signal);
+    }
+    if (end >= turnAt) {
+      turnAt = end + TURN_STRIDE;
+      await yieldTurn(signal);
     }
     from = end + 1;
     if (end >= bytes.length || (bytes[end] !== 0 && bytes[end] !== 0x0a))
@@ -549,14 +593,14 @@ interface SearchSpace {
   readonly extraLimitations: readonly string[];
 }
 
-const reportFromSearch = (
+const reportFromSearch = async (
   artifact: Report["artifact"],
   format: Report["format"],
   input: InspectKernelBuildConfigInput,
   search: SearchSpace,
   signal: AbortSignal | undefined,
-): Report => {
-  const found = findConfig(
+): Promise<Report> => {
+  const found = await findConfig(
     search.bytes,
     input.max_config_bytes,
     input.max_entries,
@@ -576,12 +620,13 @@ const reportFromSearch = (
               }
             : acceptedConfig(found, input, search.space);
   const complete = found === "absent" || config.status === "present";
+  const banner = await findBanner(search.bytes, search.space, signal);
   return {
     artifact,
     format,
     payload: search.payload,
     next_probe: null,
-    banner: findBanner(search.bytes, search.space, signal),
+    banner,
     config,
     coverage: {
       status: complete ? "complete" : "incomplete",
@@ -669,13 +714,13 @@ const closedReport = (
 const NOT_SEARCHED =
   "The banner and embedded config were not searched and are not reported as absent.";
 
-const bzImageReport = (
+const bzImageReport = async (
   bytes: Buffer,
   artifact: Report["artifact"],
   input: InspectKernelBuildConfigInput,
   header: Exclude<ReturnType<typeof readBzImage>, { kind: "none" }>,
   signal: AbortSignal | undefined,
-): Report => {
+): Promise<Report> => {
   if (header.kind === "unavailable")
     return closedReport(
       artifact,
@@ -734,7 +779,12 @@ const bzImageReport = (
   // Only the leading gzip member is inflated; its own ISIZE trailer carries
   // the length. Bytes after the member inside the payload are not read.
   assertArtifactReadActive(signal);
-  const member = inflateGzipMember(body, 0, input.max_payload_bytes);
+  const member = await inflateGzipMember(
+    body,
+    0,
+    input.max_payload_bytes,
+    signal,
+  );
   if (member.kind === "limit")
     budget("max_payload_bytes", input.max_payload_bytes);
   if (member.kind !== "member")
@@ -779,16 +829,17 @@ const bzImageReport = (
 
 /**
  * Read a kernel version banner and an embedded IKCFG build config.
- * The caller supplies the already bounded file bytes. `signal` is checked
- * between scan steps and before each inflate; one inflate call runs to its
+ * The caller supplies the already bounded file bytes. Scans yield to the event
+ * loop once per TURN_STRIDE bytes and inflation runs off it, so an abort raised
+ * while parsing is honored at the next check. One inflate call runs to its
  * output bound once started.
  */
-export const parseKernelBuildConfig = (
+export const parseKernelBuildConfig = async (
   bytes: Buffer,
   artifact: Report["artifact"],
   input: InspectKernelBuildConfigInput,
   signal?: AbortSignal,
-): Report => {
+): Promise<Report> => {
   const elf = isElf(bytes);
   if (!elf) {
     const header = readBzImage(bytes);

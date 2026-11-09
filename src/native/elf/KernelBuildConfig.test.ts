@@ -29,12 +29,12 @@ import { parseKernelBuildConfig } from "./KernelBuildConfig.js";
 
 const artifactPath = "/artifacts/vmlinux";
 
-const parse = (
+const parse = async (
   bytes: Buffer,
   extra: Partial<Omit<InspectKernelBuildConfigInput, "path">> = {},
 ) =>
   kernelBuildConfigSchema.parse(
-    parseKernelBuildConfig(
+    await parseKernelBuildConfig(
       bytes,
       { path: artifactPath, sha256: "ab".repeat(32), bytes: bytes.length },
       inspectKernelBuildConfigInputSchema.parse({
@@ -44,9 +44,9 @@ const parse = (
     ),
   );
 
-it("reads the banner and the gzip IKCFG config after skipping a decoy marker", () => {
+it("reads the banner and the gzip IKCFG config after skipping a decoy marker", async () => {
   const bytes = kernelBuildConfigFixture();
-  const report = parse(bytes);
+  const report = await parse(bytes);
   expect(report.format).toBe("elf");
   expect(report.payload.status).toBe("uncompressed");
   expect(report.banner).toMatchObject({
@@ -90,8 +90,8 @@ it("reads the banner and the gzip IKCFG config after skipping a decoy marker", (
   });
 });
 
-it("filters by exact name and pages without changing the option count", () => {
-  const named = parse(kernelBuildConfigFixture(), {
+it("filters by exact name and pages without changing the option count", async () => {
+  const named = await parse(kernelBuildConfigFixture(), {
     name: "CONFIG_MODULE_SIG_FORCE",
   });
   expect(named.config).toMatchObject({
@@ -100,19 +100,22 @@ it("filters by exact name and pages without changing the option count", () => {
     name: "CONFIG_MODULE_SIG_FORCE",
     entries: [{ name: "CONFIG_MODULE_SIG_FORCE", kind: "not_set" }],
   });
-  const paged = parse(kernelBuildConfigFixture(), { offset: 7, limit: 5 });
+  const paged = await parse(kernelBuildConfigFixture(), {
+    offset: 7,
+    limit: 5,
+  });
   expect(paged.config.entries.map((entry) => entry.name)).toEqual([
     "CONFIG_PAGE_OFFSET",
     "CONFIG_MODULE_SIG_FORCE",
   ]);
   expect(
-    parse(kernelBuildConfigFixture(), { offset: 50 }).config.entries,
+    (await parse(kernelBuildConfigFixture(), { offset: 50 })).config.entries,
   ).toEqual([]);
 });
 
-it("accepts a string value longer than 4096 characters", () => {
+it("accepts a string value longer than 4096 characters", async () => {
   expect(LONG_KERNEL_CONFIG_STRING.length).toBeGreaterThan(4096);
-  const report = parse(longStringKernelConfigFixture());
+  const report = await parse(longStringKernelConfigFixture());
   expect(report.config).toMatchObject({
     status: "present",
     option_count: 2,
@@ -123,21 +126,23 @@ it("accepts a string value longer than 4096 characters", () => {
     value: `${LONG_KERNEL_CONFIG_STRING} "q" \\`,
   });
   expect(
-    parse(longStringKernelConfigFixture(), {
-      name: "CONFIG_SECURITY_SELINUX",
-    }).config,
+    (
+      await parse(longStringKernelConfigFixture(), {
+        name: "CONFIG_SECURITY_SELINUX",
+      })
+    ).config,
   ).toMatchObject({ status: "present", matched_count: 1 });
 });
 
-it("keeps the strict grammar for malformed quoted values", () => {
+it("keeps the strict grammar for malformed quoted values", async () => {
   for (const value of ['"open', '"bad \\q"', '"a"b"', '"tail\\"'])
     expect(
-      parse(embeddedKernelConfig(`CONFIG_X=${value}\n`)).config.status,
+      (await parse(embeddedKernelConfig(`CONFIG_X=${value}\n`))).config.status,
     ).toBe("malformed");
 });
 
-it("does not treat an ordinary IKCFG_ST string as a config", () => {
-  const report = parse(plainIkcfgStringFixture());
+it("does not treat an ordinary IKCFG_ST string as a config", async () => {
+  const report = await parse(plainIkcfgStringFixture());
   expect(report.config).toMatchObject({
     status: "absent",
     reason: null,
@@ -147,15 +152,15 @@ it("does not treat an ordinary IKCFG_ST string as a config", () => {
   expect(report.coverage.status).toBe("complete");
 });
 
-it("skips a member that is not immediately followed by IKCFG_ED", () => {
-  expect(parse(trailingBytesKernelConfigFixture()).config.status).toBe(
+it("skips a member that is not immediately followed by IKCFG_ED", async () => {
+  expect((await parse(trailingBytesKernelConfigFixture())).config.status).toBe(
     "absent",
   );
 });
 
-it("reports a framed member whose text fails the grammar as malformed, not absent", () => {
+it("reports a framed member whose text fails the grammar as malformed, not absent", async () => {
   const bytes = nonConfigGzipFixture();
-  const report = parse(bytes);
+  const report = await parse(bytes);
   expect(report.config).toMatchObject({
     status: "malformed",
     reason: "config_text_invalid",
@@ -172,8 +177,8 @@ it("reports a framed member whose text fails the grammar as malformed, not absen
   ).toBe(true);
 });
 
-it("reports a framed member with a bad CRC-32 as malformed, not absent", () => {
-  const report = parse(badCrcKernelConfigFixture());
+it("reports a framed member with a bad CRC-32 as malformed, not absent", async () => {
+  const report = await parse(badCrcKernelConfigFixture());
   expect(report.config).toMatchObject({
     status: "malformed",
     reason: "config_gzip_invalid",
@@ -185,21 +190,23 @@ it("reports a framed member with a bad CRC-32 as malformed, not absent", () => {
   expect(report.limitations.some((line) => line.includes("CRC-32"))).toBe(true);
 });
 
-it("checks the optional gzip header CRC before accepting a member", () => {
+it("checks the optional gzip header CRC before accepting a member", async () => {
   const plain = Buffer.from(SAMPLE_KERNEL_CONFIG, "latin1");
   const frame = (member: Buffer): Buffer =>
     Buffer.concat([Buffer.from("IKCFG_ST"), member, Buffer.from("IKCFG_ED")]);
-  expect(parse(frame(headerCrcGzipMember(plain))).config).toMatchObject({
-    status: "present",
-    option_count: 9,
-  });
+  expect((await parse(frame(headerCrcGzipMember(plain)))).config).toMatchObject(
+    {
+      status: "present",
+      option_count: 9,
+    },
+  );
   const good = headerCrcGzipMember(plain);
   const damaged = headerCrcGzipMember(
     plain,
     (good.readUInt16LE(17) ^ 0xffff) & 0xffff,
   );
-  expect(parse(frame(damaged)).config.status).not.toBe("present");
-  const payload = parse(
+  expect((await parse(frame(damaged))).config.status).not.toBe("present");
+  const payload = await parse(
     bzImageFixture(
       headerCrcGzipMember(
         Buffer.concat([
@@ -214,7 +221,7 @@ it("checks the optional gzip header CRC before accepting a member", () => {
   expect(payload.config.reason).toBe("payload_gzip_invalid");
 });
 
-it("reports a framed member that does not decode as malformed, not absent", () => {
+it("reports a framed member that does not decode as malformed, not absent", async () => {
   const member = gzipSync(Buffer.from(SAMPLE_KERNEL_CONFIG, "latin1"));
   const damaged = Buffer.from(member);
   // The first DEFLATE byte becomes a reserved block type.
@@ -226,7 +233,7 @@ it("reports a framed member that does not decode as malformed, not absent", () =
       body,
       Buffer.from("IKCFG_ED"),
     ]);
-    const report = parse(bytes);
+    const report = await parse(bytes);
     expect(report.config).toMatchObject({
       status: "malformed",
       reason: "config_gzip_invalid",
@@ -236,21 +243,22 @@ it("reports a framed member that does not decode as malformed, not absent", () =
     });
     expect(report.coverage.status).toBe("incomplete");
     expect(
-      parse(Buffer.concat([bytes, embeddedKernelConfig()])).config.status,
+      (await parse(Buffer.concat([bytes, embeddedKernelConfig()]))).config
+        .status,
     ).toBe("present");
   }
 });
 
-it("prefers a valid config over an earlier malformed blob", () => {
-  const report = parse(
+it("prefers a valid config over an earlier malformed blob", async () => {
+  const report = await parse(
     Buffer.concat([badCrcKernelConfigFixture(), embeddedKernelConfig()]),
   );
   expect(report.config).toMatchObject({ status: "present", option_count: 9 });
   expect(report.coverage.status).toBe("complete");
 });
 
-it("reports a truncated IKCFG member as incomplete, not absent", () => {
-  const report = parse(truncatedKernelConfigFixture());
+it("reports a truncated IKCFG member as incomplete, not absent", async () => {
+  const report = await parse(truncatedKernelConfigFixture());
   expect(report.config).toMatchObject({
     status: "incomplete",
     reason: "config_gzip_truncated",
@@ -258,8 +266,8 @@ it("reports a truncated IKCFG member as incomplete, not absent", () => {
   expect(report.coverage.status).toBe("incomplete");
 });
 
-it("inflates a bzImage gzip payload and reports payload-relative offsets", () => {
-  const report = parse(bzImageGzipFixture());
+it("inflates a bzImage gzip payload and reports payload-relative offsets", async () => {
+  const report = await parse(bzImageGzipFixture());
   expect(report.format).toBe("file");
   expect(report.payload).toMatchObject({
     container: "bzimage",
@@ -280,8 +288,8 @@ it("inflates a bzImage gzip payload and reports payload-relative offsets", () =>
   expect(report.coverage.examined_bytes).toBe(report.payload.inflated_bytes);
 });
 
-it("names an xz bzImage payload as unsupported without searching it", () => {
-  const report = parse(bzImageXzFixture());
+it("names an xz bzImage payload as unsupported without searching it", async () => {
+  const report = await parse(bzImageXzFixture());
   expect(report).toMatchObject({
     payload: { container: "bzimage", codec: "xz", status: "unsupported" },
     next_probe: { operation: "external_decompression" },
@@ -291,38 +299,38 @@ it("names an xz bzImage payload as unsupported without searching it", () => {
   });
 });
 
-it("keeps truncated and unusable bzImage payloads incomplete", () => {
-  const truncated = parse(bzImageTruncatedGzipFixture());
+it("keeps truncated and unusable bzImage payloads incomplete", async () => {
+  const truncated = await parse(bzImageTruncatedGzipFixture());
   expect(truncated.payload.status).toBe("truncated");
   expect(truncated.config.reason).toBe("payload_truncated");
   expect(truncated.coverage.status).toBe("incomplete");
 
-  const old = parse(bzImageFixture(gzipSync("x"), { version: 0x0206 }));
+  const old = await parse(bzImageFixture(gzipSync("x"), { version: 0x0206 }));
   expect(old.payload.status).toBe("unavailable");
   expect(old.config.reason).toBe("setup_header_payload_unavailable");
 
   const short = bzImageFixture(gzipSync("x"));
   short.writeUInt32LE(0xffff, 0x24c);
-  expect(parse(short).config.reason).toBe("payload_truncated");
+  expect((await parse(short)).config.reason).toBe("payload_truncated");
 
   const garbage = bzImageFixture(Buffer.from("not compressed"));
-  expect(parse(garbage)).toMatchObject({
+  expect(await parse(garbage)).toMatchObject({
     payload: { codec: null, status: "unsupported" },
     config: { reason: "unrecognized_payload_codec" },
   });
 });
 
-it("detects the bzImage payload codec within the declared payload only", () => {
+it("detects the bzImage payload codec within the declared payload only", async () => {
   const image = bzImageXzFixture();
   image.writeUInt32LE(1, 0x24c);
-  expect(parse(image)).toMatchObject({
+  expect(await parse(image)).toMatchObject({
     payload: { codec: null, status: "unsupported", bytes: 1 },
     config: { reason: "unrecognized_payload_codec" },
   });
 });
 
-it("names a whole-file codec stream without inflating it", () => {
-  const report = parse(gzipSync(Buffer.from(SAMPLE_KERNEL_CONFIG)));
+it("names a whole-file codec stream without inflating it", async () => {
+  const report = await parse(gzipSync(Buffer.from(SAMPLE_KERNEL_CONFIG)));
   expect(report).toMatchObject({
     payload: { container: "file", codec: "gzip", status: "unsupported" },
     config: { status: "unsupported" },
@@ -330,32 +338,32 @@ it("names a whole-file codec stream without inflating it", () => {
   });
 });
 
-it("fails closed when a config exceeds its entry or inflation budget", () => {
-  expect(() => parse(kernelBuildConfigFixture(), { max_entries: 2 })).toThrow(
-    ArtifactReaderFailure,
-  );
-  expect(() =>
+it("fails closed when a config exceeds its entry or inflation budget", async () => {
+  await expect(
+    parse(kernelBuildConfigFixture(), { max_entries: 2 }),
+  ).rejects.toThrow(ArtifactReaderFailure);
+  await expect(
     parse(kernelBuildConfigFixture(), { max_config_bytes: 64 }),
-  ).toThrow(/max_config_bytes/u);
-  expect(() => parse(bzImageGzipFixture(), { max_payload_bytes: 64 })).toThrow(
-    /max_payload_bytes/u,
-  );
+  ).rejects.toThrow(/max_config_bytes/u);
+  await expect(
+    parse(bzImageGzipFixture(), { max_payload_bytes: 64 }),
+  ).rejects.toThrow(/max_payload_bytes/u);
 });
 
-it("ignores banner-shaped text that is unterminated or lacks a version", () => {
+it("ignores banner-shaped text that is unterminated or lacks a version", async () => {
   const bytes = Buffer.concat([
     Buffer.from("Linux version of the docs\0"),
     Buffer.from("Linux version 5.10.0"),
   ]);
-  expect(parse(bytes).banner.status).toBe("absent");
+  expect((await parse(bytes)).banner.status).toBe("absent");
 });
 
 const framed = (member: Buffer): Buffer =>
   Buffer.concat([Buffer.from("IKCFG_ST"), member, Buffer.from("IKCFG_ED")]);
 
-it("stops inflating decoy candidates after the candidate cap and reports incomplete", () => {
+it("stops inflating decoy candidates after the candidate cap and reports incomplete", async () => {
   const decoy = framed(gzipSync(Buffer.from("hello world\n")));
-  const report = parse(
+  const report = await parse(
     Buffer.concat([
       ...Array.from({ length: 16 }, () => decoy),
       embeddedKernelConfig(),
@@ -372,9 +380,9 @@ it("stops inflating decoy candidates after the candidate cap and reports incompl
   ).toBe(true);
 });
 
-it("caps total inflated bytes across candidates below each member's own budget", () => {
+it("caps total inflated bytes across candidates below each member's own budget", async () => {
   const decoy = framed(gzipSync(Buffer.alloc(4000, 0x61)));
-  const report = parse(
+  const report = await parse(
     Buffer.concat([
       ...Array.from({ length: 5 }, () => decoy),
       embeddedKernelConfig(),
@@ -387,13 +395,15 @@ it("caps total inflated bytes across candidates below each member's own budget",
   });
   // Under the cap, the same decoys still yield the later config.
   expect(
-    parse(Buffer.concat([decoy, decoy, embeddedKernelConfig()]), {
-      max_config_bytes: 4096,
-    }).config.status,
+    (
+      await parse(Buffer.concat([decoy, decoy, embeddedKernelConfig()]), {
+        max_config_bytes: 4096,
+      })
+    ).config.status,
   ).toBe("present");
 });
 
-it("charges cut-off decoy members against the total inflate budget", () => {
+it("charges cut-off decoy members against the total inflate budget", async () => {
   // Incompressible bytes, so the cut-off stream inflates under the limit.
   const noise = Buffer.concat(
     Array.from({ length: 1875 }, (_, index) =>
@@ -402,7 +412,7 @@ it("charges cut-off decoy members against the total inflate budget", () => {
   );
   // Each decoy's deflate stream is cut off by its own IKCFG_ED.
   const decoy = framed(gzipSync(noise).subarray(0, 30_000));
-  const report = parse(
+  const report = await parse(
     Buffer.concat([
       ...Array.from({ length: 4 }, () => decoy),
       embeddedKernelConfig(),
@@ -415,9 +425,9 @@ it("charges cut-off decoy members against the total inflate budget", () => {
   });
 });
 
-it("bounds each candidate's inflate input by its closing IKCFG_ED", () => {
+it("bounds each candidate's inflate input by its closing IKCFG_ED", async () => {
   const bomb = gzipSync(Buffer.alloc(1 << 20));
-  const report = parse(
+  const report = await parse(
     Buffer.concat([
       Buffer.from("IKCFG_ST"),
       bomb.subarray(0, 100),
@@ -430,21 +440,21 @@ it("bounds each candidate's inflate input by its closing IKCFG_ED", () => {
   expect(report.config).toMatchObject({ status: "present", option_count: 9 });
 });
 
-it("does not let an oversized decoy hide a later config", () => {
+it("does not let an oversized decoy hide a later config", async () => {
   const decoy = Buffer.concat([
     Buffer.from("IKCFG_ST"),
     gzipSync(Buffer.alloc(200_000)),
     Buffer.from("IKCFG_ED"),
   ]);
-  const report = parse(Buffer.concat([decoy, embeddedKernelConfig()]), {
+  const report = await parse(Buffer.concat([decoy, embeddedKernelConfig()]), {
     max_config_bytes: 65536,
   });
   expect(report.config).toMatchObject({ status: "present", option_count: 9 });
 });
 
-it("finds a banner after overlapping unterminated repeats in one linear scan", () => {
+it("finds a banner after overlapping unterminated repeats in one linear scan", async () => {
   const repeats = Buffer.from("Linux version ".repeat(200_000));
-  const rejected = parse(Buffer.concat([repeats, Buffer.from([0x01])]));
+  const rejected = await parse(Buffer.concat([repeats, Buffer.from([0x01])]));
   expect(rejected.banner.status).toBe("absent");
   const bytes = Buffer.concat([
     repeats,
@@ -452,7 +462,7 @@ it("finds a banner after overlapping unterminated repeats in one linear scan", (
     Buffer.from("Linux version x ".repeat(100)),
     Buffer.from("Linux version 6.1.0 (a@b) (gcc) #1\n"),
   ]);
-  const report = parse(bytes);
+  const report = await parse(bytes);
   expect(report.banner).toMatchObject({
     status: "present",
     text: "Linux version 6.1.0 (a@b) (gcc) #1",
@@ -461,7 +471,7 @@ it("finds a banner after overlapping unterminated repeats in one linear scan", (
   });
 });
 
-it("honors cancellation during the marker, inflate, and banner scans", () => {
+it("honors cancellation during the marker, inflate, and banner scans", async () => {
   const input = inspectKernelBuildConfigInputSchema.parse({
     path: artifactPath,
   });
@@ -477,9 +487,9 @@ it("honors cancellation during the marker, inflate, and banner scans", () => {
     } as unknown as AbortSignal;
   };
   const decoy = framed(gzipSync(Buffer.from("hello world\n")));
-  const cancelled = (bytes: Buffer, checks: number): unknown => {
+  const cancelled = async (bytes: Buffer, checks: number): Promise<unknown> => {
     try {
-      parseKernelBuildConfig(bytes, artifact, input, abortAfter(checks));
+      await parseKernelBuildConfig(bytes, artifact, input, abortAfter(checks));
     } catch (error) {
       return error;
     }
@@ -491,7 +501,35 @@ it("honors cancellation during the marker, inflate, and banner scans", () => {
     [Buffer.from("Linux version ".repeat(20_000)), 1],
     [bzImageGzipFixture(), 0],
   ] as const) {
-    const error = cancelled(bytes, checks);
+    const error = await cancelled(bytes, checks);
+    expect(error).toBeInstanceOf(ArtifactReaderFailure);
+    expect((error as ArtifactReaderFailure).reason).toBe("cancelled");
+  }
+});
+
+it("honors an abort raised while the parse is running", async () => {
+  const input = inspectKernelBuildConfigInputSchema.parse({
+    path: artifactPath,
+  });
+  const artifact = { path: artifactPath, sha256: "ab".repeat(32), bytes: 0 };
+  for (const bytes of [
+    kernelBuildConfigFixture(),
+    bzImageGzipFixture(),
+    Buffer.from("Linux version ".repeat(300_000)),
+  ]) {
+    const controller = new AbortController();
+    const pending = parseKernelBuildConfig(
+      bytes,
+      artifact,
+      input,
+      controller.signal,
+    );
+    // Runs only once the parser gives the event loop a turn.
+    setImmediate(() => controller.abort(new Error("stop")));
+    const error: unknown = await Promise.resolve(pending).then(
+      () => null,
+      (cause: unknown) => cause,
+    );
     expect(error).toBeInstanceOf(ArtifactReaderFailure);
     expect((error as ArtifactReaderFailure).reason).toBe("cancelled");
   }
