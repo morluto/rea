@@ -1435,4 +1435,61 @@ describe("wrapped aliases, parameter reassignments, and generator completion val
       e.ipcRenderer.invoke("GENERATOR_YIELD_TAINTED");
     `);
   });
+
+  it("preserves Electron identity across fresh Array.from mappers, overwritten Object.assign sources, and unused parameter defaults while tainting active defaults and surviving copies", () => {
+    const preserved = analyzeJavaScriptStaticSource(`
+      const e = require("electron");
+      const makeFresh = () => ({});
+      const mappers = { makeFresh };
+      function pick(x = e, { nested = e } = { nested: {} }) {
+        return { x, nested };
+      }
+
+      const mapped = Array.from([e], makeFresh);
+      mapped[0].ipcRenderer = {};
+
+      const memberMapped = Array.from([e], mappers.makeFresh);
+      memberMapped[0].ipcRenderer = {};
+
+      const overwritten = Object.assign({}, e, { ipcRenderer: {} });
+      overwritten.ipcRenderer.send = () => {};
+
+      const unused = pick({});
+      unused.x.ipcRenderer = {};
+      unused.nested.ipcRenderer = {};
+
+      e.ipcRenderer.send("STILL_INTACT");
+    `);
+    expect(preserved.electron.ipc).toEqual([
+      expect.objectContaining({
+        channel: "STILL_INTACT",
+        operation: "send",
+        side: "renderer",
+      }),
+    ]);
+
+    expectNoDirectElectron(`
+      const e = require("electron");
+      const copied = Array.from([e], undefined);
+      copied[0].ipcRenderer.send = () => {};
+      e.ipcRenderer.send("DIRECT_COPY_TAINTED");
+    `);
+
+    expectNoDirectElectron(`
+      const e = require("electron");
+      const surviving = Object.assign({}, e, { other: {} });
+      surviving.ipcRenderer.send = () => {};
+      e.ipcRenderer.send("SURVIVING_ASSIGN_TAINTED");
+    `);
+
+    expectNoDirectElectron(`
+      const e = require("electron");
+      function pick(x = e) {
+        return x;
+      }
+      const active = pick();
+      active.ipcRenderer.send = () => {};
+      e.ipcRenderer.send("ACTIVE_DEFAULT_TAINTED");
+    `);
+  });
 });
