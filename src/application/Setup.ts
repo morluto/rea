@@ -102,10 +102,11 @@ export const runSetup = async (
     clientStates: [],
   };
   let result: SetupResult | undefined;
+  const pending: { skill?: SetupSkillInstallError } = {};
   let primaryFailure: unknown;
   let threw = false;
   try {
-    result = await runSetupWorkflow(options, host, progress, confirm);
+    result = await runSetupWorkflow(options, host, progress, confirm, pending);
   } catch (cause: unknown) {
     if (cause instanceof AnalysisCancelledError)
       cause.retainDiagnostics({ setup_progress: setupProgressFacts(progress) });
@@ -136,6 +137,26 @@ export const runSetup = async (
     );
   }
   if (result === undefined) throw new Error("Setup returned no result.");
+  if (pending.skill !== undefined) {
+    const settled =
+      pending.skill.cleanupOwners.length > 0 &&
+      pending.skill.cleanupOwners.every(({ lease }) => lease.released);
+    if (settled)
+      emitProgress(options, {
+        actionId: "install_skill",
+        label: "REA reverse-engineering skill",
+        state: "completed",
+      });
+    else
+      result = {
+        ...result,
+        status: "needs_human",
+        code: result.code ?? "skill_install_failed",
+        remediation:
+          combineRemediation(pending.skill.remediation, result.remediation) ??
+          pending.skill.remediation,
+      };
+  }
   // Cancellation observed only during the final doctor or cleanup is not success.
   if (options.signal?.aborted === true) {
     const cancelled = new AnalysisCancelledError("setup", {
@@ -175,7 +196,8 @@ const runSetupWorkflow = async (
   options: SetupOptions,
   host: SetupHost,
   progress: SetupProgress,
-  confirm?: SetupConfirmation,
+  confirm: SetupConfirmation | undefined,
+  pending: { skill?: SetupSkillInstallError },
 ): Promise<SetupResult> => {
   assertSetupActive(options.signal);
   const appliedActions = progress.appliedActions;
@@ -492,8 +514,9 @@ const runSetupWorkflow = async (
       selectedSkillClientIds,
     );
     progress.skill = skill;
+    if (!skill.ok && skill.error.completed) pending.skill = skill.error;
     assertSetupActive(options.signal);
-    if (!skill.ok) {
+    if (!skill.ok && !skill.error.completed) {
       return withHopperFailure(await failSkill(skill.error));
     }
   }
@@ -607,10 +630,11 @@ const installSkillAction = async (
   });
   const skill = await host.installSkill(skillClientIds);
   if (!skill.ok) {
+    if (skill.error.completed) appliedActions.push("installed_skill");
     emitProgress(options, {
       actionId: "install_skill",
       label,
-      state: "failed",
+      state: skill.error.completed ? "warning" : "failed",
       detail: skill.error.message,
     });
     return skill;
