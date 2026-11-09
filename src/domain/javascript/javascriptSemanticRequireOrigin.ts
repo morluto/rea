@@ -1939,6 +1939,7 @@ const MUTABLE_BUILTIN_DEFAULTS = new Set([
   "http",
   "https",
   "child_process",
+  "events",
   "timers",
   "process",
   "path",

@@ -5,15 +5,25 @@ import {
   semanticModuleAcquisitionEffectOrigin,
   semanticRequireOriginCandidate,
 } from "./javascriptSemanticRequireOrigin.js";
+import { builtinDataEffectCallablePath } from "./javascriptSemanticDataEffectHelpers.js";
 import { parseJavaScriptSource } from "./javascriptSourceParser.js";
-import { completeSemanticSteps } from "./javascriptSemanticTraversal.js";
+import {
+  completeSemanticSteps,
+  traverseJavaScriptAst,
+} from "./javascriptSemanticTraversal.js";
 
-const indexed = (source: string) => {
-  const parsed = parseJavaScriptSource(source);
+const indexed = (source: string, commonJs = false) => {
+  const parsed = parseJavaScriptSource(
+    source,
+    commonJs ? "fixture.cts" : undefined,
+  );
   if (parsed === null)
     throw new Error("Expected builtin-module effect fixture");
   const index = completeSemanticSteps(
-    indexJavaScriptBindingsWithReceiversSteps(parsed.program),
+    indexJavaScriptBindingsWithReceiversSteps(
+      parsed.program,
+      commonJs ? "commonjs-wrapper" : undefined,
+    ),
   );
   completeSemanticSteps(index.indexAmbientWritesSteps());
   completeSemanticSteps(index.indexMemberMutationFactsSteps());
@@ -193,3 +203,127 @@ it.each([
     }),
   );
 });
+
+const eventConstructorPaths = (state: ReturnType<typeof indexed>) => {
+  const paths: (readonly string[] | null)[] = [];
+  traverseJavaScriptAst(state.program, {
+    enter(node) {
+      if (node.type === "NewExpression")
+        paths.push(
+          builtinDataEffectCallablePath(node.callee, state, [
+            "events",
+            "node:events",
+          ]),
+        );
+    },
+  });
+  return paths;
+};
+
+// CommonJS TypeScript fixtures retain inert imports with explicit wrapper authority.
+
+it.each([
+  [
+    "default events to node:events",
+    `import A from "events"; import B from "node:events";`,
+  ],
+  [
+    "default node:events to events",
+    `import A from "node:events"; import B from "events";`,
+  ],
+  [
+    "default to require",
+    `import A from "events"; const B = require("node:events");`,
+  ],
+  [
+    "require to default",
+    `const A = require("node:events"); import B from "events";`,
+  ],
+  [
+    "default node:events to require",
+    `import A from "node:events"; const B = require("events");`,
+  ],
+  [
+    "require events to default",
+    `const A = require("events"); import B from "node:events";`,
+  ],
+])("owns shared constructor-slot writes from %s", (_name, header) => {
+  const state = indexed(
+    `${header}
+const before = new B.EventEmitter();
+const Ctor = B.EventEmitter;
+const object = B;
+A.EventEmitter = replacement;
+const saved = new Ctor();
+const after = new B.EventEmitter();
+const throughSavedObject = new object.EventEmitter();`,
+    header.includes("require("),
+  );
+  expect(state.requiredModuleEffects.get("events")).toContainEqual(
+    expect.objectContaining({
+      kind: "write",
+      path: ["EventEmitter"],
+    }),
+  );
+  expect(eventConstructorPaths(state)).toEqual([
+    ["EventEmitter"],
+    ["EventEmitter"],
+    null,
+    null,
+  ]);
+});
+
+it("keeps named and namespace export snapshots separate from mutable default slots", () => {
+  const state = indexed(`import A from "events";
+import B, { EventEmitter as Ctor } from "node:events";
+import * as ns from "node:events";
+A.EventEmitter = replacement;
+const named = new Ctor();
+const namespace = new ns.EventEmitter();
+const mutable = new B.EventEmitter();`);
+  expect(eventConstructorPaths(state)).toEqual([
+    ["EventEmitter"],
+    ["EventEmitter"],
+    null,
+  ]);
+});
+
+it("does not share replacement of an immutable namespace export slot", () => {
+  const state =
+    indexed(`import * as ns from "events"; import B from "node:events";
+ns.EventEmitter = replacement;
+const e = new B.EventEmitter();`);
+  expect(state.requiredModuleEffects.get("events") ?? []).toEqual([]);
+  expect(eventConstructorPaths(state)).toEqual([["EventEmitter"]]);
+});
+
+it.each([
+  ["unrelated property", "A.extra = replacement;", ["EventEmitter"]],
+  ["unknown property", "A[key] = replacement;", null],
+  ["containing object escape", "configure(A);", null],
+  ["class value escape", "configure(A.EventEmitter);", ["EventEmitter"]],
+] as const)(
+  "uses shared path coverage for an events %s",
+  (_name, mutation, path) => {
+    const state = indexed(`import A from "events"; import B from "node:events";
+${mutation}
+const e = new B.EventEmitter();`);
+    expect(eventConstructorPaths(state)).toEqual([path]);
+  },
+);
+
+it.each([
+  "process.getBuiltinModule('events')",
+  "(await import('events'))",
+  "(await import('node:events'))",
+])(
+  "does not promote %s into a proven constructor after sharing default effects",
+  (acquisition) => {
+    const state = indexed(`import A from "events";
+const acquired = ${acquisition};
+const before = new acquired.EventEmitter();
+A.EventEmitter = replacement;
+const after = new acquired.EventEmitter();`);
+    expect(eventConstructorPaths(state)).toEqual([null, null]);
+  },
+);
