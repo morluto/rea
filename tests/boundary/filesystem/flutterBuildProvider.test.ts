@@ -265,6 +265,52 @@ it.each(["conflicting", "truncated", "capacity"] as const)(
   },
 );
 
+it("retains earlier build IDs when a later note lacks required alignment padding", async () => {
+  const shortNote = Buffer.from([
+    4, 0, 0, 0, 1, 0, 0, 0, 3, 0, 0, 0, 0x47, 0x4e, 0x55, 0, 0xaa,
+  ]);
+  for (const [padded, prior] of [
+    [true, false],
+    [false, false],
+    [false, true],
+  ] as const) {
+    const notes = Buffer.concat([
+      ...(prior ? [buildIdNote()] : []),
+      shortNote,
+      ...(padded ? [Buffer.alloc(3)] : []),
+    ]);
+    const path = await buildApk("note-padding.apk", [
+      { path: "lib/arm64-v8a/libapp.so", bytes: aotImage() },
+      {
+        path: "lib/arm64-v8a/libflutter.so",
+        bytes: engineFixtureImage({ notes }),
+      },
+    ]);
+    const provider = new FlutterBuildProvider();
+    try {
+      const result = await provider.execute({
+        operation: "identify_flutter_build",
+        input: { path },
+      });
+      if (!result.ok) throw result.error;
+      const value = flutterResultSchemas.identify_flutter_build.parse(
+        result.value.result,
+      );
+      expect(value.coverage).toBe(padded ? "complete" : "partial");
+      expect(value.abis[0]!.libflutter.build_id).toBe(padded ? "aa" : null);
+      expect(value.abis[0]!.libflutter.build_id_candidates).toEqual(
+        padded
+          ? ["aa"]
+          : prior
+            ? ["e8d907ef7c175ec4313f47111019adc9588c5f61"]
+            : [],
+      );
+    } finally {
+      await provider.close();
+    }
+  }
+});
+
 it.each([0, 1, 2, 4, 0xffff])(
   "retains snapshot kind %s with partial decoding coverage",
   async (kind) => {

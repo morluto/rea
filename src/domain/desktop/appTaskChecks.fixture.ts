@@ -26,6 +26,7 @@ export const CHECK_VIEWS: Readonly<Record<string, TaskFileView>> = {
       tags: ["a", "b"],
       "a/b": { "~k": null },
       scale: "1.2500",
+      shaped: { name: "Cell", attributes: {}, children: ["437.8"] },
     },
   },
   ".config/notes/app.ini": {
@@ -192,11 +193,57 @@ export const CHECK_VIEWS: Readonly<Record<string, TaskFileView>> = {
       truncated: false,
     },
   },
+  "Documents/cut-number.xml": {
+    format: "xml",
+    view: {
+      root: element("Cell", {}, ["437.", "8"]),
+      truncated: true,
+    },
+  },
+  "Documents/budget.xml": {
+    format: "xml",
+    view: {
+      root: element("Cells", {}, [
+        element("Cell", { Row: "2", Col: "3" }, ["437.80000000000001"]),
+        element("Cell", { Row: "2", Col: "2" }, ["398.2"]),
+        element("Cell", { Row: "3", Col: "3" }, ["174.9"]),
+        element("Cell", { Row: "5", Col: "3" }, [
+          "437.",
+          element("span", {}, ["80"]),
+        ]),
+        element("Cell", { Row: "6", Col: "3" }, ["four hundred"]),
+      ]),
+      truncated: false,
+    },
+  },
   "Documents/photo.png": { format: "binary", view: null },
   "Documents/huge.txt": {
     format: null,
     view: null,
     error: "larger than 64 MiB, the most the view reads",
+  },
+  "Documents/Budget.gnumeric": {
+    format: "xml",
+    compression: "gzip",
+    view: {
+      root: element("gnm:Workbook", {}, [
+        element("gnm:Name", {}, ["Budget"]),
+        element("gnm:Cell", { Row: "1", Col: "2" }, ["437.80000000000001"]),
+      ]),
+      truncated: false,
+    },
+  },
+  "Documents/bomb.gnumeric": {
+    format: null,
+    compression: "gzip",
+    view: null,
+    error: "expands more than 100 times, so it is not read",
+  },
+  "Documents/damaged.gnumeric": {
+    format: null,
+    compression: "gzip",
+    view: null,
+    error: "not a readable gzip stream",
   },
 };
 
@@ -508,6 +555,100 @@ const TOLERANCE_CASES: readonly (readonly [DesktopTaskCheckInput, boolean])[] =
         pointer: "/missing",
         value: 1,
         tolerance: 0,
+      },
+      false,
+    ],
+    // A cell's text by two attributes together, in either order, as drafts name cells.
+    [
+      {
+        kind: "value_equals",
+        file: "Documents/budget.xml",
+        pointer: "/root/children/[name=Cell][@Col=3][@Row=2]/children/0",
+        value: 437.8,
+        tolerance: 0.001,
+      },
+      true,
+    ],
+    [
+      {
+        kind: "value_equals",
+        file: "Documents/budget.xml",
+        pointer: "/root/children/[name=Cell][@Row=2][@Col=3]/children/0",
+        value: 437.9,
+        tolerance: 0.001,
+      },
+      false,
+    ],
+    [
+      {
+        kind: "value_equals",
+        file: "Documents/budget.xml",
+        pointer: "/root/children/[name=Cell][@Col=3]/children/0",
+        value: 437.8,
+        tolerance: 0.001,
+      },
+      false,
+    ],
+    // The cell element, so a split run and an equivalent decimal are the same number.
+    [
+      {
+        kind: "value_equals",
+        file: "Documents/budget.xml",
+        pointer: "/root/children/[name=Cell][@Row=2][@Col=3]",
+        value: 437.8,
+        tolerance: 0.001,
+      },
+      true,
+    ],
+    [
+      {
+        kind: "value_equals",
+        file: "Documents/budget.xml",
+        pointer: "/root/children/[name=Cell][@Row=5][@Col=3]",
+        value: 437.8,
+        tolerance: 0.001,
+      },
+      true,
+    ],
+    [
+      {
+        kind: "value_equals",
+        file: "Documents/budget.xml",
+        pointer: "/root/children/[name=Cell][@Row=5][@Col=3]",
+        value: 437.89,
+        tolerance: 0.001,
+      },
+      false,
+    ],
+    [
+      {
+        kind: "value_equals",
+        file: "Documents/budget.xml",
+        pointer: "/root/children/[name=Cell][@Row=6][@Col=3]",
+        value: 400,
+        tolerance: 0.001,
+      },
+      false,
+    ],
+    // A cut view dropped the text between 437. and 8. The joined numeral is not the file's number.
+    [
+      {
+        kind: "value_equals",
+        file: "Documents/cut-number.xml",
+        pointer: "/root",
+        value: 437.8,
+        tolerance: 0.001,
+      },
+      false,
+    ],
+    // A JSON object shaped like an element is not a cell's text.
+    [
+      {
+        kind: "value_equals",
+        file: settings,
+        pointer: "/shaped",
+        value: 437.8,
+        tolerance: 0.001,
       },
       false,
     ],
@@ -874,6 +1015,50 @@ const CUT_VIEW_CASES: readonly (readonly [DesktopTaskCheckInput, boolean])[] = [
   ],
 ];
 
+const budget = "Documents/Budget.gnumeric";
+
+/** A gzip file's document checked as the document, and one past the limits or damaged read by no check. */
+const GZIP_CASES: readonly (readonly [DesktopTaskCheckInput, boolean])[] = [
+  [
+    {
+      kind: "value_equals",
+      file: budget,
+      pointer: "/root/children/[name=gnm:Cell][@Row=1][@Col=2]/children/0",
+      value: 437.8,
+      tolerance: 0.001,
+    },
+    true,
+  ],
+  [
+    {
+      kind: "text_equals",
+      file: budget,
+      pointer: "/root/children/[name=gnm:Name]",
+      value: "Budget",
+    },
+    true,
+  ],
+  [{ kind: "lines_present", file: budget, lines: ["Budget"] }, false],
+  [
+    {
+      kind: "value_absent",
+      file: "Documents/bomb.gnumeric",
+      pointer: "/root/attributes/x",
+    },
+    false,
+  ],
+  [
+    {
+      kind: "text_contains",
+      file: "Documents/damaged.gnumeric",
+      pointer: "/root",
+      value: "x",
+    },
+    false,
+  ],
+  [{ kind: "file_present", file: "Documents/damaged.gnumeric" }, true],
+];
+
 /** Every kind of check against those views, each with the outcome both evaluators must give. */
 export const CHECK_CASES: readonly (readonly [
   DesktopTaskCheckInput,
@@ -1124,4 +1309,5 @@ export const CHECK_CASES: readonly (readonly [
   ...TOLERANCE_CASES,
   ...TEXT_CASES,
   ...CUT_VIEW_CASES,
+  ...GZIP_CASES,
 ];

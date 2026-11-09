@@ -2,6 +2,10 @@ import {
   probeBunStandaloneGraph,
   type BunStandaloneProbe,
 } from "./bun/BunModuleGraphLayout.js";
+import {
+  locateDenoStandalone,
+  type DenoStandaloneProbe,
+} from "./deno/DenoStandaloneLocation.js";
 import type {
   StableRegularFileDescriptor,
   RegularFileState,
@@ -28,6 +32,7 @@ import {
 export interface ArtifactEmbeddedFormatProbeFacts {
   readonly sourceState: RegularFileState;
   readonly bunStandalone?: BunStandaloneProbe;
+  readonly denoStandalone?: DenoStandaloneProbe;
   readonly godotPck?: GodotPckLocation | null;
   readonly nodeSea?: NodeSeaLocation | null;
   readonly dotnetBundleHeaderOffset?: number | null;
@@ -129,6 +134,27 @@ export class ArtifactEmbeddedFormatProbes {
     );
     abortIfNeeded(this.signal);
     this.#facts = { ...this.#facts, bunStandalone: observed };
+    return observed;
+  }
+
+  async denoStandalone(): Promise<DenoStandaloneProbe> {
+    abortIfNeeded(this.signal);
+    if (this.#facts.denoStandalone !== undefined)
+      return this.#facts.denoStandalone;
+    const packaged = await this.pyInstaller();
+    const observed = await locateDenoStandalone(
+      this.source.handle,
+      this.source.initial.size,
+      this.signal,
+      packaged === undefined
+        ? undefined
+        : {
+            start: packaged.archiveStart,
+            end: packaged.archiveStart + packaged.packageLength,
+          },
+    );
+    abortIfNeeded(this.signal);
+    this.#facts = { ...this.#facts, denoStandalone: observed };
     return observed;
   }
 

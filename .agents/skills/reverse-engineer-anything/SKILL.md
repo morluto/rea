@@ -2,7 +2,7 @@
 name: reverse-engineer-anything
 description: Reverse engineer native, managed, Electron/JavaScript, packaged, firmware, and browser targets with REA, and build agent environments (AgentEnv bundles) of web applications from a live instance or a capture, and of Linux desktop apps with a task from a request. Use shipped-artifact or requested runtime evidence to explain features, compare versions, decompile code, or guide a reconstruction. Skip REA for ordinary source-repository architecture analysis.
 metadata:
-  version: "61"
+  version: "62"
 ---
 
 # REA
@@ -97,6 +97,12 @@ explicit path or endpoint and do not need it.
 - Bun `--compile` executable: `open_binary`, then `inspect_artifact`; the Bun
   module graph is the application layer. Extract stored modules and analyze the
   JavaScript. See [Bun standalone executables](https://github.com/morluto/rea/blob/main/docs/bun-standalone.md).
+- Deno `deno compile` executable: `open_binary`, then `inspect_artifact`; the
+  embedded virtual filesystem is the application layer. Extract stored files and
+  analyze compatible JavaScript. Environment-file values and CA certificate bytes
+  are retained in local Evidence with their counts and byte lengths. The npm
+  snapshot length is reported and not decoded, and the executable is not run. See
+  [Deno compile executables](https://github.com/morluto/rea/blob/main/docs/deno-standalone.md).
 - Apple app plist, Interface Builder, asset catalog, or keyed archive resources:
   `open_bundle_resources`, then the selected resource tool. This does not
   require `CFBundleExecutable` or a deep provider. Resource sessions have no
@@ -276,6 +282,14 @@ explicit path or endpoint and do not need it.
   proof the image never imported APIs through another table. Bound snapshots
   and loaded IAT contents remain unobserved. See the
   [PE import guide](https://github.com/morluto/rea/blob/main/docs/pe-imports.md).
+- Windows Shell Link shortcuts: `inspect_windows_shortcut` with the explicit
+  local `.lnk` file. This built-in target-free inspection requires no Windows
+  SDK or COM. Preserve header flags and FILETIMEs, IDList items, LinkInfo
+  volume and network names, StringData arguments and icon location, ExtraData
+  signatures, and Tracker droid facts labelled derived. Unknown IDList items
+  and ExtraData signatures stay raw with SHA-256. The target path is not
+  resolved or executed. See the
+  [Windows shortcut guide](https://github.com/morluto/rea/blob/main/docs/guides/native/windows-shortcut.md).
 - PE TLS callbacks and load configuration: `inspect_pe_load_config` with the
   explicit local PE32/PE32+ file. This built-in target-free inspection requires
   no Windows SDK. Preserve callback VAs as strings with their RVA, file offset
@@ -299,6 +313,23 @@ explicit path or endpoint and do not need it.
   build-id or ABI-tag fields. A missing table is observed absence of those
   declarations, not proof the image never carried notes. See the
   [ELF notes guide](https://github.com/morluto/rea/blob/main/docs/elf-notes.md).
+- Code that runs before `main` or at exit in ELF or Mach-O:
+  `inspect_native_initializers` with the explicit local file (and
+  `architecture` for a universal Mach-O). This built-in inspection requires no
+  disassembler. Preserve slot and target addresses, the `resolution` of each
+  entry, and its limitations. An `unresolved` slot is not a zero pointer, and a
+  missing table is not proof that no constructor exists. See the
+  [initializer guide](https://github.com/morluto/rea/blob/main/docs/guides/native/native-initializers.md).
+
+- ELF unwind function ranges: `inspect_elf_unwind_ranges` with the explicit
+  local ELF32/ELF64 file. This built-in target-free inspection requires no
+  disassembler. Preserve FDE start, end, size, containing section, exact
+  symbol name, CIE index, LSDA, and personality. Page with `offset` and
+  `limit`. A missing `.eh_frame` is observed absence of that declaration,
+  not proof the image has no functions. `.debug_frame` is reported present
+  or absent and is not decoded. CFA instructions are counted and not
+  evaluated. See the
+  [ELF unwind ranges guide](https://github.com/morluto/rea/blob/main/docs/guides/native/elf-unwind-ranges.md).
 - Apple `.ips` crash reports: `inspect_apple_ips` with the explicit local
   file. This built-in target-free inspection requires no Xcode, atos, or
   pwntools. Preserve first-line metadata, `bug_type` as a string, process and
@@ -317,6 +348,16 @@ explicit path or endpoint and do not need it.
   zstd containers are unsupported; decompress into a separate file with an
   external codec utility, then inspect the decompressed `ET_REL` image. See the
   [kernel module guide](https://github.com/morluto/rea/blob/main/docs/kernel-modules.md).
+- Linux kernel version and build config (`CONFIG_*` options such as
+  `CONFIG_SECURITY_SELINUX`): `inspect_kernel_build_config` with the explicit
+  local `vmlinux`, raw `Image`, x86 `bzImage`, or `configs.ko`. This built-in
+  target-free inspection requires no Linux host or `extract-ikconfig`. Preserve
+  the banner version, config SHA-256, option count, and value kinds; use `name`
+  for one option. An `IKCFG_ST` string is a config only with a valid gzip member
+  and `IKCFG_ED`. An absent config may mean the kernel was built without
+  `CONFIG_IKCONFIG`. Non-gzip payloads are unsupported; decompress externally,
+  then inspect the result. See the
+  [kernel build config guide](https://github.com/morluto/rea/blob/main/docs/guides/native/kernel-build-config.md).
 - CPython 3.7–3.13 `.pyc` header, nested marshal code objects and bytecode
   identity: `inspect_python_pyc` with the explicit local file. This built-in
   target-free inspection requires no Python installation. Preserve magic,

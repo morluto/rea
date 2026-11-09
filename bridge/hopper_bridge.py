@@ -1399,7 +1399,8 @@ def _serve_connection(connection):
                 break
     except (ConnectionError, OSError):
         # A lost client cannot confirm document closure or revoke this run.
-        pass
+        # Keep the listener available for the owner to confirm cleanup.
+        should_stop = False
     finally:
         try:
             file.close()
