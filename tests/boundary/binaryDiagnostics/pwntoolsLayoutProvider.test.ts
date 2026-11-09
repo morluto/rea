@@ -352,7 +352,7 @@ it.runIf(!unsupportedHost).each([
       },
     });
     expect(projected.remediation.action).toContain("memory");
-    expect(projected.remediation.action).toContain("address-space");
+    expect(projected.remediation.action).toContain("address_space_bytes");
     await expect(access(ownedPath)).rejects.toMatchObject({ code: "ENOENT" });
     expect(await readFile(path, "utf8")).toBe("source-owned-seam-bytes");
   },

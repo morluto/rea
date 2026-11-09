@@ -1025,9 +1025,14 @@ it.each([
           },
         },
       });
-      expect(projected.remediation.action).toContain("no runtime override");
       expect(projected.remediation.action).toContain(
-        "no completed capture Evidence",
+        `Increase max_reply_bytes above ${String(WEB_NETWORK_CAPTURE_LIMITS.outputBytes)}`,
+      );
+      expect(projected.remediation.action).toContain(
+        "next inspect_web_network_capture call",
+      );
+      expect(projected.remediation.action).toContain(
+        "do not recreate a completed report from a refused decode",
       );
       expect(projected.remediation.action).not.toContain("rea doctor");
       expect(result.error.partialObservation).toMatchObject({

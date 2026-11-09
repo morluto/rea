@@ -14,9 +14,13 @@ afterEach(async () => {
 const queriesSchema = z.object({ queries: z.array(z.string()) });
 /** An uncapped page still cannot classify the call sites behind its edges. */
 const uncappedCalleeCoverage = {
-  status: "partial",
-  limitations: [UNCLASSIFIED_CALL_SITE_LIMITATION],
-  limited_directions: ["callees"],
+  status: "complete",
+  discovery: {
+    callees: {
+      status: "unknown",
+      reason: UNCLASSIFIED_CALL_SITE_LIMITATION,
+    },
+  },
 };
 const addresses = Array.from(
   { length: 20 },
