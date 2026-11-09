@@ -51,6 +51,7 @@ export const NATIVE_INITIALIZER_RESOLUTIONS = [
   "relative_addend",
   "relr",
   "chained_fixup",
+  "dyld_info_rebase",
   "offset_table",
   "symbol_addend",
   "unresolved_import",

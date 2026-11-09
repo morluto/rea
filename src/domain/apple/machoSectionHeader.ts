@@ -6,6 +6,9 @@ export interface MachoSectionHeader {
   readonly address: bigint;
   readonly size: bigint;
   readonly offset: number;
+  /** `reloff` and `nreloc`: the section's own relocation entries, used by object files. */
+  readonly relocationOffset: number;
+  readonly relocationCount: number;
   readonly flags: number;
 }
 
@@ -34,6 +37,8 @@ export const readMachoSectionHeader = (
       ? view.getBigUint64(40, littleEndian)
       : BigInt(view.getUint32(36, littleEndian)),
     offset: view.getUint32(wide ? 48 : 40, littleEndian),
+    relocationOffset: view.getUint32(wide ? 56 : 48, littleEndian),
+    relocationCount: view.getUint32(wide ? 60 : 52, littleEndian),
     flags: view.getUint32(wide ? 64 : 56, littleEndian),
   });
 };

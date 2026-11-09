@@ -474,3 +474,142 @@ export const machoArm64FatInitializers = (): Buffer => {
   thin.copy(file, 0x1000);
   return file;
 };
+
+/**
+ * The arm64 image with LC_DYLD_INFO_ONLY in place of chained fixups: a legacy
+ * rebase opcode covers the `__mod_init_func` slot, which stores its target.
+ */
+export const machoArm64LegacyRebaseInitializers = (): Buffer => {
+  const file = machoArm64Initializers();
+  // Turn LC_DYLD_CHAINED_FIXUPS into a 16-byte LC_SOURCE_VERSION.
+  file.writeUInt32LE(0x2a, 496);
+  file.writeBigUInt64LE(0n, 504);
+  // Append LC_DYLD_INFO_ONLY after LC_SYMTAB.
+  file.writeUInt32LE(5, 16);
+  file.writeUInt32LE(504 + 48, 20);
+  file.writeUInt32LE(0x80000022, 536);
+  file.writeUInt32LE(48, 540);
+  file.writeUInt32LE(0x3300, 544);
+  // SET_TYPE_IMM(pointer), SET_SEGMENT_AND_OFFSET_ULEB(__DATA, 0), DO_REBASE_IMM_TIMES(1), DONE.
+  const rebase = Buffer.from([0x11, 0x21, 0x00, 0x51, 0x00]);
+  file.writeUInt32LE(rebase.length, 548);
+  rebase.copy(file, 0x3300);
+  file.writeBigUInt64LE(0x100001000n, 0x4000);
+  return file;
+};
+
+/**
+ * i386 MH_EXECUTE with one `__mod_init_func` slot storing `_init` and an
+ * LC_DYLD_INFO_ONLY whose bind stream has `bindSize` bytes. 32-bit images have
+ * no fixup decoder here.
+ */
+export const macho32Initializers = (bindSize: number): Buffer => {
+  const file = Buffer.alloc(0x2000);
+  file.writeUInt32LE(0xfeedface, 0);
+  file.writeUInt32LE(7, 4);
+  file.writeUInt32LE(3, 8);
+  file.writeUInt32LE(2, 12);
+  file.writeUInt32LE(4, 16);
+  file.writeUInt32LE(320, 20);
+  const segment = (
+    at: number,
+    name: string,
+    address: number,
+    fileOffset: number,
+    protection: number,
+  ): void => {
+    file.writeUInt32LE(0x1, at);
+    file.writeUInt32LE(56 + 68, at + 4);
+    name16(name).copy(file, at + 8);
+    file.writeUInt32LE(address, at + 24);
+    file.writeUInt32LE(0x1000, at + 28);
+    file.writeUInt32LE(fileOffset, at + 32);
+    file.writeUInt32LE(0x1000, at + 36);
+    file.writeUInt32LE(protection, at + 40);
+    file.writeUInt32LE(protection, at + 44);
+    file.writeUInt32LE(1, at + 48);
+  };
+  const section = (
+    at: number,
+    name: string,
+    segmentName: string,
+    address: number,
+    size: number,
+    offset: number,
+    flags: number,
+  ): void => {
+    name16(name).copy(file, at);
+    name16(segmentName).copy(file, at + 16);
+    file.writeUInt32LE(address, at + 32);
+    file.writeUInt32LE(size, at + 36);
+    file.writeUInt32LE(offset, at + 40);
+    file.writeUInt32LE(2, at + 44);
+    file.writeUInt32LE(flags, at + 56);
+  };
+  segment(28, "__TEXT", 0x1000, 0, 5);
+  section(84, "__text", "__TEXT", 0x1100, 0x100, 0x100, 0x80000400);
+  segment(152, "__DATA", 0x2000, 0x1000, 3);
+  section(208, "__mod_init_func", "__DATA", 0x2000, 4, 0x1000, 0x9);
+  file.writeUInt32LE(0x80000022, 276);
+  file.writeUInt32LE(48, 280);
+  file.writeUInt32LE(0x1800, 292);
+  file.writeUInt32LE(bindSize, 296);
+  file.writeUInt32LE(0x2, 324);
+  file.writeUInt32LE(24, 328);
+  file.writeUInt32LE(0x1900, 332);
+  file.writeUInt32LE(1, 336);
+  file.writeUInt32LE(0x1910, 340);
+  const strings = Buffer.from("\0_init\0", "utf8");
+  file.writeUInt32LE(strings.length, 344);
+  file.writeUInt32LE(1, 0x1900);
+  file.writeUInt8(0x0f, 0x1904);
+  file.writeUInt8(1, 0x1905);
+  file.writeUInt32LE(0x1100, 0x1908);
+  strings.copy(file, 0x1910);
+  file.writeUInt32LE(0x1100, 0x1000);
+  return file;
+};
+
+/**
+ * x86-64 MH_OBJECT: `_before` at 0x0 and `_startup` at 0x10 in `__text`. The
+ * first `__mod_init_func` slot stores 0 under an external
+ * X86_64_RELOC_UNSIGNED against `_startup`; the second stores 0 under a
+ * section-ordinal entry, so its stored address names `_before`.
+ */
+export const machoX8664ObjectInitializers = (): Buffer => {
+  const file = Buffer.alloc(0x300);
+  file.writeUInt32LE(0xfeedfacf, 0);
+  file.writeUInt32LE(0x01000007, 4);
+  file.writeUInt32LE(3, 8);
+  file.writeUInt32LE(1, 12);
+  file.writeUInt32LE(2, 16);
+  file.writeUInt32LE(72 + 2 * 80 + 24, 20);
+  segment64(file, 32, "", 0n, 0x30, 0x200, 7, 2);
+  section64(file, 104, "__text", "__TEXT", 0n, 0x20, 0x200, 0x80000400);
+  section64(file, 184, "__mod_init_func", "__DATA", 0x20n, 16, 0x220, 0x9);
+  file.writeUInt32LE(0x240, 184 + 56);
+  file.writeUInt32LE(2, 184 + 60);
+  // r_address 0, r_symbolnum 1 (_startup), r_length 3, r_extern 1, UNSIGNED.
+  file.writeUInt32LE(0, 0x240);
+  file.writeUInt32LE(1 | (3 << 25) | (1 << 27), 0x244);
+  // r_address 8, r_symbolnum 1 (section __text), r_length 3, r_extern 0.
+  file.writeUInt32LE(8, 0x248);
+  file.writeUInt32LE(1 | (3 << 25), 0x24c);
+  file.writeUInt32LE(0x2, 264);
+  file.writeUInt32LE(24, 268);
+  file.writeUInt32LE(0x250, 272);
+  file.writeUInt32LE(2, 276);
+  file.writeUInt32LE(0x270, 280);
+  const strings = Buffer.from("\0_before\0_startup\0", "utf8");
+  file.writeUInt32LE(strings.length, 284);
+  const nlist = (at: number, strx: number, value: bigint): void => {
+    file.writeUInt32LE(strx, at);
+    file.writeUInt8(0x0e, at + 4);
+    file.writeUInt8(1, at + 5);
+    file.writeBigUInt64LE(value, at + 8);
+  };
+  nlist(0x250, 1, 0n);
+  nlist(0x260, 9, 0x10n);
+  strings.copy(file, 0x270);
+  return file;
+};

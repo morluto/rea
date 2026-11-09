@@ -4,8 +4,11 @@ import {
   elf32RelativeInitializers,
   elf64PieInitializers,
   elfRelocatableCtors,
+  macho32Initializers,
   machoArm64FatInitializers,
   machoArm64Initializers,
+  machoArm64LegacyRebaseInitializers,
+  machoX8664ObjectInitializers,
 } from "./NativeInitializers.fixture.js";
 import {
   MAX_NATIVE_INITIALIZER_ENTRIES,
@@ -915,6 +918,88 @@ describe("Unreadable symbol names", () => {
     expect(report.entries[0]?.symbol).toBeNull();
     expect(report.limitations).toContain(
       "1 symbol name(s) could not be read because the string table is missing or the name offset is outside it.",
+    );
+  });
+
+  it("reports a Mach-O name index outside its string table as incomplete", async () => {
+    const bytes = machoArm64Initializers();
+    bytes.writeUInt32LE(0x7fff, 0x3000);
+    const report = await read(bytes);
+    expect(report.status).toBe("incomplete");
+    expect(report.entries[0]?.symbol).toBeNull();
+    expect(report.limitations).toContain(
+      "1 symbol name(s) could not be read because the string table is missing or the name offset is outside it.",
+    );
+  });
+});
+
+describe("Mach-O fixup sources", () => {
+  it("labels an LC_DYLD_INFO rebase as a legacy rebase, not a chained fixup", async () => {
+    const report = await read(machoArm64LegacyRebaseInitializers());
+    expect(report.status).toBe("parsed");
+    expect(row(report)[0]).toEqual({
+      kind: "mod_init",
+      value: "0x100001000",
+      section: "__TEXT,__text",
+      symbol: "_init",
+      resolution: "dyld_info_rebase",
+    });
+  });
+
+  it("keeps a 32-bit pointer slot unresolved when undecoded bind opcodes could replace it", async () => {
+    expect(row(await read(macho32Initializers(0)))).toEqual([
+      {
+        kind: "mod_init",
+        value: "0x1100",
+        section: "__TEXT,__text",
+        symbol: "_init",
+        resolution: "raw",
+      },
+    ]);
+    const report = await read(macho32Initializers(8));
+    expect(report.entries[0]).toMatchObject({
+      resolution: "unresolved",
+      value_va: null,
+    });
+    expect(report.status).toBe("incomplete");
+    expect(report.limitations).toContain(
+      "LC_DYLD_INFO bind opcodes are not decoded for this image, so a pointer slot's stored word may be replaced by a bound symbol at load time.",
+    );
+  });
+
+  it("applies object-file section relocations instead of reading the stored addend as a target", async () => {
+    const report = await read(machoX8664ObjectInitializers());
+    expect(row(report)).toEqual([
+      {
+        kind: "mod_init",
+        value: "0x10",
+        section: "__TEXT,__text",
+        symbol: "_startup",
+        resolution: "symbol_addend",
+      },
+      {
+        kind: "mod_init",
+        value: "0x0",
+        section: "__TEXT,__text",
+        symbol: "_before",
+        resolution: "raw",
+      },
+    ]);
+    expect(report.status).toBe("parsed");
+  });
+
+  it("keeps an object-file slot unresolved under a relocation it does not apply", async () => {
+    const bytes = machoX8664ObjectInitializers();
+    // The first entry becomes X86_64_RELOC_SUBTRACTOR (type 5).
+    bytes.writeUInt32LE(1 | (3 << 25) | (1 << 27) | (5 << 28), 0x244);
+    const report = await read(bytes);
+    expect(report.entries[0]).toMatchObject({
+      resolution: "unresolved",
+      value_va: null,
+    });
+    expect(report.status).toBe("incomplete");
+    expect(report.limitations).toContain(
+      "1 object-file slot(s) have section relocations this reader does not apply and are listed as unresolved.",
     );
   });
 });

@@ -235,6 +235,10 @@ const machoImageSection = ({
     declared_range: { offset: sectionOffset, size: sectionSize },
     segment_mapping: segmentMapping,
     segment_unmapped: segmentUnmapped,
+    relocations: {
+      offset: section.relocationOffset,
+      count: section.relocationCount,
+    },
     ...range,
     file_backed: fileBacked,
     read_only: readOnly,
