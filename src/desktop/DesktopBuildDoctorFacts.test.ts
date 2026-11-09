@@ -36,7 +36,7 @@ const configRunner = (path: string) =>
 case "$1 $2" in
   "config debug") printf '{"search_path":[{"path":"%s","exists":true}]}' "$AGENT_ENV_CONFIG" ;;
   "config explain") printf '%s' "$FAKE_EXPLANATION" ;;
-  *) echo 'agent-env 0.9.1431' ;;
+  *) echo 'agent-env 0.9.1464' ;;
 esac`,
   );
 
@@ -90,7 +90,7 @@ it.skipIf(process.platform === "win32")(
       run: async (_command, args) => {
         if (args[0] === "--version")
           return {
-            stdout: "agent-env 0.9.1431",
+            stdout: "agent-env 0.9.1464",
             stderr: "",
             stdoutBytes: 19,
             stderrBytes: 0,
@@ -268,7 +268,7 @@ it.skipIf(process.platform === "win32")(
           throw Object.assign(new Error("timed out"), { code: "ETIMEDOUT" });
         }
         return {
-          stdout: "agent-env 0.9.1431",
+          stdout: "agent-env 0.9.1464",
           stderr: "",
           stdoutBytes: 19,
           stderrBytes: 0,
@@ -290,7 +290,7 @@ it.skipIf(process.platform === "win32")(
   async () => {
     const { root, bin, home } = await buildHost("rea-desktop-empty-runner-");
     const runner = join(bin, "agent-env");
-    await program(runner, 'echo "agent-env 0.9.1431"');
+    await program(runner, 'echo "agent-env 0.9.1464"');
     const environment = {
       HOME: home,
       USERPROFILE: home,
@@ -319,7 +319,7 @@ it.skipIf(process.platform === "win32")(
     ).toBe(runner);
     const facts = await readFacts(environment, ["claude_code"]);
     expect(facts.registrations[0]).toMatchObject({
-      runner: { status: "current", version: "0.9.1431" },
+      runner: { status: "current", version: "0.9.1464" },
     });
     expect(facts.registrations[0]?.differing ?? []).not.toContain(
       "REA_AGENT_ENV_COMMAND",
@@ -369,7 +369,7 @@ it.skipIf(process.platform === "win32")(
     await program(join(bin, "docker"), "exit 1");
     await program(
       join(bin, "agent-env"),
-      'if [ "$1" = "--version" ]; then printf x >> "$REA_TEST_RUNNER_LOG"; fi; echo "agent-env 0.9.1431"',
+      'if [ "$1" = "--version" ]; then printf x >> "$REA_TEST_RUNNER_LOG"; fi; echo "agent-env 0.9.1464"',
     );
     const environment = {
       HOME: home,
@@ -580,7 +580,7 @@ it("recognizes a gzip runtime archive with a different top folder", async () => 
 
   const python = (await execute("which", ["python3"])).stdout.trim();
   const runner = join(bin, "agent-env");
-  await writeFile(runner, `#!${python}\nprint('agent-env 0.9.1431')\n`, {
+  await writeFile(runner, `#!${python}\nprint('agent-env 0.9.1464')\n`, {
     mode: 0o755,
   });
   const withoutSystemPython = await readFacts(
