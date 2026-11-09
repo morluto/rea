@@ -5,7 +5,7 @@ import { expect, it } from "vitest";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { importReferenceSource } from "../../support/referenceSourceResourceScope.js";
 
-const loaderSources = {
+const constructorSources = {
   ".MJS": 'import {join} from "node:path"; require("./dep.cjs");',
   ".TS": 'import {join} from "node:path"; require("./dep.cjs");',
   "child-call.cjs": 'require.call.extra=1; require.call(null,"./dep.cjs");',
@@ -44,8 +44,8 @@ const loaderSources = {
 it("retains constructor loader requests without inventing host authority", async () => {
   const root = await createTestTempDirectory("rea-reference-loader-new-");
   await Promise.all(
-    Object.entries(loaderSources).map(([path, source]) =>
-      writeFile(join(root, path), source),
+    Object.entries(constructorSources).map(([name, source]) =>
+      writeFile(join(root, name), source),
     ),
   );
   const result = await importReferenceSource({
