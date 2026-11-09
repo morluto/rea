@@ -91,6 +91,7 @@ export class GodotPckArtifactReader extends PositionalArtifactReader {
       if (index % 256 === 0) await setImmediate();
       assertArtifactReadActive(signal);
       const pathBytes = await cursor.uint32();
+      cursor.requireBytes(pathBytes + (header.format_version === 1 ? 32 : 36));
       // Check worst-case JSON escaping before decoding or allocating the path.
       // The logical path, raw source path, and metadata source path can each
       // need six JSON bytes per input byte before retained facts are charged.
@@ -274,9 +275,12 @@ class PckCursor {
     private readonly end: number,
     private readonly signal?: AbortSignal,
   ) {}
-  async bytes(length: number): Promise<Buffer> {
+  requireBytes(length: number): void {
     if (length > this.end - this.position)
       throw formatFailure("directory entry exceeds the pack");
+  }
+  async bytes(length: number): Promise<Buffer> {
+    this.requireBytes(length);
     if (length > MAX_DIRECTORY_METADATA_BYTES / 18) throw metadataLimit();
     if (length > DIRECTORY_CHUNK_BYTES) {
       // A large valid virtual path is bounded by retained representation, not

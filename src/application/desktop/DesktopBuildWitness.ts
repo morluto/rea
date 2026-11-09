@@ -12,6 +12,7 @@ import {
   type desktopTaskSchema,
   type DesktopTask,
 } from "../../domain/desktop/appTask.js";
+import { SETTLE_TIMING } from "../../domain/desktop/appSettle.js";
 import {
   evaluateTaskChecks,
   type TaskCheckOutcome,
@@ -19,6 +20,7 @@ import {
 import {
   renderTaskSteps,
   renderTaskVerifier,
+  sameTaskVerifier,
   taskVerifierArtifact,
 } from "../../domain/desktop/appTaskPython.js";
 import {
@@ -42,9 +44,14 @@ import type {
 import { AGENTENV_PROVIDER } from "../../desktop/AgentEnvComputerHelper.js";
 import { readHostFile } from "../../desktop/HostFileRead.js";
 import { isPortableBundleName } from "../environment/environmentBundle.js";
+import {
+  silentProgressReporter,
+  type ProgressReporter,
+} from "../ProgressReporter.js";
 import type { ReadonlyActionLog } from "./DesktopBuildActionLog.js";
 import { errorText } from "./DesktopBuildCommands.js";
 import { desktopOperationFailure } from "./DesktopCaptureRefusals.js";
+import { settledAppData, type BuildSettle } from "./DesktopBuildSettle.js";
 import {
   writeWitnessRecord,
   type EndedWitness,
@@ -70,12 +77,23 @@ type WitnessSummary = {
   readonly record: WitnessRecord | null;
 };
 
+/** A task's results on the app's views, whether its files had settled, and whether the bound cut a read. */
+type Graded = {
+  readonly results: TaskCheckOutcome[];
+  readonly settled: boolean;
+  readonly read_cut: boolean;
+};
+
 /** One check of the task against the app's live state, and the witness stage it filed, if any. */
 export type CheckedTask = {
   readonly task: string;
   readonly passed: number;
   readonly failed: number;
   readonly results: TaskCheckOutcome[];
+  /** Whether the app's files had held for the settle window when they were graded, rather than at its bound. */
+  readonly settled: boolean;
+  /** Whether a read still in flight at the settle bound was cut, so the last completed read was graded. */
+  readonly read_cut: boolean;
   readonly witness: WitnessSummary | null;
 };
 
@@ -128,7 +146,10 @@ const bundleTaskDifference = async (
     !isDeepStrictEqual(listed, JSON.parse(renderTaskSteps(task, app)))
   )
     return `the bundle's ${stepsPath} differs from this task's steps.`;
-  return verifier.toString("utf8") === renderTaskVerifier(task, app)
+  return sameTaskVerifier(
+    renderTaskVerifier(task, app),
+    verifier.toString("utf8"),
+  )
     ? undefined
     : `the bundle's ${verifierPath} differs from this task's checks.`;
 };
@@ -144,6 +165,11 @@ interface OpenWitness extends EndedWitness {
   record?: WitnessRecord;
   /** A manifest whose segments still need to be fetched. */
   pendingManifest?: RecordingManifest | undefined;
+  /**
+   * The action log as it stood when the record was first written. A retry
+   * uses this copy, so later activity cannot drop the witnessed actions.
+   */
+  logged?: Pick<ReadonlyActionLog, "entries" | "dropped">;
   /**
    * A published record whose handles are still open. The error already carries
    * the record and the cleanup lease; every later close failure returns it.
@@ -171,9 +197,16 @@ const summaryOf = (
 });
 
 /** The pass and fail counts of one set of results. */
-const counted = (task: DesktopTask, results: TaskCheckOutcome[]) => {
+const counted = (task: DesktopTask, { results, settled, read_cut }: Graded) => {
   const passed = results.filter((result) => result.passed).length;
-  return { task: task.name, passed, failed: results.length - passed, results };
+  return {
+    task: task.name,
+    passed,
+    failed: results.length - passed,
+    results,
+    settled,
+    read_cut,
+  };
 };
 
 /**
@@ -210,6 +243,7 @@ export class DesktopBuildWitness {
   constructor(
     private readonly computer: WitnessedComputer,
     private readonly actions: ReadonlyActionLog,
+    private readonly settle: BuildSettle = SETTLE_TIMING,
     private readonly bundle?: string,
   ) {}
 
@@ -220,6 +254,7 @@ export class DesktopBuildWitness {
       readonly directory?: string | undefined;
     },
     signal: AbortSignal,
+    progress: ProgressReporter = silentProgressReporter,
   ): Promise<Result<CheckedTask, AnalysisError>> {
     const parsed = parseDesktopTask(input.task, isPortableBundleName);
     if (!parsed.ok)
@@ -243,27 +278,38 @@ export class DesktopBuildWitness {
         ? undefined
         : await this.#admit(task, stage, input.directory, signal);
     if (admitted?.ok === false) return admitted;
-    const graded = await this.#grade(task, signal);
+    const graded = await this.#grade(task, signal, progress);
     if (!graded.ok) return graded;
-    const results = graded.value;
-    const checked = counted(task, results);
+    const checked = counted(task, graded.value);
     if (stage === undefined || admitted === undefined)
       return ok({ ...checked, witness: null });
-    const filed = await this.#file(stage, admitted.value, results, signal);
+    const filed = await this.#file(stage, admitted.value, graded.value, signal);
     return filed.ok ? ok({ ...checked, witness: filed.value }) : filed;
   }
 
-  /** The task's checks against the app's live views, one result per check. */
+  /** The task's checks against the app's views once its files settle, one result per check. */
   async #grade(
     task: DesktopTask,
     signal: AbortSignal,
-  ): Promise<Result<TaskCheckOutcome[], AnalysisError>> {
+    progress: ProgressReporter,
+  ): Promise<Result<Graded, AnalysisError>> {
     try {
-      const views = appStateViews(
-        await this.computer.appData("data/get", signal),
+      const read = await settledAppData(
+        (turn) => this.computer.appData("data/get", turn),
+        this.settle,
+        signal,
+        (message) =>
+          progress
+            .report({ phase: CHECK, completed: 0, total: null, message })
+            .catch(() => undefined),
       );
+      const views = appStateViews(read.parts);
       return views.ok
-        ? ok([...evaluateTaskChecks(task.checks, views.value)])
+        ? ok({
+            results: [...evaluateTaskChecks(task.checks, views.value)],
+            settled: read.settled,
+            read_cut: read.readCut,
+          })
         : err(
             refused(
               views.error,
@@ -290,7 +336,7 @@ export class DesktopBuildWitness {
   async #file(
     stage: WitnessStage,
     actionsBefore: number,
-    results: TaskCheckOutcome[],
+    { results, settled, read_cut }: Graded,
     signal: AbortSignal,
   ): Promise<Result<WitnessSummary, AnalysisError>> {
     const witness = this.#witness;
@@ -328,6 +374,8 @@ export class DesktopBuildWitness {
       checked_at: new Date().toISOString(),
       expectation: stageExpectation(stage),
       held,
+      settled,
+      read_cut,
       results,
       ...(unrestored.length === 0
         ? {}
@@ -361,10 +409,14 @@ export class DesktopBuildWitness {
       witness.state = "saved";
       return ok(summaryOf(filed, null, witness.record));
     }
+    witness.logged ??= {
+      entries: [...this.actions.entries],
+      dropped: this.actions.dropped,
+    };
     const written = await writeWitnessRecord(
       this.computer,
       witness,
-      this.actions,
+      witness.logged,
       signal,
       witness.pendingManifest,
     );
@@ -410,7 +462,7 @@ export class DesktopBuildWitness {
         ),
       );
     return ok({
-      ...counted(task, filed.results),
+      ...counted(task, filed),
       witness: summaryOf(filed, null, witness.record),
     });
   }
@@ -436,7 +488,10 @@ export class DesktopBuildWitness {
       );
     const saved = await this.#save(witness, filed, signal);
     return saved.ok
-      ? ok({ ...counted(task, filed.results), witness: saved.value })
+      ? ok({
+          ...counted(task, filed),
+          witness: saved.value,
+        })
       : saved;
   }
 

@@ -786,6 +786,10 @@ it.each([
     { ghidra_bridge: true, runtime: false, package: false },
   ],
   [
+    "tests/conformance/ghidra/ReaComputedCallCoverageProbe.java",
+    { ghidra_bridge: true, runtime: false, package: false },
+  ],
+  [
     "tests/conformance/ghidra/ReaDecodeProbe.java",
     { ghidra_bridge: true, runtime: false, package: false },
   ],
@@ -832,6 +836,14 @@ it.each([
     { code: true, runtime: true, package: true },
   ],
   ["src/adb/AdbConfiguration.ts", { code: true, runtime: true, package: true }],
+  [
+    "src/application/binaryDiagnostics/ByteEntropyService.ts",
+    { code: true, runtime: true, package: true },
+  ],
+  [
+    "tests/acceptance/byteEntropyWindowsIdentity.test.ts",
+    { code: true, runtime: true, package: true },
+  ],
   [
     "src/apktool/ApktoolConfiguration.ts",
     { code: true, runtime: true, package: true },

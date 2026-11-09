@@ -5,7 +5,10 @@ import {
 } from "../../artifacts/StableArtifactFailure.js";
 import { isSelectedRegularFileError } from "../../filesystem/RegularFile.js";
 import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
-import { readStableArtifact } from "../../artifacts/readStableArtifact.js";
+import {
+  type StableArtifactSnapshot,
+  readStableArtifact,
+} from "../../artifacts/readStableArtifact.js";
 import {
   artifactFilePrimaryFacts,
   type ArtifactFilePrimaryFacts,
@@ -58,9 +61,10 @@ export class NativeExportsProvider implements NativeExportsPort {
   }
 
   async inspect(input: InspectNativeExportsInput, options?: ExecutionOptions) {
+    let snapshot: StableArtifactSnapshot | undefined;
     try {
       return await this.#resources.run(async () => {
-        const snapshot = await readStableArtifact(
+        snapshot = await readStableArtifact(
           input.path,
           input.max_file_bytes,
           options?.signal,
@@ -77,7 +81,7 @@ export class NativeExportsProvider implements NativeExportsPort {
         return ok(report);
       });
     } catch (cause) {
-      return err(nativeExportsFailure(cause, input));
+      return err(nativeExportsFailure(cause, input, snapshot));
     }
   }
 }
@@ -193,6 +197,7 @@ const nativeExportsFailurePrimary = (
 const nativeExportsFailure = (
   cause: unknown,
   input: InspectNativeExportsInput,
+  snapshot?: StableArtifactSnapshot,
 ): AnalysisError => {
   const primary = nativeExportsFailurePrimary(
     artifactFilePrimaryFacts(cause),
@@ -204,5 +209,6 @@ const nativeExportsFailure = (
     input.path,
     NATIVE_EXPORTS_PROVIDER.id,
     OPERATION,
+    snapshot,
   );
 };
