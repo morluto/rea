@@ -178,6 +178,153 @@ describe("Apple IPS Mach-O and dSYM join", () => {
     );
   });
 
+  it("does not assume a compatible slice with unknown UUID is distinct", async () => {
+    const root = await createTestTempDirectory("rea-apple-ips-join-unknown-");
+    const report = await inspectWithJoin(
+      root,
+      fatImage([
+        { cpu: ARM64, uuid: FIXTURE_UUID, textVmaddr: 0x100000000n },
+        { cpu: ARM64, uuid: null, textVmaddr: 0x200000000n },
+      ]),
+    );
+    expect(report.join.image_matches).toEqual([]);
+    expect(report.join.slices).toMatchObject([
+      { index: 0, uuid: FIXTURE_UUID },
+      { index: 1, uuid: null },
+    ]);
+    expect(report.join.frames[0]).toMatchObject({ status: "unjoined" });
+    expect(report.join.limitations.join(" ")).toContain("UUID is unknown");
+  });
+
+  it("does not report a UUID mismatch when a compatible slice UUID is unknown", async () => {
+    const root = await createTestTempDirectory(
+      "rea-apple-ips-join-unknown-only-",
+    );
+    const report = await inspectWithJoin(
+      root,
+      machoSlice({ cpu: ARM64, uuid: null, textVmaddr: 0n }),
+    );
+    expect(report.join.image_matches).toEqual([]);
+    expect(report.join.frames[0]).toMatchObject({
+      status: "unjoined",
+      reason: expect.stringContaining("join.limitations"),
+    });
+    expect(report.join.limitations.join(" ")).toContain("UUID is unknown");
+  });
+
+  it("joins when the slice with unknown UUID has a different architecture", async () => {
+    const root = await createTestTempDirectory(
+      "rea-apple-ips-join-other-arch-",
+    );
+    const report = await inspectWithJoin(
+      root,
+      fatImage([
+        { cpu: ARM64, uuid: FIXTURE_UUID, textVmaddr: 0x100000000n },
+        { cpu: X86_64, uuid: null, textVmaddr: 0x200000000n },
+      ]),
+    );
+    expect(report.join.image_matches).toHaveLength(1);
+    expect(report.join.frames[0]).toMatchObject({ status: "joined" });
+  });
+
+  it.each([null, "", "   "])(
+    "reports unknown recorded architecture %s",
+    async (arch) => {
+      const root = await createTestTempDirectory(
+        "rea-apple-ips-join-unknown-arch-",
+      );
+      const report = await inspectWithJoin(
+        root,
+        machoSlice({ cpu: ARM64, uuid: FIXTURE_UUID, textVmaddr: 0n }),
+        { arch },
+      );
+      expect(report.join.image_matches).toEqual([]);
+      expect(report.join.frames[0]).toMatchObject({
+        status: "unjoined",
+        reason: expect.stringContaining("architecture is unknown"),
+      });
+    },
+  );
+
+  it("does not join an unknown ARM64 subtype through the family display name", async () => {
+    const root = await createTestTempDirectory("rea-ips-unknown-subtype-");
+    const report = await inspectWithJoin(
+      root,
+      machoSlice({
+        cpu: { type: ARM64.type, subtype: 99 },
+        uuid: FIXTURE_UUID,
+        textVmaddr: 0n,
+      }),
+    );
+    expect(report.join.image_matches).toEqual([]);
+    expect(report.join.frames[0]).toMatchObject({ status: "unjoined" });
+    expect(report.join.limitations.join(" ")).toContain(
+      "architecture is unknown",
+    );
+  });
+
+  it("does not join an unknown x86_64 subtype through the family display name", async () => {
+    const root = await createTestTempDirectory("rea-ips-unknown-x86-subtype-");
+    const report = await inspectWithJoin(
+      root,
+      machoSlice({
+        cpu: { type: X86_64.type, subtype: 99 },
+        uuid: FIXTURE_UUID,
+        textVmaddr: 0n,
+      }),
+      { arch: "x86_64" },
+    );
+    expect(report.join.image_matches).toEqual([]);
+    expect(report.join.limitations.join(" ")).toContain(
+      "architecture is unknown",
+    );
+  });
+
+  it("does not describe an unfamiliar recorded architecture as a proven mismatch", async () => {
+    const root = await createTestTempDirectory(
+      "rea-ips-unknown-recorded-arch-",
+    );
+    const report = await inspectWithJoin(
+      root,
+      machoSlice({ cpu: ARM64, uuid: FIXTURE_UUID, textVmaddr: 0n }),
+      { arch: "new-arch" },
+    );
+    expect(report.join.image_matches).toEqual([]);
+    expect(report.join.limitations.join(" ")).toContain(
+      "architecture is unknown",
+    );
+  });
+
+  it.each([
+    { arch: "constructor", cpu: ARM64 },
+    { arch: "__proto__", cpu: ARM64 },
+    { arch: "constructor", cpu: X86_64 },
+    { arch: "__proto__", cpu: X86_64 },
+  ])(
+    "retains unknown architecture $arch for CPU $cpu.type",
+    async ({ arch, cpu }) => {
+      const root = await createTestTempDirectory("rea-ips-prototype-arch-");
+      const report = await inspectWithJoin(
+        root,
+        machoSlice({
+          cpu: { type: cpu.type, subtype: 99 },
+          uuid: FIXTURE_UUID,
+          textVmaddr: 0x100000000n,
+        }),
+        { arch },
+      );
+      expect(report.join.slices).toMatchObject([{ index: 0 }]);
+      expect(report.join).toMatchObject({
+        status: "selected",
+        image_matches: [],
+      });
+      expect(report.join.frames[0]).toMatchObject({ status: "unjoined" });
+      expect(report.join.limitations.join(" ")).toContain(
+        "architecture is unknown",
+      );
+    },
+  );
+
   it("rejects a UUID match whose architecture differs", async () => {
     const root = await createTestTempDirectory("rea-apple-ips-join-arch-");
     const report = await inspectWithJoin(

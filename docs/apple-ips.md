@@ -106,6 +106,10 @@ one slice has that UUID **and** an architecture that agrees with the report's
 UUID match with a different architecture, more than one compatible slice, or a
 slice without a readable `__TEXT` segment is reported as a rejected image with
 its reason and stays unjoined rather than being guessed.
+An unknown UUID in another slice prevents a unique join unless its architecture
+rules out a match. Missing or unrecognized architecture and unsupported CPU
+subtypes remain unknown; display-name fallbacks do not establish agreement.
+The parsed slice facts remain available even when no match can be derived.
 
 `join.status` is `selected` with the artifact path, SHA-256, byte length, every
 slice's offset, arch, CPU type and subtype, UUID, and `__TEXT` vmaddr, plus

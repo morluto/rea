@@ -9,7 +9,11 @@ import {
   admitMachoSegmentCommand,
 } from "../../domain/apple/machoSegmentHeader.js";
 import { FieldReader } from "./AppleIpsFieldReader.js";
-import { machoArchitectureName } from "../../domain/apple/machoCpuIdentity.js";
+import {
+  machoArchitectureName,
+  machoKnownArm64Subtype,
+  machoKnownX86_64Subtype,
+} from "../../domain/apple/machoCpuIdentity.js";
 import type { AppleIps, AppleIpsJoin } from "../../domain/native/appleIps.js";
 
 /**
@@ -171,22 +175,46 @@ const sliceAt = (
 const comparableArch = (value: string): string =>
   value.trim().toLowerCase().replaceAll("-", "");
 
-const ARCH_ALIASES: Readonly<Record<string, string>> = {
-  arm64: "arm64",
-  arm64e: "arm64e",
-  x8664: "x86_64",
-  x86_64: "x86_64",
-  i386: "i386",
-  armv7: "armv7",
-  armv7s: "armv7s",
-  armv8: "arm64",
-};
+const ARCH_ALIASES: ReadonlyMap<string, string> = new Map([
+  ["arm64", "arm64"],
+  ["arm64e", "arm64e"],
+  ["x8664", "x86_64"],
+  ["x86_64", "x86_64"],
+  ["armv7", "armv7"],
+  ["armv7s", "armv7s"],
+  ["armv8", "arm64"],
+  ["arm64v8", "arm64v8"],
+  ["arm64e.x1", "arm64e.x1"],
+  ["arm64_32", "arm64_32"],
+  ["x86_64h", "x86_64h"],
+  ["i386", "i386"],
+  ["arm", "arm"],
+]);
 
-const architecturesAgree = (recorded: string, slice: string): boolean => {
-  const left =
-    ARCH_ALIASES[comparableArch(recorded)] ?? comparableArch(recorded);
-  const right = ARCH_ALIASES[comparableArch(slice)] ?? comparableArch(slice);
-  return left === right;
+const architectureRelation = (
+  recorded: string,
+  slice: SliceIdentity,
+): "match" | "mismatch" | "unknown" => {
+  const left = ARCH_ALIASES.get(comparableArch(recorded));
+  if (left === undefined) return "unknown";
+  if (
+    slice.cpuType === 0x0100000c &&
+    machoKnownArm64Subtype(slice.cpuSubtype) === undefined
+  )
+    return left.startsWith("arm64") && left !== "arm64_32"
+      ? "unknown"
+      : "mismatch";
+  if (
+    slice.cpuType === 0x01000007 &&
+    machoKnownX86_64Subtype(slice.cpuSubtype) === undefined
+  )
+    return left.startsWith("x86_64") ? "unknown" : "mismatch";
+  const right = ARCH_ALIASES.get(comparableArch(slice.arch));
+  return right === undefined
+    ? "unknown"
+    : left === right
+      ? "match"
+      : "mismatch";
 };
 
 /** Resolve every report image and frame against the selected artifact. */
@@ -221,13 +249,34 @@ export const resolveAppleIpsJoin = async (
       continue;
     }
     const recordedArch = image.arch ?? "";
-    if (image.uuid === null || recordedArch === "") continue;
+    if (image.uuid === null || comparableArch(recordedArch) === "") continue;
+    const unknownUuid = parsed.slices.filter(
+      (slice) =>
+        slice.uuid === null &&
+        architectureRelation(recordedArch, slice) !== "mismatch",
+    );
+    if (unknownUuid.length > 0) {
+      const reason = `image ${String(image.index)} cannot be joined uniquely because a slice UUID is unknown and its architecture does not rule out a match; the parsed slice identities remain available.`;
+      limitations.push(reason);
+      rejectedImage.set(image.index, reason);
+      continue;
+    }
     const candidates = parsed.slices.filter(
       ({ uuid }) => uuid !== null && uuid === image.uuid,
     );
     if (candidates.length === 0) continue;
-    const compatible = candidates.filter(({ arch }) =>
-      architecturesAgree(recordedArch, arch),
+    if (
+      candidates.some(
+        (slice) => architectureRelation(recordedArch, slice) === "unknown",
+      )
+    ) {
+      const reason = `image ${String(image.index)} architecture is unknown for recorded ${JSON.stringify(recordedArch)} or a matching slice; the join stays unverified.`;
+      limitations.push(reason);
+      rejectedImage.set(image.index, reason);
+      continue;
+    }
+    const compatible = candidates.filter(
+      (slice) => architectureRelation(recordedArch, slice) === "match",
     );
     if (compatible.length === 0) {
       const reason = `image ${String(image.index)} UUID ${image.uuid} matches a slice, but its recorded architecture ${JSON.stringify(recordedArch)} does not match ${candidates.map(({ arch }) => arch).join(", ")}; the join is rejected.`;
@@ -335,6 +384,12 @@ const frameJoin = (
       threadIndex,
       frame.frame_index,
       `image ${String(imageIndex)} UUID is unknown, so it never joins`,
+    );
+  if (image.arch === null || comparableArch(image.arch) === "")
+    return unjoined(
+      threadIndex,
+      frame.frame_index,
+      `image ${String(imageIndex)} architecture is unknown, so it never joins`,
     );
   const digest = matched.get(imageIndex);
   if (digest === undefined) {
