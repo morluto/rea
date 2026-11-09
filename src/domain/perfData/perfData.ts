@@ -83,6 +83,7 @@ export const perfDiagnosticSchema = z.strictObject({
     "diagnostic-limit-reached",
     "header-attribute-overlap",
     "unsafe-attribute-size",
+    "unsafe-section-extent",
   ]),
   message: z.string(),
 });

@@ -250,6 +250,46 @@ describe("parsePerfData section accounting", () => {
     ]);
   });
 
+  it("reports an explicitly empty attribute section as complete", () => {
+    const bytes = buildPerfRecording({ entries: [] });
+    const archive = parsed(bytes);
+    expect(archive.diagnostics).toEqual([
+      expect.objectContaining({ code: "empty-attribute-section" }),
+    ]);
+    // Nothing was left unexamined, so the informational diagnostic must not
+    // present a fully read empty inventory as partial.
+    expect(archive.summary.identifiers_present).toBe(true);
+    expect(archive.source_coverage.status).toBe("complete-within-scope");
+  });
+
+  it("treats a zero-length data extent as empty rather than overlapping", () => {
+    const bytes = buildPerfRecording();
+    // A zero-size data section that starts inside the attribute extent owns no
+    // bytes, so it cannot conflict with the attributes that do.
+    bytes.writeBigUInt64LE(BigInt(PERF_HEADER_BYTES), 0x28);
+    bytes.writeBigUInt64LE(0n, 0x30);
+    const archive = parsed(bytes);
+    expect(archive.diagnostics.map(({ code }) => code)).not.toContain(
+      "attribute-section-overlap",
+    );
+    expect(archive.events).toHaveLength(1);
+    expect(archive.summary.identifiers_present).toBe(true);
+  });
+
+  it("reports an unrepresentable section extent as its own fact", () => {
+    const bytes = buildPerfRecording();
+    bytes.writeBigUInt64LE(0xffffffffffffffffn, 0x30);
+    const archive = parsed(bytes);
+    // The field was present and read; nothing is missing from the file, so this
+    // must not be reported as a truncated header.
+    expect(archive.diagnostics).toEqual([
+      expect.objectContaining({ code: "unsafe-section-extent" }),
+    ]);
+    expect(archive.diagnostics.map(({ code }) => code)).not.toContain(
+      "truncated-header",
+    );
+  });
+
   it("marks the identifier inventory incomplete when its allowance truncates it", () => {
     const ids = Array.from({ length: 200_001 }, (_unused, index) => index + 1);
     const archive = parsed(
