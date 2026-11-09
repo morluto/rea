@@ -266,8 +266,9 @@ interface AcceptedConfig extends ConfigBlob {
 }
 
 /**
- * `IKCFG_ST`, a complete gzip member, and `IKCFG_ED` identify a config blob
- * whose member fails its trailer check or whose text fails the grammar.
+ * `IKCFG_ST`, gzip magic, and `IKCFG_ED` identify a config blob whose member
+ * does not decode, fails its trailer check, or whose text fails the grammar.
+ * For a member that does not decode, `memberBytes` runs to the closing marker.
  */
 interface MalformedConfig extends ConfigBlob {
   readonly kind: "malformed";
@@ -275,8 +276,9 @@ interface MalformedConfig extends ConfigBlob {
 }
 
 /**
- * The first accepted config wins. Otherwise a framed but unreadable blob is
- * malformed and a member cut off by the searched bytes is truncated; neither
+ * The first accepted config wins. Otherwise a framed but unreadable blob,
+ * including a deflate stream that is damaged or cut off by its closing marker,
+ * is malformed and a member cut off by the searched bytes is truncated; neither
  * is reported as absent. Each candidate's inflate input ends at the next
  * `IKCFG_ED`, since `kernel/configs.c` places that marker right after the
  * member. At most MAX_CONFIG_CANDIDATES members and CONFIG_SEARCH_BUDGET_FACTOR
@@ -325,14 +327,24 @@ const findConfig = (
     }
     if (member.kind === "member") remaining -= member.output.length;
     if (member.kind === "corrupt") remaining -= member.inflated;
-    if (member.kind === "truncated" || member.kind === "invalid")
+    if (member.kind === "truncated" || member.kind === "invalid") {
       remaining -= member.spent;
-    if (member.kind === "truncated") {
-      // A member cut off by its closing marker is not framed by it.
-      if (closing < 0) truncated = true;
+      if (closing < 0) {
+        if (member.kind === "truncated") truncated = true;
+        continue;
+      }
+      // IKCFG_ST, gzip magic and a later IKCFG_ED frame bytes that do not
+      // decode: an unreadable config, not an absent one.
+      malformed ??= {
+        kind: "malformed",
+        marker,
+        gzipStart: gzipAt,
+        memberBytes: closing - gzipAt,
+        reason: "config_gzip_invalid",
+      };
       continue;
     }
-    if (member.kind === "invalid" || member.end !== closing) continue;
+    if (member.end !== closing) continue;
     const blob = {
       marker,
       gzipStart: gzipAt,
@@ -458,7 +470,7 @@ const findBanner = (
 const baseLimitations = (): string[] => [
   "This workflow does not execute the image or boot the kernel.",
   "Banner text and configuration values are target-derived and untrusted.",
-  "A config is accepted only when IKCFG_ST is immediately followed by a gzip member that inflates to config text and is immediately followed by IKCFG_ED. An IKCFG_ST string without that member is not a config. A framed member that fails its trailer check or the config grammar is malformed, not absent.",
+  "A config is accepted only when IKCFG_ST is immediately followed by a gzip member that inflates to config text and is immediately followed by IKCFG_ED. An IKCFG_ST string without gzip magic is not a config. A framed member that does not decode, fails its trailer check, or fails the config grammar is malformed, not absent.",
   "An absent banner or config describes only the bytes that were searched; a kernel built without CONFIG_IKCONFIG carries no embedded config.",
   "Only a gzip payload inside an x86 bzImage setup header is inflated. Other codecs are named and left compressed.",
 ];
@@ -580,7 +592,7 @@ const reportFromSearch = (
       ...(config.status === "malformed"
         ? [
             config.reason === "config_gzip_invalid"
-              ? "An IKCFG_ST gzip member framed by IKCFG_ED fails its CRC-32 or ISIZE check. The embedded config is unreadable and is not reported as absent."
+              ? "An IKCFG_ST gzip member framed by IKCFG_ED does not decode or fails its CRC-32 or ISIZE check. The embedded config is unreadable and is not reported as absent."
               : "An IKCFG_ST gzip member framed by IKCFG_ED inflates to text that is not a .config. The embedded config is unreadable and is not reported as absent.",
           ]
         : []),

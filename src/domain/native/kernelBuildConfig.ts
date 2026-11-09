@@ -166,8 +166,9 @@ export const inspectKernelBuildConfigInputSchema = z.strictObject({
 /**
  * Version banner and embedded build config. A config is present only when
  * `IKCFG_ST` is immediately followed by a gzip member whose inflated text is
- * a config and whose next bytes are `IKCFG_ED`. A framed blob whose member
- * fails its trailer check or whose text fails the grammar is `malformed`.
+ * a config and whose next bytes are `IKCFG_ED`. A framed blob whose member does
+ * not decode, fails its trailer check, or whose text fails the grammar is
+ * `malformed`.
  * Malformed, truncated, or unsupported input is never an absent config.
  */
 export const kernelBuildConfigSchema = z.strictObject({

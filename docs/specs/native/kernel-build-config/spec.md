@@ -32,8 +32,9 @@ these files.
    ends exactly at the next `IKCFG_ED`, inflates within `max_config_bytes`,
    passes its CRC-32 and ISIZE checks, and parses as `.config` text. Inflation
    reads only the bytes up to that marker.
-4. Framing that fails its checks or grammar is `malformed`, never `absent`. An
-   unframed `IKCFG_ST` string is skipped. A valid config later in the bytes
+4. Framing that fails its checks or grammar, including a framed deflate stream
+   that does not decode or is cut off by `IKCFG_ED`, is `malformed`, never
+   `absent`. An unframed `IKCFG_ST` string is skipped. A valid config later in the bytes
    still wins.
 5. Entries report name, kind (`y`, `m`, `number`, `string`, `not_set`) and
    value, with an exact `name` filter and `offset`/`limit` paging.

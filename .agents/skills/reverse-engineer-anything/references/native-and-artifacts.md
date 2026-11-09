@@ -231,8 +231,8 @@ and `IKCFG_ED`, so an ordinary `IKCFG_ST` string is not a config. Offsets with
 `space: "inflated_payload"` are positions in an inflated bzImage payload, not
 file offsets. An absent config describes only the searched bytes; the kernel
 may have been built without `CONFIG_IKCONFIG` or with it as a module. Truncated
-payloads are incomplete, not absent. A framed blob with a bad CRC or non-config
-text is `malformed`, not absent. xz, lz4, lzma, zstd, bzip2, and lzo
+payloads are incomplete, not absent. A framed blob that does not decode, has a
+bad CRC, or holds non-config text is `malformed`, not absent. xz, lz4, lzma, zstd, bzip2, and lzo
 payloads are unsupported and name `external_decompression`: decompress with an
 external utility, then call `inspect_kernel_build_config` on the result. See
 [Linux kernel build config](https://github.com/morluto/rea/blob/main/docs/kernel-build-config.md).

@@ -47,10 +47,12 @@ when the bytes were not searched.
   `# CONFIG_X is not set`, or `CONFIG_X=value`, and the text is valid UTF-8
   with no control bytes other than tab, CR, and LF.
 
-An `IKCFG_ST` string that is not followed by a complete gzip member and then
-`IKCFG_ED` is skipped, so an ordinary string is never reported as a config.
-When that framing is present but the member fails its CRC-32 or ISIZE check,
-or its text fails the grammar, the config is `malformed` with coverage
+An `IKCFG_ST` string that is not followed by gzip magic, or whose complete
+member is not followed by `IKCFG_ED`, is skipped, so an ordinary string is never
+reported as a config. When `IKCFG_ST`, gzip magic, and a later `IKCFG_ED` frame
+a member that does not decode, a deflate stream cut off by that marker, a
+member that fails its CRC-32 or ISIZE check, or text that fails the grammar,
+the config is `malformed` with coverage
 `incomplete`, and `marker`, `gzip`, and `end_marker` locate the blob. A
 malformed blob is never reported as an absent config. A valid config later in
 the searched bytes still wins. `marker`, `gzip`, and `end_marker` give
@@ -115,17 +117,17 @@ Results that could not search or read the kernel bytes stay `incomplete`,
 `malformed`, or `unsupported` and are never
 reported as an absent config:
 
-| `config.reason`                    | Meaning                                                    |
-| ---------------------------------- | ---------------------------------------------------------- |
-| `config_gzip_invalid`              | a framed `IKCFG_ST` gzip member fails its CRC-32 or ISIZE  |
-| `config_text_invalid`              | a framed `IKCFG_ST` gzip member is not `.config` text      |
-| `config_gzip_truncated`            | an `IKCFG_ST` gzip member runs past the searched bytes     |
-| `config_search_exhausted`          | decoy candidates used up the config search budget          |
-| `payload_truncated`                | the declared bzImage payload or its gzip member ends early |
-| `payload_gzip_invalid`             | the bzImage gzip payload fails to inflate or its trailer   |
-| `payload_codec_unsupported`        | a compressed payload or whole-file stream was not inflated |
-| `unrecognized_payload_codec`       | the bzImage payload starts with no known codec magic       |
-| `setup_header_payload_unavailable` | the setup header predates 2.08 or has no payload length    |
+| `config.reason`                    | Meaning                                                                      |
+| ---------------------------------- | ---------------------------------------------------------------------------- |
+| `config_gzip_invalid`              | a framed `IKCFG_ST` gzip member does not decode or fails its CRC-32 or ISIZE |
+| `config_text_invalid`              | a framed `IKCFG_ST` gzip member is not `.config` text                        |
+| `config_gzip_truncated`            | an `IKCFG_ST` gzip member runs past the searched bytes                       |
+| `config_search_exhausted`          | decoy candidates used up the config search budget                            |
+| `payload_truncated`                | the declared bzImage payload or its gzip member ends early                   |
+| `payload_gzip_invalid`             | the bzImage gzip payload fails to inflate or its trailer                     |
+| `payload_codec_unsupported`        | a compressed payload or whole-file stream was not inflated                   |
+| `unrecognized_payload_codec`       | the bzImage payload starts with no known codec magic                         |
+| `setup_header_payload_unavailable` | the setup header predates 2.08 or has no payload length                      |
 
 A kernel built without `CONFIG_IKCONFIG` carries no embedded config, so an
 `absent` config describes only the bytes that were searched. A kernel built

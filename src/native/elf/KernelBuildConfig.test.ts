@@ -186,6 +186,33 @@ it("checks the optional gzip header CRC before accepting a member", () => {
   expect(payload.config.reason).toBe("payload_gzip_invalid");
 });
 
+it("reports a framed member that does not decode as malformed, not absent", () => {
+  const member = gzipSync(Buffer.from(SAMPLE_KERNEL_CONFIG, "latin1"));
+  const damaged = Buffer.from(member);
+  // The first DEFLATE byte becomes a reserved block type.
+  damaged[10] = 0x07;
+  const cutOff = member.subarray(0, member.length - 20);
+  for (const body of [damaged, cutOff]) {
+    const bytes = Buffer.concat([
+      Buffer.from("IKCFG_ST"),
+      body,
+      Buffer.from("IKCFG_ED"),
+    ]);
+    const report = parse(bytes);
+    expect(report.config).toMatchObject({
+      status: "malformed",
+      reason: "config_gzip_invalid",
+      marker: { space: "file", offset: 0, bytes: 8 },
+      gzip: { space: "file", offset: 8, bytes: body.length },
+      end_marker: { space: "file", offset: bytes.length - 8, bytes: 8 },
+    });
+    expect(report.coverage.status).toBe("incomplete");
+    expect(
+      parse(Buffer.concat([bytes, embeddedKernelConfig()])).config.status,
+    ).toBe("present");
+  }
+});
+
 it("prefers a valid config over an earlier malformed blob", () => {
   const report = parse(
     Buffer.concat([badCrcKernelConfigFixture(), embeddedKernelConfig()]),
