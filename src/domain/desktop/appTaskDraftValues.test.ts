@@ -661,37 +661,72 @@ describe("draftTaskFiles for a transaction added to a book, as GnuCash saves one
   });
 });
 
+/** A split of a transaction: its id, which KMyMoney numbers anew in every transaction, amount, account and payee. */
+const split = (id: string, value: string, account: string, payee: string) =>
+  `<SPLIT value="${value}" shares="${value}" memo="" account="${account}" price="1/1" id="${id}" payee="${payee}" reconcileflag="0"/>`;
+const transaction = (id: string, date: string, splits: string) =>
+  `<TRANSACTION memo="" entrydate="2026-11-06" postdate="${date}" id="${id}" commodity="USD"><SPLITS>${splits}</SPLITS></TRANSACTION>`;
+const WATER = transaction(
+  "T000000000000000001",
+  "2026-10-12",
+  split("S0001", "-209/5", "A000001", "P000002") +
+    split("S0002", "209/5", "A000011", "P000002"),
+);
+const ELECTRIC = transaction(
+  "T000000000000000002",
+  "2026-10-20",
+  split("S0001", "-921/10", "A000001", "P000003") +
+    split("S0002", "921/10", "A000011", "P000003"),
+);
+const PAYMENT = transaction(
+  "T000000000000000003",
+  "2026-11-03",
+  split("S0001", "-1749/20", "A000001", "P000003") +
+    split("S0002", "1749/20", "A000011", "P000003"),
+);
+/** A book: a file version whose id is a small number, payees, accounts the institution and parent list by id, and transactions. */
+const kmy = (count: string, added: string) =>
+  `<KMYMONEY-FILE><FILEINFO><FIXVERSION id="3"/></FILEINFO><INSTITUTION id="I000001" name="Maple Grove Credit Union"><ACCOUNTIDS><ACCOUNTID id="A000001"/></ACCOUNTIDS></INSTITUTION><PAYEES><PAYEE id="P000002" name="Northside Water Co."/><PAYEE id="P000003" name="Riverside Electric"/></PAYEES><ACCOUNTS><ACCOUNT id="AStd::Expense" name="Expense"><SUBACCOUNTS><SUBACCOUNT id="A000011"/></SUBACCOUNTS></ACCOUNT><ACCOUNT id="A000001" name="Household Checking"/><ACCOUNT id="A000011" name="Utilities"/></ACCOUNTS><TRANSACTIONS count="${count}">${WATER}${ELECTRIC}${added}</TRANSACTIONS></KMYMONEY-FILE>`;
+const SEED = kmy("2", "");
+const END = kmy("3", PAYMENT);
+const SPLITS =
+  "/root/children/[name=TRANSACTIONS]/children/[name=TRANSACTION][@postdate=2026-11-03]/children/[name=SPLITS]/children";
+
 describe("draftTaskFiles for a transaction added to a book, as KMyMoney saves one", () => {
-  /** A split of a transaction: its id, which KMyMoney numbers anew in every transaction, amount, account and payee. */
-  const split = (id: string, value: string, account: string, payee: string) =>
-    `<SPLIT value="${value}" shares="${value}" memo="" account="${account}" price="1/1" id="${id}" payee="${payee}" reconcileflag="0"/>`;
-  const transaction = (id: string, date: string, splits: string) =>
-    `<TRANSACTION memo="" entrydate="2026-11-06" postdate="${date}" id="${id}" commodity="USD"><SPLITS>${splits}</SPLITS></TRANSACTION>`;
-  const WATER = transaction(
-    "T000000000000000001",
-    "2026-10-12",
-    split("S0001", "-209/5", "A000001", "P000002") +
-      split("S0002", "209/5", "A000011", "P000002"),
-  );
-  const ELECTRIC = transaction(
-    "T000000000000000002",
-    "2026-10-20",
-    split("S0001", "-921/10", "A000001", "P000003") +
-      split("S0002", "921/10", "A000011", "P000003"),
-  );
-  const PAYMENT = transaction(
-    "T000000000000000003",
-    "2026-11-03",
-    split("S0001", "-1749/20", "A000001", "P000003") +
-      split("S0002", "1749/20", "A000011", "P000003"),
-  );
-  /** A book: a file version whose id is a small number, payees, accounts the institution and parent list by id, and transactions. */
-  const kmy = (count: string, added: string) =>
-    `<KMYMONEY-FILE><FILEINFO><FIXVERSION id="3"/></FILEINFO><INSTITUTION id="I000001" name="Maple Grove Credit Union"><ACCOUNTIDS><ACCOUNTID id="A000001"/></ACCOUNTIDS></INSTITUTION><PAYEES><PAYEE id="P000002" name="Northside Water Co."/><PAYEE id="P000003" name="Riverside Electric"/></PAYEES><ACCOUNTS><ACCOUNT id="AStd::Expense" name="Expense"><SUBACCOUNTS><SUBACCOUNT id="A000011"/></SUBACCOUNTS></ACCOUNT><ACCOUNT id="A000001" name="Household Checking"/><ACCOUNT id="A000011" name="Utilities"/></ACCOUNTS><TRANSACTIONS count="${count}">${WATER}${ELECTRIC}${added}</TRANSACTIONS></KMYMONEY-FILE>`;
-  const SEED = kmy("2", "");
-  const END = kmy("3", PAYMENT);
-  const SPLITS =
-    "/root/children/[name=TRANSACTIONS]/children/[name=TRANSACTION][@postdate=2026-11-03]/children/[name=SPLITS]/children";
+  it("omits an oversized nested split field while retaining short checks and its note", () => {
+    const large = "x".repeat(100_000);
+    const end = kmy(
+      "3",
+      PAYMENT.replace(
+        'memo="" account="A000001"',
+        `memo="${large}" account="A000001"`,
+      ),
+    );
+    const file = xmlDraft(SEED, end);
+    expect(
+      file.suggested
+        .filter((check) => JSON.stringify(check).length >= 10_000)
+        .map((check) => ({
+          kind: check.kind,
+          pointer: "pointer" in check ? check.pointer.slice(0, 220) : "",
+        })),
+    ).toEqual([]);
+    expect(file.suggested).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ kind: "value_equals", value: "-1749/20" }),
+      ]),
+    );
+    expect(file.notes).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: "long_text",
+          pointers: expect.arrayContaining([
+            `${SPLITS}/[name=SPLIT][@account=A000001]/attributes/memo`,
+          ]),
+        }),
+      ]),
+    );
+  });
 
   it("checks each split of the new transaction by the account it names, its amount and payee, not by the split id every transaction repeats", () => {
     const file = xmlDraft(SEED, END);
@@ -731,7 +766,9 @@ describe("draftTaskFiles for a transaction added to a book, as KMyMoney saves on
       true,
     ]);
   });
+});
 
+describe("draftTaskFiles for references in KMyMoney transactions", () => {
   it("names the account and payee each split refers to, the account over an id list naming it too, and no element a plain count equals", () => {
     const file = xmlDraft(SEED, END);
 
