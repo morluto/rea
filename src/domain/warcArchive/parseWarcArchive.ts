@@ -488,14 +488,19 @@ const readHttpRequestLine = (
   };
 };
 
-/** A payload that begins `HTTP/` or an apparent method token and so promises a message. */
+/**
+ * A payload that begins `HTTP/` or an apparent method token and so promises a
+ * message. The window is the whole start-line allowance, not a fixed prefix: a
+ * request method is any HTTP token, so cutting the check short would drop a
+ * valid long extension method without a diagnostic.
+ */
 const HTTP_PREFIX = "HTTP/";
 const looksLikeHttpMessage = (
   payload: Buffer,
   limit: number,
   recordType: string,
 ): boolean => {
-  const head = payload.toString("latin1", 0, Math.min(limit, 64));
+  const head = payload.toString("latin1", 0, limit);
   if (head.startsWith(HTTP_PREFIX)) return true;
   if (recordType === "response") return false;
   const space = head.indexOf(" ");

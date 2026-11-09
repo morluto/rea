@@ -42,6 +42,21 @@ const parsed = (text: string | Buffer, options = {}): WarcArchive => {
 };
 
 describe("parseWarcArchive", () => {
+  it("reads a request whose extension method is longer than a prefix check sees", () => {
+    // A method is any HTTP token; the start-line allowance bounds it, not a
+    // shorter peek, so a long extension method must still be inventoried.
+    const method = "M".repeat(64);
+    const archive = parsed(
+      record(
+        "request",
+        [["WARC-Target-URI", "https://example.test/a"]],
+        `${method} /a HTTP/1.1\r\n\r\n`,
+      ),
+    );
+    expect(archive.records[0]?.http?.method).toBe(method);
+    expect(archive.records[0]?.http?.start_line).toBe(`${method} /a HTTP/1.1`);
+  });
+
   it("inventories concatenated records in archive order", () => {
     const archive = parsed(
       record(
