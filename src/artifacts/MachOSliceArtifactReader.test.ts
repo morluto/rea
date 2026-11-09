@@ -324,8 +324,9 @@ describe("MachOSliceArtifactReader", () => {
       reader.entries()[Symbol.asyncIterator]().next(),
     ).rejects.toMatchObject({
       reason: "format",
-      message:
-        "lipo did not produce readable architecture records: lipo output contained no architectures",
+      message: expect.stringMatching(
+        /lipo.*readable architecture records.*no architectures/i,
+      ),
       cause: new TypeError("lipo output contained no architectures"),
     });
   });

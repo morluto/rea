@@ -262,6 +262,24 @@ it("admits PTY samples only after stable session and token setup", () => {
       rootPid: 100,
       expectedRunId: "run-token",
       before: initialized,
+      observedRunId: "other-run",
+      after: initialized,
+    }),
+  ).toBe(false);
+  expect(
+    isInitializedPtyRoot({
+      rootPid: 100,
+      expectedRunId: "run-token",
+      before: initialized,
+      observedRunId: "run-token",
+      after: { ...initialized, parent_pid: 11 },
+    }),
+  ).toBe(false);
+  expect(
+    isInitializedPtyRoot({
+      rootPid: 100,
+      expectedRunId: "run-token",
+      before: initialized,
       observedRunId: "run-token",
       after: initialized,
     }),
