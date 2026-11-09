@@ -2,7 +2,7 @@
 ---
 
 
-## [6.9.0](https://github.com/morluto/rea/compare/rea-agents-6.8.0...rea-agents-6.9.0) (2026-11-08)
+## [6.9.0](https://github.com/morluto/rea/compare/rea-agents-6.8.0...rea-agents-6.9.0) (2026-11-09)
 
 
 ### ⚠ BREAKING CHANGES
@@ -98,6 +98,7 @@
 * **desktop:** capture and export apps installed from a downloaded .deb ([#8954](https://github.com/morluto/rea/issues/8954)) ([970969c](https://github.com/morluto/rea/commit/970969cb53f788976e64eae387076fcea104b603))
 * **desktop:** capture, draft, export and witness a task inside a build computer ([#9045](https://github.com/morluto/rea/issues/9045)) ([c5301e6](https://github.com/morluto/rea/commit/c5301e6145a9c8e06719f27e83da55af8e5480fc))
 * **desktop:** keep an agentenv computer up and drive it through REA's MCP tools ([#9041](https://github.com/morluto/rea/issues/9041)) ([fc4c381](https://github.com/morluto/rea/commit/fc4c381dd7232cf0e73f7f0ff8b55248e33dc12c))
+* **desktop:** open the seed's document at launch, and say when a seed was made for the task ([#9054](https://github.com/morluto/rea/issues/9054)) ([4d7c6ef](https://github.com/morluto/rea/commit/4d7c6efe9ad481d2e8ee7ee162d813f5370e7107))
 * **desktop:** pick seed and end by checkpoint, and keep the capture host out of bundles ([#9037](https://github.com/morluto/rea/issues/9037)) ([c363f3e](https://github.com/morluto/rea/commit/c363f3e27b485d3f6330c3634d5d9c8f80d98d72))
 * **desktop:** read XML with a plain DOCTYPE, and check an element's whole text ([#9050](https://github.com/morluto/rea/issues/9050)) ([ac23dc8](https://github.com/morluto/rea/commit/ac23dc8077e429bd61030c5d443580e432ae619b))
 * **desktop:** suggest managed members for Unity script assemblies ([#5511](https://github.com/morluto/rea/issues/5511)) ([abc647b](https://github.com/morluto/rea/commit/abc647bf6cfe4b7f40343448faccf000adceec32))
@@ -503,6 +504,7 @@
 * **evidence:** own standalone command finalization ([c4242cb](https://github.com/morluto/rea/commit/c4242cb85eb5d8f7d6230ebedf162def6feb3717))
 * **evidence:** preserve residual unknown constraint diagnostics ([#7770](https://github.com/morluto/rea/issues/7770)) ([06d1247](https://github.com/morluto/rea/commit/06d1247836b1fc856c4a6ec29e2c81927f445dd9))
 * **evidence:** preserve source and authenticated observation identity ([09acf21](https://github.com/morluto/rea/commit/09acf217d946c7ca3659abe308896e010e9cc764))
+* **evidence:** preserve subjects in derived workflows ([#9492](https://github.com/morluto/rea/issues/9492)) ([52fe342](https://github.com/morluto/rea/commit/52fe342c73b2c7cfc350317bd44bec51f148115a))
 * **evidence:** preserve view identity and cancellation outcomes ([5f9f13d](https://github.com/morluto/rea/commit/5f9f13d77b395aa4e405dba3a0ef3412d9b89188))
 * **evidence:** Reject non-file destinations before overwrite advice ([#7495](https://github.com/morluto/rea/issues/7495)) ([ef11f77](https://github.com/morluto/rea/commit/ef11f77836ccf85d4458aa18398c36ba592616a5))
 * **evidence:** report partial workflow question publication ([#8848](https://github.com/morluto/rea/issues/8848)) ([6df2ac1](https://github.com/morluto/rea/commit/6df2ac1d7e5fcf8d2a6daf4f1ceab7a2c8aebc9a))
@@ -526,6 +528,7 @@
 * **export:** retain verification cleanup failures ([6ed97a2](https://github.com/morluto/rea/commit/6ed97a22ed37feb414ebbfa683e53250d052e342))
 * **exports:** preserve ELF name byte identity ([14dd07e](https://github.com/morluto/rea/commit/14dd07e740a67b3e60fa1cdcd5cd4a2f19641eaf))
 * **filesystem:** complete plist and limits probes ([3ca1cc5](https://github.com/morluto/rea/commit/3ca1cc546607d18df2d9fa5ce9bcc31cc0ed0ef7))
+* **filesystem:** explain refused file symlinks ([#9476](https://github.com/morluto/rea/issues/9476)) ([a961db2](https://github.com/morluto/rea/commit/a961db280fae0a004f561edc24966b1245996b30))
 * **filesystem:** finish executable and project span reads ([a7004c7](https://github.com/morluto/rea/commit/a7004c7df1298724e8fbbeb42a4d36c1e0ec5025))
 * **filesystem:** preserve undecodable symlink targets ([#7935](https://github.com/morluto/rea/issues/7935)) ([34577eb](https://github.com/morluto/rea/commit/34577eb1cc264000a176ded68e5ebf8aba430edd))
 * **filesystem:** settle a Windows ChangeTime before recording a baseline ([#8979](https://github.com/morluto/rea/issues/8979)) ([a7574d4](https://github.com/morluto/rea/commit/a7574d4274728fcb0a13414d6ae43f1597864d94))
@@ -1069,8 +1072,10 @@
 * **process:** reuse a verified Darwin ownership helper across processes ([#8318](https://github.com/morluto/rea/issues/8318)) ([c534e24](https://github.com/morluto/rea/commit/c534e249d1838fdb6328e133fa109cc6684cc6da))
 * **setup:** wait directly for prewarm completion ([855eb70](https://github.com/morluto/rea/commit/855eb703af2a7cf8935b6be38b234cc58e7ea73a))
 * **test:** bind deferred runtime calls to advertised schemas ([#8622](https://github.com/morluto/rea/issues/8622)) ([8250bf2](https://github.com/morluto/rea/commit/8250bf2320ea57aab4e664db4b4d44b8abd2004e))
+* **tests:** consolidate MCP schema validation ([0d3a2b8](https://github.com/morluto/rea/commit/0d3a2b815eeb05b1488d3c1c972f9342561b8657))
 * **tests:** reuse bounded CLI workers for native matching errors ([#9163](https://github.com/morluto/rea/issues/9163)) ([98c589e](https://github.com/morluto/rea/commit/98c589e42019b4cc2c3c6aee1f6d2031e2de2441))
 * **tests:** reuse bounded CLI workers in mobile archive checks ([#9116](https://github.com/morluto/rea/issues/9116)) ([afc9cfe](https://github.com/morluto/rea/commit/afc9cfe9ff63c5ccef2d0a6f6c71d1d26281d431))
+* **tests:** reuse CLI sessions for analysis data cases ([0b42dc5](https://github.com/morluto/rea/commit/0b42dc56d1501ca7fc7af1f0fc52018a496f5768))
 * **tests:** reuse CLI sessions in Electron call-path regressions ([#9335](https://github.com/morluto/rea/issues/9335)) ([72d5e72](https://github.com/morluto/rea/commit/72d5e72e6d7b7997c4ecb11972fc405be8ec67d2))
 
 
