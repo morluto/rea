@@ -141,7 +141,7 @@ const inspectWithJoin = async (
   return output;
 };
 
-describe("Apple IPS Mach-O and dSYM join", () => {
+describe("Apple IPS Mach-O and dSYM join selection", () => {
   it("joins matching UUID and architecture and derives static addresses", async () => {
     const root = await createTestTempDirectory("rea-apple-ips-join-");
     const report = await inspectWithJoin(
@@ -226,7 +226,9 @@ describe("Apple IPS Mach-O and dSYM join", () => {
     expect(report.join.image_matches).toHaveLength(1);
     expect(report.join.frames[0]).toMatchObject({ status: "joined" });
   });
+});
 
+describe("Apple IPS unknown architecture in Mach-O joins", () => {
   it.each([null, "", "   "])(
     "reports unknown recorded architecture %s",
     async (arch) => {
@@ -324,7 +326,9 @@ describe("Apple IPS Mach-O and dSYM join", () => {
       );
     },
   );
+});
 
+describe("Apple IPS rejected Mach-O joins", () => {
   it("rejects a UUID match whose architecture differs", async () => {
     const root = await createTestTempDirectory("rea-apple-ips-join-arch-");
     const report = await inspectWithJoin(
