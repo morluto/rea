@@ -385,7 +385,9 @@ Selected bounded text is then parsed as inert data to recover:
   directory, such as `path.join(__dirname, "worker.js")` or
   `fileURLToPath(new URL("./worker.js", import.meta.url))`, records
   `path_base: "source-directory"` and resolves as a Node entrypoint with the
-  inferred-anchor limitation unless its options may set `eval`);
+  inferred-anchor limitation. When a Node Worker's options may set `eval`,
+  which runs a string as code and rejects a URL, both forms keep their
+  expression);
 - Vite preload dependency tables (`__vite__mapDeps`): `./` entries resolve
   relative to the importing chunk; base-relative entries such as
   `assets/chunk.js` carry a `vite-output:` specifier and resolve under the one

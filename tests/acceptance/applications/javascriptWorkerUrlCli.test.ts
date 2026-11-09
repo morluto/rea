@@ -825,6 +825,49 @@ cliTest(
   },
 );
 
+cliTest(
+  "keeps Node Worker URLs unresolved when options may set eval through the compiled CLI",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-node-worker-url-eval-");
+    const url = 'new URL("./worker.js", import.meta.url)';
+    const named = 'import { Worker } from "node:worker_threads";';
+    // With `eval`, Node rejects a URL filename, so no script loads. Browser
+    // Workers have no `eval` option.
+    const sources: Readonly<Record<string, readonly [string, string]>> = {
+      "default-eval.mjs": [
+        'import threads from "node:worker_threads";',
+        `new threads.Worker(${url}, { eval: true })`,
+      ],
+      "named-options.mjs": [named, `new Worker(${url}, options)`],
+      "named-data.mjs": [named, `new Worker(${url}, { workerData: 1 })`],
+      "browser-options.mjs": ["", `new globalThis.Worker(${url}, options)`],
+    };
+    const resolves = new Set(["named-data.mjs", "browser-options.mjs"]);
+    await writeFixtureFiles(root, {
+      ...Object.fromEntries(
+        Object.entries(sources).map(([source, [prefix, expression]]) => [
+          source,
+          `${prefix}\n${expression};`,
+        ]),
+      ),
+      "worker.js": "self.postMessage('existing worker file');",
+    });
+
+    const result = await analyzeJavaScriptDirectory("CLI", cli, root);
+    expect(result.statistics.parse_failures).toBe(0);
+    const references = workerReferences(result.graph);
+    expect(references).toHaveLength(Object.keys(sources).length);
+    for (const [source, [, expression]] of Object.entries(sources))
+      expect(references).toContainEqual({
+        source,
+        declared_specifier: resolves.has(source) ? "./worker.js" : null,
+        expression: resolves.has(source) ? null : expression,
+        resolved_path: resolves.has(source) ? "worker.js" : null,
+        mapped_paths: resolves.has(source) ? ["worker.js"] : [],
+      });
+  },
+);
+
 // Windows cannot materialize the pipe-named directory needed for this decoy.
 cliTest.skipIf(process.platform === "win32")(
   "keeps file-URL drive letters distinct from encoded POSIX paths through the compiled CLI",

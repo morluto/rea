@@ -137,15 +137,20 @@ export const inspectCall = (
     // establishes neither. Only `new URL(path, import.meta.url)` names a
     // location relative to this module, as does a Node filename built from
     // the module's own directory.
+    const script =
+      workerConstructor === "browser" ||
+      (workerConstructor === "node" &&
+        worker !== undefined &&
+        nodeWorkerOmitsEval(worker, context))
+        ? worker
+        : undefined;
     const moduleUrl =
-      workerConstructor === undefined || worker === undefined
-        ? undefined
-        : moduleUrlSpecifier(worker, bindings);
+      script === undefined ? undefined : moduleUrlSpecifier(script, bindings);
     const anchoredPath =
       workerConstructor === "node" &&
-      worker !== undefined &&
+      script !== undefined &&
       moduleUrl === undefined
-        ? sourceDirectoryWorkerPath(worker, context)
+        ? sourceDirectoryWorkerPath(script, context)
         : undefined;
     addReference(context, {
       node,
@@ -254,10 +259,7 @@ const moduleUrlSpecifier = (
     : undefined;
 };
 
-/**
- * Node runs a Worker filename as its main entrypoint. With `eval`, the string
- * is code instead, so the options must provably omit it.
- */
+/** Node runs a Worker filename as its main entrypoint. */
 const sourceDirectoryWorkerPath = (
   worker: t.NewExpression,
   context: FindingContext,
@@ -267,9 +269,20 @@ const sourceDirectoryWorkerPath = (
     argument === undefined
       ? undefined
       : staticFileExpressionPath(argument, context.pathIntrinsics);
-  if (path?.base !== "source-directory") return undefined;
+  return path?.base === "source-directory" ? path.path : undefined;
+};
+
+/**
+ * With `eval`, a Node Worker string is code and a URL is rejected, so the
+ * options must provably omit it before either names a script.
+ */
+const nodeWorkerOmitsEval = (
+  worker: t.NewExpression,
+  context: FindingContext,
+): boolean => {
   const options = argumentNode(worker.arguments[1]);
-  return worker.arguments.length < 2 ||
+  return (
+    worker.arguments.length < 2 ||
     (options !== undefined &&
       !t.isSpreadElement(options) &&
       staticObjectProperty(
@@ -277,8 +290,7 @@ const sourceDirectoryWorkerPath = (
         "eval",
         context.expressionShapes.isNullish,
       ).status === "missing")
-    ? path.path
-    : undefined;
+  );
 };
 
 const workerConstructorKind = (
