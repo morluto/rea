@@ -189,9 +189,9 @@ export class ByteEntropyService {
       // Only an admitted selected file may consult filesystem spelling. Do not
       // replace symlink/junction/8.3 aliases or touch source-derived paths.
       if (process.platform === "win32") {
-        const canonical = await realpath(input.path);
+        const canonical = await realpath(input.path).catch(() => undefined);
         assertArtifactReadActive(options?.signal);
-        if (canonical.toLowerCase() === input.path.toLowerCase())
+        if (canonical?.toLowerCase() === input.path.toLowerCase())
           input = { ...input, path: canonical };
       }
       const file = await this.files.open(
