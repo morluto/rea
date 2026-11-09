@@ -44,6 +44,11 @@ export const documentationSections = [
         route: "/binary-diagnostics",
       },
       {
+        text: "ELF unwind function ranges",
+        source: "guides/native/elf-unwind-ranges.md",
+        route: "/elf-unwind-ranges",
+      },
+      {
         text: "Linux kernel build config",
         source: "guides/native/kernel-build-config.md",
         route: "/kernel-build-config",

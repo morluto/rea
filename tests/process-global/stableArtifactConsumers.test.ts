@@ -111,6 +111,7 @@ import { inspectPythonPycInputSchema } from "../../src/domain/python/pythonPyc.j
 import { PeResourcesProvider } from "../../src/native/pe/PeResourcesProvider.js";
 import { Il2cppMetadataProvider } from "../../src/il2cpp/Il2cppMetadataProvider.js";
 import { ElfNotesProvider } from "../../src/native/elf/ElfNotesProvider.js";
+import { ElfUnwindRangesProvider } from "../../src/native/elf/ElfUnwindRangesProvider.js";
 import { AppleIpsProvider } from "../../src/native/apple/AppleIpsProvider.js";
 import { KernelModuleProvider } from "../../src/native/elf/KernelModuleProvider.js";
 import { KernelBuildConfigProvider } from "../../src/native/elf/KernelBuildConfigProvider.js";
@@ -120,6 +121,7 @@ import { WindowsShortcutProvider } from "../../src/native/windows/WindowsShortcu
 import { NativeExportsProvider } from "../../src/native/exports/NativeExportsProvider.js";
 import { BeamProvider } from "../../src/erlang/BeamProvider.js";
 import { inspectElfNotesInputSchema } from "../../src/domain/native/elfNotes.js";
+import { inspectElfUnwindRangesInputSchema } from "../../src/domain/native/elfUnwindRanges.js";
 import { inspectAppleIpsInputSchema } from "../../src/domain/native/appleIps.js";
 import { inspectKernelModuleInputSchema } from "../../src/domain/native/kernelModule.js";
 import { inspectKernelBuildConfigInputSchema } from "../../src/domain/native/kernelBuildConfig.js";
@@ -1002,6 +1004,7 @@ it.each([
 const stableArtifactProviders = [
   ...staticProviders,
   ["ELF notes", () => new ElfNotesProvider()],
+  ["ELF unwind ranges", () => new ElfUnwindRangesProvider()],
   ["Apple IPS", () => new AppleIpsProvider()],
   ["kernel module", () => new KernelModuleProvider()],
   ["kernel build config", () => new KernelBuildConfigProvider()],
@@ -1033,6 +1036,11 @@ const inspectFileFailure = (
   if (provider instanceof ElfNotesProvider)
     return provider.inspect(
       inspectElfNotesInputSchema.parse({ path }),
+      options,
+    );
+  if (provider instanceof ElfUnwindRangesProvider)
+    return provider.inspect(
+      inspectElfUnwindRangesInputSchema.parse({ path }),
       options,
     );
   if (provider instanceof AppleIpsProvider)
@@ -1121,6 +1129,7 @@ it.each(
       expect(result.error._tag).toBe(
         expectedTag ??
           (provider instanceof ElfNotesProvider ||
+          provider instanceof ElfUnwindRangesProvider ||
           provider instanceof KernelModuleProvider ||
           provider instanceof KernelBuildConfigProvider ||
           provider instanceof PeCertificatesProvider ||
