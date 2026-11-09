@@ -5,6 +5,7 @@ import { Buffer } from "node:buffer";
 
 import { z } from "zod";
 
+import { AnalysisResourceConstraintError } from "../domain/analysisErrorCore.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import {
   guestFileAnswerBytes,
@@ -81,9 +82,18 @@ export const runBuildController = async (
   const { timeoutS, signal } = options;
   source ??= readFile(CONTROLLER, "utf8");
   const script = await source;
-  if (Buffer.byteLength(script) > LINUX_SINGLE_ARGUMENT_BYTES)
-    throw new Error(
-      `REA's build controller source is ${String(Buffer.byteLength(script))} bytes, above the ${String(LINUX_SINGLE_ARGUMENT_BYTES)} bytes Linux passes as one argument.`,
+  const scriptBytes = Buffer.byteLength(script);
+  if (scriptBytes > LINUX_SINGLE_ARGUMENT_BYTES)
+    throw new AnalysisResourceConstraintError(
+      "build controller",
+      "transport",
+      "The controller source exceeds Linux's per-argument limit.",
+      { actual_bytes: scriptBytes, max_bytes: LINUX_SINGLE_ARGUMENT_BYTES },
+      {
+        remediationAction:
+          "Use a REA runtime whose controller fits the Linux argument limit.",
+        retryable: false,
+      },
     );
   const argv = [
     "python3",
@@ -95,8 +105,15 @@ export const runBuildController = async (
   ];
   const vectorBytes = argumentVectorBytes(argv);
   if (vectorBytes > LINUX_ARGUMENT_VECTOR_BYTES)
-    throw new Error(
-      `The build controller command is ${String(vectorBytes)} bytes, above the ${String(LINUX_ARGUMENT_VECTOR_BYTES)} bytes Linux accepts for one command's arguments (E2BIG).`,
+    throw new AnalysisResourceConstraintError(
+      "build controller",
+      "transport",
+      "The command arguments exceed Linux's transport limit (E2BIG).",
+      { actual_bytes: vectorBytes, max_bytes: LINUX_ARGUMENT_VECTOR_BYTES },
+      {
+        remediationAction: "Reduce the size of the request, then retry.",
+        retryable: false,
+      },
     );
   const result = await computer.exec(
     argv,

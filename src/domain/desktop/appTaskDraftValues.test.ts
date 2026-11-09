@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 
+import type { JsonValue } from "../jsonValue.js";
 import {
   draftOf,
   passing,
@@ -309,6 +310,55 @@ it("keeps JSON archive edits whose keys resemble XML attributes", () => {
     file?.values.find(({ pointer }) => pointer.endsWith("/attributes/history"))
       ?.note,
   ).toBeUndefined();
+});
+
+it("suggests changes in a JSON archive entry shaped like an XML date", () => {
+  const archive = (year: string) => {
+    const element = (name: string, children: JsonValue[]) => ({
+      name,
+      attributes: {},
+      children,
+    });
+    const bytes = new TextEncoder().encode(
+      JSON.stringify(
+        element("root", [
+          element("mdate", [
+            element("year", [year]),
+            element("month", ["11"]),
+            element("day", ["7"]),
+          ]),
+        ]),
+      ),
+    );
+    return zipView(
+      [
+        zipEntry(
+          {
+            name: "state.json",
+            size: bytes.length,
+            compressedSize: bytes.length,
+            method: 8,
+            encrypted: false,
+          },
+          bytes,
+        ),
+      ],
+      1,
+    );
+  };
+  const file = draftOf({
+    "Documents/state.zip": statePath(
+      "document",
+      "zip",
+      archive("2025"),
+      archive("2026"),
+    ),
+  })[0];
+  expect(file?.suggested).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({ kind: "value_equals", value: "2026" }),
+    ]),
+  );
 });
 
 describe("draftTaskFiles values' text and references", () => {

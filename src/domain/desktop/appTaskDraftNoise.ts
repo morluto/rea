@@ -380,7 +380,7 @@ const ENTRY_VIEW = /^\/entries\/[^/]+\/view\//u;
 
 /**
  * What an app keeps up as it saves, while the edit is elsewhere: attributes an
- * archive entry's elements only gained, as LibreOffice fills in
+ * known style defaults an archive entry's elements gained, as LibreOffice fills in
  * `loext:tab-stop-distance` across `styles.xml`, while another entry holds
  * the edit; and, while a change outside them is the edit, any change to a
  * document's styles, `styles.xml` or its style containers and master,
@@ -397,7 +397,8 @@ const upkeepOf = (
   const gained = (pointer: string) =>
     ends.format(ends.final, pointer) === "xml" &&
     added.has(pointer) &&
-    attributeKeyOf(pointer) !== undefined &&
+    attributeKeyOf(pointer) === "loext:tab-stop-distance" &&
+    pointer.startsWith("/entries/[name=styles.xml]/view/") &&
     [ends.baseline, ends.final].every((view) =>
       isXmlElement(
         resolvePointer(
@@ -675,7 +676,7 @@ const namesLayout = (
  * count under the document's metadata; a time the app stamps, whole or in
  * parts (`inSplitDate`), or a date under a tag naming bookkeeping; an id
  * the app assigns (`type="guid"`), or text of control characters; upkeep, a
- * change inside an app's `slots`, an attribute an archive entry only
+ * change inside an app's `slots`, a known style default an archive entry
  * gained while another entry holds the edit, a text showing another field
  * that changed alike (`mirrorsOf`), or an element holding nothing but the id
  * of a record the change added (`idReferencesOf`); layout an edit's text
