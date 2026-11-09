@@ -249,6 +249,9 @@ const addReference = (
           label: input.value.specifier,
           properties: {
             declared_specifier: input.value.specifier,
+            ...(input.value.path_base === undefined
+              ? {}
+              : { path_base: input.value.path_base }),
             expression: input.value.expression,
             resolved_path: resolved?.path ?? null,
             resolution_status: resolved?.resolution?.resolution_status ?? null,
@@ -526,16 +529,10 @@ const addDiscoveredRole = (
           ? { runtimePathKind: "url-resource" as const }
           : {}),
   });
-  const resolution =
-    input.value.path_base === "source-directory"
-      ? {
-          ...resolved,
-          limitations: [
-            ...resolved.limitations,
-            "The source-directory anchor is inferred from authored code; bundled or transformed runtime path behavior was not verified.",
-          ],
-        }
-      : resolved;
+  const resolution = withSourceDirectoryAnchor(
+    resolved,
+    input.value.path_base === "source-directory",
+  );
   const role = createElectronRoleNode(context, {
     kind:
       input.value.role === "preload" ? "electron-preload" : "electron-renderer",
@@ -574,6 +571,21 @@ const addDiscoveredRole = (
     coverage: input.coverage,
   });
 };
+
+/** A source-directory anchor is a static inference about authored code. */
+const withSourceDirectoryAnchor = (
+  resolution: ArtifactPathResolution,
+  anchored: boolean,
+): ArtifactPathResolution =>
+  anchored
+    ? {
+        ...resolution,
+        limitations: [
+          ...resolution.limitations,
+          "The source-directory anchor is inferred from authored code; bundled or transformed runtime path behavior was not verified.",
+        ],
+      }
+    : resolution;
 
 const addSourceMapEdge = (
   context: JavaScriptArtifactGraphContext,
@@ -701,20 +713,28 @@ const resolveReference = (
           limitations: [],
         };
   }
-  // Worker scripts are URLs relative to the script, not module specifiers.
+  // Worker scripts are URLs relative to the script, not module specifiers. A
+  // source-directory Node Worker filename runs as a Node entrypoint.
+  const anchored = isWorker && reference.path_base === "source-directory";
   const resolution =
     viteDependency !== undefined
       ? resolveViteOutputDependency(context, sourcePath, viteDependency)
       : isWorker
-        ? resolveArtifactPathByContext({
-            declaredPath: specifier,
-            sourcePath,
-            context: "url-reference",
-            files: context.filesByPath,
-            jsonDocuments: context.analysis.jsonDocuments,
-            directoryPaths: context.directoryPaths,
-            unanalyzedFiles: context.unanalyzedFiles,
-          })
+        ? withSourceDirectoryAnchor(
+            resolveArtifactPathByContext({
+              declaredPath: specifier,
+              sourcePath,
+              context: anchored ? "filesystem-expression" : "url-reference",
+              files: context.filesByPath,
+              jsonDocuments: context.analysis.jsonDocuments,
+              directoryPaths: context.directoryPaths,
+              unanalyzedFiles: context.unanalyzedFiles,
+              ...(anchored
+                ? { runtimePathKind: "node-entrypoint" as const }
+                : {}),
+            }),
+            anchored,
+          )
         : resolveArtifactPathByContext({
             declaredPath: specifier,
             sourcePath: resolutionSourcePath,

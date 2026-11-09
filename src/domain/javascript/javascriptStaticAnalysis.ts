@@ -27,7 +27,10 @@ import {
   semanticFactoryLoaderMemberAt,
 } from "./javascriptSemanticRequireOrigin.js";
 import { semanticResourceLimitReason } from "./javascriptSemanticResourceLimits.js";
-import { createStaticPathIntrinsicQuery } from "./javascriptStaticPathIntrinsics.js";
+import {
+  createNodeBuiltinExportQuery,
+  createStaticPathIntrinsicQuery,
+} from "./javascriptStaticPathIntrinsics.js";
 import { createSemanticExpressionShapeResolver } from "./javascriptSemanticExpressionShapes.js";
 import { finishElectronBrowserWindowsSteps } from "./electronStaticAnalysisBrowser.js";
 import {
@@ -115,9 +118,11 @@ export function* analyzeParsedJavaScriptStaticSourceSteps(
     file.program,
     bindings,
   );
+  const nodeBuiltinExport = createNodeBuiltinExportQuery(index);
   const findings: JavaScriptFindingContext = {
     xhrOpenRequest: createXhrOpenRequestQuery(index),
-    pathIntrinsics: createStaticPathIntrinsicQuery(index),
+    pathIntrinsics: createStaticPathIntrinsicQuery(index, nodeBuiltinExport),
+    nodeBuiltinExport,
     browserWindowReceiver: (node, site, suffix) =>
       resolveElectronBrowserWindowReceiver(node, site, suffix, findings, index),
     rendererLoad: (callee, site) =>

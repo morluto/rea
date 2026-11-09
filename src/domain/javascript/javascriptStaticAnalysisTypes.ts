@@ -50,6 +50,11 @@ interface JavaScriptStaticReferenceState {
    * when it reads like a package name.
    */
   readonly loader?: "commonjs-loader" | "factory-loader" | "create-require";
+  /**
+   * A Node Worker filename built from intact source-directory intrinsics; the
+   * specifier is then a filesystem path, not a URL. Not a bundler guarantee.
+   */
+  readonly path_base?: "source-directory";
   readonly location: JavaScriptSourceRange;
 }
 

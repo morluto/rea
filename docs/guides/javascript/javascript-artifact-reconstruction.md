@@ -380,7 +380,12 @@ Selected bounded text is then parsed as inert data to recover:
   service workers (only `new Worker(new URL(path, import.meta.url))` resolves
   relative to the calling module; string worker and service-worker paths use
   the document base URL or Node's working directory, which static analysis
-  does not establish, so they keep their expression and stay unresolved);
+  does not establish, so they keep their expression and stay unresolved. A
+  proven Node `worker_threads` Worker filename built from the module's own
+  directory, such as `path.join(__dirname, "worker.js")` or
+  `fileURLToPath(new URL("./worker.js", import.meta.url))`, records
+  `path_base: "source-directory"` and resolves as a Node entrypoint with the
+  inferred-anchor limitation unless its options may set `eval`);
 - Vite preload dependency tables (`__vite__mapDeps`): `./` entries resolve
   relative to the importing chunk; base-relative entries such as
   `assets/chunk.js` carry a `vite-output:` specifier and resolve under the one
@@ -521,8 +526,10 @@ API identity is a derivation: a familiar method or property name does not
 establish a browser or Electron API. The shared lexical, ambient-write, and
 member-mutation owners must establish the receiver before static API facts become
 roles or storage observations. Path `join`, `resolve`, and `fileURLToPath` use
-proven Node imports; source-relative URL conversion additionally requires an
-unmodified global or proven Node `url.URL` constructor and `import.meta.url`.
+proven Node imports, as does a `worker_threads` Worker reached through a
+CommonJS or default-import module object; source-relative URL conversion
+additionally requires an unmodified global or proven Node `url.URL` constructor
+and `import.meta.url`.
 Native constructor aliases retain that identity; their local spelling does not
 determine URL semantics, and replaced exports or local constructors remain unknown.
 Relative results of native path operations retain filesystem-expression context;

@@ -104,6 +104,12 @@ export interface JavaScriptAnalysisAccumulator {
 export interface JavaScriptFindingContext {
   /** Native path/URL identities established by shared lexical and mutation owners. */
   readonly pathIntrinsics?: JavaScriptStaticPathIntrinsicQuery;
+  /** Unchanged Node built-in exports, proven by the same owners. */
+  readonly nodeBuiltinExport?: (
+    callee: t.Node,
+    name: string,
+    modules: readonly string[],
+  ) => boolean;
   readonly electronExportIntact?: (path: readonly string[]) => boolean;
   readonly browserWindowReceiver?: (
     node: t.Node,
@@ -139,6 +145,7 @@ export interface JavaScriptReferenceInput {
   readonly specifier: string | undefined;
   readonly resolutionBasePath?: string;
   readonly loader?: JavaScriptStaticReference["loader"];
+  readonly pathBase?: JavaScriptStaticReference["path_base"];
 }
 
 /** Candidate route or network endpoint literal. */

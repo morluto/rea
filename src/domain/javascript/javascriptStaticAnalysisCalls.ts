@@ -32,6 +32,7 @@ import {
 import {
   semanticStaticPropertyKey,
   semanticStaticPropertyName,
+  staticObjectProperty,
   unwrapJavaScriptExpression,
 } from "./javascriptAstValues.js";
 import type {
@@ -125,24 +126,34 @@ export const inspectCall = (
   const workerConstructor =
     worker === undefined
       ? undefined
-      : workerConstructorKind(worker.callee, bindings);
+      : workerConstructorKind(worker.callee, bindings, context);
   if (
     workerConstructor !== undefined ||
     name === "Worker" ||
     name.endsWith(".Worker")
-  )
+  ) {
+    // A string path is relative to the document base URL in a browser and
+    // to the process cwd in Node; the analyzed source's artifact location
+    // establishes neither. Only `new URL(path, import.meta.url)` names a
+    // location relative to this module, as does a Node filename built from
+    // the module's own directory.
+    const moduleUrl =
+      workerConstructor === undefined || worker === undefined
+        ? undefined
+        : moduleUrlSpecifier(worker, bindings);
+    const anchoredPath =
+      workerConstructor === "node" &&
+      worker !== undefined &&
+      moduleUrl === undefined
+        ? sourceDirectoryWorkerPath(worker, context)
+        : undefined;
     addReference(context, {
       node,
       kind: "worker",
-      // A string path is relative to the document base URL in a browser and
-      // to the process cwd in Node; the analyzed source's artifact location
-      // establishes neither. Only `new URL(path, import.meta.url)` names a
-      // location relative to this module.
-      specifier:
-        workerConstructor === undefined || worker === undefined
-          ? undefined
-          : moduleUrlSpecifier(worker, bindings),
+      specifier: moduleUrl ?? anchoredPath,
+      ...(anchoredPath === undefined ? {} : { pathBase: "source-directory" }),
     });
+  }
   // Service worker strings also use the document base URL. The complete called
   // path must retain its platform identity, including the register method.
   if (
@@ -243,9 +254,37 @@ const moduleUrlSpecifier = (
     : undefined;
 };
 
+/**
+ * Node runs a Worker filename as its main entrypoint. With `eval`, the string
+ * is code instead, so the options must provably omit it.
+ */
+const sourceDirectoryWorkerPath = (
+  worker: t.NewExpression,
+  context: FindingContext,
+): string | undefined => {
+  const argument = argumentNode(worker.arguments[0]);
+  const path =
+    argument === undefined
+      ? undefined
+      : staticFileExpressionPath(argument, context.pathIntrinsics);
+  if (path?.base !== "source-directory") return undefined;
+  const options = argumentNode(worker.arguments[1]);
+  return worker.arguments.length < 2 ||
+    (options !== undefined &&
+      !t.isSpreadElement(options) &&
+      staticObjectProperty(
+        unwrapJavaScriptExpression(options).node,
+        "eval",
+        context.expressionShapes.isNullish,
+      ).status === "missing")
+    ? path.path
+    : undefined;
+};
+
 const workerConstructorKind = (
   callee: t.Node,
   bindings: JavaScriptSemanticAnalysisState,
+  context: FindingContext,
 ): "browser" | "node" | undefined => {
   const node = unwrapJavaScriptExpression(callee).node;
   const member =
@@ -261,8 +300,9 @@ const workerConstructorKind = (
   const binding = resolveSemanticBindingState(bindings, root, root.name);
   const [origin] = binding?.directOrigins ?? [];
   // Named ESM exports and module namespace exports are read-only. Default
-  // imports and CommonJS objects can replace Worker, so their identity is unknown.
-  return binding?.runtimeImport === true &&
+  // imports and CommonJS objects can replace Worker, so they need the shared
+  // built-in proof that no same-file write or escape changed it.
+  return (binding?.runtimeImport === true &&
     binding.definitions.length === 1 &&
     binding.directOrigins.length === 1 &&
     origin !== undefined &&
@@ -270,7 +310,10 @@ const workerConstructorKind = (
       origin.specifier === "node:worker_threads") &&
     (member
       ? origin.importedPath.length === 0
-      : origin.importedPath.length === 1 && origin.importedPath[0] === "Worker")
+      : origin.importedPath.length === 1 &&
+        origin.importedPath[0] === "Worker")) ||
+    (binding !== undefined &&
+      context.nodeBuiltinExport?.(node, "Worker", ["worker_threads"]) === true)
     ? "node"
     : undefined;
 };
@@ -997,6 +1040,7 @@ export const addReference = (
         ? {}
         : { resolution_base_path: input.resolutionBasePath }),
       ...(input.loader === undefined ? {} : { loader: input.loader }),
+      ...(input.pathBase === undefined ? {} : { path_base: input.pathBase }),
       module_key: null,
       location: range(input.node),
     },
