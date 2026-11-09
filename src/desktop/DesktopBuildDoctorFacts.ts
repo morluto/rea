@@ -264,12 +264,13 @@ const archiveFact = async (
   );
   if (!file) return { path, source, status: "missing" };
   if (source === "cache") return { path, source, status: "current" };
-  const python = agentEnv.status === "found"
-    ? await agentEnvInterpreter(
-        { ...input.environment, REA_AGENT_ENV_COMMAND: agentEnv.path },
-        "desktop_build_doctor",
-      ).catch(() => "python3")
-    : "python3";
+  const python =
+    agentEnv.status === "found"
+      ? await agentEnvInterpreter(
+          { ...input.environment, REA_AGENT_ENV_COMMAND: agentEnv.path },
+          "desktop_build_doctor",
+        ).catch(() => "python3")
+      : "python3";
   const packed = await attempt(input, python, [
     "-I",
     "-c",
