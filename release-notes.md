@@ -942,6 +942,7 @@
 * **pe:** reject malformed certificate name structures ([#9625](https://github.com/morluto/rea/issues/9625)) ([bdf7cc3](https://github.com/morluto/rea/commit/bdf7cc3b1e7c1325637808235f06990b7954fad3))
 * **pe:** reject malformed certificate validity times ([#8832](https://github.com/morluto/rea/issues/8832)) ([a97f827](https://github.com/morluto/rea/commit/a97f82746973613c77b6a93d0576b5383bfbb595))
 * **pe:** reject misaligned certificate table offsets ([#9276](https://github.com/morluto/rea/issues/9276)) ([8842092](https://github.com/morluto/rea/commit/88420926717121a018f717eb1eda08a6da31dfcb))
+* **pe:** reject misaligned certificate table offsets ([#9666](https://github.com/morluto/rea/issues/9666)) ([c52a9b9](https://github.com/morluto/rea/commit/c52a9b9d79021d4799c478d73a3fd3ed795b2318))
 * **pe:** reject non-MZ inputs before image inspection ([#7709](https://github.com/morluto/rea/issues/7709)) ([07dfd12](https://github.com/morluto/rea/commit/07dfd12613175af467ac86312a9d802b7ac36bac))
 * **pe:** reject surrogate code units in BMPString names ([#7817](https://github.com/morluto/rea/issues/7817)) ([3a46047](https://github.com/morluto/rea/commit/3a46047aa787ab07ffa59fde88c88a13a2554390))
 * **pe:** report exhausted certificate decoder allowances as resource limits ([#7881](https://github.com/morluto/rea/issues/7881)) ([8c83886](https://github.com/morluto/rea/commit/8c83886891c1749db3442c7099f6a9dea8f26755))
