@@ -1456,6 +1456,18 @@ it("keeps a Deno helper inside a PyInstaller archive from claiming the outer ima
   expect(result.manifest.root_format).toBe("pyinstaller");
 });
 
+it("rejects a confirmed Deno section whose parent segment exceeds the image", async () => {
+  const image = denoMachO(buildDenoSection());
+  for (const field of [32 + 32, 32 + 48])
+    image.writeBigUInt64LE(image.readBigUInt64LE(field) + 1n, field);
+  await expect(
+    locateDenoStandalone(bytesHandle(image), image.length),
+  ).resolves.toMatchObject({
+    status: "present",
+    failure: { reason: "format", message: expect.stringContaining("segment") },
+  });
+});
+
 it("rejects a Deno section outside its segment virtual extent", async () => {
   const image = denoMachO(buildDenoSection());
   image.writeBigUInt64LE(1n, 32 + 72 + 32);

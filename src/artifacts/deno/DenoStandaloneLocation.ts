@@ -5,7 +5,10 @@ import {
   isMachoZeroFillSection,
   readMachoSectionHeader,
 } from "../../domain/apple/machoSectionHeader.js";
-import { readMachoSegmentHeader } from "../../domain/apple/machoSegmentHeader.js";
+import {
+  admitMachoSegmentCommand,
+  readMachoSegmentHeader,
+} from "../../domain/apple/machoSegmentHeader.js";
 import {
   readFatHeaderPrefix,
   readMachoHeaderPrefixFacts,
@@ -257,6 +260,13 @@ const locateMachOSlice = async (
       return;
     }
     const segment = parsedSegment.value;
+    const admitted = admitMachoSegmentCommand(
+      segment,
+      command.body.byteLength,
+      segment64 ? 64 : 32,
+      sliceSize,
+    );
+    if (!admitted.ok) damage ??= admitted.error.message;
     const segmentName = fixedCString(segment.nameBytes);
     if (
       segmentName !== SEGMENT_NAME &&
