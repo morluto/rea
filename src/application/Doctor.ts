@@ -56,7 +56,10 @@ import {
   type ClientRegistrationStatus,
   type UnhealthyClientRegistrationStatus,
 } from "./ClientRegistrationStatus.js";
-import type { ProviderRequestBudgetResolver } from "./ClientRegistrationEnvironment.js";
+import type {
+  OwnedProviderSetting,
+  ProviderRequestBudgetResolver,
+} from "./ClientRegistrationEnvironment.js";
 import { registrationSpelledSettings } from "./SetupRegistrationEnvironment.js";
 import {
   collectDoctorDiagnostics,
@@ -67,6 +70,11 @@ import {
   scopeDoctorChecks,
   type DoctorScopeReport,
 } from "./DoctorScope.js";
+import {
+  selectedDesktopBuildChecks,
+  type DesktopBuildFacts,
+  type DesktopBuildFactsInput,
+} from "./DesktopBuildDoctor.js";
 
 /** One actionable environment diagnostic. */
 export interface DoctorCheck {
@@ -148,8 +156,16 @@ export interface DoctorHost {
   clientRegistrations?(
     selectedClientIds?: readonly string[],
     providerSettings?: Readonly<Record<string, string>>,
+    ownedProviderSetting?: OwnedProviderSetting,
+    observeProviderSetting?: (
+      client: string,
+      name: string,
+      value: string,
+    ) => void,
   ): Promise<readonly ClientRegistrationStatus[]>;
   ilspyCmdVersion?(path: string): Promise<string | undefined>;
+  /** Desktop build host facts; read only when that scope is selected. */
+  desktopBuildFacts?(clientIds: readonly string[]): Promise<DesktopBuildFacts>;
 }
 
 /** Structured result returned by the read-only doctor workflow. */
@@ -295,6 +311,7 @@ const inspectDoctor = async (
     ...identity.checks,
     ...registrationAdvisoryChecks(identity.value.registrations),
     ...registrationEnvironmentChecks(identity.value.registrations, selections),
+    ...(await selectedDesktopBuildChecks(host, scope, identity.value.skill)),
   ];
   const providers = {
     hopperAvailable,
@@ -632,6 +649,9 @@ export interface SystemDoctorHostOptions {
     resourceScope: RetainedResourceScope,
     signal: AbortSignal,
   ) => Promise<DoctorCheck>;
+  readonly desktopBuildFacts?: (
+    input: DesktopBuildFactsInput,
+  ) => Promise<DesktopBuildFacts>;
 }
 
 /** Create diagnostics backed by the current process and host commands. */
@@ -715,7 +735,7 @@ export const systemDoctorHost = (
             resourceScope,
             inspectionSignal,
           );
-  return {
+  const host: DoctorHost = {
     ...(options.signal === undefined ? {} : { signal: options.signal }),
     platform,
     architecture,
@@ -885,12 +905,21 @@ export const systemDoctorHost = (
         throw failure;
       }
     },
-    clientRegistrations: (selectedClientIds, providerSettings) =>
+    clientRegistrations: (
+      selectedClientIds,
+      providerSettings,
+      ownedProviderSetting,
+      observeProviderSetting,
+    ) =>
       readClientRegistrationStatuses(homeDirectory, undefined, {
         platform,
         environment,
         resources,
         ...(selectedClientIds === undefined ? {} : { selectedClientIds }),
+        ...(ownedProviderSetting === undefined ? {} : { ownedProviderSetting }),
+        ...(observeProviderSetting === undefined
+          ? {}
+          : { observeProviderSetting }),
         ...(providerSettings === undefined
           ? {}
           : {
@@ -906,6 +935,24 @@ export const systemDoctorHost = (
             }),
       }),
   };
+  const readFacts = options.desktopBuildFacts;
+  return readFacts === undefined
+    ? host
+    : {
+        ...host,
+        desktopBuildFacts: (clientIds) =>
+          resources.run(() =>
+            readFacts({
+              environment,
+              platform,
+              signal: inspectionSignal,
+              resources,
+              run: hostExecFileOutput,
+              clientIds,
+              registrations: host.clientRegistrations!,
+            }),
+          ),
+      };
 };
 
 const readMacosVersion = async (

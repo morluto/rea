@@ -33,6 +33,7 @@ import { z } from "zod";
 import { onTestFinished } from "vitest";
 
 import { DesktopBuildComputers } from "../../src/application/desktop/DesktopBuildComputers.js";
+import type { BuildComputerDefaults } from "../../src/desktop/BuildComputerEnvironment.js";
 import { createTestTempDirectory } from "./temporaryDirectory.js";
 
 /** A 2x1 PNG of a black and a white pixel, the fake driver's drawn desktop. */
@@ -757,6 +758,13 @@ export const fakeAgentEnvRunner = async (
  * A build computer owner over REA's real helper, a fake runner and a fake
  * driver, and a bundle-folder start; the test closes what it starts.
  */
+/** Build-setting defaults that find nothing: an empty archive folder and PATH, never the host's own. */
+export const isolatedBuildDefaults =
+  async (): Promise<BuildComputerDefaults> => {
+    const empty = await createTestTempDirectory("build-defaults-");
+    return { archiveDirectory: empty, searchPath: empty };
+  };
+
 export const fakeBuildComputers = async (
   options: FakeComputerOptions = {},
   environment: Readonly<Record<string, string>> = {},
@@ -764,11 +772,11 @@ export const fakeBuildComputers = async (
   const computer = await startFakeComputer(options);
   onTestFinished(() => computer.close());
   const runner = await fakeAgentEnvRunner(computer);
-  const computers = new DesktopBuildComputers({
-    ...process.env,
-    ...runner.environment,
-    ...environment,
-  });
+  const computers = new DesktopBuildComputers(
+    { ...process.env, ...runner.environment, ...environment },
+    undefined,
+    await isolatedBuildDefaults(),
+  );
   const bundle = await createTestTempDirectory("exported-bundle-");
   await mkdir(join(bundle, "tasks"));
   await writeFile(join(bundle, "tasks", "smoke.json"), "[]\n");

@@ -135,7 +135,15 @@ export interface RecordedProviderSettings {
   readonly differing: readonly string[];
   /** Recorded as an expression, or in a map REA could not read. */
   readonly unresolved: readonly string[];
+  /** Recorded with a value the caller owns, as an archive setup packed for another version. */
+  readonly owned?: readonly string[];
 }
+
+/** Whether a recorded value is the caller's own, which it may replace; the value never leaves the reader. */
+export type OwnedProviderSetting = (name: string, value: string) => boolean;
+
+/** Consume a resolved setting inside its reader without including its value in diagnostics. */
+export type ProviderSettingObserver = (name: string, value: string) => void;
 
 /**
  * Compare settings selected in this process with a registration's own file.
@@ -147,6 +155,8 @@ export const recordedProviderSettings = (
   parsed: ClientConfigurationDocument,
   selected: Readonly<Record<string, string>>,
   platform: NodeJS.Platform = process.platform,
+  owns?: OwnedProviderSetting,
+  observe?: ProviderSettingObserver,
 ): RecordedProviderSettings | undefined => {
   const names = Object.keys(selected).sort(compareUnicodeCodePoints);
   if (names.length === 0) return undefined;
@@ -165,6 +175,11 @@ export const recordedProviderSettings = (
     ),
     platform,
   );
+  for (const name of names) {
+    const value = recorded[name];
+    if (value !== undefined && expressions[name] === undefined)
+      observe?.(name, value);
+  }
   const facts = {
     unrecorded: names.filter(
       (name) => recorded[name] === undefined && expressions[name] === undefined,
@@ -175,12 +190,17 @@ export const recordedProviderSettings = (
     ),
     unresolved: names.filter((name) => expressions[name] !== undefined),
   };
+  const owned = names.filter((name) => {
+    const value = recorded[name];
+    return value !== undefined && owns?.(name, value) === true;
+  });
   return facts.unrecorded.length +
     facts.differing.length +
-    facts.unresolved.length ===
+    facts.unresolved.length +
+    owned.length ===
     0
     ? undefined
-    : facts;
+    : { ...facts, ...(owned.length === 0 ? {} : { owned }) };
 };
 
 /** Resolve the async provider-specific budget through its retained reader owner. */

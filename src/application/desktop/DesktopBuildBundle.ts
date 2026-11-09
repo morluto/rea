@@ -30,7 +30,7 @@ const reaPayload = async (
 ): Promise<ReaPayload> => {
   const path = environment.REA_BUILD_COMPUTER_REA_ARCHIVE;
   const reason =
-    "A build computer from a request needs REA_BUILD_COMPUTER_REA_ARCHIVE, the absolute path of a tar archive of a runnable REA whose one top folder holds scripts/rea.mjs.";
+    "A build computer from a request needs REA_BUILD_COMPUTER_REA_ARCHIVE, the absolute path of a tar archive of a runnable REA whose one top folder holds scripts/rea.mjs, or the archive rea setup --desktop-build packs for this REA version.";
   if (
     path === undefined ||
     !isAbsolute(path) ||
@@ -46,7 +46,7 @@ const reaPayload = async (
       {
         userMessage: reason,
         remediationAction:
-          "Pack a built REA with its production dependencies, set REA_BUILD_COMPUTER_REA_ARCHIVE to the archive and restart REA, or start from an exported bundle folder.",
+          "Run rea setup --client <client> --desktop-build, or pack a built REA with its production dependencies, set REA_BUILD_COMPUTER_REA_ARCHIVE to the archive and restart REA, or start from an exported bundle folder.",
       },
     );
   return { kind: "file", path };

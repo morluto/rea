@@ -5,9 +5,11 @@ task, such as "Build me an Inkscape environment where the agent changes a
 poster's headline and saves it". You are the building agent: you drive the
 app on a build computer through REA's MCP tools, write the task, export the
 bundle and witness it in a fresh computer. REA runs no model. The tools are
-MCP-only and need Docker, `REA_AGENT_ENV_COMMAND` and
-`REA_BUILD_COMPUTER_REA_ARCHIVE` where the REA server starts; when a start
-reports one missing, tell the person what to set and stop.
+MCP-only and need a Linux host with Docker, agentenv and REA's packed
+runtime. When a start reports one missing, tell the person to run
+`rea doctor --provider desktop_build` and apply its fixes, or
+`rea setup --client <client> --desktop-build` and restart the client, and
+stop.
 
 For the whole build:
 
@@ -22,7 +24,8 @@ For the whole build:
 ## Ask once, upfront
 
 In one message, ask only what the request leaves open, and keep the list for
-the report:
+the report. Skip each question the request answers; when it answers them all,
+start without asking:
 
 1. The app and the task, if either is unclear: what changes, in which
    document.
@@ -30,6 +33,13 @@ the report:
 3. Whether they want solver runs after the witness: how many (the budget)
    and with which model.
 4. If so, whether they want to review the task before those runs.
+
+When you cannot ask, as in a headless `claude -p` run, do not stop: take
+these defaults for whatever the request leaves open, say which you took in
+your first message and in the report, and go on. Install from the Ubuntu
+archive, make a synthetic seed, skip the review, and make 3 solver runs
+within $4 in all, with the model the request names or else the runner's
+default.
 
 ## When you are blocked
 
@@ -195,15 +205,22 @@ the first source that has the app:
   on one line.
 - Qt5 apps saving with QDom, such as KmPlot, write attributes in a random
   order in each process, so check their XML by element, never by whole line.
+- Gnumeric's desktop entry is `org.gnumeric.gnumeric`. Its Save As dialog
+  runs off the 1280×800 screen: type `~/Documents/<name>` in Name and press
+  Return. Rename a sheet with right-click on its tab, then Rename….
 - Parley's title shows the collection's title, so name the file in
-  `state_paths`. A new collection starts with 15 blank entries. While a
-  document is open KDE keeps an autosave and its `.lock` in
+  `state_paths`. File → New opens the new collection's Properties dialog:
+  confirm it with OK, since Cancel keeps the old collection and its autosave
+  lock open. A new collection starts with 15 blank entries: delete them.
+  Pick languages from the dropdown; a typed name keeps the previous locale.
+  While a document is open KDE keeps an autosave and its `.lock` in
   `~/.local/share/stalefiles/parley/`, and there is no File → Close: before
   `seed`, use File → New, then reopen the collection from Open Recent.
-- Sigil unpacks the open book into
-  `.local/share/sigil-ebook/sigil/workspace/Sigil-XXXXXX/` and deletes it on
-  exit; naming the whole `sigil-ebook` folder seeds that stale copy, so name
-  only the book, and its settings files if needed.
+- Sigil: pass `extra_packages: ["libqt5svg5"]`, or its SVG toolbar icons are
+  blank. Its title names the book, so it needs no `state_paths`. It unpacks
+  the open book into `.local/share/sigil-ebook/sigil/workspace/Sigil-XXXXXX/`
+  and deletes it on exit, so never name the whole `sigil-ebook` folder: that
+  seeds the stale copy.
 - What the app saved under the home before `seed`, such as a document in
   `~/Documents` or its settings, is part of the seed. A file you move to the
   Trash is left out, and the export lists it in `limitations`. Trash a stray
@@ -557,14 +574,17 @@ Stop after three witnesses and report what still fails.
 
 ## Solver runs
 
-Only if the requester asked for them. If they wanted to review the task
-first, show them its prompt and checks and wait for their approval. Then run
-the bundle within the budget, one run at a time, with the runner
-`REA_AGENT_ENV_COMMAND` names:
+Only if the requester asked for them, or by the headless default above. If
+they wanted to review the task first, show them its prompt and checks and
+wait for their approval. Then run the bundle within the budget, one run at a
+time, with `REA_AGENT_ENV_COMMAND`'s runner, or else `agent-env` on PATH:
 `agent-env run <bundle> --task <name> --agent claude-code --model <model>`.
-Count runs reported `passed`. A run `scored below 1` is a miss; one reported
-`failed` did not finish, so run it again if the budget allows instead of
-counting it. Never run past the budget.
+The runner needs a model endpoint in your shell: `LITELLM_BASE_URL` and
+`LITELLM_API_KEY`, or `base_url` and `api_key` under `[model]` in
+`.agentenv/config.toml`. When a run says no model endpoint is set, tell the
+person what to set and stop. Count runs reported `passed`. A run
+`scored below 1` is a miss; one reported `failed` did not finish, so run it
+again if the budget allows instead of counting it. Never run past the budget.
 
 ## Close and report
 

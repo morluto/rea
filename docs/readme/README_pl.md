@@ -273,6 +273,12 @@ REA eksportuje gotowe do uruchomienia środowisko z podstawowym testem uruchamia
 [Dokumentacja środowisk](../agent-environments.md) ·
 [Obejrzyj demo w X](https://x.com/reatools/status/2112574822584918075?s=20)
 
+### Środowiska aplikacji desktopowych
+
+REA może też zbudować środowisko aplikacji desktopowej dla Linuksa, z której agent korzysta przez zrzuty ekranu, mysz i klawiaturę. Z jednowierszowej prośby, takiej jak „Zbuduj mi środowisko Gnote, w którym agent dodaje oliwę z oliwek do notatki z listą zakupów”, twój agent instaluje aplikację na lokalnym komputerze budującym, pisze zadanie, eksportuje środowisko i sprawdza zadanie na nowym komputerze. Maszyna, która je buduje, potrzebuje Linuksa na amd64 lub arm64, Dockera i wersji frameworka agentenv wskazanej w przewodniku.
+
+[Konfiguracja środowisk aplikacji desktopowych](../desktop-build-computer.md)
+
 ## FAQ
 
 <details>
