@@ -15,3 +15,8 @@ for the specification lifecycle, roadmap granularity and producer-owned contract
 
 - [Go static string-header literal recovery](native/go-string-literals/spec.md)
   ([plan](native/go-string-literals/plan.md), [tasks](native/go-string-literals/tasks.md))
+
+## Unreal
+
+- [Pak footer and index inspection](unreal/pak-index/spec.md)
+  ([plan](unreal/pak-index/plan.md), [tasks](unreal/pak-index/tasks.md))
