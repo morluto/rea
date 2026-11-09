@@ -30,6 +30,25 @@ import {
 const DEFAULT_DOCKER_ROOT = "/var/lib/docker";
 const CONFIG_BYTES = 1024 * 1024;
 
+/** Inspect the same tar compression formats as the build's Python extractor without extracting files. */
+const ARCHIVE_VERSION = String.raw`
+import json, pathlib, sys, tarfile
+roots, versions = set(), {}
+with tarfile.open(sys.argv[1], "r|*") as archive:
+    for entry in archive:
+        parts = pathlib.PurePosixPath(entry.name).parts
+        if len(parts) == 3 and parts[1:] == ("scripts", "rea.mjs") and (entry.isfile() or entry.issym()):
+            roots.add(parts[0])
+        elif len(parts) == 2 and parts[1] == "package.json" and entry.isfile() and entry.size <= 1048576:
+            stream = archive.extractfile(entry)
+            if stream is not None:
+                try:
+                    versions[parts[0]] = json.load(stream).get("version")
+                except (ValueError, UnicodeError, AttributeError):
+                    pass
+print(json.dumps({"version": versions.get(next(iter(roots))) if len(roots) == 1 else None}))
+`;
+
 /** Read what a desktop build needs from this host, changing nothing. */
 export const readDesktopBuildFacts = async (
   input: DesktopBuildFactsInput,
@@ -243,17 +262,18 @@ const archiveFact = async (
   );
   if (!file) return { path, source, status: "missing" };
   if (source === "cache") return { path, source, status: "current" };
-  const packed = await attempt(input, "tar", [
-    "-xJOf",
+  const packed = await attempt(input, "python3", [
+    "-I",
+    "-c",
+    ARCHIVE_VERSION,
     path,
-    "rea-prod/package.json",
   ]);
   if (!packed.ok)
     return {
       path,
       source,
       status: "unknown",
-      detail: `REA could not read rea-prod/package.json from ${path}: ${packed.reason}`,
+      detail: `REA could not inspect ${path}: ${packed.reason}`,
     };
   let version: unknown;
   try {
@@ -263,12 +283,19 @@ const archiveFact = async (
   }
   return version === PRODUCT_IDENTITY.packageVersion
     ? { path, source, status: "current" }
-    : {
-        path,
-        source,
-        status: "stale",
-        detail: `${path} holds REA ${typeof version === "string" ? version : "of an unknown version"}; this is REA ${PRODUCT_IDENTITY.packageVersion}.`,
-      };
+    : typeof version !== "string"
+      ? {
+          path,
+          source,
+          status: "unknown",
+          detail: `REA could not identify the version of the runnable archive ${path}.`,
+        }
+      : {
+          path,
+          source,
+          status: "stale",
+          detail: `${path} holds REA ${typeof version === "string" ? version : "of an unknown version"}; this is REA ${PRODUCT_IDENTITY.packageVersion}.`,
+        };
 };
 
 /** Setting names each considered registration records; values stay in its file. */
@@ -278,7 +305,7 @@ const registrationFacts = async (
   versionFor: (path: string) => Promise<string | undefined>,
 ): Promise<DesktopBuildFacts["registrations"]> => {
   const selected = input.clientIds.length === 0 ? undefined : input.clientIds;
-  const recordedRunners = new Map<string, string>();
+  const recorded = new Map<string, Map<string, string>>();
   const statuses = await input.registrations(
     selected,
     Object.fromEntries(
@@ -289,11 +316,11 @@ const registrationFacts = async (
     ),
     undefined,
     (client, name, value) => {
-      if (
-        name === "REA_AGENT_ENV_COMMAND" &&
-        (selected === undefined || selected.includes(client))
-      )
-        recordedRunners.set(client, value);
+      if (selected === undefined || selected.includes(client)) {
+        const settings = recorded.get(client) ?? new Map<string, string>();
+        settings.set(name, value);
+        recorded.set(client, settings);
+      }
     },
   );
   const registered = statuses.filter(({ command }) => command.length > 0);
@@ -301,8 +328,8 @@ const registrationFacts = async (
   return Promise.all(
     considered.map(async (client) => {
       const status = registered.find((entry) => entry.client === client);
-      const recordedRunner =
-        status === undefined ? undefined : recordedRunners.get(client);
+      const values = status === undefined ? undefined : recorded.get(client);
+      const recordedRunner = values?.get("REA_AGENT_ENV_COMMAND");
       const effectiveRunner =
         recordedRunner === undefined
           ? undefined
@@ -340,14 +367,34 @@ const registrationFacts = async (
           effectiveRunner === undefined ||
           effectiveRunner !== selectedSettings.REA_AGENT_ENV_COMMAND,
       );
-      const compared = differing.filter(
-        (name) => selectedSettings[name as BuildComputerSetting] !== undefined,
-      );
-      const unchecked = differing.filter(
-        (name) =>
-          selectedSettings[name as BuildComputerSetting] === undefined &&
-          !(name === "REA_AGENT_ENV_COMMAND" && runner !== undefined),
-      );
+      const compared: string[] = [];
+      const unchecked: string[] = [];
+      for (const name of differing) {
+        if (name === "REA_AGENT_ENV_COMMAND") {
+          if (runner !== undefined) compared.push(name);
+          else unchecked.push(name);
+          continue;
+        }
+        const value = values?.get(name);
+        if (value === undefined) {
+          unchecked.push(name);
+          continue;
+        }
+        const environment = { ...input.environment, [name]: value };
+        if (name === "REA_DOCKER_COMMAND") {
+          const command = await settingCommand(environment, name, "docker");
+          if (command.status !== "found") compared.push(name);
+          else if (
+            (await dockerDaemon({ ...input, environment }, command.path))
+              .status !== "reachable"
+          )
+            unchecked.push(name);
+        } else if (name === "REA_BUILD_COMPUTER_REA_ARCHIVE") {
+          const archive = await archiveFact({ ...input, environment });
+          if (archive.status === "unknown") unchecked.push(name);
+          else if (archive.status !== "current") compared.push(name);
+        } else unchecked.push(name);
+      }
       return {
         client,
         registered: status !== undefined,
