@@ -987,3 +987,39 @@ it("allows an uncancelled inventory after a cancelled SEA preparation", async ()
     await reader.close();
   }
 });
+
+it.each([
+  {
+    field: "assets",
+    count: 100_001n,
+    blob: buildNodeSeaBlob({ assets: [{ name: "a", body: "" }] }),
+  },
+  {
+    field: "exec argv",
+    count: 4097n,
+    blob: buildNodeSeaBlob({ execArgv: ["a"] }),
+  },
+])(
+  "reports a truncated $field table as malformed through the reader",
+  async ({ count, blob }) => {
+    const declared = Buffer.alloc(8);
+    declared.writeBigUInt64LE(count);
+    // Each case has one optional table immediately after the common fields.
+    const tableOffset = buildNodeSeaBlob().length;
+    const truncated = Buffer.concat([blob.subarray(0, tableOffset), declared]);
+    const path = await writeCarrier(
+      "truncated-sea",
+      nodeSeaElf({ blob: truncated, fuse: "set" }),
+    );
+    const reader = new NodeSeaArtifactReader(path);
+    try {
+      await expect(async () => {
+        for await (const _entry of reader.entries()) {
+          /* consume */
+        }
+      }).rejects.toMatchObject({ reason: "format" });
+    } finally {
+      await reader.close();
+    }
+  },
+);

@@ -1,6 +1,9 @@
 import type { FileHandle } from "node:fs/promises";
 import { ArtifactReaderFailure } from "./ArtifactReader.js";
-import { readArtifactFileBytes } from "./ArtifactFileRange.js";
+import {
+  assertArtifactFileRange,
+  readArtifactFileBytes,
+} from "./ArtifactFileRange.js";
 import { decodeLz4Block } from "../gpu/Lz4Block.js";
 import {
   BinaryFormatFailure,
@@ -407,6 +410,11 @@ export const readUnityFsBlocksInfo = async (
       "unavailable",
       "UnityFS directory layout is unavailable",
     );
+  assertArtifactFileRange(
+    layout.blocksInfoOffset,
+    header.compressedBlocksInfoSize,
+    size,
+  );
   if (
     header.compressedBlocksInfoSize > MAX_TABLE_BYTES ||
     header.uncompressedBlocksInfoSize > MAX_TABLE_BYTES
