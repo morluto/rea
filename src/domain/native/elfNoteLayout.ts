@@ -4,6 +4,15 @@ import { err, ok } from "../result.js";
 export const elfNoteAlignment = (declared: number | bigint): number =>
   declared === 8 || declared === 8n ? 8 : 4;
 
+/**
+ * The note padding a declared `sh_addralign` selects, as GNU readelf reads it:
+ * up to 4 pads to 4 and 8 pads to 8. Readelf reports any other value as a
+ * corrupt note and reads none of its notes, so it selects no padding here.
+ */
+export const declaredElfNoteAlignment = (
+  declared: bigint,
+): 4 | 8 | undefined => (declared <= 4n ? 4 : declared === 8n ? 8 : undefined);
+
 /** Descriptor and next-note offsets relative to the note's 12-byte header. */
 export const elfNoteLayout = (
   namesz: number,

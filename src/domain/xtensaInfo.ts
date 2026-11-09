@@ -5,7 +5,7 @@ import type {
   XtensaLiteralDeclaration,
 } from "./binaryTargetTypes.js";
 import {
-  elfNoteAlignment,
+  declaredElfNoteAlignment,
   isElfNotePadding,
   readElfNoteRecord,
 } from "./native/elfNoteLayout.js";
@@ -65,14 +65,22 @@ const declaration = <Declared>(
  * `Xtensa_Info` note whose descriptor is `USE_ABSOLUTE_LITERALS=%d\nABI=%d\n`.
  * Other keys are not interpreted. Notes are located by the shared ELF note
  * rules that `inspect_elf_notes` also applies, with the padding the section's
- * declared `sh_addralign` selects; GNU as and ld write 4-byte words.
+ * declared `sh_addralign` selects; GNU as and ld write 4-byte words. Any other
+ * alignment leaves both declarations unavailable, as GNU readelf reads no
+ * notes from such a section.
  */
 export const parseXtensaInfo = (
   contents: Buffer,
   littleEndian: boolean,
   declaredAlignment: bigint,
 ): XtensaInfoDeclarations => {
-  const alignment = elfNoteAlignment(declaredAlignment);
+  const alignment = declaredElfNoteAlignment(declaredAlignment);
+  if (alignment === undefined)
+    return undeclaredXtensaInfo(
+      unavailable(
+        `.xtensa.info declares sh_addralign ${declaredAlignment}, which selects no ELF note padding; only up to 4 and 8 do.`,
+      ),
+    );
   let descriptor: Buffer | undefined;
   let at = 0;
   while (at + 12 <= contents.length) {

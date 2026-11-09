@@ -189,3 +189,25 @@ describe(".xtensa.info declarations", () => {
     });
   });
 });
+
+describe("Xtensa_Info note alignment", () => {
+  it.each([0n, 1n, 2n, 3n, 4n])(
+    "pads notes to 4 for a declared alignment of %s",
+    (declared) => {
+      expect(parseXtensaInfo(BINUTILS_WINDOWED, true, declared)).toEqual(
+        WINDOWED,
+      );
+    },
+  );
+
+  it.each([5n, 6n, 7n, 9n, 16n, 2n ** 63n])(
+    "leaves both declarations unavailable for a declared alignment of %s",
+    (declared) => {
+      const parsed = parseXtensaInfo(BINUTILS_WINDOWED, true, declared);
+      expect(parsed.abi).toMatchObject({ status: "unavailable" });
+      expect(parsed.literals).toEqual(parsed.abi);
+      if (parsed.abi.status === "unavailable")
+        expect(parsed.abi.reason).toContain(`sh_addralign ${declared}`);
+    },
+  );
+});
