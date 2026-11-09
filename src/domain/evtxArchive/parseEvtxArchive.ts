@@ -369,6 +369,18 @@ export const parseEvtxArchive = (
         "first-record-id-mismatch",
         `Chunk at position ${index} states its first record identifier is ${statedFirstRecordId}, but the first record reads ${inventory.first_event_record_id}.`,
       );
+    // A mismatched header checksum stays visible in `chunks[].checksum`, but
+    // the summary view omits `chunks`, so an analyst reading only the summary
+    // would see zero diagnostics and complete coverage over a chunk whose
+    // stored checksum does not describe its bytes.
+    if (inventory.checksum === "mismatched")
+      diagnose(
+        state,
+        index,
+        null,
+        "chunk-checksum-mismatch",
+        `Chunk at position ${index} stores a header checksum that does not match its bytes.`,
+      );
     chunks.push({
       chunk_number: inventory.chunk_number,
       ordinal: inventory.ordinal,

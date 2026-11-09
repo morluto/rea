@@ -327,7 +327,15 @@ describe("parseEvtxArchive chunk headers", () => {
     signed.writeUInt32LE(0x12345678, 0x78);
     expect(parsed(evtx([signed])).chunks[0]?.checksum).toBe("matched");
     signed[0x40] = 1;
-    expect(parsed(evtx([signed])).chunks[0]?.checksum).toBe("mismatched");
+    const mismatched = parsed(evtx([signed]));
+    expect(mismatched.chunks[0]?.checksum).toBe("mismatched");
+    // The summary view omits `chunks`; without a diagnostic a reader would
+    // see an empty diagnostic list and complete coverage over a chunk whose
+    // stored checksum does not describe its bytes.
+    expect(mismatched.diagnostics.map((entry) => entry.code)).toContain(
+      "chunk-checksum-mismatch",
+    );
+    expect(mismatched.source_coverage.status).toBe("partial");
   });
 
   it("does not invent live records when the free-space offset is invalid", () => {
@@ -347,6 +355,9 @@ describe("parseEvtxArchive chunk headers", () => {
     const stale = record(8);
     stale.copy(padded, end);
     padded.writeUInt32LE(end + stale.length, 0x30);
+    // Stale records are not a header change, so re-sign the header this edit
+    // invalidated; otherwise the chunk also reports a checksum mismatch.
+    padded.writeUInt32LE(chunkCrc(padded), 0x7c);
     const archive = parsed(evtx([padded]));
     expect(archive.events.map((event) => event.event_record_id)).toEqual([7]);
     expect(archive.source_coverage.status).toBe("complete-within-scope");
