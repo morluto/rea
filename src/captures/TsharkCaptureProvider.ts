@@ -1,3 +1,4 @@
+import { BOUNDED_PRODUCER_LIMITS as LIMITS } from "../domain/producerResourceLimits.js";
 import { TSHARK_PROVIDER_IDENTITY } from "./TsharkProviderIdentity.js";
 import { artifactFileCancellationCause } from "../artifacts/ArtifactFileOperation.js";
 import {
@@ -10,7 +11,6 @@ import {
   FIELD_RECORD_BUDGET,
 } from "./parseFieldDiscovery.js";
 import {
-  BOUNDED_PRODUCER_LIMITS as LIMITS,
   prlimitArgumentVector,
   readLinuxResourceLimits,
   type LinuxResourceLimits,

@@ -1,3 +1,4 @@
+import { BOUNDED_PRODUCER_LIMITS as LIMITS } from "../domain/producerResourceLimits.js";
 import { SIGROK_PROVIDER_IDENTITY } from "./SigrokProviderIdentity.js";
 import { snapshotEnvironment } from "../process/snapshotEnvironment.js";
 import { artifactFileCancellationCause } from "../artifacts/ArtifactFileOperation.js";
@@ -14,7 +15,6 @@ import {
   type SigrokSelection,
 } from "./sigrokSelectorRejection.js";
 import {
-  BOUNDED_PRODUCER_LIMITS as LIMITS,
   prlimitArgumentVector,
   readLinuxResourceLimits,
   type LinuxResourceLimits,
