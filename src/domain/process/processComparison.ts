@@ -796,7 +796,10 @@ export const compareProcessCaptures = (
           traceEvaluation,
           [left, right],
         );
-  const timedSources = explicitlyTimedSources(options.traceSpecification);
+  const timedSources =
+    trace?.verdict === "different" && options.traceSpecification !== undefined
+      ? explicitlyTimedSources(options.traceSpecification)
+      : new Map();
   const timedDimensions = dimensionsForTraceSources(
     new Set(timedSources.keys()),
   );
