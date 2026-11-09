@@ -812,6 +812,23 @@ it.each(["full", "compact"] as const)(
       expect(tool?.inputSchema.properties?.cdp_endpoint).toMatchObject({
         description: expect.stringContaining("/devtools/browser/ID"),
       });
+    const listed = await connected.client.callTool({
+      name: "list_browser_targets",
+      arguments: {
+        cdp_endpoint: browser.browserWebSocketUrl,
+        discovery_timeout_ms: 15_000,
+      },
+    });
+    expect(listed.isError).not.toBe(true);
+    expect(listed.structuredContent).toMatchObject({
+      parameters: {
+        cdp_endpoint: browser.browserWebSocketUrl.replace(
+          /fake$/u,
+          "[REDACTED]",
+        ),
+        discovery_timeout_ms: 15_000,
+      },
+    });
     const inspected = await connected.client.callTool({
       name: "inspect_web_page",
       arguments: {
@@ -822,6 +839,7 @@ it.each(["full", "compact"] as const)(
       },
     });
     expect(inspected.isError).not.toBe(true);
+    expect(browser.openedConnectionCount()).toBe(1);
     expect(inspected.structuredContent).toMatchObject({
       parameters: {
         cdp_endpoint: browser.browserWebSocketUrl.replace(

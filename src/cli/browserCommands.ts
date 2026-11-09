@@ -30,9 +30,10 @@ import { cliDecimalField } from "./options.js";
 import { CLI_COMMANDS } from "../cliCommandNames.js";
 import {
   browserPageInspectionOptions,
-  browserScopeOptions,
   observationDuration,
+  passiveBrowserScopeOptions,
   selectedCommandTimeout,
+  selectedDiscoveryTimeout,
 } from "../cliObservationOptions.js";
 import { withCommandCancellation } from "./commandCancellation.js";
 import { finishAnalysisCommand } from "./finishAnalysisCommand.js";
@@ -61,7 +62,8 @@ const registerTargetList = (
       ),
     }),
     options: z.object({
-      allowedOrigins: browserScopeOptions.allowedOrigins,
+      allowedOrigins: passiveBrowserScopeOptions.allowedOrigins,
+      discoveryTimeoutMs: passiveBrowserScopeOptions.discoveryTimeoutMs,
     }),
     run: ({ args, options }) =>
       withCommandCancellation((signal) =>
@@ -70,6 +72,7 @@ const registerTargetList = (
           const input = {
             cdp_endpoint: args.endpoint,
             allowed_origins: options.allowedOrigins,
+            ...selectedDiscoveryTimeout(options.discoveryTimeoutMs),
           };
           const parsed = listBrowserTargetsInputSchema.safeParse(input);
           if (!parsed.success)
@@ -128,6 +131,7 @@ const registerPageInspection = (
             include_script_sources: options.includeScriptSources,
             include_storage_keys: options.includeStorageKeys,
             include_storage_fingerprints: options.includeStorageFingerprints,
+            ...selectedDiscoveryTimeout(options.discoveryTimeoutMs),
             ...selectedCommandTimeout(options.commandTimeoutMs),
           };
           const parsed = inspectWebPageInputSchema.safeParse(input);
@@ -171,7 +175,7 @@ const registerBundleAnalysis = (
       ),
     }),
     options: z.object({
-      ...browserScopeOptions,
+      ...passiveBrowserScopeOptions,
       ...webBundleDeliveryOptions,
       observationMs: observationDuration(500),
       fetchSourceMaps: z
@@ -220,6 +224,7 @@ const registerBundleAnalysis = (
               : {
                   source_map_fetch_timeout_ms: options.sourceMapFetchTimeoutMs,
                 }),
+            ...selectedDiscoveryTimeout(options.discoveryTimeoutMs),
             ...selectedCommandTimeout(options.commandTimeoutMs),
           };
           const parsed = analyzeWebBundleInputSchema.safeParse(input);
@@ -263,7 +268,7 @@ const registerObservationSession = (
       ),
     }),
     options: z.object({
-      ...browserScopeOptions,
+      ...passiveBrowserScopeOptions,
       observationMs: observationDuration(10_000, 1),
     }),
     run: ({ args, options }) =>
@@ -275,6 +280,7 @@ const registerObservationSession = (
             allowed_origins: options.allowedOrigins,
             target_id: args.targetId,
             observation_ms: options.observationMs,
+            ...selectedDiscoveryTimeout(options.discoveryTimeoutMs),
             ...selectedCommandTimeout(options.commandTimeoutMs),
           };
           const parsed = observeWebSessionInputSchema.safeParse(input);

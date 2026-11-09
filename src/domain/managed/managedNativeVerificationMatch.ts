@@ -20,12 +20,16 @@ export const collectNativeSymbols = (
   readonly symbols: readonly NativeSymbol[];
   readonly accepted: number;
   readonly unsupported: number;
+  readonly partialExports: boolean;
+  readonly exportLimitations: readonly string[];
   readonly moduleFormatsByEvidenceId: ReadonlyMap<string, string | null>;
 } => {
   const symbols: NativeSymbol[] = [];
   const moduleFormatsByEvidenceId = new Map<string, string | null>();
   let accepted = 0;
   let unsupported = 0;
+  let partialExports = false;
+  const exportLimitations: string[] = [];
   for (const observation of observations) {
     moduleFormatsByEvidenceId.set(
       observation.evidence.evidence_id,
@@ -36,9 +40,23 @@ export const collectNativeSymbols = (
     } else {
       accepted += 1;
       symbols.push(...observation.symbols);
+      if (observation.exportCoverage !== undefined) {
+        if (!observation.exportCoverage.exhaustive) partialExports = true;
+        for (const limitation of observation.exportCoverage.limitations)
+          exportLimitations.push(
+            `Native export Evidence ${observation.evidence.evidence_id}: ${limitation}`,
+          );
+      }
     }
   }
-  return { symbols, accepted, unsupported, moduleFormatsByEvidenceId };
+  return {
+    symbols,
+    accepted,
+    unsupported,
+    partialExports,
+    exportLimitations,
+    moduleFormatsByEvidenceId,
+  };
 };
 
 /** P/Invoke resolves a Mach-O export through dlsym, which names it without the symbol-table prefix. */
@@ -516,6 +534,8 @@ interface VerificationResultInput {
     readonly symbols: readonly NativeSymbol[];
     readonly accepted: number;
     readonly unsupported: number;
+    readonly partialExports: boolean;
+    readonly exportLimitations: readonly string[];
   };
   readonly pinvokeImports: readonly PinvokeVerification[];
   readonly nativeObservationCount: number;
@@ -540,7 +560,9 @@ export const buildVerificationResult = ({
   ).length;
   const coverage: ManagedNativeVerificationResult["coverage"] = {
     status:
-      managed.coverage.state === "complete" && native.unsupported === 0
+      managed.coverage.state === "complete" &&
+      native.unsupported === 0 &&
+      !native.partialExports
         ? "complete-within-inputs"
         : "partial",
   };
@@ -594,6 +616,10 @@ export const buildVerificationResult = ({
         : [
             "Some native Evidence operations were unsupported by this workflow.",
           ]),
+      ...(native.partialExports
+        ? ["Some native export inventories are not exhaustive."]
+        : []),
+      ...native.exportLimitations,
     ],
   };
 };
