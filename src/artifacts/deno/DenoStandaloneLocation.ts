@@ -233,14 +233,19 @@ const locateMachOSlice = async (
   const owned: OwnedRange[] = [];
   let confirmed = false;
   // A __SUI segment is libsui's, but only a d3n0l4nd section in it makes the
-  // image Deno's. Damage seen first is kept until that name is confirmed.
+  // image Deno's. Damage, including a segment that cannot be parsed, is kept
+  // until that name is confirmed and otherwise leaves the slice unread.
   let damage: string | undefined;
   const framed = frameLoadCommands(table, (command) => {
     if (command.command !== LC_SEGMENT && command.command !== LC_SEGMENT_64)
       return;
     const segment64 = command.command === LC_SEGMENT_64;
     const parsedSegment = readMachoSegmentHeader(command.body, segment64, true);
-    if (!parsedSegment.ok) return;
+    if (!parsedSegment.ok) {
+      // An unparsed segment may be __SUI, so the slice is not fully examined.
+      damage ??= "Mach-O segment command cannot be parsed";
+      return;
+    }
     const segment = parsedSegment.value;
     const segmentName = fixedCString(segment.nameBytes);
     if (
@@ -311,7 +316,7 @@ const locateMachOSlice = async (
       found,
       unread: `load commands cannot be framed: ${framed.reason}`,
     };
-  // A damaged __SUI segment may hold an unread d3n0l4nd section, so the
+  // A damaged or unparsed segment may hold an unread d3n0l4nd section, so the
   // slice is not fully examined and the trailer search cannot stand for it.
   if (damage !== undefined) return { found, unread: damage };
   const cpu = fatCpu ?? table.header.cpuType;

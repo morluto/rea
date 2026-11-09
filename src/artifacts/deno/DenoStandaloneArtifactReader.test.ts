@@ -1402,3 +1402,34 @@ it("leaves a damaged __SUI segment without a d3n0l4nd section to native inventor
     },
   });
 });
+
+it("rejects a universal Deno image whose sibling holds an unparseable segment command", async () => {
+  const armImage = denoMachO(sectionFor(Buffer.from("arm\n")));
+  // sizeofcmds and the segment's cmdsize both say 8, so the table frames
+  // but the LC_SEGMENT_64 command cannot be parsed.
+  armImage.writeUInt32LE(8, 20);
+  armImage.writeUInt32LE(8, 32 + 4);
+  const arm = Buffer.concat([
+    armImage,
+    Buffer.alloc(4096 - (armImage.length % 4096)),
+  ]);
+  const intel = denoIntelTrailer(sectionFor(Buffer.from("intel\n")));
+  const bytes = denoUniversal([arm, intel]);
+  bytes.writeUInt32BE(0x01000007, 8 + 20);
+  bytes.writeUInt32BE(3, 8 + 24);
+  await expect(
+    locateDenoStandalone(bytesHandle(bytes), bytes.length),
+  ).resolves.toMatchObject({
+    status: "present",
+    failure: {
+      reason: "format",
+      message: expect.stringContaining("slice 0"),
+    },
+  });
+  // Without a confirmed Deno sibling the same slice stays native.
+  const native = denoUniversal([arm, denoMachO([], { architecture: "x64" })]);
+  native.writeUInt32BE(0x01000007, 8 + 20);
+  await expect(
+    locateDenoStandalone(bytesHandle(native), native.length),
+  ).resolves.toEqual({ status: "absent" });
+});
