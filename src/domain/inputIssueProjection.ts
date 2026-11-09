@@ -244,6 +244,7 @@ const projectUnrecognizedKeyIssues = (
 const CANDIDATE_DISCRIMINATOR_KEYS: readonly string[] = [
   "kind",
   "type",
+  "setting",
   "collection",
   "projection",
   "facet",
@@ -318,13 +319,40 @@ const branchAcceptsKey = (
   return true;
 };
 
+const branchHasDirectKeyIssue = (
+  branchErrors: readonly z.core.$ZodIssue[],
+  key: string,
+  code: z.core.$ZodIssue["code"],
+  budget?: { remaining: number },
+): boolean => {
+  if (budget !== undefined) {
+    budget.remaining -= 16;
+    if (budget.remaining < 0) throw projectionBudgetExceeded;
+  }
+  for (const err of branchErrors) {
+    if (err.path.length === 1 && err.path[0] === key && err.code === code) {
+      return true;
+    }
+    if (err.code === "invalid_union" && err.path.length === 0) {
+      const anyNested = err.errors.some((nested) =>
+        branchHasDirectKeyIssue(nested, key, code, budget),
+      );
+      if (anyNested) return true;
+    }
+  }
+  return false;
+};
+
 const extractIssueExpectedValues = (
   issue: z.core.$ZodIssue,
 ): readonly unknown[] => {
-  if ("values" in issue && Array.isArray(issue.values)) return issue.values;
-  if ("options" in issue && Array.isArray(issue.options)) return issue.options;
-  if ("expected" in issue && issue.expected !== undefined)
-    return [issue.expected];
+  if (issue.code === "invalid_value") {
+    if ("values" in issue && Array.isArray(issue.values)) return issue.values;
+    if ("options" in issue && Array.isArray(issue.options))
+      return issue.options;
+    if ("expected" in issue && issue.expected !== undefined)
+      return [issue.expected];
+  }
   return [];
 };
 
@@ -383,6 +411,17 @@ const resolveUnionDiscriminatorDiagnostic = (
       (branch) => !branchAcceptsKey(branch, key, budget),
     );
     if (!allBranchesReject) continue;
+
+    const anyBranchHasInvalidType = currentErrors.some((branch) =>
+      branchHasDirectKeyIssue(branch, key, "invalid_type", budget),
+    );
+    if (anyBranchHasInvalidType) continue;
+
+    const anyBranchHasInvalidValue = currentErrors.some((branch) =>
+      branchHasDirectKeyIssue(branch, key, "invalid_value", budget),
+    );
+    if (!anyBranchHasInvalidValue) continue;
+
     const allExpected = currentErrors.flatMap((branch) =>
       collectKeyExpectedValues(branch, key, budget),
     );

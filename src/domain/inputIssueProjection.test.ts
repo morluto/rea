@@ -11,6 +11,7 @@ import {
 import { projectAnalysisError } from "./analysisErrorProjection.js";
 import { processScenarioSchema } from "./process/processScenario.js";
 import { applicationFeatureSeedSchema } from "./javascript/javascriptFeatureTraceSchemas.js";
+import { updateAnalysisSettingsInputSchema } from "../contracts/analysisSettingsContracts.js";
 import { OFFICIAL_TOOL_CONTRACTS } from "../contracts/officialToolContracts.js";
 import { APPLICATION_TOOL_CONTRACTS } from "../contracts/applicationToolContracts.js";
 import { ENHANCED_TOOL_CONTRACTS } from "../contracts/enhancedToolContracts.js";
@@ -815,5 +816,45 @@ describe("discriminated union nested alternatives and budget", () => {
       40,
     );
     expect(bounded.omittedIssueCount).toBeGreaterThan(0);
+  });
+
+  it("resolves setting discriminator before payload narrowing on analysis settings input", () => {
+    const input = {
+      changes: [{ setting: "bogus", action: "set", value: null }],
+    };
+    const parsed = updateAnalysisSettingsInputSchema.safeParse(input);
+    if (parsed.success) throw new Error("expected invalid input");
+    const issues = projectInputIssues(parsed.error.issues, input);
+    expect(issues).toContainEqual(
+      expect.objectContaining({
+        path: ["changes", 0, "setting"],
+        reason: "invalid_value",
+        expected: expect.arrayContaining([
+          "asar.max_header_bytes",
+          "ghidra.startup_timeout_ms",
+          "ghidra.decompile_timeout_seconds",
+        ]),
+      }),
+    );
+  });
+
+  it("preserves invalid_type reason when all union variants reject candidate key on type", () => {
+    const schema = z.union([
+      z.object({ kind: z.string(), foo: z.string() }),
+      z.object({ kind: z.number(), bar: z.string() }),
+    ]);
+    const input = { kind: true };
+    const parsed = schema.safeParse(input);
+    if (parsed.success) throw new Error("expected invalid input");
+    const issues = projectInputIssues(parsed.error.issues, input);
+    expect(issues).toContainEqual(
+      expect.objectContaining({
+        path: ["kind"],
+        reason: "invalid_type",
+      }),
+    );
+    expect(issues.some((issue) => issue.reason === "invalid_value")).toBe(
+      false,
+    );
   });
 });
