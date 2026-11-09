@@ -84,21 +84,11 @@ See [desktop builds](https://github.com/morluto/rea/blob/main/.agents/skills/rev
    placeholder prompt; and `guards`, optional checks that the rest kept its
    seed values. The draft's
    [task section](desktop-application-tasks.md#describe-the-change) describes
-   each. `notes`, each with a `code` and a `message`, say why a draft has no
-   files: `no_change` when no file under the home changed between them and
-   nor did the app's dconf keys; `unowned_changes` when files changed but
-   none under the owned paths, listing up to five in `files` with their
-   roles, desktop files last, and counting the rest in `more`;
-   `uncheckable_changes` when the app's keys in dconf were read and changed,
-   listing the database in `files`, since no check reads dconf (a version
-   the capture kept no copy of, as it keeps none of the database at the
-   start, counts as holding none of the app's keys);
-   `unreadable_changes` when a dconf database changed but REA could not read
-   it, such as without `dconf-cli`, with the read `error`, so whose keys
-   changed is unknown; and `no_document` when no file has the document role.
-   `unowned_changes` and `no_document` point at `state_paths`. They also say,
-   for a drafted `file`, why its suggestions are thin: `by_position`,
-   `view_state_only`, `long_text`, `cut_view` or `unreadable_view`.
+   each. Draft `notes` explain missing files or thin suggestions. For example,
+   `unowned_changes` points to changes outside the owned paths, while
+   `unreadable_changes` leaves whose dconf keys changed unknown. Use the
+   [note codes and recovery guidance](desktop-application-tasks.md#describe-the-change)
+   before choosing checks.
 6. Write the task: its name, the prompt in the user's own words, and checks
    that hold after the change and not on the seed, from the suggestions,
    `values` and any `guards` worth keeping.
@@ -133,7 +123,8 @@ See [desktop builds](https://github.com/morluto/rea/blob/main/.agents/skills/rev
    output; it then brings the files back through the driver's
    `data/get` in answers of at most 8 MiB, and checks and writes each answer
    into the folder before asking for the next, so one answer at a time is
-   held; a failure leaves no partial folder.
+   held. A failure attempts to remove the unpublished folder; if rollback
+   fails, the error reports the resources whose cleanup is incomplete.
 8. `close_build_computer`.
 
 A checkpoint name is lowercase letters, digits, dot, dash and underscore; the

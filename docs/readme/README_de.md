@@ -84,6 +84,10 @@ Die Einrichtung unterstützt Claude Code, Codex, Cursor, Gemini CLI, Grok Build 
 
 MCP verwendet standardmäßig kompakte Eingabeschemas. Für vollständige Feldhinweise und Details zur verschachtelten Validierung setze `REA_MCP_INPUT_SCHEMA_PROFILE=full` in der MCP-Registrierung. Beide Profile behalten alle Tools und dieselbe kanonische Servervalidierung; siehe MCP-Vertragsleitfaden.
 
+Die Einrichtung registriert die gewählte Laufzeit und das REA-Einstiegsskript direkt. Bewahre bei einem Paket-Runner dessen Cache-Eintrag und die Laufzeit auf; lade das Paket aus einem vertrauenswürdigen Verzeichnis außerhalb des Zielprojekts. Siehe die Installationsanleitung.
+
+Vollständige Ausgabeschemas werden standardmäßig angekündigt. Begrenzt dein Client `tools/list`, setze in der MCP-Registrierung `REA_MCP_OUTPUT_SCHEMA_PROFILE=compact` oder `off`. Servervalidierung und strukturierte Ergebnisse bleiben vollständig. Siehe „Output schemas“ im MCP-Vertragsleitfaden.
+
 ### Deinen Agenten fragen
 
 ```text
