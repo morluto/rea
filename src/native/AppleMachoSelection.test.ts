@@ -17,8 +17,8 @@ import {
   selectMachoSlice,
   UnsupportedMachoMetadataFormatError,
 } from "./AppleMachoSelection.js";
-import { parsePointerFixups } from "./AppleMachoFixups.js";
-import { decodeAppleDispatchMetadata } from "./AppleDispatchMetadata.js";
+import { parsePointerFixups } from "./AppleMachoFixups.fixture.js";
+import { decodeAppleDispatchMetadata } from "./AppleDispatchMetadata.fixture.js";
 
 /** macOS 27 system binaries ship CPU_SUBTYPE_ARM64E_X1 (12) with the PAC ABI bit. */
 const ARM64E_X1 = { type: 0x0100000c, subtype: 0x8000000c } as const;

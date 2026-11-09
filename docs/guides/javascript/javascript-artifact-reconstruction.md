@@ -22,7 +22,9 @@ rea analyze-javascript-application /absolute/path/to/apps/app.asar \
 
 Generic `rea analyze` selects this static provider for directories and `.asar`
 paths when neither `--provider` nor `--snapshot` is supplied. The dedicated
-command and the generic route return their complete results inline. Native
+command and the generic route return complete results inline by default.
+Summary and route-view delivery export the full Evidence to `--evidence_output`
+and return a projection; see [route delivery](../../javascript-route-inventory.md). Native
 targets, single JavaScript files, `.app` bundles, and explicit deep-provider or
 snapshot requests retain the native deep-analysis route.
 
@@ -186,7 +188,9 @@ coverage, limitations, and `normalized_result.parent_evidence_id`. Pass that ID
 to `inspect_analysis_view` for module pages or items, or to the application
 workflows as a retained reference. The summary does not repeat or truncate the
 analysis; a server without session retention refuses summary detail with
-`capability_unavailable`. CLI output is unchanged and always complete.
+`capability_unavailable`. On the CLI, `--detail summary --evidence_output PATH`
+exports the full Evidence and returns its summary; the default remains complete
+inline delivery.
 
 With a connected MCP `client` and the caller-selected absolute `inputPath`, this
 recipe analyzes once and pages module identities using the returned ID:

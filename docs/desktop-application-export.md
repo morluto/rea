@@ -37,8 +37,9 @@ gzip seeds it compressed again only to clear their headers
 (`recompressed_files`), the bundle files that still hold them
 (`unscrubbed_files`), and written files, the last four by their path in the
 bundle. A failed export, cancellation
-included, removes the bundle it had not yet published, so no partial copy of the
-user's data remains. If the bundle was published but its output handles could
+included, attempts to remove the bundle it had not yet published. If rollback
+fails, partial files can remain; the error reports resources whose cleanup
+is incomplete. If the bundle was published but its output handles could
 not be closed, the command reports a cleanup error that carries the export
 Evidence; the bundle itself is complete.
 
