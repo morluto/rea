@@ -367,6 +367,24 @@ it("keeps argument positions after a spread of known length", () => {
   ).toEqual({ kind: "literal", value: "kept" });
 });
 
+it.each([
+  [
+    "an unknown spread",
+    `function k(a){return a} function h(x,...rest){return k(...rest,"app:ping")} function first(x){return x} inspect(h(first(...extraArguments)));`,
+    "app:ping",
+  ],
+  [
+    "an array of written length",
+    `function pick(a,b){return b} function forward(...r){return pick(...r,"fallback")} function f(...a){a.length=0;return forward(a[0])} inspect(f("stale"));`,
+    "fallback",
+  ],
+])(
+  "passes one value selected from %s on as exactly one argument",
+  (_name, source, expected) => {
+    expect(inspectOne(source)).toEqual({ kind: "literal", value: expected });
+  },
+);
+
 it("builds a parameter's written members once for every read and call", () => {
   const { parsed, resolver } = resolverFor(
     `function f(o){o.channel="real";o.extra=1;inspect(o);inspect(o)}`,

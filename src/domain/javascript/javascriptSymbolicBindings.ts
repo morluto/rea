@@ -110,6 +110,21 @@ const writtenArrayElements = (
   return written;
 };
 
+/**
+ * The value at one position of an argument list or array. A position holds
+ * exactly one value, so an unknown-count element selected there is a plain
+ * unknown and cannot extend a later argument list.
+ */
+const selectedElement = (
+  values: readonly SymbolicValue[],
+  index: number,
+): SymbolicValue | undefined => {
+  const value = values[index];
+  return value?.kind === "unknown" && value.unknownCount === true
+    ? symbolicUnknown(value.reason)
+    : value;
+};
+
 /** Demand-driven substitutions for local bindings, closures and literal module tables. */
 export class JavaScriptSymbolicBindings {
   readonly #writes = new Map<string, PropertyWrite[]>();
@@ -499,7 +514,10 @@ export class JavaScriptSymbolicBindings {
     if (value.kind === "array") {
       const index = semanticArrayIndex(key);
       if (index !== null)
-        return value.values[index] ?? symbolicUnknown("missing argument");
+        return (
+          selectedElement(value.values, index) ??
+          symbolicUnknown("missing argument")
+        );
     }
     if (value.kind === "iterator" || value.kind === "promise") {
       this.unresolved = true;
@@ -660,7 +678,8 @@ export class JavaScriptSymbolicBindings {
           binding.bindingId,
           t.isRestElement(param)
             ? { kind: "array", values: restOf(index) }
-            : (args[index] ?? symbolicUnknown("runtime parameter")),
+            : (selectedElement(args, index) ??
+                symbolicUnknown("runtime parameter")),
         );
     });
     const scopeId =
