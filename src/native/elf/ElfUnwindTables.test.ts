@@ -792,6 +792,18 @@ it("notes an ignored PT_GNU_EH_FRAME only when a .eh_frame_hdr section overrides
   );
 });
 
+it("uses the load mapping for a non-allocated unwind header", () => {
+  const bytes = elfUnwindSectionlessFixture({ sections: ".eh_frame_hdr" });
+  const { headerOffset } = findSection(bytes, ".eh_frame_hdr");
+  bytes.writeBigUInt64LE(0n, headerOffset + 8);
+  bytes.writeBigUInt64LE(0n, headerOffset + 16);
+  const report = parse(bytes);
+  expect(report.coverage).toMatchObject({
+    status: "complete",
+    eh_frame_hdr_agreement: "agree",
+  });
+});
+
 it("translates and places addresses only through SHF_ALLOC sections", () => {
   const report = parse(
     elfUnwindSectionlessFixture({

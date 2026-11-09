@@ -627,7 +627,8 @@ export const parseElfUnwindRanges = (
     } else {
       headerLocation = placement.location;
       headerStatus = "present";
-      hdrBase = hdrSection.address;
+      hdrBase =
+        headerLocation === null ? null : vaForFileOffset(headerLocation.offset);
     }
   } else if (gnu !== undefined) {
     const offset = safeInt(gnu.offset);
