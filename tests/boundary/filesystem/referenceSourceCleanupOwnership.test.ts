@@ -420,6 +420,7 @@ it("preserves null cancellation and retained directory cleanup across retry", as
   const closeFailure = new Error("directory close temporarily denied");
   let closeCalls = 0;
   let releaseFixture: (() => Promise<void>) | undefined;
+  onTestFinished(() => releaseFixture?.());
   opendirMock.mockImplementation(async (...args) => {
     const directory = await actual.opendir(...args);
     const operations: DirectoryOperations = directory;
@@ -459,5 +460,4 @@ it("preserves null cancellation and retained directory cleanup across retry", as
   expect(resources.hasPending).toBe(true);
   expect(resources.cleanupResources).toEqual([root]);
   expect(closeCalls).toBe(1);
-  await releaseFixture?.();
 });
