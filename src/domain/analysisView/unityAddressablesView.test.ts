@@ -154,7 +154,7 @@ it("pages providers and reuses a sealed snapshot", () => {
   expect(second.value).toEqual(first.value);
 });
 
-it("refuses foreign view kinds, mismatched subjects and invalid parents", () => {
+it("accepts a relocated subject and refuses foreign view kinds, mismatched digests and invalid parents", () => {
   expect(
     projectUnityAddressablesView(parent(), {
       kind: "il2cpp-metadata",
@@ -171,6 +171,19 @@ it("refuses foreign view kinds, mismatched subjects and invalid parents", () => 
           format: "file",
           local_path: "/artifacts/other.bin",
           digest: { sha256: report.artifact.sha256 },
+        },
+      } as never,
+      { kind: "summary" },
+    ).ok,
+  ).toBe(true);
+  expect(
+    projectUnityAddressablesView(
+      {
+        ...parent(),
+        subject: {
+          format: "file",
+          local_path: report.artifact.path,
+          digest: { sha256: "0".repeat(64) },
         },
       } as never,
       { kind: "summary" },

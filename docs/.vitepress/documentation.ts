@@ -636,6 +636,11 @@ export const documentationSections = [
         route: "/uimage",
       },
       {
+        text: "Unity Addressables catalogs",
+        source: "unity-addressables.md",
+        route: "/unity-addressables",
+      },
+      {
         text: "UnityFS AssetBundle archives",
         source: "unityfs.md",
         route: "/unityfs",

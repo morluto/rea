@@ -92,7 +92,6 @@ export default defineConfig({
       {
         text: "Documentation directory",
         items: [
-          { text: "Unity Addressables", link: "/unity-addressables" },
           { text: "All guides", link: "/documentation" },
           { text: "Authoring conventions", link: "/development/documentation" },
           { text: "Feature specifications", link: "/specs/" },
