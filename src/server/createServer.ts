@@ -288,15 +288,31 @@ export const createServer = (
             policy: (): AvailabilityPolicy => {
               const value = basePolicy();
               const failures = capabilities.observeProviderLoadFailures();
-              return Object.keys(failures).length === 0
-                ? value
-                : {
-                    ...value,
-                    optionalProviderLoadFailures: {
-                      ...value.optionalProviderLoadFailures,
-                      ...failures,
-                    },
-                  };
+              const commandFailures =
+                capabilities.observeCommandProviderFailures();
+              const hasFailures = Object.keys(failures).length > 0;
+              const hasCommandFailures =
+                Object.keys(commandFailures).length > 0;
+              if (!hasFailures && !hasCommandFailures) return value;
+              return {
+                ...value,
+                ...(hasFailures
+                  ? {
+                      optionalProviderLoadFailures: {
+                        ...value.optionalProviderLoadFailures,
+                        ...failures,
+                      },
+                    }
+                  : {}),
+                ...(hasCommandFailures
+                  ? {
+                      commandProviderFailures: {
+                        ...value.commandProviderFailures,
+                        ...commandFailures,
+                      },
+                    }
+                  : {}),
+              };
             },
           };
         })();
