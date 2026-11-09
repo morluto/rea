@@ -374,6 +374,8 @@ const projectSizedDocument = (
   components: CycloneDxDocument["components"],
   dependencies: CycloneDxDocument["dependencies"],
   documentProperties: readonly CycloneDxProperty[],
+  /** Reader-recorded component the binary file is built from; never inferred. */
+  subjectRef?: string,
 ): Result<
   {
     readonly kind: "cyclonedx";
@@ -429,7 +431,14 @@ const projectSizedDocument = (
       },
     },
     components,
-    ...(dependencies === undefined ? {} : { dependencies }),
+    ...(dependencies === undefined
+      ? {}
+      : {
+          dependencies:
+            subjectRef === undefined
+              ? dependencies
+              : [{ ref: binaryRef, dependsOn: [subjectRef] }, ...dependencies],
+        }),
     compositions: [
       {
         aggregate: sourceCoverage.aggregate,
@@ -666,6 +675,11 @@ const projectRustCycloneDx = (
           dependsOn: uniqueRefs(pkg.dependencies.map((target) => refs[target])),
         }));
   const metadata = report.auditable_metadata;
+  const rootIndex = metadata?.root_package_index ?? null;
+  const rootRef =
+    rootIndex === null
+      ? undefined
+      : (refs[rootIndex] ?? `rust-package:${String(rootIndex)}`);
   const reportedUnknowns = rustBinaryUnknowns(report);
   return projectSizedDocument(
     parent,
@@ -680,7 +694,8 @@ const projectRustCycloneDx = (
     [COMPOSITION_LIMITATION, RUST_KIND_LIMITATION],
     components,
     dependencies,
-    [],
+    rootRef === undefined ? [] : [{ name: "rea:cargo:root", value: rootRef }],
+    rootRef,
   );
 };
 

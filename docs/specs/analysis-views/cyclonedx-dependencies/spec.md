@@ -27,7 +27,9 @@ access.
   segments) and non-crates.io Rust sources no Package URL: use an indexed
   `bom-ref`, keep the source in a property and leave identity unknown.
 - Set `scope: excluded` only for Rust packages whose kind is `build`. Follow the
-  embedded Rust package indices for dependency edges. Record only main-module
+  embedded Rust package indices for dependency edges, and relate
+  `metadata.component` to a recorded Rust root package with a dependency entry
+  and `rea:cargo:root`; a null root stays unknown. Record only main-module
   edges for Go and mark them with `rea:go:graph`; omit the empty `dependsOn`
   entry for a Go record that did not parse completely.
 - Report `compositions` as `incomplete` for partial coverage and `unknown`

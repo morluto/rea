@@ -39,7 +39,10 @@ Components use Package URLs:
   kind does not set `scope`.
 
 Rust dependency entries follow the embedded package indices, including a
-recorded self-edge. Go build information has no module graph, so the document
+recorded self-edge. When the embedded record names a root package, a dependency
+entry from `metadata.component` to that package and the document property
+`rea:cargo:root` give its `bom-ref`. A record without a root adds neither, so
+the binary's own package stays unknown. Go build information has no module graph, so the document
 records only edges from the main module to each module and sets `rea:go:graph`
 to `main-module-edges`.
 

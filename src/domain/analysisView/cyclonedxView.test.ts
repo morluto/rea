@@ -747,6 +747,7 @@ it("projects Rust edges, build scope and duplicate Package URLs", () => {
   );
   expect(unknownsNaming(first.unknowns, "serde")).toEqual([]);
   expect(first.document.dependencies).toEqual([
+    { ref: `sha256:${SHA}`, dependsOn: ["rust-package:2"] },
     { ref: serde, dependsOn: [] },
     {
       ref: "rust-package:1",
@@ -768,6 +769,37 @@ it("projects Rust edges, build scope and duplicate Package URLs", () => {
   });
   expect(first.document.compositions[0]?.aggregate).toBe("unknown");
   expect(JSON.stringify(first.document)).not.toContain('"complete"');
+});
+
+it("links the binary to its recorded Rust root and leaves a null root unknown", () => {
+  const packages = (root: boolean) => [
+    { ...cratesIoPackage("app", [1]), root },
+    cratesIoPackage("leaf"),
+    cratesIoPackage("tool"),
+  ];
+  const binaryRef = `sha256:${SHA}`;
+  const app = "pkg:cargo/app@1.0.0";
+  const rooted = projectRust(
+    rustMetadata(packages(true), [{ from_index: 0, to_index: 1 }], [], 0),
+  );
+  expect(rooted.document.metadata.component["bom-ref"]).toBe(binaryRef);
+  expect(rooted.document.dependencies?.[0]).toEqual({
+    ref: binaryRef,
+    dependsOn: [app],
+  });
+  expect(propertyValues(rooted.document.properties, "rea:cargo:root")).toEqual([
+    app,
+  ]);
+
+  const unrooted = projectRust(
+    rustMetadata(packages(false), [{ from_index: 0, to_index: 1 }], [], null),
+  );
+  expect(
+    unrooted.document.dependencies?.map((dependency) => dependency.ref),
+  ).not.toContain(binaryRef);
+  expect(
+    propertyValues(unrooted.document.properties, "rea:cargo:root"),
+  ).toEqual([]);
 });
 
 it("keeps missing Rust metadata unknown instead of an empty inventory", () => {
