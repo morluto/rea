@@ -332,6 +332,10 @@ crashed run can be recovered by the next run. Failed descriptor or staging clean
 could not be written or read, for example on a full disk, the export stops with
 an error instead of decompiling the rest. Files and records already committed
 stay, `decompile-index.json` is still written, and a later resume continues.
+If the index was published before cancellation or a later failure, the error's
+`diagnostics.published_output` retains its `output_directory` and `index_path`.
+This receipt confirms publication, not completion of every selected function.
+Failed staging cleanup retains the same receipt through cleanup retry.
 
 Type inspection selects one exact database pathname or typed data address.
 Struct/union fields, enums, pointers, arrays, typedefs, size, alignment, packing
