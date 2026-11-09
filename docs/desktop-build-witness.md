@@ -101,7 +101,7 @@ See [desktop builds](https://github.com/morluto/rea/blob/main/.agents/skills/rev
    `unowned_changes` and `no_document` point at `state_paths`. They also say,
    for a drafted `file`, why its suggestions are thin: `by_position`,
    `view_state_only`, `long_text`, `cut_view`, `unreadable_view`,
-   `volatile_lines` or `read_as_text`.
+   `volatile_lines`, `generated_reference` or `read_as_text`.
 6. Write the task: its name, the prompt in the user's own words naming the
    app (a solving agent's own shell cannot see the computer's files, and the
    export's limitations say when a prompt names neither the app's title,

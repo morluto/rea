@@ -10,6 +10,7 @@ export const FILE_NOTE_CODES = [
   "cut_view",
   "unreadable_view",
   "volatile_lines",
+  "generated_reference",
   "read_as_text",
 ] as const;
 
@@ -25,6 +26,23 @@ export interface FileNote {
 }
 
 const MAX_LISTED = 5;
+
+/** Explain a relationship whose generated ID cannot be compared across runs. */
+export const generatedReferenceNotes = (
+  file: string,
+  pointers: readonly string[],
+): FileNote[] =>
+  pointers.length === 0
+    ? []
+    : [
+        {
+          code: "generated_reference",
+          file,
+          message:
+            "Some array values refer to newly generated record IDs and cannot be checked exactly across runs; review the relationship manually.",
+          pointers: pointers.slice(0, MAX_LISTED),
+        },
+      ];
 
 /** What a file's change says about whether its views can show it. */
 export interface ChangeShape {

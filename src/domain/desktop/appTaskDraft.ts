@@ -1,8 +1,8 @@
 import type { JsonValue } from "../jsonValue.js";
 import { isTimestamp, type DesktopTaskCheckInput } from "./appTask.js";
-import { isGeneratedUid } from "./attributeRank.js";
 import {
   decisive,
+  generatedRecordId,
   isLikeDefault,
   jsonCounts,
   outermost,
@@ -12,6 +12,7 @@ import {
 } from "./appTaskDraftJson.js";
 import {
   fileNotes,
+  generatedReferenceNotes,
   readAsTextNotes,
   type FileNote,
 } from "./appTaskDraftFileNotes.js";
@@ -288,19 +289,44 @@ const valueSuggestions = (
     format === "keyfile" ? entries : outermost(entries);
   const edits: Suggestion[] = [];
   const ends = versions(baseline, final);
+  const generatedId =
+    format === "json" ? generatedRecordId(ends, "json") : () => false;
+  // Array references to a newly added record cannot compare its generated id
+  // across runs. Only ids selected by record pairing qualify; an existing
+  // account or other scalar value remains an exact check.
+  const newRecordIds = new Set(
+    change.added.flatMap((entry) => {
+      const at = pointer(entry);
+      const value =
+        at === undefined ? undefined : resolvePointer(final.view, at, format);
+      return at !== undefined && generatedId(at) && typeof value === "string"
+        ? [value]
+        : [];
+    }),
+  );
   // A key file's entries hold no array, so no record of one is added whole.
   const added = new Set(change.added);
+  const generatedReferences: string[] = [];
   for (const entry of leaves([...change.added, ...change.changed])) {
     const at = pointer(entry);
     const value =
       at === undefined ? undefined : resolvePointer(final.view, at, format);
+    const generatedReference =
+      at !== undefined &&
+      typeof value === "string" &&
+      newRecordIds.has(value) &&
+      Array.isArray(
+        resolvePointer(final.view, at.replace(/\/[^/]+$/u, ""), format),
+      );
+    if (generatedReference) generatedReferences.push(at);
     // An id the app generates, as TreeLine's uuid1 `uid`, holds nothing another save repeats.
     if (
       at !== undefined &&
       at !== "" &&
       value !== undefined &&
       !isTimestamp(value) &&
-      !(typeof value === "string" && isGeneratedUid(value)) &&
+      !generatedId(at) &&
+      !generatedReference &&
       !isLikeDefault(ends, added, at, value)
     )
       edits.push({ kind: "value_equals", file, pointer: at, value });
@@ -330,7 +356,10 @@ const valueSuggestions = (
       ...recordGuards(file, suggested.slice(0, MAX_SUGGESTIONS), ends, added),
       ...counts.guards,
     ],
-    notes: positionalNotes(file, suggested, final.view),
+    notes: [
+      ...positionalNotes(file, suggested, final.view),
+      ...generatedReferenceNotes(file, generatedReferences),
+    ],
   };
 };
 
