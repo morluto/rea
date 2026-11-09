@@ -3,7 +3,7 @@ import { once } from "node:events";
 import { writeFileSync } from "node:fs";
 import { buffer } from "node:stream/consumers";
 import { createReader } from "./inventory/reader.js";
-import { open, readFile, writeFile } from "node:fs/promises";
+import { open, readFile, writeFile, type FileHandle } from "node:fs/promises";
 import { join } from "node:path";
 import { setImmediate } from "node:timers";
 
@@ -952,6 +952,41 @@ it.each(["valid replacement", "malformed blob"] as const)(
     expect(created?.formatMetadata()).toBeUndefined();
   },
 );
+
+it("allows an uncancelled inventory after a cancelled SEA preparation", async () => {
+  const path = await writeCarrier("cancel-retry", nodeSeaElf(populated));
+  const reader = new NodeSeaArtifactReader(path);
+  const controller = new AbortController();
+  const reason = { stop: "first inventory" };
+  const observed = await open(path, "r");
+  const prototype = Object.getPrototypeOf(observed) as FileHandle;
+  const original = prototype.read;
+  let stopped = false;
+  const spy = vi.spyOn(prototype, "read").mockImplementation(async function (
+    this: FileHandle,
+    ...args: Parameters<typeof original>
+  ) {
+    const result = await original.apply(this, args);
+    if (!stopped) {
+      stopped = true;
+      controller.abort(reason);
+    }
+    return result;
+  });
+  try {
+    await expect(
+      reader.entries(controller.signal)[Symbol.asyncIterator]().next(),
+    ).rejects.toMatchObject({ reason: "cancelled" });
+    spy.mockRestore();
+    const entries = [];
+    for await (const entry of reader.entries()) entries.push(entry);
+    expect(entries.length).toBeGreaterThan(0);
+  } finally {
+    spy.mockRestore();
+    await observed.close();
+    await reader.close();
+  }
+});
 
 it.each([
   {
