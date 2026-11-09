@@ -110,8 +110,9 @@ partway through is charged its full per-candidate allowance, since its partial
 output is not measured. When that search budget runs
 out before a config is accepted, the config is `incomplete` with reason
 `config_search_exhausted` instead of failing or reporting an absent config.
-Inflation runs off the event loop and every scan yields to it at least once per
-MiB, so a cancellation that arrives while the image is being parsed is honored
+Inflation runs off the event loop. Every scan, including config text
+checks, validation of one long value, and hashing, yields to it at least once
+per MiB, so a cancellation that arrives while the image is being parsed is honored
 at the next check. One inflate call runs to its output bound once started.
 
 Results that could not search or read the kernel bytes stay `incomplete`,

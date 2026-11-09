@@ -138,9 +138,21 @@ it("accepts a string value longer than 4096 characters", async () => {
 });
 
 it("keeps the strict grammar for malformed quoted values", async () => {
-  for (const value of ['"open', '"bad \\q"', '"a"b"', '"tail\\"'])
+  for (const value of [
+    '"open',
+    '"bad \\q"',
+    '"a"b"',
+    '"tail\\"',
+    '"a\rb"',
+    '"a\u2028b"',
+    "y\u2028",
+  ])
     expect(
-      (await parse(embeddedKernelConfig(`CONFIG_X=${value}\n`))).config.status,
+      (
+        await parse(
+          framed(gzipSync(Buffer.from(`CONFIG_X=${value}\n`, "utf8"))),
+        )
+      ).config.status,
     ).toBe("malformed");
 });
 
@@ -543,4 +555,41 @@ it("honors an abort raised while the parse is running", async () => {
     expect(error).toBeInstanceOf(ArtifactReaderFailure);
     expect((error as ArtifactReaderFailure).reason).toBe("cancelled");
   }
+});
+
+it("yields to the event loop while decoding and validating one long value", async () => {
+  const input = inspectKernelBuildConfigInputSchema.parse({
+    path: artifactPath,
+    max_config_bytes: 16 << 20,
+  });
+  const artifact = { path: artifactPath, sha256: "ab".repeat(32), bytes: 0 };
+  const bytes = embeddedKernelConfig(
+    `CONFIG_EXTRA_FIRMWARE="${"a".repeat(8 << 20)}"\n`,
+  );
+  // Each cancellation check records the event-loop turn it ran in. Checks
+  // that all share one turn could never observe a live abort.
+  let turns = 0;
+  let running = true;
+  const tick = (): void => {
+    turns += 1;
+    if (running) setImmediate(tick);
+  };
+  setImmediate(tick);
+  const seen: number[] = [];
+  const signal = {
+    get aborted() {
+      seen.push(turns);
+      return false;
+    },
+    reason: undefined,
+  } as unknown as AbortSignal;
+  try {
+    const report = await parseKernelBuildConfig(bytes, artifact, input, signal);
+    expect(report.config).toMatchObject({ status: "present", option_count: 1 });
+  } finally {
+    running = false;
+  }
+  // Turns spent after the inflate returned, while the decoded text is parsed.
+  const parsing = new Set(seen.slice(seen.indexOf(seen[1] ?? -1)));
+  expect(parsing.size).toBeGreaterThanOrEqual(8);
 });

@@ -28,6 +28,8 @@ const IKCFG_ED = Buffer.from("IKCFG_ED");
 const BANNER_PREFIX = Buffer.from("Linux version ");
 const BANNER_TEXT_BYTES = 512;
 const MAX_NAME_BYTES = 256;
+/** `# ` + a longest name + ` is not set`. */
+const UNSET_LINE_BYTES = MAX_NAME_BYTES + 13;
 /** IKCFG_ST + gzip candidates inflated per search; a kernel carries one. */
 const MAX_CONFIG_CANDIDATES = 16;
 /** Total inflated bytes across all candidates, as a multiple of max_config_bytes. */
@@ -35,9 +37,6 @@ const CONFIG_SEARCH_BUDGET_FACTOR = 4;
 /** Bytes scanned between event-loop turns, so a live abort can be delivered. */
 const TURN_STRIDE = 0x100000;
 const UNTRUSTED = "target-derived-untrusted" as const;
-
-const sha256 = (bytes: Buffer): string =>
-  createHash("sha256").update(bytes).digest("hex");
 
 const codeOf = (error: unknown): string | null =>
   error instanceof Error && "code" in error && typeof error.code === "string"
@@ -51,6 +50,19 @@ const codeOf = (error: unknown): string | null =>
 const yieldTurn = async (signal: AbortSignal | undefined): Promise<void> => {
   await nextTurn();
   assertArtifactReadActive(signal);
+};
+
+/** SHA-256 hashed one TURN_STRIDE window per event-loop turn. */
+const sha256 = async (
+  bytes: Buffer,
+  signal: AbortSignal | undefined,
+): Promise<string> => {
+  const hash = createHash("sha256");
+  for (let start = 0; start < bytes.length; start += TURN_STRIDE) {
+    if (start > 0) await yieldTurn(signal);
+    hash.update(bytes.subarray(start, start + TURN_STRIDE));
+  }
+  return hash.digest("hex");
 };
 
 /** A caller-selected budget refused the image; `knob` names it as a typed fact. */
@@ -203,36 +215,59 @@ const inflateGzipMember = async (
 };
 
 const decoder = new TextDecoder("utf-8", { fatal: true });
+/** C0 controls other than tab, LF and CR, plus DEL. */
+const CONTROL = /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/u;
 
-const decodeText = (bytes: Buffer): string | null => {
-  for (const value of bytes)
-    if (
-      (value < 0x20 && value !== 0x09 && value !== 0x0a && value !== 0x0d) ||
-      value === 0x7f
-    )
-      return null;
+/**
+ * Strict UTF-8 text with no control bytes besides tab, LF and CR. The native
+ * decode is one linear pass; the control check then runs one TURN_STRIDE
+ * window per event-loop turn.
+ */
+const decodeText = async (
+  bytes: Buffer,
+  signal: AbortSignal | undefined,
+): Promise<string | null> => {
+  let text: string;
   try {
-    return decoder.decode(bytes);
+    text = decoder.decode(bytes);
   } catch {
     return null;
   }
+  for (let start = 0; start < text.length; start += TURN_STRIDE) {
+    if (start > 0) await yieldTurn(signal);
+    if (CONTROL.test(text.slice(start, start + TURN_STRIDE))) return null;
+  }
+  return text;
 };
 
 const QUOTE = 0x22;
 const BACKSLASH = 0x5c;
 
+/** Line terminators other than LF that a `.config` value may not contain. */
+const isLineBreak = (char: number): boolean =>
+  char === 0x0d || char === 0x2028 || char === 0x2029;
+
 /**
  * Decoded `"..."` value whose only escapes are `\"` and `\\`. The line is
- * validated in place first, so the decoded string is built once, no larger
- * than the line, and only for a valid value.
+ * validated in place first, yielding once per TURN_STRIDE characters, so the
+ * decoded string is built once, no larger than the line, and only for a valid
+ * value.
  */
-const unquote = (raw: string): string | null => {
+const unquote = async (
+  raw: string,
+  signal: AbortSignal | undefined,
+): Promise<string | null> => {
   if (raw.length < 2 || !raw.startsWith('"') || !raw.endsWith('"')) return null;
   const end = raw.length - 1;
   let escaped = false;
+  let turnAt = TURN_STRIDE;
   for (let index = 1; index < end; index += 1) {
+    if (index >= turnAt) {
+      turnAt = index + TURN_STRIDE;
+      await yieldTurn(signal);
+    }
     const char = raw.charCodeAt(index);
-    if (char === QUOTE) return null;
+    if (char === QUOTE || isLineBreak(char)) return null;
     if (char !== BACKSLASH) continue;
     const next = raw.charCodeAt(index + 1);
     if (index + 1 >= end || (next !== QUOTE && next !== BACKSLASH)) return null;
@@ -243,14 +278,15 @@ const unquote = (raw: string): string | null => {
   return escaped ? body.replace(/\\(["\\])/gu, "$1") : body;
 };
 
-const classifyValue = (
+const classifyValue = async (
   raw: string,
-): { kind: Entry["kind"]; value: string } | null => {
+  signal: AbortSignal | undefined,
+): Promise<{ kind: Entry["kind"]; value: string } | null> => {
   if (raw === "y" || raw === "m") return { kind: raw, value: raw };
   if (KERNEL_BUILD_CONFIG_NUMBER.test(raw))
     return { kind: "number", value: raw };
   // Kconfig strings have no length limit; max_config_bytes bounds the line.
-  const text = unquote(raw);
+  const text = await unquote(raw, signal);
   return text === null ? null : { kind: "string", value: text };
 };
 
@@ -266,7 +302,7 @@ const parseConfigText = async (
   maxEntries: number,
   signal: AbortSignal | undefined,
 ): Promise<readonly Entry[] | null> => {
-  const text = decodeText(bytes);
+  const text = await decodeText(bytes, signal);
   if (text === null || text.length === 0) return null;
   const entries: Entry[] = [];
   const push = (entry: Entry): void => {
@@ -289,7 +325,12 @@ const parseConfigText = async (
     );
     start = end + 1;
     if (/^[ \t]*$/u.test(line)) continue;
-    const unset = /^# (CONFIG_[A-Za-z0-9_]+) is not set$/u.exec(line);
+    // Only a line short enough to hold a bounded name can be either form, so
+    // the patterns never scan a long value.
+    const unset =
+      line.length <= UNSET_LINE_BYTES
+        ? /^# (CONFIG_[A-Za-z0-9_]+) is not set$/u.exec(line)
+        : null;
     if (unset !== null) {
       const name = unset[1] ?? "";
       if (name.length > MAX_NAME_BYTES) return null;
@@ -297,11 +338,13 @@ const parseConfigText = async (
       continue;
     }
     if (line.startsWith("#")) continue;
-    const set = /^(CONFIG_[A-Za-z0-9_]+)=(.*)$/u.exec(line);
+    const set = /^(CONFIG_[A-Za-z0-9_]+)=/u.exec(
+      line.slice(0, MAX_NAME_BYTES + 1),
+    );
     if (set === null) return null;
     const name = set[1] ?? "";
     if (name.length > MAX_NAME_BYTES) return null;
-    const value = classifyValue(set[2] ?? "");
+    const value = await classifyValue(line.slice(set[0].length), signal);
     if (value === null) return null;
     push({ name, kind: value.kind, value: value.value, trust: UNTRUSTED });
   }
@@ -421,7 +464,7 @@ const findConfig = async (
         kind: "present",
         ...blob,
         entries,
-        sha256: sha256(member.output),
+        sha256: await sha256(member.output, signal),
       };
     malformed ??= {
       kind: "malformed",
