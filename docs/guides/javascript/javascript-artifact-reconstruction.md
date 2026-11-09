@@ -381,6 +381,16 @@ Selected bounded text is then parsed as inert data to recover:
   relative to the calling module; string worker and service-worker paths use
   the document base URL or Node's working directory, which static analysis
   does not establish, so they keep their expression and stay unresolved);
+- worklet modules loaded through `addModule` on `CSS.paintWorklet`,
+  `CSS.layoutWorklet`, `CSS.animationWorklet`, or the `audioWorklet` of a
+  context that an unmodified `AudioContext` or `OfflineAudioContext`
+  constructor created, directly or through stable bindings. As for service
+  workers, only a `new URL(path, import.meta.url)` argument resolves, and a
+  string keeps its expression. A context of unproven origin, such as a
+  parameter or a `this` property, records no reference. Neither does a load
+  after an earlier call that receives the bound context or its `audioWorklet`,
+  including a previous `addModule`, because that call may have replaced the
+  method;
 - Vite preload dependency tables (`__vite__mapDeps`): `./` entries resolve
   relative to the importing chunk; base-relative entries such as
   `assets/chunk.js` carry a `vite-output:` specifier and resolve under the one

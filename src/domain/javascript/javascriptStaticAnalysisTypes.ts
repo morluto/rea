@@ -38,7 +38,8 @@ interface JavaScriptStaticReferenceState {
     | "dynamic-import"
     | "require"
     | "worker"
-    | "service-worker";
+    | "service-worker"
+    | "worklet";
   readonly module_key: string | null;
   /** Recovered factory runtime; absent in older or unbundled findings. */
   readonly module_runtime?: string;
@@ -53,7 +54,7 @@ interface JavaScriptStaticReferenceState {
   readonly location: JavaScriptSourceRange;
 }
 
-/** A statically visible module, worker, or service-worker reference. */
+/** A statically visible module, worker, service-worker, or worklet reference. */
 export type JavaScriptStaticReference = JavaScriptStaticReferenceState &
   (
     | { readonly specifier: string; readonly expression: null }

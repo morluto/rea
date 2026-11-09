@@ -40,6 +40,7 @@ export const JAVASCRIPT_APPLICATION_NODE_KINDS = [
   "url-scheme",
   "worker",
   "service-worker",
+  "worklet",
   "endpoint",
   "storage",
   "native-addon",

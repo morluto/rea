@@ -113,6 +113,8 @@ export interface JavaScriptFindingContext {
     | { readonly owner: t.NewExpression; readonly path: readonly string[] }
     | undefined;
   readonly xhrOpenRequest?: (node: t.Node) => boolean;
+  /** Proven `addModule` call on a CSS or AudioWorklet platform worklet. */
+  readonly workletModuleLoad?: (node: t.Node) => boolean;
   readonly rendererLoad?: (callee: t.Node, site: t.Node) => boolean;
   readonly rpcScan: JavaScriptRpcScan;
   /** Shared bounded argv/nullish argument shapes for optional-slot signatures. */
