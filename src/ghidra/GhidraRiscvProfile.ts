@@ -218,7 +218,7 @@ const ghidraRiscvSectionOverlapRefusal = (
     return `This RISC-V lane requires a readable section table: ${overlap.reason}.`;
   if (overlap.status !== "unsupported") return null;
   const [first, second] = overlap.witnesses;
-  return `Sections ${witnessLabel(first)} and ${witnessLabel(second)} share addresses, so Ghidra 12.1.4's ELF loader would put one of them in an overlay address space. This lane prepares only one NOBITS section that starts at an executable PROGBITS section's address and covers it, with no other section overlapping either; see docs/ghidra-riscv.md.`;
+  return `Sections ${witnessLabel(first)} and ${witnessLabel(second)} share addresses, so Ghidra 12.1.4's ELF loader would put one of them in an overlay address space. This lane prepares only one NOBITS section that starts at an executable PROGBITS section's address and covers it, with no other section overlapping either; see docs/providers/ghidra-riscv.md.`;
 };
 
 /**
@@ -525,7 +525,7 @@ export const ghidraRiscvLoadPreparationLimitations = (
   const code = sectionLabel(expected.code);
   const reservation = sectionLabel(expected.reservation);
   return [
-    `RISC-V ELF load layout: NOBITS section ${reservation} reserves the addresses of executable section ${code} (${expected.code.address}, ${expected.code.size} bytes). When the reservation follows the code in the section table, Ghidra 12.1.4's ELF loader puts the code in an overlay address space, which its DWARF import, call-frame entries and default-space references do not reach; see docs/ghidra-riscv.md.`,
+    `RISC-V ELF load layout: NOBITS section ${reservation} reserves the addresses of executable section ${code} (${expected.code.address}, ${expected.code.size} bytes). When the reservation follows the code in the section table, Ghidra 12.1.4's ELF loader puts the code in an overlay address space, which its DWARF import, call-frame entries and default-space references do not reach; see docs/providers/ghidra-riscv.md.`,
     report === undefined || "refused" in report
       ? `Before analysis REA moves ${code} out of such an overlay into the default address space, with the same file bytes and offsets, and keeps ${reservation} as an uninitialized overlay.`
       : report.outcome === "moved"

@@ -339,7 +339,7 @@ describe("ELF section overlap refusals", () => {
       expect(refusal).toContain(
         "This lane prepares only one NOBITS section that starts at an executable PROGBITS section's address and covers it",
       );
-      expect(refusal).toContain("docs/ghidra-riscv.md");
+      expect(refusal).toContain("docs/providers/ghidra-riscv.md");
       expect(preparation).toBeUndefined();
     },
   );
