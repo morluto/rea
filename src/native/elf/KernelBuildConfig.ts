@@ -447,8 +447,7 @@ const findConfig = async (
       return "exhausted";
     candidates += 1;
     const limit = Math.min(maxOutput, remaining);
-    const span = closing < 0 ? bytes : bytes.subarray(0, closing);
-    const member = await inflateGzipMember(span, gzipAt, limit, signal);
+    const member = await inflateGzipMember(bytes, gzipAt, limit, signal);
     if (member.kind === "limit") {
       if (limit < maxOutput) return "exhausted";
       // A member past max_config_bytes may be a decoy, so a later framed
@@ -476,7 +475,17 @@ const findConfig = async (
       };
       continue;
     }
-    if (member.end !== closing) continue;
+    if (
+      !bytes.subarray(member.end, member.end + IKCFG_ED.length).equals(IKCFG_ED)
+    ) {
+      const suffix = bytes.subarray(member.end);
+      if (
+        suffix.length < IKCFG_ED.length &&
+        IKCFG_ED.subarray(0, suffix.length).equals(suffix)
+      )
+        truncated = true;
+      continue;
+    }
     const blob = {
       marker,
       gzipStart: gzipAt,

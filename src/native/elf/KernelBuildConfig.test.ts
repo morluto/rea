@@ -699,3 +699,23 @@ it("finds markers that straddle a search window boundary", async () => {
     });
   }
 });
+
+it("retains incomplete coverage for a partial config end marker", async () => {
+  const bytes = kernelBuildConfigFixture();
+  const end = bytes.indexOf(
+    Buffer.from("IKCFG_ED"),
+    bytes.indexOf(Buffer.from("IKCFG_ST")) + 20,
+  );
+  const report = await parse(bytes.subarray(0, end + 7));
+  expect(report.config.status).not.toBe("absent");
+});
+
+it("ignores marker bytes inside a gzip member", async () => {
+  const bytes = Buffer.concat([
+    kernelBuildConfigFixture().subarray(0, 64),
+    Buffer.from("IKCFG_ST"),
+    gzipSync(Buffer.from('CONFIG_LOCALVERSION="IKCFG_ED"\n'), { level: 0 }),
+    Buffer.from("IKCFG_ED"),
+  ]);
+  expect((await parse(bytes)).config.status).toBe("present");
+});
