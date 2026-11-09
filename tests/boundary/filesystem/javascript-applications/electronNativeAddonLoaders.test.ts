@@ -523,3 +523,123 @@ it("resolves dlopen require.resolve search paths without linking sibling addon.n
     },
   ]);
 });
+
+it("traces sibling unpacked require, outside-wrapper rewritten directories, nested ASAR anchored require, and skips uppercase .NODE decoys", async () => {
+  const root = await createTestTempDirectory("rea-nested-asar-native-fixes-");
+  const asarSource = join(root, "asar-src");
+  const appRoot = join(root, "app");
+  const nestedAsar = join(appRoot, "resources/app.asar");
+  const unpackedOnlyBytes = "unpacked-sibling-direct-require-bytes";
+  const packedNgbBytes = "packed-ngb-addon-bytes";
+  const looseNgbBytes = "loose-rewritten-ngb-addon-bytes";
+  const nestedInsideBytes = "nested-asar-anchored-require-bytes";
+  const decoyUpperBytes = "uppercase-node-decoy-bytes";
+
+  await writeFixtureFiles(asarSource, {
+    "package.json": JSON.stringify({
+      name: "inner-asar",
+      main: "pkg/index.cjs",
+    }),
+    "pkg/index.cjs": `
+      const { run } = require("./unpacked-only.node");
+      module.exports = { run };
+    `,
+    "ngb-pkg/package.json": JSON.stringify({
+      name: "ngb-pkg",
+      main: "index.cjs",
+    }),
+    "ngb-pkg/prebuilds/darwin-arm64/ngb.node": packedNgbBytes,
+    "inside.node": nestedInsideBytes,
+  });
+  await mkdir(join(appRoot, "resources"), { recursive: true });
+  await createPackageWithOptions(asarSource, nestedAsar, {});
+
+  await writeFixtureFiles(appRoot, {
+    "package.json": JSON.stringify({
+      name: "outer-wrapper",
+      main: "launcher.cjs",
+    }),
+    "launcher.cjs": [
+      'const { ipcMain } = require("electron");',
+      'const path = require("node:path");',
+      'const load = require("node-gyp-build");',
+      'const inner = require("./resources/app.asar/pkg/index.cjs");',
+      'const rewritten = load(path.join(__dirname, "resources", "app.asar", "ngb-pkg").replace("app.asar", "app.asar.unpacked"));',
+      'const anchored = require(path.join(__dirname, "resources", "app.asar", "inside.node"));',
+      'const upperDecoy = require(path.join(__dirname, "decoy-dir", "decoy.NODE"));',
+      'ipcMain.handle("wrapper:boot", () => [inner, rewritten, anchored, upperDecoy]);',
+    ].join("\n"),
+    "decoy-dir/decoy.NODE": "module.exports = { notNative: true };",
+    "resources/app.asar.unpacked/pkg/unpacked-only.node": unpackedOnlyBytes,
+    "resources/app.asar.unpacked/ngb-pkg/prebuilds/darwin-arm64/ngb.node":
+      looseNgbBytes,
+    "resources/app.asar.unpacked/ngb-pkg/prebuilds/linux-x64/decoy.NODE":
+      decoyUpperBytes,
+  });
+
+  const analyzed = await analyzeJavaScriptApplication({
+    input_path: appRoot,
+    format: "directory",
+  });
+  if (!analyzed.ok) throw analyzed.error;
+  const result = javascriptApplicationAnalysisResultSchema.parse(
+    analyzed.value.normalized_result,
+  );
+  expect(result.summary).toMatchObject({
+    resolved_native_addon_bindings: 3,
+  });
+
+  const traced = traceApplicationFeatureEvidence({
+    application: analyzed.value,
+    seed: { kind: "module", value: "launcher.cjs" },
+    direction: "outgoing",
+    native_observations: [
+      createSimulatedNativeEvidence(
+        join(appRoot, "resources/app.asar.unpacked/pkg/unpacked-only.node"),
+        unpackedOnlyBytes,
+      ),
+      createSimulatedNativeEvidence(
+        join(
+          appRoot,
+          "resources/app.asar.unpacked/ngb-pkg/prebuilds/darwin-arm64/ngb.node",
+        ),
+        looseNgbBytes,
+      ),
+      createSimulatedNativeEvidence(
+        join(appRoot, "resources/app.asar/inside.node"),
+        nestedInsideBytes,
+      ),
+    ],
+  });
+  if (!traced.ok) throw traced.error;
+
+  const byPath = new Map(
+    traced.value.result.native_handoffs.map((handoff) => [
+      handoff.artifact_path,
+      handoff,
+    ]),
+  );
+  expect([...byPath.keys()].sort()).toEqual([
+    "resources/app.asar.unpacked/ngb-pkg/prebuilds/darwin-arm64/ngb.node",
+    "resources/app.asar.unpacked/pkg/unpacked-only.node",
+    "resources/app.asar/inside.node",
+  ]);
+  expect(
+    byPath.get(
+      "resources/app.asar.unpacked/ngb-pkg/prebuilds/darwin-arm64/ngb.node",
+    ),
+  ).toMatchObject({
+    artifact_sha256: sha256Hex(looseNgbBytes),
+    status: "evidence-linked",
+  });
+  expect(
+    byPath.get("resources/app.asar.unpacked/pkg/unpacked-only.node"),
+  ).toMatchObject({
+    artifact_sha256: sha256Hex(unpackedOnlyBytes),
+    status: "evidence-linked",
+  });
+  expect(byPath.get("resources/app.asar/inside.node")).toMatchObject({
+    artifact_sha256: sha256Hex(nestedInsideBytes),
+    status: "evidence-linked",
+  });
+});

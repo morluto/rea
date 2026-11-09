@@ -470,3 +470,63 @@ it("rejects global process loaders/axes after node:process alias patches and han
     absoluteUrlHelperRoot.analysis_coverage?.semantics.unknown_findings,
   ).toBeGreaterThan(0);
 });
+
+it("preserves exact app.asar replacement scope and bindings .node suffix normalization", () => {
+  const cjs = analyzeCommonJsStaticFixture(`
+    const path = require("node:path");
+    const load = require("node-gyp-build");
+    const bindings = require("bindings");
+    const outerReplace = load(
+      path.join(__dirname, "app.asar", "pkg").replace("app.asar", "app.asar.unpacked"),
+    );
+    const innerReplace = load(
+      path.join(__dirname.replace("app.asar", "app.asar.unpacked"), "app.asar", "pkg"),
+    );
+    const replaceAllDir = load(
+      path.join(__dirname, "app.asar", "nested", "app.asar").replaceAll("app.asar", "app.asar.unpacked"),
+    );
+    const upperCaseBindings = bindings("upper.NODE");
+    void outerReplace, innerReplace, replaceAllDir, upperCaseBindings;
+  `);
+  expect(cjs.electron.native_addon_bindings).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({
+        specifier: "node-gyp-build:app.asar/pkg",
+        resolution: {
+          kind: "node-gyp-build",
+          directory: "app.asar/pkg",
+          asar_unpacked: true,
+        },
+      }),
+      expect.objectContaining({
+        specifier: "node-gyp-build:app.asar/pkg",
+        resolution: {
+          kind: "node-gyp-build",
+          directory: "app.asar/pkg",
+          asar_unpacked: true,
+          asar_unpacked_scope: { directory: "." },
+        },
+      }),
+      expect.objectContaining({
+        specifier: "node-gyp-build:app.asar/nested/app.asar",
+        resolution: {
+          kind: "node-gyp-build",
+          directory: "app.asar/nested/app.asar",
+          asar_unpacked: true,
+          asar_unpacked_scope: {
+            directory: "app.asar/nested/app.asar",
+            replace_all: true,
+          },
+        },
+      }),
+      expect.objectContaining({
+        specifier: "upper.NODE.node",
+        resolution: {
+          kind: "bindings",
+          addon_name: "upper.NODE.node",
+          module_root: null,
+        },
+      }),
+    ]),
+  );
+});

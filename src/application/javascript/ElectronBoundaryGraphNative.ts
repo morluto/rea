@@ -1,6 +1,5 @@
 import { javascriptSourceRangeKey } from "../../domain/javascript/javascriptSourceCoordinates.js";
 import type { ElectronNativeAddonBindingFinding } from "../../domain/javascript/electronStaticAnalysisTypes.js";
-import type { JavaScriptStaticAnalysis } from "../../domain/javascript/javascriptStaticAnalysisTypes.js";
 import type { JavaScriptArtifactFile } from "../../domain/javascript/javascriptArtifactFiles.js";
 import {
   artifactLocalIdentity,
@@ -24,8 +23,8 @@ import {
 interface NativeBindingInput {
   readonly context: JavaScriptArtifactGraphContext;
   readonly resolver: ElectronNativeAddonResolver;
+  readonly existingLoadTargets: ReadonlyMap<string, ReadonlySet<string>>;
   readonly file: JavaScriptArtifactFile;
-  readonly javascript: JavaScriptStaticAnalysis;
   readonly value: ElectronNativeAddonBindingFinding;
   readonly coverage: JavaScriptArtifactGraphCoverage;
 }
@@ -34,6 +33,7 @@ interface NativeBindingInput {
 export const addElectronNativeBoundaries = (
   context: JavaScriptArtifactGraphContext,
 ): void => {
+  const existingLoadTargets = collectExistingLoadTargets(context);
   const resolver =
     context.analysis.nativeAddonResolver ??
     createElectronNativeAddonResolver({
@@ -49,8 +49,8 @@ export const addElectronNativeBoundaries = (
       addNativeBinding({
         context,
         resolver,
+        existingLoadTargets,
         file,
-        javascript,
         value,
         coverage,
       });
@@ -58,7 +58,8 @@ export const addElectronNativeBoundaries = (
 };
 
 const addNativeBinding = (input: NativeBindingInput): void => {
-  const { context, resolver, file, javascript, value, coverage } = input;
+  const { context, resolver, existingLoadTargets, file, value, coverage } =
+    input;
   const source = electronFindingSourceNode(
     context,
     file,
@@ -149,7 +150,7 @@ const addNativeBinding = (input: NativeBindingInput): void => {
       "Requested JavaScript members are not verified native exports.",
     ],
   });
-  const emitIndirectLoadEdge = !hasDirectStaticLoadReference(javascript, value);
+  const sourceExistingLoads = existingLoadTargets.get(source.node_id);
   for (const resolvedPath of resolvedPaths) {
     const addon = context.fileNodes.get(resolvedPath);
     if (addon === undefined) continue;
@@ -173,7 +174,10 @@ const addNativeBinding = (input: NativeBindingInput): void => {
         "The .node artifact path is resolved, but requested JavaScript members have not been verified against native symbols.",
       ],
     });
-    if (emitIndirectLoadEdge && source.node_id !== addon.node_id) {
+    if (
+      source.node_id !== addon.node_id &&
+      sourceExistingLoads?.has(addon.node_id) !== true
+    ) {
       addElectronInferenceEdge(context, {
         source,
         target: addon,
@@ -196,24 +200,18 @@ const addNativeBinding = (input: NativeBindingInput): void => {
   }
 };
 
-const hasDirectStaticLoadReference = (
-  javascript: JavaScriptStaticAnalysis,
-  value: ElectronNativeAddonBindingFinding,
-): boolean => {
-  const resolution = value.resolution;
-  if (resolution === undefined) return true;
-  if (
-    resolution.kind !== "candidates" ||
-    resolution.resolution_context !== "module-specifier" ||
-    resolution.candidates.length !== 1
-  )
-    return false;
-  const candidate = resolution.candidates[0];
-  return javascript.references.some(
-    (ref) =>
-      ref.operation === "load" &&
-      ref.specifier === candidate &&
-      ref.resolution_base_path === resolution.resolution_base_path &&
-      ref.module_key === value.module_key,
-  );
+const collectExistingLoadTargets = (
+  context: JavaScriptArtifactGraphContext,
+): Map<string, Set<string>> => {
+  const bySource = new Map<string, Set<string>>();
+  for (const edge of context.accumulator.edges()) {
+    if (edge.relation !== "loads") continue;
+    let targets = bySource.get(edge.source_node_id);
+    if (targets === undefined) {
+      targets = new Set();
+      bySource.set(edge.source_node_id, targets);
+    }
+    targets.add(edge.target_node_id);
+  }
+  return bySource;
 };

@@ -5,6 +5,7 @@ import * as t from "@babel/types";
 import { compareUnicodeCodePoints } from "../unicodeCodePointOrder.js";
 import { stripQueryAndFragment } from "../artifactPathSyntax.js";
 import type {
+  ElectronAsarUnpackedRewriteScope,
   ElectronNativeAddonBindingFinding,
   ElectronNativeAddonResolution,
 } from "./electronStaticAnalysisTypes.js";
@@ -50,10 +51,16 @@ type PathPiece =
   | { readonly kind: "text"; readonly value: string }
   | { readonly kind: "host"; readonly axis: HostAxis };
 
+interface AsarUnpackedTemplateRewrite {
+  readonly scopeDirectory: string | undefined;
+  readonly replaceAll: boolean;
+  readonly hasPostRewriteSuffix: boolean;
+}
+
 interface NativePathTemplateFact {
   readonly pieces: readonly PathPiece[];
   readonly base: "source-directory" | "literal-path";
-  readonly asarUnpacked?: boolean;
+  readonly asarUnpacked?: AsarUnpackedTemplateRewrite;
 }
 
 export interface NativeMemberAccess {
@@ -205,7 +212,7 @@ export const resolveDlopenCall = (
       candidates:
         expanded.base === "source-directory" ? expanded.candidates : [],
       ...(expanded.base === "source-directory" && expanded.asarUnpacked
-        ? { asar_unpacked: true }
+        ? asarUnpackedResolutionProps(expanded.asarUnpacked)
         : {}),
     },
   };
@@ -217,6 +224,7 @@ export type RequireResolveSearchOptions =
       readonly kind: "directory";
       readonly directory: string;
       readonly asarUnpacked: boolean;
+      readonly asarUnpackedScope?: ElectronAsarUnpackedRewriteScope;
     }
   | { readonly kind: "unresolved" };
 
@@ -266,6 +274,9 @@ export const resolveRequireResolveSearchOptions = (
         kind: "directory",
         directory: anchored.directory,
         asarUnpacked: anchored.asarUnpacked,
+        ...(anchored.asarUnpackedScope === undefined
+          ? {}
+          : { asarUnpackedScope: anchored.asarUnpackedScope }),
       };
 };
 
@@ -341,7 +352,9 @@ const resolveDlopenRequireResolve = (
           kind: "candidates",
           resolution_context: "filesystem-expression",
           candidates: expanded.candidates,
-          ...(expanded.asarUnpacked ? { asar_unpacked: true } : {}),
+          ...(expanded.asarUnpacked === undefined
+            ? {}
+            : asarUnpackedResolutionProps(expanded.asarUnpacked)),
         },
       };
     if (
@@ -353,9 +366,30 @@ const resolveDlopenRequireResolve = (
       context.accumulator.unknownFindings += 1;
       return undefined;
     }
-    const unpacked = Boolean(
-      expanded.asarUnpacked || searchOptions.asarUnpacked,
-    );
+    if (searchOptions.asarUnpacked) {
+      const scope: ElectronAsarUnpackedRewriteScope =
+        searchOptions.asarUnpackedScope ?? {
+          directory: searchOptions.directory,
+        };
+      const rebasedCandidates =
+        searchOptions.asarUnpackedScope === undefined
+          ? expanded.candidates.map((candidate) => posix.normalize(candidate))
+          : expanded.candidates.map((candidate) =>
+              posix.join(searchOptions.directory, candidate),
+            );
+      return {
+        specifier: expanded.display,
+        kind,
+        access,
+        resolution: {
+          kind: "candidates",
+          resolution_context: "filesystem-expression",
+          candidates: rebasedCandidates,
+          asar_unpacked: true,
+          asar_unpacked_scope: scope,
+        },
+      };
+    }
     return {
       specifier: expanded.display,
       kind,
@@ -366,7 +400,6 @@ const resolveDlopenRequireResolve = (
         candidates: expanded.candidates.map((candidate) =>
           posix.join(searchOptions.directory, candidate),
         ),
-        ...(unpacked ? { asar_unpacked: true } : {}),
       },
     };
   }
@@ -380,7 +413,9 @@ const resolveDlopenRequireResolve = (
             kind: "candidates",
             resolution_context: "filesystem-expression",
             candidates: expanded.candidates,
-            ...(expanded.asarUnpacked ? { asar_unpacked: true } : {}),
+            ...(expanded.asarUnpacked === undefined
+              ? {}
+              : asarUnpackedResolutionProps(expanded.asarUnpacked)),
           }
         : {
             kind: "candidates",
@@ -389,7 +424,6 @@ const resolveDlopenRequireResolve = (
             ...(resolvedCall.sourceRelativePath === undefined
               ? {}
               : { resolution_base_path: resolvedCall.sourceRelativePath }),
-            ...(expanded.asarUnpacked ? { asar_unpacked: true } : {}),
           },
   };
 };
@@ -498,13 +532,16 @@ const resolveNodeGypBuildCall = (
     return undefined;
   }
   return {
-    specifier: `node-gyp-build:${anchored.directory}`,
+    specifier: `node-gyp-build:${anchored.displayDirectory}`,
     hasMemberAccess,
     access,
     resolution: {
       kind: "node-gyp-build",
       directory: anchored.directory,
       ...(anchored.asarUnpacked ? { asar_unpacked: true } : {}),
+      ...(anchored.asarUnpackedScope === undefined
+        ? {}
+        : { asar_unpacked_scope: anchored.asarUnpackedScope }),
     },
   };
 };
@@ -552,6 +589,7 @@ const resolveBindingsHelperCall = (
   let rawAddonName: string | undefined;
   let moduleRoot: string | null = null;
   let moduleRootUnpacked = false;
+  let moduleRootUnpackedScope: ElectronAsarUnpackedRewriteScope | undefined;
   let pathOnly = false;
   for (const prop of objectNode.properties) {
     if (t.isSpreadElement(prop) || t.isObjectMethod(prop)) {
@@ -575,6 +613,7 @@ const resolveBindingsHelperCall = (
       if (isUnshadowedGlobal(valueNode, bindings, "undefined")) {
         moduleRoot = null;
         moduleRootUnpacked = false;
+        moduleRootUnpackedScope = undefined;
       } else {
         const resolved = resolveSourceAnchoredDirectory(
           valueNode,
@@ -588,6 +627,7 @@ const resolveBindingsHelperCall = (
         }
         moduleRoot = resolved.directory;
         moduleRootUnpacked = resolved.asarUnpacked;
+        moduleRootUnpackedScope = resolved.asarUnpackedScope;
       }
     } else if (key === "path") {
       const valueNode = unwrapJavaScriptExpression(prop.value).node;
@@ -640,6 +680,9 @@ const resolveBindingsHelperCall = (
       addon_name: addonName,
       module_root: moduleRoot,
       ...(moduleRootUnpacked ? { asar_unpacked: true } : {}),
+      ...(moduleRootUnpackedScope === undefined
+        ? {}
+        : { asar_unpacked_scope: moduleRootUnpackedScope }),
     },
   };
 };
@@ -711,7 +754,9 @@ const resolveRequireNativeCall = (
             kind: "candidates",
             resolution_context: "filesystem-expression",
             candidates: expanded.candidates,
-            ...(expanded.asarUnpacked ? { asar_unpacked: true } : {}),
+            ...(expanded.asarUnpacked === undefined
+              ? {}
+              : asarUnpackedResolutionProps(expanded.asarUnpacked)),
           }
         : {
             kind: "candidates",
@@ -720,7 +765,6 @@ const resolveRequireNativeCall = (
             ...(call.sourceRelativePath === undefined
               ? {}
               : { resolution_base_path: call.sourceRelativePath }),
-            ...(expanded.asarUnpacked ? { asar_unpacked: true } : {}),
           },
   };
 };
@@ -738,7 +782,7 @@ const normalizeBindingsAddonName = (raw: string): string | undefined => {
     raw.includes("\0")
   )
     return undefined;
-  return raw.toLowerCase().endsWith(".node") ? raw : `${raw}.node`;
+  return raw.endsWith(".node") ? raw : `${raw}.node`;
 };
 
 const isRelativeSubpath = (path: string): boolean =>
@@ -748,6 +792,30 @@ const isRelativeSubpath = (path: string): boolean =>
   !path.startsWith("\\") &&
   !/^[A-Za-z]:/u.test(path);
 
+const asarUnpackedScopeFromRewrite = (
+  rewrite: AsarUnpackedTemplateRewrite,
+): ElectronAsarUnpackedRewriteScope | undefined => {
+  if (!rewrite.hasPostRewriteSuffix && !rewrite.replaceAll) return undefined;
+  if (rewrite.scopeDirectory === undefined) return undefined;
+  return {
+    directory: rewrite.scopeDirectory,
+    ...(rewrite.replaceAll ? { replace_all: true } : {}),
+  };
+};
+
+const asarUnpackedResolutionProps = (
+  rewrite: AsarUnpackedTemplateRewrite,
+): {
+  readonly asar_unpacked: true;
+  readonly asar_unpacked_scope?: ElectronAsarUnpackedRewriteScope;
+} => {
+  const scope = asarUnpackedScopeFromRewrite(rewrite);
+  return {
+    asar_unpacked: true,
+    ...(scope === undefined ? {} : { asar_unpacked_scope: scope }),
+  };
+};
+
 const resolveSourceAnchoredDirectory = (
   raw: t.Node,
   context: JavaScriptFindingContext,
@@ -755,27 +823,28 @@ const resolveSourceAnchoredDirectory = (
   site: t.Node,
   visited: ReadonlySet<string> = new Set(),
 ):
-  | { readonly directory: string; readonly asarUnpacked: boolean }
+  | {
+      readonly directory: string;
+      readonly displayDirectory: string;
+      readonly asarUnpacked: boolean;
+      readonly asarUnpackedScope?: ElectronAsarUnpackedRewriteScope;
+    }
   | undefined => {
   const node = unwrapJavaScriptExpression(raw).node;
-  const unpackedReceiver = unwrapAsarUnpackedReplace(node, bindings);
-  if (unpackedReceiver !== undefined) {
-    const inner = resolveSourceAnchoredDirectory(
-      unpackedReceiver,
-      context,
-      bindings,
-      site,
-      visited,
-    );
-    return inner === undefined
-      ? undefined
-      : { directory: inner.directory, asarUnpacked: true };
-  }
   if (context.pathIntrinsics?.(node, "source-directory") === true)
-    return { directory: ".", asarUnpacked: false };
+    return { directory: ".", displayDirectory: ".", asarUnpacked: false };
   const fileExpr = staticFileExpressionPath(node, context.pathIntrinsics);
-  if (fileExpr?.base === "source-directory" && isRelativeSubpath(fileExpr.path))
-    return { directory: posix.normalize(fileExpr.path), asarUnpacked: false };
+  if (
+    fileExpr?.base === "source-directory" &&
+    isRelativeSubpath(fileExpr.path)
+  ) {
+    const normalized = posix.normalize(fileExpr.path);
+    return {
+      directory: normalized,
+      displayDirectory: normalized,
+      asarUnpacked: false,
+    };
+  }
   if (t.isIdentifier(node)) {
     const binding = resolveSemanticBindingState(bindings, node, node.name);
     if (
@@ -809,11 +878,33 @@ const resolveSourceAnchoredDirectory = (
     fact.pieces.length === 1 &&
     fact.pieces[0]?.kind === "text" &&
     isRelativeSubpath(fact.pieces[0].value)
-  )
+  ) {
+    const directory = posix.normalize(fact.pieces[0].value);
+    const rewrite = fact.asarUnpacked;
+    if (rewrite !== undefined) {
+      if (
+        (rewrite.hasPostRewriteSuffix || rewrite.replaceAll) &&
+        rewrite.scopeDirectory === undefined
+      )
+        return undefined;
+      const scope = asarUnpackedScopeFromRewrite(rewrite);
+      const displayDirectory =
+        rewrite.hasPostRewriteSuffix && rewrite.scopeDirectory !== undefined
+          ? posix.normalize(posix.join(rewrite.scopeDirectory, directory))
+          : directory;
+      return {
+        directory,
+        displayDirectory,
+        asarUnpacked: true,
+        ...(scope === undefined ? {} : { asarUnpackedScope: scope }),
+      };
+    }
     return {
-      directory: posix.normalize(fact.pieces[0].value),
-      asarUnpacked: fact.asarUnpacked === true,
+      directory,
+      displayDirectory: directory,
+      asarUnpacked: false,
     };
+  }
   return undefined;
 };
 
@@ -852,7 +943,7 @@ const expandNativePathTemplate = (
       readonly display: string;
       readonly base: "source-directory" | "literal-path";
       readonly candidates: readonly string[];
-      readonly asarUnpacked?: boolean;
+      readonly asarUnpacked?: AsarUnpackedTemplateRewrite;
     }
   | undefined => {
   const fact = evaluatePathTemplateFact(
@@ -864,6 +955,12 @@ const expandNativePathTemplate = (
     new Set(),
   );
   if (fact === undefined) return undefined;
+  if (
+    fact.asarUnpacked !== undefined &&
+    (fact.asarUnpacked.hasPostRewriteSuffix || fact.asarUnpacked.replaceAll) &&
+    fact.asarUnpacked.scopeDirectory === undefined
+  )
+    return undefined;
   const usesPlatform = fact.pieces.some(
     (piece) => piece.kind === "host" && piece.axis === "platform",
   );
@@ -872,7 +969,12 @@ const expandNativePathTemplate = (
   );
   const platforms = usesPlatform ? HOST_PLATFORMS : ([null] as const);
   const arches = usesArch ? HOST_ARCHES : ([null] as const);
-  const display = renderTemplatePieces(fact.pieces, null, null);
+  const rawDisplay = renderTemplatePieces(fact.pieces, null, null);
+  const display =
+    fact.asarUnpacked?.hasPostRewriteSuffix === true &&
+    fact.asarUnpacked.scopeDirectory !== undefined
+      ? posix.join(fact.asarUnpacked.scopeDirectory, rawDisplay)
+      : rawDisplay;
   const candidates: string[] = [];
   for (const platform of platforms) {
     for (const arch of arches) {
@@ -889,7 +991,9 @@ const expandNativePathTemplate = (
         display,
         base: fact.base,
         candidates: unique,
-        ...(fact.asarUnpacked ? { asarUnpacked: true } : {}),
+        ...(fact.asarUnpacked === undefined
+          ? {}
+          : { asarUnpacked: fact.asarUnpacked }),
       };
 };
 
@@ -1112,19 +1216,42 @@ const evaluatePathCallFact = (
   depth: number,
   visitedBindings: ReadonlySet<string>,
 ): NativePathTemplateFact | undefined => {
-  const unpackedReceiver = unwrapAsarUnpackedReplace(node, bindings);
-  if (unpackedReceiver !== undefined) {
+  const unpacked = unwrapAsarUnpackedReplace(node, bindings);
+  if (unpacked !== undefined) {
     const inner = evaluatePathTemplateFact(
-      unpackedReceiver,
+      unpacked.receiver,
       context,
       bindings,
       site,
       depth + 1,
       visitedBindings,
     );
-    return inner?.base === "source-directory"
-      ? { ...inner, asarUnpacked: true }
-      : undefined;
+    if (inner === undefined) return undefined;
+    if (inner.base === "literal-path") {
+      const replaced = rewriteLiteralAsarPieces(
+        inner.pieces,
+        unpacked.replaceAll,
+      );
+      return replaced === undefined
+        ? undefined
+        : { pieces: replaced, base: "literal-path" };
+    }
+    if (inner.asarUnpacked !== undefined) return undefined;
+    const scopeDirectory =
+      inner.pieces.length === 1 &&
+      inner.pieces[0]?.kind === "text" &&
+      isRelativeSubpath(inner.pieces[0].value)
+        ? posix.normalize(inner.pieces[0].value)
+        : undefined;
+    return {
+      pieces: inner.pieces,
+      base: "source-directory",
+      asarUnpacked: {
+        scopeDirectory,
+        replaceAll: unpacked.replaceAll,
+        hasPostRewriteSuffix: false,
+      },
+    };
   }
   if (context.pathIntrinsics?.(node.callee, "file-url-to-path") === true)
     return evaluateFileUrlCallFact(
@@ -1159,7 +1286,7 @@ const evaluatePathCallFact = (
 const unwrapAsarUnpackedReplace = (
   node: t.Node,
   bindings: JavaScriptSemanticAnalysisState,
-): t.Node | undefined => {
+): { readonly receiver: t.Node; readonly replaceAll: boolean } | undefined => {
   if (!t.isCallExpression(node) || node.arguments.length !== 2)
     return undefined;
   const callee = unwrapJavaScriptExpression(node.callee).node;
@@ -1171,7 +1298,7 @@ const unwrapAsarUnpackedReplace = (
   const search = stringValue(argumentNode(node.arguments[0]));
   const replacement = stringValue(argumentNode(node.arguments[1]));
   return search === "app.asar" && replacement === "app.asar.unpacked"
-    ? callee.object
+    ? { receiver: callee.object, replaceAll: method === "replaceAll" }
     : undefined;
 };
 
@@ -1363,6 +1490,33 @@ const evaluatePathResolveFact = (
   return normalizeJoinedTemplateSegments(reversed.reverse(), base);
 };
 
+const rewriteLiteralAsarPieces = (
+  pieces: readonly PathPiece[],
+  replaceAll: boolean,
+): PathPiece[] | undefined => {
+  const PLATFORM_TOKEN = "__rea_host_platform_token__";
+  const ARCH_TOKEN = "__rea_host_arch_token__";
+  if (
+    pieces.some(
+      (piece) =>
+        piece.kind === "text" &&
+        (piece.value.includes(PLATFORM_TOKEN) ||
+          piece.value.includes(ARCH_TOKEN)),
+    )
+  )
+    return undefined;
+  const encoded = renderTemplatePieces(pieces, PLATFORM_TOKEN, ARCH_TOKEN);
+  const replaced = replaceAll
+    ? encoded.replaceAll("app.asar", "app.asar.unpacked")
+    : encoded.replace("app.asar", "app.asar.unpacked");
+  return splitTokenizedTemplatePieces(replaced, PLATFORM_TOKEN, ARCH_TOKEN);
+};
+
+const isEmptyOrDotPart = (part: NativePathTemplateFact): boolean =>
+  part.pieces.length === 1 &&
+  part.pieces[0]?.kind === "text" &&
+  (part.pieces[0].value === "" || part.pieces[0].value === ".");
+
 const normalizeJoinedTemplateSegments = (
   parts: readonly NativePathTemplateFact[],
   base: "source-directory" | "literal-path",
@@ -1387,14 +1541,51 @@ const normalizeJoinedTemplateSegments = (
     )
   )
     return undefined;
+  const anchorIndex = parts.findIndex(
+    (part) => part.base === "source-directory",
+  );
+  const anchorRewrite =
+    anchorIndex >= 0 ? parts[anchorIndex]?.asarUnpacked : undefined;
+  if (base === "source-directory" && anchorRewrite !== undefined) {
+    const suffixParts = parts.slice(anchorIndex + 1);
+    const hasNewSuffix = suffixParts.some((part) => !isEmptyOrDotPart(part));
+    if (hasNewSuffix || anchorRewrite.hasPostRewriteSuffix) {
+      if (anchorRewrite.scopeDirectory === undefined) return undefined;
+      const suffixEncoded = [
+        ".",
+        ...(anchorRewrite.hasPostRewriteSuffix ? [encoded[anchorIndex]!] : []),
+        ...encoded.slice(anchorIndex + 1),
+      ];
+      const suffixJoined = posix.join(...suffixEncoded);
+      const suffixTrimmed =
+        suffixJoined === "/" ? suffixJoined : suffixJoined.replace(/\/$/u, "");
+      return {
+        pieces: splitTokenizedTemplatePieces(
+          suffixTrimmed,
+          PLATFORM_TOKEN,
+          ARCH_TOKEN,
+        ),
+        base: "source-directory",
+        asarUnpacked: {
+          scopeDirectory: anchorRewrite.scopeDirectory,
+          replaceAll: anchorRewrite.replaceAll,
+          hasPostRewriteSuffix: true,
+        },
+      };
+    }
+    const joined = posix.join(...encoded);
+    const trimmed = joined === "/" ? joined : joined.replace(/\/$/u, "");
+    return {
+      pieces: splitTokenizedTemplatePieces(trimmed, PLATFORM_TOKEN, ARCH_TOKEN),
+      base: "source-directory",
+      asarUnpacked: anchorRewrite,
+    };
+  }
   const joined = posix.join(...encoded);
   const trimmed = joined === "/" ? joined : joined.replace(/\/$/u, "");
   return {
     pieces: splitTokenizedTemplatePieces(trimmed, PLATFORM_TOKEN, ARCH_TOKEN),
     base,
-    ...(parts.some((part) => part.asarUnpacked === true)
-      ? { asarUnpacked: true }
-      : {}),
   };
 };
 

@@ -8,8 +8,12 @@ import {
   compareUnicodeCodePoints,
   compositeKey,
 } from "../../domain/unicodeCodePointOrder.js";
-import type { ElectronNativeAddonBindingFinding } from "../../domain/javascript/electronStaticAnalysisTypes.js";
+import type {
+  ElectronAsarUnpackedRewriteScope,
+  ElectronNativeAddonBindingFinding,
+} from "../../domain/javascript/electronStaticAnalysisTypes.js";
 import type { JavaScriptArtifactFile } from "../../domain/javascript/javascriptArtifactFiles.js";
+import { isNativeAddonModuleTarget } from "../../domain/javascript/javascriptModuleResolutionMode.js";
 import type { JavaScriptJsonDocuments } from "./JavaScriptJsonDocuments.js";
 import { resolveArtifactPathByContext } from "./JavaScriptArtifactPathResolution.js";
 
@@ -63,11 +67,7 @@ export const createElectronNativeAddonResolver = (
       if (cached !== undefined) return cached;
       let resolved: readonly string[];
       if (finding.resolution?.asar_unpacked === true) {
-        const rewrittenSourcePath = rewriteAppAsarSourcePath(file.path);
-        resolved =
-          rewrittenSourcePath !== undefined
-            ? resolveFromSourcePath(state, rewrittenSourcePath, finding)
-            : resolveFromSourcePath(state, file.path, finding);
+        resolved = resolveAsarUnpackedFinding(state, file.path, finding);
       } else {
         const direct = resolveFromSourcePath(state, file.path, finding);
         if (direct.length > 0) {
@@ -189,6 +189,8 @@ const scanNodeGypBuildTargets = (
   const prefix = root === "." ? "" : `${root}/`;
   const matched: string[] = [];
   for (const path of ensureInventoryIndex(state).nativeAddonPaths) {
+    if (!isNativeAddonModuleTarget(path, state.input.files.get(path)?.kind))
+      continue;
     if (!path.startsWith(prefix)) continue;
     const rel = path.slice(prefix.length);
     const segments = rel.split("/");
@@ -215,6 +217,8 @@ const scanBindingsTargets = (
   const prefix = root === "." ? "" : `${root}/`;
   const matched: string[] = [];
   for (const path of ensureInventoryIndex(state).nativeAddonPaths) {
+    if (!isNativeAddonModuleTarget(path, state.input.files.get(path)?.kind))
+      continue;
     if (!path.startsWith(prefix)) continue;
     const rel = path.slice(prefix.length);
     const segments = rel.split("/");
@@ -293,6 +297,7 @@ const resolveCandidatePaths = (
             declaredPath: candidate,
             sourcePath: baseSourcePath,
             context: "filesystem-expression",
+            moduleKind: finding.module_kind,
             runtimePathKind: "exact-file",
           })
         : resolveSinglePath(input, {
@@ -304,6 +309,115 @@ const resolveCandidatePaths = (
     return resolved === undefined ? [] : [resolved];
   });
   return [...new Set(matched)].sort(compareUnicodeCodePoints);
+};
+
+const resolveAsarUnpackedFinding = (
+  state: NativeAddonResolverState,
+  sourcePath: string,
+  finding: ElectronNativeAddonBindingFinding,
+): readonly string[] => {
+  const resolution = finding.resolution;
+  if (resolution === undefined) return [];
+  if (resolution.kind === "node-gyp-build") {
+    const searchRoot = resolveRewrittenAnchoredPath(
+      sourcePath,
+      resolution.directory,
+      resolution.asar_unpacked_scope,
+    );
+    return searchRoot === undefined
+      ? []
+      : scanNodeGypBuildTargets(state, searchRoot);
+  }
+  if (resolution.kind === "bindings") {
+    if (resolution.module_root !== null) {
+      const searchRoot = resolveRewrittenAnchoredPath(
+        sourcePath,
+        resolution.module_root,
+        resolution.asar_unpacked_scope,
+      );
+      return searchRoot === undefined
+        ? []
+        : scanBindingsTargets(state, searchRoot, resolution.addon_name);
+    }
+    const rewrittenDir = resolveRewrittenAnchoredPath(
+      sourcePath,
+      ".",
+      resolution.asar_unpacked_scope,
+    );
+    if (rewrittenDir === undefined) return [];
+    const searchRoot = findEnclosingPackageRoot(state, rewrittenDir, [
+      "build",
+      "out",
+      "Release",
+      "Debug",
+      "compiled",
+      "addon-build",
+      "lib",
+    ]);
+    return scanBindingsTargets(state, searchRoot, resolution.addon_name);
+  }
+  if (resolution.resolution_context === "filesystem-expression") {
+    const sourceDir = posix.dirname(sourcePath);
+    const matched = resolution.candidates.flatMap((candidate) => {
+      const rewrittenPath = resolveRewrittenAnchoredPath(
+        sourcePath,
+        candidate,
+        resolution.asar_unpacked_scope,
+      );
+      if (rewrittenPath === undefined || rewrittenPath === ".") return [];
+      const relativeToSource = posix.relative(sourceDir, rewrittenPath);
+      const declaredPath = relativeToSource.startsWith(".")
+        ? relativeToSource
+        : `./${relativeToSource}`;
+      const resolved = resolveSinglePath(state.input, {
+        declaredPath,
+        sourcePath,
+        context: "filesystem-expression",
+        moduleKind: finding.module_kind,
+        runtimePathKind: "exact-file",
+      });
+      return resolved === undefined ? [] : [resolved];
+    });
+    return [...new Set(matched)].sort(compareUnicodeCodePoints);
+  }
+  const rewrittenSourcePath =
+    rewriteAppAsarSourcePath(sourcePath) ?? sourcePath;
+  return resolveCandidatePaths(
+    state.input,
+    rewrittenSourcePath,
+    finding,
+    resolution,
+  );
+};
+
+const resolveRewrittenAnchoredPath = (
+  sourcePath: string,
+  targetRelPath: string,
+  scope: ElectronAsarUnpackedRewriteScope | undefined,
+): string | undefined => {
+  const sourceDir = posix.dirname(sourcePath);
+  if (scope === undefined) {
+    const joined = normalizeJoinedLogicalPath(
+      posix.join(sourceDir, targetRelPath),
+    );
+    if (logicalPathEscapesRoot(joined)) return undefined;
+    const normalized = joined === "" ? "." : joined;
+    return normalized.replace("app.asar", "app.asar.unpacked");
+  }
+  const prefixJoined = normalizeJoinedLogicalPath(
+    posix.join(sourceDir, scope.directory),
+  );
+  if (logicalPathEscapesRoot(prefixJoined)) return undefined;
+  const prefixNormalized = prefixJoined === "" ? "." : prefixJoined;
+  const rewrittenPrefix =
+    scope.replace_all === true
+      ? prefixNormalized.replaceAll("app.asar", "app.asar.unpacked")
+      : prefixNormalized.replace("app.asar", "app.asar.unpacked");
+  const finalJoined = normalizeJoinedLogicalPath(
+    posix.join(rewrittenPrefix, targetRelPath),
+  );
+  if (logicalPathEscapesRoot(finalJoined)) return undefined;
+  return finalJoined === "" ? "." : finalJoined;
 };
 
 const resolveSinglePath = (
@@ -332,7 +446,8 @@ const resolveSinglePath = (
       ? {}
       : { runtimePathKind: options.runtimePathKind }),
   }).resolved_path;
-  return resolved !== null && isNativeAddonFile(resolved, input.files)
+  return resolved !== null &&
+    isNativeAddonModuleTarget(resolved, input.files.get(resolved)?.kind)
     ? resolved
     : undefined;
 };

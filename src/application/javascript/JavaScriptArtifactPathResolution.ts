@@ -1709,7 +1709,9 @@ const isNodeFilesystemLookup = (input: ResolveArtifactPathInput): boolean =>
   input.runtimePathKind === "node-entrypoint" ||
   (input.moduleKind !== undefined &&
     (input.context === "module-specifier" ||
-      input.context === "package-entrypoint"));
+      input.context === "package-entrypoint" ||
+      (input.context === "filesystem-expression" &&
+        input.runtimePathKind === "exact-file")));
 
 /** Runtime launch and module lookup share archive occurrence admission. */
 const crossesRuntimeArchiveBoundary = (

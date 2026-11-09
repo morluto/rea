@@ -184,7 +184,7 @@ const electron = z
           loader_authority: z.literal("candidate").exactOptional(),
           entry_kind: z.enum(["bridge-member", "ipc-handler"]),
           entry: z.string(),
-          entry_path: strings.optional(),
+          entry_path: strings.exactOptional(),
           channel: z.string().nullable(),
           terminal: z.string(),
           resolution: z.literal("candidate"),
@@ -208,13 +208,6 @@ const electron = z
             z.strictObject({ expression: z.string(), location: range }),
           ),
         }),
-      )
-      .transform((paths) =>
-        paths.map(({ entry_kind, entry, entry_path, ...rest }) =>
-          entry_path === undefined
-            ? { entry_kind, entry, ...rest }
-            : { entry_kind, entry, entry_path, ...rest },
-        ),
       )
       .optional(),
     browser_windows: z.array(
@@ -312,12 +305,24 @@ const electron = z
               kind: z.literal("node-gyp-build"),
               directory: z.string(),
               asar_unpacked: z.boolean().exactOptional(),
+              asar_unpacked_scope: z
+                .strictObject({
+                  directory: z.string(),
+                  replace_all: z.boolean().exactOptional(),
+                })
+                .exactOptional(),
             }),
             z.strictObject({
               kind: z.literal("bindings"),
               addon_name: z.string(),
               module_root: z.string().nullable(),
               asar_unpacked: z.boolean().exactOptional(),
+              asar_unpacked_scope: z
+                .strictObject({
+                  directory: z.string(),
+                  replace_all: z.boolean().exactOptional(),
+                })
+                .exactOptional(),
             }),
             z.strictObject({
               kind: z.literal("candidates"),
@@ -325,6 +330,12 @@ const electron = z
               candidates: strings,
               resolution_base_path: z.string().exactOptional(),
               asar_unpacked: z.boolean().exactOptional(),
+              asar_unpacked_scope: z
+                .strictObject({
+                  directory: z.string(),
+                  replace_all: z.boolean().exactOptional(),
+                })
+                .exactOptional(),
             }),
           ])
           .optional(),
