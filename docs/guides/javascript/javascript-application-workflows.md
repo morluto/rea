@@ -223,6 +223,11 @@ registrations/removals and dispatch, Node timers and cancellation handles, async
 `node:child_process` creation and ownership, configuration sources and direct
 defaults, request construction and response consumers, parse/coercion/
 validation boundaries, and built-in resource acquisition/release.
+File-open acquisitions omit primitive path arguments Node rejects and literal
+strings containing NUL. String, Buffer, URL, computed and spread paths remain
+undecided when they may be accepted; stream constructors retain their separate
+`fd` override behavior. This argument proof does not check that a path exists
+or execute the analyzed source.
 Reassignments connect retained right-hand reads to the binding or property
 write. Compound assignments also retain the previous-value input; logical
 assignments keep conditional inputs as candidates. These edges describe

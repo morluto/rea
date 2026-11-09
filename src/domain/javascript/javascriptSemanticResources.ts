@@ -76,6 +76,36 @@ export const collectJavaScriptSemanticResources = (
 };
 
 /**
+ * File opens require a string, Buffer or URL path. Primitive non-strings and
+ * literal strings containing NUL are rejected before a descriptor can exist.
+ * Other expressions may still supply a path; streams also have an fd override,
+ * so this proof belongs only to open/openSync, not stream constructors.
+ */
+const rejectsOpenPathLiteral = (
+  node: t.CallExpression | t.OptionalCallExpression,
+): boolean => {
+  const path = node.arguments[0];
+  if (path === undefined || t.isSpreadElement(path)) return false;
+  const value = unwrapJavaScriptExpression(path).node;
+  if (
+    t.isNullLiteral(value) ||
+    t.isBooleanLiteral(value) ||
+    t.isNumericLiteral(value) ||
+    t.isBigIntLiteral(value)
+  )
+    return true;
+  // Every unary result except typeof's string is a non-path primitive, or the
+  // operand throws first. Neither outcome gives this open call a descriptor.
+  if (t.isUnaryExpression(value)) return value.operator !== "typeof";
+  const text = t.isStringLiteral(value)
+    ? value.value
+    : t.isTemplateLiteral(value) && value.expressions.length === 0
+      ? value.quasis[0]?.value.cooked
+      : undefined;
+  return text?.includes("\0") ?? false;
+};
+
+/**
  * `fs.open`/`fs.openSync` validate the flag before touching the filesystem, so
  * a flag Node rejects at the call site throws synchronously and no descriptor
  * exists. Node accepts only a known flag string, a nullish value (which defaults
@@ -332,6 +362,7 @@ const collectAcquisitions = (
     const reference = acquisitionMethod(node.callee, context.state);
     if (reference === null) return;
     if (openFlagInFirstArgument(reference)) {
+      if (rejectsOpenPathLiteral(node)) return;
       if (rejectsOpenFlagLiteral(node, context)) return;
       if (rejectsOpenModeLiteral(node, context)) return;
     }
