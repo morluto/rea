@@ -43,6 +43,7 @@ export class NoBinaryOpenError extends AnalysisError {
 /** Apple bundle resolution outcomes that leave no program file to open. */
 export type BundleTargetConstraint =
   | "bundle_type_unsupported"
+  | "bundle_info_plist_decode_budget_exceeded"
   | "bundle_info_plist_missing"
   | "bundle_layout_ambiguous"
   | "bundle_executable_undeclared"

@@ -3,11 +3,15 @@ import { extname, join, sep } from "node:path";
 
 import { z } from "zod";
 
-import { preflightPropertyListDecode } from "../artifacts/apple/PropertyListDecodeBudget.js";
+import {
+  preflightPropertyListDecode,
+  PropertyListDecodeBudgetFailure,
+} from "../artifacts/apple/PropertyListDecodeBudget.js";
 import { decodeBinaryPlistValue } from "../artifacts/apple/BinaryPlistMaterializer.js";
 import { BinaryTargetError } from "../domain/configurationErrors.js";
 import { isPathWithinRoot } from "../domain/localPath.js";
 import { parseXmlPropertyList } from "../domain/propertyListKeys.js";
+import { startsOpenStepPropertyList } from "../domain/propertyListOpenStep.js";
 import { decodeXmlPlistText } from "../domain/propertyListXmlText.js";
 import { hasBinaryPlistSignature } from "../domain/apple/appleArchiveFormat.js";
 import type { BundleResourceRoot } from "../domain/apple/bundleResourceRoot.js";
@@ -467,6 +471,18 @@ const resolveLayoutExecutable = async (
         ? await fileSystem.decodeBinaryPlist(plistPath)
         : executableName(decodeInfoPlistValue(plist));
   } catch (cause: unknown) {
+    if (cause instanceof PropertyListDecodeBudgetFailure)
+      return err(
+        new BinaryTargetError(
+          plistPath,
+          `${noun} Info.plist decoded representation exceeds the 16 MiB property list decode budget: ${plistPath} (${cause.message}). Shrink the Info.plist and retry.`,
+          {
+            cause,
+            constraint: "bundle_info_plist_decode_budget_exceeded",
+            infoPlist: plistPath,
+          },
+        ),
+      );
     return err(
       new BinaryTargetError(
         plistPath,
@@ -560,7 +576,10 @@ export const decodeInfoPlistValue = (plist: Buffer): unknown => {
       preflightPropertyListDecode(plist, BINARY_PLIST_DECODE_BYTES),
     );
   const xmlText = decodeXmlPlistText(plist);
-  preflightPropertyListDecode(plist, BINARY_PLIST_DECODE_BYTES, xmlText);
+  // OpenStep text is not XML: quoted markup inside it is string data, so
+  // the XML entity-expansion preflight must not run on it.
+  if (!startsOpenStepPropertyList(xmlText))
+    preflightPropertyListDecode(plist, BINARY_PLIST_DECODE_BYTES, xmlText);
   return parseXmlPropertyList(xmlText).value;
 };
 

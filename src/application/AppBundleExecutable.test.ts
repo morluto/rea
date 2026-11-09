@@ -117,7 +117,13 @@ describe("app bundle Info.plist decode budget", () => {
     await writeFile(executable, "inert fixture; never executed");
 
     const result = await resolveAppBundleExecutable(bundle);
-    expect(result.ok).toBe(false);
+    expect(result).toMatchObject({
+      ok: false,
+      error: {
+        constraint: "bundle_info_plist_decode_budget_exceeded",
+        reason: expect.stringContaining("16 MiB"),
+      },
+    });
   });
 });
 

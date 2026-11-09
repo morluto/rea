@@ -179,6 +179,11 @@ export const analysisErrorRemediationAction = (
     return `Read ${error.infoPlist} with inspect_plist (\`rea inspect-plist <path>\`) to review its CFBundleExecutable, then select an existing program file directly.`;
   if (
     error instanceof BinaryTargetError &&
+    error.constraint === "bundle_info_plist_decode_budget_exceeded"
+  )
+    return "Reduce the Info.plist below the 16 MiB decoded representation allowance, then retry opening the bundle.";
+  if (
+    error instanceof BinaryTargetError &&
     (error.constraint === "bundle_info_plist_missing" ||
       error.constraint === "bundle_layout_ambiguous" ||
       error.constraint === "bundle_current_version_missing" ||
