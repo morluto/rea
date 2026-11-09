@@ -2,6 +2,7 @@ import {
   parseEvidence,
   withEvidenceCallerInputPath,
   type Evidence,
+  type CallerInputPaths,
 } from "../domain/evidence.js";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import type { Result } from "../domain/result.js";
@@ -13,7 +14,7 @@ export const bindCliEvidenceCallerPath =
   (
     callerPath: string,
     run: () => Promise<Result<Evidence, AnalysisError>>,
-    additionalPaths?: Readonly<Record<string, string>>,
+    additionalPaths?: CallerInputPaths,
   ): (() => Promise<Result<Evidence, AnalysisError>>) =>
   async () => {
     const result = await run();
@@ -49,7 +50,7 @@ export const finishCliEvidenceCommand = (
   providerId: string,
   operation: string,
   signal: AbortSignal,
-  additionalPaths?: Readonly<Record<string, string>>,
+  additionalPaths?: CallerInputPaths,
 ) =>
   finishAnalysisCommand(
     bindCliEvidenceCallerPath(callerPath, run, additionalPaths),

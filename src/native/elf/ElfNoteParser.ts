@@ -9,7 +9,10 @@ import { readElfRawTableDeclarations } from "../../domain/elfRawTableDeclaration
 import { createHash } from "node:crypto";
 import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
 import { assertArtifactReadActive } from "../../artifacts/ArtifactFileOperation.js";
-import { readElfFixedHeader } from "../../domain/elfFixedHeader.js";
+import {
+  readElfFixedHeader,
+  type ElfFixedHeader,
+} from "../../domain/elfFixedHeader.js";
 import {
   elfNoteAlignment as noteAlignment,
   elfNoteLayout,
@@ -36,6 +39,10 @@ const SHT_NOTE = 7;
 const SHT_STRTAB = 3;
 const SHF_COMPRESSED = 0x800n;
 const HEX_DESCRIPTOR_LIMIT = 64;
+
+/** The existing Linux note layouts do not establish another declared ABI. */
+const isLinuxCoreProfile = (header: ElfFixedHeader): boolean =>
+  (header.osAbi === 0 || header.osAbi === 3) && header.abiVersion === 0;
 
 interface TextBudget {
   limit: number;
@@ -824,17 +831,7 @@ export const parseElfNotes = (
         examined,
         text,
       ))
-        parsed.push(
-          toEntry(
-            note,
-            "program",
-            index,
-            reader.little,
-            wide,
-            header.machine,
-            text,
-          ),
-        );
+        parsed.push(toEntry(note, "program", index, header, text));
     }
   }
   if (shnum !== 0) {
@@ -889,17 +886,7 @@ export const parseElfNotes = (
         examined,
         text,
       ))
-        parsed.push(
-          toEntry(
-            note,
-            "section",
-            index,
-            reader.little,
-            wide,
-            header.machine,
-            text,
-          ),
-        );
+        parsed.push(toEntry(note, "section", index, header, text));
     }
   }
   const absent = tables.length === 0;
@@ -920,6 +907,13 @@ export const parseElfNotes = (
     limitations: [
       ...(absent ? ABSENT_LIMITATIONS : LIMITATIONS),
       ...sectionNameLimitations,
+      ...(parsed.some(({ owner }) => owner === "CORE")
+        ? [
+            isLinuxCoreProfile(header)
+              ? "Linux CORE decoding assumes System V/unspecified or GNU/Linux OSABI with ABI version zero; an unspecified OSABI alone does not establish operating-system origin."
+              : `Linux CORE note payloads were not interpreted for ELF OSABI ${String(header.osAbi)}, ABI version ${String(header.abiVersion)}; raw note identities, descriptor ranges and hashes remain available.`,
+          ]
+        : []),
     ],
   };
 };
@@ -928,13 +922,12 @@ const toEntry = (
   note: ParsedNote,
   tableKind: "program" | "section",
   tableIndex: number,
-  little: boolean,
-  wide: boolean,
-  machine: number,
+  header: ElfFixedHeader,
   text: TextBudget,
 ): Omit<ElfNotes["entries"][number], "index"> => {
+  const little = header.byteOrder === "little";
   const gnuOwner = note.owner === "GNU";
-  const coreOwner = note.owner === "CORE";
+  const coreOwner = note.owner === "CORE" && isLinuxCoreProfile(header);
   const range = `${String(note.descriptor_offset)}:${String(note.descsz)}`;
   let digest = text.hashes.get(range);
   if (digest === undefined) {
@@ -966,15 +959,17 @@ const toEntry = (
           : null,
     },
     gnu: decodeGnu(note.owner, note.type, note.descriptor, little, text),
-    core: decodeCore(
-      note.owner,
-      note.type,
-      note.descriptor,
-      little,
-      wide,
-      machine,
-      text,
-    ),
+    core: coreOwner
+      ? decodeCore(
+          note.owner,
+          note.type,
+          note.descriptor,
+          little,
+          header.elfClass === 64,
+          header.machine,
+          text,
+        )
+      : null,
   };
 };
 
