@@ -1,4 +1,11 @@
-import { access, chmod, writeFile } from "node:fs/promises";
+import {
+  access,
+  chmod,
+  mkdir,
+  readdir,
+  rmdir,
+  writeFile,
+} from "node:fs/promises";
 import { join } from "node:path";
 
 import { describe, expect, it } from "vitest";
@@ -59,9 +66,7 @@ describe("runSolveHelper", () => {
       cleanupIncomplete: true,
       cleanupResources: ["agentenv sandbox identity unknown"],
       diagnostics: {
-        reason: expect.stringContaining(
-          "cannot safely select an unknown sandbox",
-        ),
+        reason: expect.stringContaining("cannot verify a sandbox"),
       },
     });
     await started;
@@ -169,4 +174,67 @@ it("retains a completed report if cancellation arrives during final cleanup", as
     cause: reason,
     report: { outcome: "passed", turns: 3, usd: 0.1 },
   });
+}, 30_000);
+
+it("retains an unrecognized sandbox root entry and retries after it is repaired", async () => {
+  const runner = await fakeAgentEnvSolves([SOLVE]);
+  const parent = await createTestTempDirectory("solve-owned-roots-");
+  const retained: SolveCleanupOwner[] = [];
+  const failure = await runSolveHelper({
+    ...(await options({
+      ...runner.environment,
+      AGENT_ENV_LOCAL_SANDBOX_DIR: parent,
+      FAKE_SOLVE_ROOT_ENTRY: "unexpected",
+    })),
+    signal: new AbortController().signal,
+    retainCleanup: (owner) => retained.push(owner),
+  }).catch((cause: unknown) => cause);
+  expect(failure).toBeInstanceOf(ProviderCleanupError);
+  expect(retained).toHaveLength(1);
+  const roots = await readdir(parent);
+  expect(roots).toHaveLength(1);
+  const root = join(parent, roots[0] ?? "");
+  expect(await readdir(root)).toEqual(["unexpected"]);
+  await rmdir(join(root, "unexpected"));
+  expect(await retained[0]?.stop()).toMatchObject({
+    status: "verified-cleanup",
+  });
+  expect(await readdir(parent)).toEqual([]);
+  if (!(failure instanceof ProviderCleanupError)) throw failure;
+  expect(failure.cleanupIncomplete).toBe(false);
+  retained[0]?.dispose();
+}, 30_000);
+
+it("retains root cleanup and the spawn failure when admission fails", async () => {
+  const runner = await fakeAgentEnvSolves([SOLVE]);
+  const parent = await createTestTempDirectory("solve-spawn-root-");
+  const retained: SolveCleanupOwner[] = [];
+  const failure = await runSolveHelper({
+    ...(await options({
+      ...runner.environment,
+      AGENT_ENV_LOCAL_SANDBOX_DIR: parent,
+    })),
+    signal: new AbortController().signal,
+    retainCleanup: (owner) => retained.push(owner),
+    spawn: async (spawnOptions) => {
+      const root = spawnOptions.env?.AGENT_ENV_LOCAL_SANDBOX_DIR;
+      if (root === undefined) throw new Error("missing root");
+      await mkdir(join(root, "unexpected"));
+      throw new Error("admission failed");
+    },
+  }).catch((cause: unknown) => cause);
+  expect(failure).toBeInstanceOf(ProviderCleanupError);
+  if (!(failure instanceof ProviderCleanupError)) throw failure;
+  expect(failure.diagnostics).toMatchObject({
+    spawn_error: "admission failed",
+  });
+  expect(retained).toHaveLength(1);
+  const roots = await readdir(parent);
+  await rmdir(join(parent, roots[0] ?? "", "unexpected"));
+  expect(await retained[0]?.stop()).toMatchObject({
+    status: "verified-cleanup",
+  });
+  expect(failure.cleanupIncomplete).toBe(false);
+  expect(failure.cleanupResources).toEqual([]);
+  retained[0]?.dispose();
 }, 30_000);

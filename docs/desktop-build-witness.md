@@ -315,6 +315,12 @@ The model endpoint is the one agentenv reads where REA starts,
 `LITELLM_BASE_URL` and `LITELLM_API_KEY` or `[model]` in
 `.agentenv/config.toml`; REA holds no model client and never reads the key.
 
+Each solve uses a private agentenv sandbox root. If the helper stops before
+reporting cleanup, REA retries sandboxes whose folders remain there and keeps
+the root when cleanup fails. The pinned provider can remove a folder after an
+unverified teardown, so a missing report still leaves cleanup unknown. On
+macOS, REA cannot verify host processes left by a recovered sandbox.
+
 | Solves finished | Passes    | Band       | Next          |
 | --------------- | --------- | ---------- | ------------- |
 | 3               | 0         | `too_hard` | stop          |

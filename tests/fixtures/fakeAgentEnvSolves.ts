@@ -44,6 +44,8 @@ def run_bundle(root, *, tasks=(), model=None, agent=None, sandbox=None, emulate=
                            "endpoint": os.environ.get("LITELLM_BASE_URL")})
     if os.environ.get("FAKE_SOLVE_RAISES"):
         raise RuntimeError(os.environ["FAKE_SOLVE_RAISES"])
+    if os.environ.get("FAKE_SOLVE_ROOT_ENTRY"):
+        os.mkdir(os.path.join(os.environ["AGENT_ENV_LOCAL_SANDBOX_DIR"], os.environ["FAKE_SOLVE_ROOT_ENTRY"]))
     if os.environ.get("FAKE_SOLVE_HANGS"):
         signal.signal(signal.SIGTERM, signal.SIG_IGN)
         time.sleep(3600)

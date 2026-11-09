@@ -12,6 +12,7 @@ import {
   ProviderProcessSupervisor,
   spawnOwnedProviderProcess,
 } from "../process/ProviderProcess.js";
+import { SolveSandboxRoot } from "./SolveSandboxRoot.js";
 import {
   AGENTENV_PROVIDER,
   agentEnvInterpreter,
@@ -94,7 +95,7 @@ export class SolveCleanupError extends ProviderCleanupError {
       {
         operation,
         remediationAction: unknown
-          ? "The helper did not identify every sandbox. Inspect agentenv's records and Docker containers; REA cannot safely select an unknown sandbox for removal."
+          ? "The helper did not identify every sandbox. REA attempts to clean discoverable sandbox folders, but agentenv can remove a folder after an unverified teardown. Inspect agentenv's records and Docker containers for anything still running."
           : "Closing REA retries this cleanup; check that no agentenv run of the bundle is still up with docker ps.",
       },
     );
@@ -157,21 +158,58 @@ export const runSolveHelper = async (options: {
   const { environment, signal } = options;
   const timing = options.timing ?? { solveMs: SOLVE_MS, stopMs: STOP_MS };
   const interpreter = await agentEnvInterpreter(environment, options.operation);
-  const spawned = await (options.spawn ?? spawnOwnedProviderProcess)({
-    command: interpreter,
-    arguments: [
-      HELPER,
-      options.bundle,
-      options.task,
-      options.model,
-      options.agent,
-    ],
-    runId: randomUUID(),
-    expectedCommand: null,
-    hostEnvironment: environment,
-    env: { PYTHONDONTWRITEBYTECODE: "1" },
-    signal,
-  });
+  const sandboxRoot = await SolveSandboxRoot.create(interpreter, environment);
+  let spawned: Awaited<ReturnType<typeof spawnOwnedProviderProcess>>;
+  try {
+    spawned = await (options.spawn ?? spawnOwnedProviderProcess)({
+      command: interpreter,
+      arguments: [
+        HELPER,
+        options.bundle,
+        options.task,
+        options.model,
+        options.agent,
+      ],
+      runId: randomUUID(),
+      expectedCommand: null,
+      hostEnvironment: environment,
+      env: {
+        PYTHONDONTWRITEBYTECODE: "1",
+        AGENT_ENV_LOCAL_SANDBOX_DIR: sandboxRoot.path,
+      },
+      signal,
+    });
+  } catch (cause: unknown) {
+    const cleanup = await sandboxRoot.stop();
+    if (cleanup.status === "incomplete") {
+      const failure = new SolveCleanupError(
+        undefined,
+        [`sandbox root ${sandboxRoot.path}`],
+        {
+          reason: cleanup.reason,
+          spawn_error: cause instanceof Error ? cause.message : String(cause),
+        },
+        options.operation,
+      );
+      failure.bindCleanupResourceOwner({
+        get cleanupResources() {
+          return sandboxRoot.removed
+            ? []
+            : [`sandbox root ${sandboxRoot.path}`];
+        },
+      });
+      options.retainCleanup({
+        async stop() {
+          const result = await sandboxRoot.stop();
+          if (result.status === "verified-cleanup") failure.resolveCleanup();
+          return result;
+        },
+        dispose: () => sandboxRoot.dispose(),
+      });
+      throw failure;
+    }
+    throw cause;
+  }
   const supervisor = new ProviderProcessSupervisor(
     {
       ...spawned,
@@ -227,6 +265,7 @@ export const runSolveHelper = async (options: {
       ? [`process group ${String(spawned.ownership.processGroupId)}`]
       : []),
     ...[...pending.keys()].map((id) => `agentenv sandbox ${id}`),
+    ...(!sandboxRoot.removed ? [`sandbox root ${sandboxRoot.path}`] : []),
     ...(unknown ? ["agentenv sandbox identity unknown"] : []),
   ];
   let cleanupError: SolveCleanupError | undefined;
@@ -247,12 +286,18 @@ export const runSolveHelper = async (options: {
         if (failure === undefined) pending.delete(id);
         else failures.push(failure);
       }
+      const rootCleanup = await sandboxRoot.stop();
+      if (rootCleanup.status === "incomplete")
+        failures.push(rootCleanup.reason);
       if (failures.length > 0)
         return { status: "incomplete", reason: failures.join(" ") };
       if (!unknown) cleanupError?.resolveCleanup();
       return { status: "verified-cleanup" };
     },
-    dispose: () => supervisor.dispose(),
+    dispose: () => {
+      supervisor.dispose();
+      sandboxRoot.dispose();
+    },
   };
   const cleanup = processPending ? stopped : await cleanupOwner.stop();
   if (cleanup.status === "incomplete" || unknown) {
@@ -260,7 +305,7 @@ export const runSolveHelper = async (options: {
     const reason =
       cleanup.status === "incomplete"
         ? cleanup.reason
-        : "The helper ended before identifying every sandbox; REA cannot safely select an unknown sandbox for removal.";
+        : "The helper ended before identifying every sandbox; REA cleaned discoverable folders but cannot verify a sandbox whose folder agentenv already removed.";
     cleanupError = new SolveCleanupError(
       report,
       resources(),
