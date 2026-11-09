@@ -2,6 +2,7 @@ import type { ElectronBoundarySummary } from "../../domain/javascript/javascript
 import {
   electronSemanticsState,
   createElectronIpcContext,
+  hasCandidateElectronFindings,
   summarizeElectronBoundaries,
   type ElectronIpcContext,
 } from "./ElectronBoundaryAnalysis.js";
@@ -381,6 +382,11 @@ const graphLimitations = (
     "CommonJS and ESM binding relationships were recovered from inert syntax and resolved only within the inventoried artifact container.",
     "Webpack/Rspack factories were recovered from AST literals; REA did not invoke push handlers or bundle bootstrap code.",
     "Static imports, entrypoints, workers, endpoints, and storage relationships do not prove runtime execution.",
+    ...(hasCandidateElectronFindings(context.analysis)
+      ? [
+          "Conditional Electron findings are retained in the graph but excluded from proven boundary summary counts; their loader identity remains unknown.",
+        ]
+      : []),
     ...(context.analysis.files.some(({ javascript }) =>
       javascript?.limitations.includes(ELECTRON_IDENTITY_LIMITATION),
     )

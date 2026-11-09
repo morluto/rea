@@ -1,8 +1,11 @@
 import { describe, expect, it } from "vitest";
 
-import { analyzeJavaScriptStaticSource } from "./javascriptStaticAnalysis.js";
+import { analyzeCommonJsStaticFixture } from "../../../tests/fixtures/javascriptCommonJsAnalysis.js";
 
-const analyze = (source: string) => analyzeJavaScriptStaticSource(source);
+// A `.js` fixture parses as ESM, and then every `require` call keeps only
+// candidate loader authority. These cases describe CommonJS packaging, so they
+// use the CommonJS fixture that the sibling Electron paths also rely on.
+const analyze = (source: string) => analyzeCommonJsStaticFixture(source);
 
 describe("node:vm bytecode cache boundaries", () => {
   it("records the artifact named by an inert readFileSync cache argument", () => {

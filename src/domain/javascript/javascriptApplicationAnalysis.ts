@@ -134,6 +134,27 @@ function* checkApplicationBindingsSteps(
   try {
     for (const node of result.graph.nodes) {
       applicationNodeIds.add(node.node_id);
+      if (
+        node.kind === "artifact" &&
+        (node.identity.strategy !== "content-digest" ||
+          node.identity.sha256 !== result.root_artifact_sha256)
+      ) {
+        for (const observation of node.observations) {
+          if (observation.evidence.extractor.operation === "inventory-root") {
+            context.addIssue({
+              code: "custom",
+              path: ["root_artifact_sha256"],
+              message:
+                "Application artifact root must match the declared root SHA-256",
+            });
+            break;
+          }
+          if (++examined === 4096) {
+            examined = 0;
+            yield;
+          }
+        }
+      }
       if (++examined === 4096) {
         examined = 0;
         yield;

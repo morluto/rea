@@ -17,7 +17,7 @@ import {
 } from "./javascriptSemanticTraversal.js";
 
 import {
-  isElectronRendererLoad,
+  electronRendererLoadAuthority,
   resolveElectronBrowserWindowReceiver,
 } from "./electronStaticRenderer.js";
 import { finishElectronNativeBindingsSteps } from "./electronStaticAnalysisNative.js";
@@ -122,7 +122,7 @@ export function* analyzeParsedJavaScriptStaticSourceSteps(
     browserWindowReceiver: (node, site, suffix) =>
       resolveElectronBrowserWindowReceiver(node, site, suffix, findings, index),
     rendererLoad: (callee, site) =>
-      isElectronRendererLoad(callee, site, findings, index),
+      electronRendererLoadAuthority(callee, site, findings, index),
     source,
     accumulator,
     vitePreloadDependencyTable: indexVitePreloadDependencyTable(
@@ -131,9 +131,12 @@ export function* analyzeParsedJavaScriptStaticSourceSteps(
     ),
     openReceiverFacts: receivers.openReceivers,
     electronBindings: electronIdentity.bindings,
+    electronCandidateBindings: electronIdentity.candidateBindings,
     electronExportIntact: electronIdentity.intactExport,
     electronInvocationPath: electronIdentity.invocationPath,
     electronAppPathChangePossible: electronIdentity.mayChangeAppPath,
+    electronCandidateAppPathChangePossible:
+      electronIdentity.candidateMayChangeAppPath,
     rpcScan: createJavaScriptRpcScan(source, receivers.rpcClientRoots, index),
     expressionShapes: createSemanticExpressionShapeResolver(bindings),
   };
@@ -213,6 +216,7 @@ const finalizeStaticAnalysis = (
       value.operation === "load" &&
       ELECTRON_REFERENCE_KINDS.has(value.kind) &&
       ELECTRON_MODULE.test(value.specifier) &&
+      value.loader_authority !== "candidate" &&
       // A `factory-loader` reference names a recovered bundle module, so its
       // specifier is a module key inside the artifact rather than a package. A
       // real external load in the same file keeps its `commonjs-loader`
@@ -220,6 +224,14 @@ const finalizeStaticAnalysis = (
       value.loader !== "factory-loader",
   );
   const resourceLimits = [...bindings.valueResourceLimits].sort();
+  const candidateElectron = [
+    ...accumulator.browserWindows,
+    ...accumulator.contextBridgeApis,
+    ...accumulator.ipc,
+    ...accumulator.utilityProcesses,
+    ...accumulator.protocols,
+    ...accumulator.appPathChanges,
+  ].some(({ value }) => value.loader_authority === "candidate");
   const coverage: JavaScriptStaticCoverage = {
     syntax:
       parserErrors === 0
@@ -284,6 +296,11 @@ const finalizeStaticAnalysis = (
         ]
       : []),
     ...(electronObserved ? [ELECTRON_IDENTITY_LIMITATION] : []),
+    ...(candidateElectron
+      ? [
+          "Some Electron syntax depends on an unproved CommonJS loader; its Electron identity remains conditional.",
+        ]
+      : []),
     "JavaScript syntax was parsed as data and was never evaluated.",
   ];
   return {
