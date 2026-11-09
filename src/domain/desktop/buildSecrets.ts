@@ -119,8 +119,27 @@ const jsonEscapedSecrets = (
 ): Set<string> => {
   const found = new Set<string>();
   const buffer = Buffer.from(bytes.buffer, bytes.byteOffset, bytes.length);
-  if (!buffer.includes(Buffer.from("\\u"))) return found;
-  const text = decodeStateText(bytes);
+  let text: string | undefined;
+  if (buffer.includes(Buffer.from("\\u"))) text = decodeStateText(bytes);
+  if (text === undefined) {
+    const hasAligned = (marker: Buffer) => {
+      for (let at = buffer.indexOf(marker); at !== -1; at = buffer.indexOf(marker, at + 1))
+        if (at % 2 === 0) return true;
+      return false;
+    };
+    const encoding = hasAligned(Buffer.from([0x5c, 0, 0x75, 0]))
+      ? "utf-16le"
+      : hasAligned(Buffer.from([0, 0x5c, 0, 0x75]))
+        ? "utf-16be"
+        : undefined;
+    if (encoding !== undefined) {
+      try {
+        text = new TextDecoder(encoding, { fatal: true }).decode(bytes);
+      } catch {
+        return found;
+      }
+    }
+  }
   if (text === undefined) return found;
   const longest = secrets.reduce(
     (max, { value }) => Math.max(max, value.length),

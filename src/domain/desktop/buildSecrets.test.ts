@@ -93,6 +93,16 @@ describe("build secrets", () => {
       expect(found(text)).toContain("licence");
       expect(found(gzipSync(Buffer.from(text)))).toContain("licence");
     }
+    const utf16 = Buffer.from(`{"password":"${encoded}"}`, "utf16le");
+    for (const bytes of [
+      utf16,
+      swapped(utf16),
+      Buffer.concat([Buffer.from([0xff, 0xfe]), utf16]),
+      Buffer.concat([Buffer.from([0xfe, 0xff]), swapped(utf16)]),
+    ]) {
+      expect(found(bytes)).toContain("licence");
+      expect(found(gzipSync(bytes))).toContain("licence");
+    }
     expect(
       found('{"password":"e-Cl\\u00e9-\\u00dcn\\u00efcode-Fake-X"}'),
     ).not.toContain("licence");

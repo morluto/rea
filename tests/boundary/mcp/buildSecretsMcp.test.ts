@@ -304,7 +304,7 @@ it("refuses a bundle containing a declared form-encoded secret", async () => {
   expect(errorMessage(quote)).toContain("field=<secret:master>");
 });
 
-it("refuses a bundle containing a declared Unicode secret escaped in JSON", async () => {
+it.each(["utf8", "utf16le", "utf16be"] as const)("refuses a declared Unicode secret escaped in %s JSON", async (encoding) => {
   const value = "e-Clé-Ünïcode-Fake-9";
   const config = await secretsConfig({ master: { text: value } });
   const { client, outputs } = await buildCaptureFakes({
@@ -318,7 +318,10 @@ it("refuses a bundle containing a declared Unicode secret escaped in JSON", asyn
   const seed = join(outputs.bundle, "envs/notes/seed/Documents");
   await mkdir(seed, { recursive: true });
   const encoded = "e-Cl\\u00e9-\\u00dcn\\u00efcode-Fake-9";
-  await writeFile(join(seed, "profile.json"), `{"password":"${encoded}"}`);
+  const json = `{"password":"${encoded}"}`;
+  const bytes = encoding === "utf8" ? Buffer.from(json) : Buffer.from(json, "utf16le");
+  if (encoding === "utf16be") bytes.swap16();
+  await writeFile(join(seed, "profile.json"), bytes);
   const directory = join(await createTestTempDirectory("build-out-"), "notes");
   const result = await client.callTool({
     name: "export_build_environment",
