@@ -83,6 +83,13 @@ const containsOwnedReturn = (root: t.Node): boolean => {
 /** Demand-driven substitutions for local bindings, closures and literal module tables. */
 export class JavaScriptSymbolicBindings {
   readonly #writes = new Map<string, PropertyWrite[]>();
+  /** Each binding's written top-level members; null when a write replaces it. */
+  readonly #writtenMembers = new Map<string, ReadonlySet<string> | null>();
+  /** Each bound value as read through a binding that writes its members. */
+  readonly #writtenViews = new WeakMap<
+    SymbolicValue,
+    Map<string, SymbolicValue>
+  >();
   readonly #environments = new WeakMap<t.Node, SymbolicEnvironment>();
   readonly #cache = new WeakMap<
     SymbolicEnvironment,
@@ -830,19 +837,35 @@ export class JavaScriptSymbolicBindings {
    * A bound value, such as a parameter's argument, read through a binding
    * that visibly writes some of its members. Only those members lose the
    * bound value, and the result carries them through aliases and calls.
+   * Every read of one bound value through the binding shares one view.
    */
   #withMemberWrites(value: SymbolicValue, bindingId: string): SymbolicValue {
-    const writes = this.#writes.get(bindingId);
-    if (writes === undefined) return value;
-    const members = new Set<string>();
-    for (const write of writes) {
-      const member = write.path[0];
-      if (member === undefined)
-        return symbolicUnknown("overwritten object members");
-      members.add(member);
+    const members = this.#writtenMembersOf(bindingId);
+    if (members === undefined) return value;
+    if (members === null) return symbolicUnknown("overwritten object members");
+    const views =
+      this.#writtenViews.get(value) ?? new Map<string, SymbolicValue>();
+    const cached = views.get(bindingId);
+    if (cached !== undefined) return cached;
+    const variants = symbolicVariants(value);
+    // Charge each copy and merged member set before allocating it.
+    const cost = variants.reduce(
+      (sum, variant) =>
+        sum +
+        1 +
+        (variant.overwrittenMembers === undefined
+          ? 0
+          : variant.overwrittenMembers.size + members.size),
+      0,
+    );
+    if (cost > this.#remainingEvaluations) {
+      this.#remainingEvaluations = 0;
+      this.truncated = true;
+      return symbolicUnknown("symbolic resource limit");
     }
-    return symbolicUnion(
-      symbolicVariants(value).map((variant) =>
+    this.#remainingEvaluations -= cost;
+    const view = symbolicUnion(
+      variants.map((variant) =>
         variant.kind === "unknown"
           ? variant
           : {
@@ -854,6 +877,22 @@ export class JavaScriptSymbolicBindings {
             },
       ),
     );
+    views.set(bindingId, view);
+    this.#writtenViews.set(value, views);
+    return view;
+  }
+
+  /** A binding's written top-level members, collected once from its writes. */
+  #writtenMembersOf(bindingId: string): ReadonlySet<string> | null | undefined {
+    const cached = this.#writtenMembers.get(bindingId);
+    if (cached !== undefined) return cached;
+    const writes = this.#writes.get(bindingId);
+    if (writes === undefined) return undefined;
+    const members = writes.some((write) => write.path.length === 0)
+      ? null
+      : new Set(writes.map((write) => write.path[0]!));
+    this.#writtenMembers.set(bindingId, members);
+    return members;
   }
 
   #readBoundary(

@@ -298,6 +298,57 @@ it("loads modules through a loader parameter whose members a module writes", () 
   ).toEqual({ kind: "external", path: ["electron", "ipcMain"] });
 });
 
+it("builds a parameter's written members once for every read and call", () => {
+  const { parsed, resolver } = resolverFor(
+    `function f(o){o.channel="real";o.extra=1;inspect(o);inspect(o)}`,
+  );
+  const fn = parsed.program.body[0];
+  if (!t.isFunctionDeclaration(fn)) throw new Error("f declaration missing");
+  const reads: t.Node[] = [];
+  traverseJavaScriptAst(fn, {
+    enter: (node) => {
+      if (
+        t.isCallExpression(node) &&
+        t.isIdentifier(node.callee, { name: "inspect" }) &&
+        node.arguments[0] !== undefined
+      )
+        reads.push(node.arguments[0]);
+    },
+  });
+  const call = (argument: SymbolicValue) => {
+    const env = resolver.bind(
+      {
+        kind: "function",
+        node: fn,
+        environment: { values: new Map() },
+        origins: [],
+      },
+      [argument],
+    );
+    return reads.map((read) => resolver.evaluate(read, env));
+  };
+  const record = (channel: string): SymbolicValue => ({
+    kind: "record",
+    values: new Map([["channel", { kind: "literal", value: channel }]]),
+  });
+  const [first, second] = call(record("stale"));
+  const [other] = call(record("other"));
+  const [merged, mergedAgain] = call({
+    ...record("outer"),
+    overwrittenMembers: new Set(["outer"]),
+  });
+  expect(first?.overwrittenMembers).toEqual(new Set(["channel", "extra"]));
+  // Reads of one argument share its view; other calls share the member set.
+  expect(second).toBe(first);
+  expect(other).not.toBe(first);
+  expect(other?.overwrittenMembers).toBe(first?.overwrittenMembers);
+  expect(merged?.overwrittenMembers).toEqual(
+    new Set(["outer", "channel", "extra"]),
+  );
+  expect(mergedAgain).toBe(merged);
+  expect(resolver.truncated).toBe(false);
+});
+
 it("does not substitute a lexical or var initializer before its source write", () => {
   for (const source of [
     `inspect(value); const value = require("electron");`,
