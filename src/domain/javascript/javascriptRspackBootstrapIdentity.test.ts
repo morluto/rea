@@ -1493,3 +1493,53 @@ describe("wrapped aliases, parameter reassignments, and generator completion val
     `);
   });
 });
+
+describe("Object.assign getter pruning, Array.from selections, and nested defaults", () => {
+  it("handles getter-deleted Object.assign keys, inactive Array.from mapper defaults, null-prototype array-likes, positional collection slots, and deeply nested defaults", () => {
+    expectNoDirectElectron(`
+      const e = require("electron");
+      const copy = Object.assign({}, e, {
+        get before() { delete this.ipcRenderer; return 0; },
+        ipcRenderer: {},
+      });
+      copy.ipcRenderer.send = () => {};
+      e.ipcRenderer.send("GETTER_DELETED_KEY_TAINTED");
+    `);
+
+    const preserved = analyzeJavaScriptStaticSource(`
+      const e = require("electron");
+      const mapperDefault = Array.from([{}], (x = e) => x);
+      mapperDefault[0].ipcRenderer = {};
+
+      const arrayLike = Array.from({ __proto__: null, 0: {}, length: 1, extra: e });
+      arrayLike[0].ipcRenderer = {};
+
+      const indexedArray = Array.from([e, {}], (x) => x);
+      indexedArray[1].ipcRenderer = {};
+
+      const indexedValues = Object.values({ a: e, b: {} });
+      indexedValues[1].ipcRenderer = {};
+
+      e.ipcRenderer.send("COLLECTION_INTACT");
+    `);
+    expect(preserved.electron.ipc).toEqual([
+      expect.objectContaining({
+        channel: "COLLECTION_INTACT",
+        operation: "send",
+        side: "renderer",
+      }),
+    ]);
+
+    let deepPattern = "leaf = e";
+    for (let depth = 31; depth >= 0; depth -= 1) {
+      deepPattern = `{ d${depth}: ${deepPattern} } = globalThis.unknownFallback`;
+    }
+    expectNoDirectElectron(`
+      const e = require("electron");
+      function unpack(${deepPattern}) { return leaf; }
+      const maybeElectron = unpack(globalThis.unknownInput);
+      maybeElectron.ipcRenderer.send = () => {};
+      e.ipcRenderer.send("DEEP_DEFAULT_TAINTED");
+    `);
+  });
+});

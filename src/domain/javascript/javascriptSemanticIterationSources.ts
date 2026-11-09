@@ -112,11 +112,43 @@ const project = (
     ],
   };
 };
+const MAX_PATTERN_SOURCE_VISITS = 512;
+
 interface PatternCollection {
   readonly sources: SemanticIterationSource[];
   readonly mutation: t.Node;
   readonly propertyReads: SemanticPropertyReadSource[];
+  remainingVisits: number;
+  nextNodeId: number;
+  readonly nodeIds: WeakMap<t.Node, number>;
+  readonly saturatedStates: Set<string>;
 }
+
+const createPatternCollection = (
+  sources: SemanticIterationSource[],
+  propertyReads: SemanticPropertyReadSource[],
+  mutation: t.Node,
+): PatternCollection => ({
+  sources,
+  propertyReads,
+  mutation,
+  remainingVisits: MAX_PATTERN_SOURCE_VISITS,
+  nextNodeId: 1,
+  nodeIds: new WeakMap(),
+  saturatedStates: new Set(),
+});
+
+const patternSourceNodeId = (
+  node: t.Node,
+  context: PatternCollection,
+): number => {
+  const existing = context.nodeIds.get(node);
+  if (existing !== undefined) return existing;
+  const assigned = context.nextNodeId;
+  context.nextNodeId += 1;
+  context.nodeIds.set(node, assigned);
+  return assigned;
+};
 
 const visit = (
   context: PatternCollection,
@@ -125,6 +157,26 @@ const visit = (
   guards: SourceGuards = {},
 ): void => {
   pattern = unwrapJavaScriptExpression(pattern).node;
+  if (context.remainingVisits > 0) {
+    context.remainingVisits -= 1;
+  } else {
+    guards =
+      guards.iterationSources === undefined
+        ? {}
+        : { iterationSources: guards.iterationSources };
+    const stateKey = JSON.stringify([
+      patternSourceNodeId(pattern, context),
+      source === undefined ? 0 : patternSourceNodeId(source.node, context),
+      source?.projection ?? [],
+      source?.restStartIndex ?? -1,
+      guards.iterationSources?.map((iter) => [
+        patternSourceNodeId(iter.node, context),
+        iter.projection,
+      ]),
+    ]);
+    if (context.saturatedStates.has(stateKey)) return;
+    context.saturatedStates.add(stateKey);
+  }
   const { sources, mutation } = context;
   if (t.isMemberExpression(pattern)) {
     // Property stores have no lexical alias binding. Preserve the selected
@@ -347,7 +399,7 @@ const semanticSourceFacts = (
   if (cached?.parent === parent) return cached.facts;
   const sources: SemanticIterationSource[] = [];
   const propertyReads: SemanticPropertyReadSource[] = [];
-  const context = { sources, propertyReads, mutation: node };
+  const context = createPatternCollection(sources, propertyReads, node);
   if (t.isVariableDeclarator(node) && node.init != null)
     visit(context, node.id, { node: node.init, projection: [] });
   else if (
@@ -409,7 +461,7 @@ export const semanticPatternPropertyReadSources = (
   mutation: t.Node,
 ): readonly SemanticPropertyReadSource[] => {
   const propertyReads: SemanticPropertyReadSource[] = [];
-  visit({ sources: [], propertyReads, mutation }, pattern, source);
+  visit(createPatternCollection([], propertyReads, mutation), pattern, source);
   return propertyReads;
 };
 
