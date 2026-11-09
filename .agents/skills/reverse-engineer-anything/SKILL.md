@@ -307,7 +307,7 @@ explicit path or endpoint and do not need it.
   not proof the image has no functions. `.debug_frame` is reported present
   or absent and is not decoded. CFA instructions are counted and not
   evaluated. See the
-  [ELF unwind ranges guide](https://github.com/morluto/rea/blob/main/docs/elf-unwind-ranges.md).
+  [ELF unwind ranges guide](https://github.com/morluto/rea/blob/main/docs/guides/native/elf-unwind-ranges.md).
 - Apple `.ips` crash reports: `inspect_apple_ips` with the explicit local
   file. This built-in target-free inspection requires no Xcode, atos, or
   pwntools. Preserve first-line metadata, `bug_type` as a string, process and

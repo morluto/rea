@@ -44,6 +44,11 @@ export const documentationSections = [
         route: "/binary-diagnostics",
       },
       {
+        text: "ELF unwind function ranges",
+        source: "guides/native/elf-unwind-ranges.md",
+        route: "/elf-unwind-ranges",
+      },
+      {
         text: "Recorded crash evidence",
         source: "guides/native/recorded-crashes.md",
         route: "/recorded-crashes",
@@ -524,11 +529,6 @@ export const documentationSections = [
         route: "/electron-fuses",
       },
       { text: "ELF note tables", source: "elf-notes.md", route: "/elf-notes" },
-      {
-        text: "ELF unwind function ranges",
-        source: "elf-unwind-ranges.md",
-        route: "/elf-unwind-ranges",
-      },
       {
         text: "Erlang BEAM files",
         source: "erlang-beam.md",

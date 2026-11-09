@@ -461,7 +461,7 @@ counts ranges that match a symbol, ranges without a symbol, and whether the
 `.eh_frame_hdr` search table agrees with the decoded FDEs. `.debug_frame` is
 reported present, absent, or incomplete and is not decoded. A missing unwind table is
 observed absence of those declarations. See
-[ELF unwind function ranges](../elf-unwind-ranges.md).
+[ELF unwind function ranges](../guides/native/elf-unwind-ranges.md).
 
 Inspect an Apple `.ips` crash report without executing a target:
 

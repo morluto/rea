@@ -199,7 +199,7 @@ image has no functions. Header disagreement is a limitation and does not drop
 decoded ranges. `.debug_frame` is reported present or absent and is not
 decoded. CFA instructions are counted and not evaluated. Indirect EH pointers
 are not dereferenced. See
-[ELF unwind function ranges](https://github.com/morluto/rea/blob/main/docs/elf-unwind-ranges.md).
+[ELF unwind function ranges](https://github.com/morluto/rea/blob/main/docs/guides/native/elf-unwind-ranges.md).
 
 ## Apple IPS crash reports
 

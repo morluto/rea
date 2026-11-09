@@ -13,7 +13,7 @@ This feature adds `inspect_elf_unwind_ranges` and
 selected local ELF32 or ELF64 image and list the function ranges those tables
 name, without executing the image.
 
-[ELF unwind function ranges](../../../elf-unwind-ranges.md) describes the
+[ELF unwind function ranges](../../../guides/native/elf-unwind-ranges.md) describes the
 current behavior and limitations. This directory is the feature
 specification, implementation plan and task list. The guide does not replace
 these files.
