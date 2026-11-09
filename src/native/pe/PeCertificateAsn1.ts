@@ -270,6 +270,8 @@ const sequence = (node: Asn1BerNode, label: string): readonly Asn1BerNode[] => {
 
 const algorithmOid = (node: Asn1BerNode): string => {
   const children = sequence(node, "AlgorithmIdentifier");
+  if (children.length > 2)
+    return fail("AlgorithmIdentifier has unexpected trailing fields.");
   const oid = children[0];
   if (oid === undefined || oid.tag !== 0x06)
     return fail("AlgorithmIdentifier is missing an OBJECT IDENTIFIER.");

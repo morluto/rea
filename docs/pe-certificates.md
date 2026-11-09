@@ -59,6 +59,10 @@ eight header bytes, including zeros, is a truncated `WIN_CERTIFICATE` and
 fails the same way. SignedData must contain at least one `SignerInfo`, and
 each `SignerInfo` must carry a non-empty signature value. Each embedded X.509
 certificate must include `subjectPublicKeyInfo` and `signatureValue`.
+Algorithm identifiers require an OID and at most one parameter value, as defined
+in [RFC 5280](https://www.rfc-editor.org/rfc/rfc5280.html#section-4.1.1.2).
+Extra fields fail before algorithm OIDs are reported; absent parameters and a
+single opaque parameter remain supported without algorithm-specific validation.
 Certificate issuer/subject and signer issuer names require nonempty RDN sets
 and exactly two fields (type and value) in each attribute, as defined in
 [RFC 5280](https://www.rfc-editor.org/rfc/rfc5280.html#section-4.1.2.4).

@@ -14,6 +14,43 @@ import { repeatedCertificateSignedData } from "../fixtures/peCertificateAllowanc
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 import { cliTest, runFileCli } from "../support/cli/cliFixture.js";
 
+cliTest.for(["certificateSignature", "digest"] as const)(
+  "rejects extra %s algorithm fields through CLI and MCP",
+  async (target, { cli }) => {
+    const root = await createTestTempDirectory("rea-pe-algorithm-fields-");
+    const path = join(root, "malformed.exe");
+    const malformed = Buffer.from([0x30, 8, 0x06, 2, 0x2a, 3, 5, 0, 5, 0]);
+    const payload = pkcs7SignedDataFixture(
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      {},
+      { [target]: malformed },
+    );
+    const bytes = peCertificateFixture(false, payload);
+    await writeFile(path, bytes);
+    const result = await runFileCli(cli, {
+      arguments: ["inspect-pe-certificates", path, "--json"],
+    });
+    expect.soft(result.exitCode, result.stdout).toBe(1);
+    expect.soft(result.json).toMatchObject({
+      code: "invalid_request",
+      category: "invalid_input",
+      details: {
+        operation: "inspect_pe_certificates",
+        issues: [
+          expect.objectContaining({ path: ["path"], reason: "invalid_format" }),
+        ],
+      },
+    });
+    const call = await cli.sharedMcpCall!();
+    const response = await call("inspect_pe_certificates", { path });
+    expect.soft(response.isError, JSON.stringify(response)).toBe(true);
+    expect((await readFile(path)).equals(bytes)).toBe(true);
+  },
+);
+
 cliTest.for(["extra-field", "empty-rdn"] as const)(
   "rejects a malformed certificate name %s through CLI and MCP",
   async (kind, { cli }) => {
