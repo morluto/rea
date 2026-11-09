@@ -29,22 +29,58 @@ export const isCrateNameByte = (code: number): boolean =>
 export const isRegistryOrGitSlugByte = (code: number): boolean =>
   isCrateNameByte(code) || code === 0x2e;
 
+/**
+ * Cargo derives git checkout directory slugs from the final `url::Url` path
+ * segment of `SourceId::canonical_url()`, admitting printable non-space ASCII
+ * (`0x21..0x7e`) except path separators (`/`, `\`) and WHATWG URL path
+ * delimiters/percent-encoded characters (`"`, `#`, `<`, `>`, `?`, `` ` ``, `{`, `}`).
+ */
 export const isCargoGitSlugByte = (code: number): boolean =>
-  isRegistryOrGitSlugByte(code) ||
-  code === 0x2b ||
-  code === 0x7e ||
-  code === 0x25;
+  code >= 0x21 &&
+  code <= 0x7e &&
+  code !== 0x22 &&
+  code !== 0x23 &&
+  code !== 0x2f &&
+  code !== 0x3c &&
+  code !== 0x3e &&
+  code !== 0x3f &&
+  code !== 0x5c &&
+  code !== 0x60 &&
+  code !== 0x7b &&
+  code !== 0x7d;
 
 const isSemverIdentByte = (code: number): boolean =>
   isAsciiAlnum(code) || code === 0x2d;
+
+const U64_MAX_DECIMAL = "18446744073709551615";
+
+const exceedsU64MaxText = (text: string, start: number): boolean => {
+  for (let index = 0; index < U64_MAX_DECIMAL.length; index += 1) {
+    const digit = text.charCodeAt(start + index);
+    const maxDigit = U64_MAX_DECIMAL.charCodeAt(index);
+    if (digit !== maxDigit) return digit > maxDigit;
+  }
+  return false;
+};
+
+const exceedsU64MaxBytes = (bytes: Uint8Array, start: number): boolean => {
+  for (let index = 0; index < U64_MAX_DECIMAL.length; index += 1) {
+    const digit = bytes[start + index] ?? 0;
+    const maxDigit = U64_MAX_DECIMAL.charCodeAt(index);
+    if (digit !== maxDigit) return digit > maxDigit;
+  }
+  return false;
+};
 
 const readSemverCoreNumber = (text: string, start: number): number => {
   let cursor = start;
   while (cursor < text.length && isAsciiDigit(text.charCodeAt(cursor)))
     cursor += 1;
   const digits = cursor - start;
-  if (digits < 1 || digits > 20) return -1;
+  if (digits < 1 || digits > U64_MAX_DECIMAL.length) return -1;
   if (digits > 1 && text.charCodeAt(start) === 0x30) return -1;
+  if (digits === U64_MAX_DECIMAL.length && exceedsU64MaxText(text, start))
+    return -1;
   return cursor;
 };
 
@@ -205,8 +241,10 @@ const readByteSemverNumber = (bytes: Uint8Array, start: number): number => {
   let cursor = start;
   while (cursor < bytes.length && isAsciiDigit(bytes[cursor] ?? 0)) cursor += 1;
   const digits = cursor - start;
-  if (digits < 1 || digits > 20) return -1;
+  if (digits < 1 || digits > U64_MAX_DECIMAL.length) return -1;
   if (digits > 1 && bytes[start] === 0x30) return -1;
+  if (digits === U64_MAX_DECIMAL.length && exceedsU64MaxBytes(bytes, start))
+    return -1;
   return cursor;
 };
 

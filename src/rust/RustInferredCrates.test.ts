@@ -557,7 +557,7 @@ it("rebases universal Mach-O slice offsets and preserves default parity in RustB
   }
 });
 
-it("retains git checkout_id and non-crate leading slug bytes while rejecting dot-only slugs", () => {
+it("retains git checkout_id and Cargo URL path-segment punctuation while rejecting dot-only or delimiter slugs", () => {
   const bytes = createRustImage({
     format: "elf",
     omitSection: true,
@@ -568,8 +568,12 @@ it("retains git checkout_id and non-crate leading slug bytes while rejecting dot
         "/cargo/git/checkouts/foo-1111111111111111/abcdef1/src/other.rs",
         "/cargo/git/checkouts/.dot-repo-0123456789abcdef/a1b2c3d/src/lib.rs",
         "/cargo/git/checkouts/-dash+repo-fedcba9876543210/a1b2c3d/src/lib.rs",
+        "/cargo/git/checkouts/repo@v1-3333333333333333/a1b2c3d/src/lib.rs",
+        "/cargo/git/checkouts/repo!$&'()*,:;=[]^|%20~-4444444444444444/a1b2c3d/src/lib.rs",
         "/cargo/git/checkouts/.-0123456789abcdef/a1b2c3d/src/lib.rs",
         "/cargo/git/checkouts/..-0123456789abcdef/a1b2c3d/src/lib.rs",
+        "/cargo/git/checkouts/bad?query-0123456789abcdef/a1b2c3d/src/lib.rs",
+        "/cargo/git/checkouts/bad#frag-0123456789abcdef/a1b2c3d/src/lib.rs",
       ].join("\0") + "\0",
       "latin1",
     ),
@@ -578,7 +582,7 @@ it("retains git checkout_id and non-crate leading slug bytes while rejecting dot
     bytes,
     readBinaryContainer(bytes),
   );
-  expect(result.inferred_crates.discovered_count).toBe(4);
+  expect(result.inferred_crates.discovered_count).toBe(6);
   expect(
     result.inferred_crates.items.map(
       ({ first_file_offset: _offset, ...item }) => item,
@@ -620,6 +624,24 @@ it("retains git checkout_id and non-crate leading slug bytes while rejecting dot
       revision: "a1b2c3d",
       reference_count: 1,
     },
+    {
+      name: "repo@v1",
+      version: null,
+      source_kind: "git",
+      registry_index: null,
+      checkout_id: "3333333333333333",
+      revision: "a1b2c3d",
+      reference_count: 1,
+    },
+    {
+      name: "repo!$&'()*,:;=[]^|%20~",
+      version: null,
+      source_kind: "git",
+      registry_index: null,
+      checkout_id: "4444444444444444",
+      revision: "a1b2c3d",
+      reference_count: 1,
+    },
   ]);
 
   const validReport = {
@@ -643,6 +665,70 @@ it("retains git checkout_id and non-crate leading slug bytes while rejecting dot
   const missingCheckout = structuredClone(validReport);
   missingCheckout.inferred_crates.items[0]!.checkout_id = null;
   expect(rustBinarySchema.safeParse(missingCheckout).success).toBe(false);
+
+  const invalidSlugReport = structuredClone(validReport);
+  invalidSlugReport.inferred_crates.items[0]!.name = "bad?slug";
+  expect(rustBinarySchema.safeParse(invalidSlugReport).success).toBe(false);
+});
+
+it("enforces Cargo u64::MAX bounds on SemVer major, minor, and patch components", () => {
+  const bytes = createRustImage({
+    format: "elf",
+    omitSection: true,
+    readOnlyBytes: Buffer.from(
+      [
+        "/cargo/registry/src/index.crates.io-6f17d22bba15001f/max_major-18446744073709551615.0.0/src/lib.rs",
+        "/cargo/registry/src/index.crates.io-6f17d22bba15001f/max_patch-0.0.18446744073709551615/src/lib.rs",
+        "/cargo/registry/src/index.crates.io-6f17d22bba15001f/over_major-18446744073709551616.0.0/src/lib.rs",
+        "/cargo/registry/src/index.crates.io-6f17d22bba15001f/over_minor-0.18446744073709551616.0/src/lib.rs",
+        "/cargo/registry/src/index.crates.io-6f17d22bba15001f/over_patch-0.0.18446744073709551616/src/lib.rs",
+        "/cargo/registry/src/index.crates.io-6f17d22bba15001f/over_high-20000000000000000000.0.0/src/lib.rs",
+        "rustc 18446744073709551615.0.0",
+        "rustc 18446744073709551616.0.0",
+      ].join("\0") + "\0",
+      "latin1",
+    ),
+  });
+  const result = recoverRustSourceFingerprints(
+    bytes,
+    readBinaryContainer(bytes),
+  );
+  expect(
+    result.inferred_crates.items.map(({ name, version }) => ({
+      name,
+      version,
+    })),
+  ).toEqual([
+    { name: "max_major", version: "18446744073709551615.0.0" },
+    { name: "max_patch", version: "0.0.18446744073709551615" },
+  ]);
+  expect(result.rustc_versions.items.map((item) => item.version)).toEqual([
+    "18446744073709551615.0.0",
+  ]);
+
+  const validReport = {
+    artifact: { path: "/artifacts/u64", sha256: "a".repeat(64), bytes: 8192 },
+    format: "elf" as const,
+    architecture: "amd64",
+    bits: 64 as const,
+    byte_order: "little" as const,
+    auditable_metadata: null,
+    rustc_commit: null,
+    inferred_crates: result.inferred_crates,
+    rustc_versions: result.rustc_versions,
+    limitations: [],
+  };
+  expect(rustBinarySchema.safeParse(validReport).success).toBe(true);
+
+  for (const invalidVersion of [
+    "18446744073709551616.0.0",
+    "0.18446744073709551616.0",
+    "0.0.18446744073709551616",
+  ]) {
+    const invalidReport = structuredClone(validReport);
+    invalidReport.inferred_crates.items[0]!.version = invalidVersion;
+    expect(rustBinarySchema.safeParse(invalidReport).success).toBe(false);
+  }
 });
 
 it("rejects numeric prerelease leading zeros while preserving build metadata and alphanumeric prereleases", () => {
