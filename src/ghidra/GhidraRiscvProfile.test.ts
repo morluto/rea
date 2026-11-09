@@ -773,10 +773,10 @@ const canonical: GhidraRiscvLoadPreparationReport = {
   code: { ...movedCode, space_before: "ram" },
 };
 
-// Profiles of images without a section overlap, as main 5553acfe5 commits them.
+// Profiles of images without a section overlap, as main 8dfc47b10 commits them.
 const UNCHANGED_DIGESTS = {
-  ilp32: "c9b452a217bbe78ff115a32b54e75b59687c8e152412a22f6ad0cb6d42825bb6",
-  double64: "7a89b2fb6c68a79e2d4267a7df0784134f2db175fa06f833480cc431fd6f30e6",
+  ilp32: "ab1659db0b3f1185fe44cb77f7be1805d56d7927347c4192be17437925ce4c9c",
+  double64: "b3afa37f349d04bf818eb0c6c8469d2276cdf5f6d09ddf8e16abbeed287c9698",
 } as const;
 
 describe("RISC-V load preparation admission", () => {
