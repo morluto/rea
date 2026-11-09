@@ -142,3 +142,42 @@ cliTest(
     }
   },
 );
+
+cliTest.for(["CLI", "stdio MCP"] as const)(
+  "observes Electron net requests with proven module identity through %s",
+  async (surface, { cli }) => {
+    const root = await createTestTempDirectory("rea-electron-net-");
+    await writeFixtureFiles(root, {
+      "main.cjs": `
+    const electron = require("electron");
+    const { net } = electron;
+    net.fetch("https://api.example.test/v1/config");
+    electron.net.request("https://api.example.test/v1/ping").end();
+    const cache = { fetch: (key) => key };
+    cache.fetch("settings-key");
+  `,
+    });
+    const result = await analyzeJavaScriptDirectory(surface, cli, root);
+    const observations = result.graph.nodes
+      .filter(({ kind }) => kind === "endpoint")
+      .flatMap(({ observations }) => observations);
+    expect(
+      observations.map(({ properties }) => String(properties.value)).sort(),
+    ).toEqual([
+      "https://api.example.test/v1/config",
+      "https://api.example.test/v1/ping",
+      "settings-key",
+    ]);
+    for (const observation of observations) {
+      const local = observation.properties.value === "settings-key";
+      expect(observation.evidence).toMatchObject(
+        local
+          ? { state: "inferred", confidence: "low" }
+          : { state: "observed", confidence: "exact" },
+      );
+      expect(observation.properties.interpretation).toBe(
+        local ? "candidate" : undefined,
+      );
+    }
+  },
+);
