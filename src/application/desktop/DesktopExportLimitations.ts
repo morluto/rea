@@ -10,6 +10,7 @@ import {
   unownedFoldersLimitation,
 } from "../../domain/desktop/appExportUnowned.js";
 import type { DesktopApplicationCapture } from "../../domain/desktop/desktopCapture.js";
+import type { DesktopApplicationState } from "../../domain/desktop/desktopState.js";
 import type { HostIdentity } from "../../domain/desktop/hostIdentity.js";
 import { recoveryListLimitation } from "../../domain/desktop/seedRecoveryList.js";
 
@@ -42,12 +43,16 @@ export const exportLimitations = (
     readonly recovered: readonly string[];
     /** What the export says about the task, such as a prompt that does not name the app. */
     readonly task: readonly string[];
+    readonly files: ReadonlyMap<string, DesktopApplicationState["paths"][number]>;
   },
 ): string[] => {
   const opened = heldOpenLimitation(
     capture.state.unretained_opened_directories,
     capture.host.home,
-    plan.seedFiles,
+    plan.seedFiles.flatMap((seed) => {
+      const source = facts.files.get(seed)?.path;
+      return source === undefined ? [] : [{ seed, source }];
+    }),
   );
   const opens = launchDocumentLimitation(plan.opens);
   const unowned = unownedFoldersLimitation(plan.unownedFolders);

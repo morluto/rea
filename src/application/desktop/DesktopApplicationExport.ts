@@ -410,6 +410,7 @@ const runExport = async (
     trashed,
     recovered: scrub.recovered ?? [],
     task: admitted?.limitations ?? [],
+    files,
   });
   const result: DesktopExportResult = {
     directory: request.directory,
