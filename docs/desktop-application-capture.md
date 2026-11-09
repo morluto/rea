@@ -47,6 +47,10 @@ computer would not have that entry. An `--executable` runs from
 the current directory, as it would from a shell, and a relative path to it is
 resolved there.
 
+Desktop-entry string values retain literal trailing spaces. For example,
+`Path=/tmp/workspace ` and `Path=/tmp/workspace\s` name the same directory
+ending in a space. Use the escaped spelling to make such a suffix visible.
+
 Before writing anything the command refuses to start if a window of the
 application is already open, or if the window list cannot be read. A launch
 beside a running instance can hand off to it, and that instance's unsaved

@@ -161,16 +161,6 @@ export interface DataEffectTraversalContext {
   readonly ancestors: t.Node[];
 }
 
-/** Resolve built-in methods from the shared, unambiguous binding provenance. */
-export const builtinDataEffectMethod = (
-  callee: t.Node,
-  state: JavaScriptSemanticAnalysisState,
-  specifiers: readonly string[],
-): string | null => {
-  const path = builtinDataEffectCallablePath(callee, state, specifiers);
-  return path?.length === 1 ? (path[0] ?? null) : null;
-};
-
 /** Recover the complete callable export path using the shared mutation proof. */
 export const builtinDataEffectCallablePath = (
   callee: t.Node,
