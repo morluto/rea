@@ -44,7 +44,7 @@ const COMPOSITION_LIMITATION =
 const GO_GRAPH_LIMITATION =
   "Go build information carries no module graph. Dependency entries are main-module to module edges only.";
 const RUST_KIND_LIMITATION =
-  "An omitted cargo package kind is not stored as runtime. An omitted CycloneDX scope does not claim the package is required.";
+  "An omitted cargo package kind has no CycloneDX scope. CycloneDX consumers assume required when scope is omitted, so a package with rea:cargo:kind=omitted can read as required although its kind is unknown.";
 
 const propertySchema = z.strictObject({
   name: z.string().min(1),

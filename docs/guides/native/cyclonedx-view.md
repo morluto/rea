@@ -36,7 +36,9 @@ Components use Package URLs:
   or other source has no Package URL. Its `bom-ref` is `rust-package:<index>`,
   `rea:cargo:source` keeps the source, and the identity stays unknown. A
   package whose kind is `build` has `scope: excluded`. An omitted
-  kind does not set `scope`.
+  kind does not set `scope`. CycloneDX consumers assume `required` when
+  `scope` is omitted, so `rea:cargo:kind` with the value `omitted` and a
+  document limitation record that the kind is unknown.
 
 Rust dependency entries follow the embedded package indices, including a
 recorded self-edge. When the embedded record names a root package, a dependency

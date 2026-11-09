@@ -836,6 +836,12 @@ it("projects Rust edges, build scope and duplicate Package URLs", () => {
     { name: "rea:cargo:source", value: "local" },
     { name: "rea:cargo:kind", value: "omitted" },
   ]);
+  expect(first.document.components[2]).not.toHaveProperty("scope");
+  expect(first.limitations).toContainEqual(
+    expect.stringContaining(
+      "CycloneDX consumers assume required when scope is omitted",
+    ),
+  );
   expect(first.source_coverage).toEqual({
     aggregate: "unknown",
     records: "present",
