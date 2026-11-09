@@ -212,13 +212,9 @@ rea inspect-managed-members /absolute/path/Assembly.dll --type Namespace.Type \
 bundle format. Its parent directory must exist, and it never replaces an
 existing path. Relative paths resolve against the command's working directory.
 The option also works with complete delivery when a saved bundle is useful.
-Summary without a destination is rejected before analysis. A publication failure
-returns a typed error with the completed Evidence under
-`details.partial_observation`; it does not report successful summary delivery.
-Cancellation before publication prevents the new output. Once atomic
-publication has started, it can complete despite cancellation; a cancelled
-delivery then retains the committed path and byte count under
-`details.diagnostics.evidence_bundle`.
+Summary without a destination is rejected before analysis. For partial Evidence
+and committed-file receipts after failure or cancellation, see
+[Evidence publication and source recovery](../../reference/mcp-contracts.md#evidence-publication-and-source-recovery).
 
 Copy `normalized_result.parent_evidence_id` from the summary into the
 `source.evidence_id` field of the `managed-members` request above, then save that
