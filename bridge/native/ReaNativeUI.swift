@@ -122,10 +122,12 @@ func observe(_ request: Request) async throws -> [String: Any] {
       if nodes.count >= request.max_nodes { truncated = true; break }
       let childCountResult = childCount(element)
       var actions: CFArray?
-      AXUIElementCopyActionNames(element, &actions)
+      let actionStatus = AXUIElementCopyActionNames(element, &actions)
+      let observedActions = captureActionNames(status: actionStatus.rawValue, success: AXError.success.rawValue, names: actions as? [String])
+      if let error = observedActions.error { gaps.append("AX actions unavailable at path \(path): AXError \(error)"); truncated = true }
       let observedValue = captureAccessibilityValue(attribute(element, kAXValueAttribute))
       if let gap = observedValue.gap { gaps.append("\(gap) at path \(path)"); truncated = true }
-      nodes.append(["path": path, "role": text(element, kAXRoleAttribute), "title": text(element, kAXTitleAttribute), "value": observedValue.value, "actions": actions as? [String] ?? [], "children_count": childCountResult.value.map { $0 as Any } ?? NSNull()])
+      nodes.append(["path": path, "role": text(element, kAXRoleAttribute), "title": text(element, kAXTitleAttribute), "value": observedValue.value, "actions": observedActions.names, "children_count": childCountResult.value.map { $0 as Any } ?? NSNull()])
       guard let totalChildren = childCountResult.value else {
         truncated = true
         gaps.append("AX child count unavailable at path \(path): AXError \(childCountResult.error ?? -1)")

@@ -56,3 +56,12 @@ precondition(complete.values == [10, 20], "Retrieval must respect the requested 
 precondition(complete.complete, "A full bounded result must remain complete")
 
 print("Native UI child retrieval and serialization seams passed")
+
+let unavailableActions = captureActionNames(status: -25204, success: 0, names: nil)
+precondition(unavailableActions.names.isEmpty && unavailableActions.error == -25204, "Failed action reads must retain their AX error")
+let unsupportedActions = captureActionNames(status: -25208, success: 0, names: nil)
+precondition(unsupportedActions.names.isEmpty && unsupportedActions.error == -25208, "Unsupported action reads must remain unknown")
+let emptyActions = captureActionNames(status: 0, success: 0, names: [])
+precondition(emptyActions.names.isEmpty && emptyActions.error == nil, "Successful empty action lists must remain known empty")
+let knownActions = captureActionNames(status: 0, success: 0, names: ["AXPress"])
+precondition(knownActions.names == ["AXPress"] && knownActions.error == nil)

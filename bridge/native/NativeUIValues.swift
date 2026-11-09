@@ -24,3 +24,9 @@ func captureAccessibilityValue(_ source: Any?) -> AccessibilityValue {
   }
   return AccessibilityValue(value: NSNull(), gap: "AXValue type \(type(of: source)) is not a supported JSON scalar")
 }
+
+/** Keep an unavailable action list distinct from a successful empty list. */
+func captureActionNames(status: Int32, success: Int32, names: [String]?) -> (names: [String], error: Int32?) {
+  guard status == success else { return ([], status) }
+  return (names ?? [], nil)
+}
