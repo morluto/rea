@@ -7,10 +7,7 @@ import { PassThrough } from "node:stream";
 
 import { describe, expect, it } from "vitest";
 
-import {
-  digestFile,
-  REVERSE_COMMAND_OUTPUT_LIMITATION,
-} from "../../src/application/reverse/ReverseEngineeringService.js";
+import { digestFile } from "../../src/application/reverse/ReverseEngineeringService.js";
 import { TestReverseEngineeringService as ReverseEngineeringService } from "../support/reverseEngineeringService.js";
 import { providerSnapshot } from "../support/reverseEngineeringCompositionFixtures.js";
 import { createReverseEngineeringService } from "../../src/composition/reverseEngineering.js";
@@ -33,6 +30,70 @@ it("documents the shared combined capture limit for both command tools", () => {
   for (const contract of REVERSE_ENGINEERING_TOOL_CONTRACTS)
     expect(contract.description).toContain("command_timeout_ms");
 });
+
+it.each(["objdump", "rizin"] as const)(
+  "recovers a bounded %s capture after the caller raises output admission",
+  async (provider) => {
+    const directory = await mkdtemp(
+      join(tmpdir(), "rea-reverse-output-admission-"),
+    );
+    const path = join(directory, "input.bin");
+    await writeFile(path, "selected artifact");
+    const profile = {
+      executable: process.execPath,
+      arguments: ["-e", "process.stdout.write('complete-output')"],
+      identity: {
+        id: "fixture-command",
+        name: "Fixture command",
+        version: "1",
+      },
+    };
+    const service = new ReverseEngineeringService({
+      commands: { objdump: () => profile, rizin: () => profile },
+    });
+    const inspect = (max_output_bytes: number) =>
+      provider === "objdump"
+        ? service.inspectWithObjdump({
+            operation: "architectures",
+            max_output_bytes,
+          })
+        : service.executeRizinCommand({
+            path,
+            command: "iI",
+            max_output_bytes,
+          });
+    try {
+      const limited = await inspect(8);
+      if (!limited.ok) throw limited.error;
+      expect(limited.value.normalized_result).toMatchObject({
+        stdout: "complete",
+        output_budget_bytes: 8,
+        output_budget_source: "request",
+        output_truncated: true,
+        completion_status: "unknown",
+      });
+      expect(limited.value.parameters).toMatchObject({ max_output_bytes: 8 });
+      expect(limited.value.limitations).toContainEqual(
+        expect.stringContaining("max_output_bytes=8"),
+      );
+      const recovered = await inspect(32);
+      if (!recovered.ok) throw recovered.error;
+      expect(recovered.value.normalized_result).toMatchObject({
+        stdout: "complete-output",
+        output_budget_bytes: 32,
+        output_budget_source: "request",
+        output_truncated: false,
+        completion_status: "complete",
+      });
+      expect(recovered.value.parameters).toMatchObject({
+        max_output_bytes: 32,
+      });
+    } finally {
+      await service.close();
+      await rm(directory, { recursive: true, force: true });
+    }
+  },
+);
 
 describe("reverse engineering command services", () => {
   it("uses compatible local DWARF link flags and disables debuginfod through the environment", async () => {
@@ -177,8 +238,8 @@ describe("reverse engineering command services", () => {
           output_truncated: true,
           completion_status: "unknown",
         });
-        expect(result.value.limitations).toContain(
-          REVERSE_COMMAND_OUTPUT_LIMITATION,
+        expect(result.value.limitations).toContainEqual(
+          expect.stringContaining("max_output_bytes=16777216"),
         );
       }
     } finally {
