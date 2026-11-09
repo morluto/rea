@@ -848,6 +848,8 @@ const sourceRequireFacts = (
         properties.semantic_role === "source-module" &&
         properties.path === path,
     )?.properties;
+  if (module === undefined)
+    throw new Error(`Source module ${path} is absent from the analysis graph`);
   const requires = graph.edges.filter(
     ({ relation, properties, evidence }) =>
       relation === "imports" &&
@@ -857,8 +859,8 @@ const sourceRequireFacts = (
       evidence.location.value.source === path,
   );
   return {
-    module_format: module?.module_format,
-    import_relationships: module?.import_relationships,
+    module_format: module.module_format,
+    import_relationships: module.import_relationships,
     require_targets: requires.map(({ properties }) => [
       properties.specifier,
       properties.resolved_path,
@@ -1014,8 +1016,20 @@ cliTest(
     const { graph } = javascriptApplicationAnalysisResultSchema.parse(
       parseEvidence(response.json).normalized_result,
     );
-    expect(sourceRequireFacts(graph, "preload.js").module_format).not.toBe(
-      "commonjs",
+    expect(graph.nodes).toContainEqual(
+      expect.objectContaining({
+        kind: "browser-window",
+        observations: expect.arrayContaining([
+          expect.objectContaining({
+            properties: expect.objectContaining({
+              loader_authority: "candidate",
+            }),
+          }),
+        ]),
+      }),
+    );
+    expect(sourceRequireFacts(graph, "preload.js").module_format).toBe(
+      "unknown",
     );
     expect(
       sourceRequireFacts(graph, "preload.js").require_targets,
