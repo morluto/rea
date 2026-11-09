@@ -3,15 +3,14 @@ import {
   semanticStaticPropertyName,
   unwrapJavaScriptExpression,
 } from "./javascriptAstValues.js";
-import { semanticBindingAtRead } from "./javascriptSemanticMutationInitializers.js";
-import { semanticOpaqueGlobalMayHaveChanged } from "./javascriptSemanticOpaqueEffects.js";
-import { evaluateSemanticExpression } from "./javascriptSemanticValues.js";
-import { semanticPrimitiveCandidates } from "./javascriptSemanticPrimitives.js";
 import {
-  resolveSemanticBindingState,
-  semanticStableInitializer,
-  type JavaScriptBindingIndex,
-  type JavaScriptSemanticAnalysisState,
+  semanticConstructedReceiver,
+  semanticPrimitiveArguments,
+} from "./javascriptSemanticIntrinsicReceivers.js";
+import { semanticOpaqueGlobalMayHaveChanged } from "./javascriptSemanticOpaqueEffects.js";
+import type {
+  JavaScriptBindingIndex,
+  JavaScriptSemanticAnalysisState,
 } from "./javascriptSemanticState.js";
 import * as t from "@babel/types";
 import {
@@ -60,13 +59,7 @@ const isXhrOpenRequest = (
   // Primitive arguments also avoid user code during WebIDL string conversion.
   if (
     purpose === "receiver" &&
-    node.arguments.some(
-      (argument) =>
-        t.isSpreadElement(argument) ||
-        semanticPrimitiveCandidates(
-          evaluateSemanticExpression(argument, bindings),
-        ) === null,
-    )
+    !semanticPrimitiveArguments(node.arguments, bindings)
   )
     return false;
   const prototypeOwners =
@@ -89,40 +82,21 @@ const isXhrOpenRequest = (
     )
   )
     return false;
-  let receiver = unwrapJavaScriptExpression(callee.object).node;
-  const seen = new Set<string>();
-  while (t.isIdentifier(receiver)) {
-    if (
-      index !== undefined &&
-      (purpose === "receiver"
-        ? index.referenceMayHaveChangedAt(node, receiver, [])
-        : index.referenceMayHaveChangedAt(node, receiver, ["open"]) ||
-          index.referenceMayHaveChangedAt(node, receiver, ["__proto__"]))
-    )
-      return false;
-    const binding = resolveSemanticBindingState(
-      bindings,
-      receiver,
-      receiver.name,
-    );
-    if (binding === undefined || seen.has(binding.bindingId)) return false;
-    seen.add(binding.bindingId);
-    const initializer = semanticStableInitializer(binding, bindings);
-    if (
-      initializer === undefined ||
-      initializer.projection.length !== 0 ||
-      !semanticBindingAtRead(binding, receiver, bindings).hasDefiniteInitializer
-    )
-      return false;
-    receiver = unwrapJavaScriptExpression(initializer.node).node;
-  }
+  const receiver = semanticConstructedReceiver(callee.object, node, bindings, {
+    paths: purpose === "receiver" ? [[]] : [["open"], ["__proto__"]],
+    index,
+  });
   if (
-    !t.isNewExpression(receiver) ||
-    !isUnmodifiedGlobalReference(receiver.callee, bindings, "XMLHttpRequest") ||
+    receiver === undefined ||
+    !isUnmodifiedGlobalReference(
+      receiver.construction.callee,
+      bindings,
+      "XMLHttpRequest",
+    ) ||
     semanticOpaqueGlobalMayHaveChanged(callee, bindings)
   )
     return false;
-  return index === undefined && seen.size > 0 ? undefined : true;
+  return index === undefined && receiver.viaBinding ? undefined : true;
 };
 
 /** A pristine native open is safe for the mutation producer, not every XHR call. */

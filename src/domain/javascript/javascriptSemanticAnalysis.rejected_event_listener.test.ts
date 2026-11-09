@@ -1556,3 +1556,27 @@ e.on("ready");`;
     expect(eventsForSource(source(false))).toEqual([]);
   },
 );
+
+it.each([
+  "process.getBuiltinModule.call(null, 'events')",
+  "process.getBuiltinModule.apply(null, ['events'])",
+  "Reflect.apply(process.getBuiltinModule, null, ['events'])",
+  "process.getBuiltinModule.bind(null, 'events')()",
+  "process.getBuiltinModule.bind(null)('events')",
+])(
+  "retains native-listener uncertainty after normalized getter effects: %s",
+  (getter) => {
+    expect(
+      eventsForSource(`import {EventEmitter} from 'node:events';
+    import {replacement} from './patch.js';
+    ${getter}.EventEmitter.prototype.on = replacement;
+    const e = new EventEmitter(); e.on('ready');`),
+    ).toContainEqual({ kind: "register", method: "on", eventName: "ready" });
+    expect(
+      eventsForSource(`import {EventEmitter} from 'node:events';
+    import {replacement} from './patch.js';
+    const e = new EventEmitter(); e.on('ready');
+    ${getter}.EventEmitter.prototype.on = replacement;`),
+    ).toEqual([]);
+  },
+);
