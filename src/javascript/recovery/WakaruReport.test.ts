@@ -4,7 +4,10 @@ import { expect, it } from "vitest";
 import { projectAnalysisError } from "../../domain/analysisErrorProjection.js";
 import { ProviderAdapterError } from "../../domain/providerAdapterError.js";
 import { createTestTempDirectory } from "../../../tests/fixtures/temporaryDirectory.js";
-import { AnalysisOutputError } from "../../domain/analysisErrorCore.js";
+import {
+  AnalysisCancelledError,
+  AnalysisOutputError,
+} from "../../domain/analysisErrorCore.js";
 import {
   parseWakaruReports,
   validateRecoverySourceMap,
@@ -30,6 +33,28 @@ const execution = {
   arguments: ["--json"],
   resource_limiter: "/usr/bin/prlimit",
 };
+
+it("preserves cancellation and its exact reason when the provenance read is cancelled", async () => {
+  const controller = new AbortController();
+  const reason = { requested: "stop provenance read" };
+  controller.abort(reason);
+  const failure: unknown = await parseWakaruReports({
+    execution,
+    provenancePath: "/unread-provenance.json",
+    snapshots: new Map(),
+    files: [],
+    signal: controller.signal,
+  }).catch((cause: unknown) => cause);
+  expect(failure).toBeInstanceOf(AnalysisCancelledError);
+  if (!(failure instanceof AnalysisCancelledError))
+    throw new Error("Expected cancellation");
+  expect(failure.cause).toBe(reason);
+  expect(failure.capturedOutput).toMatchObject({
+    stdout: reportStdout,
+    stderr: "",
+    exit_code: 0,
+  });
+});
 
 it("names the fixed report allowance when provenance.json exceeds 8 MiB", async () => {
   const root = await createTestTempDirectory("rea-wakaru-provenance-size-");

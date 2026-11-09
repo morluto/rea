@@ -6,6 +6,8 @@ import { dirname, join } from "node:path";
 import { afterEach, expect, it, onTestFinished, vi } from "vitest";
 import { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
 import { ArtifactFileCleanupFailure } from "../../artifacts/ArtifactFileOperation.js";
+import { AnalysisCancelledError } from "../../domain/analysisErrorCore.js";
+import { parseWakaruReports } from "./WakaruReport.js";
 import { createTestTempDirectory } from "../../../tests/fixtures/temporaryDirectory.js";
 import {
   fingerprintRecoveryFile,
@@ -91,6 +93,56 @@ const selectedFile = async () => {
   closeFault.path = path;
   return { path, bytes };
 };
+
+it("retains report output and observed file hash when cancellation arrives during provenance close", async () => {
+  const root = await createTestTempDirectory("rea-recovery-provenance-cancel-");
+  const path = join(root, "provenance.json");
+  const bytes = Buffer.from(
+    '{"format":"unknown","strategy":"safe","modules":{}}',
+  );
+  await writeFile(path, bytes);
+  closeFault.path = path;
+  const controller = new AbortController();
+  closeFault.cancel = controller;
+  const stdout = JSON.stringify({
+    detected_formats: [],
+    safety: "safe",
+    modules: [],
+    warnings: [],
+    total: 0,
+    failed: 0,
+    elapsed_ms: 1,
+  });
+  const failure: unknown = await parseWakaruReports({
+    execution: {
+      exit_code: 0,
+      signal: null,
+      stdout,
+      stderr: "",
+      command: "/wakaru",
+      arguments: [],
+      resource_limiter: "/prlimit",
+    },
+    provenancePath: path,
+    snapshots: new Map(),
+    files: [{ relativePath: "provenance.json" }],
+    signal: controller.signal,
+  }).catch((cause: unknown) => cause);
+  expect(failure).toBeInstanceOf(AnalysisCancelledError);
+  if (!(failure instanceof AnalysisCancelledError))
+    throw new Error("Expected cancellation");
+  expect(failure.cause).toBe(controller.signal.reason);
+  expect(failure.partialObservation).toMatchObject({
+    kind: "file-snapshot-hash",
+    path,
+    bytes: bytes.length,
+  });
+  expect(failure.capturedOutput).toMatchObject({
+    stdout,
+    stderr: "",
+    exit_code: 0,
+  });
+});
 
 it.each(["completed", "size-limit"] as const)(
   "retains the exact descriptor and %s read outcome through a failed close",

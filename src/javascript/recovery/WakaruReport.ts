@@ -6,7 +6,12 @@ import {
   normalizeArtifactPath,
   ArtifactPathRegistry,
 } from "../../artifacts/ArtifactPaths.js";
-import { AnalysisOutputError } from "../../domain/analysisErrorCore.js";
+import {
+  AnalysisAccessDeniedError,
+  AnalysisArtifactChangedError,
+  AnalysisCancelledError,
+  AnalysisOutputError,
+} from "../../domain/analysisErrorCore.js";
 import { ProviderAdapterError } from "../../domain/providerAdapterError.js";
 import type { JavaScriptRecoveryResult } from "../../domain/javascript/javascriptRecovery.js";
 import {
@@ -106,9 +111,25 @@ export const parseWakaruReports = async (context: ReportContext) => {
           : ("complete" as const),
     };
   } catch (cause: unknown) {
+    if (cause instanceof AnalysisCancelledError)
+      throw new AnalysisCancelledError(OPERATION, {
+        cause: cause.cause,
+        ...(cause.partialObservation === undefined
+          ? {}
+          : { partialObservation: cause.partialObservation }),
+        capturedOutput: {
+          stdout: execution.stdout,
+          stderr: execution.stderr,
+          exit_code: execution.exit_code,
+          signal: execution.signal,
+          truncated: false,
+        },
+      });
     if (
-      cause instanceof ArtifactReaderFailure &&
-      (cause.cleanup !== undefined || cause.reason === "cancelled")
+      cause instanceof AnalysisAccessDeniedError ||
+      cause instanceof AnalysisArtifactChangedError ||
+      (cause instanceof ArtifactReaderFailure &&
+        (cause.cleanup !== undefined || cause.reason === "cancelled"))
     )
       throw cause;
     throw new ProviderAdapterError("wakaru", OPERATION, {
