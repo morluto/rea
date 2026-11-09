@@ -61,11 +61,13 @@ Decide everything else yourself and note it in the report.
 The computer is Ubuntu 24.04 (noble) on this host's architecture only. Use
 the first source that has the app:
 
-| Source                       | `install`                                                                         |
-| ---------------------------- | --------------------------------------------------------------------------------- |
-| Ubuntu archive               | `{"kind": "archive", "package": "inkscape"}`                                      |
-| PPA or vendor apt repository | `{"kind": "apt_repository", "package", "uri", "suite", "components", "key_file"}` |
-| `.deb` by URL                | `{"kind": "package_file", "url", "sha256", "architecture", "dependencies"}`       |
+| Source                       | `install`                                                                                   |
+| ---------------------------- | ------------------------------------------------------------------------------------------- |
+| Ubuntu archive               | `{"kind": "archive", "package": "inkscape"}`                                                |
+| PPA or vendor apt repository | `{"kind": "apt_repository", "package", "uri", "suite", "components", "key_file"}`           |
+| `.deb` by URL                | `{"kind": "package_file", "url", "sha256", "architecture", "dependencies"}`                 |
+| AppImage by URL              | `{"kind": "appimage", "url", "sha256", "architecture", "extra_packages"}`                   |
+| Tarball by URL               | `{"kind": "tarball", "url", "sha256", "architecture", "program", "name", "extra_packages"}` |
 
 - A PPA's `uri` is `https://ppa.launchpadcontent.net/OWNER/NAME/ubuntu`,
   `suite` `noble`, `components` `["main"]`. `key_file` is the repository's
@@ -84,10 +86,31 @@ the first source that has the app:
   to add a package. Ask the requester for its URL and SHA-256; do not fetch
   a vendor's download page yourself. List its `Depends` as `dependencies`,
   with any runtime piece it lacks: it installs with the network off.
-- Flatpak, AppImage and snaps are not supported yet: say so and stop. An
-  archive package that only installs a snap, such as noble's `firefox`,
-  counts as a snap. A package with no build for this host's architecture
-  (some PPAs are amd64 only) cannot be installed either.
+- Take an AppImage or a tarball only when no package has the app. Pin it by
+  the release file's URL for this host's architecture and the SHA-256 its
+  project publishes, such as a GitHub release asset's digest or the
+  release's `SHA256SUMS`; ask the requester when the project publishes none.
+  The computer downloads it when the bundle is put, refuses other bytes, and
+  unpacks it under `/opt/rea-apps/<desktop_entry>` with the network off; the
+  export downloads the same file.
+- An AppImage installs its own desktop entry, so `desktop_entry` is the
+  `.desktop` file at the top of the image, such as FreeCAD's
+  `org.freecad.FreeCAD`. A wrong name fails the start with the entries the
+  image has: start again with one of them. The image brings its libraries,
+  so `extra_packages` is rarely needed; FreeCAD 1.1.4's needs none.
+- A tarball has no entry of its own. `program` is the program's path inside
+  the archive, such as `firefox/firefox`; REA writes an entry named
+  `desktop_entry` that runs it with the files it opens, and `name` is what
+  the Applications menu shows. A tarball uses the computer's libraries: name
+  what its program lacks in `extra_packages`. gzip, bzip2 and xz archives
+  are read, zstd ones are not.
+- Flatpak and snaps are not supported: say so and stop. Flatpak's sandbox
+  needs user namespaces the computer's container does not grant, so a
+  Flathub app installs but never opens; ask for the project's AppImage,
+  tarball or `.deb` when it ships one. An archive package that only installs
+  a snap, such as noble's `firefox`, counts as a snap. A package with no
+  build for this host's architecture (some PPAs are amd64 only) cannot be
+  installed either.
 - `desktop_entry` is the package's `.desktop` file name under
   `/usr/share/applications` without `.desktop`, such as
   `org.inkscape.Inkscape`. Add `window_class` when you know it; Inkscape's
@@ -186,6 +209,10 @@ the first source that has the app:
   the language box's autocomplete popup takes the first OK click.
 - CherryTree: its first-run autosave "Choose Storage Type" dialog swallows
   keys, so save once early as `.ctd` and untick autosave.
+- VSCodium (its tarball, with `extra_packages: ["libnss3",
+  "libasound2t64"]`) runs on outside REA's reach, so `stop_build_capture`
+  fails to clean it up: after `end`, quit it with Ctrl+Q, then stop. Enter
+  accepts its word suggestions, so press Escape after typing a line.
 - Glade: a new widget's id is empty until you set it, and a second save
   writes a `.glade~` backup, which shows in the draft as an unrelated
   change. A backup present at `seed` is seeded with the document, so trash

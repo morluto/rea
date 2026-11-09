@@ -3,6 +3,7 @@ import { Readable } from "node:stream";
 import { z } from "zod";
 
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
+import type { DownloadInstall } from "../../domain/desktop/appDownloadInstall.js";
 import type { desktopTaskSchema } from "../../domain/desktop/appTask.js";
 import { jsonValueSchema, type JsonValue } from "../../domain/jsonValue.js";
 import { err, ok, type Result } from "../../domain/result.js";
@@ -105,6 +106,21 @@ const writeBundle = async (
       );
 };
 
+/** The `--download-install` file the export reads beside the task, and its flag; neither without a download. */
+const downloadInput = (
+  path: string,
+  install: DownloadInstall | undefined,
+): {
+  readonly argv: readonly string[];
+  readonly files: Readonly<Record<string, string>>;
+} =>
+  install === undefined
+    ? { argv: [], files: {} }
+    : {
+        argv: ["--download-install", path],
+        files: { [path]: `${JSON.stringify(install, null, 2)}\n` },
+      };
+
 /**
  * Export a stopped capture in the computer with the agent's task, seeded at
  * `seed` and checked at `end`, into a new folder of the work folder, then
@@ -118,6 +134,8 @@ export const exportBuild = async (
     readonly attempt: number;
     /** The URL a computer downloads the app's `.deb` from, when the capture says apt does not install it. */
     readonly packageUrl?: string;
+    /** The AppImage or tarball the request unpacked the app from, which the bundle downloads too. */
+    readonly downloadInstall?: DownloadInstall;
     /** The packages the request named beside the app, which the bundle installs beside it too. */
     readonly extraPackages: readonly string[];
   },
@@ -129,6 +147,10 @@ export const exportBuild = async (
   const bundle = `${folder}/bundle-${attempt}`;
   const task = `${folder}/task-${attempt}.json`;
   const stdout = `${folder}/export-${attempt}.json`;
+  const download = downloadInput(
+    `${folder}/download-install-${attempt}.json`,
+    capture.downloadInstall,
+  );
   const taskFile = `${JSON.stringify(request.task, null, 2)}\n`;
   try {
     const { stdoutBytes: bytes } = await runRea(
@@ -146,12 +168,13 @@ export const exportBuild = async (
         ...(capture.packageUrl === undefined
           ? []
           : ["--package-url", capture.packageUrl]),
+        ...download.argv,
         ...capture.extraPackages.flatMap((name) => ["--extra-package", name]),
         "--json",
       ],
       {
         stdout,
-        files: { [task]: taskFile },
+        files: { [task]: taskFile, ...download.files },
         signal,
       },
     );
