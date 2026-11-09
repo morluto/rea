@@ -3,7 +3,7 @@ import { access, open, readFile, rename, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { deflateRawSync } from "node:zlib";
 
-import { expect, it } from "vitest";
+import { expect, it, vi } from "vitest";
 
 import { artifactFixedLimitFailure } from "../../../src/artifacts/ArtifactReader.js";
 import { DotnetBundleArtifactReader } from "../../../src/artifacts/DotnetBundleArtifactReader.js";
@@ -542,17 +542,21 @@ it("finds a split marker and uses the first apphost marker, including offset zer
       (await readDotnetBundle(handle, padded.length, header)).files,
     ).toMatchObject([{ path: "App.dll", size: 20 }]);
     const controller = new AbortController();
+    const readFailure = new Error("injected read failure during cancellation");
     handle.read = (async () => {
       controller.abort();
-      throw new Error("injected read failure during cancellation");
+      throw readFailure;
     }) as typeof handle.read;
     await expect(
       findDotnetBundleHeader(handle, padded.length, controller.signal),
-    ).rejects.toMatchObject({ reason: "cancelled" });
+    ).rejects.toBe(readFailure);
     const metadataController = new AbortController();
+    const manifestFailure = new Error(
+      "injected manifest read failure during cancellation",
+    );
     handle.read = (async () => {
       metadataController.abort();
-      throw new Error("injected manifest read failure during cancellation");
+      throw manifestFailure;
     }) as typeof handle.read;
     await expect(
       readDotnetBundle(
@@ -561,7 +565,22 @@ it("finds a split marker and uses the first apphost marker, including offset zer
         header,
         metadataController.signal,
       ),
-    ).rejects.toMatchObject({ reason: "cancelled" });
+    ).rejects.toBe(manifestFailure);
+    const completedController = new AbortController();
+    const reason = { source: "caller" };
+    handle.read = (async (...args: Parameters<typeof handle.read>) => {
+      const result = await original(...args);
+      completedController.abort(reason);
+      return result;
+    }) as typeof handle.read;
+    await expect(
+      readDotnetBundle(
+        handle,
+        padded.length,
+        header,
+        completedController.signal,
+      ),
+    ).rejects.toMatchObject({ reason: "cancelled", cause: reason });
   } finally {
     await handle.close();
   }
@@ -764,3 +783,45 @@ it.each(["pe", "elf"] as const)(
     await expect(access(outputRoot)).rejects.toThrow();
   },
 );
+
+it("preserves a physical .NET member read failure during cancellation", async () => {
+  const root = await createTestTempDirectory("rea-dotnet-physical-failure-");
+  const path = join(root, "host.exe");
+  const fixture = dotnetBundleFixture([
+    { path: "data", bytes: Buffer.from("content") },
+  ]);
+  await writeFile(path, fixture.bytes);
+  const handle = await open(path, "r");
+  const controller = new AbortController();
+  const physical = Object.assign(new Error("descriptor failure"), {
+    code: "EIO",
+  });
+  let restore = () => {};
+  const reader = new DotnetBundleArtifactReader(path, {
+    handle,
+    initial: await handle.stat(),
+  });
+  try {
+    const entries = [];
+    for await (const entry of reader.entries()) entries.push(entry);
+    const entry = entries[0];
+    if (entry === undefined) throw new Error("Missing member");
+    const stream = await reader.open(entry, controller.signal);
+    const spy = vi.spyOn(handle, "read").mockImplementationOnce(async () => {
+      controller.abort("caller stopped");
+      throw physical;
+    });
+    restore = () => spy.mockRestore();
+    await expect(
+      (async () => {
+        for await (const _ of stream) {
+          /* consume */
+        }
+      })(),
+    ).rejects.toMatchObject({ reason: "io", cause: physical });
+  } finally {
+    restore();
+    await reader.close();
+    await handle.close();
+  }
+});
