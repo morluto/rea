@@ -197,6 +197,89 @@ cliTest.for([
 );
 
 cliTest(
+  "reads the final CPython 3.15.2 magic 3666 from a real release pyc",
+  async ({ cli }) => {
+    // `encodings/__pycache__/utf_8.cpython-315.pyc`, byte for byte as shipped in
+    // python-build-standalone cpython-3.15.2+20261026-aarch64-apple-darwin
+    // (install_only tarball, SHA-256 285a6b92...e64a6): the header carries magic 3666.
+    // The expected rows are what a CPython 3.15.0a8 interpreter's own
+    // `marshal.loads` reports for these bytes (qualname, first line, SHA-256 of
+    // `co_code`), so they are not derived from this reader. a8 and the final
+    // release share the 3.11 code layout; 3.15.2 itself was not executed.
+    const pyc = Buffer.from(
+      "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",
+      "base64",
+    );
+    const root = await createTestTempDirectory("rea-python-pyc-final-315-");
+    const path = join(root, "utf_8.cpython-315.pyc");
+    await writeFile(path, pyc);
+    const result = await cli.run({
+      arguments: ["inspect-python-pyc", path, "--json"],
+    });
+    expect(result.exitCode, result.stderr).toBe(0);
+    const evidence = completePycEvidenceSchema.parse(result.json);
+    expect(evidence.normalized_result.header).toMatchObject({
+      magic: 3666,
+      python_version: "3.15",
+      code_layout: "py311",
+      flags: 0,
+      hash_based: false,
+    });
+    expect(
+      evidence.normalized_result.code_objects.map((code) => [
+        code.qualname,
+        code.firstlineno,
+        code.bytecode.sha256,
+      ]),
+    ).toEqual([
+      [
+        "<module>",
+        1,
+        "dec009b8d182273295bb1af2572eaf510c5a2c9b79c9ed5b5867acd3ab3f3532",
+      ],
+      [
+        "decode",
+        15,
+        "fe1a50cda8d8510aee7c6c8a4300c4fb151a360ba9e830b7ac9bd797d4b522f6",
+      ],
+      [
+        "IncrementalEncoder",
+        18,
+        "32afcda5f0c08dccd01a0e42c4a2b5575247c8ed5723bc704db2dd995511c73b",
+      ],
+      [
+        "IncrementalEncoder.encode",
+        19,
+        "df5053d342e0600648ddbd48ec64a5f1c4336c6956cde360b8799c61da5d93fe",
+      ],
+      [
+        "IncrementalDecoder",
+        22,
+        "2d2cf7a62ece3c133ac82e9d59fee2ecfd21eb1a79c31b7d4a6e64a30fc2072d",
+      ],
+      [
+        "StreamWriter",
+        25,
+        "b77dff0cd7cf304af6ae747b34e03499353b914282cb7d782ec4d8e24e442c67",
+      ],
+      [
+        "StreamReader",
+        28,
+        "0b21e2f77e98d3f01c2698ed2b9cff5778331afb1a8bdc12b3eb80c389d36861",
+      ],
+      [
+        "getregentry",
+        33,
+        "98cecbb09af6594440e3caab695700c9ca4d5a1355a3e8a83e2172dd8a9fc6a5",
+      ],
+    ]);
+    expect(evidence.normalized_result.artifact.sha256).toBe(
+      createHash("sha256").update(pyc).digest("hex"),
+    );
+  },
+);
+
+cliTest(
   "uses magic-specific cache tables for synthetic pyc bytecode equality",
   async ({ cli }) => {
     const root = await createTestTempDirectory("rea-python-pyc-inline-cache-");
