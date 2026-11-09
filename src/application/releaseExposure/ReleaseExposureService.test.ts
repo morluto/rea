@@ -2468,13 +2468,30 @@ describe("ReleaseExposureService Go relative flag paths", () => {
 });
 
 describe("ReleaseExposureService Go linker file operands", () => {
-  it("treats linker map stdout as output, not a build path", async () => {
-    const report = await goReport(
-      goModule([{ key: "CGO_LDFLAGS", value: "-Wl,-Map=-" }]),
-    );
-    const check = report.checks.find((item) => item.id === "go.build_paths");
-    expect(check?.status).toBe("not_observed");
-  });
+  it.each([
+    ["CGO_LDFLAGS", "-Wl,-Map=-"],
+    ["-ldflags", "-extldflags=-Wl,-Map=-"],
+  ])(
+    "treats linker map stdout in %s as output, not a build path",
+    async (key, value) => {
+      const report = await goReport(goModule([{ key, value }]));
+      const check = report.checks.find((item) => item.id === "go.build_paths");
+      expect(check?.status).toBe("not_observed");
+    },
+  );
+  it.each([
+    ["CGO_LDFLAGS", "-Wl,-R,$ORIGIN/../lib"],
+    ["-ldflags", "-extldflags=-Wl,-R,$ORIGIN/../lib"],
+  ])(
+    "keeps ambiguous GNU linker -R runtime tokens unknown for %s",
+    async (key, value) => {
+      const report = await goReport(goModule([{ key, value }]));
+      const check = report.checks.find((item) => item.id === "go.build_paths");
+      expect(check?.status).toBe("unknown");
+      expect(check?.observation.samples).not.toContain("$ORIGIN/../lib");
+    },
+  );
+
   it("reports a relative GNU linker -R operand", async () => {
     const report = await goReport(
       goModule([{ key: "CGO_LDFLAGS", value: "-Wl,-R,private-runtime" }]),

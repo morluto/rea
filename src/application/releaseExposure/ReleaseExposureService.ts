@@ -508,11 +508,18 @@ const goMetadata =
     if (imageChanged(image, report.data.artifact.sha256))
       return failedMetadata(IMAGE_CHANGED);
     if (report.data.build_info === null) return { kind: "absent" };
+    const extracted = goPaths(report.data.build_info.module, image.format);
     return {
       kind: "paths",
-      paths: goPaths(report.data.build_info.module, image.format),
-      complete: report.data.build_info.module.complete,
-      limitations: report.data.limitations,
+      paths: extracted.paths,
+      complete:
+        report.data.build_info.module.complete && !extracted.ambiguousLinkerR,
+      limitations: extracted.ambiguousLinkerR
+        ? [
+            ...report.data.limitations,
+            "A GNU linker -R operand with an ELF runtime token may name either a symbol file or a runtime search path; its build-host applicability is unknown.",
+          ]
+        : report.data.limitations,
     };
   };
 
@@ -1208,13 +1215,28 @@ const flagPaths = (flags: string[]): string[] =>
  * A path flag's relative argument, attached or in the next field. A rooted
  * argument belongs to `flagPaths`, which keeps its `=` and `,` structure.
  */
-const goRelativeFlagPaths = (flags: string[], pathFlag: RegExp): string[] =>
+const goRelativeFlagPaths = (
+  flags: string[],
+  pathFlag: RegExp,
+  format: NativeImageFormat,
+  onAmbiguousLinkerR: () => void,
+): string[] =>
   flags.flatMap((flag, index) => {
     const attached = pathFlag.exec(flag)?.[1]?.trimEnd();
     if (attached === undefined) return [];
     const next = flags[index + 1];
     const argument =
       attached.length > 0 || next?.startsWith("-") === true ? attached : next;
+    if (
+      argument !== undefined &&
+      pathFlag === LINKER_PATH_FLAG &&
+      flag.startsWith("-R") &&
+      format === "elf" &&
+      LINKER_RUNTIME_TOKENS.elf?.test(argument) === true
+    ) {
+      onAmbiguousLinkerR();
+      return [];
+    }
     return argument === undefined ||
       argument.length === 0 ||
       (pathFlag === LINKER_PATH_FLAG &&
@@ -1346,15 +1368,29 @@ const responseFilePaths = (args: string[], pathFlag: RegExp): string[] =>
  * each `-rpath` argument as one directory, so `@loader_path/lib:extra` is one
  * loader-relative entry.
  */
-const compilerPaths = (value: string, format: NativeImageFormat): string[] => {
+const compilerPaths = (
+  value: string,
+  format: NativeImageFormat,
+  onAmbiguousLinkerR: () => void,
+): string[] => {
   const flags = goFlags(value);
   const { compiler, linker } = splitForwardedLinkerFlags(flags);
   const literal = withoutLinkerSearchLists(flags);
   const literalLinker = splitForwardedLinkerFlags(literal).linker;
   return [
     ...flagPaths(literal),
-    ...goRelativeFlagPaths(compiler, GO_COMPILER_PATH_FLAG),
-    ...goRelativeFlagPaths(literalLinker, LINKER_PATH_FLAG),
+    ...goRelativeFlagPaths(
+      compiler,
+      GO_COMPILER_PATH_FLAG,
+      format,
+      onAmbiguousLinkerR,
+    ),
+    ...goRelativeFlagPaths(
+      literalLinker,
+      LINKER_PATH_FLAG,
+      format,
+      onAmbiguousLinkerR,
+    ),
     ...responseFilePaths(compiler, GO_COMPILER_PATH_FLAG),
     ...responseFilePaths(literalLinker, LINKER_PATH_FLAG),
     ...linkerSearchLists(linker).flatMap((list) =>
@@ -1409,8 +1445,10 @@ const goSettingPaths = (
   key: string,
   value: string,
   format: NativeImageFormat,
+  onAmbiguousLinkerR: () => void,
 ): string[] => {
-  if (GO_COMPILER_SETTING.test(key)) return compilerPaths(value, format);
+  if (GO_COMPILER_SETTING.test(key))
+    return compilerPaths(value, format, onAmbiguousLinkerR);
   const pathFlag = GO_TOOL_PATH_FLAGS.get(key);
   const { flags, own, external } = goToolFlags(value);
   const whole =
@@ -1426,15 +1464,18 @@ const goSettingPaths = (
       ),
     ),
     ...whole.paths,
-    ...external.flatMap((flags) => compilerPaths(flags, format)),
+    ...external.flatMap((flags) =>
+      compilerPaths(flags, format, onAmbiguousLinkerR),
+    ),
   ];
 };
 
 const goPaths = (
   module: NonNullable<GoBinary["build_info"]>["module"],
   format: NativeImageFormat,
-): string[] => {
+): { readonly paths: string[]; readonly ambiguousLinkerR: boolean } => {
   const paths = new Set<string>();
+  let ambiguousLinkerR = false;
   const add = (value: string | null | undefined) => {
     const path = filesystemPath(value);
     if (path !== null) paths.add(path);
@@ -1453,8 +1494,15 @@ const goPaths = (
       continue;
     }
     if (!GO_FLAG_SETTING.test(setting.key)) continue;
-    for (const path of goSettingPaths(setting.key, setting.value, format))
+    for (const path of goSettingPaths(
+      setting.key,
+      setting.value,
+      format,
+      () => {
+        ambiguousLinkerR = true;
+      },
+    ))
       paths.add(path);
   }
-  return [...paths];
+  return { paths: [...paths], ambiguousLinkerR };
 };
