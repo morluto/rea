@@ -87,7 +87,7 @@ const draftTask = async (
       draft_refusal: `No draft: the capture has no ${missing.join(" or ")} checkpoint; capture again and mark ${SEED_CHECKPOINT} once the seed is saved and ${END_CHECKPOINT} once the edit is.`,
     };
   const stdout = `${folder}/draft.json`;
-  const bytes = await runRea(
+  const { stdoutBytes: bytes } = await runRea(
     computer,
     [
       "describe-desktop-application-task",

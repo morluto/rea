@@ -67,11 +67,18 @@ See [desktop installations](https://github.com/morluto/rea/blob/main/docs/deskto
 Use `inspect_go_binary` for an explicit local ELF, PE or Mach-O (universal
 files need `architecture`) when the
 question concerns the embedded compiler version, module/dependency versions,
-local replacements or build settings. No `open_binary`, Go installation or
+local replacements, build settings, or static Go string literals packed without
+NUL terminators. Pass `include_string_literals: true`
+(`--include-string-literals`, optional `max_string_literals` /
+`--max-string-literals`) to recover bounded inferred word-aligned `(ptr, len)`
+UTF-8 string slices from read-only data and page them through `go`
+`string_literals` views. No `open_binary`, Go installation or
 target execution is required. The CLI equivalent is `inspect-go-binary PATH`.
 Preserve artifact SHA-256, original file ranges, framed module bytes and every
 unparsed module-text line. A missing record is an unknown, not proof of a
-non-Go binary; observed metadata does not authenticate its claims. Function,
+non-Go binary; observed metadata does not authenticate its claims, and static
+`(ptr, len)` string recovery excludes compiler-inlined stack/immediate strings
+without proving runtime reachability. Function,
 source and type recovery remain a separate native-analysis question.
 
 ## Model files

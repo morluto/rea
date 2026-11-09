@@ -174,7 +174,7 @@ const parseModinfo = (
   use: SectionUse,
   examined: { count: number },
   maxEntries: number,
-): Report["modinfo"] => {
+): NonNullable<Report["modinfo"]> => {
   if (section === undefined)
     return {
       status: use.namesComplete ? "absent" : "unknown",
@@ -271,7 +271,7 @@ const parseVersions = (
   use: SectionUse,
   examined: { count: number },
   maxEntries: number,
-): Report["versions"] => {
+): NonNullable<Report["versions"]> => {
   const layout =
     bits === 64 ? "elf64_unsigned_long_name56" : "elf32_unsigned_long_name60";
   const entryBytes = KERNEL_MODULE_VERSION_ENTRY_BYTES;
@@ -380,7 +380,7 @@ const sized = (
   namesComplete: boolean,
   limitations: Limitations,
   label: string,
-): Report["init_text"] => {
+): NonNullable<Report["init_text"]> => {
   if (section === undefined)
     return {
       status: namesComplete ? "absent" : "unknown",
@@ -525,28 +525,27 @@ export const parseKernelModule = (
     limitations.push(image.section_names_limitation);
   const use = { namesComplete, limitations };
   const examined = { count: 0 };
-  const noteDuplicates = (name: string, found: readonly ElfSection[]): void => {
-    if (found.length > 1)
+  let duplicateSections = false;
+  const firstNamedSection = (name: string): ElfSection | undefined => {
+    const found = sectionsNamed(sections, name);
+    if (found.length > 1) {
+      duplicateSections = true;
       limitations.push(
         `Multiple ${name} sections are declared; the first is examined.`,
       );
+    }
+    return found[0];
   };
-  const modinfoSections = sectionsNamed(sections, ".modinfo");
-  const versionSections = sectionsNamed(sections, "__versions");
-  const moduleSections = sectionsNamed(sections, ".gnu.linkonce.this_module");
-  noteDuplicates(".modinfo", modinfoSections);
-  noteDuplicates("__versions", versionSections);
-  noteDuplicates(".gnu.linkonce.this_module", moduleSections);
   const modinfo = parseModinfo(
     bytes,
-    modinfoSections[0],
+    firstNamedSection(".modinfo"),
     use,
     examined,
     input.max_entries,
   );
   const versions = parseVersions(
     bytes,
-    versionSections[0],
+    firstNamedSection("__versions"),
     image.bits,
     image.byte_order === "little",
     use,
@@ -554,7 +553,7 @@ export const parseKernelModule = (
     input.max_entries,
   );
   const modulePresence = presence(
-    moduleSections[0],
+    firstNamedSection(".gnu.linkonce.this_module"),
     namesComplete,
     bytes.length,
   );
@@ -596,6 +595,38 @@ export const parseKernelModule = (
   if (versions?.status === "absent")
     limitations.push("No __versions section was declared.");
   limitations.push(signatureLimitation(signature));
+  const initText = sized(
+    bytes,
+    firstNamedSection(".init.text"),
+    namesComplete,
+    limitations,
+    ".init.text",
+  );
+  const exitText = sized(
+    bytes,
+    firstNamedSection(".exit.text"),
+    namesComplete,
+    limitations,
+    ".exit.text",
+  );
+  const sectionIncomplete = (
+    section: NonNullable<Report["modinfo"]> | NonNullable<Report["versions"]>,
+  ) =>
+    (section.status !== "present" && section.status !== "absent") ||
+    section.entries.some((entry) => entry.status !== "observed");
+  const coveragePartial =
+    !namesComplete ||
+    duplicateSections ||
+    unbacked > 0 ||
+    ksymtab.some((section) => section.reason !== null) ||
+    sectionIncomplete(modinfo) ||
+    sectionIncomplete(versions) ||
+    modulePresence.status === "unsupported" ||
+    (modulePresence.status === "present" && modulePresence.location === null) ||
+    (initText?.status === "present" && initText.bytes === null) ||
+    (exitText?.status === "present" && exitText.bytes === null) ||
+    signature?.status === "malformed" ||
+    signature?.status === "unsupported";
   return {
     artifact,
     ...facts,
@@ -613,22 +644,13 @@ export const parseKernelModule = (
       status: namesComplete ? "observed" : "unknown",
       sections: ksymtab,
     },
-    init_text: sized(
-      bytes,
-      sectionsNamed(sections, ".init.text")[0],
-      namesComplete,
-      limitations,
-      ".init.text",
-    ),
-    exit_text: sized(
-      bytes,
-      sectionsNamed(sections, ".exit.text")[0],
-      namesComplete,
-      limitations,
-      ".exit.text",
-    ),
+    init_text: initText,
+    exit_text: exitText,
     signature,
-    coverage: { status: "complete", examined_entries: examined.count },
+    coverage: {
+      status: coveragePartial ? "partial" : "complete",
+      examined_entries: examined.count,
+    },
     limitations,
   };
 };

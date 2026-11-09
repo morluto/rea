@@ -27,7 +27,10 @@ See [desktop builds](https://github.com/morluto/rea/blob/main/.agents/skills/rev
 ## Build
 
 1. `start_build_computer` from a request. REA is installed in the computer.
-2. `start_build_capture`. REA writes an apt configuration under
+2. `start_build_capture`. REA first checks the installed runtime's export
+   schema for synthetic-seed support. If the archive is too old, repack a
+   current REA, update `REA_BUILD_COMPUTER_REA_ARCHIVE`, restart the REA MCP
+   server and start a new build computer. REA then writes an apt configuration under
    `~/.rea-build/apt` and runs `apt-get update` as the computer's user, so the
    capture finds the package's sources (`package_lists` counts the lists,
    and `package_lists_error` gives apt's exit status and last lines when the
@@ -55,8 +58,12 @@ See [desktop builds](https://github.com/morluto/rea/blob/main/.agents/skills/rev
    --end-checkpoint end`, so it seeds what was saved at `seed`, scrubs the
    computer's host name and user from it, and refuses a task whose checks
    all pass on the seed. A task larger than 96 KiB as REA passes it to the
-   computer is refused before anything runs. A file moved to the desktop Trash is not seeded,
-   and the export's limitations name what the Trash held at `seed`. For a
+   computer is refused before anything runs. It also passes `--synthetic-seed`,
+   since the agent made the seed for the task, so the README does not call it
+   the user's real data. When the seed holds exactly one document and the
+   app's desktop entry takes files, the bundle's app opens that document at
+   launch. A file moved to the desktop Trash is not seeded, and the export's
+   limitations name what the Trash held at `seed`. For a
    `.deb` app that no apt source the capture found offers, the export takes
    the request's URL with `--package-url`; one apt offers installs from apt. REA lists the bundle's files with their sizes
    and SHA-256 in the computer, into a file beside the bundle that it reads
@@ -108,7 +115,8 @@ cancels the call in progress on it and refuses the calls still waiting.
 ## Witness
 
 Start a fresh computer from the exported folder with `start_build_computer`
-and `{"kind": "bundle", "path": ...}`; agentenv boots the app with the seed.
+and `{"kind": "bundle", "path": ...}`; agentenv boots the app with the seed,
+on the seed's document when the export opens one.
 Then, with the task exactly as exported:
 
 | `stage`       | Before it                                                         | Its checks must              |

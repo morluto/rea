@@ -47,6 +47,7 @@ import {
 } from "./ModelFormat.js";
 import { jsonValueByteLength } from "../domain/jsonValueByteLength.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
+import { selectedFileTargetError } from "../artifacts/RegularFileErrorProjection.js";
 import {
   isSelectedRegularFileError,
   sameRegularFileState,
@@ -178,7 +179,7 @@ export class ModelArtifactProvider implements ModelArtifactPort {
           { cause: primary },
         );
       else if (isSelectedRegularFileError(primary))
-        error = new BinaryTargetError(input.path, primary.message, { cause });
+        error = selectedFileTargetError(input.path, primary, cause);
       else
         error = new ProviderAdapterError(this.identity.id, OPERATION, {
           cause,

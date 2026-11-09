@@ -317,7 +317,7 @@ export const projectFeatureTraceView = (
     parent_evidence_id: parent.evidenceId,
     parent_operation: OPERATION,
     parent_digest: parent.evidenceId.slice(3),
-    artifact: null,
+    artifact: parent.artifact ?? null,
     limitations: boundedViewMessages(
       limitations,
       parent.evidenceId,

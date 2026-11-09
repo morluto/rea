@@ -1,6 +1,9 @@
 import * as t from "@babel/types";
 
-import { electronCalleePath } from "./electronStaticAnalysisValues.js";
+import {
+  electronCalleePath,
+  electronCandidateAuthority,
+} from "./electronStaticAnalysisValues.js";
 import {
   semanticStaticPropertyKey,
   unwrapJavaScriptExpression,
@@ -14,17 +17,17 @@ import { completeSemanticSteps } from "./javascriptSemanticTraversal.js";
 import type { JavaScriptFindingContext } from "./javascriptStaticAnalysisState.js";
 
 /** A renderer load belongs to an intact, source-proven BrowserWindow instance. */
-export const isElectronRendererLoad = (
+export const electronRendererLoadAuthority = (
   callee: t.Node,
   site: t.Node,
   context: JavaScriptFindingContext,
   index: JavaScriptBindingIndex,
-): boolean => {
+): { readonly loader_authority?: "candidate" } | undefined => {
   callee = unwrapJavaScriptExpression(callee).node;
   if (!t.isMemberExpression(callee) && !t.isOptionalMemberExpression(callee))
-    return false;
+    return undefined;
   const method = semanticStaticPropertyKey(callee.property, callee.computed);
-  if (method !== "loadFile" && method !== "loadURL") return false;
+  if (method !== "loadFile" && method !== "loadURL") return undefined;
   const receiver = resolveElectronBrowserWindowReceiver(
     callee.object,
     site,
@@ -32,11 +35,11 @@ export const isElectronRendererLoad = (
     context,
     index,
   );
-  return (
-    receiver !== undefined &&
+  return receiver !== undefined &&
     (receiver.path.length === 1 ||
       (receiver.path.length === 2 && receiver.path[0] === "webContents"))
-  );
+    ? receiver.authority
+    : undefined;
 };
 
 /** Source allocation identity, not a claim about runtime window/frame identity. */
@@ -47,7 +50,11 @@ export const resolveElectronBrowserWindowReceiver = (
   context: JavaScriptFindingContext,
   index: JavaScriptBindingIndex,
 ):
-  | { readonly owner: t.NewExpression; readonly path: readonly string[] }
+  | {
+      readonly owner: t.NewExpression;
+      readonly path: readonly string[];
+      readonly authority: { readonly loader_authority?: "candidate" };
+    }
   | undefined => {
   let receiver = unwrapJavaScriptExpression(node).node;
   const path = [...suffix];
@@ -105,7 +112,11 @@ export const resolveElectronBrowserWindowReceiver = (
   for (const alias of aliases)
     if (index.referenceMayHaveChangedAt(site, alias.receiver, alias.path))
       return undefined;
-  return { owner: receiver, path };
+  return {
+    owner: receiver,
+    path,
+    authority: electronCandidateAuthority(receiver.callee, context),
+  };
 };
 
 const supportedReceiverPath = (path: readonly string[]): boolean => {

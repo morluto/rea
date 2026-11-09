@@ -214,11 +214,15 @@ explicit path or endpoint and do not need it.
   `parent_evidence_id` for exact function or `bytecode_hex`/stdout/stderr pages.
   Candidate coverage does not establish interface completeness. See the
   [EVM bytecode guide](https://github.com/morluto/rea/blob/main/docs/guides/evm/evm-bytecode.md).
-- Embedded Go compiler, module or build-setting metadata: `inspect_go_binary`
-  with the explicit local file. This built-in target-free inspection requires no
-  Go installation or disassembler. Preserve raw module bytes and source ranges;
-  absent metadata does not prove a binary is not Go, and unparsed text records
-  remain explicit. See the
+- Embedded Go compiler, module, build-setting metadata, or static `(ptr, len)`
+  string literals: `inspect_go_binary` with the explicit local file (pass
+  `include_string_literals: true` and optional `max_string_literals` for bounded
+  inferred static string-header recovery, and page retained rows with
+  `inspect_analysis_view` kind `go` collection `string_literals`). This built-in
+  target-free inspection requires no Go installation or disassembler. Preserve
+  raw module bytes and source ranges; absent metadata does not prove a binary is
+  not Go, static string recovery excludes compiler-inlined stack or immediate
+  strings, and unparsed text records remain explicit. See the
   [Go binary guide](https://github.com/morluto/rea/blob/main/docs/guides/native/go-binaries.md).
 - Embedded CUDA/HIP code objects: `inspect_gpu_code_objects`; inventory targets
   first, then decode selected payloads and query retained GPU Evidence.

@@ -273,6 +273,85 @@ describe("managed application graph projection", () => {
   });
 });
 
+it("preserves only a managed graph's matching subject in feature traces", () => {
+  const { artifactEvidence } = createManagedInteropEvidence();
+  const selectedArtifact = parseEvidence({
+    ...artifactEvidence,
+    subject: { ...artifactEvidence.subject, name: "selected managed image" },
+  });
+  const projected = projectManagedApplicationGraphEvidence({
+    managed_artifact: selectedArtifact,
+  });
+  if (!projected.ok) throw projected.error;
+  const parsed = parseEvidence(projected.value);
+  expect(parsed.subject).toEqual(selectedArtifact.subject);
+  const query = {
+    seed: {
+      kind: "string" as const,
+      value: "MessageBoxW",
+      match: "exact" as const,
+      case_sensitive: true,
+    },
+    direction: "incoming" as const,
+  };
+  const trace = traceApplicationFeatureEvidence({
+    application: parsed,
+    ...query,
+  });
+  if (!trace.ok) throw trace.error;
+  expect(trace.value.evidence.subject).toEqual(selectedArtifact.subject);
+  const foreign = createEvidence(
+    { path: "/other.exe", sha256: "f".repeat(64), format: "pe" },
+    parsed.provider,
+    {
+      operation: parsed.operation,
+      predicateType: parsed.predicate_type,
+      parameters: parsed.parameters,
+      result: parsed.normalized_result,
+      confidence: "inferred",
+      authority: "analyst-inference",
+      evidenceLinks: parsed.evidence_links,
+    },
+  );
+  const foreignTrace = traceApplicationFeatureEvidence({
+    application: foreign,
+    ...query,
+  });
+  if (!foreignTrace.ok) throw foreignTrace.error;
+  expect(foreignTrace.value.evidence.subject).toBeNull();
+  const contradictory = createEvidence(
+    { path: "/other.exe", sha256: "f".repeat(64), format: "pe" },
+    parsed.provider,
+    {
+      operation: parsed.operation,
+      predicateType: parsed.predicate_type,
+      parameters: parsed.parameters,
+      result: {
+        ...(parsed.normalized_result as Record<string, unknown>),
+        root_artifact_sha256: "f".repeat(64),
+      },
+      confidence: "inferred",
+      authority: "analyst-inference",
+      evidenceLinks: parsed.evidence_links,
+    },
+  );
+  const contradictoryTrace = traceApplicationFeatureEvidence({
+    application: contradictory,
+    ...query,
+  });
+  expect(contradictoryTrace).toMatchObject({
+    ok: false,
+    error: {
+      _tag: "AnalysisInputError",
+      issues: expect.arrayContaining([
+        expect.objectContaining({
+          path: ["application", "normalized_result", "root_artifact_sha256"],
+        }),
+      ]),
+    },
+  });
+});
+
 describe("managed application graph request", () => {
   it("accepts any nonempty set of inline sources and rejects duplicates", () => {
     const evidence = MANAGED_APPLICATION_GRAPH_EXAMPLE.managed_members;
@@ -1015,4 +1094,32 @@ describe("managed call and field-access relations", () => {
       result.limitations.find((text) => text.startsWith("Accesses edges")),
     ).toContain("3 missing-node");
   });
+});
+
+it("keeps unfamiliar field opcodes unknown in managed graph Evidence", () => {
+  const bytes = buildManagedPeFixture({
+    ilBody: tinyIl([0x02, 0x7b, 0x01, 0, 0, 0x04, 0x26, 0x2a]),
+  });
+  const binary = managedPeFixtureTarget(bytes, "/fixture/ManagedCalls.exe");
+  const members = inspectManagedMembersBytes(bytes, binary);
+  const projection = projectManagedApplicationGraphEvidence({
+    managed_members: createEvidence(binary, MANAGED_STATIC_PROVIDER, {
+      operation: "inspect_managed_members",
+      parameters: {},
+      result: {
+        ...members,
+        field_accesses: [
+          { ...members.field_accesses[0]!, opcode: "constructor" },
+        ],
+      },
+      limitations: [],
+    }),
+  });
+  if (!projection.ok) throw projection.error;
+  const result = managedApplicationGraphResultSchema.parse(
+    parseEvidence(projection.value).normalized_result,
+  );
+  expect(
+    result.graph.edges.find((edge) => edge.relation === "accesses")?.properties,
+  ).toMatchObject({ access: ["unknown"], opcodes: { constructor: 1 } });
 });

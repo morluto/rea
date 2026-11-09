@@ -14,14 +14,24 @@ import type {
   AptRepository,
   DesktopApplicationCapture,
 } from "../../domain/desktop/desktopCapture.js";
-import { exportDesktopApplication } from "./DesktopApplicationExport.js";
 import {
+  NO_LAUNCH_DOCUMENT,
+  launchDocumentNote,
+  seedWording,
+} from "../../domain/desktop/appExport.js";
+import {
+  exportDesktopApplication,
+  seedLimitation,
+} from "./DesktopApplicationExport.js";
+import {
+  EDITED_NOTE,
   HOME,
   capture,
   change,
   checkpoint,
   readers,
   retained,
+  seedEndCapture,
   writeCaptureFolder,
 } from "./desktopCapture.fixture.js";
 
@@ -657,6 +667,153 @@ describe("exportDesktopApplication home paths", () => {
     });
     expect(await seed(directory, ".config/notes/settings.ini")).toBe(settings);
     expect(result.limitations.join("\n")).toContain(`leaves out ${later}`);
+  });
+});
+
+/** Export the seed-then-end capture, launched from a desktop entry with `exec`, seeded at `seed`. */
+const exportSeeded = async (
+  exec: string | null,
+  options: { readonly syntheticSeed?: boolean } = {},
+) => {
+  const local = seedEndCapture();
+  const folder = await writeCaptureFolder(
+    {
+      ...local,
+      application: {
+        ...local.application,
+        desktop_entry:
+          exec === null
+            ? null
+            : {
+                id: "org.example.notes",
+                path: "/usr/share/applications/org.example.notes.desktop",
+                name: "Notes",
+                exec,
+                icon: null,
+                startup_wm_class: null,
+                categories: [],
+                mime_types: [],
+                terminal: false,
+              },
+      },
+    },
+    undefined,
+    [EDITED_NOTE],
+  );
+  const directory = join(
+    await createTestTempDirectory("desktop-export-"),
+    "bundle",
+  );
+  const result = await exportDesktopApplication(
+    {
+      capture: folder,
+      directory,
+      name: "notes",
+      tasks: [],
+      seedCheckpoint: "seed",
+      endCheckpoint: "end",
+      ...options,
+    },
+    readers,
+  );
+  if (result instanceof Error) throw result;
+  const read = (path: string) => readFile(join(directory, path), "utf8");
+  return {
+    result,
+    module: await read("envs/notes/notes_app.py"),
+    readme: await read("README.md"),
+  };
+};
+
+/** The limitations on what the launch opens, found by the lead their formatter gives them. */
+const launchLimitations = (limitations: readonly string[]) =>
+  limitations.filter((line) => line.includes(NO_LAUNCH_DOCUMENT));
+
+describe("exportDesktopApplication launch document", () => {
+  it("opens the seed's one document when the desktop entry takes files", async () => {
+    const { result, module, readme } = await exportSeeded("notes %U");
+
+    expect(module).toContain(
+      `command=["sh", "-c", "cd \\"$HOME\\" 2>/dev/null; exec 'notes' \\"$HOME\\"/'Documents/today.txt'"]`,
+    );
+    expect(readme).toContain(
+      launchDocumentNote({
+        opens: { kind: "seed", document: "Documents/today.txt" },
+      }),
+    );
+    expect(readme).toContain("`~/Documents/today.txt`");
+    expect(launchLimitations(result.limitations)).toEqual([]);
+  });
+
+  it.each(["notes", null])(
+    "launches as captured, and says why in the README and limitations, when Exec is %j",
+    async (exec) => {
+      const opened = await exportSeeded("notes %U");
+      const { result, module, readme } = await exportSeeded(exec);
+      const launch = launchLimitations(result.limitations);
+
+      expect(module).toContain(
+        `command=["sh", "-c", "cd \\"$HOME\\" 2>/dev/null; exec 'notes'"]`,
+      );
+      expect(launch).toHaveLength(1);
+      expect(
+        result.limitations.filter((line) => !launch.includes(line)),
+      ).toEqual(opened.result.limitations);
+      for (const line of launch) expect(readme).toContain(line);
+    },
+  );
+
+  it("launches as captured from a baseline seed, which holds no document", async () => {
+    const local = capture();
+    const { result, directory } = await exportCapture({
+      ...local,
+      application: {
+        ...local.application,
+        desktop_entry: {
+          id: "org.example.notes",
+          path: "/usr/share/applications/org.example.notes.desktop",
+          name: "Notes",
+          exec: "notes %F",
+          icon: null,
+          startup_wm_class: null,
+          categories: [],
+          mime_types: [],
+          terminal: false,
+        },
+      },
+    });
+
+    if (result instanceof Error) throw result;
+    expect(launchLimitations(result.limitations)).toEqual([]);
+    expect(
+      await readFile(join(directory, "envs/notes/notes_app.py"), "utf8"),
+    ).toContain(
+      `command=["sh", "-c", "cd \\"$HOME\\" 2>/dev/null; exec 'notes'"]`,
+    );
+  });
+
+  it("says a seed made for the task was made for it, and a captured one is the user's own", async () => {
+    const made = await exportSeeded("notes %U", { syntheticSeed: true });
+    const captured = await exportSeeded("notes %U");
+    const notice = (syntheticSeed: boolean) =>
+      seedWording({ name: "notes", seedCheckpoint: "seed", syntheticSeed })
+        .notice;
+
+    expect(made.result.parameters).toMatchObject({ synthetic_seed: true });
+    expect(captured.result.parameters).toMatchObject({ synthetic_seed: false });
+    for (const [exported, synthetic] of [
+      [made, true],
+      [captured, false],
+    ] as const) {
+      expect(exported.result.limitations).toContain(seedLimitation(synthetic));
+      expect(exported.result.limitations).not.toContain(
+        seedLimitation(!synthetic),
+      );
+      expect(exported.readme).toContain(notice(synthetic));
+      expect(exported.readme).not.toContain(notice(!synthetic));
+    }
+    expect(made.readme).toContain("`envs/notes/seed/`");
+    expect(captured.readme).not.toContain("`envs/notes/seed/`");
   });
 });
 

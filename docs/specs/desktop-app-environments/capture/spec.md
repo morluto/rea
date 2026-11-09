@@ -13,6 +13,10 @@ folder to build the environment; this step builds nothing.
 
 ## Requirements
 
+- The baseline records each observed non-file path and its type without
+  following symlinks, so a later state reader can distinguish an absent SQLite
+  sidecar from an observed non-file.
+
 - The command is CLI only. A capture is a long interactive session whose
   checkpoints come from stdin lines (empty, `checkpoint [name]` or other
   text) and which ends on `stop` or the end of stdin, when the launched

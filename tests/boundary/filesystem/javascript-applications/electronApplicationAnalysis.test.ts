@@ -177,7 +177,7 @@ describe("native addon association", () => {
       const root = await createTestTempDirectory("rea-electron-addon-kind-");
       await Promise.all([
         writeFile(
-          join(root, "main.js"),
+          join(root, "main.cjs"),
           'const addon = require("./addon.node");\nvoid addon;\n',
         ),
         writeFile(
@@ -690,7 +690,7 @@ const computedMemberFixtureDirectory = async (): Promise<string> => {
   await mkdir(join(root, "native"));
   await Promise.all([
     writeFile(
-      join(root, "main.js"),
+      join(root, "main.cjs"),
       String.raw`
 const member = "read";
 const selected = require("./native/addon.node")[member];
