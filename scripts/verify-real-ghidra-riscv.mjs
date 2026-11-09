@@ -924,17 +924,18 @@ try {
   assert.equal(namedOutcome.reservation.name, "ram");
   assert.equal(namedOutcome.reservation.space_after, "ram.1");
 
-  // A disjoint section named like the temporary block does not refuse the
-  // image, and the move still takes place.
+  // Sections named like the temporary blocks, the reservation among them, do
+  // not refuse the image, and the move still takes place.
   const edge = await buildRiscvFixture(workspace, 32, "esp-edge-names");
   assert.equal(edge.riscv.sectionOverlap.status, "code-reservation");
+  assert.equal(edge.riscv.sectionOverlap.reservation.name, ".flash.text.rea");
   const edgeLimitations = new Set();
   const edgeCall = layoutCaller(edge, edgeLimitations);
   await edgeCall("open_binary", { path: edge.path, provider_id: "ghidra" });
   const edgeImage = await edgeCall("inspect_native_load_image");
   assert.ok(
     edgeImage.observations.mappings.some(
-      (value) => value.block === ".flash.text.rea" && value.overlay === false,
+      (value) => value.block === ".flash.text.rea.1" && value.overlay === false,
     ),
     JSON.stringify(edgeImage.observations.mappings),
   );
