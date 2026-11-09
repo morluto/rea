@@ -44,11 +44,18 @@ file memory regions and paths (`NT_FILE`), fault signal and code (`NT_SIGINFO`),
 auxiliary vectors (`NT_AUXV`) across 32-bit and 64-bit images. Other owners or unparsed
 notes keep `core` null.
 
+Linux `CORE` decoding requires System V/unspecified (0) or GNU/Linux (3)
+OSABI with ABI version zero. An unspecified OSABI alone does not establish
+Linux origin. An explicitly different OSABI or ABI version leaves `core` null
+and its Linux-specific `type_name` unknown, with a limitation explaining the
+profile. Owner/type numbers, descriptor ranges and hashes, GNU-owned notes,
+and complete table-examination coverage remain available.
+
 For Android `NT_ANDROID_TYPE_IDENT` (`.note.android.ident`, owner `Android`,
 type `1`) notes, `android.android_api` is decoded from both legacy 4-byte
 descriptors (where `ndk_version` and `ndk_build_number` remain null) and modern
 132-byte or extended NDK descriptors, which also populate `android.ndk_version`
-and `android.ndk_build_number` when their 64-byte slots hold NUL-padded
+and `ndk_build_number` when their 64-byte slots hold NUL-padded
 printable ASCII. Truncated or non-ASCII Android descriptors degrade `android`
 to null while preserving the raw descriptor digest and preview, and other
 owners keep `android` null.
