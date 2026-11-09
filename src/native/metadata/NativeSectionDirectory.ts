@@ -47,9 +47,10 @@ export interface NativeSection {
   readonly alignment: bigint;
   readonly file_backed: boolean;
 }
-/** Program header types retained for load, dynamic, and hardening consumers. */
+/** Program header types retained for load, dynamic, hardening, and unwind consumers. */
 export const ELF_PT_NOTE = 4 as const;
 export const ELF_PT_INTERP = 3 as const;
+export const ELF_PT_GNU_EH_FRAME = 0x6474e550 as const;
 export const ELF_PT_GNU_STACK = 0x6474e551 as const;
 export const ELF_PT_GNU_RELRO = 0x6474e552 as const;
 export const ELF_PT_GNU_PROPERTY = 0x6474e553 as const;
@@ -70,6 +71,7 @@ export type ElfProgramDeclaration =
   | ({ readonly type: 2; readonly header_offset: number } & ElfDynamicSegment)
   | ({ readonly type: typeof ELF_PT_NOTE } & ElfProgramSpan)
   | ({ readonly type: typeof ELF_PT_INTERP } & ElfProgramSpan)
+  | ({ readonly type: typeof ELF_PT_GNU_EH_FRAME } & ElfProgramSpan)
   | ({ readonly type: typeof ELF_PT_GNU_STACK } & ElfProgramSpan)
   | ({ readonly type: typeof ELF_PT_GNU_RELRO } & ElfProgramSpan)
   | ({ readonly type: typeof ELF_PT_GNU_PROPERTY } & ElfProgramSpan);
@@ -184,6 +186,8 @@ export function* readElfSectionDirectory(
         programDeclarations.push({ type: ELF_PT_NOTE, ...span });
       else if (type === ELF_PT_INTERP)
         programDeclarations.push({ type: ELF_PT_INTERP, ...span });
+      else if (type === ELF_PT_GNU_EH_FRAME)
+        programDeclarations.push({ type: ELF_PT_GNU_EH_FRAME, ...span });
       else if (type === ELF_PT_GNU_STACK)
         programDeclarations.push({ type: ELF_PT_GNU_STACK, ...span });
       else if (type === ELF_PT_GNU_RELRO)

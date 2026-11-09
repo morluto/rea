@@ -30,6 +30,7 @@ import {
   BYTE_ENTROPY_PROVIDER,
   DEVICETREE_PROVIDER,
   ELF_NOTES_PROVIDER,
+  ELF_UNWIND_RANGES_PROVIDER,
   HARMONY_APPLICATION_PROVIDER,
   JAVASCRIPT_APPLICATION_PROVIDER,
   JAVASCRIPT_APPLICATION_WORKFLOW_PROVIDER,
@@ -255,6 +256,13 @@ export const CAPABILITY_DECLARATIONS = {
   },
   elfNotes: {
     providers: [providerBinding(ELF_NOTES_PROVIDER, ["inspect_elf_notes"])],
+  },
+  elfUnwindRanges: {
+    providers: [
+      providerBinding(ELF_UNWIND_RANGES_PROVIDER, [
+        "inspect_elf_unwind_ranges",
+      ]),
+    ],
   },
   erlangBeam: {
     providers: [

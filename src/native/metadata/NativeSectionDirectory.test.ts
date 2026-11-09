@@ -1,7 +1,9 @@
 import { expect, it } from "vitest";
 import { pe } from "../../domain/binaryTarget.fixture.js";
 import { elfHardeningFixture } from "../hardening/BinaryHardening.fixture.js";
+import { elfUnwindSectionlessFixture } from "../elf/ElfUnwindTables.fixture.js";
 import {
+  ELF_PT_GNU_EH_FRAME,
   ELF_PT_GNU_RELRO,
   ELF_PT_GNU_STACK,
   ELF_PT_INTERP,
@@ -62,6 +64,22 @@ it("admits PT_INTERP, PT_GNU_STACK and PT_GNU_RELRO program headers", () => {
       ELF_PT_GNU_RELRO,
     ]),
   );
+});
+
+it("retains PT_GNU_EH_FRAME with its file and address span", () => {
+  const bytes = elfUnwindSectionlessFixture();
+  const directory = readElfDirectoryFromBuffer(bytes);
+  expect(directory.programs.map((program) => program.type)).toEqual([
+    1,
+    ELF_PT_GNU_EH_FRAME,
+  ]);
+  expect(directory.programs[1]).toMatchObject({
+    type: ELF_PT_GNU_EH_FRAME,
+    header_offset: 64 + 56,
+    file_offset: bytes.readBigUInt64LE(64 + 56 + 8),
+    virtual_address: bytes.readBigUInt64LE(64 + 56 + 16),
+    file_size: bytes.readBigUInt64LE(64 + 56 + 32),
+  });
 });
 
 it("retains a confirmed overlapping PE when the COFF record extends past EOF", () => {

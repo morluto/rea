@@ -525,6 +525,11 @@ export const documentationSections = [
       },
       { text: "ELF note tables", source: "elf-notes.md", route: "/elf-notes" },
       {
+        text: "ELF unwind function ranges",
+        source: "elf-unwind-ranges.md",
+        route: "/elf-unwind-ranges",
+      },
+      {
         text: "Erlang BEAM files",
         source: "erlang-beam.md",
         route: "/erlang-beam",

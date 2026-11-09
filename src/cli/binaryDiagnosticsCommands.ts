@@ -10,6 +10,7 @@ import {
   createRecordedCrashService,
   createBinaryLayoutService,
   createElfNotesService,
+  createElfUnwindRangesService,
   createAppleIpsService,
   createDevicetreeService,
   createKernelModuleService,
@@ -32,6 +33,7 @@ import { inspectPeCertificatesInputSchema } from "../domain/native/peCertificate
 import { inspectPeImportsInputSchema } from "../domain/native/peImports.js";
 import { inspectNativeExportsInputSchema } from "../domain/native/nativeExports.js";
 import { inspectElfNotesInputSchema } from "../domain/native/elfNotes.js";
+import { inspectElfUnwindRangesInputSchema } from "../domain/native/elfUnwindRanges.js";
 import { inspectAppleIpsInputSchema } from "../domain/native/appleIps.js";
 import { inspectKernelModuleInputSchema } from "../domain/native/kernelModule.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
@@ -83,6 +85,50 @@ export const registerBinaryDiagnosticsCommands = (
               elf,
               "rea-elf-notes",
               "inspect_elf_notes",
+              signal,
+            ).then(projectCliAnalysisResult),
+        );
+      }),
+  });
+  cli.command(CLI_COMMANDS.inspectElfUnwindRanges, {
+    description:
+      "Inspect ELF unwind function ranges without executing the image",
+    args: z.object({
+      path: localPathStringSchema.describe("Local ELF32/ELF64 image"),
+    }),
+    options: z.object({
+      maxFileBytes: cliDecimalField(
+        inspectElfUnwindRangesInputSchema.shape.max_file_bytes,
+      ),
+      maxRanges: cliDecimalField(
+        inspectElfUnwindRangesInputSchema.shape.max_ranges,
+      ),
+      offset: cliDecimalField(inspectElfUnwindRangesInputSchema.shape.offset),
+      limit: cliDecimalField(inspectElfUnwindRangesInputSchema.shape.limit),
+    }),
+    run: ({ args, options }) =>
+      withCommandCancellation(async (signal) => {
+        const unwind = createElfUnwindRangesService();
+        return await logCliCommand(
+          logger,
+          CLI_COMMANDS.inspectElfUnwindRanges,
+          async () =>
+            finishCliEvidenceCommand(
+              args.path,
+              () =>
+                unwind.inspect(
+                  {
+                    path: absoluteCallerPath(args.path),
+                    max_file_bytes: options.maxFileBytes,
+                    max_ranges: options.maxRanges,
+                    offset: options.offset,
+                    limit: options.limit,
+                  },
+                  { signal },
+                ),
+              unwind,
+              "rea-elf-unwind-ranges",
+              "inspect_elf_unwind_ranges",
               signal,
             ).then(projectCliAnalysisResult),
         );

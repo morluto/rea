@@ -53,6 +53,10 @@ import {
   elfNotesSchema,
 } from "../../domain/native/elfNotes.js";
 import {
+  inspectElfUnwindRangesInputSchema,
+  elfUnwindRangesSchema,
+} from "../../domain/native/elfUnwindRanges.js";
+import {
   inspectAppleIpsInputSchema,
   appleIpsSchema,
 } from "../../domain/native/appleIps.js";
@@ -136,6 +140,21 @@ export const BINARY_DIAGNOSTICS_TOOL_CONTRACTS = [
     examples: [
       {
         title: "Inspect ELF GNU build-id and ABI-tag notes",
+        input: { path: "/artifacts/program" },
+      },
+    ],
+  },
+  {
+    name: "inspect_elf_unwind_ranges",
+    ...toolContractMetadata("inspect_elf_unwind_ranges"),
+    kind: "native-provider",
+    description:
+      "Inspect one explicit local ELF32/ELF64 image's .eh_frame and .eh_frame_hdr without executing it or opening a disassembler. Returns a page of FDE function ranges with start, end, size, containing section, exact symbol name when one exists, CIE index, LSDA, and personality, plus version, augmentation, alignments, return-address register, and pointer encoding for only the CIEs those ranges name, with a total CIE count in coverage. Coverage counts ranges that match a symbol, ranges without a symbol, and whether the .eh_frame_hdr search table agrees with the decoded FDEs. .debug_frame is reported present, absent, or incomplete and is not decoded. A missing unwind table is observed absence of those declarations, not proof the image has no functions. Truncated records stay incomplete coverage. Reads a stable regular file; malformed ELF headers and exhausted CIE or FDE budgets return no partial success. CFA instructions are counted and not evaluated. Indirect EH pointers are not dereferenced. Portable on supported Node hosts.",
+    inputSchema: inspectElfUnwindRangesInputSchema,
+    outputSchema: evidenceResultOf(elfUnwindRangesSchema),
+    examples: [
+      {
+        title: "List function ranges from ELF unwind tables",
         input: { path: "/artifacts/program" },
       },
     ],

@@ -15,3 +15,5 @@ for the specification lifecycle, roadmap granularity and producer-owned contract
 
 - [Go static string-header literal recovery](native/go-string-literals/spec.md)
   ([plan](native/go-string-literals/plan.md), [tasks](native/go-string-literals/tasks.md))
+- [ELF unwind function ranges](native/elf-unwind-ranges/spec.md)
+  ([plan](native/elf-unwind-ranges/plan.md), [tasks](native/elf-unwind-ranges/tasks.md))

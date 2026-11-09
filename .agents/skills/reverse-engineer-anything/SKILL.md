@@ -2,7 +2,7 @@
 name: reverse-engineer-anything
 description: Reverse engineer native, managed, Electron/JavaScript, packaged, firmware, and browser targets with REA, and build agent environments (AgentEnv bundles) of web applications from a live instance or a capture, and of Linux desktop apps with a task from a request. Use shipped-artifact or requested runtime evidence to explain features, compare versions, decompile code, or guide a reconstruction. Skip REA for ordinary source-repository architecture analysis.
 metadata:
-  version: "61"
+  version: "62"
 ---
 
 # REA
@@ -299,6 +299,15 @@ explicit path or endpoint and do not need it.
   build-id or ABI-tag fields. A missing table is observed absence of those
   declarations, not proof the image never carried notes. See the
   [ELF notes guide](https://github.com/morluto/rea/blob/main/docs/elf-notes.md).
+- ELF unwind function ranges: `inspect_elf_unwind_ranges` with the explicit
+  local ELF32/ELF64 file. This built-in target-free inspection requires no
+  disassembler. Preserve FDE start, end, size, containing section, exact
+  symbol name, CIE index, LSDA, and personality. Page with `offset` and
+  `limit`. A missing `.eh_frame` is observed absence of that declaration,
+  not proof the image has no functions. `.debug_frame` is reported present
+  or absent and is not decoded. CFA instructions are counted and not
+  evaluated. See the
+  [ELF unwind ranges guide](https://github.com/morluto/rea/blob/main/docs/elf-unwind-ranges.md).
 - Apple `.ips` crash reports: `inspect_apple_ips` with the explicit local
   file. This built-in target-free inspection requires no Xcode, atos, or
   pwntools. Preserve first-line metadata, `bug_type` as a string, process and

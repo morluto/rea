@@ -449,6 +449,20 @@ The workflow reports note owners, types, descriptor hashes, and GNU build-id
 or ABI-tag fields when those descriptors match. A missing note table is
 observed absence of those declarations. See [ELF note tables](../elf-notes.md).
 
+Inspect ELF unwind function ranges without executing the image:
+
+```bash
+rea inspect-elf-unwind-ranges /absolute/path/to/program --json
+```
+
+The workflow reports FDE start, end, and size, the containing section, an exact
+symbol name when one exists, CIE identity, LSDA, and personality. Coverage
+counts ranges that match a symbol, ranges without a symbol, and whether the
+`.eh_frame_hdr` search table agrees with the decoded FDEs. `.debug_frame` is
+reported present, absent, or incomplete and is not decoded. A missing unwind table is
+observed absence of those declarations. See
+[ELF unwind function ranges](../elf-unwind-ranges.md).
+
 Inspect an Apple `.ips` crash report without executing a target:
 
 ```bash

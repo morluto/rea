@@ -185,6 +185,22 @@ absence of those declarations, not proof the image never carried notes in
 another container. See
 [ELF note tables](https://github.com/morluto/rea/blob/main/docs/elf-notes.md).
 
+## ELF unwind function ranges
+
+Use `inspect_elf_unwind_ranges` for an explicit local ELF32/ELF64 image when
+the question concerns function starts and lengths that survive `strip`, which
+functions have an LSDA, or which ranges have no exact symbol. No
+`open_binary` or target execution is required. The CLI equivalent is
+`inspect-elf-unwind-ranges PATH`. Preserve artifact SHA-256, FDE start and
+end, containing section, exact symbol name, CIE index, LSDA, and personality.
+Page later ranges with `offset` and `limit`. A missing `.eh_frame` is
+observed absence of that declaration and of `PT_GNU_EH_FRAME`, not proof the
+image has no functions. Header disagreement is a limitation and does not drop
+decoded ranges. `.debug_frame` is reported present or absent and is not
+decoded. CFA instructions are counted and not evaluated. Indirect EH pointers
+are not dereferenced. See
+[ELF unwind function ranges](https://github.com/morluto/rea/blob/main/docs/elf-unwind-ranges.md).
+
 ## Apple IPS crash reports
 
 Use `inspect_apple_ips` for an explicit local Apple `.ips` file when the
