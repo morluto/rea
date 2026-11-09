@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { Readable } from "node:stream";
 import { deflateRawSync, deflateSync } from "node:zlib";
 import type { Dirent } from "node:fs";
-import { mkdir, symlink, truncate, writeFile } from "node:fs/promises";
+import { mkdir, readdir, symlink, truncate, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { describe, expect, it, vi } from "vitest";
@@ -4789,4 +4789,19 @@ describe("ReleaseExposureReader packaged map identity", () => {
       expect(scanned.debug_companions.paths).toEqual([]);
     },
   );
+});
+
+it("keeps distinct normalized linker-map occurrences after a declaration", async (context) => {
+  const root = await createTestTempDirectory("rea-map-identities-");
+  const first = "café.map";
+  const second = "cafe\u0301.map";
+  await writeFile(join(root, first), "linker map\n");
+  await writeFile(join(root, second), "linker map\n");
+  if ((await readdir(root)).length !== 2) {
+    context.skip();
+    return;
+  }
+  await writeFile(join(root, "z.js"), `//# sourceMappingURL=${first}\n`);
+  const scanned = await inspect(root);
+  expect(scanned.debug_companions.paths).toContain(join(root, second));
 });

@@ -1942,7 +1942,7 @@ const noteScriptTarget = (state: ScanState, location: string): void => {
   if (state.examinedScripts.has(target) || state.scriptTargets.has(target))
     return;
   if (state.examinedLocations.has(target) || state.examinedMaps.has(target)) {
-    state.linkerMapGuesses.delete(target);
+    retractLinkerMapGuesses(state, location);
     state.skippedMaps += 1;
     return;
   }
@@ -2044,8 +2044,7 @@ const noteLocalMapReference = (
 const noteMapTarget = (state: ScanState, location: string): void => {
   const target = memberLocationKey(location);
   // A map read before its declaration may have settled as a linker map.
-  state.skippedMaps += state.linkerMapGuesses.get(target)?.size ?? 0;
-  state.linkerMapGuesses.delete(target);
+  state.skippedMaps += retractLinkerMapGuesses(state, location);
   if (state.examinedMaps.has(target) || state.mapTargets.has(target)) return;
   if (state.examinedLocations.has(target)) {
     state.skippedMaps += 1;
@@ -2065,6 +2064,25 @@ const noteMapTarget = (state: ScanState, location: string): void => {
  */
 const memberLocationKey = (location: string): string =>
   logicalPathNfc(resolve(location));
+
+/** Retract one source occurrence; a normalized lookup bucket is not identity. */
+const retractLinkerMapGuesses = (
+  state: ScanState,
+  location: string,
+): number => {
+  const key = memberLocationKey(location);
+  const paths = state.linkerMapGuesses.get(key);
+  if (paths === undefined) return 0;
+  if (paths.delete(location)) {
+    if (paths.size === 0) state.linkerMapGuesses.delete(key);
+    return 1;
+  }
+  // Without an exact source spelling, normalization cannot prove which
+  // occurrence the declaration means. Keep companion coverage unresolved.
+  state.skippedCompanions += paths.size;
+  state.linkerMapGuesses.delete(key);
+  return paths.size;
+};
 
 const noteLinkerMapGuess = (state: ScanState, location: string): void => {
   // Once a map or script declaration was discarded, this map may be its target.
