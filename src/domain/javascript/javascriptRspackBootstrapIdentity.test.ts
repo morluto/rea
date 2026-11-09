@@ -1954,3 +1954,127 @@ describe("member-write excluded branch pruning and frame-aware nested callees", 
     `);
   });
 });
+
+describe("Electron member-write generator, intrinsic, prototype, and constructor identity", () => {
+  it("separates ordinary yield resume values from outward yielded operands and yield* completion returns", () => {
+    const preserved = analyzeJavaScriptStaticSource(`
+      const e = require("electron");
+      function* g() {
+        const a = yield e;
+        a.ipcRenderer = {};
+      }
+      const it = g();
+      it.next();
+      it.next({});
+      function* subSafe() {
+        yield e;
+        return {};
+      }
+      function* outerSafe() {
+        const res = yield* subSafe();
+        res.ipcRenderer = {};
+      }
+      outerSafe().next();
+      e.ipcRenderer.send("YIELD_RESUME_SEPARATED");
+    `);
+    expect(preserved.electron.ipc).toEqual([
+      expect.objectContaining({
+        channel: "YIELD_RESUME_SEPARATED",
+        operation: "send",
+        side: "renderer",
+      }),
+    ]);
+
+    expectNoDirectElectron(`
+      const e = require("electron");
+      function* g() {
+        const a = yield {};
+        a.ipcRenderer = {};
+      }
+      const it = g();
+      it.next();
+      it.next(e);
+      e.ipcRenderer.send("YIELD_RESUME_ELECTRON_TAINTED");
+    `);
+
+    expectNoDirectElectron(`
+      const e = require("electron");
+      function* g() {
+        yield e;
+      }
+      const [first] = g();
+      first.ipcRenderer = {};
+      e.ipcRenderer.send("YIELD_DESTRUCTURED_TAINTED");
+    `);
+
+    expectNoDirectElectron(`
+      const e = require("electron");
+      function* sub() {
+        return e;
+      }
+      function* outer() {
+        const res = yield* sub();
+        res.ipcRenderer = {};
+      }
+      outer().next();
+      e.ipcRenderer.send("YIELD_STAR_RETURN_TAINTED");
+    `);
+  });
+
+  it("preserves fresh native container, prototype, and constructor instance identities", () => {
+    const preserved = analyzeJavaScriptStaticSource(`
+      const e = require("electron");
+      const keys = Object.keys(e);
+      keys.ipcRenderer = {};
+      const entries = Object.entries(e);
+      entries.ipcRenderer = {};
+      entries[0].ipcRenderer = {};
+      const desc = Object.getOwnPropertyDescriptor(e, "ipcRenderer");
+      desc.send = () => 0;
+      const protoHolder = { __proto__: {}, ["__proto__"]: e.ipcRenderer };
+      Object.getPrototypeOf(protoHolder).send = () => 0;
+      Reflect.getPrototypeOf(protoHolder).send = () => 0;
+      class Box {
+        constructor(ipc) {
+          this.ipc = ipc;
+        }
+      }
+      const local = new Box(e.ipcRenderer);
+      local.send = () => 0;
+      e.ipcRenderer.send("FRESH_IDENTITIES_PRESERVED");
+    `);
+    expect(preserved.electron.ipc).toEqual([
+      expect.objectContaining({
+        channel: "FRESH_IDENTITIES_PRESERVED",
+        operation: "send",
+        side: "renderer",
+      }),
+    ]);
+
+    expectNoDirectElectron(`
+      const e = require("electron");
+      const entries = Object.entries(e);
+      entries[0][1].send = () => 0;
+      e.ipcRenderer.send("ENTRIES_VALUE_TAINTED");
+    `);
+
+    expectNoDirectElectron(`
+      const e = require("electron");
+      const protoHolder = { __proto__: e.ipcRenderer, ["__proto__"]: {} };
+      Object.getPrototypeOf(protoHolder).send = () => 0;
+      e.ipcRenderer.send("REAL_PROTO_TAINTED");
+    `);
+
+    expectNoDirectElectron(`
+      const e = require("electron");
+      class Box {
+        constructor(ipc) {
+          this.ipc = ipc;
+        }
+      }
+      const local = new Box(e.ipcRenderer);
+      local.ipc.send = () => 0;
+      e.ipcRenderer.send("INSTANCE_FIELD_TAINTED");
+    `);
+  });
+});

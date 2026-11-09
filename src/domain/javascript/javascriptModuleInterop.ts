@@ -80,6 +80,232 @@ interface InteropHelper {
   readonly identity: boolean;
 }
 
+export type JavaScriptIntrinsicContainerKind =
+  | "object-values"
+  | "object-entries"
+  | "object-from-entries"
+  | "object-create"
+  | "object-group-by"
+  | "property-descriptor"
+  | "property-descriptors"
+  | "array-from"
+  | "array-of"
+  | "array-from-async";
+
+export type JavaScriptIntrinsicTargetMutationKind =
+  | "preserve"
+  | "coerce-object"
+  | "assign"
+  | "define-property"
+  | "define-properties"
+  | "set-prototype";
+
+export type JavaScriptIntrinsicResultIdentity =
+  | { readonly kind: "primitive" }
+  | { readonly kind: "fresh-scalars" }
+  | {
+      readonly kind: "fresh-container";
+      readonly container: JavaScriptIntrinsicContainerKind;
+    }
+  | {
+      readonly kind: "target-argument";
+      readonly mutation: JavaScriptIntrinsicTargetMutationKind;
+      readonly target: t.Expression;
+    }
+  | {
+      readonly kind: "projected-read";
+      readonly projection: "prototype" | "property";
+    }
+  | { readonly kind: "unknown" };
+
+const OBJECT_PRIMITIVE_METHODS = new Set([
+  "is",
+  "hasOwn",
+  "isExtensible",
+  "isFrozen",
+  "isSealed",
+]);
+const OBJECT_SCALAR_ARRAY_METHODS = new Set([
+  "keys",
+  "getOwnPropertyNames",
+  "getOwnPropertySymbols",
+]);
+const OBJECT_PROTO_PRIMITIVE_METHODS = new Set([
+  "hasOwnProperty",
+  "isPrototypeOf",
+  "propertyIsEnumerable",
+  "toString",
+  "toLocaleString",
+]);
+const OBJECT_CONTAINERS: Readonly<
+  Record<string, JavaScriptIntrinsicContainerKind>
+> = {
+  values: "object-values",
+  entries: "object-entries",
+  fromEntries: "object-from-entries",
+  create: "object-create",
+  groupBy: "object-group-by",
+  getOwnPropertyDescriptor: "property-descriptor",
+  getOwnPropertyDescriptors: "property-descriptors",
+};
+const OBJECT_TARGET_MUTATORS: Readonly<
+  Record<string, JavaScriptIntrinsicTargetMutationKind>
+> = {
+  assign: "assign",
+  defineProperty: "define-property",
+  defineProperties: "define-properties",
+  setPrototypeOf: "set-prototype",
+};
+const ARRAY_PROTO_PRIMITIVE_METHODS = new Set([
+  "includes",
+  "indexOf",
+  "lastIndexOf",
+  "join",
+  "toString",
+  "toLocaleString",
+  "every",
+  "some",
+  "push",
+  "unshift",
+  "findIndex",
+  "findLastIndex",
+]);
+const REFLECT_PRIMITIVE_METHODS = new Set([
+  "defineProperty",
+  "deleteProperty",
+  "has",
+  "isExtensible",
+  "preventExtensions",
+  "set",
+  "setPrototypeOf",
+]);
+
+const isPrimitiveOrUndefinedIntrinsicArgument = (
+  node: t.Expression,
+  state: JavaScriptSemanticAnalysisState,
+): boolean => {
+  if (readExactJavaScriptLiteral(node).found) return true;
+  const unwrapped = unwrapJavaScriptExpression(node).node;
+  return (
+    t.isUnaryExpression(unwrapped, { operator: "void" }) ||
+    isUnshadowedGlobal(unwrapped, state, "undefined")
+  );
+};
+
+const classifyObjectIntrinsicResult = (
+  invocation: JavaScriptIntrinsicInvocation,
+  state: JavaScriptSemanticAnalysisState,
+): JavaScriptIntrinsicResultIdentity => {
+  const { path, arguments: args } = invocation;
+  if (path.length === 2) {
+    if (args === undefined) return { kind: "unknown" };
+    if (args.length === 0) return { kind: "fresh-scalars" };
+    const first = args[0];
+    if (first === undefined || !t.isExpression(first))
+      return { kind: "unknown" };
+    return isPrimitiveOrUndefinedIntrinsicArgument(first, state)
+      ? { kind: "fresh-scalars" }
+      : { kind: "target-argument", mutation: "coerce-object", target: first };
+  }
+  if (path.length === 4 && path[2] === "prototype") {
+    return OBJECT_PROTO_PRIMITIVE_METHODS.has(path[3] ?? "")
+      ? { kind: "primitive" }
+      : { kind: "unknown" };
+  }
+  if (path.length !== 3) return { kind: "unknown" };
+  const method = path[2] ?? "";
+  if (OBJECT_PRIMITIVE_METHODS.has(method)) return { kind: "primitive" };
+  if (OBJECT_SCALAR_ARRAY_METHODS.has(method)) return { kind: "fresh-scalars" };
+  const container = OBJECT_CONTAINERS[method];
+  if (container !== undefined) return { kind: "fresh-container", container };
+  if (method === "getPrototypeOf")
+    return { kind: "projected-read", projection: "prototype" };
+  if (
+    method === "freeze" ||
+    method === "seal" ||
+    method === "preventExtensions"
+  ) {
+    if (args === undefined) return { kind: "unknown" };
+    if (args.length === 0) return { kind: "primitive" };
+    const first = args[0];
+    if (first === undefined || !t.isExpression(first))
+      return { kind: "unknown" };
+    return isPrimitiveOrUndefinedIntrinsicArgument(first, state)
+      ? { kind: "primitive" }
+      : { kind: "target-argument", mutation: "preserve", target: first };
+  }
+  const mutator = OBJECT_TARGET_MUTATORS[method];
+  if (mutator !== undefined) {
+    const first = args?.[0];
+    return first !== undefined && t.isExpression(first)
+      ? { kind: "target-argument", mutation: mutator, target: first }
+      : { kind: "unknown" };
+  }
+  return { kind: "unknown" };
+};
+
+/** Classify result object identity for a resolved intrinsic invocation. */
+export const classifyJavaScriptIntrinsicResult = (
+  invocation: JavaScriptIntrinsicInvocation,
+  state: JavaScriptSemanticAnalysisState,
+  resolveIntrinsicPath: (node: t.Node) => readonly string[] | undefined,
+): JavaScriptIntrinsicResultIdentity => {
+  if (invocation.kind !== "known" || invocation.path[0] !== "intrinsic")
+    return { kind: "unknown" };
+  const owner = invocation.path[1];
+  if (owner === "Object")
+    return classifyObjectIntrinsicResult(invocation, state);
+  if (owner === "Array") {
+    if (invocation.path.length === 3) {
+      const method = invocation.path[2];
+      if (method === "isArray") return { kind: "primitive" };
+      if (method === "from" || method === "of" || method === "fromAsync") {
+        const standardCtor =
+          invocation.receiver === undefined ||
+          resolveIntrinsicPath(invocation.receiver)?.join(".") ===
+            "intrinsic.Array";
+        if (!standardCtor) return { kind: "unknown" };
+        const container: JavaScriptIntrinsicContainerKind =
+          method === "from"
+            ? "array-from"
+            : method === "of"
+              ? "array-of"
+              : "array-from-async";
+        return { kind: "fresh-container", container };
+      }
+    }
+    if (invocation.path.length === 4 && invocation.path[2] === "prototype") {
+      const method = invocation.path[3] ?? "";
+      if (ARRAY_PROTO_PRIMITIVE_METHODS.has(method))
+        return { kind: "primitive" };
+      if (method === "keys") return { kind: "fresh-scalars" };
+    }
+    return { kind: "unknown" };
+  }
+  if (owner === "Reflect" && invocation.path.length === 3) {
+    const method = invocation.path[2] ?? "";
+    if (REFLECT_PRIMITIVE_METHODS.has(method)) return { kind: "primitive" };
+    if (method === "ownKeys") return { kind: "fresh-scalars" };
+    if (method === "getOwnPropertyDescriptor")
+      return { kind: "fresh-container", container: "property-descriptor" };
+    if (method === "getPrototypeOf")
+      return { kind: "projected-read", projection: "prototype" };
+    if (method === "get")
+      return { kind: "projected-read", projection: "property" };
+    return { kind: "unknown" };
+  }
+  if (
+    owner === "Function" &&
+    invocation.path.length === 4 &&
+    invocation.path[2] === "prototype"
+  ) {
+    const method = invocation.path[3];
+    if (method === "bind") return { kind: "fresh-scalars" };
+    if (method === "toString") return { kind: "primitive" };
+  }
+  return { kind: "unknown" };
+};
+
 /** Prove one inert namespace conversion without relaxing general assignment semantics. */
 export const createSemanticModuleInterop = (
   state: JavaScriptSemanticAnalysisState,
@@ -367,9 +593,12 @@ export const createSemanticModuleInterop = (
 
   const isFreshObject = (node: t.Node): boolean => {
     const visited = new Set<string>();
+    const visitedNodes = new Set<t.Node>();
     let current = node;
     for (;;) {
       current = unwrapJavaScriptExpression(current).node;
+      if (visitedNodes.has(current)) return false;
+      visitedNodes.add(current);
       if (
         t.isObjectExpression(current) ||
         t.isArrayExpression(current) ||
@@ -378,6 +607,33 @@ export const createSemanticModuleInterop = (
         t.isRegExpLiteral(current)
       )
         return true;
+      if (t.isCallExpression(current) || t.isOptionalCallExpression(current)) {
+        const invocation = resolveJavaScriptIntrinsicInvocation(
+          current,
+          intrinsicPath,
+          boundIntrinsic,
+          intrinsicReadChanged,
+          nativeArrayIteration,
+        );
+        const identity =
+          invocation === undefined
+            ? undefined
+            : classifyJavaScriptIntrinsicResult(
+                invocation,
+                state,
+                intrinsicPath,
+              );
+        if (
+          identity?.kind === "fresh-scalars" ||
+          identity?.kind === "fresh-container"
+        )
+          return true;
+        if (identity?.kind === "target-argument") {
+          current = identity.target;
+          continue;
+        }
+        return false;
+      }
       if (!t.isIdentifier(current)) return false;
       const binding = resolveSemanticBindingState(state, current, current.name);
       const initializer = unprojectedInitializer(binding, state);
@@ -732,6 +988,8 @@ export const createSemanticModuleInterop = (
         nativeArrayIteration,
       ),
     boundIntrinsic,
+    intrinsicResultIdentity: (invocation: JavaScriptIntrinsicInvocation) =>
+      classifyJavaScriptIntrinsicResult(invocation, state, intrinsicPath),
     staticString,
     isFreshObject,
     opaqueMutationPath,
