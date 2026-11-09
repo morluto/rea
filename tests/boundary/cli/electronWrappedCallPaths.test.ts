@@ -132,6 +132,64 @@ for (const fixture of restArrayPropertyCases)
     },
   );
 
+cliTest(
+  "pairs renderer invokes with wrapper registrations on exact template channels through the public CLI",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory(
+      "rea-electron-template-channel-",
+    );
+    await writeFixtureFiles(root, {
+      "main.js": `const { ipcMain } = require("electron");
+        function register(channel, handler) { ipcMain.handle(channel, handler); }
+        register("app:quoted", () => 1);
+        register(\`app:template\`, () => 2);`,
+      "preload.js": `const { contextBridge, ipcRenderer } = require("electron");
+        contextBridge.exposeInMainWorld(\`desktop\`, {
+          quoted: () => ipcRenderer.invoke("app:quoted"),
+          template: () => ipcRenderer.invoke("app:template"),
+        });`,
+    });
+    const application = await analyzeJavaScriptDirectory("CLI", cli, root);
+    const observations = application.graph.nodes.flatMap(
+      (node) => node.observations,
+    );
+    expect(
+      application.graph.nodes
+        .filter((node) => node.kind === "ipc-channel")
+        .flatMap((node) => node.observations)
+        .filter(({ properties }) => properties.side === "main")
+        .map(
+          ({ properties, evidence }) =>
+            `${String(properties.channel)} ${evidence.state}`,
+        )
+        .sort(),
+    ).toEqual([
+      "app:quoted inferred",
+      "app:template inferred",
+      "null observed",
+    ]);
+    expect(
+      observations
+        .filter(({ properties }) => properties.step_kind === "terminal")
+        .map(
+          ({ properties }) =>
+            `${String(properties.entry)} -> ${String(properties.channel)}`,
+        )
+        .sort(),
+    ).toEqual([
+      "desktop.quoted -> app:quoted",
+      "desktop.template -> app:template",
+    ]);
+    // Every invocation of the wrapper supplies an exact channel, so neither
+    // renderer invoke competes with the wrapper's own unresolved site.
+    expect(application.summary.ipc).toMatchObject({
+      paired_renderer_transmissions: 2,
+      ambiguous_renderer_transmissions: 0,
+      unpaired_literal_renderer_transmissions: 0,
+    });
+  },
+);
+
 const analyze = async (cli: TestCli, extra = "") => {
   const root = await createTestTempDirectory("rea-electron-wrapped-paths-");
   await writeFixtureFiles(root, {
