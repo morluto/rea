@@ -312,6 +312,10 @@ describe("skill publication recovery", () => {
       );
       if (result.ok) throw new Error("Expected cleanup failure");
       expect(result.error.reason).toContain("cleanup incomplete");
+      expect(result.error).toMatchObject({ completed: true });
+      expect(result.error.message).toContain("installed and verified");
+      expect(result.error.message).not.toContain("Rollback");
+      expect(result.error.remediation).toContain("staging cleanup");
       expect(result.error.rollbackFailures).toEqual([
         {
           path: expect.stringContaining(".rea-skill-"),
@@ -371,4 +375,83 @@ describe("skill staging preparation", () => {
       close.mockRestore();
     }
   });
+});
+
+it.each([false, true])(
+  "reports verified multi-file publication after transient cleanup succeeds (scope: %s)",
+  async (scoped) => {
+    const home = await createTestTempDirectory("rea-skill-transient-cleanup-");
+    const manifest = join(skillDestinations(home, [])[0]!.path, "SKILL.md");
+    const resources = scoped ? new ArtifactResourceScope() : undefined;
+    let attempts = 0;
+    const result = await installCanonicalSkill(
+      home,
+      [],
+      {},
+      process.platform,
+      {
+        ...skillPublicationOperations,
+        prepare: async (...args) => {
+          const publication = await SkillFilePublication.prepare(...args);
+          if (publication.path === manifest) {
+            const release = publication.lease.release.bind(publication.lease);
+            vi.spyOn(publication.lease, "release").mockImplementation(
+              async () => {
+                if (++attempts === 1)
+                  throw new Error("transient staging close failure");
+                await release();
+              },
+            );
+          }
+          return publication;
+        },
+      },
+      resources,
+    );
+    expect(result).toEqual({ ok: true, value: "installed" });
+    expect(attempts).toBe(2);
+    expect(await canonicalSkillNeedsInstall(home)).toBe(false);
+    expect(resources?.hasPending).toBe(scoped ? false : undefined);
+  },
+);
+
+it("preserves a readback failure with mixed rollback and retryable cleanup failures", async () => {
+  const home = await createTestTempDirectory("rea-skill-mixed-finalization-");
+  const manifest = join(skillDestinations(home, [])[0]!.path, "SKILL.md");
+  await mkdir(dirname(manifest), { recursive: true });
+  await writeFile(manifest, "original skill\n");
+  let attempts = 0;
+  const result = await installCanonicalSkill(home, [], {}, process.platform, {
+    ...skillPublicationOperations,
+    prepare: async (...args) => {
+      const publication = await SkillFilePublication.prepare(...args);
+      if (publication.path === manifest) {
+        vi.spyOn(publication, "assertCurrent").mockRejectedValueOnce(
+          new Error("selected readback failed"),
+        );
+        const release = publication.lease.release.bind(publication.lease);
+        vi.spyOn(publication.lease, "release").mockImplementation(async () => {
+          if (++attempts <= 1) throw new Error("staging cleanup failed");
+          await release();
+        });
+      }
+      return publication;
+    },
+  });
+  if (result.ok) throw new Error("Expected readback failure");
+  expect(result.error).toMatchObject({
+    completed: false,
+    stage: "readback",
+    reason: "selected readback failed",
+  });
+  expect(result.error.rollbackFailures).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({
+        reason: expect.stringContaining("manual removal"),
+      }),
+      expect.objectContaining({ reason: "staging cleanup failed" }),
+    ]),
+  );
+  expect(await readFile(manifest, "utf8")).toBe("original skill\n");
+  expect(await result.error.retryCleanup()).toEqual([]);
 });

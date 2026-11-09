@@ -487,6 +487,7 @@ const installSkillAction = async (
   });
   const skill = await host.installSkill(skillClientIds);
   if (!skill.ok) {
+    if (skill.error.completed) appliedActions.push("installed_skill");
     emitProgress(options, {
       actionId: "install_skill",
       label,
