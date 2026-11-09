@@ -122,6 +122,21 @@ const withoutUrlUserInfo = (
   return `${value.slice(0, credentials.start)}[redacted]@${value.slice(credentials.end)}`;
 };
 
+/**
+ * Trim leading and trailing SP/HTAB from a header value. `/[ \t]+$/u` retries
+ * at every position of a value that is mostly spaces, which is quadratic in a
+ * value the line, block, and archive allowances all admit; scanning the end
+ * once is the same result in linear time.
+ */
+const trimHttpSpaces = (text: string, start: number): string => {
+  let first = start;
+  let last = text.length;
+  while (first < last && (text[first] === " " || text[first] === "\t")) first++;
+  while (last > first && (text[last - 1] === " " || text[last - 1] === "\t"))
+    last--;
+  return text.slice(first, last);
+};
+
 const sanitizedMalformedHeader = (
   text: string,
   previousSensitive: boolean,
@@ -634,7 +649,7 @@ const readHttpMessage = (
         });
       }
     } else {
-      const value = text.slice(colon + 1).replace(/^[ \t]+|[ \t]+$/gu, "");
+      const value = trimHttpSpaces(text, colon + 1);
       const index = fields.length;
       fields.push({
         name,
