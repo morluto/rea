@@ -189,6 +189,7 @@ export const analysisRunIncompatibilityCodeSchema = z.enum([
   "incompatible_subject_architecture",
   "incompatible_provider",
   "incompatible_procedure_coordinates",
+  "incomplete_procedure_relationships",
   "duplicate_item_identity",
 ]);
 

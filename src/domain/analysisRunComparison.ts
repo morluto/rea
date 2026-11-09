@@ -1,6 +1,7 @@
 import { AnalysisInputError } from "./analysisErrorCore.js";
 import { checkAnalysisRunCompatibility } from "./analysisRunComparisonCompatibility.js";
 import {
+  isAnalysisRunCoverageComplete,
   diffRecordFieldNames,
   extractNormalizedRunItems,
   sortUniqueStrings,
@@ -20,7 +21,6 @@ import {
   type NormalizedComparisonItem,
 } from "./analysisRunComparisonSchemas.js";
 import { digestCanonicalValue } from "./canonicalDigest.js";
-import { absenceClaimable } from "./comparisonSemantics.js";
 import { freezeJsonSnapshot } from "./immutableJson.js";
 import { ok, type Result } from "./result.js";
 import {
@@ -41,19 +41,8 @@ const ITEM_KINDS = [
   "residual_unknown",
 ] as const;
 
-const isCoverageComplete = (coverage: AnalysisRunCoverage): boolean =>
-  absenceClaimable({
-    status: coverage.status,
-    ...(coverage.truncated === undefined
-      ? {}
-      : { truncated: coverage.truncated }),
-    ...(coverage.omitted_count === undefined
-      ? {}
-      : { omitted_count: coverage.omitted_count }),
-  });
-
 const coverageRank = (coverage: AnalysisRunCoverage): number => {
-  if (isCoverageComplete(coverage)) return 3;
+  if (isAnalysisRunCoverageComplete(coverage)) return 3;
   if (coverage.status === "partial" || coverage.status === "complete") return 2;
   return 1;
 };
@@ -62,8 +51,8 @@ const computeCoverageDelta = (
   leftCoverage: AnalysisRunCoverage,
   rightCoverage: AnalysisRunCoverage,
 ): AnalysisRunCoverageDelta => {
-  const leftComplete = isCoverageComplete(leftCoverage);
-  const rightComplete = isCoverageComplete(rightCoverage);
+  const leftComplete = isAnalysisRunCoverageComplete(leftCoverage);
+  const rightComplete = isAnalysisRunCoverageComplete(rightCoverage);
   const leftRank = coverageRank(leftCoverage);
   const rightRank = coverageRank(rightCoverage);
   const leftOmitted = leftCoverage.omitted_count ?? null;

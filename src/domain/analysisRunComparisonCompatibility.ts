@@ -1,3 +1,4 @@
+import { isAnalysisRunCoverageComplete } from "./analysisRunComparisonNormalization.js";
 import { committedProvidersEqual } from "./analysisProfile.js";
 import { functionCoordinateContextsEqual } from "./native/functionCoordinateContext.js";
 import {
@@ -206,6 +207,25 @@ const checkPairSemanticCompatibility = (
     return makeIncompatibility(
       "incompatible_procedure_coordinates",
       "Address-based procedure comparison requires the same artifact and established provider-owned coordinate mapping. Use an explicit cross-artifact mapping workflow for different binaries.",
+      summaries,
+    );
+  const rightAddresses = new Set(
+    (right.procedures ?? []).map((procedure) => procedure.address),
+  );
+  const matchesProcedure =
+    left.procedures?.some((procedure) =>
+      rightAddresses.has(procedure.address),
+    ) === true;
+  if (
+    matchesProcedure &&
+    (left.relationship_coverage == null ||
+      right.relationship_coverage == null ||
+      !isAnalysisRunCoverageComplete(left.relationship_coverage) ||
+      !isAnalysisRunCoverageComplete(right.relationship_coverage))
+  )
+    return makeIncompatibility(
+      "incomplete_procedure_relationships",
+      "Matched procedure call-list comparison requires complete relationship coverage; incomplete lists cannot establish unchanged or changed call membership. Use compare_functions for coverage-aware function Evidence comparison.",
       summaries,
     );
   return ok(undefined);

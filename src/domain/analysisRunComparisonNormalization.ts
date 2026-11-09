@@ -1,6 +1,7 @@
 import type { z } from "zod";
 
 import type {
+  AnalysisRunCoverage,
   AnalysisRunEnvelope,
   AnalysisRunFindingRecord,
   AnalysisRunObligationRecord,
@@ -9,11 +10,24 @@ import type {
   NormalizedComparisonItem,
 } from "./analysisRunComparisonSchemas.js";
 import { digestCanonicalValue } from "./canonicalDigest.js";
-import { canonicalJson } from "./comparisonSemantics.js";
+import { absenceClaimable, canonicalJson } from "./comparisonSemantics.js";
 import { type JsonValue, jsonObjectSchema } from "./jsonValue.js";
 import { compareUnicodeCodePoints } from "./unicodeCodePointOrder.js";
 
 type JsonObject = z.infer<typeof jsonObjectSchema>;
+
+export const isAnalysisRunCoverageComplete = (
+  coverage: AnalysisRunCoverage,
+): boolean =>
+  absenceClaimable({
+    status: coverage.status,
+    ...(coverage.truncated === undefined
+      ? {}
+      : { truncated: coverage.truncated }),
+    ...(coverage.omitted_count === undefined
+      ? {}
+      : { omitted_count: coverage.omitted_count }),
+  });
 
 export const sortUniqueStrings = (values: readonly string[]): string[] =>
   [...new Set(values)].sort(compareUnicodeCodePoints);

@@ -718,6 +718,7 @@ it("admits absence per inventory kind and retains original source references acr
 
 it("keeps unreported truncation unknown and rejects an unchanged report with unknown inventory coverage", () => {
   const left = makeBaseRun({
+    procedures: [],
     relationship_coverage: {
       status: "partial",
       truncated: true,
@@ -725,6 +726,7 @@ it("keeps unreported truncation unknown and rejects an unchanged report with unk
     },
   });
   const right = makeBaseRun({
+    procedures: [],
     relationship_coverage: { status: "partial", omitted_count: 2 },
   });
   expect(
@@ -782,4 +784,16 @@ it("refuses unreported call lists and unproven address correspondence", () => {
       }),
     ),
   ).toMatchObject({ ok: true });
+});
+
+it("refuses call-list changes whose missing relationships are unexamined", () => {
+  const left = makeBaseRun();
+  const right = makeBaseRun({
+    relationship_coverage: { status: "partial", truncated: true },
+    procedures: [{ ...left.procedures![0]!, callees: [] }],
+  });
+  expect(compareAnalysisRuns(left, right)).toMatchObject({
+    ok: false,
+    error: { code: "incomplete_procedure_relationships" },
+  });
 });
