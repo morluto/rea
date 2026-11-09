@@ -39,6 +39,7 @@ export class ArtifactOperationError extends AnalysisError {
       | "inspect_kernel_module"
       | "inspect_kernel_build_config"
       | "inspect_erlang_beam"
+      | "inspect_v8_code_cache"
       | "extract_artifact"
       | "decode_interface_builder"
       | "inspect_asset_catalog"
