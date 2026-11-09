@@ -59,6 +59,49 @@ export class ElfNoteSectionNameBudgetFailure extends Error {
   }
 }
 
+/**
+ * Refuse a compressed section-name table whose declared decoded size does not
+ * fit the source-plus-decoded-names budget, before any decoder inflates it.
+ * Structural problems are left to the decoders that own them.
+ */
+export const assertElfSectionNameBudget = (
+  bytes: Buffer,
+  maxFileBytes: number,
+): void => {
+  const fixed = readElfFixedHeader(bytes);
+  if (!fixed.ok) return;
+  const header = fixed.value;
+  const little = header.byteOrder === "little";
+  const raw = readElfRawTableDeclarations(bytes, header);
+  if (!raw.ok) return;
+  const { offset, width, count, namesIndex } = raw.value.sections;
+  if (count === 0 || namesIndex === 0 || namesIndex >= count) return;
+  const at = offset + BigInt(namesIndex) * BigInt(width);
+  if (at > BigInt(bytes.length - width)) return;
+  const parsed = readElfSectionHeader(
+    bytes.subarray(Number(at), Number(at) + width),
+    header.elfClass,
+    little,
+  );
+  if (!parsed.ok || (parsed.value.flags & SHF_COMPRESSED) === 0n) return;
+  const wide = header.elfClass === 64;
+  const start = parsed.value.offset;
+  if (start > BigInt(bytes.length - (wide ? 16 : 8))) return;
+  const chdr = Number(start);
+  const declared = wide
+    ? little
+      ? bytes.readBigUInt64LE(chdr + 8)
+      : bytes.readBigUInt64BE(chdr + 8)
+    : BigInt(
+        little ? bytes.readUInt32LE(chdr + 4) : bytes.readUInt32BE(chdr + 4),
+      );
+  if (declared > BigInt(Math.max(0, maxFileBytes - bytes.length)))
+    throw new ElfNoteSectionNameBudgetFailure(
+      BigInt(bytes.length) + declared,
+      maxFileBytes,
+    );
+};
+
 const fail = (message: string): never => {
   throw new ArtifactReaderFailure("format", message);
 };

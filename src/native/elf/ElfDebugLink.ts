@@ -26,6 +26,7 @@ import {
 } from "../metadata/BinaryContainer.js";
 import { readElfImage } from "../metadata/ElfImage.js";
 import {
+  assertElfSectionNameBudget,
   ElfNoteSectionNameBudgetFailure,
   parseElfNotes,
 } from "./ElfNoteParser.js";
@@ -484,6 +485,9 @@ export const parseElfDebugLink = (
   artifact: Report["artifact"],
   input: InspectElfDebugLinkInput,
 ): Report => {
+  // The image directory decodes names under its own structural allowance, so
+  // the caller-selected budget is enforced before either decoder inflates them.
+  assertElfSectionNameBudget(bytes, input.max_file_bytes);
   const image = readElfImage(bytes);
   const sections = image.sections.filter(
     (section): section is ElfSection => section.format === "elf",
@@ -680,6 +684,7 @@ const readCandidateIdentity = (
   let imageMalformed = false;
   let imageBudgetExceeded = false;
   try {
+    assertElfSectionNameBudget(content, input.max_file_bytes);
     image = readElfImage(content);
   } catch (cause) {
     if (isRethrownBudget(cause)) imageBudgetExceeded = true;
