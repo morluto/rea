@@ -49,9 +49,10 @@ export const finishCliEvidenceCommand = (
   providerId: string,
   operation: string,
   signal: AbortSignal,
+  additionalPaths?: Readonly<Record<string, string>>,
 ) =>
   finishAnalysisCommand(
-    bindCliEvidenceCallerPath(callerPath, run),
+    bindCliEvidenceCallerPath(callerPath, run, additionalPaths),
     service,
     providerId,
     operation,

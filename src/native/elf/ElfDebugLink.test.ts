@@ -15,6 +15,7 @@ import {
 } from "../../domain/native/elfDebugLink.js";
 import { gnuBuildIdNote } from "./ElfNotes.fixture.js";
 import { parseElfNotes } from "./ElfNoteParser.js";
+import { readElfImage } from "../metadata/ElfImage.js";
 import {
   continueGnuDebuglinkCrc32,
   gnuDebuglinkCrc32,
@@ -385,6 +386,45 @@ it("matches a candidate by CRC32 and build-id and records its sections", () => {
     format: "elf64",
     debug_info: "present",
     symtab: "present",
+  });
+});
+
+/** Point one named section of a little-endian ELF64 candidate past its end. */
+const moveSectionPastEnd = (candidate: Buffer, name: string): Buffer => {
+  const damaged = Buffer.from(candidate);
+  const declared = readElfImage(candidate).sections.find(
+    (section) => section.format === "elf" && section.name === name,
+  );
+  if (declared?.format !== "elf") throw new Error(`missing ${name}`);
+  const table = Number(damaged.readBigUInt64LE(0x28));
+  const entry = damaged.readUInt16LE(0x3a);
+  for (let index = 0; index < damaged.readUInt16LE(0x3c); index += 1) {
+    const at = table + index * entry + 0x18;
+    if (damaged.readBigUInt64LE(at) === declared.declared_range.offset) {
+      damaged.writeBigUInt64LE(BigInt(damaged.length + 64), at);
+      return damaged;
+    }
+  }
+  throw new Error(`no header for ${name}`);
+};
+
+it("leaves candidate sections whose range is outside the file unknown", () => {
+  const candidate = moveSectionPastEnd(
+    moveSectionPastEnd(elfDebugCandidateFixture(), ".debug_info"),
+    ".symtab",
+  );
+  const image = elfDebugLinkFixture({
+    debuglink: debuglinkSection(
+      FIXTURE_DEBUG_NAME,
+      gnuDebuglinkCrc32(candidate),
+      true,
+    ),
+  });
+  const report = verify(image, candidate, "/artifacts/prog.debug");
+  expect(report.verification?.build_id).toMatchObject({ status: "match" });
+  expect(report.candidate).toMatchObject({
+    debug_info: "unknown",
+    symtab: "unknown",
   });
 });
 

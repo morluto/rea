@@ -570,7 +570,11 @@ const candidateSections = (
     image.section_names_limitation === undefined &&
     sections.every((section) => section.name !== null);
   const status = (name: string): "present" | "absent" | "unknown" => {
-    if (sections.some((section) => section.name === name)) return "present";
+    const named = sections.filter((section) => section.name === name);
+    // A declaration whose range is not inside the file does not supply that
+    // content, so its presence stays unknown rather than present.
+    if (named.some((section) => section.file_backed)) return "present";
+    if (named.length > 0) return "unknown";
     return namesComplete ? "absent" : "unknown";
   };
   return { debug_info: status(".debug_info"), symtab: status(".symtab") };

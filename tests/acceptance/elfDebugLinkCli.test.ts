@@ -98,6 +98,13 @@ cliTest(
       "matches",
     );
     expect(relativeEvidence.subject?.local_path).toBe(imagePath);
+    expect(relativeEvidence.caller_input_path).toBe("prog");
+    expect(relativeEvidence.caller_input_paths).toEqual({
+      candidate_path: "prog.debug",
+    });
+    expect(relativeEvidence.normalized_result.candidate?.path).toBe(
+      candidatePath,
+    );
   },
 );
 

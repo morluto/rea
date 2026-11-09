@@ -136,6 +136,10 @@ export const registerBinaryDiagnosticsCommands = (
               "rea-elf-debug-link",
               "inspect_elf_debug_link",
               signal,
+              // The candidate keeps its CLI spelling beside the image's.
+              options.candidatePath === undefined
+                ? undefined
+                : { candidate_path: options.candidatePath },
             ).then(projectCliAnalysisResult),
         );
       }),
