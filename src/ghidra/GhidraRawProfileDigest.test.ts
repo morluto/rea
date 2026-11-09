@@ -11,9 +11,9 @@ import { GhidraProvider } from "./GhidraProvider.js";
 // bit-field base-type and inventory-search revisions that prevent reuse of snapshots with earlier
 // results.
 const RAW_DIGESTS = {
-  "6502": "2878a9daeb48e08755a5a840044a9f1c9f19784b92d6c08c1d27eca5b27d675a",
+  "6502": "540037ef007380e737a606cd14c402a9bdf055132cf44fb73d29ab1ec9f84af6",
   "x86-disabled-analyzer":
-    "480aa8cac604f14abbb6e6fc909378faa27b44a06fd36f3db6a8c67248277980",
+    "8498e58d5a1147cdfe7dad2b486b4b4087efc76944ee1902c9af9d0c0da56237",
 } as const;
 
 const configFor = (environment: NodeJS.ProcessEnv) => {
