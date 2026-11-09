@@ -278,6 +278,85 @@ describe.skipIf(process.platform === "win32")(
         "desktop_entry_search_incomplete",
       );
     });
+
+    it("refuses rather than launch a lower-priority entry when a subtree cannot be listed", async () => {
+      const { home, environment } = await fixture();
+      const share = environment.XDG_DATA_DIRS;
+      const applications = join(home, ".local/share/applications");
+      const vendor = join(applications, "vendor");
+      await mkdir(vendor, { recursive: true });
+      await writeFile(
+        join(vendor, "org.example.app.desktop"),
+        "[Desktop Entry]\nType=Application\nName=High\nExec=notes-app --high\n",
+      );
+      await writeFile(
+        join(share, "applications/vendor-org.example.app.desktop"),
+        "[Desktop Entry]\nType=Application\nName=Low\nExec=notes-app --low\n",
+      );
+      // The readable file above is not enough: the subtree that holds the
+      // higher-priority entry has to be listable before absence is trusted.
+      await chmod(vendor, 0o000);
+
+      try {
+        const inspected = await inspectLinuxApplication({
+          desktopEntry: "vendor-org.example.app",
+          executable: undefined,
+          arguments: [],
+          environment,
+          home,
+          callerDirectory: home,
+        });
+
+        expect(!inspected.ok && inspected.error.reason).toBe(
+          "desktop_entry_search_incomplete",
+        );
+      } finally {
+        await chmod(vendor, 0o755);
+      }
+    });
+
+    it("searches a directory whose own name ends in .desktop", async () => {
+      const { home, environment } = await fixture();
+      const directory = join(home, ".local/share/applications/vendor.desktop");
+      await mkdir(directory, { recursive: true });
+      await writeFile(
+        join(directory, "app.desktop"),
+        "[Desktop Entry]\nType=Application\nName=Nested\nExec=notes-app\n",
+      );
+
+      const inventory = await inventoryOf("vendor.desktop-app", {
+        home,
+        environment,
+      });
+
+      expect(inventory.desktop_entry).toMatchObject({
+        id: "vendor.desktop-app",
+        name: "Nested",
+      });
+    });
+
+    it("keeps a dash inside a directory name, not only inside the file name", async () => {
+      const { home, environment } = await fixture();
+      const directory = join(
+        home,
+        ".local/share/applications/org.example-tools",
+      );
+      await mkdir(directory, { recursive: true });
+      await writeFile(
+        join(directory, "my-app.desktop"),
+        "[Desktop Entry]\nType=Application\nName=Both\nExec=notes-app\n",
+      );
+
+      const inventory = await inventoryOf("org.example-tools-my-app", {
+        home,
+        environment,
+      });
+
+      expect(inventory.desktop_entry).toMatchObject({
+        id: "org.example-tools-my-app",
+        name: "Both",
+      });
+    });
   },
 );
 

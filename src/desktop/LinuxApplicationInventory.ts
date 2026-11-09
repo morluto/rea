@@ -1,4 +1,4 @@
-import { lstat, readdir, realpath, stat } from "node:fs/promises";
+import { lstat, opendir, readdir, realpath, stat } from "node:fs/promises";
 import {
   basename,
   dirname,
@@ -124,8 +124,10 @@ const isFile = async (path: string): Promise<boolean> =>
  * separators fall; list the directory instead and form each entry's id from
  * the path that holds it.
  *
- * The walk is bounded. Running out reports `truncated` rather than "absent",
- * because an unvisited directory may still hold the entry.
+ * The walk is bounded, and both bounds are reported as `truncated` rather than
+ * as absence: an unvisited directory or an unreadable subtree may still hold
+ * the entry, and selecting a lower-priority root would launch a different
+ * application under the same id.
  */
 const findNestedDesktopEntry = async (
   applicationsDirectory: string,
@@ -138,29 +140,46 @@ const findNestedDesktopEntry = async (
     signal?.throwIfAborted();
     const directory = pending.pop();
     if (directory === undefined) break;
-    let names: string[];
+    let handle: Awaited<ReturnType<typeof opendir>>;
     try {
-      names = await readdir(directory.path);
-    } catch {
-      continue;
+      handle = await opendir(directory.path);
+    } catch (cause: unknown) {
+      // A root that is not installed holds nothing; one that exists but cannot
+      // be read may still hold the entry, so that search has no answer.
+      const code = (cause as NodeJS.ErrnoException).code;
+      if (code === "ENOENT" || code === "ENOTDIR") continue;
+      return { truncated: true };
     }
-    for (const name of names) {
-      examined += 1;
-      if (examined > NESTED_SEARCH_MAX_ENTRIES) return { truncated: true };
-      const path = join(directory.path, name);
-      if (name.endsWith(".desktop")) {
-        const encoded = relative(applicationsDirectory, path).replaceAll(
-          "/",
-          "-",
-        );
-        if (encoded === id && (await isFile(path))) return { path };
-        continue;
+    {
+      for await (const entry of handle) {
+        // The budget is charged while enumerating, because readdir would
+        // materialize every name in a huge directory before any check ran.
+        examined += 1;
+        if (examined > NESTED_SEARCH_MAX_ENTRIES) return { truncated: true };
+        const path = join(directory.path, entry.name);
+        const stats =
+          entry.isDirectory() || entry.isFile()
+            ? undefined
+            : await stat(path).catch(() => undefined);
+        const isDirectory =
+          entry.isDirectory() || stats?.isDirectory() === true;
+        if (entry.name.endsWith(".desktop")) {
+          // A directory may be named `*.desktop`; the spec still forms the ids
+          // of the entries inside it from their full path, so only a file is a
+          // candidate here.
+          if (!isDirectory) {
+            const encoded = relative(applicationsDirectory, path).replaceAll(
+              "/",
+              "-",
+            );
+            if (encoded === id && (await isFile(path))) return { path };
+          }
+        }
+        if (!isDirectory) continue;
+        if (directory.depth >= NESTED_SEARCH_MAX_DEPTH)
+          return { truncated: true };
+        pending.push({ path, depth: directory.depth + 1 });
       }
-      const stats = await stat(path).catch(() => undefined);
-      if (stats?.isDirectory() !== true) continue;
-      if (directory.depth >= NESTED_SEARCH_MAX_DEPTH)
-        return { truncated: true };
-      pending.push({ path, depth: directory.depth + 1 });
     }
   }
   return undefined;
