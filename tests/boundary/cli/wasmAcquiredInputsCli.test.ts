@@ -15,30 +15,35 @@ import { cliTest } from "../../support/cli/cliFixture.js";
 const sha256 = (bytes: Buffer | string): string =>
   createHash("sha256").update(bytes).digest("hex");
 
+const createRejectedWabtTools = async (directory: string): Promise<string> => {
+  const tools = join(directory, "tools");
+  await mkdir(tools);
+  for (const name of ["wasm-validate", "wasm-objdump", "wasm2wat"]) {
+    const path = join(tools, name);
+    const body =
+      name === "wasm-validate"
+        ? "echo 'fixture validation rejected' >&2\nexit 1"
+        : "exit 0";
+    await writeFile(
+      path,
+      `#!/bin/sh
+if [ "$1" = "--version" ]; then echo '1.0.42'; exit 0; fi
+${body}
+`,
+      { mode: 0o700 },
+    );
+    await chmod(path, 0o700);
+  }
+  return tools;
+};
+
 // These scripts exercise the public adapters with WABT-shaped responses. They
 // do not establish how the real WABT release classifies the selected bytes.
 cliTest.runIf(process.platform !== "win32")(
   "retains selected, candidate, and glue facts after simulated WABT rejection through CLI and stdio MCP",
   async ({ cli }) => {
     const directory = await createTestTempDirectory("rea-wasm-acquired-");
-    const tools = join(directory, "tools");
-    await mkdir(tools);
-    for (const name of ["wasm-validate", "wasm-objdump", "wasm2wat"]) {
-      const path = join(tools, name);
-      const body =
-        name === "wasm-validate"
-          ? "echo 'fixture validation rejected' >&2\nexit 1"
-          : "exit 0";
-      await writeFile(
-        path,
-        `#!/bin/sh
-if [ "$1" = "--version" ]; then echo '1.0.42'; exit 0; fi
-${body}
-`,
-        { mode: 0o700 },
-      );
-      await chmod(path, 0o700);
-    }
+    const tools = await createRejectedWabtTools(directory);
     const selected = join(directory, "selected.wasm");
     const candidate = join(directory, "candidate.wasm");
     const glue = join(directory, "glue.js");
