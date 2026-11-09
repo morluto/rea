@@ -17,6 +17,15 @@ import { compareApplicationVersionsEvidence } from "../../../src/application/jav
 import { createToolResultDelivery } from "../../../src/server/toolResult.js";
 import { recoveryOmissionRemediation } from "../../../src/domain/analysisErrorProjection.js";
 
+/**
+ * Enough for the derived comparison Evidence to stay inline while its larger
+ * completed observation is omitted. Below ~12.1 KiB the partial Evidence is
+ * omitted too, and above ~21.5 KiB the completed observation fits, so this
+ * must track the Evidence the example produces rather than the 10 KiB these
+ * two sides last met at.
+ */
+const PARTIAL_OBSERVATION_BUDGET_BYTES = 16 * 1024;
+
 it("preserves the source when an inline result with unknown retention exceeds delivery", async () => {
   const session = new BinarySession(
     createTestProviderRouter(() => {
@@ -26,7 +35,9 @@ it("preserves the source when an inline result with unknown retention exceeds de
   );
   const { client } = await createApplicationMcpHarness({
     session,
-    serverOptions: { delivery: createToolResultDelivery(10 * 1024) },
+    serverOptions: {
+      delivery: createToolResultDelivery(PARTIAL_OBSERVATION_BUDGET_BYTES),
+    },
   });
   const response = await client.callTool({
     name: "compare_application_versions",
