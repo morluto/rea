@@ -25,9 +25,10 @@ export const capturedFileUrl = (
   if (!/^file:/iu.test(value)) return undefined;
   try {
     const url = new URL(value);
-    return url.protocol === "file:"
-      ? { url, path: fileURLToPath(url, { windows: false }) }
-      : undefined;
+    if (url.protocol !== "file:") return undefined;
+    const path = posix.normalize(fileURLToPath(url, { windows: false }));
+    url.pathname = posix.normalize(url.pathname);
+    return { url, path };
   } catch {
     return undefined;
   }
