@@ -194,10 +194,100 @@ describe.skipIf(process.platform === "win32")("inspectLinuxApplication", () => {
   });
 });
 
+describe.skipIf(process.platform === "win32")(
+  "inspectLinuxApplication desktop file ids",
+  () => {
+    it("resolves a nested entry by its desktop file id before a lower-priority flat one", async () => {
+      const { home, environment } = await fixture();
+      const share = environment.XDG_DATA_DIRS;
+      await mkdir(join(home, ".local/share/applications/vendor"), {
+        recursive: true,
+      });
+      await writeFile(
+        join(
+          home,
+          ".local/share/applications/vendor/org.example.nested.desktop",
+        ),
+        "[Desktop Entry]\nType=Application\nName=High\nExec=notes-app --high\n",
+      );
+      // The spec's id for the nested entry above, installed at lower priority.
+      await writeFile(
+        join(share, "applications/vendor-org.example.nested.desktop"),
+        "[Desktop Entry]\nType=Application\nName=Low\nExec=notes-app --low\n",
+      );
+
+      const inventory = await inventoryOf("vendor-org.example.nested", {
+        home,
+        environment,
+      });
+
+      expect(inventory.desktop_entry).toMatchObject({
+        id: "vendor-org.example.nested",
+        name: "High",
+      });
+      expect(inventory.argv).toEqual(["notes-app", "--high"]);
+    });
+
+    it("resolves an id whose directory name itself contains a dash", async () => {
+      const { home, environment } = await fixture();
+      const directory = join(home, ".local/share/applications/org.example");
+      await mkdir(directory, { recursive: true });
+      await writeFile(
+        join(directory, "my-app.desktop"),
+        "[Desktop Entry]\nType=Application\nName=Dashed\nExec=notes-app\n",
+      );
+
+      const inventory = await inventoryOf("org.example-my-app", {
+        home,
+        environment,
+      });
+
+      expect(inventory.desktop_entry).toMatchObject({
+        id: "org.example-my-app",
+        name: "Dashed",
+      });
+    });
+
+    it("refuses rather than launch a lower-priority entry when the search is cut short", async () => {
+      const { home, environment } = await fixture();
+      const share = environment.XDG_DATA_DIRS;
+      const applications = join(home, ".local/share/applications");
+      // More nested directories than the bounded search may enter.
+      for (let index = 0; index < 6; index += 1)
+        await mkdir(
+          join(applications, ...Array<string>(index + 1).fill("deep")),
+          {
+            recursive: true,
+          },
+        );
+      await writeFile(
+        join(share, "applications/buried-org.example.app.desktop"),
+        "[Desktop Entry]\nType=Application\nName=Low\nExec=notes-app\n",
+      );
+
+      const inspected = await inspectLinuxApplication({
+        desktopEntry: "buried-org.example.app",
+        executable: undefined,
+        arguments: [],
+        environment,
+        home,
+        callerDirectory: home,
+      });
+
+      expect(!inspected.ok && inspected.error.reason).toBe(
+        "desktop_entry_search_incomplete",
+      );
+    });
+  },
+);
+
 /** The inventory of an installed desktop entry, launched with no arguments. */
 const inventoryOf = async (
   desktopEntry: string,
-  { home, environment }: Awaited<ReturnType<typeof fixture>>,
+  {
+    home,
+    environment,
+  }: Pick<Awaited<ReturnType<typeof fixture>>, "home" | "environment">,
 ) => {
   const inspected = await inspectLinuxApplication({
     desktopEntry,

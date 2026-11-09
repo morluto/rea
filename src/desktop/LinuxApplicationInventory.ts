@@ -1,5 +1,12 @@
-import { lstat, realpath, stat } from "node:fs/promises";
-import { basename, dirname, isAbsolute, join, resolve } from "node:path";
+import { lstat, readdir, realpath, stat } from "node:fs/promises";
+import {
+  basename,
+  dirname,
+  isAbsolute,
+  join,
+  relative,
+  resolve,
+} from "node:path";
 
 import type { DesktopApplicationInventory } from "../domain/desktop/desktopCapture.js";
 import {
@@ -54,6 +61,10 @@ export type LinuxApplicationRefusal =
       readonly reason: "desktop_entry_not_found";
       readonly searched: readonly string[];
     }
+  | {
+      readonly reason: "desktop_entry_search_incomplete";
+      readonly searched: readonly string[];
+    }
   | { readonly reason: "desktop_entry_invalid"; readonly detail: string }
   | { readonly reason: "executable_not_found"; readonly program: string }
   | {
@@ -95,9 +106,70 @@ export const desktopEntryDirectories = (
   );
 };
 
+/** How deep below one applications directory a nested id search may descend. */
+const NESTED_SEARCH_MAX_DEPTH = 4;
+/** How many directory entries one applications directory search may examine. */
+const NESTED_SEARCH_MAX_ENTRIES = 4096;
+
+const isFile = async (path: string): Promise<boolean> =>
+  // Flatpak exports and Nix profiles install entries as links to the file.
+  (await stat(path).catch(() => undefined))?.isFile() === true;
+
+/**
+ * The entry in `applicationsDirectory` whose desktop file id is `id`, when one
+ * is there. The Desktop Entry spec forms the id from the entry's path below
+ * `applications/` by replacing the separators with dashes, so
+ * `vendor/org.example.App.desktop` advertises `vendor-org.example.App.desktop`.
+ * A dash may also belong to a name, so the id does not say where the
+ * separators fall; list the directory instead and form each entry's id from
+ * the path that holds it.
+ *
+ * The walk is bounded. Running out reports `truncated` rather than "absent",
+ * because an unvisited directory may still hold the entry.
+ */
+const findNestedDesktopEntry = async (
+  applicationsDirectory: string,
+  id: string,
+  signal: AbortSignal | undefined,
+): Promise<{ path: string } | { truncated: true } | undefined> => {
+  const pending = [{ path: applicationsDirectory, depth: 1 }];
+  let examined = 0;
+  while (pending.length > 0) {
+    signal?.throwIfAborted();
+    const directory = pending.pop();
+    if (directory === undefined) break;
+    let names: string[];
+    try {
+      names = await readdir(directory.path);
+    } catch {
+      continue;
+    }
+    for (const name of names) {
+      examined += 1;
+      if (examined > NESTED_SEARCH_MAX_ENTRIES) return { truncated: true };
+      const path = join(directory.path, name);
+      if (name.endsWith(".desktop")) {
+        const encoded = relative(applicationsDirectory, path).replaceAll(
+          "/",
+          "-",
+        );
+        if (encoded === id && (await isFile(path))) return { path };
+        continue;
+      }
+      const stats = await stat(path).catch(() => undefined);
+      if (stats?.isDirectory() !== true) continue;
+      if (directory.depth >= NESTED_SEARCH_MAX_DEPTH)
+        return { truncated: true };
+      pending.push({ path, depth: directory.depth + 1 });
+    }
+  }
+  return undefined;
+};
+
 const locateDesktopEntry = async (
   request: LinuxApplicationRequest,
   selector: string,
+  signal?: AbortSignal,
 ): Promise<
   Result<{ path: string; id: string | null }, LinuxApplicationRefusal>
 > => {
@@ -105,10 +177,18 @@ const locateDesktopEntry = async (
   const id = selector.endsWith(".desktop") ? selector : `${selector}.desktop`;
   const searched = desktopEntryDirectories(request.environment, request.home);
   for (const directory of searched) {
+    signal?.throwIfAborted();
     const path = join(directory, id);
-    // Flatpak exports and Nix profiles install entries as links to the file.
-    if ((await stat(path).catch(() => undefined))?.isFile() === true)
+    if (await isFile(path))
       return ok({ path, id: id.slice(0, -".desktop".length) });
+    // A nested entry in this directory outranks a flat one in a later root.
+    const nested = await findNestedDesktopEntry(directory, id, signal);
+    if (nested !== undefined && "path" in nested)
+      return ok({ path: nested.path, id: id.slice(0, -".desktop".length) });
+    // The bounded search did not establish absence, so a later root must not
+    // supply a different application under the same id.
+    if (nested !== undefined)
+      return err({ reason: "desktop_entry_search_incomplete", searched });
   }
   return err({ reason: "desktop_entry_not_found", searched });
 };
@@ -265,7 +345,11 @@ const launchCommand = async (
       entry: null,
     });
   }
-  const located = await locateDesktopEntry(request, request.desktopEntry);
+  const located = await locateDesktopEntry(
+    request,
+    request.desktopEntry,
+    signal,
+  );
   if (!located.ok) return located;
   const entry = await readDesktopEntry(located.value.path, signal);
   if (!entry.ok) return entry;
