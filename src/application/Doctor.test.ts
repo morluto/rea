@@ -745,6 +745,29 @@ describe("doctor installation identity", () => {
       },
     });
   });
+
+  it("reports a single installation when launcher shims share one directory on Windows", async () => {
+    const result = await runDoctor(
+      undefined,
+      host({
+        installationPaths: () =>
+          Promise.resolve([
+            "C:\\Users\\user\\AppData\\Roaming\\npm\\rea",
+            "C:\\Users\\user\\AppData\\Roaming\\npm\\rea.cmd",
+            "C:\\Users\\user\\AppData\\Roaming\\npm\\rea.ps1",
+          ]),
+      }),
+    );
+
+    expect(result.identity?.installations).toEqual({
+      paths: [
+        "C:\\Users\\user\\AppData\\Roaming\\npm\\rea",
+        "C:\\Users\\user\\AppData\\Roaming\\npm\\rea.cmd",
+        "C:\\Users\\user\\AppData\\Roaming\\npm\\rea.ps1",
+      ],
+      state: "single",
+    });
+  });
   it("reports a missing installed skill as unhealthy", async () => {
     const result = await runDoctor(
       undefined,
