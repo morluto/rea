@@ -221,7 +221,17 @@ export const resolveAppleIpsJoin = async (
       continue;
     }
     const recordedArch = image.arch ?? "";
-    if (image.uuid === null || recordedArch === "") continue;
+    if (image.uuid === null || comparableArch(recordedArch) === "") continue;
+    const unknownUuid = parsed.slices.filter(
+      ({ uuid, arch }) =>
+        uuid === null && architecturesAgree(recordedArch, arch),
+    );
+    if (unknownUuid.length > 0) {
+      const reason = `image ${String(image.index)} cannot be joined uniquely because a compatible slice UUID is unknown; the parsed slice identities remain available.`;
+      limitations.push(reason);
+      rejectedImage.set(image.index, reason);
+      continue;
+    }
     const candidates = parsed.slices.filter(
       ({ uuid }) => uuid !== null && uuid === image.uuid,
     );
@@ -335,6 +345,12 @@ const frameJoin = (
       threadIndex,
       frame.frame_index,
       `image ${String(imageIndex)} UUID is unknown, so it never joins`,
+    );
+  if (image.arch === null || comparableArch(image.arch) === "")
+    return unjoined(
+      threadIndex,
+      frame.frame_index,
+      `image ${String(imageIndex)} architecture is unknown, so it never joins`,
     );
   const digest = matched.get(imageIndex);
   if (digest === undefined) {
