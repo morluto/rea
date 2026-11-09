@@ -51,3 +51,39 @@ it.each([
 ] as const)("leaves an undecided stdio undecided: %s", (call) => {
   expect(spawnsFor(call)).toHaveLength(1);
 });
+
+/**
+ * `cwd` and `argv0` must be a string when they are supplied at all.
+ *
+ * Measured on Node 24.22.1: `{cwd: 5}`, `{cwd: true}`, `{cwd: {}}`, `{cwd: []}` and
+ * `{cwd: 0}` throw `ERR_INVALID_ARG_TYPE` on `spawn`, `fork`, `execFile` and `exec` alike,
+ * while `{cwd: "/tmp"}` and `{cwd: null}` start a child. `argv0` behaves the same way.
+ * `env` is not in the set: Node accepts any `env` value.
+ */
+it.each([
+  [`cp.spawn("x", [], { cwd: 5 })`],
+  [`cp.spawn("x", [], { cwd: true })`],
+  [`cp.spawn("x", [], { cwd: {} })`],
+  [`cp.spawn("x", [], { cwd: [] })`],
+  [`cp.spawn("x", [], { cwd: 0 })`],
+  [`cp.spawn("x", [], { argv0: 5 })`],
+  [`cp.fork("x", [], { cwd: 5 })`],
+  [`cp.exec("x", { cwd: 5 })`],
+  [`cp.execFile("x", [], { cwd: 5 })`],
+] as const)("emits no spawn for a non-string cwd or argv0: %s", (call) => {
+  expect(spawnsFor(call)).toEqual([]);
+});
+
+it.each([
+  [`cp.spawn("x", [], { cwd: "/tmp" })`],
+  [`cp.spawn("x", [], { cwd: null })`],
+  [`cp.spawn("x", [], { cwd: "" })`],
+  [`cp.spawn("x", [], { argv0: "x" })`],
+  [`cp.spawn("x", [], { argv0: null })`],
+  // Node accepts any `env` value, so a non-object one is not a call-site failure.
+  [`cp.spawn("x", [], { env: 5 })`],
+  // A binding is not a literal, so this file leaves the answer to the runtime.
+  [`const c = "/tmp"; cp.spawn("x", [], { cwd: c })`],
+] as const)("keeps the spawn for an accepted cwd or argv0: %s", (call) => {
+  expect(spawnsFor(call)).toHaveLength(1);
+});

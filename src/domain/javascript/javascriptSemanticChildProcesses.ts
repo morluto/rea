@@ -77,6 +77,7 @@ export const collectJavaScriptSemanticChildProcesses = (
     (candidate) =>
       !forkRejectsStdioArray(candidate, context) &&
       !rejectsStdioLiteral(candidate, context) &&
+      !rejectsStringOptionLiteral(candidate, context) &&
       !rejectsOptionsShape(candidate, context, state),
   );
   const childProcessSpawns = candidates.map((candidate) =>
@@ -566,6 +567,48 @@ const forkRejectsStdioArray = (
   return ipcCount !== 1;
 };
 
+/**
+ * Option members Node requires to be a string when they are supplied at all.
+ *
+ * Measured on Node 24.22.1, `{cwd: 5}`, `{cwd: true}`, `{cwd: {}}`, `{cwd: []}` and
+ * `{cwd: 0}` all throw `ERR_INVALID_ARG_TYPE` on `spawn`, `fork`, `execFile` and `exec`
+ * alike, while `{cwd: "/tmp"}` and `{cwd: null}` start a child. `argv0` behaves the same
+ * way. Both are validated before the child is created, so such a call is not a spawn.
+ * `env` is deliberately absent: Node accepts any `env` value, including `5` and `"x"`.
+ */
+const STRING_OPTION_MEMBERS = ["cwd", "argv0"] as const;
+
+/**
+ * Whether a `cwd` or `argv0` literal is a non-string, non-nullish value Node refuses.
+ *
+ * Only an exactly readable literal is decided. A binding, a call or a member read stays
+ * undecided, because its value is not settled by this expression.
+ */
+const rejectsStringOptionLiteral = (
+  candidate: SpawnCandidate,
+  context: ChildSpawnContext,
+): boolean => {
+  const { options } = spawnArguments(candidate, context);
+  if (options === undefined) return false;
+  const expression = unwrapJavaScriptExpression(options).node;
+  if (context.isNullish(expression)) return false;
+  for (const member of STRING_OPTION_MEMBERS) {
+    const lookup = staticObjectProperty(expression, member, context.isNullish);
+    if (lookup.status !== "explicit") continue;
+    const value = unwrapJavaScriptExpression(lookup.value).node;
+    if (context.isNullish(value)) continue;
+    if (t.isStringLiteral(value)) continue;
+    // `exec` spreads its options into `spawn`'s, so it validates the same members.
+    if (readExactJavaScriptLiteral(value).found) return true;
+    if (
+      t.isObjectExpression(value) ||
+      t.isArrayExpression(value) ||
+      t.isBooleanLiteral(value)
+    )
+      return true;
+  }
+  return false;
+};
 /**
  * Node validates the options object before creating anything, so a literal
  * primitive or literal array in that slot throws ERR_INVALID_ARG_TYPE
