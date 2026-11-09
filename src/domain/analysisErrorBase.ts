@@ -1,3 +1,4 @@
+import type { AppleIpsPartialObservation } from "./native/appleIps.js";
 import type { PlaywrightTrace } from "./playwrightTrace/playwrightTrace.js";
 import type { GraphqlContract } from "./apiContract/graphqlContract.js";
 import type { SavedAnalysisSnapshotPartialObservation } from "./savedAnalysisSnapshot.js";
@@ -309,6 +310,19 @@ export abstract class AnalysisError extends Error {
     return this;
   }
 
+  /** Retain facts on every primary that cleanup settlement can reveal. */
+  retainPrimaryDiagnostics(
+    diagnostics: Readonly<Record<string, JsonValue>>,
+  ): this {
+    for (
+      let error: AnalysisError | undefined = this;
+      error !== undefined;
+      error = error.cleanupPrimary
+    )
+      error.retainDiagnostics(diagnostics);
+    return this;
+  }
+
   /** Diagnostics recorded for a caller with this lifetime. */
   diagnosticsFor(
     callerLifetime: AnalysisCallerLifetime,
@@ -517,6 +531,7 @@ export type AnalysisPartialObservation =
   | Evidence
   | BinaryLayout
   | RecordedCrash
+  | AppleIpsPartialObservation
   | RecordedCrashPartialObservation
   | AndroidPartialObservation
   | FirmwarePartialObservation

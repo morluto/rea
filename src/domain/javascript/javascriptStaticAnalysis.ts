@@ -21,6 +21,7 @@ import {
   resolveElectronBrowserWindowReceiver,
 } from "./electronStaticRenderer.js";
 import { finishElectronNativeBindingsSteps } from "./electronStaticAnalysisNative.js";
+import { finishElectronDynamicCodeSteps } from "./electronStaticAnalysisDynamicCode.js";
 import { inspectElectronStaticNode } from "./electronStaticAnalysis.js";
 import {
   hasPossibleCommonJsDelegateWrite,
@@ -151,6 +152,7 @@ export function* analyzeParsedJavaScriptStaticSourceSteps(
   finishBundlerExports(accumulator, index);
   yield* finishElectronNativeBindingsSteps(findings, index);
   yield* finishElectronBrowserWindowsSteps(findings, index);
+  yield* finishElectronDynamicCodeSteps(findings, index);
   if (accumulator.pendingModuleRequireCalls.length > 0) {
     yield* index.indexMemberMutationFactsSteps();
     finishModuleRequireCalls(findings, index);
@@ -365,6 +367,14 @@ const finalizeStaticAnalysis = (
         accumulator.nativeAddonBindings,
         accumulator.moduleRangeIndex,
       ),
+      ...(accumulator.dynamicCode.length > 0
+        ? {
+            dynamic_code: finalizeLocatedFindings(
+              accumulator.dynamicCode,
+              accumulator.moduleRangeIndex,
+            ),
+          }
+        : {}),
       protocols: finalizeLocatedFindings(
         accumulator.protocols,
         accumulator.moduleRangeIndex,
