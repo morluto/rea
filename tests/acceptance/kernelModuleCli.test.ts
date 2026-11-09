@@ -43,6 +43,39 @@ cliTest(
 );
 
 cliTest(
+  "reports duplicate sections as partial through the public CLI",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-kernel-module-duplicate-");
+    const path = join(root, "duplicate.ko");
+    await writeFile(
+      path,
+      kernelModuleFixture({
+        sharedNameSections: {
+          name: ".init.text",
+          count: 1,
+          body: Buffer.from([1, 2, 3]),
+        },
+      }),
+    );
+    const result = await cli.run({
+      arguments: ["inspect-kernel-module", path, "--json"],
+    });
+    expect(result.exitCode, result.stderr).toBe(0);
+    const evidence = toolContract("inspect_kernel_module").outputSchema.parse(
+      result.json,
+    );
+    expect(evidence.normalized_result.coverage.status).toBe("partial");
+    expect(evidence.normalized_result.init_text).toMatchObject({
+      status: "present",
+      bytes: 4,
+    });
+    expect(evidence.normalized_result.limitations).toContain(
+      "Multiple .init.text sections are declared; the first is examined.",
+    );
+  },
+);
+
+cliTest(
   "resolves a relative kernel module path against the working directory",
   async ({ cli }) => {
     const root = await createTestTempDirectory("rea-kernel-module-cli-rel-");

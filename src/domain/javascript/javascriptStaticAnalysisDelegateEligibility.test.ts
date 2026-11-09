@@ -4,6 +4,7 @@ import { runInNewContext } from "node:vm";
 import { expect, it } from "vitest";
 
 import { analyzeJavaScriptStaticSource } from "./javascriptStaticAnalysis.js";
+import { analyzeCommonJsStaticFixture } from "../../../tests/fixtures/javascriptCommonJsAnalysis.js";
 
 it("keeps repeated Node resolver calls separate from loader delegate eligibility", () => {
   const expression = "path.resolve(runtimePath,__dirname,'preload.js')";
@@ -33,7 +34,7 @@ it("keeps repeated Node resolver calls separate from loader delegate eligibility
     "/fixture/app/preload.js",
     "/fixture/app/preload.js",
   ]);
-  const analysis = analyzeJavaScriptStaticSource(source);
+  const analysis = analyzeCommonJsStaticFixture(source);
   expect(analysis.parse_status).toBe("complete");
   expect(analysis.references).toEqual([
     expect.objectContaining({ kind: "require", specifier: "node:path" }),

@@ -1144,7 +1144,7 @@ export const sourceToBundlePageViewResultSchema = z.strictObject({
 /** Compact retained feature-trace summary; pages carry the same trace context. */
 export const featureTraceSummaryViewResultSchema = z.strictObject({
   ...summaryViewResultBase,
-  artifact: z.null(),
+  artifact: artifactSchema.nullable(),
   parent_operation: z.literal("trace_application_feature"),
   summary: featureTraceSummarySchema,
 });
@@ -1157,7 +1157,7 @@ const featureTracePage = <
     ...viewResultBase,
     ...featureTraceViewContextSchema.shape,
     kind: z.literal("feature-trace"),
-    artifact: z.null(),
+    artifact: artifactSchema.nullable(),
     parent_operation: z.literal("trace_application_feature"),
     view: featureTraceViewCollections[collection].request,
     items: featureTraceViewCollections[collection].rows,

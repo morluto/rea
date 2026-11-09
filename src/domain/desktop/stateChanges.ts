@@ -307,13 +307,22 @@ const truncatedView = (view: JsonValue): boolean => {
   );
 };
 
-/** Describe how one state file changed between two readable versions. */
+/**
+ * Describe how one state file changed between two readable versions. With
+ * `named`, XML members are listed by the selectors naming them, as a check
+ * names them, and by position only where nothing names them or where only
+ * their order changed, which no selector shows.
+ */
 export const diffStateViews = (
   format: DesktopStateFormat,
   before: JsonValue,
   after: JsonValue,
+  options: { readonly named?: boolean } = {},
 ): DesktopStateDifference => {
-  const difference = compareViews(format, before, after);
+  const difference =
+    format === "xml" && options.named === true
+      ? namedOrPositional(before, after)
+      : compareViews(format, before, after);
   // Only REA's own readers write coverage flags; JSON and key files are data.
   const flagged = format === "text" || format === "xml" || format === "sqlite";
   const partial =
@@ -321,6 +330,17 @@ export const diffStateViews = (
       ? zipLeavesOut(before) || zipLeavesOut(after)
       : flagged && (truncatedView(before) || truncatedView(after));
   return partial ? { ...difference, complete: false } : difference;
+};
+
+/** An XML change keyed by selector, or by position when keying shows none, as when siblings only moved. */
+const namedOrPositional = (
+  before: JsonValue,
+  after: JsonValue,
+): DesktopStateDifference => {
+  const named = compareTrees(before, after, { keyed: true });
+  return named.added_count + named.removed_count + named.changed_count > 0
+    ? named
+    : compareTrees(before, after);
 };
 
 const compareViews = (

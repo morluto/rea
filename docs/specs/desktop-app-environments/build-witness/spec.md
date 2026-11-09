@@ -28,23 +28,49 @@ and the recording and writes the record as Evidence.
   out of every walk. A start returns once the capture reports the window
   open; a refused or early-ended start stops the capture and reports its
   output.
+- `start_build_capture` takes `state_paths`, at most 16 files or folders in
+  the home, relative to it, after `~/` or absolute, without `..` and not the
+  home itself; the controller resolves each under the computer's home, both
+  as named and with its links followed (a path not there yet through its
+  nearest existing folder), refuses one outside it or in `~/.rea-build`
+  either way before launching anything, and passes each as named to the
+  capture as `--state-path`. A selected file is a document, or the app's own
+  state under a hidden folder of the home as named, before links, or when it
+  is a lock the app holds, such as LibreOffice's `.~lock.<name>#`.
 - Acknowledgement: `capture-desktop-application` reports, beside each progress
   message, an `event`: `window_open`; `checkpoint` with its name, trigger,
-  time, entries walked, changes and retained files and bytes, once it is
-  taken, the baseline, `stop` and `exit` included; and `checkpoint_refused`
-  with the reason. `mark_build_checkpoint` writes `checkpoint <name>` and
-  waits for the event naming it, returning its counts. Names follow a narrow
-  pattern, without the capture's own names; a name already taken is refused.
+  time, entries walked, changes and retained files and bytes, and up to ten
+  changed files, home-relative, those under a selected path first, then
+  those the app held open, caches and browser-engine storage last, with a count
+  of the rest, once it is taken, the baseline, `stop` and `exit` included;
+  and `checkpoint_refused` with the reason. `mark_build_checkpoint` writes
+  `checkpoint <name>` and waits for the event naming it, returning its counts
+  and changed files, both `null` when the REA in the computer predates them
+  and its event leaves them out. Names follow a narrow pattern, without the capture's own
+  names; a name already taken is refused.
 - `stop_build_capture` sends `stop`, waits for the exit status, reads the
   capture's Evidence and, when `seed` and `end` were acknowledged, runs
   `describe-desktop-application-task --seed-checkpoint seed --end-checkpoint
   end` and returns the changed files, their net change and suggested checks.
+  A draft with no files carries `notes`, coded `no_change`,
+  `unowned_changes` (up to five changed home paths with their roles, and a
+  count of the rest), `uncheckable_changes` (dconf databases whose app keys
+  were read and changed, which no check reads, a version kept without its
+  bytes counting as holding none), `unreadable_changes` (dconf
+  databases that changed but could not be read, with the read `error`) and
+  `no_document`; a drafted file whose suggestions are thin carries one
+  naming its `file`, coded `by_position`, `view_state_only`, `long_text`,
+  `cut_view` or `unreadable_view`.
 - `export_build_environment` writes the agent's task under `~/.rea-build`,
   runs `export-desktop-application` with it and the same checkpoints into a
   new folder there, reports a refused task with the export's own reason,
   lists the bundle with sizes and SHA-256, fetches it through the driver's
   `data/get` in answers of at most 8 MiB, checks each file and writes the
-  caller's new or empty folder through the safe output tree.
+  caller's new or empty folder through the safe output tree. The export
+  leaves lock files the app holds while it runs out of the seed, but never a
+  document or selected path, listing them in its limitations and README; a
+  start from a bundle whose computer never gets ready names the files its
+  seed holds by a profile lock's name or as a document lock.
 - `check_build_task` reads the one app's `data/get` through the card's
   child URL, takes the state views beside its files and evaluates the task's
   checks with `evaluateTaskChecks`, one result per check. With `stage`, the
@@ -84,6 +110,12 @@ and the recording and writes the record as Evidence.
   and the export's limitations name what the Trash held at the seed; a
   start from a bundle folder writes no bytecode into it; the first
   screenshot waits, briefly and bounded, until the frame is not one colour.
+- Gaps of the blind validation's solve runs: the exported app opens the
+  seed's one document at launch, when its desktop entry takes files, so a
+  solving agent starts in the document rather than on the app's start
+  screen; and `export_build_environment` passes `--synthetic-seed`, so the
+  README says the seed was made for the task instead of calling it the
+  user's real data.
 
 - Gaps of the second review: calls on one computer (actions, capture
   steps, checks and close) run one at a time in arrival order, so a stage's

@@ -417,6 +417,7 @@ export const readFirmwareCommandReport = async (context: {
   execution: Awaited<ReturnType<typeof runFirmwareCommand>>;
   files: FirmwareFileAccess;
   signal?: AbortSignal;
+  deadline?: FirmwareDeadline;
 }): Promise<unknown> => {
   try {
     return await context.files.report(
@@ -425,7 +426,21 @@ export const readFirmwareCommandReport = async (context: {
       context.signal,
     );
   } catch (cause: unknown) {
-    if (cause instanceof ArtifactReaderFailure) throw cause;
+    if (cause instanceof ArtifactReaderFailure) {
+      const { engine, operation, execution, deadline } = context;
+      const failure = firmwareFailure(cause, { engine, operation, deadline });
+      if (cause.partialObservation !== undefined)
+        failure.retainPartialObservation(cause.partialObservation);
+      throw failure.retainCapturedOutput({
+        stdout: execution.stdout.text,
+        stderr: execution.stderr.text,
+        stdout_bytes: execution.stdout.bytes,
+        stderr_bytes: execution.stderr.bytes,
+        exit_code: execution.exit_code ?? null,
+        signal: execution.signal,
+        truncated: false,
+      });
+    }
     const { engine, operation, execution } = context;
     const reportFailure =
       cause instanceof AnalysisOutputError

@@ -163,7 +163,21 @@ async function runInlineWorkflowScenarios(
   expect(tracedInline.structuredContent).toMatchObject({
     normalized_result: {
       seed: { kind: "module", value: "renderer.js", match: "exact" },
-      summary: { matched_seeds: 1, traced_nodes: 1, unknown_facts: 0 },
+      summary: {
+        matched_seeds: 1,
+        traced_nodes: 2,
+        traced_edges: 1,
+        unknown_facts: 0,
+      },
+      graph: {
+        nodes: expect.arrayContaining([
+          expect.objectContaining({ kind: "artifact" }),
+          expect.objectContaining({ kind: "javascript-asset" }),
+        ]),
+        edges: expect.arrayContaining([
+          expect.objectContaining({ relation: "contains" }),
+        ]),
+      },
       coverage: {
         status: "complete-within-source",
         source_graph_status: "complete",

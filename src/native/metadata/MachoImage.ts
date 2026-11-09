@@ -230,6 +230,7 @@ const machoImageSection = ({
     name,
     section_name: sectionName,
     type: flags & 0xff,
+    flags,
     address: sectionAddress,
     declared_range: { offset: sectionOffset, size: sectionSize },
     segment_mapping: segmentMapping,

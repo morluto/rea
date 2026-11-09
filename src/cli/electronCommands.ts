@@ -91,7 +91,6 @@ const registerElectronFuseCommand = (
 
 /** Anchor relative input without changing which file symlink/.. selects. */
 const absoluteElectronFusePath = (path: string): string => {
-  if (path === "") return path;
   // Win32 resolves dot components before directory links, including drive-relative paths.
   if (sep === "\\") return resolve(path);
   if (isAbsolute(path)) return path;
@@ -343,9 +342,7 @@ const registerJavaScriptApplicationCommand = (
     description:
       "Statically reconstruct a local JavaScript/Electron application",
     args: z.object({
-      path: localPathStringSchema.describe(
-        "ASAR or extracted application path",
-      ),
+      path: z.string().describe("ASAR or extracted application path"),
     }),
     options: javascriptApplicationOptions,
     run: ({ args, options }) =>
@@ -368,7 +365,9 @@ const registerJavaScriptApplicationCommand = (
             if (!sourcePaths.ok) return sourcePaths.error;
             return runCliJavaScriptApplicationAnalysis(
               {
-                input_path: absoluteCallerPath(args.path),
+                // An empty path names no file; leave it for input validation.
+                input_path:
+                  args.path === "" ? args.path : absoluteCallerPath(args.path),
                 format: options.artifactFormat,
                 integrity_policy: options.integrityPolicy,
                 ...(options.maxSemanticNodes === undefined
