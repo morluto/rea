@@ -1655,3 +1655,117 @@ it("keeps property descriptor accessor functions separate from getter return val
     "real-add",
   ]);
 });
+
+it("preserves exact defineProperty, groupBy, and Reflect.get member-write selections", () => {
+  const source = `
+      const { contextBridge, ipcRenderer } = require("electron");
+
+      const v1 = Object.defineProperty({ ipc: ipcRenderer }, "ipc", { value: {} });
+      v1.ipc.invoke = () => 0;
+
+      const v2 = Object.defineProperties(
+        { ipc: ipcRenderer },
+        { ipc: { value: {} } },
+      );
+      v2.ipc.send = () => 0;
+
+      const g1 = Object.groupBy([ipcRenderer, {}], () => "all");
+      g1.all[1].postMessage = () => 0;
+
+      const g2 = Object.groupBy(
+        [{}, ipcRenderer, {}],
+        (_item, index) => (index === 0 ? "skip" : "all"),
+      );
+      g2.all[1].once = () => 0;
+
+      const r1 = Reflect.get({ ipc: ipcRenderer, local: {} }, "local");
+      r1.on = () => 0;
+
+      const { get: reflectGet } = Reflect;
+      const r2 = reflectGet({ ipc: ipcRenderer, local: {} }, "local");
+      r2.addListener = () => 0;
+
+      function run(make, target) {
+        return make(target);
+      }
+      const f = run(() => ({}), ipcRenderer);
+      f.sendSync = () => 0;
+
+      contextBridge.exposeInMainWorld("api", {
+        intactInvoke: () => ipcRenderer.invoke("real-invoke"),
+        intactSend: () => ipcRenderer.send("real-send"),
+        intactPost: () => ipcRenderer.postMessage("real-post", "*"),
+        intactOnce: () => ipcRenderer.once("real-once", () => {}),
+        intactOn: () => ipcRenderer.on("real-on", () => {}),
+        intactAdd: () => ipcRenderer.addListener("real-add", () => {}),
+        intactSync: () => ipcRenderer.sendSync("real-sync"),
+      });
+    `;
+  const parsed = parseJavaScriptSource(source, "preload.cjs");
+  if (parsed === null) throw new Error("Expected CommonJS parse");
+  const analysis = analyzeParsedJavaScriptStaticSource(source, parsed);
+
+  expect(analysis.parse_status).toBe("complete");
+  expect(analysis.electron.ipc.map(({ channel }) => channel)).toEqual([
+    "real-invoke",
+    "real-send",
+    "real-post",
+    "real-once",
+    "real-on",
+    "real-add",
+    "real-sync",
+  ]);
+});
+
+it("suppresses overwritten ipcRenderer methods for partial descriptors, matching groupBy slots, and Reflect.get receivers", () => {
+  const source = `
+      const { contextBridge, ipcRenderer } = require("electron");
+
+      Object.defineProperty({ ipc: ipcRenderer }, "ipc", {
+        enumerable: false,
+      }).ipc.invoke = () => 0;
+
+      Object.defineProperty(
+        { get ipc() { return ipcRenderer; } },
+        "ipc",
+        { set(_next) {} },
+      ).ipc.send = () => 0;
+
+      Object.groupBy(
+        [{}, ipcRenderer, {}],
+        (_item, index) => (index === 0 ? "skip" : "all"),
+      ).all[0].once = () => 0;
+
+      Reflect.get({ ipc: ipcRenderer, local: {} }, "ipc").on = () => 0;
+
+      Reflect.get(
+        { get x() { return this.ipc; } },
+        "x",
+        { ipc: ipcRenderer },
+      ).addListener = () => 0;
+
+      Object.defineProperty(
+        globalThis.maybeProxy || { ipc: ipcRenderer },
+        "ipc",
+        { value: {} },
+      ).ipc.postMessage = () => 0;
+
+      contextBridge.exposeInMainWorld("api", {
+        overwrittenInvoke: () => ipcRenderer.invoke("fake-invoke"),
+        overwrittenSend: () => ipcRenderer.send("fake-send"),
+        overwrittenPost: () => ipcRenderer.postMessage("fake-post", "*"),
+        overwrittenOnce: () => ipcRenderer.once("fake-once", () => {}),
+        overwrittenOn: () => ipcRenderer.on("fake-on", () => {}),
+        overwrittenAdd: () => ipcRenderer.addListener("fake-add", () => {}),
+        intactSync: () => ipcRenderer.sendSync("real-sync"),
+      });
+    `;
+  const parsed = parseJavaScriptSource(source, "preload.cjs");
+  if (parsed === null) throw new Error("Expected CommonJS parse");
+  const analysis = analyzeParsedJavaScriptStaticSource(source, parsed);
+
+  expect(analysis.parse_status).toBe("complete");
+  expect(analysis.electron.ipc.map(({ channel }) => channel)).toEqual([
+    "real-sync",
+  ]);
+});

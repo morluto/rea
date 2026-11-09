@@ -3010,6 +3010,7 @@ interface KnownIntrinsicMemberWriteContext {
   readonly capturedSelections: readonly SemanticCapturedSelection[] | undefined;
   readonly state: JavaScriptSemanticAnalysisState;
   readonly interop: ReturnType<typeof createSemanticModuleInterop>;
+  readonly returnQueries: ElectronMemberWriteReturnQueries;
   readonly pending: ElectronMemberWriteCandidate[];
 }
 
@@ -3027,8 +3028,10 @@ const hasStandardArrayConstructorReceiver = (
 };
 
 interface StaticPropertyDescriptorFacts {
+  readonly hasValue: boolean;
   readonly hasGet: boolean;
   readonly hasSet: boolean;
+  readonly hasNullPrototype: boolean;
   readonly valueNode?: t.Node | undefined;
   readonly getNode?: t.Node | undefined;
   readonly setNode?: t.Node | undefined;
@@ -3039,8 +3042,10 @@ const inspectStaticPropertyDescriptorObject = (
   descObj: t.ObjectExpression,
   respectDefaultNonEnumerable: boolean,
 ): StaticPropertyDescriptorFacts | undefined => {
+  let hasValue = false;
   let hasGet = false;
   let hasSet = false;
+  let hasNullPrototype = false;
   let valueNode: t.Node | undefined;
   let getNode: t.Node | undefined;
   let setNode: t.Node | undefined;
@@ -3054,10 +3059,22 @@ const inspectStaticPropertyDescriptorObject = (
     )
       return undefined;
     const key = semanticStaticPropertyKey(prop.key, prop.computed);
-    if (key === null || isObjectPrototypeSetter(prop, key)) return undefined;
+    if (key === null) return undefined;
+    if (isObjectPrototypeSetter(prop, key)) {
+      if (
+        t.isObjectProperty(prop) &&
+        t.isNullLiteral(unwrapJavaScriptExpression(prop.value).node)
+      ) {
+        hasNullPrototype = true;
+        continue;
+      }
+      return undefined;
+    }
     const propVal: t.Node = t.isObjectProperty(prop) ? prop.value : prop;
-    if (key === "value") valueNode = propVal;
-    else if (key === "get") {
+    if (key === "value") {
+      hasValue = true;
+      valueNode = propVal;
+    } else if (key === "get") {
       hasGet = true;
       getNode = propVal;
     } else if (key === "set") {
@@ -3070,7 +3087,57 @@ const inspectStaticPropertyDescriptorObject = (
       enumerableValue = lit.found ? Boolean(lit.value) : undefined;
     }
   }
-  return { hasGet, hasSet, valueNode, getNode, setNode, enumerableValue };
+  return {
+    hasValue,
+    hasGet,
+    hasSet,
+    hasNullPrototype,
+    valueNode,
+    getNode,
+    setNode,
+    enumerableValue,
+  };
+};
+
+const descriptorOverwritesTargetSlot = (
+  facts: StaticPropertyDescriptorFacts,
+  activeDescriptor: SemanticDescriptorRead | undefined,
+  state: JavaScriptSemanticAnalysisState,
+): boolean => {
+  if (!facts.hasNullPrototype && hasAmbientObjectPrototypeMutation(state))
+    return false;
+  if (activeDescriptor === undefined || activeDescriptor.kind === "get")
+    return facts.hasValue || facts.hasGet;
+  if (activeDescriptor.kind === "value")
+    return facts.hasValue || facts.hasGet || facts.hasSet;
+  return facts.hasValue || facts.hasSet;
+};
+
+const resolveStaticDescriptorFactsForArg = (
+  descArg: t.Expression | t.SpreadElement | t.ArgumentPlaceholder | undefined,
+  ctx: KnownIntrinsicMemberWriteContext,
+  respectDefaultNonEnumerable: boolean,
+): StaticPropertyDescriptorFacts | undefined => {
+  if (descArg === undefined || t.isSpreadElement(descArg)) return undefined;
+  const resolved = t.isExpression(descArg)
+    ? resolveSingleExpressionInCallFrame(
+        descArg,
+        ctx.callNode,
+        ctx.current.callFrame,
+        ctx.state,
+      )
+    : undefined;
+  const descObj = resolveUnmutatedObjectExpression(
+    resolved?.node ?? descArg,
+    ctx.state,
+    resolved?.captureAt ?? ctx.callNode,
+  );
+  return descObj === undefined
+    ? undefined
+    : inspectStaticPropertyDescriptorObject(
+        descObj,
+        respectDefaultNonEnumerable,
+      );
 };
 
 const enqueueDescriptorValueMemberWriteSources = (
@@ -3094,70 +3161,64 @@ const enqueueDescriptorValueMemberWriteSources = (
     ctx.current.descriptorReads,
     activeDepth,
   );
-  if (!t.isSpreadElement(descArg)) {
-    const descObj = resolveUnmutatedObjectExpression(
-      descArg,
-      ctx.state,
-      ctx.callNode,
-    );
-    const facts =
-      descObj === undefined
-        ? undefined
-        : inspectStaticPropertyDescriptorObject(
-            descObj,
-            respectDefaultNonEnumerable,
-          );
-    if (facts !== undefined) {
-      if (activeDescriptor !== undefined) {
-        const selectedNode =
-          activeDescriptor.kind === "get"
-            ? facts.hasGet
-              ? facts.getNode
+  const facts = resolveStaticDescriptorFactsForArg(
+    descArg,
+    ctx,
+    respectDefaultNonEnumerable,
+  );
+  if (
+    facts !== undefined &&
+    (facts.hasNullPrototype || !hasAmbientObjectPrototypeMutation(ctx.state))
+  ) {
+    if (activeDescriptor !== undefined) {
+      const selectedNode =
+        activeDescriptor.kind === "get"
+          ? facts.hasGet
+            ? facts.getNode
+            : undefined
+          : activeDescriptor.kind === "set"
+            ? facts.hasSet
+              ? facts.setNode
               : undefined
-            : activeDescriptor.kind === "set"
-              ? facts.hasSet
-                ? facts.setNode
-                : undefined
-              : facts.hasGet || facts.hasSet
-                ? undefined
-                : facts.valueNode;
-        if (
-          selectedNode !== undefined &&
-          !isDefinitelyUndefinedExpression(selectedNode, ctx.state)
-        )
-          ctx.pending.push({
-            ...ctx.current,
-            node: selectedNode,
-            suffix: remainingSuffix,
-            readAt: ctx.current.readAt ?? ctx.callNode,
-            capturedSelections: semanticShiftCapturedSelections(
-              ctx.capturedSelections,
-              -1,
-            ),
-            descriptorReads: nextDescriptorReads,
-          });
-        return;
-      }
-      if (!facts.hasGet && !facts.hasSet) {
-        const requiresOwnEnumerable =
-          ctx.capturedSelections?.some(
-            (capture) => capture.depth === 1 && capture.ownEnumerable,
-          ) === true;
-        if (requiresOwnEnumerable && facts.enumerableValue === false) return;
-        if (facts.valueNode !== undefined)
-          ctx.pending.push({
-            ...ctx.current,
-            node: facts.valueNode,
-            suffix: remainingSuffix,
-            readAt: ctx.current.readAt ?? ctx.callNode,
-            capturedSelections: semanticShiftCapturedSelections(
-              ctx.capturedSelections,
-              -1,
-            ),
-            descriptorReads: nextDescriptorReads,
-          });
-        return;
-      }
+            : facts.hasGet || facts.hasSet
+              ? undefined
+              : facts.valueNode;
+      if (
+        selectedNode !== undefined &&
+        !isDefinitelyUndefinedExpression(selectedNode, ctx.state)
+      )
+        ctx.pending.push({
+          ...ctx.current,
+          node: selectedNode,
+          suffix: remainingSuffix,
+          readAt: ctx.current.readAt ?? ctx.callNode,
+          capturedSelections: semanticShiftCapturedSelections(
+            ctx.capturedSelections,
+            -1,
+          ),
+          descriptorReads: nextDescriptorReads,
+        });
+      return;
+    }
+    if (!facts.hasGet && !facts.hasSet) {
+      const requiresOwnEnumerable =
+        ctx.capturedSelections?.some(
+          (capture) => capture.depth === 1 && capture.ownEnumerable,
+        ) === true;
+      if (requiresOwnEnumerable && facts.enumerableValue === false) return;
+      if (facts.valueNode !== undefined)
+        ctx.pending.push({
+          ...ctx.current,
+          node: facts.valueNode,
+          suffix: remainingSuffix,
+          readAt: ctx.current.readAt ?? ctx.callNode,
+          capturedSelections: semanticShiftCapturedSelections(
+            ctx.capturedSelections,
+            -1,
+          ),
+          descriptorReads: nextDescriptorReads,
+        });
+      return;
     }
   }
   if (t.isExpression(descArg) || t.isSpreadElement(descArg))
@@ -3177,18 +3238,33 @@ const enqueueDescriptorMapMemberWriteSources = (
   propsArg: t.Expression | t.SpreadElement | t.ArgumentPlaceholder | undefined,
   firstSeg: JavaScriptSemanticPropertyPath[number],
   remainingSuffix: JavaScriptSemanticPropertyPath,
-): ReadonlySet<string> => {
+): {
+  readonly shadowed: ReadonlySet<string>;
+  readonly overwritten: ReadonlySet<string>;
+} => {
+  const empty = {
+    shadowed: new Set<string>(),
+    overwritten: new Set<string>(),
+  };
   if (
     propsArg === undefined ||
     (!t.isSpreadElement(propsArg) &&
       isDefinitelyUndefinedExpression(propsArg, ctx.state))
   )
-    return new Set();
+    return empty;
   if (!t.isSpreadElement(propsArg)) {
+    const resolvedProps = t.isExpression(propsArg)
+      ? resolveSingleExpressionInCallFrame(
+          propsArg,
+          ctx.callNode,
+          ctx.current.callFrame,
+          ctx.state,
+        )
+      : undefined;
     const propsObj = resolveUnmutatedObjectExpression(
-      propsArg,
+      resolvedProps?.node ?? propsArg,
       ctx.state,
-      ctx.callNode,
+      resolvedProps?.captureAt ?? ctx.callNode,
     );
     if (propsObj !== undefined) {
       const entries = new Map<string, t.ObjectProperty>();
@@ -3199,28 +3275,48 @@ const enqueueDescriptorMapMemberWriteSources = (
           break;
         }
         const key = semanticStaticPropertyKey(prop.key, prop.computed);
-        if (key === null || isObjectPrototypeSetter(prop, key)) {
+        if (key === null) {
+          staticEntries = false;
+          break;
+        }
+        if (isObjectPrototypeSetter(prop, key)) {
+          if (t.isNullLiteral(unwrapJavaScriptExpression(prop.value).node))
+            continue;
           staticEntries = false;
           break;
         }
         entries.set(key, prop);
       }
       if (staticEntries) {
+        const activeDescriptor = descriptorReadAtDepth(
+          ctx.current.descriptorReads,
+          remainingSuffix.length + 1,
+        );
         const shadowed = new Set<string>();
+        const overwritten = new Set<string>();
         for (const [key, prop] of entries) {
           shadowed.add(key);
-          if (
-            semanticPropertyPathKeyMatches(firstSeg, key) &&
-            t.isExpression(prop.value)
-          )
-            enqueueDescriptorValueMemberWriteSources(
-              ctx,
+          if (t.isExpression(prop.value)) {
+            const facts = resolveStaticDescriptorFactsForArg(
               prop.value,
-              remainingSuffix,
+              ctx,
               true,
             );
+            if (
+              facts !== undefined &&
+              descriptorOverwritesTargetSlot(facts, activeDescriptor, ctx.state)
+            )
+              overwritten.add(key);
+            if (semanticPropertyPathKeyMatches(firstSeg, key))
+              enqueueDescriptorValueMemberWriteSources(
+                ctx,
+                prop.value,
+                remainingSuffix,
+                true,
+              );
+          }
         }
-        return shadowed;
+        return { shadowed, overwritten };
       }
     }
   }
@@ -3237,7 +3333,7 @@ const enqueueDescriptorMapMemberWriteSources = (
       },
       ctx.pending,
     );
-  return new Set();
+  return empty;
 };
 
 const enqueuePrototypeLinkMemberWriteSources = (
@@ -3697,6 +3793,156 @@ const enqueueObjectFromEntriesMemberWriteSources = (
   return true;
 };
 
+const definePropertyTargetAllowsSlotOverwrite = (
+  expr: t.Node,
+  staticKeys: ReadonlySet<string>,
+  ctx: {
+    readonly state: JavaScriptSemanticAnalysisState;
+    readonly interop: ReturnType<typeof createSemanticModuleInterop>;
+    readonly captureAt: t.Node;
+  },
+  visited: ReadonlySet<t.Node> = new Set(),
+): boolean => {
+  const unfrozen =
+    unwrapUnmodifiedObjectFreezeArgument(expr, ctx.state) ?? expr;
+  const node = unwrapJavaScriptExpression(unfrozen).node;
+  if (visited.has(node)) return false;
+  const nextVisited = new Set(visited);
+  nextVisited.add(node);
+  if (t.isObjectExpression(node)) return true;
+  if (t.isArrayExpression(node)) return !staticKeys.has("length");
+  if (t.isCallExpression(node) || t.isOptionalCallExpression(node)) {
+    const inv = ctx.interop.intrinsicInvocation(node);
+    if (
+      inv?.kind === "known" &&
+      inv.path[0] === "intrinsic" &&
+      inv.path[1] === "Object"
+    ) {
+      const method = inv.path[2];
+      if (
+        method === "create" ||
+        method === "fromEntries" ||
+        method === "groupBy"
+      )
+        return true;
+      if (
+        method === "assign" ||
+        method === "defineProperty" ||
+        method === "defineProperties" ||
+        method === "setPrototypeOf"
+      ) {
+        const [innerTarget] = inv.arguments ?? [];
+        return (
+          innerTarget !== undefined &&
+          t.isExpression(innerTarget) &&
+          definePropertyTargetAllowsSlotOverwrite(
+            innerTarget,
+            staticKeys,
+            { ...ctx, captureAt: node },
+            nextVisited,
+          )
+        );
+      }
+    }
+    return false;
+  }
+  if (t.isConditionalExpression(node) || t.isLogicalExpression(node)) {
+    const branches = evaluateSemanticSelectedBranches(node, ctx.state);
+    return (
+      branches.length > 0 &&
+      branches.every((branch) =>
+        definePropertyTargetAllowsSlotOverwrite(
+          branch,
+          staticKeys,
+          ctx,
+          nextVisited,
+        ),
+      )
+    );
+  }
+  if (t.isSequenceExpression(node)) {
+    const last = node.expressions.at(-1);
+    return (
+      last !== undefined &&
+      definePropertyTargetAllowsSlotOverwrite(
+        last,
+        staticKeys,
+        ctx,
+        nextVisited,
+      )
+    );
+  }
+  if (
+    t.isIdentifier(node) &&
+    !semanticResolutionBlocked(ctx.state, node, node.name)
+  ) {
+    const binding = resolveSemanticBindingState(ctx.state, node, node.name);
+    if (
+      binding !== undefined &&
+      !binding.mutable &&
+      !semanticBindingCanBeRebound(binding) &&
+      binding.initializers.length === 1 &&
+      binding.referenceInitializers.length === 0 &&
+      binding.initializers[0]?.projection.length === 0 &&
+      semanticBindingAtRead(binding, node, ctx.state).hasDefiniteInitializer &&
+      !hasBindingObjectEffectsBeforeSite(binding, ctx.captureAt, ctx.state, {
+        allowPlainDataMemberWrites: true,
+      })
+    )
+      return definePropertyTargetAllowsSlotOverwrite(
+        binding.initializers[0].node,
+        staticKeys,
+        ctx,
+        nextVisited,
+      );
+  }
+  return false;
+};
+
+const enqueueFilteredMutatorTarget = (
+  ctx: KnownIntrinsicMemberWriteContext,
+  target: t.Expression,
+  overwrittenKeys: ReadonlySet<string>,
+): void => {
+  if (overwrittenKeys.size === 0) {
+    ctx.pending.push({
+      ...ctx.current,
+      node: target,
+      capturedSelections: ctx.capturedSelections,
+    });
+    return;
+  }
+  const [firstSeg, ...remainingSuffix] = ctx.current.suffix;
+  const sortedOverwritten = [...overwrittenKeys].sort(compareUnicodeCodePoints);
+  for (const choice of semanticAliasSelectionChoices(firstSeg!)) {
+    if (choice !== null && typeof choice !== "object") {
+      if (overwrittenKeys.has(String(choice))) continue;
+      ctx.pending.push({
+        ...ctx.current,
+        node: target,
+        suffix: [choice, ...remainingSuffix],
+        capturedSelections: ctx.capturedSelections,
+      });
+      continue;
+    }
+    const filteredChoice =
+      choice === null
+        ? { excludedKeys: sortedOverwritten }
+        : {
+            ...choice,
+            excludedKeys: [
+              ...new Set([...choice.excludedKeys, ...sortedOverwritten]),
+            ].sort(compareUnicodeCodePoints),
+          };
+    ctx.pending.push({
+      ...ctx.current,
+      node: target,
+      suffix: [filteredChoice, ...remainingSuffix],
+      capturedSelections: ctx.capturedSelections,
+    });
+  }
+};
+
 const enqueueObjectMutatorIntrinsicMemberWriteSources = (
   ctx: KnownIntrinsicMemberWriteContext,
 ): boolean => {
@@ -3733,19 +3979,24 @@ const enqueueObjectMutatorIntrinsicMemberWriteSources = (
       new Set<string>(),
     );
   }
+  const resolvedTarget = resolveSingleExpressionInCallFrame(
+    target,
+    ctx.callNode,
+    ctx.current.callFrame,
+    ctx.state,
+  );
+  const targetCtx = {
+    state: ctx.state,
+    interop: ctx.interop,
+    captureAt: resolvedTarget?.captureAt ?? ctx.callNode,
+  };
+  const [firstSeg, ...remainingSuffix] = ctx.current.suffix;
   if (method === "defineProperty") {
-    const [firstSeg, ...remainingSuffix] = ctx.current.suffix;
     const keyArg = callArgs[1];
     if (keyArg !== undefined && t.isSpreadElement(keyArg)) return false;
-    const staticKey =
-      keyArg === undefined ? "undefined" : ctx.interop.staticString(keyArg);
-    ctx.pending.push({
-      ...ctx.current,
-      node: target,
-      capturedSelections: ctx.capturedSelections,
-    });
+    const staticKey = resolveDescriptorPropertyKeySegment(keyArg, ctx);
     if (
-      staticKey === undefined ||
+      staticKey === null ||
       semanticPropertyPathKeyMatches(firstSeg!, staticKey)
     )
       enqueueDescriptorValueMemberWriteSources(
@@ -3754,20 +4005,717 @@ const enqueueObjectMutatorIntrinsicMemberWriteSources = (
         remainingSuffix,
         true,
       );
+    const activeDescriptor = descriptorReadAtDepth(
+      ctx.current.descriptorReads,
+      ctx.current.suffix.length,
+    );
+    const facts = resolveStaticDescriptorFactsForArg(callArgs[2], ctx, true);
+    const candidateKeys =
+      staticKey !== null &&
+      facts !== undefined &&
+      descriptorOverwritesTargetSlot(facts, activeDescriptor, ctx.state)
+        ? new Set([staticKey])
+        : new Set<string>();
+    const overwrittenKeys =
+      candidateKeys.size > 0 &&
+      definePropertyTargetAllowsSlotOverwrite(
+        resolvedTarget?.node ?? target,
+        candidateKeys,
+        targetCtx,
+      )
+        ? candidateKeys
+        : new Set<string>();
+    enqueueFilteredMutatorTarget(ctx, target, overwrittenKeys);
     return true;
   }
-  const [firstSeg, ...remainingSuffix] = ctx.current.suffix;
-  enqueueDescriptorMapMemberWriteSources(
+  const { overwritten } = enqueueDescriptorMapMemberWriteSources(
     ctx,
     callArgs[1],
     firstSeg!,
     remainingSuffix,
   );
+  const overwrittenKeys =
+    overwritten.size > 0 &&
+    definePropertyTargetAllowsSlotOverwrite(
+      resolvedTarget?.node ?? target,
+      overwritten,
+      targetCtx,
+    )
+      ? overwritten
+      : new Set<string>();
+  enqueueFilteredMutatorTarget(ctx, target, overwrittenKeys);
+  return true;
+};
+
+const isPlainGetterFreeObjectTarget = (
+  target: t.Expression,
+  ctx: KnownIntrinsicMemberWriteContext,
+): boolean => {
+  const resolved = resolveSingleExpressionInCallFrame(
+    target,
+    ctx.callNode,
+    ctx.current.callFrame,
+    ctx.state,
+  );
+  const obj = resolveUnmutatedObjectExpression(
+    resolved?.node ?? target,
+    ctx.state,
+    resolved?.captureAt ?? ctx.callNode,
+  );
+  if (obj === undefined) return false;
+  let hasNullProto = false;
+  for (const prop of obj.properties) {
+    if (t.isSpreadElement(prop)) return false;
+    const name = semanticStaticPropertyKey(prop.key, prop.computed);
+    if (isObjectPrototypeSetter(prop, name)) {
+      if (
+        t.isObjectProperty(prop) &&
+        t.isNullLiteral(unwrapJavaScriptExpression(prop.value).node)
+      ) {
+        hasNullProto = true;
+        continue;
+      }
+      return false;
+    }
+    if (t.isObjectMethod(prop) && prop.kind === "get") return false;
+  }
+  return hasNullProto || !hasAmbientObjectPrototypeMutation(ctx.state);
+};
+
+const enqueueReflectGetMemberWriteSources = (
+  ctx: KnownIntrinsicMemberWriteContext,
+): boolean => {
+  const callArgs = ctx.intrinsic.arguments;
+  if (callArgs === undefined) return false;
+  const [target, keyArg, receiverArg] = callArgs;
+  if (target === undefined) return true;
+  if (!t.isExpression(target)) return false;
+  if (keyArg !== undefined && t.isSpreadElement(keyArg)) return false;
+  const implicitRead = ctx.state.implicitPropertyReads.get(ctx.callNode)?.[0];
+  if (implicitRead !== undefined && implicitRead.node === ctx.callNode)
+    return false;
+  if (callArgs.length >= 3 && receiverArg !== undefined) {
+    if (!t.isExpression(receiverArg)) return false;
+    const sameReceiver =
+      unwrapJavaScriptExpression(receiverArg).node ===
+      unwrapJavaScriptExpression(target).node;
+    if (!sameReceiver && !isPlainGetterFreeObjectTarget(target, ctx))
+      return false;
+  }
+  const recordedKey = implicitRead?.projection[0] ?? null;
+  const keySeg =
+    recordedKey !== null
+      ? String(recordedKey)
+      : resolveDescriptorPropertyKeySegment(keyArg, ctx);
+  const targetNode =
+    implicitRead !== undefined && t.isExpression(implicitRead.node)
+      ? implicitRead.node
+      : target;
   ctx.pending.push({
     ...ctx.current,
-    node: target,
-    capturedSelections: ctx.capturedSelections,
+    node: targetNode,
+    suffix: [keySeg, ...ctx.current.suffix],
+    readAt: ctx.current.readAt ?? ctx.callNode,
+    capturedSelections: [
+      ...(semanticShiftCapturedSelections(ctx.capturedSelections, 1) ?? []),
+      { at: ctx.callNode, depth: 1 },
+    ],
   });
+  return true;
+};
+
+type GroupByEvalPrimitive =
+  | string
+  | number
+  | boolean
+  | bigint
+  | null
+  | undefined;
+
+type GroupByEvalValue =
+  | { readonly kind: "primitive"; readonly value: GroupByEvalPrimitive }
+  | { readonly kind: "symbol" }
+  | { readonly kind: "node"; readonly node: t.Expression };
+
+const evaluateGroupByBinary = (
+  operator: t.BinaryExpression["operator"],
+  left: GroupByEvalPrimitive,
+  right: GroupByEvalPrimitive,
+): GroupByEvalValue | undefined => {
+  if (operator === "===") return { kind: "primitive", value: left === right };
+  if (operator === "!==") return { kind: "primitive", value: left !== right };
+  if (operator === "==") return { kind: "primitive", value: left == right };
+  if (operator === "!=") return { kind: "primitive", value: left != right };
+  if (operator === "+") {
+    if (typeof left === "string" || typeof right === "string")
+      return { kind: "primitive", value: `${String(left)}${String(right)}` };
+    if (typeof left === "bigint" && typeof right === "bigint")
+      return { kind: "primitive", value: left + right };
+    if (typeof left !== "bigint" && typeof right !== "bigint")
+      return { kind: "primitive", value: Number(left) + Number(right) };
+    return undefined;
+  }
+  if (typeof left === "bigint" || typeof right === "bigint") return undefined;
+  const lNum = Number(left);
+  const rNum = Number(right);
+  switch (operator) {
+    case "-":
+      return { kind: "primitive", value: lNum - rNum };
+    case "*":
+      return { kind: "primitive", value: lNum * rNum };
+    case "/":
+      return { kind: "primitive", value: lNum / rNum };
+    case "%":
+      return { kind: "primitive", value: lNum % rNum };
+    case "<":
+      return {
+        kind: "primitive",
+        value:
+          typeof left === "string" && typeof right === "string"
+            ? left < right
+            : lNum < rNum,
+      };
+    case "<=":
+      return {
+        kind: "primitive",
+        value:
+          typeof left === "string" && typeof right === "string"
+            ? left <= right
+            : lNum <= rNum,
+      };
+    case ">":
+      return {
+        kind: "primitive",
+        value:
+          typeof left === "string" && typeof right === "string"
+            ? left > right
+            : lNum > rNum,
+      };
+    case ">=":
+      return {
+        kind: "primitive",
+        value:
+          typeof left === "string" && typeof right === "string"
+            ? left >= right
+            : lNum >= rNum,
+      };
+    case "&":
+      return { kind: "primitive", value: lNum & rNum };
+    case "|":
+      return { kind: "primitive", value: lNum | rNum };
+    case "^":
+      return { kind: "primitive", value: lNum ^ rNum };
+    case "<<":
+      return { kind: "primitive", value: lNum << rNum };
+    case ">>":
+      return { kind: "primitive", value: lNum >> rNum };
+    case ">>>":
+      return { kind: "primitive", value: lNum >>> rNum };
+    default:
+      return undefined;
+  }
+};
+
+const evaluateGroupByMemberRead = (
+  member: t.MemberExpression | t.OptionalMemberExpression,
+  env: ReadonlyMap<string, GroupByEvalValue>,
+  ctx: KnownIntrinsicMemberWriteContext,
+  depth: number,
+): GroupByEvalValue | undefined => {
+  if (!t.isExpression(member.object)) return undefined;
+  const propKey = member.computed
+    ? (() => {
+        const keyVal = evaluateGroupByExpression(
+          member.property,
+          env,
+          ctx,
+          depth + 1,
+        );
+        return keyVal?.kind === "primitive" ? String(keyVal.value) : null;
+      })()
+    : semanticStaticPropertyKey(member.property, false);
+  if (propKey === null) return undefined;
+  const objVal = evaluateGroupByExpression(member.object, env, ctx, depth + 1);
+  if (objVal?.kind === "primitive") {
+    if (
+      (objVal.value === null || objVal.value === undefined) &&
+      t.isOptionalMemberExpression(member) &&
+      member.optional
+    )
+      return { kind: "primitive", value: undefined };
+    if (typeof objVal.value === "string" && propKey === "length")
+      return { kind: "primitive", value: objVal.value.length };
+    return undefined;
+  }
+  const targetExpr = objVal?.kind === "node" ? objVal.node : member.object;
+  const objLit = resolveUnmutatedObjectExpression(
+    targetExpr,
+    ctx.state,
+    ctx.callNode,
+  );
+  if (objLit === undefined) return undefined;
+  let matched: t.Node | undefined;
+  let found = false;
+  for (const prop of objLit.properties) {
+    if (t.isSpreadElement(prop)) return undefined;
+    const key = semanticStaticPropertyKey(prop.key, prop.computed);
+    if (key === null) return undefined;
+    if (isObjectPrototypeSetter(prop, key)) continue;
+    if (key === propKey) {
+      if (!t.isObjectProperty(prop)) return undefined;
+      matched = prop.value;
+      found = true;
+    }
+  }
+  if (!found)
+    return hasAmbientObjectPrototypeMutation(ctx.state)
+      ? undefined
+      : { kind: "primitive", value: undefined };
+  return matched === undefined
+    ? undefined
+    : evaluateGroupByExpression(matched, env, ctx, depth + 1);
+};
+
+const evaluateGroupByUnary = (
+  expr: t.UnaryExpression,
+  env: ReadonlyMap<string, GroupByEvalValue>,
+  ctx: KnownIntrinsicMemberWriteContext,
+  depth: number,
+): GroupByEvalValue | undefined => {
+  const arg = evaluateGroupByExpression(expr.argument, env, ctx, depth + 1);
+  if (expr.operator === "void" && arg !== undefined)
+    return { kind: "primitive", value: undefined };
+  if (arg?.kind === "symbol" && expr.operator === "typeof")
+    return { kind: "primitive", value: "symbol" };
+  if (arg?.kind !== "primitive") return undefined;
+  if (expr.operator === "!") return { kind: "primitive", value: !arg.value };
+  if (expr.operator === "+" && typeof arg.value !== "bigint")
+    return { kind: "primitive", value: Number(arg.value) };
+  if (expr.operator === "-")
+    return {
+      kind: "primitive",
+      value: typeof arg.value === "bigint" ? -arg.value : -Number(arg.value),
+    };
+  if (expr.operator === "~" && typeof arg.value !== "bigint")
+    return { kind: "primitive", value: ~Number(arg.value) };
+  if (expr.operator === "typeof")
+    return { kind: "primitive", value: typeof arg.value };
+  return undefined;
+};
+
+const evaluateGroupByExpression = (
+  rawExpr: t.Node,
+  env: ReadonlyMap<string, GroupByEvalValue>,
+  ctx: KnownIntrinsicMemberWriteContext,
+  depth: number,
+): GroupByEvalValue | undefined => {
+  if (depth > 12) return undefined;
+  const expr = unwrapJavaScriptExpression(rawExpr).node;
+  const literal = readExactJavaScriptLiteral(expr);
+  if (literal.found) return { kind: "primitive", value: literal.value };
+  if (isDefinitelyUndefinedExpression(expr, ctx.state))
+    return { kind: "primitive", value: undefined };
+  if (semanticKnownSymbolKey(expr, ctx.state)) return { kind: "symbol" };
+  if (t.isIdentifier(expr)) {
+    const local = env.get(expr.name);
+    if (local !== undefined) {
+      return local.kind === "node"
+        ? (evaluateGroupByExpression(local.node, new Map(), ctx, depth + 1) ??
+            local)
+        : local;
+    }
+    const frameResolved = resolveSingleExpressionInCallFrame(
+      expr,
+      ctx.callNode,
+      ctx.current.callFrame,
+      ctx.state,
+    );
+    if (frameResolved !== undefined && frameResolved.node !== expr)
+      return evaluateGroupByExpression(
+        frameResolved.node,
+        new Map(),
+        ctx,
+        depth + 1,
+      );
+    const evaluated = evaluateSemanticExpression(expr, ctx.state, ctx.callNode);
+    return evaluated.status === "literal"
+      ? { kind: "primitive", value: evaluated.value }
+      : undefined;
+  }
+  if (t.isMemberExpression(expr) || t.isOptionalMemberExpression(expr))
+    return evaluateGroupByMemberRead(expr, env, ctx, depth);
+  if (t.isTemplateLiteral(expr)) {
+    let acc = "";
+    for (let idx = 0; idx < expr.quasis.length; idx += 1) {
+      acc += expr.quasis[idx]?.value.cooked ?? "";
+      const sub = expr.expressions[idx];
+      if (sub !== undefined) {
+        const val = evaluateGroupByExpression(sub, env, ctx, depth + 1);
+        if (val?.kind !== "primitive") return undefined;
+        acc += String(val.value);
+      }
+    }
+    return { kind: "primitive", value: acc };
+  }
+  if (t.isUnaryExpression(expr))
+    return evaluateGroupByUnary(expr, env, ctx, depth);
+  if (t.isBinaryExpression(expr)) {
+    const left = evaluateGroupByExpression(expr.left, env, ctx, depth + 1);
+    const right = evaluateGroupByExpression(expr.right, env, ctx, depth + 1);
+    if (left?.kind !== "primitive" || right?.kind !== "primitive")
+      return undefined;
+    return evaluateGroupByBinary(expr.operator, left.value, right.value);
+  }
+  if (t.isConditionalExpression(expr)) {
+    const test = evaluateGroupByExpression(expr.test, env, ctx, depth + 1);
+    if (test?.kind !== "primitive") return undefined;
+    return evaluateGroupByExpression(
+      test.value ? expr.consequent : expr.alternate,
+      env,
+      ctx,
+      depth + 1,
+    );
+  }
+  if (t.isLogicalExpression(expr)) {
+    const left = evaluateGroupByExpression(expr.left, env, ctx, depth + 1);
+    if (left?.kind !== "primitive") return undefined;
+    const useRight =
+      expr.operator === "&&"
+        ? Boolean(left.value)
+        : expr.operator === "||"
+          ? !left.value
+          : left.value === null || left.value === undefined;
+    return useRight
+      ? evaluateGroupByExpression(expr.right, env, ctx, depth + 1)
+      : left;
+  }
+  if (t.isSequenceExpression(expr)) {
+    const last = expr.expressions.at(-1);
+    return last === undefined
+      ? undefined
+      : evaluateGroupByExpression(last, env, ctx, depth + 1);
+  }
+  return undefined;
+};
+
+const evaluateGroupByStatements = (
+  stmts: readonly t.Statement[],
+  env: Map<string, GroupByEvalValue>,
+  ctx: KnownIntrinsicMemberWriteContext,
+  depth: number,
+):
+  | { readonly returned: true; readonly value: GroupByEvalValue | undefined }
+  | { readonly returned: false }
+  | undefined => {
+  if (depth > 12) return undefined;
+  for (const stmt of stmts) {
+    if (t.isEmptyStatement(stmt)) continue;
+    if (t.isBlockStatement(stmt)) {
+      const inner = evaluateGroupByStatements(stmt.body, env, ctx, depth + 1);
+      if (inner === undefined || inner.returned) return inner;
+      continue;
+    }
+    if (t.isReturnStatement(stmt)) {
+      return {
+        returned: true,
+        value:
+          stmt.argument == null
+            ? { kind: "primitive", value: undefined }
+            : evaluateGroupByExpression(stmt.argument, env, ctx, depth + 1),
+      };
+    }
+    if (t.isVariableDeclaration(stmt)) {
+      for (const decl of stmt.declarations) {
+        if (!t.isIdentifier(decl.id)) return undefined;
+        const initVal: GroupByEvalValue | undefined =
+          decl.init == null
+            ? { kind: "primitive", value: undefined }
+            : evaluateGroupByExpression(decl.init, env, ctx, depth + 1);
+        if (initVal === undefined) return undefined;
+        env.set(decl.id.name, initVal);
+      }
+      continue;
+    }
+    if (t.isIfStatement(stmt)) {
+      const cond = evaluateGroupByExpression(stmt.test, env, ctx, depth + 1);
+      if (cond?.kind !== "primitive") return undefined;
+      const chosen = cond.value ? stmt.consequent : stmt.alternate;
+      if (chosen != null) {
+        const res = evaluateGroupByStatements([chosen], env, ctx, depth + 1);
+        if (res === undefined || res.returned) return res;
+      }
+      continue;
+    }
+    return undefined;
+  }
+  return { returned: false };
+};
+
+const bindGroupByCallableParameters = (
+  callable: t.Function,
+  elemExpr: t.Expression | undefined,
+  index: number,
+  ctx: KnownIntrinsicMemberWriteContext,
+): Map<string, GroupByEvalValue> | undefined => {
+  const env = new Map<string, GroupByEvalValue>();
+  const rawArgs: (GroupByEvalValue | undefined)[] = [
+    elemExpr === undefined
+      ? { kind: "primitive", value: undefined }
+      : { kind: "node", node: elemExpr },
+    { kind: "primitive", value: index },
+  ];
+  const params = runtimeFunctionParameters(callable);
+  for (let idx = 0; idx < params.length; idx += 1) {
+    let param: t.Node = params[idx]!;
+    if (t.isRestElement(param)) return undefined;
+    let slotVal: GroupByEvalValue = rawArgs[idx] ?? {
+      kind: "primitive",
+      value: undefined,
+    };
+    if (t.isAssignmentPattern(param)) {
+      const isUndef =
+        (slotVal.kind === "primitive" && slotVal.value === undefined) ||
+        (slotVal.kind === "node" &&
+          isDefinitelyUndefinedExpression(slotVal.node, ctx.state));
+      if (isUndef) {
+        const defVal = evaluateGroupByExpression(param.right, env, ctx, 0);
+        if (defVal === undefined) return undefined;
+        slotVal = defVal;
+      }
+      param = param.left;
+    }
+    if (t.isIdentifier(param)) {
+      env.set(param.name, slotVal);
+      continue;
+    }
+    if (t.isObjectPattern(param) && slotVal.kind === "node") {
+      for (const prop of param.properties) {
+        if (t.isRestElement(prop) || !t.isIdentifier(prop.value))
+          return undefined;
+        const key = semanticStaticPropertyKey(prop.key, prop.computed);
+        if (key === null) return undefined;
+        const propVal = evaluateGroupByMemberRead(
+          t.memberExpression(slotVal.node, t.stringLiteral(key), true),
+          env,
+          ctx,
+          0,
+        );
+        if (propVal === undefined) return undefined;
+        env.set(prop.value.name, propVal);
+      }
+      continue;
+    }
+    return undefined;
+  }
+  return env;
+};
+
+const partitionStaticGroupByIndices = (
+  effectiveItems: t.Node,
+  effectiveCaptureAt: t.Node,
+  callbackArg: t.Expression,
+  ctx: KnownIntrinsicMemberWriteContext,
+):
+  | {
+      readonly groups: ReadonlyMap<string, readonly number[]>;
+      readonly hasSymbolKeys: boolean;
+    }
+  | undefined => {
+  if (
+    !semanticKnownArrayIterationAt(
+      effectiveItems,
+      ctx.state,
+      effectiveCaptureAt,
+    )
+  )
+    return undefined;
+  const arrExpr = resolveUnmutatedArrayExpression(
+    effectiveItems,
+    ctx.state,
+    effectiveCaptureAt,
+  );
+  if (
+    arrExpr === undefined ||
+    arrExpr.elements.length > SEMANTIC_ALIAS_SELECTION_LIMIT ||
+    arrExpr.elements.some((el) => el !== null && t.isSpreadElement(el))
+  )
+    return undefined;
+  const cbReturned = ctx.returnQueries.direct(
+    callbackArg,
+    undefined,
+    ctx.current.callFrame,
+  );
+  if (
+    cbReturned.unresolvedCallable ||
+    cbReturned.unresolvedInvocation ||
+    cbReturned.callables.size !== 1
+  )
+    return undefined;
+  const [callable] = [...cbReturned.callables];
+  if (callable === undefined || callable.async || callable.generator)
+    return undefined;
+  const groups = new Map<string, number[]>();
+  let hasSymbolKeys = false;
+  for (let idx = 0; idx < arrExpr.elements.length; idx += 1) {
+    const elem = arrExpr.elements[idx];
+    const elemExpr =
+      elem !== null && elem !== undefined && t.isExpression(elem)
+        ? elem
+        : undefined;
+    const env = bindGroupByCallableParameters(callable, elemExpr, idx, ctx);
+    if (env === undefined) return undefined;
+    let result: GroupByEvalValue | undefined;
+    if (t.isBlockStatement(callable.body)) {
+      const stmtRes = evaluateGroupByStatements(
+        callable.body.body,
+        env,
+        ctx,
+        0,
+      );
+      if (stmtRes === undefined) return undefined;
+      result = stmtRes.returned
+        ? stmtRes.value
+        : { kind: "primitive", value: undefined };
+    } else {
+      result = evaluateGroupByExpression(callable.body, env, ctx, 0);
+    }
+    if (result === undefined || result.kind === "node") return undefined;
+    if (result.kind === "symbol") {
+      hasSymbolKeys = true;
+      continue;
+    }
+    const key = String(result.value);
+    const list = groups.get(key) ?? [];
+    list.push(idx);
+    groups.set(key, list);
+  }
+  return { groups, hasSymbolKeys };
+};
+
+const enqueueObjectGroupByMemberWriteSources = (
+  ctx: KnownIntrinsicMemberWriteContext,
+): boolean => {
+  if (ctx.current.suffix.length <= 1) return true;
+  if (!maySelectArrayElementSegment(ctx.current.suffix[1]!)) return true;
+  const outerDesc = descriptorReadAtDepth(
+    ctx.current.descriptorReads,
+    ctx.current.suffix.length,
+  );
+  const elemDesc = descriptorReadAtDepth(
+    ctx.current.descriptorReads,
+    ctx.current.suffix.length - 1,
+  );
+  if (
+    outerDesc?.kind === "get" ||
+    outerDesc?.kind === "set" ||
+    elemDesc?.kind === "get" ||
+    elemDesc?.kind === "set"
+  )
+    return true;
+  const callArgs = ctx.intrinsic.arguments;
+  if (callArgs === undefined) return false;
+  const [items, callbackArg] = callArgs;
+  if (items === undefined || callbackArg === undefined) return true;
+  if (!t.isExpression(items) || t.isSpreadElement(callbackArg)) return false;
+  const nextDescriptorReads = withoutDescriptorReadAtDepth(
+    withoutDescriptorReadAtDepth(
+      ctx.current.descriptorReads,
+      ctx.current.suffix.length,
+    ),
+    ctx.current.suffix.length - 1,
+  );
+  const nextCaptures: readonly SemanticCapturedSelection[] = [
+    ...(semanticShiftCapturedSelections(ctx.capturedSelections, -1) ?? []),
+    { at: ctx.callNode, depth: 1 },
+  ];
+  const resolvedItems = resolveSingleExpressionInCallFrame(
+    items,
+    ctx.callNode,
+    ctx.current.callFrame,
+    ctx.state,
+  );
+  const effectiveItems = resolvedItems?.node ?? items;
+  const effectiveCaptureAt = resolvedItems?.captureAt ?? ctx.callNode;
+  const partition = t.isExpression(callbackArg)
+    ? partitionStaticGroupByIndices(
+        effectiveItems,
+        effectiveCaptureAt,
+        callbackArg,
+        ctx,
+      )
+    : undefined;
+  const [groupSeg, elemSeg, ...remainingSuffix] = ctx.current.suffix;
+  const groupMatchesWildcard = semanticAliasSelectionChoices(groupSeg!).some(
+    (choice) => choice === null || typeof choice === "object",
+  );
+  if (
+    partition !== undefined &&
+    !(partition.hasSymbolKeys && groupMatchesWildcard)
+  ) {
+    const matchedIndices = new Set<number>();
+    for (const [groupKey, groupIndices] of partition.groups) {
+      if (
+        !semanticAliasSelectionChoices(groupSeg!).some((choice) =>
+          semanticPropertyPathKeyMatches(choice, groupKey),
+        )
+      )
+        continue;
+      for (const localSeg of selectArrayFromInputSegments(
+        elemSeg!,
+        groupIndices.length,
+      )) {
+        if (typeof localSeg === "number") {
+          const origIdx = groupIndices[localSeg];
+          if (origIdx !== undefined) matchedIndices.add(origIdx);
+        } else if (localSeg !== null && typeof localSeg === "object") {
+          for (
+            let li = localSeg.startIndex ?? 0;
+            li < groupIndices.length;
+            li += 1
+          )
+            if (!localSeg.excludedKeys.includes(String(li)))
+              matchedIndices.add(groupIndices[li]!);
+        } else {
+          for (const origIdx of groupIndices) matchedIndices.add(origIdx);
+        }
+      }
+    }
+    for (const origIdx of [...matchedIndices].sort((a, b) => a - b)) {
+      ctx.pending.push({
+        ...ctx.current,
+        node: items,
+        suffix: [origIdx, ...remainingSuffix],
+        readAt: ctx.current.readAt ?? ctx.callNode,
+        capturedSelections: nextCaptures,
+        descriptorReads: nextDescriptorReads,
+      });
+    }
+    return true;
+  }
+  ctx.pending.push({
+    ...ctx.current,
+    node: items,
+    suffix: [null, ...remainingSuffix],
+    readAt: ctx.current.readAt ?? ctx.callNode,
+    capturedSelections: nextCaptures,
+    descriptorReads: nextDescriptorReads,
+  });
+  if (
+    !semanticKnownArrayIterationAt(
+      effectiveItems,
+      ctx.state,
+      effectiveCaptureAt,
+    )
+  )
+    enqueueOpaqueInvocationArguments(
+      [items],
+      {
+        ...ctx.current,
+        suffix: remainingSuffix,
+        descriptorReads: nextDescriptorReads,
+      },
+      ctx.pending,
+    );
   return true;
 };
 
@@ -3818,11 +4766,13 @@ const enqueueContainerIntrinsicMemberWriteSources = (
     });
     return true;
   }
+  if (obj === "Reflect" && method === "get")
+    return enqueueReflectGetMemberWriteSources(ctx);
   if (obj === "Object" && method === "create") {
     if (ctx.current.suffix.length === 0) return true;
     if (callArgs === undefined) return false;
     const [firstSeg, ...remainingSuffix] = ctx.current.suffix;
-    const shadowed = enqueueDescriptorMapMemberWriteSources(
+    const { shadowed } = enqueueDescriptorMapMemberWriteSources(
       ctx,
       callArgs[1],
       firstSeg!,
@@ -3842,38 +4792,8 @@ const enqueueContainerIntrinsicMemberWriteSources = (
     return enqueueObjectEntriesMemberWriteSources(ctx);
   if (obj === "Object" && method === "fromEntries")
     return enqueueObjectFromEntriesMemberWriteSources(ctx);
-  if (obj === "Object" && method === "groupBy") {
-    if (ctx.current.suffix.length <= 1) return true;
-    if (!maySelectArrayElementSegment(ctx.current.suffix[1]!)) return true;
-    if (callArgs === undefined) return false;
-    const [items] = callArgs;
-    if (items === undefined) return true;
-    if (!t.isExpression(items)) return false;
-    ctx.pending.push({
-      ...ctx.current,
-      node: items,
-      suffix: [null, ...ctx.current.suffix.slice(2)],
-      readAt: ctx.current.readAt ?? ctx.callNode,
-      capturedSelections: [
-        ...(semanticShiftCapturedSelections(ctx.capturedSelections, -1) ?? []),
-        { at: ctx.callNode, depth: 1 },
-      ],
-      descriptorReads: withoutDescriptorReadAtDepth(
-        withoutDescriptorReadAtDepth(
-          ctx.current.descriptorReads,
-          ctx.current.suffix.length,
-        ),
-        ctx.current.suffix.length - 1,
-      ),
-    });
-    if (!semanticKnownArrayIterationAt(items, ctx.state))
-      enqueueOpaqueInvocationArguments(
-        [items],
-        { ...ctx.current, suffix: ctx.current.suffix.slice(2) },
-        ctx.pending,
-      );
-    return true;
-  }
+  if (obj === "Object" && method === "groupBy")
+    return enqueueObjectGroupByMemberWriteSources(ctx);
   return enqueueDescriptorReaderIntrinsicMemberWriteSources(ctx);
 };
 
@@ -3889,7 +4809,14 @@ const matchingDescriptorFieldKinds = (
 
 const resolveDescriptorPropertyKeySegment = (
   keyArg: t.Expression | t.ArgumentPlaceholder | undefined,
-  ctx: KnownIntrinsicMemberWriteContext,
+  ctx: {
+    readonly callNode: t.Node;
+    readonly current: {
+      readonly callFrame?: ElectronMemberWriteCallFrame | undefined;
+    };
+    readonly state: JavaScriptSemanticAnalysisState;
+    readonly interop: ReturnType<typeof createSemanticModuleInterop>;
+  },
 ): string | null => {
   if (keyArg === undefined) return "undefined";
   if (t.isArgumentPlaceholder(keyArg)) return null;
@@ -4581,10 +5508,10 @@ const enqueueNonIdentifierMemberWriteSources = (
           const isElementAwaited =
             current.awaitDepths?.includes(elementSuffix.length) === true;
           const mapped = isElementIterated
-            ? returnQueries.potential(mapFn)
+            ? returnQueries.potential(mapFn, undefined, current.callFrame)
             : isElementAwaited
-              ? returnQueries.awaited(mapFn)
-              : returnQueries.direct(mapFn);
+              ? returnQueries.awaited(mapFn, undefined, current.callFrame)
+              : returnQueries.direct(mapFn, undefined, current.callFrame);
           if (mapped.unresolvedCallable || mapped.unresolvedInvocation)
             enqueueDirectCopy();
           const {
@@ -4682,6 +5609,7 @@ const enqueueNonIdentifierMemberWriteSources = (
           capturedSelections,
           state,
           interop,
+          returnQueries,
           pending,
         })
       )
@@ -4704,7 +5632,7 @@ const enqueueNonIdentifierMemberWriteSources = (
       : isAwaited
         ? returnQueries.awaited
         : returnQueries.direct;
-    const baseReturned = queryFn(calleeNode, node);
+    const baseReturned = queryFn(calleeNode, node, current.callFrame);
     const returned = baseReturned.unresolvedCallable
       ? (resolveDescriptorReaderCallableTargets({
           calleeNode,
@@ -4935,12 +5863,9 @@ const parseDescriptorReaderMemberCall = (
     if (keyArg !== undefined && t.isSpreadElement(keyArg)) return undefined;
     keySeg = resolveDescriptorPropertyKeySegment(keyArg, {
       callNode: descCall,
-      intrinsic: inv,
-      current: { node: descCall, suffix: [], callFrame: ctx.callFrame },
-      capturedSelections: undefined,
+      current: { callFrame: ctx.callFrame },
       state: ctx.state,
       interop: ctx.interop,
-      pending: [],
     });
     descField = members[0] ?? null;
   } else if (
@@ -5026,6 +5951,7 @@ const resolveDescriptorReaderCallableTargets = (input: {
       t.isCallExpression(callSite) || t.isOptionalCallExpression(callSite)
         ? callSite
         : undefined,
+      callFrame,
     );
     for (const fn of sub.callables) callables.add(fn);
     for (const ref of sub.references) references.push(ref);
