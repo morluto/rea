@@ -1,3 +1,4 @@
+import { artifactOperationCause } from "./ArtifactFileOperation.js";
 import { readFileHandlePrefix } from "../filesystem/readFileHandlePrefix.js";
 import { Readable } from "node:stream";
 import {
@@ -8,7 +9,6 @@ import {
 import type { ArtifactCommand } from "../domain/artifactGraph.js";
 import {
   RegularFileChangedError,
-  RegularFileOperationCancelled,
   assertStableRegularFileIdentity,
   type StableRegularFileDescriptor,
 } from "../filesystem/RegularFile.js";
@@ -181,21 +181,13 @@ export class InesArtifactReader implements ArtifactReader {
         { symlinks: "reject", ...(signal === undefined ? {} : { signal }) },
       );
     } catch (cause: unknown) {
-      if (cause instanceof RegularFileOperationCancelled)
-        throw new ArtifactReaderFailure(
-          "cancelled",
-          "Artifact inventory cancelled",
-          {
-            cause: cause.reason,
-          },
-        );
       if (cause instanceof RegularFileChangedError)
         throw new ArtifactReaderFailure(
           "integrity",
           "iNES source changed during reading",
           { cause: cause.cause ?? cause },
         );
-      throw cause;
+      throw artifactOperationCause(cause);
     }
     // State validation is asynchronous even after the final byte was consumed.
     abortIfNeeded(signal);

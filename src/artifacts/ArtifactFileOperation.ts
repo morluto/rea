@@ -327,7 +327,8 @@ export const withArtifactFileHandle = async <Value>(
   }
 };
 
-const artifactOperationCause = (cause: unknown): unknown =>
+/** Convert only cancellation produced by the regular-file owner. */
+export const artifactOperationCause = (cause: unknown): unknown =>
   cause instanceof RegularFileOperationCancelled
     ? new ArtifactReaderFailure(
         "cancelled",

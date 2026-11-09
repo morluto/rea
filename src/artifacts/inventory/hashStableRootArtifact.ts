@@ -1,3 +1,4 @@
+import { artifactOperationCause } from "../ArtifactFileOperation.js";
 import { regularFileCancellation } from "../../filesystem/OwnedRegularFile.js";
 import type { Stats } from "node:fs";
 import type { FileHandle } from "node:fs/promises";
@@ -8,7 +9,6 @@ import { ArtifactReaderFailure } from "../ArtifactReader.js";
 import {
   assertStableRegularFileIdentity,
   RegularFileChangedError,
-  RegularFileOperationCancelled,
   NonRegularFileReadError,
   RegularFileAdmissionFailure,
   openRegularFile,
@@ -162,21 +162,13 @@ export const hashStableRootArtifactHandle = async (
       ...(signal === undefined ? {} : { signal }),
     });
   } catch (cause: unknown) {
-    if (cause instanceof RegularFileOperationCancelled)
-      throw new ArtifactReaderFailure(
-        "cancelled",
-        "Artifact inventory cancelled",
-        {
-          cause: cause.reason,
-        },
-      );
     if (cause instanceof RegularFileChangedError)
       throw new ArtifactReaderFailure(
         "integrity",
         `Root artifact changed during inventory: ${path}`,
         { cause: cause.cause ?? cause },
       );
-    throw cause;
+    throw artifactOperationCause(cause);
   }
   if (digest.bytes !== initial.size)
     throw new ArtifactReaderFailure(
