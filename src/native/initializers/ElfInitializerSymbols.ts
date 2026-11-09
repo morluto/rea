@@ -484,6 +484,7 @@ export const sectionRelocations = (
       }
       // An unknown type is assumed to write a whole word, so it still marks what it may touch.
       const span = elfRelocationWidth(input.machine, parsed.value.type) ?? word;
+      if (span === 0) continue;
       const written = recordTarget(input, target, parsed.value.offset, span);
       if (written === null) continue;
       for (

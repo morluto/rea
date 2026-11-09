@@ -70,30 +70,21 @@ const pageOf = (
   };
 };
 
-/** Counts names withheld because they exceed the schema's name budget. */
-const toEntry =
-  (withheld: { count: number }) =>
-  (entry: CollectedInitializer): NativeInitializerEntry => {
-    const name = (text: string | null): NativeInitializerName | null => {
-      if (text !== null && text.length > MAX_NATIVE_INITIALIZER_NAME_BYTES)
-        withheld.count += 1;
-      return untrustedName(text);
-    };
-    return {
-      index: entry.index,
-      kind: entry.kind,
-      slot_va: entry.slotVa === null ? null : hexAddress(entry.slotVa),
-      slot_file_offset: entry.slotFileOffset,
-      slot_bytes: entry.slotBytes,
-      value_va: entry.valueVa === null ? null : hexAddress(entry.valueVa),
-      value_file_offset: entry.valueFileOffset,
-      slot_section: name(entry.slotSection),
-      section: name(entry.section),
-      symbol: name(entry.symbol),
-      resolution: entry.resolution,
-      detail: name(entry.detail)?.name ?? null,
-    };
-  };
+/** Project one entry after completeness has accounted for all collected names. */
+const toEntry = (entry: CollectedInitializer): NativeInitializerEntry => ({
+  index: entry.index,
+  kind: entry.kind,
+  slot_va: entry.slotVa === null ? null : hexAddress(entry.slotVa),
+  slot_file_offset: entry.slotFileOffset,
+  slot_bytes: entry.slotBytes,
+  value_va: entry.valueVa === null ? null : hexAddress(entry.valueVa),
+  value_file_offset: entry.valueFileOffset,
+  slot_section: untrustedName(entry.slotSection),
+  section: untrustedName(entry.section),
+  symbol: untrustedName(entry.symbol),
+  resolution: entry.resolution,
+  detail: untrustedName(entry.detail)?.name ?? null,
+});
 
 /**
  * Standing limitations first, then observations from this image. `examined`
@@ -110,22 +101,32 @@ export const finishInitializerReport = (
   page: InitializerPage,
   incomplete: boolean,
 ): NativeInitializerInspection => {
-  const paged = pageOf(entries, examined, page, incomplete);
-  const withheld = { count: 0 };
-  const returned = paged.entries.map(toEntry(withheld));
+  let withheld = 0;
+  for (const entry of entries)
+    for (const name of [
+      entry.slotSection,
+      entry.section,
+      entry.symbol,
+      entry.detail,
+    ])
+      if (name !== null && name.length > MAX_NATIVE_INITIALIZER_NAME_BYTES)
+        withheld += 1;
+  const incompleteReport = incomplete || withheld > 0;
+  const paged = pageOf(entries, examined, page, incompleteReport);
+  const returned = paged.entries.map(toEntry);
   return {
     ...body,
     applicability: "applicable",
-    status: incomplete ? "incomplete" : "parsed",
+    status: incompleteReport ? "incomplete" : "parsed",
     coverage: paged.coverage,
     entries: returned,
     limitations: [
       ...NATIVE_INITIALIZER_LIMITATIONS,
       ...notes.list(),
-      ...(withheld.count === 0
+      ...(withheld === 0
         ? []
         : [
-            `${String(withheld.count)} returned section, symbol or detail name(s) exceeded the ${String(MAX_NATIVE_INITIALIZER_NAME_BYTES)}-byte name budget and were reported as null.`,
+            `${String(withheld)} section, symbol or detail name(s) exceeded the ${String(MAX_NATIVE_INITIALIZER_NAME_BYTES)}-byte name budget and were reported as null.`,
           ]),
     ],
   };

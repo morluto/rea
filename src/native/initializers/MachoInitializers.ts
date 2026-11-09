@@ -5,10 +5,7 @@ import {
   readMachoLoadCommandTableHeader,
   readMachoSymtabCommand,
 } from "../../domain/apple/machoLoadCommands.js";
-import {
-  elfStringTableText,
-  observeElfStringTableEntry,
-} from "../../domain/elfStringTable.js";
+import { observeElfStringTableEntry } from "../../domain/elfStringTable.js";
 import {
   MAX_NATIVE_INITIALIZER_ENTRIES,
   MAX_NATIVE_INITIALIZER_NAME_BYTES,
@@ -21,6 +18,7 @@ import {
   type PointerFixups,
 } from "../AppleMachoFixups.js";
 import { parseMachoLayout } from "../AppleMachoSelection.js";
+import { decodeMachoName } from "../AppleMachoNames.js";
 import {
   BinaryFormatFailure,
   BinaryMappingFailure,
@@ -217,8 +215,13 @@ const nameAt = (
     scan.incomplete = true;
     return null;
   }
-  const text = elfStringTableText(observed);
-  return text === null || text.length === 0 ? null : text;
+  const text = decodeMachoName(observed.bytes);
+  if (typeof text !== "string") {
+    scan.notes.tally("unreadable-symbol-name");
+    scan.incomplete = true;
+    return null;
+  }
+  return text.length === 0 ? null : text;
 };
 
 const readSymbols = (
@@ -511,13 +514,21 @@ const objectRelocations = (
     );
   const little = walk.image.byte_order === "little";
   const length = stride === 8 ? 3 : 2;
-  const add = (address: number, relocation: ObjectRelocation): void => {
-    const slot = address - (address % stride);
-    const exact = address === slot && relocation.kind === "unsigned";
-    bySlot.set(
-      slot,
-      exact && !bySlot.has(slot) ? relocation : { kind: "other" },
-    );
+  const add = (
+    address: number,
+    width: number,
+    relocation: ObjectRelocation,
+  ): void => {
+    const firstSlot = address - (address % stride);
+    const end = address + width;
+    for (let slot = firstSlot; slot < end; slot += stride) {
+      const exact =
+        address === slot && width === stride && relocation.kind === "unsigned";
+      bySlot.set(
+        slot,
+        exact && !bySlot.has(slot) ? relocation : { kind: "other" },
+      );
+    }
   };
   for (let index = 0; index < read; index += 1) {
     if (index % 4096 === 0) assertArtifactReadActive(walk.signal);
@@ -528,7 +539,7 @@ const objectRelocations = (
       : bytes.readUInt32BE(at + 4);
     // R_SCATTERED: the low 24 bits hold the address in either byte order.
     if ((first & 0x80000000) !== 0) {
-      add(first & 0xffffff, { kind: "other" });
+      add(first & 0xffffff, 1 << ((first >>> 28) & 3), { kind: "other" });
       continue;
     }
     const fields = little
@@ -548,6 +559,7 @@ const objectRelocations = (
         };
     add(
       first,
+      1 << fields.length,
       fields.type === 0 && fields.pcrel === 0 && fields.length === length
         ? {
             kind: "unsigned",
@@ -659,6 +671,13 @@ const slotsOf = (
     const slotVa = section.address + BigInt(index * stride);
     const slotFile = section.offset + index * stride;
     const stored = readWord(walk.scan.bytes, slotFile, stride, little);
+    const mappingMismatch =
+      !walk.object && walk.locate(slotVa, stride) !== walk.fileBase + slotFile;
+    if (mappingMismatch)
+      note(
+        walk.scan,
+        `${section.name} slot mapping disagrees with its section offset; affected slots are unresolved.`,
+      );
     const unresolved: SlotRelocation = {
       method: "unresolved",
       value: null,
@@ -666,7 +685,7 @@ const slotsOf = (
       definedName: null,
     };
     const applied: SlotRelocation =
-      stored === null
+      stored === null || mappingMismatch
         ? unresolved
         : relocations !== undefined
           ? objectSlot(walk, relocations, index * stride, stored, offsets)

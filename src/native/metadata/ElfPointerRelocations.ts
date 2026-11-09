@@ -207,11 +207,12 @@ export const elfAbsoluteRelocationType = (
   machine: number,
 ): number | undefined => RELOCATION_KINDS.get(machine)?.absolute;
 
-/** Bytes a relocation type writes on a supported ELF machine, or undefined when unknown. */
+/** Bytes written by a relocation; type zero is a no-op and unknown types remain undefined. */
 export const elfRelocationWidth = (
   machine: number,
   type: number,
-): number | undefined => RELOCATION_KINDS.get(machine)?.widths.get(type);
+): number | undefined =>
+  type === 0 ? 0 : RELOCATION_KINDS.get(machine)?.widths.get(type);
 
 function* dynamicTags(
   bytes: Buffer,
@@ -393,7 +394,7 @@ export function* readElfRelocationWritesSteps(
             );
       if (!parsed.ok) return malformed(parsed.error.message);
       const { type: kind, offset: destination, symbolIndex } = parsed.value;
-      if (kind === 0) continue;
+      if (elfRelocationWidth(input.machine, kind) === 0) continue;
       const source = { encoding, record_file_offset: at, kind };
       const explicitAddend =
         "addend" in parsed.value && typeof parsed.value.addend === "bigint"

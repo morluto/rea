@@ -417,6 +417,16 @@ describe("ELF incomplete inputs", () => {
     const report = await read(bytes);
     const slot = report.entries.find((entry) => entry.kind === "init_array");
     expect(slot).toMatchObject({ slot_section: null, detail: ".init_array" });
+    expect(report.status).toBe("incomplete");
+    const beyond = await read(bytes, { offset: 100 });
+    expect(beyond.entries).toHaveLength(0);
+    expect(beyond.status).toBe("incomplete");
+    expect(beyond.coverage.status).toBe("incomplete");
+    expect(
+      beyond.limitations.some((line) =>
+        line.includes("exceeded the 1024-byte name budget"),
+      ),
+    ).toBe(true);
     expect(
       report.limitations.some((line) =>
         line.includes("exceeded the 1024-byte name budget"),
@@ -819,6 +829,18 @@ describe("Mach-O symbol tables", () => {
 });
 
 describe("ELF relocation coverage", () => {
+  it("ignores no-op relocation records overlapping an initializer", async () => {
+    const base = elfRelocatableCtors();
+    const records = Buffer.alloc(48);
+    base.copy(records, 0, 0x300, 0x318);
+    base.copy(records, 24, 0x300, 0x318);
+    records.writeBigUInt64LE(0n, 32);
+    const bytes = Buffer.concat([base, records]);
+    bytes.writeBigUInt64LE(BigInt(base.length), 0x500 + 3 * 64 + 24);
+    bytes.writeBigUInt64LE(48n, 0x500 + 3 * 64 + 32);
+    expect(row(await read(bytes))).toEqual(row(await read(base)));
+  });
+
   it("keeps slots unresolved when a section relocation table that reaches them is skipped", async () => {
     const bytes = elfRelocatableCtors();
     // .rela.ctors (section 3) and .rela.init_array (section 8) get a 16-byte entry size.
@@ -980,6 +1002,18 @@ describe("Mach-O fixup sources", () => {
     ).rejects.toThrow(ArtifactReaderFailure);
   });
 
+  it("does not resolve an initializer from a section offset that disagrees with its load mapping", async () => {
+    const bytes = machoArm64LegacyRebaseInitializers();
+    bytes.writeUInt32LE(0x4030, 256 + 48);
+    bytes.writeBigUInt64LE(0x100001100n, 0x4030);
+    const report = await read(bytes);
+    expect(report.entries[0]).toMatchObject({
+      resolution: "unresolved",
+      value_va: null,
+    });
+    expect(report.status).toBe("incomplete");
+  });
+
   it("labels an LC_DYLD_INFO rebase as a legacy rebase, not a chained fixup", async () => {
     const report = await read(machoArm64LegacyRebaseInitializers());
     expect(report.status).toBe("parsed");
@@ -1032,6 +1066,31 @@ describe("Mach-O fixup sources", () => {
       },
     ]);
     expect(report.status).toBe("parsed");
+  });
+
+  it("decodes UTF-8 Mach-O nlist names and retains invalid text as unknown", async () => {
+    const image = machoX8664ObjectInitializers();
+    const strings = Buffer.from("\0_before\0_démarre\0", "utf8");
+    strings.copy(image, 0x270);
+    image.writeUInt32LE(strings.length, 284);
+    const report = await read(image);
+    expect(report.entries[0]?.symbol?.name).toBe("_démarre");
+    const invalid = Buffer.from(image);
+    invalid[0x270 + 10] = 0xff;
+    const unknown = await read(invalid);
+    expect(unknown.entries[0]?.symbol).toBeNull();
+    expect(unknown.status).toBe("incomplete");
+  });
+
+  it("keeps both object-file slots unresolved when a relocation crosses their boundary", async () => {
+    const bytes = machoX8664ObjectInitializers();
+    bytes.writeUInt32LE(4, 0x248);
+    const report = await read(bytes);
+    expect(report.entries.map((entry) => entry.resolution)).toEqual([
+      "unresolved",
+      "unresolved",
+    ]);
+    expect(report.status).toBe("incomplete");
   });
 
   it("keeps an object-file slot unresolved under a relocation it does not apply", async () => {
