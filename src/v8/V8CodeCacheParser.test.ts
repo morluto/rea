@@ -123,8 +123,19 @@ it("keeps the function and module flags distinct", () => {
 it("separates the compileFunction producer bit from the source length", () => {
   const source = "return 7;";
   const cache = v8FunctionCodeCacheFixture(source);
+  const word = cache.readUInt32LE(8);
   const report = parse(cache);
-  expect(report.header.producer).toBe("compile_function");
+  // Whether `vm.compileFunction` sets bit 29 in the source-length word is a V8 build
+  // detail, not a contract: Node 24.22.1 writes `0x20000009` for this source while Node
+  // 22.23.4 does not set the bit at all. Assert against the word the runtime produced
+  // rather than against one build's spelling, so the check is about the parser reading
+  // that word correctly; the flag meanings themselves are pinned by the synthetic
+  // `withHeaderWord` cases above.
+  expect(report.header.producer).toBe(
+    (word & 0x20000000) === 0 ? "script" : "compile_function",
+  );
+  // The source length is the low bits either way, so it is the part that must hold.
+  expect(report.header.source_length).toBe(word & 0x1fffffff);
   expect(report.header.source_length).toBe(source.length);
 });
 
