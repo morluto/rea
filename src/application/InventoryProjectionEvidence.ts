@@ -7,9 +7,9 @@ import type { AnalysisInputError } from "../domain/analysisErrorCore.js";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import {
   createEvidence,
+  evidenceSubjectTarget,
   type Evidence,
   type EvidenceProvider,
-  type EvidenceSubjectTarget,
 } from "../domain/evidence.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import type { ParsedInventorySet } from "../domain/artifactInventoryEvidence.js";
@@ -42,7 +42,6 @@ interface InventoryProjectionOptions<
   readonly operation: string;
   readonly predicateType: string;
   readonly provider: EvidenceProvider;
-  readonly subjectFormat: (first: Evidence) => EvidenceSubjectTarget["format"];
 }
 
 /** Resolve source inventory once, then wrap its family projection in Evidence. */
@@ -70,13 +69,7 @@ export const projectInventoryEvidence = <
   const first = source.value.evidence[0];
   return ok({
     evidence: createEvidence(
-      first?.subject === null || first?.subject === undefined
-        ? undefined
-        : {
-            path: first.subject.local_path,
-            sha256: result.root_sha256,
-            format: options.subjectFormat(first),
-          },
+      evidenceSubjectTarget(first?.subject ?? null),
       options.provider,
       {
         predicateType: options.predicateType,

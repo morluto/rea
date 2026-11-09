@@ -1,6 +1,8 @@
+import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
-import { access, readFile } from "node:fs/promises";
+import { access, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { promisify } from "node:util";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { z } from "zod";
@@ -16,6 +18,7 @@ import type {
   AptRepository,
   DesktopApplicationCapture,
 } from "../../domain/desktop/desktopCapture.js";
+import { renderBuildBundle } from "../../domain/desktop/appBuild.js";
 import {
   NO_LAUNCH_DOCUMENT,
   launchDocumentNote,
@@ -118,6 +121,8 @@ const exists = (path: string) =>
     () => true,
     () => false,
   );
+
+const execute = promisify(execFile);
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -1445,6 +1450,199 @@ describe("exportDesktopApplication from a package file", () => {
       "installed from varicad2026-en_2.03_amd64.deb, which no apt repository the capture recorded lists",
     );
     expect(await exists(directory)).toBe(false);
+  });
+});
+
+const APPIMAGE_URL = "https://downloads.example.com/notes-2.0-aarch64.AppImage";
+const APP_RUN = "/opt/rea-apps/org.example.notes/squashfs-root/AppRun";
+const APPIMAGE_INSTALL = {
+  kind: "appimage",
+  desktop_entry: "org.example.notes",
+  url: APPIMAGE_URL,
+  sha256: "e".repeat(64),
+  architecture: "arm64",
+} as const;
+
+/** The fixture capture of an app a build computer extracted from an AppImage and launched by its entry. */
+const downloadCapture = (program = APP_RUN): DesktopApplicationCapture => {
+  const local = capture();
+  return {
+    ...local,
+    host: { ...local.host, architecture: "arm64" },
+    application: {
+      ...local.application,
+      desktop_entry: {
+        id: "org.example.notes",
+        path: "/usr/local/share/applications/org.example.notes.desktop",
+        name: "Notes",
+        exec: `${program} %F`,
+        icon: null,
+        startup_wm_class: null,
+        categories: [],
+        mime_types: [],
+        terminal: false,
+      },
+      argv: [program],
+      executable: {
+        path: program,
+        resolved_path: program,
+        electron_markers: [],
+      },
+      package: {
+        kind: "unknown",
+        name: null,
+        version: null,
+        architecture: null,
+        sources: [],
+        package_lists_present: null,
+      },
+    },
+  };
+};
+
+const exportDownload = async (
+  local: DesktopApplicationCapture,
+  install: unknown,
+  packageUrl?: string,
+) => {
+  const folder = await writeCaptureFolder(local);
+  const work = await createTestTempDirectory("desktop-export-");
+  const downloadInstall = join(work, "download-install.json");
+  await writeFile(downloadInstall, JSON.stringify(install));
+  const directory = join(work, "bundle");
+  const result = await exportDesktopApplication(
+    {
+      capture: folder,
+      directory,
+      name: undefined,
+      tasks: [],
+      downloadInstall,
+      ...(packageUrl === undefined ? {} : { packageUrl }),
+    },
+    readers,
+  );
+  return { result, directory };
+};
+
+describe("exportDesktopApplication from a download", () => {
+  it("declares the AppImage's download and the same script the build computer extracted it with, without the app", async () => {
+    const { result, directory } = await exportDownload(
+      downloadCapture(),
+      APPIMAGE_INSTALL,
+    );
+
+    if (result instanceof Error) throw result;
+    const module = await readFile(
+      join(directory, "envs/notes/notes_app.py"),
+      "utf8",
+    );
+    expect(module).toContain(
+      `packages=Packages(apt=[]),\n    downloads=[Download(url="${APPIMAGE_URL}", sha256="${"e".repeat(64)}", to="vendor/app.AppImage", arch="arm64")],\n    run=[RunScript(script="install-download.sh")],`,
+    );
+    expect(module).toContain('"arch": ["arm64"]');
+    expect(module).toContain(`exec '${APP_RUN}'`);
+    const built = renderBuildBundle(
+      {
+        kind: "request",
+        desktop_entry: "org.example.notes",
+        install: {
+          kind: "appimage",
+          url: APPIMAGE_URL,
+          sha256: "e".repeat(64),
+          architecture: "arm64",
+          extra_packages: [],
+        },
+      },
+      { kind: "file", path: "/builds/rea-prod.tar.xz" },
+    ).files.find((file) => file.path === "envs/notes/install-download.sh");
+    expect(
+      await readFile(join(directory, "envs/notes/install-download.sh"), "utf8"),
+    ).toBe(built?.content);
+    expect(await exists(join(directory, "envs/notes/vendor"))).toBe(false);
+    expect(result.limitations.join("\n")).toContain(
+      `The computer downloads the AppImage from ${APPIMAGE_URL} once, when the bundle is put`,
+    );
+    expect(await readFile(join(directory, "README.md"), "utf8")).toContain(
+      "The bundle does not contain the application",
+    );
+  });
+
+  it("keeps a URL with quotes, backslashes and triple quotes inside the class's Python string literals", async () => {
+    const url =
+      'https://downloads.example.com/notes\\"2.0.AppImage?v="""#""";print(123);"""';
+    const { result, directory } = await exportDownload(downloadCapture(), {
+      ...APPIMAGE_INSTALL,
+      url,
+    });
+
+    if (result instanceof Error) throw result;
+    const { stdout } = await execute("python3", [
+      "-I",
+      "-c",
+      [
+        "import ast, json, sys",
+        "tree = ast.parse(open(sys.argv[1]).read())",
+        'urls = [k.value.value for n in ast.walk(tree) if isinstance(n, ast.Call) and getattr(n.func, "id", "") == "Download" for k in n.keywords if k.arg == "url"]',
+        'print(json.dumps({"urls": urls, "expressions": sum(isinstance(n, ast.Expr) for n in tree.body)}))',
+      ].join("\n"),
+      join(directory, "envs/notes/notes_app.py"),
+    ]);
+    // The docstring is the module's one expression; the URL is data only in Download's literal.
+    expect(JSON.parse(stdout)).toEqual({ urls: [url], expressions: 1 });
+  });
+
+  it("writes a tarball's desktop entry beside the script that unpacks it", async () => {
+    const program = "/opt/rea-apps/org.example.notes/notes-2.0/bin/notes";
+    const { result, directory } = await exportDownload(
+      downloadCapture(program),
+      { ...APPIMAGE_INSTALL, kind: "tarball", program: "notes-2.0/bin/notes" },
+    );
+
+    if (result instanceof Error) throw result;
+    expect(
+      await readFile(
+        join(directory, "envs/notes/applications/org.example.notes.desktop"),
+        "utf8",
+      ),
+    ).toBe(
+      `[Desktop Entry]\nType=Application\nName=notes\nExec=${program} %F\nTerminal=false\n`,
+    );
+  });
+
+  it("refuses a capture of a program outside the folder the download installs to, and writes nothing", async () => {
+    const { result, directory } = await exportDownload(
+      downloadCapture("/usr/bin/notes"),
+      APPIMAGE_INSTALL,
+    );
+
+    expect(result).toMatchObject({
+      _tag: "AnalysisInputError",
+      issues: [expect.objectContaining({ path: ["download_install"] })],
+    });
+    expect(JSON.stringify(result)).toContain(
+      "/usr/bin/notes is not under /opt/rea-apps/org.example.notes",
+    );
+    expect(await exists(directory)).toBe(false);
+  });
+
+  it("refuses a download beside --package-url, and a file that names no download", async () => {
+    const both = await exportDownload(
+      downloadCapture(),
+      APPIMAGE_INSTALL,
+      VARICAD_URL,
+    );
+    expect(both.result).toMatchObject({
+      _tag: "AnalysisInputError",
+      issues: [expect.objectContaining({ path: ["package_url"] })],
+    });
+    const unnamed = await exportDownload(downloadCapture(), {
+      kind: "flatpak",
+      desktop_entry: "org.example.notes",
+    });
+    expect(unnamed.result).toMatchObject({
+      _tag: "AnalysisInputError",
+      issues: [expect.objectContaining({ path: ["download_install"] })],
+    });
   });
 });
 

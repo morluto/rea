@@ -1,4 +1,5 @@
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
+import type { DownloadInstall } from "../../domain/desktop/appDownloadInstall.js";
 import {
   DESKTOP_EXPORT_FRAMEWORK_VERSION,
   appModuleFile,
@@ -7,7 +8,6 @@ import {
   launchDocumentLimitation,
   renderAppClass,
   renderEnvToml,
-  renderInstallScript,
   renderReadme,
   renderSkill,
   renderSmokeTask,
@@ -15,7 +15,6 @@ import {
   type HomePathCollision,
   type SeedScrubReport,
 } from "../../domain/desktop/appExport.js";
-import { INSTALL_SCRIPT } from "../../domain/desktop/appExportInstall.js";
 import {
   heldOpenLimitation,
   leftOutLocksLimitation,
@@ -51,6 +50,8 @@ import {
 import {
   admitApplication,
   exportEnvironmentName,
+  installFiles,
+  readDownloadInstall,
 } from "./DesktopExportInstall.js";
 import {
   writeOutputTree,
@@ -88,6 +89,8 @@ export interface DesktopExportRequest {
   readonly packageUrl?: string | undefined;
   /** Packages installed beside the application, such as a runtime piece a build request named. */
   readonly extraPackages?: readonly string[] | undefined;
+  /** A JSON file naming the AppImage or tarball a build computer unpacked the application from. */
+  readonly downloadInstall?: string | undefined;
   /** The checkpoint the seed is taken at; the baseline when omitted. */
   readonly seedCheckpoint?: string | undefined;
   /** The checkpoint a task's end state is read at unless it names its own; the last when omitted. */
@@ -176,6 +179,7 @@ const planExport = (
     readonly evidenceId: string;
     readonly seed: number;
     readonly identity: HostIdentity;
+    readonly download: DownloadInstall | undefined;
   },
 ): {
   readonly plan: DesktopAppExportPlan;
@@ -188,12 +192,10 @@ const planExport = (
 } => {
   const { application, host } = capture;
   const source = exportEnvironmentName(capture, request.name);
-  const { install, windowClass } = admitApplication(
-    capture,
-    source,
-    request.packageUrl,
-    request.extraPackages,
-  );
+  const { install, windowClass } = admitApplication(capture, source, {
+    ...request,
+    download: context.download,
+  });
   const electron = application.executable.electron_markers.length > 0;
   const stateFiles = exportedStateFiles(capture, state);
   const { homePath, stateAliases, files, collisions, paths, isLeftOut } =
@@ -225,6 +227,7 @@ const planExport = (
     aptSources: install.sources,
     architectures: install.architectures,
     packageFile: install.packageFile,
+    ...(install.download === undefined ? {} : { download: install.download }),
     ...(install.executablePackage === undefined
       ? {}
       : { executablePackage: install.executablePackage }),
@@ -308,14 +311,9 @@ const bundleText = (
         dconfHoldsIdentity,
       ),
       text(`${environment}/SKILL.md`, renderSkill(plan)),
-      ...(plan.packageFile === null
-        ? []
-        : [
-            text(
-              `${environment}/${INSTALL_SCRIPT}`,
-              renderInstallScript(plan.packageFile),
-            ),
-          ]),
+      ...installFiles(plan).map(({ path, content }) =>
+        text(`${environment}/${path}`, content),
+      ),
       text("tasks/smoke.json", renderSmokeTask(plan)),
       ...(admitted?.files ?? []).map((file) => text(file.path, file.content)),
     ],
@@ -406,6 +404,7 @@ const runExport = async (
       evidenceId: evidence.evidence_id,
       seed: ends.seed,
       identity,
+      download: await readDownloadInstall(request.downloadInstall),
     });
   const copies = retainedCopies(plan, seeds);
   // A task's seed checks read the seeds as the bundle ships them, scrubbed.
@@ -505,6 +504,7 @@ export const exportDesktopApplication = async (
         tasks: request.tasks.length,
         task_ends: [...(request.taskEnds ?? [])],
         package_url: request.packageUrl !== undefined,
+        download_install: request.downloadInstall !== undefined,
         extra_packages: [...(request.extraPackages ?? [])],
         seed_checkpoint: request.seedCheckpoint ?? null,
         end_checkpoint: request.endCheckpoint ?? null,

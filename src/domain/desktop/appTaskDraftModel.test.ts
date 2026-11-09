@@ -184,3 +184,49 @@ describe("draftTaskFiles for a zipped UML model", () => {
     ).toBe(false);
   });
 });
+
+describe("draftTaskFiles beside wide archive entries", () => {
+  it("drafts the zipped model's edit beside an entry holding a JSON array of 2,000,000 numbers, within the 4 MiB view limit", () => {
+    const ZIP = "Documents/library.zip";
+    /** The model zipped as `library.xmi`, with `others` beside it. */
+    const zipped = (
+      text: string,
+      others: readonly JsonValue[] = [],
+    ): JsonValue => ({
+      entries: [
+        {
+          name: "library.xmi",
+          size: text.length,
+          sha256: "a".repeat(64),
+          format: "xml",
+          view: xml(text),
+          view_error: null,
+        },
+        ...others,
+      ],
+      entry_count: 1 + others.length,
+      truncated: false,
+    });
+    const wide = {
+      name: "samples.json",
+      size: 4_000_001,
+      sha256: "b".repeat(64),
+      format: "json",
+      view: Array.from({ length: 2_000_000 }, () => 0),
+      view_error: null,
+    };
+
+    const [file] = draftOf({
+      [ZIP]: statePath(
+        "document",
+        "zip",
+        zipped(SEED, [wide]),
+        zipped(email(STRING), [wide]),
+      ),
+    });
+
+    expect(file?.suggested.map(pointerOf)).toContain(
+      `/entries/[name=library.xmi]/view${MEMBER}/children/[name=ownedAttribute][@name=email]/attributes/type`,
+    );
+  });
+});

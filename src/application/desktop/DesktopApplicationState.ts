@@ -41,10 +41,9 @@ import {
   type RetainedContent,
 } from "./DesktopRetainedContent.js";
 import {
-  digestsAt,
   indexState,
+  observedFileAt,
   pathVersions,
-  presenceAt,
   statePaths,
   type StateIndex,
 } from "./DesktopStateVersions.js";
@@ -193,12 +192,6 @@ interface ReadInput {
   readonly version: Version;
 }
 
-/** Whether a database's sidecar file existed at a version, and its retained digest. */
-const sidecarAt = (path: string, version: Version, index: StateIndex) => ({
-  present: presenceAt(path, index)[version.checkpoint_index] ?? null,
-  sha256: digestsAt(path, index)[version.checkpoint_index] ?? null,
-});
-
 /**
  * A sidecar's verified bytes to stage beside the database, or why the
  * database cannot be read: reading it without a sidecar it had could hide or
@@ -209,9 +202,9 @@ const sidecarBytes = async (
   sidecar: (typeof SQLITE_SIDECARS)[number],
   context: ViewContext,
 ): Promise<Result<Buffer | undefined, string>> => {
-  const { present, sha256 } = sidecarAt(
+  const { present, sha256 } = observedFileAt(
     `${path}${sidecar.suffix}`,
-    version,
+    version.checkpoint_index,
     context.index,
   );
   if (present === null)
@@ -231,6 +224,15 @@ const sqliteView = async (
   input: ReadInput,
   context: ViewContext,
 ): Promise<ViewOutcome> => {
+  const database = observedFileAt(
+    input.path,
+    input.version.checkpoint_index,
+    context.index,
+  );
+  if (database.present !== true || database.sha256 !== input.version.sha256)
+    return failed(
+      "the capture did not confirm the database's retained version at this checkpoint",
+    );
   // The SQLite reader accepts an inactive rollback journal and refuses a hot one.
   const staged = [{ name: "state.db", bytes: input.bytes }];
   for (const sidecar of SQLITE_SIDECARS) {

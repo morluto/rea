@@ -1,8 +1,16 @@
+import type { DownloadInstall } from "./appDownloadInstall.js";
 import {
   INSTALL_SCRIPT,
   type ExportAptSource,
   type ExportPackageFile,
 } from "./appExportInstall.js";
+import {
+  downloadDeclarations,
+  downloadKind,
+  installName,
+  installNotes,
+  installs,
+} from "./appExportInstallText.js";
 import {
   PYTHON_DATA_HOOKS,
   PYTHON_HELPERS,
@@ -45,6 +53,8 @@ export interface DesktopAppExportPlan {
   readonly architectures: readonly string[];
   /** The package file downloaded and installed in place of the app's apt package; null when apt installs it. */
   readonly packageFile: ExportPackageFile | null;
+  /** The AppImage or tarball downloaded and unpacked in place of a package; absent for a package. */
+  readonly download?: DownloadInstall;
   /** The package of the program the desktop entry runs, installed by name after the app's; absent when the app's package owns it. */
   readonly executablePackage?: string;
   /** Packages installed beside the app because the export was asked for them; absent when none. */
@@ -396,7 +406,6 @@ export const exportedStateFiles = (
     dconf,
     collisions,
     paths,
-    selected,
     isLeftOut,
   };
 };
@@ -517,16 +526,11 @@ ${PYTHON_READY_CHECK}`;
   return `    """${title}, launched at boot. No state was observed, so it serves no data operations."""\n${PYTHON_READY_CHECK}`;
 };
 
-/** The package as apt takes it: `name`, or `name/release` for a vendor release. */
-const installName = (plan: DesktopAppExportPlan): string =>
-  plan.aptRelease === null
-    ? plan.aptPackage
-    : `${plan.aptPackage}/${plan.aptRelease}`;
-
 /** The app's package, or a package file's dependencies, then the extra packages, its program's package, its library packages and dconf-cli when settings are loaded. */
 const aptPackages = (plan: DesktopAppExportPlan): readonly string[] => [
   ...new Set([
-    ...(plan.packageFile?.dependencies ?? [installName(plan)]),
+    ...(plan.packageFile?.dependencies ??
+      (plan.download === undefined ? [installName(plan)] : [])),
     ...(plan.extraPackages ?? []),
     ...(plan.executablePackage === undefined ? [] : [plan.executablePackage]),
     ...plan.libraryPackages,
@@ -587,7 +591,7 @@ export const renderAppClass = (plan: DesktopAppExportPlan): string => {
   const hooks = classBody(plan);
   return `"""${docText(plan.title)} as an agentenv computer app, exported by REA from a desktop application capture.
 
-Package: ${plan.aptPackage}${plan.packageVersion === null ? "" : ` (captured at ${plan.packageVersion})`}. Capture Evidence: ${plan.captureEvidenceId}.
+${plan.download === undefined ? `Package: ${plan.aptPackage}${plan.packageVersion === null ? "" : ` (captured at ${plan.packageVersion})`}` : `Downloaded: ${docText(plan.download.url)}`}. Capture Evidence: ${plan.captureEvidenceId}.
 ${seedWording(plan).docstring}
 """
 
@@ -606,7 +610,7 @@ ${PYTHON_HELPERS}
 
 @computer_app(supports=[{"os": {"type": "linux", "display": ["x11"]}, "arch": ${pyList(plan.architectures)}}])
 @linux(
-    packages=Packages(apt=${pyList(aptPackages(plan))}),${aptSources(plan)}${packageFileInstall(plan)}
+    packages=Packages(apt=${pyList(aptPackages(plan))}),${aptSources(plan)}${packageFileInstall(plan)}${downloadDeclarations(plan)}
     launch=Launch(at="boot", command=${pyList(plan.command)}, window={"class": ${py(plan.windowClass)}}, ready=Ready(window=True)),
     paths=PATHS,
     skill="SKILL.md",
@@ -632,61 +636,6 @@ Its files live under ${plan.paths.map((path) => `\`~/${path}\``).join(", ")}. Wo
 window and dialogs; the result is read from those files.
 `
 }`;
-
-const installedFrom = (plan: DesktopAppExportPlan): string =>
-  plan.aptSources.length === 0
-    ? "the distribution archive"
-    : plan.aptSources
-        .map(
-          (source) =>
-            `the apt repository \`${source.uri}\` (suite \`${source.suite}\`${source.components.length === 0 ? "" : `, components \`${source.components.join(" ")}\``}), trusting \`${source.keyFile}\`, the key that verified its release on the capture host`,
-        )
-        .join(" and ");
-
-/** What the computer installs, and from where. */
-const installs = (plan: DesktopAppExportPlan): string =>
-  plan.packageFile === null
-    ? `\`${installName(plan)}\` from ${installedFrom(plan)}`
-    : `\`${plan.aptPackage}\`${plan.packageVersion === null ? "" : ` ${plan.packageVersion}`} from its package file, downloaded from
-  \`${plan.packageFile.url}\` when the bundle is put and refused unless its SHA-256 is \`${plan.packageFile.sha256}\``;
-
-const packageFileNotes = ({ packageFile: file }: DesktopAppExportPlan) =>
-  file === null
-    ? []
-    : [
-        `- The bundle does not contain the package: \`${INSTALL_SCRIPT}\` installs \`${file.path}\` with dpkg once the apt packages
-  it depends on are in${file.dependencies.length === 0 ? "" : ` (${file.dependencies.map((name) => `\`${name}\``).join(", ")})`}, so the computer runs exactly the captured version, on \`${file.architecture}\` only.`,
-        "- Vendor sites may refuse automated downloads, so the URL must point at a copy of the file the operator may use.\n  The package's licence, such as a trial's terms, is the operator's to check.",
-      ];
-
-const installNotes = (plan: DesktopAppExportPlan): string =>
-  [
-    ...packageFileNotes(plan),
-    ...(plan.extraPackages === undefined
-      ? []
-      : [
-          `- Installed beside the app because the export was asked for them with \`--extra-package\`, as a build computer asks
-  for the packages its request named: ${plan.extraPackages.map((name) => `\`${name}\``).join(", ")}.`,
-        ]),
-    ...(plan.executablePackage === undefined
-      ? []
-      : [
-          `- \`${plan.executablePackage}\`, which owns the program the desktop entry runs, is installed with it.`,
-        ]),
-    ...(plan.libraryPackages.length === 0
-      ? []
-      : [
-          `- Library packages, which own the shared libraries the executable loaded on the capture host, are installed with it:
-  ${plan.libraryPackages.map((name) => `\`${name}\``).join(", ")}.`,
-        ]),
-    ...(plan.electron
-      ? [
-          "- Chromium's sandbox is off (`--no-sandbox`): it needs user namespaces the computer's container does not grant,\n  and Electron exits without them.",
-        ]
-      : []),
-  ]
-    .map((line) => `\n${line}`)
-    .join("");
 
 /** The start of the limitation of a launch that opens no document; its reason follows. */
 export const NO_LAUNCH_DOCUMENT = "The app opens no document at launch";
@@ -766,7 +715,7 @@ export const renderReadme = (
 ): string =>
   `# ${plan.title} computer app
 
-Exported by REA's \`export-desktop-application\` from a capture of the \`${plan.aptPackage}\` package
+Exported by REA's \`export-desktop-application\` from a capture of the \`${plan.aptPackage}\` ${plan.download === undefined ? "package" : downloadKind(plan.download)}
 (capture Evidence \`${plan.captureEvidenceId}\`). It was checked against agentenv-framework
 ${DESKTOP_EXPORT_FRAMEWORK_VERSION}.
 

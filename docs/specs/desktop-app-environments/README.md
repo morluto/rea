@@ -57,6 +57,10 @@ The work lands as one PR per step:
     bundle's task in fresh computers for a model, 3 times and 2 more unless
     they passed none or all, within a budget, and records its band, cost,
     turns and failures per check in the bundle.
+17. [Download installs](download-installs/spec.md): applications no package
+    offers, from their project's AppImage or tarball pinned by URL and
+    SHA-256, unpacked under `/opt/rea-apps` by the build computer and the
+    export alike, starting with FreeCAD.
 
 Version 1 covers Linux with X11, applications whose state lives in files or
 SQLite under the home directory, and real applications from public packages.
