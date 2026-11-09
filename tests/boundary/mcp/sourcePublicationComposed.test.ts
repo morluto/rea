@@ -24,14 +24,57 @@ it("preserves the source when an inline result with unknown retention exceeds de
     }),
     new InvestigationRecords({ maximumRepresentationBytes: 0 }),
   );
+  const input = JAVASCRIPT_APPLICATION_VERSION_COMPARISON_EXAMPLE;
+  const full = await createApplicationMcpHarness({ session });
+  const request = { name: "compare_application_versions", arguments: input };
+  const completeResponse = await full.client.callTool(request);
+  const completeError = parseMcpToolError(completeResponse).error;
+  expect(completeError.details).toMatchObject({
+    partial_observation: {
+      kind: "unretained-evidence",
+      evidence: { evidence_id: input.left.evidence_id },
+    },
+    completed_observation: { kind: "inline-evidence", retention: "unknown" },
+  });
+
+  // Measure the delivered envelope, including escaped error text and metadata.
+  // Contract example growth must not make the source itself exceed this budget.
+  const { completed_observation: _completed, ...sourceDetails } =
+    completeError.details!;
+  const sourceResponse = {
+    ...completeResponse,
+    content: [
+      {
+        type: "text",
+        text: JSON.stringify({
+          error: { ...completeError, details: sourceDetails },
+        }),
+      },
+    ],
+  };
+  const sourceBytes = Buffer.byteLength(JSON.stringify(sourceResponse));
+  const completeBytes = Buffer.byteLength(JSON.stringify(completeResponse));
+  const delivery = createToolResultDelivery(
+    Math.ceil((sourceBytes + completeBytes) / 2) + 1024,
+  );
+  expect(sourceBytes).toBeLessThan(delivery.resultBudgetBytes);
+  expect(completeBytes).toBeGreaterThan(delivery.resultBudgetBytes);
+  await full.close();
+
+  const boundedSession = new BinarySession(
+    createTestProviderRouter(() => {
+      throw new Error("no provider needed");
+    }),
+    new InvestigationRecords({ maximumRepresentationBytes: 0 }),
+  );
   const { client } = await createApplicationMcpHarness({
-    session,
-    serverOptions: { delivery: createToolResultDelivery(10 * 1024) },
+    session: boundedSession,
+    serverOptions: { delivery },
   });
-  const response = await client.callTool({
-    name: "compare_application_versions",
-    arguments: JAVASCRIPT_APPLICATION_VERSION_COMPARISON_EXAMPLE,
-  });
+  const response = await client.callTool(request);
+  expect(Buffer.byteLength(JSON.stringify(response))).toBeLessThanOrEqual(
+    delivery.resultBudgetBytes,
+  );
   const error = parseMcpToolError(response).error;
   expect(error.remediation.action).toContain(
     recoveryOmissionRemediation("unknown"),
@@ -39,7 +82,10 @@ it("preserves the source when an inline result with unknown retention exceeds de
   expect(error).toMatchObject({
     code: "resource_constraint",
     details: {
-      partial_observation: { kind: "unretained-evidence" },
+      partial_observation: {
+        kind: "unretained-evidence",
+        evidence: input.left,
+      },
       completed_observation_omitted: {
         reason: "mcp-response-limit",
         retention: "unknown",
@@ -47,6 +93,9 @@ it("preserves the source when an inline result with unknown retention exceeds de
       },
     },
   });
+  expect(error.details).not.toHaveProperty("completed_observation");
+  expect(error.details).not.toHaveProperty("partial_observation_omitted");
+  expect(boundedSession.exportEvidenceBundle().records).toEqual([]);
 });
 
 it("does not infer ledger membership from an independently registered reader", async () => {
