@@ -1,5 +1,19 @@
 import { describe, expect, it } from "vitest";
-import { analyzeJavaScriptStaticSource } from "./javascriptStaticAnalysis.js";
+import { parseJavaScriptSource } from "./javascriptSourceParser.js";
+import {
+  analyzeJavaScriptStaticSource,
+  analyzeParsedJavaScriptStaticSource,
+} from "./javascriptStaticAnalysis.js";
+
+// A bare `require` in a source without a declared runtime context is only a
+// candidate loader, and that candidate counts its own unknown. These fixtures
+// exercise the call-path walk, so parse them as established CommonJS. The
+// `import.meta` fixtures keep module syntax and stay on the bare analyzer.
+const analyze = (source: string) => {
+  const parsed = parseJavaScriptSource(source, "main.cjs");
+  if (parsed === null) throw new Error("fixture did not parse");
+  return analyzeParsedJavaScriptStaticSource(source, parsed);
+};
 
 // A hoisted function reads a binding whose initializer appears later in the
 // module, the shape production bundles such as react-dom take for timers.
@@ -14,7 +28,7 @@ const UNKNOWN_LIMITATION = expect.stringContaining("remain unknown");
 
 describe("wrapped call-path unknown attribution", () => {
   it("keeps a module without Electron identity complete when a hoisted read precedes its initializer", () => {
-    const result = analyzeJavaScriptStaticSource(LATER_INITIALIZED_READ);
+    const result = analyze(LATER_INITIALIZED_READ);
 
     expect(result.parse_error_count).toBe(0);
     expect(result.parse_status).toBe("complete");
@@ -23,7 +37,7 @@ describe("wrapped call-path unknown attribution", () => {
   });
 
   it("keeps the same read unknown beside Electron identity, where an isolated-world exposure could hide", () => {
-    const result = analyzeJavaScriptStaticSource(
+    const result = analyze(
       `const e = require("electron");\ne.app.quit();\n${LATER_INITIALIZED_READ}`,
     );
 
@@ -45,7 +59,7 @@ describe("wrapped call-path unknown attribution", () => {
   });
 
   it("keeps bridge findings and call paths when the Electron module name is a resolved variable", () => {
-    const result = analyzeJavaScriptStaticSource(`
+    const result = analyze(`
       const name = "electron";
       const { contextBridge, ipcRenderer } = require(name);
       contextBridge.exposeInMainWorld("api", { ping: () => ipcRenderer.send("ping") });
@@ -67,7 +81,7 @@ describe("wrapped call-path unknown attribution", () => {
   });
 
   it("keeps IPC registrations and call paths through a require alias", () => {
-    const result = analyzeJavaScriptStaticSource(`
+    const result = analyze(`
       const load = require;
       const { ipcMain } = load("electron");
       ipcMain.on("ping", (event) => event.sender.send("pong"));
@@ -93,7 +107,7 @@ describe("wrapped call-path unknown attribution", () => {
   });
 
   it("keeps the unknown when a hoisted read precedes a loader alias that could supply Electron", () => {
-    const result = analyzeJavaScriptStaticSource(`
+    const result = analyze(`
       function register() {
         load("electron").ipcMain.on("ping", () => {});
       }
@@ -109,7 +123,7 @@ describe("wrapped call-path unknown attribution", () => {
 
 describe("later initializer loader proof", () => {
   it("keeps the unknown when a late loader alias resolves through another binding", () => {
-    const result = analyzeJavaScriptStaticSource(`
+    const result = analyze(`
       const req = require;
       function register() {
         load("electron").ipcMain.on("ping", () => {});
@@ -124,7 +138,7 @@ describe("later initializer loader proof", () => {
   });
 
   it("keeps the unknown when a late loader resolves to an ambient loader alias", () => {
-    const result = analyzeJavaScriptStaticSource(`
+    const result = analyze(`
       function register() {
         load("electron").ipcMain.on("ping", () => {});
       }
@@ -154,7 +168,7 @@ describe("later initializer loader proof", () => {
   });
 
   it("keeps the unknown when a late loader alias resolves through two bindings", () => {
-    const result = analyzeJavaScriptStaticSource(`
+    const result = analyze(`
       function register() {
         load("electron").ipcMain.on("ping", () => {});
       }
@@ -169,7 +183,7 @@ describe("later initializer loader proof", () => {
   });
 
   it("keeps the unknown when a late loader alias comes from a function call", () => {
-    const result = analyzeJavaScriptStaticSource(`
+    const result = analyze(`
       function register() {
         load("electron").ipcMain.on("ping", () => {});
       }
@@ -186,7 +200,7 @@ describe("later initializer loader proof", () => {
   });
 
   it("keeps the unknown when a late loader alias resolves to a host member", () => {
-    const result = analyzeJavaScriptStaticSource(`
+    const result = analyze(`
       const req = window.require;
       function register() {
         load("electron").ipcMain.on("ping", () => {});
@@ -201,7 +215,7 @@ describe("later initializer loader proof", () => {
   });
 
   it("keeps the unknown when a late initializer can hand out require", () => {
-    const result = analyzeJavaScriptStaticSource(`
+    const result = analyze(`
       function register() {
         load("electron").ipcMain.on("ping", () => {});
       }
@@ -215,7 +229,7 @@ describe("later initializer loader proof", () => {
   });
 
   it("keeps the module complete when a later function only returns a string containing electron", () => {
-    const result = analyzeJavaScriptStaticSource(`
+    const result = analyze(`
       function register() {
         format("value");
       }
@@ -229,7 +243,7 @@ describe("later initializer loader proof", () => {
   });
 
   it("keeps the module complete when the later initializer of the called alias cannot load a module", () => {
-    const result = analyzeJavaScriptStaticSource(`
+    const result = analyze(`
       function register() {
         load("electron").ipcMain.on("ping", () => {});
       }
@@ -251,7 +265,7 @@ describe("later initializer selected value proof", () => {
   ])(
     "keeps the module complete through a %s callable selection",
     (_kind, initializer) => {
-      const result = analyzeJavaScriptStaticSource(`
+      const result = analyze(`
         function run() {
           format("value");
         }
@@ -282,7 +296,7 @@ describe("later initializer selected value proof", () => {
 
 describe("later initializer loader proof", () => {
   it("keeps the unknown when a late function has a loader default parameter", () => {
-    const result = analyzeJavaScriptStaticSource(`
+    const result = analyze(`
       function register() {
         load()("electron").ipcMain.on("ping", () => {});
       }
@@ -296,7 +310,7 @@ describe("later initializer loader proof", () => {
   });
 
   it("keeps the unknown when a late forwarding wrapper closes over a loader", () => {
-    const result = analyzeJavaScriptStaticSource(`
+    const result = analyze(`
       const req = require;
       function register() {
         load("electron").ipcMain.on("ping", () => {});
@@ -313,7 +327,7 @@ describe("later initializer loader proof", () => {
 
 describe("later initializer loader input proof", () => {
   it("keeps the unknown when a late forwarding wrapper receives a loader parameter", () => {
-    const result = analyzeJavaScriptStaticSource(`
+    const result = analyze(`
       const name = "electron";
       function register() {
         load(require).ipcMain.on("ping", () => {});
@@ -328,7 +342,7 @@ describe("later initializer loader input proof", () => {
   });
 
   it("keeps the unknown when a late forwarding wrapper reads a catch binding", () => {
-    const result = analyzeJavaScriptStaticSource(`
+    const result = analyze(`
       const name = "electron";
       function register() {
         load().ipcMain.on("ping", () => {});
@@ -349,7 +363,7 @@ describe("later initializer loader input proof", () => {
   });
 
   it("keeps the unknown when a late forwarding wrapper reads arguments", () => {
-    const result = analyzeJavaScriptStaticSource(`
+    const result = analyze(`
       const name = "electron";
       function register() {
         load(require).ipcMain.on("ping", () => {});
@@ -366,7 +380,7 @@ describe("later initializer loader input proof", () => {
   });
 
   it("keeps the unknown when a late forwarding wrapper receives a loader in rest arguments", () => {
-    const result = analyzeJavaScriptStaticSource(`
+    const result = analyze(`
       const req = require;
       const moduleName = "electron";
       function register() {
@@ -382,7 +396,7 @@ describe("later initializer loader input proof", () => {
   });
 
   it("keeps the module complete when a late forwarding wrapper calls a loader-free module function", () => {
-    const result = analyzeJavaScriptStaticSource(`
+    const result = analyze(`
       function identity(value) {
         return value;
       }
@@ -399,7 +413,7 @@ describe("later initializer loader input proof", () => {
   });
 
   it("keeps the unknown when a late function returns its loader receiver", () => {
-    const result = analyzeJavaScriptStaticSource(`
+    const result = analyze(`
       function register() {
         load.call(require)("electron").ipcMain.on("ping", () => {});
       }
@@ -413,7 +427,7 @@ describe("later initializer loader input proof", () => {
   });
 
   it("keeps the unknown when a late function reads a loader from its receiver", () => {
-    const result = analyzeJavaScriptStaticSource(`
+    const result = analyze(`
       const name = "electron";
       function register() {
         load.call({ r: require }).ipcMain.on("ping", () => {});
@@ -428,7 +442,7 @@ describe("later initializer loader input proof", () => {
   });
 
   it("keeps the unknown when a late function reads a loader from a changed object", () => {
-    const result = analyzeJavaScriptStaticSource(`
+    const result = analyze(`
       const name = "electron";
       const holder = {};
       holder.load = require;
@@ -445,7 +459,7 @@ describe("later initializer loader input proof", () => {
   });
 
   it("keeps the unknown when an alias changes a late function's object", () => {
-    const result = analyzeJavaScriptStaticSource(`
+    const result = analyze(`
       const name = "electron";
       const holder = {};
       const alias = holder;
@@ -465,7 +479,7 @@ describe("later initializer loader input proof", () => {
 
 describe("later initializer loader input edge cases", () => {
   it("keeps the unknown when a spread shifts a loader into a later parameter", () => {
-    const result = analyzeJavaScriptStaticSource(`
+    const result = analyze(`
       const args = [0, require];
       function register() {
         load(...args, "safe")("electron").ipcMain.on("ping", () => {});
@@ -480,7 +494,7 @@ describe("later initializer loader input edge cases", () => {
   });
 
   it("keeps the unknown when a spread shifts a loader into rest parameters", () => {
-    const result = analyzeJavaScriptStaticSource(`
+    const result = analyze(`
       const args = [0, require];
       function register() {
         load(...args, "safe")[0]("electron").ipcMain.on("ping", () => {});
@@ -495,7 +509,7 @@ describe("later initializer loader input edge cases", () => {
   });
 
   it("keeps the unknown when a late function returns new.target", () => {
-    const result = analyzeJavaScriptStaticSource(`
+    const result = analyze(`
       function register() {
         Reflect.construct(load, [], require)("electron").ipcMain.on("x", () => {});
       }
@@ -511,7 +525,7 @@ describe("later initializer loader input edge cases", () => {
 
 describe("later initializer mutation proof", () => {
   it("keeps the unknown when a called function changes a late function's object", () => {
-    const result = analyzeJavaScriptStaticSource(`
+    const result = analyze(`
       const name = "electron";
       const holder = {};
       function install(target) {
@@ -531,7 +545,7 @@ describe("later initializer mutation proof", () => {
   });
 
   it("keeps the unknown when a late loader can come from a changed prototype", () => {
-    const result = analyzeJavaScriptStaticSource(`
+    const result = analyze(`
       const name = "electron";
       Object.prototype.load = require;
       function register() {
@@ -547,7 +561,7 @@ describe("later initializer mutation proof", () => {
   });
 
   it("keeps the unknown when a safe argument inherits a loader member", () => {
-    const result = analyzeJavaScriptStaticSource(`
+    const result = analyze(`
       Object.prototype.load = require;
       function register() {
         late({})("electron").ipcMain.on("ping", () => {});
@@ -562,7 +576,7 @@ describe("later initializer mutation proof", () => {
   });
 
   it("keeps a safe literal member helper complete", () => {
-    const result = analyzeJavaScriptStaticSource(`
+    const result = analyze(`
       function run() {
         size("value");
       }
@@ -576,7 +590,7 @@ describe("later initializer mutation proof", () => {
   });
 
   it("keeps the unknown when a destructuring projection inherits a loader", () => {
-    const result = analyzeJavaScriptStaticSource(`
+    const result = analyze(`
       Object.prototype.load = require;
       function register() {
         load("electron").ipcMain.on("x", () => {});
@@ -591,7 +605,7 @@ describe("later initializer mutation proof", () => {
   });
 
   it("keeps the unknown when a late function reads a loader through super", () => {
-    const result = analyzeJavaScriptStaticSource(`
+    const result = analyze(`
       const name = "electron";
       Object.prototype.r = require;
       function register() {
@@ -607,7 +621,7 @@ describe("later initializer mutation proof", () => {
   });
 
   it("keeps the unknown when an ambient value receives a loader member", () => {
-    const result = analyzeJavaScriptStaticSource(`
+    const result = analyze(`
       const name = "electron";
       String.load = require;
       function register() {
@@ -623,7 +637,7 @@ describe("later initializer mutation proof", () => {
   });
 
   it("keeps the unknown when an ambient value receives a computed loader member", () => {
-    const result = analyzeJavaScriptStaticSource(`
+    const result = analyze(`
       const key = "load";
       const name = "electron";
       String.load = require;
@@ -640,7 +654,7 @@ describe("later initializer mutation proof", () => {
   });
 
   it("keeps the unknown when a qualified write replaces an ambient value", () => {
-    const result = analyzeJavaScriptStaticSource(`
+    const result = analyze(`
       globalThis.String = require;
       function register() {
         load()("electron").ipcMain.on("ping", () => {});
@@ -655,7 +669,7 @@ describe("later initializer mutation proof", () => {
   });
 
   it("keeps the unknown for an inherited loader on a function value", () => {
-    const result = analyzeJavaScriptStaticSource(`
+    const result = analyze(`
       const name = "electron";
       Object.prototype.load = require;
       function register() {
@@ -673,7 +687,7 @@ describe("later initializer mutation proof", () => {
 
 describe("later initializer ambient prototype proof", () => {
   it("keeps the unknown when an ambient value inherits a loader member", () => {
-    const result = analyzeJavaScriptStaticSource(`
+    const result = analyze(`
       Object.prototype.load = require;
       const name = "electron";
       function register() {
@@ -689,7 +703,7 @@ describe("later initializer ambient prototype proof", () => {
   });
 
   it("keeps the unknown when an ambient value inherits a function loader member", () => {
-    const result = analyzeJavaScriptStaticSource(`
+    const result = analyze(`
       Function.prototype.load = require;
       const name = "electron";
       function register() {
@@ -738,7 +752,7 @@ describe("later initializer ambient prototype proof", () => {
   ])(
     "keeps the unknown when %s supplies an indirect ambient loader",
     (_source, write, callee) => {
-      const result = analyzeJavaScriptStaticSource(`
+      const result = analyze(`
         ${write}
         const name = "electron";
         function register() {
@@ -755,7 +769,7 @@ describe("later initializer ambient prototype proof", () => {
   );
 
   it("keeps an indirect ambient member call complete without a prototype write", () => {
-    const result = analyzeJavaScriptStaticSource(`
+    const result = analyze(`
       const name = "electron";
       function register() {
         load().ipcMain.on("ping", () => {});
@@ -770,7 +784,7 @@ describe("later initializer ambient prototype proof", () => {
   });
 
   it("keeps a safe ambient member helper complete", () => {
-    const result = analyzeJavaScriptStaticSource(`
+    const result = analyze(`
       const { app } = require("electron");
       String.fromCharCode(65);
       app.getName();
@@ -786,7 +800,7 @@ describe("later initializer literal prototype proof", () => {
   it.each(["[]", '("")', "(0)", "(false)", "/value/", "(0n)"])(
     "keeps the unknown when Object.prototype can supply a late loader through %s",
     (literal) => {
-      const result = analyzeJavaScriptStaticSource(`
+      const result = analyze(`
         Object.prototype.load = require;
         function register() {
           load("electron").ipcMain.on("ping", () => {});
@@ -807,7 +821,7 @@ describe("later initializer literal prototype proof", () => {
   ])(
     "keeps the unknown when %s.prototype can supply a late loader",
     (_owner, prototype, literal) => {
-      const result = analyzeJavaScriptStaticSource(`
+      const result = analyze(`
         const name = "electron";
         ${prototype}.load = require;
         function register() {
@@ -824,7 +838,7 @@ describe("later initializer literal prototype proof", () => {
   );
 
   it("keeps the unknown when a late function reads a changed prototype", () => {
-    const result = analyzeJavaScriptStaticSource(`
+    const result = analyze(`
       const name = "electron";
       Object.prototype.load = require;
       function register() {
@@ -853,7 +867,7 @@ describe("later initializer precision", () => {
       'typeof queueMicrotask === "function" ? queueMicrotask : undefined',
     ],
   ])("keeps a late %s shim complete", (_ambient, local, initializer) => {
-    const result = analyzeJavaScriptStaticSource(`
+    const result = analyze(`
         function run(value) {
           return ${local}(value);
         }
@@ -867,7 +881,7 @@ describe("later initializer precision", () => {
   });
 
   it("keeps an alias rebinding separate from its original object", () => {
-    const result = analyzeJavaScriptStaticSource(`
+    const result = analyze(`
       const base = {};
       let alias = base;
       alias = {};
@@ -894,7 +908,7 @@ describe("later initializer precision", () => {
     "alias = {}; alias[key] = 1;",
     "alias = {}; const replacement = alias; replacement.other = 1;",
   ])("keeps bridge methods after replacement alias writes: %s", (writes) => {
-    const result = analyzeJavaScriptStaticSource(`
+    const result = analyze(`
       const { contextBridge, ipcRenderer } = require("electron");
       const base = { ping: () => ipcRenderer.send("ping") };
       let alias = base;
@@ -918,7 +932,7 @@ describe("later initializer precision", () => {
   });
 
   it("retains uncertainty when a constructed replacement returns the original object", () => {
-    const result = analyzeJavaScriptStaticSource(`
+    const result = analyze(`
       const { contextBridge, ipcRenderer } = require("electron");
       const base = { ping: () => ipcRenderer.send("ping") };
       let alias = base;
@@ -938,7 +952,7 @@ describe("later initializer precision", () => {
     "if (flag) alias = {}; alias.load = require;",
     "({ value: alias } = { value: holder }); alias.load = require;",
   ])("retains original alias mutation uncertainty: %s", (writes) => {
-    const result = analyzeJavaScriptStaticSource(`
+    const result = analyze(`
       const name = "electron";
       const holder = {};
       let alias = holder;
@@ -954,7 +968,7 @@ describe("later initializer precision", () => {
   });
 
   it("keeps a sequence-wrapped late callee complete", () => {
-    const result = analyzeJavaScriptStaticSource(`
+    const result = analyze(`
       function run() {
         (0, format)("value");
       }
@@ -978,7 +992,7 @@ describe("later initializer alias write bounds", () => {
       { length: 8_000 },
       (_, index) => `value.property${index} = ${index};`,
     ).join("\n");
-    const result = analyzeJavaScriptStaticSource(`
+    const result = analyze(`
         const value = {};
         ${aliases}
         ${writes}
@@ -993,7 +1007,7 @@ describe("later initializer alias write bounds", () => {
       { length: 150_000 },
       (_, index) => `const alias${index} = value;`,
     ).join("\n");
-    const result = analyzeJavaScriptStaticSource(`
+    const result = analyze(`
       const value = {};
       ${aliases}
       value.property = 1;
@@ -1005,7 +1019,7 @@ describe("later initializer alias write bounds", () => {
 });
 
 it("keeps require.resolve-only Electron references outside the call-path gate", () => {
-  const result = analyzeJavaScriptStaticSource(`
+  const result = analyze(`
     require.resolve("electron");
     function run() {
       format("value");
@@ -1031,7 +1045,7 @@ describe("later initializer loader proof bounds", () => {
     const aliases = Array.from({ length: 512 }, (_, index) =>
       index === 0 ? "var a0 = require;" : `var a${index} = a${index - 1};`,
     ).join("\n");
-    const result = analyzeJavaScriptStaticSource(`
+    const result = analyze(`
         function register() {
           load("electron").ipcMain.on("ping", () => {});
         }
@@ -1050,7 +1064,7 @@ describe("later initializer loader proof bounds", () => {
       { length: 512 },
       (_, index) => `value${index}`,
     ).join(" + ");
-    const result = analyzeJavaScriptStaticSource(`
+    const result = analyze(`
       function register() {
         load("electron").ipcMain.on("ping", () => {});
       }

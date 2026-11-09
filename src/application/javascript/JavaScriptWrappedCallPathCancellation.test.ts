@@ -1,7 +1,7 @@
 import { expect, it } from "vitest";
 import { completeJavaScriptAnalysisSteps } from "./JavaScriptAnalysisControl.js";
 import { collectElectronWrappedCallPathsSteps } from "../../domain/javascript/electronWrappedCallPaths.js";
-import { analyzeJavaScriptStaticSource } from "../../domain/javascript/javascriptStaticAnalysis.js";
+import { analyzeParsedJavaScriptStaticSource } from "../../domain/javascript/javascriptStaticAnalysis.js";
 import {
   indexJavaScriptBindingsWithReceiversSteps,
   indexJavaScriptElectronIdentitySteps,
@@ -173,7 +173,9 @@ it("preserves unknown handler counts when mutation indexing retries a seed", () 
     }
     var format = value => value;
   `;
-  const parsed = parseJavaScriptSource(source);
+  // An established CommonJS loader keeps the candidate-loader unknown out of
+  // the comparison, so both counts describe the call-path walk alone.
+  const parsed = parseJavaScriptSource(source, "main.cjs");
   if (parsed === null) throw new Error("Expected parsed source");
   const index = completeSemanticSteps(
     indexJavaScriptBindingsWithReceiversSteps(parsed.program),
@@ -194,7 +196,7 @@ it("preserves unknown handler counts when mutation indexing retries a seed", () 
     ),
   );
 
-  const analysis = analyzeJavaScriptStaticSource(source);
+  const analysis = analyzeParsedJavaScriptStaticSource(source, parsed);
 
   expect(analysis.analysis_coverage?.semantics.unknown_findings).toBe(
     accumulator.unknownFindings,
