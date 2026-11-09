@@ -104,6 +104,7 @@ import { collectJavaScriptDerivedSemanticsSteps } from "./javascriptSemanticDeri
 import {
   evaluateSemanticExpression,
   evaluateSemanticProvenance,
+  evaluateSemanticSelectedBranches,
   clearSemanticValueCaches,
   semanticValueDefinitelyDefined,
 } from "./javascriptSemanticValues.js";
@@ -3561,10 +3562,10 @@ const enqueueNonIdentifierMemberWriteSources = (
           const isElementAwaited =
             current.awaitDepths?.includes(elementSuffix.length) === true;
           const mapped = isElementIterated
-            ? returnQueries.potential(mapFn)
+            ? returnQueries.potential(mapFn, undefined, current.callFrame)
             : isElementAwaited
-              ? returnQueries.awaited(mapFn)
-              : returnQueries.direct(mapFn);
+              ? returnQueries.awaited(mapFn, undefined, current.callFrame)
+              : returnQueries.direct(mapFn, undefined, current.callFrame);
           if (mapped.unresolvedCallable || mapped.unresolvedInvocation)
             enqueueDirectCopy();
           const {
@@ -3662,10 +3663,10 @@ const enqueueNonIdentifierMemberWriteSources = (
     const isAwaited =
       current.awaitDepths?.includes(current.suffix.length) === true;
     const returned = isIterated
-      ? returnQueries.potential(calleeNode, node)
+      ? returnQueries.potential(calleeNode, node, current.callFrame)
       : isAwaited
-        ? returnQueries.awaited(calleeNode, node)
-        : returnQueries.direct(calleeNode, node);
+        ? returnQueries.awaited(calleeNode, node, current.callFrame)
+        : returnQueries.direct(calleeNode, node, current.callFrame);
     const {
       parameterSources,
       inactiveDefaultNodes,
@@ -3763,18 +3764,8 @@ const enqueueNonIdentifierMemberWriteSources = (
   } else if (t.isYieldExpression(node) && node.argument != null) {
     pending.push({ ...current, node: node.argument, capturedSelections });
   } else if (t.isConditionalExpression(node) || t.isLogicalExpression(node)) {
-    pending.push(
-      {
-        ...current,
-        node: t.isConditionalExpression(node) ? node.consequent : node.left,
-        capturedSelections,
-      },
-      {
-        ...current,
-        node: t.isConditionalExpression(node) ? node.alternate : node.right,
-        capturedSelections,
-      },
-    );
+    for (const branch of evaluateSemanticSelectedBranches(node, state))
+      pending.push({ ...current, node: branch, capturedSelections });
   } else if (t.isSequenceExpression(node)) {
     const last = node.expressions.at(-1);
     if (last !== undefined)
@@ -4201,23 +4192,19 @@ const objectAssignTargetAllowsOverwrite = (
     return hasNullPrototype || !hasAmbientObjectPrototypeMutation(state);
   }
   if (hasAmbientObjectPrototypeMutation(state)) return false;
-  if (t.isConditionalExpression(node)) {
+  if (t.isConditionalExpression(node) || t.isLogicalExpression(node)) {
+    const branches = evaluateSemanticSelectedBranches(node, state);
     return (
-      objectAssignTargetAllowsOverwrite(
-        node.consequent,
-        choice,
-        state,
-        interop,
-        captureAt,
-        nextVisited,
-      ) &&
-      objectAssignTargetAllowsOverwrite(
-        node.alternate,
-        choice,
-        state,
-        interop,
-        captureAt,
-        nextVisited,
+      branches.length > 0 &&
+      branches.every((branch) =>
+        objectAssignTargetAllowsOverwrite(
+          branch,
+          choice,
+          state,
+          interop,
+          captureAt,
+          nextVisited,
+        ),
       )
     );
   }
@@ -4318,22 +4305,24 @@ const definiteObjectAssignSourceKeys = (
     }
     return keys;
   }
-  if (t.isConditionalExpression(node)) {
-    const consequentKeys = definiteObjectAssignSourceKeys(
-      node.consequent,
-      state,
-      interop,
-      captureAt,
-      nextVisited,
-    );
-    const alternateKeys = definiteObjectAssignSourceKeys(
-      node.alternate,
-      state,
-      interop,
-      captureAt,
-      nextVisited,
-    );
-    return new Set([...consequentKeys].filter((k) => alternateKeys.has(k)));
+  if (t.isConditionalExpression(node) || t.isLogicalExpression(node)) {
+    const branches = evaluateSemanticSelectedBranches(node, state);
+    if (branches.length === 0) return new Set();
+    let intersection: Set<string> | undefined;
+    for (const branch of branches) {
+      const branchKeys = definiteObjectAssignSourceKeys(
+        branch,
+        state,
+        interop,
+        captureAt,
+        nextVisited,
+      );
+      intersection =
+        intersection === undefined
+          ? new Set(branchKeys)
+          : new Set([...intersection].filter((k) => branchKeys.has(k)));
+    }
+    return intersection ?? new Set();
   }
   if (t.isSequenceExpression(node)) {
     const last = node.expressions.at(-1);

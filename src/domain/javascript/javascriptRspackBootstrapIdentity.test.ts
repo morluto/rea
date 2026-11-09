@@ -1837,3 +1837,120 @@ describe("Rspack bootstrap same-activation captures and container boundaries", (
     `);
   });
 });
+
+describe("member-write excluded branch pruning and frame-aware nested callees", () => {
+  it("prunes statically excluded conditional and logical branches before tracing member-write identities", () => {
+    const preserved = analyzeJavaScriptStaticSource(`
+      const e = require("electron");
+      const LOCAL_ONLY = true;
+      const a = true ? {} : e;
+      a.ipcRenderer = {};
+      const b = false ? e : {};
+      b.ipcRenderer = {};
+      const c = LOCAL_ONLY ? {} : e;
+      c.ipcRenderer = {};
+      const d = ({}) || e;
+      d.ipcRenderer = {};
+      const f = false && e;
+      if (f) f.ipcRenderer = {};
+      const g = ({}) ?? e;
+      g.ipcRenderer = {};
+      const assigned = Object.assign(
+        { ipc: e.ipcRenderer },
+        true ? { ipc: {} } : {},
+      );
+      assigned.ipc.send = () => {};
+      e.ipcRenderer.send("EXCLUDED_BRANCH_PRUNED");
+    `);
+    expect(preserved.electron.ipc).toEqual([
+      expect.objectContaining({
+        channel: "EXCLUDED_BRANCH_PRUNED",
+        operation: "send",
+        side: "renderer",
+      }),
+    ]);
+
+    expectNoDirectElectron(`
+      const e = require("electron");
+      const a = true ? e : {};
+      a.ipcRenderer = {};
+      e.ipcRenderer.send("SELECTED_ELECTRON_BRANCH_TAINTED");
+    `);
+
+    expectNoDirectElectron(`
+      const e = require("electron");
+      const a = globalThis.flag ? {} : e;
+      a.ipcRenderer = {};
+      e.ipcRenderer.send("UNKNOWN_CONDITION_TAINTED");
+    `);
+  });
+
+  it("resolves nested callees and Array.from mappers through enclosing invocation-frame parameter facts", () => {
+    const preserved = analyzeJavaScriptStaticSource(`
+      const e = require("electron");
+      function outer(make) {
+        return make(e);
+      }
+      function outerDestructured({ make }) {
+        return make.call(null, e);
+      }
+      function outerDefault(make = () => ({})) {
+        return make(e);
+      }
+      function level1(make1) {
+        return level2(make1);
+      }
+      function level2(make2) {
+        return make2(e);
+      }
+      function mapItems(make) {
+        return Array.from([e], make);
+      }
+      function callMethod(bag) {
+        return bag.make(e);
+      }
+      const a = outer(() => ({}));
+      a.ipcRenderer = {};
+      const b = outerDestructured({ make: () => ({}) });
+      b.ipcRenderer = {};
+      const c = outerDefault();
+      c.ipcRenderer = {};
+      const d = outerDefault(undefined);
+      d.ipcRenderer = {};
+      const f = level1(() => ({}));
+      f.ipcRenderer = {};
+      const g = mapItems(() => ({}));
+      g[0].ipcRenderer = {};
+      const h = callMethod({ self: {}, make() { return this.self; } });
+      h.ipcRenderer = {};
+      e.ipcRenderer.send("FRAME_CALLEE_RESOLVED");
+    `);
+    expect(preserved.electron.ipc).toEqual([
+      expect.objectContaining({
+        channel: "FRAME_CALLEE_RESOLVED",
+        operation: "send",
+        side: "renderer",
+      }),
+    ]);
+
+    expectNoDirectElectron(`
+      const e = require("electron");
+      function outer(make) {
+        return make(e);
+      }
+      const a = outer((x) => x);
+      a.ipcRenderer = {};
+      e.ipcRenderer.send("FRAME_PASSTHROUGH_TAINTED");
+    `);
+
+    expectNoDirectElectron(`
+      const e = require("electron");
+      function outer(make) {
+        return make(e);
+      }
+      const a = outer(globalThis.pick);
+      a.ipcRenderer = {};
+      e.ipcRenderer.send("FRAME_OPAQUE_CALLEE_TAINTED");
+    `);
+  });
+});
