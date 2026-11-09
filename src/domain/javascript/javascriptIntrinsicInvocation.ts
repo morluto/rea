@@ -95,21 +95,59 @@ export const javaScriptGenericInvocationMethod = (
   return method === "call" || method === "apply" ? method : undefined;
 };
 
+const taggedTemplateArgumentsCache = new WeakMap<
+  t.TaggedTemplateExpression,
+  t.CallExpression["arguments"] | null
+>();
+
+/** Synthesize the implicit frozen strings array and interpolated expressions for a tagged template. */
+export const javaScriptTaggedTemplateArguments = (
+  node: t.TaggedTemplateExpression,
+): t.CallExpression["arguments"] | undefined => {
+  const cached = taggedTemplateArgumentsCache.get(node);
+  if (cached !== undefined) return cached ?? undefined;
+  const expressions: t.Expression[] = [];
+  for (const expr of node.quasi.expressions) {
+    if (!t.isExpression(expr)) {
+      taggedTemplateArgumentsCache.set(node, null);
+      return undefined;
+    }
+    expressions.push(expr);
+  }
+  const strings = Object.assign(
+    t.arrayExpression(
+      node.quasi.quasis.map((quasi) =>
+        t.stringLiteral(quasi.value.cooked ?? quasi.value.raw),
+      ),
+    ),
+    { start: node.quasi.start ?? null, end: node.quasi.end ?? null },
+  );
+  const built: t.CallExpression["arguments"] = [strings, ...expressions];
+  taggedTemplateArgumentsCache.set(node, built);
+  return built;
+};
+
 /** A member call supplies its receiver; a captured/comma callable does not. */
 export const javaScriptSourceInvocationContext = (
-  node: t.CallExpression | t.OptionalCallExpression,
+  node:
+    | t.CallExpression
+    | t.OptionalCallExpression
+    | t.TaggedTemplateExpression,
   nativeArrayIteration: JavaScriptArrayIterationProof = unknownArrayIteration,
 ): JavaScriptSourceInvocationContext => {
-  const callee = unwrapJavaScriptExpression(node.callee).node;
+  const rawCallee = t.isTaggedTemplateExpression(node) ? node.tag : node.callee;
+  const callee = unwrapJavaScriptExpression(rawCallee).node;
   return {
     receiver:
       t.isMemberExpression(callee) || t.isOptionalMemberExpression(callee)
         ? callee.object
         : undefined,
-    arguments: expandJavaScriptInvocationArguments(
-      node.arguments,
-      nativeArrayIteration,
-    ),
+    arguments: t.isTaggedTemplateExpression(node)
+      ? javaScriptTaggedTemplateArguments(node)
+      : expandJavaScriptInvocationArguments(
+          node.arguments,
+          nativeArrayIteration,
+        ),
   };
 };
 

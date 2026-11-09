@@ -1543,3 +1543,83 @@ describe("Object.assign getter pruning, Array.from selections, and nested defaul
     `);
   });
 });
+
+describe("Unresolved callable fallbacks, collection capture times, and tagged-template defaults", () => {
+  it("taints arguments passed to partially unresolved callables", () => {
+    expectNoDirectElectron(`
+      let e = (function () {
+        var m = { 91288(mod) { mod.exports = require("electron"); } };
+        var c = {};
+        function r(id) {
+          if (c[id]) return c[id].exports;
+          var mod = (c[id] = { exports: {} });
+          m[id](mod, mod.exports, r);
+          return mod.exports;
+        }
+        return r(91288);
+      })();
+      const saved = e;
+      const pick = globalThis.pick || (() => ({}));
+      const picked = pick(e);
+      picked.ipcRenderer.send = () => {};
+      e = null;
+      saved.ipcRenderer.send("UNRESOLVED_CALLABLE_TAINTED");
+    `);
+  });
+
+  it("preserves copy-time slot identities across Array.from and Object.values when inputs mutate later", () => {
+    const preserved = analyzeJavaScriptStaticSource(`
+      const e = require("electron");
+
+      const xs = [{}];
+      const directCopy = Array.from(xs);
+      const mappedCopy = Array.from(xs, (item) => item);
+      xs[0] = e;
+      directCopy[0].ipcRenderer = {};
+      mappedCopy[0].ipcRenderer = {};
+
+      const src = { slot: {} };
+      const valuesCopy = Object.values(src);
+      src.slot = e;
+      valuesCopy[0].ipcRenderer = {};
+
+      e.ipcRenderer.send("COPY_TIME_PRESERVED");
+    `);
+    expect(preserved.electron.ipc).toEqual([
+      expect.objectContaining({
+        channel: "COPY_TIME_PRESERVED",
+        operation: "send",
+        side: "renderer",
+      }),
+    ]);
+  });
+
+  it("applies tagged-template arguments before evaluating parameter defaults", () => {
+    const preserved = analyzeJavaScriptStaticSource(`
+      const e = require("electron");
+      function tag(_strings, value = e) {
+        return value;
+      }
+      const overridden = tag\`\${{}}\`;
+      overridden.ipcRenderer = {};
+      e.ipcRenderer.send("TAGGED_TEMPLATE_DEFAULT_INACTIVE");
+    `);
+    expect(preserved.electron.ipc).toEqual([
+      expect.objectContaining({
+        channel: "TAGGED_TEMPLATE_DEFAULT_INACTIVE",
+        operation: "send",
+        side: "renderer",
+      }),
+    ]);
+
+    expectNoDirectElectron(`
+      const e = require("electron");
+      function tag(_strings, value = e) {
+        return value;
+      }
+      const defaulted = tag\`only-strings\`;
+      defaulted.ipcRenderer.send = () => {};
+      e.ipcRenderer.send("TAGGED_TEMPLATE_DEFAULT_ACTIVE");
+    `);
+  });
+});

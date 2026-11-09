@@ -116,7 +116,10 @@ export const createSemanticReturnedReferences = (
   options?: { readonly includeResultMetadata?: boolean },
 ): ((
   callee: t.Node,
-  invocation?: t.CallExpression | t.OptionalCallExpression,
+  invocation?:
+    | t.CallExpression
+    | t.OptionalCallExpression
+    | t.TaggedTemplateExpression,
 ) => SemanticReturnedReferenceResult) => {
   const results = new WeakMap<
     t.Node,
@@ -204,7 +207,11 @@ export const createSemanticReturnedReferences = (
         : javaScriptSourceInvocationContext(invocation, nativeArrayIteration);
     const sourceGenericInvocation =
       invocation !== undefined &&
-      javaScriptGenericInvocationMethod(invocation.callee) !== undefined;
+      javaScriptGenericInvocationMethod(
+        t.isTaggedTemplateExpression(invocation)
+          ? invocation.tag
+          : invocation.callee,
+      ) !== undefined;
     const inheritedInvocationChanged = (method: "call" | "apply"): boolean => {
       if (invocation === undefined) return false;
       const inheritedPath = ["global", "Function", "prototype", method];
@@ -392,7 +399,11 @@ export const createSemanticReturnedReferences = (
             // opaque effects; earlier captured member reads keep their site.
             invocation !== undefined &&
               current.readAt ===
-                unwrapJavaScriptExpression(invocation.callee).node
+                unwrapJavaScriptExpression(
+                  t.isTaggedTemplateExpression(invocation)
+                    ? invocation.tag
+                    : invocation.callee,
+                ).node
               ? invocation
               : (current.readAt ?? node),
             current.capturedSelections,

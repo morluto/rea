@@ -131,7 +131,10 @@ import {
 } from "./javascriptSourceParser.js";
 
 import { isJavaScriptRpcClientFactory } from "./javascriptRpcEndpoints.js";
-import { expandJavaScriptInvocationArguments } from "./javascriptIntrinsicInvocation.js";
+import {
+  expandJavaScriptInvocationArguments,
+  javaScriptTaggedTemplateArguments,
+} from "./javascriptIntrinsicInvocation.js";
 import { createSemanticModuleInterop } from "./javascriptModuleInterop.js";
 import { semanticAliasSelectionChoices } from "./javascriptSemanticAliasSelections.js";
 import { semanticCopiedReferencePath } from "./javascriptSemanticCopiedReferencePaths.js";
@@ -1167,6 +1170,7 @@ interface ElectronMemberWriteReturnQueries {
 interface InvocationParameterSource {
   readonly node: t.Node;
   readonly projection: JavaScriptSemanticPropertyPath;
+  readonly capturedSelections?: readonly SemanticCapturedSelection[];
   readonly restElementIndex?: number | null;
   readonly copyKind?: "object-rest" | "array-rest";
   readonly copyProjectionOffset?: number;
@@ -1263,6 +1267,25 @@ interface ParameterCopyMetadata {
   readonly copyStartIndex?: number;
 }
 
+const buildPrefixCaptures = (
+  captureAt: t.Node | undefined,
+  prefixLength: number,
+  copy?: ParameterCopyMetadata,
+): readonly SemanticCapturedSelection[] | undefined => {
+  if (captureAt === undefined || prefixLength === 0) return undefined;
+  const captures: SemanticCapturedSelection[] = [];
+  for (let idx = 0; idx < prefixLength; idx += 1) {
+    captures.push({
+      at: captureAt,
+      depth: idx + 1,
+      ...(copy?.copyKind === "object-rest" && idx === copy.copyProjectionOffset
+        ? { ownEnumerable: true }
+        : {}),
+    });
+  }
+  return captures;
+};
+
 const bindParameterPatternSources = (
   pattern: t.Node,
   argNode: t.Node,
@@ -1270,6 +1293,7 @@ const bindParameterPatternSources = (
   state: JavaScriptSemanticAnalysisState,
   mapped: Map<string, InvocationParameterSource[]>,
   copy?: ParameterCopyMetadata,
+  captureAt?: t.Node,
 ): void => {
   const target = unwrapJavaScriptExpression(pattern).node;
   if (t.isAssignmentPattern(target)) {
@@ -1280,6 +1304,7 @@ const bindParameterPatternSources = (
       state,
       mapped,
       copy,
+      captureAt,
     );
     return;
   }
@@ -1287,9 +1312,15 @@ const bindParameterPatternSources = (
     const binding = resolveSemanticBindingState(state, target, target.name);
     if (binding !== undefined) {
       const list = mapped.get(binding.bindingId) ?? [];
+      const capturedSelections = buildPrefixCaptures(
+        captureAt,
+        prefix.length,
+        copy,
+      );
       list.push({
         node: argNode,
         projection: prefix,
+        ...(capturedSelections === undefined ? {} : { capturedSelections }),
         ...(copy === undefined ? {} : copy),
       });
       mapped.set(binding.bindingId, list);
@@ -1312,6 +1343,7 @@ const bindParameterPatternSources = (
             copyProjectionOffset: prefix.length,
             copyExcludedKeys: semanticObjectPatternKeys(target),
           },
+          captureAt,
         );
       else
         bindParameterPatternSources(
@@ -1321,6 +1353,7 @@ const bindParameterPatternSources = (
           state,
           mapped,
           copy,
+          captureAt,
         );
     }
   } else if (t.isArrayPattern(target)) {
@@ -1340,6 +1373,7 @@ const bindParameterPatternSources = (
             copyProjectionOffset: prefix.length,
             copyStartIndex: idx,
           },
+          captureAt,
         );
       else
         bindParameterPatternSources(
@@ -1349,6 +1383,7 @@ const bindParameterPatternSources = (
           state,
           mapped,
           copy,
+          captureAt,
         );
     });
   }
@@ -1361,6 +1396,7 @@ const bindRestParameterSources = (
   firstSpread: number,
   state: JavaScriptSemanticAnalysisState,
   mapped: Map<string, InvocationParameterSource[]>,
+  captureAt?: t.Node,
 ): void => {
   const target = unwrapJavaScriptExpression(pattern).node;
   if (t.isIdentifier(target)) {
@@ -1386,6 +1422,9 @@ const bindRestParameterSources = (
           list.push({
             node: arg.argument,
             projection: [null],
+            ...(captureAt === undefined
+              ? {}
+              : { capturedSelections: [{ at: captureAt, depth: 1 }] }),
             restElementIndex: null,
           });
         else if (t.isExpression(arg))
@@ -1411,13 +1450,22 @@ const bindRestParameterSources = (
           firstSpread,
           state,
           mapped,
+          captureAt,
         );
         return;
       }
       if (firstSpread < 0 || argIndex < firstSpread) {
         const arg = expanded[argIndex];
         if (arg !== undefined && t.isExpression(arg))
-          bindParameterPatternSources(elem, arg, [], state, mapped);
+          bindParameterPatternSources(
+            elem,
+            arg,
+            [],
+            state,
+            mapped,
+            undefined,
+            captureAt,
+          );
         return;
       }
       for (const arg of expanded.slice(firstSpread)) {
@@ -1428,9 +1476,19 @@ const bindRestParameterSources = (
             [null],
             state,
             mapped,
+            undefined,
+            captureAt,
           );
         else if (t.isExpression(arg))
-          bindParameterPatternSources(elem, arg, [], state, mapped);
+          bindParameterPatternSources(
+            elem,
+            arg,
+            [],
+            state,
+            mapped,
+            undefined,
+            captureAt,
+          );
       }
     });
     return;
@@ -1445,6 +1503,7 @@ const bindRestParameterSources = (
           firstSpread,
           state,
           mapped,
+          captureAt,
         );
         continue;
       }
@@ -1462,9 +1521,19 @@ const bindRestParameterSources = (
               [null],
               state,
               mapped,
+              undefined,
+              captureAt,
             );
           else if (t.isExpression(arg))
-            bindParameterPatternSources(prop.value, arg, [], state, mapped);
+            bindParameterPatternSources(
+              prop.value,
+              arg,
+              [],
+              state,
+              mapped,
+              undefined,
+              captureAt,
+            );
         }
         continue;
       }
@@ -1474,7 +1543,15 @@ const bindRestParameterSources = (
       if (firstSpread < 0 || argIndex < firstSpread) {
         const arg = expanded[argIndex];
         if (arg !== undefined && t.isExpression(arg))
-          bindParameterPatternSources(prop.value, arg, [], state, mapped);
+          bindParameterPatternSources(
+            prop.value,
+            arg,
+            [],
+            state,
+            mapped,
+            undefined,
+            captureAt,
+          );
       } else {
         for (const arg of expanded.slice(firstSpread)) {
           if (t.isSpreadElement(arg))
@@ -1484,9 +1561,19 @@ const bindRestParameterSources = (
               [null],
               state,
               mapped,
+              undefined,
+              captureAt,
             );
           else if (t.isExpression(arg))
-            bindParameterPatternSources(prop.value, arg, [], state, mapped);
+            bindParameterPatternSources(
+              prop.value,
+              arg,
+              [],
+              state,
+              mapped,
+              undefined,
+              captureAt,
+            );
         }
       }
     }
@@ -2158,6 +2245,8 @@ const bindArrayFromMapperParameters = (
           [seg],
           state,
           mapParams,
+          undefined,
+          iterable,
         );
       continue;
     }
@@ -2174,6 +2263,7 @@ const bindArrayFromMapperParameters = (
           list.push({
             node: iterable,
             projection: [seg],
+            capturedSelections: [{ at: iterable, depth: 1 }],
             restElementIndex: 0,
           });
         mapParams.set(restBinding.bindingId, list);
@@ -2195,6 +2285,7 @@ const bindArrayFromMapperParameters = (
                 list.push({
                   node: iterable,
                   projection: [seg],
+                  capturedSelections: [{ at: iterable, depth: 1 }],
                   restElementIndex: 0,
                 });
               mapParams.set(innerBinding.bindingId, list);
@@ -2208,6 +2299,8 @@ const bindArrayFromMapperParameters = (
               [seg],
               state,
               mapParams,
+              undefined,
+              iterable,
             );
         }
       }
@@ -2223,6 +2316,8 @@ const bindArrayFromMapperParameters = (
               [seg],
               state,
               mapParams,
+              undefined,
+              iterable,
             );
       }
     }
@@ -2323,6 +2418,7 @@ const mapInvocationParameterSources = (
               firstSpread,
               state,
               mapped,
+              callSite,
             );
           if (allDefaults.length > 0 && callableArgsComplete)
             markActiveRestDefaults(
@@ -2340,7 +2436,15 @@ const mapInvocationParameterSources = (
         if (firstSpread < 0 || index < firstSpread) {
           const arg = expanded[index];
           if (arg !== undefined && t.isExpression(arg))
-            bindParameterPatternSources(param, arg, [], state, mapped);
+            bindParameterPatternSources(
+              param,
+              arg,
+              [],
+              state,
+              mapped,
+              undefined,
+              callSite,
+            );
           if (allDefaults.length > 0 && callableArgsComplete) {
             if (arg === undefined)
               markActivePatternDefaults(
@@ -2380,9 +2484,19 @@ const mapInvocationParameterSources = (
               [null],
               state,
               mapped,
+              undefined,
+              callSite,
             );
           else if (t.isExpression(arg))
-            bindParameterPatternSources(param, arg, [], state, mapped);
+            bindParameterPatternSources(
+              param,
+              arg,
+              [],
+              state,
+              mapped,
+              undefined,
+              callSite,
+            );
         }
         if (allDefaults.length > 0 && callableArgsComplete)
           markActivePatternDefaults(
@@ -2603,8 +2717,14 @@ const enqueueNonIdentifierMemberWriteSources = (
         },
       );
     }
-  } else if (t.isCallExpression(node) || t.isOptionalCallExpression(node)) {
-    const intrinsic = interop.intrinsicInvocation(node);
+  } else if (
+    t.isCallExpression(node) ||
+    t.isOptionalCallExpression(node) ||
+    t.isTaggedTemplateExpression(node)
+  ) {
+    const intrinsic = t.isTaggedTemplateExpression(node)
+      ? undefined
+      : interop.intrinsicInvocation(node);
     if (intrinsic?.kind === "known") {
       const [ns, obj, method] = intrinsic.path;
       const callArgs = intrinsic.arguments ?? [];
@@ -2742,6 +2862,11 @@ const enqueueNonIdentifierMemberWriteSources = (
         if (target !== undefined && t.isExpression(target)) {
           const remainingSuffix = current.suffix.slice(1);
           const readAt = current.readAt ?? node;
+          const targetCapturedSelections: readonly SemanticCapturedSelection[] =
+            [
+              ...(capturedSelections ?? []),
+              { at: target, depth: 1, ownEnumerable: true },
+            ];
           const staticKeys = staticObjectValuesKeys(target, state, interop);
           if (staticKeys !== undefined) {
             for (const seg of selectArrayFromInputSegments(
@@ -2756,7 +2881,7 @@ const enqueueNonIdentifierMemberWriteSources = (
                     node: target,
                     suffix: [key, ...remainingSuffix],
                     readAt,
-                    capturedSelections,
+                    capturedSelections: targetCapturedSelections,
                   });
               } else if (
                 seg !== null &&
@@ -2774,7 +2899,7 @@ const enqueueNonIdentifierMemberWriteSources = (
                       node: target,
                       suffix: [staticKeys[idx]!, ...remainingSuffix],
                       readAt,
-                      capturedSelections,
+                      capturedSelections: targetCapturedSelections,
                     });
                 }
               } else if (
@@ -2787,7 +2912,7 @@ const enqueueNonIdentifierMemberWriteSources = (
                     node: target,
                     suffix: [key, ...remainingSuffix],
                     readAt,
-                    capturedSelections,
+                    capturedSelections: targetCapturedSelections,
                   });
               } else {
                 pending.push({
@@ -2795,13 +2920,13 @@ const enqueueNonIdentifierMemberWriteSources = (
                   node: target,
                   suffix: [null, ...remainingSuffix],
                   readAt,
-                  capturedSelections,
+                  capturedSelections: targetCapturedSelections,
                 });
               }
             }
             return;
           }
-          const denseLen = denseKnownArrayLengthAt(target, state, readAt);
+          const denseLen = denseKnownArrayLengthAt(target, state, target);
           if (denseLen !== undefined) {
             for (const seg of selectArrayFromInputSegments(
               current.suffix[0]!,
@@ -2812,7 +2937,7 @@ const enqueueNonIdentifierMemberWriteSources = (
                 node: target,
                 suffix: [seg, ...remainingSuffix],
                 readAt,
-                capturedSelections,
+                capturedSelections: targetCapturedSelections,
               });
             return;
           }
@@ -2820,7 +2945,7 @@ const enqueueNonIdentifierMemberWriteSources = (
             node: target,
             suffix: [null, ...remainingSuffix],
             readAt,
-            capturedSelections,
+            capturedSelections: targetCapturedSelections,
             callFrame: current.callFrame,
           });
         }
@@ -2843,7 +2968,7 @@ const enqueueNonIdentifierMemberWriteSources = (
             semanticKnownArrayIterationAt(iterableExpr, state);
           const denseArrayLen =
             knownArrayIter && iterableExpr !== undefined
-              ? denseKnownArrayLengthAt(iterableExpr, state, readAt)
+              ? denseKnownArrayLengthAt(iterableExpr, state, iterableExpr)
               : undefined;
           const arrayLike =
             !knownArrayIter && iterableExpr !== undefined
@@ -2864,18 +2989,32 @@ const enqueueNonIdentifierMemberWriteSources = (
                   node: iterable.argument,
                   suffix: [null, null, ...elementSuffix],
                   readAt,
+                  capturedSelections: [
+                    ...(semanticShiftCapturedSelections(
+                      capturedSelections,
+                      1,
+                    ) ?? []),
+                    { at: iterable.argument, depth: 1 },
+                    { at: iterable.argument, depth: 2 },
+                  ],
                   callFrame: current.callFrame,
                 },
                 {
                   node: iterable.argument,
                   suffix: [null, ...elementSuffix],
                   readAt,
+                  capturedSelections: [
+                    ...(capturedSelections ?? []),
+                    { at: iterable.argument, depth: 1 },
+                  ],
                   callFrame: current.callFrame,
                 },
               );
               return;
             }
             if (!t.isExpression(iterable)) return;
+            const iterableCapturedSelections: readonly SemanticCapturedSelection[] =
+              [...(capturedSelections ?? []), { at: iterable, depth: 1 }];
             if (knownArrayIter) {
               for (const seg of inputSegments) {
                 const nextSuffix = [seg, ...elementSuffix];
@@ -2884,7 +3023,7 @@ const enqueueNonIdentifierMemberWriteSources = (
                   node: iterable,
                   suffix: nextSuffix,
                   readAt,
-                  capturedSelections,
+                  capturedSelections: iterableCapturedSelections,
                   iteratedDepths: [
                     ...new Set([
                       ...(current.iteratedDepths ?? []),
@@ -2908,7 +3047,7 @@ const enqueueNonIdentifierMemberWriteSources = (
                   node: iterable,
                   suffix: [seg, ...elementSuffix],
                   readAt,
-                  capturedSelections,
+                  capturedSelections: iterableCapturedSelections,
                 });
               return;
             }
@@ -2916,7 +3055,7 @@ const enqueueNonIdentifierMemberWriteSources = (
               {
                 ...current,
                 node: iterable,
-                capturedSelections,
+                capturedSelections: iterableCapturedSelections,
                 iteratedDepths: [
                   ...new Set([
                     ...(current.iteratedDepths ?? []),
@@ -2934,6 +3073,7 @@ const enqueueNonIdentifierMemberWriteSources = (
                 node: iterable,
                 suffix: [null, ...elementSuffix],
                 readAt,
+                capturedSelections: iterableCapturedSelections,
                 iteratedDepths: [
                   ...new Set([
                     ...(current.iteratedDepths ?? []),
@@ -2952,6 +3092,10 @@ const enqueueNonIdentifierMemberWriteSources = (
                 node: iterable,
                 suffix: elementSuffix,
                 readAt,
+                capturedSelections: semanticShiftCapturedSelections(
+                  capturedSelections,
+                  -1,
+                ),
                 iteratedDepths: [
                   ...new Set([
                     ...(current.iteratedDepths ?? []),
@@ -3070,6 +3214,12 @@ const enqueueNonIdentifierMemberWriteSources = (
         return;
       }
     }
+    const calleeNode = t.isTaggedTemplateExpression(node)
+      ? node.tag
+      : node.callee;
+    const rawArguments = t.isTaggedTemplateExpression(node)
+      ? javaScriptTaggedTemplateArguments(node)
+      : node.arguments;
     const isIterated =
       current.iteratedDepths?.includes(current.suffix.length) === true;
     const isIteratedElement =
@@ -3077,16 +3227,16 @@ const enqueueNonIdentifierMemberWriteSources = (
     const isAwaited =
       current.awaitDepths?.includes(current.suffix.length) === true;
     const returned = isIterated
-      ? returnQueries.potential(node.callee, node)
+      ? returnQueries.potential(calleeNode, node)
       : isAwaited
-        ? returnQueries.awaited(node.callee, node)
-        : returnQueries.direct(node.callee, node);
+        ? returnQueries.awaited(calleeNode, node)
+        : returnQueries.direct(calleeNode, node);
     const {
       parameterSources,
       inactiveDefaultNodes,
       receiverSources,
       hasOpaqueArguments,
-    } = mapInvocationParameterSources(returned, node.arguments, node, state);
+    } = mapInvocationParameterSources(returned, rawArguments, node, state);
     const { frame: nextCallFrame, overflowed: callFrameOverflow } =
       createNextCallFrame(
         allocateFrameId,
@@ -3144,30 +3294,13 @@ const enqueueNonIdentifierMemberWriteSources = (
     if (
       callFrameOverflow ||
       hasOpaqueArguments ||
+      returned.unresolvedCallable ||
       returned.unresolvedInvocation ||
       (returned.callables.size === 0 && returned.references.length === 0)
     )
-      enqueueOpaqueInvocationArguments(node.arguments, current, pending);
+      enqueueOpaqueInvocationArguments(rawArguments ?? [], current, pending);
   } else if (t.isNewExpression(node)) {
     enqueueOpaqueInvocationArguments(node.arguments, current, pending);
-  } else if (t.isTaggedTemplateExpression(node)) {
-    const returned = current.awaitDepths?.includes(current.suffix.length)
-      ? returnQueries.awaited(node.tag)
-      : returnQueries.direct(node.tag);
-    for (const ref of returned.references)
-      pending.push({
-        node: ref.node,
-        suffix: [...ref.projection, ...current.suffix],
-        readAt: current.readAt ?? node,
-        capturedSelections: semanticShiftCapturedSelections(
-          capturedSelections,
-          ref.projection.length,
-        ),
-        awaitDepths: current.awaitDepths,
-        iteratedDepths: current.iteratedDepths,
-        iteratedElementDepths: current.iteratedElementDepths,
-        callFrame: current.callFrame,
-      });
   } else if (t.isAwaitExpression(node)) {
     pending.push({
       ...current,
@@ -3894,18 +4027,38 @@ const enqueueCallFrameParameterMatches = (
     const mappedArgs = frame.parameterSources.get(binding.bindingId);
     if (mappedArgs === undefined) continue;
     for (const argSource of mappedArgs) {
+      const unwrappedArg = unwrapJavaScriptExpression(argSource.node).node;
+      const memberArg =
+        t.isMemberExpression(unwrappedArg) ||
+        t.isOptionalMemberExpression(unwrappedArg)
+          ? electronMemberPath(unwrappedArg)
+          : undefined;
+      const argRoot = memberArg === undefined ? argSource.node : memberArg.root;
+      const argMembers = memberArg === undefined ? [] : memberArg.members;
+      const argMemberCaptures: SemanticCapturedSelection[] = [];
+      for (let idx = 0; idx < argMembers.length; idx += 1)
+        argMemberCaptures.push({ at: argSource.node, depth: idx + 1 });
+      const shiftedArgCaptures = semanticShiftCapturedSelections(
+        argSource.capturedSelections,
+        argMembers.length,
+      );
       for (const selectedSuffix of selectMappedParameterSuffixes(
         argSource,
         current.suffix,
       )) {
+        const nextSuffix = [...argMembers, ...selectedSuffix];
         enqueue({
-          node: argSource.node,
-          suffix: selectedSuffix,
+          node: argRoot,
+          suffix: nextSuffix,
           readAt: frame.callReadAt,
-          capturedSelections: semanticShiftCapturedSelections(
-            capturedSelections,
-            selectedSuffix.length - current.suffix.length,
-          ),
+          capturedSelections: [
+            ...(semanticShiftCapturedSelections(
+              capturedSelections,
+              nextSuffix.length - current.suffix.length,
+            ) ?? []),
+            ...argMemberCaptures,
+            ...(shiftedArgCaptures ?? []),
+          ],
           awaitDepths: current.awaitDepths,
           iteratedDepths: current.iteratedDepths,
           iteratedElementDepths: current.iteratedElementDepths,
