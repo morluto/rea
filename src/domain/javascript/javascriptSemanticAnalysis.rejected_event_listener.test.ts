@@ -440,6 +440,84 @@ e.on("ready");`),
 });
 
 /**
+ * Node invokes `EventEmitter.init.call(this, opts)`. The initializer function is
+ * mutable: an external configurator can replace its `.call` slot with a wrapper
+ * that installs an own defaulting listener method. Measured on Node 24.22.1:
+ * `e.on("ready")` then registers one listener without throwing.
+ */
+it.each([
+  [
+    "a named import",
+    'import { EventEmitter } from "node:events";',
+    "EventEmitter",
+    "EventEmitter.init",
+  ],
+  [
+    "a namespace",
+    'import * as events from "node:events";',
+    "events.EventEmitter",
+    "events.EventEmitter.init",
+  ],
+  [
+    "an initializer alias",
+    'import { EventEmitter } from "node:events"; const init = EventEmitter.init;',
+    "EventEmitter",
+    "init",
+  ],
+  [
+    "a required module",
+    'const events = require("node:events");',
+    "events.EventEmitter",
+    "events.EventEmitter.init",
+    true,
+  ],
+  [
+    "an inline require",
+    'import { EventEmitter } from "node:events";',
+    "EventEmitter",
+    'require("events").EventEmitter.init',
+    true,
+  ],
+] as const)(
+  "checks initializer escape timing through %s",
+  (_name, header, constructor, initializer, commonJs: boolean = false) => {
+    const events = commonJs ? eventsForCommonJsSource : eventsForSource;
+    const source = (before: boolean) => `${header}
+import { configure } from "./configure.js";
+${before ? `configure(${initializer});` : ""}
+const e = new ${constructor}();
+${before ? "" : `configure(${initializer});`}
+e.on("ready");`;
+    expect(events(source(true))).toContainEqual({
+      kind: "register",
+      method: "on",
+      eventName: "ready",
+    });
+    expect(events(source(false))).toEqual([]);
+  },
+);
+
+it("still rejects a missing listener when only the initializer call value escapes", () => {
+  expect(
+    eventsForSource(`import { EventEmitter } from "node:events";
+import { configure } from "./configure.js";
+configure(EventEmitter.init.call);
+const e = new EventEmitter();
+e.on("ready");`),
+  ).toEqual([]);
+});
+
+it("keeps the registration after an initializer alias call slot is replaced", () => {
+  expect(
+    eventsForSource(`import { EventEmitter } from "node:events";
+const init = EventEmitter.init;
+init.call = replacement;
+const e = new EventEmitter();
+e.on("ready");`),
+  ).toContainEqual({ kind: "register", method: "on", eventName: "ready" });
+});
+
+/**
  * Two specifiers name the same mutable module, so a replacement installed
  * through one import answers the other. Measured on Node 22.22.2: `e.on("ready")`
  * does not throw after the class is replaced through the first import.

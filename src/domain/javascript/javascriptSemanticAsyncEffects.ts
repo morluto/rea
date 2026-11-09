@@ -276,6 +276,10 @@ const eventsClassPath = (path: JavaScriptSemanticPropertyPath): boolean => {
   return true;
 };
 
+/** The initializer object owns the `.call` slot Node reads during allocation. */
+const eventsInitializerPath = (path: JavaScriptSemanticPropertyPath): boolean =>
+  path.at(-1) === "init" && eventsClassPath(path.slice(0, -1));
+
 const reachesEventsClassSurface = (
   binding: JavaScriptSemanticBindingState,
   state: JavaScriptSemanticAnalysisState,
@@ -301,6 +305,7 @@ type EventEmitterEffect = t.Node | undefined;
 
 interface EventEmitterClassEffects {
   readonly writes: readonly EventEmitterEffect[];
+  readonly initializerEscapes: readonly EventEmitterEffect[];
   readonly escapes: readonly EventEmitterEffect[];
 }
 
@@ -325,6 +330,7 @@ const indexEventEmitterSharedEffects = (
   state: JavaScriptSemanticAnalysisState,
 ): EventEmitterSharedEffects => {
   const writes: EventEmitterEffect[] = [];
+  const initializerEscapes: EventEmitterEffect[] = [];
   const escapes: EventEmitterEffect[] = [];
   const otherRoots = new Map<string, EventEmitterClassEffects>();
   const prototypeWrites = new Map<string, EventEmitterEffect[]>();
@@ -347,15 +353,25 @@ const indexEventEmitterSharedEffects = (
     const classEscapes = binding.escapedPaths
       .filter(({ path }) => eventsClassPath(path))
       .map(({ node }) => node);
-    if (classWrites.length > 0 || classEscapes.length > 0) {
+    const classInitializerEscapes = binding.escapedPaths
+      .filter(({ path }) => eventsInitializerPath(path))
+      .map(({ node }) => node);
+    if (
+      classWrites.length > 0 ||
+      classEscapes.length > 0 ||
+      classInitializerEscapes.length > 0
+    ) {
       if (reachesEventsClassSurface(binding, state)) {
         for (const node of classWrites) writes.push(node);
         for (const node of classEscapes) escapes.push(node);
+        for (const node of classInitializerEscapes)
+          initializerEscapes.push(node);
       } else {
         // A proven construction's root remains relevant even when the general
         // class-origin predicate cannot establish that binding's surface.
         otherRoots.set(binding.bindingId, {
           writes: classWrites,
+          initializerEscapes: classInitializerEscapes,
           escapes: classEscapes,
         });
       }
@@ -371,18 +387,28 @@ const indexEventEmitterSharedEffects = (
     ) ?? []) {
       if (kind === "escape") {
         if (eventsClassPath(path)) escapes.push(node);
+        if (eventsInitializerPath(path)) initializerEscapes.push(node);
         if (escapesPrototypeObject(path)) prototypeEscapes.push(node);
       } else {
         if (targetsEventsClass(path)) writes.push(node);
         retainPrototypeWrite(path, node);
       }
     }
-  return { writes, escapes, otherRoots, prototypeWrites, prototypeEscapes };
+  return {
+    writes,
+    initializerEscapes,
+    escapes,
+    otherRoots,
+    prototypeWrites,
+    prototypeEscapes,
+  };
 };
 
 /**
- * Construction-only writes matter before allocation. Class and namespace
- * escapes can replace the shared prototype until the listener call.
+ * Construction-only writes and initializer escapes matter before allocation.
+ * An escaped initializer can gain an own `.call` wrapper without replacement.
+ * Class and namespace escapes can replace the shared prototype until the
+ * listener call.
  */
 const eventsClassSurfaceTouched = (
   effects: EventEmitterSharedEffects,
@@ -396,7 +422,8 @@ const eventsClassSurfaceTouched = (
     !semanticTopLevelEffectFollowsCapture(read, effect, state.parentsByNode);
   const touched = (selected: EventEmitterClassEffects): boolean =>
     selected.escapes.some((node) => precedes(read, node)) ||
-    selected.writes.some((node) => precedes(construction, node));
+    selected.writes.some((node) => precedes(construction, node)) ||
+    selected.initializerEscapes.some((node) => precedes(construction, node));
   if (touched(effects)) return true;
   const root = constructionRootBinding(construction.callee, state);
   const rootEffects =
