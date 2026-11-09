@@ -116,6 +116,11 @@ const clientWithDossier = (relationshipCoverage: unknown) => {
     facet_availability: facetAvailability(),
     outgoing_references: [],
   };
+  // A declared coverage that leaves caller or callee discovery unestablished
+  // makes compare_functions report the calls dimension as unknown, so the stub
+  // derives it the way the comparison does rather than pinning one shape.
+  const callsUnknown =
+    (relationshipCoverage as { status?: string } | null)?.status !== "complete";
   return {
     callTool: async (request: { readonly name: string }) => {
       if (request.name === "analyze_function") return { structuredContent };
@@ -132,7 +137,11 @@ const clientWithDossier = (relationshipCoverage: unknown) => {
             "cfg",
           ].map((dimension) => ({
             dimension,
-            status: dimension === "references" ? "unknown" : "unchanged",
+            status:
+              dimension === "references" ||
+              (dimension === "calls" && callsUnknown)
+                ? "unknown"
+                : "unchanged",
           })),
         },
       };
