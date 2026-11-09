@@ -36,7 +36,7 @@ const textAt = (
   pointer: string,
   attribute?: string,
 ) => {
-  const element = resolvePointer(view, pointer);
+  const element = resolvePointer(view, pointer, "xml");
   return isXmlElement(element) ? elementText(element, attribute) : undefined;
 };
 
@@ -55,7 +55,7 @@ const isNamedRecord = (node: JsonValue, key: string) =>
  * and the nodes in it, each holding `TEXT`, are no runs.
  */
 const runsOf = (view: JsonValue | null, pointer: string, key: string) => {
-  const element = resolvePointer(view, pointer);
+  const element = resolvePointer(view, pointer, "xml");
   const holds = (node: JsonValue) =>
     isXmlElement(node) && typeof node.attributes[key] === "string";
   let runs = 0;
@@ -122,7 +122,7 @@ export const attributeTextCheck = (
   | undefined => {
   const { ends } = context;
   const element = [ends.final, ends.baseline]
-    .map((view) => resolvePointer(view, owner))
+    .map((view) => resolvePointer(view, owner, "xml"))
     .find(isXmlElement);
   const value = element?.attributes[key];
   if (
@@ -169,7 +169,7 @@ export const textAttributes = (
   noise: (pointer: string) => NoiseReason | undefined,
 ) => {
   const own = (view: JsonValue | null, pointer: string) => {
-    const element = resolvePointer(view, pointer);
+    const element = resolvePointer(view, pointer, "xml");
     return isXmlElement(element)
       ? Object.keys(element.attributes).map((key) => ({ owner: pointer, key }))
       : [];
@@ -194,7 +194,7 @@ export const readsText =
   (checked: readonly { readonly element: string; readonly key: string }[]) =>
   (pointer: string, view: JsonValue | null): boolean =>
     checked.some(({ element, key }) => {
-      const run = resolvePointer(view, pointer);
+      const run = resolvePointer(view, pointer, "xml");
       return (
         pointer.startsWith(`${element}/`) &&
         (attributeKeyOf(pointer) === key ||

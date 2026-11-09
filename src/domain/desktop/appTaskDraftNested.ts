@@ -84,7 +84,9 @@ const cousinsOf = (
 ): Element[] =>
   likes.flatMap((like) =>
     recordsIn(
-      steps.length === 0 ? like : resolvePointer(like, `/${steps.join("/")}`),
+      steps.length === 0
+        ? like
+        : resolvePointer(like, `/${steps.join("/")}`, "xml"),
     ).filter((record) => record.name === tag),
   );
 
@@ -201,7 +203,11 @@ export const nestedRecordChecks = (
   element: JsonValue,
 ): DesktopTaskCheckInput[] => {
   if (!isXmlElement(element)) return [];
-  const list = resolvePointer(context.final, pointer.replace(/\/[^/]+$/u, ""));
+  const list = resolvePointer(
+    context.final,
+    pointer.replace(/\/[^/]+$/u, ""),
+    "xml",
+  );
   const likes = (Array.isArray(list) ? list : []).filter(
     (item) =>
       item !== element && isXmlElement(item) && item.name === element.name,

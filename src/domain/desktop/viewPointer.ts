@@ -1,6 +1,11 @@
 import type { JsonValue } from "../jsonValue.js";
 import { collapseWhitespace, isTimestamp } from "./appTask.js";
-import { bracketed, selectorOf, type Condition } from "./viewSelector.js";
+import {
+  bracketed,
+  insideSteps,
+  selectorOf,
+  type Condition,
+} from "./viewSelector.js";
 
 /** The arrays a pointer stepped into, each as the pointer to it. */
 interface ArraySteps {
@@ -74,7 +79,7 @@ export const elementText = (element: JsonValue, attribute?: string): string => {
   return parts.join("");
 };
 
-/** The field a condition reads from a member, when it is a string; a child's text is none, since several children may hold one. */
+/** The field a condition reads from a member, when it is a string; what a path inside it reads is none, since several elements may hold one. */
 const fieldOf = (member: JsonValue, { prefix, key }: Condition) => {
   if (!isRecord(member) || prefix === ">") return undefined;
   const fields = prefix === "@" ? own(member, "attributes") : member;
@@ -89,34 +94,74 @@ const textWithoutStamps = (node: JsonValue): string => {
   return node.children.map((child) => textWithoutStamps(child)).join("");
 };
 
-/** Whether an element has a child element named `key` whose text, its whitespace collapsed, is `value`. */
-const hasChildText = (member: JsonValue, { key, value }: Condition) =>
-  isXmlElement(member) &&
-  member.children.some((child) => {
-    if (!isXmlElement(child) || child.name !== key) return false;
-    // A nested save time is not part of the name. A child that is only a time still matches that time.
-    const plain = collapseWhitespace(textWithoutStamps(child));
-    const text = plain === "" ? collapseWhitespace(elementText(child)) : plain;
-    return text === value;
-  });
+/** A child's text as a condition reads it: whitespace collapsed, without a nested save time unless it is only a time. */
+const conditionText = (child: JsonValue): string => {
+  const plain = collapseWhitespace(textWithoutStamps(child));
+  return plain === "" ? collapseWhitespace(elementText(child)) : plain;
+};
+
+/**
+ * Whether an element has a child element named the first step that holds
+ * `value` along the rest: at the last step its text, whitespace collapsed,
+ * or with `NAME@ATTR` its attribute ATTR. Each element on the way is visited once.
+ */
+const elementHolds = (
+  element: { readonly children: readonly JsonValue[] },
+  steps: readonly string[],
+  value: string,
+): boolean => {
+  const [step = "", ...rest] = steps;
+  const at = rest.length === 0 ? step.indexOf("@") : -1;
+  const name = at < 0 ? step : step.slice(0, at);
+  return element.children.some(
+    (child) =>
+      isXmlElement(child) &&
+      child.name === name &&
+      (rest.length > 0
+        ? elementHolds(child, rest, value)
+        : at < 0
+          ? conditionText(child) === value
+          : own(child.attributes, step.slice(at + 1)) === value),
+  );
+};
+
+/** Whether a `>` condition's path inside a member holds its value: in an XML element as `elementHolds` reads it, in a JSON record the string at those keys. */
+const holdsInside = (
+  member: JsonValue,
+  { key, value }: Condition,
+  format: string | null | undefined,
+) => {
+  const steps = insideSteps(key) ?? [];
+  if (format === "xml")
+    return isXmlElement(member) && elementHolds(member, steps, value);
+  let found: JsonValue | undefined = member;
+  for (const step of steps)
+    found = isRecord(found) ? own(found, step) : undefined;
+  return found === value;
+};
 
 /** Whether an array member meets every condition; selectors compare strings only. */
-const selects = (member: JsonValue, conditions: readonly Condition[]) =>
+const selects = (
+  member: JsonValue,
+  conditions: readonly Condition[],
+  format: string | null | undefined,
+) =>
   isRecord(member) &&
   conditions.every((condition) =>
     condition.prefix === ">"
-      ? hasChildText(member, condition)
+      ? holdsInside(member, condition, format)
       : fieldOf(member, condition) === condition.value,
   );
 
 /** Whether a member meets a selector's conditions, or undefined when the string is no selector. */
 export const selectorTest = (
   selector: string,
+  format: string | null | undefined,
 ): ((member: JsonValue) => boolean) | undefined => {
   const conditions = selectorOf(selector);
   return conditions === undefined
     ? undefined
-    : (member) => selects(member, conditions);
+    : (member) => selects(member, conditions, format);
 };
 
 /** One step into an array: by index, or by a selector that must match one member, or none when it is the last. */
@@ -124,6 +169,7 @@ const arrayStep = (
   items: readonly JsonValue[],
   token: string,
   last: boolean,
+  format: string | null | undefined,
 ): { readonly member: JsonValue } | Stepped => {
   if (INDEX.test(token)) {
     const index = Number(token);
@@ -139,7 +185,7 @@ const arrayStep = (
           problem: `${token} is not a selector of the form [KEY=VALUE]`,
         }
       : { kind: "none" };
-  const matched = items.filter((item) => selects(item, conditions));
+  const matched = items.filter((item) => selects(item, conditions, format));
   if (matched.length === 1) return { member: matched[0] ?? null };
   if (matched.length > 1)
     return {
@@ -156,17 +202,22 @@ const arrayStep = (
  * Follow an RFC 6901 pointer through a view, where a segment applied to an
  * array may also be a selector: `[KEY=VALUE]` one or more times, naming the one
  * member whose string field KEY equals VALUE, with `@KEY` whose `attributes`
- * hold it, as REA's XML view keeps them, or with `>KEY` that has a child
- * element KEY of that text. So `/root/children/[name=Object][@name=Hole]`
- * is the `Object` element named `Hole`, wherever it sits among its siblings.
+ * hold it, as REA's XML view keeps them, or with `>PATH` that holds it up to
+ * three steps inside: a child element KEY of that text, `KEY/SUB` a grandchild,
+ * `KEY@ATTR` a child's attribute, or in a JSON record the string at those keys.
+ * So `/root/children/[name=Object][@name=Hole]` is the `Object` element named
+ * `Hole`, wherever it sits among its siblings. A step is decoded before it is
+ * read as a selector, so a path's `/` is written `~1`.
  */
 export const locatePointer = (
   view: JsonValue | null,
   pointer: string,
+  format: string | null | undefined,
 ): Located => {
   if (pointer === "")
     return { kind: "value", value: view, searched: [], byPosition: [] };
   let current: JsonValue = view;
+  let currentFormat = format;
   const segments = pointer.slice(1).split("/");
   const steps = { searched: [] as string[], byPosition: [] as string[] };
   for (const [position, segment] of segments.entries()) {
@@ -179,14 +230,28 @@ export const locatePointer = (
       const indexed = INDEX.test(token);
       if (!indexed && selectorOf(token) !== undefined)
         steps.searched.push(array);
-      const step = arrayStep(current, token, position === segments.length - 1);
+      const step = arrayStep(
+        current,
+        token,
+        position === segments.length - 1,
+        currentFormat,
+      );
       if ("kind" in step) return { ...step, ...steps };
       if (indexed && typeof step.member === "object" && step.member !== null)
         steps.byPosition.push(array);
       current = step.member;
-    } else if (isRecord(current) && Object.hasOwn(current, token))
+    } else if (isRecord(current) && Object.hasOwn(current, token)) {
+      // The archive entry is metadata until its view is entered.
+      if (
+        format === "zip" &&
+        position === 2 &&
+        segments[0] === "entries" &&
+        token === "view"
+      )
+        currentFormat =
+          typeof current.format === "string" ? current.format : undefined;
       current = current[token] ?? null;
-    else return { kind: "none", ...steps };
+    } else return { kind: "none", ...steps };
   }
   return { kind: "value", value: current, ...steps };
 };
@@ -247,12 +312,13 @@ const selectorGroups = (tokens: Iterable<string>) => {
 const selectedMembers = (
   items: readonly JsonValue[],
   tokens: Iterable<string>,
+  format: string | null | undefined,
 ): ReadonlyMap<string, JsonValue> => {
   const selected = new Map<string, JsonValue>();
   const listed = [...tokens];
   for (const token of listed) {
     const meets = selectorOf(token)?.some(readsChild)
-      ? selectorTest(token)
+      ? selectorTest(token, format)
       : undefined;
     const matched = meets === undefined ? [] : items.filter(meets);
     if (matched.length === 1) selected.set(token, matched[0] ?? null);
@@ -280,12 +346,13 @@ const selectedMembers = (
  */
 export const memberLookup = (
   value: JsonValue | undefined,
-  tokens: Iterable<string> = [],
+  tokens: Iterable<string>,
+  format: string | null | undefined,
 ): ((token: string) => JsonValue | undefined) => {
   if (!Array.isArray(value))
     return (token) =>
       isRecord(value) && Object.hasOwn(value, token) ? value[token] : undefined;
-  const selected = selectedMembers(value, tokens);
+  const selected = selectedMembers(value, tokens, format);
   return (token) =>
     INDEX.test(token) ? value[Number(token)] : selected.get(token);
 };
@@ -294,7 +361,8 @@ export const memberLookup = (
 export const resolvePointer = (
   view: JsonValue | null,
   pointer: string,
+  format: string | null | undefined,
 ): JsonValue | undefined => {
-  const located = locatePointer(view, pointer);
+  const located = locatePointer(view, pointer, format);
   return located.kind === "value" ? located.value : undefined;
 };

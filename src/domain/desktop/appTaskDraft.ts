@@ -1,14 +1,18 @@
 import type { JsonValue } from "../jsonValue.js";
 import { isTimestamp, type DesktopTaskCheckInput } from "./appTask.js";
-import { isGeneratedUid } from "./attributeRank.js";
 import {
   decisive,
+  generatedRecordId,
+  isLikeDefault,
   jsonCounts,
   outermost,
+  ownNamesUnreadOtherwise,
   positionalNotes,
+  recordGuards,
 } from "./appTaskDraftJson.js";
 import {
   fileNotes,
+  generatedReferenceNotes,
   readAsTextNotes,
   type FileNote,
 } from "./appTaskDraftFileNotes.js";
@@ -198,7 +202,8 @@ const plainChange = (
   baseline: Version,
   final: Version,
 ) => {
-  if (format === "json") return diffNamedMembers(baseline.view, final.view);
+  if (format === "json")
+    return diffNamedMembers(baseline.view, final.view, "json");
   const change = diffStateViews(format, baseline.view, final.view);
   const pointers = keyPointers([baseline.view, final.view]);
   const at = (entries: readonly string[]) =>
@@ -282,26 +287,57 @@ const valueSuggestions = (
     format === "keyfile" ? entries : innermost(entries);
   const wholes = (entries: readonly string[]) =>
     format === "keyfile" ? entries : outermost(entries);
-  const listed: Suggestion[] = [];
+  const edits: Suggestion[] = [];
+  const ends = versions(baseline, final);
+  const generatedId =
+    format === "json" ? generatedRecordId(ends, "json") : () => false;
+  // Array references to a newly added record cannot compare its generated id
+  // across runs. Only ids selected by record pairing qualify; an existing
+  // account or other scalar value remains an exact check.
+  const newRecordIds = new Set(
+    change.added.flatMap((entry) => {
+      const at = pointer(entry);
+      const value =
+        at === undefined ? undefined : resolvePointer(final.view, at, format);
+      return at !== undefined && generatedId(at) && typeof value === "string"
+        ? [value]
+        : [];
+    }),
+  );
+  // A key file's entries hold no array, so no record of one is added whole.
+  const added = new Set(change.added);
+  const generatedReferences: string[] = [];
   for (const entry of leaves([...change.added, ...change.changed])) {
     const at = pointer(entry);
-    const value = at === undefined ? undefined : resolvePointer(final.view, at);
+    const value =
+      at === undefined ? undefined : resolvePointer(final.view, at, format);
+    const generatedReference =
+      at !== undefined &&
+      typeof value === "string" &&
+      newRecordIds.has(value) &&
+      Array.isArray(
+        resolvePointer(final.view, at.replace(/\/[^/]+$/u, ""), format),
+      );
+    if (generatedReference) generatedReferences.push(at);
     // An id the app generates, as TreeLine's uuid1 `uid`, holds nothing another save repeats.
     if (
       at !== undefined &&
       at !== "" &&
       value !== undefined &&
       !isTimestamp(value) &&
-      !(typeof value === "string" && isGeneratedUid(value))
+      !generatedId(at) &&
+      !generatedReference &&
+      !isLikeDefault(ends, added, at, value)
     )
-      listed.push({ kind: "value_equals", file, pointer: at, value });
+      edits.push({ kind: "value_equals", file, pointer: at, value });
   }
+  const listed = ownNamesUnreadOtherwise(edits);
   for (const entry of wholes(change.removed)) {
     const at = pointer(entry);
     if (at !== undefined && at !== "")
       listed.push({ kind: "value_absent", file, pointer: at });
   }
-  const suggestions = decisive(listed, versions(baseline, final));
+  const suggestions = decisive(listed, ends);
   const { values, cut } = plainValues(
     plainChange(format, baseline, final),
     baseline,
@@ -309,14 +345,21 @@ const valueSuggestions = (
   );
   if (format === "keyfile")
     return { suggested: suggestions, values, valuesCut: cut, guards: [] };
-  const counts = jsonCounts(file, change, versions(baseline, final));
+  const counts = jsonCounts(file, change, ends);
   const suggested = [...suggestions, ...counts.checks];
   return {
     suggested,
     values,
     valuesCut: cut,
-    guards: counts.guards,
-    notes: positionalNotes(file, suggested, final.view),
+    // The count guard sits outside the cap, as for XML.
+    guards: [
+      ...recordGuards(file, suggested.slice(0, MAX_SUGGESTIONS), ends, added),
+      ...counts.guards,
+    ],
+    notes: [
+      ...positionalNotes(file, suggested, final.view),
+      ...generatedReferenceNotes(file, generatedReferences),
+    ],
   };
 };
 

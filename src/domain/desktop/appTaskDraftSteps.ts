@@ -48,8 +48,8 @@ const sharedField = (
   step: ListStep,
   outer: ListStep,
 ) => {
-  const records = resolvePointer(view, outer.list);
-  const record = resolvePointer(view, `${outer.list}/${outer.member}`);
+  const records = resolvePointer(view, outer.list, "xml");
+  const record = resolvePointer(view, `${outer.list}/${outer.member}`, "xml");
   const inner = outer.rest.slice(0, outer.rest.length - step.rest.length);
   return (
     Array.isArray(records) &&
@@ -59,7 +59,7 @@ const sharedField = (
         item !== record &&
         isXmlElement(item) &&
         item.name === record.name &&
-        resolvePointer(item, `/${inner.join("/")}`) !== undefined,
+        resolvePointer(item, `/${inner.join("/")}`, "xml") !== undefined,
     )
   );
 };

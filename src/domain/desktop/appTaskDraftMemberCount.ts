@@ -25,7 +25,7 @@ export const isMemberCount = (
   key: string | undefined,
 ) => {
   const counter = pointer.replace(/\/children\/\d+$/u, "");
-  const holder = resolvePointer(ends.final, counter);
+  const holder = resolvePointer(ends.final, counter, "xml");
   const scope =
     key === undefined
       ? counter !== pointer &&
@@ -37,7 +37,7 @@ export const isMemberCount = (
         ? pointer.split("/").slice(0, -2).join("/")
         : undefined;
   const [before, after] = [ends.baseline, ends.final].map((view) =>
-    resolvePointer(view, pointer),
+    resolvePointer(view, pointer, "xml"),
   );
   const number = (value: JsonValue | undefined) =>
     typeof value === "string" && /^\d+$/u.test(value)
@@ -53,8 +53,9 @@ export const isMemberCount = (
     return false;
   const tallyAt = (view: JsonValue | null, deep: boolean) => {
     const tally = new Map<string, number>();
-    const own = key === undefined ? resolvePointer(view, counter) : undefined;
-    const owner = resolvePointer(view, scope);
+    const own =
+      key === undefined ? resolvePointer(view, counter, "xml") : undefined;
+    const owner = resolvePointer(view, scope, "xml");
     const pending = isXmlElement(owner) ? [...owner.children] : [];
     for (let node = pending.pop(); node !== undefined; node = pending.pop())
       if (isXmlElement(node) && node !== own) {

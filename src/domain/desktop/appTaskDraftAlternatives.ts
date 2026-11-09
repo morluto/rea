@@ -37,10 +37,15 @@ export const alternativePointers = (
     if (conditions === undefined) continue;
     // A step its tag alone names, as an XHTML `h1` holding `id="chapter-two"`, gives way outward when nothing else names it.
     const tagOnly = conditions.every(({ prefix }) => prefix === "");
-    const list = resolvePointer(view, segments.slice(0, index).join("/"));
+    const list = resolvePointer(
+      view,
+      segments.slice(0, index).join("/"),
+      "xml",
+    );
     const element = resolvePointer(
       view,
       segments.slice(0, index + 1).join("/"),
+      "xml",
     );
     if (!Array.isArray(list) || !isXmlElement(element)) {
       if (tagOnly) continue;
