@@ -347,9 +347,9 @@ Null class/meta flags, ivar counts, atomicity, or read-only values mean the
 selected provider did not establish that fact. Symbol names alone do not prove
 that a class is a root class or has no ivars.
 
-<a id="managed-pe-cli-guide"></a>
-
 ## Managed PE/CLI
+
+<a id="managed-pe-cli-guide"></a>
 
 Start with `inspect_managed_artifact`. REA's canonical managed inspection is
 execution-free: do not claim it loaded, reflected, executed, or resolved the
