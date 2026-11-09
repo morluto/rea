@@ -60,6 +60,12 @@ export const applicationRefusal = (
         ["desktop_entry"],
         "Pass an installed entry's id (for example org.xfce.mousepad) or its absolute path, or name the program with --executable.",
       );
+    case "desktop_entry_search_incomplete":
+      return inputError(
+        `The search for a desktop entry with that id under ${refusal.searched.join(", ")} stopped before it could tell whether one is installed.`,
+        ["desktop_entry"],
+        "Pass the entry's absolute path, or narrow the installed entries under those folders.",
+      );
     case "desktop_entry_invalid":
       return inputError(
         `The desktop entry cannot be launched: ${refusal.detail}.`,

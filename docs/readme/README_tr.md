@@ -84,6 +84,10 @@ Kurulum Claude Code, Codex, Cursor, Gemini CLI, Grok Build ve [diğer ajanları]
 
 MCP varsayılan olarak kompakt girdi şemaları kullanır. Tam alan açıklamaları ve iç içe doğrulama ayrıntıları için MCP kaydında `REA_MCP_INPUT_SCHEMA_PROFILE=full` ayarlayın. Her iki profil tüm araçları ve aynı kanonik sunucu doğrulamasını korur; MCP sözleşme rehberine bakın.
 
+Kurulum, seçilen çalışma zamanını ve REA giriş betiğini doğrudan kaydeder. Paket çalıştırıcısı kullanıyorsanız önbellek girdisini ve çalışma zamanını koruyun; paketi hedef projenin dışında güvenilir bir dizinden edinin. Kurulum rehberine bakın.
+
+Tam çıktı şemaları varsayılan olarak duyurulur. İstemciniz `tools/list` boyutunu sınırlıyorsa MCP kaydında `REA_MCP_OUTPUT_SCHEMA_PROFILE=compact` veya `off` ayarlayın. Sunucu doğrulaması ve yapılandırılmış sonuçlar tam kalır. MCP sözleşmeleri rehberindeki “Output schemas” bölümüne bakın.
+
 ### Ajanınıza sorun
 
 ```text
@@ -173,6 +177,7 @@ REA; Node.js 22.x (>=22.23.4), 24.x (>=24.22.1) veya 26+ (>=26.12.1) ve npm gere
 | Kaydedilmiş ağ yakalamaları             | İstekler, yanıtlar, erişilebilir yük içerikleri ve kaynak konumları                                         | HAR veya Fiddler Everywhere SAZ; Linux'ta native mitmproxy için mitmdump; [ağ yakalama rehberi](../guides/web/web-network-captures.md)                            |
 | .NET derlemeleri                        | Meta veriler, CIL talimatları, bildirilmiş yerel bağımlılıklar ve derleme karşılaştırmaları                 | Statik inceleme; [yönetilen kod rehberi](../guides/managed/managed-code-analysis.md)                                                                              |
 | PyInstaller                             | CArchive, PYZ, Python bytecode                                                                              | Static inspection; [Python packaged applications](../python-packaged-applications.md)                                                                             |
+| Deno compile binaries                   | Virtual files, entry point, recorded options, npm snapshot length                                           | Static inspection; [Deno compile executables](../deno-standalone.md)                                                                                              |
 | Android APK'leri                        | Manifest bildirimleri, sınıflar, tersine derlenmiş metotlar ve referanslar                                  | Linux/macOS/Windows x64 üzerinde arayüzsüz JADX ve tam bir JDK; [Android rehberi](../guides/android/android-analysis.md)                                          |
 | Android cihazları                       | Cihazlar, paketler, süreçler, günlükler, dökümler, ekran görüntüleri ve APK/dosya aktarımları               | Çağıranın sağladığı adb (emülatör veya cihaz); [ADB rehberi](../guides/android/adb-device-analysis.md)                                                            |
 | JEB projeleri                           | Motor destekli proje birimleri, artefakt özetleri ve tür/metot sözdekodu                                    | Çağıranın başlattığı, MCP sunan bir JEB istemcisi, REA_JEB_MCP_URL ile seçilir; [JEB rehberi](../providers/jeb-analysis.md)                                       |

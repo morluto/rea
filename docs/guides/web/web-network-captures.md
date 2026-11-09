@@ -357,7 +357,11 @@ entire property and its sidecars; a `scope: "property-name"` redaction points
 to its actual parent. No substitute property name or child pointer is invented.
 Omitted subtrees are still validated, including canonical HAR base64. Explicitly sensitive artifact
 paths are empty in Evidence and omitted from locations, while the original
-SHA-256 and size remain available unless the digest itself is explicitly excluded. Failure messages, diagnostics and cleanup
+SHA-256 and size remain available unless the digest itself is explicitly excluded.
+CLI [caller-selected paths](../../reference/mcp-contracts.md#caller-selected-paths)
+are excluded independently: a sensitive capture spelling can be omitted while a
+safe `descriptor_set_path` remains, and a safe relative spelling can remain even
+when its resolved parent path is sensitive. Failure messages, diagnostics and cleanup
 resources follow the same explicit declarations without changing error types;
 sensitive issue pointers identify a real ancestor instead of a fabricated
 coordinate. Header/cookie authentication values and known

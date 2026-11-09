@@ -662,10 +662,26 @@ describe("attached IDA function observations", () => {
       const found = await client.execute("search_strings", { pattern, mode });
       expect(found.ok && found.value.result).toHaveLength(count);
     }
-    expect(
-      (await client.execute("search_strings", { pattern: "[", mode: "regex" }))
-        .ok,
-    ).toBe(false);
+    const invalid = await client.execute("search_strings", {
+      pattern: "[",
+      mode: "regex",
+    });
+    if (invalid.ok) throw new Error("Expected invalid-pattern refusal");
+    expect(projectAnalysisError(invalid.error)).toMatchObject({
+      code: "invalid_request",
+      message: expect.stringContaining("Invalid regex pattern"),
+      remediation: { action: expect.stringMatching(/pattern.*mode literal/u) },
+      details: {
+        operation: "search_strings",
+        issues: [
+          {
+            path: ["pattern"],
+            reason: "invalid_format",
+            message: expect.stringContaining("Invalid regular expression"),
+          },
+        ],
+      },
+    });
     await client.close();
   });
 });
