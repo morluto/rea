@@ -484,6 +484,11 @@ const narrowUnionBranch = (
   | undefined => {
   const supplied = valueAtPath(input, path);
   if (typeof supplied !== "object" || supplied === null) return undefined;
+  const candidates: {
+    readonly branches: readonly z.core.$ZodIssue[];
+    readonly tagPath: readonly (string | number)[];
+  }[] = [];
+  let preferred: (typeof candidates)[number] | undefined;
   for (const tagPath of taggedFieldPaths(issue)) {
     const tag = valueAtPath(supplied, tagPath);
 
@@ -515,7 +520,7 @@ const narrowUnionBranch = (
       );
     });
     if (unrelated) continue;
-    return {
+    const candidate = {
       branches: accepting.flatMap(
         ({ index }) =>
           issue.errors[index]?.filter(
@@ -524,8 +529,14 @@ const narrowUnionBranch = (
       ),
       tagPath,
     };
+    // A property no branch accepts is an ordinary field that failed everywhere,
+    // not the union's discriminator. Prefer a property at least one branch
+    // selects through, so the caller is not sent to values declared by a branch
+    // the union never selects.
+    if (accepting.length > 0 && preferred === undefined) preferred = candidate;
+    candidates.push(candidate);
   }
-  return undefined;
+  return preferred ?? candidates[0];
 };
 
 const valueAtPath = (input: unknown, path: readonly PropertyKey[]): unknown => {

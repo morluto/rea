@@ -205,7 +205,7 @@ describe("union branch diagnostics", () => {
     ]);
   });
 
-  it("merges literal expectations reported at one path across branches", () => {
+  it("reports a failing field against the branch its tag selects", () => {
     const schema = z.object({
       roots: z.union([
         z.strictObject({
@@ -221,11 +221,40 @@ describe("union branch diagnostics", () => {
     const input = { roots: { mode: "a", field: "weight" } };
     const parsed = schema.safeParse(input);
     if (parsed.success) throw new Error("expected invalid input");
+    // `mode` selects the first branch, so only its literals can be the fix;
+    // `"type"` exists only under the branch the tag never selects.
     expect(projectInputIssues(parsed.error.issues, input)).toEqual([
       {
         path: ["roots", "field"],
         reason: "invalid_value",
-        expected: ["name", "size", "type"],
+        expected: ["name", "size"],
+      },
+    ]);
+  });
+
+  it("merges literal expectations reported at one path across branches", () => {
+    const schema = z.object({
+      roots: z.union([
+        z.strictObject({
+          mode: z.literal("a"),
+          field: z.enum(["name", "size"]),
+        }),
+        z.strictObject({
+          mode: z.literal("b"),
+          field: z.enum(["size", "type"]),
+        }),
+      ]),
+    });
+    // No branch accepts this `mode`, so the property cannot discriminate and
+    // the field literals every branch declares are still merged.
+    const input = { roots: { mode: "c", field: "weight" } };
+    const parsed = schema.safeParse(input);
+    if (parsed.success) throw new Error("expected invalid input");
+    expect(projectInputIssues(parsed.error.issues, input)).toEqual([
+      {
+        path: ["roots", "mode"],
+        reason: "invalid_value",
+        expected: ["a", "b"],
       },
     ]);
   });
