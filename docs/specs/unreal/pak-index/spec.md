@@ -46,9 +46,11 @@ behavior.
 
 ## Acceptance
 
-Synthetic fixtures cover every version and footer layout, each issue kind and
-failure reason, resource limits, cancellation, encrypted indexes and
-descriptor cleanup in unit, boundary, MCP and CLI acceptance tests.
+Synthetic fixtures cover versions 1, 3, 4 and 7 to 12, including both version
+8 footer layouts, each issue kind and failure reason, resource limits,
+cancellation, encrypted indexes and descriptor cleanup in unit, boundary, MCP
+and CLI acceptance tests. Layouts `v2`, `v5` and `v6` are not in the synthetic
+test matrix, and version 10 path hashes are not checked.
 `npm run verify:unreal:pak -- --pak PATH` checks CLI and stdio MCP summary and
 page parity for a caller-owned pak. A version 12 pak written by Unreal Engine
 5.8.3 and 46 generated version 1 to 11 paks were compared with repak and
