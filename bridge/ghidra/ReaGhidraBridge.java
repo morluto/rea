@@ -2879,10 +2879,8 @@ public final class ReaGhidraBridge extends HeadlessScript {
                     (recoveredAArch64.signedEntries ? "signed" : "unsigned") +
                     " entries of size " + recoveredAArch64.entrySize + " bytes from " + canonicalAddress(recoveredAArch64.tableAddress) +
                     "; the AArch64 ADRP/ADD table, indexed load, ADR base, ADD" +
-                    (recoveredAArch64.dispatchExtend != null
-                        ? " " + recoveredAArch64.dispatchExtend +
-                          (recoveredAArch64.offsetShift == 0 ? "" : " #" + recoveredAArch64.offsetShift)
-                        : recoveredAArch64.offsetShift == 0 ? "" : " LSL #" + recoveredAArch64.offsetShift) +
+                    (recoveredAArch64.dispatchOperator == null ? "" : " " + recoveredAArch64.dispatchOperator) +
+                    (recoveredAArch64.offsetShift == 0 ? "" : " #" + recoveredAArch64.offsetShift) +
                     "/BR chain uses a selector bounded by CMP #" + recoveredAArch64.compareImmediate +
                     " and " + recoveredAArch64.guardMnemonic + " on one straight-line path" +
                     (recoveredAArch64.nullTarget == null
@@ -3232,8 +3230,8 @@ public final class ReaGhidraBridge extends HeadlessScript {
         private final Address priorSelectorDefinition;
         private final boolean signedEntries;
         private final int offsetShift;
-        /** SXTB or SXTH for GCC's extended-register dispatch ADD; null for a shifted register. */
-        private final String dispatchExtend;
+        /** The dispatch ADD's LSL, SXTB or SXTH operator; null when it has none. */
+        private final String dispatchOperator;
         private final String guardMnemonic;
         private final long compareImmediate;
         private final Address nullTarget;
@@ -3247,7 +3245,7 @@ public final class ReaGhidraBridge extends HeadlessScript {
             Address priorSelectorDefinition,
             boolean signedEntries,
             int offsetShift,
-            String dispatchExtend,
+            String dispatchOperator,
             String guardMnemonic,
             long compareImmediate,
             Address nullTarget,
@@ -3260,7 +3258,7 @@ public final class ReaGhidraBridge extends HeadlessScript {
             this.priorSelectorDefinition = priorSelectorDefinition;
             this.signedEntries = signedEntries;
             this.offsetShift = offsetShift;
-            this.dispatchExtend = dispatchExtend;
+            this.dispatchOperator = dispatchOperator;
             this.guardMnemonic = guardMnemonic;
             this.compareImmediate = compareImmediate;
             this.nullTarget = nullTarget;
@@ -3269,13 +3267,9 @@ public final class ReaGhidraBridge extends HeadlessScript {
         }
     }
 
-    // Shifted register (clang): ADD Xd, Xn, Xm{, LSL #s}, shift in group 4.
-    // Extended register (GCC casesi): ADD Xd, Xn, Wm, SXTB|SXTH{ #s}, extend
-    // in group 5 and shift in group 6. Ghidra prints the extend with a
-    // trailing space, so a zero shift leaves trailing whitespace.
+    // Ghidra prints an extend with a trailing space, even without a shift.
     private static final Pattern AARCH64_DISPATCH_ADD = Pattern.compile(
-        "(?i)^([wx]\\d+),\\s*([wx]\\d+),\\s*([wx]\\d+)" +
-        "(?:,\\s*(?:LSL\\s*#(?:0x)?([0-9a-f]+)|(SXTB|SXTH)(?:\\s*#(?:0x)?([0-9a-f]+))?))?\\s*$"
+        "(?i)^([wx]\\d+),\\s*([wx]\\d+),\\s*([wx]\\d+)(?:,\\s*(LSL|SXTB|SXTH)(?:\\s*#(?:0x)?([0-9a-f]+))?)?\\s*$"
     );
     private static final Pattern AARCH64_TABLE_LOAD = Pattern.compile(
         "(?i)^([wx]\\d+),\\s*\\[([wx]\\d+),\\s*([wx]\\d+)(?:,\\s*(LSL|UXTW)\\s*(?:#(?:0x)?([0-9a-f]+))?)?\\s*\\]$"
@@ -3353,10 +3347,9 @@ public final class ReaGhidraBridge extends HeadlessScript {
         java.util.regex.Matcher addMatcher = AARCH64_DISPATCH_ADD.matcher(operands(dispatchAdd));
         if (!addMatcher.matches() || !addMatcher.group(1).toLowerCase(Locale.ROOT).startsWith("x")) return null;
         if (!normalizedRegister(addMatcher.group(1)).equals(branchRegister)) return null;
-        String dispatchExtend = addMatcher.group(5) == null ? null : addMatcher.group(5).toUpperCase(Locale.ROOT);
-        if (dispatchExtend != null && !addMatcher.group(3).toLowerCase(Locale.ROOT).startsWith("w")) return null;
-        String shiftText = dispatchExtend == null ? addMatcher.group(4) : addMatcher.group(6);
-        int offsetShift = shiftText == null ? 0 : Integer.parseInt(shiftText, 16);
+        String dispatchOperator = addMatcher.group(4) == null ? null : addMatcher.group(4).toUpperCase(Locale.ROOT);
+        boolean extended = dispatchOperator != null && !dispatchOperator.equals("LSL");
+        int offsetShift = addMatcher.group(5) == null ? 0 : Integer.parseInt(addMatcher.group(5), 16);
         if (offsetShift != 0 && offsetShift != 2) return null;
         String firstSource = normalizedRegister(addMatcher.group(2));
         String secondSource = normalizedRegister(addMatcher.group(3));
@@ -3367,8 +3360,7 @@ public final class ReaGhidraBridge extends HeadlessScript {
         int loadIndex = -1;
         String entryRegister = null;
         String baseRegister = null;
-        boolean scaledOrExtended = offsetShift != 0 || dispatchExtend != null;
-        for (String candidate : scaledOrExtended ? List.of(secondSource) : List.of(secondSource, firstSource)) {
+        for (String candidate : offsetShift == 0 && !extended ? List.of(secondSource, firstSource) : List.of(secondSource)) {
             int writer = latestWriter(instructions, branchIndex - 1, candidate);
             if (writer >= 0 && Set.of("LDRB", "LDRH", "LDRSB", "LDRSH").contains(mnemonic(instructions.get(writer)))) {
                 loadIndex = writer;
@@ -3382,20 +3374,15 @@ public final class ReaGhidraBridge extends HeadlessScript {
         Instruction load = instructions.get(loadIndex);
         String loadMnemonic = mnemonic(load);
         int entrySize = loadMnemonic.endsWith("B") ? 1 : 2;
-        boolean signedEntries = loadMnemonic.startsWith("LDRS");
+        // GCC's casesi sign-extends the loaded entry in the dispatch ADD; the
+        // extend must read exactly the loaded width.
+        boolean signedEntries = extended || loadMnemonic.startsWith("LDRS");
+        if (extended && entrySize != (dispatchOperator.equals("SXTB") ? 1 : 2)) return null;
         java.util.regex.Matcher loadMatcher = AARCH64_TABLE_LOAD.matcher(operands(load));
         if (!loadMatcher.matches()) return null;
-        if (dispatchExtend != null) {
-            // GCC's casesi loads the entry with LDRB/LDRH and sign-extends its
-            // low byte or halfword in the dispatch ADD, so the extend decides
-            // the entries' sign. It must read exactly the loaded width.
-            if (entrySize != (dispatchExtend.equals("SXTB") ? 1 : 2)) return null;
-            signedEntries = true;
-        } else if (signedEntries && !loadMatcher.group(1).toLowerCase(Locale.ROOT).startsWith("x")) {
-            // A signed load into a W register sign-extends only to 32 bits; a
-            // 64-bit shifted-register dispatch ADD would then read a zero-extended value.
-            return null;
-        }
+        // A signed load into a W register sign-extends only to 32 bits; the
+        // 64-bit dispatch ADD would then read a zero-extended value.
+        if (!extended && signedEntries && !loadMatcher.group(1).toLowerCase(Locale.ROOT).startsWith("x")) return null;
         String tableBaseRegister = normalizedRegister(loadMatcher.group(2));
         String indexRegister = normalizedRegister(loadMatcher.group(3));
         boolean wordIndex = loadMatcher.group(3).toLowerCase(Locale.ROOT).startsWith("w");
@@ -3573,7 +3560,7 @@ public final class ReaGhidraBridge extends HeadlessScript {
             selectorWriter < 0 ? null : instructions.get(selectorWriter).getAddress(),
             signedEntries,
             offsetShift,
-            dispatchExtend,
+            dispatchOperator,
             guardMnemonic,
             compareImmediate,
             nullTarget,
