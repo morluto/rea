@@ -1708,4 +1708,62 @@ describe("Rspack bootstrap forwarded defaults, tagged-template .raw, and call-ti
       }),
     ]);
   });
+
+  it("preserves initialized local callees and Object.assign patch bindings across loops and later nested closures", () => {
+    const loopRead = analyzeJavaScriptStaticSource(`
+      const e = require("electron"), fresh = () => ({});
+      const helpers = { fresh };
+      const patch = { ipcRenderer: {} };
+      for (const _ of [0]) {
+        const a = fresh(e);
+        a.ipcRenderer = {};
+        const b = helpers.fresh(e);
+        b.ipcRenderer = {};
+        const c = Object.assign({}, e, patch);
+        c.ipcRenderer.send = () => {};
+      }
+      e.ipcRenderer.send("LOOP_CALLEE_PRESERVED");
+    `);
+    expect(loopRead.electron.ipc).toEqual([
+      expect.objectContaining({
+        channel: "LOOP_CALLEE_PRESERVED",
+        operation: "send",
+        side: "renderer",
+      }),
+    ]);
+
+    const closureRead = analyzeJavaScriptStaticSource(`
+      const e = require("electron"), fresh = () => ({}), run = () => {
+        const a = fresh(e);
+        a.ipcRenderer = {};
+      };
+      run();
+      {
+        const blockFresh = () => ({});
+        const runBlock = () => {
+          const b = blockFresh(e);
+          b.ipcRenderer = {};
+        };
+        runBlock();
+      }
+      e.ipcRenderer.send("CLOSURE_CALLEE_PRESERVED");
+    `);
+    expect(closureRead.electron.ipc).toEqual([
+      expect.objectContaining({
+        channel: "CLOSURE_CALLEE_PRESERVED",
+        operation: "send",
+        side: "renderer",
+      }),
+    ]);
+
+    expectNoDirectElectron(`
+      const e = require("electron");
+      let fn;
+      const run = () => fn(e);
+      fn = globalThis.pick || (() => ({}));
+      const maybeElectron = run();
+      maybeElectron.ipcRenderer.send = () => {};
+      e.ipcRenderer.send("MUTABLE_CLOSURE_CALLEE_TAINTED");
+    `);
+  });
 });

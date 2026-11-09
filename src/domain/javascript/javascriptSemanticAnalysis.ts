@@ -83,6 +83,7 @@ import {
   semanticBindingAtRead,
   semanticEffectTiming,
   semanticEffectTimingWithinActivation,
+  semanticStableBindingInitializedBeforeRead,
 } from "./javascriptSemanticMutationInitializers.js";
 import {
   createAmbientPathResolver,
@@ -3886,7 +3887,8 @@ const resolveUnmutatedObjectExpression = (
       binding.initializers.length === 1 &&
       binding.referenceInitializers.length === 0 &&
       binding.initializers[0]?.projection.length === 0 &&
-      semanticBindingAtRead(binding, node, state).hasDefiniteInitializer &&
+      (semanticBindingAtRead(binding, node, state).hasDefiniteInitializer ||
+        semanticStableBindingInitializedBeforeRead(binding, node, state)) &&
       !hasBindingObjectEffectsBeforeSite(binding, captureAt, state)
     ) {
       const nextVisited = new Set(visited);
@@ -4234,7 +4236,8 @@ const objectAssignTargetAllowsOverwrite = (
       binding.initializers.length === 1 &&
       binding.referenceInitializers.length === 0 &&
       binding.initializers[0]?.projection.length === 0 &&
-      semanticBindingAtRead(binding, node, state).hasDefiniteInitializer &&
+      (semanticBindingAtRead(binding, node, state).hasDefiniteInitializer ||
+        semanticStableBindingInitializedBeforeRead(binding, node, state)) &&
       !hasBindingObjectEffectsBeforeSite(binding, captureAt, state, {
         allowPlainDataMemberWrites: true,
       })
@@ -4345,7 +4348,8 @@ const definiteObjectAssignSourceKeys = (
       binding.initializers.length === 1 &&
       binding.referenceInitializers.length === 0 &&
       binding.initializers[0]?.projection.length === 0 &&
-      semanticBindingAtRead(binding, node, state).hasDefiniteInitializer &&
+      (semanticBindingAtRead(binding, node, state).hasDefiniteInitializer ||
+        semanticStableBindingInitializedBeforeRead(binding, node, state)) &&
       !hasBindingObjectEffectsBeforeSite(binding, captureAt, state)
     )
       return definiteObjectAssignSourceKeys(

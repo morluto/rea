@@ -1708,11 +1708,16 @@ export const semanticStableBindingInitializedBeforeRead = (
     firstStatement === undefined ? undefined : parents.get(firstStatement);
   const bodyParent =
     bodyOwner === undefined ? undefined : parents.get(bodyOwner);
-  if (
-    !t.isProgram(bodyOwner) &&
-    !(t.isBlockStatement(bodyOwner) && t.isFunction(bodyParent))
-  )
-    return false;
+  const programOrFunctionBody =
+    t.isProgram(bodyOwner) ||
+    (t.isBlockStatement(bodyOwner) && t.isFunction(bodyParent));
+  const lexicalBlockBinding =
+    t.isBlockStatement(bodyOwner) &&
+    binding.scopeId === semanticScopeId("block", bodyOwner) &&
+    (binding.declarationKinds.has("const") ||
+      binding.declarationKinds.has("let")) &&
+    !binding.declarationKinds.has("var");
+  if (!programOrFunctionBody && !lexicalBlockBinding) return false;
   let current: t.Node | undefined = read;
   let ownerStatement: t.Statement | undefined;
   let ownerDeclarator: t.VariableDeclarator | undefined;
@@ -1723,6 +1728,7 @@ export const semanticStableBindingInitializedBeforeRead = (
       if (candidate !== null && candidate.body === sourcePosition.body) {
         ownerStatement = current;
         if (t.isFunctionDeclaration(ownerStatement)) {
+          if (!programOrFunctionBody) return false;
           const firstRead = moduleFunctionFirstRead(
             ownerStatement,
             sourcePosition.body,

@@ -17,6 +17,7 @@ import {
 import {
   semanticBindingAtRead,
   semanticEffectTiming,
+  semanticStableBindingInitializedBeforeRead,
 } from "./javascriptSemanticMutationInitializers.js";
 import {
   semanticReferenceSourcesInactive,
@@ -408,19 +409,16 @@ export const createSemanticReturnedReferences = (
               : (current.readAt ?? node),
             current.capturedSelections,
           );
+          const hasDefiniteInitializer =
+            semanticBindingAtRead(binding, node, state)
+              .hasDefiniteInitializer ||
+            semanticStableBindingInitializedBeforeRead(binding, node, state);
           if (current.path.length === 0) {
-            if (
-              !semanticBindingAtRead(binding, node, state)
-                .hasDefiniteInitializer
-            )
-              unresolvedCallable = true;
+            if (!hasDefiniteInitializer) unresolvedCallable = true;
           } else if (strictFacts === undefined) {
             unresolvedCallable = true;
             if (sourceGenericInvocation) result.unresolvedInvocation = true;
-          } else if (
-            strictFacts.retainsOrigin &&
-            !semanticBindingAtRead(binding, node, state).hasDefiniteInitializer
-          )
+          } else if (strictFacts.retainsOrigin && !hasDefiniteInitializer)
             unresolvedCallable = true;
           const selectedSources = semanticProjectedSourcesAtRead(
             binding,
