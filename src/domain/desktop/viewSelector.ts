@@ -1,12 +1,24 @@
 /**
  * One condition of a selector, equal to a value: a member's string field, with
- * `@` one of its attributes, or with `>` the text of a child element of its own.
+ * `@` one of its attributes, or with `>` what a path of steps inside it holds
+ * (`insideSteps`).
  */
 export interface Condition {
   readonly prefix: "" | "@" | ">";
   readonly key: string;
   readonly value: string;
 }
+
+/** The most `/`-separated steps a `>` condition's path takes into a member. */
+export const MAX_INSIDE_STEPS = 3;
+
+/** A `>` condition's path as its steps; undefined when one is empty or there are more than `MAX_INSIDE_STEPS`. */
+export const insideSteps = (key: string): readonly string[] | undefined => {
+  const steps = key.split("/");
+  return steps.length <= MAX_INSIDE_STEPS && !steps.includes("")
+    ? steps
+    : undefined;
+};
 
 /** A condition as a selector spells it, such as `[@Col=3]`. */
 export const spellCondition = ({ prefix, key, value }: Condition) =>
@@ -26,7 +38,8 @@ export const selectorOf = (
     const key = equals < 0 ? "" : part.slice(0, equals);
     const prefix = key.startsWith("@") ? "@" : key.startsWith(">") ? ">" : "";
     const name = key.slice(prefix.length);
-    if (name === "") return undefined;
+    if (name === "" || (prefix === ">" && insideSteps(name) === undefined))
+      return undefined;
     conditions.push({ prefix, key: name, value: part.slice(equals + 1) });
   }
   return conditions;

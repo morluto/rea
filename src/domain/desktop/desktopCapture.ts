@@ -355,6 +355,13 @@ export const desktopApplicationCaptureSchema = z.strictObject({
   state: z.strictObject({
     roots: z.array(z.string().min(1)).min(1),
     content_roots: z.array(z.string().min(1)),
+    /** Non-file entries observed by the baseline walk, without following links. */
+    baseline_non_files: z.array(
+      z.strictObject({
+        path: z.string().min(1),
+        type: z.enum(["directory", "symlink", "other"]),
+      }),
+    ),
     /**
      * The application's state directories as walked, in their physical
      * spelling; absent from captures written before it was recorded.

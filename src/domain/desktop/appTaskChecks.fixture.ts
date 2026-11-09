@@ -132,6 +132,29 @@ export const CHECK_VIEWS: Readonly<Record<string, TaskFileView>> = {
     format: "zip",
     view: { entries: [], entry_count: 1200, truncated: true },
   },
+  "Documents/shaped.zip": {
+    format: "zip",
+    view: {
+      entries: [
+        {
+          name: "a.json",
+          format: "json",
+          view: {
+            nodes: [
+              {
+                name: "node",
+                attributes: {},
+                children: [],
+                data: { Title: "New" },
+              },
+            ],
+          },
+        },
+      ],
+      entry_count: 1,
+      truncated: false,
+    },
+  },
   "Documents/cut.xml": {
     format: "xml",
     view: {
@@ -267,6 +290,80 @@ export const CHECK_VIEWS: Readonly<Record<string, TaskFileView>> = {
         contact("\n  Bastien\t", "Roy"),
         contact("Delphine", "Abara"),
         element("group", {}, [element("first_name", {}, ["Delphine"])]),
+      ]),
+      truncated: false,
+    },
+  },
+  "Documents/reading-list.trln": {
+    format: "json",
+    view: {
+      nodes: [
+        {
+          children: [],
+          data: { Title: "The Guns of August", Year: "1962" },
+          format: "BOOK",
+          uid: "812403bed9f511f19fc4edd4f1920549",
+        },
+        {
+          name: "node",
+          attributes: {},
+          children: [],
+          data: {
+            Author: "Peter Frankopan",
+            Pages: 636,
+            Title: "The Silk Roads",
+            Year: "2015",
+          },
+          format: "BOOK",
+          uid: "fc11808dd9f511f181b7edd4f1920549",
+        },
+        {
+          children: ["812403bed9f511f19fc4edd4f1920549"],
+          data: { NAME: "History" },
+          format: "CATEGORY",
+          uid: "7584d494d9f511f1a873edd4f1920549",
+        },
+        {
+          children: [],
+          data: { Title: { text: "Margins" } },
+          format: "NOTE",
+          meta: { "@type": "Note", "a~1b": "tilde", "x/y": "slash" },
+          uid: "0a11808dd9f511f181b7edd4f1920549",
+        },
+      ],
+    },
+  },
+  "Documents/feedback.glade": {
+    format: "xml",
+    view: {
+      root: element("interface", {}, [
+        element("child", {}, [
+          element("object", { class: "GtkButton", id: "cancel_button" }, [
+            element("property", { name: "label" }, ["Cancel"]),
+          ]),
+          element("packing", {}, [
+            element("property", { name: "position" }, ["0"]),
+          ]),
+        ]),
+        element("child", {}, [
+          element("object", { class: "GtkButton", id: "submit_button" }, [
+            element("property", { name: "label", translatable: "yes" }, [
+              "\n  Send\tFeedback ",
+            ]),
+          ]),
+          element("packing", {}, [
+            element("property", { name: "position" }, ["1"]),
+          ]),
+        ]),
+        element("child", {}, [
+          element("object", { class: "GtkBox" }, [
+            element("child", {}, [
+              element("object", { class: "GtkLabel", id: "intro_label" }, [
+                element("property", { name: "label" }, ["Tell us"]),
+              ]),
+            ]),
+          ]),
+        ]),
       ]),
       truncated: false,
     },
@@ -1353,6 +1450,362 @@ const CHILD_TEXT_CASES: readonly (readonly [DesktopTaskCheckInput, boolean])[] =
     ],
   ];
 
+const books = "Documents/reading-list.trln";
+const glade = "Documents/feedback.glade";
+
+/**
+ * Members named by a path inside them of up to three steps: in JSON the string
+ * at those keys, compared whole; in XML a descendant element's text, its
+ * whitespace collapsed, or with `NAME@ATTR` last its attribute.
+ */
+const INSIDE_PATH_CASES: readonly (readonly [
+  DesktopTaskCheckInput,
+  boolean,
+])[] = [
+  [
+    {
+      kind: "value_equals",
+      file: "Documents/plate.FCStd",
+      pointer: "/entries/[>name=Document.xml]/format",
+      value: "xml",
+    },
+    true,
+  ],
+  [
+    {
+      kind: "member_count",
+      file: "Documents/plate.FCStd",
+      pointer: "/entries/[>name=Document.xml]/view/root/children",
+      matching: "[>Property/Float@value=5.0000000000000000]",
+      equals: 1,
+    },
+    true,
+  ],
+  [
+    {
+      kind: "text_equals",
+      file: "Documents/plate.FCStd",
+      pointer:
+        "/entries/[>name=Document.xml]/view/root/children/[>Property~1Float@value=5.0000000000000000]/children/[name=Property]/children/[name=Float]/attributes/value",
+      value: "5.0000000000000000",
+    },
+    true,
+  ],
+  [
+    {
+      kind: "value_equals",
+      file: "Documents/plate.FCStd",
+      pointer:
+        "/entries/[>name=Document.xml]/view/root/children/[>Property~1Float@value=5.0000000000000000]/name",
+      value: "Object",
+    },
+    true,
+  ],
+  [
+    {
+      kind: "value_equals",
+      file: "Documents/shaped.zip",
+      pointer:
+        "/entries/[>name=a.json]/view/nodes/[>data~1Title=New]/data/Title",
+      value: "New",
+    },
+    true,
+  ],
+  [
+    {
+      kind: "value_absent",
+      file: books,
+      pointer: "/nodes/[>data~1Title=The Silk Roads]",
+    },
+    false,
+  ],
+  [
+    {
+      kind: "member_count",
+      file: books,
+      pointer: "/nodes",
+      matching: "[>data/Title=The Silk Roads]",
+      equals: 1,
+    },
+    true,
+  ],
+  [
+    {
+      kind: "value_absent",
+      file: "Documents/shaped.zip",
+      pointer: "/entries/[name=a.json]/view/nodes/[>data~1Title=New]",
+    },
+    false,
+  ],
+  [
+    {
+      kind: "member_count",
+      file: "Documents/shaped.zip",
+      pointer: "/entries/[name=a.json]/view/nodes",
+      matching: "[>data/Title=New]",
+      equals: 1,
+    },
+    true,
+  ],
+  [
+    {
+      kind: "value_equals",
+      file: books,
+      pointer: "/nodes/[format=BOOK][>data~1Title=The Silk Roads]/data/Author",
+      value: "Peter Frankopan",
+    },
+    true,
+  ],
+  [
+    {
+      kind: "value_equals",
+      file: books,
+      pointer: "/nodes/[>data~1Title=The Guns of August]/data/Year",
+      value: "1962",
+    },
+    true,
+  ],
+  [
+    {
+      kind: "value_equals",
+      file: books,
+      pointer: "/nodes/[>format=CATEGORY]/data/NAME",
+      value: "History",
+    },
+    true,
+  ],
+  [
+    {
+      kind: "value_equals",
+      file: books,
+      pointer: "/nodes/[>data~1Title~1text=Margins]/format",
+      value: "NOTE",
+    },
+    true,
+  ],
+  [
+    {
+      kind: "value_equals",
+      file: books,
+      pointer: "/nodes/[>meta~1a~01b=tilde]/format",
+      value: "NOTE",
+    },
+    true,
+  ],
+  [
+    {
+      kind: "value_equals",
+      file: books,
+      pointer: "/nodes/[>meta~1@type=Note]/format",
+      value: "NOTE",
+    },
+    true,
+  ],
+  [
+    {
+      kind: "value_absent",
+      file: books,
+      pointer: "/nodes/[>meta~1x~1y=slash]",
+    },
+    true,
+  ],
+  [
+    {
+      kind: "value_absent",
+      file: books,
+      pointer: "/nodes/[>data~1Subtitle=The Silk Roads]",
+    },
+    true,
+  ],
+  [
+    {
+      kind: "value_absent",
+      file: books,
+      pointer: "/nodes/[>data~1Subtitle=The Silk Roads]/uid",
+    },
+    false,
+  ],
+  [
+    { kind: "value_absent", file: books, pointer: "/nodes/[>data~1Pages=636]" },
+    true,
+  ],
+  [
+    {
+      kind: "value_absent",
+      file: books,
+      pointer: "/nodes/[>data~1Title=Margins]",
+    },
+    true,
+  ],
+  [
+    {
+      kind: "value_absent",
+      file: books,
+      pointer: "/nodes/[>data~1Title~1text~1x=Margins]",
+    },
+    false,
+  ],
+  [
+    {
+      kind: "member_count",
+      file: books,
+      pointer: "/nodes",
+      matching: "[format=BOOK][>data/Year=2015]",
+      equals: 1,
+    },
+    true,
+  ],
+  [
+    {
+      kind: "member_count",
+      file: books,
+      pointer: "/nodes",
+      matching: "[>data/Title=The Silk Roads]",
+      equals: 1,
+    },
+    true,
+  ],
+  [
+    {
+      kind: "text_equals",
+      file: glade,
+      pointer:
+        "/root/children/[name=child][>object@id=submit_button]/children/[name=object]/children/[name=property][@name=label]",
+      value: "Send Feedback",
+      normalize_whitespace: true,
+    },
+    true,
+  ],
+  [
+    {
+      kind: "value_equals",
+      file: glade,
+      pointer:
+        "/root/children/[>object~1property=Cancel]/children/[name=packing]/children/[name=property]/children/0",
+      value: "0",
+    },
+    true,
+  ],
+  [
+    {
+      kind: "value_equals",
+      file: glade,
+      pointer:
+        "/root/children/[>object~1property=Send Feedback]/children/[name=object]/attributes/id",
+      value: "submit_button",
+    },
+    true,
+  ],
+  [
+    {
+      kind: "value_equals",
+      file: glade,
+      pointer:
+        "/root/children/[>object~1property@translatable=yes]/children/[name=object]/attributes/id",
+      value: "submit_button",
+    },
+    true,
+  ],
+  [
+    {
+      kind: "value_equals",
+      file: glade,
+      pointer:
+        "/root/children/[>object~1child~1object@id=intro_label]/children/0/attributes/class",
+      value: "GtkBox",
+    },
+    true,
+  ],
+  [
+    {
+      kind: "value_equals",
+      file: glade,
+      pointer:
+        "/root/children/[>object~1child~1object=Tell us]/children/0/attributes/class",
+      value: "GtkBox",
+    },
+    true,
+  ],
+  [
+    {
+      kind: "value_absent",
+      file: glade,
+      pointer: "/root/children/[>object@id=gone_button]",
+    },
+    true,
+  ],
+  [
+    {
+      kind: "value_absent",
+      file: glade,
+      pointer: "/root/children/[>object@id~1property=Cancel]",
+    },
+    true,
+  ],
+  [
+    {
+      kind: "value_absent",
+      file: glade,
+      pointer: "/root/children/[>object@class=GtkButton]",
+    },
+    false,
+  ],
+  [
+    {
+      kind: "value_absent",
+      file: glade,
+      pointer: "/root/children/[>object~1child~1object~1property=Tell us]",
+    },
+    false,
+  ],
+  [
+    {
+      kind: "member_count",
+      file: glade,
+      pointer: "/root/children",
+      matching: "[name=child][>object@class=GtkButton]",
+      equals: 2,
+    },
+    true,
+  ],
+  [
+    {
+      kind: "member_count",
+      file: glade,
+      pointer: "/root/children",
+      matching: "[>packing/property@name=position][>object/property=Cancel]",
+      equals: 1,
+    },
+    true,
+  ],
+  [
+    {
+      kind: "value_absent",
+      file: "Documents/cut.xml",
+      pointer: "/root/children/[name=p][>q~1r=x]",
+    },
+    false,
+  ],
+  [
+    {
+      kind: "value_absent",
+      file: "Documents/cut.xml",
+      pointer: "/root/children/[>q@id=x]",
+    },
+    false,
+  ],
+  [
+    {
+      kind: "member_count",
+      file: "Documents/cut.xml",
+      pointer: "/root/children",
+      matching: "[>q@id=x]",
+      equals: 0,
+    },
+    false,
+  ],
+];
+
 /** Counts of an array's members, every one or those a selector matches, decided only on an array the view holds whole. */
 const MEMBER_COUNT_CASES: readonly (readonly [
   DesktopTaskCheckInput,
@@ -1776,4 +2229,5 @@ export const CHECK_CASES: readonly (readonly [
   ...ATTRIBUTE_TEXT_CASES,
   ...CHILD_TEXT_CASES,
   ...MEMBER_COUNT_CASES,
+  ...INSIDE_PATH_CASES,
 ];

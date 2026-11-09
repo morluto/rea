@@ -187,7 +187,11 @@ the first source that has the app:
 - CherryTree: its first-run autosave "Choose Storage Type" dialog swallows
   keys, so save once early as `.ctd` and untick autosave.
 - Glade: a new widget's id is empty until you set it, and a second save
-  writes a `.glade~` backup.
+  writes a `.glade~` backup, which shows in the draft as an unrelated
+  change. A backup present at `seed` is seeded with the document, so trash
+  it before `seed`. The draft names a button's `<child>` by the id
+  its widget carries, `[name=child][>object@id=submit_button]`, which moving
+  the button keeps; give the widget an id before `seed` so it can.
 - VYM: the title never names the map, so pass `Documents/<map>.vym` in
   `state_paths`. Its settings live in `.config/InSilmaril` and are written
   only at a clean exit. It writes `<map>.vym.lock` while a map is open, so
@@ -237,10 +241,17 @@ the first source that has the app:
 - An app whose state folder is named after it, such as
   `~/.local/share/gnote`, or after it and its version, such as TreeLine's
   `~/.treeline-3.1`, is found without `state_paths`.
-- TreeLine: Ctrl+A adds a child node even while a field has focus. Clicking
-  a node already selected starts an inline rename, so Ctrl+X then cuts its
-  text: cut a node from its context menu. It saves nodes sorted by their
-  generated uid1, so their order changes from run to run.
+- TreeLine: File → New opens a template window. Book List's CATEGORY makes
+  AUTHOR children by default; change it under Data → Configure Data Types →
+  Default Child Type. A new child opens an inline rename showing "", so
+  press Escape and fill its fields in the Data Edit tab. Ctrl+A adds a child
+  node even while a field has focus. Clicking a node already selected starts
+  an inline rename, so Ctrl+X then cuts its text: cut a node from its
+  context menu. It saves nodes sorted by their
+  generated uid1, so their order changes from run to run. The draft names a
+  new node by its format and a field of its `data`,
+  `/nodes/[format=BOOK][>data~1Title=The Silk Roads]`, and checks its other
+  fields through that, so give each new node a title no other node has.
 - After an app crashes, capture again on a fresh computer, so the seed
   carries no crash-recovery state, such as MyPaint's "Recover interrupted
   work?".
@@ -345,8 +356,10 @@ the first source that has the app:
    - `by_position`: only position names what changed; its `elements` lack
      a naming attribute. Name a record that keeps its fields as child
      elements by one of them, as Osmo's contact by
-     `[name=contact][>first_name=Delphine]`, and count records with
-     `member_count`, `matching` `[name=contact]`; otherwise check an
+     `[name=contact][>first_name=Delphine]`, a JSON record by a field
+     inside it, `[>data/Title=…]` (`~1` for the `/` inside a pointer), or
+     an element by an id its child carries, `[>object@id=…]`; count records
+     with `member_count`, `matching` `[name=contact]`; otherwise check an
      ancestor's text, or give the element an id in the app and capture again.
    - `view_state_only`: every change is view state, a renumbered id or a
      time the app stamps, and its `pointers` are the checks kept. The edit

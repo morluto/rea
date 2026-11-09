@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
-import { analyzeJavaScriptStaticSource } from "./javascriptStaticAnalysis.js";
+import { analyzeJavaScriptStaticSource as analyzeUnknownHostSource } from "./javascriptStaticAnalysis.js";
+import { analyzeCommonJsStaticFixture as analyzeJavaScriptStaticSource } from "../../../tests/fixtures/javascriptCommonJsAnalysis.js";
 import { ROLLDOWN_MODULE_INTEROP } from "./javascriptModuleInterop.fixture.js";
 
 const WINDOW =
@@ -19,6 +20,13 @@ const BLOCK_MODULE_INTEROP = ROLLDOWN_MODULE_INTEROP.replace(
   )
   .replace("    });", "    });\n    }")
   .replace("  return to;", "  }\n  return to;");
+
+it("does not claim Electron interop identity when wrapper authority is unknown", () => {
+  expect(
+    analyzeUnknownHostSource(`${ROLLDOWN_MODULE_INTEROP}
+${IMPORT} ${WRAP} ${WINDOW}`).electron.browser_windows,
+  ).toEqual([]);
+});
 
 describe("Electron module interop identity", () => {
   it("preserves named APIs through the released Rolldown namespace conversion", () => {

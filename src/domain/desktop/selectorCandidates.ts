@@ -2,9 +2,11 @@ import type { JsonValue } from "../jsonValue.js";
 import { isTimestamp } from "./appTask.js";
 import {
   isGeneratedId,
+  isGuid,
   isIdentifyingAttribute,
   isNameLikeKey,
   isPlaceholder,
+  isSaveNumberedId,
   rankAttributes,
 } from "./attributeRank.js";
 import { selectorOf, spellCondition, type Condition } from "./viewSelector.js";
@@ -85,6 +87,38 @@ const shortText = (element: JsonValue): string | undefined => {
   return text;
 };
 
+/** A tag a `>` condition's step can carry: no `/` or `@`, which a path reads as its own. */
+const stepTag = (tag: JsonValue | undefined): tag is string =>
+  typeof tag === "string" && tag !== "" && !/[=[\]/@]/u.test(tag);
+
+/** The element children of a member, none for any other value. */
+const elementsOf = (member: JsonValue): Record<string, JsonValue>[] => {
+  const children = isRecord(member) ? own(member, "children") : undefined;
+  return (Array.isArray(children) ? children : []).filter(isRecord);
+};
+
+/** A child's text a condition could name an element by, and whether the child joins it from elements of its own. */
+const childTexts = (member: JsonValue) =>
+  elementsOf(member).flatMap((child) => {
+    const key = own(child, "name");
+    const value = stepTag(key) ? shortText(child) : undefined;
+    return stepTag(key) &&
+      value !== undefined &&
+      /[\p{L}\d]/u.test(value) &&
+      !value.includes("][") &&
+      !isTimestamp(value) &&
+      !isGeneratedId(value) &&
+      !isPlaceholder(value) &&
+      !/\d{10}/u.test(value)
+      ? [{ key, value, joined: elementsOf(child).length > 0 }]
+      : [];
+  });
+
+const spelledInside = (found: readonly Attribute[]) =>
+  rankAttributes(found).map(({ key, value }) =>
+    spellCondition({ prefix: ">", key, value }),
+  );
+
 /**
  * The `[>CHILD=VALUE]` conditions that could name an element by a child's
  * text, best first by `attributeTier`: a name-like tag, as Osmo's
@@ -92,30 +126,53 @@ const shortText = (element: JsonValue): string | undefined => {
  * A child whose text is long, blank, a time, or a token or id a program
  * generates names nothing a later save keeps.
  */
-export const childConditions = (member: JsonValue): string[] => {
-  const children = isRecord(member) ? own(member, "children") : undefined;
-  const found = (Array.isArray(children) ? children : []).flatMap((child) => {
-    const key = isRecord(child) ? own(child, "name") : undefined;
-    const value = typeof key === "string" ? shortText(child) : undefined;
-    return typeof key === "string" &&
-      value !== undefined &&
-      key !== "" &&
-      !/[=[\]]/u.test(key) &&
-      /[\p{L}\d]/u.test(value) &&
-      !value.includes("][") &&
-      !isTimestamp(value) &&
-      !isGeneratedId(value) &&
-      !isPlaceholder(value) &&
-      !/\d{10}/u.test(value)
-      ? [{ key, value }]
+export const childConditions = (member: JsonValue): string[] => [
+  ...new Set(spelledInside(childTexts(member))),
+];
+
+/**
+ * The `[>CHILD@ATTR=VALUE]` conditions that could name an element by an
+ * identifier a child carries, as a GtkBuilder `<child>` by its
+ * `<object id="submit_button">`: none an app generates or numbers anew as it
+ * saves.
+ */
+const childIdConditions = (member: JsonValue): string[] =>
+  elementsOf(member).flatMap((child) => {
+    const tag = own(child, "name");
+    const attributes = own(child, "attributes");
+    return stepTag(tag) && isRecord(attributes)
+      ? Object.entries(attributes).flatMap(([key, value]) =>
+          typeof value === "string" &&
+          isIdentifyingAttribute(key) &&
+          !/[=[\]/@]/u.test(key) &&
+          /[\p{L}\d]/u.test(value) &&
+          !value.includes("][") &&
+          !isTimestamp(value) &&
+          !isPlaceholder(value) &&
+          !isGeneratedId(value) &&
+          !isGuid(value) &&
+          !isSaveNumberedId(key, value)
+            ? [spellCondition({ prefix: ">", key: `${tag}@${key}`, value })]
+            : [],
+        )
       : [];
   });
+
+/**
+ * The conditions that could name an element by its children, best first: a
+ * child's own text, an identifier a child carries, then text a child joins
+ * from elements of its own, as GtkBuilder's `<packing>` joins its properties
+ * into `TrueTrue1`, which moving the widget changes; each kind ranked as
+ * `childConditions` ranks them.
+ */
+export const childCandidates = (member: JsonValue): string[] => {
+  const texts = childTexts(member);
   return [
-    ...new Set(
-      rankAttributes(found).map(({ key, value }) =>
-        spellCondition({ prefix: ">", key, value }),
-      ),
-    ),
+    ...new Set([
+      ...spelledInside(texts.filter(({ joined }) => !joined)),
+      ...childIdConditions(member),
+      ...spelledInside(texts.filter(({ joined }) => joined)),
+    ]),
   ];
 };
 
