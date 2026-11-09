@@ -5,7 +5,7 @@ import {
   type Tool,
 } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
-import { readFile, rm, writeFile } from "node:fs/promises";
+import { cp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { afterAll, expect, it, onTestFinished, vi } from "vitest";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
@@ -57,6 +57,7 @@ const lifecycleConfigurations = [
 const connect = async (
   configuration: Configuration,
   nodeArguments: readonly string[] = [],
+  entrypoint = resolve("scripts/rea.mjs"),
 ) => {
   const root = await createTestTempDirectory("rea-deferred-schema-profiles-");
   const log = join(root, "runtime-loaded");
@@ -76,12 +77,7 @@ registerHooks({
 `)}`;
   const transport = new StdioClientTransport({
     command: process.execPath,
-    args: [
-      `--import=${hook}`,
-      ...nodeArguments,
-      resolve("scripts/rea.mjs"),
-      "mcp",
-    ],
+    args: [`--import=${hook}`, ...nodeArguments, entrypoint, "mcp"],
     env: {
       PATH: process.env.PATH ?? "",
       HOME: root,
@@ -699,6 +695,99 @@ it.each(lifecycleConfigurations)(
     ]);
     await verifyGuidance(f, configuration);
     expect(await f.list()).toEqual(toolsBefore);
+    expect(f.stderr()).toBe("");
+  },
+);
+
+it.each(lifecycleConfigurations)(
+  "validates stale and unavailable guidance replies and recovers after bundle repair over $mode/$catalog",
+  async (configuration) => {
+    const runtime = await createTestTempDirectory(
+      "rea-guidance-failure-runtime-",
+    );
+    // Exercise the shipped dispatcher and runtime with an independently
+    // editable guide bundle. Only locked dependencies are linked to the build.
+    for (const path of ["dist", "skills", "scripts", "package.json"])
+      await cp(resolve(path), join(runtime, path), { recursive: true });
+    await symlink(
+      resolve("node_modules"),
+      join(runtime, "node_modules"),
+      "junction",
+    );
+    const guidePath = join(
+      runtime,
+      "skills/reverse-engineer-anything/SKILL.md",
+    );
+    const original = await readFile(guidePath);
+    const f = await connect(
+      configuration,
+      [],
+      join(runtime, "scripts/rea.mjs"),
+    );
+    await f.list();
+    await f.load(["search_guidance", "read_guidance_section"]);
+    const before = await f.list();
+    expect(await f.runtimeLoaded()).toBe(false);
+    const search = async (query: string, cursor?: string) => {
+      const result = await f.call("search_guidance", {
+        query,
+        limit: 1,
+        ...(cursor === undefined ? {} : { cursor }),
+      });
+      expect(result.isError).not.toBe(true);
+      return searchGuidanceOutputSchema.parse(
+        unwrapGuidance(result.structuredContent),
+      );
+    };
+    const found = await search("inspect_analysis_view OpenAPI");
+    if (found.status !== "matches" || found.matches[0] === undefined)
+      throw new Error("Expected a compiled guidance locator");
+    expect(found.matches[0].guide).toBe("tools/inspect_analysis_view.md");
+    const locator = found.matches[0].locator;
+    const page = await search("inspect_analysis_view");
+    if (page.status !== "matches" || page.next_cursor === undefined)
+      throw new Error("Expected a guidance continuation token");
+    const read = async () => {
+      const result = await f.call("read_guidance_section", { locator });
+      expect(result.isError).not.toBe(true);
+      return readGuidanceSectionOutputSchema.parse(
+        unwrapGuidance(result.structuredContent),
+      );
+    };
+    await writeFile(
+      guidePath,
+      Buffer.concat([
+        original,
+        Buffer.from("\n<!-- bundle drift fixture -->\n"),
+      ]),
+    );
+    expect((await read()).status).toBe("stale_locator");
+    expect(
+      (await search("inspect_analysis_view", page.next_cursor)).status,
+    ).toBe("stale_continuation");
+    const invalid = await f.call("read_guidance_section", {
+      locator: "../../outside.md",
+    });
+    expect(parseMcpToolError(invalid).error.code).toBe("invalid_request");
+    expect(invalid.structuredContent).toBeUndefined();
+    await rm(guidePath);
+    expect((await search("inspect_analysis_view OpenAPI")).status).toBe(
+      "bundle_unavailable",
+    );
+    expect((await read()).status).toBe("bundle_unavailable");
+    await writeFile(guidePath, original);
+    expect(await search("inspect_analysis_view OpenAPI")).toMatchObject({
+      status: "matches",
+      bundle_sha256: found.bundle_sha256,
+    });
+    expect(await read()).toMatchObject({
+      status: "section",
+      guide: "tools/inspect_analysis_view.md",
+      locator,
+      content: expect.stringContaining("api-contract"),
+    });
+    expect(await f.runtimeLoaded()).toBe(true);
+    expect(await f.list()).toEqual(before);
     expect(f.stderr()).toBe("");
   },
 );
