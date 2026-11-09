@@ -69,6 +69,11 @@ export const sessionAvailabilityPolicy = (
         : {
             optionalProviderLoadFailures: defaults.optionalProviderLoadFailures,
           }),
+      ...(defaults.commandProviderFailures === undefined
+        ? {}
+        : {
+            commandProviderFailures: defaults.commandProviderFailures,
+          }),
       ...(defaults.hostUnsupported === undefined
         ? {}
         : {
