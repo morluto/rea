@@ -40,7 +40,8 @@ these files.
 3. FDEs become ranges with start, end, size, containing `SHF_ALLOC` section, an exact
    symbol name when one starts at that address (a function, then an
    `STT_GNU_IFUNC` resolver, then an untyped symbol), CIE index, LSDA and
-   personality, paged by `offset` and `limit`.
+   personality, paged by `offset` and `limit`. On 32-bit ARM the Thumb bit
+   (bit 0) of a function or IFUNC symbol value is cleared before the match.
 4. Encoded pointers follow the `DW_EH_PE` rules. A raw zero is a null pointer.
    Resolved addresses and FDE ends wrap at the ELF32 or ELF64 address width.
    `datarel` in `.eh_frame` resolves against `DT_PLTGOT`, then `.got.plt` or

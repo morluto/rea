@@ -47,6 +47,7 @@ const STT_GNU_IFUNC = 10;
 const SHN_UNDEF = 0;
 const SHN_ABS = 0xfff1;
 const SHN_LORESERVE = 0xff00;
+const EM_ARM = 40;
 const SHF_ALLOC = 2n;
 const SHF_EXECINSTR = 4n;
 const SHF_COMPRESSED = 0x800n;
@@ -1877,6 +1878,10 @@ const scanSymbols = (
         const owner = byIndex.get(symbol.section_index);
         if (owner !== undefined) address += owner.address;
       }
+      // An ARM function symbol sets bit 0 for Thumb code; the code, and so its
+      // FDE initial location, starts at the even address.
+      if (directory.machine === EM_ARM && symbol.type !== STT_NOTYPE)
+        address &= ~1n;
       // Only a symbol at a decoded FDE start can name a range.
       if (stringBytes === null || !wanted.has(address)) continue;
       let name = names.get(symbol.name_offset);
