@@ -511,20 +511,14 @@ describe("ELF table budgets", () => {
 
   it("observes cancellation during the section relocation walk", async () => {
     const bytes = repeatedRelocations();
-    let reads = 0;
-    const signal = {
-      get aborted() {
-        reads += 1;
-        return reads > 16;
-      },
-      reason: new Error("cancelled by test"),
-    } as unknown as AbortSignal;
+    const controller = new AbortController();
+    setImmediate(() => controller.abort(new Error("cancelled by test")));
     await expect(
       readNativeInitializers(
         bytes,
         artifact(bytes),
         { path: "/artifacts/image", offset: 0, limit: 64 },
-        signal,
+        controller.signal,
       ),
     ).rejects.toThrow(ArtifactReaderFailure);
   });
@@ -1397,4 +1391,27 @@ it("yields and observes cancellation during sparse bind analysis", async () => {
       controller.signal,
     ),
   ).rejects.toThrow(ArtifactReaderFailure);
+});
+
+it("keeps a linked section-fallback slot unresolved when its load mapping disagrees", async () => {
+  const bytes = elf64PieInitializers();
+  for (let at = 0x300; at < 0x430; at += 16) {
+    if (bytes.readBigUInt64LE(at) === 25n)
+      bytes.writeBigUInt64LE(0x70000000n, at);
+  }
+  bytes.writeBigUInt64LE(0x260n, 0x800 + 3 * 64 + 24);
+  bytes.writeBigUInt64LE(0x110n, 0x260);
+  const report = await readNativeInitializers(bytes, artifact(bytes), {
+    path: "/artifacts/image",
+    offset: 0,
+    limit: 64,
+  });
+  expect(report.coverage.status).toBe("incomplete");
+  expect(
+    report.entries.find((entry) => entry.kind === "init_array"),
+  ).toMatchObject({
+    resolution: "unresolved",
+    value_va: null,
+    slot_file_offset: 0x260,
+  });
 });

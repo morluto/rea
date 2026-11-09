@@ -1,3 +1,4 @@
+import { setImmediate as immediate } from "node:timers/promises";
 import { assertArtifactReadActive } from "../../artifacts/ArtifactFileOperation.js";
 import { readElfRelocationEntry } from "../../domain/elfRelocation.js";
 import { readElfSymbol } from "../../domain/elfSymbol.js";
@@ -422,9 +423,9 @@ const applicable = (
  * is a link-time record the static linker already applied (for example from
  * `--emit-relocs`), so the slot already holds its result and is not reapplied.
  */
-export const sectionRelocations = (
+export const sectionRelocations = async (
   input: SectionRelocInput,
-): SectionRelocationScan => {
+): Promise<SectionRelocationScan> => {
   const found = new Map<number, SlotRelocation>();
   const clobbered = new Set<number>();
   if (input.wanted.size === 0) return { found, clobbered, complete: true };
@@ -469,7 +470,10 @@ export const sectionRelocations = (
         `Section relocation scanning stopped at ${String(SECTION_RELOCATION_RECORD_SCAN)} records across all relocation sections. Later records were not applied.`,
       );
     for (let index = 0; index < count; index += 1) {
-      if (index % 4096 === 0) assertArtifactReadActive(input.signal);
+      if (index % 4096 === 0) {
+        await immediate();
+        assertArtifactReadActive(input.signal);
+      }
       const at = start + index * width;
       const parsed = readRelocationRecord(
         input.bytes.subarray(at, at + width),

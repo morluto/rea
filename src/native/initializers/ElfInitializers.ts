@@ -78,6 +78,7 @@ interface DynTag {
 }
 
 interface ArraySlot {
+  readonly mappingMismatch?: boolean;
   readonly va: bigint;
   readonly fileOffset: number | null;
   readonly sectionName: string | null;
@@ -854,26 +855,33 @@ const collectEntries = (
       scanned += 1;
       if (scanned % 1024 === 0) assertArtifactReadActive(signal);
       const applied: SlotRelocation =
-        slot.direct === undefined
-          ? resolveSlot(
-              scan,
-              slot,
-              scan.relocatable ? undefined : loaded.writes.get(slot.va),
-              (!scan.relocatable && loaded.clobbered.has(slot.va)) ||
-                (slot.fileOffset !== null &&
-                  sectionClobbered.has(slot.fileOffset)),
-              slot.fileOffset === null
-                ? undefined
-                : sectionRels.get(slot.fileOffset),
-              symbols,
-              trustRaw,
-            )
-          : {
-              method: "raw",
-              value: slot.direct,
+        slot.direct === undefined && slot.mappingMismatch === true
+          ? {
+              method: "unresolved",
+              value: null,
               importName: null,
               definedName: null,
-            };
+            }
+          : slot.direct === undefined
+            ? resolveSlot(
+                scan,
+                slot,
+                scan.relocatable ? undefined : loaded.writes.get(slot.va),
+                (!scan.relocatable && loaded.clobbered.has(slot.va)) ||
+                  (slot.fileOffset !== null &&
+                    sectionClobbered.has(slot.fileOffset)),
+                slot.fileOffset === null
+                  ? undefined
+                  : sectionRels.get(slot.fileOffset),
+                symbols,
+                trustRaw,
+              )
+            : {
+                method: "raw",
+                value: slot.direct,
+                importName: null,
+                definedName: null,
+              };
       if (
         source.sentinel &&
         applied.method === "raw" &&
@@ -962,7 +970,7 @@ export const readElfInitializers = async (
     fileOffsetFor(scan, mappings, index, address, wordOf(scan.bits));
   const locateTarget = (address: bigint): number | null =>
     fileOffsetFor(scan, mappings, index, address, 1);
-  const sources = collectSources(
+  const declaredSources = collectSources(
     scan,
     tags,
     directory.sections,
@@ -971,6 +979,27 @@ export const readElfInitializers = async (
     locate,
     namesKnown,
   );
+  const sources = scan.relocatable
+    ? declaredSources
+    : declaredSources.map((source) => ({
+        ...source,
+        slots: source.slots.map((slot) => {
+          if (slot.direct !== undefined || slot.fileOffset === null)
+            return slot;
+          let mapped: number | null = null;
+          try {
+            mapped = mappings.offset(slot.va, wordOf(scan.bits));
+          } catch (cause) {
+            if (!(cause instanceof BinaryMappingFailure)) throw cause;
+          }
+          if (mapped === slot.fileOffset) return slot;
+          note(
+            scan,
+            "An ELF initializer slot's section offset disagrees with its load mapping; affected slots are unresolved.",
+          );
+          return { ...slot, mappingMismatch: true };
+        }),
+      }));
   const wanted = new Set(
     sources.flatMap((source) =>
       source.slots.flatMap((slot) =>
@@ -995,7 +1024,7 @@ export const readElfInitializers = async (
     ),
   );
   const notesBeforeRelocs = scan.notes.recorded;
-  const sectionRels = sectionRelocations({
+  const sectionRels = await sectionRelocations({
     ...scan,
     sections: directory.sections,
     wanted: uncovered,
