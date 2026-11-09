@@ -663,7 +663,7 @@ import json
 import math
 import re
 import time
-${task.readers === undefined ? "" : "import uuid\n"}
+${task.readers === undefined ? "" : "import sys\nimport types\nimport uuid\n"}
 from agentenv_protocol import client as protocol
 from agentenv_protocol.types import RPC_PATH
 

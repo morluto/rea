@@ -51,6 +51,8 @@ answers, execs = scenario.get("answers") or {}, []
 cleanup_failures = [scenario.get("cleanup_failures", 0)]
 cancel_cleanup = [scenario.get("cancel_cleanup", False)]
 verify_task = None
+reader_started, release_reader = asyncio.Event(), asyncio.Event()
+reader_calls = [0]
 #: Virtual seconds each data/get takes, a binary fraction so the clock stays exact.
 READ_S = 0.125
 
@@ -77,6 +79,13 @@ async def invoke_extension(url, card, uri, params=None, timeout=30, verify=True,
             cleanup_failures[0] -= 1
             return {"exit_code": 1, "stdout": "", "stderr": "permission denied", "timed_out": False}
         return {"exit_code": 0, "stdout": "", "stderr": "", "timed_out": False}
+    if scenario.get("concurrent"):
+        reader_calls[0] += 1
+        if reader_calls[0] == 1:
+            reader_started.set()
+            await release_reader.wait()
+        else:
+            release_reader.set()
     answer = answers[json.loads("".join(params["argv"][4:]))["id"]]
     stdout = answer if isinstance(answer, str) else "Python noise\n" + json.dumps(answer) + "\n"
     return {"exit_code": 0, "stdout": stdout, "stderr": "", "truncated": False, "timed_out": False}
@@ -111,22 +120,41 @@ async def wait_for(awaitable, timeout):
 
 
 client.get_card, client.get_data, client.invoke_extension = get_card, get_data, invoke_extension
-spec = importlib.util.spec_from_file_location("verifier", verifier)
-module = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(module)
-module.time = types.SimpleNamespace(monotonic=lambda: clock[0])
-module.asyncio = types.SimpleNamespace(sleep=sleep, wait_for=wait_for, TimeoutError=Cut,
-                                       create_task=asyncio.create_task, shield=asyncio.shield,
-                                       CancelledError=asyncio.CancelledError)
+def load_verifier():
+    spec = importlib.util.spec_from_file_location("verifier", verifier)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    module.time = types.SimpleNamespace(monotonic=lambda: clock[0])
+    module.asyncio = types.SimpleNamespace(sleep=sleep, wait_for=wait_for, TimeoutError=Cut,
+                                           create_task=asyncio.create_task, shield=asyncio.shield,
+                                           CancelledError=asyncio.CancelledError)
+    return module
+
+module = load_verifier()
 async def run():
-    global verify_task
+    global verify_task, module
     first_error = None
+    if scenario.get("concurrent"):
+        first = asyncio.create_task(module.verify("http://mcp", "http://computer:8080"))
+        await asyncio.wait_for(reader_started.wait(), timeout=2)
+        other = load_verifier()
+        second = asyncio.create_task(other.verify("http://mcp", "http://computer:8080"))
+        results, _ = await asyncio.wait_for(asyncio.gather(first, second), timeout=5)
+        return results, first_error
     if scenario.get("retry"):
         try:
             verify_task = asyncio.create_task(module.verify("http://mcp", "http://computer:8080"))
             await verify_task
         except (RuntimeError, asyncio.CancelledError) as error:
             first_error = str(error) + " ".join(getattr(error, "__notes__", ()))
+        if scenario.get("reload_verifier"):
+            module = load_verifier()
+    if scenario.get("parallel_retry"):
+        other = load_verifier()
+        first = asyncio.create_task(module.verify("http://mcp", "http://computer:8080"))
+        second = asyncio.create_task(other.verify("http://mcp", "http://computer:8080"))
+        results, _ = await asyncio.gather(first, second)
+        return results, first_error
     results = await module.verify("http://mcp", "http://computer:8080")
     return results, first_error
 
@@ -161,6 +189,9 @@ const runVerifier = async (
     readonly cleanupFailures?: number;
     readonly retry?: boolean;
     readonly cancelCleanup?: boolean;
+    readonly reloadVerifier?: boolean;
+    readonly concurrent?: boolean;
+    readonly parallelRetry?: boolean;
   } = {},
 ): Promise<VerifierOutput> => {
   const folder = await createTestTempDirectory("desktop-task-python-");
@@ -196,6 +227,9 @@ const runVerifier = async (
         cleanup_failures: computer.cleanupFailures,
         retry: computer.retry,
         cancel_cleanup: computer.cancelCleanup,
+        reload_verifier: computer.reloadVerifier,
+        concurrent: computer.concurrent,
+        parallel_retry: computer.parallelRetry,
       }),
       encoding: "utf8",
     }),
@@ -515,6 +549,7 @@ it("reports a cleanup failure with the completed view and retries the same folde
     answers: ANSWERS,
     cleanupFailures: 1,
     retry: true,
+    reloadVerifier: true,
   });
   expect(output.first_error).toContain("Could not remove owned reader folder");
   expect(output.first_error).toContain("completed reader views");
@@ -534,6 +569,7 @@ it("keeps cleanup owned when verification is cancelled during final cleanup", as
     answers: ANSWERS,
     cancelCleanup: true,
     retry: true,
+    reloadVerifier: true,
   });
   expect(output.first_error).toContain("Reader cleanup remains owned");
   expect(output.first_error).toContain("completed reader views");
@@ -541,6 +577,40 @@ it("keeps cleanup owned when verification is cancelled during final cleanup", as
     String(request_id).startsWith("rea-reader-cleanup-"),
   );
   expect(cleanups).toHaveLength(2);
+});
+
+it("does not adopt another active verifier's reader lease", async () => {
+  const output = await runVerifier(READER_CHECKS, [[0, CHECK_VIEWS]], [], {
+    readers: [READERS[0]!],
+    answers: ANSWERS,
+    concurrent: true,
+  });
+  expect(
+    output.execs
+      .slice(0, 2)
+      .every(
+        ({ request_id }) =>
+          !String(request_id).startsWith("rea-reader-cleanup-"),
+      ),
+  ).toBe(true);
+});
+
+it("joins concurrent retries of one abandoned reader cleanup", async () => {
+  const output = await runVerifier(READER_CHECKS, [[0, CHECK_VIEWS]], [], {
+    readers: [READERS[0]!],
+    answers: ANSWERS,
+    cleanupFailures: 1,
+    retry: true,
+    parallelRetry: true,
+  });
+  expect(output.first_error).toContain("Could not remove owned reader folder");
+  const cleanups = output.execs.filter(({ request_id }) =>
+    String(request_id).startsWith("rea-reader-cleanup-"),
+  );
+  expect(cleanups).toHaveLength(4);
+  const lease = (entry: Record<string, unknown>) =>
+    JSON.parse((entry.argv as string[])[4]!);
+  expect(lease(cleanups[1]!)).toEqual(lease(cleanups[0]!));
 });
 
 it.each([

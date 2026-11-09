@@ -319,8 +319,10 @@ export const readerAnswerView = (stdout: string): TaskFileView | undefined => {
 /** The verifier's runs of the task's readers through the computer's computer-exec, as the witness runs them. */
 export const PYTHON_READER_VIEWS = String.raw`
 
-# Entries retain interrupted commands and their exact folders for a retry.
-_PENDING_READERS = {}
+# agentenv loads a fresh verifier module for every execution. Keep abandoned
+# leases in the hosting process, so a later module can retry their cleanup.
+_reader_registry = sys.modules.setdefault("_rea_desktop_reader_leases_v1", types.ModuleType("_rea_desktop_reader_leases_v1"))
+_PENDING_READERS = _reader_registry.__dict__.setdefault("pending", {})
 
 
 def _owned_task(awaitable):
@@ -329,43 +331,55 @@ def _owned_task(awaitable):
     return task
 
 
-async def _cleanup_readers(env_url, card):
-    for token, pending in list(_PENDING_READERS.items()):
-        if pending["env_url"] != env_url:
-            continue
-        if not pending["settled"]:
-            if pending["task"].cancelled():
-                raise RuntimeError(f"Reader {pending['request_id']} has an unknown outcome; retained {pending['lease']['path']}")
-            try:
-                result = await asyncio.shield(pending["task"])
-            except Exception as error:
-                raise RuntimeError(f"Reader {pending['request_id']} may still own {pending['lease']['path']}: {error}") from error
-            if not isinstance(result, dict) or result.get("timed_out"):
-                raise RuntimeError(f"Reader {pending['request_id']} may still be running; retained {pending['lease']['path']}")
-            pending["settled"] = True
-        if pending.get("cleanup_uncertain"):
-            raise RuntimeError(f"Cleanup may still be running; retained {pending['lease']['path']}")
-        pending.setdefault("cleanup_id", f"rea-reader-cleanup-{uuid.uuid4().hex}")
-        cleanup = {"argv": ["python3", "-I", "-c", READER_CLEANUP, json.dumps(pending["lease"])],
-                   "request_id": pending["cleanup_id"], "timeout_s": RUNNER_SLACK_S}
-        if "cleanup_task" not in pending:
-            pending["cleanup_task"] = _owned_task(
-                protocol.invoke_extension(env_url, card, EXEC, cleanup, method="run", timeout=2 * RUNNER_SLACK_S))
-        if pending["cleanup_task"].cancelled():
-            raise RuntimeError(f"Cleanup has an unknown outcome; retained {pending['lease']['path']}")
+async def _finish_reader(env_url, card, pending):
+    if not pending["settled"]:
+        if pending["task"].cancelled():
+            raise RuntimeError(f"Reader {pending['request_id']} has an unknown outcome; retained {pending['lease']['path']}")
         try:
-            answer = await asyncio.shield(pending["cleanup_task"])
+            result = await asyncio.shield(pending["task"])
         except Exception as error:
-            pending.pop("cleanup_task", None)
-            raise RuntimeError(f"Cleanup of owned reader folder {pending['lease']['path']} is unconfirmed: {error}") from error
-        if not isinstance(answer, dict) or answer.get("timed_out"):
-            pending["cleanup_uncertain"] = True
-            raise RuntimeError(f"Cleanup may still be running; retained {pending['lease']['path']}")
-        if answer.get("exit_code") != 0:
-            pending.pop("cleanup_id", None)
-            pending.pop("cleanup_task", None)
-            raise RuntimeError(f"Could not remove owned reader folder {pending['lease']['path']}: {answer}")
-        del _PENDING_READERS[token]
+            raise RuntimeError(f"Reader {pending['request_id']} may still own {pending['lease']['path']}: {error}") from error
+        if not isinstance(result, dict) or result.get("timed_out"):
+            raise RuntimeError(f"Reader {pending['request_id']} may still be running; retained {pending['lease']['path']}")
+        pending["settled"] = True
+    if pending.get("cleanup_uncertain"):
+        raise RuntimeError(f"Cleanup may still be running; retained {pending['lease']['path']}")
+    pending.setdefault("cleanup_id", f"rea-reader-cleanup-{uuid.uuid4().hex}")
+    cleanup = {"argv": ["python3", "-I", "-c", READER_CLEANUP, json.dumps(pending["lease"])],
+               "request_id": pending["cleanup_id"], "timeout_s": RUNNER_SLACK_S}
+    if "cleanup_task" not in pending:
+        pending["cleanup_task"] = _owned_task(
+            protocol.invoke_extension(env_url, card, EXEC, cleanup, method="run", timeout=2 * RUNNER_SLACK_S))
+    if pending["cleanup_task"].cancelled():
+        raise RuntimeError(f"Cleanup has an unknown outcome; retained {pending['lease']['path']}")
+    try:
+        answer = await asyncio.shield(pending["cleanup_task"])
+    except Exception as error:
+        pending.pop("cleanup_task", None)
+        raise RuntimeError(f"Cleanup of owned reader folder {pending['lease']['path']} is unconfirmed: {error}") from error
+    if not isinstance(answer, dict) or answer.get("timed_out"):
+        pending["cleanup_uncertain"] = True
+        raise RuntimeError(f"Cleanup may still be running; retained {pending['lease']['path']}")
+    if answer.get("exit_code") != 0:
+        pending.pop("cleanup_id", None)
+        pending.pop("cleanup_task", None)
+        raise RuntimeError(f"Could not remove owned reader folder {pending['lease']['path']}: {answer}")
+
+
+async def _cleanup_readers(env_url, card, current=None):
+    for token, pending in list(_PENDING_READERS.items()):
+        if pending["env_url"] != env_url or (not pending["abandoned"] if current is None else token != current):
+            continue
+        if "finishing" not in pending:
+            pending["finishing"] = _owned_task(_finish_reader(env_url, card, pending))
+        if pending["finishing"].cancelled():
+            raise RuntimeError(f"Reader cleanup has an unknown outcome; retained {pending['lease']['path']}")
+        try:
+            await asyncio.shield(pending["finishing"])
+        except Exception:
+            pending.pop("finishing", None)
+            raise
+        _PENDING_READERS.pop(token, None)
 
 
 async def _reader_views(env_url, card):
@@ -390,13 +404,15 @@ async def _reader_views(env_url, card):
         task = _owned_task(protocol.invoke_extension(
             env_url, card, EXEC, params, method="run", timeout=reader["timeout_s"] + 2 * RUNNER_SLACK_S))
         _PENDING_READERS[token] = {"env_url": env_url, "lease": lease, "task": task,
-                                   "request_id": params["request_id"], "settled": False}
+                                   "request_id": params["request_id"], "settled": False, "abandoned": False}
         try:
             answer = await asyncio.shield(task)
         except BaseException as error:
+            _PENDING_READERS[token]["abandoned"] = True
             error.add_note(f"Reader command {params['request_id']} and folder {lease['path']} remain owned for retry.")
             raise
         if not isinstance(answer, dict) or answer.get("timed_out"):
+            _PENDING_READERS[token]["abandoned"] = True
             raise RuntimeError(f"Reader {params['request_id']} may still be running; retained {lease['path']}")
         _PENDING_READERS[token]["settled"] = True
         try:
@@ -405,11 +421,13 @@ async def _reader_views(env_url, card):
                 views[reader["id"]] = view
         finally:
             try:
-                await _cleanup_readers(env_url, card)
+                await _cleanup_readers(env_url, card, token)
             except asyncio.CancelledError as error:
+                _PENDING_READERS[token]["abandoned"] = True
                 error.add_note(f"Reader cleanup remains owned for {lease['path']}; completed reader views: {json.dumps(views)}")
                 raise
             except Exception as error:
+                _PENDING_READERS[token]["abandoned"] = True
                 raise RuntimeError(f"{error}; completed reader views: {json.dumps(views)}") from error
     return views
 
