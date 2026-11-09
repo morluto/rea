@@ -99,6 +99,16 @@ const taggedTemplateArgumentsCache = new WeakMap<
   t.TaggedTemplateExpression,
   t.CallExpression["arguments"] | null
 >();
+const taggedTemplateRawArrays = new WeakMap<
+  t.ArrayExpression,
+  t.ArrayExpression
+>();
+
+/** Recover the synthesized `.raw` strings array for a tagged-template call site. */
+export const javaScriptTaggedTemplateRawStrings = (
+  node: t.Node,
+): t.ArrayExpression | undefined =>
+  t.isArrayExpression(node) ? taggedTemplateRawArrays.get(node) : undefined;
 
 /** Synthesize the implicit frozen strings array and interpolated expressions for a tagged template. */
 export const javaScriptTaggedTemplateArguments = (
@@ -114,14 +124,23 @@ export const javaScriptTaggedTemplateArguments = (
     }
     expressions.push(expr);
   }
+  const rawStrings = Object.assign(
+    t.arrayExpression(
+      node.quasi.quasis.map((quasi) => t.stringLiteral(quasi.value.raw)),
+    ),
+    { start: node.quasi.start ?? null, end: node.quasi.end ?? null },
+  );
   const strings = Object.assign(
     t.arrayExpression(
       node.quasi.quasis.map((quasi) =>
-        t.stringLiteral(quasi.value.cooked ?? quasi.value.raw),
+        quasi.value.cooked == null
+          ? t.unaryExpression("void", t.numericLiteral(0))
+          : t.stringLiteral(quasi.value.cooked),
       ),
     ),
     { start: node.quasi.start ?? null, end: node.quasi.end ?? null },
   );
+  taggedTemplateRawArrays.set(strings, rawStrings);
   const built: t.CallExpression["arguments"] = [strings, ...expressions];
   taggedTemplateArgumentsCache.set(node, built);
   return built;

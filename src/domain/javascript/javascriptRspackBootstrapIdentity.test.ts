@@ -1623,3 +1623,89 @@ describe("Unresolved callable fallbacks, collection capture times, and tagged-te
     `);
   });
 });
+
+describe("Rspack bootstrap forwarded defaults, tagged-template .raw, and call-time captures", () => {
+  it("preserves enclosing invocation facts when activating parameter defaults and Array.from copies", () => {
+    const preserved = analyzeJavaScriptStaticSource(`
+      const e = require("electron");
+      function pick(x = e) {
+        return x;
+      }
+      function outer(x) {
+        return pick(x);
+      }
+      function outerCopy(xs) {
+        return Array.from(xs);
+      }
+      const a = outer({});
+      a.ipcRenderer = {};
+      const copied = outerCopy([{}]);
+      copied[0].ipcRenderer = {};
+      e.ipcRenderer.send("FORWARDED_FRAME_PRESERVED");
+    `);
+    expect(preserved.electron.ipc).toEqual([
+      expect.objectContaining({
+        channel: "FORWARDED_FRAME_PRESERVED",
+        operation: "send",
+        side: "renderer",
+      }),
+    ]);
+
+    expectNoDirectElectron(`
+      const e = require("electron");
+      function pick(x = e) {
+        return x;
+      }
+      function outerOmitted(x) {
+        return pick(x);
+      }
+      outerOmitted().ipcRenderer.send = () => {};
+      e.ipcRenderer.send("FORWARDED_OMITTED_ACTIVE");
+    `);
+
+    expectNoDirectElectron(`
+      const e = require("electron");
+      function pick(x = e) {
+        return x;
+      }
+      function outerMutated(o) {
+        o.a = undefined;
+        return pick(o.a);
+      }
+      outerMutated({ a: {} }).ipcRenderer.send = () => {};
+      e.ipcRenderer.send("FORWARDED_MUTATED_ACTIVE");
+    `);
+  });
+
+  it("includes tagged-template .raw slots, call-time return captures, and named intrinsic copy sources", () => {
+    const preserved = analyzeJavaScriptStaticSource(`
+      const e = require("electron");
+      function tag({ raw = e }) {
+        return raw;
+      }
+      const rawArr = tag\`x\`;
+      Reflect.set(rawArr, "ipcRenderer", {});
+
+      function pickSlot(x) {
+        return x.ipc;
+      }
+      const holder = { ipc: {} };
+      const savedSlot = pickSlot(holder);
+      holder.ipc = e.ipcRenderer;
+      savedSlot.send = () => {};
+
+      const namedSrc = { a: e.ipcRenderer, b: {} };
+      const vals = Object.values(namedSrc);
+      vals[1].send = () => {};
+
+      e.ipcRenderer.send("RAW_AND_CAPTURE_PRESERVED");
+    `);
+    expect(preserved.electron.ipc).toEqual([
+      expect.objectContaining({
+        channel: "RAW_AND_CAPTURE_PRESERVED",
+        operation: "send",
+        side: "renderer",
+      }),
+    ]);
+  });
+});

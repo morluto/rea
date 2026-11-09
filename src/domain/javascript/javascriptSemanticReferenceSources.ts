@@ -1,5 +1,7 @@
 import type * as t from "@babel/types";
 import type { JavaScriptSemanticAnalysisState } from "./javascriptSemanticState.js";
+import { unwrapJavaScriptExpression } from "./javascriptAstValues.js";
+import { javaScriptTaggedTemplateRawStrings } from "./javascriptIntrinsicInvocation.js";
 import {
   semanticArrayIndex,
   semanticPropertyPathKeyMatches,
@@ -55,9 +57,10 @@ export const semanticKnownArrayIteration = (
 export const semanticKnownArrayIterationAt = (
   node: t.Node,
   state: JavaScriptSemanticAnalysisState,
+  capturePoint: t.Node = node,
 ): boolean =>
   semanticKnownArrayIteration(
-    evaluateSemanticExpression(node, state, node),
+    evaluateSemanticExpression(node, state, capturePoint),
     state,
   );
 
@@ -65,17 +68,34 @@ export const semanticKnownArrayIterationAt = (
 export const semanticReferenceIterationUnknown = (
   source: { readonly iterationSources?: readonly ReferenceSource[] },
   state: JavaScriptSemanticAnalysisState,
+  capturePoint?: t.Node,
 ): boolean =>
   source.iterationSources?.some(
-    (iterable) => !selectedReferenceIterationKnown(iterable, state),
+    (iterable) =>
+      !selectedReferenceIterationKnown(
+        iterable,
+        state,
+        capturePoint ?? iterable.node,
+      ),
   ) === true;
 
 const selectedReferenceIterationKnown = (
   source: ReferenceSource,
   state: JavaScriptSemanticAnalysisState,
+  capturePoint: t.Node = source.node,
 ): boolean => {
-  let values = [evaluateSemanticExpression(source.node, state, source.node)];
-  for (const key of source.projection) {
+  const rawStrings =
+    source.projection[0] === "raw"
+      ? javaScriptTaggedTemplateRawStrings(
+          unwrapJavaScriptExpression(source.node).node,
+        )
+      : undefined;
+  let values = [
+    evaluateSemanticExpression(rawStrings ?? source.node, state, capturePoint),
+  ];
+  const remainingProjection =
+    rawStrings === undefined ? source.projection : source.projection.slice(1);
+  for (const key of remainingProjection) {
     if (typeof key === "object" && key !== null) return false;
     const selected = new Set<JavaScriptSemanticValue>();
     for (const value of values) {
@@ -140,6 +160,18 @@ export const semanticSelectedReferenceSlot = (
   for (const key of source.projection) {
     if (key === null || typeof key === "object") return undefined;
     path.push(String(key));
+  }
+  const rawStrings =
+    path[0] === "raw"
+      ? javaScriptTaggedTemplateRawStrings(
+          unwrapJavaScriptExpression(source.node).node,
+        )
+      : undefined;
+  if (rawStrings !== undefined) {
+    return semanticSlotAtPath(
+      evaluateSemanticExpression(rawStrings, state, capturePoint),
+      path.slice(1),
+    );
   }
   return semanticSlotAtPath(
     evaluateSemanticExpression(source.node, state, capturePoint),

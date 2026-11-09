@@ -43,6 +43,7 @@ import {
   type JavaScriptSemanticBindingState,
 } from "./javascriptSemanticState.js";
 import { readSemanticRequireOriginCandidate } from "./javascriptSemanticRequireOriginSlot.js";
+import { javaScriptTaggedTemplateRawStrings } from "./javascriptIntrinsicInvocation.js";
 import { compareUnicodeCodePoints } from "../unicodeCodePointOrder.js";
 import {
   readExactJavaScriptLiteral,
@@ -1002,6 +1003,15 @@ const evaluateMember = (
     }
     keys.push(key);
     current = current.object;
+  }
+  if (value === undefined && keys.at(-1) === "raw") {
+    const rawStrings = javaScriptTaggedTemplateRawStrings(
+      unwrapJavaScriptExpression(current).node,
+    );
+    if (rawStrings !== undefined) {
+      keys.pop();
+      value = evaluateExpression(rawStrings, nestedContext(context));
+    }
   }
   value ??= evaluateExpression(current, nestedContext(context));
   for (const key of keys.reverse()) value = projectValue(value, [key]);
