@@ -43,6 +43,7 @@ cliTest(
       { arguments: ["observe-native-calls", "", "{}"], field: "path" },
       { arguments: ["inspect-evm-interface", "", "hex"], field: "path" },
       { arguments: ["inspect-electron-fuses", ""], field: "path" },
+      { arguments: ["analyze-javascript-application", ""], field: "path" },
       {
         arguments: ["inspect-web-network-capture", "", "har"],
         field: "capturePath",

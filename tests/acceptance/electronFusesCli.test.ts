@@ -347,8 +347,10 @@ cliTest(
     });
     expect(empty.exitCode, empty.stderr).toBe(1);
     expect(empty.json).toMatchObject({
-      code: "invalid_request",
-      details: { operation: "inspect_electron_fuses" },
+      code: "VALIDATION_ERROR",
+      fieldErrors: expect.arrayContaining([
+        expect.objectContaining({ path: "path", code: "too_small" }),
+      ]),
     });
   },
 );
