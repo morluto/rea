@@ -19,7 +19,11 @@ import {
   elfBunSection,
 } from "./bun/BunStandalone.fixture.js";
 import { dotnetBundleFixture } from "./dotnet/DotnetBundle.fixture.js";
-import { cArchiveExecutable } from "./pyinstaller/CArchive.fixture.js";
+import {
+  cArchiveExecutable,
+  pyzArchive,
+  PYTHON_39_MAGIC,
+} from "./pyinstaller/CArchive.fixture.js";
 import { ArtifactResourceScope } from "./ArtifactResourceScope.js";
 import { asarHeaderBytes } from "../../tests/fixtures/asarHeader.js";
 import { binaryPlistObjectTable } from "../../tests/fixtures/binaryPlistObjectTable.js";
@@ -2928,6 +2932,44 @@ describe("ReleaseExposureReader unexpanded package PE reads", () => {
       createdReaders.wrap = undefined;
     }
   });
+});
+
+it("keeps encrypted text-named PyInstaller members unclassified", async () => {
+  const root = await createTestTempDirectory("rea-encrypted-data-");
+  const path = join(root, "app");
+  await writeFile(
+    path,
+    cArchiveExecutable({
+      layout: "2.1",
+      pythonVersion: 309,
+      members: [
+        {
+          name: "pyimod00_crypto_key",
+          typeCode: "m",
+          payload: Buffer.from("key"),
+          compress: false,
+        },
+        {
+          name: "PYZ.pyz",
+          typeCode: "z",
+          payload: pyzArchive({
+            magic: PYTHON_39_MAGIC,
+            modules: [
+              {
+                name: "payload.json",
+                typeCode: 2,
+                body: Buffer.from("opaque"),
+              },
+            ],
+          }),
+          compress: false,
+        },
+      ],
+    }),
+  );
+  const scanned = await inspect(path);
+  expect(scanned.coverage).toBe("unknown");
+  expect(scanned.extractable.unreadable_members).toBeGreaterThan(0);
 });
 
 describe("ReleaseExposureReader probed FAT identity", () => {

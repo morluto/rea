@@ -260,6 +260,30 @@ describe("release exposure fuse and package checks", () => {
 });
 
 describe("release exposure fuse sampling", () => {
+  it.each(["not_a_directory", "not_electron"] as const)(
+    "keeps fuse applicability unknown for an unread packaged native image under %s",
+    (family) => {
+      const report = reportFor(
+        scan({
+          omitted: [
+            {
+              subject: PACKAGED_NATIVE_IMAGES,
+              count: 1,
+              reason: "stored inside a package",
+            },
+          ],
+        }),
+        owners({
+          electron_family: family,
+          fuse_images: [
+            { kind: "report", role: "native-image", implications: [] },
+          ],
+        }),
+      );
+      expect(statusOf(report, "electron.run_as_node")).toBe("unknown");
+    },
+  );
+
   it("keeps a directly selected Electron executable observed when its fuses are safe", () => {
     const safe = reportFor(
       scan({

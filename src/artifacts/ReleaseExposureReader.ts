@@ -1063,6 +1063,15 @@ const examineMember = async (
 
 const noteUnreadMember = (state: ScanState, member: MemberView): void => {
   if (canDeclareMap(member)) state.skippedMaps += 1;
+  if (
+    member.packageFormat !== null &&
+    !member.kindStated &&
+    asNativeFormat(member.format) === null
+  ) {
+    if (isDeclaredMap(state, member)) noteUnreadMap(state, member, null);
+    noteUnreadBinary(state, member);
+    return;
+  }
   if (asNativeFormat(member.format) !== null) noteUnreadBinary(state, member);
   else if (isDeclaredMap(state, member)) {
     noteUnreadMap(state, member, null);

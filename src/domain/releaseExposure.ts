@@ -606,13 +606,14 @@ const fuseCheck = (
       owners.electron_executable_included !== true);
   let status: Status;
   if (outcomes.includes(spec.exposed)) status = "exposed";
-  else if (owners.electron_family === "not_electron") status = "not_applicable";
+  else if (owners.electron_family === "not_electron")
+    status = nativeImagesMayBeUnread(scan) ? "unknown" : "not_applicable";
   else if (outcomes.includes("unknown") || failed || hostUnresolved)
     status = "unknown";
   else if (outcomes.length > 0 && outcomes.every((item) => item === spec.safe))
     status = partialFuseSample ? "unknown" : "not_observed";
   else if (owners.electron_family === "not_a_directory")
-    status = "not_applicable";
+    status = nativeImagesMayBeUnread(scan) ? "unknown" : "not_applicable";
   else status = "unknown";
   const familyReason = owners.electron_family_reason;
   const exposedPaths = images.flatMap((image) => {
