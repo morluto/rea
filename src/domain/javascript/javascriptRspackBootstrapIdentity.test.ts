@@ -1,7 +1,7 @@
 import { runInNewContext } from "node:vm";
 import { describe, expect, it } from "vitest";
 
-import { analyzeJavaScriptStaticSource } from "./javascriptStaticAnalysis.js";
+import { analyzeCommonJsStaticFixture as analyzeJavaScriptStaticSource } from "../../../tests/fixtures/javascriptCommonJsAnalysis.js";
 
 const EXTERNAL_ELECTRON =
   '(module) => { module.exports = require("electron"); }';
@@ -947,8 +947,212 @@ describe("tampered block-body n.n getter rejections", () => {
         var mod = (c[id] = { exports: {} });
         return m[id](mod, mod.exports, r), mod.exports;
       }
+      r.d = (exports, definition) => {
+        for (var key in definition) {
+          if (Object.prototype.hasOwnProperty.call(definition, key) && !Object.prototype.hasOwnProperty.call(exports, key)) {
+            Object.defineProperty(exports, key, { enumerable: true, get: definition[key] });
+          }
+        }
+      };
       r.n = ${getterImpl};
       r(85425);
     })();`);
+  });
+
+  it.each([
+    [
+      "r.d mutates the passed getter target instead of defining canonical descriptors",
+      `r.d = (g) => { g().ipcRenderer.send = () => {}; };`,
+      "r(85425);",
+    ],
+    [
+      "r.d is missing altogether when block-body r.n calls r.d",
+      ``,
+      "r(85425);",
+    ],
+    [
+      "r.d is installed only after entry dispatch",
+      ``,
+      `r(85425); r.d = (e, t) => { for (var k in t) Object.defineProperty(e, k, { enumerable: true, get: t[k] }); };`,
+    ],
+    [
+      "r.d delegates to a tampered r.o helper",
+      `r.o = (obj) => { obj.ipcRenderer && (obj.ipcRenderer.send = () => {}); return true; };
+       r.d = (e, t) => { for (var k in t) r.o(t, k) && !r.o(e, k) && Object.defineProperty(e, k, { enumerable: true, get: t[k] }); };`,
+      "r(85425);",
+    ],
+  ])(
+    "rejects canonical block-body r.n when %s",
+    (_label, helperSetup, entryInvoke) => {
+      expectNoDirectElectron(`(() => {
+        var m = {
+          91288: ${EXTERNAL_ELECTRON},
+          85425: (_u, _e, r) => {
+            const e = r(91288), d = r.n(e);
+            d().ipcRenderer.send("FALSE");
+          }
+        }, c = {};
+        function r(id) {
+          var hit = c[id];
+          if (void 0 !== hit) return hit.exports;
+          var mod = (c[id] = { exports: {} });
+          return m[id](mod, mod.exports, r), mod.exports;
+        }
+        ${helperSetup}
+        r.n = (e) => {
+          var t = e && e.__esModule ? () => e.default : () => e;
+          return r.d(t, { a: t }), t;
+        };
+        ${entryInvoke}
+      })();`);
+    },
+  );
+
+  it("admits canonical block-body r.n paired with canonical r.o + r.d helpers", () => {
+    const analysis = analyzeJavaScriptStaticSource(`(() => {
+      var m = {
+        91288: ${EXTERNAL_ELECTRON},
+        85425: (_u, _e, r) => {
+          const e = r(91288), d = r.n(e);
+          d().ipcRenderer.send("CANONICAL_RO_RD_OK");
+        }
+      }, c = {};
+      function r(id) {
+        var hit = c[id];
+        if (void 0 !== hit) return hit.exports;
+        var mod = (c[id] = { exports: {} });
+        return m[id](mod, mod.exports, r), mod.exports;
+      }
+      r.o = (obj, prop) => Object.prototype.hasOwnProperty.call(obj, prop);
+      r.d = (exports, definition) => {
+        for (var key in definition)
+          r.o(definition, key) &&
+            !r.o(exports, key) &&
+            Object.defineProperty(exports, key, { enumerable: !0, get: definition[key] });
+      };
+      r.n = (e) => {
+        var t = e && e.__esModule ? () => e.default : () => e;
+        return r.d(t, { a: t }), t;
+      };
+      r(85425);
+    })();`);
+    expect(analysis.electron.ipc).toMatchObject([
+      { channel: "CANONICAL_RO_RD_OK", side: "renderer", operation: "send" },
+    ]);
+  });
+});
+
+describe("deferred class/accessor methods and indirect Electron member writes", () => {
+  it("admits variable-declared loader when a preceding class static method calls it after init", () => {
+    const analysis = analyzeJavaScriptStaticSource(`(() => {
+      var m = {
+        91288: ${EXTERNAL_ELECTRON},
+        85425: (_u, _e, r) => { r(91288).ipcRenderer.send("CLASS_METHOD_OK"); }
+      }, c = {};
+      class Boot {
+        static run() {
+          return r(85425);
+        }
+      }
+      var r = function(id) {
+        var mod = (c[id] = { exports: {} });
+        return m[id](mod, mod.exports, r), mod.exports;
+      };
+      Boot.run();
+    })();`);
+    expect(analysis.electron.ipc).toMatchObject([
+      { channel: "CLASS_METHOD_OK", side: "renderer", operation: "send" },
+    ]);
+  });
+
+  it.each([
+    [
+      "class static block invokes deferred method before loader initialization",
+      `(() => {
+        var m = {
+          91288: ${EXTERNAL_ELECTRON},
+          85425: (_u, _e, r) => { r(91288).ipcRenderer.send("EARLY_STATIC"); }
+        }, c = {};
+        class Boot {
+          static run() { return r(85425); }
+          static { Boot.run(); }
+        }
+        void Boot;
+        var r = function(id) {
+          var mod = (c[id] = { exports: {} });
+          return m[id](mod, mod.exports, r), mod.exports;
+        };
+        r(85425);
+      })();`,
+    ],
+    [
+      "computed class method key executes before loader initialization",
+      `(() => {
+        var m = {
+          91288: ${EXTERNAL_ELECTRON},
+          85425: (_u, _e, r) => { r(91288).ipcRenderer.send("EARLY_KEY"); }
+        }, c = {};
+        function sideEffect() { return Boot.run(); }
+        class Boot {
+          static run() { return r(85425); }
+          [sideEffect()]() {}
+        }
+        void Boot;
+        var r = function(id) {
+          var mod = (c[id] = { exports: {} });
+          return m[id](mod, mod.exports, r), mod.exports;
+        };
+        r(85425);
+      })();`,
+    ],
+  ])("rejects variable-declared loader when %s", (_label, source) => {
+    const analysis = expectNoDirectElectron(source);
+    expect(analysis.bundler_registrations).toEqual([]);
+  });
+
+  it.each([
+    [
+      "for-of iteration over an array holding an Electron alias",
+      `let e = r(91288);
+       const saved = e;
+       for (const a of [e]) a.ipcRenderer.send = () => {};
+       e = null;
+       saved.ipcRenderer.send("FALSE");`,
+    ],
+    [
+      "helper call returning an Electron alias",
+      `const id = (x) => x;
+       let e = r(91288);
+       const saved = e;
+       const a = id(e);
+       a.ipcRenderer.send = () => {};
+       e = null;
+       saved.ipcRenderer.send("FALSE");`,
+    ],
+    [
+      "shallow Object.freeze wrapper around an Electron namespace",
+      `const e = r(91288);
+       const frozen = Object.freeze({ ipc: e.ipcRenderer });
+       frozen.ipc.send = () => {};
+       e.ipcRenderer.send("FALSE");`,
+    ],
+  ])("invalidates Electron IPC identity after %s", (_label, consumer) => {
+    expectNoDirectElectron(rspackGetterBundle(`(e) => () => e`, consumer));
+  });
+
+  it("preserves Electron IPC identity when mutating an unrelated helper return value", () => {
+    const analysis = analyzeJavaScriptStaticSource(
+      rspackGetterBundle(
+        `(e) => () => e`,
+        `const makeCfg = () => ({ ready: false });
+         const cfg = makeCfg();
+         cfg.ready = true;
+         for (const item of [cfg]) item.ready = false;
+         r(91288).ipcRenderer.send("UNRELATED_WRITE_OK");`,
+      ),
+    );
+    expect(analysis.electron.ipc).toMatchObject([
+      { channel: "UNRELATED_WRITE_OK", side: "renderer", operation: "send" },
+    ]);
   });
 });

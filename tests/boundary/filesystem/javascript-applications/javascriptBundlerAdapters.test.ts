@@ -157,7 +157,7 @@ describe("standalone Rspack inline FunctionExpression bootstraps", () => {
   it("recovers standalone Rspack inline FunctionExpression bootstraps and Electron IPC", async () => {
     const root = await createTestTempDirectory("rea-rspack-iife-bootstrap-");
     await writeFixtureFiles(root, {
-      "preload.js": `(() => {
+      "preload.cjs": `(() => {
         "use strict";
         var __webpack_modules__ = {
           91288: (module) => { module.exports = require("electron"); },

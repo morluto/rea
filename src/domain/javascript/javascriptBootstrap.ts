@@ -264,11 +264,35 @@ const isDeferredClosureNode = (
   | t.FunctionDeclaration
   | t.FunctionExpression
   | t.ArrowFunctionExpression
-  | t.ObjectMethod =>
+  | t.ObjectMethod
+  | t.ClassMethod
+  | t.ClassPrivateMethod =>
   t.isFunctionDeclaration(node) ||
   t.isFunctionExpression(node) ||
   t.isArrowFunctionExpression(node) ||
-  (t.isObjectMethod(node) && !node.computed && node.kind === "method");
+  t.isObjectMethod(node) ||
+  t.isClassMethod(node) ||
+  t.isClassPrivateMethod(node);
+
+const isDeferredSubtreeOfClosure = (
+  node: t.Node,
+  parents: WeakMap<t.Node, t.Node>,
+): boolean => {
+  if (
+    t.isFunctionDeclaration(node) ||
+    t.isFunctionExpression(node) ||
+    t.isArrowFunctionExpression(node)
+  )
+    return true;
+  const parent = parents.get(node);
+  return (
+    parent !== undefined &&
+    (t.isObjectMethod(parent) ||
+      t.isClassMethod(parent) ||
+      t.isClassPrivateMethod(parent)) &&
+    (node === parent.body || parent.params.includes(node as never))
+  );
+};
 
 const isInsideDeferredClosureBody = (
   node: t.Node,
@@ -281,7 +305,11 @@ const isInsideDeferredClosureBody = (
     current !== undefined && current !== root;
     child = current, current = parents.get(current)
   ) {
-    if (isDeferredClosureNode(current) && child === current.body) return true;
+    if (
+      isDeferredClosureNode(current) &&
+      (child === current.body || current.params.includes(child as never))
+    )
+      return true;
   }
   return false;
 };
@@ -297,7 +325,9 @@ const isInertLiteralNode = (node: t.Node): boolean =>
 
 const isInertPrefixNode = (node: t.Node): boolean => {
   if (
-    isDeferredClosureNode(node) ||
+    t.isFunctionDeclaration(node) ||
+    t.isFunctionExpression(node) ||
+    t.isArrowFunctionExpression(node) ||
     isInertLiteralNode(node) ||
     javaScriptExpressionWrapperTarget(node) !== undefined
   )
@@ -307,9 +337,22 @@ const isInertPrefixNode = (node: t.Node): boolean => {
     t.isVariableDeclaration(node) ||
     t.isExpressionStatement(node) ||
     t.isEmptyStatement(node) ||
-    t.isIdentifier(node)
+    t.isIdentifier(node) ||
+    t.isPrivateName(node) ||
+    t.isClassBody(node)
   )
     return true;
+  if (t.isClassDeclaration(node) || t.isClassExpression(node))
+    return (node.decorators?.length ?? 0) === 0 && node.superClass == null;
+  if (t.isObjectMethod(node) || t.isClassMethod(node))
+    return !node.computed && (node.decorators?.length ?? 0) === 0;
+  if (t.isClassPrivateMethod(node)) return (node.decorators?.length ?? 0) === 0;
+  if (t.isClassProperty(node))
+    return (
+      !node.static && !node.computed && (node.decorators?.length ?? 0) === 0
+    );
+  if (t.isClassPrivateProperty(node))
+    return !node.static && (node.decorators?.length ?? 0) === 0;
   if (t.isVariableDeclarator(node)) return t.isIdentifier(node.id);
   if (t.isObjectExpression(node))
     return node.properties.every((p) => !t.isSpreadElement(p));
@@ -331,7 +374,7 @@ const hasOnlyInertPrefixBeforeDeclarator = (
       !inert ||
       node === declarator ||
       (node !== body && (node.start ?? Number.POSITIVE_INFINITY) >= limit) ||
-      isDeferredClosureNode(node),
+      isDeferredSubtreeOfClosure(node, state.parentsByNode),
     enter: (node) => {
       if (!isInertPrefixNode(node)) inert = false;
     },

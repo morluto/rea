@@ -33,6 +33,7 @@ import {
   semanticReferenceRole,
 } from "./javascriptSemanticProjection.js";
 import {
+  readExactJavaScriptLiteral,
   semanticObjectPatternKeys,
   runtimeFunctionParameters,
   semanticStaticPropertyKey,
@@ -68,10 +69,14 @@ import {
 import {
   semanticRequireOrigin,
   assignmentValueSources,
+  semanticRequireOriginCandidate,
   observePossibleCommonJsDelegateWrite,
   invalidateSemanticRequireDelegateWrites,
 } from "./javascriptSemanticRequireOrigin.js";
-import { semanticBundledRequireOrigin } from "./javascriptBundledRequireOrigin.js";
+import {
+  semanticBundledRequireOrigin,
+  semanticBundledRequireOriginCandidate,
+} from "./javascriptBundledRequireOrigin.js";
 import { collectSemanticMemberMutationsSteps } from "./javascriptSemanticMemberMutations.js";
 import {
   semanticBindingAtRead,
@@ -121,6 +126,7 @@ import {
 } from "./javascriptSourceParser.js";
 
 import { isJavaScriptRpcClientFactory } from "./javascriptRpcEndpoints.js";
+import { expandJavaScriptInvocationArguments } from "./javascriptIntrinsicInvocation.js";
 import { createSemanticModuleInterop } from "./javascriptModuleInterop.js";
 import { semanticAliasSelectionChoices } from "./javascriptSemanticAliasSelections.js";
 import { semanticCopiedReferencePath } from "./javascriptSemanticCopiedReferencePaths.js";
@@ -140,7 +146,11 @@ import {
   semanticPropertyPathKeyMatches,
   type JavaScriptSemanticPropertyPath,
 } from "./javascriptSemanticPropertyPaths.js";
-import { semanticReferenceSourcesInactive } from "./javascriptSemanticReferenceSources.js";
+import {
+  semanticKnownArrayIterationAt,
+  semanticReferenceSourcesInactive,
+} from "./javascriptSemanticReferenceSources.js";
+import { createSemanticReturnedReferences } from "./javascriptSemanticReturnedReferences.js";
 import { indexCommonJsExportReceiversSteps } from "./javascriptCommonJsExportReceivers.js";
 import { createSemanticElectronAppPathChangeQuery } from "./javascriptElectronAppPathChanges.js";
 import type { JavaScriptModuleResolutionMode } from "./javascriptModuleResolutionMode.js";
@@ -863,12 +873,16 @@ const resolveGlobalAliasFact = (
 export interface JavaScriptElectronIdentity {
   /** Proven export paths keyed by call/construction root offset; absence is unknown. */
   readonly bindings: ReadonlyMap<number, readonly string[]>;
+  /** Conditional export paths whose require loader is not established. */
+  readonly candidateBindings: ReadonlyMap<number, readonly string[]>;
   readonly intactExport: (path: readonly (string | null)[]) => boolean;
   readonly exportPath: (root: t.Node) => readonly string[] | undefined;
+  readonly candidateExportPath: (root: t.Node) => readonly string[] | undefined;
   readonly invocationPath: (
     node: t.CallExpression | t.OptionalCallExpression,
   ) => readonly string[] | undefined;
   readonly mayChangeAppPath: (node: t.Node) => boolean;
+  readonly candidateMayChangeAppPath: (node: t.Node) => boolean;
 }
 
 export function* indexJavaScriptElectronIdentitySteps(
@@ -876,15 +890,33 @@ export function* indexJavaScriptElectronIdentitySteps(
   state: JavaScriptSemanticAnalysisState,
 ): Generator<void, JavaScriptElectronIdentity> {
   const facts = new Map<number, readonly string[]>();
+  const candidateFacts = new Map<number, readonly string[]>();
+  let hasCandidateElectronSource = false;
   const interop = createSemanticModuleInterop(state);
   const writes = new SemanticPropertyPathCoverage();
   let collectedWrites = false;
   const exportsByBinding = new Map<string, readonly string[] | null>();
+  const candidatesByBinding = new Map<string, readonly string[] | null>();
+  const originAvailableAtRead = (
+    binding: JavaScriptSemanticBindingState,
+    read: t.Node,
+  ): boolean => {
+    if (
+      binding.directOrigins.length > 0 ||
+      semanticStableInitializer(binding, state) === undefined
+    )
+      return true;
+    const access = semanticBindingAtRead(binding, read, state);
+    // An unresolved activation can still carry a possible identity, while an
+    // ordered read before its initializer cannot refer to that value.
+    return access.status !== "ordered" || access.hasDefiniteInitializer;
+  };
   const rootOrigin = (root: t.Node): readonly string[] | undefined => {
     if (t.isIdentifier(root)) {
       if (semanticResolutionBlocked(state, root, root.name)) return undefined;
       const binding = resolveSemanticBindingState(state, root, root.name);
-      if (binding === undefined) return undefined;
+      if (binding === undefined || !originAvailableAtRead(binding, root))
+        return undefined;
       let exported = exportsByBinding.get(binding.bindingId);
       if (exported === undefined) {
         exported = electronExport(binding, state, interop);
@@ -919,6 +951,73 @@ export function* indexJavaScriptElectronIdentitySteps(
     }
     return rootOrigin(root);
   };
+  const candidateRootExport = (root: t.Node): readonly string[] | undefined => {
+    if (t.isIdentifier(root)) {
+      if (semanticResolutionBlocked(state, root, root.name)) return undefined;
+      const binding = resolveSemanticBindingState(state, root, root.name);
+      if (
+        binding === undefined ||
+        (collectedWrites && interop.invalidated(binding))
+      )
+        return undefined;
+      if (binding.directOrigins.length === 0) {
+        if (semanticStableInitializer(binding, state) === undefined)
+          return undefined;
+        if (!originAvailableAtRead(binding, root)) return undefined;
+      }
+      if (
+        state.opaqueEffects.byScope.size > 0 &&
+        (semanticOpaqueBindingReadMayHaveChanged(binding, root, state) ||
+          interop.aliasMayHaveChanged(binding))
+      )
+        return undefined;
+      let candidate = candidatesByBinding.get(binding.bindingId);
+      if (candidate === undefined) {
+        const provenance = evaluateSemanticProvenance(binding, state);
+        const initializer = semanticStableInitializer(binding, state);
+        const bundled =
+          initializer === undefined
+            ? undefined
+            : semanticBundledRequireOriginCandidate(initializer.node, state)
+                ?.origin;
+        const origin =
+          bundled?.loaderAuthority === "candidate" &&
+          initializer?.projection.every(
+            (key): key is string => typeof key === "string",
+          )
+            ? {
+                ...bundled,
+                importedPath: [
+                  ...bundled.importedPath,
+                  ...initializer.projection,
+                ],
+              }
+            : provenance.status === "ambiguous" &&
+                provenance.origins.length === 1
+              ? provenance.origins[0]
+              : undefined;
+        candidate =
+          origin?.loaderAuthority === "candidate" &&
+          ELECTRON_MODULE.test(origin.specifier)
+            ? electronExportPath(origin.importedPath)
+            : null;
+        candidatesByBinding.set(binding.bindingId, candidate);
+      }
+      return candidate ?? undefined;
+    }
+    const origin = (
+      semanticRequireOriginCandidate(root, state) ??
+      semanticBundledRequireOriginCandidate(root, state)
+    )?.origin;
+    return origin?.loaderAuthority === "candidate" &&
+      ELECTRON_MODULE.test(origin.specifier)
+      ? electronExportPath(origin.importedPath)
+      : undefined;
+  };
+  const returnedReferences = createSemanticReturnedReferences(
+    state,
+    "potential-reference",
+  );
   yield* collectJavaScriptIdentityWritesSteps(
     program,
     state.erasedSyntaxNodes,
@@ -933,7 +1032,9 @@ export function* indexJavaScriptElectronIdentitySteps(
               members,
               state,
               interop,
+              returnedReferences,
               rootOrigin,
+              candidateRootExport,
               exportsByBinding,
             );
       if (exportedPaths.length > 0)
@@ -963,6 +1064,17 @@ export function* indexJavaScriptElectronIdentitySteps(
         !t.isNewExpression(node)
       )
         return;
+      if (
+        (t.isCallExpression(node) || t.isOptionalCallExpression(node)) &&
+        t.isIdentifier(node.callee, { name: "require" })
+      ) {
+        const origin = semanticRequireOriginCandidate(node, state)?.origin;
+        if (
+          origin?.loaderAuthority === "candidate" &&
+          ELECTRON_MODULE.test(origin.specifier)
+        )
+          hasCandidateElectronSource = true;
+      }
       const { root, members } = electronMemberPath(node.callee);
       const exported = rootExport(root);
       if (
@@ -970,6 +1082,14 @@ export function* indexJavaScriptElectronIdentitySteps(
         intactExport(["electron", ...exported, ...members])
       )
         facts.set(root.start ?? -1, exported);
+      else {
+        const candidate = candidateRootExport(root);
+        if (
+          candidate !== undefined &&
+          intactExport(["electron", ...candidate, ...members])
+        )
+          candidateFacts.set(root.start ?? -1, candidate);
+      }
     },
   });
   const invocationPath = (
@@ -992,14 +1112,23 @@ export function* indexJavaScriptElectronIdentitySteps(
   };
   return {
     bindings: facts,
+    candidateBindings: candidateFacts,
     intactExport,
     exportPath: rootExport,
+    candidateExportPath: candidateRootExport,
     invocationPath,
     mayChangeAppPath: createSemanticElectronAppPathChangeQuery(
       state,
       rootOrigin,
       interop,
     ),
+    candidateMayChangeAppPath: hasCandidateElectronSource
+      ? createSemanticElectronAppPathChangeQuery(
+          state,
+          candidateRootExport,
+          interop,
+        )
+      : () => false,
   };
 }
 
@@ -1012,18 +1141,147 @@ interface ElectronMemberWriteCandidate {
     | undefined;
 }
 
+const mapInvocationParameterSources = (
+  callables: ReadonlySet<t.Function>,
+  invocation: t.CallExpression | t.OptionalCallExpression,
+  state: JavaScriptSemanticAnalysisState,
+): ReadonlyMap<
+  string,
+  readonly {
+    readonly node: t.Node;
+    readonly projection: JavaScriptSemanticPropertyPath;
+  }[]
+> => {
+  const mapped = new Map<
+    string,
+    {
+      readonly node: t.Node;
+      readonly projection: JavaScriptSemanticPropertyPath;
+    }[]
+  >();
+  if (callables.size === 0 || invocation.arguments.length === 0) return mapped;
+  const expanded = expandJavaScriptInvocationArguments(
+    invocation.arguments,
+    (array) => semanticKnownArrayIterationAt(array, state),
+  );
+  const firstSpread = expanded.findIndex((arg) => t.isSpreadElement(arg));
+  const recordBinding = (
+    pattern: t.Node,
+    argNode: t.Node,
+    prefix: JavaScriptSemanticPropertyPath,
+  ): void => {
+    const target = unwrapJavaScriptExpression(pattern).node;
+    if (t.isAssignmentPattern(target)) {
+      recordBinding(target.left, argNode, prefix);
+      return;
+    }
+    if (t.isIdentifier(target)) {
+      const binding = resolveSemanticBindingState(state, target, target.name);
+      if (binding !== undefined) {
+        const list = mapped.get(binding.bindingId) ?? [];
+        list.push({ node: argNode, projection: prefix });
+        mapped.set(binding.bindingId, list);
+      }
+      return;
+    }
+    if (t.isObjectPattern(target)) {
+      for (const prop of target.properties) {
+        if (t.isRestElement(prop))
+          recordBinding(prop.argument, argNode, [
+            ...prefix,
+            { excludedKeys: semanticObjectPatternKeys(target) },
+          ]);
+        else
+          recordBinding(prop.value, argNode, [
+            ...prefix,
+            semanticStaticPropertyKey(prop.key, prop.computed),
+          ]);
+      }
+    } else if (t.isArrayPattern(target)) {
+      target.elements.forEach((elem, idx) => {
+        if (elem === null) return;
+        if (t.isRestElement(elem))
+          recordBinding(elem.argument, argNode, [
+            ...prefix,
+            { excludedKeys: [], startIndex: idx },
+          ]);
+        else recordBinding(elem, argNode, [...prefix, idx]);
+      });
+    }
+  };
+  for (const callable of callables) {
+    const params = runtimeFunctionParameters(callable);
+    params.forEach((param, index) => {
+      if (t.isRestElement(param)) {
+        for (const arg of expanded.slice(
+          firstSpread >= 0 ? Math.min(index, firstSpread) : index,
+        )) {
+          if (t.isSpreadElement(arg))
+            recordBinding(param.argument, arg.argument, [null]);
+          else if (t.isExpression(arg)) recordBinding(param.argument, arg, []);
+        }
+        return;
+      }
+      if (firstSpread < 0 || index < firstSpread) {
+        const arg = expanded[index];
+        if (arg !== undefined && t.isExpression(arg))
+          recordBinding(param, arg, []);
+        return;
+      }
+      for (const arg of expanded.slice(firstSpread)) {
+        if (t.isSpreadElement(arg)) recordBinding(param, arg.argument, [null]);
+        else if (t.isExpression(arg)) recordBinding(param, arg, []);
+      }
+    });
+  }
+  return mapped;
+};
+
+const enqueueOpaqueInvocationArguments = (
+  args: readonly (t.Expression | t.SpreadElement | t.ArgumentPlaceholder)[],
+  current: ElectronMemberWriteCandidate,
+  pending: ElectronMemberWriteCandidate[],
+): void => {
+  for (const arg of args) {
+    if (t.isSpreadElement(arg)) {
+      pending.push(
+        { node: arg.argument, suffix: [], readAt: current.readAt },
+        {
+          node: arg.argument,
+          suffix: [null, ...current.suffix],
+          readAt: current.readAt,
+        },
+      );
+    } else if (t.isExpression(arg)) {
+      pending.push(
+        { node: arg, suffix: [], readAt: current.readAt },
+        {
+          node: arg,
+          suffix: [null, ...current.suffix],
+          readAt: current.readAt,
+        },
+      );
+    }
+  }
+};
+
 const enqueueNonIdentifierMemberWriteSources = (
   node: t.Node,
   current: ElectronMemberWriteCandidate,
   capturedSelections: readonly SemanticCapturedSelection[] | undefined,
   state: JavaScriptSemanticAnalysisState,
   interop: ReturnType<typeof createSemanticModuleInterop>,
+  returnedReferences: ReturnType<typeof createSemanticReturnedReferences>,
   addPath: (candidate: JavaScriptSemanticPropertyPath) => void,
   pending: ElectronMemberWriteCandidate[],
 ): void => {
   const directSource =
     interop.callOrigin(node)?.origin ??
-    electronRequireOrigin(node, state)?.origin;
+    electronRequireOrigin(node, state)?.origin ??
+    (
+      semanticRequireOriginCandidate(node, state) ??
+      semanticBundledRequireOriginCandidate(node, state)
+    )?.origin;
   if (
     directSource !== undefined &&
     ELECTRON_MODULE.test(directSource.specifier)
@@ -1034,7 +1292,154 @@ const enqueueNonIdentifierMemberWriteSources = (
     ]);
     return;
   }
-  if (t.isConditionalExpression(node) || t.isLogicalExpression(node)) {
+  if (t.isForOfStatement(node)) {
+    pending.push({
+      node: node.right,
+      suffix: [null, ...current.suffix],
+      readAt: current.readAt ?? node,
+      capturedSelections: semanticShiftCapturedSelections(
+        capturedSelections,
+        1,
+      ),
+    });
+    if (node.await || !semanticKnownArrayIterationAt(node.right, state)) {
+      pending.push(
+        {
+          node: node.right,
+          suffix: current.suffix,
+          readAt: current.readAt ?? node,
+          capturedSelections,
+        },
+        { node: node.right, suffix: [], readAt: current.readAt ?? node },
+      );
+    }
+  } else if (t.isCallExpression(node) || t.isOptionalCallExpression(node)) {
+    const intrinsic = interop.intrinsicInvocation(node);
+    if (intrinsic?.kind === "known") {
+      const [ns, obj, method] = intrinsic.path;
+      const callArgs = intrinsic.arguments ?? [];
+      if (
+        ns === "intrinsic" &&
+        obj === "Object" &&
+        (method === "freeze" ||
+          method === "seal" ||
+          method === "preventExtensions")
+      ) {
+        const [target] = callArgs;
+        if (target !== undefined && t.isExpression(target))
+          pending.push({ ...current, node: target, capturedSelections });
+        return;
+      }
+      if (ns === "intrinsic" && obj === "Object" && method === "assign") {
+        const [target, ...sources] = callArgs;
+        if (target !== undefined && t.isExpression(target))
+          pending.push({ ...current, node: target, capturedSelections });
+        if (current.suffix.length > 0) {
+          for (const src of sources)
+            if (t.isExpression(src))
+              pending.push({ ...current, node: src, capturedSelections });
+        }
+        return;
+      }
+      if (
+        ns === "intrinsic" &&
+        obj === "Object" &&
+        method === "values" &&
+        current.suffix.length > 0
+      ) {
+        const [target] = callArgs;
+        if (target !== undefined && t.isExpression(target))
+          pending.push({
+            node: target,
+            suffix: [null, ...current.suffix.slice(1)],
+            readAt: current.readAt ?? node,
+            capturedSelections,
+          });
+        return;
+      }
+      if (ns === "intrinsic" && obj === "Array" && method === "from") {
+        const [iterable] = callArgs;
+        if (iterable !== undefined && t.isExpression(iterable)) {
+          pending.push({ ...current, node: iterable, capturedSelections });
+          if (!semanticKnownArrayIterationAt(iterable, state))
+            pending.push({
+              node: iterable,
+              suffix: [],
+              readAt: current.readAt ?? node,
+            });
+        }
+        return;
+      }
+    }
+    const returned = returnedReferences(node.callee, node);
+    const paramSources = mapInvocationParameterSources(
+      returned.callables,
+      node,
+      state,
+    );
+    for (const ref of returned.references) {
+      const unwrappedRef = unwrapJavaScriptExpression(ref.node).node;
+      if (t.isIdentifier(unwrappedRef)) {
+        const refBinding = resolveSemanticBindingState(
+          state,
+          unwrappedRef,
+          unwrappedRef.name,
+        );
+        const mappedArgs =
+          refBinding === undefined
+            ? undefined
+            : paramSources.get(refBinding.bindingId);
+        if (mappedArgs !== undefined) {
+          for (const argSource of mappedArgs)
+            pending.push({
+              node: argSource.node,
+              suffix: [
+                ...argSource.projection,
+                ...ref.projection,
+                ...current.suffix,
+              ],
+              readAt: current.readAt ?? node,
+              capturedSelections: semanticShiftCapturedSelections(
+                capturedSelections,
+                argSource.projection.length + ref.projection.length,
+              ),
+            });
+        }
+      }
+      pending.push({
+        node: ref.node,
+        suffix: [...ref.projection, ...current.suffix],
+        readAt: current.readAt ?? node,
+        capturedSelections: semanticShiftCapturedSelections(
+          capturedSelections,
+          ref.projection.length,
+        ),
+      });
+    }
+    if (
+      returned.unresolvedInvocation ||
+      (returned.callables.size === 0 && returned.references.length === 0)
+    )
+      enqueueOpaqueInvocationArguments(node.arguments, current, pending);
+  } else if (t.isNewExpression(node)) {
+    enqueueOpaqueInvocationArguments(node.arguments, current, pending);
+  } else if (t.isTaggedTemplateExpression(node)) {
+    for (const ref of returnedReferences(node.tag).references)
+      pending.push({
+        node: ref.node,
+        suffix: [...ref.projection, ...current.suffix],
+        readAt: current.readAt ?? node,
+        capturedSelections: semanticShiftCapturedSelections(
+          capturedSelections,
+          ref.projection.length,
+        ),
+      });
+  } else if (
+    (t.isAwaitExpression(node) || t.isYieldExpression(node)) &&
+    node.argument != null
+  ) {
+    pending.push({ ...current, node: node.argument, capturedSelections });
+  } else if (t.isConditionalExpression(node) || t.isLogicalExpression(node)) {
     pending.push(
       {
         ...current,
@@ -1084,6 +1489,7 @@ const enqueueNonIdentifierMemberWriteSources = (
 };
 
 const enqueueFallbackBindingMemberWriteSources = (
+  binding: JavaScriptSemanticBindingState,
   snapshot: JavaScriptSemanticBindingState,
   node: t.Identifier,
   current: ElectronMemberWriteCandidate,
@@ -1117,6 +1523,39 @@ const enqueueFallbackBindingMemberWriteSources = (
         });
     }
   }
+  for (const effect of binding.memberWrites)
+    for (const source of effect.assignedSources ?? []) {
+      if (semanticReferenceSourcesInactive(source, state)) continue;
+      pending.push({
+        node: source.node,
+        suffix: [],
+        readAt: current.readAt ?? node,
+      });
+    }
+};
+
+const isSeparateTerminalMemberWriteSource = (
+  candidateNode: t.Node,
+  suffix: JavaScriptSemanticPropertyPath,
+): boolean => {
+  const unwrapped = unwrapJavaScriptExpression(candidateNode).node;
+  if (
+    readExactJavaScriptLiteral(unwrapped).found ||
+    t.isRegExpLiteral(unwrapped)
+  )
+    return true;
+  if (suffix.length === 0)
+    return (
+      t.isObjectExpression(unwrapped) ||
+      t.isArrayExpression(unwrapped) ||
+      t.isFunction(unwrapped) ||
+      (t.isClass(unwrapped) && !unwrapped.decorators?.length)
+    );
+  if (t.isObjectExpression(unwrapped) && unwrapped.properties.length === 0)
+    return true;
+  if (t.isArrayExpression(unwrapped) && unwrapped.elements.length === 0)
+    return true;
+  return false;
 };
 
 const electronMemberWriteExports = (
@@ -1124,10 +1563,12 @@ const electronMemberWriteExports = (
   members: readonly (string | null)[],
   state: JavaScriptSemanticAnalysisState,
   interop: ReturnType<typeof createSemanticModuleInterop>,
+  returnedReferences: ReturnType<typeof createSemanticReturnedReferences>,
   rootOrigin: (node: t.Node) => readonly string[] | undefined,
+  candidateRootExport: (node: t.Node) => readonly string[] | undefined,
   exportsByBinding: Map<string, readonly string[] | null>,
 ): readonly JavaScriptSemanticPropertyPath[] => {
-  const direct = rootOrigin(root);
+  const direct = rootOrigin(root) ?? candidateRootExport(root);
   if (direct !== undefined) return [[...direct, ...members]];
   const results: JavaScriptSemanticPropertyPath[] = [];
   const seenPaths = new Set<string>();
@@ -1138,24 +1579,32 @@ const electronMemberWriteExports = (
       results.push(candidate);
     }
   };
-  const pending: ElectronMemberWriteCandidate[] = [
-    { node: root, suffix: members },
-  ];
+  const pending: ElectronMemberWriteCandidate[] = [];
   const visited = new WeakMap<t.Node, Set<string>>();
   let selections = 0;
-  while (pending.length > 0) {
-    const current = pending.pop();
-    if (current === undefined) continue;
-    const node = unwrapJavaScriptExpression(current.node).node;
-    const capturedSelections = semanticNormalizeCapturedSelections(
-      current.capturedSelections,
-      current.suffix.length,
-    );
+  let widened = false;
+  const enqueue = (candidate: ElectronMemberWriteCandidate): void => {
+    const node = unwrapJavaScriptExpression(candidate.node).node;
+    if (isSeparateTerminalMemberWriteSource(node, candidate.suffix)) return;
+    if (!widened && selections >= SEMANTIC_ALIAS_SELECTION_LIMIT) {
+      state.valueResourceLimits.add("alias-selections");
+      widened = true;
+    }
+    const normalized: ElectronMemberWriteCandidate = widened
+      ? { node, suffix: [null] }
+      : {
+          ...candidate,
+          node,
+          capturedSelections: semanticNormalizeCapturedSelections(
+            candidate.capturedSelections,
+            candidate.suffix.length,
+          ),
+        };
     const visitKey = JSON.stringify([
-      current.suffix,
-      current.readAt?.start,
-      current.readAt?.end,
-      capturedSelections?.map(({ at, depth, ownEnumerable }) => [
+      normalized.suffix,
+      normalized.readAt?.start,
+      normalized.readAt?.end,
+      normalized.capturedSelections?.map(({ at, depth, ownEnumerable }) => [
         at.start,
         at.end,
         depth,
@@ -1163,19 +1612,24 @@ const electronMemberWriteExports = (
       ]),
     ]);
     const nodeVisits = visited.get(node) ?? new Set<string>();
-    if (nodeVisits.has(visitKey)) continue;
-    if (selections >= SEMANTIC_ALIAS_SELECTION_LIMIT) {
-      state.valueResourceLimits.add("alias-selections");
-      break;
-    }
+    if (nodeVisits.has(visitKey)) return;
     selections += 1;
     nodeVisits.add(visitKey);
     visited.set(node, nodeVisits);
+    pending.push(normalized);
+  };
+  enqueue({ node: root, suffix: members });
+  while (pending.length > 0) {
+    const current = pending.pop();
+    if (current === undefined) continue;
+    const node = current.node;
+    const capturedSelections = current.capturedSelections;
+    const nextPending: ElectronMemberWriteCandidate[] = [];
 
     if (t.isMemberExpression(node) || t.isOptionalMemberExpression(node)) {
       const { root: memberRoot, members: memberSegments } =
         electronMemberPath(node);
-      pending.push({
+      enqueue({
         node: memberRoot,
         suffix: [...memberSegments, ...current.suffix],
         readAt: current.readAt ?? node,
@@ -1194,9 +1648,11 @@ const electronMemberWriteExports = (
         capturedSelections,
         state,
         interop,
+        returnedReferences,
         addPath,
-        pending,
+        nextPending,
       );
+      for (const candidate of nextPending) enqueue(candidate);
       continue;
     }
 
@@ -1209,7 +1665,13 @@ const electronMemberWriteExports = (
       exportsByBinding.set(binding.bindingId, stable);
     }
     if (stable !== null) addPath([...stable, ...current.suffix]);
-    const bundled = semanticBundledRequireOrigin(node, state)?.origin;
+    const candidateExport = candidateRootExport(node);
+    if (candidateExport !== undefined)
+      addPath([...candidateExport, ...current.suffix]);
+    const bundled = (
+      semanticBundledRequireOrigin(node, state) ??
+      semanticBundledRequireOriginCandidate(node, state)
+    )?.origin;
     if (bundled !== undefined && ELECTRON_MODULE.test(bundled.specifier))
       addPath([...electronExportPath(bundled.importedPath), ...current.suffix]);
     const snapshot = semanticBindingAtRead(binding, node, state).binding;
@@ -1230,7 +1692,7 @@ const electronMemberWriteExports = (
     )?.sources;
     if (projected !== undefined) {
       for (const source of projected)
-        pending.push({
+        enqueue({
           node: source.node,
           suffix: source.path,
           readAt:
@@ -1246,12 +1708,14 @@ const electronMemberWriteExports = (
       continue;
     }
     enqueueFallbackBindingMemberWriteSources(
+      binding,
       snapshot,
       node,
       current,
       state,
-      pending,
+      nextPending,
     );
+    for (const candidate of nextPending) enqueue(candidate);
   }
   return results;
 };

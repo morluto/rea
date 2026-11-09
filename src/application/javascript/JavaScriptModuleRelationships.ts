@@ -19,6 +19,8 @@ import type {
   JavaScriptSemanticModuleLink,
 } from "../../domain/javascript/javascriptSemanticIr.js";
 import {
+  explicitJavaScriptLoaderMode,
+  hasCaseVariantJavaScriptLoaderSuffix,
   isJsonModuleTarget,
   moduleResolutionModeForJavaScriptReference,
 } from "../../domain/javascript/javascriptModuleResolutionMode.js";
@@ -88,8 +90,12 @@ export const addJavaScriptSourceModules = (
     if (asset === undefined || semantic === null || program === undefined)
       continue;
     const exports = semantic.ir.moduleLinks
-      .flatMap(({ exportedName, kind }) =>
-        exportedName === null || kind === "type-import" ? [] : [exportedName],
+      .flatMap(({ exportedName, kind, loaderAuthority }) =>
+        exportedName === null ||
+        kind === "type-import" ||
+        loaderAuthority === "candidate"
+          ? []
+          : [exportedName],
       )
       .sort(compareUnicodeCodePoints);
     const typeExports = semantic.ir.moduleLinks
@@ -97,7 +103,17 @@ export const addJavaScriptSourceModules = (
         exportedName === null || kind !== "type-import" ? [] : [exportedName],
       )
       .sort(compareUnicodeCodePoints);
-    const retainedExports = [...new Set(exports)];
+    const retainedExportSet = new Set(exports);
+    const retainedExports = [...retainedExportSet];
+    const candidateExportNames = new Set(
+      semantic.ir.moduleLinks.flatMap(({ exportedName, loaderAuthority }) =>
+        exportedName !== null &&
+        loaderAuthority === "candidate" &&
+        !retainedExportSet.has(exportedName)
+          ? [exportedName]
+          : [],
+      ),
+    );
     const source = context.accumulator.addNode({
       kind: "javascript-module",
       identity: artifactLocalIdentity(
@@ -124,7 +140,7 @@ export const addJavaScriptSourceModules = (
             export_relationships: exports.length,
             export_names: retainedExports,
             type_export_names: [...new Set(typeExports)],
-            omitted_export_names: 0,
+            omitted_export_names: candidateExportNames.size,
           },
           evidence: astObservationEvidence({
             sha256: file.sha256,
@@ -132,7 +148,14 @@ export const addJavaScriptSourceModules = (
             range: program.location,
             operation: "recover-source-module",
             coverage: semanticCoverage(semantic),
-            limitations: semantic.ir.limitations,
+            limitations: [
+              ...semantic.ir.limitations,
+              ...(candidateExportNames.size === 0
+                ? []
+                : [
+                    "Candidate CommonJS export names are not included in the proven export names; the candidate relationships are retained separately.",
+                  ]),
+            ],
           }),
         },
       ],
@@ -189,12 +212,17 @@ const addExportRelationship = (
   const { context, file, semantic, source, link } = input;
   if (link.exportedName === null) return;
   const baseCoverage = semanticCoverage(semantic);
-  const returnShapes = projectJavaScriptExportReturnShapes({
-    ir: semantic.ir,
-    link,
-    modulePath: file.path,
-    baseCoverage,
-  });
+  const candidate = link.loaderAuthority === "candidate";
+  const candidateLimitation =
+    "The module wrapper is unknown, so this export is only a candidate.";
+  const returnShapes = candidate
+    ? null
+    : projectJavaScriptExportReturnShapes({
+        ir: semantic.ir,
+        link,
+        modulePath: file.path,
+        baseCoverage,
+      });
   const exported = context.accumulator.addNode({
     kind: "javascript-module",
     identity: artifactLocalIdentity(
@@ -214,14 +242,20 @@ const addExportRelationship = (
           local_name: link.localName,
           imported_name: link.importedName,
           declared_specifier: link.specifier,
+          ...(candidate ? { loader_authority: "candidate" } : {}),
         },
-        evidence: astObservationEvidence({
+        evidence: (candidate
+          ? staticInferenceEvidence
+          : astObservationEvidence)({
           sha256: file.sha256,
           path: file.path,
           range: link.location,
           operation: "recover-module-export",
           coverage: baseCoverage,
-          limitations: semantic.ir.limitations,
+          limitations: candidate
+            ? [...semantic.ir.limitations, candidateLimitation]
+            : semantic.ir.limitations,
+          ...(candidate ? { confidence: "low" as const } : {}),
         }),
       },
       ...(returnShapes === null
@@ -247,7 +281,12 @@ const addExportRelationship = (
     target_node_id: exported.node_id,
     relation: "exposes",
     properties: relationshipProperties(link, null),
-    evidence: relationshipEvidence(input, "expose-module-export", []),
+    evidence: relationshipEvidence(
+      input,
+      "expose-module-export",
+      candidate ? [candidateLimitation] : [],
+      candidate ? "low" : "high",
+    ),
   });
   const origin = moduleOriginForExport(semantic.ir, link);
   if (origin !== null)
@@ -260,7 +299,7 @@ const addImportRelationship = (
   omissions: RelationshipOmissionCounter,
   origin: JavaScriptModuleOrigin,
 ): void => {
-  const target = resolveModuleTarget(input, origin.specifier);
+  const target = resolveModuleTarget(input, origin);
   // A specifier that resolves back to the importing module itself (a literal
   // self-import, self-require, or artifact-confined path alias)
   // cannot become an edge: the application graph forbids self-referential
@@ -289,8 +328,34 @@ const addImportRelationship = (
 
 const resolveModuleTarget = (
   input: RelationshipInput,
-  specifier: string,
+  origin: JavaScriptModuleOrigin,
 ): ResolvedModuleTarget => {
+  const specifier = origin.specifier;
+  if (
+    input.link.loaderAuthority === "candidate" ||
+    origin.loaderAuthority === "candidate"
+  ) {
+    // The syntax retains a possible dependency, but an unproven wrapper
+    // cannot establish the loader or its lookup base.
+    const resolution: ArtifactPathResolution = {
+      declared_path: specifier,
+      resolution_context: "module-specifier",
+      resolution_status: "unavailable",
+      resolved_path: null,
+      limitations: [
+        "The module loader is unknown, so this dependency cannot be resolved against the source file.",
+      ],
+    };
+    return {
+      node: unresolvedModuleNode(input, specifier, resolution),
+      path: null,
+      file: null,
+      jsonStatus: null,
+      status: resolution.resolution_status,
+      limitations: resolution.limitations,
+      resolution,
+    };
+  }
   const resolution = resolveArtifactPathByContext({
     declaredPath: specifier,
     sourcePath: input.file.path,
@@ -370,7 +435,10 @@ const unresolvedModuleNode = (
           operation: "retain-unresolved-semantic-module",
           coverage: semanticCoverage(input.semantic),
           confidence: "low",
-          limitations: input.semantic.ir.limitations,
+          limitations: [
+            ...input.semantic.ir.limitations,
+            ...resolution.limitations,
+          ],
         }),
       },
     ],
@@ -387,6 +455,9 @@ const moduleOriginForExport = (
         : { resolutionMode: link.resolutionMode }),
       specifier: link.specifier,
       importedPath: link.importedName === null ? [] : [link.importedName],
+      ...(link.loaderAuthority === "candidate"
+        ? { loaderAuthority: "candidate" as const }
+        : {}),
     };
   if (link.localName === null) return null;
   const program = ir.scopes.find(({ kind }) => kind === "program");
@@ -394,9 +465,14 @@ const moduleOriginForExport = (
     ({ name, scopeId }) =>
       name === link.localName && scopeId === program?.scopeId,
   );
-  return binding?.provenance.status === "module" &&
-    binding.provenance.origins.length === 1
-    ? (binding.provenance.origins[0] ?? null)
+  const provenance = binding?.provenance;
+  if (provenance === undefined || provenance.origins.length !== 1) return null;
+  const origin = provenance.origins[0];
+  return origin !== undefined &&
+    (provenance.status === "module" ||
+      (provenance.status === "ambiguous" &&
+        origin.loaderAuthority === "candidate"))
+    ? origin
     : null;
 };
 
@@ -406,7 +482,14 @@ const relationshipProperties = (
   origin?: JavaScriptModuleOrigin,
 ) => ({
   module_link_kind: link.kind,
-  ...moduleResolutionModeProperties(link.resolutionMode),
+  ...(link.loaderAuthority === "candidate" ||
+  origin?.loaderAuthority === "candidate"
+    ? { loader_authority: "candidate" }
+    : {}),
+  ...(link.loaderAuthority === "candidate" ||
+  origin?.loaderAuthority === "candidate"
+    ? { resolution_mode: null }
+    : moduleResolutionModeProperties(link.resolutionMode)),
   specifier: origin?.specifier ?? link.specifier,
   imported_name: origin?.importedPath.at(-1) ?? link.importedName,
   imported_path: origin?.importedPath ?? [],
@@ -457,15 +540,19 @@ const moduleFormat = (
   path: string,
   ir: JavaScriptModuleSemanticIr,
 ): "commonjs" | "esm" | "mixed" | "unknown" => {
+  const loader = explicitJavaScriptLoaderMode(path);
+  if (loader === "module") return "esm";
+  if (loader === "commonjs") return "commonjs";
+  if (hasCaseVariantJavaScriptLoaderSuffix(path)) return "unknown";
   const extension = posix.extname(path).toLowerCase();
-  if (extension === ".mjs" || extension === ".mts") return "esm";
-  if (extension === ".cjs" || extension === ".cts") return "commonjs";
   if (extension === ".ts" || extension === ".tsx") return "unknown";
   const esm = ir.moduleLinks.some(({ kind }) =>
     ["import", "export", "re-export"].includes(kind),
   );
-  const commonJs = ir.moduleLinks.some(({ kind }) =>
-    ["require", "commonjs-export"].includes(kind),
+  const commonJs = ir.moduleLinks.some(
+    ({ kind, loaderAuthority }) =>
+      loaderAuthority !== "candidate" &&
+      ["require", "commonjs-export"].includes(kind),
   );
   return esm && commonJs
     ? "mixed"

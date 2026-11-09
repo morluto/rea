@@ -18,10 +18,12 @@ import {
 import { semanticOpaqueBindingReadMayHaveChanged } from "./javascriptSemanticOpaqueEffects.js";
 import { SEMANTIC_ALIAS_SELECTION_LIMIT } from "./javascriptSemanticResourceLimits.js";
 import { createSemanticModuleInterop } from "./javascriptModuleInterop.js";
+import { isUnmodifiedGlobalReference } from "./javascriptSemanticGlobalReference.js";
 import {
-  semanticRequireOrigin,
+  semanticRequireOriginCandidate,
   type JavaScriptRequireOrigin,
 } from "./javascriptSemanticRequireOrigin.js";
+import type { JavaScriptModuleOrigin } from "./javascriptSemanticIr.js";
 import {
   resolveSemanticBindingState,
   semanticResolutionBlocked,
@@ -50,7 +52,7 @@ interface BootstrapExternals {
   /** Loader bindings with the canonical n.n getter installed before dispatch. */
   readonly interopGetterBindingIds: ReadonlySet<string>;
   /** Table keys whose factory only re-exports one unshadowed literal require; null when a key repeats. */
-  readonly externals: ReadonlyMap<string, string | null>;
+  readonly externals: ReadonlyMap<string, JavaScriptModuleOrigin | null>;
 }
 
 const proofs = new WeakMap<
@@ -68,6 +70,15 @@ const proofs = new WeakMap<
  * the keyed factory consists solely of that re-export.
  */
 export const semanticBundledRequireOrigin = (
+  node: t.Node | null | undefined,
+  state: JavaScriptSemanticAnalysisState,
+): JavaScriptRequireOrigin | undefined => {
+  const result = semanticBundledRequireOriginCandidate(node, state);
+  return result?.origin.loaderAuthority === "candidate" ? undefined : result;
+};
+
+/** Retain conditional externals without treating the bootstrap as host proof. */
+export const semanticBundledRequireOriginCandidate = (
   node: t.Node | null | undefined,
   state: JavaScriptSemanticAnalysisState,
 ): JavaScriptRequireOrigin | undefined => {
@@ -158,11 +169,11 @@ const resolveBundledModuleOrigin = (
     const proof = bootstrapExternals(ancestor, state);
     if (proof === null || !proof.loaderBindingIds.has(binding.bindingId))
       continue;
-    const specifier = proof.externals.get(key);
-    return typeof specifier === "string"
+    const origin = proof.externals.get(key);
+    return origin !== null && origin !== undefined
       ? {
           origin: {
-            specifier,
+            ...origin,
             importedPath: chain.members,
             resolutionMode: "require",
           },
@@ -311,8 +322,10 @@ const canonicalWebpackInteropBindings = (
   state: JavaScriptSemanticAnalysisState,
 ): ReadonlySet<string> => {
   // The shared identity-write owner covers assignment, delete, destructuring,
-  // and Object/Reflect mutators; any write that may select `n` counts.
-  const writes = new Set<t.Node>();
+  // and Object/Reflect mutators; any write that may select `n`, `d`, or `o` counts.
+  const nWrites = new Set<t.Node>();
+  const dWrites = new Set<t.Node>();
+  const oWrites = new Set<t.Node>();
   const interop = createSemanticModuleInterop(state);
   const excludesLoader = (node: t.Node): boolean =>
     interop.isFreshObject(node) || readExactJavaScriptLiteral(node).found;
@@ -362,28 +375,57 @@ const canonicalWebpackInteropBindings = (
       interop.staticString,
       interop.isFreshObject,
       (node, path) => {
-        if (path.length < 2 || path[1] === "n" || path[1] === null)
-          writes.add(node);
+        if (path.length < 2 || path[1] === null) {
+          nWrites.add(node);
+          dWrites.add(node);
+          oWrites.add(node);
+        } else {
+          if (path[1] === "n") nWrites.add(node);
+          if (path[1] === "d") dWrites.add(node);
+          if (path[1] === "o") oWrites.add(node);
+        }
       },
     ),
   );
   const proven = new Set<string>();
-  const [write] = writes;
+  const [write] = nWrites;
   if (
-    writes.size === 1 &&
+    nWrites.size === 1 &&
     t.isAssignmentExpression(write, { operator: "=" }) &&
-    isInstalledBeforeEntryDispatch(write, bootstrap, loaderBindingIds, state) &&
-    isCanonicalGetter(write, loaderBindingIds, state)
-  )
-    for (const bindingId of loaderBindingIds) proven.add(bindingId);
+    isInstalledBeforeEntryDispatch(write, bootstrap, loaderBindingIds, state)
+  ) {
+    const getterProof = analyzeCanonicalGetter(write, loaderBindingIds, state);
+    if (
+      getterProof.valid &&
+      (!getterProof.usesDefineExports ||
+        isProvenDefineExportsHelper(
+          dWrites,
+          oWrites,
+          bootstrap,
+          loaderBindingIds,
+          state,
+        ))
+    )
+      for (const bindingId of loaderBindingIds) proven.add(bindingId);
+  }
   return proven;
 };
 
-const isCanonicalGetter = (
+interface CanonicalGetterProof {
+  readonly valid: boolean;
+  readonly usesDefineExports: boolean;
+}
+
+const INVALID_GETTER: CanonicalGetterProof = {
+  valid: false,
+  usesDefineExports: false,
+};
+
+const analyzeCanonicalGetter = (
   write: t.AssignmentExpression,
   loaderBindingIds: ReadonlySet<string>,
   state: JavaScriptSemanticAnalysisState,
-): boolean => {
+): CanonicalGetterProof => {
   const fn = unwrapJavaScriptExpression(write.right).node;
   if (
     (!t.isArrowFunctionExpression(fn) && !t.isFunctionExpression(fn)) ||
@@ -391,19 +433,19 @@ const isCanonicalGetter = (
     fn.generator ||
     runtimeFunctionParameters(fn).length !== 1
   )
-    return false;
+    return INVALID_GETTER;
   if (t.isFunctionExpression(fn) && fn.id != null) {
-    if (!t.isIdentifier(fn.id)) return false;
+    if (!t.isIdentifier(fn.id)) return INVALID_GETTER;
     const fnBinding = resolveSemanticBindingState(state, fn.id, fn.id.name);
     if (
       fnBinding === undefined ||
       !singleDefinition(state, fnBinding.bindingId, "function") ||
       (state.bindingWrites.get(fnBinding.bindingId)?.length ?? 0) !== 0
     )
-      return false;
+      return INVALID_GETTER;
   }
   const [parameter] = runtimeFunctionParameters(fn);
-  if (!t.isIdentifier(parameter)) return false;
+  if (!t.isIdentifier(parameter)) return INVALID_GETTER;
   const parameterBinding = resolveSemanticBindingState(
     state,
     parameter,
@@ -414,13 +456,16 @@ const isCanonicalGetter = (
     !singleDefinition(state, parameterBinding.bindingId, "parameter") ||
     (state.bindingWrites.get(parameterBinding.bindingId)?.length ?? 0) !== 0
   )
-    return false;
+    return INVALID_GETTER;
   if (!t.isBlockStatement(fn.body))
-    return isCanonicalConditionalGetter(
-      fn.body,
-      parameterBinding.bindingId,
-      state,
-    );
+    return {
+      valid: isCanonicalConditionalGetter(
+        fn.body,
+        parameterBinding.bindingId,
+        state,
+      ),
+      usesDefineExports: false,
+    };
   const statements = fn.body.body;
   const [first, second, third] = statements;
   if (
@@ -428,15 +473,19 @@ const isCanonicalGetter = (
     t.isReturnStatement(first) &&
     first.argument != null
   )
-    return isCanonicalConditionalGetter(
-      first.argument,
-      parameterBinding.bindingId,
-      state,
-    );
+    return {
+      valid: isCanonicalConditionalGetter(
+        first.argument,
+        parameterBinding.bindingId,
+        state,
+      ),
+      usesDefineExports: false,
+    };
   if (!t.isVariableDeclaration(first) || first.declarations.length !== 1)
-    return false;
+    return INVALID_GETTER;
   const [declarator] = first.declarations;
-  if (!t.isIdentifier(declarator?.id) || declarator.init == null) return false;
+  if (!t.isIdentifier(declarator?.id) || declarator.init == null)
+    return INVALID_GETTER;
   const getterBinding = resolveSemanticBindingState(
     state,
     declarator.id,
@@ -453,15 +502,16 @@ const isCanonicalGetter = (
       state,
     )
   )
-    return false;
+    return INVALID_GETTER;
   if (
     statements.length === 2 &&
     t.isReturnStatement(second) &&
     second.argument != null
   ) {
     const returned = unwrapJavaScriptExpression(second.argument).node;
-    if (sameBinding(returned, getterBinding.bindingId, state)) return true;
-    return (
+    if (sameBinding(returned, getterBinding.bindingId, state))
+      return { valid: true, usesDefineExports: false };
+    const valid =
       t.isSequenceExpression(returned) &&
       returned.expressions.length === 2 &&
       isCanonicalGetterDefineCall(
@@ -474,10 +524,10 @@ const isCanonicalGetter = (
         unwrapJavaScriptExpression(returned.expressions[1]!).node,
         getterBinding.bindingId,
         state,
-      )
-    );
+      );
+    return { valid, usesDefineExports: valid };
   }
-  return (
+  const valid =
     statements.length === 3 &&
     t.isExpressionStatement(second) &&
     isCanonicalGetterDefineCall(
@@ -491,6 +541,361 @@ const isCanonicalGetter = (
     sameBinding(
       unwrapJavaScriptExpression(third.argument).node,
       getterBinding.bindingId,
+      state,
+    );
+  return { valid, usesDefineExports: valid };
+};
+
+const isProvenDefineExportsHelper = (
+  dWrites: ReadonlySet<t.Node>,
+  oWrites: ReadonlySet<t.Node>,
+  bootstrap: Bootstrap,
+  loaderBindingIds: ReadonlySet<string>,
+  state: JavaScriptSemanticAnalysisState,
+): boolean => {
+  const [dWrite] = dWrites;
+  if (
+    dWrites.size !== 1 ||
+    !t.isAssignmentExpression(dWrite, { operator: "=" }) ||
+    !isInstalledBeforeEntryDispatch(dWrite, bootstrap, loaderBindingIds, state)
+  )
+    return false;
+  const fn = unwrapJavaScriptExpression(dWrite.right).node;
+  if (
+    (!t.isArrowFunctionExpression(fn) && !t.isFunctionExpression(fn)) ||
+    fn.async ||
+    fn.generator ||
+    runtimeFunctionParameters(fn).length !== 2 ||
+    !t.isBlockStatement(fn.body) ||
+    fn.body.body.length !== 1
+  )
+    return false;
+  if (t.isFunctionExpression(fn) && fn.id != null) {
+    if (!t.isIdentifier(fn.id)) return false;
+    const fnBinding = resolveSemanticBindingState(state, fn.id, fn.id.name);
+    if (
+      fnBinding === undefined ||
+      !singleDefinition(state, fnBinding.bindingId, "function") ||
+      (state.bindingWrites.get(fnBinding.bindingId)?.length ?? 0) !== 0
+    )
+      return false;
+  }
+  const [exportsParam, definitionParam] = runtimeFunctionParameters(fn);
+  if (!t.isIdentifier(exportsParam) || !t.isIdentifier(definitionParam))
+    return false;
+  const exportsBinding = resolveSemanticBindingState(
+    state,
+    exportsParam,
+    exportsParam.name,
+  );
+  const definitionBinding = resolveSemanticBindingState(
+    state,
+    definitionParam,
+    definitionParam.name,
+  );
+  if (
+    exportsBinding === undefined ||
+    definitionBinding === undefined ||
+    exportsBinding.bindingId === definitionBinding.bindingId ||
+    !singleDefinition(state, exportsBinding.bindingId, "parameter") ||
+    !singleDefinition(state, definitionBinding.bindingId, "parameter") ||
+    (state.bindingWrites.get(exportsBinding.bindingId)?.length ?? 0) !== 0 ||
+    (state.bindingWrites.get(definitionBinding.bindingId)?.length ?? 0) !== 0 ||
+    definitionBinding.memberWrites.length !== 0
+  )
+    return false;
+  const [forIn] = fn.body.body;
+  if (
+    !t.isForInStatement(forIn) ||
+    !sameBinding(
+      unwrapJavaScriptExpression(forIn.right).node,
+      definitionBinding.bindingId,
+      state,
+    ) ||
+    !t.isVariableDeclaration(forIn.left) ||
+    forIn.left.declarations.length !== 1
+  )
+    return false;
+  const [keyDeclarator] = forIn.left.declarations;
+  if (!t.isIdentifier(keyDeclarator?.id) || keyDeclarator.init != null)
+    return false;
+  const keyBinding = resolveSemanticBindingState(
+    state,
+    keyDeclarator.id,
+    keyDeclarator.id.name,
+  );
+  if (
+    keyBinding === undefined ||
+    keyBinding.definitions.filter(({ kind }) => kind === "variable").length !==
+      1 ||
+    keyBinding.definitions.length > 2 ||
+    !(state.bindingWrites.get(keyBinding.bindingId) ?? []).every(
+      (site) => site === forIn,
+    )
+  )
+    return false;
+  let usesHasOwnHelper = false;
+  const isSafeGuard = (guard: t.Node): boolean => {
+    const unwrapped = unwrapJavaScriptExpression(guard).node;
+    if (t.isLogicalExpression(unwrapped, { operator: "&&" }))
+      return isSafeGuard(unwrapped.left) && isSafeGuard(unwrapped.right);
+    if (t.isUnaryExpression(unwrapped, { operator: "!" }))
+      return isSafeGuard(unwrapped.argument);
+    if (!t.isCallExpression(unwrapped) || unwrapped.arguments.length !== 2)
+      return false;
+    const [targetArg, propArg] = unwrapped.arguments;
+    if (
+      targetArg === undefined ||
+      propArg === undefined ||
+      t.isSpreadElement(targetArg) ||
+      t.isSpreadElement(propArg)
+    )
+      return false;
+    const targetNode = unwrapJavaScriptExpression(targetArg).node;
+    const propNode = unwrapJavaScriptExpression(propArg).node;
+    if (
+      (!sameBinding(targetNode, exportsBinding.bindingId, state) &&
+        !sameBinding(targetNode, definitionBinding.bindingId, state)) ||
+      !sameBinding(propNode, keyBinding.bindingId, state)
+    )
+      return false;
+    const callee = unwrapJavaScriptExpression(unwrapped.callee).node;
+    if (
+      t.isMemberExpression(callee) &&
+      semanticStaticPropertyKey(callee.property, callee.computed) === "o"
+    ) {
+      const loaderObj = unwrapJavaScriptExpression(callee.object).node;
+      const loaderBinding = t.isIdentifier(loaderObj)
+        ? resolveSemanticBindingState(state, loaderObj, loaderObj.name)
+        : undefined;
+      if (
+        loaderBinding !== undefined &&
+        loaderBindingIds.has(loaderBinding.bindingId)
+      ) {
+        usesHasOwnHelper = true;
+        return true;
+      }
+    }
+    return isUnmodifiedHasOwnCallCallee(callee, state);
+  };
+  const step = unwrapSingleStatement(forIn.body);
+  if (step === undefined) return false;
+  let defineExpr: t.Node | undefined;
+  if (t.isIfStatement(step) && step.alternate == null) {
+    const consequent = unwrapSingleStatement(step.consequent);
+    if (
+      !isSafeGuard(step.test) ||
+      consequent === undefined ||
+      !t.isExpressionStatement(consequent)
+    )
+      return false;
+    defineExpr = consequent.expression;
+  } else if (t.isExpressionStatement(step)) {
+    const inner = unwrapJavaScriptExpression(step.expression).node;
+    if (t.isLogicalExpression(inner, { operator: "&&" })) {
+      if (!isSafeGuard(inner.left)) return false;
+      defineExpr = inner.right;
+    } else defineExpr = inner;
+  }
+  return (
+    defineExpr !== undefined &&
+    isCanonicalDefinePropertyCall(
+      defineExpr,
+      exportsBinding.bindingId,
+      definitionBinding.bindingId,
+      keyBinding.bindingId,
+      state,
+    ) &&
+    (!usesHasOwnHelper ||
+      isProvenHasOwnHelper(oWrites, bootstrap, loaderBindingIds, state))
+  );
+};
+
+const unwrapSingleStatement = (node: t.Statement): t.Statement | undefined =>
+  t.isBlockStatement(node)
+    ? node.body.length === 1
+      ? node.body[0]
+      : undefined
+    : node;
+
+const isUnmodifiedHasOwnCallCallee = (
+  callee: t.Node,
+  state: JavaScriptSemanticAnalysisState,
+): boolean =>
+  isUnmodifiedGlobalReference(callee, state, ["Object", "hasOwn"]) ||
+  (isUnmodifiedGlobalReference(callee, state, [
+    "Object",
+    "prototype",
+    "hasOwnProperty",
+    "call",
+  ]) &&
+    !state.ambientWrites.covers(["global", "Function", "prototype", "call"]));
+
+const isExactTrueLiteral = (node: t.Node): boolean => {
+  const unwrapped = unwrapJavaScriptExpression(node).node;
+  const literal = readExactJavaScriptLiteral(unwrapped);
+  if (literal.found) return literal.value === true;
+  if (t.isUnaryExpression(unwrapped, { operator: "!" })) {
+    const inner = readExactJavaScriptLiteral(unwrapped.argument);
+    return inner.found && !inner.value;
+  }
+  return false;
+};
+
+const isCanonicalDefinePropertyCall = (
+  node: t.Node,
+  exportsBindingId: string,
+  definitionBindingId: string,
+  keyBindingId: string,
+  state: JavaScriptSemanticAnalysisState,
+): boolean => {
+  const call = unwrapJavaScriptExpression(node).node;
+  if (
+    !t.isCallExpression(call) ||
+    call.arguments.length !== 3 ||
+    !isUnmodifiedGlobalReference(call.callee, state, [
+      "Object",
+      "defineProperty",
+    ]) ||
+    ["value", "writable", "get", "set"].some((field) =>
+      state.ambientWrites.covers(["global", "Object", "prototype", field]),
+    )
+  )
+    return false;
+  const [targetArg, keyArg, descriptorArg] = call.arguments;
+  if (
+    targetArg === undefined ||
+    keyArg === undefined ||
+    descriptorArg === undefined ||
+    t.isSpreadElement(targetArg) ||
+    t.isSpreadElement(keyArg) ||
+    t.isSpreadElement(descriptorArg) ||
+    !sameBinding(
+      unwrapJavaScriptExpression(targetArg).node,
+      exportsBindingId,
+      state,
+    ) ||
+    !sameBinding(unwrapJavaScriptExpression(keyArg).node, keyBindingId, state)
+  )
+    return false;
+  const descriptor = unwrapJavaScriptExpression(descriptorArg).node;
+  if (
+    !t.isObjectExpression(descriptor) ||
+    descriptor.properties.length < 1 ||
+    descriptor.properties.length > 2
+  )
+    return false;
+  let hasGetter = false;
+  const seenKeys = new Set<string>();
+  for (const property of descriptor.properties) {
+    if (
+      !t.isObjectProperty(property) ||
+      property.computed ||
+      property.shorthand
+    )
+      return false;
+    const key = semanticStaticPropertyKey(property.key, false);
+    if (key === null || seenKeys.has(key)) return false;
+    seenKeys.add(key);
+    if (key === "enumerable") {
+      if (!isExactTrueLiteral(property.value)) return false;
+    } else if (key === "get") {
+      const getter = unwrapJavaScriptExpression(property.value).node;
+      if (
+        !t.isMemberExpression(getter) ||
+        !getter.computed ||
+        !sameBinding(
+          unwrapJavaScriptExpression(getter.object).node,
+          definitionBindingId,
+          state,
+        ) ||
+        !sameBinding(
+          unwrapJavaScriptExpression(getter.property).node,
+          keyBindingId,
+          state,
+        )
+      )
+        return false;
+      hasGetter = true;
+    } else return false;
+  }
+  return hasGetter;
+};
+
+const isProvenHasOwnHelper = (
+  oWrites: ReadonlySet<t.Node>,
+  bootstrap: Bootstrap,
+  loaderBindingIds: ReadonlySet<string>,
+  state: JavaScriptSemanticAnalysisState,
+): boolean => {
+  const [oWrite] = oWrites;
+  if (
+    oWrites.size !== 1 ||
+    !t.isAssignmentExpression(oWrite, { operator: "=" }) ||
+    !isInstalledBeforeEntryDispatch(oWrite, bootstrap, loaderBindingIds, state)
+  )
+    return false;
+  const fn = unwrapJavaScriptExpression(oWrite.right).node;
+  if (
+    (!t.isArrowFunctionExpression(fn) && !t.isFunctionExpression(fn)) ||
+    fn.async ||
+    fn.generator ||
+    runtimeFunctionParameters(fn).length !== 2
+  )
+    return false;
+  const [objParam, propParam] = runtimeFunctionParameters(fn);
+  if (!t.isIdentifier(objParam) || !t.isIdentifier(propParam)) return false;
+  const objBinding = resolveSemanticBindingState(
+    state,
+    objParam,
+    objParam.name,
+  );
+  const propBinding = resolveSemanticBindingState(
+    state,
+    propParam,
+    propParam.name,
+  );
+  if (
+    objBinding === undefined ||
+    propBinding === undefined ||
+    objBinding.bindingId === propBinding.bindingId ||
+    !singleDefinition(state, objBinding.bindingId, "parameter") ||
+    !singleDefinition(state, propBinding.bindingId, "parameter") ||
+    (state.bindingWrites.get(objBinding.bindingId)?.length ?? 0) !== 0 ||
+    (state.bindingWrites.get(propBinding.bindingId)?.length ?? 0) !== 0
+  )
+    return false;
+  let returned: t.Node | undefined;
+  if (t.isBlockStatement(fn.body)) {
+    const [statement] = fn.body.body;
+    if (
+      fn.body.body.length !== 1 ||
+      !t.isReturnStatement(statement) ||
+      statement.argument == null
+    )
+      return false;
+    returned = unwrapJavaScriptExpression(statement.argument).node;
+  } else returned = unwrapJavaScriptExpression(fn.body).node;
+  if (!t.isCallExpression(returned) || returned.arguments.length !== 2)
+    return false;
+  const [arg0, arg1] = returned.arguments;
+  return (
+    arg0 !== undefined &&
+    arg1 !== undefined &&
+    !t.isSpreadElement(arg0) &&
+    !t.isSpreadElement(arg1) &&
+    sameBinding(
+      unwrapJavaScriptExpression(arg0).node,
+      objBinding.bindingId,
+      state,
+    ) &&
+    sameBinding(
+      unwrapJavaScriptExpression(arg1).node,
+      propBinding.bindingId,
+      state,
+    ) &&
+    isUnmodifiedHasOwnCallCallee(
+      unwrapJavaScriptExpression(returned.callee).node,
       state,
     )
   );
@@ -631,7 +1036,7 @@ const isInstalledBeforeEntryDispatch = (
 };
 
 const bootstrapProofForLoaderCall = (
-  call: t.CallExpression,
+  call: t.CallExpression | t.OptionalCallExpression,
   loaderBindingId: string,
   state: JavaScriptSemanticAnalysisState,
 ): BootstrapExternals | undefined => {
@@ -768,7 +1173,7 @@ const proveBootstrapExternals = (
     state,
   );
   if (integrity === undefined) return null;
-  const externals = new Map<string, string | null>();
+  const externals = new Map<string, JavaScriptModuleOrigin | null>();
   for (const { property, factory } of factories) {
     const key = modulePropertyName(property);
     const specifier = integrity.replacedKeys.has(key)
@@ -795,7 +1200,7 @@ const proveBootstrapExternals = (
 const externalSpecifier = (
   factory: t.FunctionExpression | t.ArrowFunctionExpression | t.ObjectMethod,
   state: JavaScriptSemanticAnalysisState,
-): string | undefined => {
+): JavaScriptModuleOrigin | undefined => {
   const moduleParameter = javascriptBundlerFactoryRoles(
     factory,
     BOOTSTRAP_RUNTIME,
@@ -839,9 +1244,12 @@ const externalSpecifier = (
     target?.bindingId !== moduleBinding.bindingId
   )
     return undefined;
-  const required = semanticRequireOrigin(expression.right, state)?.origin;
+  const required = semanticRequireOriginCandidate(
+    expression.right,
+    state,
+  )?.origin;
   return required !== undefined && required.importedPath.length === 0
-    ? required.specifier
+    ? required
     : undefined;
 };
 
