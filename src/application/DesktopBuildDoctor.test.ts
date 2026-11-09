@@ -431,6 +431,17 @@ describe("desktop build informational checks", () => {
     expect(check?.remediation).toContain("screen_judge");
   });
 
+  it("reports an unavailable endpoint query as unknown", async () => {
+    const report = await diagnose(buildHost({ solveEndpoint: null }));
+    expect(report.informational_checks).toContainEqual(
+      expect.objectContaining({
+        name: "desktop_build-solve-endpoint",
+        ok: false,
+        classification: "unknown",
+      }),
+    );
+  });
+
   it("names the exact command that removes leftover build containers", async () => {
     const report = await diagnose(
       buildHost({ leftoverContainers: ["agent-0f3a", "agent-91bc"] }),
