@@ -71,9 +71,12 @@ MCP is configured. Native CLI tasks still require their selected engine.
 Prefer an existing `rea` CLI. When none is installed and REA package acquisition
 is within the authorized scope, use `npx -y rea-agents@latest` in its place from a
 trusted directory outside the target project and outside any REA source checkout,
-with absolute target paths. Inside a checkout npm resolves `rea-agents` to the
-local unbuilt package, so the launcher fails and the client reports a closed
-connection. Managed
+with absolute target paths. Inside a checkout npm treats `rea-agents` as a local
+match only for an unversioned request or one naming the checkout's exact version,
+and the checkout's package is unbuilt, so such a request fails and the client
+reports a closed connection. An `@latest` request keeps resolving the registry
+entry, so this shadowing does not explain a failure of the `npx -y
+rea-agents@latest` form above. Managed
 setup binds the current installation directly; retain its runtime and package
 cache entry, or restore that installation before repairing its registration.
 For setup-owned registration, configuration repair starts with a read-only setup plan; show paths, backups and
