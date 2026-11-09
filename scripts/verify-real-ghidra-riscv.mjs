@@ -924,6 +924,38 @@ try {
   assert.equal(namedOutcome.reservation.name, "ram");
   assert.equal(namedOutcome.reservation.space_after, "ram.1");
 
+  // A disjoint section named like the temporary block does not refuse the
+  // image, and the move still takes place.
+  const edge = await buildRiscvFixture(workspace, 32, "esp-edge-names");
+  assert.equal(edge.riscv.sectionOverlap.status, "code-reservation");
+  const edgeLimitations = new Set();
+  const edgeCall = layoutCaller(edge, edgeLimitations);
+  await edgeCall("open_binary", { path: edge.path, provider_id: "ghidra" });
+  const edgeImage = await edgeCall("inspect_native_load_image");
+  assert.ok(
+    edgeImage.observations.mappings.some(
+      (value) => value.block === ".flash.text.rea" && value.overlay === false,
+    ),
+    JSON.stringify(edgeImage.observations.mappings),
+  );
+  const [edgeText] = edgeImage.observations.mappings.filter(
+    (value) => value.block === edge.riscv.sectionOverlap.code.name,
+  );
+  assert.equal(
+    edgeText?.overlay,
+    false,
+    JSON.stringify(edgeImage.observations.mappings),
+  );
+  await edgeCall("close_binary");
+  assert.ok(
+    [...edgeLimitations].some((value) =>
+      value.startsWith(
+        "RISC-V load preparation outcome: before analysis REA moved",
+      ),
+    ),
+    [...edgeLimitations].join("\n"),
+  );
+
   // With the reservation first, Ghidra already loads the code in the default
   // space, and the preparation changes nothing.
   const first = await buildRiscvFixture(workspace, 32, "esp-reservation-first");
@@ -998,6 +1030,10 @@ try {
         path: named.path,
         sha256: named.sha256,
         space_after: namedOutcome.reservation.space_after,
+      },
+      edge_names: {
+        path: edge.path,
+        sha256: edge.sha256,
       },
       reservation_first: {
         path: first.path,

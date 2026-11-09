@@ -160,7 +160,7 @@ public final class ReaGhidraPrepareElfLoad extends HeadlessScript {
         // Removing a block keeps the references into its range, entry points included.
         memory.removeBlock(reservation, monitor);
         MemoryBlock canonical = memory.createInitializedBlock(
-            codeName + ".rea", space.getAddress(code.getStart().getOffset()), file, fileOffset, size, false
+            unusedBlockName(codeName), space.getAddress(code.getStart().getOffset()), file, fileOffset, size, false
         );
         canonical.setPermissions(code.isRead(), code.isWrite(), code.isExecute());
         canonical.setVolatile(code.isVolatile());
@@ -207,7 +207,7 @@ public final class ReaGhidraPrepareElfLoad extends HeadlessScript {
         MemoryBlock displaced = memory.convertToUninitialized(code);
         if (reservationSize > size) {
             MemoryBlock rest = memory.createUninitializedBlock(
-                reservationName + ".rea", displaced.getEnd().add(1), reservationSize - size, false
+                unusedBlockName(reservationName), displaced.getEnd().add(1), reservationSize - size, false
             );
             displaced = memory.join(displaced, rest);
         }
@@ -322,6 +322,17 @@ public final class ReaGhidraPrepareElfLoad extends HeadlessScript {
         String text = failure.getClass().getSimpleName() +
             (failure.getMessage() == null ? "" : ": " + failure.getMessage());
         return text.length() <= FAILURE_DETAIL_MAX ? text : text.substring(0, FAILURE_DETAIL_MAX);
+    }
+
+    /**
+     * A name for a block that exists only during the move. Block names are unique in a program
+     * but carry no meaning here, so a section already named `<name>.rea` must not refuse the image.
+     */
+    private String unusedBlockName(String base) {
+        Memory memory = currentProgram.getMemory();
+        String name = base + ".rea";
+        for (int index = 1; memory.getBlock(name) != null; index++) name = base + ".rea." + index;
+        return name;
     }
 
     private static AddressSet range(MemoryBlock block) {
