@@ -80,6 +80,83 @@ const unsupportedDependencyKeywords = (
   });
 };
 
+// Moonshot rejects a $ref whose target is a oneOf/anyOf whose branches
+// contain another $ref (morluto/rea#9581): "detected infinite recursion
+// without termination condition". The rejection is about the reference
+// shape, not the union itself, so this checks the pattern rather than
+// banning references outright: a genuinely recursive schema still needs
+// $ref, but never in this shape.
+const resolveLocalPointer = (root: unknown, reference: string): unknown => {
+  if (!reference.startsWith("#/")) return undefined;
+  let current: unknown = root;
+  for (const token of reference
+    .slice(2)
+    .split("/")
+    .map((part) => part.replaceAll("~1", "/").replaceAll("~0", "~"))) {
+    if (typeof current !== "object" || current === null) return undefined;
+    current = (current as Record<string, unknown>)[token];
+  }
+  return current;
+};
+
+const collectSchemaReferences = (
+  node: unknown,
+  path: string,
+  collected: { path: string; reference: string }[],
+): void => {
+  if (Array.isArray(node)) {
+    node.forEach((child, index) =>
+      collectSchemaReferences(child, `${path}[${index}]`, collected),
+    );
+    return;
+  }
+  if (typeof node !== "object" || node === null) return;
+  for (const [key, value] of Object.entries(node)) {
+    if (key === "$ref" && typeof value === "string") {
+      collected.push({ path: `${path}.$ref`, reference: value });
+      continue;
+    }
+    if (["const", "enum", "default", "examples"].includes(key)) continue;
+    if (schemaMaps.has(key) && typeof value === "object" && value !== null) {
+      for (const [name, child] of Object.entries(value))
+        collectSchemaReferences(child, `${path}.${key}.${name}`, collected);
+    } else if (schemaArrays.has(key) && Array.isArray(value)) {
+      value.forEach((child, index) =>
+        collectSchemaReferences(child, `${path}.${key}[${index}]`, collected),
+      );
+    } else if (schemaChildren.has(key)) {
+      if (Array.isArray(value))
+        value.forEach((child, index) =>
+          collectSchemaReferences(child, `${path}.${key}[${index}]`, collected),
+        );
+      else collectSchemaReferences(value, `${path}.${key}`, collected);
+    }
+  }
+};
+
+/** Paths of $refs Moonshot rejects: targets that are a oneOf/anyOf with a nested $ref. */
+const moonshotRejectedReferences = (
+  schema: Record<string, unknown>,
+): readonly string[] => {
+  const collected: { path: string; reference: string }[] = [];
+  collectSchemaReferences(schema, "$", collected);
+  return collected
+    .filter(({ reference }) => {
+      const target = resolveLocalPointer(schema, reference);
+      if (typeof target !== "object" || target === null) return false;
+      for (const key of ["oneOf", "anyOf"]) {
+        const branches = (target as Record<string, unknown>)[key];
+        if (!Array.isArray(branches)) continue;
+        const nested: { path: string; reference: string }[] = [];
+        for (const branch of branches)
+          collectSchemaReferences(branch, "$", nested);
+        if (nested.length > 0) return true;
+      }
+      return false;
+    })
+    .map(({ path }) => path);
+};
+
 const listToolsThroughTransport = async (
   server: EvidenceMcpServer,
 ): Promise<readonly AdvertisedTool[]> => {
@@ -480,6 +557,55 @@ it("retains parameter types and avoids client-side reference expansion", async (
     coverage: { type: "object" },
     boundary_id: { type: "string" },
   });
+});
+
+it("advertises Moonshot-accepted input schemas without the rejected reference pattern in both profiles", async () => {
+  // morluto/rea#9581: Kimi/Moonshot rejects a $ref whose target is a
+  // oneOf/anyOf with another $ref inside, which broke every Kimi request
+  // because clients send the whole tool list. The nine tools named in the
+  // issue must stay advertised with inlined schemas in both profiles.
+  const rejectedInIssue = [
+    "capture_browser_scenario",
+    "capture_native_ui_scenario",
+    "observe_native_calls",
+    "inspect_analysis_view",
+    "compare_web_captures",
+    "trace_javascript_semantics",
+    "compare_process_captures",
+    "correlate_static_and_runtime",
+    "verify_reconstruction",
+  ];
+  for (const profile of ["full", "compact"] as const) {
+    const server = profile === "full" ? fullServer() : compactServer();
+    registerCatalog(server);
+    const tools = await listToolsThroughTransport(server);
+    const byName = new Map(tools.map((tool) => [tool.name, tool]));
+    for (const name of rejectedInIssue) {
+      const tool = byName.get(name);
+      if (tool === undefined)
+        throw new Error(`${profile} profile: ${name} was not advertised`);
+      expect(
+        tool.inputSchema,
+        `${profile} profile: ${name}`,
+      ).not.toHaveProperty("$defs");
+      expect(
+        moonshotRejectedReferences(tool.inputSchema),
+        `${profile} profile: ${name}`,
+      ).toEqual([]);
+    }
+    expect(
+      tools.flatMap(({ name, inputSchema }) =>
+        moonshotRejectedReferences(inputSchema).map(
+          (path) => `${profile} profile: ${name}${path.slice(1)}`,
+        ),
+      ),
+    ).toEqual([]);
+    expect(
+      tools
+        .filter(({ inputSchema }) => Object.hasOwn(inputSchema, "$defs"))
+        .map(({ name }) => `${profile} profile: ${name}`),
+    ).toEqual([]);
+  }
 });
 
 it("parses the profile selection the server startup reads", () => {

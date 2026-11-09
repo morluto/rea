@@ -224,6 +224,48 @@ describe("compact advertised input schema", () => {
   });
 });
 
+it("inlines the Kimi/Moonshot-rejected reference pattern from #9581", () => {
+  // Minimal trigger from morluto/rea#9581: Moonshot rejects a $ref whose
+  // target is a oneOf whose branches contain another $ref ("detected
+  // infinite recursion without termination condition"), even though none
+  // of these schemas actually recurse. The compact presentation inlines
+  // the whole shape, so Kimi accepts the advertised schema.
+  const trigger = {
+    type: "object",
+    properties: { c: { $ref: "#/$defs/u" } },
+    $defs: {
+      u: {
+        oneOf: [
+          { type: "object", properties: { a: { $ref: "#/$defs/s" } } },
+          { type: "object", properties: { a: { $ref: "#/$defs/t" } } },
+        ],
+      },
+      s: { type: "string" },
+      t: { type: "string" },
+    },
+  };
+  const { schema, presentation } = compactAdvertisedInputSchema(
+    trigger,
+    // COMPACT_INPUT_SCHEMA_BUDGET_BYTES (13 KiB); the contracts layer
+    // cannot import the config layer, so the budget stays literal here.
+    13 * 1024,
+  );
+  expect(presentation).toBe("inline");
+  expect(schema.$defs).toBeUndefined();
+  expect(JSON.stringify(schema)).not.toContain('"$ref":');
+  const ajv = new Ajv2020({ strict: false });
+  const canonical = ajv.compile(trigger);
+  const compact = ajv.compile(schema);
+  for (const input of [
+    { c: { a: "text" } },
+    { c: { a: 7 } },
+    { c: {} },
+    {},
+    { c: null },
+  ])
+    expect(compact(input)).toBe(canonical(input));
+});
+
 describe("strict gateway compatibility", () => {
   it("types homogeneous union items without discarding their branches", () => {
     const original = {
