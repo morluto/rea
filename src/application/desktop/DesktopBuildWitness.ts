@@ -28,10 +28,6 @@ import {
   type WitnessStageRecord,
 } from "../../domain/desktop/buildWitness.js";
 import { ProviderAdapterError } from "../../domain/providerAdapterError.js";
-import {
-  guestFileAnswerCeiling,
-  guestFileAnswerWorkingBytes,
-} from "../../desktop/AgentEnvComputer.js";
 import { err, ok, type Result } from "../../domain/result.js";
 import type {
   AgentEnvComputer,
