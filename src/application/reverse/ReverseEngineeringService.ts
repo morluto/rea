@@ -57,6 +57,10 @@ import { ProcessAdmissionError } from "../../process/ProcessAdmissionError.js";
 import type { ProviderProcessSupervisor } from "../../process/ProviderProcess.js";
 import { RuntimeControlUnavailableError } from "../../process/RuntimeControlUnavailableError.js";
 import { WindowsNativeAuthorityUnavailableError } from "../../windows/WindowsNativeLoader.js";
+import {
+  WindowsNativeSpawnControlError,
+  windowsNativeSpawnControlError,
+} from "../../windows/WindowsOwnedProcess.js";
 import { absoluteCallerPath } from "../../filesystem/callerPath.js";
 import { parseAnalysisInput } from "../AnalysisInput.js";
 
@@ -786,6 +790,10 @@ export class ReverseEngineeringService {
               WindowsNativeAuthorityUnavailableError
                 ? { failure_stage: controlFailure.failureStage }
                 : {}),
+              ...(controlFailure instanceof WindowsNativeSpawnControlError &&
+              controlFailure.constraint !== undefined
+                ? { constraint: controlFailure.constraint }
+                : {}),
             },
             ...ownedCleanupOptions(cause),
           },
@@ -1330,7 +1338,7 @@ const runtimeControlPreparationError = (
     return runtimeControlPreparationError(cause.cause);
   if (cause instanceof OwnedCommandFailure && cause.reason === "process")
     return runtimeControlPreparationError(cause.cause);
-  return undefined;
+  return windowsNativeSpawnControlError(cause);
 };
 
 const reverseCommandTimeoutGuidance = (

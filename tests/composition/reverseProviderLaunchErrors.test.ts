@@ -15,7 +15,11 @@ import {
   systemProcessOwnershipHost,
 } from "../../src/process/ProcessOwnershipObservation.js";
 import { ProcessAdmissionError } from "../../src/process/ProcessAdmissionError.js";
-import { WindowsNativeAuthorityUnavailableError } from "../../src/windows/WindowsNativeLoader.js";
+import {
+  WindowsNativeAuthorityUnavailableError,
+  type WindowsNativeAuthority,
+} from "../../src/windows/WindowsNativeLoader.js";
+import { WindowsOwnedProcess } from "../../src/windows/WindowsOwnedProcess.js";
 import { AnalysisCapabilityUnavailableError } from "../../src/domain/analysisErrorCore.js";
 import { projectAnalysisError } from "../../src/domain/analysisErrorProjection.js";
 import {
@@ -1292,6 +1296,182 @@ it("keeps Windows native runner load and self-test failures out of command-launc
       );
     }
     expect(service.observedLaunchFailures()).toEqual({});
+  } finally {
+    await service.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+const fakeWindowsAuthority = (
+  throwOnSpawn: () => Error,
+): WindowsNativeAuthority => ({
+  inspection: {
+    abiVersion: 1,
+    nodeApiVersion: 8,
+    architecture: "x64",
+    filesystem: {
+      requestedPath: "C:\\probe",
+      finalPath: "C:\\probe",
+      filesystem: "NTFS",
+      volumeSerial: "0".repeat(16),
+      fileId: "0".repeat(32),
+      size: 0,
+      directory: true,
+    },
+    privateDacl: true,
+    privateBridgeDescriptorAccess: true,
+    atomicJobAssignment: true,
+    killOnOwnerClose: true,
+    protocolStdin: true,
+    jobMemoryLimit: true,
+  },
+  call: (operation) => {
+    if (operation === "process_spawn") throw throwOnSpawn();
+    throw new Error(`Unmodeled native operation ${operation}`);
+  },
+});
+
+it("keeps Windows process_spawn host-control rejections out of command-launch state while recording CreateProcessW executable failures", async () => {
+  const { directory, path } = await createArtifact();
+  const command = "C:\\tools\\llvm-objdump.exe";
+  const rizinCommand = "C:\\tools\\rizin.exe";
+  let spawnFailure: Error = Object.assign(
+    new Error(
+      `Caller CPU affinity cannot bound an owned process in another processor group [${command}] (Win32 87): The parameter is incorrect.`,
+    ),
+    {
+      code: "ERR_REA_WINDOWS_NATIVE",
+      constraint:
+        "Caller CPU affinity cannot bound an owned process in another processor group",
+      requestedPath: command,
+      win32Code: 87,
+    },
+  );
+  const authority = fakeWindowsAuthority(() => spawnFailure);
+  const service = new TestReverseEngineeringService({
+    environment: {
+      REA_OBJDUMP_COMMAND: command,
+      REA_RIZIN_COMMAND: rizinCommand,
+    },
+    runOwned: async (spawn) => {
+      new WindowsOwnedProcess(
+        spawn.command,
+        spawn.arguments,
+        spawn.cwd,
+        spawn.env ?? {},
+        spawn.windowsVerbatimArguments ?? false,
+        { authority },
+      );
+      return providerSnapshot();
+    },
+  });
+  try {
+    const objdumpControlResult = await service.inspectWithObjdump({
+      path,
+      operation: "file_headers",
+    });
+    expect(objdumpControlResult.ok).toBe(false);
+    if (!objdumpControlResult.ok) {
+      const projected = projectAnalysisError(objdumpControlResult.error);
+      expect(projected).toMatchObject({
+        code: "capability_unavailable",
+        retryable: true,
+        details: {
+          provider_id: "process-ownership",
+          operation: "prepare_owned_process",
+          diagnostics: {
+            boundary: "process-ownership",
+            control_code: "windows-native-spawn-control-unavailable",
+            constraint:
+              "Caller CPU affinity cannot bound an owned process in another processor group",
+          },
+        },
+      });
+      expect(projected.remediation.action).toContain(
+        "REA_OBJDUMP_COMMAND does not need to change",
+      );
+      expect(projected.remediation.action).not.toContain(
+        "Set REA_OBJDUMP_COMMAND",
+      );
+    }
+
+    spawnFailure = Object.assign(
+      new Error(
+        `Suspended process has no owned Job Object membership [${rizinCommand}] (Win32 5): Access is denied.`,
+      ),
+      {
+        code: "EACCES",
+        constraint: "Suspended process has no owned Job Object membership",
+        requestedPath: rizinCommand,
+        win32Code: 5,
+      },
+    );
+    const rizinControlResult = await service.executeRizinCommand({
+      path,
+      command: "iI",
+    });
+    expect(rizinControlResult.ok).toBe(false);
+    if (!rizinControlResult.ok) {
+      const projected = projectAnalysisError(rizinControlResult.error);
+      expect(projected).toMatchObject({
+        code: "capability_unavailable",
+        retryable: true,
+        details: {
+          provider_id: "process-ownership",
+          operation: "prepare_owned_process",
+          diagnostics: {
+            boundary: "process-ownership",
+            control_code: "windows-native-spawn-control-unavailable",
+            constraint: "Suspended process has no owned Job Object membership",
+          },
+        },
+      });
+      expect(projected.remediation.action).toContain(
+        "REA_RIZIN_COMMAND does not need to change",
+      );
+      expect(projected.remediation.action).not.toContain(
+        "Set REA_RIZIN_COMMAND",
+      );
+    }
+    expect(service.observedLaunchFailures()).toEqual({});
+
+    spawnFailure = Object.assign(
+      new Error(
+        `Create process atomically inside owned Job Object failed [${command}] (Win32 2): The system cannot find the file specified.`,
+      ),
+      {
+        code: "ENOENT",
+        constraint: "Create process atomically inside owned Job Object failed",
+        requestedPath: command,
+        win32Code: 2,
+      },
+    );
+    const executableResult = await service.inspectWithObjdump({
+      path,
+      operation: "file_headers",
+    });
+    expect(executableResult.ok).toBe(false);
+    if (!executableResult.ok) {
+      const projected = projectAnalysisError(executableResult.error);
+      expect(projected).toMatchObject({
+        code: "capability_unavailable",
+        details: {
+          provider_id: "objdump.command",
+          operation: "inspect_with_objdump",
+          diagnostics: {
+            boundary: "provider-launch",
+            command,
+            system_code: "ENOENT",
+          },
+        },
+      });
+    }
+    expect(service.observedLaunchFailures()).toEqual({
+      inspect_with_objdump: {
+        reason: expect.stringContaining(JSON.stringify(command)),
+        remediation: expect.stringContaining("REA_OBJDUMP_COMMAND"),
+      },
+    });
   } finally {
     await service.close();
     await rm(directory, { recursive: true, force: true });
