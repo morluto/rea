@@ -290,7 +290,10 @@ it.skipIf(process.platform === "win32")(
   async () => {
     const { root, bin, home } = await buildHost("rea-desktop-empty-runner-");
     const runner = join(bin, "agent-env");
-    await program(runner, `echo "agent-env ${DESKTOP_EXPORT_FRAMEWORK_VERSION}"`);
+    await program(
+      runner,
+      `echo "agent-env ${DESKTOP_EXPORT_FRAMEWORK_VERSION}"`,
+    );
     const environment = {
       HOME: home,
       USERPROFILE: home,
