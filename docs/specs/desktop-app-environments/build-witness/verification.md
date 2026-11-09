@@ -280,6 +280,267 @@ taken 18, 23 and 21 turns for $0.70, $1.55 and $0.51 ($0.92). Cache reads
 fell from 585-714K tokens to 181-225K; the cost is mostly cache writes,
 which varied from 17K to 189K tokens whatever the turns.
 
+## Naming the app's state
+
+Run on macOS with source tests and gates; no build computer was started.
+Each test below failed on the head before this change, with only the tests
+and their fixtures added, and passes now.
+
+- `buildCaptureStatePathsMcp.test.ts`: `start_build_capture` with
+  `state_paths` passes the note's path to the capture as `--state-path`, the
+  draft covers it as a document with no notes, and an export with a check on
+  it is accepted; without it the draft is empty with `unowned_changes`
+  (the note, `unrelated`) and `no_document`, and the export's refusal names
+  `state_paths`. A path through `..`, the home itself and 17 paths are
+  refused by the schema, `/etc/hosts` by the computer, and none starts a
+  capture. Before, `state_paths` was an unknown argument.
+- `DesktopTaskDraftNotes.test.ts`: a draft with files has no notes; one with
+  no change between seed and end has only `no_change`; one whose changes lie
+  outside the owned paths lists five with their roles, desktop files last,
+  and counts two more, beside `no_document`.
+- `stateRoles.test.ts`: a selected file under a hidden folder of the home is
+  application state, elsewhere a document.
+- `DesktopApplicationExport.test.ts`, `appExportUnowned.test.ts`: the export's
+  limitations and README name folders the capture saw change outside the
+  owned paths, collapsed to their top folder and without desktop caches, up
+  to eight and a count, and the seeded lock file, WebKit storage and cache
+  folders.
+
+## Lock files, changed files and held-open folders
+
+Run on macOS with source tests and gates; no build computer was started. A
+hold-out LibreOffice Calc bundle seeded `~/.config/libreoffice/4/.lock` and
+showed no window at boot; its export also said nothing in `~/Documents` was
+seeded while `seed_files` held `Documents/q1-sales.ods`. Each test below
+failed on the head before this change, with only the tests and their
+fixtures added, and passes now.
+
+- `DesktopApplicationExport.test.ts`: a capture whose seed holds a profile
+  `.lock` and a document lock `.~lock.today.txt#` exports without either in
+  `seed_files` or the bundle, and lists both after "Left out of the seed" in
+  one limitation and the README; with `~/Documents` held open, its
+  limitation names `~/Documents/today.txt` as seeded from there.
+- `appExportUnowned.test.ts`: profile, browser and document locks are lock
+  files, and `*.lock` or `*.lck` only in a hidden folder, so `Cargo.lock`
+  and `yarn.lock` in a project are not; the capture's limitation names the
+  held-open folders from `~/`, and the export's names the seed files there
+  or says there are none.
+- `desktopCapture.test.ts`: a checkpoint's acknowledgement names its changed
+  files home-relative, the held-open document first, then state, then the
+  rest, without folders, and names ten of thirteen with three more.
+- `buildCaptureMcp.test.ts`: `mark_build_checkpoint` returns the changed
+  files the capture acknowledged.
+- `buildComputerMcp.test.ts`: a bundle's start that never got ready names
+  the lock files its seed holds; one without locks, or failing otherwise,
+  names none.
+
+The Linux-only capture test's acknowledgement now expects the changed state
+file; it is skipped on macOS and was not run.
+
+## Linked state paths, dconf changes, project lock files and older checkpoint replies
+
+Run on macOS with source tests and gates; no build computer was started.
+Each test below failed on the head before this change, with only the tests
+and their fixtures added, and passes now.
+
+- `buildCaptureStatePathsMcp.test.ts`: the computer refuses state paths that
+  a link leads out of the home, existing or not yet (through the nearest
+  existing folder, or a dangling link), or into `~/.rea-build`, and starts
+  nothing; a link that stays in the home is followed and the path passed to
+  the capture as named. Before, the first such path started a capture.
+- `DesktopCaptureScope.test.ts`: the capture scope records each selected
+  path as named beside the physical path it walks.
+- `DesktopApplicationExport.test.ts`: with `~/.config/MuseScore` selected as
+  a link to `~/settings/MuseScore` beside a selected note, the bundle's
+  launch opens the note. With only the capture's record of selected paths
+  added, the settings file was still a document and the launch opened none.
+- `DesktopTaskDraftNotes.test.ts`: a draft whose only change between `seed`
+  and `end` is to the app's keys in dconf carries `uncheckable_changes`
+  naming `~/.config/dconf/user`, not `no_change`; one where only another
+  group's keys changed still has `no_change`.
+- `appExportUnowned.test.ts`: `*.lock` and `*.lck` are locks only directly
+  in a state directory, so `Projects/.repo/Cargo.lock` is not; and 20,000
+  separate unowned folders collapse in tens of milliseconds, where comparing
+  every pair took 12.9 seconds.
+- `DesktopApplicationExport.test.ts`: `Projects/.repo/Cargo.lock` and
+  `.dotfiles/web/yarn.lock`, which the capture recognized as documents, and
+  a lock-named file the caller selected are seeded, a `*.lock` directly in a
+  state directory is left out, and the profile and document locks still are.
+- `buildCaptureMcp.test.ts`: checkpoints acknowledged without
+  `changed_files` and `more_changed_files`, as the previous REA in a build
+  computer does, are taken with both `null`, also when a lost reply is read
+  again from the capture's log. Before, the host refused the acknowledgement
+  although the checkpoint was taken.
+- `desktopCapture.test.ts`: a checkpoint's changed files name a document
+  under a selected path first, though the app did not hold it open, and
+  caches and browser-engine storage last, even one the app held open or in a
+  state directory, so ten KDE service-cache files no longer push the saved
+  document past the cut, as they did in a held-out Tellico build.
+- `DesktopApplicationExport.test.ts`: with `~/.config/MuseScore` selected as
+  a link to `~/Documents` and the note inside it selected itself, the
+  launch opens the note while the settings beside it stay the app's; before,
+  the link's hidden name made the note application state and the launch
+  opened none.
+- `DesktopTaskDraftNotes.test.ts`: a dconf database that changed but could
+  not be read gives `unreadable_changes` with the reader's error, not
+  `uncheckable_changes`.
+- `buildCaptureMcp.test.ts`: `stop_build_capture` on a capture whose only
+  change between `seed` and `end` is a dconf database the draft cannot read
+  (no `dconf` on its `PATH`) returns the `unreadable_changes` note with its
+  `error`; before, the build tool dropped the field.
+- `LinuxApplicationInventory.test.ts`: the inventory lists KDE's
+  `~/.config/<name>rc` before it exists, so a Tellico capture owns
+  `~/.config/tellicorc`, whose absence brought back Tip of the Day at boot;
+  `DesktopApplicationExport.test.ts` shows such a file, written during the
+  capture, owned and seeded (that test passed before, given the inventory).
+
+The capture's recording of selected paths runs only on Linux; its scope is
+tested on macOS, and the capture itself was not run.
+
+## GnuCash's dconf settings and book lock
+
+Run on macOS with source tests and gates; no build computer was started, so
+dconf-cli reading a real build computer's database is not verified here.
+Each test below failed before the change and passes now.
+
+- `appBuild.test.ts`, `buildComputerMcp.test.ts`: the build bundle installs
+  `dconf-cli` beside `libgtk-3-bin`, read from the module the fake runner
+  received.
+- `desktopCaptureCli.test.ts`: a dconf database created before `seed` that
+  the export cannot read (`REA_DCONF_COMMAND` names no program) leaves
+  `DCONF = ""` and one limitation naming `~/.config/dconf/user` with the read
+  error; exported with the seed at `baseline`, when it did not exist yet, no
+  limitation names it.
+- `appExportUnowned.test.ts`, `DesktopApplicationExport.test.ts`:
+  `Documents/household.gnucash.LCK` beside `Documents/household.gnucash` is
+  left out of the seed and listed after "Left out of the seed", in either
+  letter case, while a lone `Documents/notes.lck` is seeded and a `.LCK` whose
+  file lies in another folder is no lock.
+- `buildComputerMcp.test.ts`: a bundle start that never got ready names a
+  seeded `q1.ods.LCK` beside `q1.ods`, and not a lone `notes.lck`.
+
+## Version-dotted entries, glibc's fatal errors and Grisbi's lock
+
+Run on macOS with source tests and gates; no build computer was started.
+Each test below failed before the change and passes now.
+
+- `appExport.test.ts`: `org.gnumeric.gnumeric`, `com.github.xournalpp.xournalpp`,
+  `glabels-3.0`, `gimp-2.10`, `display-im6.q16` and `mousepad` name
+  `gnumeric`, `xournalpp`, `glabels`, `gimp`, `display-im6-q16` and
+  `mousepad`; before, `glabels-3.0` gave `app-0`.
+- `buildComputerMcp.test.ts`: `start_build_computer` with `glabels-3.0`
+  returns `environment: "glabels"` and renders `envs/glabels`; the
+  reverse-DNS and plain entries keep their names.
+- `DesktopApplicationExport.test.ts`: a capture whose desktop entry is
+  `glabels-3.0` exports as `glabels`, not `app-0`. With Grisbi's empty
+  `.household.gsb.lock` beside `household.gsb`, the lock is neither seeded,
+  in the bundle, nor named in the class module's text seeds, and is listed
+  after "Left out of the seed"; a lone `.notes.lock` is seeded.
+- `appExportUnowned.test.ts`: `.household.gsb.lock` and `.household.gsb.lck`
+  beside `household.gsb` are locks; `.notes.lock` and `household.gsb.lock`
+  are not.
+- `DesktopApplicationSession.test.ts`: the launched app's environment holds
+  `LIBC_FATAL_STDERR_=1`, read back from its stderr; this test runs on macOS
+  too. A real glibc abort was not reproduced.
+- `DesktopApplicationExport.test.ts`: a seeded `registrymodifications.xcu`
+  ships without its `RecoveryList` item and keeps its other items; one
+  limitation and the README name it, and with the item's home path gone the
+  file is not listed as scrubbed.
+- `desktopCapture.test.ts`: with `.config/libreoffice` selected, a file
+  there and a document the app held open precede twelve icons under its
+  `cache` folder, while a cache file selected itself still comes first.
+
+## Checkpoint order by window titles, and prompts that name the app
+
+Run on macOS with source tests and gates; no build computer was started.
+Each test below failed before the change and passes now.
+
+- `desktopCapture.test.ts`: eight changed files come back in the wanted
+  order: a document only a window title names, a file selected itself, one
+  the app held open, one under the selected `.config/libreoffice`, one in a
+  state directory, the rest, a LibreOffice icon cache, and ghostwriter's
+  `QtWebEngine/Default/Visited Links` though it lies in a state directory.
+- `DesktopApplicationSession.test.ts`: a checkpoint receives the titles the
+  app's own window has shown, not another app's; this runs on macOS too.
+  With the session's titles left out, it failed.
+- `appExportUnowned.test.ts`: a whole `QtWebEngine` profile collapses to
+  that folder as browser storage, as do Chromium's `Visited Links`,
+  `Platform Notifications` and `user_prefs.json` elsewhere; the unowned
+  limitation counts "file(s) or folder(s)".
+- `DesktopTaskExport.test.ts`: a task whose prompt does not name the app
+  gets one limitation naming the app; "In Notes, ..." gets none.
+
+## The app's logs
+
+Historical note: the filename-based exclusions described below were later removed; app-state logs are now retained.
+
+Run on macOS with source tests and gates. Each test below failed before the
+change and passes now.
+
+- `appExportUnowned.test.ts`: `log.0`, `log.0.lck`, `20261106.log`,
+  `App.LOG`, `log.12`, `app.log.lock` and a file under `logs/` are logs;
+  `catalog.xml`, `logo.png`, `changelog`, `logs.json`, `blog.0`, `log.txt`
+  and `settings.lck` are not.
+- `DesktopApplicationExport.test.ts`: Freeplane's `1.7.x/logs/log.0` and
+  its `log.0.lck` in a state directory, and QElectroTech's `.qet/20261106.log`
+  the app held open, are neither seeded nor in the bundle, and one limitation
+  and the README list them apart from the lock files; a selected `notes.log`
+  in the state directory and a document `build.log` are seeded.
+
+## Database journals and the recovery list's XML
+
+Run on macOS with source tests and gates. Each test below failed before the
+change and passes now, except the parser's own range test, which is new
+with the function.
+
+- `appExportUnowned.test.ts`, `DesktopApplicationExport.test.ts`:
+  `Local Storage/leveldb/000003.log`, a `000007.log` under a `leveldb`
+  folder and a `000005.log` beside `CURRENT` or `MANIFEST-*` are seeded;
+  Freeplane's and QElectroTech's logs and a numbered log with no LevelDB
+  beside it are still left out.
+- `seedRecoveryList.test.ts`: recovery list items with single quotes, extra
+  whitespace and another prefix for the registry's namespace are cut, with
+  every other byte kept; the same text in a comment or CDATA is kept; a
+  registry that is not well-formed ships unchanged.
+- `xmlDocument.test.ts`: element ranges run from the start tag's `<` to the
+  element's last `>` through CRLF and astral characters, the outermost
+  picked element only, and a malformed source is refused.
+
+## Titles that show a folder's path
+
+Run on macOS with source tests and gates. Each test below failed on the old
+title rule and passes now.
+
+- `stateRoles.test.ts`: CherryTree's title names `home-notebook.ctd` but not
+  `~/.cache/dconf/user`, `~/.config/dconf/user`, a file named `Documents` or
+  a `.ctd` under `~/.cache`; `Makefile - Editor` and `~/src/Makefile - Editor`
+  name `~/src/Makefile`, and `/srv/Makefile - Editor` names no `~/Makefile`.
+- `DesktopApplicationExport.test.ts`: with that title shape and both dconf
+  files changed, the export has one document and the launch opens it.
+- `desktopCapture.test.ts`: the checkpoint leads with the document, not
+  `.cache/dconf/user`.
+- `appExportUnowned.test.ts`: `plan.vym.lock` beside `plan.vym` and
+  `household.gsb.lock` beside `household.gsb` are locks; a lone
+  `notes.txt.lock`, and `Gemfile.lock` and `Cargo.lock` beside `Gemfile` and
+  `Cargo.toml`, are not.
+
+## Poedit's locks and seed modes
+
+Run on macOS with source tests and gates. Each test below failed before the
+change and passes now.
+
+- `appExportUnowned.test.ts`: `poedit.lock`, `app.LCK` in the home and
+  `TranslationMemory/write.lock` are locks, while `Projects/*/Cargo.lock`
+  stays a project's; the held-open folders leave out the home for
+  `~/poedit.lock` and Lucene's folder, and keep `~/Documents` and
+  `/usr/lib/python3.12`.
+- `DesktopApplicationExport.test.ts`: with Poedit's shapes the export seeds
+  the index segments but neither lock, does not own `poedit.lock`, lists
+  `write.lock` as left out, and names `~/poedit.lock` in no limitation; a
+  `0600` and a `0755` seed are listed in `SEED_MODES`, a `0644` one is not.
+- `desktopExportPython.test.ts`: `_seed_home` gives each file in
+  `SEED_MODES` its mode.
+
 ## Limits of this verification
 
 - The witness acts were scripted by this agent from the task's prompt; no
