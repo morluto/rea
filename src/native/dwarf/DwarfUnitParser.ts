@@ -73,12 +73,17 @@ type FormFailure = "truncated" | "unknown-form" | "indirect-invalid" | "budget";
 /** Aggregate form-decoding work shared by every unit DIE in one walk. */
 interface FormWorkBudget {
   remaining: number;
+  /** Set only when a step was refused, so an exactly spent allowance stays complete. */
+  refused: boolean;
 }
 
 const DECODE_BUDGET_MESSAGE = `DIE attribute decoding exceeds the ${String(MAX_DWARF_FORM_DECODE_STEPS)}-step aggregate work allowance`;
 
 const chargeFormWork = (budget: FormWorkBudget): boolean => {
-  if (budget.remaining <= 0) return false;
+  if (budget.remaining <= 0) {
+    budget.refused = true;
+    return false;
+  }
   budget.remaining -= 1;
   return true;
 };
@@ -114,7 +119,10 @@ export const parseDwarfCompileUnits = (
     input.abbrev ?? Buffer.alloc(0),
     input.little,
   );
-  const work: FormWorkBudget = { remaining: MAX_DWARF_FORM_DECODE_STEPS };
+  const work: FormWorkBudget = {
+    remaining: MAX_DWARF_FORM_DECODE_STEPS,
+    refused: false,
+  };
   const units: DwarfCompileUnit[] = [];
   let total = 0;
   let reason: string | null = null;
@@ -148,7 +156,7 @@ export const parseDwarfCompileUnits = (
       );
     total += 1;
   }
-  if (reason === null && work.remaining <= 0) reason = DECODE_BUDGET_MESSAGE;
+  if (reason === null && work.refused) reason = DECODE_BUDGET_MESSAGE;
   return {
     units,
     total_units: total,

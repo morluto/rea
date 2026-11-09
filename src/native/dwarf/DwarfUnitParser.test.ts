@@ -320,6 +320,32 @@ it("charges indirect form chains against a shared decode allowance", () => {
   });
 });
 
+it("stays complete when a walk uses exactly the decode allowance", () => {
+  const abbrev = abbrevTable([
+    {
+      code: 1,
+      tag: 0x11,
+      children: false,
+      attributes: [{ name: 0x03, form: 0x16 }],
+    },
+  ]);
+  // One step for the read and one per DW_FORM_indirect hop: hops + 2 steps.
+  const chain = (hops: number) =>
+    compileUnit({
+      attributes: [Buffer.alloc(hops, 0x16), uleb(0x08), Buffer.from("a.c\0")],
+    });
+  const exact = walk(chain(MAX_DWARF_FORM_DECODE_STEPS - 2), abbrev);
+  expect(exact.coverage).toEqual({ status: "complete", reason: null });
+  expect(exact.units[0]).toMatchObject({
+    name: { state: "present", value: "a.c" },
+    die_complete: true,
+    issues: [],
+  });
+  const over = walk(chain(MAX_DWARF_FORM_DECODE_STEPS - 1), abbrev);
+  expect(over.coverage.status).toBe("partial");
+  expect(over.units[0]?.issues[0]?.code).toBe("decode_budget");
+});
+
 it("does not read strx, GNU str indexes, or str_offsets_base while ET_REL relocations are unapplied", () => {
   const str = Buffer.from("wrong\0right\0", "latin1");
   const strOffsets = Buffer.alloc(8);
