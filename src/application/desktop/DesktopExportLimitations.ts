@@ -43,7 +43,10 @@ export const exportLimitations = (
     readonly recovered: readonly string[];
     /** What the export says about the task, such as a prompt that does not name the app. */
     readonly task: readonly string[];
-    readonly files: ReadonlyMap<string, DesktopApplicationState["paths"][number]>;
+    readonly files: ReadonlyMap<
+      string,
+      DesktopApplicationState["paths"][number]
+    >;
   },
 ): string[] => {
   const opened = heldOpenLimitation(
