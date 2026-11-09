@@ -69,6 +69,16 @@ elif command == "describe-desktop-application-task":
     with open(os.environ["FAKE_REA_DRAFT"]) as handle:
         sys.stdout.write(handle.read())
 elif command == "export-desktop-application":
+    if "--schema" in args:
+        if os.environ.get("FAKE_REA_SCHEMA_FAILURE"):
+            print("runtime cannot load its export command", file=sys.stderr)
+            sys.exit(23)
+        with open(os.environ["FAKE_REA_SCHEMA"]) as handle:
+            schema = json.load(handle)
+        if os.environ.get("FAKE_REA_OLD_EXPORT"):
+            schema["options"]["properties"].pop("syntheticSeed", None)
+        print(json.dumps(schema))
+        sys.exit(0)
     with open(option(args, "--task")) as handle:
         note("tasks.jsonl", json.load(handle))
     exported = os.environ["FAKE_REA_EXPORT"]
@@ -116,6 +126,7 @@ export interface FakeReaOutputs {
   readonly draft: string;
   readonly export: string;
   readonly bundle: string;
+  readonly schema: string;
 }
 
 export interface FakeBuildComputerRea {
@@ -155,6 +166,7 @@ export const fakeBuildComputerRea = async (
       FAKE_REA_DRAFT: outputs.draft,
       FAKE_REA_EXPORT: outputs.export,
       FAKE_REA_BUNDLE: outputs.bundle,
+      FAKE_REA_SCHEMA: outputs.schema,
     },
     notes: async (name) => {
       const path = join(notes, name);
