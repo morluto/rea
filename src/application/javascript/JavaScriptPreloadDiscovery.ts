@@ -9,6 +9,7 @@ import type { JavaScriptArtifactFileSet } from "../../domain/javascript/javascri
 import type { JavaScriptSourceAnalysisLimits } from "../../domain/javascript/javascriptSourceAnalysis.js";
 import type { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
 import { createJavaScriptSourceAnalysis } from "../../artifacts/javascript/JavaScriptSourceAnalysis.js";
+import { maySourceConstructElectronBrowserWindow } from "../../domain/javascript/javascriptStaticAnalysis.js";
 import { createJavaScriptPackageTypeLookup } from "./JavaScriptArtifactAnalysis.js";
 import { dependencyManifest } from "./JavaScriptArtifactGraphContext.js";
 import { JavaScriptJsonDocuments } from "./JavaScriptJsonDocuments.js";
@@ -41,7 +42,6 @@ export const discoverJavaScriptPreloadPaths = async (
     fileSet.files.flatMap((file) =>
       file.kind === "javascript" &&
       file.text.included &&
-      !dependencyManifest(file.path) &&
       /\.js$/iu.test(file.path) &&
       packageTypeFor(file) === "module"
         ? [file.container_sha256]
@@ -49,19 +49,32 @@ export const discoverJavaScriptPreloadPaths = async (
     ),
   );
   if (moduleJsContainers.size === 0) return { paths, limitations };
+  const candidateContainers = new Set(
+    fileSet.files.flatMap((file) =>
+      file.kind === "javascript" &&
+      file.text.included &&
+      moduleJsContainers.has(file.container_sha256) &&
+      maySourceConstructElectronBrowserWindow(file.text.value)
+        ? [file.container_sha256]
+        : [],
+    ),
+  );
+  if (candidateContainers.size === 0) return { paths, limitations };
   const sources = fileSet.files.filter(
     (file) =>
       file.kind === "javascript" &&
       file.text.included &&
-      !dependencyManifest(file.path) &&
-      moduleJsContainers.has(file.container_sha256),
+      candidateContainers.has(file.container_sha256) &&
+      (!dependencyManifest(file.path) ||
+        maySourceConstructElectronBrowserWindow(file.text.value)),
   );
+  if (sources.length === 0) return { paths, limitations };
   const filesByContainer = new Map<
     string,
     Map<string, (typeof fileSet.files)[number]>
   >();
   for (const file of fileSet.files) {
-    if (!moduleJsContainers.has(file.container_sha256)) continue;
+    if (!candidateContainers.has(file.container_sha256)) continue;
     let containerFiles = filesByContainer.get(file.container_sha256);
     if (containerFiles === undefined) {
       containerFiles = new Map();

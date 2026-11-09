@@ -210,16 +210,12 @@ it("retains a failed close and the original cancellation until scope cleanup ret
   expect(scope.hasPending).toBe(false);
   expect(close).toHaveBeenCalledTimes(2);
 });
-it("skips preload discovery when only node_modules dependencies use module package scope", async () => {
+it("skips preload discovery when no source in a module-js container can construct BrowserWindow", async () => {
   const result = await discoverJavaScriptPreloadPaths(
     {
       files: [
-        file("package.json", '{"name":"cjs-app","main":"main.js"}'),
-        file(
-          "main.js",
-          'const { BrowserWindow } = require("electron"); new BrowserWindow({webPreferences:{preload:"preload.js"}});',
-        ),
-        file("preload.js", 'require("./helper.cjs");'),
+        file("package.json", '{"name":"cjs-cli","main":"main.js"}'),
+        file("main.js", "module.exports = (value) => String(value);\n"),
         file("node_modules/esm-dep/package.json", '{"type":"module"}'),
         file("node_modules/esm-dep/index.js", "export const x = 1;"),
       ],
@@ -234,7 +230,59 @@ it("skips preload discovery when only node_modules dependencies use module packa
   expect(result).toEqual({ paths: new Set(), limitations: [] });
   expect(acquire).not.toHaveBeenCalled();
 });
-it("scopes preload discovery in mixed ESM + CJS workspaces to application module containers and excludes node_modules", async () => {
+it("discovers module-scoped dependency preloads and dependency BrowserWindow declarations without scanning unrelated ESM dependencies", async () => {
+  const result = await discoverJavaScriptPreloadPaths(
+    {
+      files: [
+        file("package.json", '{"name":"cjs-app","main":"main.js"}'),
+        file(
+          "main.js",
+          'const { BrowserWindow } = require("electron"); const path = require("node:path"); new BrowserWindow({webPreferences:{preload:path.join(__dirname, "node_modules/esm-preload/preload.js")}});',
+        ),
+        file("node_modules/esm-preload/package.json", '{"type":"module"}'),
+        file(
+          "node_modules/esm-preload/preload.js",
+          'const { contextBridge } = require("electron"); contextBridge.exposeInMainWorld("api", {});',
+        ),
+        file(
+          "node_modules/window-helper/package.json",
+          '{"name":"window-helper"}',
+        ),
+        file(
+          "node_modules/window-helper/open.js",
+          'const { BrowserWindow } = require("electron"); const path = require("node:path"); new BrowserWindow({webPreferences:{preload:path.join(__dirname, "../esm-preload/extra.js")}});',
+        ),
+        file(
+          "node_modules/esm-preload/extra.js",
+          'const { ipcRenderer } = require("electron"); ipcRenderer.send("ready");',
+        ),
+        file("node_modules/unrelated-esm/package.json", '{"type":"module"}'),
+        file(
+          "node_modules/unrelated-esm/index.js",
+          "export const formatLine = (v) => `${v}\\n`;",
+        ),
+      ],
+      unavailable_relevant_files: [],
+      containers: [],
+      text_bytes_read: 0,
+      invalid_utf8_files: 0,
+    },
+    limits,
+    new ArtifactResourceScope(),
+  );
+  expect(result).toEqual({
+    paths: new Set([
+      "a".repeat(64) + ":node_modules/esm-preload/preload.js",
+      "a".repeat(64) + ":node_modules/esm-preload/extra.js",
+    ]),
+    limitations: [],
+  });
+  expect(analyze.mock.calls.map(([source]) => source.path)).toEqual([
+    "main.js",
+    "node_modules/window-helper/open.js",
+  ]);
+});
+it("scopes preload discovery in mixed ESM + CJS workspaces to candidate module containers and excludes unrelated node_modules", async () => {
   const otherContainer = "c".repeat(64);
   const cjsMain =
     'const { BrowserWindow } = require("electron"); const path = require("node:path"); new BrowserWindow({webPreferences:{preload:path.join(__dirname, "preload.js")}});';

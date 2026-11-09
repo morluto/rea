@@ -717,4 +717,67 @@ it("preserves deterministic Evidence across mixed CJS and ESM apps with ESM node
   expect(projectAnalysisError(cancelled.error)).toMatchObject({
     code: "cancelled",
   });
-});
+}, 60_000);
+
+it("promotes .js preloads shipped inside type=module packages under node_modules", async () => {
+  const depPreloadRoot = await createTestTempDirectory(
+    "rea-js-dep-preload-app-",
+  );
+  await mkdir(join(depPreloadRoot, "node_modules", "esm-preload"), {
+    recursive: true,
+  });
+  await mkdir(join(depPreloadRoot, "node_modules", "esm-only"), {
+    recursive: true,
+  });
+  await Promise.all([
+    writeFile(
+      join(depPreloadRoot, "package.json"),
+      JSON.stringify({ name: "cjs-dep-preload-app", main: "main.js" }),
+    ),
+    writeFile(
+      join(depPreloadRoot, "main.js"),
+      [
+        'const { BrowserWindow, ipcMain } = require("electron");',
+        'const path = require("node:path");',
+        'ipcMain.handle("app:ping", async () => "pong");',
+        'new BrowserWindow({ webPreferences: { preload: path.join(__dirname, "node_modules/esm-preload/preload.js") } });',
+      ].join("\n"),
+    ),
+    writeFile(
+      join(depPreloadRoot, "node_modules", "esm-preload", "package.json"),
+      JSON.stringify({
+        name: "esm-preload",
+        version: "1.0.0",
+        type: "module",
+      }),
+    ),
+    writeFile(
+      join(depPreloadRoot, "node_modules", "esm-preload", "preload.js"),
+      'const { contextBridge, ipcRenderer } = require("electron"); contextBridge.exposeInMainWorld("api", { ping: () => ipcRenderer.invoke("app:ping") });',
+    ),
+    writeFile(
+      join(depPreloadRoot, "node_modules", "esm-only", "package.json"),
+      JSON.stringify({ name: "esm-only", version: "1.0.0", type: "module" }),
+    ),
+    writeFile(
+      join(depPreloadRoot, "node_modules", "esm-only", "index.js"),
+      "export const trimValue = (v) => String(v).trim();\n",
+    ),
+  ]);
+
+  const depPreloadAnalyzed = await analyzeJavaScriptApplication({
+    input_path: depPreloadRoot,
+    format: "directory",
+  });
+  if (!depPreloadAnalyzed.ok) throw depPreloadAnalyzed.error;
+  expect(
+    javascriptApplicationAnalysisResultSchema.parse(
+      depPreloadAnalyzed.value.normalized_result,
+    ).summary,
+  ).toMatchObject({
+    browser_windows: 1,
+    preload_entrypoints: 1,
+    context_bridge_apis: 1,
+    ipc: { paired_renderer_transmissions: 1 },
+  });
+}, 60_000);

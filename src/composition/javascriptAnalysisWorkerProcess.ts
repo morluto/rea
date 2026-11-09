@@ -3,6 +3,7 @@ import { parseJavaScriptSource } from "../domain/javascript/javascriptSourcePars
 import {
   analyzeParsedJavaScriptStaticSourceWithBindingsSteps,
   discoverParsedJavaScriptBrowserWindowsSteps,
+  maySourceConstructElectronBrowserWindow,
 } from "../domain/javascript/javascriptStaticAnalysis.js";
 import {
   analyzeParsedJavaScriptSemanticsSteps,
@@ -31,6 +32,13 @@ const analyze: JavaScriptSourceWorkerAnalyzer = async (
 ) => {
   if (!file.text.included)
     throw new TypeError("JavaScript worker requires decoded source text");
+  if (
+    purpose === "preload-discovery" &&
+    !maySourceConstructElectronBrowserWindow(file.text.value)
+  ) {
+    await callbacks.checkpoint(failedJavaScriptStaticAnalysis());
+    return null;
+  }
   await callbacks.phase("parse");
   let parsed = parseJavaScriptSource(file.text.value, file.path, packageType);
   if (parsed === null) {

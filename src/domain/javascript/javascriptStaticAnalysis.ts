@@ -236,6 +236,21 @@ export function* analyzeParsedJavaScriptStaticSourceWithBindingsSteps(
   };
 }
 
+const POSSIBLE_NEW_KEYWORD = /\bnew\b|\\u/u;
+const POSSIBLE_ESCAPED_ELECTRON =
+  /\\(?:x[0-9a-f]{2}|u|1[4-6][0-7]|[elco]|[\r\n\u2028\u2029])/iu;
+
+/**
+ * Sound lexical prefilter for sources that could construct an Electron
+ * BrowserWindow in isolation: requires a `new` token (or Unicode escape) and
+ * an `"electron"` literal (or string/template escape that could decode to one).
+ */
+export const maySourceConstructElectronBrowserWindow = (
+  source: string,
+): boolean =>
+  POSSIBLE_NEW_KEYWORD.test(source) &&
+  (source.includes("electron") || POSSIBLE_ESCAPED_ELECTRON.test(source));
+
 /**
  * Recover only Electron BrowserWindow declarations for preliminary preload
  * discovery, skipping sources that cannot construct an Electron BrowserWindow.
