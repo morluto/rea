@@ -213,7 +213,7 @@ export const utf8ByteLength = (text: string): number => {
 };
 
 const isCargoCrateStartChar = (ch: string, codePoint: number): boolean => {
-  if (codePoint <= 0x7f) return isAsciiAlnum(codePoint) || codePoint === 0x5f;
+  if (codePoint <= 0x7f) return isAsciiAlpha(codePoint) || codePoint === 0x5f;
   return codePoint <= 0xd7ff || codePoint >= 0xe000
     ? UNICODE_XID_START.test(ch)
     : false;

@@ -1144,3 +1144,56 @@ it("recovers Cargo-valid Unicode registry crate names and enforces UTF-8 byte bo
   expect(overCapResult.inferred_crates.discovered_count).toBe(0);
   expect(overCapResult.inferred_crates.truncated).toBe(true);
 });
+
+it("rejects digit-prefixed registry crate names in scanner and retained-report schema while preserving underscore and trailing-digit names", () => {
+  const bytes = createRustImage({
+    format: "elf",
+    omitSection: true,
+    readOnlyBytes: Buffer.from(
+      [
+        "/cargo/registry/src/index.crates.io-6f17d22bba15001f/123foo-0.1.0/src/lib.rs",
+        `/cargo/registry/src/index.crates.io-6f17d22bba15001f/9${"a".repeat(260)}-0.1.0/src/lib.rs`,
+        "/cargo/registry/src/index.crates.io-6f17d22bba15001f/_123foo-0.1.0/src/lib.rs",
+        "/cargo/registry/src/index.crates.io-6f17d22bba15001f/foo123-0.2.0/src/lib.rs",
+      ].join("\0") + "\0",
+      "utf8",
+    ),
+  });
+  const result = recoverRustSourceFingerprints(
+    bytes,
+    readBinaryContainer(bytes),
+  );
+  expect(result.inferred_crates.truncated).toBe(false);
+  expect(result.inferred_crates.discovered_count).toBe(2);
+  expect(
+    result.inferred_crates.items.map(({ name, version }) => ({
+      name,
+      version,
+    })),
+  ).toEqual([
+    { name: "_123foo", version: "0.1.0" },
+    { name: "foo123", version: "0.2.0" },
+  ]);
+
+  const validReport = {
+    artifact: {
+      path: "/artifacts/digit-check",
+      sha256: "b".repeat(64),
+      bytes: bytes.length,
+    },
+    format: "elf" as const,
+    architecture: "amd64",
+    bits: 64 as const,
+    byte_order: "little" as const,
+    auditable_metadata: null,
+    rustc_commit: null,
+    inferred_crates: result.inferred_crates,
+    rustc_versions: result.rustc_versions,
+    limitations: [],
+  };
+  expect(rustBinarySchema.safeParse(validReport).success).toBe(true);
+
+  const digitPrefixedReport = structuredClone(validReport);
+  digitPrefixedReport.inferred_crates.items[0]!.name = "123foo";
+  expect(rustBinarySchema.safeParse(digitPrefixedReport).success).toBe(false);
+});
