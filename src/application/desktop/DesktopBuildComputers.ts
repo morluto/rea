@@ -36,6 +36,10 @@ import {
   ComputerHelper,
   type ComputerRelease,
 } from "../../desktop/AgentEnvComputerHelper.js";
+import {
+  resolveBuildComputerEnvironment,
+  type BuildComputerDefaults,
+} from "../../desktop/BuildComputerEnvironment.js";
 import type { PrivateRuntimeRoot } from "../../process/PrivateRuntimeRoot.js";
 import type { ProgressReporter } from "../ProgressReporter.js";
 import {
@@ -312,6 +316,7 @@ export class DesktopBuildComputers {
   constructor(
     private readonly environment: Readonly<NodeJS.ProcessEnv>,
     private readonly settle: BuildSettle = SETTLE_TIMING,
+    private readonly defaults: BuildComputerDefaults = {},
   ) {}
 
   async start(
@@ -360,6 +365,11 @@ export class DesktopBuildComputers {
     progress: ProgressReporter | undefined,
   ): ReturnType<DesktopBuildComputers["start"]> {
     const { source } = input;
+    const environment = await resolveBuildComputerEnvironment(
+      this.environment,
+      process.platform,
+      this.defaults,
+    );
     let target: {
       readonly bundle: string;
       readonly name: string;
@@ -369,7 +379,7 @@ export class DesktopBuildComputers {
       target =
         source.kind === "bundle"
           ? { bundle: source.path, name: source.path }
-          : await writeRequestBundle(source, this.environment);
+          : await writeRequestBundle(source, environment);
     } catch (cause: unknown) {
       return err(failure(START, cause, signal));
     }
@@ -379,7 +389,7 @@ export class DesktopBuildComputers {
     try {
       helper = await ComputerHelper.spawn({
         bundle: target.bundle,
-        environment: this.environment,
+        environment,
         signal,
         operation: START,
       });

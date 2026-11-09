@@ -385,6 +385,7 @@ Select the part you want to check:
 | One analysis engine                 | `rea doctor --provider ghidra --json` (or `hopper`, `ida`, `jadx`, `kuna`) |
 | One agent registration              | `rea doctor --client codex --json` (see [client IDs](#supported-agents))   |
 | Installed workflow instructions     | `rea doctor --skill --json`                                                |
+| Desktop app environment builds      | `rea doctor --provider desktop_build --client claude_code --json`          |
 
 A scoped report has `scope.mode: "explicit"`. Its `scope_checks` determine
 `healthy` and the exit status. Other checks appear in `informational_checks`;

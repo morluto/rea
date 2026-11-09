@@ -253,6 +253,25 @@ _ensure_state_aliases(home)
   },
 );
 
+it("restores a selected alias to an existing settings file", async () => {
+  const root = await createTestTempDirectory("desktop-file-alias-");
+  const home = join(root, "home");
+  await mkdir(join(home, ".config"), { recursive: true });
+  await writeFile(join(home, ".config", "tellicorc"), "saved");
+  const imports = PYTHON_IMPORTS.split("\n")
+    .filter((line) => !line.includes("agentenv_protocol"))
+    .join("\n");
+  const program = `${imports}
+STATE_ALIASES = [("settings", ".config/tellicorc")]
+${PYTHON_HELPERS}
+home = Path(sys.argv[1])
+_ensure_state_aliases(home)
+_ensure_state_aliases(home)
+`;
+  execPython(["-I", "-B", "-c", program, home], { encoding: "utf8" });
+  expect(await readFile(join(home, "settings"), "utf8")).toBe("saved");
+});
+
 it("restores a selected settings alias without replacing an existing path", async () => {
   const root = await createTestTempDirectory("desktop-state-alias-");
   const home = join(root, "home");
@@ -303,6 +322,18 @@ _ensure_state_aliases(home)
     }),
   ).toThrow();
   expect(await readFile(join(other, "settings"), "utf8")).toBe("preserve");
+
+  const empty = join(root, "empty-home");
+  await mkdir(empty);
+  const emptySeed = join(root, "empty-seed");
+  await mkdir(emptySeed);
+  execPython(["-I", "-B", "-c", program, emptySeed, empty], {
+    encoding: "utf8",
+  });
+  await writeFile(join(empty, "settings", "new.ini"), "new settings");
+  expect(
+    await readFile(join(empty, ".config", "notes", "new.ini"), "utf8"),
+  ).toBe("new settings");
 });
 
 /** A stand-in xprop answering the root window list and each window's class and state from a table. */

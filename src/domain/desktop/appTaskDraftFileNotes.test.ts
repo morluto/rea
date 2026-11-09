@@ -2,6 +2,16 @@ import { describe, expect, it } from "vitest";
 
 import type { JsonValue } from "../jsonValue.js";
 import { draftOf, statePath, xml, xmlDraft } from "./appTaskDraft.fixture.js";
+import { readAsTextNotes } from "./appTaskDraftFileNotes.js";
+
+it("explains when an XML name is unsupported by the exported reader", () => {
+  expect(readAsTextNotes("Documents/map.dat", ["<Ϳ/>"])).toEqual([
+    expect.objectContaining({
+      code: "read_as_text",
+      message: expect.stringContaining("XML names are not supported"),
+    }),
+  ]);
+});
 
 describe("draftTaskFiles notes on thin files", () => {
   it("says which elements only position names when no check can name a change", () => {
