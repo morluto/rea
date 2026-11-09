@@ -1851,37 +1851,47 @@ it("retains bundled isolated-world contextBridge APIs through dedicated and gene
     })();`,
   );
 
-  for (const arguments_ of [
-    ["analyze-javascript-application", root, "--json"],
-    ["analyze", root, "--format", "json"],
-  ]) {
-    const result = javascriptApplicationAnalysisResultSchema.parse(
-      parseEvidence(await runCli(arguments_)).normalized_result,
-    );
-    expect(result.summary.context_bridge_apis).toBe(1);
-    const bridge = result.graph.nodes.find(
-      ({ kind }) => kind === "context-bridge-api",
-    );
-    expect(bridge?.observations).toContainEqual(
-      expect.objectContaining({
-        properties: expect.objectContaining({
-          world: "isolated",
-          world_id: { status: "literal", value: 1001, expression: null },
-          api_key: "isolatedApi",
-          api_status: "object-literal",
-          members: ["ping"],
-          unknown_members: 0,
-          // The proven Webpack bootstrap resolves `load(2)` directly.
-          resolution_basis: "direct-syntax",
-        }),
-        evidence: expect.objectContaining({
-          location: expect.objectContaining({
-            available: true,
-            value: expect.objectContaining({ source: "preload.js" }),
+  for (const loader of ["unknown", "commonjs"] as const) {
+    if (loader === "commonjs")
+      await writeFile(join(root, "package.json"), '{"type":"commonjs"}');
+    for (const arguments_ of [
+      ["analyze-javascript-application", root, "--json"],
+      ["analyze", root, "--format", "json"],
+    ]) {
+      const result = javascriptApplicationAnalysisResultSchema.parse(
+        parseEvidence(await runCli(arguments_)).normalized_result,
+      );
+      expect(result.summary.context_bridge_apis).toBe(
+        loader === "commonjs" ? 1 : 0,
+      );
+      const bridge = result.graph.nodes.find(
+        ({ kind }) => kind === "context-bridge-api",
+      );
+      expect(bridge?.observations).toContainEqual(
+        expect.objectContaining({
+          properties: expect.objectContaining({
+            world: "isolated",
+            world_id: { status: "literal", value: 1001, expression: null },
+            api_key: "isolatedApi",
+            api_status: "object-literal",
+            members: ["ping"],
+            unknown_members: 0,
+            // The proven Webpack bootstrap resolves `load(2)` directly.
+            resolution_basis: "direct-syntax",
+            ...(loader === "unknown" ? { loader_authority: "candidate" } : {}),
+          }),
+          evidence: expect.objectContaining({
+            ...(loader === "unknown"
+              ? { confidence: "low", state: "inferred" }
+              : {}),
+            location: expect.objectContaining({
+              available: true,
+              value: expect.objectContaining({ source: "preload.js" }),
+            }),
           }),
         }),
-      }),
-    );
+      );
+    }
   }
 });
 

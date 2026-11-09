@@ -46,19 +46,23 @@ const analyze: JavaScriptSourceWorkerAnalyzer = async (
     return null;
   }
   await callbacks.phase("static");
-  if (purpose === "preload-discovery") {
-    // Only declarations cross this preliminary pass. The normal pass owns
-    // full static/semantic facts and their result reservations.
-    const facts = await completeJavaScriptAnalysisSteps(
-      discoverParsedJavaScriptBrowserWindowsSteps(file.text.value, parsed),
-    );
-    await callbacks.checkpoint(facts);
-    return null;
-  }
   const staticImportResolutionMode = moduleResolutionModeForJavaScriptReference(
     file.path,
     "static-import",
   );
+  if (purpose === "preload-discovery") {
+    // Only declarations cross this preliminary pass. The normal pass owns
+    // full static/semantic facts and their result reservations.
+    const facts = await completeJavaScriptAnalysisSteps(
+      discoverParsedJavaScriptBrowserWindowsSteps(
+        file.text.value,
+        parsed,
+        staticImportResolutionMode,
+      ),
+    );
+    await callbacks.checkpoint(facts);
+    return null;
+  }
   let sharedBindings: JavaScriptReceiverIndex | null;
   const staticResult = await completeJavaScriptAnalysisSteps(
     analyzeParsedJavaScriptStaticSourceWithBindingsSteps(
