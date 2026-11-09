@@ -4,6 +4,7 @@ import { expect, it } from "vitest";
 import {
   semanticMemberChain,
   semanticStaticPropertyKey,
+  staticObjectOwnMethodReader,
   staticObjectProperty,
   staticObjectPropertyReader,
   staticObjectPropertyNames,
@@ -127,6 +128,170 @@ it("preserves ordinary method data values without executing getter effects", () 
     ]);
     expect(staticObjectProperty(object, "stdio").status).toBe(status);
   }
+});
+
+it("leaves only the keys a conditional literal spread can copy unresolved", () => {
+  const preload = t.objectProperty(
+    t.identifier("preload"),
+    t.stringLiteral("./preload.js"),
+  );
+  const frame = () =>
+    t.objectExpression([
+      t.objectProperty(t.identifier("frame"), t.booleanLiteral(false)),
+    ]);
+  const flag = t.identifier("flag");
+  // Index keys: a falsy `&&` operand may be document.all; a string branch
+  // copies its own indices.
+  for (const [argument, first, third] of [
+    [t.logicalExpression("&&", flag, frame()), "dynamic", "dynamic"],
+    [
+      t.conditionalExpression(flag, frame(), t.nullLiteral()),
+      "missing",
+      "missing",
+    ],
+    [
+      t.conditionalExpression(flag, t.stringLiteral("ab"), frame()),
+      "dynamic",
+      "missing",
+    ],
+  ] as const) {
+    const object = t.objectExpression([preload, t.spreadElement(argument)]);
+    const read = staticObjectPropertyReader(object);
+    for (const lookup of [
+      read,
+      (name: string) => staticObjectProperty(object, name),
+    ]) {
+      expect(lookup("preload")).toEqual({
+        status: "explicit",
+        property: preload,
+        value: preload.value,
+      });
+      expect(lookup("frame")).toEqual({ status: "dynamic" });
+      expect(lookup("sandbox")).toEqual({ status: "missing" });
+      expect(lookup("0").status).toBe(first);
+      expect(lookup("2").status).toBe(third);
+    }
+    expect(staticObjectPropertyNames(object)).toEqual({
+      status: "partial",
+      names: ["preload"],
+    });
+  }
+  const override = t.spreadElement(
+    t.logicalExpression(
+      "&&",
+      flag,
+      t.objectExpression([
+        t.objectProperty(t.identifier("preload"), t.identifier("runtimePath")),
+      ]),
+    ),
+  );
+  expect(
+    staticObjectProperty(t.objectExpression([preload, override]), "preload"),
+  ).toEqual({
+    status: "dynamic",
+  });
+  expect(
+    staticObjectProperty(t.objectExpression([override, preload]), "preload"),
+  ).toEqual({
+    status: "explicit",
+    property: preload,
+    value: preload.value,
+  });
+  const method = t.objectMethod(
+    "method",
+    t.identifier("run"),
+    [],
+    t.blockStatement([]),
+  );
+  const branch = (name: string) =>
+    t.spreadElement(
+      t.logicalExpression(
+        "&&",
+        flag,
+        t.objectExpression([
+          t.objectProperty(t.identifier(name), t.numericLiteral(1)),
+        ]),
+      ),
+    );
+  expect(
+    staticObjectOwnMethodReader(t.objectExpression([method, branch("other")]))(
+      "run",
+    ),
+  ).toBe(true);
+  expect(
+    staticObjectOwnMethodReader(t.objectExpression([method, branch("run")]))(
+      "run",
+    ),
+  ).toBe(false);
+});
+
+it("keeps fallback and unresolved conditional spreads unknown", () => {
+  const preload = t.objectProperty(
+    t.identifier("preload"),
+    t.stringLiteral("./preload.js"),
+  );
+  const flag = t.identifier("flag");
+  const frame = t.objectExpression([
+    t.objectProperty(t.identifier("frame"), t.booleanLiteral(false)),
+  ]);
+  for (const argument of [
+    t.logicalExpression("||", flag, frame),
+    t.logicalExpression("??", flag, frame),
+    t.conditionalExpression(flag, t.identifier("input"), frame),
+    t.logicalExpression(
+      "&&",
+      flag,
+      t.objectExpression([
+        t.objectMethod("get", t.identifier("frame"), [], t.blockStatement([])),
+      ]),
+    ),
+    t.logicalExpression(
+      "&&",
+      flag,
+      t.objectExpression([
+        t.objectProperty(t.identifier("key"), t.booleanLiteral(true), true),
+      ]),
+    ),
+    t.logicalExpression(
+      "&&",
+      flag,
+      t.objectExpression([t.spreadElement(t.identifier("input"))]),
+    ),
+  ]) {
+    const object = t.objectExpression([preload, t.spreadElement(argument)]);
+    expect(staticObjectProperty(object, "preload")).toEqual({
+      status: "dynamic",
+    });
+    expect(staticObjectPropertyReader(object)("sandbox")).toEqual({
+      status: "dynamic",
+    });
+    expect(staticObjectPropertyNames(object)).toEqual({
+      status: "partial",
+      names: ["preload"],
+    });
+  }
+});
+
+it("bounds nested conditional spreads by expression depth", () => {
+  const preload = t.objectProperty(
+    t.identifier("preload"),
+    t.stringLiteral("./preload.js"),
+  );
+  const nested = (levels: number): t.Expression => {
+    let argument: t.Expression = t.objectExpression([
+      t.objectProperty(t.identifier("frame"), t.booleanLiteral(false)),
+    ]);
+    for (let level = 0; level < levels; level++)
+      argument = t.logicalExpression("&&", t.identifier("flag"), argument);
+    return argument;
+  };
+  const read = (levels: number) =>
+    staticObjectProperty(
+      t.objectExpression([preload, t.spreadElement(nested(levels))]),
+      "preload",
+    ).status;
+  expect(read(SEMANTIC_EXPRESSION_DEPTH_LIMIT - 1)).toBe("explicit");
+  expect(read(SEMANTIC_EXPRESSION_DEPTH_LIMIT)).toBe("dynamic");
 });
 
 it("limits unary-plus keys to transparent numeric literals", () => {
