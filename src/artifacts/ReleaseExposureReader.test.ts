@@ -7,7 +7,10 @@ import { dirname, join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { describe, expect, it, vi } from "vitest";
 
-import { AnalysisArtifactChangedError } from "../domain/analysisErrorCore.js";
+import {
+  AnalysisArtifactChangedError,
+  AnalysisResourceConstraintError,
+} from "../domain/analysisErrorCore.js";
 import { pe } from "../domain/binaryTarget.fixture.js";
 import { nodeSeaElf } from "./nodeSea/NodeSea.fixture.js";
 import {
@@ -100,8 +103,7 @@ vi.mock("./inventory/ArtifactInventory.js", async () => {
 
 const createdReaders = vi.hoisted(() => ({
   wrap: undefined as
-    | undefined
-    | ((reader: ArtifactReader, path: string) => ArtifactReader),
+    undefined | ((reader: ArtifactReader, path: string) => ArtifactReader),
 }));
 
 vi.mock("./createArtifactReader.js", async () => {
@@ -2316,6 +2318,37 @@ describe("ReleaseExposureReader nested ASAR admission", () => {
     expect(scanned.limitations).toContain(
       "Could not decide whether payload.json holds an ASAR within the header admission.",
     );
+  });
+
+  it("refuses a selected ASAR past the header admission with its recovery", async () => {
+    const root = await createTestTempDirectory(
+      "rea-release-selected-asar-limit-",
+    );
+    const json = JSON.stringify({ files: {} });
+    await writeFile(
+      join(root, "app.asar"),
+      asarHeaderBytes(`${" ".repeat(1100)}${json}`),
+    );
+    const reader = new ReleaseExposureReader({
+      maximumBytes: 1024,
+      source: "runtime",
+    });
+    try {
+      const result = await reader.inspect(
+        { path: join(root, "app.asar") },
+        undefined,
+        () => undefined,
+      );
+      expect(result.ok).toBe(false);
+      if (result.ok) return;
+      expect(result.error).toBeInstanceOf(AnalysisResourceConstraintError);
+      expect(result.error.limit).toMatchObject({
+        setting: "asar.max_header_bytes",
+        effective_value: 1024,
+      });
+    } finally {
+      await reader.close();
+    }
   });
 });
 

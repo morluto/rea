@@ -314,6 +314,9 @@ const scanFile = async (
     });
   } catch (cause) {
     rethrowReadFailure(cause);
+    // A named admission owns its recovery; keep it typed as the directory scan does.
+    if (cause instanceof ArtifactReaderFailure && cause.admission !== undefined)
+      throw cause;
     limitations.push(
       "Artifact inventory did not complete. Member coverage is unknown.",
     );
