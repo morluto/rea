@@ -153,6 +153,9 @@ const ipc = z
   });
 const windowShape = {
   ...electronFindingContext,
+  window_constructor: z
+    .enum(["BaseWindow", "BrowserView", "WebContentsView"])
+    .exactOptional(),
   options_status: z.enum(["object-literal", "dynamic", "missing"]),
   web_preferences_status: z.enum(["object-literal", "dynamic", "missing"]),
   web_preferences: z.array(
@@ -184,7 +187,7 @@ const electron = z
           loader_authority: z.literal("candidate").exactOptional(),
           entry_kind: z.enum(["bridge-member", "ipc-handler"]),
           entry: z.string(),
-          entry_path: strings.optional(),
+          entry_path: strings.exactOptional(),
           channel: z.string().nullable(),
           terminal: z.string(),
           resolution: z.literal("candidate"),
@@ -208,13 +211,6 @@ const electron = z
             z.strictObject({ expression: z.string(), location: range }),
           ),
         }),
-      )
-      .transform((paths) =>
-        paths.map(({ entry_kind, entry, entry_path, ...rest }) =>
-          entry_path === undefined
-            ? { entry_kind, entry, ...rest }
-            : { entry_kind, entry, entry_path, ...rest },
-        ),
       )
       .optional(),
     browser_windows: z.array(
@@ -308,6 +304,36 @@ const electron = z
         dynamic_member_access: z.boolean().optional(),
       }),
     ),
+    dynamic_code: z
+      .array(
+        z
+          .strictObject({
+            ...findingContext,
+            api: z.enum(["vm.Script", "vm.compileFunction"]),
+            cached_data_status: z.enum(["declared", "absent", "unknown"]),
+            cached_data: z.union([
+              z.strictObject({
+                source_path: z.string(),
+                source_path_base: z
+                  .enum(["source-directory", "literal-path"])
+                  .optional(),
+                source_resolution_context: z.enum([
+                  "filesystem-expression",
+                  "module-specifier",
+                ]),
+                source_expression: z.null(),
+              }),
+              z.strictObject({
+                source_path: z.null(),
+                source_resolution_context: z.null(),
+                source_expression: z.string(),
+              }),
+            ]),
+            source_text: staticValue,
+          })
+          .transform(withRuntime),
+      )
+      .optional(),
     protocols: z.array(
       z
         .strictObject({
@@ -326,10 +352,11 @@ const electron = z
         .transform(withRuntime),
     ),
   })
-  .transform(({ call_paths, app_path_changes, ...rest }) => ({
+  .transform(({ call_paths, app_path_changes, dynamic_code, ...rest }) => ({
     ...rest,
     ...(app_path_changes === undefined ? {} : { app_path_changes }),
     ...(call_paths === undefined ? {} : { call_paths }),
+    ...(dynamic_code === undefined ? {} : { dynamic_code }),
   }));
 const referenceShape = {
   ...findingContext,

@@ -76,6 +76,8 @@ export const collectJavaScriptSemanticChildProcesses = (
   const candidates = collectSpawns(program, state, callables).filter(
     (candidate) =>
       !forkRejectsStdioArray(candidate, context) &&
+      !rejectsStdioLiteral(candidate, context) &&
+      !rejectsProcessOptionLiteral(candidate, context) &&
       !rejectsOptionsShape(candidate, context, state),
   );
   const childProcessSpawns = candidates.map((candidate) =>
@@ -449,6 +451,42 @@ const environmentSupplied = (
   return staticJavaScriptTruthiness(value) !== false;
 };
 
+/**
+ * The `stdio` string values Node accepts for `spawn`, `execFile` and `fork`.
+ *
+ * Measured on Node 24.22.1: `"pipe"`, `"overlapped"`, `"inherit"` and `"ignore"` start a
+ * child; `"ipc"`, `"PIPE"`, `"pipe "`, `"pipeline"`, `"stream"` and `"stdio"` all throw
+ * `ERR_INVALID_ARG_VALUE` before anything is created. The set is exact and case-sensitive.
+ */
+const STREAM_STDIO_MODES = new Set([
+  "pipe",
+  "overlapped",
+  "inherit",
+  "ignore",
+] as const);
+
+/**
+ * Whether an exact string `stdio` makes the call throw before a child exists.
+ *
+ * `spawn` passes the string to `getValidStdio`, so every value outside
+ * `STREAM_STDIO_MODES` throws. `fork` sends the string through `stdioStringToArray`, which
+ * refuses `""` on its own — it does not split the string and it never appends `"ipc"`, so
+ * the rejection is that one explicit check rather than an IPC-count rule. Measured on Node
+ * 24.22.1: `spawn(..., {stdio: ""})` starts a child while `fork(..., {stdio: ""})` throws
+ * `ERR_INVALID_ARG_VALUE`.
+ *
+ * `exec` and `execFile` are excluded by the caller: async `execFile` does not forward
+ * `stdio` to its underlying `spawn` at all, so `execFile(..., {stdio: "bad"})` returns a
+ * real child, which `stdioMode` already records as `"default"`.
+ */
+const rejectsStdioString = (
+  value: string,
+  method: JavaScriptSemanticChildProcessSpawn["method"],
+): boolean =>
+  (STREAM_STDIO_MODES as ReadonlySet<string>).has(value)
+    ? false
+    : method === "fork" || value !== "";
+
 const stdioMode = (
   options: t.Node | undefined,
   method: JavaScriptSemanticChildProcessSpawn["method"],
@@ -472,6 +510,33 @@ const stdioMode = (
   if (method === "fork" && staticJavaScriptTruthiness(value) !== undefined)
     return unsetStdioMode(expression, method, context);
   return "dynamic";
+};
+
+/**
+ * Whether a `stdio` member is a string Node refuses at the call site.
+ *
+ * The value is read through the shared literal owner rather than the AST kind, because a
+ * no-substitution template literal is the same string to Node: measured on Node 24.22.1,
+ * `{stdio: \`ipc\`}` throws `ERR_INVALID_ARG_VALUE` while `{stdio: \`pipe\`}` starts a
+ * child. A non-string value is left to `stdioMode`, which already reports it as
+ * `"dynamic"`, so this filter only speaks about strings.
+ */
+const rejectsStdioLiteral = (
+  candidate: SpawnCandidate,
+  context: ChildSpawnContext,
+): boolean => {
+  // Async exec/execFile do not forward options.stdio to their underlying spawn.
+  if (candidate.method === "exec" || candidate.method === "execFile")
+    return false;
+  const { options } = spawnArguments(candidate, context);
+  if (options === undefined) return false;
+  const expression = unwrapJavaScriptExpression(options).node;
+  if (context.isNullish(expression)) return false;
+  const lookup = staticObjectProperty(expression, "stdio", context.isNullish);
+  if (lookup.status !== "explicit") return false;
+  const literal = readExactJavaScriptLiteral(lookup.value);
+  if (!literal.found || typeof literal.value !== "string") return false;
+  return rejectsStdioString(literal.value, candidate.method);
 };
 
 /**
@@ -508,6 +573,48 @@ const forkRejectsStdioArray = (
       literal !== undefined && literal.found && literal.value === "ipc",
   ).length;
   return ipcCount !== 1;
+};
+
+/** Only proven invalid cwd paths or argv0 strings establish call-site rejection. */
+const rejectsProcessOptionLiteral = (
+  candidate: SpawnCandidate,
+  context: ChildSpawnContext,
+): boolean => {
+  const { options } = spawnArguments(candidate, context);
+  if (options === undefined) return false;
+  const expression = unwrapJavaScriptExpression(options).node;
+  if (context.isNullish(expression)) return false;
+  for (const member of ["cwd", "argv0"] as const) {
+    const lookup = staticObjectProperty(expression, member, context.isNullish);
+    if (lookup.status !== "explicit") continue;
+    const value = unwrapJavaScriptExpression(lookup.value).node;
+    if (context.isNullish(value)) continue;
+    // The value is read through the shared literal owner, so a no-substitution template
+    // literal counts as the string Node receives: measured on Node 24.22.1,
+    // `{cwd: \`/tmp\`}` and `{argv0: \`x\`}` both start a child.
+    const literal = readExactJavaScriptLiteral(value);
+    if (literal.found) {
+      if (typeof literal.value === "string") continue;
+      return true;
+    }
+    if (t.isStringLiteral(value)) continue;
+    // A constructor can return a URL or another accepted path value. Its name
+    // cannot prove that cwd is invalid, including qualified and custom constructors.
+    if (member === "cwd" && t.isNewExpression(value)) continue;
+    if (
+      t.isObjectExpression(value) ||
+      t.isArrayExpression(value) ||
+      t.isBooleanLiteral(value) ||
+      t.isBigIntLiteral(value) ||
+      t.isRegExpLiteral(value) ||
+      t.isArrowFunctionExpression(value) ||
+      t.isFunctionExpression(value) ||
+      t.isClassExpression(value) ||
+      t.isNewExpression(value)
+    )
+      return true;
+  }
+  return false;
 };
 
 /**

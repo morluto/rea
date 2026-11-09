@@ -3,13 +3,13 @@ import { describe, expect, it } from "vitest";
 import type { JsonValue } from "../jsonValue.js";
 import { parseDesktopTask } from "./appTask.js";
 import {
-  elementText,
   evaluateTaskChecks,
   type TaskCheckOutcome,
   type TaskFileView,
 } from "./appTaskChecks.js";
 import { CHECK_CASES, CHECK_VIEWS } from "./appTaskChecks.fixture.js";
 import { textView, xmlView } from "./stateFormats.js";
+import { elementText } from "./viewPointer.js";
 
 const portable = (name: string) => /^[a-z0-9]+(?:-[a-z0-9]+)*$/u.test(name);
 
@@ -250,6 +250,72 @@ const REFUSALS: readonly (readonly [Record<string, unknown>, string])[] = [
     },
     "at checks.0.normalize_whitespace",
   ],
+  [
+    {
+      checks: [
+        {
+          kind: "text_equals",
+          file: "a",
+          pointer: "/p",
+          value: "x",
+          text_attribute: "",
+        },
+      ],
+    },
+    "at checks.0.text_attribute",
+  ],
+  [
+    { checks: [{ kind: "member_count", file: "a", pointer: "/x" }] },
+    "exactly one of equals, at_least and at_most",
+  ],
+  [
+    {
+      checks: [
+        {
+          kind: "member_count",
+          file: "a",
+          pointer: "/x",
+          equals: 1,
+          at_least: 1,
+        },
+      ],
+    },
+    "exactly one of equals, at_least and at_most",
+  ],
+  [
+    {
+      checks: [{ kind: "member_count", file: "a", pointer: "/x", equals: -1 }],
+    },
+    "at checks.0.equals",
+  ],
+  [
+    { checks: [{ kind: "member_count", file: "a", pointer: "x", equals: 1 }] },
+    "must start with /",
+  ],
+  ...[
+    "[>first_name]",
+    "first_name=x",
+    "[name=a]x",
+    "[>data/info/label/x=Deep]",
+    "[>data//Title=x]",
+    "[>/Title=x]",
+  ].map(
+    (matching) =>
+      [
+        {
+          checks: [
+            {
+              kind: "member_count",
+              file: "a",
+              pointer: "/x",
+              matching,
+              equals: 1,
+            },
+          ],
+        },
+        `matching ${JSON.stringify(matching)}`,
+      ] as const,
+  ),
 ];
 
 describe("evaluateTaskChecks", () => {
@@ -317,6 +383,12 @@ describe("evaluateTaskChecks", () => {
           file: "Documents/photo.png",
           lines: ["x"],
         },
+        {
+          id: "gzip",
+          kind: "value_absent",
+          file: "Documents/bomb.gnumeric",
+          pointer: "/root/attributes/x",
+        },
       ] as never,
       new Map(Object.entries(CHECK_VIEWS)),
     );
@@ -328,6 +400,7 @@ describe("evaluateTaskChecks", () => {
       ["cut", false, true],
       ["shown", false, undefined],
       ["binary", false, undefined],
+      ["gzip", false, true],
     ]);
   });
 });
@@ -524,6 +597,77 @@ describe("evaluateTaskChecks text on a cut view", () => {
   });
 });
 
+describe("evaluateTaskChecks numeric element text", () => {
+  const grade = (file: string, pointer: string, value: number) =>
+    evaluateTaskChecks(
+      [
+        {
+          id: "c",
+          kind: "value_equals",
+          file,
+          pointer,
+          value,
+          tolerance: 0.001,
+        } as never,
+      ],
+      new Map(Object.entries(CHECK_VIEWS)),
+    )[0];
+
+  it("accepts an equivalent or split decimal on a whole cell, and refuses a cut cell or a JSON object", () => {
+    const cell = (row: string) =>
+      `/root/children/[name=Cell][@Row=${row}][@Col=3]`;
+    expect(grade("Documents/budget.xml", cell("2"), 437.8)?.passed).toBe(true);
+    expect(grade("Documents/budget.xml", cell("5"), 437.8)?.passed).toBe(true);
+    expect(grade("Documents/budget.xml", cell("5"), 437.89)?.passed).toBe(
+      false,
+    );
+    expect(
+      grade("Documents/budget.xml", cell("6"), 400)?.undecided,
+    ).toBeUndefined();
+    expect(grade("Documents/cut-number.xml", "/root", 437.8)).toMatchObject({
+      passed: false,
+      undecided: true,
+    });
+    const shaped = grade(".config/notes/settings.json", "/shaped", 437.8);
+    expect(shaped?.passed).toBe(false);
+    expect(shaped?.undecided).toBeUndefined();
+    expect(shaped?.description).toContain("not a number");
+  });
+
+  it("decides a numeral text node in a cut view, because that node was kept whole", () => {
+    const [outcome] = evaluateTaskChecks(
+      [
+        {
+          id: "c",
+          kind: "value_equals",
+          file: "n.xml",
+          pointer: "/root/children/0",
+          value: 437.8,
+          tolerance: 0.001,
+        } as never,
+      ],
+      new Map([
+        [
+          "n.xml",
+          {
+            format: "xml",
+            view: {
+              root: {
+                name: "Cell",
+                attributes: {},
+                children: ["437.80"],
+              },
+              truncated: true,
+            },
+          },
+        ],
+      ]),
+    );
+    expect(outcome?.passed).toBe(true);
+    expect(outcome?.undecided).toBeUndefined();
+  });
+});
+
 describe("evaluateTaskChecks selectors and tolerance", () => {
   const plate = "Documents/plate.FCStd";
   const objects = "/entries/[name=Document.xml]/view/root/children";
@@ -646,6 +790,119 @@ describe("evaluateTaskChecks selectors and tolerance", () => {
         tolerance: 1,
       })?.description,
     ).toMatch(/is "Part::Cylinder", not a number$/u);
+  });
+});
+
+describe("evaluateTaskChecks attribute text, child-text selectors and member counts", () => {
+  const outcome = (check: Record<string, unknown>) =>
+    evaluateTaskChecks(
+      [{ id: "c", ...check } as never],
+      new Map(Object.entries(CHECK_VIEWS)),
+    )[0];
+  const contacts = ".local/share/osmo/contacts_records.xml";
+  const cut = { id: "c", passed: false, undecided: true } as const;
+  const failed = { id: "c", passed: false } as const;
+
+  it("leaves each failure that a cut view may cause undecided", () => {
+    for (const check of [
+      {
+        kind: "member_count",
+        file: "Documents/cut.xml",
+        pointer: "/root/children",
+        at_least: 1,
+      },
+      {
+        kind: "member_count",
+        file: "Documents/many.zip",
+        pointer: "/entries",
+        at_least: 1,
+      },
+      {
+        kind: "member_count",
+        file: "Documents/listing.zip",
+        pointer: "/entries/1/view/root/children",
+        equals: 1,
+      },
+      {
+        kind: "text_contains",
+        file: "Documents/cut.xml",
+        pointer: "/root",
+        value: "1",
+        text_attribute: "id",
+      },
+      {
+        kind: "value_absent",
+        file: "Documents/cut.xml",
+        pointer: "/root/children/[name=p][>q=x]",
+      },
+    ])
+      expectOutcome(outcome(check), cut, [check.file]);
+  });
+
+  it("explains that a missing array in a cut view is undecided", () => {
+    for (const [file, pointer] of [
+      ["Documents/cut.xml", "/root/missing"],
+      ["Documents/listing.zip", "/entries/1/view/root/missing"],
+    ] as const) {
+      const result = outcome({
+        kind: "member_count",
+        file,
+        pointer,
+        equals: 0,
+      });
+      expect(result).toEqual({
+        id: "c",
+        passed: false,
+        undecided: true,
+        description: `the view of ${file} is truncated, so what it leaves out is unknown`,
+      });
+    }
+  });
+
+  it("decides a failure on what the view holds, and says what it found", () => {
+    expectOutcome(
+      outcome({
+        kind: "member_count",
+        file: contacts,
+        pointer: "/root/children",
+        matching: "[>first_name=Delphine]",
+        at_most: 2,
+      }),
+      failed,
+      [contacts, "/root/children", "[>first_name=Delphine]", "3 ", " 2"],
+    );
+    expectOutcome(
+      outcome({
+        kind: "member_count",
+        file: ".config/notes/settings.json",
+        pointer: "/size",
+        equals: 0,
+      }),
+      failed,
+      ["/size", quoted(12)],
+    );
+    expectOutcome(
+      outcome({
+        kind: "text_equals",
+        file: "Documents/flyer.sla",
+        pointer:
+          "/root/children/[name=DOCUMENT]/children/[name=PAGEOBJECT][@ANNAME=Headline]",
+        value: "Spring Fete",
+        text_attribute: "CH",
+      }),
+      failed,
+      [quoted("Spring Fair"), quoted("Spring Fete"), "CH"],
+    );
+    expectOutcome(
+      outcome({
+        kind: "value_equals",
+        file: contacts,
+        pointer: "/root/children/[name=contact][>first_name=Delphine]/name",
+        value: "contact",
+      }),
+      failed,
+      ["[name=contact][>first_name=Delphine]", "2"],
+    );
   });
 });
 

@@ -59,6 +59,11 @@ export const installLimitations = (
             ? `The application is installed as ${install.aptPackage}${install.release === null ? "" : `/${install.release}`} from ${install.sources.map((source) => source.uri).join(", ")}, trusting the key that verified it on the capture host, so the computer installs the version that repository offers then, which may differ from the one captured; the bundle supports only the capture host's architecture, ${install.architectures.join(", ")}.`
             : "The application is installed from the distribution archive by name, so the computer may install a different version than the one captured.",
         ]),
+    ...(install.extraPackages === undefined
+      ? []
+      : [
+          `The computer installs ${install.extraPackages.join(", ")} beside the application because the export was asked for them with --extra-package, as a build computer asks for the packages its request named.`,
+        ]),
     ...install.skipped.map(
       (repository) => `The apt repository ${repository} was left out.`,
     ),

@@ -10,6 +10,7 @@ import {
   versionView,
   type TaskFileView,
 } from "../../domain/desktop/appTaskChecks.js";
+import { SETTLE_TIMING } from "../../domain/desktop/appSettle.js";
 import {
   renderTaskEval,
   renderTaskSteps,
@@ -17,6 +18,7 @@ import {
   taskVerifierArtifact,
 } from "../../domain/desktop/appTaskPython.js";
 import type { DesktopAppExportPlan } from "../../domain/desktop/appExport.js";
+import { STATE_PATH_INPUTS } from "../../domain/desktop/buildCapture.js";
 import {
   versionAt,
   type DesktopStatePath,
@@ -41,17 +43,22 @@ import { refuse } from "./DesktopExportInstall.js";
 
 const OPERATION = "export_desktop_application";
 const REWRITE = "Fix the task file and export again.";
+/** Where the change shows on either path: a capture inside a build computer cannot be described with the CLI, so its draft comes from stop_build_capture. */
+const DRAFT =
+  "each changed file's values in the task draft (describe-desktop-application-task, or stop_build_capture on a build computer) show what it held at the seed and at the end, at the pointer a check names it by";
 
 /** What the export knows of the app: its name, owned paths, captured home, host identity, state files by home path and the checkpoints it reads. */
 type TaskTarget = Pick<
   DesktopAppExportPlan,
-  "name" | "paths" | "capturedHome"
+  "name" | "paths" | "capturedHome" | "title" | "aptPackage"
 > & {
   readonly files: ReadonlyMap<string, DesktopStatePath>;
   readonly identity: HostIdentity;
   readonly ends: StateEnds;
-  /** Views of the seeds the export rewrites, as it ships them. */
+  /** Views of the text seeds the export rewrites, as it ships them. */
   readonly seedViews: ReadonlyMap<string, TaskFileView>;
+  /** Home paths the bundle actually ships, including files that are not text. */
+  readonly seeded: ReadonlySet<string>;
 };
 
 /** A task the capture validated: the files it adds to the bundle, its README section and its summary. */
@@ -61,6 +68,8 @@ export interface AdmittedTask {
     readonly content: string;
   }[];
   readonly readme: string;
+  /** What the export says about the task, such as a prompt that does not name the app. */
+  readonly limitations: readonly string[];
   readonly summary: {
     readonly name: string;
     readonly checks: number;
@@ -138,7 +147,7 @@ const targetProblem = (
   views: TaskViews,
 ): string | undefined => {
   if (!isWithinAny(check.file, target.paths))
-    return `names ${check.file}, which is not under the app's owned paths (${target.paths.join(", ") || "none"}); data/get serves only those`;
+    return `names ${check.file}, which is not under the app's owned paths (${target.paths.join(", ") || "none"}); data/get serves only those. For the bundle to own it, capture again naming it with ${STATE_PATH_INPUTS}`;
   // What the check compares and names; its field names, kind and id label it.
   const { id: _id, kind: _kind, ...fields } = check;
   for (const value of Object.values(fields).flatMap(valueStrings)) {
@@ -156,6 +165,17 @@ const targetProblem = (
     : undefined;
 };
 
+/**
+ * A seed check's view of one file. A file the bundle does not ship is absent,
+ * including a lock the capture saw. A shipped text file uses the scrubbed
+ * view; any other shipped file uses the captured view.
+ */
+export const shippedSeedCheckView = (
+  seeded: boolean,
+  shipped: TaskFileView | undefined,
+  captured: TaskFileView | undefined,
+): TaskFileView | undefined => (seeded ? (shipped ?? captured) : undefined);
+
 /** Views of every file at the end checkpoint, or at the seed as the bundle ships it. */
 const viewsAt = (
   target: TaskTarget,
@@ -167,9 +187,15 @@ const viewsAt = (
     // A file not retained at the seed is not seeded, so the computer starts without it.
     if (end === "seed" && version?.present === true && version.sha256 === null)
       continue;
-    const shipped = end === "seed" ? target.seedViews.get(home) : undefined;
+    const captured = version === undefined ? undefined : versionView(version);
     const view =
-      shipped ?? (version === undefined ? undefined : versionView(version));
+      end === "seed"
+        ? shippedSeedCheckView(
+            target.seeded.has(home),
+            target.seedViews.get(home),
+            captured,
+          )
+        : captured;
     if (view !== undefined) views.set(home, view);
   }
   return views;
@@ -184,7 +210,9 @@ const taskReadme = (
 
 \`tasks/${task.name}.json\` deploys the app, has the agent work through the computer from the prompt below, and grades
 the outcome with \`artifacts/${taskVerifierArtifact(task)}/verify.py\`, which reads the app's \`data/get\` views and needs
-no model. \`evals/${app}.toml\` names it, so a run of the bundle runs it.
+no model. It grades once the app's files have held for ${String(SETTLE_TIMING.windowMs / 1000)} s, so a save the app makes on its own within that
+time of the agent stopping counts; each result's \`settled\` is false when they were still changing ${String(SETTLE_TIMING.boundMs / 1000)} s after the
+first read. \`evals/${app}.toml\` names it, so a run of the bundle runs it.
 
 ${task.prompt
   .split("\n")
@@ -205,6 +233,24 @@ whose summary line says \`passed\`; a run that says \`failed\` did not finish an
 `;
 
 /** Read, validate and render the task a caller passed with the export, if any. */
+/** Whether a prompt names the app by its title, environment or package, in any letter case. */
+export const namesApp = (
+  prompt: string,
+  {
+    title,
+    name,
+    aptPackage,
+  }: Pick<TaskTarget, "title" | "name" | "aptPackage">,
+): boolean => {
+  return [title, name, aptPackage].some((app) => {
+    const spelled = app.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
+    return new RegExp(
+      `(?<![\\p{L}\\p{N}_])${spelled}(?![\\p{L}\\p{N}_])`,
+      "iu",
+    ).test(prompt);
+  });
+};
+
 export const admitDesktopTask = async (
   paths: readonly string[],
   target: TaskTarget,
@@ -248,7 +294,7 @@ export const admitDesktopTask = async (
     throw refuse(
       `Check ${JSON.stringify(failing.id)} fails on the captured end state: ${failing.description}.`,
       "task",
-      "Write checks that the captured end state passes; describe-desktop-application-task shows its views.",
+      `Write checks that the captured end state passes; ${DRAFT}.`,
     );
   const seed = evaluateTaskChecks(task.checks, views.seed).filter(
     (outcome) => !outcome.passed,
@@ -269,7 +315,7 @@ export const admitDesktopTask = async (
         .map(({ id, description }) => `${JSON.stringify(id)}: ${description}`)
         .join("; ")}).`,
       "task",
-      "Add a check that fails on what the seed's views hold, such as a line or row of a file read whole; describe-desktop-application-task shows its views.",
+      `Add a check that fails on what the seed's views hold, such as a line or row of a file read whole; ${DRAFT}.`,
     );
   return {
     summary: {
@@ -277,6 +323,11 @@ export const admitDesktopTask = async (
       checks: task.checks.length,
       failing_on_seed: failingOnSeed,
     },
+    limitations: namesApp(task.prompt, target)
+      ? []
+      : [
+          `The task's prompt does not name the app (${target.title}): a solving agent's own shell cannot see the computer's files, and the app's name sends it to the screen, so start the prompt with "In ${target.title}, ".`,
+        ],
     readme: taskReadme(task, target.name, failingOnSeed),
     files: [
       {
