@@ -33,8 +33,10 @@ runtime location reconciliation.
   layers automatically in `reconcile_javascript_runtime` without authorizing
   sibling files in the parent directory or external relative module imports.
 - **R4 — Generic binary routing preservation**: Keep `namedArtifactFormat` and
-  default `rea analyze <file.js>` target routing unchanged unless
-  `--artifact-format file` is explicitly requested.
+  `rea analyze <file.js>` target routing unchanged; standalone single-file
+  JavaScript application analysis is selected through
+  `rea analyze-javascript-application` (`--artifact-format auto|file`) and
+  `analyze_javascript_application` (`format: "auto" | "file"`).
 
 ## Acceptance
 
@@ -59,6 +61,6 @@ runtime location reconciliation.
 
 ## Out of scope
 
-Changing default `rea analyze <path>` target routing without
-`--artifact-format file`, executing target JavaScript, or implicitly scanning
-parent directories when a single file is supplied.
+Changing `rea analyze <path>` target routing to dispatch JavaScript application
+analysis, executing target JavaScript, or implicitly scanning parent
+directories when a single file is supplied.
