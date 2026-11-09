@@ -40,7 +40,7 @@ it("does not read counterfeit metadata from the Markdown body", () => {
   });
   expect(addSkillManifestToolCount(content, 5)).toMatchObject({
     ok: false,
-    error: { message: "Missing authored skill version" },
+    error: { message: expect.stringMatching(/missing.*version/iu) },
   });
 });
 

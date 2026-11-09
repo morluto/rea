@@ -22,7 +22,9 @@ rea analyze-javascript-application /absolute/path/to/apps/app.asar \
 
 Generic `rea analyze` selects this static provider for directories and `.asar`
 paths when neither `--provider` nor `--snapshot` is supplied. The dedicated
-command and the generic route return their complete results inline. Native
+command and the generic route return complete results inline by default.
+Summary and route-view delivery export the full Evidence to `--evidence_output`
+and return a projection; see [route delivery](../../javascript-route-inventory.md). Native
 targets, single JavaScript files, `.app` bundles, and explicit deep-provider or
 snapshot requests retain the native deep-analysis route.
 
@@ -85,6 +87,11 @@ edges for the selected candidate. Previously retained Evidence keeps its origina
 properties and remains readable without migration.
 
 ## Select sources before analysis
+
+Explicit `source_paths` retain the acquisition owner's requested order, including
+selected dependency files. First-party priority applies only to unscoped analysis.
+Recovered syntax or incomplete semantic examination keeps Electron coverage
+partial even when useful windows or IPC facts were retained.
 
 For a question about known entry sources, supply exact artifact-relative file
 paths in `source_paths`, or repeat `--source-path` on either CLI route:
@@ -181,7 +188,9 @@ coverage, limitations, and `normalized_result.parent_evidence_id`. Pass that ID
 to `inspect_analysis_view` for module pages or items, or to the application
 workflows as a retained reference. The summary does not repeat or truncate the
 analysis; a server without session retention refuses summary detail with
-`capability_unavailable`. CLI output is unchanged and always complete.
+`capability_unavailable`. On the CLI, `--detail summary --evidence_output PATH`
+exports the full Evidence and returns its summary; the default remains complete
+inline delivery.
 
 With a connected MCP `client` and the caller-selected absolute `inputPath`, this
 recipe analyzes once and pages module identities using the returned ID:
@@ -322,6 +331,12 @@ module facts together with any parent application-projection limit. Cleanup
 failure does not authorize expanding relationships that parent admission declined.
 
 ## What is reconstructed
+
+Electron `BrowserView` and `WebContentsView` expose `webContents` and accept
+`webPreferences`, including declared preloads. `BaseWindow` has neither surface
+of its own. Preload associations retain the parsed constructor's mechanism rather
+than labeling every view as a BrowserWindow. These are static associations, not
+proof that a renderer or preload executed.
 
 The projector reuses the content-addressed artifact inventory and safe artifact
 readers. It retains canonical artifact-relative paths, exact byte counts,
@@ -514,6 +529,25 @@ Re-analyze both snapshots to compare using the v3 rules.
 If fingerprint construction reaches its structural
 bound, the fingerprint is unavailable and its status is `truncated`; a bounded
 prefix is never presented as a complete stable fingerprint.
+
+## Cached-data compilation boundaries
+
+The [feature specification](../../specs/javascript/v8-cached-data/spec.md) defines
+the static admission and uncertainty contract.
+
+A `node:vm` compilation reports whether `cachedData` is declared, absent or
+unknown. Explicitly supplied undefined bytes are treated as absent; shadowed
+identifiers remain declarations. Source syntax alone does not establish valid cache bytes, V8 acceptance
+or execution. The summary counts declared compilations, not executions.
+
+A proven synchronous filesystem read or awaited promise-based read supplies a
+cache path. The producer retains its path base: source-directory expressions
+can name inventoried artifacts, while relative literal paths depend on the
+target working directory and remain unresolved. Other supplied values retain
+their bounded source expression. Declared paths, exact-file lookup
+status, candidate paths and resolution limitations remain separate; an unresolved
+path never becomes a resolved file. Opaque inventoried cache bytes can remain
+unavailable to the JavaScript resolver even when their occurrence is known.
 
 ## Authority and unknowns
 

@@ -99,7 +99,7 @@ export const prepareRoot = async (
     readonly rootIdentity: BigIntStats;
   }>
 > => {
-  if (isAborted(signal)) return err(cancelled());
+  if (isAborted(signal)) return err(cancelled(signal));
   try {
     const metadata = await bigLstat(root);
     if (metadata.isSymbolicLink() || !metadata.isDirectory())
@@ -110,7 +110,7 @@ export const prepareRoot = async (
         ),
       );
     const canonicalRoot = await realpath(root);
-    if (isAborted(signal)) return err(cancelled());
+    if (isAborted(signal)) return err(cancelled(signal));
     const canonicalMetadata = await bigLstat(canonicalRoot);
     if (!sameFile(metadata, canonicalMetadata))
       return err(
@@ -121,7 +121,7 @@ export const prepareRoot = async (
       );
     return ok({ canonicalRoot, rootIdentity: canonicalMetadata });
   } catch (cause: unknown) {
-    if (isAborted(signal)) return err(cancelled());
+    if (isAborted(signal)) return err(cancelled(signal));
     const rootFailure = rootFilesystemFailure(
       cause,
       "Reference source root could not be resolved",

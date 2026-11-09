@@ -11,9 +11,9 @@ import { GhidraProvider } from "./GhidraProvider.js";
 // bit-field base-type and inventory-search revisions that prevent reuse of snapshots with earlier
 // results.
 const RAW_DIGESTS = {
-  "6502": "bac13dfcedcd47a2ad2a69585146cf192cdc210593732b737c7a98d8f88dde9d",
+  "6502": "540037ef007380e737a606cd14c402a9bdf055132cf44fb73d29ab1ec9f84af6",
   "x86-disabled-analyzer":
-    "f62ac1a36dca4d5c3399b501f8fdf23a132f471c5172d275fd59d84921d7e90a",
+    "8498e58d5a1147cdfe7dad2b486b4b4087efc76944ee1902c9af9d0c0da56237",
 } as const;
 
 const configFor = (environment: NodeJS.ProcessEnv) => {
@@ -50,6 +50,7 @@ describe("raw-binary analysis profile digest", () => {
         "source-mappings-entry-context-relocation-symbol-v3",
       instruction_status: "unlisted-and-containing-code-data-v3",
       inventory_search_projection: "provider-inventory-facts-v1",
+      value_flow_effect_scope: "pcode-load-store-explicit-v1",
       byte_search_boundary: "contiguous-eligible-initialized-blocks-v1",
       byte_search_coverage: "separate-loaded-overlays-v1",
       data_type_observations: "bit-field-base-and-lookup-v1",
@@ -75,6 +76,7 @@ describe("raw-binary analysis profile digest", () => {
     );
     expect(resolved.value.profile?.parameters).toMatchObject({
       inventory_search_projection: "provider-inventory-facts-v1",
+      value_flow_effect_scope: "pcode-load-store-explicit-v1",
       byte_search_coverage: "separate-loaded-overlays-v1",
       analysis_options: {
         disabled_analyzers: ["Aggressive Instruction Finder"],

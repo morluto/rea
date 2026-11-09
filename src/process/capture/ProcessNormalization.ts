@@ -276,7 +276,7 @@ const createProcessTextRules = (
 };
 
 /** Prepare capture-local matchers while retaining a live terminal PID lookup. */
-export const createProcessTextNormalizer = (
+const createProcessTextNormalizer = (
   scenario: ProcessScenario,
   temporaryRoot: string | undefined,
   pid: ProcessIdentifierSource,

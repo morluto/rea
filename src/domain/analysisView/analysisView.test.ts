@@ -883,7 +883,9 @@ it("projects typed module facts without source bodies and keeps source coverage 
 
 it("counts retained range observations including repeats and skips unavailable locations", () => {
   const analysis = analysisViewJavaScriptAnalysis();
-  const original = analysis.graph.nodes[0];
+  const original = analysis.graph.nodes.find(
+    ({ kind }) => kind === "javascript-asset",
+  );
   const observed = original?.observations[0];
   if (!original || !observed) throw new Error("missing module observation");
   const range = {
@@ -929,6 +931,7 @@ it("counts retained range observations including repeats and skips unavailable l
     ...application,
     nodes: [node],
     root_node_ids: [node.node_id],
+    edges: [],
   });
   const parent = javascriptParent(
     analysisViewBindJavaScriptGraphs(analysis, graph),
@@ -997,7 +1000,9 @@ it("validates typed module selectors without coercing null or empty paths", () =
 
 it("keeps mixed observation support distinct instead of promoting a module to observed", () => {
   const analysis = analysisViewJavaScriptAnalysis();
-  const original = analysis.graph.nodes[0];
+  const original = analysis.graph.nodes.find(
+    ({ kind }) => kind === "javascript-asset",
+  );
   const observed = original?.observations[0];
   if (!original || !observed) throw new Error("missing module observation");
   const inferred = {
@@ -1025,6 +1030,7 @@ it("keeps mixed observation support distinct instead of promoting a module to ob
     ...application,
     nodes: [node],
     root_node_ids: [node.node_id],
+    edges: [],
   });
   const result = projectAnalysisView(
     javascriptParent(analysisViewBindJavaScriptGraphs(analysis, graph)),
@@ -1128,6 +1134,84 @@ it("rejects ambiguous JavaScript module paths with candidate node ids", () => {
     });
   }
   expect(ids).toEqual(graph.nodes.map(({ node_id }) => node_id));
+});
+
+it("keeps export bindings out of module pages and path selection", () => {
+  const analysis = analysisViewJavaScriptAnalysis();
+  const original = analysis.graph.nodes[0];
+  const observation = original?.observations[0];
+  if (original === undefined || observation === undefined)
+    throw new Error("missing module observation");
+  const exportBinding = createJavaScriptApplicationNode({
+    kind: "javascript-module",
+    identity: {
+      strategy: "artifact-local-key",
+      stability: "artifact-version",
+      artifact_sha256: "c".repeat(64),
+      namespace: "module-export",
+      key: "renderer.js:alpha",
+    },
+    observations: [
+      {
+        label: "renderer.js:alpha",
+        properties: {
+          semantic_role: "export-binding",
+          module_path: "renderer.js",
+          exported_name: "alpha",
+        },
+        evidence: {
+          ...observation.evidence,
+          artifact: {
+            ...observation.evidence.artifact,
+            sha256: "c".repeat(64),
+            artifact_id: `art_${"c".repeat(64)}`,
+          },
+        },
+      },
+    ],
+  });
+  const graph = createJavaScriptApplicationGraph({
+    schema: "JavaScriptApplicationGraph",
+    root_node_ids: [original.node_id, exportBinding.node_id],
+    nodes: [original, exportBinding],
+    edges: [],
+    coverage: analysis.graph.coverage,
+    limitations: analysis.graph.limitations,
+  });
+  const parent = javascriptParent(
+    analysisViewBindJavaScriptGraphs(analysis, graph),
+  );
+  const page = projectAnalysisView(parent, {
+    kind: "page",
+    collection: "modules",
+    offset: 0,
+    limit: 10,
+  });
+  if (!page.ok) throw page.error;
+  if (page.value.kind !== "page") throw new Error("expected page");
+  expect(page.value.items).toEqual([
+    {
+      node_id: original.node_id,
+      kind: original.kind,
+      path: "renderer.js",
+    },
+  ]);
+  expect(page.value.coverage).toMatchObject({
+    total: 1,
+    examined: 1,
+    exhausted: true,
+  });
+  const item = projectAnalysisView(parent, {
+    kind: "item",
+    collection: "modules",
+    selector: { path: "renderer.js" },
+  });
+  if (!item.ok) throw item.error;
+  if (item.value.kind !== "item") throw new Error("expected item view");
+  expect(item.value.item).toMatchObject({ node_id: original.node_id });
+  const summary = projectAnalysisView(parent, { kind: "summary" });
+  if (!summary.ok) throw summary.error;
+  expect(summary.value.coverage).toMatchObject({ total: 1, examined: 1 });
 });
 
 it("pages actual modules, including unknown and empty paths, without unrelated roles", () => {

@@ -84,6 +84,10 @@ npx rea-agents setup
 
 MCP는 기본적으로 간결한 입력 스키마를 사용합니다. 전체 필드 안내와 중첩 검증 정보가 필요하면 MCP 등록에서 `REA_MCP_INPUT_SCHEMA_PROFILE=full`을 설정하세요. 두 프로필 모두 전체 도구와 동일한 정규 서버 검증을 유지합니다. MCP 계약 가이드를 참고하세요.
 
+설정은 선택한 런타임과 REA 진입 스크립트를 직접 등록합니다. 패키지 실행기를 사용한다면 해당 캐시 항목과 런타임을 유지하고, 대상 프로젝트 밖의 신뢰할 수 있는 디렉터리에서 패키지를 받으세요. 설치 가이드를 참고하세요.
+
+기본적으로 완전한 출력 스키마가 제공됩니다. 클라이언트가 `tools/list` 크기를 제한한다면 MCP 등록에서 `REA_MCP_OUTPUT_SCHEMA_PROFILE=compact` 또는 `off`로 설정하세요. 서버 검증과 구조화된 결과는 완전하게 유지됩니다. MCP 계약 가이드의 «Output schemas»를 참고하세요.
+
 ### 에이전트에게 요청
 
 ```text
@@ -159,6 +163,7 @@ REA에는 Node.js 22.x(>=22.23.4), 24.x(>=24.22.1) 또는 26+ (>=26.12.1)와 npm
 | Rust 바이너리          | cargo-auditable이 내장한 크레이트 이름, 버전, 소스, 의존성 관계               | REA 내장 ELF/PE/thin Mach-O 정적 검사; [Rust 바이너리](../rust-binaries.md)                                                                                      |
 | PE certificates        | Authenticode WIN_CERTIFICATE entries and PKCS#7 signer/X.509 identity fields  | Built-in static PE inspection; [PE certificates](../pe-certificates.md)                                                                                          |
 | PE imports             | Import and delay-load DLL names, ordinals, IAT RVAs and pefile import hash    | Built-in static PE inspection; [PE imports](../pe-imports.md)                                                                                                    |
+| Windows shortcuts      | Shell Link target, arguments, working dir, ExtraData and Tracker droid facts  | Built-in static LNK inspection; [Windows shortcuts](../guides/native/windows-shortcut.md)                                                                        |
 | ELF notes              | PT_NOTE/SHT_NOTE owners, types, GNU build-id and ABI-tag fields               | Built-in static ELF inspection; [ELF notes](../elf-notes.md)                                                                                                     |
 | Binary hardening       | PIE, NX, RELRO, CFG and related header flags for ELF, PE and Mach-O           | Built-in static header inspection; [binary hardening](../binary-hardening.md)                                                                                    |
 | Apple IPS crashes      | .ips metadata, threads, images, registers and crash classes                   | Built-in static JSON inspection; [Apple IPS](../apple-ips.md)                                                                                                    |
@@ -185,6 +190,7 @@ REA에는 Node.js 22.x(>=22.23.4), 24.x(>=24.22.1) 또는 26+ (>=26.12.1)와 npm
 | 패키지 및 리소스       | 파일 목록, 다이제스트, plist, Apple 번들 구조, 추출한 리소스                  | [아티팩트 및 JavaScript 가이드](../guides/javascript/javascript-artifact-reconstruction.md), [Apple 애플리케이션](../guides/apple/apple-application-analysis.md) |
 | 프로세스 동작          | 터미널 출력, 상호작용, 종료 및 파일 시스템 관찰 결과, 실행 비교               | 네이티브 PTY를 지원하는 Linux/macOS; [프로세스 캡처](../guides/runtime/process-capture.md)                                                                       |
 | PyInstaller            | CArchive, PYZ, Python bytecode                                                | Static inspection; [Python packaged applications](../python-packaged-applications.md)                                                                            |
+| Deno compile binaries  | Virtual files, entry point, recorded options, npm snapshot length             | Static inspection; [Deno compile executables](../deno-standalone.md)                                                                                             |
 | GPU 코드 객체          | CUDA/HIP 대상, 선택한 커널 매개변수와 자원, 보존된 PTX 텍스트                 | 내장 정적 검사 ELF/PE/fatbin/CUBIN/PTX; [GPU](../gpu-code-objects.md)                                                                                            |
 | 모델 파일              | GGUF / safetensors 메타데이터, 텐서 선언과 계산한 합계                        | 헤더 검사; 전체 파일 해시는 선택 사항; [GGUF / safetensors](../model-artifacts.md)                                                                               |
 | IL2CPP 메타데이터      | Unity global-metadata.dat 어셈블리 이미지, 형식·메서드 이름과 인덱스 범위     | 버전 24, 27, 29, 31, 39 정적 디코딩; Unity 불필요                                                                                                                |

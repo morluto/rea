@@ -25,7 +25,10 @@ while differing in supported options and output.
 Failure to launch the selected executable reports provider unavailability, the
 configured command and the host error under `boundary: "provider-launch"`.
 Recovery concerns `REA_OBJDUMP_COMMAND`, PATH and execution permission, including
-for target-free architecture listing. Artifact admission keeps separate input
+for target-free architecture listing. In MCP discovery (`binary_session`), an
+unprobed executable is reported available; observing a launch failure marks the
+operation unavailable with its remediation until a later dispatched request
+succeeds. Artifact admission keeps separate input
 and filesystem-read diagnostics. Invalid operation/selector combinations retain
 their rejected fields in input issues before artifact reads or provider launch.
 

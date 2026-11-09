@@ -84,6 +84,10 @@ npx rea-agents setup
 
 MCP 預設使用精簡輸入 Schema，以減少上下文開銷。需要完整欄位說明和巢狀驗證細節時，請在 MCP 註冊中設定 `REA_MCP_INPUT_SCHEMA_PROFILE=full`。兩種設定都保留完整工具集和標準的伺服器驗證；見 MCP 合約指南。
 
+設定會直接登記所選執行環境和 REA 入口指令碼。使用套件執行器時，請保留其快取項目及執行環境，並從目標專案以外的可信任目錄取得套件。 請參閱安裝指南。
+
+預設會公布完整輸出 Schema。若用戶端限制 `tools/list` 的大小，請在 MCP 登記中設定 `REA_MCP_OUTPUT_SCHEMA_PROFILE=compact` 或 `off`。伺服器驗證和結構化結果仍保持完整。 請參閱 MCP 合約指南中的「Output schemas」。
+
 ### 詢問 AI 代理
 
 ```text
@@ -160,6 +164,7 @@ REA 需要 Node.js 22.x（>=22.23.4）、24.x（>=24.22.1）或 26+ (>=26.12.1)�
 | Erlang BEAM           | IFF chunks, atoms, exports, and tables                                       | Built-in static BEAM inspection; [Erlang BEAM](../erlang-beam.md)                                                                                 |
 | PE certificates       | Authenticode WIN_CERTIFICATE entries and PKCS#7 signer/X.509 identity fields | Built-in static PE inspection; [PE certificates](../pe-certificates.md)                                                                           |
 | PE imports            | Import and delay-load DLL names, ordinals, IAT RVAs and pefile import hash   | Built-in static PE inspection; [PE imports](../pe-imports.md)                                                                                     |
+| Windows shortcuts     | Shell Link target, arguments, working dir, ExtraData and Tracker droid facts | Built-in static LNK inspection; [Windows shortcuts](../guides/native/windows-shortcut.md)                                                         |
 | ELF notes             | PT_NOTE/SHT_NOTE owners, types, GNU build-id and ABI-tag fields              | Built-in static ELF inspection; [ELF notes](../elf-notes.md)                                                                                      |
 | Binary hardening      | PIE, NX, RELRO, CFG and related header flags for ELF, PE and Mach-O          | Built-in static header inspection; [binary hardening](../binary-hardening.md)                                                                     |
 | Apple IPS crashes     | .ips metadata, threads, images, registers and crash classes                  | Built-in static JSON inspection; [Apple IPS](../apple-ips.md)                                                                                     |
@@ -172,6 +177,7 @@ REA 需要 Node.js 22.x（>=22.23.4）、24.x（>=24.22.1）或 26+ (>=26.12.1)�
 | 封包擷取              | 端點、DNS、TLS SNI、通訊協定分佈和 HTTP 請求                                 | 呼叫端提供的 tshark 和 capinfos；[pcap 指南](../guides/data/pcap-analysis.md)                                                                     |
 | .NET 程式集           | 中繼資料、CIL 指令、聲明的原生依賴和建置對比                                 | 靜態檢查；[托管程式碼指南](../guides/managed/managed-code-analysis.md)                                                                            |
 | PyInstaller           | CArchive, PYZ, Python bytecode                                               | Static inspection; [Python packaged applications](../python-packaged-applications.md)                                                             |
+| Deno compile binaries | Virtual files, entry point, recorded options, npm snapshot length            | Static inspection; [Deno compile executables](../deno-standalone.md)                                                                              |
 | Android APK           | 清單聲明、類別、反編譯的方法和引用                                           | Linux/macOS/Windows x64 上的無界面 JADX 和完整 JDK；[Android 指南](../guides/android/android-analysis.md)                                         |
 | Android 裝置          | 裝置、套件、程序、日誌、傾印、螢幕擷取以及 APK/檔案傳輸                      | 呼叫端提供的 adb（模擬器或實體裝置）；[ADB 指南](../guides/android/adb-device-analysis.md)                                                        |
 | JEB 專案              | 引擎支援的專案單元、成品摘要和型別/方法的虛擬碼                              | 由呼叫端啟動、提供 MCP 的 JEB 用戶端，透過 REA_JEB_MCP_URL 選擇；[JEB 指南](../providers/jeb-analysis.md)                                         |

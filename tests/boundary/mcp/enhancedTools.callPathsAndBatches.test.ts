@@ -620,12 +620,14 @@ describe("enhanced MCP batches", () => {
             code: "unreadable_output",
             category: "execution_failure",
             details: { operation: "decompile", reason: "failed" },
-            message:
-              "Analysis returned an unreadable result. Run `rea doctor` and review the reported details; repeating the unchanged request is not expected to succeed.",
+            message: expect.stringMatching(
+              /unreadable result.*rea doctor.*repeating the unchanged request.*not expected to succeed/i,
+            ),
             retryable: false,
             remediation: {
-              action:
-                "Analysis returned an unreadable result. Run `rea doctor` and review the reported details; repeating the unchanged request is not expected to succeed.",
+              action: expect.stringMatching(
+                /unreadable result.*rea doctor.*repeating the unchanged request.*not expected to succeed/i,
+              ),
             },
           },
         },

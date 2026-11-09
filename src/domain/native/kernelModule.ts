@@ -258,7 +258,11 @@ export const kernelModuleSchema = z.strictObject({
   exit_text: sizedSectionSchema.nullable(),
   signature: signatureSchema.nullable(),
   coverage: z.strictObject({
-    status: z.enum(["complete", "not_applicable", "unsupported"]),
+    status: z
+      .enum(["complete", "partial", "not_applicable", "unsupported"])
+      .describe(
+        "Whether the supported inspection examined the declared facts; omitted or undecodable facts make coverage partial.",
+      ),
     examined_entries: uint,
   }),
   limitations: z.array(z.string()),

@@ -2,6 +2,7 @@ import { projectCliAnalysisResult } from "./projectCliAnalysisResult.js";
 import { nativeDispatchMetadataInputSchema } from "../domain/native/objcSwiftMetadata.js";
 import { nativeInvestigationTraceLimitsSchema } from "../domain/native/nativeInvestigationGraph.js";
 import { nativeValueTraceInputSchema } from "../domain/native/nativeValueTrace.js";
+import { nativeDataTypeInputSchema } from "../domain/native/nativeDataType.js";
 import { z } from "incur";
 import {
   bytePatternFields,
@@ -13,6 +14,7 @@ import { localPathStringSchema } from "../domain/localPath.js";
 
 import {
   addressOrProcedureGuidance,
+  dataTypeSelectorGuidance,
   equalSelectorGuidance,
   resolveCliAnalysisSelector,
 } from "./analysisSelector.js";
@@ -32,12 +34,10 @@ import { withCommandCancellation } from "./commandCancellation.js";
 import {
   analysisEvidenceDeliveryOptions,
   cliEvidenceDeliveryInputError,
-  cliEvidenceSourceClosure,
   publishCliAnalysisEvidence,
 } from "./analysisEvidenceDelivery.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import { AnalysisOutputError } from "../domain/analysisErrorCore.js";
-import type { EvidenceBundle } from "../domain/evidenceBundle.js";
 
 const bytePatternInputSchema = z
   .object(bytePatternFields)
@@ -303,7 +303,6 @@ export const registerCoreNativeCommands = (
           };
           const invalid = cliEvidenceDeliveryInputError(delivery);
           if (invalid !== undefined) return projectAnalysisError(invalid);
-          let sessionBundle: EvidenceBundle | undefined;
           const complete = await runDirectAnalysis(
             args.path,
             "trace_native_values",
@@ -320,63 +319,68 @@ export const registerCoreNativeCommands = (
             {
               ...directAnalysisOptionsFromCli(logger, options),
               signal,
-              ...(options.evidence_output === undefined
-                ? {}
-                : {
-                    onEvidenceBundle: (bundle: EvidenceBundle) => {
-                      sessionBundle = bundle;
-                    },
-                  }),
+              includeEvidenceSources: options.evidence_output !== undefined,
             },
           );
           if (!complete.ok || options.evidence_output === undefined)
             return publishCliAnalysisEvidence(complete, delivery);
-          if (sessionBundle === undefined)
+          if (complete.sourceEvidence === undefined)
             return projectAnalysisError(
               new AnalysisOutputError(
                 "trace_native_values",
-                "The CLI session did not return its retained Evidence bundle.",
+                "The CLI session did not return its source Evidence.",
               ).retainPartialObservation(complete.value),
             );
-          const sources = cliEvidenceSourceClosure(
-            complete.value,
-            sessionBundle.records,
-          );
-          if (!sources.ok)
-            return projectAnalysisError(
-              sources.error.retainPartialObservation(complete.value),
-            );
-          return publishCliAnalysisEvidence(complete, {
-            ...delivery,
-            sourceEvidence: sources.value,
-          });
+          return publishCliAnalysisEvidence(complete, delivery);
         }),
       ),
   });
   cli.command(CLI_COMMANDS.inspectNativeDataType, {
-    description: "Inspect one recovered database type or typed data object",
+    description: `Inspect one recovered database type or typed data object. ${dataTypeSelectorGuidance}`,
     args: z.object({
-      path: z.string().describe("Local native executable or app path"),
+      path: localPathStringSchema.describe(
+        "Local native executable or app path",
+      ),
     }),
     options: z.object({
-      type: z.string().optional().describe("Exact database type category path"),
-      address: z.string().optional().describe("Exact native address"),
+      type: z
+        .string()
+        .optional()
+        .describe(
+          `Exact database type category path. ${dataTypeSelectorGuidance}`,
+        ),
+      address: z
+        .string()
+        .optional()
+        .describe(`Exact native address. ${dataTypeSelectorGuidance}`),
       ...nativeOpenOptionFields,
     }),
     run: ({ args, options }) =>
-      logCliCommand(logger, CLI_COMMANDS.inspectNativeDataType, () =>
-        runDirectAnalysis(
+      logCliCommand(logger, CLI_COMMANDS.inspectNativeDataType, async () => {
+        const input = {
+          ...(options.type === undefined ? {} : { type: options.type }),
+          ...(options.address === undefined
+            ? {}
+            : { address: options.address }),
+        };
+        // Admit the canonical selector choice before opening the target.
+        const selected = nativeDataTypeInputSchema.safeParse(input);
+        if (!selected.success)
+          return projectAnalysisError(
+            analysisInputErrorFromIssues(
+              "inspect_native_data_type",
+              selected.error.issues,
+              input,
+              { cause: selected.error },
+            ),
+          );
+        return runDirectAnalysis(
           args.path,
           "inspect_native_data_type",
-          {
-            ...(options.type === undefined ? {} : { type: options.type }),
-            ...(options.address === undefined
-              ? {}
-              : { address: options.address }),
-          },
+          input,
           directAnalysisOptionsFromCli(logger, options),
-        ).then(projectCliAnalysisResult),
-      ),
+        ).then(projectCliAnalysisResult);
+      }),
   });
   for (const [command, operation] of [
     [CLI_COMMANDS.inspectNativeInstruction, "inspect_native_instruction"],

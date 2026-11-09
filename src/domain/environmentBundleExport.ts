@@ -6,6 +6,13 @@ import { prefixedDigestSchema } from "./digests.js";
 import { retainedEvidenceReferenceSchema } from "./evidenceReference.js";
 import { absoluteLocalPathStringSchema } from "./localPath.js";
 
+/** A durably published bundle retained when later cleanup fails. */
+export interface EnvironmentBundlePublication {
+  readonly kind: "environment-bundle-publication";
+  readonly directory: string;
+  readonly files: readonly { readonly path: string; readonly bytes: number }[];
+}
+
 /** Capture Evidence retained in this session, or one capture Evidence file on this host. */
 const environmentCaptureSourceSchema = z.discriminatedUnion("kind", [
   retainedEvidenceReferenceSchema.describe(

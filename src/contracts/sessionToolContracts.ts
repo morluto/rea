@@ -108,7 +108,7 @@ export const SESSION_TOOL_CONTRACTS = [
   ),
   session(
     "compare_process_captures",
-    "Compare two compatible process capture observations across terminal, interaction, lifecycle, process, filesystem, command-shim, HTTP, and WebSocket evidence. Optional trace_spec validates exact events against an explicit partial order or finite trace language; concurrency is never inferred from timestamps or broad sorting. Missing, journal-free, or truncated observations are never treated as equivalent.",
+    'Compare two compatible process capture observations, supplied inline or as exact {kind: "retained-evidence", evidence_id} references from this session, across terminal, interaction, lifecycle, process, filesystem, command-shim, HTTP, and WebSocket evidence. Capture-local observer timing is retained as provenance but does not by itself establish a behavior change. Optional trace_spec validates exact events, including caller-selected timing assertions, against an explicit partial order or finite trace language; concurrency is never inferred from timestamps or broad sorting. Missing, journal-free, or truncated observations are never treated as equivalent.',
     processComparisonInputSchema,
   ),
   session(
@@ -187,7 +187,7 @@ export const SESSION_TOOL_CONTRACTS = [
   {
     ...session(
       "inspect_address_context",
-      "Inspect one explicit reproducible address for its analyzed name, containing procedure, regular and inline comments, and matching bookmarks. Each unsupported facet returns a typed unavailable outcome. A facet rejected for invalid input or a resource constraint retains its canonical error and recovery alongside any successful facets. Use xrefs, assembly, or pseudocode for those deeper views.",
+      "Inspect one explicit reproducible address for its analyzed name, containing procedure, regular and inline comments, and matching bookmarks. Each unsupported facet returns a typed unavailable outcome. A facet rejected for invalid input, source Evidence integrity, or a resource constraint retains its canonical error and recovery alongside successful facets. Use xrefs, assembly, or pseudocode for those deeper views.",
       addressContextInputSchema,
     ),
     requiresActiveTarget: true,

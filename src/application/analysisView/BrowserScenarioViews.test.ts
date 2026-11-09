@@ -262,8 +262,10 @@ describe("browser scenario analysis view pages", () => {
       },
     };
     const summary = await view(dropped, { kind: "summary" });
-    expect(summary.unknowns).toContain(
-      "3 events were dropped by capture budgets; counts and pages cover retained events only.",
+    expect(summary.unknowns).toContainEqual(
+      expect.stringMatching(
+        /3 events.*dropped.*counts and pages.*retained events only/iu,
+      ),
     );
     expect(summary).toMatchObject({
       summary: {

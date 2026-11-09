@@ -99,6 +99,10 @@ validării structurilor imbricate. Ambele profiluri păstrează toate uneltele �
 validarea canonică a serverului. Consultă secțiunea „Compact input schema profile”
 din ghidul contractelor MCP.
 
+Configurarea înregistrează direct mediul de execuție ales și scriptul de intrare REA. Dacă folosești un executor de pachete, păstrează intrarea sa din cache și mediul de execuție; obține pachetul dintr-un director de încredere din afara proiectului țintă. Consultă ghidul de instalare.
+
+Schemele complete de ieșire sunt anunțate implicit. Dacă clientul limitează `tools/list`, setează `REA_MCP_OUTPUT_SCHEMA_PROFILE=compact` sau `off` în înregistrarea MCP. Validarea serverului și rezultatele structurate rămân complete. Consultă „Output schemas” din ghidul contractelor MCP.
+
 ### Cere-i agentului
 
 ```text
@@ -199,6 +203,7 @@ Uneltele suplimentare și platformele acceptate depind de ținta analizată:
 | Fișiere binare Rust                 | Nume, versiuni, surse și relații de dependență ale pachetelor crate încorporate prin cargo-auditable                          | Inspectare statică integrată a fișierelor ELF/PE/Mach-O cu o singură arhitectură; [binare Rust](../rust-binaries.md)                                              |
 | Certificate PE                      | Intrări Authenticode WIN_CERTIFICATE și câmpuri de identitate ale semnatarilor PKCS#7 și certificatelor X.509                 | Inspectare statică integrată a fișierelor PE; [certificate PE](../pe-certificates.md)                                                                             |
 | Importuri PE                        | Numele DLL-urilor importate și încărcate întârziat, ordinale, RVA-uri ale IAT și hash-ul importurilor calculat de pefile      | Inspectare statică integrată a fișierelor PE; [importuri PE](../pe-imports.md)                                                                                    |
+| Scurtături Windows                  | Țintă Shell Link, argumente, director de lucru, ExtraData și identificatori Tracker                                           | Inspectare statică integrată a fișierelor LNK; [scurtături Windows](../guides/native/windows-shortcut.md)                                                         |
 | Note ELF                            | Proprietari și tipuri PT_NOTE/SHT_NOTE, câmpuri GNU build-id și ABI-tag                                                       | Inspectare statică integrată a fișierelor ELF; [note ELF](../elf-notes.md)                                                                                        |
 | Întărire binară                     | PIE, NX, RELRO, CFG și indicatori de antet pentru ELF, PE și Mach-O                                                           | Inspecție statică integrată a antetelor; [întărire binară](../binary-hardening.md)                                                                                |
 | Rapoarte Apple IPS de eroare fatală | Metadate .ips, fire de execuție, imagini binare, registre și clase documentate de erori fatale                                | Inspectare statică integrată a datelor JSON; [Apple IPS](../apple-ips.md)                                                                                         |
@@ -225,6 +230,7 @@ Uneltele suplimentare și platformele acceptate depind de ținta analizată:
 | Pachete și resurse                  | Inventare de fișiere, hash-uri, fișiere plist, structura pachetelor de aplicație Apple și resurse extrase                     | [Ghidul artefactelor și JavaScript](../guides/javascript/javascript-artifact-reconstruction.md), [aplicații Apple](../guides/apple/apple-application-analysis.md) |
 | Comportamentul proceselor           | Ieșirea în terminal, interacțiuni, observații despre terminarea proceselor și sistemul de fișiere și comparații între rulări  | Linux/macOS cu un PTY nativ; [capturarea proceselor](../guides/runtime/process-capture.md)                                                                        |
 | Executabile PyInstaller             | Membri CArchive, versiunea Python, scripturi de intrare și bytecode extras                                                    | Fără cerințe suplimentare (doar analiză statică); [aplicații Python împachetate](../python-packaged-applications.md)                                              |
+| Deno compile binaries               | Virtual files, entry point, recorded options, npm snapshot length                                                             | Static inspection; [Deno compile executables](../deno-standalone.md)                                                                                              |
 
 Inspectarea statică JavaScript și .NET citește fișierele furnizate fără a rula
 aplicația. Capturarea în timpul execuției rulează ținta selectată sau interacționează

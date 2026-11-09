@@ -100,8 +100,10 @@ export interface DoctorProviderCheck {
 /** Read-only provider inspection supplied by an outer composition adapter. */
 export interface DoctorProviderInspection {
   readonly id: string;
-  readonly configured: boolean;
-  readonly available: boolean;
+  /** Null means the selected client's setting could not be determined. */
+  readonly configured: boolean | null;
+  /** Null means readiness cannot be established for the selected client. */
+  readonly available: boolean | null;
   readonly providerVersion: string | null;
   /** Validated discoveries used as registration defaults. Setup preserves
    * caller-selected configuration separately from these readiness facts. */
@@ -136,7 +138,9 @@ export interface DoctorHost {
   brewHopperPath(): Promise<string | undefined>;
   /** Renamed `Hopper*.app` launchers; consulted only where macOS bundles are probed. */
   manualHopperPaths(): Promise<readonly string[]>;
-  providerInspections?(): Promise<readonly DoctorProviderInspection[]>;
+  providerInspections?(
+    clients: readonly string[],
+  ): Promise<readonly DoctorProviderInspection[]>;
   /** Resolve a parsed upstream request budget from the effective client environment. */
   resolveProviderRequestBudget?: ProviderRequestBudgetResolver;
   installationPaths?(): Promise<readonly string[]>;
@@ -277,7 +281,7 @@ const inspectDoctor = async (
     checks: diagnosticChecks,
     hopperPath,
     providerInspections,
-  } = await collectDoctorDiagnostics(target, host);
+  } = await collectDoctorDiagnostics(target, host, scope.clients);
   const hopperAvailable =
     hopperPath !== undefined &&
     diagnosticChecks
@@ -367,10 +371,31 @@ const providerSettingSelections = (
       ]),
 ];
 
+/** Render what the registration comparison established without inferring its effective environment. */
+export const registrationEnvironmentDetail = (
+  client: string,
+  {
+    unrecorded,
+    differing,
+    unresolved,
+  }: NonNullable<ClientRegistrationStatus["provider_settings"]>,
+): string =>
+  [
+    `Provider checks used this terminal's environment; what the server ${client} starts receives is unknown.`,
+    ...(unrecorded.length === 0
+      ? []
+      : [`Its registration does not record ${unrecorded.join(", ")}.`]),
+    ...(differing.length === 0
+      ? []
+      : [`It records other values for ${differing.join(", ")}.`]),
+    ...(unresolved.length === 0
+      ? []
+      : [`REA could not resolve its ${unresolved.join(", ")}.`]),
+  ].join(" ");
+
 /**
- * A healthy provider check describes this terminal, not the server a client
- * starts. Report what the registration's file leaves out without gating health:
- * the client may still pass the setting on, which doctor cannot observe.
+ * Report what the registration's file leaves out without gating health:
+ * doctor cannot observe the environment the client actually passes on.
  */
 const registrationEnvironmentChecks = (
   registrations: readonly ClientRegistrationStatus[],
@@ -385,18 +410,7 @@ const registrationEnvironmentChecks = (
         name: `registration_environment:${client}`,
         ok: true,
         classification: "unknown" as const,
-        detail: [
-          `Provider checks used this terminal's environment; what the server ${client} starts receives is unknown.`,
-          ...(unrecorded.length === 0
-            ? []
-            : [`Its registration does not record ${unrecorded.join(", ")}.`]),
-          ...(differing.length === 0
-            ? []
-            : [`It records other values for ${differing.join(", ")}.`]),
-          ...(unresolved.length === 0
-            ? []
-            : [`REA could not resolve its ${unresolved.join(", ")}.`]),
-        ].join(" "),
+        detail: registrationEnvironmentDetail(client, settings),
         details: {
           effective_environment: "unknown",
           providers: selections
@@ -610,6 +624,7 @@ export interface SystemDoctorHostOptions {
   readonly providerInspections?: (
     resourceScope: RetainedResourceScope,
     signal: AbortSignal,
+    clients: readonly string[],
   ) => Promise<readonly DoctorProviderInspection[]>;
   readonly resolveProviderRequestBudget?: (
     provider: Parameters<ProviderRequestBudgetResolver>[0],
@@ -809,9 +824,13 @@ export const systemDoctorHost = (
     ...(options.providerInspections === undefined
       ? {}
       : {
-          providerInspections: () =>
+          providerInspections: (clients) =>
             resources.run(() =>
-              options.providerInspections!(resourceScope, inspectionSignal),
+              options.providerInspections!(
+                resourceScope,
+                inspectionSignal,
+                clients,
+              ),
             ),
         }),
     ...(resolveProviderRequestBudget === undefined
