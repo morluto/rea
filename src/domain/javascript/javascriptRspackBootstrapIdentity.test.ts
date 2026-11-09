@@ -540,6 +540,56 @@ describe("deferred hoisted and nested-block bundled Electron reads", () => {
   });
 });
 
+it("tracks member writes through object-rest and spread shallow copies without tainting excluded or own copy slots", () => {
+  expectNoDirectElectron(
+    rspackGetterBundle(
+      `(e) => { var t = e && e.__esModule ? () => e.default : () => e; return r.d(t, { a: t }), t; }`,
+      `
+          let e = r(91288);
+          const saved = e;
+          const { ...a } = e;
+          a.ipcRenderer.send = () => {};
+          e = null;
+          saved.ipcRenderer.send("FALSE");
+        `,
+    ),
+  );
+
+  expectNoDirectElectron(
+    rspackGetterBundle(
+      `(e) => { var t = e && e.__esModule ? () => e.default : () => e; return r.d(t, { a: t }), t; }`,
+      `
+          let e = r(91288);
+          const saved = e;
+          const { ...a } = e;
+          e = null;
+          a.ipcRenderer.send = () => {};
+          saved.ipcRenderer.send("FALSE_AFTER_REASSIGN");
+        `,
+    ),
+  );
+
+  const preservedCopyOwnSlot = analyzeJavaScriptStaticSource(
+    rspackGetterBundle(
+      `(e) => { var t = e && e.__esModule ? () => e.default : () => e; return r.d(t, { a: t }), t; }`,
+      `
+          let e = r(91288);
+          const saved = e;
+          const { ...a } = e;
+          a.ipcRenderer = { send: () => {} };
+          const { ipcRenderer: _ignored, ...restWithoutIpc } = e;
+          restWithoutIpc.ipcRenderer = { send: () => {} };
+          restWithoutIpc.ipcRenderer.send = () => {};
+          e = null;
+          saved.ipcRenderer.send("INTACT_ORIGINAL");
+        `,
+    ),
+  );
+  expect(preservedCopyOwnSlot.electron.ipc).toMatchObject([
+    { channel: "INTACT_ORIGINAL", side: "renderer", operation: "send" },
+  ]);
+});
+
 describe("Rspack bootstrap and getter soundness rejections", () => {
   it.each([
     [
@@ -723,11 +773,64 @@ describe("Rspack enclosing-block and variable-loader soundness rejections", () =
         })();`,
       true,
     ],
+    [
+      "variable-declared loader is called in a computed object method key before initialization",
+      `(() => {
+          var m = {
+            91288: ${EXTERNAL_ELECTRON},
+            85425: (_u, _e, r) => { r(91288).ipcRenderer.send("TAMPERED"); }
+          }, c = {};
+          ({ [r(85425)]() {} });
+          var r = function(id) {
+            var mod = (c[id] = { exports: {} });
+            return m[id](mod, mod.exports, r), mod.exports;
+          };
+          r(85425);
+        })();`,
+      true,
+    ],
+    [
+      "variable-declared loader is called in a computed class method key before initialization",
+      `(() => {
+          var m = {
+            91288: ${EXTERNAL_ELECTRON},
+            85425: (_u, _e, r) => { r(91288).ipcRenderer.send("TAMPERED"); }
+          }, c = {};
+          class PreInit { [r(85425)]() {} }
+          void PreInit;
+          var r = function(id) {
+            var mod = (c[id] = { exports: {} });
+            return m[id](mod, mod.exports, r), mod.exports;
+          };
+          r(85425);
+        })();`,
+      true,
+    ],
   ])("rejects recovery when %s", (_label, source, alsoRejectsRegistration) => {
     const analysis = expectNoDirectElectron(source);
     if (alsoRejectsRegistration) {
       expect(analysis.bundler_registrations).toEqual([]);
     }
+  });
+
+  it("admits variable-declared loader when an earlier non-computed method body references it lazily", () => {
+    const source = `(() => {
+      var m = {
+        91288: ${EXTERNAL_ELECTRON},
+        85425: (_u, _e, r) => { r(91288).ipcRenderer.send("LAZY_METHOD_OK"); }
+      }, c = {};
+      var helper = { run() { return r(85425); } };
+      void helper;
+      var r = function(id) {
+        var mod = (c[id] = { exports: {} });
+        return m[id](mod, mod.exports, r), mod.exports;
+      };
+      r(85425);
+    })();`;
+    const analysis = analyzeJavaScriptStaticSource(source);
+    expect(analysis.electron.ipc).toMatchObject([
+      { channel: "LAZY_METHOD_OK", side: "renderer", operation: "send" },
+    ]);
   });
 });
 

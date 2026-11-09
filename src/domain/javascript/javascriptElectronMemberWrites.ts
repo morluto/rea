@@ -6,6 +6,7 @@ import {
   semanticWriteTargets,
   unwrapJavaScriptExpression,
 } from "./javascriptAstValues.js";
+import type { JavaScriptSemanticPropertyPath } from "./javascriptSemanticPropertyPaths.js";
 import { traverseJavaScriptValueAstSteps } from "./javascriptSemanticTraversal.js";
 
 /**
@@ -70,20 +71,22 @@ export interface JavaScriptIntrinsicInvocation {
  * object before appending the written key: self-reference properties can denote
  * the same object, while replacing that property is a distinct write.
  */
-export function* collectJavaScriptIdentityWritesSteps(
+export function* collectJavaScriptIdentityWritesSteps<
+  TSegment extends JavaScriptSemanticPropertyPath[number] = string | null,
+>(
   program: t.Program,
   erasedSyntaxNodes: WeakSet<t.Node>,
   origin: (
     root: t.Node,
     kind: "binding" | "member" | "opaque-call",
     writeSite: t.Node,
-  ) => readonly (readonly (string | null)[])[],
+  ) => readonly (readonly TSegment[])[],
   intrinsicInvocation: (
     node: t.CallExpression | t.OptionalCallExpression,
   ) => JavaScriptIntrinsicInvocation | undefined,
   staticString: (node: t.Node | undefined) => string | undefined,
   freshObject: (node: t.Node) => boolean,
-  retain: (node: t.Node, path: readonly (string | null)[]) => void,
+  retain: (node: t.Node, path: readonly (TSegment | string | null)[]) => void,
   observeInvocation?: (
     node:
       | t.CallExpression

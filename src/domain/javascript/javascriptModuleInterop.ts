@@ -23,7 +23,10 @@ import {
   expandJavaScriptInvocationArguments,
   resolveJavaScriptIntrinsicInvocation,
 } from "./javascriptIntrinsicInvocation.js";
-import { SemanticPropertyPathCoverage } from "./javascriptSemanticPropertyPaths.js";
+import {
+  SemanticPropertyPathCoverage,
+  type JavaScriptSemanticPropertyPath,
+} from "./javascriptSemanticPropertyPaths.js";
 import {
   readExactJavaScriptLiteral,
   runtimeFunctionParameters,
@@ -732,7 +735,7 @@ export const createSemanticModuleInterop = (
     staticString,
     isFreshObject,
     opaqueMutationPath,
-    retainWrite: (node: t.Node, path: readonly (string | null)[]) => {
+    retainWrite: (node: t.Node, path: JavaScriptSemanticPropertyPath) => {
       const coverage = new SemanticPropertyPathCoverage();
       coverage.retain(path[0] === "opaque-intrinsic" ? ["intrinsic"] : path);
       writes.push({

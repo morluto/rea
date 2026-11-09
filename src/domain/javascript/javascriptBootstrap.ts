@@ -5,6 +5,7 @@ import {
   runtimeFunctionParameters,
   unwrapJavaScriptExpression,
 } from "./javascriptAstValues.js";
+import { semanticMethodDefinitionExpression } from "./javascriptSemanticEvaluationOrder.js";
 import { moduleFactory } from "./javascriptStaticAnalysisHelpers.js";
 import { semanticIdentifierRole } from "./javascriptSemanticProjection.js";
 import {
@@ -263,7 +264,22 @@ const hasTopLevelReferenceBeforeInitializer = (
   const readyAt = declarator.end ?? Number.POSITIVE_INFINITY;
   let before = false;
   traverseJavaScriptValueAst(body, state.erasedSyntaxNodes, {
-    skip: (node) => before || t.isFunction(node),
+    skip: (node) => {
+      if (
+        before ||
+        t.isFunctionDeclaration(node) ||
+        t.isFunctionExpression(node) ||
+        t.isArrowFunctionExpression(node)
+      )
+        return true;
+      const parent = state.parentsByNode.get(node);
+      return (
+        (t.isObjectMethod(parent) ||
+          t.isClassMethod(parent) ||
+          t.isClassPrivateMethod(parent)) &&
+        !semanticMethodDefinitionExpression(parent, node)
+      );
+    },
     enter: (node, parent, readAncestors) => {
       if (
         !t.isIdentifier(node) ||

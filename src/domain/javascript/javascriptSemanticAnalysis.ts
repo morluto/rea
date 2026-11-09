@@ -67,6 +67,7 @@ import {
 } from "./javascriptSemanticTraversal.js";
 import {
   semanticRequireOrigin,
+  assignmentValueSources,
   observePossibleCommonJsDelegateWrite,
   invalidateSemanticRequireDelegateWrites,
 } from "./javascriptSemanticRequireOrigin.js";
@@ -121,11 +122,25 @@ import {
 
 import { isJavaScriptRpcClientFactory } from "./javascriptRpcEndpoints.js";
 import { createSemanticModuleInterop } from "./javascriptModuleInterop.js";
+import { semanticAliasSelectionChoices } from "./javascriptSemanticAliasSelections.js";
+import { semanticCopiedReferencePath } from "./javascriptSemanticCopiedReferencePaths.js";
+import {
+  semanticArrayPropertyReferences,
+  semanticObjectPropertyReferences,
+} from "./javascriptSemanticObjectReferences.js";
+import {
+  semanticCapturedSelectionsAfterPropertyRead,
+  semanticNormalizeCapturedSelections,
+  semanticProjectedSourceFactsAtRead,
+  semanticShiftCapturedSelections,
+  type SemanticCapturedSelection,
+} from "./javascriptSemanticProjectedSources.js";
 import {
   SemanticPropertyPathCoverage,
   semanticPropertyPathKeyMatches,
   type JavaScriptSemanticPropertyPath,
 } from "./javascriptSemanticPropertyPaths.js";
+import { semanticReferenceSourcesInactive } from "./javascriptSemanticReferenceSources.js";
 import { indexCommonJsExportReceiversSteps } from "./javascriptCommonJsExportReceivers.js";
 import { createSemanticElectronAppPathChangeQuery } from "./javascriptElectronAppPathChanges.js";
 import type { JavaScriptModuleResolutionMode } from "./javascriptModuleResolutionMode.js";
@@ -904,131 +919,25 @@ export function* indexJavaScriptElectronIdentitySteps(
     }
     return rootOrigin(root);
   };
-  const memberWriteExports = (
-    root: t.Node,
-  ): readonly (readonly (string | null)[])[] => {
-    const direct = rootOrigin(root);
-    if (direct !== undefined) return [direct];
-    if (!t.isIdentifier(root)) return [];
-    const results: (readonly (string | null)[])[] = [];
-    const seenPaths = new Set<string>();
-    const addPath = (candidate: readonly (string | null)[]): void => {
-      const key = JSON.stringify(candidate);
-      if (!seenPaths.has(key)) {
-        seenPaths.add(key);
-        results.push(candidate);
-      }
-    };
-    const bundled = semanticBundledRequireOrigin(root, state)?.origin;
-    if (bundled !== undefined && ELECTRON_MODULE.test(bundled.specifier))
-      addPath(electronExportPath(bundled.importedPath));
-    const pending: {
-      readonly identifier: t.Identifier;
-      readonly suffix: readonly (string | null)[];
-    }[] = [{ identifier: root, suffix: [] }];
-    const visited = new Set<string>();
-    while (pending.length > 0) {
-      const current = pending.pop();
-      if (current === undefined) continue;
-      if (
-        semanticResolutionBlocked(
-          state,
-          current.identifier,
-          current.identifier.name,
-        )
-      )
-        continue;
-      const binding = resolveSemanticBindingState(
-        state,
-        current.identifier,
-        current.identifier.name,
-      );
-      if (binding === undefined) continue;
-      const visitKey = `${binding.bindingId}@${String(current.identifier.start ?? -1)}`;
-      if (visited.has(visitKey)) continue;
-      if (visited.size >= SEMANTIC_ALIAS_SELECTION_LIMIT) {
-        state.valueResourceLimits.add("alias-selections");
-        break;
-      }
-      visited.add(visitKey);
-      let stable = exportsByBinding.get(binding.bindingId);
-      if (stable === undefined) {
-        stable = electronExport(binding, state, interop);
-        exportsByBinding.set(binding.bindingId, stable);
-      }
-      if (stable !== null) {
-        addPath([...stable, ...current.suffix]);
-        continue;
-      }
-      const snapshot = semanticBindingAtRead(
-        binding,
-        current.identifier,
-        state,
-      ).binding;
-      for (const origin of snapshot.directOrigins)
-        if (ELECTRON_MODULE.test(origin.specifier))
-          addPath([
-            ...electronExportPath(origin.importedPath),
-            ...current.suffix,
-          ]);
-      for (const source of [
-        ...snapshot.initializers,
-        ...snapshot.referenceInitializers,
-      ]) {
-        const projection = source.projection.map((segment) =>
-          typeof segment === "string" ? segment : null,
-        );
-        const nextSuffix = [...projection, ...current.suffix];
-        const directSource =
-          interop.callOrigin(source.node)?.origin ??
-          electronRequireOrigin(source.node, state)?.origin;
-        if (directSource !== undefined) {
-          if (ELECTRON_MODULE.test(directSource.specifier))
-            addPath([
-              ...electronExportPath(directSource.importedPath),
-              ...nextSuffix,
-            ]);
-          continue;
-        }
-        const { root: sourceRoot, members: sourceMembers } = electronMemberPath(
-          source.node,
-        );
-        if (t.isIdentifier(sourceRoot)) {
-          pending.push({
-            identifier: sourceRoot,
-            suffix: [...sourceMembers, ...nextSuffix],
-          });
-        } else {
-          const rootCallOrigin =
-            interop.callOrigin(sourceRoot)?.origin ??
-            electronRequireOrigin(sourceRoot, state)?.origin;
-          if (
-            rootCallOrigin !== undefined &&
-            ELECTRON_MODULE.test(rootCallOrigin.specifier)
-          )
-            addPath([
-              ...electronExportPath(rootCallOrigin.importedPath),
-              ...sourceMembers,
-              ...nextSuffix,
-            ]);
-        }
-      }
-    }
-    return results;
-  };
   yield* collectJavaScriptIdentityWritesSteps(
     program,
     state.erasedSyntaxNodes,
     (node, kind) => {
       if (kind === "opaque-call") return [interop.opaqueMutationPath(node)];
       const { root, members } = electronMemberPath(node);
-      const exportedPaths = kind === "binding" ? [] : memberWriteExports(root);
+      const exportedPaths =
+        kind === "binding"
+          ? []
+          : electronMemberWriteExports(
+              root,
+              members,
+              state,
+              interop,
+              rootOrigin,
+              exportsByBinding,
+            );
       if (exportedPaths.length > 0)
-        return exportedPaths.map((exported) => [
-          "electron",
-          ...exported,
-          ...members,
-        ]);
+        return exportedPaths.map((exported) => ["electron", ...exported]);
       const path =
         interop.intrinsicPath(root) ??
         (kind === "member" ? interop.boundIntrinsic(root)?.path : undefined);
@@ -1093,6 +1002,259 @@ export function* indexJavaScriptElectronIdentitySteps(
     ),
   };
 }
+
+interface ElectronMemberWriteCandidate {
+  readonly node: t.Node;
+  readonly suffix: JavaScriptSemanticPropertyPath;
+  readonly readAt?: t.Node | undefined;
+  readonly capturedSelections?:
+    | readonly SemanticCapturedSelection[]
+    | undefined;
+}
+
+const enqueueNonIdentifierMemberWriteSources = (
+  node: t.Node,
+  current: ElectronMemberWriteCandidate,
+  capturedSelections: readonly SemanticCapturedSelection[] | undefined,
+  state: JavaScriptSemanticAnalysisState,
+  interop: ReturnType<typeof createSemanticModuleInterop>,
+  addPath: (candidate: JavaScriptSemanticPropertyPath) => void,
+  pending: ElectronMemberWriteCandidate[],
+): void => {
+  const directSource =
+    interop.callOrigin(node)?.origin ??
+    electronRequireOrigin(node, state)?.origin;
+  if (
+    directSource !== undefined &&
+    ELECTRON_MODULE.test(directSource.specifier)
+  ) {
+    addPath([
+      ...electronExportPath(directSource.importedPath),
+      ...current.suffix,
+    ]);
+    return;
+  }
+  if (t.isConditionalExpression(node) || t.isLogicalExpression(node)) {
+    pending.push(
+      {
+        ...current,
+        node: t.isConditionalExpression(node) ? node.consequent : node.left,
+        capturedSelections,
+      },
+      {
+        ...current,
+        node: t.isConditionalExpression(node) ? node.alternate : node.right,
+        capturedSelections,
+      },
+    );
+  } else if (t.isSequenceExpression(node)) {
+    const last = node.expressions.at(-1);
+    if (last !== undefined)
+      pending.push({ ...current, node: last, capturedSelections });
+  } else if (t.isAssignmentExpression(node)) {
+    for (const source of assignmentValueSources(node))
+      pending.push({ ...current, node: source, capturedSelections });
+  } else if (
+    (t.isObjectExpression(node) || t.isArrayExpression(node)) &&
+    current.suffix.length > 0
+  ) {
+    const [key, ...remaining] = current.suffix;
+    for (const choice of semanticAliasSelectionChoices(key!)) {
+      const sources = t.isObjectExpression(node)
+        ? semanticObjectPropertyReferences(node, [choice], state)
+        : semanticArrayPropertyReferences(node, [choice]);
+      for (const source of sources)
+        if (
+          !source.inherited ||
+          !capturedSelections?.some(
+            (capture) => capture.depth === 1 && capture.ownEnumerable,
+          )
+        )
+          pending.push({
+            node: source.node,
+            suffix: [...source.path, ...remaining],
+            readAt: current.readAt,
+            capturedSelections: semanticCapturedSelectionsAfterPropertyRead(
+              capturedSelections,
+              source,
+            ),
+          });
+    }
+  }
+};
+
+const enqueueFallbackBindingMemberWriteSources = (
+  snapshot: JavaScriptSemanticBindingState,
+  node: t.Identifier,
+  current: ElectronMemberWriteCandidate,
+  state: JavaScriptSemanticAnalysisState,
+  pending: ElectronMemberWriteCandidate[],
+): void => {
+  for (const source of snapshot.initializers) {
+    if (semanticReferenceSourcesInactive(source, state)) continue;
+    pending.push({
+      node: source.node,
+      suffix: [...source.projection, ...current.suffix],
+      readAt: current.readAt ?? node,
+    });
+  }
+  const [key, ...remaining] = current.suffix;
+  for (const source of snapshot.referenceInitializers) {
+    if (semanticReferenceSourcesInactive(source, state)) continue;
+    for (const choice of key === undefined
+      ? [undefined]
+      : semanticAliasSelectionChoices(key)) {
+      const copied = semanticCopiedReferencePath(
+        source,
+        choice === undefined ? [] : [choice],
+        "identity",
+      );
+      if (copied !== null)
+        pending.push({
+          node: source.node,
+          suffix: [...copied, ...remaining],
+          readAt: current.readAt ?? node,
+        });
+    }
+  }
+};
+
+const electronMemberWriteExports = (
+  root: t.Node,
+  members: readonly (string | null)[],
+  state: JavaScriptSemanticAnalysisState,
+  interop: ReturnType<typeof createSemanticModuleInterop>,
+  rootOrigin: (node: t.Node) => readonly string[] | undefined,
+  exportsByBinding: Map<string, readonly string[] | null>,
+): readonly JavaScriptSemanticPropertyPath[] => {
+  const direct = rootOrigin(root);
+  if (direct !== undefined) return [[...direct, ...members]];
+  const results: JavaScriptSemanticPropertyPath[] = [];
+  const seenPaths = new Set<string>();
+  const addPath = (candidate: JavaScriptSemanticPropertyPath): void => {
+    const key = JSON.stringify(candidate);
+    if (!seenPaths.has(key)) {
+      seenPaths.add(key);
+      results.push(candidate);
+    }
+  };
+  const pending: ElectronMemberWriteCandidate[] = [
+    { node: root, suffix: members },
+  ];
+  const visited = new WeakMap<t.Node, Set<string>>();
+  let selections = 0;
+  while (pending.length > 0) {
+    const current = pending.pop();
+    if (current === undefined) continue;
+    const node = unwrapJavaScriptExpression(current.node).node;
+    const capturedSelections = semanticNormalizeCapturedSelections(
+      current.capturedSelections,
+      current.suffix.length,
+    );
+    const visitKey = JSON.stringify([
+      current.suffix,
+      current.readAt?.start,
+      current.readAt?.end,
+      capturedSelections?.map(({ at, depth, ownEnumerable }) => [
+        at.start,
+        at.end,
+        depth,
+        ownEnumerable,
+      ]),
+    ]);
+    const nodeVisits = visited.get(node) ?? new Set<string>();
+    if (nodeVisits.has(visitKey)) continue;
+    if (selections >= SEMANTIC_ALIAS_SELECTION_LIMIT) {
+      state.valueResourceLimits.add("alias-selections");
+      break;
+    }
+    selections += 1;
+    nodeVisits.add(visitKey);
+    visited.set(node, nodeVisits);
+
+    if (t.isMemberExpression(node) || t.isOptionalMemberExpression(node)) {
+      const { root: memberRoot, members: memberSegments } =
+        electronMemberPath(node);
+      pending.push({
+        node: memberRoot,
+        suffix: [...memberSegments, ...current.suffix],
+        readAt: current.readAt ?? node,
+        capturedSelections: semanticShiftCapturedSelections(
+          capturedSelections,
+          memberSegments.length,
+        ),
+      });
+      continue;
+    }
+
+    if (!t.isIdentifier(node)) {
+      enqueueNonIdentifierMemberWriteSources(
+        node,
+        current,
+        capturedSelections,
+        state,
+        interop,
+        addPath,
+        pending,
+      );
+      continue;
+    }
+
+    if (semanticResolutionBlocked(state, node, node.name)) continue;
+    const binding = resolveSemanticBindingState(state, node, node.name);
+    if (binding === undefined) continue;
+    let stable = exportsByBinding.get(binding.bindingId);
+    if (stable === undefined) {
+      stable = electronExport(binding, state, interop);
+      exportsByBinding.set(binding.bindingId, stable);
+    }
+    if (stable !== null) addPath([...stable, ...current.suffix]);
+    const bundled = semanticBundledRequireOrigin(node, state)?.origin;
+    if (bundled !== undefined && ELECTRON_MODULE.test(bundled.specifier))
+      addPath([...electronExportPath(bundled.importedPath), ...current.suffix]);
+    const snapshot = semanticBindingAtRead(binding, node, state).binding;
+    for (const origin of snapshot.directOrigins)
+      if (ELECTRON_MODULE.test(origin.specifier))
+        addPath([
+          ...electronExportPath(origin.importedPath),
+          ...current.suffix,
+        ]);
+    const projected = semanticProjectedSourceFactsAtRead(
+      binding,
+      node,
+      current.suffix,
+      state,
+      false,
+      current.readAt ?? node,
+      capturedSelections,
+    )?.sources;
+    if (projected !== undefined) {
+      for (const source of projected)
+        pending.push({
+          node: source.node,
+          suffix: source.path,
+          readAt:
+            current.suffix.length === 0 ? undefined : (current.readAt ?? node),
+          capturedSelections: [
+            ...(semanticShiftCapturedSelections(
+              capturedSelections,
+              source.path.length - current.suffix.length,
+            ) ?? []),
+            ...(source.capturedSelections ?? []),
+          ],
+        });
+      continue;
+    }
+    enqueueFallbackBindingMemberWriteSources(
+      snapshot,
+      node,
+      current,
+      state,
+      pending,
+    );
+  }
+  return results;
+};
 
 // Read import and require origins directly; general value evaluation is
 // unnecessary here and costly across large vendor bundles.
