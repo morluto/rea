@@ -30,13 +30,11 @@ const MAX_EXEC_ARGV = 4096;
 const MAX_EXEC_ARGV_TEXT_BYTES = 1024 * 1024;
 const NO_OVERRIDE = "This release has no runtime override.";
 
-export const NODE_SEA_BAD_MAGIC = "Node SEA blob magic is not 0x143da20";
+const NODE_SEA_BAD_MAGIC = "Node SEA blob magic is not 0x143da20";
 export const NODE_SEA_TRUNCATED = "Node SEA blob is truncated";
-export const NODE_SEA_UNKNOWN_FLAGS =
-  "Node SEA blob flags contain unknown bits";
-export const NODE_SEA_UNKNOWN_EXTENSION =
-  "Node SEA exec argv extension is unknown";
-export const NODE_SEA_TRAILING_BYTES = "Node SEA blob has trailing bytes";
+const NODE_SEA_UNKNOWN_FLAGS = "Node SEA blob flags contain unknown bits";
+const NODE_SEA_UNKNOWN_EXTENSION = "Node SEA exec argv extension is unknown";
+const NODE_SEA_TRAILING_BYTES = "Node SEA blob has trailing bytes";
 export const NODE_SEA_DUPLICATE_BLOB =
   "Node SEA blob is declared more than once";
 export const NODE_SEA_ELF_DESCRIPTOR_TRUNCATED =
@@ -49,21 +47,18 @@ export const NODE_SEA_MACHO_COMMANDS_TRUNCATED =
   "Node SEA Mach-O load commands are truncated";
 export const NODE_SEA_MACHO_SEGMENT_TRUNCATED =
   "Node SEA Mach-O segment table is truncated";
-export const NODE_SEA_FUSE_ABSENT =
+const NODE_SEA_FUSE_ABSENT =
   "Node SEA blob is present but no NODE_SEA_FUSE sentinel was observed";
-export const NODE_SEA_FUSE_UNSET =
+const NODE_SEA_FUSE_UNSET =
   "Node SEA blob is present but the NODE_SEA_FUSE sentinel is unset";
-export const NODE_SEA_FUSE_CONFLICT = "Node SEA fuse sentinels disagree";
-export const NODE_SEA_EMPTY_CODE_PATH = "Node SEA code path is empty";
-export const NODE_SEA_INVALID_UTF8 = "Node SEA string is not valid UTF-8";
-export const NODE_SEA_ASSET_COUNT = `Node SEA asset count exceeds the ${String(MAX_ASSET_COUNT)}-asset bound. ${NO_OVERRIDE}`;
-export const NODE_SEA_ASSET_NAME_BYTES = `Node SEA asset names exceed the ${String(MAX_ASSET_NAME_BYTES)}-byte name budget. ${NO_OVERRIDE}`;
-export const NODE_SEA_EXEC_ARGV_COUNT = `Node SEA exec argv count exceeds the ${String(MAX_EXEC_ARGV)}-argument bound. ${NO_OVERRIDE}`;
-export const NODE_SEA_EXEC_ARGV_TEXT = `Node SEA exec argv text exceeds the ${String(MAX_EXEC_ARGV_TEXT_BYTES)}-byte bound. ${NO_OVERRIDE}`;
+const NODE_SEA_FUSE_CONFLICT = "Node SEA fuse sentinels disagree";
+const NODE_SEA_EMPTY_CODE_PATH = "Node SEA code path is empty";
+const NODE_SEA_INVALID_UTF8 = "Node SEA string is not valid UTF-8";
+const NODE_SEA_ASSET_COUNT = `Node SEA asset count exceeds the ${String(MAX_ASSET_COUNT)}-asset bound. ${NO_OVERRIDE}`;
+const NODE_SEA_ASSET_NAME_BYTES = `Node SEA asset names exceed the ${String(MAX_ASSET_NAME_BYTES)}-byte name budget. ${NO_OVERRIDE}`;
+const NODE_SEA_EXEC_ARGV_COUNT = `Node SEA exec argv count exceeds the ${String(MAX_EXEC_ARGV)}-argument bound. ${NO_OVERRIDE}`;
+const NODE_SEA_EXEC_ARGV_TEXT = `Node SEA exec argv text exceeds the ${String(MAX_EXEC_ARGV_TEXT_BYTES)}-byte bound. ${NO_OVERRIDE}`;
 export const NODE_SEA_BLOB_TOO_LARGE = `Node SEA blob exceeds the ${String(NODE_SEA_MAX_BLOB_BYTES)}-byte in-memory bound`;
-
-export const nodeSeaAssetCollision = (name: string): string =>
-  `Node SEA asset name collides: ${name}`;
 
 const FUSE_PREFIX = "NODE_SEA_FUSE_";
 
@@ -276,7 +271,8 @@ class BlobCursor {
         assertArtifactReadActive(signal);
       }
       const name = this.text(true, NODE_SEA_INVALID_UTF8, charge);
-      if (seen.has(name)) throw formatFailure(nodeSeaAssetCollision(name));
+      if (seen.has(name))
+        throw formatFailure(`Node SEA asset name collides: ${name}`);
       seen.add(name);
       assets.push({ name, range: this.byteRange() });
     }

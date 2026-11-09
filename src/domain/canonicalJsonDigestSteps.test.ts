@@ -82,21 +82,18 @@ describe("cooperative canonical JSON digest", () => {
     const cycle: { [key: string]: JsonValue } = {};
     cycle.self = cycle;
     expect(() => complete(canonicalJsonDigestSteps(sparse))).toThrow();
-    expect(() => complete(canonicalJsonDigestSteps(Number.NaN))).toThrow(
-      CanonicalDigestError,
-    );
-    expect(() => complete(canonicalJsonDigestSteps(cycle))).toThrow(
-      CanonicalDigestError,
-    );
-    try {
-      complete(canonicalJsonDigestSteps(Number.NaN));
-    } catch (cause) {
-      expect(cause).toMatchObject({ code: "nan" });
-    }
-    try {
-      complete(canonicalJsonDigestSteps(cycle));
-    } catch (cause) {
-      expect(cause).toMatchObject({ code: "circular" });
+    for (const [value, code] of [
+      [Number.NaN, "nan"],
+      [cycle, "circular"],
+    ] as const) {
+      let failure: unknown;
+      try {
+        complete(canonicalJsonDigestSteps(value));
+      } catch (cause) {
+        failure = cause;
+      }
+      expect(failure).toBeInstanceOf(CanonicalDigestError);
+      expect(failure).toMatchObject({ code });
     }
   });
 });

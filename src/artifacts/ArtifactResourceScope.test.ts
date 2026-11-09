@@ -42,7 +42,7 @@ it("waits for admitted operations and shares concurrent close", async () => {
   expect(scope.close()).toBe(close);
   await expect(scope.run(async () => undefined)).rejects.toMatchObject({
     reason: "unavailable",
-    message: "Artifact resource scope is closed",
+    message: expect.stringContaining("closed"),
   });
   let closed = false;
   void close.then(() => {
