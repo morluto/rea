@@ -207,6 +207,12 @@ export const elfAbsoluteRelocationType = (
   machine: number,
 ): number | undefined => RELOCATION_KINDS.get(machine)?.absolute;
 
+/** Bytes a relocation type writes on a supported ELF machine, or undefined when unknown. */
+export const elfRelocationWidth = (
+  machine: number,
+  type: number,
+): number | undefined => RELOCATION_KINDS.get(machine)?.widths.get(type);
+
 function* dynamicTags(
   bytes: Buffer,
   input: ElfPointerRelocationInput,

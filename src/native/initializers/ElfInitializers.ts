@@ -68,6 +68,7 @@ const SHT_INIT_ARRAY = 14;
 const SHT_FINI_ARRAY = 15;
 const SHT_PREINIT_ARRAY = 16;
 const ET_REL = 1;
+const EM_ARM = 40;
 
 interface DynTag {
   readonly value: bigint;
@@ -786,7 +787,9 @@ interface Target {
 /**
  * Where a resolved value points. `locateTarget` maps one byte, since a function
  * only needs its first byte mapped. ET_REL values are offsets inside the
- * relocation symbol's section.
+ * relocation symbol's section. On 32-bit ARM, bit 0 of a function pointer
+ * selects Thumb state and is not part of the code address, so it is cleared
+ * for the lookup while `value_va` keeps the callable value.
  */
 const targetOf = (
   scan: ElfScan,
@@ -796,10 +799,11 @@ const targetOf = (
   locateTarget: (address: bigint) => number | null,
 ): Target => {
   if (applied.value === null) return { section: null, fileOffset: null };
+  const code = scan.machine === EM_ARM ? applied.value & ~1n : applied.value;
   if (!scan.relocatable)
     return {
-      section: index.nameAt(applied.value),
-      fileOffset: locateTarget(applied.value),
+      section: index.nameAt(code),
+      fileOffset: locateTarget(code),
     };
   const section =
     applied.sectionIndex === undefined
@@ -808,7 +812,7 @@ const targetOf = (
   if (section === undefined) return { section: null, fileOffset: null };
   return {
     section: section.name,
-    fileOffset: withinSection(section, 1)(section.address + applied.value),
+    fileOffset: withinSection(section, 1)(section.address + code),
   };
 };
 
@@ -817,6 +821,7 @@ const collectEntries = (
   sources: readonly Source[],
   loaded: WriteLoad,
   sectionRels: ReadonlyMap<number, SlotRelocation>,
+  sectionClobbered: ReadonlySet<number>,
   symbols: readonly ElfInitializerSymbol[] | undefined,
   names: SymbolNames,
   trustRaw: boolean,
@@ -844,7 +849,9 @@ const collectEntries = (
               scan,
               slot,
               scan.relocatable ? undefined : loaded.writes.get(slot.va),
-              !scan.relocatable && loaded.clobbered.has(slot.va),
+              (!scan.relocatable && loaded.clobbered.has(slot.va)) ||
+                (slot.fileOffset !== null &&
+                  sectionClobbered.has(slot.fileOffset)),
               slot.fileOffset === null
                 ? undefined
                 : sectionRels.get(slot.fileOffset),
@@ -989,7 +996,8 @@ export const readElfInitializers = async (
     wanted: uncovered,
     tables: symbols.tables,
     notes: scan.notes,
-    fileOffset: locate,
+    fileOffset: (address, width) =>
+      fileOffsetFor(image.mappings, image.zero_fills, index, address, width),
     signal,
   });
   if (scan.notes.recorded !== notesBeforeRelocs || !sectionRels.complete)
@@ -999,6 +1007,7 @@ export const readElfInitializers = async (
     sources,
     loaded,
     sectionRels.found,
+    sectionRels.clobbered,
     dynamicSymbols(directory.sections, tags, symbols.tables),
     symbols,
     loaded.trustRaw && sectionRels.complete,

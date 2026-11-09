@@ -1003,3 +1003,51 @@ describe("Mach-O fixup sources", () => {
     );
   });
 });
+
+describe("Initializer target semantics", () => {
+  it("keeps an absolute relocation against an IFUNC symbol unresolved", async () => {
+    const bytes = elfRelocatableCtors();
+    // `ctor` becomes a global STT_GNU_IFUNC, whose value is its resolver.
+    bytes.writeUInt8(0x1a, 0x338 + 4);
+    const report = await read(bytes);
+    const ctor = report.entries.find((entry) => entry.kind === "ctors");
+    expect(ctor).toMatchObject({
+      slot_va: "0x8",
+      resolution: "unresolved",
+      value_va: null,
+    });
+  });
+
+  it("keeps a slot a narrower section relocation partly overwrites unresolved", async () => {
+    const bytes = elfRelocatableCtors();
+    // The .ctors record becomes R_X86_64_32 at byte 4 of slot 0x8.
+    bytes.writeBigUInt64LE(0xcn, 0x300);
+    bytes.writeBigUInt64LE((1n << 32n) | 10n, 0x308);
+    const report = await read(bytes);
+    const ctors = report.entries.filter((entry) => entry.kind === "ctors");
+    expect(ctors.map((entry) => [entry.slot_va, entry.resolution])).toEqual([
+      ["0x8", "unresolved"],
+    ]);
+    expect(report.status).toBe("incomplete");
+    expect(report.limitations).toContain(
+      "1 initializer slot(s) are partly overwritten or relocated more than once by section relocations and are listed as unresolved.",
+    );
+  });
+
+  it("clears the ELF ARM Thumb bit when locating a target but keeps the callable value", async () => {
+    const bytes = elf32RelativeInitializers();
+    bytes.writeUInt16LE(40, 18);
+    // R_ARM_RELATIVE with in-place addend 0x81, and a Thumb `ctor` at 0x81.
+    bytes.writeUInt32LE(23, 0x184);
+    bytes.writeUInt32LE(0x81, 0x100);
+    bytes.writeUInt32LE(0x81, 0x1b4);
+    const report = await read(bytes);
+    expect(report.entries[0]).toMatchObject({
+      value_va: "0x81",
+      value_file_offset: 0x80,
+      section: { name: ".text" },
+      symbol: { name: "ctor" },
+      resolution: "relative_addend",
+    });
+  });
+});

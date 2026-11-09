@@ -10,6 +10,7 @@ import type { NativeInitializerResolution } from "../../domain/native/nativeInit
 import {
   elfAbsoluteRelocationType,
   elfRelativeRelocationType,
+  elfRelocationWidth,
 } from "../metadata/ElfPointerRelocations.js";
 import type { NativeSection } from "../metadata/NativeSectionDirectory.js";
 import type { InitializerNotes } from "./initializerNotes.js";
@@ -45,6 +46,8 @@ export interface SlotRelocation {
 const STT_FUNC = 2;
 const STT_SECTION = 3;
 const STT_FILE = 4;
+/** `st_value` is a resolver; the loader writes whatever the resolver returns. */
+const STT_GNU_IFUNC = 10;
 
 /** Key for a symbol defined at `value` inside section `section`. */
 export const sectionSymbolKey = (section: number, value: bigint): string =>
@@ -290,7 +293,8 @@ export const relocationFromEntry = (
       importName: symbol.name,
       definedName: null,
     };
-  if (entry.type !== absolute) return unresolved();
+  if (entry.type !== absolute || symbol.type === STT_GNU_IFUNC)
+    return unresolved();
   const addend = addendOf(entry, inplace);
   if (addend === null) return unresolved();
   return {
@@ -313,7 +317,8 @@ interface SectionRelocInput extends ImageFacts {
   readonly wanted: ReadonlySet<number>;
   readonly tables: ReadonlyMap<number, readonly ElfInitializerSymbol[]>;
   readonly notes: InitializerNotes;
-  readonly fileOffset: (address: bigint) => number | null;
+  /** File offset of `width` bytes at a linked-image address. */
+  readonly fileOffset: (address: bigint, width: number) => number | null;
   readonly signal?: AbortSignal | undefined;
 }
 
@@ -331,21 +336,40 @@ const readRelocationRecord = (
 const encodingOf = (type: number): "rel" | "rela" | null =>
   type === 4 ? "rela" : type === 9 ? "rel" : null;
 
+/** File offset of the `width` bytes one record writes, or null when they are not file-backed. */
 const recordTarget = (
   input: SectionRelocInput,
   target: NativeSection | undefined,
   offset: bigint,
+  width: number,
 ): number | null => {
-  if (!input.relocatable) return input.fileOffset(offset);
+  if (!input.relocatable) return input.fileOffset(offset, width);
   if (target === undefined || !target.file_backed) return null;
-  if (offset < 0n || offset + BigInt(wordOf(input.bits)) > target.size)
-    return null;
+  if (offset < 0n || offset + BigInt(width) > target.size) return null;
   return Number(target.offset + offset);
+};
+
+/** Index of the first wanted slot whose word could overlap a write starting at `at`. */
+const firstOverlap = (
+  wanted: readonly number[],
+  at: number,
+  word: number,
+): number => {
+  let low = 0;
+  let high = wanted.length;
+  while (low < high) {
+    const mid = (low + high) >>> 1;
+    if ((wanted[mid] ?? at) <= at - word) low = mid + 1;
+    else high = mid;
+  }
+  return low;
 };
 
 /** Section relocations found for wanted slots, and whether every applicable record was read. */
 export interface SectionRelocationScan {
   readonly found: ReadonlyMap<number, SlotRelocation>;
+  /** Slots a narrower, offset or repeated record overlaps; their value is unknown. */
+  readonly clobbered: ReadonlySet<number>;
   /**
    * False when a relocation section was skipped, ended early or lies past the
    * record budget, so an unmatched slot may still have an unread relocation.
@@ -402,7 +426,8 @@ export const sectionRelocations = (
   input: SectionRelocInput,
 ): SectionRelocationScan => {
   const found = new Map<number, SlotRelocation>();
-  if (input.wanted.size === 0) return { found, complete: true };
+  const clobbered = new Set<number>();
+  if (input.wanted.size === 0) return { found, clobbered, complete: true };
   const wanted = [...input.wanted].sort((left, right) => left - right);
   const word = wordOf(input.bits);
   let complete = true;
@@ -457,16 +482,32 @@ export const sectionRelocations = (
         skip(section);
         break;
       }
-      const slot = recordTarget(input, target, parsed.value.offset);
-      if (slot === null || !input.wanted.has(slot)) continue;
-      const inplace =
-        encoding === "rel"
-          ? readPointerWord(input.bytes, slot, input.bits, input.little)
-          : null;
-      found.set(
-        slot,
-        relocationFromEntry(input, parsed.value, symbols, inplace),
-      );
+      // An unknown type is assumed to write a whole word, so it still marks what it may touch.
+      const span = elfRelocationWidth(input.machine, parsed.value.type) ?? word;
+      const written = recordTarget(input, target, parsed.value.offset, span);
+      if (written === null) continue;
+      for (
+        let next = firstOverlap(wanted, written, word);
+        next < wanted.length;
+        next += 1
+      ) {
+        const slot = wanted[next];
+        if (slot === undefined || slot >= written + span) break;
+        if (clobbered.has(slot)) continue;
+        if (slot === written && span === word && !found.has(slot)) {
+          const inplace =
+            encoding === "rel"
+              ? readPointerWord(input.bytes, slot, input.bits, input.little)
+              : null;
+          found.set(
+            slot,
+            relocationFromEntry(input, parsed.value, symbols, inplace),
+          );
+          continue;
+        }
+        found.delete(slot);
+        clobbered.add(slot);
+      }
     }
     if (stopped) {
       // The rest of this section and every later one were not read.
@@ -475,5 +516,9 @@ export const sectionRelocations = (
       break;
     }
   }
-  return { found, complete };
+  if (clobbered.size > 0)
+    input.notes.add(
+      `${String(clobbered.size)} initializer slot(s) are partly overwritten or relocated more than once by section relocations and are listed as unresolved.`,
+    );
+  return { found, clobbered, complete };
 };
