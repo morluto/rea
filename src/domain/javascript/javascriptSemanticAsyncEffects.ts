@@ -130,6 +130,11 @@ export const collectJavaScriptSemanticAsyncEffects = (
   callables: readonly JavaScriptSemanticCallable[],
 ): AsyncEffectAnalysis => {
   const events: JavaScriptSemanticEventOperation[] = [];
+  // Mutation facts are complete before this collection. Share only matching
+  // records within this pass; every read still decides its own timing.
+  let emitterEffects: EventEmitterSharedEffects | undefined;
+  const sharedEmitterEffects = (): EventEmitterSharedEffects =>
+    (emitterEffects ??= indexEventEmitterSharedEffects(state));
   const timers: TimerCandidate[] = [];
   const callableIds = new Set(callables.map(({ callableId }) => callableId));
   const callableStack = createSemanticCallableIdStack(callableIds);
@@ -139,7 +144,13 @@ export const collectJavaScriptSemanticAsyncEffects = (
       callableStack.enter(node, parent);
       if (t.isCallExpression(node) || t.isOptionalCallExpression(node)) {
         const ownerCallableId = callableStack.callables.at(-1) ?? null;
-        collectEvent(node, ownerCallableId, state, events);
+        collectEvent(
+          node,
+          ownerCallableId,
+          state,
+          events,
+          sharedEmitterEffects,
+        );
         collectTimer({
           node,
           ownerCallableId,
@@ -286,57 +297,111 @@ const reachesEventsClassSurface = (
     return path !== null && eventsClassPath(path);
   });
 
+type EventEmitterEffect = t.Node | undefined;
+
+interface EventEmitterClassEffects {
+  readonly writes: readonly EventEmitterEffect[];
+  readonly escapes: readonly EventEmitterEffect[];
+}
+
+interface EventEmitterSharedEffects extends EventEmitterClassEffects {
+  readonly otherRoots: ReadonlyMap<string, EventEmitterClassEffects>;
+  readonly prototypeWrites: ReadonlyMap<string, readonly EventEmitterEffect[]>;
+  readonly prototypeEscapes: readonly EventEmitterEffect[];
+}
+
+/** Unknown property keys may select any part of the construction surface. */
+const targetsEventsClass = (path: JavaScriptSemanticPropertyPath): boolean =>
+  path.some(
+    (key) =>
+      key === null ||
+      key === "EventEmitter" ||
+      key === "init" ||
+      key === "prototype",
+  );
+
+/** Index shared matching records once, without caching a call's validity. */
+const indexEventEmitterSharedEffects = (
+  state: JavaScriptSemanticAnalysisState,
+): EventEmitterSharedEffects => {
+  const writes: EventEmitterEffect[] = [];
+  const escapes: EventEmitterEffect[] = [];
+  const otherRoots = new Map<string, EventEmitterClassEffects>();
+  const prototypeWrites = new Map<string, EventEmitterEffect[]>();
+  const prototypeEscapes: EventEmitterEffect[] = [];
+  const retainPrototypeWrite = (
+    path: JavaScriptSemanticPropertyPath,
+    node: EventEmitterEffect,
+  ): void => {
+    for (const method of EVENT_LISTENER_METHODS) {
+      if (!affectsPrototypeMethod(path, method)) continue;
+      const matching = prototypeWrites.get(method) ?? [];
+      matching.push(node);
+      prototypeWrites.set(method, matching);
+    }
+  };
+  for (const binding of state.bindingsById.values()) {
+    const classWrites = binding.memberWrites
+      .filter(({ path }) => targetsEventsClass(path))
+      .map(({ node }) => node);
+    const classEscapes = binding.escapedPaths
+      .filter(({ path }) => eventsClassPath(path))
+      .map(({ node }) => node);
+    if (classWrites.length > 0 || classEscapes.length > 0) {
+      if (reachesEventsClassSurface(binding, state)) {
+        for (const node of classWrites) writes.push(node);
+        for (const node of classEscapes) escapes.push(node);
+      } else {
+        // A proven construction's root remains relevant even when the general
+        // class-origin predicate cannot establish that binding's surface.
+        otherRoots.set(binding.bindingId, {
+          writes: classWrites,
+          escapes: classEscapes,
+        });
+      }
+    }
+    for (const { path, node } of binding.memberWrites)
+      retainPrototypeWrite(path, node);
+    for (const { path, node } of binding.escapedPaths)
+      if (escapesPrototypeObject(path)) prototypeEscapes.push(node);
+  }
+  for (const specifier of NODE_EVENTS_SPECIFIERS)
+    for (const { kind, path, node } of state.requiredModuleEffects.get(
+      specifier,
+    ) ?? []) {
+      if (kind === "escape") {
+        if (eventsClassPath(path)) escapes.push(node);
+        if (escapesPrototypeObject(path)) prototypeEscapes.push(node);
+      } else {
+        if (targetsEventsClass(path)) writes.push(node);
+        retainPrototypeWrite(path, node);
+      }
+    }
+  return { writes, escapes, otherRoots, prototypeWrites, prototypeEscapes };
+};
+
 /**
- * Construction-only writes (including Node's init hook) matter before allocation.
- * Escaping the class or namespace can still replace the shared prototype after
- * allocation, so those effects remain relevant until the listener call.
- * Passing a method value cannot replace its containing class or prototype.
+ * Construction-only writes matter before allocation. Class and namespace
+ * escapes can replace the shared prototype until the listener call.
  */
 const eventsClassSurfaceTouched = (
+  effects: EventEmitterSharedEffects,
   construction: t.NewExpression,
   read: t.Node,
   state: JavaScriptSemanticAnalysisState,
   invocation: t.Node,
 ): boolean => {
-  // This invocation runs after selecting its method. Its own receiver escape
-  // cannot replace that selected native method retroactively.
-  const precedes = (read: t.Node, effect: t.Node | undefined): boolean =>
+  const precedes = (read: t.Node, effect: EventEmitterEffect): boolean =>
     effect !== invocation &&
     !semanticTopLevelEffectFollowsCapture(read, effect, state.parentsByNode);
+  const touched = (selected: EventEmitterClassEffects): boolean =>
+    selected.escapes.some((node) => precedes(read, node)) ||
+    selected.writes.some((node) => precedes(construction, node));
+  if (touched(effects)) return true;
   const root = constructionRootBinding(construction.callee, state);
-  // An unknown property key can name any slot, so it covers this surface too.
-  const targetsClass = (path: JavaScriptSemanticPropertyPath): boolean =>
-    path.some(
-      (key) =>
-        key === null ||
-        key === "EventEmitter" ||
-        key === "init" ||
-        key === "prototype",
-    );
-  for (const binding of state.bindingsById.values()) {
-    const isRoot = root !== undefined && binding.bindingId === root.bindingId;
-    if (!isRoot && !reachesEventsClassSurface(binding, state)) continue;
-    if (
-      binding.escapedPaths.some(
-        ({ path, node }) => eventsClassPath(path) && precedes(read, node),
-      ) ||
-      binding.memberWrites.some(
-        ({ path, node }) => targetsClass(path) && precedes(construction, node),
-      )
-    )
-      return true;
-  }
-  for (const specifier of NODE_EVENTS_SPECIFIERS)
-    if (
-      (state.requiredModuleEffects.get(specifier) ?? []).some(
-        ({ kind, path, node }) =>
-          kind === "escape"
-            ? eventsClassPath(path) && precedes(read, node)
-            : targetsClass(path) && precedes(construction, node),
-      )
-    )
-      return true;
-  return false;
+  const rootEffects =
+    root === undefined ? undefined : effects.otherRoots.get(root.bindingId);
+  return rootEffects !== undefined && touched(rootEffects);
 };
 
 /**
@@ -370,32 +435,15 @@ const affectsPrototypeMethod = (
  * answers the call.
  */
 const writesPrototypeMethod = (
+  effects: EventEmitterSharedEffects,
   method: string,
   read: t.Node,
   state: JavaScriptSemanticAnalysisState,
-): boolean => {
-  const precedes = (write: t.Node | undefined): boolean =>
-    !semanticTopLevelEffectFollowsCapture(read, write, state.parentsByNode);
-  for (const binding of state.bindingsById.values())
-    if (
-      binding.memberWrites.some(
-        ({ path, node: write }) =>
-          affectsPrototypeMethod(path, method) && precedes(write),
-      )
-    )
-      return true;
-  for (const specifier of NODE_EVENTS_SPECIFIERS)
-    if (
-      (state.requiredModuleEffects.get(specifier) ?? []).some(
-        ({ kind, path, node: write }) =>
-          kind === "write" &&
-          affectsPrototypeMethod(path, method) &&
-          precedes(write),
-      )
-    )
-      return true;
-  return false;
-};
+): boolean =>
+  (effects.prototypeWrites.get(method) ?? []).some(
+    (write) =>
+      !semanticTopLevelEffectFollowsCapture(read, write, state.parentsByNode),
+  );
 
 /**
  * Report whether an escape hands out the prototype object itself. Reading a
@@ -418,28 +466,14 @@ const escapesPrototypeObject = (
  * method it defines.
  */
 const prototypeObjectEscaped = (
+  effects: EventEmitterSharedEffects,
   read: t.Node,
   state: JavaScriptSemanticAnalysisState,
-): boolean => {
-  const precedes = (escape: t.Node | undefined): boolean =>
-    !semanticTopLevelEffectFollowsCapture(read, escape, state.parentsByNode);
-  for (const binding of state.bindingsById.values())
-    if (
-      binding.escapedPaths.some(
-        ({ path, node }) => escapesPrototypeObject(path) && precedes(node),
-      )
-    )
-      return true;
-  for (const specifier of NODE_EVENTS_SPECIFIERS)
-    if (
-      (state.requiredModuleEffects.get(specifier) ?? []).some(
-        ({ kind, path, node }) =>
-          kind === "escape" && escapesPrototypeObject(path) && precedes(node),
-      )
-    )
-      return true;
-  return false;
-};
+): boolean =>
+  effects.prototypeEscapes.some(
+    (escape) =>
+      !semanticTopLevelEffectFollowsCapture(read, escape, state.parentsByNode),
+  );
 
 /**
  * Report whether the receiver is a value this module constructs from Node's
@@ -454,6 +488,7 @@ const nodeEventEmitterReceiver = (
   method: string,
   state: JavaScriptSemanticAnalysisState,
   call: t.Node,
+  sharedEffects: () => EventEmitterSharedEffects,
 ): boolean => {
   if (!t.isIdentifier(node)) return false;
   const binding = resolveSemanticBindingState(state, node, node.name);
@@ -466,7 +501,9 @@ const nodeEventEmitterReceiver = (
   // Reaching the class is not the same as reaching the method: the class object
   // and the `init` hook Node runs while constructing can both be reshaped, so a
   // construction whose surface was touched keeps its operation.
-  if (eventsClassSurfaceTouched(construction, node, state, call)) return false;
+  const effects = sharedEffects();
+  if (eventsClassSurfaceTouched(effects, construction, node, state, call))
+    return false;
   // The receiver is activation-local, but the events module and its prototype
   // are shared: opaque code in an outer activation can replace their methods
   // even when this receiver does not exist yet. Use the opaque-effect owner's
@@ -509,8 +546,8 @@ const nodeEventEmitterReceiver = (
   // replaces the method for this receiver as well, and so does handing that
   // prototype to a call that may install the method itself.
   return (
-    !writesPrototypeMethod(method, node, state) &&
-    !prototypeObjectEscaped(node, state)
+    !writesPrototypeMethod(effects, method, node, state) &&
+    !prototypeObjectEscaped(effects, node, state)
   );
 };
 
@@ -519,6 +556,7 @@ const collectEvent = (
   ownerCallableId: string | null,
   state: JavaScriptSemanticAnalysisState,
   output: JavaScriptSemanticEventOperation[],
+  sharedEffects: () => EventEmitterSharedEffects,
 ): void => {
   const member = dataEffectMemberCallee(node);
   if (member === null) return;
@@ -540,7 +578,7 @@ const collectEvent = (
     listenerMethod &&
     listenerArgument === undefined &&
     !node.arguments.some((argument) => t.isSpreadElement(argument)) &&
-    nodeEventEmitterReceiver(member.object, method, state, node)
+    nodeEventEmitterReceiver(member.object, method, state, node, sharedEffects)
   )
     return;
   // A leading spread shifts the runtime argument positions, so argument 1 is not
