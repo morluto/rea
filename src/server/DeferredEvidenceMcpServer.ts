@@ -60,19 +60,26 @@ export class DeferredEvidenceMcpServer extends EvidenceMcpServerCore {
     private readonly initialize: (
       server: DeferredEvidenceMcpServer,
     ) => Promise<void>,
+    maximumInputElements?: number,
   ) {
     super(
       catalog.info,
       {
         capabilities: catalog.capabilities,
         instructions: catalog.instructions,
+        ...(maximumInputElements === undefined
+          ? {}
+          : { maxToolInputElements: maximumInputElements }),
       },
       undefined,
       delivery,
       undefined,
-      false,
+      // `main.ts` only defers the exact full advertisement catalog.
+      "full",
       catalog.identity,
     );
+    for (const name of catalog.evidenceReferenceAlternatives)
+      this.registerEvidenceReferenceAlternative(name);
     for (const tool of catalog.tools) {
       const { name, inputSchema, outputSchema, ...metadata } = tool;
       let binding: DeferredTool;

@@ -1,22 +1,24 @@
+import {
+  projectStableArtifactFailure,
+  stableArtifactInputRecovery,
+  projectArtifactCloseFailure,
+} from "../../artifacts/StableArtifactFailure.js";
 import { isSelectedRegularFileError } from "../../filesystem/RegularFile.js";
 import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
 import {
+  type StableArtifactSnapshot,
   readStableArtifact,
-  completedStableArtifact,
 } from "../../artifacts/readStableArtifact.js";
 import {
   artifactFilePrimaryFacts,
   type ArtifactFilePrimaryFacts,
   assertArtifactReadActive,
-  bindArtifactFileCleanup,
   artifactFileCancellationCause,
 } from "../../artifacts/ArtifactFileOperation.js";
 import { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
-import { analysisErrorWithCleanupFailure } from "../../domain/analysisErrorCleanup.js";
 import type { PeLoadConfigPort } from "../../application/binaryDiagnostics/PeLoadConfigPort.js";
 import type { ExecutionOptions } from "../../application/AnalysisProvider.js";
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
-import { fileSnapshotPartialObservationSchema } from "../../domain/fileSnapshotObservation.js";
 import {
   AnalysisAccessDeniedError,
   AnalysisArtifactChangedError,
@@ -33,7 +35,6 @@ import {
   type InspectPeLoadConfigInput,
 } from "../../domain/native/peLoadConfig.js";
 import { ProviderAdapterError } from "../../domain/providerAdapterError.js";
-import { ProviderCleanupError } from "../../domain/providerCleanupError.js";
 import { err, ok } from "../../domain/result.js";
 import { PE_LOAD_CONFIG_PROVIDER } from "../../domain/investigationProviders.js";
 import {
@@ -57,26 +58,19 @@ export class PeLoadConfigProvider implements PeLoadConfigPort {
     try {
       await this.#resources.close();
     } catch (cause: unknown) {
-      if (
-        !(cause instanceof ArtifactReaderFailure) ||
-        cause.cleanup === undefined
-      )
-        throw cause;
-      const error = new ProviderCleanupError(
+      throw projectArtifactCloseFailure(
+        cause,
         PE_LOAD_CONFIG_PROVIDER.id,
-        cause.cleanup.resources,
-        { reason: cause.cleanup.reason },
-        { cause, operation: OPERATION },
+        OPERATION,
       );
-      bindArtifactFileCleanup(cause, error);
-      throw error;
     }
   }
 
   async inspect(input: InspectPeLoadConfigInput, options?: ExecutionOptions) {
+    let snapshot: StableArtifactSnapshot | undefined;
     try {
       return await this.#resources.run(async () => {
-        const snapshot = await readStableArtifact(
+        snapshot = await readStableArtifact(
           input.path,
           input.max_file_bytes,
           options?.signal,
@@ -98,7 +92,7 @@ export class PeLoadConfigProvider implements PeLoadConfigPort {
         return ok(report);
       });
     } catch (cause) {
-      return err(peLoadConfigFailure(cause, input));
+      return err(peLoadConfigFailure(cause, input, snapshot));
     }
   }
 }
@@ -191,9 +185,11 @@ const peLoadConfigFailurePrimary = (
         },
       );
     if (cause.reason === "path" || cause.reason === "format")
-      return new AnalysisInputError(OPERATION, { cause }, [
-        { path: ["path"], reason: "invalid_format", message: cause.message },
-      ]);
+      return new AnalysisInputError(
+        OPERATION,
+        { cause, ...stableArtifactInputRecovery(cause) },
+        [{ path: ["path"], reason: "invalid_format", message: cause.message }],
+      );
   }
   if (cause instanceof Error && "code" in cause) {
     if (cause.code === "EACCES" || cause.code === "EPERM")
@@ -221,33 +217,18 @@ const peLoadConfigFailurePrimary = (
 const peLoadConfigFailure = (
   cause: unknown,
   input: InspectPeLoadConfigInput,
+  snapshot?: StableArtifactSnapshot,
 ): AnalysisError => {
   const primary = peLoadConfigFailurePrimary(
     artifactFilePrimaryFacts(cause),
     input,
   );
-  const snapshot = completedStableArtifact(cause);
-  if (snapshot !== undefined) {
-    // This inspect boundary acquires exactly one StableArtifactSnapshot before
-    // parsing. Completion describes that read, not a decoded report.
-    primary.retainPartialObservation(
-      fileSnapshotPartialObservationSchema.parse({
-        kind: "file-snapshot-hash",
-        path: input.path,
-        sha256: snapshot.sha256,
-        bytes: snapshot.bytes.length,
-      }),
-    );
-  }
-  if (!(cause instanceof ArtifactReaderFailure) || cause.cleanup === undefined)
-    return primary;
-  const cleanup = new ProviderCleanupError(
+  return projectStableArtifactFailure(
+    cause,
+    primary,
+    input.path,
     PE_LOAD_CONFIG_PROVIDER.id,
-    cause.cleanup.resources,
-    { reason: cause.cleanup.reason },
-    { operation: OPERATION, cause },
+    OPERATION,
+    snapshot,
   );
-  const error = analysisErrorWithCleanupFailure(primary, cleanup, OPERATION);
-  bindArtifactFileCleanup(cause, error);
-  return error;
 };

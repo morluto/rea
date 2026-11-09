@@ -1,4 +1,4 @@
-import { z } from "zod";
+import { positiveDecimalIntegerSchema } from "./positiveDecimalInteger.js";
 
 import { ConfigurationError } from "../domain/configurationErrors.js";
 import { err, ok, type Result } from "../domain/result.js";
@@ -69,26 +69,12 @@ const PHASES = [
 const phaseConstraint = (phase: McpPhaseBudgetDefinition): string =>
   `${phase.setting} must be a positive decimal integer from ${String(MCP_PHASE_BUDGET_FLOOR_MS)} to ${String(MCP_PHASE_BUDGET_MAXIMUM_MS)} ms; the default is ${String(phase.defaultMilliseconds)} ms. Node schedules a delay above that maximum as 1 ms, so a larger value is refused.`;
 
-const decimalInteger = /^[1-9]\d*$/u;
-
-const withinPhaseBudgetRange = (value: string): boolean => {
-  // The pattern check reports a non-decimal value. Refine only bounds integers.
-  if (!decimalInteger.test(value)) return true;
-  const parsed = BigInt(value);
-  return (
-    parsed >= BigInt(MCP_PHASE_BUDGET_FLOOR_MS) &&
-    parsed <= BigInt(MCP_PHASE_BUDGET_MAXIMUM_MS)
+const phaseBudgetSchema = (phase: McpPhaseBudgetDefinition) =>
+  positiveDecimalIntegerSchema(
+    MCP_PHASE_BUDGET_FLOOR_MS,
+    MCP_PHASE_BUDGET_MAXIMUM_MS,
+    phaseConstraint(phase),
   );
-};
-
-const phaseBudgetSchema = (phase: McpPhaseBudgetDefinition) => {
-  const constraint = phaseConstraint(phase);
-  return z
-    .string()
-    .regex(decimalInteger, { error: constraint })
-    .refine(withinPhaseBudgetRange, { error: constraint })
-    .transform(Number);
-};
 
 /** Optional decimal millisecond count for the MCP initialize phase budget. */
 export const mcpInitializeBudgetMsSchema = phaseBudgetSchema(PHASES[0]);

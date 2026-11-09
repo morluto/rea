@@ -35,7 +35,7 @@ const binaryLayoutObjectSchema = z.strictObject({
   format: z.literal("elf"),
   architecture: z.union([
     z.strictObject({
-      machine: z.literal("EM_X86_64"),
+      machine: z.enum(["EM_X86_64", "EM_AARCH64"]),
       bits: z.literal(64),
       byte_order: z.literal("little"),
     }),

@@ -1,3 +1,4 @@
+import { currentClientRegistrationCommand } from "../../../src/application/ClientRegistrationIdentity.js";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 
@@ -9,12 +10,9 @@ import { configureClientConfiguration } from "../../../src/application/SetupClie
 import { supportedClients } from "../../../src/application/SupportedClients.js";
 import { systemUninstallHost } from "../../../src/application/Uninstall.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
-import {
-  clearClientLocationEnvironment,
-  NPX_REGISTRATION_COMMAND,
-} from "../../fixtures/clientEnvironment.js";
+import { clearClientLocationEnvironment } from "../../fixtures/clientEnvironment.js";
 
-const command = NPX_REGISTRATION_COMMAND;
+const command = currentClientRegistrationCommand();
 
 beforeEach(clearClientLocationEnvironment);
 afterEach(() => vi.unstubAllEnvs());
@@ -93,7 +91,7 @@ describe("OMP disabledServers denylist", () => {
     expect(parseJsonc(text)).toEqual({
       mcpServers: {
         other: { command: "other-server" },
-        rea: { type: "stdio", command: "npx", args: command.slice(1) },
+        rea: { type: "stdio", command: command[0], args: command.slice(1) },
       },
       disabledServers: ["other"],
     });
@@ -111,7 +109,7 @@ describe("OMP disabledServers denylist", () => {
 
   it("reports a registration hidden by disabledServers as stale", async () => {
     const { home, client } = await ompClient();
-    const entry = resolve("scripts/rea.mjs");
+    const entry = command[1];
     const registration = {
       command: process.execPath,
       args: [entry, "mcp"],

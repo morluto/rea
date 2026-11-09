@@ -1,3 +1,4 @@
+import { projectCliAnalysisResult } from "../../../../src/cli/projectCliAnalysisResult.js";
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
@@ -42,7 +43,9 @@ it("runs static .app decoding without registering native analysis engines", asyn
   const evidence = parseEvidence(
     await createDirectAnalysis({
       REA_ANALYSIS_PROVIDER: "auto",
-    }).runProviderAnalysis(app, "decode_interface_builder", {}),
+    })
+      .runProviderAnalysis(app, "decode_interface_builder", {})
+      .then(projectCliAnalysisResult),
   );
   expect(evidence.operation).toBe("decode_interface_builder");
   expect(evidence.provider.id).toBe("rea-artifact-graph");
@@ -64,7 +67,9 @@ it("inspects an artifact through the direct CLI workflow without an REA grant", 
   await createPackageWithOptions(source, archive, {});
 
   const evidence = parseEvidence(
-    await runProviderAnalysis(archive, "inspect_artifact", {}),
+    await runProviderAnalysis(archive, "inspect_artifact", {}).then(
+      projectCliAnalysisResult,
+    ),
   );
   expect(evidence.operation).toBe("inspect_artifact");
   expect(evidence.provider.id).toBe("rea-artifact-graph");

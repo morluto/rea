@@ -1,4 +1,5 @@
 import type { Logger } from "pino";
+import type { GhidraCheckpointSelection } from "./GhidraCheckpoint.js";
 import type { BridgeMaxRequestBytes } from "../config/bridgeMaxRequestBytes.js";
 import type { Result } from "../domain/result.js";
 import type { LinuxCgroupMemoryState } from "../process/LinuxCgroupMemory.js";
@@ -33,12 +34,14 @@ export type GhidraDiagnostic =
     }
   | { readonly type: "cleanup-incomplete"; readonly reason: string };
 
-/** Dependencies and exact profile commitment for one headless import. */
+/** Dependencies and exact profile commitment for one headless Program session. */
 export interface GhidraClientOptions {
   readonly launcher: GhidraLauncher;
   readonly runId?: string;
   readonly targetPath: string;
   readonly targetSha256: string;
+  readonly existingProject?: boolean;
+  readonly checkpoint?: GhidraCheckpointSelection;
   /** Installation host shared by runtime allocation and snapshot admission. */
   readonly platform?: NodeJS.Platform;
   readonly transport?: GhidraTransportKind;

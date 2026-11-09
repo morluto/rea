@@ -42,9 +42,11 @@ export const javaScriptSemanticQuerySeedSchema = z.discriminatedUnion("kind", [
     kind: z.literal("property"),
     name: z.string(),
   }),
+  // Analysis preserves the complete literal endpoint, including the empty
+  // string, so the seed matches any retained value exactly, as event does.
   z.strictObject({
     kind: z.literal("endpoint"),
-    value: z.string().min(1),
+    value: z.string(),
   }),
   z.strictObject({
     kind: z.literal("event"),

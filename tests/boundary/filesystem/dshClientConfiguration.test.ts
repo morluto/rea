@@ -1,3 +1,4 @@
+import { currentClientRegistrationCommand } from "../../../src/application/ClientRegistrationIdentity.js";
 import { access, mkdir, readFile, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 
@@ -11,7 +12,7 @@ import {
 } from "yaml";
 
 import { readClientRegistrationStatuses } from "../../../src/application/ClientRegistrationStatus.js";
-import { npxRegistrationCommand } from "../../../src/application/ClientRegistrationIdentity.js";
+
 import {
   configureClientConfiguration,
   inspectClientConfiguration,
@@ -28,7 +29,9 @@ import { clearClientLocationEnvironment } from "../../fixtures/clientEnvironment
  * The registration command setup writes on the host running the tests. Windows
  * wraps it in `cmd.exe /d /c`, so the expected entry follows the host too.
  */
-const command = npxRegistrationCommand(process.platform);
+const command = currentClientRegistrationCommand({
+  platform: process.platform,
+});
 
 beforeEach(clearClientLocationEnvironment);
 afterEach(() => vi.unstubAllEnvs());
@@ -2228,7 +2231,7 @@ describe("DeepSeek Harness ordered selector applicability", () => {
 });
 
 describe("DeepSeek Harness caller node metadata", () => {
-  it.each(["environment", "launcher"])(
+  it.each(["environment", "launcher", "arguments"])(
     "preserves scalar and argument comments during %s repairs",
     async (repair) => {
       const { home, client } = await harnessClient();
@@ -2242,6 +2245,9 @@ describe("DeepSeek Harness caller node metadata", () => {
                 config: {
                   ...entry.config,
                   ...(repair === "launcher" ? { command: "stale" } : {}),
+                  ...(repair === "arguments"
+                    ? { command: "stale", args: ["mcp", "--legacy"] }
+                    : {}),
                   env: { TOKEN: "original" },
                 },
               },
@@ -2270,6 +2276,10 @@ describe("DeepSeek Harness caller node metadata", () => {
       if (!isSeq(args) || !isNode(args.items[0]))
         throw new Error("missing launcher arguments");
       args.items[0].comment = " caller argument";
+      if (repair === "arguments") {
+        if (!isNode(args.items[1])) throw new Error("missing old argument");
+        args.items[1].comment = " removed argument explanation";
+      }
       const initial = yaml.toString();
       await writeFile(client.configPath, initial);
       expect(
@@ -2295,6 +2305,23 @@ describe("DeepSeek Harness caller node metadata", () => {
         expect(text).toContain(`# before ${key}`);
       }
       expect(text).toContain("# caller argument");
+      if (repair === "arguments") {
+        expect(text).toContain("# removed argument explanation");
+        const updatedArgs = parseDocument(text).getIn(
+          [0, "insert", 0, "config", "args"],
+          true,
+        );
+        if (!isSeq(updatedArgs)) throw new Error("missing updated arguments");
+        expect(updatedArgs.commentBefore).toContain(
+          "removed argument explanation",
+        );
+        const mcp = updatedArgs.items.find(
+          (item) => isNode(item) && "value" in item && item.value === "mcp",
+        );
+        expect(isNode(mcp) ? mcp.comment : undefined).toContain(
+          "caller argument",
+        );
+      }
       expect(loadedInserts(text)).toEqual([
         {
           ...entry,

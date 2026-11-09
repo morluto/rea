@@ -33,6 +33,18 @@ export class BinaryResourceFailure extends Error {
   }
 }
 
+/** A bounded read could not establish termination; it does not prove invalid text. */
+export class BinaryStringReadLimitFailure extends BinaryFormatFailure {
+  constructor(readonly maximumBytes: number) {
+    // Preserve the existing broad failure contract for legacy callers while
+    // allowing coverage-aware consumers to distinguish a limit from corruption.
+    super(
+      "malformed",
+      `String termination was not established within its ${String(maximumBytes)}-byte read allowance`,
+    );
+  }
+}
+
 /** One file-backed virtual range; addresses stay exact until mapped to file offsets. */
 export interface FileMapping {
   readonly address: bigint;
@@ -73,6 +85,7 @@ export type ImageSection = {
       /** Null when the ELF name table is unavailable or this name is unreadable. */
       readonly name: string | null;
       readonly type: number;
+      readonly flags: bigint;
       readonly address: bigint;
       readonly declared_range: {
         readonly offset: bigint;
@@ -93,6 +106,7 @@ export type ImageSection = {
       readonly name: string;
       readonly section_name: string;
       readonly type: number;
+      readonly flags: number;
       readonly address: bigint;
       readonly declared_range: {
         readonly offset: bigint;
@@ -100,6 +114,8 @@ export type ImageSection = {
       };
       readonly segment_mapping: FileMapping | null;
       readonly segment_unmapped: boolean;
+      /** Declared `reloff` and `nreloc`, which only object files populate. */
+      readonly relocations: { readonly offset: number; readonly count: number };
     }
 );
 
@@ -142,6 +158,7 @@ export type BinaryContainer = BinaryContainerFacts &
         readonly format: "elf";
         readonly elf: {
           readonly machine: number;
+          readonly type: number;
           readonly dynamicSegments: readonly ElfDynamicSegment[];
         };
       }
@@ -576,10 +593,7 @@ const readMappedString = (
     chunks.push(chunk);
     length += size;
   }
-  throw new BinaryFormatFailure(
-    "malformed",
-    `String is unterminated or longer than ${String(maximumBytes)} bytes`,
-  );
+  throw new BinaryStringReadLimitFailure(maximumBytes);
 };
 
 /** Recognize a wholly zero-filled span while refusing even partial file aliases. */

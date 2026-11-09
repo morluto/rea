@@ -47,7 +47,10 @@ describe("compiled CLI JSON input failure status", () => {
         expect(result.json).toMatchObject({
           code: "invalid_request",
           category: "invalid_input",
-          details: { operation },
+          details: {
+            operation,
+            issues: [{ path: [], reason: "invalid_format", expected: "JSON" }],
+          },
         });
         expect(result.stderr).toBe("");
         expect(result.exitCode).toBe(1);

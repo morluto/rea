@@ -2,7 +2,8 @@ import { createHash, randomUUID } from "node:crypto";
 import { createReadStream } from "node:fs";
 import { open, realpath, stat, type FileHandle } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { basename, join, normalize } from "node:path";
+import { basename, isAbsolute, join, normalize } from "node:path";
+import { absoluteCallerPath } from "../filesystem/callerPath.js";
 import type { BinaryTarget } from "../domain/binaryTargetTypes.js";
 import { AnalysisProtocolError } from "../domain/analysisErrorCore.js";
 import { ConfigurationError } from "../domain/configurationErrors.js";
@@ -21,11 +22,12 @@ export const idaFileDigest = async (path: string): Promise<string> => {
   return hash.digest("hex");
 };
 
-/** Compare host-local paths without confusing Windows paths with POSIX coordinates. */
+/** Compare host-local spellings without collapsing POSIX symlink/.. traversal. */
 export const sameIdaHostPath = (left: string, right: string): boolean =>
   process.platform === "win32"
     ? normalize(left).toLowerCase() === normalize(right).toLowerCase()
-    : normalize(left) === normalize(right);
+    : isAbsolute(left) === isAbsolute(right) &&
+      absoluteCallerPath(left) === absoluteCallerPath(right);
 
 /** Admit the selected lookup before canonicalizing it for readiness and allocation.
  * Native realpath can collapse file/.. without rejecting the non-directory.
@@ -152,7 +154,20 @@ export class IdaWorkspace {
       if (end > start) {
         const admitted = bytes.subarray(start - position, end - position);
         inputHash.update(admitted);
-        await input.write(admitted);
+        let offset = 0;
+        while (offset < admitted.length) {
+          assertArtifactReadActive(signal);
+          const { bytesWritten } = await input.write(
+            admitted,
+            offset,
+            admitted.length - offset,
+          );
+          if (bytesWritten === 0)
+            throw new AnalysisProtocolError(
+              "IDA input copy write made no progress",
+            );
+          offset += bytesWritten;
+        }
         assertArtifactReadActive(signal);
       }
       position += observed.bytesRead;

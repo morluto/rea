@@ -1,5 +1,7 @@
 import { createHash } from "node:crypto";
 import { timedCaptureEvidence } from "../../fixtures/analysisView.js";
+import { INITIAL_TRASH_ROWS } from "../../fixtures/environmentStateLaterReads.js";
+import { jsonObjectSchema } from "../../../src/domain/jsonValue.js";
 
 import {
   Client,
@@ -22,9 +24,9 @@ import {
 
 const HTTP_BOUNDARY_TIMEOUT_MS = 90_000;
 const CARD_PATH = "/.well-known/agent-env.json";
-/** SHA-256 of the 13,882-byte card served for the fixture named "renamed", its descriptions naming each tool's recorded responses; pure replay must serve these bytes. */
+/** SHA-256 of the 14,519-byte card served for the fixture named "renamed", its descriptions naming each tool's recorded responses; pure replay must serve these bytes. */
 const REPLAY_CARD_SHA256 =
-  "27370fe0a89556dcd0dd1bc6ddd0439d77b628349829afd56e4af4ee393d0a64";
+  "995c280f0798f77e76f206c068eb6c2c1f8c4210a03ac1c01fba8cc07b5d7f09";
 
 /** Serve the fixture pair as pure replay through the built CLI. */
 const serveReplayOnly = async (
@@ -58,6 +60,103 @@ const connect = async (url: URL) => {
 };
 
 processTest(
+  "replays a recorded list containing an initially deleted entity",
+  async ({ processes }) => {
+    const fixture = environmentStateServeFixture(
+      timedCaptureEvidence(INITIAL_TRASH_ROWS),
+    );
+    const root = await createTestTempDirectory("rea-environment-trash-mcp-");
+    const files = await writeEnvironmentServeFiles(root, fixture);
+    const started = await startListeningProcess(processes, [
+      "environment-serve",
+      files.manifestPath,
+      "--evidence",
+      files.capturePath,
+      "--port",
+      "0",
+    ]);
+    const client = await connect(started.url);
+    try {
+      const response = await client.callTool({
+        name: "get_contacts",
+        arguments: { maxSize: "20", offset: "0" },
+      });
+      expect(response.isError).toBeFalsy();
+      expect(response.structuredContent).toMatchObject({
+        body: INITIAL_TRASH_ROWS[0]![2],
+      });
+    } finally {
+      await client.close();
+    }
+  },
+  HTTP_BOUNDARY_TIMEOUT_MS,
+);
+
+processTest(
+  "accepts numbers and booleans for query parameters, sent as their JSON text",
+  async ({ processes }) => {
+    const fixture = environmentStateServeFixture(
+      timedCaptureEvidence([
+        [
+          "GET",
+          "/api/contacts?maxSize=2&withItems=true",
+          [{ id: 1, name: "Ada" }],
+        ],
+      ]),
+    );
+    const started = await serveReplayOnly(processes, {}, fixture);
+    const client = await connect(started.url);
+    try {
+      const response = await client.callTool({
+        name: "get_contacts",
+        arguments: { maxSize: 2, withItems: true },
+      });
+      expect(response.isError).toBeFalsy();
+      expect(response.structuredContent).toMatchObject({
+        body: [{ id: 1, name: "Ada" }],
+        replay: {
+          exact_match: true,
+          recorded_query: "?maxSize=2&withItems=true",
+        },
+      });
+    } finally {
+      await client.close();
+    }
+  },
+  HTTP_BOUNDARY_TIMEOUT_MS,
+);
+
+processTest(
+  "replays recorded own JSON keys without interpreting inherited members as fields",
+  async ({ processes }) => {
+    const body = JSON.parse(
+      '{"id":1,"__proto__":{"source":"recorded"},"nested":{"constructor":null,"__proto__":[false,0,""]}}',
+    );
+    const fixture = environmentStateServeFixture(
+      timedCaptureEvidence([["GET", "/api/books/1", body]]),
+    );
+    const started = await serveReplayOnly(processes, {}, fixture);
+    const client = await connect(started.url);
+    try {
+      const response = await client.callTool({
+        name: "get_books_by_id",
+        arguments: { id: "1" },
+      });
+      expect(response.isError).toBeFalsy();
+      expect(response.structuredContent).toMatchObject({ body });
+      const replayed = jsonObjectSchema.parse(
+        jsonObjectSchema.parse(response.structuredContent).body,
+      );
+      expect(Object.hasOwn(replayed, "__proto__")).toBe(true);
+      expect(Object.hasOwn(replayed, "constructor")).toBe(false);
+    } finally {
+      await client.close();
+    }
+  },
+  HTTP_BOUNDARY_TIMEOUT_MS,
+);
+
+processTest(
   "validates repeated query arrays through the advertised MCP contract",
   async ({ processes }) => {
     const fixture = environmentStateServeFixture(
@@ -82,6 +181,8 @@ processTest(
       ).toMatchObject({
         oneOf: [
           { type: "string" },
+          { type: "number" },
+          { type: "boolean" },
           { type: "array", items: { type: "string" } },
         ],
       });

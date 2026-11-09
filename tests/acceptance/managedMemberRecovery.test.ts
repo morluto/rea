@@ -1,3 +1,4 @@
+import { artifactMcpCall } from "../../scripts/lib/artifact-e2e.mjs";
 import { createHash } from "node:crypto";
 import { unlink, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
@@ -63,7 +64,7 @@ cliTest(
       });
       expect(output.exitCode, output.stderr).toBe(0);
       const cliEvidence = parseEvidence(output.json);
-      const response = await client.callTool({
+      const response = await artifactMcpCall(client, {
         name: "inspect_managed_members",
         arguments: { path },
       });
@@ -85,31 +86,37 @@ cliTest(
       expect(report.types).toHaveLength(3);
       expect(report.methods).toEqual([]);
       const empty = report.types.find((type) => type.method_list.count === 0);
-      expect(empty).toBeDefined();
+      if (empty === undefined) throw new Error("Missing empty fixture type");
       const selectedCli = await cli.run({
         arguments: [
           "inspect-managed-members",
           path,
           "--type",
-          empty!.full_name,
+          empty.full_name,
           "--json",
         ],
       });
       expect(selectedCli.exitCode, selectedCli.stderr).toBe(0);
-      const selected = await client.callTool({
+      const selected = await artifactMcpCall(client, {
         name: "inspect_managed_members",
-        arguments: { path, type_names: [empty!.full_name] },
+        arguments: { path, type_names: [empty.full_name] },
       });
       expect(selected.isError).not.toBe(true);
       const selectedEvidence = parseEvidence(selected.structuredContent);
       expect(selectedEvidence.normalized_result).toEqual(
         parseEvidence(selectedCli.json).normalized_result,
       );
-      expect(selectedEvidence.normalized_result).toMatchObject({
+      const selectedReport = managedMemberInspectionSchema.parse(
+        selectedEvidence.normalized_result,
+      );
+      expect(selectedReport).toMatchObject({
         coverage: { state: "complete", issues: [] },
+        selection: { type_names: [empty.full_name], unmatched_type_names: [] },
+        types: [{ token: empty.token, full_name: empty.full_name }],
+        methods: [],
       });
 
-      const summaryReply = await client.callTool({
+      const summaryReply = await artifactMcpCall(client, {
         name: "inspect_managed_members",
         arguments: { path, detail: "summary" },
       });
@@ -128,7 +135,7 @@ cliTest(
       });
       await unlink(path);
       for (const collection of ["types", "methods"] as const) {
-        const reply = await client.callTool({
+        const reply = await artifactMcpCall(client, {
           name: "inspect_analysis_view",
           arguments: {
             source: {
@@ -149,7 +156,7 @@ cliTest(
           collection === "types" ? report.types : [],
         );
       }
-      const unknown = await client.callTool({
+      const unknown = await artifactMcpCall(client, {
         name: "inspect_analysis_view",
         arguments: {
           source: {

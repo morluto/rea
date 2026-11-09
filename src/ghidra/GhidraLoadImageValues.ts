@@ -5,11 +5,7 @@ import {
   type NativeLoadImageCheck,
   type NativeLoadImageObservation,
 } from "../domain/native/nativeLoadImage.js";
-import {
-  parseMzHeaderEvidence,
-  type DosMzHeader,
-  type MzWindowsHeaderSignatureEvidence,
-} from "../domain/dosMz.js";
+import type { DosMzHeader, MzHeaderEvidence } from "../domain/dosMz.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import type { BinaryTarget } from "../domain/binaryTargetTypes.js";
 import { validateDosComLength } from "../domain/dosCom.js";
@@ -19,8 +15,10 @@ import { ghidraRawBinaryLanguage } from "./GhidraRawBinaryLanguage.js";
 const sha256 = (bytes: Buffer): string =>
   createHash("sha256").update(bytes).digest("hex");
 const address = (offset: number): string => `0x${offset.toString(16)}`;
+export const GHIDRA_DOS_LOAD_VERIFICATION_LIMITATION =
+  "Verification covers original/modified FileBytes, every initialized target-backed header/module mapping, relocation records and the external entry point. Ghidra relocation symbol names are retained observations, not independently verified. Mapping ends are inclusive.";
 const limitations = [
-  "Verification covers original/modified FileBytes, every initialized target-backed header/module mapping, relocation records and the external entry point. Mapping ends are inclusive.",
+  GHIDRA_DOS_LOAD_VERIFICATION_LIMITATION,
   "Appended overlay bytes are identified by file extent and included in FileBytes identity; they must not be mapped as initialized header/module memory. Uninitialized allocations are reported but their contents and DOS runtime behavior are not verified.",
   "The fixed load segment 0x1000 describes Ghidra's analysis image, not a running DOS process. Verified import does not establish original source ownership or recovered program behavior.",
   "A mismatching memory digest identifies the reported source range; it does not locate the first differing byte inside that range.",
@@ -58,10 +56,8 @@ export type GhidraDosImage = {
 /** Prepare initialized bytes and relocation facts without copying overlays. */
 export const prepareGhidraDosLoadImage = (
   bytes: Buffer,
-  fileBytes: number,
-  signatureAtOffset?: MzWindowsHeaderSignatureEvidence,
+  evidence: MzHeaderEvidence,
 ): Result<GhidraDosImage, string> => {
-  const evidence = parseMzHeaderEvidence(bytes, fileBytes, signatureAtOffset);
   if (evidence.windowsHeader.state === "candidate")
     return err("MZ Windows new-header candidate is unresolved");
   if (evidence.windowsHeader.state === "header-needed")
@@ -78,24 +74,32 @@ export const prepareGhidraDosLoadImage = (
   const loadSegment = 0x1000;
   const modified = Buffer.from(bytes.subarray(0, header.imageBytes));
   const applied = [];
-  for (let index = 0; index < header.relocationCount; index += 1) {
-    const table = header.relocationTableOffset + index * 4;
-    const offset = bytes.readUInt16LE(table);
-    const segment = bytes.readUInt16LE(table + 2);
-    const fileOffset = header.headerBytes + segment * 16 + offset;
+  for (const {
+    segment,
+    offset,
+    moduleOffset,
+    fileOffset,
+  } of header.relocations) {
     const original = modified
       .subarray(fileOffset, fileOffset + 2)
       .toString("hex");
     const relocated =
       (modified.readUInt16LE(fileOffset) + loadSegment) & 0xffff;
     modified.writeUInt16LE(relocated, fileOffset);
-    applied.push({ segment, offset, fileOffset, original, relocated });
+    applied.push({
+      segment,
+      offset,
+      moduleOffset,
+      fileOffset,
+      original,
+      relocated,
+    });
   }
   // Application records describe their own fixup; the bridge reads memory
   // once all fixups have completed, including later overlapping writes.
   const expectedRelocations = applied.map(
-    ({ segment, offset, fileOffset, original, relocated }) => ({
-      address: address(loadSegment * 16 + segment * 16 + offset),
+    ({ segment, offset, moduleOffset, fileOffset, original, relocated }) => ({
+      address: address(loadSegment * 16 + moduleOffset),
       segment: (loadSegment + segment) & 0xffff,
       offset,
       status: "APPLIED",
@@ -158,8 +162,10 @@ export const attestGhidraDosLoadImage = (
   // A multiset preserves duplicate relocations and aliases; iteration order is not semantic.
   const rows = (values: NativeLoadImageObservation["relocations"]): string[] =>
     values
-      .map(({ segment: _segment, offset: _offset, ...value }) =>
-        JSON.stringify(value),
+      // The independent DOS check does not attest Ghidra's symbol name.
+      .map(
+        ({ segment: _segment, offset: _offset, symbol: _symbol, ...value }) =>
+          JSON.stringify(value),
       )
       .sort();
   check(

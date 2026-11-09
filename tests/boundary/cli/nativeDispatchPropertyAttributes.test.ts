@@ -1,4 +1,5 @@
-import { writeFile } from "node:fs/promises";
+import { readFile, writeFile } from "node:fs/promises";
+import { createHash } from "node:crypto";
 import { join } from "node:path";
 
 import { describe, expect } from "vitest";
@@ -6,6 +7,70 @@ import { describe, expect } from "vitest";
 import { machoWithPropertyAttributes } from "../../fixtures/objcPropertyMacho.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
+import { objcAdoptedProtocolCountMacho } from "../../fixtures/objcRecordBudgetMacho.js";
+import { parseEvidence } from "../../../src/domain/evidence.js";
+import { nativeDispatchMetadataResultSchema } from "../../../src/domain/native/objcSwiftMetadata.js";
+
+describe.skipIf(process.platform !== "darwin")(
+  "native adopted-protocol list recovery",
+  () => {
+    cliTest.for([1n, 20001n])(
+      "preserves class facts and partial-list semantics over CLI and stdio MCP for count %s",
+      async (count, { cli }) => {
+        const root = await createTestTempDirectory("rea-protocol-list-");
+        const path = join(root, "fixture.macho");
+        const bytes = objcAdoptedProtocolCountMacho(count);
+        await writeFile(path, bytes);
+        const sha256 = createHash("sha256").update(bytes).digest("hex");
+        const cliReply = await cli.run({
+          arguments: ["inspect-native-dispatch-metadata", path, "--json"],
+          environment: { REA_LOG_LEVEL: "silent" },
+        });
+        expect(cliReply.exitCode, cliReply.stderr).toBe(0);
+        const cliResult = nativeDispatchMetadataResultSchema.parse(
+          parseEvidence(cliReply.json).normalized_result,
+        );
+        const call = await cli.sharedMcpCall!();
+        const opened = await call("open_binary", { path });
+        expect(opened.isError, JSON.stringify(opened)).not.toBe(true);
+        try {
+          const reply = await call("inspect_native_dispatch_metadata", {});
+          expect(reply.isError, JSON.stringify(reply)).not.toBe(true);
+          const mcpResult = nativeDispatchMetadataResultSchema.parse(
+            parseEvidence(reply.structuredContent).normalized_result,
+          );
+          for (const result of [cliResult, mcpResult]) {
+            expect(result.target_sha256).toBe(sha256);
+            expect(result.input_admission?.retained_bytes).toBe(bytes.length);
+            expect(result.result.objc_classes).toMatchObject([
+              {
+                name: "FixtureClass",
+                methods: [{ selector: "classMethod" }],
+                protocols: count === 1n ? ["FixtureProtocol"] : [],
+                decode:
+                  count === 1n
+                    ? { status: "decoded", reason: null }
+                    : { status: "partial", reason: "protocol_list_unreadable" },
+              },
+            ]);
+            expect(
+              result.result.coverage.find(
+                ({ facet }) => facet === "objc_class_method_ivar_metadata",
+              )?.status,
+            ).toBe(count === 1n ? "complete" : "partial");
+          }
+          expect(mcpResult.result.objc_classes).toEqual(
+            cliResult.result.objc_classes,
+          );
+        } finally {
+          const closed = await call("close_binary", {});
+          expect(closed.isError).not.toBe(true);
+        }
+        expect((await readFile(path)).equals(bytes)).toBe(true);
+      },
+    );
+  },
+);
 
 describe.skipIf(process.platform !== "darwin")(
   "native dispatch property attributes",

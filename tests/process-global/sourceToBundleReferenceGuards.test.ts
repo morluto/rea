@@ -122,15 +122,15 @@ it.each(["validation", "comparison"] as const)(
       const actual = await vi.importActual<typeof workflow>(
         "../../src/application/javascript/JavaScriptApplicationWorkflowService.js",
       );
-      vi.mocked(workflow.compareSourceToBundleEvidence).mockImplementationOnce(
-        (input) => {
-          const compared = actual.compareSourceToBundleEvidence(input);
-          setImmediate(() =>
-            controller.abort(new Error("cancel during graph comparison")),
-          );
-          return compared;
-        },
-      );
+      vi.mocked(
+        workflow.executeSourceToBundleComparison,
+      ).mockImplementationOnce(async (...args) => {
+        const compared = await actual.executeSourceToBundleComparison(...args);
+        setImmediate(() =>
+          controller.abort(new Error("cancel during graph comparison")),
+        );
+        return compared;
+      });
     }
     let settle: (() => void) | undefined;
     const settled = new Promise<void>((resolve) => {

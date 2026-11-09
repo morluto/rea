@@ -15,6 +15,7 @@ import { PACKAGE_METADATA } from "../../generatedPackageMetadata.js";
 import {
   BUNDLE_BASE_IMAGE,
   bundleDockerfile,
+  isPortableBundleName,
   ENVIRONMENT_EXPORT_OPERATION,
   planEnvironmentBundle,
   registryPackageSource,
@@ -117,6 +118,9 @@ describe("planEnvironmentBundle", () => {
     expect(lines[0]).toBe(`FROM ${BUNDLE_BASE_IMAGE}`);
     expect(lines).toContain("ENV MCP_HOST=0.0.0.0");
     expect(lines).toContain("ENV MCP_PORT=18765");
+    expect(lines).toContain(
+      `ENV MCP_ALLOWED_HOSTS=127.0.0.1,localhost,grafana-example`,
+    );
     expect(lines).toContain(
       "RUN apt-get update && apt-get install -y --no-install-recommends python3 && rm -rf /var/lib/apt/lists/*",
     );
@@ -235,6 +239,36 @@ describe("planEnvironmentBundle", () => {
 });
 
 describe("planEnvironmentBundle portable names", () => {
+  it.each(["4294967296", "123", "0xffffffff"])(
+    "refuses bundle name %s when HTTP cannot preserve its host identity",
+    (name) => {
+      expect(nameRefusal(name)).toMatchObject({
+        code: "invalid_request",
+        details: {
+          operation: "environment-export",
+          issues: [{ path: ["name"], reason: "invalid_value" }],
+        },
+      });
+    },
+  );
+
+  it("keeps addressable numeric prefixes and admits the DNS label boundary", () => {
+    for (const name of ["123-replay", "0xffffffff-replay", "a".repeat(63)]) {
+      expect(isPortableBundleName(name)).toBe(true);
+      const planned = plan({ name });
+      expect(planned.name).toBe(name);
+      expect(file(planned, `envs/${name}/Dockerfile`)).toContain(
+        `ENV MCP_ALLOWED_HOSTS=127.0.0.1,localhost,${name}`,
+      );
+    }
+    expect(isPortableBundleName("a".repeat(64))).toBe(false);
+    expect(nameRefusal("a".repeat(64))).toMatchObject({
+      code: "invalid_request",
+    });
+    for (const name of ["123", "4294967296", "0xffffffff"])
+      expect(isPortableBundleName(name)).toBe(false);
+  });
+
   it("accepts a kebab-case name override and refuses any other name as invalid input", () => {
     const renamed = plan({ name: "replay-2" });
     expect(renamed.files.map((entry) => entry.path)).toContain(

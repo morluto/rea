@@ -1,17 +1,20 @@
+import {
+  projectStableArtifactFailure,
+  stableArtifactInputRecovery,
+  projectArtifactCloseFailure,
+} from "../../artifacts/StableArtifactFailure.js";
 import { isSelectedRegularFileError } from "../../filesystem/RegularFile.js";
 import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
 import {
-  completedStableArtifact,
+  type StableArtifactSnapshot,
   readStableArtifact,
 } from "../../artifacts/readStableArtifact.js";
 import {
   artifactFilePrimaryFacts,
   type ArtifactFilePrimaryFacts,
-  bindArtifactFileCleanup,
   artifactFileCancellationCause,
 } from "../../artifacts/ArtifactFileOperation.js";
 import { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
-import { analysisErrorWithCleanupFailure } from "../../domain/analysisErrorCleanup.js";
 import type { DevicetreePort } from "../../application/binaryDiagnostics/DevicetreePort.js";
 import type { ExecutionOptions } from "../../application/AnalysisProvider.js";
 import { ArtifactOperationError } from "../../domain/artifactOperationError.js";
@@ -27,9 +30,7 @@ import {
   MAX_DEVICETREE_FILE_BYTES,
   type InspectDevicetreeInput,
 } from "../../domain/firmware/devicetree.js";
-import { fileSnapshotPartialObservationSchema } from "../../domain/fileSnapshotObservation.js";
 import { err, ok } from "../../domain/result.js";
-import { ProviderCleanupError } from "../../domain/providerCleanupError.js";
 import { DEVICETREE_PROVIDER } from "../../domain/investigationProviders.js";
 import { BinaryFormatFailure } from "../../native/metadata/BinaryContainer.js";
 import { DevicetreeLimitFailure, parseDevicetree } from "./DevicetreeParser.js";
@@ -45,26 +46,19 @@ export class DevicetreeProvider implements DevicetreePort {
     try {
       await this.#resources.close();
     } catch (cause: unknown) {
-      if (
-        !(cause instanceof ArtifactReaderFailure) ||
-        cause.cleanup === undefined
-      )
-        throw cause;
-      const error = new ProviderCleanupError(
+      throw projectArtifactCloseFailure(
+        cause,
         DEVICETREE_PROVIDER.id,
-        cause.cleanup.resources,
-        { reason: cause.cleanup.reason },
-        { cause, operation: OPERATION },
+        OPERATION,
       );
-      bindArtifactFileCleanup(cause, error);
-      throw error;
     }
   }
 
   async inspect(input: InspectDevicetreeInput, options?: ExecutionOptions) {
+    let snapshot: StableArtifactSnapshot | undefined;
     try {
       return await this.#resources.run(async () => {
-        const snapshot = await readStableArtifact(
+        snapshot = await readStableArtifact(
           input.path,
           input.max_file_bytes,
           options?.signal,
@@ -84,7 +78,7 @@ export class DevicetreeProvider implements DevicetreePort {
         );
       });
     } catch (cause) {
-      return err(devicetreeFailure(cause, input));
+      return err(devicetreeFailure(cause, input, snapshot));
     }
   }
 }
@@ -164,13 +158,17 @@ const devicetreeFailurePrimary = (
     }
 
     if (cause.reason === "path" || cause.reason === "format")
-      return new AnalysisInputError(OPERATION, { cause }, [
-        {
-          path: ["path"],
-          reason: "invalid_format",
-          message: cause.message,
-        },
-      ]);
+      return new AnalysisInputError(
+        OPERATION,
+        { cause, ...stableArtifactInputRecovery(cause) },
+        [
+          {
+            path: ["path"],
+            reason: "invalid_format",
+            message: cause.message,
+          },
+        ],
+      );
   }
   if (cause instanceof Error && "code" in cause) {
     if (cause.code === "EACCES" || cause.code === "EPERM")
@@ -197,31 +195,21 @@ const devicetreeFailurePrimary = (
   );
 };
 
-const devicetreeFailure = (cause: unknown, input: InspectDevicetreeInput) => {
+const devicetreeFailure = (
+  cause: unknown,
+  input: InspectDevicetreeInput,
+  snapshot?: StableArtifactSnapshot,
+) => {
   const primary = devicetreeFailurePrimary(
     artifactFilePrimaryFacts(cause),
     input,
   );
-  const snapshot = completedStableArtifact(cause);
-  if (snapshot !== undefined)
-    // The one stable read completed before finalization failed; keep its identity.
-    primary.retainPartialObservation(
-      fileSnapshotPartialObservationSchema.parse({
-        kind: "file-snapshot-hash",
-        path: input.path,
-        sha256: snapshot.sha256,
-        bytes: snapshot.bytes.length,
-      }),
-    );
-  if (!(cause instanceof ArtifactReaderFailure) || cause.cleanup === undefined)
-    return primary;
-  const cleanup = new ProviderCleanupError(
+  return projectStableArtifactFailure(
+    cause,
+    primary,
+    input.path,
     DEVICETREE_PROVIDER.id,
-    cause.cleanup.resources,
-    { reason: cause.cleanup.reason },
-    { operation: OPERATION, cause },
+    OPERATION,
+    snapshot,
   );
-  const error = analysisErrorWithCleanupFailure(primary, cleanup, OPERATION);
-  bindArtifactFileCleanup(cause, error);
-  return error;
 };

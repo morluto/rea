@@ -234,7 +234,10 @@ export const readReconstructionCoverageData = (
         })),
       ),
     );
-  const bundle = readEvidenceBundle(parsed.data.evidence_bundle);
+  const bundle = readEvidenceBundle(parsed.data.evidence_bundle, {
+    operation: "evaluate_reconstruction_coverage",
+    path: [...path, "evidence_bundle"],
+  });
   if (!bundle.ok) return bundle;
   const coverage = { ...parsed.data, evidence_bundle: bundle.value };
   try {

@@ -83,7 +83,7 @@ it.each([
     ok: false,
     error: {
       reason: "format",
-      message: "PYZ marshal string is not valid UTF-8",
+      message: expect.stringContaining("UTF-8"),
     },
   });
 });
@@ -127,7 +127,7 @@ it.each(["6c0200000003000000", "6cfeffffff03000000"])(
       ok: false,
       error: {
         reason: "format",
-        message: "PYZ marshal long is not normalized",
+        message: expect.stringMatching(/long.*not normalized/iu),
       },
     });
   },

@@ -5,6 +5,8 @@ import {
 import {
   classifyFatContainerIdentity,
   readFatContainerHeader,
+  readFatHeaderPrefix,
+  readMachoHeaderPrefixFacts,
 } from "../../domain/apple/machoContainer.js";
 import { readElfImage } from "./ElfImage.js";
 import { readPeImage } from "./PeImage.js";
@@ -16,8 +18,8 @@ export const readBinaryContainer = (bytes: Buffer): BinaryContainer => {
     return readElfImage(bytes);
   if (bytes.subarray(0, 2).equals(Buffer.from("MZ"))) return readPeImage(bytes);
   if (bytes.length >= 4) {
-    const magic = bytes.readUInt32BE();
-    if ([0xcafebabe, 0xcafebabf, 0xbebafeca, 0xbfbafeca].includes(magic)) {
+    const fatPrefix = readFatHeaderPrefix(bytes);
+    if (fatPrefix.state === "incomplete" || fatPrefix.state === "parsed") {
       const fatHeader = readFatContainerHeader(bytes, bytes.length);
       if (fatHeader.state === "malformed")
         throw new BinaryFormatFailure("malformed", fatHeader.reason);
@@ -38,7 +40,7 @@ export const readBinaryContainer = (bytes: Buffer): BinaryContainer => {
           "Universal/fat Mach-O containers require selecting a thin slice",
         );
     }
-    if ([0xfeedface, 0xfeedfacf, 0xcefaedfe, 0xcffaedfe].includes(magic))
+    if (readMachoHeaderPrefixFacts(bytes).format !== null)
       return readMachoImage(bytes);
   }
   throw new BinaryFormatFailure(

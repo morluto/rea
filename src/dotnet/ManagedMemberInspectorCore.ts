@@ -1,5 +1,7 @@
 import { createHash } from "node:crypto";
 
+import { err, ok, type Result } from "../domain/result.js";
+
 import {
   appendManagedParseIssues,
   managedFailure,
@@ -18,12 +20,12 @@ import {
   readManagedTypeNesting,
   type ManagedTypeNesting,
 } from "./ManagedTypeNesting.js";
-import type {
-  ManagedMetadataLayout,
-  MetadataTableLayout,
+import {
+  MANAGED_CODED_INDEXES,
+  type ManagedMetadataLayout,
+  type MetadataTableLayout,
 } from "./ManagedMetadataLayout.js";
 import {
-  metadataRowCursor,
   readManagedCompressedUnsigned,
   decodeMetadataCodedIndex,
   metadataCodedIndexCoordinate,
@@ -34,7 +36,11 @@ import {
   sha256Bytes,
 } from "./ManagedMetadataHeaps.js";
 import { memberListTable } from "./ManagedMemberPointers.js";
-import type { TypeMemberListFacts } from "./ManagedTypeMemberLists.js";
+import type {
+  TypeMemberListEntry,
+  TypeMemberListFacts,
+} from "./ManagedTypeMemberLists.js";
+import type { TypeDefinitionRowFacts } from "./ManagedTypeDefinitionRows.js";
 
 export type ManagedType = ManagedMemberInspection["types"][number];
 /** A renderable TypeDef projection paired with its original source row. */
@@ -72,6 +78,7 @@ export interface TypeRange {
 
 /** One TypeDef row's names and coordinates, including unreadable declarations. */
 interface TypeDefinition extends TypeRange {
+  readonly source: TypeDefinitionRowFacts;
   readonly row: number;
   readonly name: string | undefined;
   readonly namespace: string | undefined;
@@ -173,12 +180,10 @@ const readTypeDefinition = (
   layout: ManagedMetadataLayout,
   row: number,
   issues: ManagedParseIssue[],
-  memberLists: TypeMemberListFacts,
+  current: TypeMemberListEntry,
 ): TypeDefinition => {
-  const cursor = metadataRowCursor(bytes, layout, 2, row);
-  cursor.readUInt32();
-  const nameIndex = cursor.readIndex(layout.stringIndexSize);
-  const namespaceIndex = cursor.readIndex(layout.stringIndexSize);
+  const { source } = current;
+  const { nameIndex, namespaceIndex } = source;
   // Keep both independent name failures, but decode each heap coordinate once.
   const namespace = readManagedValue(
     () =>
@@ -189,9 +194,8 @@ const readTypeDefinition = (
     () => readMetadataString(bytes, layout, nameIndex, layout.strings.size),
     issues,
   );
-  cursor.readIndex(layout.codedIndexSize("TypeDefOrRef"));
-  const current = memberLists.entries[row - 1];
   return {
+    source,
     row,
     name,
     namespace,
@@ -200,10 +204,10 @@ const readTypeDefinition = (
       namespace === undefined || name === undefined
         ? null
         : fullName(namespace, name),
-    fieldStart: current?.field.start.value ?? null,
-    fieldEnd: current?.field.end ?? null,
-    methodStart: current?.method.start.value ?? null,
-    methodEnd: current?.method.end ?? null,
+    fieldStart: current.field.start.value,
+    fieldEnd: current.field.end,
+    methodStart: current.method.start.value,
+    methodEnd: current.method.end,
   };
 };
 
@@ -214,11 +218,10 @@ export const readTypeDefinitions = (
   memberLists: TypeMemberListFacts,
 ): readonly TypeDefinition[] => {
   appendManagedParseIssues(issues, memberLists.issues);
-  const typeTable = layout.table(2);
   const definitions: TypeDefinition[] = [];
-  for (let row = 1; row <= (typeTable?.rowCount ?? 0); row += 1)
+  for (const [index, entry] of memberLists.entries.entries())
     definitions.push(
-      readTypeDefinition(bytes, layout, row, issues, memberLists),
+      readTypeDefinition(bytes, layout, index + 1, issues, entry),
     );
   return definitions;
 };
@@ -249,12 +252,7 @@ export const parseTypes = (
       definition.fullName === null
     )
       continue;
-    const cursor = metadataRowCursor(bytes, layout, 2, row);
-    const flags = cursor.readUInt32();
-    cursor.readIndex(layout.stringIndexSize);
-    cursor.readIndex(layout.stringIndexSize);
-    const extendsOffset = cursor.offset;
-    const extendsRaw = cursor.readIndex(layout.codedIndexSize("TypeDefOrRef"));
+    const { flags, extendsRaw, extendsOffset, rowOffset } = definition.source;
     const fieldRange = rowRange(
       fields,
       definition.fieldStart,
@@ -267,8 +265,8 @@ export const parseTypes = (
     );
     const extendsIndex = decodeMetadataCodedIndex(
       extendsRaw,
-      2,
-      [2, 1, 27],
+      MANAGED_CODED_INDEXES.TypeDefOrRef.bits,
+      MANAGED_CODED_INDEXES.TypeDefOrRef.tables,
       layout.rowCounts,
     );
     if (extendsIndex.kind === "invalid")
@@ -279,12 +277,12 @@ export const parseTypes = (
         detail: `TypeDef Extends coded index 0x${extendsRaw.toString(16)} is invalid: ${extendsIndex.reason}`,
       });
     const enclosingRow = nesting.enclosing.get(row);
-    managedDecodeBudget(layout).reserve(128, cursor.start);
+    managedDecodeBudget(layout).reserve(128, rowOffset);
     items.push({
       row,
       type: {
         token,
-        row_offset: cursor.start,
+        row_offset: rowOffset,
         namespace,
         name,
         full_name: definition.fullName,
@@ -523,18 +521,22 @@ const POSITION_ELEMENTS: ReadonlyMap<number, readonly SignaturePosition[]> =
     [0x10, ["return", "parameter", "local", "field"]],
   ]);
 
+/** GENERICINST names a TypeDef or TypeRef, excluding the family's TypeSpec alternative. */
+const GENERIC_TYPE_DEFINITION_TABLES: readonly number[] =
+  MANAGED_CODED_INDEXES.TypeDefOrRef.tables.slice(0, 2);
+
 /** Decode a type operand once; spec callers also validate its metadata coordinate. */
 const readTypeOperand = (
   blob: Buffer,
   offset: number,
   layout?: ManagedMetadataLayout,
-  tables: readonly number[] = [2, 1, 27],
+  tables: readonly number[] = MANAGED_CODED_INDEXES.TypeDefOrRef.tables,
 ): Omit<TypeOperand, "offset"> => {
   const token = readCompressed(blob, offset);
   if (layout !== undefined) {
     const decoded = decodeMetadataCodedIndex(
       token.value,
-      2,
+      MANAGED_CODED_INDEXES.TypeDefOrRef.bits,
       tables,
       layout.rowCounts,
     );
@@ -547,7 +549,11 @@ const readTypeOperand = (
       );
     return { ...token, coordinate: { table: decoded.table, row: decoded.row } };
   }
-  const { table, row } = metadataCodedIndexCoordinate(token.value, 2, tables);
+  const { table, row } = metadataCodedIndexCoordinate(
+    token.value,
+    MANAGED_CODED_INDEXES.TypeDefOrRef.bits,
+    tables,
+  );
   return { ...token, coordinate: { table, row } };
 };
 
@@ -571,11 +577,16 @@ const readTypeSignature = (
   {
     layout,
     operands,
+    onElement,
+    displayTypeName,
   }: {
     /** Validate each type operand against these tables, as specs require. */
     readonly layout?: ManagedMetadataLayout;
     /** Collect each type operand, to resolve it by name. */
     readonly operands?: TypeOperand[];
+    /** Observe parsed element kinds without reinterpreting signature bytes. */
+    readonly onElement?: (kind: number) => void;
+    readonly displayTypeName?: SignatureDisplayTypeName | undefined;
   } = {},
 ): {
   readonly value: string;
@@ -583,6 +594,15 @@ const readTypeSignature = (
   readonly nominalGenericType: NominalGenericType | null;
 } => {
   const stack: TypeContinuation[] = [];
+  const namedOperand = (
+    kind: string,
+    operand: Parameters<SignatureTypeName>[0],
+  ): string => {
+    // Enclosing continuations copy names during rendering; admit first.
+    const name = displayTypeName?.(operand, (stack.length + 1) * 2);
+    const raw = `${kind}:${String(operand.value)}`;
+    return name === undefined || name === null ? raw : `${raw} (${name})`;
+  };
   let cursor = offset;
   let nominalGenericType: NominalGenericType | null = null;
   let pinned = false;
@@ -591,6 +611,7 @@ const readTypeSignature = (
     const kind = blob[cursor];
     if (kind === undefined)
       return malformedSignature("truncated type signature", cursor);
+    onElement?.(kind);
     if (kind === 0x41) {
       const signature = stack.at(-1);
       if (signature?.kind !== "list" || !signature.signatureItems)
@@ -666,7 +687,7 @@ const readTypeSignature = (
         );
       const token = readTypeOperand(blob, cursor + 1, layout);
       operands?.push({ offset: cursor + 1, ...token });
-      const modifier = `${kind === 0x1f ? "modreq" : "modopt"}:${String(token.value)}`;
+      const modifier = namedOperand(kind === 0x1f ? "modreq" : "modopt", token);
       // A modifier frame on top was pushed by the directly preceding byte;
       // keep an adjacent run together and in source order.
       const top = stack.at(-1);
@@ -676,7 +697,7 @@ const readTypeSignature = (
     } else if (kind === 0x11 || kind === 0x12) {
       const token = readTypeOperand(blob, cursor + 1, layout);
       operands?.push({ offset: cursor + 1, ...token });
-      value = `${kind === 0x11 ? "valuetype" : "class"}:${String(token.value)}`;
+      value = namedOperand(kind === 0x11 ? "valuetype" : "class", token);
       cursor = token.next;
     } else if (kind === 0x1e || kind === 0x13) {
       const variable = readCompressed(blob, cursor + 1);
@@ -700,7 +721,12 @@ const readTypeSignature = (
           "generic instantiation does not name a class or value type",
           cursor + 1,
         );
-      const token = readTypeOperand(blob, cursor + 2, layout, [2, 1]);
+      const token = readTypeOperand(
+        blob,
+        cursor + 2,
+        layout,
+        GENERIC_TYPE_DEFINITION_TABLES,
+      );
       if (
         cursor === offset &&
         (token.coordinate.table === 1 || token.coordinate.table === 2)
@@ -716,7 +742,10 @@ const readTypeSignature = (
           "generic instantiation has no type arguments",
           token.next,
         );
-      const head = `${generic === 0x11 ? "valuetype" : "class"}:${String(token.value)}`;
+      const head = namedOperand(
+        generic === 0x11 ? "valuetype" : "class",
+        token,
+      );
       stack.push({
         kind: "list",
         remaining: argumentCount.value,
@@ -778,8 +807,22 @@ const readTypeSignature = (
   }
 };
 
-/** Validate a StandAloneSig LocalVarSig without projecting local type identities. */
-export const validateLocalSignature = (
+/**
+ * Signature decoders report blob-relative offsets; coverage issues use
+ * artifact file offsets.
+ */
+const artifactSignatureIssue = (
+  issue: ManagedParseIssue,
+  scope: string,
+  blobOffset: number,
+): ManagedParseIssue => ({
+  ...issue,
+  scope,
+  offset: issue.offset === null ? blobOffset : blobOffset + issue.offset,
+});
+
+/** Read validated LocalVarSig identity facts without projecting local type identities. */
+export const readLocalSignatureFacts = (
   layout: ManagedMetadataLayout,
   blob: Buffer,
   {
@@ -787,7 +830,10 @@ export const validateLocalSignature = (
     blobOffset,
   }: { readonly scope: string; readonly blobOffset: number },
   budget: ManagedDecodeBudget,
-): ManagedParseIssue | null => {
+): Result<
+  NonNullable<ManagedMethodBody["local_var_signature"]>,
+  ManagedParseIssue
+> => {
   budget.admitTransient(blob.length * 256, blobOffset);
   try {
     if (blob[0] !== 0x07)
@@ -799,13 +845,24 @@ export const validateLocalSignature = (
         1,
       );
     let cursor = count.next;
+    let contextDependent = false;
     for (let index = 0; index < count.value; index += 1) {
-      const local = readTypeSignature(blob, cursor, "local", { layout });
+      const local = readTypeSignature(blob, cursor, "local", {
+        layout,
+        onElement: (kind) => {
+          // Named types, generic variables and modifiers require metadata or declaring context.
+          if ([0x11, 0x12, 0x13, 0x15, 0x1e, 0x1f, 0x20].includes(kind))
+            contextDependent = true;
+        },
+      });
       cursor = local.next;
     }
     if (cursor !== blob.length)
       malformedSignature("Trailing LocalVarSig data", cursor);
-    return null;
+    return ok({
+      raw_sha256: sha256Bytes(blob),
+      has_context_dependent_types: contextDependent,
+    });
   } catch (cause: unknown) {
     if (
       !(cause instanceof ManagedReaderFailure) ||
@@ -814,14 +871,7 @@ export const validateLocalSignature = (
         cause.issue.code !== "unsupported-signature")
     )
       throw cause;
-    return {
-      ...cause.issue,
-      scope,
-      offset:
-        cause.issue.offset === null
-          ? blobOffset
-          : blobOffset + cause.issue.offset,
-    };
+    return err(artifactSignatureIssue(cause.issue, scope, blobOffset));
   }
 };
 
@@ -939,6 +989,7 @@ const decodeSignature = (
   operands: TypeOperand[] = [],
   issueSink?: (issue: ManagedParseIssue) => void,
   scope = "signature",
+  displayTypeName?: SignatureDisplayTypeName,
 ): DecodedSignature => {
   let kind: DecodedSignature["kind"] = "unknown";
   try {
@@ -951,6 +1002,7 @@ const decodeSignature = (
       kind = "field";
       const fieldType = readTypeSignature(blob, 1, "field", {
         operands,
+        displayTypeName,
         ...(layout === undefined ? {} : { layout }),
       });
       return {
@@ -970,6 +1022,7 @@ const decodeSignature = (
     kind = "method";
     const returnType = readTypeSignature(blob, header.next, "return", {
       operands,
+      displayTypeName,
       ...(layout === undefined ? {} : { layout }),
     });
     let offset = returnType.next;
@@ -989,6 +1042,7 @@ const decodeSignature = (
       }
       const parameter = readTypeSignature(blob, offset, "parameter", {
         operands,
+        displayTypeName,
         ...(layout === undefined ? {} : { layout }),
       });
       parameters.push(parameter.value);
@@ -1074,6 +1128,12 @@ export type SignatureTypeName = (
 
 export type DeclarationTypeName = (table: 1 | 2, row: number) => Buffer | null;
 
+/** Display an already decoded operand, admitting its transient copies first. */
+export type SignatureDisplayTypeName = (
+  operand: Parameters<SignatureTypeName>[0],
+  copies: number,
+) => string | null;
+
 /**
  * Each type operand is replaced by 0xff, which never starts a compressed
  * coded index, then the 32-byte name digest; a blob without type operands
@@ -1129,13 +1189,21 @@ export const signature = (
   blob: Buffer,
   rawSha256?: string,
   typeName: SignatureTypeName = () => null,
+  displayTypeName?: SignatureDisplayTypeName,
 ): ManagedSignature => {
   const operands: TypeOperand[] = [];
   return projectSignature(
     blob,
     rawSha256,
     typeName,
-    decodeSignature(blob, undefined, operands),
+    decodeSignature(
+      blob,
+      undefined,
+      operands,
+      undefined,
+      "signature",
+      displayTypeName,
+    ),
     operands,
   );
 };
@@ -1149,14 +1217,19 @@ export const metadataSignature = (
     layout,
     issues,
     scope,
+    blobOffset,
     expectedKind,
+    displayTypeName,
   }: {
     readonly rawSha256: string;
     readonly typeName: SignatureTypeName;
     readonly layout: ManagedMetadataLayout;
     readonly issues: ManagedParseIssue[];
     readonly scope: string;
+    /** Artifact file offset of the blob's first byte. */
+    readonly blobOffset: number;
     readonly expectedKind?: "field" | "method";
+    readonly displayTypeName?: SignatureDisplayTypeName | undefined;
   },
 ): ManagedSignature => {
   const operands: TypeOperand[] = [];
@@ -1164,8 +1237,9 @@ export const metadataSignature = (
     blob,
     layout,
     operands,
-    (issue) => issues.push(issue),
+    (issue) => issues.push(artifactSignatureIssue(issue, scope, blobOffset)),
     scope,
+    displayTypeName,
   );
   if (
     expectedKind !== undefined &&

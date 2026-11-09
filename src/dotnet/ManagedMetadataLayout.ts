@@ -1,3 +1,5 @@
+import { isUtf8 } from "node:buffer";
+
 import {
   attachManagedDecodeBudget,
   ManagedDecodeBudget,
@@ -94,9 +96,10 @@ export interface ManagedMetadataLayout {
   codedIndexSize(name: CodedIndexName): 2 | 4;
 }
 
-export type CodedIndexName = keyof typeof CODED_INDEXES;
+export type CodedIndexName = keyof typeof MANAGED_CODED_INDEXES;
 
-const CODED_INDEXES = {
+/** ECMA-335 coded-index tag positions, shared by width and coordinate interpretation. */
+export const MANAGED_CODED_INDEXES = {
   TypeDefOrRef: { bits: 2, tables: [2, 1, 27] },
   HasConstant: { bits: 2, tables: [4, 8, 23] },
   HasCustomAttribute: {
@@ -113,7 +116,7 @@ const CODED_INDEXES = {
   MethodDefOrRef: { bits: 1, tables: [6, 10] },
   MemberForwarded: { bits: 1, tables: [4, 6] },
   Implementation: { bits: 2, tables: [38, 35, 39] },
-  CustomAttributeType: { bits: 3, tables: [6, 10] },
+  CustomAttributeType: { bits: 3, tables: [undefined, undefined, 6, 10] },
   ResolutionScope: { bits: 2, tables: [0, 26, 35, 1] },
   TypeOrMethodDef: { bits: 1, tables: [2, 6] },
 } as const;
@@ -204,10 +207,12 @@ const codedSize = (
   name: CodedIndexName,
   rowCounts: readonly number[],
 ): 2 | 4 => {
-  const descriptor = CODED_INDEXES[name];
+  const descriptor = MANAGED_CODED_INDEXES[name];
   let maximum = 0;
-  for (const table of descriptor.tables)
+  for (const table of descriptor.tables) {
+    if (table === undefined) continue;
     maximum = Math.max(maximum, rowCounts[table] ?? 0);
+  }
   return maximum < 2 ** (16 - descriptor.bits) ? 2 : 4;
 };
 
@@ -238,9 +243,15 @@ const readMetadataStreams = (
   const zero = versionBytes.indexOf(0);
   const decodedVersionLength = zero < 0 ? versionBytes.length : zero;
   budget.reserveString(decodedVersionLength, rootOffset + 16);
-  const version = versionBytes
-    .subarray(0, decodedVersionLength)
-    .toString("utf8");
+  const versionText = versionBytes.subarray(0, decodedVersionLength);
+  if (!isUtf8(versionText))
+    throw managedFailure(
+      "invalid-metadata-root",
+      "metadata.version",
+      "Metadata version is not valid UTF-8",
+      rootOffset + 16,
+    );
+  const version = versionText.toString("utf8");
   let cursor = align4(16 + versionLength);
   requireRange(bytes, rootOffset, cursor, 4, "metadata.stream-count");
   const streamCount = bytes.readUInt16LE(cursor + 2);

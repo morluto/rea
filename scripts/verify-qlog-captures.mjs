@@ -10,6 +10,11 @@ import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import { Ajv2020 } from "ajv/dist/2020.js";
 import { parseEvidence } from "../dist/domain/evidence.js";
+import { toolContract } from "../dist/contracts/toolContracts.js";
+import {
+  requireMcpOutput,
+  requireMcpToolError,
+} from "./lib/mcp-verifier-results.mjs";
 
 // Caller-supplied producer evidence stays local; no fixture capture or secrets are bundled.
 const [controlPath, lossPath, reportPath] = process.argv.slice(2);
@@ -40,6 +45,7 @@ transport.stderr?.on("data", (bytes) => {
 });
 const ajv = new Ajv2020({ strict: false, validateFormats: false });
 const measurements = [];
+const contract = toolContract("inspect_web_network_capture");
 try {
   try {
     await client.connect(transport);
@@ -68,12 +74,13 @@ try {
       name: tool.name,
       arguments: input,
     });
-    assert.notEqual(response.isError, true);
+    const mcp = parseEvidence(
+      requireMcpOutput(response, contract.name, contract),
+    );
     assert.ok(
       validateOutput(response.structuredContent),
       JSON.stringify(validateOutput.errors),
     );
-    const mcp = parseEvidence(response.structuredContent);
     const completed = await promisify(execFile)(
       process.execPath,
       [entrypoint, "inspect-web-network-capture", path, "qlog", "--json"],
@@ -153,17 +160,14 @@ try {
         view: { kind: "api-surface" },
       },
     });
-    assert.equal(retained.isError, true);
-    assert.equal(
-      JSON.parse(retained.content.find((item) => item.type === "text").text)
-        .error.code,
-      "unsupported_target",
-    );
+    assert.equal(requireMcpToolError(retained).code, "unsupported_target");
     const selected = await client.callTool({
       name: tool.name,
       arguments: { ...input, record_ordinals: [capture.total_records - 1, 0] },
     });
-    const subset = parseEvidence(selected.structuredContent).normalized_result;
+    const subset = parseEvidence(
+      requireMcpOutput(selected, contract.name, contract),
+    ).normalized_result;
     assert.deepEqual(
       subset.records.map((record) => record.ordinal),
       [capture.total_records - 1, 0],

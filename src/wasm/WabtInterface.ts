@@ -1,3 +1,4 @@
+import { WabtAdmissionError } from "./WabtAdmissionError.js";
 import { AnalysisResourceConstraintError } from "../domain/analysisErrorCore.js";
 import { wasmInterfaceEntryRepresentationBytes } from "../domain/wasm/wasmInterface.js";
 import { WasmInterfaceBudget } from "./WasmInterfaceBudget.js";
@@ -8,6 +9,7 @@ import type {
   WasmInterfaceValueType,
 } from "../domain/wasm/wasmInterface.js";
 import { watString, watStringEnd } from "./WabtString.js";
+import { watCommentEnd } from "./WabtComment.js";
 
 /** Split direct WAT children only; function instruction bodies are never materialized. */
 const parts = (form: string): string[] => {
@@ -19,23 +21,9 @@ const parts = (form: string): string[] => {
       i++;
       continue;
     }
-    if (form.startsWith("(;", i)) {
-      let depth = 1;
-      i += 2;
-      while (i < form.length && depth > 0) {
-        if (form.startsWith("(;", i)) {
-          depth++;
-          i += 2;
-        } else if (form.startsWith(";)", i)) {
-          depth--;
-          i += 2;
-        } else i++;
-      }
-      continue;
-    }
-    if (form.startsWith(";;", i)) {
-      const end = form.indexOf("\n", i);
-      i = end < 0 ? form.length : end + 1;
+    const commentEnd = watCommentEnd(form, i);
+    if (commentEnd !== undefined) {
+      i = commentEnd;
       continue;
     }
     const start = i;
@@ -45,7 +33,9 @@ const parts = (form: string): string[] => {
       let depth = 1;
       i++;
       while (i < form.length && depth > 0) {
-        if (form[i] === '"') i = watStringEnd(form, i + 1);
+        const commentEnd = watCommentEnd(form, i);
+        if (commentEnd !== undefined) i = commentEnd;
+        else if (form[i] === '"') i = watStringEnd(form, i + 1);
         else {
           if (form[i] === "(") depth++;
           else if (form[i] === ")") depth--;
@@ -58,7 +48,7 @@ const parts = (form: string): string[] => {
       if (items[0] === "func" && items.length > 1 && !atom.startsWith("$"))
         break;
     }
-    if (i <= start) throw new Error("Malformed WABT form");
+    if (i <= start) throw new WabtAdmissionError("malformed_form");
     budget.reserve(64 + (i - start) * 2);
     items.push(form.slice(start, i));
   }
@@ -102,7 +92,7 @@ const functionType = (
 };
 const name = (text: string | undefined): string => {
   if (text?.startsWith('"') !== true)
-    throw new Error("WABT interface name is missing");
+    throw new WabtAdmissionError("name_missing");
   return new TextDecoder("utf8", { fatal: true, ignoreBOM: true }).decode(
     watString(text, 1).bytes,
   );
@@ -154,7 +144,9 @@ const decodeWabtInterface = (
     const p = parts(form);
     const kind = p[0];
     if (kind === "func" || kind === "tag") {
-      const use = p.find((t) => t.startsWith("(type "));
+      // Interpret group heads through the same comment/whitespace framing as
+      // their values; raw prefixes can mistake an explicit type for no type.
+      const use = p.find((t) => t.startsWith("(") && head(t) === "type");
       if (use === undefined) return functionType(form, kind);
       const reference = parts(use)[1];
       const index =
@@ -220,11 +212,10 @@ const decodeWabtInterface = (
     }
     if (kind === "global") {
       const declaration = p[1]?.startsWith("$") === true ? p[2] : p[1];
-      const mutable = declaration?.startsWith("(mut ") === true;
-      const value_type =
-        mutable && declaration !== undefined
-          ? parts(declaration)[1]
-          : declaration;
+      const group =
+        declaration?.startsWith("(") === true ? parts(declaration) : undefined;
+      const mutable = group?.[0] === "mut";
+      const value_type = mutable ? group?.[1] : declaration;
       return value_type !== undefined && isValueType(value_type)
         ? { kind, value_type, mutable }
         : null;
@@ -262,7 +253,7 @@ const decodeWabtInterface = (
     const p = parts(form);
     if (p[0] !== "import") continue;
     const body = p[3];
-    if (body === undefined) throw new Error("Incomplete WABT import");
+    if (body === undefined) throw new WabtAdmissionError("incomplete_import");
     const observed = addDefinition(body);
     const entry: WasmInterfaceEntry = {
       direction: "import",
@@ -290,7 +281,7 @@ const decodeWabtInterface = (
     const p = parts(form);
     if (p[0] !== "export") continue;
     const body = p[2];
-    if (body === undefined) throw new Error("Incomplete WABT export");
+    if (body === undefined) throw new WabtAdmissionError("incomplete_export");
     const descriptor = parts(body);
     const rawKind = descriptor[0] ?? "unknown";
     const kind = ["func", "table", "memory", "global", "tag"].includes(rawKind)

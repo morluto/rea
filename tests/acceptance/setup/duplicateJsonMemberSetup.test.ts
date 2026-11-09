@@ -1,9 +1,22 @@
-import { mkdir, readFile, writeFile } from "node:fs/promises";
-import { dirname, join, resolve } from "node:path";
+import { mkdir, readFile, realpath, writeFile } from "node:fs/promises";
+import { dirname, isAbsolute, join, resolve } from "node:path";
 import { expect } from "vitest";
+import { z } from "zod";
 
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { cliTest, type TestCli } from "../../support/cli/cliFixture.js";
+
+const assertSelectedLauncher = async (value: unknown) => {
+  const [runtime, entrypoint] = z
+    .tuple([z.string(), z.string(), z.literal("mcp")])
+    .parse(value);
+  expect(isAbsolute(runtime)).toBe(true);
+  expect(isAbsolute(entrypoint)).toBe(true);
+  expect(await realpath(runtime)).toBe(await realpath(process.execPath));
+  expect(await realpath(entrypoint)).toBe(
+    await realpath(resolve("scripts/rea.mjs")),
+  );
+};
 
 // JSON.parse, JSONC parse, and native Claude Code read the last duplicate.
 const shadowParent = '"mcpServers": {"shadow": {"command": "/usr/bin/false"}},';
@@ -40,10 +53,7 @@ for (const [layout, original] of [
     "a repeated server table",
     `{\n  ${shadowParent}\n  "mcpServers": {"peer": {"command": "/usr/bin/true"}}\n}\n`,
   ],
-  [
-    "a repeated rea member",
-    `{\n  "mcpServers": {${shadowLeaf} "rea": {"command": "/usr/bin/true"}}\n}\n`,
-  ],
+  ["a repeated rea member", `{\n  "mcpServers": {${shadowLeaf} ${owned}}\n}\n`],
 ] as const)
   cliTest(
     `Claude Code setup edits the effective member of ${layout}`,
@@ -64,9 +74,17 @@ for (const [layout, original] of [
       expect(configured).toContain(
         layout === "a repeated server table" ? shadowParent : shadowLeaf,
       );
-      expect(JSON.parse(configured)).toMatchObject({
-        mcpServers: { rea: { command: expect.not.stringMatching(/^\/usr/) } },
-      });
+      const registration = z
+        .object({
+          mcpServers: z.object({
+            rea: z.object({ command: z.string(), args: z.array(z.string()) }),
+          }),
+        })
+        .parse(JSON.parse(configured)).mcpServers.rea;
+      await assertSelectedLauncher([
+        registration.command,
+        ...registration.args,
+      ]);
 
       const repeated = await run(setupArguments("claude_code"));
       expect(repeated.exitCode, repeated.stdout).toBe(0);
@@ -254,11 +272,11 @@ cliTest(
 );
 
 cliTest(
-  "OpenCode setup replaces every repeated V1 entry while preserving the V2 peer",
+  "OpenCode setup migrates every owned repeated V1 entry while preserving the V2 peer",
   async ({ cli }) => {
     const home = await createTestTempDirectory("rea-json-opencode-migration-");
     const config = join(home, ".config", "opencode", "opencode.json");
-    const original = `{"mcp":{"servers":{"peer":{"type":"local","command":["/usr/bin/true"]}},"rea":${openCodeForeign},"rea":${openCodeForeign}}}\n`;
+    const original = `{"mcp":{"servers":{"peer":{"type":"local","command":["/usr/bin/true"]}},"rea":${openCodeOwned},"rea":${openCodeOwned}}}\n`;
     await writeConfiguration(config, original);
 
     const setup = await runIn(cli, home)(setupArguments("opencode"));
@@ -270,16 +288,13 @@ cliTest(
       mcp: Record<string, unknown> & { servers: Record<string, unknown> };
     };
     expect(Object.hasOwn(mcp, "rea")).toBe(false);
-    const launcher = resolve("scripts/rea.mjs");
     expect(mcp.servers).toMatchObject({
       peer: { command: ["/usr/bin/true"] },
-      rea: {
-        type: "local",
-        command:
-          process.platform === "win32"
-            ? [process.execPath, launcher, "mcp"]
-            : [launcher, "mcp"],
-      },
+      rea: { type: "local" },
     });
+    const registration = z
+      .object({ command: z.unknown() })
+      .parse(mcp.servers.rea);
+    await assertSelectedLauncher(registration.command);
   },
 );

@@ -7,7 +7,7 @@ import { inspectManagedArtifactBytes } from "../../../dist/dotnet/ManagedArtifac
 import { inspectManagedMembersBytes } from "../../../dist/dotnet/ManagedMemberInspector.js";
 import { inspectManagedNativeBoundariesBytes } from "../../../dist/dotnet/ManagedNativeBoundaryInspector.js";
 import { compareManagedMemberPaths } from "../../../dist/application/managed/ManagedMemberComparisonService.js";
-import { verifyManagedNativeBoundariesEvidence } from "../../../dist/application/managed/ManagedNativeVerificationService.js";
+import { executeManagedNativeBoundaries } from "../../../dist/application/managed/ManagedNativeVerificationService.js";
 import { importManagedReconstructionEvidence } from "../../../dist/application/managed/ManagedReconstructionService.js";
 import { projectManagedApplicationGraphEvidence } from "../../../dist/application/managed/ManagedApplicationGraphService.js";
 import { traceApplicationFeatureEvidence } from "../../../dist/application/javascript/JavaScriptApplicationWorkflowService.js";
@@ -168,12 +168,15 @@ try {
       locations: [{ kind: "address", address: "0x401000" }],
     },
   );
-  const nativeVerification = verifyManagedNativeBoundariesEvidence({
+  const nativeVerification = executeManagedNativeBoundaries({
     managed_boundaries: frameworkBoundaryEvidence,
     native_observations: [nativeFunctionEvidence],
   });
   assert.equal(nativeVerification.ok, true);
-  assert.equal(nativeVerification.value.normalized_result.summary.verified, 1);
+  assert.equal(
+    nativeVerification.value.evidence.normalized_result.summary.verified,
+    1,
+  );
   const applicationGraph = projectManagedApplicationGraphEvidence({
     managed_artifact: frameworkArtifactEvidence,
     managed_members: frameworkMemberEvidence,

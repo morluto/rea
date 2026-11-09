@@ -179,26 +179,31 @@ share the application workflow, projection, retention and publication owners.
   - `schemes_agree_on_signer` (observed): every present block scheme presents
     the same _set_ of signer certificates. An extra signer in one scheme is
     disagreement; a signer without a certificate makes it `null` (unknown).
-    Build-tools 33+ rotate through v3.1 by default, so a rotated app usually
-    reads `false` here and `true` below.
+    A single present block scheme with known signers agrees with itself;
+    v1 is compared separately below.
   - `signer_change_declared_by_rotation` (declared): the signers differ, but
-    each appears in a lineage the APK declares. Read the two together: a
-    rotated APK shows `false` / `true`; signers that differ with no declared
-    lineage containing them show `false` / `false`. It is `null` when a
-    signer's identity is unknown, or when the signers differ and a declared
-    lineage could not be decoded.
+    each appears in a lineage the APK declares. Read the two together: block
+    schemes with different signers covered by a declared lineage show `false`
+    / `true`; differing signers without such a lineage show `false` / `false`.
+    A lineage alone does not establish a change between block schemes. It is
+    `null` when a signer's identity is unknown, or when the signers differ and
+    a declared lineage could not be decoded.
   - `v1_signers_match_block_signers` (observed): the v1 signer certificates
     equal what the lowest block scheme that has signers (v2, else v3, else
     v3.1) expects v1 to carry. That is its signer set, except that a v3/v3.1
     signer declaring a rotation lineage expects the lineage's first
     (original) certificate, as apksig requires. `false` is notable: the JAR
-    signature names a different key than the block signature. A key rotation
-    keeps v1 (and v2) on the original key, so it reads `true` while
-    `schemes_agree_on_signer` reads `false`, with or without v2. `null` when
-    v1 or a block scheme is absent, any signer's identity is unknown (a
+    signature names a different key than the block signature. When v1 uses
+    the lineage's original key and v3 its newer key, this comparison reads
+    `true`. If v3 is the only present block scheme, agreement is `true` and
+    declared inter-block signer change is `false` even though rotation is
+    present. If v2 also uses the original key, agreement is `false` and the
+    declared inter-block change is `true`. `null` when
+    v1 or a populated block scheme is absent, any signer's identity is unknown (a
     `decode_error`, a `null` certificate or a `subjectKeyIdentifier`
     `SignerInfo`), or the lineage's original certificate cannot be
-    identified; a limitation then says why.
+    identified. When identities or a lineage origin are unknown, limitations
+    explain why; absence is shown in the scheme records.
   - `strongest_scheme`, `rotation_present`, `source_stamp_present`,
     `self_consistent`.
 
@@ -238,6 +243,13 @@ bounded from above by those counts before anything is materialised, and the exac
 serialized size of the report together with its limitations (which repeat
 archive names) is then checked against an 8 MiB output budget (the exact check
 is authoritative); an over-budget report is refused, not truncated.
+
+Signing blocks admit at most 4096 ID/value pairs; at most 4096 signing-relevant
+META-INF entries are retained. These fixed counts, signer/lineage counts and the
+report byte budget return nonretryable `resource_constraint` errors naming the
+effective allowance. This release has no runtime override for them. Waiting for
+an active scan cannot raise a fixed count, and complete CLI JSON cannot raise the
+report budget. Occupied scan-queue capacity remains retryable after a scan finishes.
 
 The whole-file reader allocates the selected snapshot and bounded read scratch;
 total process memory exceeds the selected file's size. It also computes the complete

@@ -1,7 +1,7 @@
 import type { EvidenceMcpServer } from "./EvidenceMcpServer.js";
 
 import type { BinarySessionPort } from "../application/binary/BinarySessionPort.js";
-import { readImmutableEvidenceBundle } from "../application/EvidenceBundleFiles.js";
+import { readComparisonEvidenceBundles } from "../application/EvidenceBundleFiles.js";
 import { toolContract } from "../contracts/toolContracts.js";
 import { compareBundles } from "../domain/bundleComparison.js";
 import { createEvidence } from "../domain/evidence.js";
@@ -31,34 +31,27 @@ export const registerBundleComparisonTool = (
         contract.name,
         context.mcpReq.signal,
         async () => {
-          const [left, right] = await Promise.all([
-            readImmutableEvidenceBundle(
-              input.left_bundle_path,
-              context.mcpReq.signal,
-              resources,
-              contract.name,
-            ),
-            readImmutableEvidenceBundle(
-              input.right_bundle_path,
-              context.mcpReq.signal,
-              resources,
-              contract.name,
-            ),
-          ]);
-          if (!left.ok) return server.delivery.toCallToolResult(left, contract);
-          if (!right.ok)
-            return server.delivery.toCallToolResult(right, contract);
+          const loaded = await readComparisonEvidenceBundles(
+            input.left_bundle_path,
+            input.right_bundle_path,
+            context.mcpReq.signal,
+            resources,
+            contract.name,
+          );
+          if (!loaded.ok)
+            return server.delivery.toCallToolResult(loaded, contract);
+          const { left, right } = loaded.value;
           const computed = await runDerivedOperation(
             context,
             contract.name,
-            () => compareBundles(left.value, right.value, input.record_pairs),
+            () => compareBundles(left, right, input.record_pairs),
           );
           if (!computed.ok)
             return server.delivery.toCallToolResult(computed, contract);
           const comparison = computed.value;
           const sourceRecords = [
             ...new Map(
-              [...left.value.records, ...right.value.records].map((record) => [
+              [...left.records, ...right.records].map((record) => [
                 record.evidence_id,
                 record,
               ]),

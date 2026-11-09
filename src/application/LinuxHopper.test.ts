@@ -13,12 +13,12 @@ import {
   LinuxHopperTemporaryCleanupOwner,
   systemLinuxHopperInstallHost,
   type LinuxDistribution,
-  type LinuxHopperDownload,
   type LinuxHopperInstallHost,
   type LinuxHopperLauncherStatus,
   type LinuxPackageInstallFailure,
   type LinuxPackageInstallOutcome,
 } from "./LinuxHopper.js";
+import type { HopperDownload } from "./HopperDownload.js";
 import { err, ok } from "../domain/result.js";
 import {
   type LinuxPackageFamily,
@@ -74,9 +74,13 @@ class RecordingLinuxHost implements LinuxHopperInstallHost {
     Promise.resolve(this.distributionValue);
   release = (family: LinuxPackageFamily) =>
     Promise.resolve(ok(releasesFor(new Uint8Array([1, 2, 3]))[family]));
-  download = (url: string): Promise<LinuxHopperDownload> => {
+  download = (url: string): Promise<HopperDownload> => {
     this.downloads.push(url);
-    return Promise.resolve({ ok: this.archiveOk, bytes: this.archive });
+    return Promise.resolve(
+      this.archiveOk
+        ? ok(this.archive)
+        : err({ url, kind: "http_status", httpStatus: 503 }),
+    );
   };
   createTemporaryDirectory = (): Promise<string> =>
     Promise.resolve("/tmp/rea test");
@@ -394,7 +398,19 @@ describe("Linux Hopper installation failure classification", () => {
       ...(scenario === "package manager failure"
         ? { packageFailure: host.packageFailure }
         : {}),
+      ...(scenario === "package request failure"
+        ? {
+            download: {
+              request: "package",
+              url: host.downloads[0],
+              kind: "http_status",
+              httpStatus: 503,
+            },
+          }
+        : {}),
     });
+    if (scenario === "package request failure")
+      expect(host.cleaned).toEqual([]);
     if (host.installed.length > 0)
       expect(host.cleaned).toEqual(["/tmp/rea test"]);
   });

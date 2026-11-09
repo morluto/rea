@@ -19,6 +19,9 @@ export const translateArtifactFailure = (
       cause.details,
       cause.message,
       {
+        ...(cause.userMessage === undefined
+          ? {}
+          : { userMessage: cause.userMessage }),
         cause:
           cause.reason === "cancelled"
             ? artifactFileCancellationCause(cause)

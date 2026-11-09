@@ -7,11 +7,22 @@ import {
   FirmwareFileAccess,
 } from "../../../src/firmware/FirmwareFiles.js";
 import { readFirmwareCommandReport } from "../../../src/firmware/FirmwareCommand.js";
+import { ArtifactReaderFailure } from "../../../src/artifacts/ArtifactReader.js";
+import { AnalysisCleanupLease } from "../../../src/artifacts/AnalysisCleanupLease.js";
+import { firmwareFailure } from "../../../src/firmware/FirmwareFailures.js";
 import { FIRMWARE_LIMITS } from "../../../src/firmware/FirmwareRelease.js";
 import { AnalysisError } from "../../../src/domain/analysisErrorBase.js";
+import { AnalysisResourceConstraintError } from "../../../src/domain/analysisErrorCore.js";
 import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
 import { SafeOutputTree } from "../../../src/artifacts/SafeOutputTree.js";
-import { firmwareRequestSchema } from "../../../src/domain/firmware/firmwareAnalysis.js";
+import {
+  normalizeBinwalkReport,
+  normalizeUnblobReport,
+} from "../../../src/firmware/FirmwareReports.js";
+import {
+  firmwareResultSchemas,
+  firmwareRequestSchema,
+} from "../../../src/domain/firmware/firmwareAnalysis.js";
 import { createHash } from "node:crypto";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
@@ -112,8 +123,8 @@ it.each([
     expect(projected.remediation.action).toContain("cannot be replayed as-is");
     if (state === "oversized") {
       expect(projected.remediation.action).toContain("no runtime override");
-      expect(projected.remediation.action).toContain(
-        "Repeating the unchanged request fails the same way",
+      expect(projected.remediation.action).toMatch(
+        /unchanged request.*fails/iu,
       );
       expect(projected.remediation.action).not.toContain(
         "Rerun the same REA request",
@@ -127,8 +138,8 @@ it.each([
       expect(projected.remediation.action).toContain(
         "Rerun the same REA request",
       );
-      expect(projected.remediation.action).not.toContain(
-        "Repeating the unchanged request fails the same way",
+      expect(projected.remediation.action).not.toMatch(
+        /unchanged request.*fails/iu,
       );
     }
   },
@@ -153,6 +164,7 @@ it("orders extracted firmware paths by code point independently of host locale",
     root,
     1024,
     16,
+    Number.MAX_SAFE_INTEGER,
     "inspect_firmware_regions",
   );
   // Locale collation would interleave case and place "ä" by language rules.
@@ -179,7 +191,13 @@ it.skipIf(process.platform !== "linux")(
     );
     await writeFile(join(root, "good.bin"), "1234");
     await expect(
-      inventoryFirmwareOutput(root, 4, 10, "extract_firmware"),
+      inventoryFirmwareOutput(
+        root,
+        4,
+        10,
+        Number.MAX_SAFE_INTEGER,
+        "extract_firmware",
+      ),
     ).rejects.toMatchObject({
       _tag: "AnalysisOutputError",
       diagnostics: { raw_name_hex: "626164ff2e62696e" },
@@ -197,7 +215,13 @@ it.each([
     await writeFile(join(root, "a"), "1");
     await writeFile(join(root, "b"), "2");
     await expect(
-      inventoryFirmwareOutput(root, bytes, files, "extract_firmware"),
+      inventoryFirmwareOutput(
+        root,
+        bytes,
+        files,
+        Number.MAX_SAFE_INTEGER,
+        "extract_firmware",
+      ),
     ).rejects.toMatchObject({
       _tag: "AnalysisResourceConstraintError",
       resource: "capacity",
@@ -207,6 +231,42 @@ it.each([
     });
   },
 );
+
+it("refuses a staged file that reaches the producer's per-file limit", async () => {
+  const root = await createTestTempDirectory("rea-firmware-file-limit-");
+  await writeFile(join(root, "below"), "123");
+  await expect(
+    inventoryFirmwareOutput(root, 1024, 10, 4, "extract_firmware"),
+  ).resolves.toEqual([expect.objectContaining({ size: 3 })]);
+  await writeFile(join(root, "reached"), "1234");
+  const failure: unknown = await inventoryFirmwareOutput(
+    root,
+    1024,
+    10,
+    4,
+    "extract_firmware",
+  ).then(
+    () => undefined,
+    (cause: unknown) => cause,
+  );
+  expect(failure).toMatchObject({
+    _tag: "AnalysisResourceConstraintError",
+    resource: "file-size",
+    reportedLimits: { file_size_bytes: 4 },
+    retryable: false,
+  });
+  if (!(failure instanceof AnalysisResourceConstraintError)) throw failure;
+  expect(failure.remediationAction).toMatch(
+    /inherited.*4-byte file-size limit.*RLIMIT_FSIZE/iu,
+  );
+  expect(failure.remediationAction).toMatch(
+    /raise the file-size limit.*ulimit -f/iu,
+  );
+  expect(failure.remediationAction).toMatch(
+    /analysis_timeout_ms does not raise it/iu,
+  );
+  expect(failure.remediationAction).toMatch(/unchanged request fails/iu);
+});
 
 it("attributes missing sources to the selected path without relabeling snapshot destination failure", async () => {
   const root = await createTestTempDirectory("rea-firmware-source-");
@@ -308,3 +368,218 @@ it.skipIf(process.platform === "win32" || process.getuid?.() === 0)(
     }
   },
 );
+
+it("retains unfamiliar Unblob report members from JSON files through public diagnostics", async () => {
+  const root = await createTestTempDirectory("rea-firmware-report-metadata-");
+  const inputPath = join(root, "input.bin");
+  const reportPath = join(root, "report.json");
+  const sha256 = "a".repeat(64);
+  const unfamiliar: unknown = JSON.parse(
+    '{"__typename__":"FutureReport","__proto__":{"source":"local","empty":null},"constructor":false,"prototype":0,"nested":{"__proto__":"retained"}}',
+  );
+  const record = {
+    task: { path: inputPath, depth: 0, blob_id: "", is_multi_file: false },
+    reports: [
+      { __typename__: "HashReport", sha256 },
+      {
+        __typename__: "StatReport",
+        path: inputPath,
+        size: 4,
+        is_dir: false,
+        is_file: true,
+        is_link: false,
+        link_target: null,
+      },
+      unfamiliar,
+    ],
+    subtasks: [],
+  };
+  await writeFile(reportPath, JSON.stringify([record]));
+  const files = new FirmwareFileAccess();
+  try {
+    const raw = await files.report(reportPath, "extract_firmware");
+    const normalized = normalizeUnblobReport(raw, {
+      inputPath,
+      outputRoot: join(root, "output"),
+      sha256,
+      length: 4,
+      offset: 0,
+      maxDepth: 3,
+    });
+    const diagnostics =
+      firmwareResultSchemas.extract_firmware.shape.diagnostics.parse(
+        normalized.diagnostics,
+      );
+    expect(JSON.stringify(diagnostics)).toBe(
+      JSON.stringify([{ input_path: "$input", report: unfamiliar }]),
+    );
+    expect(normalized.coverage).toBe("partial");
+    for (const malformed of [{}, { __typename__: null }, { __typename__: 1 }]) {
+      expect(() =>
+        normalizeUnblobReport(
+          [{ ...record, reports: [...record.reports.slice(0, 2), malformed] }],
+          {
+            inputPath,
+            outputRoot: join(root, "output"),
+            sha256,
+            length: 4,
+            offset: 0,
+            maxDepth: 3,
+          },
+        ),
+      ).toThrow();
+    }
+  } finally {
+    await files.close();
+  }
+});
+
+it("rejects Binwalk extraction activity under every own JSON member", async () => {
+  const root = await createTestTempDirectory(
+    "rea-firmware-report-extractions-",
+  );
+  const reportPath = join(root, "report.json");
+  const inputPath = join(root, "input.bin");
+  const files = new FirmwareFileAccess();
+  try {
+    for (const extractions of [
+      "{}",
+      '{"__proto__":null}',
+      '{"ordinary":false}',
+    ]) {
+      await writeFile(
+        reportPath,
+        `[{"Analysis":{"file_path":${JSON.stringify(inputPath)},"file_map":[],"extractions":${extractions}}}]`,
+      );
+      const raw = await files.report(reportPath, "inspect_firmware_regions");
+      const normalize = () => normalizeBinwalkReport(raw, inputPath, 4);
+      if (extractions === "{}") expect(normalize()).toEqual([]);
+      else expect(normalize).toThrow("Expected one inspection-only report");
+    }
+  } finally {
+    await files.close();
+  }
+});
+
+it.each([false, true])(
+  "retains completed command output after report read failure (cleanup pending: %s)",
+  async (pending) => {
+    const lease = new AnalysisCleanupLease(async () => {});
+    const reader = pending
+      ? ArtifactReaderFailure.withCleanup(
+          new Error("report read failed"),
+          { reason: "close failed", resources: ["/work/report"] },
+          undefined,
+          [lease],
+        )
+      : new ArtifactReaderFailure("io", "report read failed");
+    const files = new FirmwareFileAccess();
+    vi.spyOn(files, "report").mockRejectedValue(reader);
+    const cause: unknown = await readFirmwareCommandReport({
+      path: "/work/report",
+      engine: "binwalk",
+      operation: "inspect_firmware_regions",
+      files,
+      execution: {
+        stdout: { text: "found output", bytes: 12, observedBytes: 12 },
+        stderr: { text: "warning", bytes: 7, observedBytes: 7 },
+        exit_code: 0,
+        signal: null,
+        command: "/opt/binwalk",
+        args: [],
+        resource_limiter: "/usr/bin/prlimit",
+      },
+    }).catch((failure: unknown) => failure);
+    const failure = firmwareFailure(cause, {
+      engine: "binwalk",
+      operation: "inspect_firmware_regions",
+    });
+    expect(
+      projectAnalysisError(failure).details?.captured_output,
+    ).toMatchObject({
+      stdout: "found output",
+      stderr: "warning",
+      stdout_bytes: 12,
+      stderr_bytes: 7,
+      exit_code: 0,
+    });
+    if (pending) {
+      expect(failure.cleanupIncomplete).toBe(true);
+      await lease.release();
+      expect(failure.cleanupIncomplete).toBe(false);
+    }
+    await files.close();
+  },
+);
+
+it("retains the analysis timeout and command output while report cleanup is pending and after retry", async () => {
+  const deadlineSignal = new AbortController();
+  const reason = new Error("analysis deadline");
+  deadlineSignal.abort(reason);
+  const lease = new AnalysisCleanupLease(async () => {});
+  const reader = ArtifactReaderFailure.withCleanup(
+    new ArtifactReaderFailure("cancelled", "deadline interrupted report read", {
+      cause: reason,
+    }),
+    { reason: "close failed", resources: ["/work/report"] },
+    {
+      kind: "file-snapshot-hash",
+      path: "/work/report",
+      sha256: "a".repeat(64),
+      bytes: 12,
+    },
+    [lease],
+  );
+  const files = new FirmwareFileAccess();
+  vi.spyOn(files, "report").mockRejectedValue(reader);
+  const failure: unknown = await readFirmwareCommandReport({
+    path: "/work/report",
+    engine: "binwalk",
+    operation: "inspect_firmware_regions",
+    files,
+    deadline: {
+      phase: "analysis",
+      timeoutMs: 42,
+      signal: deadlineSignal.signal,
+      expiresAtMs: 0,
+    },
+    execution: {
+      stdout: { text: "found output", bytes: 12, observedBytes: 12 },
+      stderr: { text: "warning", bytes: 7, observedBytes: 7 },
+      exit_code: 0,
+      signal: null,
+      command: "/opt/binwalk",
+      args: [],
+      resource_limiter: "/usr/bin/prlimit",
+    },
+  }).catch((cause: unknown) => cause);
+  if (!(failure instanceof AnalysisError))
+    throw new Error("Expected typed report failure");
+  expect(failure.cleanupIncomplete).toBe(true);
+  expect(failure.partialObservation).toMatchObject({
+    kind: "file-snapshot-hash",
+    path: "/work/report",
+  });
+  expect(projectAnalysisError(failure).details?.captured_output).toMatchObject({
+    stdout: "found output",
+    stderr: "warning",
+    exit_code: 0,
+  });
+  await lease.release();
+  expect(failure.cleanupIncomplete).toBe(false);
+  expect(
+    projectAnalysisError(failure).details?.partial_observation,
+  ).toMatchObject({ kind: "file-snapshot-hash", path: "/work/report" });
+  expect(projectAnalysisError(failure)).toMatchObject({
+    code: "provider_timeout",
+    details: {
+      timeout_ms: 42,
+      captured_output: {
+        stdout: "found output",
+        stderr: "warning",
+        exit_code: 0,
+      },
+    },
+  });
+  await files.close();
+});

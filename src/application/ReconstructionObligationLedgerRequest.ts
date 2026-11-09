@@ -1,3 +1,4 @@
+import { parseAnalysisInput } from "./AnalysisInput.js";
 import { z } from "zod";
 
 import { AnalysisInputError } from "../domain/analysisErrorCore.js";
@@ -13,7 +14,6 @@ import {
   type ReconstructionObligationManifest,
 } from "../domain/reconstructionObligationLedgerSchemas.js";
 import { err, ok, type Result } from "../domain/result.js";
-import { analysisInputErrorFromIssues } from "../domain/inputIssueProjection.js";
 
 const OPERATION = "build_reconstruction_obligation_ledger";
 const requestSchema = reconstructionObligationLedgerInputSchema.extend({
@@ -36,19 +36,20 @@ export interface ResolvedReconstructionObligationRequest {
 export const resolveReconstructionObligationLedgerRequest = (
   input: unknown,
 ): Result<ResolvedReconstructionObligationRequest, AnalysisError> => {
-  const frame = requestSchema.safeParse(input);
-  if (!frame.success)
-    return err(
-      analysisInputErrorFromIssues(OPERATION, frame.error.issues, input, {
-        cause: frame.error,
-      }),
-    );
-  const bundle = readEvidenceBundle(frame.data.evidence_bundle);
+  const frame = parseAnalysisInput(OPERATION, input, requestSchema);
+  if (!frame.ok) return frame;
+  const bundle = readEvidenceBundle(frame.value.evidence_bundle, {
+    operation: OPERATION,
+    path: ["evidence_bundle"],
+  });
   if (!bundle.ok) return bundle;
   const records = new Map(
     bundle.value.records.map((record) => [record.evidence_id, record]),
   );
-  for (const [index, obligation] of frame.data.reviewed_obligations.entries()) {
+  for (const [
+    index,
+    obligation,
+  ] of frame.value.reviewed_obligations.entries()) {
     for (const [
       referenceIndex,
       id,
@@ -73,7 +74,7 @@ export const resolveReconstructionObligationLedgerRequest = (
   }
   return ok({
     sources: { bundle: bundle.value, records },
-    reviewedObligations: frame.data.reviewed_obligations,
-    manifest: frame.data.manifest,
+    reviewedObligations: frame.value.reviewed_obligations,
+    manifest: frame.value.manifest,
   });
 };

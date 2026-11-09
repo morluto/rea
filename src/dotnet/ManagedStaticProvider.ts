@@ -106,10 +106,12 @@ class ManagedStaticClient implements AnalysisClient {
       const observed =
         snapshot === undefined
           ? await readManagedSnapshot(this.target.path, operation, {
+              expectedSha256: this.target.sha256,
               signal: options?.signal,
               resources: this.#resources,
             })
           : await hashManagedSource(this.target.path, operation, {
+              expectedSha256: this.target.sha256,
               signal: options?.signal,
               resources: this.#resources,
             });

@@ -3,7 +3,10 @@ import { posix } from "node:path";
 
 import { compactStringIdentityKey } from "../../domain/compactStringIdentity.js";
 import type { ApplicationNode } from "../../domain/javascript/javascriptApplicationGraphSchemas.js";
-import type { JavaScriptStaticAnalysis } from "../../domain/javascript/javascriptStaticAnalysisTypes.js";
+import {
+  VITE_OUTPUT_DEPENDENCY_PREFIX,
+  type JavaScriptStaticAnalysis,
+} from "../../domain/javascript/javascriptStaticAnalysisTypes.js";
 import type { JavaScriptArtifactFile } from "../../domain/javascript/javascriptArtifactFiles.js";
 import {
   addStaticInferenceEdge,
@@ -33,6 +36,7 @@ import {
 import {
   moduleResolutionModeForJavaScriptReference,
   isJsonModuleTarget,
+  isNativeAddonModuleTarget,
 } from "../../domain/javascript/javascriptModuleResolutionMode.js";
 
 type StaticReference = JavaScriptStaticAnalysis["references"][number];
@@ -201,7 +205,8 @@ const addReference = (
       input.value.module_runtime,
     ) ?? input.asset;
   const resolved =
-    input.value.specifier === null
+    input.value.specifier === null ||
+    input.value.loader_authority === "candidate"
       ? null
       : resolveReference(context, input.file.path, input.value, input.coverage);
   if (
@@ -306,7 +311,8 @@ const addReference = (
     coverage: input.coverage,
     relation:
       input.value.operation === "load" &&
-      resolved?.file?.kind === "native-addon"
+      resolved?.path != null &&
+      isNativeAddonModuleTarget(resolved.path, resolved.file?.kind)
         ? "loads"
         : "imports",
     properties: {
@@ -314,11 +320,15 @@ const addReference = (
       operation: input.value.operation,
       specifier: input.value.specifier,
       expression: input.value.expression,
+      ...(input.value.loader_authority === "candidate"
+        ? { loader_authority: "candidate" }
+        : {}),
       resolution_base_path: input.value.resolution_base_path ?? null,
       resolution_mode:
         input.value.kind === "static-import" ||
         input.value.kind === "dynamic-import" ||
-        input.value.kind === "require"
+        (input.value.kind === "require" &&
+          input.value.loader_authority !== "candidate")
           ? moduleResolutionModeForJavaScriptReference(
               input.file.path,
               input.value.kind,
@@ -328,7 +338,18 @@ const addReference = (
       resolution_status: resolved?.resolution?.resolution_status ?? null,
       ...artifactPathResolutionProperties(resolved?.resolution),
     },
-    ...(resolved === null ? {} : { limitations: resolved.limitations }),
+    ...(input.value.loader_authority === "candidate"
+      ? { confidence: "low" as const }
+      : {}),
+    ...(resolved === null
+      ? input.value.loader_authority === "candidate"
+        ? {
+            limitations: [
+              "The module loader is unknown, so this dependency cannot be resolved against the source file.",
+            ],
+          }
+        : {}
+      : { limitations: resolved.limitations }),
   });
 };
 
@@ -349,7 +370,7 @@ const addEndpoint = (
   const candidateLimitation =
     input.value.kind === "route"
       ? "Only the property name suggests a route; the enclosing object has no router fields."
-      : "The unbound method-like argument is only a candidate; its receiver does not establish a network call.";
+      : "The receiver or loader identity is unproven; this network endpoint is only a candidate.";
   const partialLimitation =
     "The request target is not an exact literal; the endpoint value retains the unresolved source expression.";
   const label = `${input.value.kind} ${candidate ? "endpoint candidate" : "endpoint"}`;
@@ -383,7 +404,10 @@ const addEndpoint = (
               operation: "classify-static-endpoint-candidate",
               coverage: input.coverage,
               confidence: "low",
-              limitations: [candidateLimitation],
+              limitations: [
+                candidateLimitation,
+                ...(partial ? [partialLimitation] : []),
+              ],
             })
           : astObservationEvidence({
               sha256: input.file.sha256,
@@ -411,7 +435,10 @@ const addEndpoint = (
     ...(candidate
       ? {
           confidence: "low" as const,
-          limitations: [candidateLimitation],
+          limitations: [
+            candidateLimitation,
+            ...(partial ? [partialLimitation] : []),
+          ],
         }
       : partial
         ? { limitations: [partialLimitation] }
@@ -491,8 +518,12 @@ const addDiscoveredRole = (
   input: FindingInput<StaticRolePath>,
   changedRoots: ReadonlySet<string> | null,
 ): void => {
+  if (input.value.loader_authority === "candidate") {
+    addCandidateRole(context, input);
+    return;
+  }
   const root = applicationRootPath(context, input.file);
-  const resolution = resolveArtifactPathByContext({
+  const resolved = resolveArtifactPathByContext({
     declaredPath: input.value.path,
     sourcePath: input.file.path,
     context: input.value.resolution_context,
@@ -500,7 +531,8 @@ const addDiscoveredRole = (
     jsonDocuments: context.analysis.jsonDocuments,
     directoryPaths: context.directoryPaths,
     unanalyzedFiles: context.unanalyzedFiles,
-    ...(input.value.role === "preload"
+    ...(input.value.role === "preload" ||
+    input.value.path_base === "source-directory"
       ? { runtimePathKind: "exact-file" as const }
       : input.value.role === "renderer" &&
           input.value.resolution_context === "filesystem-expression"
@@ -520,6 +552,16 @@ const addDiscoveredRole = (
           ? { runtimePathKind: "url-resource" as const }
           : {}),
   });
+  const resolution =
+    input.value.path_base === "source-directory"
+      ? {
+          ...resolved,
+          limitations: [
+            ...resolved.limitations,
+            "The source-directory anchor is inferred from authored code; bundled or transformed runtime path behavior was not verified.",
+          ],
+        }
+      : resolved;
   const role = createElectronRoleNode(context, {
     kind:
       input.value.role === "preload" ? "electron-preload" : "electron-renderer",
@@ -543,7 +585,12 @@ const addDiscoveredRole = (
     range: input.value.location,
     coverage: input.coverage,
     relation: "loads",
-    properties: { mechanism: input.value.mechanism },
+    properties: {
+      mechanism: input.value.mechanism,
+      ...(input.value.path_base === undefined
+        ? {}
+        : { path_base: input.value.path_base }),
+    },
   });
   linkElectronRoleToAsset(context, {
     role,
@@ -551,6 +598,67 @@ const addDiscoveredRole = (
     resolution,
     range: input.value.location,
     coverage: input.coverage,
+  });
+};
+
+/** Retain the requested path without asserting that an unknown loader creates an Electron role. */
+const addCandidateRole = (
+  context: JavaScriptArtifactGraphContext,
+  input: FindingInput<StaticRolePath>,
+): void => {
+  const limitation =
+    "The Electron loader is unknown, so the renderer role and target ownership remain unproven.";
+  const source =
+    sourceNodeFor(
+      context,
+      input.file.path,
+      input.value.module_key,
+      input.value.module_runtime,
+    ) ?? input.asset;
+  const properties = {
+    candidate_role: input.value.role,
+    loader_authority: "candidate",
+    declared_path: input.value.path,
+    resolution_status: "unavailable",
+    resolved_path: null,
+    mechanism: input.value.mechanism,
+    ...(input.value.path_base === undefined
+      ? {}
+      : { path_base: input.value.path_base }),
+  };
+  const role = context.accumulator.addNode({
+    kind: "unknown",
+    identity: artifactLocalIdentity(
+      input.file.sha256,
+      "candidate-electron-role",
+      JSON.stringify([input.file.path, input.value.path, input.value.location]),
+    ),
+    observations: [
+      {
+        label: input.value.path,
+        properties,
+        evidence: staticInferenceEvidence({
+          sha256: input.file.sha256,
+          path: input.file.path,
+          range: input.value.location,
+          operation: "retain-candidate-electron-role",
+          coverage: input.coverage,
+          confidence: "low",
+          limitations: [limitation],
+        }),
+      },
+    ],
+  });
+  addStaticInferenceEdge(context, {
+    source,
+    target: role,
+    file: input.file,
+    range: input.value.location,
+    coverage: input.coverage,
+    relation: "loads",
+    properties,
+    confidence: "low",
+    limitations: [limitation],
   });
 };
 
@@ -649,12 +757,22 @@ const resolveReference = (
           posix.join(posix.dirname(sourcePath), reference.resolution_base_path),
         )
       : sourcePath;
-  const chunk = isWorker
-    ? null
-    : resolveBundlerChunkReference(context, sourcePath, reference);
+  const viteDependency = specifier.startsWith(VITE_OUTPUT_DEPENDENCY_PREFIX)
+    ? specifier.slice(VITE_OUTPUT_DEPENDENCY_PREFIX.length)
+    : undefined;
+  const chunk =
+    isWorker || viteDependency !== undefined
+      ? null
+      : resolveBundlerChunkReference(context, sourcePath, reference);
   if (chunk !== null) return chunk;
+  // Only a recovered factory loader names a bundle module key. A real CommonJS
+  // `require("electron")` inside a factory body records `commonjs-loader`, so its
+  // specifier is an external package name even though the finding sits inside a
+  // module range and carries that range's runtime.
   const module =
-    isWorker || reference.module_runtime === undefined
+    isWorker ||
+    reference.module_runtime === undefined ||
+    reference.loader === "commonjs-loader"
       ? undefined
       : context.moduleNodes.get(
           moduleLookupKey(sourcePath, reference.module_runtime, specifier),
@@ -671,35 +789,38 @@ const resolveReference = (
         };
   }
   // Worker scripts are URLs relative to the script, not module specifiers.
-  const resolution = isWorker
-    ? resolveArtifactPathByContext({
-        declaredPath: specifier,
-        sourcePath,
-        context: "url-reference",
-        files: context.filesByPath,
-        jsonDocuments: context.analysis.jsonDocuments,
-        directoryPaths: context.directoryPaths,
-        unanalyzedFiles: context.unanalyzedFiles,
-      })
-    : resolveArtifactPathByContext({
-        declaredPath: specifier,
-        sourcePath: resolutionSourcePath,
-        context: "module-specifier",
-        files: context.filesByPath,
-        jsonDocuments: context.analysis.jsonDocuments,
-        directoryPaths: context.directoryPaths,
-        unanalyzedFiles: context.unanalyzedFiles,
-        ...("require" === reference.kind ||
-        "static-import" === reference.kind ||
-        "dynamic-import" === reference.kind
-          ? {
-              moduleKind: moduleResolutionModeForJavaScriptReference(
-                resolutionSourcePath,
-                reference.kind,
-              ),
-            }
-          : {}),
-      });
+  const resolution =
+    viteDependency !== undefined
+      ? resolveViteOutputDependency(context, sourcePath, viteDependency)
+      : isWorker
+        ? resolveArtifactPathByContext({
+            declaredPath: specifier,
+            sourcePath,
+            context: "url-reference",
+            files: context.filesByPath,
+            jsonDocuments: context.analysis.jsonDocuments,
+            directoryPaths: context.directoryPaths,
+            unanalyzedFiles: context.unanalyzedFiles,
+          })
+        : resolveArtifactPathByContext({
+            declaredPath: specifier,
+            sourcePath: resolutionSourcePath,
+            context: "module-specifier",
+            files: context.filesByPath,
+            jsonDocuments: context.analysis.jsonDocuments,
+            directoryPaths: context.directoryPaths,
+            unanalyzedFiles: context.unanalyzedFiles,
+            ...("require" === reference.kind ||
+            "static-import" === reference.kind ||
+            "dynamic-import" === reference.kind
+              ? {
+                  moduleKind: moduleResolutionModeForJavaScriptReference(
+                    resolutionSourcePath,
+                    reference.kind,
+                  ),
+                }
+              : {}),
+          });
   const path = resolution.resolved_path;
   const targetPath = path ?? resolution.candidate_path;
   const targetKind =
@@ -715,7 +836,8 @@ const resolveReference = (
     targetPath !== undefined && isJsonModuleTarget(targetPath, targetKind);
   const targetImportsUnexamined =
     !targetIsJson &&
-    (resolution.resolution_status === "unavailable" ||
+    (resolution.unexamined_module_imports === true ||
+      resolution.resolution_status === "unavailable" ||
       (path !== null &&
         !context.applicationModuleReferencesRetained.has(path)));
   if (path === null) {
@@ -755,6 +877,80 @@ const resolveReference = (
           : {}),
         resolution,
       };
+};
+
+/**
+ * Vite's preload helper prefixes the configured base to a path under the
+ * build output directory, which is an ancestor of the importing chunk. Only
+ * one ancestor holding the file establishes that directory.
+ */
+const resolveViteOutputDependency = (
+  context: JavaScriptArtifactGraphContext,
+  sourcePath: string,
+  dependency: string,
+): ArtifactPathResolution => {
+  const resolutions = ancestorDirectories(sourcePath).map((directory) =>
+    resolveArtifactPathByContext({
+      declaredPath: dependency,
+      sourcePath: posix.join(directory, posix.basename(sourcePath)),
+      context: "url-reference",
+      files: context.filesByPath,
+      jsonDocuments: context.analysis.jsonDocuments,
+      directoryPaths: context.directoryPaths,
+      unanalyzedFiles: context.unanalyzedFiles,
+    }),
+  );
+  // An ancestor whose candidate exists but was not analyzed, or whose absence
+  // is unknown, may still be the build output directory. Keep it.
+  const candidates = resolutions.filter(
+    ({ resolution_status: status }) =>
+      status === "resolved" || status === "unavailable",
+  );
+  const [single] = candidates;
+  if (candidates.length === 1 && single !== undefined) return single;
+  const root = resolutions.at(-1);
+  if (root === undefined)
+    throw new TypeError("A source path has at least the root directory");
+  if (candidates.length > 1) {
+    const { candidate_path: _rootCandidate, ...rootFacts } = root;
+    const paths = candidates.map(
+      (candidate) => candidate.resolved_path ?? candidate.candidate_path,
+    );
+    return {
+      ...rootFacts,
+      resolved_path: null,
+      resolution_status: "unavailable",
+      limitations: [
+        ...new Set([
+          ...candidates.flatMap(({ limitations }) => limitations),
+          `Several ancestors of the importing file may hold this Vite build-output path (${paths.join(", ")}); the build output directory is not established.`,
+        ]),
+      ],
+    };
+  }
+  return {
+    ...root,
+    resolved_path: null,
+    resolution_status:
+      root.resolution_status === "resolved"
+        ? "not-found"
+        : root.resolution_status,
+    limitations: [
+      ...root.limitations,
+      "A Vite preload dependency is relative to the build output directory, and no ancestor of the importing file holds it. Select the build output directory, which holds index.html and the assets directory.",
+    ],
+  };
+};
+
+/** The source's directory and each ancestor up to the selected root. */
+const ancestorDirectories = (sourcePath: string): string[] => {
+  const directories: string[] = [];
+  for (let directory = posix.dirname(sourcePath); ;) {
+    directories.push(directory === "." ? "" : directory);
+    if (directory === "." || directory === "/" || directory === "") break;
+    directory = posix.dirname(directory);
+  }
+  return directories;
 };
 
 const resolveBundlerChunkReference = (
@@ -816,6 +1012,9 @@ const unresolvedReferenceNode = (
           reference_kind: reference.kind,
           specifier: reference.specifier,
           expression: reference.expression,
+          ...(reference.loader_authority === "candidate"
+            ? { loader_authority: "candidate" }
+            : {}),
           resolution: "unresolved",
           ...(resolution === undefined
             ? {}
@@ -831,6 +1030,9 @@ const unresolvedReferenceNode = (
           confidence: "low",
           limitations: [
             "The static reference could not be resolved within the inventoried artifact.",
+            ...(reference.loader_authority === "candidate"
+              ? ["The module loader is unknown."]
+              : []),
             ...(resolution?.limitations ?? []),
           ],
         }),

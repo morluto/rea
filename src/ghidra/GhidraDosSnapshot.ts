@@ -3,8 +3,10 @@ import type { FileHandle } from "node:fs/promises";
 import { readArtifactFileChunks } from "../artifacts/readArtifactFileChunks.js";
 import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
 import {
-  dosMzImageByteLength,
-  observeMzWindowsHeader,
+  dosMzDeclaredImageByteLength,
+  readDosMzDeclarations,
+  parseDeclaredMzHeaderEvidence,
+  withMzWindowsHeaderSignature,
 } from "../domain/dosMz.js";
 import { err } from "../domain/result.js";
 import type { NativeLoadImageObservation } from "../domain/native/nativeLoadImage.js";
@@ -37,7 +39,9 @@ export const attestGhidraDosSnapshot = async (
   });
   if (header === undefined || header.length !== headerBytes)
     throw new RegularFileChangedError(path);
-  const extent = dosMzImageByteLength(header);
+  const declarations = readDosMzDeclarations(header);
+  if (!declarations.ok) return declarations;
+  const extent = dosMzDeclaredImageByteLength(declarations.value);
   if (!extent.ok) return extent;
   if (extent.value > fileBytes) return err("truncated DOS MZ load module");
   // Retain the complete initialized image and the Windows-pointer header only.
@@ -57,7 +61,8 @@ export const attestGhidraDosSnapshot = async (
     }
   }
   if (captured !== captureBytes) throw new RegularFileChangedError(path);
-  const windowsHeader = observeMzWindowsHeader(prefix, fileBytes);
+  let evidence = parseDeclaredMzHeaderEvidence(prefix, fileBytes, declarations);
+  const { windowsHeader } = evidence;
   let signature:
     | { readonly offset: number; readonly bytes: Buffer }
     | undefined;
@@ -81,7 +86,14 @@ export const attestGhidraDosSnapshot = async (
       bytes: signatureBytes,
     };
   }
-  const prepared = prepareGhidraDosLoadImage(prefix, fileBytes, signature);
+  if (signature !== undefined)
+    evidence = withMzWindowsHeaderSignature(
+      prefix,
+      fileBytes,
+      evidence,
+      signature,
+    );
+  const prepared = prepareGhidraDosLoadImage(prefix, evidence);
   if (!prepared.ok) return prepared;
   const originalHash = createHash("sha256").update(prefix);
   const modifiedHash = createHash("sha256")

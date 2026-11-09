@@ -1,3 +1,4 @@
+import { requireOutputSchema } from "./toolOutputSchemaPrimitives.js";
 import { jsonObjectSchema } from "../domain/jsonValue.js";
 import { analysisDetailSummaryDefaultSchema } from "./analysisDetail.js";
 import { enhancedInputSchemas } from "./enhancedInputs.js";
@@ -5,7 +6,6 @@ import { TOOL_EXAMPLE_OVERRIDES } from "./toolContractExamples.js";
 import type { ToolContract } from "./toolContractTypes.js";
 import { toolContractMetadata } from "./toolEffects.js";
 import { enhancedOutputSchemas } from "./toolOutputSchemaGroups.js";
-import { requireOutputSchema } from "./toolOutputSchemaPrimitives.js";
 
 type FunctionWorkflowName = "analyze_function" | "inspect_native_api";
 
@@ -50,7 +50,7 @@ const functionWorkflow = <Name extends FunctionWorkflowName>(
 export const FUNCTION_WORKFLOW_TOOL_CONTRACTS = [
   functionWorkflow(
     "analyze_function",
-    "Build a dossier for one native function identified by symbol or provider-returned address. Returns identity with complete inclusive analyzed body ranges or explicit unknown, provider-specific pseudocode and assembly, comments, calls, references, referenced strings/names, local CFG blocks, and available native API boundary observations. Ghidra terminal-call assumptions that may cut the analyzed body are reported in limitations with available callee identities. Default detail summary returns a compact dossier (identity, pseudocode size, facet counts, value-flow availability) and retains the complete dossier Evidence in this session; page pseudocode, references, assembly and value-flow through normalized_result.parent_evidence_id with inspect_analysis_view. detail complete returns the full dossier inline.",
+    "Build a dossier for one native function identified by symbol or provider-returned address. Returns identity with complete inclusive analyzed body ranges or explicit unknown, provider-specific pseudocode and assembly, comments, calls, references, referenced strings/names, local CFG blocks, and available native API boundary observations. Ghidra terminal-call assumptions that may cut the analyzed body are reported in limitations with available callee identities. Default detail summary returns a compact dossier (identity, pseudocode size, facet counts, value-flow availability) and retains the complete dossier Evidence in this session; page pseudocode, references, assembly, comments and value-flow through normalized_result.parent_evidence_id with inspect_analysis_view. detail complete returns the full dossier inline.",
   ),
   functionWorkflow(
     "inspect_native_api",

@@ -9,12 +9,11 @@ import {
 } from "../../domain/firmware/firmwareAnalysis.js";
 import {
   AnalysisCancelledError,
-  AnalysisInputError,
   AnalysisOutputError,
 } from "../../domain/analysisErrorCore.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
 import type { Evidence } from "../../domain/evidence.js";
-import { projectInputIssues } from "../../domain/inputIssueProjection.js";
+import { analysisOperationInputErrorFromIssues } from "../../domain/inputIssueProjection.js";
 import { err, type Result } from "../../domain/result.js";
 import { completeProviderEvidence } from "../ProviderOperationExecution.js";
 
@@ -39,17 +38,11 @@ export class FirmwareAnalysisService {
     const parsed = firmwareRequestSchema.safeParse({ operation, input });
     if (!parsed.success)
       return err(
-        new AnalysisInputError(
+        analysisOperationInputErrorFromIssues(
           operation,
-          { cause: parsed.error },
-          projectInputIssues(parsed.error.issues, { operation, input }).map(
-            (issue) => ({
-              ...issue,
-              // `input` is the internal discriminated request envelope.
-              path:
-                issue.path[0] === "input" ? issue.path.slice(1) : issue.path,
-            }),
-          ),
+          parsed.error.issues,
+          input,
+          parsed.error,
         ),
       );
     const executed = await this.provider.execute(parsed.data, options);

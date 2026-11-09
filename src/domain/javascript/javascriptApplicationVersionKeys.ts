@@ -1,3 +1,4 @@
+import { nativeExportCorrespondenceKey } from "./javascriptNativeExportFacts.js";
 import { canonicalJson } from "../comparisonSemantics.js";
 import {
   compareUnicodeCodePoints,
@@ -250,6 +251,11 @@ const semanticKey = (node: ApplicationNode): string | null => {
   return value === null ? null : `semantic\0${node.kind}\0${value}`;
 };
 
+/** Kinds keyed by one literal name, unless that name is a dynamic expression. */
+const LITERAL_NAME_PROPERTIES: Partial<
+  Record<ApplicationNode["kind"], string>
+> = { "ipc-channel": "channel", "url-scheme": "scheme" };
+
 const semanticValue = (
   node: ApplicationNode,
   properties: Readonly<Record<string, JsonValue>>,
@@ -261,31 +267,20 @@ const semanticValue = (
       properties.storage_kind,
       properties.name ?? properties.mechanism,
     );
-  if (node.kind === "ipc-channel")
-    return properties.resolution === "dynamic"
+  const literalKey = LITERAL_NAME_PROPERTIES[node.kind];
+  if (literalKey !== undefined)
+    return ["dynamic", "invalid-literal"].includes(
+      String(properties.resolution),
+    )
       ? null
-      : (exactString(properties.channel) ?? firstLabel(node));
+      : (exactString(properties[literalKey]) ?? firstLabel(node));
   if (node.kind === "context-bridge-api")
     return (
       firstLabel(node) ??
       exactString(properties.api_key) ??
       nonEmptyString(properties.api_name)
     );
-  if (node.kind === "native-export")
-    return (
-      joined(
-        properties.specifier,
-        compositeKey([
-          stringList(properties.requested_members),
-          typeof properties.namespace_access === "boolean"
-            ? properties.namespace_access
-            : null,
-          typeof properties.dynamic_member_access === "boolean"
-            ? properties.dynamic_member_access
-            : null,
-        ]),
-      ) ?? firstLabel(node)
-    );
+  if (node.kind === "native-export") return nativeExportCorrespondenceKey(node);
   if (
     [
       "electron-main",
@@ -333,13 +328,6 @@ const nonEmptyString = (value: unknown): string | null =>
 /** A literal value such as `ipcMain.handle("")` keeps its exact empty text. */
 const exactString = (value: unknown): string | null =>
   typeof value === "string" ? value : null;
-
-const stringList = (value: unknown): string[] =>
-  Array.isArray(value)
-    ? value
-        .filter((item): item is string => typeof item === "string")
-        .sort(compareUnicodeCodePoints)
-    : [];
 
 const sortedNodes = (nodes: Iterable<ApplicationNode>): ApplicationNode[] =>
   [...nodes].sort((left, right) =>

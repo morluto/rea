@@ -1,11 +1,13 @@
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { expect, it, onTestFinished, vi } from "vitest";
-import { createTestBinarySession } from "../../fixtures/binarySession.js";
+import {
+  createTestBinarySession,
+  createDeferred,
+} from "../../fixtures/binarySession.js";
 import { GoBinaryService } from "../../../src/application/go/GoBinaryService.js";
 import type { GoBinary } from "../../../src/domain/go/goBinary.js";
 import { silentLogger } from "../../../src/logger.js";
 import { createServer } from "../../../src/server/createServer.js";
-import { createDeferred } from "../../fixtures/binarySession.js";
 import { ok } from "../../../src/domain/result.js";
 import type { JavaScriptRuntimeObservationPort } from "../../../src/application/javascript/JavaScriptRuntimeObservationPort.js";
 import type { BrowserObservationPort } from "../../../src/application/BrowserObservationPort.js";
@@ -29,6 +31,7 @@ it("retains late-cancelled Go artifact Evidence through MCP and keeps the server
     throw new Error("unexpected binary admission");
   });
   const service = new GoBinaryService({
+    close: async () => {},
     identity: { id: "fixture", name: "fixture", version: "1" },
     inspect: async (_input, options) => {
       started.resolve();

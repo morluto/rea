@@ -1,10 +1,8 @@
+import { parseAnalysisInput } from "../AnalysisInput.js";
 import type { ExecutionOptions } from "../AnalysisProvider.js";
 import type { SqliteDatabasePort } from "./SqliteDatabasePort.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
-import {
-  AnalysisCancelledError,
-  AnalysisOutputError,
-} from "../../domain/analysisErrorCore.js";
+import { AnalysisOutputError } from "../../domain/analysisErrorCore.js";
 import {
   createEvidence,
   type Evidence,
@@ -21,7 +19,6 @@ import {
   sqliteSchemaScope,
   sqliteInspectionParameters,
 } from "../../domain/sqlite/sqliteDatabase.js";
-import { analysisInputErrorFromIssues } from "../../domain/inputIssueProjection.js";
 import { err, ok, type Result } from "../../domain/result.js";
 
 const OPERATION = "inspect_sqlite_database";
@@ -62,6 +59,7 @@ const matchesSelectedDatabase = (
     ? report.rows === null
     : report.rows?.table === input.table &&
       report.rows.row_limit === (input.row_limit ?? SQLITE_ROW_LIMIT_DEFAULT) &&
+      report.rows.row_offset === (input.row_offset ?? 0) &&
       (input.columns === undefined ||
         (report.rows.columns.length === input.columns.length &&
           report.rows.columns.every(
@@ -82,27 +80,21 @@ export class SqliteDatabaseService {
     rawInput: unknown,
     options?: ExecutionOptions,
   ): Promise<Result<Evidence, AnalysisError>> {
-    if (options?.signal?.aborted)
-      return err(
-        new AnalysisCancelledError(OPERATION, {
-          cause: options.signal.reason,
-        }),
-      );
-    const input = inspectSqliteDatabaseInputSchema.safeParse(rawInput);
-    if (!input.success)
-      return err(
-        analysisInputErrorFromIssues(OPERATION, input.error.issues, rawInput, {
-          cause: input.error,
-        }),
-      );
-    const inspected = await this.provider.inspect(input.data, options);
+    const input = parseAnalysisInput(
+      OPERATION,
+      rawInput,
+      inspectSqliteDatabaseInputSchema,
+      options?.signal,
+    );
+    if (!input.ok) return input;
+    const inspected = await this.provider.inspect(input.value, options);
     if (!inspected.ok) return inspected;
     const execution = inspected.value;
     const report = sqliteDatabaseSchema.safeParse(execution.result);
     if (
       !report.success ||
       execution.subject == null ||
-      !matchesSelectedDatabase(report.data, input.data, execution.subject)
+      !matchesSelectedDatabase(report.data, input.value, execution.subject)
     )
       return err(
         new AnalysisOutputError(
@@ -113,7 +105,7 @@ export class SqliteDatabaseService {
     return ok(
       createEvidence(execution.subject, execution.provider, {
         operation: OPERATION,
-        parameters: sqliteInspectionParameters(input.data),
+        parameters: sqliteInspectionParameters(input.value),
         result: report.data,
         ...(execution.rawResult === null
           ? {}

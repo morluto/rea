@@ -3,6 +3,8 @@ import { createHash } from "node:crypto";
 import { z } from "zod";
 
 import { evidenceSchema, type Evidence } from "../evidence.js";
+import { evidenceInputSchema } from "../evidenceReference.js";
+import type { EvidenceRequestFrameInput } from "../evidenceInputContract.js";
 import {
   cliMetadataGuidSchema,
   managedMetadataTokenSchema,
@@ -47,22 +49,24 @@ type ManagedReconstructionMethodInput = z.infer<
 >;
 
 const managedReconstructionImportRequestShape = {
-  static_members: z.unknown(),
   decompiler: decompilerSchema,
   methods: z.array(managedReconstructionMethodInputSchema).min(1),
   notes: z.array(textSchema).default([]),
 };
 
-/** Request envelope parsed before interpreting the nested Evidence source. */
-export const managedReconstructionImportRequestSchema = z.strictObject(
-  managedReconstructionImportRequestShape,
-);
+const reconstructionInput = <Source extends z.ZodType>(source: Source) =>
+  z.strictObject({
+    ...managedReconstructionImportRequestShape,
+    static_members: source,
+  });
 
-/** Public reconstruction request with the complete source Evidence contract. */
-export const managedReconstructionImportInputSchema = z.strictObject({
-  ...managedReconstructionImportRequestShape,
-  static_members: evidenceSchema,
-});
+/** Complete semantic reconstruction input with its original source record. */
+export const managedReconstructionImportInputSchema =
+  reconstructionInput(evidenceSchema);
+
+/** Public reconstruction request accepts records inline or by exact retained identity. */
+export const managedReconstructionImportRequestSchema =
+  reconstructionInput(evidenceInputSchema);
 
 const importedMethodSchema = z.strictObject({
   token: managedMetadataTokenSchema,
@@ -123,9 +127,8 @@ export const managedReconstructionImportResultSchema = z.strictObject({
 export type ManagedReconstructionImportInput = z.infer<
   typeof managedReconstructionImportInputSchema
 >;
-export type ManagedReconstructionImportRequest = z.infer<
-  typeof managedReconstructionImportRequestSchema
->;
+export type ManagedReconstructionImportRequest =
+  EvidenceRequestFrameInput<ManagedReconstructionImportInput>;
 export type ManagedReconstructionImportResult = z.infer<
   typeof managedReconstructionImportResultSchema
 >;

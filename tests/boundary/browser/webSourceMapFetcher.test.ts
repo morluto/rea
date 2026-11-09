@@ -3,6 +3,8 @@ import { createServer } from "node:http";
 
 import { describe, expect, it } from "vitest";
 
+import { withVerifierCleanup } from "../../../scripts/lib/verifier-cleanup.mjs";
+import { awaitAcknowledgement } from "../../fixtures/lifecycleAcknowledgement.js";
 import { fetchWebSourceMaps } from "../../../src/browser/WebSourceMapFetcher.js";
 import { fetchWebSourceMapsOk } from "../../fixtures/fetchWebSourceMapsOk.js";
 import { AnalysisCancelledError } from "../../../src/domain/analysisErrorCore.js";
@@ -30,6 +32,120 @@ const expectInvalidIncludedSourceMaps = (result: WebSourceMaps): void => {
   });
   expectInvalidSourceMaps({ ...result, status: "unavailable" });
 };
+
+it.each(["regular", "indexed"])(
+  "retains declaration identity for duplicate source URLs in HTTP %s maps",
+  async (format) => {
+    const contents = [
+      null,
+      'import "./shared.js"; import "./shared.js"; import "./first.js";',
+      'import "./shared.js"; import "./second.js";',
+    ];
+    const leaf = (sourcesContent: (string | null)[]) => ({
+      version: 3,
+      sources: sourcesContent.map(() => "same.ts"),
+      sourcesContent,
+      names: [],
+      mappings: "",
+    });
+    const map =
+      format === "regular"
+        ? leaf(contents)
+        : {
+            version: 3,
+            sections: contents.map((content, line) => ({
+              offset: { line, column: 0 },
+              map: leaf([content]),
+            })),
+          };
+    const server = createServer((_incoming, response) => {
+      response.setHeader("content-type", "application/source-map+json");
+      response.end(JSON.stringify(map));
+    });
+    try {
+      await new Promise<void>((resolve, reject) => {
+        server.once("error", reject);
+        server.listen(0, "127.0.0.1", resolve);
+      });
+      const address = server.address();
+      if (address === null || typeof address === "string")
+        throw new TypeError("Expected a TCP listener address");
+      const localOrigin = `http://127.0.0.1:${String(address.port)}`;
+      const url = `${localOrigin}/app.js.map`;
+      const result = await fetchWebSourceMapsOk(
+        [{ ...request, fetchUrl: url, declaredUrl: url }],
+        input({ allowed_origins: [localOrigin] }),
+      );
+      const item = result.items[0];
+      if (item?.status !== "included") throw new Error("map not included");
+      expect(item.limitation).toBeNull();
+      expect(
+        item.original_sources.map((source) => ({
+          declaration_index: source.declaration_index,
+          source_index: source.source_index,
+          source: source.source,
+          text: source.artifact?.text ?? null,
+        })),
+      ).toEqual(
+        contents.map((text, declaration_index) => ({
+          declaration_index,
+          source_index: format === "regular" ? declaration_index : 0,
+          source: `${localOrigin}/same.ts`,
+          text,
+        })),
+      );
+      expect(item.original_module_edges).toEqual(
+        [
+          [1, "./shared.js"],
+          [1, "./first.js"],
+          [2, "./shared.js"],
+          [2, "./second.js"],
+        ].map(([declaration_index, specifier]) => ({
+          declaration_index,
+          from_source: `${localOrigin}/same.ts`,
+          kind: "static_import",
+          specifier,
+          resolved_source: new URL(String(specifier), url).href,
+        })),
+      );
+      expect(webSourceMapsSchema.parse(result)).toEqual(result);
+      const historical = {
+        ...result,
+        items: [
+          {
+            ...item,
+            original_module_edges: item.original_module_edges.map(
+              ({ declaration_index: _index, ...edge }) => edge,
+            ),
+          },
+        ],
+      };
+      expect(webSourceMapsSchema.parse(historical)).toEqual(historical);
+      expectInvalidSourceMaps({
+        ...result,
+        items: [
+          {
+            ...item,
+            original_module_edges: [
+              {
+                ...item.original_module_edges[0],
+                declaration_index: -1,
+              },
+            ],
+          },
+        ],
+      });
+    } finally {
+      server.closeAllConnections();
+      if (server.listening)
+        await new Promise<void>((resolve, reject) => {
+          server.close((error) =>
+            error === undefined ? resolve() : reject(error),
+          );
+        });
+    }
+  },
+);
 
 it.each(["regular", "indexed"])(
   "collects an HTTP %s source map with omitted names without accepting invalid names",
@@ -437,7 +553,10 @@ describe("web source-map fetching and validation: fetching maps and following re
     expectInvalidIncludedSourceMaps(result);
   });
 
-  it("reauthorizes every redirect and never contacts a disallowed origin", async () => {
+  it.each([
+    ["another origin", "https://private.example.test/map"],
+    ["same-origin credentials", "https://user:secret@app.example.test/map"],
+  ])("reauthorizes a redirect with %s", async (_case, location) => {
     const calls: string[] = [];
     const result = await fetchWebSourceMapsOk([request], input(), undefined, {
       fetch: (url) => {
@@ -445,23 +564,33 @@ describe("web source-map fetching and validation: fetching maps and following re
         return Promise.resolve(
           new Response(null, {
             status: 302,
-            headers: { location: "https://private.example.test/map" },
+            headers: { location },
           }),
         );
       },
     });
 
     expect(calls).toEqual([request.fetchUrl]);
+    expect(JSON.stringify(result)).not.toContain("user:secret");
     expect(result).toMatchObject({
       status: "unavailable",
-      items: [{ status: "policy_filtered", effective_url: request.fetchUrl }],
+      items: [
+        {
+          status: "policy_filtered",
+          effective_url: request.fetchUrl,
+          limitation:
+            "Each source-map redirect must be a credential-free HTTP(S) URL on an approved exact origin.",
+        },
+      ],
     });
     expectInvalidSourceMaps({
       ...result,
       items: [{ ...result.items[0], limitation: null }],
     });
   });
+});
 
+describe("source-map declared URL policy", () => {
   it.each([
     ["embedded credentials", "https://user:secret@app.example.test/a.map"],
     ["a different scheme on the same host", "http://app.example.test/a.map"],
@@ -488,7 +617,14 @@ describe("web source-map fetching and validation: fetching maps and following re
       expect(calls).toEqual([]);
       expect(result).toMatchObject({
         status: "unavailable",
-        items: [{ status: "policy_filtered", effective_url: null }],
+        items: [
+          {
+            status: "policy_filtered",
+            effective_url: null,
+            limitation:
+              "Declared source-map URL must be a credential-free HTTP(S) URL on an approved exact origin.",
+          },
+        ],
       });
     },
   );
@@ -631,16 +767,15 @@ describe("web source-map fetching and validation: enforcing fetch limits and val
         });
     }
   });
+});
 
+describe("source-map response cancellation", () => {
   it("cancels a pending response reader on caller abort", async () => {
     let markPullStarted: (() => void) | undefined;
     const pullStarted = new Promise<void>((resolve) => {
       markPullStarted = resolve;
     });
-    let markCancelled: (() => void) | undefined;
-    const cancelled = new Promise<void>((resolve) => {
-      markCancelled = resolve;
-    });
+    let cancelled = false;
     const body = new ReadableStream<Uint8Array>({
       start(controller) {
         controller.enqueue(new TextEncoder().encode("{"));
@@ -649,7 +784,7 @@ describe("web source-map fetching and validation: enforcing fetch limits and val
         markPullStarted?.();
       },
       cancel() {
-        markCancelled?.();
+        cancelled = true;
       },
     });
     const controller = new AbortController();
@@ -658,13 +793,23 @@ describe("web source-map fetching and validation: enforcing fetch limits and val
       fetch: async () => new Response(body),
     });
 
-    await pullStarted;
-    controller.abort(abortReason);
-
-    const result = await pending;
-    expect(result.ok).toBe(false);
-    if (!result.ok) expect(result.error.cause).toBe(abortReason);
-    await cancelled;
+    await withVerifierCleanup(async () => {
+      await awaitAcknowledgement(
+        pullStarted,
+        pending,
+        "source-map response pull",
+      );
+      controller.abort(abortReason);
+      const result = await pending;
+      expect(result.ok).toBe(false);
+      if (!result.ok) expect(result.error.cause).toBe(abortReason);
+      await expect.poll(() => cancelled).toBe(true);
+    }, [
+      () => controller.abort(),
+      async () => {
+        await pending;
+      },
+    ]);
   });
 });
 
@@ -676,10 +821,7 @@ describe("completed source-map cancellation", () => {
       const pullStarted = new Promise<void>((resolve) => {
         markPullStarted = resolve;
       });
-      let markCancelled: (() => void) | undefined;
-      const cancelled = new Promise<void>((resolve) => {
-        markCancelled = resolve;
-      });
+      let cancelled = false;
       const secondBody = new ReadableStream<Uint8Array>({
         start(controller) {
           controller.enqueue(new TextEncoder().encode("{"));
@@ -688,7 +830,7 @@ describe("completed source-map cancellation", () => {
           markPullStarted?.();
         },
         cancel() {
-          markCancelled?.();
+          cancelled = true;
         },
       });
       const firstBody = JSON.stringify({
@@ -723,32 +865,42 @@ describe("completed source-map cancellation", () => {
         },
       );
 
-      await pullStarted;
-      controller.abort(reason);
-
-      const result = await pending;
-      expect(result.ok).toBe(false);
-      if (result.ok) return;
-      const failure = result.error;
-      expect(failure).toBeInstanceOf(AnalysisCancelledError);
-      expect(failure.cause).toBe(reason);
-      expect(failure.partialObservation).toMatchObject({
-        kind: "web-source-map-fetch",
-        source_maps: {
-          requested: 2,
-          processed: 1,
-          items: [
-            {
-              status: "included",
-              artifact: {
-                text: firstBody,
-                sha256: createHash("sha256").update(firstBody).digest("hex"),
+      await withVerifierCleanup(async () => {
+        await awaitAcknowledgement(
+          pullStarted,
+          pending,
+          "second source-map response pull",
+        );
+        controller.abort(reason);
+        const result = await pending;
+        expect(result.ok).toBe(false);
+        if (result.ok) return;
+        const failure = result.error;
+        expect(failure).toBeInstanceOf(AnalysisCancelledError);
+        expect(failure.cause).toBe(reason);
+        expect(failure.partialObservation).toMatchObject({
+          kind: "web-source-map-fetch",
+          source_maps: {
+            requested: 2,
+            processed: 1,
+            items: [
+              {
+                status: "included",
+                artifact: {
+                  text: firstBody,
+                  sha256: createHash("sha256").update(firstBody).digest("hex"),
+                },
               },
-            },
-          ],
+            ],
+          },
+        });
+        await expect.poll(() => cancelled).toBe(true);
+      }, [
+        () => controller.abort(),
+        async () => {
+          await pending;
         },
-      });
-      await cancelled;
+      ]);
     },
   );
 });

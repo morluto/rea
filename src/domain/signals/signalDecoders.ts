@@ -24,9 +24,7 @@ export const inspectSignalDecodersInputSchema = z.strictObject({
     .nonnegative()
     .max(Number.MAX_SAFE_INTEGER)
     .default(0)
-    .describe(
-      "Number of matching decoders or help lines to skip; defaults to 0",
-    ),
+    .describe("Number of matching decoders or help lines to skip"),
   limit: z
     .number()
     .int()

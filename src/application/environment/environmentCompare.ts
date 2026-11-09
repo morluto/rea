@@ -1,4 +1,5 @@
 import {
+  ownMember,
   decodedSegment,
   same,
 } from "../../domain/analysisView/environmentStateRules.js";
@@ -80,6 +81,10 @@ export interface CompareStep {
   readonly equal_ignoring_order: boolean;
   readonly categories: DifferenceCategory[];
   readonly differences: Difference[];
+  /** All differences computed for this step, before the returned list is capped. */
+  readonly differences_total: number;
+  readonly differences_omitted: number;
+  readonly differences_truncated: boolean;
   readonly ignored_query: string[];
 }
 
@@ -240,7 +245,7 @@ const answersCall = (
   const body = probeArguments(call.tool, run.bodies).body;
   // A tool with no body parameter matches; one that takes a body matches only the body this call sent, including none.
   if (body === undefined) return true;
-  return same(run.recordedBodies.get(exchange.ordinal), args[body]);
+  return same(run.recordedBodies.get(exchange.ordinal), ownMember(args, body));
 };
 
 /** A served tool's input check: the first problem with a call's arguments, or undefined. */
@@ -286,6 +291,8 @@ const stepOf = (
   outcome: { env_status: number | null; differences: Difference[] },
 ): CompareStep => {
   const categories = [...new Set(outcome.differences.map((d) => d.category))];
+  const differences = outcome.differences.slice(0, STEP_DIFFERENCE_LIMIT);
+  const omitted = outcome.differences.length - differences.length;
   return {
     ...base,
     tool: call?.tool.name ?? null,
@@ -295,7 +302,10 @@ const stepOf = (
       (difference) => difference.category === "order",
     ),
     categories,
-    differences: outcome.differences.slice(0, STEP_DIFFERENCE_LIMIT),
+    differences,
+    differences_total: outcome.differences.length,
+    differences_omitted: omitted,
+    differences_truncated: omitted > 0,
     ignored_query: [...(call?.ignoredQuery ?? [])],
   };
 };
@@ -348,7 +358,7 @@ const compareStep = (
     });
   const held = heldIds(run.store);
   const unknownPath = call.pathArguments.some((name) => {
-    const value = call.args[name];
+    const value = ownMember(call.args, name);
     if (typeof value !== "string") return false;
     const id = decodedSegment(value);
     return !run.map.hasEnv(id) && !held.has(id);

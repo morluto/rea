@@ -1,3 +1,5 @@
+import { importVerifierSource } from "./lib/verifier-source-loader.mjs";
+
 import { createHash } from "node:crypto";
 import {
   chmod,
@@ -21,6 +23,11 @@ import {
   withVerifierCleanup,
 } from "./lib/verifier-cleanup.mjs";
 import { completeVerifierRun, createVerifierRun } from "./lib/verifier-run.mjs";
+
+const { parseSkillManifestMetadata } = await importVerifierSource(
+  new URL("../src/domain/skillManifest.ts", import.meta.url).href,
+  import.meta.url,
+);
 
 const { evaluateCodexEvents } = await tsImport(
   new URL("../tests/evaluation/model-evals/CodexAgentEval.ts", import.meta.url)
@@ -148,8 +155,10 @@ await withVerifierCleanup(
       join(skillDestination, "SKILL.md"),
       "utf8",
     );
+    const skillMetadata = parseSkillManifestMetadata(installedSkill);
     if (
-      !installedSkill.includes(`  version: "${PRODUCT_IDENTITY.skillVersion}"`)
+      !skillMetadata.ok ||
+      skillMetadata.value.version !== PRODUCT_IDENTITY.skillVersion
     )
       throw new Error("Setup did not install the current packaged REA skill");
     const requestedScenarioIds = new Set(

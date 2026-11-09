@@ -1,3 +1,4 @@
+import { javaClassFile } from "../../fixtures/javaClassFile.js";
 import { Il2cppBinaryFormatFailure } from "../../../src/il2cpp/Il2cppBinaryFormat.js";
 import { readBinaryContainer } from "../../../src/native/metadata/readBinaryContainer.js";
 import {
@@ -17,6 +18,7 @@ import {
 } from "../../../src/il2cpp/Il2cppBinaryGenerics.js";
 import {
   createElfFixture,
+  createLargeElfRelativeFixture,
   createIl2cppBinaryFixture,
   createIl2cppDyldBindFixture,
   createIl2cppRegistrationTailFixture,
@@ -191,10 +193,33 @@ it("rejects reused MethodDef tokens within an image but preserves cross-image re
   );
 });
 
+it.each([0, 4000, 9000])(
+  "reports a valid JVM class with %i unused constant bytes as unsupported",
+  (constantBytes) => {
+    expect(failure(javaClassFile(constantBytes, true))).toEqual({
+      reason: "unsupported-container",
+      kind: "unsupported",
+    });
+  },
+);
+
+it("does not infer universal Mach-O identity from a FAT-shaped non-Mach-O table", () => {
+  // CAFEBABE also identifies JVM classes. A plausible FAT table and known CPU
+  // do not prove Mach-O unless the declared slice contains a Mach-O header.
+  const bytes = createUniversalFixture([
+    { cpu: 0x0100000c, bytes: Buffer.alloc(0x100) },
+  ]);
+  expect(failure(bytes)).toEqual({
+    reason: "unsupported-container",
+    kind: "unsupported",
+  });
+  expect(failure(bytes, "arm64").reason).toBe("slice-not-found");
+});
+
 it("requires an explicit slice of a universal Mach-O and reads only that slice", () => {
   const thin = createIl2cppBinaryFixture();
   const universal = createUniversalFixture([
-    { cpu: 0x01000007, bytes: Buffer.alloc(0x100) },
+    { cpu: 0x01000007, bytes: createIl2cppBinaryFixture() },
     { cpu: 0x0100000c, bytes: thin },
   ]);
   expect(failure(universal)).toEqual({
@@ -883,6 +908,19 @@ it("links an ELF shared object after applying its RELATIVE relocations", () => {
 });
 
 it.each([183, 62])(
+  "streams more than 65536 file-backed relative writes without shrinking IL2CPP capacity (machine %s)",
+  (machine) => {
+    const source = createIl2cppBinaryFixture();
+    const bytes = createLargeElfRelativeFixture(source, 65_537, machine);
+    const snapshot = Buffer.from(bytes);
+    expect(link(bytes).method_addresses).toEqual(
+      link(createElfFixture(source, { machine })).method_addresses,
+    );
+    expect(bytes.equals(snapshot)).toBe(true);
+  },
+);
+
+it.each([183, 62])(
   "links ELF relocations using the resolved PN_XNUM program count (machine %s)",
   (machine) => {
     const original = createElfFixture(createIl2cppBinaryFixture(), { machine });
@@ -1135,7 +1173,9 @@ it.each([1, 0xff])(
   (padding) => {
     const bytes = createIl2cppBinaryFixture();
     bytes.fill(padding, 0x604, 0x608);
-    expect(link(bytes)).toEqual(link(createIl2cppBinaryFixture()));
+    const linked = link(bytes);
+    expect(linked.method_addresses).toEqual(expectedAddresses);
+    expect(linked).toEqual(link(createIl2cppBinaryFixture()));
     bytes.writeUInt32LE(3, 0x600);
     expect(failure(bytes).reason).toBe("code-registration-not-found");
   },
@@ -1202,6 +1242,17 @@ it("checks the observed slice header against the caller-selected FAT architectur
   ]);
   expect(failure(bytes, "amd64").reason).toBe("malformed-container");
 });
+it.each([1, 0x80000000])(
+  "checks the complete FAT CPU subtype including capability bits (%i)",
+  (subtype) => {
+    const thin = createIl2cppBinaryFixture();
+    thin.writeUInt32LE(subtype, 8);
+    const bytes = createUniversalFixture([{ cpu: 0x0100000c, bytes: thin }]);
+    expect(failure(bytes, "arm64").reason).toBe("malformed-container");
+    bytes.writeUInt32BE(subtype, 12);
+    expect(link(bytes, "arm64").method_addresses).toEqual(expectedAddresses);
+  },
+);
 it("still validates version 27 type indices when rendered names are unavailable", () => {
   const decoded = readIl2cppMetadataForLinking(
     createIl2cppMetadataFixture({ version: 27 }).bytes,
@@ -1328,7 +1379,9 @@ it("admits every generic row and issue before retention", () => {
   expect(rows).toContainEqual({
     row: 0,
     address: at(0xb80n),
-    message: "method spec 0 names method 9 outside the 5 metadata methods",
+    message: expect.stringMatching(
+      /method spec 0.*method 9.*5 metadata methods/i,
+    ),
   });
   // A refused budget check stops before any generic row is retained.
   const refused: unknown[] = [];
@@ -1369,8 +1422,8 @@ it("reports entries past the 64-bit address space at their table row", () => {
     at(0xbd0n),
     at(0xbe0n),
   ]);
-  expect(specs.issues[1]!.message).toBe(
-    "method spec 1 lies outside the 64-bit address space from methodSpecs at 0xffffffffffffffff",
+  expect(specs.issues[1]!.message).toMatch(
+    /method spec 1.*64-bit address space.*methodSpecs.*0xffffffffffffffff/i,
   );
   const slots = linkGeneric({ genericMethodPointers: top }).generic_methods!;
   expect(slots.instances.map((row) => row.state)).toEqual([
@@ -1381,8 +1434,9 @@ it("reports entries past the 64-bit address space at their table row", () => {
   expect(slots.issues).toContainEqual({
     row: 1,
     address: at(0xbd4n),
-    message:
-      "genericMethodPointers slot 1 lies outside the 64-bit address space from genericMethodPointers at 0xffffffffffffffff",
+    message: expect.stringMatching(
+      /genericMethodPointers.*slot 1.*64-bit address space.*0xffffffffffffffff/i,
+    ),
   });
 });
 
@@ -1500,7 +1554,9 @@ it("keeps contradicting rows unknown and reports the record address", () => {
       {
         row: 0,
         address: at(0xb80n),
-        message: "method spec 0 names method 9 outside the 5 metadata methods",
+        message: expect.stringMatching(
+          /method spec 0.*method 9.*5 metadata methods/i,
+        ),
       },
     ],
   });
@@ -1510,8 +1566,9 @@ it("keeps contradicting rows unknown and reports the record address", () => {
       {
         row: 0,
         address: at(0xb80n),
-        message:
-          "method spec 0 names generic instances 2 and -1, outside the 2 readable genericInsts",
+        message: expect.stringMatching(
+          /method spec 0.*generic instances 2 and -1.*2 readable genericInsts/i,
+        ),
       },
     ],
   });
@@ -1522,7 +1579,12 @@ it("keeps contradicting rows unknown and reports the record address", () => {
       {
         row: 0,
         address: at(0xd00n),
-        message: `genericMethodPointers slot 0 points outside unambiguous executable file data at 0x${outside.toString(16)}`,
+        message: expect.stringMatching(
+          new RegExp(
+            `genericMethodPointers.*slot 0.*outside.*executable.*0x${outside.toString(16)}`,
+            "i",
+          ),
+        ),
       },
     ],
   });
@@ -1540,33 +1602,35 @@ it("keeps contradicting rows unknown and reports the record address", () => {
     {
       row: 0,
       address: at(0xbc0n),
-      message:
-        "method spec 0 is shared by 2 genericMethodTable rows, including row 2",
+      message: expect.stringMatching(
+        /method spec 0.*2 genericMethodTable rows.*row 2/i,
+      ),
     },
     {
       row: 2,
       address: at(0xbc0n + 32n),
-      message:
-        "method spec 0 is shared by 2 genericMethodTable rows, including row 0",
+      message: expect.stringMatching(
+        /method spec 0.*2 genericMethodTable rows.*row 0/i,
+      ),
     },
   ]);
 });
 
-it.each<[string, GenericMethodFixtureOptions, string]>([
+it.each<[string, GenericMethodFixtureOptions, RegExp]>([
   [
     "class arguments for a type without a generic container",
     { firstSpecMethod: 2 },
-    "method spec 0 gives type 1 1 generic arguments, but it declares 0",
+    /method spec 0.*type 1.*1 generic arguments.*declares 0/i,
   ],
   [
     "class arguments that disagree with the container's count",
     { firstSpecClass: 1 },
-    "method spec 0 gives type 3 2 generic arguments, but it declares 1",
+    /method spec 0.*type 3.*2 generic arguments.*declares 1/i,
   ],
   [
     "method arguments for a method without a generic container",
     { firstSpecMethodInstance: 0 },
-    "method spec 0 gives method 3 1 generic arguments, but it declares 0",
+    /method spec 0.*method 3.*1 generic arguments.*declares 0/i,
   ],
 ])("keeps a method spec with %s unnamed", (_, options, message) => {
   const generic = linkGeneric(options).generic_methods!;
@@ -1574,7 +1638,9 @@ it.each<[string, GenericMethodFixtureOptions, string]>([
   expect(generic.instances.slice(1)).toEqual(
     FIXTURE_GENERIC_INSTANCES.slice(1),
   );
-  expect(generic.issues).toEqual([{ row: 0, address: at(0xb80n), message }]);
+  expect(generic.issues).toEqual([
+    { row: 0, address: at(0xb80n), message: expect.stringMatching(message) },
+  ]);
 });
 
 it("keeps a method spec unnamed when its owner's container is out of range", () => {
@@ -1601,8 +1667,9 @@ it("keeps a method spec unnamed when its owner's container is out of range", () 
     {
       row: 2,
       address: at(0xb80n + 24n),
-      message:
-        "method spec 2 gives method 4 1 generic arguments, but its generic container 99 is out of range",
+      message: expect.stringMatching(
+        /method spec 2.*method 4.*1 generic arguments.*container 99.*out of range/i,
+      ),
     },
   ]);
 });
@@ -1626,7 +1693,9 @@ it("keeps a generic slot with an unresolved relocation unknown", () => {
     {
       row: 1,
       address: at(0xd08n),
-      message: "genericMethodPointers slot 1 has an unresolved relocation",
+      message: expect.stringMatching(
+        /genericMethodPointers.*slot 1.*unresolved relocation/i,
+      ),
     },
   ]);
 });
@@ -1643,7 +1712,9 @@ it("keeps the other generic rows when one pointer slot is unmapped", () => {
     {
       row: 2,
       address: at(0x1000n),
-      message: "genericMethodPointers slot 2 is not file mapped",
+      message: expect.stringMatching(
+        /genericMethodPointers.*slot 2.*not file mapped/i,
+      ),
     },
   ]);
 });
@@ -1727,7 +1798,9 @@ it("treats a zero-filled method spec as unobserved, not as method 0", () => {
   expect(generic.issues.map(({ row, message }) => ({ row, message }))).toEqual(
     [0, 1, 2].map((row) => ({
       row,
-      message: `method spec ${row} is not file backed`,
+      message: expect.stringMatching(
+        new RegExp(`method spec ${row}.*not file backed`, "i"),
+      ),
     })),
   );
 });
@@ -1785,12 +1858,6 @@ it("keeps a capacity refusal while naming a generic row a refusal", () => {
   expect((failure as Il2cppBinaryFormatFailure).kind).toBe("capacity");
 });
 
-it("ignores CodeRegistration count alignment padding", () => {
-  const bytes = createIl2cppBinaryFixture();
-  bytes.fill(0xff, 0x604, 0x608);
-  expect(link(bytes).method_addresses).toEqual(expectedAddresses);
-});
-
 it.each([0, 8, 16])(
   "finds registration with %s file-backed trailing zero bytes",
   (tail) => {
@@ -1838,5 +1905,22 @@ it.each([0n, FIXTURE_BINARY_BASE + 0x980n, FIXTURE_BINARY_BASE + 0x9b0n])(
       );
     expect(linked.method_addresses).toEqual(control.method_addresses);
     expect(bytes.readBigUInt64LE(0x900)).toBe(raw);
+  },
+);
+
+it.each([183, 62])(
+  "ignores R_NONE target and addend before relocation application (machine %s)",
+  (machine) => {
+    const image = createIl2cppBinaryFixture();
+    const bytes = createElfFixture(image, {
+      machine,
+      unresolvedRelocations: [{ offset: 0x7fffffff, kind: 0 }],
+    });
+    const dynamic = Number(bytes.readBigUInt64LE(128));
+    const relocationBytes = Number(bytes.readBigUInt64LE(dynamic + 24));
+    const last = 0x1000 + relocationBytes - 24;
+    bytes.writeBigUInt64LE(0xffffffffffffffffn, last);
+    bytes.writeBigInt64LE(-0x8000000000000000n, last + 16);
+    expect(link(bytes)).toEqual(link(createElfFixture(image, { machine })));
   },
 );

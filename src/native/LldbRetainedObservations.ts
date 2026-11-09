@@ -82,6 +82,7 @@ export const projectLldbPartialObservation = (input: {
   limitations: [
     "The LLDB run did not produce a complete native call observation result.",
     "The target SHA-256 identifies the selected artifact; LLDB did not verify the bytes loaded into the process.",
+    "Source paths and lines are LLDB line-table attribution; REA did not read or verify the referenced source bytes.",
     "Captured output byte counts are observed lower bounds because LLDB did not report final stream counters.",
     ...input.journal.limitations,
     ...(input.journalLimitations ?? []),

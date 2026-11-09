@@ -10,20 +10,20 @@ import { BYTE_ENTROPY_PROVIDER } from "../../../src/domain/investigationProvider
 import { SUPPORTED_CLIENT_DEFINITIONS } from "../../../src/application/SupportedClients.js";
 import { CLI_COMMAND_NAMES } from "../../../src/cliCommandNames.js";
 import { createCli } from "../../../src/cli.js";
-import { FRIDA_PROVIDER_IDENTITY } from "../../../src/frida/FridaInstrumentationManager.js";
+import { FRIDA_PROVIDER_IDENTITY } from "../../../src/frida/FridaProviderIdentity.js";
 import { TOOL_CONTRACTS } from "../../../src/contracts/toolContracts.js";
 import {
   HOPPER_OPERATIONS,
   HOPPER_PROVIDER_IDENTITY,
-} from "../../../src/hopper/HopperProviderCapabilities.js";
+} from "../../../src/hopper/HopperProviderMetadata.js";
 import {
   GHIDRA_PROVIDER_IDENTITY,
   GHIDRA_OPERATIONS,
-} from "../../../src/ghidra/GhidraProviderCapabilities.js";
-import { OBJDUMP_PROVIDER_IDENTITY } from "../../../src/objdump/ObjdumpCommand.js";
-import { RIZIN_PROVIDER_IDENTITY } from "../../../src/rizin/RizinCommand.js";
-import { GDB_PROVIDER_IDENTITY } from "../../../src/gdb/GdbSessionManager.js";
-import { PWNTOOLS_PROVIDER_IDENTITY } from "../../../src/native/pwntools/PwntoolsRelease.js";
+} from "../../../src/ghidra/GhidraProviderMetadata.js";
+import { OBJDUMP_PROVIDER_IDENTITY } from "../../../src/objdump/ObjdumpProviderIdentity.js";
+import { RIZIN_PROVIDER_IDENTITY } from "../../../src/rizin/RizinProviderIdentity.js";
+import { GDB_PROVIDER_IDENTITY } from "../../../src/gdb/GdbProviderIdentity.js";
+import { PWNTOOLS_PROVIDER_IDENTITY } from "../../../src/native/pwntools/PwntoolsProviderIdentity.js";
 import {
   documentationFactIssues,
   skillReferenceIssues,
@@ -53,7 +53,7 @@ afterEach(async () => {
 describe("canonical product catalog", () => {
   it("admits every documented browser scenario through the named contract", async () => {
     const guide = await readFile(
-      join(root, "docs/browser-scenario-contract.md"),
+      join(root, "docs/guides/web/browser-scenario-contract.md"),
       "utf8",
     );
     const examples = [
@@ -128,9 +128,7 @@ describe("canonical CLI catalog", () => {
   it("uses the same primary command names as the actual Incur router", () => {
     const inventory = createCliInventory(createCli());
     expect(inventory.primary).toEqual([...CLI_COMMAND_NAMES].sort());
-    expect(inventory.aliases).toEqual([
-      { name: "compare-bundles", target: "compare" },
-    ]);
+    expect(inventory.aliases).toEqual([]);
   }, 30_000);
 
   it("describes every primary command argument and option", () => {
@@ -196,7 +194,9 @@ describe("canonical product catalog drift", () => {
       ],
     };
     const issues = await documentationFactIssues(root, drifted);
-    expect(issues).toContain("docs/installation.md: missing Future Client");
+    expect(issues).toContain(
+      "docs/getting-started/installation.md: missing Future Client",
+    );
     expect(issues).not.toContain("README.md: missing Future Client");
   });
 

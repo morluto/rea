@@ -12,7 +12,6 @@ it("refuses extra rustc paths without asking the caller to wait", async () => {
   const path = join(root, "many-hashes.elf");
   await writeFile(path, createRustHashOverflowImage());
   const result = await new RustBinaryProvider().inspect({ path });
-  expect(result.ok).toBe(false);
   if (result.ok) throw new Error("Expected a hash-capacity refusal");
   const projected = projectAnalysisError(result.error);
   expect(projected).toMatchObject({
@@ -34,7 +33,6 @@ it("refuses an oversized Rust input without evidence-reply advice", async () => 
   await writeFile(path, Buffer.from([0x7f, 0x45, 0x4c, 0x46]));
   await truncate(path, RUST_BINARY_INPUT_BYTES + 1);
   const result = await new RustBinaryProvider().inspect({ path });
-  expect(result.ok).toBe(false);
   if (result.ok) throw new Error("Expected an input-size refusal");
   const projected = projectAnalysisError(result.error);
   expect(projected).toMatchObject({

@@ -42,36 +42,47 @@ const describeSchema = (
   references: JsonSchemaReferences,
   inherited: JsonSchemaScope | undefined,
   describeProperty: (property: string) => string | undefined,
+  propertyDescription?: string,
 ): unknown => {
   if (!isObject(schema)) return schema;
+  // These operands are complete producer results, not fields an agent builds.
+  // Their owner keeps full canonical validation; only their wire declaration
+  // omits the repeated result schema. Analyst-authored controls stay explicit.
+  if (schema.type === "object" && schema["x-rea-complete-observation"] === true)
+    return {
+      type: "object",
+      description: [
+        propertyDescription ??
+          (typeof schema.description === "string"
+            ? schema.description
+            : undefined),
+        "Pass the complete returned normalized_result unchanged. Its fields are omitted from this declaration; the server still validates the complete canonical observation.",
+      ]
+        .filter((text) => text !== undefined)
+        .join(" "),
+    };
   const scope = references.enter(schema, inherited);
-  return Object.fromEntries(
+  const described = Object.fromEntries(
     Object.entries(schema).map(([key, value]) => {
       if (schemaMaps.has(key) && isObject(value))
         return [
           key,
           Object.fromEntries(
             Object.entries(value).map(([name, child]) => {
-              const described = describeSchema(
-                child,
-                references,
-                scope,
-                describeProperty,
-              );
-              if (
-                key !== "properties" ||
-                !isObject(described) ||
-                !isObject(child)
-              )
-                return [name, described];
               const description =
-                referencedDescription(references, child, scope) ??
-                describeProperty(name);
+                key === "properties" && isObject(child)
+                  ? (referencedDescription(references, child, scope) ??
+                    describeProperty(name))
+                  : undefined;
               return [
                 name,
-                description === undefined
-                  ? described
-                  : { ...described, description },
+                describeSchema(
+                  child,
+                  references,
+                  scope,
+                  describeProperty,
+                  description,
+                ),
               ];
             }),
           ),
@@ -96,6 +107,9 @@ const describeSchema = (
       return [key, value];
     }),
   );
+  return propertyDescription === undefined
+    ? described
+    : { ...described, description: propertyDescription };
 };
 
 const objectBranch = (

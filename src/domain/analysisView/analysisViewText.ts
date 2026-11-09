@@ -1,8 +1,17 @@
 import { analysisViewInputError } from "./analysisViewErrors.js";
 import type { AnalysisError } from "../analysisErrorBase.js";
 import { err, ok, type Result } from "../result.js";
-import type { AnalysisViewCoverage } from "./analysisView.js";
-import { pageViewCoverage } from "./analysisViewCoverage.js";
+import { z } from "zod";
+import {
+  pageViewCoverage,
+  type AnalysisViewCoverage,
+} from "./analysisViewCoverage.js";
+
+/** Exact text pages use UTF-16 code-unit offsets without splitting surrogate pairs. */
+export const analysisTextPageItemSchema = z.strictObject({
+  text: z.string(),
+  unit: z.literal("utf16-code-units"),
+});
 
 const viewError = (message: string): AnalysisError =>
   analysisViewInputError([
@@ -17,7 +26,7 @@ export const analysisTextPage = (
   label = "Pseudocode",
 ): Result<
   {
-    readonly item: { readonly text: string; readonly unit: "utf16-code-units" };
+    readonly item: Readonly<z.output<typeof analysisTextPageItemSchema>>;
     readonly coverage: AnalysisViewCoverage;
   },
   AnalysisError

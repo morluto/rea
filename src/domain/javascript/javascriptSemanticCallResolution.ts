@@ -104,11 +104,7 @@ const resolveIdentifier = (
       complete: false,
       reason: `Unresolved call target ${node.name}.`,
     };
-  const read = semanticBindingAtRead(
-    binding,
-    node,
-    context.state.parentsByNode,
-  );
+  const read = semanticBindingAtRead(binding, node, context.state);
   // A full read re-enters the same candidate set wherever the chain returns
   // to this binding. Close that cycle at the binding; position-narrowed reads
   // keep their per-initializer cycle handling.

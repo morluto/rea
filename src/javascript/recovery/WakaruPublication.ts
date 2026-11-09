@@ -18,11 +18,8 @@ import {
   validateRecoverySourceMap,
   type parseWakaruReports,
 } from "./WakaruReport.js";
-import {
-  RECOVERY_LIMITATIONS,
-  RECOVERY_LIMITS,
-  WAKARU_RELEASE,
-} from "./WakaruRelease.js";
+import { RECOVERY_LIMITATIONS, RECOVERY_LIMITS } from "./WakaruRelease.js";
+import { WAKARU_RELEASE } from "./WakaruProviderIdentity.js";
 import type {
   resolveWakaruCommand,
   runWakaruCommand,
@@ -109,7 +106,7 @@ export const publishWakaruArtifacts = async (
       id: "wakaru",
       version: context.admitted.version,
       executable: {
-        path: context.engine.command,
+        path: context.engine.command.resolvedPath,
         sha256: context.engine.sha256,
         bytes: context.engine.bytes,
       },

@@ -27,6 +27,7 @@ const ABI_SELECTOR_MAX_CHARACTERS =
  * the label; Zod max() counts UTF-16 units. Advertise the same code-point
  * budget as JSON Schema maxLength, including every trailing line terminator.
  */
+/** Shared refusal for an ABI label that is not a lib/ directory name. */
 const ABI_SELECTOR_MESSAGE = `ABI must be the exact lib/ directory label: 1–${String(ABI_SELECTOR_MAX_CHARACTERS)} Unicode characters without '/'.`;
 const abiSelectorSchema = z
   .string()
@@ -141,7 +142,7 @@ export const flutterResultSchemas = {
             .string()
             .nullable()
             .describe(
-              "Labeled 'Dart VM version' string, when a build carries one",
+              "Observed string matching the labeled 'Dart VM version' or unlabeled Dart Version::String() pattern; unlabeled matches are candidates rather than verified source identities",
             ),
           toolchain_lines: z.array(z.string().min(1)),
           /** Dart labels omitted by grammar or single-version projection bounds. */

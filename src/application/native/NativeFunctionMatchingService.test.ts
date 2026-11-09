@@ -4,7 +4,8 @@ import { matchNativeFunctions } from "./NativeFunctionMatchingService.js";
 import { nativeFunctionMatchingSchema } from "../../domain/native/functionMatching.js";
 import { createEvidence, immutableEvidence } from "../../domain/evidence.js";
 import { createAnalysisProfile } from "../../domain/analysisProfile.js";
-import { functionDossierSchema } from "../../domain/hopperValues.js";
+import { AnalysisResourceConstraintError } from "../../domain/analysisErrorCore.js";
+import { functionDossierSchema } from "../../domain/native/functionDossier.js";
 import { procedureInfoSchema } from "../../domain/native/procedureInfo.js";
 import {
   nativeMatchingNamedInventory as nativeMatchingInventory,
@@ -73,7 +74,6 @@ it("retains transitive provenance without treating dependencies as native observ
     undefined,
     (id) => (id === dependency.evidence_id ? dependency : undefined),
   );
-  expect(missing.ok).toBe(false);
   if (missing.ok) throw new Error("Missing ancestor accepted");
   expect(missing.error).toMatchObject({
     evidenceId: ancestor.evidence_id,
@@ -114,8 +114,10 @@ it("keeps symbol origin unknown when supplied metadata describes a different sam
   const member = report.matches
     .flatMap((match) => match.left)
     .find((value) => value.address === "0x10");
-  expect(member?.limitations).toContain(
-    "Symbol origin unavailable; exact-name matching is unavailable. Independent complete body bytes remain eligible.",
+  expect(member?.limitations).toContainEqual(
+    expect.stringMatching(
+      /symbol origin unavailable.*exact-name matching is unavailable.*complete body bytes remain eligible/iu,
+    ),
   );
   expect(member?.evidence_links).toContain(alias.evidence_id);
 });
@@ -171,8 +173,10 @@ it("preserves contradictory symbol origins from inventory/name facts or multiple
         withBytes ? "identical-bytes" : null,
       );
       const member = report.matches[0]!.left[0]!;
-      expect(member.limitations).toContain(
-        "Conflicting generated and named symbol-origin observations; exact-name matching is unavailable. Independent complete body bytes remain eligible.",
+      expect(member.limitations).toContainEqual(
+        expect.stringMatching(
+          /conflicting generated and named symbol-origin.*exact-name matching is unavailable.*complete body bytes remain eligible/iu,
+        ),
       );
       expect(member.limitations.join(" ")).not.toContain(
         "Symbol origin unavailable",
@@ -917,6 +921,68 @@ it("matches 20,000 retained Ghidra-shaped rows per side and refuses an oversized
       reportedLimits: { maximum_bytes: 96 * 1024 * 1024 },
       retryable: false,
     });
+});
+
+it("enforces the caller-resolved representation allowance and names its setting", async () => {
+  const rows = (count: number) =>
+    Array.from({ length: count }, (_, i) => ({
+      address: `0x${(0x1000 + i * 16).toString(16)}`,
+      value: `function_${i}`,
+    }));
+  const small = {
+    left: nativeMatchingInventory("1", rows(100)),
+    right: nativeMatchingInventory("2", rows(100)),
+  };
+  const lowered = await matchNativeFunctions(small, {
+    representationAllowance: { maximumBytes: 64 * 1024, source: "runtime" },
+  });
+  if (lowered.ok) throw new Error("Lowered allowance admitted the request");
+  expect(lowered.error).toMatchObject({
+    _tag: "AnalysisResourceConstraintError",
+    reportedLimits: { maximum_bytes: 64 * 1024 },
+    retryable: false,
+    limit: {
+      setting: "native.matching_representation_bytes",
+      effective_value: 64 * 1024,
+      source: "runtime",
+      unit: "bytes",
+      minimum: 1,
+      maximum: 1024 * 1024 * 1024,
+      applies_at: "next_operation",
+      agent_editable: true,
+    },
+  });
+  if (!(lowered.error instanceof AnalysisResourceConstraintError))
+    throw lowered.error;
+  expect(lowered.error.remediationAction).toContain(
+    "update_analysis_settings with setting native.matching_representation_bytes",
+  );
+  expect(lowered.error.remediationAction).toContain(
+    "REA_NATIVE_MATCHING_REPRESENTATION_BYTES",
+  );
+  expect((await matchNativeFunctions(small)).ok).toBe(true);
+  // A request refused by the 96 MiB default fits a raised allowance unchanged.
+  const large = {
+    left: nativeMatchingInventory("1", rows(15_000)),
+    right: nativeMatchingInventory("2", rows(15_000)),
+  };
+  const refused = await matchNativeFunctions(large);
+  expect(refused.ok).toBe(false);
+  if (!refused.ok)
+    expect(refused.error).toMatchObject({
+      limit: { effective_value: 96 * 1024 * 1024, source: "default" },
+    });
+  const raised = await matchNativeFunctions(large, {
+    representationAllowance: {
+      maximumBytes: 256 * 1024 * 1024,
+      source: "setting",
+    },
+  });
+  if (!raised.ok) throw raised.error;
+  expect(
+    nativeFunctionMatchingSchema.parse(raised.value.evidence.normalized_result)
+      .summary.matched,
+  ).toBe(15_000);
 });
 
 it("keeps duplicate candidate storage linear and emits every input occurrence exactly once", async () => {

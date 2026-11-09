@@ -246,11 +246,7 @@ const validateInspectionSubject = (
     throw new ArtifactInventoryValidationError(
       "Artifact inspection subject does not match its inventory manifest",
     );
-  if (
-    subject === null ||
-    subject.digest.sha256 !== manifest.root_sha256 ||
-    subject.format !== manifest.root_format
-  )
+  if (!subjectMatchesInventoryRoot(subject, manifest))
     throw new ArtifactInventoryValidationError(
       "Artifact inspection Evidence subject does not match its root manifest",
     );
@@ -295,22 +291,62 @@ const parseInventoryEvidencePage = (
   }
 };
 
+const subjectMatchesInventoryRoot = (
+  subject: Evidence["subject"],
+  manifest: ArtifactInventoryResult["manifest"],
+): boolean =>
+  subject !== null &&
+  subject.digest.sha256 === manifest.root_sha256 &&
+  subject.format === manifest.root_format;
+
 /** Both inventory carriers require the same authenticated root identity. */
 export const validateArtifactInventorySubject = (
   subject: Evidence["subject"],
   manifest: ArtifactInventoryResult["manifest"],
 ): void => {
-  if (
-    subject === null ||
-    subject.digest.sha256 !== manifest.root_sha256 ||
-    subject.format !== manifest.root_format
-  )
+  if (!subjectMatchesInventoryRoot(subject, manifest))
     throw new ArtifactInventoryValidationError(
       "Artifact inventory Evidence subject does not match its root digest",
     );
 };
 
 const validateInventoryPage = (inventory: ArtifactInventoryResult): void => {
+  const manifest = inventory.manifest;
+  if (manifest.root_artifact_id !== artifactIdForContent(manifest.root_sha256))
+    throw new ArtifactInventoryValidationError(
+      "Artifact root identity does not match its manifest digest",
+    );
+  if (
+    manifest.manifest_id !==
+    artifactManifestId(manifest.root_artifact_id, manifest.graph_sha256)
+  )
+    throw new ArtifactInventoryValidationError(
+      "Artifact manifest ID does not match its commitment",
+    );
+  for (const occurrence of inventory.occurrences) {
+    if (occurrence.logical_path !== ".") continue;
+    if (
+      occurrence.artifact_id !== manifest.root_artifact_id ||
+      occurrence.artifact_format !== manifest.root_format ||
+      occurrence.parent_occurrence_id !== null ||
+      occurrence.entry_kind !==
+        (manifest.root_format === "directory" ? "directory" : "file")
+    )
+      throw new ArtifactInventoryValidationError(
+        "Artifact root occurrence does not match its manifest representation",
+      );
+    if (
+      occurrence.occurrence_id !==
+      occurrenceIdForLocation({
+        rootArtifactId: manifest.root_artifact_id,
+        logicalPath: ".",
+        entryKind: occurrence.entry_kind,
+      })
+    )
+      throw new ArtifactInventoryValidationError(
+        "Artifact occurrence ID does not match its identity",
+      );
+  }
   assertUnique(
     inventory.nodes.map(({ artifact_id: id }) => id),
     "node ID",
@@ -383,6 +419,34 @@ const assembleInventoryResults = (
     occurrences,
     edges,
   });
+  if (
+    inventory.nodes.length > inventory.manifest.node_count ||
+    inventory.occurrences.length > inventory.manifest.occurrence_count ||
+    inventory.edges.length > inventory.manifest.edge_count
+  )
+    throw new ArtifactInventoryValidationError(
+      "Artifact inventory members exceed their manifest counts",
+    );
+  const occurrencesById = new Map(
+    inventory.occurrences.map((occurrence) => [
+      occurrence.occurrence_id,
+      occurrence,
+    ]),
+  );
+  for (const edge of inventory.edges) {
+    const occurrence = occurrencesById.get(edge.occurrence_id);
+    // Missing pages leave references unresolved, but a supplied occurrence
+    // already provides every input to the edge's identity commitment.
+    if (occurrence === undefined) continue;
+    if (occurrence.artifact_id === null)
+      throw new ArtifactInventoryValidationError(
+        "Artifact edge references a missing graph member",
+      );
+    if (edge.edge_id !== artifactEdgeId(edge, occurrence))
+      throw new ArtifactInventoryValidationError(
+        "Artifact edge ID does not match its identity",
+      );
+  }
   if (inventory.complete) validateCompleteInventory(inventory);
   return inventory;
 };
@@ -480,10 +544,7 @@ const validateCompleteInventory = (inventory: InventorySet): void => {
   const rootOccurrence = inventory.occurrences.find(
     ({ logical_path }) => logical_path === ".",
   );
-  if (
-    rootOccurrence?.artifact_id !== inventory.manifest.root_artifact_id ||
-    rootOccurrence.artifact_format !== inventory.manifest.root_format
-  )
+  if (rootOccurrence === undefined)
     throw new ArtifactInventoryValidationError(
       "Artifact root occurrence does not match its manifest representation",
     );
@@ -528,14 +589,6 @@ const validateCompleteInventory = (inventory: InventorySet): void => {
   if (graphSha256 !== inventory.manifest.graph_sha256)
     throw new ArtifactInventoryValidationError(
       "Artifact graph commitment does not match its members",
-    );
-  const manifestId = artifactManifestId(
-    inventory.manifest.root_artifact_id,
-    graphSha256,
-  );
-  if (manifestId !== inventory.manifest.manifest_id)
-    throw new ArtifactInventoryValidationError(
-      "Artifact manifest ID does not match its commitment",
     );
 };
 
@@ -583,10 +636,6 @@ const validateEdge = (
   )
     throw new ArtifactInventoryValidationError(
       "Artifact edge references a missing graph member",
-    );
-  if (edge.edge_id !== artifactEdgeId(edge, occurrence))
-    throw new ArtifactInventoryValidationError(
-      "Artifact edge ID does not match its identity",
     );
 };
 

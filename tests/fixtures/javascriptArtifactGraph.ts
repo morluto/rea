@@ -8,4 +8,4 @@ export const immutableArtifactGraph = (
 ): Promise<JavaScriptApplicationGraph> =>
   completeJavaScriptAnalysisSteps(
     buildImmutableJavaScriptArtifactGraphSteps(...args),
-  );
+  ).then(({ graph }) => graph);

@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import { TOOL_CONTRACTS } from "./toolContracts.js";
 import { FRIDA_KEEPALIVE_INTERVAL_DESCRIPTION } from "./fridaToolContracts.js";
-import { isValidFridaRemoteAddress } from "./fridaRemoteAddress.js";
+import { isValidFridaRemoteAddress } from "../domain/fridaRemoteAddress.js";
 
 const contract = (name: string) => {
   const found = TOOL_CONTRACTS.find((candidate) => candidate.name === name);
