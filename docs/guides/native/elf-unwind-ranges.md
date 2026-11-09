@@ -57,7 +57,12 @@ in 32 bits is not decoded: `fde_count` is null, the header is `incomplete`,
 and the decoded FDEs stay in the result. A header whose FDE count encoding is
 `DW_EH_PE_omit` (`0xff`), as GNU ld writes when it cannot build the search
 table, is `present` with a null `fde_count`, no table rows, and comparison
-`unavailable`; it does not make coverage incomplete.
+`unavailable`; it does not make coverage incomplete. A header that declares
+an FDE count but writes `DW_EH_PE_omit` as its table encoding is `present`
+with that count, no table rows, and comparison `unavailable`, and also keeps
+coverage complete. A non-zero FDE count under an indirect encoding is the
+address of a slot that is not followed, so `fde_count` is null, the header is
+`incomplete`, and the table is not read.
 
 When section headers name both `.eh_frame_hdr` and `PT_GNU_EH_FRAME`, the
 section is decoded. A limitation names the segment as ignored only when it
@@ -98,7 +103,10 @@ FDEs are not decoded either. A limitation counts those FDEs and coverage is
 
 `ranges` is one page of FDEs. Each range has `start`, `end`, decimal `size`,
 the containing `SHF_ALLOC` section, an exact symbol name when a symbol starts
-at that address, the CIE index, LSDA, and personality. Symbol names, section names,
+at that address, the CIE index, LSDA, and personality. A function symbol is
+preferred, then an `STT_GNU_IFUNC` symbol, then an untyped one. An IFUNC name
+is the resolver that starts at that address, not the implementation it
+selects at run time, and a limitation says so. Symbol names, section names,
 and augmentation strings are target-derived and untrusted. Indirect EH
 pointers are not dereferenced. An FDE whose initial location is indirect names
 a pointer slot, not its function, so it is not reported as a range; a

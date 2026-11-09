@@ -270,6 +270,36 @@ it("accepts an FDE with a zero LSDA under a CIE that declares an LSDA encoding",
   });
 });
 
+it("accepts a header that declares a count but omits its search table", async () => {
+  const bytes = elfUnwindFixture({ header: "match" });
+  const shoff = Number(bytes.readBigUInt64LE(40));
+  const sections = bytes.readUInt16LE(60);
+  const names = Number(
+    bytes.readBigUInt64LE(shoff + bytes.readUInt16LE(62) * 64 + 24),
+  );
+  for (let index = 1; index < sections; index += 1) {
+    const at = shoff + index * 64;
+    const nameAt = names + bytes.readUInt32LE(at);
+    if (
+      bytes.toString("latin1", nameAt, bytes.indexOf(0, nameAt)) ===
+      ".eh_frame_hdr"
+    )
+      bytes[Number(bytes.readBigUInt64LE(at + 24)) + 3] = 0xff;
+  }
+  const value = parsed(bytes);
+  expect(value.eh_frame_hdr).toMatchObject({
+    status: "present",
+    fde_count: 2,
+    table_encoding: { raw: 0xff },
+  });
+  const result = await accept(value);
+  expect(result.ok).toBe(true);
+  if (!result.ok) throw result.error;
+  expect(result.value.normalized_result).toMatchObject({
+    coverage: { status: "complete", eh_frame_hdr_agreement: "unavailable" },
+  });
+});
+
 it("accepts a null personality stored under an indirect encoding", async () => {
   const value = parsed(elfUnwindFixture({ nullPersonality: true }));
   expect(value.cies[1]?.personality).toMatchObject({

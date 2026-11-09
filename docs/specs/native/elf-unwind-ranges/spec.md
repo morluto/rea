@@ -38,7 +38,8 @@ these files.
    unrecognized augmentation letter is not decoded, its FDEs are skipped
    with a counted limitation, and coverage is `incomplete`.
 3. FDEs become ranges with start, end, size, containing `SHF_ALLOC` section, an exact
-   symbol name when one starts at that address, CIE index, LSDA and
+   symbol name when one starts at that address (a function, then an
+   `STT_GNU_IFUNC` resolver, then an untyped symbol), CIE index, LSDA and
    personality, paged by `offset` and `limit`.
 4. Encoded pointers follow the `DW_EH_PE` rules. A raw zero is a null pointer.
    Resolved addresses and FDE ends wrap at the ELF32 or ELF64 address width.
@@ -56,7 +57,10 @@ these files.
 7. `.eh_frame_hdr` is decoded and its search table compared with the decoded
    FDEs as `agree`, `disagree` or `unavailable`. The table is read for at most
    `max_ranges` rows and no more rows than its bytes hold. A larger declared
-   count makes the header `incomplete` with a limitation.
+   count makes the header `incomplete` with a limitation. A declared count
+   with an omitted table is a `present` header with comparison
+   `unavailable`. A non-zero indirect count is not followed, so the count is
+   unknown and the header `incomplete`.
 8. `.debug_frame` presence is reported but not decoded.
 9. Budgets bound the file size, CIE and FDE counts, page size and the symbol
    lookup across `.symtab` and `.dynsym`. Only symbols at decoded FDE starts

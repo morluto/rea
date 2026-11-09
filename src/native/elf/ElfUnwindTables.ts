@@ -42,6 +42,7 @@ const DT_PLTGOT = 3n;
 const MAX_DYNAMIC_ENTRIES = 4096;
 const STT_NOTYPE = 0;
 const STT_FUNC = 2;
+const STT_GNU_IFUNC = 10;
 const SHN_UNDEF = 0;
 const SHN_ABS = 0xfff1;
 const SHN_LORESERVE = 0xff00;
@@ -82,6 +83,10 @@ const indirectFdeLimitation = (count: number): string =>
   count === 1
     ? "1 FDE has an indirect initial location that was not dereferenced; its function start is unknown and it was skipped."
     : `${String(count)} FDEs have indirect initial locations that were not dereferenced; their function starts are unknown and they were skipped.`;
+const INDIRECT_COUNT =
+  "The .eh_frame_hdr FDE count uses an indirect encoding that was not dereferenced, so the count and search table are unknown.";
+const IFUNC_NAMES =
+  "A symbol name from an STT_GNU_IFUNC symbol names the resolver that starts at that address, not the implementation it selects at run time.";
 const INDIRECT_TABLE =
   "The .eh_frame_hdr search table uses an indirect encoding that was not dereferenced; it was not compared with the decoded FDEs.";
 const INDIRECT_FRAME_POINTER =
@@ -943,7 +948,7 @@ export const parseElfUnwindRanges = (
     directory,
     new Set(ranges.map((range) => range.startValue)),
     signal,
-    fail,
+    { fail, note },
   );
   const relocatable = directory.elf_type === 1;
   if (relocatable)
@@ -1266,6 +1271,17 @@ const decodeHeader = (
       ehFramePointer: pointer.address,
     };
   }
+  // A non-zero indirect count is the address of a slot holding the count. The
+  // slot is not followed, so the count, and with it the table, is unknown.
+  if ((countEnc & 0x80) !== 0 && countValue.address !== 0n) {
+    fail(INDIRECT_COUNT);
+    return {
+      ...base,
+      version,
+      eh_frame_pointer: hex(pointer.address),
+      ehFramePointer: pointer.address,
+    };
+  }
   if (countValue.address > 0xffffffffn) {
     fail(".eh_frame_hdr FDE count does not fit in 32 bits.");
     return {
@@ -1285,6 +1301,17 @@ const decodeHeader = (
       ehFramePointer: pointer.address,
     };
   }
+  // An omitted table is a valid header without a binary-search table; libgcc
+  // then searches linearly. Test the sentinel before the indirect bit it sets.
+  if (tableEnc === DW_EH_PE_OMIT)
+    return {
+      ...base,
+      status: "present",
+      version,
+      eh_frame_pointer: hex(pointer.address),
+      ehFramePointer: pointer.address,
+      fde_count: count,
+    };
   // Indirect table entries name pointer slots, not starts or FDEs. They are
   // not followed, so the table is neither compared nor used as a scan bound.
   if ((tableEnc & 0x80) !== 0) {
@@ -1731,11 +1758,19 @@ const scanSymbols = (
   directory: ReturnType<typeof readElfDirectoryFromBuffer>,
   wanted: ReadonlySet<bigint>,
   signal: AbortSignal | undefined,
-  fail: (text: string) => void,
+  report: {
+    readonly fail: (text: string) => void;
+    readonly note: (text: string) => void;
+  },
 ): Map<bigint, SymbolName> => {
+  const { fail, note } = report;
   const found = new Map<
     bigint,
-    { readonly name: SymbolName; readonly score: number }
+    {
+      readonly name: SymbolName;
+      readonly score: number;
+      readonly ifunc: boolean;
+    }
   >();
   const tables = directory.sections.filter(
     (section) => section.type === SHT_SYMTAB || section.type === SHT_DYNSYM,
@@ -1795,7 +1830,12 @@ const scanSymbols = (
         break;
       }
       const symbol = parsed.value;
-      if (symbol.type !== STT_FUNC && symbol.type !== STT_NOTYPE) continue;
+      if (
+        symbol.type !== STT_FUNC &&
+        symbol.type !== STT_GNU_IFUNC &&
+        symbol.type !== STT_NOTYPE
+      )
+        continue;
       if (symbol.section_index === SHN_UNDEF) continue;
       if (
         symbol.section_index >= SHN_LORESERVE &&
@@ -1824,14 +1864,21 @@ const scanSymbols = (
         continue;
       }
       if (name.contentBytes === 0) continue;
+      // A function symbol is preferred, then an IFUNC resolver, then an
+      // untyped label; .symtab breaks ties.
       const score =
-        (symbol.type === STT_FUNC ? 2 : 0) +
+        (symbol.type === STT_FUNC ? 4 : symbol.type === STT_GNU_IFUNC ? 2 : 0) +
         (table.type === SHT_SYMTAB ? 1 : 0);
       const previous = found.get(address);
       if (previous === undefined || score > previous.score)
-        found.set(address, { name, score });
+        found.set(address, {
+          name,
+          score,
+          ifunc: symbol.type === STT_GNU_IFUNC,
+        });
     }
   }
+  if ([...found.values()].some((item) => item.ifunc)) note(IFUNC_NAMES);
   return new Map([...found].map(([address, item]) => [address, item.name]));
 };
 

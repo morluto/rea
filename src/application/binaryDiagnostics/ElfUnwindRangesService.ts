@@ -203,6 +203,13 @@ const headerOk = (report: ElfUnwindRanges, maxRanges: number): boolean => {
       header.table_entries === 0 &&
       report.coverage.eh_frame_hdr_agreement === "unavailable"
     );
+  // A header may declare a count but omit its search table.
+  if (header.table_encoding?.raw === 0xff)
+    return (
+      header.fde_count !== null &&
+      header.table_entries === 0 &&
+      report.coverage.eh_frame_hdr_agreement === "unavailable"
+    );
   if (
     header.fde_count === null ||
     header.table_entries !== header.fde_count ||

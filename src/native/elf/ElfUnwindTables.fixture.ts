@@ -114,6 +114,8 @@ export interface ElfUnwindFixtureOptions {
    * pairwise different.
    */
   readonly suffixNames?: number;
+  /** `alpha` at `UNWIND_FN_A` is a global `STT_GNU_IFUNC` resolver symbol. */
+  readonly ifunc?: boolean;
   /** Append this many `S` letters to the first CIE's augmentation. */
   readonly longAugmentation?: number;
 }
@@ -515,6 +517,7 @@ interface SectionSpec {
 const buildSymbolTable = (
   bits: 32 | 64,
   little: boolean,
+  ifunc = false,
 ): { readonly symbols: Buffer; readonly strings: Buffer } => {
   const strings = Buffer.from("\0alpha\0mid\0obj\0", "latin1");
   const width = bits === 64 ? 24 : 16;
@@ -541,7 +544,7 @@ const buildSymbolTable = (
     symbols[at + 12] = info;
     write16(symbols, at + 14, section, little);
   };
-  writeSymbol(1, 1, 0x12, 1, UNWIND_FN_A, UNWIND_FN_A_SIZE);
+  writeSymbol(1, 1, ifunc ? 0x1a : 0x12, 1, UNWIND_FN_A, UNWIND_FN_A_SIZE);
   writeSymbol(2, 7, 0x12, 1, UNWIND_FN_A + 4, 1);
   writeSymbol(3, 11, 0x11, 1, UNWIND_FN_A, UNWIND_FN_A_SIZE);
   return { symbols, strings };
@@ -806,7 +809,7 @@ export const elfUnwindFixture = (
         ? buildSharedNameSymbolTable(bits, little, options.sharedName)
         : options.suffixNames !== undefined
           ? buildSuffixNameSymbolTable(bits, little, options.suffixNames)
-          : buildSymbolTable(bits, little);
+          : buildSymbolTable(bits, little, options.ifunc === true);
   const debug =
     options.debugFrame === false || !unwind ? null : Buffer.alloc(4);
   const sections: SectionSpec[] = [

@@ -1001,3 +1001,53 @@ it("does not compare or bound by an .eh_frame_hdr search table with an indirect 
     "The .eh_frame located only through the .eh_frame_hdr eh_frame_ptr has no section bounds and no terminator after the last FDE its search table names; bytes after that FDE were not decoded.",
   );
 });
+
+it("leaves a non-zero indirect .eh_frame_hdr FDE count unresolved", () => {
+  const bytes = elfUnwindFixture({ header: "match" });
+  bytes[findSection(bytes, ".eh_frame_hdr").offset + 2] = 0x83;
+  const report = parse(bytes);
+  expect(report.ranges).toHaveLength(2);
+  expect(report.eh_frame_hdr).toMatchObject({
+    status: "incomplete",
+    fde_count: null,
+    table_entries: 0,
+  });
+  expect(report.coverage).toMatchObject({
+    status: "incomplete",
+    eh_frame_hdr_agreement: "unavailable",
+  });
+  expect(report.limitations).toContain(
+    "The .eh_frame_hdr FDE count uses an indirect encoding that was not dereferenced, so the count and search table are unknown.",
+  );
+});
+
+it("reports a header that declares a count but omits its search table as present", () => {
+  const bytes = elfUnwindFixture({ header: "match" });
+  bytes[findSection(bytes, ".eh_frame_hdr").offset + 3] = 0xff;
+  const report = parse(bytes);
+  expect(report.eh_frame_hdr).toMatchObject({
+    status: "present",
+    fde_count: 2,
+    table_entries: 0,
+    table_encoding: { raw: 0xff },
+  });
+  expect(report.coverage).toMatchObject({
+    status: "complete",
+    eh_frame_hdr_agreement: "unavailable",
+  });
+  expect(report.limitations).not.toContain(
+    "The .eh_frame_hdr search table uses an indirect encoding that was not dereferenced; it was not compared with the decoded FDEs.",
+  );
+});
+
+it("names a range from an STT_GNU_IFUNC resolver symbol at its exact start", () => {
+  const report = parse(elfUnwindFixture({ header: "match", ifunc: true }));
+  expect(report.ranges[0]).toMatchObject({
+    start: address(UNWIND_FN_A),
+    symbol: { text: "alpha" },
+  });
+  expect(report.coverage.ranges_with_symbols).toBe(1);
+  expect(report.limitations).toContain(
+    "A symbol name from an STT_GNU_IFUNC symbol names the resolver that starts at that address, not the implementation it selects at run time.",
+  );
+});
