@@ -169,22 +169,55 @@ export const staticArrayValues = (
   };
 };
 
+type JavaScriptStaticPathIntrinsicFact =
+  | "resolve"
+  | "join"
+  | "file-url-to-path"
+  | "source-url"
+  | "source-directory";
+
 /** Classify whether inert path syntax is a module specifier or file expression. */
-export type JavaScriptStaticPathIntrinsicQuery = (
-  node: t.Node,
-  fact?:
-    | "resolve"
-    | "join"
-    | "file-url-to-path"
-    | "source-url"
-    | "source-directory",
-) => boolean;
+export interface JavaScriptStaticPathIntrinsicQuery {
+  (node: t.Node, fact?: JavaScriptStaticPathIntrinsicFact): boolean;
+  /**
+   * Return the initializer of a single `const` binding when it runs before
+   * every evaluation of this read. Other reads remain unknown.
+   */
+  readonly constantInitializer?: (read: t.Identifier) => t.Node | undefined;
+}
+
+/**
+ * Substitute each constant at most once while interpreting one expression.
+ * Repeated reads such as `const twice = once + once` stay unknown, so
+ * substitution cannot expand syntax or spelling beyond the source text.
+ */
+const substitutingConstantsOnce = (
+  pathIntrinsics: JavaScriptStaticPathIntrinsicQuery | undefined,
+): JavaScriptStaticPathIntrinsicQuery | undefined => {
+  const constantInitializer = pathIntrinsics?.constantInitializer;
+  if (pathIntrinsics === undefined || constantInitializer === undefined)
+    return pathIntrinsics;
+  const substituted = new Set<t.Node>();
+  return Object.assign(
+    (node: t.Node, fact?: JavaScriptStaticPathIntrinsicFact) =>
+      pathIntrinsics(node, fact),
+    {
+      constantInitializer: (read: t.Identifier) => {
+        const initializer = constantInitializer(read);
+        if (initializer === undefined || substituted.has(initializer))
+          return undefined;
+        substituted.add(initializer);
+        return initializer;
+      },
+    },
+  );
+};
 
 export const staticPathResolutionContext = (
   node: t.Node,
   pathIntrinsics?: JavaScriptStaticPathIntrinsicQuery,
 ): JavaScriptStaticPathContext =>
-  isFilesystemPathExpression(node, pathIntrinsics)
+  isFilesystemPathExpression(node, substitutingConstantsOnce(pathIntrinsics))
     ? "filesystem-expression"
     : "module-specifier";
 
@@ -197,7 +230,8 @@ interface StaticPathFact {
 export const staticPath = (
   node: t.Node,
   pathIntrinsics?: JavaScriptStaticPathIntrinsicQuery,
-): string | undefined => staticPathFact(node, pathIntrinsics)?.path;
+): string | undefined =>
+  staticPathFact(node, substitutingConstantsOnce(pathIntrinsics))?.path;
 
 /** Parse spelling and its source-directory provenance together at the owning boundary. */
 const staticPathFact = (
@@ -207,6 +241,13 @@ const staticPathFact = (
   const node = unwrapJavaScriptExpression(raw).node;
   const value = stringValue(node);
   if (value !== undefined) return { path: value, base: "literal-path" };
+  if (t.isIdentifier(node)) {
+    // The initializer keeps its own syntax, so a source-directory base survives.
+    const initializer = pathIntrinsics?.constantInitializer?.(node);
+    return initializer === undefined
+      ? undefined
+      : staticPathFact(initializer, pathIntrinsics);
+  }
   if (t.isBinaryExpression(node, { operator: "+" }))
     return staticConcatenation(node, pathIntrinsics);
   if (t.isCallExpression(node) || t.isNewExpression(node))
@@ -224,7 +265,7 @@ export const staticFileExpressionPath = (
       readonly base: "source-directory" | "literal-path";
     }
   | undefined => {
-  const fact = staticPathFact(node, pathIntrinsics);
+  const fact = staticPathFact(node, substitutingConstantsOnce(pathIntrinsics));
   return fact === undefined || fact.base === "unknown"
     ? undefined
     : { path: fact.path, base: fact.base };
@@ -326,7 +367,7 @@ const staticFileUrlPathFact = (
       ? undefined
       : { path: resolved.path, base: "source-directory" };
   }
-  const value = staticPath(argument, pathIntrinsics);
+  const value = staticPathFact(argument, pathIntrinsics)?.path;
   const rawPath = value?.split(/[?#]/u, 1)[0] ?? "";
   if (
     value === undefined ||
@@ -432,6 +473,13 @@ const isFilesystemPathExpression = (
   if (value !== undefined) return value.startsWith("/");
   if (isFileIdentity(node) || isDirectoryPath(node, pathIntrinsics))
     return true;
+  if (t.isIdentifier(node)) {
+    const initializer = pathIntrinsics?.constantInitializer?.(node);
+    return (
+      initializer !== undefined &&
+      isFilesystemPathExpression(initializer, pathIntrinsics)
+    );
+  }
   if (t.isBinaryExpression(node, { operator: "+" }))
     return (
       isFilesystemPathExpression(node.left, pathIntrinsics) ||

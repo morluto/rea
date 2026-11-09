@@ -533,6 +533,16 @@ covers direct BrowserWindow instances, stable local aliases, and their
 `webContents`; other receiver-producing APIs remain unmodeled. Complete AST
 traversal does not imply complete API-model coverage.
 
+Path values and source-directory or source-file anchors held in a single
+`const`, such as `const preload = path.join(__dirname, "preload.js")` or
+`const __dirname = path.dirname(fileURLToPath(import.meta.url))`, stand for
+their initializers when the shared lexical index proves that the initializer
+runs before every evaluation of the read. The timing rules described below for
+constant options apply. Each constant is read at most once per path
+expression, so repeated reads such as `const twice = once + once` stay
+unknown. `let` and `var` bindings, reassigned or destructured constants, reads
+that may run before initialization, and `URL` objects keep their expressions.
+
 Artifact bytes and AST syntax are observations. Entrypoint resolution, imports,
 loads, calls, and persistence relationships are static inferences and explicitly
 say that syntax does not prove runtime execution. A malformed or unavailable
