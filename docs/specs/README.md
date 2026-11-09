@@ -15,3 +15,8 @@ for the specification lifecycle, roadmap granularity and producer-owned contract
 
 - [Organization](documentation/organization/spec.md)
   ([plan](documentation/organization/plan.md), [tasks](documentation/organization/tasks.md))
+
+## Native
+
+- [Go static string-header literal recovery](native/go-string-literals/spec.md)
+  ([plan](native/go-string-literals/plan.md), [tasks](native/go-string-literals/tasks.md))

@@ -32,12 +32,10 @@ import { withCommandCancellation } from "./commandCancellation.js";
 import {
   analysisEvidenceDeliveryOptions,
   cliEvidenceDeliveryInputError,
-  cliEvidenceSourceClosure,
   publishCliAnalysisEvidence,
 } from "./analysisEvidenceDelivery.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import { AnalysisOutputError } from "../domain/analysisErrorCore.js";
-import type { EvidenceBundle } from "../domain/evidenceBundle.js";
 
 const bytePatternInputSchema = z
   .object(bytePatternFields)
@@ -303,7 +301,6 @@ export const registerCoreNativeCommands = (
           };
           const invalid = cliEvidenceDeliveryInputError(delivery);
           if (invalid !== undefined) return projectAnalysisError(invalid);
-          let sessionBundle: EvidenceBundle | undefined;
           const complete = await runDirectAnalysis(
             args.path,
             "trace_native_values",
@@ -320,43 +317,28 @@ export const registerCoreNativeCommands = (
             {
               ...directAnalysisOptionsFromCli(logger, options),
               signal,
-              ...(options.evidence_output === undefined
-                ? {}
-                : {
-                    onEvidenceBundle: (bundle: EvidenceBundle) => {
-                      sessionBundle = bundle;
-                    },
-                  }),
+              includeEvidenceSources: options.evidence_output !== undefined,
             },
           );
           if (!complete.ok || options.evidence_output === undefined)
             return publishCliAnalysisEvidence(complete, delivery);
-          if (sessionBundle === undefined)
+          if (complete.sourceEvidence === undefined)
             return projectAnalysisError(
               new AnalysisOutputError(
                 "trace_native_values",
-                "The CLI session did not return its retained Evidence bundle.",
+                "The CLI session did not return its source Evidence.",
               ).retainPartialObservation(complete.value),
             );
-          const sources = cliEvidenceSourceClosure(
-            complete.value,
-            sessionBundle.records,
-          );
-          if (!sources.ok)
-            return projectAnalysisError(
-              sources.error.retainPartialObservation(complete.value),
-            );
-          return publishCliAnalysisEvidence(complete, {
-            ...delivery,
-            sourceEvidence: sources.value,
-          });
+          return publishCliAnalysisEvidence(complete, delivery);
         }),
       ),
   });
   cli.command(CLI_COMMANDS.inspectNativeDataType, {
     description: "Inspect one recovered database type or typed data object",
     args: z.object({
-      path: localPathStringSchema.describe("Local native executable or app path"),
+      path: localPathStringSchema.describe(
+        "Local native executable or app path",
+      ),
     }),
     options: z.object({
       type: z.string().optional().describe("Exact database type category path"),
