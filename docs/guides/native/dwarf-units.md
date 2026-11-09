@@ -50,8 +50,10 @@ unit length still frames the next unit.
 `coverage.status` is `complete` when every framed unit was visited. Gaps inside
 a visited unit stay in that unit's `issues`, so `complete` does not mean every
 fact resolved. `partial` means a later length could not frame the next unit, the
-walk cap was reached, a declared `.debug_info` could not be decoded, or a further
-`.debug_info` section was not read. A `.dwo` object is `partial` because its
+walk cap was reached, a declared `.debug_info` could not be decoded, a further
+`.debug_info` section was not read, or attribute decoding used up its shared
+work allowance. Each form read and each `DW_FORM_indirect` hop costs one step
+of that allowance; units read after it runs out report `decode_budget`. A `.dwo` object is `partial` because its
 `.debug_info.dwo` is not read. `no_debug_info` means this file declares no
 `.debug_info`, or declares one that stores no bytes. That does not establish
 that a separate debug file is absent. For ELF and PE, the limitations then name

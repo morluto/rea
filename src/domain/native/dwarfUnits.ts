@@ -33,6 +33,8 @@ export const MAX_DWARF_ABBREV_ATTRIBUTES = 256;
 export const MAX_DWARF_ULEB_BYTES = 10;
 /** Bytes retained from one NUL-terminated DWARF string. */
 export const MAX_DWARF_STRING_BYTES = 65_536;
+/** Form decoding steps, including each DW_FORM_indirect hop, shared by one walk. */
+export const MAX_DWARF_FORM_DECODE_STEPS = 1_048_576;
 /** Issues retained on one compile unit. */
 export const MAX_DWARF_UNIT_ISSUES = 32;
 
@@ -93,6 +95,7 @@ export const DWARF_UNIT_ISSUE_CODES = [
   "abbrev_unavailable",
   "abbrev_malformed",
   "abbrev_budget",
+  "decode_budget",
   "unknown_abbrev_code",
   "unknown_form",
   "truncated_die",

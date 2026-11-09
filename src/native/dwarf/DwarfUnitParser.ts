@@ -1,5 +1,6 @@
 import {
   dwarfLanguageName,
+  MAX_DWARF_FORM_DECODE_STEPS,
   MAX_DWARF_STRING_BYTES,
   MAX_DWARF_UNIT_ISSUES,
   MAX_DWARF_UNITS,
@@ -67,7 +68,20 @@ type FormValue =
   | { readonly kind: "unusable" }
   | { readonly kind: "capped" };
 
-type FormFailure = "truncated" | "unknown-form" | "indirect-invalid";
+type FormFailure = "truncated" | "unknown-form" | "indirect-invalid" | "budget";
+
+/** Aggregate form-decoding work shared by every unit DIE in one walk. */
+interface FormWorkBudget {
+  remaining: number;
+}
+
+const DECODE_BUDGET_MESSAGE = `DIE attribute decoding exceeds the ${String(MAX_DWARF_FORM_DECODE_STEPS)}-step aggregate work allowance`;
+
+const chargeFormWork = (budget: FormWorkBudget): boolean => {
+  if (budget.remaining <= 0) return false;
+  budget.remaining -= 1;
+  return true;
+};
 
 interface UnitDraft {
   readonly offset: number;
@@ -100,6 +114,7 @@ export const parseDwarfCompileUnits = (
     input.abbrev ?? Buffer.alloc(0),
     input.little,
   );
+  const work: FormWorkBudget = { remaining: MAX_DWARF_FORM_DECODE_STEPS };
   const units: DwarfCompileUnit[] = [];
   let total = 0;
   let reason: string | null = null;
@@ -128,10 +143,12 @@ export const parseDwarfCompileUnits = (
           framed.totalLength,
           input,
           abbrev,
+          work,
         ),
       );
     total += 1;
   }
+  if (reason === null && work.remaining <= 0) reason = DECODE_BUDGET_MESSAGE;
   return {
     units,
     total_units: total,
@@ -183,6 +200,7 @@ const parseUnit = (
   length: number,
   input: DwarfInfoInput,
   abbrev: DwarfAbbrevCache,
+  work: FormWorkBudget,
 ): DwarfCompileUnit => {
   const draft = blankUnit(
     offset,
@@ -318,6 +336,7 @@ const parseUnit = (
     draft,
     input,
     issue,
+    work,
   );
   return draft;
 };
@@ -341,6 +360,7 @@ const readDie = (
   draft: UnitDraft,
   input: DwarfInfoInput,
   issue: (code: DwarfUnitIssueCode, detail: string) => void,
+  work: FormWorkBudget,
 ): void => {
   const code = cursor.uleb();
   if (!code.ok) {
@@ -376,11 +396,17 @@ const readDie = (
   let stop = entry.attributes.length;
   for (let index = 0; index < entry.attributes.length; index += 1) {
     const attribute = entry.attributes[index]!;
-    const read = readForm(cursor, attribute.form, attribute.implicit, {
-      version: draft.version ?? 0,
-      addressSize: draft.address_size ?? 0,
-      offsetSize: draft.offset_size,
-    });
+    const read = readForm(
+      cursor,
+      attribute.form,
+      attribute.implicit,
+      {
+        version: draft.version ?? 0,
+        addressSize: draft.address_size ?? 0,
+        offsetSize: draft.offset_size,
+      },
+      work,
+    );
     if (!read.ok) {
       stop = index;
       if (read.reason === "unknown-form")
@@ -393,6 +419,8 @@ const readDie = (
           "unknown_form",
           "DW_FORM_indirect cannot carry DW_FORM_implicit_const",
         );
+      else if (read.reason === "budget")
+        issue("decode_budget", DECODE_BUDGET_MESSAGE);
       else issue("truncated_die", "DIE attribute value is truncated");
       break;
     }
@@ -706,6 +734,7 @@ const readForm = (
   form: number,
   implicit: bigint | null,
   unit: FormContext,
+  work: FormWorkBudget,
 ):
   | { readonly ok: true; readonly value: FormValue }
   | {
@@ -713,9 +742,11 @@ const readForm = (
       readonly reason: FormFailure;
       readonly form: number;
     } => {
-  // Each indirection consumes at least one byte, so the unit cursor's remaining
-  // bytes bound the chain without recursion or a limit on valid nesting depth.
+  // Each read and each indirection is charged to the walk's shared allowance, so
+  // a long chain inside an admitted decompressed section cannot stall the caller.
+  if (!chargeFormWork(work)) return { ok: false, reason: "budget", form };
   while (form === FORM_INDIRECT) {
+    if (!chargeFormWork(work)) return { ok: false, reason: "budget", form };
     const inner = cursor.uleb();
     if (!inner.ok) return { ok: false, reason: "truncated", form };
     if (inner.value > 0xffff_ffffn)

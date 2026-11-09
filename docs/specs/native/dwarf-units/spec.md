@@ -36,7 +36,9 @@ executes the target.
   walk (`100,000` units), abbreviation entries (`8,192`) and attributes
   (`256`), retained string bytes (`64 KiB`), unit issues (`32`) and the input
   read (`512 MiB`). Decompression attempts and abbreviation parsing share
-  aggregate work allowances.
+  aggregate work allowances. Form reads and `DW_FORM_indirect` hops share a
+  `1,048,576`-step allowance per walk; exhaustion is a `decode_budget` unit
+  issue with `partial` coverage.
 - Report `coverage.status` as `complete`, `partial` with a reason, or
   `no_debug_info`. `no_debug_info` does not establish that a separate debug
   file is absent; ELF and PE limitations name whether `.gnu_debuglink` was

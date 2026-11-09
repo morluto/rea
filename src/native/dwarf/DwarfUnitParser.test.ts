@@ -2,6 +2,7 @@ import { expect, it } from "vitest";
 import {
   MAX_DWARF_ABBREV_ENTRIES,
   MAX_DWARF_STRING_BYTES,
+  MAX_DWARF_FORM_DECODE_STEPS,
 } from "../../domain/native/dwarfUnits.js";
 import { parseDwarfCompileUnits } from "./DwarfUnitParser.js";
 import {
@@ -273,6 +274,50 @@ it("stops a truncated indirect chain without consuming the next unit", () => {
   expect(parsed.units[0]?.name.state).toBe("unknown");
   expect(parsed.units[0]?.issues[0]?.code).toBe("truncated_die");
   expect(parsed.units[1]?.name.value).toBe("next.c");
+});
+
+it("charges indirect form chains against a shared decode allowance", () => {
+  const abbrev = abbrevTable([
+    {
+      code: 1,
+      tag: 0x11,
+      children: false,
+      attributes: [{ name: 0x03, form: 0x16 }],
+    },
+  ]);
+  const chain = (hops: number) =>
+    compileUnit({
+      attributes: [Buffer.alloc(hops, 0x16), uleb(0x08), Buffer.from("a.c\0")],
+    });
+  const half = MAX_DWARF_FORM_DECODE_STEPS / 2;
+  const parsed = walk(
+    Buffer.concat([
+      chain(half - 8),
+      chain(half + 8),
+      compileUnit({ attributes: [uleb(0x08), Buffer.from("next.c\0")] }),
+    ]),
+    abbrev,
+  );
+  expect(parsed.units[0]).toMatchObject({
+    name: { state: "present", value: "a.c" },
+    die_complete: true,
+    issues: [],
+  });
+  for (const unit of parsed.units.slice(1)) {
+    expect(unit.name.state).toBe("unknown");
+    expect(unit.die_complete).toBe(false);
+    expect(unit.issues).toEqual([
+      {
+        code: "decode_budget",
+        detail: `DIE attribute decoding exceeds the ${String(MAX_DWARF_FORM_DECODE_STEPS)}-step aggregate work allowance`,
+      },
+    ]);
+  }
+  expect(parsed.total_units).toBe(3);
+  expect(parsed.coverage).toEqual({
+    status: "partial",
+    reason: `DIE attribute decoding exceeds the ${String(MAX_DWARF_FORM_DECODE_STEPS)}-step aggregate work allowance`,
+  });
 });
 
 it("does not read strx, GNU str indexes, or str_offsets_base while ET_REL relocations are unapplied", () => {
