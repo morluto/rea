@@ -628,3 +628,58 @@ it("does not keep the decoded config alive through a one-entry page", async () =
   // Eight pages that each pinned their decoded text would hold about 7 MiB.
   expect(retained).toBeLessThan(2 << 20);
 });
+
+it("yields to the event loop while marker searches find nothing", async () => {
+  const input = inspectKernelBuildConfigInputSchema.parse({
+    path: artifactPath,
+  });
+  const artifact = { path: artifactPath, sha256: "ab".repeat(32), bytes: 0 };
+  // Every byte starts a possible IKCFG_ST, and no marker or banner exists.
+  const bytes = Buffer.alloc(8 << 20, 0x49);
+  let turns = 0;
+  let running = true;
+  const tick = (): void => {
+    turns += 1;
+    if (running) setImmediate(tick);
+  };
+  setImmediate(tick);
+  const seen = new Set<number>();
+  const signal = {
+    get aborted() {
+      seen.add(turns);
+      return false;
+    },
+    reason: undefined,
+  } as unknown as AbortSignal;
+  try {
+    const report = await parseKernelBuildConfig(bytes, artifact, input, signal);
+    expect(report.config.status).toBe("absent");
+    expect(report.banner.status).toBe("absent");
+  } finally {
+    running = false;
+  }
+  // Two 8 MiB searches with no match: checks must span many turns, not one.
+  expect(seen.size).toBeGreaterThanOrEqual(8);
+});
+
+it("finds markers that straddle a search window boundary", async () => {
+  for (const shift of [1, 4, 6]) {
+    // The first window ends needle.length - 1 bytes past each MiB, so these
+    // markers start inside one window and end in the next.
+    const at = (1 << 20) + shift;
+    const config = embeddedKernelConfig();
+    const banner = Buffer.from("Linux version 6.1.0 (a@b) (gcc) #1\n");
+    const bytes = Buffer.alloc((3 << 20) + config.length);
+    banner.copy(bytes, at);
+    config.copy(bytes, (2 << 20) + shift);
+    const report = await parse(bytes);
+    expect(report.banner).toMatchObject({
+      status: "present",
+      location: { offset: at },
+    });
+    expect(report.config).toMatchObject({
+      status: "present",
+      marker: { offset: (2 << 20) + shift },
+    });
+  }
+});

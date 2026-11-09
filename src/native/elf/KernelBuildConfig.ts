@@ -52,6 +52,29 @@ const yieldTurn = async (signal: AbortSignal | undefined): Promise<void> => {
   assertArtifactReadActive(signal);
 };
 
+/**
+ * Offset of the next `needle` at or after `from`, or -1. Overlapping
+ * TURN_STRIDE windows are searched with a turn after each one that holds no
+ * match, so a search that finds nothing still yields once per MiB.
+ */
+const findNext = async (
+  bytes: Buffer,
+  needle: Buffer,
+  from: number,
+  signal: AbortSignal | undefined,
+): Promise<number> => {
+  for (let start = from; ;) {
+    const end = Math.min(bytes.length, start + TURN_STRIDE + needle.length - 1);
+    const hit = bytes.subarray(0, end).indexOf(needle, start);
+    if (hit >= 0) return hit;
+    if (end >= bytes.length) return -1;
+    // The next window repeats the last needle.length - 1 bytes, so a match
+    // across the boundary is still found.
+    start = end - needle.length + 1;
+    await yieldTurn(signal);
+  }
+};
+
 /** SHA-256 hashed one TURN_STRIDE window per event-loop turn. */
 const sha256 = async (
   bytes: Buffer,
@@ -402,7 +425,7 @@ const findConfig = async (
   let turnAt = TURN_STRIDE;
   for (;;) {
     assertArtifactReadActive(signal);
-    const marker = bytes.indexOf(IKCFG_ST, from);
+    const marker = await findNext(bytes, IKCFG_ST, from, signal);
     if (marker < 0) break;
     if (marker >= turnAt) {
       turnAt = marker + TURN_STRIDE;
@@ -412,7 +435,7 @@ const findConfig = async (
     const gzipAt = marker + IKCFG_ST.length;
     if (codecAt(bytes, gzipAt) !== "gzip") continue;
     if (closing === null || (closing >= 0 && closing < gzipAt))
-      closing = bytes.indexOf(IKCFG_ED, gzipAt);
+      closing = await findNext(bytes, IKCFG_ED, gzipAt, signal);
     // Without a closing marker nothing later can be framed; one truncated
     // member is enough to report the search incomplete.
     if (closing < 0 && truncated) break;
@@ -535,7 +558,7 @@ const findBanner = async (
   let turnAt = TURN_STRIDE;
   for (;;) {
     assertArtifactReadActive(signal);
-    const at = bytes.indexOf(BANNER_PREFIX, from);
+    const at = await findNext(bytes, BANNER_PREFIX, from, signal);
     if (at < 0) return absentBanner("absent");
     let end = at + BANNER_PREFIX.length;
     while (end < bytes.length && isPrintable(bytes[end] ?? 0)) {
