@@ -1,5 +1,7 @@
 # Native and managed analysis
 
+<a id="native-managed-and-packaged-artifacts"></a>
+
 Read only the sections needed for the selected task.
 
 - [Other artifact guides](#other-artifact-guides)
@@ -13,7 +15,7 @@ Read only the sections needed for the selected task.
 - [Selected native facts and call graphs](#selected-native-facts-and-call-graphs)
 - [Static memory and original file bytes](#static-memory-and-original-file-bytes)
 - [DOS MZ with Ghidra](#dos-mz-with-ghidra)
-- [Managed PE/CLI](#managed-pecli)
+- [Managed PE/CLI](#managed-pe-cli-guide)
 - [DOS COM loader interpretation](#dos-com-loader-interpretation)
 - [Function annotations in Ghidra](#function-annotations-in-ghidra)
 
@@ -344,6 +346,8 @@ Property attributes remain raw name/value tokens; use the property's
 Null class/meta flags, ivar counts, atomicity, or read-only values mean the
 selected provider did not establish that fact. Symbol names alone do not prove
 that a class is a root class or has no ivars.
+
+<a id="managed-pe-cli-guide"></a>
 
 ## Managed PE/CLI
 
