@@ -7,6 +7,7 @@ import { createHash } from "node:crypto";
 import { mkdir, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { join } from "node:path";
+import { cargoExecutableArtifact } from "./lib/cargo-build-artifacts.mjs";
 import {
   closeVerifierResources,
   withVerifierCleanup,
@@ -443,17 +444,18 @@ await withVerifierCleanup(async () => {
             PATH: `${join(auditableRoot, "bin")}${process.platform === "win32" ? ";" : ":"}${process.env.PATH ?? ""}`,
           }),
     };
-    await run(
+    const built = await run(
       "cargo",
-      ["auditable", "build", "--manifest-path", join(rustDir, "Cargo.toml")],
+      [
+        "auditable",
+        "build",
+        "--message-format=json-render-diagnostics",
+        "--manifest-path",
+        join(rustDir, "Cargo.toml"),
+      ],
       { cwd: rustDir, env: rustEnvironment, timeout: 180_000 },
     );
-    const rustBinary = join(
-      root.path,
-      "rust-target",
-      "debug",
-      process.platform === "win32" ? "app.exe" : "app",
-    );
+    const rustBinary = cargoExecutableArtifact(built.stdout, "app");
     await withVerifierCleanup(async () => {
       const inspected = await rustService.inspect({ path: rustBinary });
       if (!inspected.ok) throw inspected.error;
