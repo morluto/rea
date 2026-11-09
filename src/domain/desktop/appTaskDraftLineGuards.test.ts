@@ -26,6 +26,29 @@ const drafted = (before: string, after: string) => {
 };
 
 describe("draftTaskFiles for lines holding values the app generates", () => {
+  it("keeps an unquoted assignment in ordinary prose exact", () => {
+    const line = "Set created=2025550123 and save";
+    const file = drafted("# Instructions", `# Instructions\n${line}`);
+    expect(file.suggested).toEqual([
+      { kind: "lines_present", file: FILE, lines: [line] },
+    ]);
+    const checks = file.suggested.map((check, index) => ({
+      ...check,
+      id: `c${index}`,
+    }));
+    const wrong = new Map([
+      [
+        FILE,
+        {
+          format: "text" as const,
+          view: textView("# Instructions\nSet created=WRONG and save"),
+        },
+      ],
+    ]);
+    expect(
+      evaluateTaskChecks(checks, wrong).map(({ passed }) => passed),
+    ).toEqual([false]);
+  });
   it("keeps assignment-like text quoted in a translation", () => {
     const translation = 'msgstr "Set created=2025550123 and save"';
     const file = drafted(lines(), lines(translation));
@@ -304,21 +327,20 @@ describe("draftTaskFiles for added lines", () => {
       { kind: "lines_present", file: FILE, lines: [text] },
     ]);
   });
-  it("keeps phone numbers but counts a stable prefix before a named creation time", () => {
+  it("keeps assignment-like text exact when no XML structure identifies metadata", () => {
     const phone = 'topic TEXT="Call 2025550123"';
     const timed = 'topic TEXT="Water filter" CREATED="1793955250671"';
     const file = drafted(lines(), lines(phone, timed));
     expect(file.suggested).toEqual(
       expect.arrayContaining([
-        expect.objectContaining({ kind: "lines_present", lines: [phone] }),
         expect.objectContaining({
-          kind: "line_count",
-          contains: 'topic TEXT="Water filter" CREATED="',
+          kind: "lines_present",
+          lines: [phone, timed],
         }),
       ]),
     );
   });
-  it("counts the lines holding a new line's text up to its first generated value, rather than the line whole, which another save would not repeat", () => {
+  it("keeps a non-XML line with ID-like assignments exact", () => {
     const file = drafted(
       lines(),
       lines(
@@ -328,10 +350,11 @@ describe("draftTaskFiles for added lines", () => {
 
     expect(file.suggested).toEqual([
       {
-        kind: "line_count",
+        kind: "lines_present",
         file: FILE,
-        contains: 'topic TEXT="Water filter" ID="',
-        equals: 1,
+        lines: [
+          'topic TEXT="Water filter" ID="ID_329023692" CREATED="1793955250671" MODIFIED="1793955252979"',
+        ],
       },
     ]);
     expect(file.notes).toEqual([]);
@@ -552,6 +575,29 @@ describe("draftTaskFiles for the app's log beside its journal", () => {
     expect(
       noted[0]?.notes.some((note) => note.message.includes("internal subset")),
     ).toBe(false);
+  });
+});
+
+describe("draftTaskFiles for a lock the export leaves out of a state directory", () => {
+  it("drafts no check or guard on a lock directly in a state directory, which the export leaves out of the seed", () => {
+    const [lock] = draftOf(
+      {
+        ".config/notes/sync.lock": statePath(
+          "application_state",
+          "text",
+          textView("pid 1\n"),
+          textView("pid 2\n"),
+        ),
+      },
+      [],
+      [".config/notes"],
+    );
+
+    expect(lock).toMatchObject({
+      file: ".config/notes/sync.lock",
+      suggested: [],
+      guards: [],
+    });
   });
 });
 

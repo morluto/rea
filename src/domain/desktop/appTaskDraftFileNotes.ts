@@ -1,6 +1,6 @@
 import { isWellFormedXml, opensLikeXml } from "../xmlDocument.js";
 import type { NamedFacts } from "./appTaskDraftNamed.js";
-import { doctypeHasInternalSubset } from "./stateFormats.js";
+import { doctypeHasInternalSubset, XML_POLICY } from "./stateFormats.js";
 
 /** Why a file in a draft has few or no suggested checks, one code per reason. */
 export const FILE_NOTE_CODES = [
@@ -157,12 +157,14 @@ export const readAsTextNotes = (
   if (!opensLikeXml(opening)) return [];
   if (
     !doctypeHasInternalSubset(opening) &&
-    isWellFormedXml(opening, { doctype: "external" })
+    isWellFormedXml(opening, XML_POLICY)
   )
     return [];
   const why = doctypeHasInternalSubset(opening)
     ? "its DOCTYPE has an internal subset, which can declare entities"
-    : "it is not well-formed XML";
+    : isWellFormedXml(opening, { doctype: "external" })
+      ? "its XML names are not supported by the exported reader"
+      : "it is not well-formed XML";
   return [
     {
       code: "read_as_text",
