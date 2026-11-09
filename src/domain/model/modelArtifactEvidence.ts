@@ -27,7 +27,9 @@ export const createModelArtifactEvidence = (
       result: report,
       confidence: "observed",
       subjectUnavailableReason:
-        "Full-file identity is unknown in header-only mode; normalized_result.artifact records a scoped header SHA-256 and exact source path/extent.",
+        report.format === "ort"
+          ? "The full-file Evidence subject is unset because hash full was not requested; normalized_result.artifact.header_sha256 commits to the complete bounded ORT container."
+          : "Full-file identity is unknown in header-only mode; normalized_result.artifact records a scoped header SHA-256 and exact source path/extent.",
       locations: [
         { kind: "artifact-path", path: source.path },
         { kind: "file-offset-range", start: 0, end: source.header_length },

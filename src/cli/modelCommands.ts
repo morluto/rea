@@ -24,7 +24,7 @@ export const registerModelCommands = (
 ): void => {
   cli.command(CLI_COMMANDS.inspectModelArtifact, {
     description:
-      "Inspect GGUF or safetensors headers without loading model weights",
+      "Inspect GGUF, safetensors or ORT declarations without a model runtime",
     args: z.object({
       path: localPathStringSchema.describe(
         "Local model file, detected by content",
@@ -42,7 +42,7 @@ export const registerModelCommands = (
         .enum(["header", "full"])
         .default("header")
         .describe(
-          "header reads declarations only; full additionally streams all bytes for SHA-256",
+          "header reads declarations (the whole container for ORT); full requests full-file SHA-256",
         ),
     }),
     run: ({ args, options }) =>
