@@ -72,10 +72,30 @@ it("detects Unicode XML names in both state readers while rejecting non-XML text
     ["map.dat", '<地图 名称="甲"><节点/></地图>'],
     ["map.dat", '<!DOCTYPE 地图 SYSTEM "map.dtd"><地图/>'],
     ["map.dat", "<máp/>"],
+    ["map.dat", "<Ϳ>new</Ϳ>"],
+    ["map.xml", "<root><Ϳ/></root>"],
+    ["map.xml", '<root aͿ="x"/>'],
+    ["map.xml", "<𐀀/>"],
+    ["map.dat", "<á/>"],
+    ["map.dat", "<root><?Ϳ value?></root>"],
+    ["map.dat", "<!DOCTYPE Ϳ><root/>"],
     ["map.dat", "<地图><节点></地图>"],
     ["note.dat", "<ada@example.test>\nBuy milk"],
   ] as const;
-  const expected = ["xml", "xml", "xml", "text", "text"];
+  const expected = [
+    "xml",
+    "xml",
+    "xml",
+    "text",
+    "text",
+    "text",
+    "text",
+    "xml",
+    "text",
+    "text",
+    "text",
+    "text",
+  ];
   expect(pythonFormats(files)).toEqual(expected);
   expect(
     files.map(([name, text]) =>

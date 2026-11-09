@@ -72,6 +72,7 @@ const checkXmlSyntax = (
   source: string,
   doctype: DoctypePolicy,
   listen?: (syntax: SaxesParser<{ xmlns: true }>) => void,
+  nameSupported?: (name: string) => boolean,
 ): void => {
   const syntax = new SaxesParser({
     xmlns: true,
@@ -79,6 +80,17 @@ const checkXmlSyntax = (
     forceXMLVersion: true,
   });
   listen?.(syntax);
+  const checkName = (name: string) => {
+    if (nameSupported !== undefined && !nameSupported(name))
+      throw new XmlDocumentParseError("malformed");
+  };
+  if (nameSupported !== undefined) {
+    syntax.on("opentagstart", (tag) => checkName(tag.name));
+    syntax.on("attribute", (attribute) => checkName(attribute.name));
+    syntax.on("processinginstruction", (instruction) =>
+      checkName(instruction.target),
+    );
+  }
   syntax.on("doctype", (declaration) => {
     if (doctype === "reject") throw new XmlDocumentParseError("doctype");
     if (doctype !== "external") return;
@@ -86,6 +98,7 @@ const checkXmlSyntax = (
       throw new XmlDocumentParseError("internal-subset");
     if (!EXTERNAL_DOCTYPE.test(declaration))
       throw new XmlDocumentParseError("malformed");
+    checkName(declaration.trimStart().split(/[ \t\r\n]/u, 1)[0] ?? "");
   });
   syntax.write(source).close();
 };
@@ -97,10 +110,13 @@ const checkXmlSyntax = (
  */
 export const isWellFormedXml = (
   source: string,
-  policy: { readonly doctype: Exclude<DoctypePolicy, "allow"> },
+  policy: {
+    readonly doctype: Exclude<DoctypePolicy, "allow">;
+    readonly nameSupported?: (name: string) => boolean;
+  },
 ): boolean => {
   try {
-    checkXmlSyntax(source, policy.doctype);
+    checkXmlSyntax(source, policy.doctype, undefined, policy.nameSupported);
     return true;
   } catch {
     return false;
@@ -220,10 +236,11 @@ export const parseXmlDocument = (
   policy: {
     readonly doctype: DoctypePolicy;
     readonly lineEndings: "preserve" | "normalize";
+    readonly nameSupported?: (name: string) => boolean;
   },
 ): Result<Document, XmlDocumentParseError> => {
   try {
-    checkXmlSyntax(source, policy.doctype);
+    checkXmlSyntax(source, policy.doctype, undefined, policy.nameSupported);
     // Saxes owns well-formedness outside DTDs. The DOM parser additionally
     // checks DTD syntax and builds source-located nodes; its advisory warnings
     // (including literal U+FFFD) are not byte-decoding or syntax failures.
