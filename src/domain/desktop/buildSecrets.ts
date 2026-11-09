@@ -123,7 +123,11 @@ const jsonEscapedSecrets = (
   if (buffer.includes(Buffer.from("\\u"))) text = decodeStateText(bytes);
   if (text === undefined) {
     const hasAligned = (marker: Buffer) => {
-      for (let at = buffer.indexOf(marker); at !== -1; at = buffer.indexOf(marker, at + 1))
+      for (
+        let at = buffer.indexOf(marker);
+        at !== -1;
+        at = buffer.indexOf(marker, at + 1)
+      )
         if (at % 2 === 0) return true;
       return false;
     };

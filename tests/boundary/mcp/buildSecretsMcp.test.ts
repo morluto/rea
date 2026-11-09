@@ -304,36 +304,43 @@ it("refuses a bundle containing a declared form-encoded secret", async () => {
   expect(errorMessage(quote)).toContain("field=<secret:master>");
 });
 
-it.each(["utf8", "utf16le", "utf16be"] as const)("refuses a declared Unicode secret escaped in %s JSON", async (encoding) => {
-  const value = "e-Clé-Ünïcode-Fake-9";
-  const config = await secretsConfig({ master: { text: value } });
-  const { client, outputs } = await buildCaptureFakes({
-    serverEnv: { XDG_CONFIG_HOME: config },
-  });
-  const id = await startBuildComputer(client, REQUEST);
-  await callOk(client, "start_build_capture", { computer_id: id });
-  for (const name of ["seed", "end"])
-    await callOk(client, "mark_build_checkpoint", { computer_id: id, name });
-  await callOk(client, "stop_build_capture", { computer_id: id });
-  const seed = join(outputs.bundle, "envs/notes/seed/Documents");
-  await mkdir(seed, { recursive: true });
-  const encoded = "e-Cl\\u00e9-\\u00dcn\\u00efcode-Fake-9";
-  const json = `{"password":"${encoded}"}`;
-  const bytes = encoding === "utf8" ? Buffer.from(json) : Buffer.from(json, "utf16le");
-  if (encoding === "utf16be") bytes.swap16();
-  await writeFile(join(seed, "profile.json"), bytes);
-  const directory = join(await createTestTempDirectory("build-out-"), "notes");
-  const result = await client.callTool({
-    name: "export_build_environment",
-    arguments: { computer_id: id, task: TASK, directory },
-  });
-  const error = parseMcpToolError(result).error;
-  expect(error.code).toBe("invalid_request");
-  expect(error.message).toContain("master");
-  expect(JSON.stringify(error)).not.toContain(value);
-  expect(JSON.stringify(error)).not.toContain(encoded);
-  expect(await readdir(directory).catch(() => [])).toEqual([]);
-});
+it.each(["utf8", "utf16le", "utf16be"] as const)(
+  "refuses a declared Unicode secret escaped in %s JSON",
+  async (encoding) => {
+    const value = "e-Clé-Ünïcode-Fake-9";
+    const config = await secretsConfig({ master: { text: value } });
+    const { client, outputs } = await buildCaptureFakes({
+      serverEnv: { XDG_CONFIG_HOME: config },
+    });
+    const id = await startBuildComputer(client, REQUEST);
+    await callOk(client, "start_build_capture", { computer_id: id });
+    for (const name of ["seed", "end"])
+      await callOk(client, "mark_build_checkpoint", { computer_id: id, name });
+    await callOk(client, "stop_build_capture", { computer_id: id });
+    const seed = join(outputs.bundle, "envs/notes/seed/Documents");
+    await mkdir(seed, { recursive: true });
+    const encoded = "e-Cl\\u00e9-\\u00dcn\\u00efcode-Fake-9";
+    const json = `{"password":"${encoded}"}`;
+    const bytes =
+      encoding === "utf8" ? Buffer.from(json) : Buffer.from(json, "utf16le");
+    if (encoding === "utf16be") bytes.swap16();
+    await writeFile(join(seed, "profile.json"), bytes);
+    const directory = join(
+      await createTestTempDirectory("build-out-"),
+      "notes",
+    );
+    const result = await client.callTool({
+      name: "export_build_environment",
+      arguments: { computer_id: id, task: TASK, directory },
+    });
+    const error = parseMcpToolError(result).error;
+    expect(error.code).toBe("invalid_request");
+    expect(error.message).toContain("master");
+    expect(JSON.stringify(error)).not.toContain(value);
+    expect(JSON.stringify(error)).not.toContain(encoded);
+    expect(await readdir(directory).catch(() => [])).toEqual([]);
+  },
+);
 
 it("preserves unmarked token-shaped data in seeded UTF-16 and gzip files", async () => {
   const { client, outputs } = await buildCaptureFakes();
