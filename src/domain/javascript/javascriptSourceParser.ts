@@ -1,6 +1,11 @@
+import { posix } from "node:path";
 import { parse, type ParserOptions, type ParserPlugin } from "@babel/parser";
 import * as t from "@babel/types";
 import { javaScriptDefinitionExpression } from "./javascriptAstValues.js";
+import {
+  explicitJavaScriptLoaderMode,
+  hasCaseVariantJavaScriptLoaderSuffix,
+} from "./javascriptModuleResolutionMode.js";
 import {
   hasOnlyInlineTypeExportSpecifiers,
   hasOnlyInlineTypeImportSpecifiers,
@@ -78,27 +83,31 @@ const parseWithRuntimeContext = (
   packageContext?: JavaScriptPackageType,
 ): ParsedJavaScriptSource => {
   const file = parse(source, options);
+  const filenameMode = explicitJavaScriptLoaderMode(sourcePath);
   runtimeContextByProgram.set(
     file.program,
-    /\.c[jt]s$/iu.test(sourcePath ?? "")
-      ? /\.d\.cts$/iu.test(sourcePath ?? "")
+    filenameMode === "commonjs"
+      ? sourcePath?.toLowerCase().endsWith(".d.cts")
         ? "unknown"
         : "commonjs"
-      : isExplicitModuleSourcePath(sourcePath)
+      : filenameMode === "module"
         ? "module"
         : packageContext === "module" || packageContext === "commonjs"
           ? packageContext
-          : packageContext === "unspecified" && /\.js$/iu.test(sourcePath ?? "")
+          : packageContext === "unspecified" &&
+              posix.extname(sourcePath ?? "") === ".js"
             ? file.program.sourceType === "module"
               ? "module"
               : "commonjs"
-            : file.program.body.some((node) => t.isTSExportAssignment(node))
-              ? // CommonJS isolation does not establish strict ESM semantics.
-                "commonjs"
-              : file.program.sourceType === "module" &&
-                  hasRuntimeModuleDeclaration(file.program)
-                ? "module"
-                : "unknown",
+            : hasCaseVariantJavaScriptLoaderSuffix(sourcePath)
+              ? "unknown"
+              : file.program.body.some((node) => t.isTSExportAssignment(node))
+                ? // CommonJS isolation does not establish strict ESM semantics.
+                  "commonjs"
+                : file.program.sourceType === "module" &&
+                    hasRuntimeModuleDeclaration(file.program)
+                  ? "module"
+                  : "unknown",
   );
   return file;
 };
@@ -141,16 +150,12 @@ export const parserPluginsForPath = (sourcePath?: string): ParserPlugin[] => {
   return jsxCapable ? [...syntax, "jsx", typescript] : [...syntax, typescript];
 };
 
-/** `.mjs` and `.mts` explicitly select module mode. */
-export const isExplicitModuleSourcePath = (path?: string): boolean =>
-  /\.m[jt]s$/iu.test(path ?? "");
-
 const runtimeSourceTypeForPath = (
   path?: string,
 ): "commonjs" | "module" | "unambiguous" =>
-  /\.cjs$/iu.test(path ?? "")
+  explicitJavaScriptLoaderMode(path) === "commonjs" && path?.endsWith(".cjs")
     ? "commonjs"
-    : isExplicitModuleSourcePath(path)
+    : explicitJavaScriptLoaderMode(path) === "module"
       ? "module"
       : "unambiguous";
 
@@ -162,7 +167,7 @@ const packageContextForPath = (
   sourcePath: string | undefined,
   observedPackageType: JavaScriptPackageType | undefined,
 ): JavaScriptPackageType | undefined =>
-  /\.(?:js|ts)$/iu.test(sourcePath ?? "") &&
+  [".js", ".ts"].includes(posix.extname(sourcePath ?? "")) &&
   !/\.d\.ts$/iu.test(sourcePath ?? "")
     ? observedPackageType
     : undefined;
@@ -193,7 +198,8 @@ export const parseRecoveredJavaScript = (
       ? filenameType
       : packageContext === "module"
         ? "module"
-        : packageContext === "commonjs" && /\.js$/iu.test(sourcePath ?? "")
+        : packageContext === "commonjs" &&
+            posix.extname(sourcePath ?? "") === ".js"
           ? "commonjs"
           : "unambiguous";
   if (sourceType !== "unambiguous") {

@@ -146,7 +146,15 @@ could misstate its committed rows. The capture records them under its content
 roots, which include both beside a database selected on its own, when its
 baseline walk listed every directory, read every path, entered no other
 device, did not stop early and recorded what it left out, and wherever they change; an excluded log, and any elsewhere, is
-unknown, since an unchanged file and a missing one look alike. A table
+unknown, since an unchanged file and a missing one look alike. After an
+incomplete checkpoint, a database or sidecar without an explicit
+later change remains unconfirmed even if a later walk completes. REA does not
+combine that older file with a newly recorded member of the SQLite set. The
+historical versions remain listed; the affected SQLite view has a `view_error`.
+A baseline non-file at a sidecar path, or a non-directory ancestor, cannot
+establish an absent file. Captures without the required baseline non-file
+inventory must be made again before inspection.
+A table
 that cannot be read keeps its `error` in place of its rows, and changes to that
 database are marked incomplete. dconf
 databases are read with `dconf dump /` against a private file profile, so the
