@@ -1,3 +1,4 @@
+import { artifactOperationCause } from "../ArtifactFileOperation.js";
 import {
   nesContainerFormat,
   parseInesLayout,
@@ -244,14 +245,13 @@ const classifyRootFormat = async (
       ...(signal === undefined ? {} : { signal }),
     });
   } catch (cause: unknown) {
-    abortIfNeeded(signal);
     if (cause instanceof RegularFileChangedError)
       throw new ArtifactReaderFailure(
         "integrity",
         `Root artifact changed during classification: ${path}`,
         { cause: cause.cause ?? cause },
       );
-    throw cause;
+    throw artifactOperationCause(cause);
   }
   // Fill each range: a short result is end of file, not a partial host read.
   const read = async (position: number, length: number): Promise<Buffer> => {
