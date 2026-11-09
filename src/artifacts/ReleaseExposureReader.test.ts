@@ -3847,6 +3847,30 @@ describe("ReleaseExposureReader Node shebang scripts", () => {
   });
 });
 
+describe("ReleaseExposureReader unreadable launchers", () => {
+  it("keeps coverage unknown for an extensionless launcher that cannot be read", async () => {
+    const root = await createTestTempDirectory("rea-release-exposure-shebang-");
+    await writeFile(
+      join(root, "runner"),
+      "#!/usr/bin/env node\nrun();\n//# sourceMappingURL=runner.js.map\n",
+    );
+    const real = stableRead.impl;
+    stableRead.impl = async (...args) => {
+      if (String(args[0]).endsWith("runner"))
+        throw new Error("unreadable member");
+      if (real === undefined) throw new Error("missing stable read");
+      return real(...args);
+    };
+    try {
+      const scanned = await inspect(root);
+      expect(scanned.source_maps).toMatchObject({ embedded: 0, skipped: 1 });
+      expect(sourceMapSourcesStatus(scanned)).toBe("unknown");
+    } finally {
+      stableRead.impl = real;
+    }
+  });
+});
+
 describe("ReleaseExposureReader Node shebang .map scripts", () => {
   const mapUrl = `data:application/json;base64,${embeddedSourceMap().toString(
     "base64",

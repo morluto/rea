@@ -1652,8 +1652,12 @@ const examineProbedText = async (
       : probe.kind === "over_allowance"
         ? probe.prefix
         : null;
-  if (prefix === null) state.skippedText += 1;
-  else if (hasNodeShebang(prefix)) {
+  if (prefix === null) {
+    state.skippedText += 1;
+    // The header that would give a Node shebang its script role was never
+    // read, so the file's maps stay unassessed, as an unread `runner.js`'s do.
+    state.skippedMaps += 1;
+  } else if (hasNodeShebang(prefix)) {
     // The probe already read the header, so the role holds even when the
     // text allowance is spent before the text reader reads it again.
     state.examinedScripts.add(memberLocationKey(member.location));
