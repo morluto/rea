@@ -6,7 +6,6 @@ import { assertArtifactReadActive } from "../../artifacts/ArtifactFileOperation.
 import {
   KERNEL_BUILD_CONFIG_CODECS,
   KERNEL_BUILD_CONFIG_NUMBER,
-  MAX_KERNEL_BUILD_CONFIG_STRING,
   type InspectKernelBuildConfigInput,
   type KernelBuildConfig,
   type KernelBuildConfigEntry,
@@ -181,23 +180,29 @@ const decodeText = (bytes: Buffer): string | null => {
   }
 };
 
+const QUOTE = 0x22;
+const BACKSLASH = 0x5c;
+
+/**
+ * Decoded `"..."` value whose only escapes are `\"` and `\\`. The line is
+ * validated in place first, so the decoded string is built once, no larger
+ * than the line, and only for a valid value.
+ */
 const unquote = (raw: string): string | null => {
   if (raw.length < 2 || !raw.startsWith('"') || !raw.endsWith('"')) return null;
-  let value = "";
-  const body = raw.slice(1, -1);
-  for (let index = 0; index < body.length; index += 1) {
-    const char = body[index];
-    if (char === "\\") {
-      const next = body[index + 1];
-      if (next !== "\\" && next !== '"') return null;
-      value += next;
-      index += 1;
-      continue;
-    }
-    if (char === '"') return null;
-    value += char;
+  const end = raw.length - 1;
+  let escaped = false;
+  for (let index = 1; index < end; index += 1) {
+    const char = raw.charCodeAt(index);
+    if (char === QUOTE) return null;
+    if (char !== BACKSLASH) continue;
+    const next = raw.charCodeAt(index + 1);
+    if (index + 1 >= end || (next !== QUOTE && next !== BACKSLASH)) return null;
+    escaped = true;
+    index += 1;
   }
-  return value;
+  const body = raw.slice(1, end);
+  return escaped ? body.replace(/\\(["\\])/gu, "$1") : body;
 };
 
 const classifyValue = (
@@ -206,16 +211,17 @@ const classifyValue = (
   if (raw === "y" || raw === "m") return { kind: raw, value: raw };
   if (KERNEL_BUILD_CONFIG_NUMBER.test(raw))
     return { kind: "number", value: raw };
+  // Kconfig strings have no length limit; max_config_bytes bounds the line.
   const text = unquote(raw);
-  if (text === null || text.length > MAX_KERNEL_BUILD_CONFIG_STRING)
-    return null;
-  return { kind: "string", value: text };
+  return text === null ? null : { kind: "string", value: text };
 };
 
 /**
  * Strict `.config` grammar: every non-blank line is a comment, a
  * `# CONFIG_X is not set` line, or `CONFIG_X=value`. Anything else rejects the
- * whole candidate so ordinary marker strings never read as a config.
+ * whole candidate so ordinary marker strings never read as a config. Lines
+ * are scanned one at a time, so no per-line array is built ahead of the
+ * max_entries check.
  */
 const parseConfigText = (
   bytes: Buffer,
@@ -230,9 +236,15 @@ const parseConfigText = (
     entries.push(entry);
   };
   let lines = 0;
-  for (const rawLine of text.split("\n")) {
+  for (let start = 0; start < text.length;) {
     if ((lines++ & 0x3ff) === 0) assertArtifactReadActive(signal);
-    const line = rawLine.endsWith("\r") ? rawLine.slice(0, -1) : rawLine;
+    const newline = text.indexOf("\n", start);
+    const end = newline < 0 ? text.length : newline;
+    const line = text.slice(
+      start,
+      end > start && text.charCodeAt(end - 1) === 0x0d ? end - 1 : end,
+    );
+    start = end + 1;
     if (/^[ \t]*$/u.test(line)) continue;
     const unset = /^# (CONFIG_[A-Za-z0-9_]+) is not set$/u.exec(line);
     if (unset !== null) {

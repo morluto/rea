@@ -9,7 +9,6 @@ import {
   KERNEL_BUILD_CONFIG_MALFORMED_REASONS,
   KERNEL_BUILD_CONFIG_MARKER_BYTES,
   KERNEL_BUILD_CONFIG_NUMBER,
-  MAX_KERNEL_BUILD_CONFIG_STRING,
   type InspectKernelBuildConfigInput,
   type KernelBuildConfig,
   type KernelBuildConfigEntry,
@@ -116,9 +115,7 @@ const valueAgrees = (entry: KernelBuildConfigEntry): boolean => {
   if (entry.kind === "not_set") return entry.value === null;
   if (entry.kind === "number")
     return entry.value !== null && KERNEL_BUILD_CONFIG_NUMBER.test(entry.value);
-  return (
-    entry.value !== null && entry.value.length <= MAX_KERNEL_BUILD_CONFIG_STRING
-  );
+  return entry.value !== null;
 };
 
 const markersAgree = (config: KernelBuildConfig["config"]): boolean => {

@@ -183,3 +183,22 @@ export const headerCrcGzipMember = (
   trailer.writeUInt32LE(plain.length >>> 0, 4);
   return concat(header, checksum, deflateRawSync(plain), trailer);
 };
+
+/** A `CONFIG_EXTRA_FIRMWARE` list longer than any fixed string cap. */
+export const LONG_KERNEL_CONFIG_STRING = Array.from(
+  { length: 400 },
+  (_, index) => `vendor/fw-${String(index).padStart(3, "0")}.bin`,
+).join(" ");
+
+/** ELF whose embedded config carries one long, escaped string value. */
+export const longStringKernelConfigFixture = (): Buffer =>
+  concat(
+    elfPrefix(),
+    embeddedKernelConfig(
+      [
+        "CONFIG_SECURITY_SELINUX=y",
+        `CONFIG_EXTRA_FIRMWARE="${LONG_KERNEL_CONFIG_STRING} \\"q\\" \\\\"`,
+        "",
+      ].join("\n"),
+    ),
+  );

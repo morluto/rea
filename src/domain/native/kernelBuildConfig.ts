@@ -61,8 +61,6 @@ const range = z.strictObject({
 /** Matches a Kconfig `int` or `hex` value as written to `.config`. */
 export const KERNEL_BUILD_CONFIG_NUMBER =
   /^(?:-?(?:0|[1-9][0-9]*)|0[xX][0-9A-Fa-f]+)$/u;
-/** Longest decoded string value accepted from one `.config` line. */
-export const MAX_KERNEL_BUILD_CONFIG_STRING = 4096;
 /** Length of the `IKCFG_ST` and `IKCFG_ED` markers. */
 export const KERNEL_BUILD_CONFIG_MARKER_BYTES = 8;
 

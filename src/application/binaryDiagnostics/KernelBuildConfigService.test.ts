@@ -16,6 +16,7 @@ import {
   bzImageGzipFixture,
   bzImageXzFixture,
   kernelBuildConfigFixture,
+  longStringKernelConfigFixture,
   nonConfigGzipFixture,
   plainIkcfgStringFixture,
   truncatedKernelConfigFixture,
@@ -62,6 +63,7 @@ it.each([
   ["plain IKCFG_ST", () => reportOf(plainIkcfgStringFixture()), "elf"],
   ["malformed IKCFG text", () => reportOf(nonConfigGzipFixture()), "elf"],
   ["bad IKCFG CRC", () => reportOf(badCrcKernelConfigFixture()), "elf"],
+  ["long string value", () => reportOf(longStringKernelConfigFixture()), "elf"],
   ["bzImage", () => reportOf(bzImageGzipFixture()), "file"],
   ["xz bzImage", () => reportOf(bzImageXzFixture()), "file"],
 ] as const)(

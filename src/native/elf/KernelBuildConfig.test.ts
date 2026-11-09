@@ -16,6 +16,8 @@ import {
   embeddedKernelConfig,
   headerCrcGzipMember,
   kernelBuildConfigFixture,
+  LONG_KERNEL_CONFIG_STRING,
+  longStringKernelConfigFixture,
   nonConfigGzipFixture,
   plainIkcfgStringFixture,
   SAMPLE_KERNEL_BANNER,
@@ -106,6 +108,32 @@ it("filters by exact name and pages without changing the option count", () => {
   expect(
     parse(kernelBuildConfigFixture(), { offset: 50 }).config.entries,
   ).toEqual([]);
+});
+
+it("accepts a string value longer than 4096 characters", () => {
+  expect(LONG_KERNEL_CONFIG_STRING.length).toBeGreaterThan(4096);
+  const report = parse(longStringKernelConfigFixture());
+  expect(report.config).toMatchObject({
+    status: "present",
+    option_count: 2,
+  });
+  expect(report.config.entries[1]).toMatchObject({
+    name: "CONFIG_EXTRA_FIRMWARE",
+    kind: "string",
+    value: `${LONG_KERNEL_CONFIG_STRING} "q" \\`,
+  });
+  expect(
+    parse(longStringKernelConfigFixture(), {
+      name: "CONFIG_SECURITY_SELINUX",
+    }).config,
+  ).toMatchObject({ status: "present", matched_count: 1 });
+});
+
+it("keeps the strict grammar for malformed quoted values", () => {
+  for (const value of ['"open', '"bad \\q"', '"a"b"', '"tail\\"'])
+    expect(
+      parse(embeddedKernelConfig(`CONFIG_X=${value}\n`)).config.status,
+    ).toBe("malformed");
 });
 
 it("does not treat an ordinary IKCFG_ST string as a config", () => {
