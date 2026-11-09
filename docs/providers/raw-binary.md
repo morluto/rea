@@ -114,7 +114,12 @@ Only a settled basis may be stated as fact. A claim keeps the subject, source,
 rule, and reason of the fact it came from. An open color note stays a board
 record. It is not rewritten as an installed-part question. A driver claim keeps
 that driver's id and the evidence that names the captured image.
-`decideHardwareClaim` applies these rules.
+`decideHardwareClaim` applies these rules. A selected board also decodes the
+image observations recorded with that board: loaded addresses, pin indexes,
+SFUD rows, a PLL immediate, and vector slots. A bus-name string such as `spi2`
+stays a driver-linkage claim and does not become a controller. Pin role and the
+installed flash part stay unsettled. A PLL field split does not state a clock
+frequency unless the image also shows the clock switch.
 
 ## NMOS 6502
 

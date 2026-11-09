@@ -34,6 +34,7 @@ import {
   boardDriverSchema,
   type BoardDriver,
 } from "../../domain/firmware/boardDriverLayer.js";
+import { hardwareClaimsFromImage } from "../../domain/firmware/imageHardwareDecode.js";
 import {
   boardDeviceAttachmentSchema,
   boardDevicesForPeripheral,
@@ -441,6 +442,11 @@ export const reconstructHardwareFromReferences = (
       ? unsettledBoardFacts(boardProfile.devices)
       : [];
 
+  const imageClaims =
+    boardApplies && boardProfile?.imageObservations != null
+      ? hardwareClaimsFromImage(boardProfile.imageObservations)
+      : [];
+
   return {
     procedure,
     architecture,
@@ -462,23 +468,26 @@ export const reconstructHardwareFromReferences = (
     attributions,
     detectedPlatforms,
     unsettledFacts,
-    hardwareClaims: hardwareClaimsForBlocks({
-      blocks: peripheralBlocks.map((block) => ({
-        blockBase: block.blockBase,
-        matched: block.socPeripheralNameBasis === "chip_manual",
-        addresses: block.uniqueAddresses,
-      })),
-      devices:
-        boardApplies && boardProfile !== null ? boardProfile.devices : [],
-      drivers:
-        boardApplies && boardProfile !== null
-          ? boardProfile.drivers.map((driver) => ({
-              id: driver.id,
-              evidence: driver.evidence,
-              linked: driver.linkage === "linked_in_image",
-            }))
-          : [],
-    }),
+    hardwareClaims: [
+      ...hardwareClaimsForBlocks({
+        blocks: peripheralBlocks.map((block) => ({
+          blockBase: block.blockBase,
+          matched: block.socPeripheralNameBasis === "chip_manual",
+          addresses: block.uniqueAddresses,
+        })),
+        devices:
+          boardApplies && boardProfile !== null ? boardProfile.devices : [],
+        drivers:
+          boardApplies && boardProfile !== null
+            ? boardProfile.drivers.map((driver) => ({
+                id: driver.id,
+                evidence: driver.evidence,
+                linked: driver.linkage === "linked_in_image",
+              }))
+            : [],
+      }),
+      ...imageClaims,
+    ],
     limitations,
   };
 };

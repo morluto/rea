@@ -2,6 +2,7 @@ import {
   RT_SPARK_DRIVERS,
   RT_SPARK_FLASH_IMAGE_SHA256,
 } from "./boardDriverLayer.js";
+import type { ImageHardwareDecodeInput } from "./imageHardwareDecode.js";
 
 /**
  * Boot facts read from one RT-Spark flash image.
@@ -273,3 +274,81 @@ export const rtSparkBoardPack = {
   evidence: rtSparkBootEvidence,
   drivers: RT_SPARK_DRIVERS,
 } as const;
+
+const pllFields = [
+  { name: "PLLM", shift: 0, width: 6 },
+  { name: "PLLN", shift: 6, width: 9 },
+  { name: "PLLP", shift: 16, width: 2 },
+  { name: "PLLSRC", shift: 22, width: 1 },
+  { name: "PLLQ", shift: 24, width: 4 },
+] as const;
+
+const spiLoadSite: Readonly<Record<string, string>> = {
+  "0x40023830": "0x080604ec",
+  "0x40020400": "0x08060508",
+};
+
+/**
+ * Observations the reconstruction report can decode.
+ * Built from the boot record so the pin list, SFUD rows, and PLL word stay one list.
+ */
+export const rtSparkImageObservations: ImageHardwareDecodeInput = {
+  platform: "stm32f4",
+  pinPlacement: {
+    origin: BigInt(rtSparkBootEvidence.pinDecode.gpioBase),
+    stride: BigInt(rtSparkBootEvidence.pinDecode.stride),
+    portLimit: rtSparkBootEvidence.pinDecode.portLimit,
+  },
+  vectors: [{ index: 1, rule: "architecture-register", name: "Reset" }],
+  observations: [
+    ...rtSparkBootEvidence.spiFlashInit.registerWrites.map((write) => ({
+      kind: "loaded-address" as const,
+      site:
+        spiLoadSite[write.address] ??
+        rtSparkBootEvidence.spiFlashInit.functionAddress,
+      address: BigInt(write.address),
+      fromRoundedPage: false,
+    })),
+    {
+      kind: "bus-name",
+      site: rtSparkBootEvidence.spiFlashInit.attach.functionAddress,
+      name: rtSparkBootEvidence.spiFlashInit.attach.busName,
+    },
+    {
+      kind: "loaded-address",
+      site: "0x0807ac40",
+      address: 0x40021400n,
+      fromRoundedPage: false,
+    },
+    {
+      kind: "bus-name",
+      site: "0x0807ac3c",
+      name: "spi2",
+    },
+    ...rtSparkBootEvidence.pinCalls.map((call) => ({
+      kind: "pin-index" as const,
+      site: call.site,
+      index: BigInt(call.pin),
+    })),
+    {
+      kind: "sfud-table",
+      tableAddress:
+        rtSparkBootEvidence.spiFlashInit.probe.table[0]?.address ?? "",
+      deviceName: rtSparkBootEvidence.spiFlashInit.probe.flashDeviceName,
+      rows: rtSparkBootEvidence.spiFlashInit.probe.table.map((row) => ({
+        address: row.address,
+        name: row.name,
+        jedec: BigInt(row.jedec),
+        capacity: BigInt(row.capacity),
+      })),
+    },
+    {
+      kind: "pll-immediate",
+      site: "0x0800c704",
+      value: 0x24003010n,
+      fields: pllFields,
+      clockSwitch: null,
+    },
+    { kind: "vector-slot", site: "0x08000004", index: 1 },
+  ],
+};

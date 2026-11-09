@@ -265,6 +265,12 @@ describe("RT-Spark board annotation", () => {
       "rw007",
       "spi-flash",
     ]);
+    expect(spi?.boardDrivers.map((driver) => driver.id)).not.toContain(
+      "spi-flash",
+    );
+    expect(
+      report.boardDrivers.find((driver) => driver.id === "spi-flash"),
+    ).toMatchObject({ controllers: ["RCC", "GPIOB"] });
     expect(
       spi?.boardDevices.find((device) => device.id === "spi-flash")
         ?.uncertainty,
@@ -335,7 +341,62 @@ describe("RT-Spark board annotation", () => {
       hardwarePeripheralReconstructionSchema.safeParse(report).success,
     ).toBe(true);
   });
+});
 
+describe("captured RT-Spark image", () => {
+  it("decodes the captured image onto the RT-Spark report", () => {
+    const report = reconstructHardwareFromReferences(
+      [],
+      "cortex-m",
+      "rt_spark_image",
+      null,
+      "stm32f407-rt-spark",
+    );
+    expect(
+      report.hardwareClaims.find(
+        (claim) => claim.subject === "spi2" && claim.source === "0x08060378",
+      ),
+    ).toMatchObject({ rule: "driver-linkage", settled: true });
+    expect(
+      report.hardwareClaims.find((claim) => claim.subject === "SPI2"),
+    ).toBeUndefined();
+    expect(
+      report.hardwareClaims.find((claim) => claim.subject === "pin:0x5c"),
+    ).toMatchObject({
+      rule: "instruction-decode",
+      settled: true,
+      source: expect.stringContaining("port=5 pin=12"),
+    });
+    expect(
+      report.hardwareClaims.find((claim) => claim.subject === "pin-base:0x5c"),
+    ).toMatchObject({ basis: "explicit_profile", source: "0x40021400" });
+    expect(
+      report.hardwareClaims.find((claim) => claim.subject === "gpio-role:5:12"),
+    ).toMatchObject({ rule: "board-record", settled: false });
+    expect(
+      report.hardwareClaims.find((claim) => claim.subject === "spi-flash-part"),
+    ).toMatchObject({
+      rule: "installed-part",
+      settled: false,
+      reason: expect.stringContaining("W25Q128BV"),
+    });
+    expect(
+      report.hardwareClaims.find(
+        (claim) => claim.subject === "pll:0x0800c704:PLLM",
+      ),
+    ).toMatchObject({ source: "0x24003010=16" });
+    expect(
+      report.hardwareClaims.find(
+        (claim) => claim.subject === "pll-frequency:0x0800c704",
+      ),
+    ).toMatchObject({ settled: false });
+    expect(
+      report.hardwareClaims.find((claim) => claim.subject === "Reset"),
+    ).toMatchObject({ rule: "architecture-register", settled: true });
+  });
+});
+
+describe("RT-Spark platform mismatch", () => {
   it("does not apply RT-Spark devices when the caller platform is a different family", () => {
     const report = reconstructHardwareFromReferences(
       [{ target_address: "0x40011000", write: true }],

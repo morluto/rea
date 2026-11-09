@@ -105,9 +105,9 @@ export const RT_SPARK_DRIVERS: readonly BoardDriver[] = [
   linked(
     "spi-flash",
     "SPI flash",
-    ["SPI2"],
+    ["RCC", "GPIOB"],
     ["spi-flash"],
-    "contains @spi20, rt_hw_spi_flash_init, spiflash0, the literal W25Q128, and SFUD table names W25Q64CV and W25Q128BV. Those strings do not identify the installed part.",
+    "init at 0x080604e4 loads RCC AHB1ENR and GPIOB. The bus name spi2 is passed to the attach helper and is not a loaded controller address. SFUD table names do not identify the installed part.",
   ),
   linked(
     "rw007",

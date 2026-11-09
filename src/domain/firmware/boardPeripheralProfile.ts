@@ -9,6 +9,11 @@ import {
   RT_SPARK_DRIVERS,
 } from "./boardDriverLayer.js";
 import {
+  imageHardwareDecodeInputSchema,
+  type ImageHardwareDecodeInput,
+} from "./imageHardwareDecode.js";
+import { rtSparkImageObservations } from "./rtSparkBootEvidence.js";
+import {
   type SocPlatform,
   socPlatformSchema,
 } from "./socPeripheralDatabase.js";
@@ -63,6 +68,8 @@ export interface BoardPeripheralProfile {
   readonly devices: readonly BoardDeviceAttachment[];
   readonly drivers: readonly BoardDriver[];
   readonly limitations: readonly string[];
+  /** Image observations decoded onto the report when this board applies. */
+  readonly imageObservations: ImageHardwareDecodeInput | null;
 }
 
 export const boardDeviceAttachmentSchema = z.strictObject({
@@ -97,6 +104,7 @@ export const boardPeripheralProfileSchema = z.strictObject({
   devices: z.array(boardDeviceAttachmentSchema),
   drivers: z.array(boardDriverSchema),
   limitations: z.array(z.string()),
+  imageObservations: imageHardwareDecodeInputSchema.nullable(),
 });
 
 const window = (
@@ -449,6 +457,7 @@ const RT_SPARK_PROFILE: BoardPeripheralProfile = {
     },
   ],
   drivers: RT_SPARK_DRIVERS,
+  imageObservations: rtSparkImageObservations,
   limitations: [
     "Board devices describe the RT-Thread stm32f407-rt-spark BSP. Drivers above them record strings in one captured flash image. A linked driver is code present in that image, not proof the device is opened during boot.",
     "A GPIO port match means that port hosts the listed pins. It does not identify which pin a given access uses.",
