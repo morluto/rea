@@ -150,6 +150,8 @@ const PDB_READ_LIMIT = 4;
 const LIMITATION_CAP = 8;
 const SCAN_INTERRUPTED =
   "The member scan stopped on unfinished cleanup. Members it did not reach are unknown.";
+const SCAN_CANCELLED =
+  "The member scan was cancelled. Members it did not reach are unknown.";
 /** Decoded representation bound for one binary plist text member. */
 const RELEASE_EXPOSURE_PLIST_DECODE_BYTES = 16 * 1024 * 1024;
 /** Bytes of a member that decide how its NULs are read. */
@@ -375,8 +377,21 @@ const consumeInventory = async (
     ...input.siblingCleanup,
     ...(await releaseContainers(containers, input.resources)),
   ];
-  if (firstCleanup !== undefined || (failed && leftCleanupUnfinished(failure)))
-    reportInterruptedScan(input, result ?? progress.assemble?.());
+  // A cancelled scan keeps what it examined, as one stopped on cleanup does;
+  // the caller still receives the cancellation.
+  const cancelled = failed && wasCancelled(failure);
+  if (
+    firstCleanup !== undefined ||
+    (failed && leftCleanupUnfinished(failure)) ||
+    cancelled
+  )
+    reportInterruptedScan(
+      input,
+      result ?? progress.assemble?.(),
+      cancelled && firstCleanup === undefined && !leftCleanupUnfinished(failure)
+        ? SCAN_CANCELLED
+        : SCAN_INTERRUPTED,
+    );
   if (firstCleanup !== undefined) {
     const primary = failed
       ? releaseExposureFailure(failure, input.path, input.maxFileBytes)
@@ -417,19 +432,25 @@ const leftCleanupUnfinished = (cause: unknown): boolean => {
   );
 };
 
+const wasCancelled = (cause: unknown): boolean => {
+  const failure = asReadFailure(cause);
+  return (
+    failure instanceof AnalysisCancelledError ||
+    (failure instanceof ArtifactReaderFailure && failure.reason === "cancelled")
+  );
+};
+
 /** Completed findings survive the failure; what was not reached stays unknown. */
 const reportInterruptedScan = (
   input: ConsumeInput,
   scan: ReleaseExposureScan | undefined,
+  reason: string,
 ): void => {
   if (scan === undefined) return;
   input.visitInterruptedScan?.({
     ...scan,
     coverage: "unknown",
-    limitations: [SCAN_INTERRUPTED, ...scan.limitations].slice(
-      0,
-      LIMITATION_CAP,
-    ),
+    limitations: [reason, ...scan.limitations].slice(0, LIMITATION_CAP),
   });
 };
 

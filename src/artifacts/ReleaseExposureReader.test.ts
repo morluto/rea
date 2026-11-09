@@ -3139,6 +3139,35 @@ describe("ReleaseExposureReader cleanup-bearing read failures", () => {
     }
   });
 
+  it("reports what it found before the scan was cancelled", async () => {
+    const root = await createTestTempDirectory("rea-release-exposure-cancel-");
+    await writeFile(
+      join(root, "a.js.map"),
+      JSON.stringify({ version: 3, sources: ["a.ts"], mappings: "" }),
+    );
+    await writeFile(join(root, "b.txt"), "first\n");
+    await writeFile(join(root, "c.txt"), "second\n");
+    const controller = new AbortController();
+    const reader = new ReleaseExposureReader();
+    const interrupted: ReleaseExposureScan[] = [];
+    try {
+      const result = await reader.inspect(
+        { path: root },
+        { signal: controller.signal },
+        () => controller.abort(new Error("stop")),
+        (scan) => interrupted.push(scan),
+      );
+      if (result.ok) throw new Error("expected cancellation");
+      expect(result.error._tag).toBe("AnalysisCancelledError");
+      expect(interrupted).toHaveLength(1);
+      expect(interrupted[0]?.coverage).toBe("unknown");
+      expect(interrupted[0]?.source_maps.without_sources).toBe(1);
+      expect(interrupted[0]?.limitations[0]).toContain("cancelled");
+    } finally {
+      await reader.close();
+    }
+  });
+
   it("does not read cleanup-incomplete inventory as unknown coverage", async () => {
     const root = await createTestTempDirectory("rea-release-exposure-inv-");
     const selected = join(root, "app");
