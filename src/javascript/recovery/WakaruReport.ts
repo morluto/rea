@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { safeParseUtf8Json } from "../../domain/safeJson.js";
 import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
+import type { AnalysisCapturedOutput } from "../../domain/analysisErrorBase.js";
 import type { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
 import {
   normalizeArtifactPath,
@@ -60,6 +61,16 @@ const provenanceSchema = z.looseObject({
 
 const OPERATION = "recover_javascript_sources";
 
+/** Keep the reader's exact cleanup owner alongside the finished command output. */
+export class WakaruReportReadFailure extends Error {
+  constructor(
+    readonly failure: ArtifactReaderFailure,
+    readonly capturedOutput: AnalysisCapturedOutput,
+  ) {
+    super(failure.message, { cause: failure });
+  }
+}
+
 type ReportContext = {
   execution: Awaited<ReturnType<typeof runWakaruCommand>>;
   provenancePath: string;
@@ -111,27 +122,24 @@ export const parseWakaruReports = async (context: ReportContext) => {
           : ("complete" as const),
     };
   } catch (cause: unknown) {
-    if (cause instanceof AnalysisCancelledError)
-      throw new AnalysisCancelledError(OPERATION, {
-        cause: cause.cause,
-        ...(cause.partialObservation === undefined
-          ? {}
-          : { partialObservation: cause.partialObservation }),
-        capturedOutput: {
-          stdout: execution.stdout,
-          stderr: execution.stderr,
-          exit_code: execution.exit_code,
-          signal: execution.signal,
-          truncated: false,
-        },
-      });
+    const capturedOutput = {
+      stdout: execution.stdout,
+      stderr: execution.stderr,
+      exit_code: execution.exit_code,
+      signal: execution.signal,
+      truncated: false,
+    };
     if (
+      cause instanceof AnalysisCancelledError ||
       cause instanceof AnalysisAccessDeniedError ||
-      cause instanceof AnalysisArtifactChangedError ||
-      (cause instanceof ArtifactReaderFailure &&
-        (cause.cleanup !== undefined || cause.reason === "cancelled"))
+      cause instanceof AnalysisArtifactChangedError
     )
-      throw cause;
+      throw cause.retainCapturedOutput(capturedOutput);
+    if (
+      cause instanceof ArtifactReaderFailure &&
+      (cause.cleanup !== undefined || cause.reason === "cancelled")
+    )
+      throw new WakaruReportReadFailure(cause, capturedOutput);
     throw new ProviderAdapterError("wakaru", OPERATION, {
       cause,
       ...wakaruReportGuidance(cause),

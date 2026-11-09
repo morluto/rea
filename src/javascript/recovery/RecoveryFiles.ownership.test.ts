@@ -1,4 +1,4 @@
-import type { Dir } from "node:fs";
+import { renameSync, writeFileSync, type Dir } from "node:fs";
 import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
 import { createHash } from "node:crypto";
 import { writeFile, type FileHandle } from "node:fs/promises";
@@ -6,8 +6,11 @@ import { dirname, join } from "node:path";
 import { afterEach, expect, it, onTestFinished, vi } from "vitest";
 import { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
 import { ArtifactFileCleanupFailure } from "../../artifacts/ArtifactFileOperation.js";
-import { AnalysisCancelledError } from "../../domain/analysisErrorCore.js";
-import { parseWakaruReports } from "./WakaruReport.js";
+import {
+  AnalysisCancelledError,
+  AnalysisArtifactChangedError,
+} from "../../domain/analysisErrorCore.js";
+import { parseWakaruReports, WakaruReportReadFailure } from "./WakaruReport.js";
 import { createTestTempDirectory } from "../../../tests/fixtures/temporaryDirectory.js";
 import {
   fingerprintRecoveryFile,
@@ -18,6 +21,7 @@ import {
 const closeFault = vi.hoisted(() => ({
   path: undefined as string | undefined,
   denied: false,
+  replaceAfterRead: false,
   cancel: undefined as AbortController | undefined,
   handles: [] as FileHandle[],
   failure: new Error("controlled recovery descriptor close failure"),
@@ -58,6 +62,17 @@ vi.mock("node:fs/promises", async (importOriginal) => {
     open: async (...args: Parameters<typeof actual.open>) => {
       const handle = await actual.open(...args);
       if (args[0] === closeFault.path) {
+        if (closeFault.replaceAfterRead) {
+          const createStream = handle.createReadStream.bind(handle);
+          handle.createReadStream = (...options) => {
+            const stream = createStream(...options);
+            stream.once("end", () => {
+              renameSync(String(args[0]), `${String(args[0])}.original`);
+              writeFileSync(String(args[0]), "replacement");
+            });
+            return stream;
+          };
+        }
         const close = handle.close.bind(handle);
         closeFault.handles.push(handle);
         onTestFinished(async () => {
@@ -81,8 +96,47 @@ afterEach(() => {
   directoryFault.closeAttempts = 0;
   closeFault.path = undefined;
   closeFault.denied = false;
+  closeFault.replaceAfterRead = false;
   closeFault.cancel = undefined;
   closeFault.handles = [];
+});
+
+it("retains command output when the provenance file changes during its read", async () => {
+  const { path } = await selectedFile();
+  closeFault.replaceAfterRead = true;
+  const stdout = JSON.stringify({
+    detected_formats: [],
+    safety: "safe",
+    modules: [],
+    warnings: [],
+    total: 0,
+    failed: 0,
+    elapsed_ms: 1,
+  });
+  const failure: unknown = await parseWakaruReports({
+    execution: {
+      exit_code: 0,
+      signal: null,
+      stdout,
+      stderr: "engine diagnostic",
+      command: "/wakaru",
+      arguments: [],
+      resource_limiter: "/prlimit",
+    },
+    provenancePath: path,
+    snapshots: new Map(),
+    files: [],
+  }).catch((cause: unknown) => cause);
+  expect(failure).toBeInstanceOf(AnalysisArtifactChangedError);
+  if (!(failure instanceof AnalysisArtifactChangedError))
+    throw new Error("Expected changed artifact");
+  expect(failure.path).toBe(path);
+  expect(failure.capturedOutput).toMatchObject({
+    stdout,
+    stderr: "engine diagnostic",
+    exit_code: 0,
+    signal: null,
+  });
 });
 
 const selectedFile = async () => {
@@ -142,6 +196,52 @@ it("retains report output and observed file hash when cancellation arrives durin
     stderr: "",
     exit_code: 0,
   });
+});
+
+it("retains command output and the exact provenance cleanup owner", async () => {
+  const { path } = await selectedFile();
+  closeFault.denied = true;
+  const resources = new ArtifactResourceScope();
+  const stdout = JSON.stringify({
+    detected_formats: [],
+    safety: "safe",
+    modules: [],
+    warnings: [],
+    total: 0,
+    failed: 0,
+    elapsed_ms: 1,
+  });
+  const failure: unknown = await parseWakaruReports({
+    execution: {
+      exit_code: 0,
+      signal: null,
+      stdout,
+      stderr: "engine diagnostic",
+      command: "/wakaru",
+      arguments: [],
+      resource_limiter: "/prlimit",
+    },
+    provenancePath: path,
+    snapshots: new Map(),
+    files: [],
+    resources,
+  }).catch((cause: unknown) => cause);
+  expect(failure).toMatchObject({
+    capturedOutput: {
+      stdout,
+      stderr: "engine diagnostic",
+      exit_code: 0,
+      signal: null,
+    },
+  });
+  expect(failure).toBeInstanceOf(WakaruReportReadFailure);
+  if (!(failure instanceof WakaruReportReadFailure))
+    throw new Error("Expected retained report failure");
+  expect(failure.failure).toBeInstanceOf(ArtifactFileCleanupFailure);
+  expect(resources.hasPending).toBe(true);
+  closeFault.denied = false;
+  await resources.retryCleanup();
+  expect(resources.hasPending).toBe(false);
 });
 
 it.each(["completed", "size-limit"] as const)(

@@ -1,13 +1,15 @@
-import { readFile, truncate, writeFile } from "node:fs/promises";
+import { chmod, readFile, truncate, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect, it } from "vitest";
 import { projectAnalysisError } from "../../domain/analysisErrorProjection.js";
 import { ProviderAdapterError } from "../../domain/providerAdapterError.js";
 import { createTestTempDirectory } from "../../../tests/fixtures/temporaryDirectory.js";
 import {
+  AnalysisAccessDeniedError,
   AnalysisCancelledError,
   AnalysisOutputError,
 } from "../../domain/analysisErrorCore.js";
+import { requirePermissionDenial } from "../../../tests/fixtures/permissionDenial.js";
 import {
   parseWakaruReports,
   validateRecoverySourceMap,
@@ -33,6 +35,38 @@ const execution = {
   arguments: ["--json"],
   resource_limiter: "/usr/bin/prlimit",
 };
+
+it.skipIf(process.platform === "win32")(
+  "retains command output when the provenance file cannot be read",
+  async (context) => {
+    await requirePermissionDenial(context, "file-read");
+    const root = await createTestTempDirectory("rea-wakaru-provenance-denied-");
+    const path = join(root, "provenance.json");
+    await writeFile(path, "{}");
+    await chmod(path, 0);
+    const reported = { ...execution, stderr: "engine diagnostic" };
+    try {
+      const failure: unknown = await parseWakaruReports({
+        execution: reported,
+        provenancePath: path,
+        snapshots: new Map(),
+        files: [],
+      }).catch((cause: unknown) => cause);
+      expect(failure).toBeInstanceOf(AnalysisAccessDeniedError);
+      if (!(failure instanceof AnalysisAccessDeniedError))
+        throw new Error("Expected access denial");
+      expect(failure.path).toBe(path);
+      expect(failure.capturedOutput).toMatchObject({
+        stdout: reported.stdout,
+        stderr: reported.stderr,
+        exit_code: 0,
+        signal: null,
+      });
+    } finally {
+      await chmod(path, 0o600);
+    }
+  },
+);
 
 it("preserves cancellation and its exact reason when the provenance read is cancelled", async () => {
   const controller = new AbortController();
