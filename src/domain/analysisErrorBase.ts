@@ -174,7 +174,10 @@ export abstract class AnalysisError extends Error {
   readonly invocationDiagnostics:
     | Readonly<Record<string, JsonValue>>
     | undefined;
-  readonly capturedOutput: AnalysisCapturedOutput | undefined;
+  #capturedOutput: AnalysisCapturedOutput | undefined;
+  get capturedOutput(): AnalysisCapturedOutput | undefined {
+    return this.#capturedOutput;
+  }
   readonly cleanup: AnalysisCleanupObservation | undefined;
   cleanupIncomplete: boolean;
   #ownedCleanupResources: readonly string[];
@@ -198,7 +201,7 @@ export abstract class AnalysisError extends Error {
       options?.invocationDiagnostics === undefined
         ? undefined
         : structuredClone(options.invocationDiagnostics);
-    this.capturedOutput =
+    this.#capturedOutput =
       options?.capturedOutput === undefined
         ? undefined
         : { ...options.capturedOutput };
@@ -366,6 +369,12 @@ export abstract class AnalysisError extends Error {
   /** Retain a completed observation when a later step fails. */
   retainPartialObservation(observation: AnalysisPartialObservation): this {
     this.partialObservation ??= observation;
+    return this;
+  }
+
+  /** Keep command output observed before this error without replacing the owner. */
+  retainCapturedOutput(output: AnalysisCapturedOutput): this {
+    this.#capturedOutput ??= { ...output };
     return this;
   }
 
