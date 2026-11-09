@@ -88,6 +88,11 @@ export const documentationSections = [
         source: "guides/javascript/electron-observation.md",
         route: "/electron-observation",
       },
+      {
+        text: "V8 code cache inspection",
+        source: "guides/javascript/v8-code-cache.md",
+        route: "/v8-code-cache",
+      },
     ],
   },
   {

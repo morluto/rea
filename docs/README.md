@@ -27,6 +27,7 @@ product pages. The VitePress documentation source is this `docs/` tree.
 - [Passive Node and Electron runtime observation](guides/javascript/javascript-runtime-observation.md)
 - [JavaScript static/runtime reconciliation](guides/javascript/javascript-runtime-reconciliation.md)
 - [Electron file-page observation](guides/javascript/electron-observation.md)
+- [V8 code cache inspection](guides/javascript/v8-code-cache.md)
 
 ## Browser and captured websites
 

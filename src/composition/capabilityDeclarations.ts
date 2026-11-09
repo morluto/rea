@@ -51,6 +51,7 @@ import {
 } from "../domain/webTraceProviders.js";
 import { ELECTRON_FUSE_PROVIDER_IDENTITY } from "../electron/ElectronFuseProviderIdentity.js";
 import { ERLANG_BEAM_PROVIDER_IDENTITY } from "../erlang/ErlangBeamProviderIdentity.js";
+import { V8_CODE_CACHE_PROVIDER_IDENTITY } from "../v8/V8CodeCacheProviderIdentity.js";
 import { EVMOLE_PROVIDER_IDENTITY } from "../evm/EvmoleProviderIdentity.js";
 import {
   BINWALK_PROVIDER_IDENTITY,
@@ -445,6 +446,13 @@ export const CAPABILITY_DECLARATIONS = {
     providers: [
       providerBinding(PYTHON_PYC_PROVIDER_IDENTITY, {
         group: "PYTHON_PYC_TOOL_CONTRACTS",
+      }),
+    ],
+  },
+  v8CodeCache: {
+    providers: [
+      providerBinding(V8_CODE_CACHE_PROVIDER_IDENTITY, {
+        group: "V8_CODE_CACHE_TOOL_CONTRACTS",
       }),
     ],
   },
