@@ -65,6 +65,24 @@ export class InvestigationRecords
     );
   }
 
+  /**
+   * Hold caller input to the same ordinary-JSON and heap-headroom rules the
+   * ledger applies, before the caller seals it for attribution.
+   *
+   * A sealed value skips those checks inside the ledger, so a workflow that
+   * re-attributes a record must admit the raw input it received here first.
+   */
+  admitSealedEvidenceInput(
+    input: unknown,
+    operation: string,
+  ): Result<void, AnalysisError> {
+    return admitInvestigationAuthentication(
+      input,
+      operation,
+      this.retentionPolicy,
+    );
+  }
+
   /** Record immutable Evidence idempotently; reject conflicting content. */
   recordEvidence(
     evidence: Evidence,

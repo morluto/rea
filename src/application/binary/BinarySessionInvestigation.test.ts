@@ -15,6 +15,7 @@ import type { AnalysisProviderCandidate } from "../AnalysisProvider.js";
 import { AnalysisProviderRegistry } from "./AnalysisProviderRegistry.js";
 import { BinarySession } from "./BinarySession.js";
 import { SessionProviderRouter } from "./SessionProviderRouter.js";
+import { InvestigationRecords } from "../investigation/InvestigationRecords.js";
 import {
   ControllableAnalysisClient,
   createBinarySessionTargets,
@@ -233,6 +234,26 @@ it("attributes an imported bundle to the recording session's provider selection"
         /^(request|environment|auto-single-candidate)$/u,
       ),
     });
+  } finally {
+    await session.dispose();
+  }
+});
+
+it("admits record Evidence before attributing it to the session", async () => {
+  const [target] = await createBinarySessionTargets();
+  // A session with no authentication allowance must refuse a mutable record
+  // rather than copying and sealing it for attribution first.
+  const session = createTestBinarySession(
+    createCacheProvider([]),
+    {},
+    new InvestigationRecords({ availableAuthenticationBytes: () => 0 }),
+  );
+  try {
+    expect((await session.open(target)).ok).toBe(true);
+    const refused = session.recordEvidence(observation("no_headroom"));
+    if (refused.ok) throw new Error("Expected authentication headroom refusal");
+    expect(refused.error._tag).toBe("AnalysisResourceConstraintError");
+    expect(session.exportEvidenceBundle().records).toHaveLength(0);
   } finally {
     await session.dispose();
   }

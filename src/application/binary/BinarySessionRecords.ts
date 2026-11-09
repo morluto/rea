@@ -71,21 +71,20 @@ const SNAPSHOT_MUTATION_RECOVERY =
  * Without an active selection the bundle passes through unchanged — there is
  * nothing to attribute it to, and dropping the caller's metadata would be a
  * loss, not a correction.
+ *
+ * Attribution seals its result, and a sealed value skips the owning ledger's
+ * ordinary-JSON and heap-headroom admission, so the caller must admit first.
  */
 const attributeImportedProviderSelection = (
-  bundle: unknown,
-  providerSelection: ProviderSelectionProvenance | undefined,
-): unknown => {
-  if (providerSelection === undefined) return bundle;
-  const authenticated = safeParseImmutableEvidenceBundle(bundle);
-  if (!authenticated.ok) return bundle;
-  return createImmutableEvidenceBundle(
-    authenticated.value.records.map((record) =>
+  bundle: EvidenceBundle,
+  providerSelection: ProviderSelectionProvenance,
+): EvidenceBundle =>
+  createImmutableEvidenceBundle(
+    bundle.records.map((record) =>
       withEvidenceProviderSelection(record, providerSelection),
     ),
-    authenticated.value.unknowns,
+    bundle.unknowns,
   );
-};
 
 /** A missing replay prerequisite is not an Evidence integrity failure. */
 const snapshotUnavailable = (reason: string) =>
@@ -159,10 +158,18 @@ export abstract class BinarySessionRecords {
       return err(new AnalysisCancelledError("record_evidence"));
     // Selection facts belong to the session that admitted the observation, so
     // every record stays attributable to the exact engine that produced it.
-    // Attribution parses to seal the rebound envelope, and a tampered record
-    // must still come back as the declared `Result` rather than a thrown
-    // schema error. Authenticate first so the parse inside attribution only
-    // sees a value the ledger's own reader would have accepted.
+    // Attribution seals its result, and a sealed record skips the owning
+    // ledger's ordinary-JSON and heap-headroom admission, so admit the caller's
+    // own value first — validating a large record must not wait until after it
+    // has been copied and sealed.
+    const admitted = this.#records.admitSealedEvidenceInput(
+      evidence,
+      "record_evidence",
+    );
+    if (!admitted.ok) return admitted;
+    // A tampered record must still come back as the declared `Result` rather
+    // than a thrown schema error, so let the ledger reject what it cannot parse
+    // instead of sealing it here.
     const authenticated = tryParseEvidence(evidence);
     if (authenticated === undefined)
       return this.#records.recordEvidence(evidence);
@@ -250,11 +257,12 @@ export abstract class BinarySessionRecords {
   ): Result<EvidenceImportReceipt, AnalysisError> {
     if (this.#investigationDisposed)
       return err(new AnalysisCancelledError("import_evidence_bundle"));
-    const importable = attributeImportedProviderSelection(
+    const importable = this.#attributeImportedBundle(
       bundle,
-      this.activeAnalysisBinding()?.providerSelection,
+      "import_evidence_bundle",
     );
-    const imported = this.#records.mergeEvidenceBundle(importable);
+    if (!importable.ok) return importable;
+    const imported = this.#records.mergeEvidenceBundle(importable.value);
     if (!imported.ok) return imported;
     this.#snapshot.refreshEvidenceMetadata(imported.value.replacements);
     if (imported.value.changed) this.#emitSnapshotChanged();
@@ -263,6 +271,25 @@ export abstract class BinarySessionRecords {
       unknownsAdded: imported.value.unknownsAdded,
       totalRecords: this.#records.statistics().evidenceRecords,
     });
+  }
+
+  /** Admit, then attribute, an imported bundle the way `recordEvidence` does. */
+  #attributeImportedBundle(
+    bundle: unknown,
+    operation: string,
+  ): Result<unknown, AnalysisError> {
+    const providerSelection = this.activeAnalysisBinding()?.providerSelection;
+    if (providerSelection === undefined) return ok(bundle);
+    const admitted = this.#records.admitSealedEvidenceInput(bundle, operation);
+    if (!admitted.ok) return admitted;
+    const authenticated = safeParseImmutableEvidenceBundle(bundle);
+    if (!authenticated.ok) return ok(bundle);
+    return ok(
+      attributeImportedProviderSelection(
+        authenticated.value,
+        providerSelection,
+      ),
+    );
   }
 
   protected abstract activeAnalysisBinding(): ActiveAnalysisBinding | undefined;
@@ -353,11 +380,12 @@ export abstract class BinarySessionRecords {
           ? undefined
           : { target: active.target, profile },
       (bundle) => {
-        const importable = attributeImportedProviderSelection(
+        const importable = this.#attributeImportedBundle(
           bundle,
-          active?.providerSelection,
+          "import_analysis_snapshot",
         );
-        const imported = this.#records.mergeEvidenceBundle(importable);
+        if (!importable.ok) return importable;
+        const imported = this.#records.mergeEvidenceBundle(importable.value);
         if (!imported.ok) return imported;
         this.#snapshot.refreshEvidenceMetadata(imported.value.replacements);
         return ok(imported.value.recordsAdded);
