@@ -23,10 +23,7 @@ export interface ElfHeaderFacts {
   readonly abiVersion: number;
 }
 
-export interface ElfFixedHeader extends Omit<
-  ElfHeaderFacts,
-  "version" | "abiVersion"
-> {
+export interface ElfFixedHeader extends Omit<ElfHeaderFacts, "version"> {
   readonly architecture: ElfArchitecture | null;
 }
 
@@ -104,6 +101,7 @@ export const readElfFixedHeader = (
     type: facts.type,
     flags: facts.flags,
     osAbi: facts.osAbi,
+    abiVersion: facts.abiVersion,
     architecture: elfArchitecture(facts.machine) ?? null,
   });
 };

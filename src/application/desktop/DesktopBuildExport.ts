@@ -17,6 +17,7 @@ import {
   errorText,
   readOutput,
   refused,
+  reportedFailure,
   runRea,
 } from "./DesktopBuildCommands.js";
 import {
@@ -25,13 +26,12 @@ import {
 } from "./DesktopOutputTree.js";
 
 const EXPORT = "export_build_environment";
-/** The most bytes the task takes in the controller's one JSON argument, which Linux caps at 128 KiB. */
-const TASK_ARGUMENT_BYTES = 96 * 1024;
-
 const exportResultSchema = z.looseObject({
   environment: z.string(),
   seed_files: z.array(z.string()),
   scrubbed_files: z.array(z.string()),
+  // An export from before gzip seeds were listed apart has none.
+  recompressed_files: z.array(z.string()).default([]),
   unscrubbed_files: z.array(z.string()),
   limitations: z.array(z.string()),
   task: jsonValueSchema,
@@ -53,6 +53,7 @@ export type ExportedBuild = {
   readonly task: JsonValue;
   readonly seed_files: string[];
   readonly scrubbed_files: string[];
+  readonly recompressed_files: string[];
   readonly unscrubbed_files: string[];
   readonly limitations: string[];
 };
@@ -127,17 +128,8 @@ export const exportBuild = async (
   const task = `${folder}/task-${attempt}.json`;
   const stdout = `${folder}/export-${attempt}.json`;
   const taskFile = `${JSON.stringify(request.task, null, 2)}\n`;
-  const taskBytes = Buffer.byteLength(JSON.stringify(taskFile));
-  if (taskBytes > TASK_ARGUMENT_BYTES)
-    return err(
-      refused(
-        EXPORT,
-        `The task takes ${String(taskBytes)} bytes in the command REA runs in the computer, more than the ${String(TASK_ARGUMENT_BYTES)} it allows a task.`,
-        "Shorten the task's prompt or checks and export again.",
-      ),
-    );
   try {
-    const bytes = await runRea(
+    const { stdoutBytes: bytes } = await runRea(
       computer,
       [
         "export-desktop-application",
@@ -146,6 +138,8 @@ export const exportBuild = async (
         "--task",
         task,
         ...ENDS,
+        // The building agent made the seed in this computer for the task.
+        "--synthetic-seed",
         ...(request.name === undefined ? [] : ["--name", request.name]),
         ...(capture.packageUrl === undefined
           ? []
@@ -168,7 +162,7 @@ export const exportBuild = async (
               output.failure.remediation?.action ??
                 "Rewrite the task and export again.",
             )
-          : adapterError(EXPORT, output.failure.message),
+          : reportedFailure(EXPORT, output),
       );
     const result = exportResultSchema.parse(output.result);
     const written = await writeBundle(
@@ -186,6 +180,7 @@ export const exportBuild = async (
       task: result.task,
       seed_files: result.seed_files,
       scrubbed_files: result.scrubbed_files,
+      recompressed_files: result.recompressed_files,
       unscrubbed_files: result.unscrubbed_files,
       limitations: result.limitations,
     });

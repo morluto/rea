@@ -211,7 +211,6 @@ it("keeps native JSON source excerpts internal while preserving the failure caus
   const resources = new ArtifactResourceScope();
   try {
     const result = await inspectApiContractEvidence({ path }, resources);
-    expect(result.ok).toBe(false);
     if (result.ok) throw new Error("Expected a syntax refusal");
     expect(result.error.cause).toBeInstanceOf(SyntaxError);
     expect(JSON.stringify(result.error)).not.toContain("u:p@h");
@@ -257,7 +256,6 @@ it.each([
       });
       await new Promise<void>((resolve) => setImmediate(resolve));
       expect(controller.signal.aborted).toBe(true);
-      expect(result.ok).toBe(false);
       if (result.ok) throw new Error("Expected the parser failure");
       expect(result.error._tag).toBe(tag);
       expect(result.error.partialObservation).toEqual({

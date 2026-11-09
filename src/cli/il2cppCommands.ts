@@ -63,6 +63,9 @@ export const registerIl2cppCommands = (
           const service = createIl2cppMetadataService();
           return deliverCliAnalysisEvidence({
             callerInputPath: args.path,
+            ...(options.binary === undefined
+              ? {}
+              : { callerInputPaths: { binary_path: options.binary } }),
             run: () => {
               const input = {
                 path: absoluteCallerPath(args.path),

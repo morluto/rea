@@ -1393,7 +1393,7 @@ const projectPrimarySessionError = (
         break;
       case "file_offset_ambiguous":
         recovery =
-          "Choose an explicit analysis address from the reported mappings. Use inspect_native_load_image to inspect the loaded mappings; REA does not select one automatically.";
+          "Choose a space-qualified analysis address from the reported mappings, such as ram:0x1000. A bare 0x... selector falls back to file-offset lookup and can report this ambiguity again. Use inspect_native_load_image to inspect the loaded mappings and Ghidra's observed default address space; REA does not select one automatically.";
         break;
       case "procedure_ambiguous":
         recovery =

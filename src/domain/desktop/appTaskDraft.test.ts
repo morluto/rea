@@ -1027,6 +1027,38 @@ describe("draftTaskFiles for elements without text beside a text edit", () => {
   });
 });
 
+describe("draftTaskFiles for a whitespace-only run", () => {
+  it("covers a whitespace-only run with the paragraph text check and does not require that run", () => {
+    const file = "Documents/note.abw";
+    const note = (sixth: JsonValue[]): JsonValue => ({
+      root: xmlElement("abiword", {}, [
+        xmlElement("section", { xid: "1" }, [
+          xmlElement("p", { xid: "6" }, sixth),
+        ]),
+      ]),
+      truncated: false,
+    });
+    const edited = ["Hello", xmlElement("c", {}, [" "]), "there"];
+    const [draftFile] = draft({
+      [file]: path("document", "xml", note(["Hello"]), note(edited)),
+    });
+    const paragraph = "/root/children/[name=section]/children/[name=p]";
+    expect(draftFile?.suggested).toEqual([
+      {
+        kind: "text_equals",
+        file,
+        pointer: paragraph,
+        value: "Hello there",
+      },
+    ]);
+    expect(
+      [edited, ["Hello", " ", "there"]].map((saved) =>
+        passing(file, draftFile?.suggested, note(saved)),
+      ),
+    ).toEqual([[true], [true]]);
+  });
+});
+
 describe("draftTaskFiles with nullable SQLite keys", () => {
   it("suggests checks for distinct NULL-key rows and ignores a reorder", () => {
     const file = ".local/share/app/items.db";
@@ -1338,6 +1370,33 @@ const listing = (entries: JsonValue[]): JsonValue => ({
 });
 
 describe("draftTaskFiles archives added to whole", () => {
+  it("checks JSON values that resemble XML elements using the entry format", () => {
+    const file = "Documents/a.zip";
+    const before = listing([zipEntry("a.json", "json", {})]);
+    const saved = (label: string) =>
+      listing([
+        zipEntry("a.json", "json", {
+          element: { name: "Cell", attributes: {}, children: [], label },
+        }),
+      ]);
+    const [result] = draft({
+      [file]: path("document", "zip", before, saved("keep")),
+    });
+    const checks = result?.suggested ?? [];
+    expect(checks).toContainEqual({
+      kind: "value_equals",
+      file,
+      pointer: "/entries/[name=a.json]/view/element/label",
+      value: "keep",
+    });
+    expect(passing(file, checks, saved("keep"), "zip").every(Boolean)).toBe(
+      true,
+    );
+    expect(passing(file, checks, saved("wrong"), "zip").every(Boolean)).toBe(
+      false,
+    );
+  });
+
   it("suggests checks inside a JSON value or a readable entry added whole", () => {
     const [file] = draft({
       "Documents/a.zip": path(
@@ -1464,8 +1523,8 @@ describe("draftTaskFiles archive elements by identity", () => {
       {
         kind: "value_equals",
         file: "Documents/plate.zip",
-        pointer: `${objects}/[name=Object][@name=Hole001]/name`,
-        value: "Object",
+        pointer: `${objects}/[name=Object][@name=Hole001]/attributes/type`,
+        value: "Part::Cylinder",
       },
       {
         kind: "value_absent",
@@ -1701,8 +1760,8 @@ describe("draftTaskFiles archives", () => {
       {
         kind: "value_equals",
         file: "Documents/plate.FCStd",
-        pointer: `${objects}/[name=Object][@name=Hole]/name`,
-        value: "Object",
+        pointer: `${objects}/[name=Object][@name=Hole]/attributes/type`,
+        value: "Part::Cylinder",
       },
       {
         kind: "value_absent",

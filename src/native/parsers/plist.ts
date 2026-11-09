@@ -5,13 +5,14 @@ import {
   AnalysisResourceConstraintError,
 } from "../../domain/analysisErrorCore.js";
 import { fixedAllowanceOptions } from "../../domain/fixedAllowanceRemediation.js";
-import { MAX_JSON_DEPTH, type JsonValue } from "../../domain/jsonValue.js";
+import type { JsonValue } from "../../domain/jsonValue.js";
 import {
   binaryDatePrecisionOverlapLimitation,
   negativeZeroReal,
   negativeZeroRealLimitation,
   nonFiniteRealLimitation,
   projectPlistValue,
+  MAX_NATIVE_PLIST_NESTING_DEPTH,
   unknownDateLimitation,
   unknownScalarLimitation,
   type ProjectedPlistValue,
@@ -48,9 +49,6 @@ import {
 export const MAX_NATIVE_PLIST_BYTES = 64 * 1024 * 1024;
 /** Provisional decode allowance. This release has no runtime override. */
 const MAX_NATIVE_PLIST_DECODE_BYTES = 64 * 1024 * 1024;
-
-// Reserve one level for typed scalar fields and one for normalized_result.value.
-export const MAX_NATIVE_PLIST_NESTING_DEPTH = MAX_JSON_DEPTH - 2;
 
 const mebibytes = (bytes: number): string =>
   `${String(bytes / (1024 * 1024))} MiB`;

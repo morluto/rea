@@ -14,10 +14,12 @@ import {
 import {
   omitUnretainedEvidenceFromError,
   projectAnalysisError,
+  unretainedEvidenceCandidates,
   type AnalysisErrorProjection,
 } from "../domain/analysisErrorProjection.js";
 import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
 import { analysisErrorWithCancellation } from "../domain/analysisErrorCancellation.js";
+import { EvidenceIntegrityError } from "../domain/evidenceErrors.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import { analysisBookmarkSchema } from "../domain/native/nativeInventory.js";
 import { parseContainingProcedureResolution } from "../domain/native/nativeObservation.js";
@@ -131,18 +133,25 @@ export function* omitContextEvidenceForDelivery(
   const candidates = names.flatMap((name) => {
     const facet = context[name];
     if (facet.state !== "unavailable" || facet.error === undefined) return [];
-    const compact = omitUnretainedEvidenceFromError(facet.error, limit);
-    if (compact === undefined) return [];
-    const partial = facet.error.details?.partial_observation;
-    const size = estimateJsonStorage(partial, {
-      maximumValueBytes: budgetBytes,
-      includeSerialized: false,
-    }).valueBytes;
-    return [{ name, facet, compact, size }];
+    return [...unretainedEvidenceCandidates(facet.error)].map((candidate) => {
+      const size = estimateJsonStorage(candidate.value, {
+        maximumValueBytes: budgetBytes,
+        includeSerialized: false,
+      }).valueBytes;
+      return { name, candidate, size };
+    });
   });
   candidates.sort((left, right) => right.size - left.size);
   let current = context;
-  for (const { name, facet, compact } of candidates) {
+  for (const { name, candidate } of candidates) {
+    const facet = current[name];
+    if (facet.state !== "unavailable" || facet.error === undefined) continue;
+    const compact = omitUnretainedEvidenceFromError(
+      facet.error,
+      limit,
+      candidate,
+    );
+    if (compact === undefined) continue;
     current = {
       ...current,
       [name]: {
@@ -276,6 +285,7 @@ const unavailableFacet = (
       remediation:
         error.retryable ||
         error.remediationAction !== undefined ||
+        error.fallbackRemediationAction !== undefined ||
         error.continuingCallerGuidance?.remediationAction !== undefined
           ? projected.remediation.action
           : "Review provider availability in binary_session with detail complete and select another supported provider if appropriate. After switching, if a name is known and search_procedures is available, use it to find candidates and verify their identity and coordinates.",
@@ -283,12 +293,15 @@ const unavailableFacet = (
   }
   if (
     error instanceof AnalysisInputError ||
-    error instanceof AnalysisResourceConstraintError
+    error instanceof AnalysisResourceConstraintError ||
+    (error instanceof EvidenceIntegrityError &&
+      error.sourcePublicationRecovery !== undefined)
   ) {
     const projected = projectAnalysisError(error);
     if (
       projected.code === "invalid_request" ||
-      projected.code === "resource_constraint"
+      projected.code === "resource_constraint" ||
+      projected.code === "evidence_integrity_mismatch"
     )
       return {
         state: "unavailable",
@@ -307,7 +320,11 @@ const unavailableFacet = (
 const isRequestLevelFailure = (error: AnalysisError): boolean =>
   error._tag === "AnalysisCancelledError" ||
   error._tag === "AnalysisTimeoutError" ||
-  error._tag === "NoBinaryOpenError";
+  error._tag === "NoBinaryOpenError" ||
+  (error.sourcePublicationRecovery !== undefined &&
+    !(error instanceof AnalysisInputError) &&
+    !(error instanceof AnalysisResourceConstraintError) &&
+    !(error instanceof EvidenceIntegrityError));
 
 /** Wait for all facets and retain every unresolved cleanup owner. */
 const contextFailure = (
@@ -354,7 +371,8 @@ const contextFailure = (
       ).bindCleanupDependencies([previous, failure]);
     } else if (
       !(failure instanceof AnalysisCancelledError) &&
-      isRequestLevelFailure(failure)
+      (isRequestLevelFailure(failure) ||
+        failure.sourcePublicationRecovery !== undefined)
     ) {
       combined.retainSecondaryFailure(failure);
     }

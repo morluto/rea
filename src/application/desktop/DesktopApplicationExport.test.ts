@@ -3,6 +3,7 @@ import { access, readFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { z } from "zod";
 
 import { createTestTempDirectory } from "../../../tests/fixtures/temporaryDirectory.js";
 import { SafeOutputTree } from "../../artifacts/SafeOutputTree.js";
@@ -14,14 +15,26 @@ import type {
   AptRepository,
   DesktopApplicationCapture,
 } from "../../domain/desktop/desktopCapture.js";
-import { exportDesktopApplication } from "./DesktopApplicationExport.js";
 import {
+  NO_LAUNCH_DOCUMENT,
+  launchDocumentNote,
+  seedWording,
+} from "../../domain/desktop/appExport.js";
+import {
+  exportDesktopApplication,
+  seedLimitation,
+  trashedFilesLimitation,
+} from "./DesktopApplicationExport.js";
+import {
+  EDITED_NOTE,
   HOME,
+  NOTE,
   capture,
   change,
   checkpoint,
   readers,
   retained,
+  seedEndCapture,
   writeCaptureFolder,
 } from "./desktopCapture.fixture.js";
 
@@ -238,6 +251,165 @@ describe("exportDesktopApplication", () => {
   });
 });
 
+it("seeds the app's state at its own path and retains a selected alias", async () => {
+  const local = capture();
+  const physical = `${HOME}/.config/notes`;
+  const { result, directory } = await exportCapture({
+    ...local,
+    state: {
+      ...local.state,
+      content_roots: [physical],
+      state_directories: [physical, `${HOME}/.local/share/notes`],
+      selected_paths: [
+        { path: `${HOME}/settings`, physical, kind: "directory" },
+        {
+          path: `${HOME}/settings/profiles/work`,
+          physical: `${physical}/profiles/work`,
+          kind: "directory",
+        },
+      ],
+      checkpoints: [
+        checkpoint(
+          "baseline",
+          "baseline",
+          [],
+          [
+            retained(`${physical}/settings.ini`, "[ui]\nwrap=false\n"),
+            retained(`${physical}/profiles/work/profile.ini`, "milk\n"),
+          ],
+        ),
+      ],
+    },
+  });
+  if (result instanceof Error) throw result;
+  expect(result.normalized_result).toMatchObject({
+    paths: [".config/notes"],
+    seed_files: [
+      ".config/notes/profiles/work/profile.ini",
+      ".config/notes/settings.ini",
+    ],
+  });
+  expect(
+    await readFile(
+      join(directory, "envs/notes/seed/.config/notes/settings.ini"),
+      "utf8",
+    ),
+  ).toBe("[ui]\nwrap=false\n");
+  expect(
+    await readFile(
+      join(
+        directory,
+        "envs/notes/seed/.config/notes/profiles/work/profile.ini",
+      ),
+      "utf8",
+    ),
+  ).toBe("milk\n");
+  const module = await readFile(
+    join(directory, "envs/notes/notes_app.py"),
+    "utf8",
+  );
+  expect(module).toContain('("settings", ".config/notes")');
+});
+
+it.each(["settings/notes", "chosen/notes"])(
+  "restores the selected %s spelling alongside the app's walked state path",
+  async (selected) => {
+    const local = capture();
+    const physical = `${HOME}/settings/notes`;
+    const { result, directory } = await exportCapture({
+      ...local,
+      state: {
+        ...local.state,
+        roots: [HOME],
+        content_roots: [physical],
+        state_directories: [physical, `${HOME}/.local/share/notes`],
+        selected_paths: [
+          { path: `${HOME}/${selected}`, physical, kind: "directory" },
+        ],
+        checkpoints: [
+          checkpoint(
+            "baseline",
+            "baseline",
+            [],
+            [retained(`${physical}/settings.ini`, "[ui]\nwrap=false\n")],
+          ),
+        ],
+      },
+    });
+    if (result instanceof Error) throw result;
+    expect(result.normalized_result).toMatchObject({
+      seed_files: expect.arrayContaining([".config/notes/settings.ini"]),
+    });
+    expect(
+      await readFile(
+        join(directory, "envs/notes/seed/.config/notes/settings.ini"),
+        "utf8",
+      ),
+    ).toBe("[ui]\nwrap=false\n");
+    const module = await readFile(
+      join(directory, "envs/notes/notes_app.py"),
+      "utf8",
+    );
+    expect(module).toContain(`("${selected}", ".config/notes")`);
+  },
+);
+
+it.each([true, false])(
+  "omits only a child alias supplied by its parent (%s)",
+  async (redundant) => {
+    const local = capture();
+    const parent = `${HOME}/.config/notes`;
+    const child = `${parent}/state/notes`;
+    const { result, directory } = await exportCapture({
+      ...local,
+      application: {
+        ...local.application,
+        state_directories: [
+          { path: parent, exists_at_start: true },
+          {
+            path: redundant ? child : `${HOME}/.local/share/separate`,
+            exists_at_start: true,
+          },
+        ],
+      },
+      state: {
+        ...local.state,
+        content_roots: [parent],
+        state_directories: [parent, child],
+        selected_paths: [
+          { path: `${HOME}/settings`, physical: parent, kind: "directory" },
+          {
+            path: `${HOME}/settings/state/notes`,
+            physical: child,
+            kind: "directory",
+          },
+        ],
+        checkpoints: [
+          checkpoint(
+            "baseline",
+            "baseline",
+            [],
+            [retained(`${child}/settings.ini`, "[ui]\nwrap=false\n")],
+          ),
+        ],
+      },
+    });
+    if (result instanceof Error) throw result;
+    const module = await readFile(
+      join(directory, "envs/notes/notes_app.py"),
+      "utf8",
+    );
+    expect(module).toContain('("settings", ".config/notes")');
+    expect(module).not.toContain(
+      '("settings/state/notes", ".config/notes/state/notes")',
+    );
+    if (!redundant)
+      expect(module).toContain(
+        '("settings/state/notes", ".local/share/separate")',
+      );
+  },
+);
+
 describe("exportDesktopApplication and the desktop Trash", () => {
   it("leaves a file the user moved to the Trash out of the seed and the owned paths, and says so", async () => {
     const local = capture();
@@ -296,9 +468,297 @@ describe("exportDesktopApplication and the desktop Trash", () => {
         "Documents/today.txt",
       ],
     });
-    expect(result.limitations).toContain(
-      "The desktop Trash held 2 file(s) at the seed checkpoint, which are not seeded: ~/.local/share/Trash/files/today.txt, ~/.local/share/Trash/info/today.txt.trashinfo. Restore one the task needs and capture again.",
+    const trashPaths = [
+      ".local/share/Trash/files/today.txt",
+      ".local/share/Trash/info/today.txt.trashinfo",
+    ];
+    const notice = trashedFilesLimitation(trashPaths);
+    expect(result.limitations).toContain(notice);
+    for (const path of trashPaths) expect(notice).toContain(`~/${path}`);
+  });
+});
+
+describe("exportDesktopApplication of state it does not own or keeps for itself", () => {
+  it("names the folders the app wrote that the bundle neither owns nor seeds, and the web storage and caches it seeds", async () => {
+    const local = capture();
+    const [baseline, edited] = local.state.checkpoints;
+    if (baseline === undefined || edited === undefined)
+      throw new Error("the fixture has two checkpoints");
+    const text = "x\n";
+    // In the state directories from the start, so seeded.
+    const kept = [
+      `${HOME}/.local/share/notes/storage/salt`,
+      `${HOME}/.local/share/notes/hsts-storage.sqlite`,
+      `${HOME}/.config/notes/GPUCache/data_0`,
+    ];
+    // Written during the capture outside them; the font cache is the desktop's.
+    const written = [
+      `${HOME}/.config/MuseScore/MuseScore3.ini`,
+      `${HOME}/.local/share/MuseScore/MuseScore3/session`,
+      `${HOME}/.cache/fontconfig/cache-1`,
+    ];
+    const folder = await writeCaptureFolder(
+      {
+        ...local,
+        state: {
+          ...local.state,
+          checkpoints: [
+            {
+              ...baseline,
+              retained: [
+                ...baseline.retained,
+                ...kept.map((path) => retained(path, text)),
+              ],
+            },
+            {
+              ...edited,
+              changes: [
+                ...edited.changes,
+                ...written.map((path) => change(path, { after: text })),
+              ],
+              retained: [
+                ...edited.retained,
+                ...written.map((path) => retained(path, text)),
+              ],
+            },
+          ],
+        },
+      },
+      undefined,
+      [text],
     );
+    const directory = join(
+      await createTestTempDirectory("desktop-export-"),
+      "bundle",
+    );
+
+    const result = await exportDesktopApplication(
+      { capture: folder, directory, name: undefined, tasks: [] },
+      readers,
+    );
+
+    if (result instanceof Error) throw result;
+    expect(result.normalized_result).toMatchObject({
+      seed_files: expect.arrayContaining(
+        kept.map((path) => path.slice(HOME.length + 1)),
+      ),
+    });
+    const unowned = result.limitations.find((limitation) =>
+      limitation.includes("~/.config/MuseScore"),
+    );
+    expect(unowned).toContain("~/.local/share/MuseScore");
+    expect(unowned).toContain("state_paths");
+    const runtime = result.limitations.find((limitation) =>
+      limitation.includes("~/.local/share/notes/storage"),
+    );
+    for (const path of [
+      "~/.local/share/notes/hsts-storage.sqlite",
+      "~/.config/notes/GPUCache",
+    ])
+      expect(runtime).toContain(path);
+    // Desktop caches are left out, and paths collapse to the folder that holds them.
+    const listed = result.limitations.join("\n");
+    for (const path of ["fontconfig", "MuseScore3/session", "storage/salt"])
+      expect(listed).not.toContain(path);
+    const readme = await readFile(join(directory, "README.md"), "utf8");
+    for (const path of [
+      "~/.config/MuseScore",
+      "~/.local/share/MuseScore",
+      "~/.local/share/notes/storage",
+      "~/.config/notes/GPUCache",
+    ])
+      expect(readme).toContain(`\`${path}\``);
+    expect(readme).toContain("`state_paths`");
+  });
+});
+
+/** The fixture with a profile lock and a document lock written by `edited`, and its notes folder held open. */
+const lockedCapture = (): DesktopApplicationCapture => {
+  const local = capture();
+  const [baseline, edited] = local.state.checkpoints;
+  if (baseline === undefined || edited === undefined)
+    throw new Error("the fixture has two checkpoints");
+  const locks = [
+    [PROFILE_LOCK, PROFILE_LOCK_TEXT],
+    [DOCUMENT_LOCK, DOCUMENT_LOCK_TEXT],
+  ] as const;
+  return {
+    ...local,
+    state: {
+      ...local.state,
+      checkpoints: [
+        baseline,
+        {
+          ...edited,
+          changes: [
+            ...edited.changes,
+            ...locks.map(([path, text]) => change(path, { after: text })),
+          ],
+          retained: [
+            ...edited.retained,
+            ...locks.map(([path, text]) => retained(path, text)),
+          ],
+        },
+      ],
+      unretained_opened_directories: [`${HOME}/Documents`],
+    },
+  };
+};
+const PROFILE_LOCK = `${HOME}/.config/notes/.lock`;
+const PROFILE_LOCK_TEXT = "[Lockdata]\nUser=ada\nHost=localhost\n";
+const DOCUMENT_LOCK = `${HOME}/Documents/.~lock.today.txt#`;
+const DOCUMENT_LOCK_TEXT =
+  ",ada,localhost,04.11.2026 00:00,file:///home/ada/.config/notes;\n";
+
+const exportLocked = async (
+  recorded = lockedCapture(),
+  extraContent: readonly string[] = [],
+) => {
+  const folder = await writeCaptureFolder(recorded, undefined, [
+    PROFILE_LOCK_TEXT,
+    DOCUMENT_LOCK_TEXT,
+    ...extraContent,
+  ]);
+  const directory = join(
+    await createTestTempDirectory("desktop-export-"),
+    "bundle",
+  );
+  const result = await exportDesktopApplication(
+    {
+      capture: folder,
+      directory,
+      name: undefined,
+      tasks: [],
+      seedCheckpoint: "edited",
+    },
+    readers,
+  );
+  if (result instanceof Error) throw result;
+  return { result, directory };
+};
+
+describe("exportDesktopApplication of lock files and folders the app held files open in", () => {
+  it("leaves the profile lock and the document lock out of the seed and lists them as left out", async () => {
+    const { result, directory } = await exportLocked();
+
+    const seedFiles = z
+      .object({ seed_files: z.array(z.string()) })
+      .parse(result.normalized_result).seed_files;
+    expect(seedFiles).toContain("Documents/today.txt");
+    expect(seedFiles).toContain(".config/notes/settings.ini");
+    expect(seedFiles).not.toContain(".config/notes/.lock");
+    expect(seedFiles).not.toContain("Documents/.~lock.today.txt#");
+    expect(
+      await exists(join(directory, "envs/notes/seed/.config/notes/.lock")),
+    ).toBe(false);
+    expect(
+      await exists(
+        join(directory, "envs/notes/seed/Documents/.~lock.today.txt#"),
+      ),
+    ).toBe(false);
+    const leftOut = result.limitations.filter((limitation) =>
+      limitation.startsWith("Left out of the seed:"),
+    );
+    expect(leftOut).toHaveLength(1);
+    expect(leftOut[0]).toContain(
+      "~/.config/notes/.lock, ~/Documents/.~lock.today.txt#.",
+    );
+    // Nothing else calls them seeded.
+    expect(
+      result.limitations.filter((limitation) => limitation.includes(".lock")),
+    ).toEqual(leftOut);
+    const readme = await readFile(join(directory, "README.md"), "utf8");
+    expect(readme).toContain("- Left out of the seed:");
+    expect(readme).toContain(
+      "`~/.config/notes/.lock`, `~/Documents/.~lock.today.txt#`",
+    );
+  });
+
+  it("seeds project lock files the capture recognized as documents and a lock-named file the caller selected, and leaves out a *.lock file directly in a state directory", async () => {
+    const locked = lockedCapture();
+    const [baseline, edited] = locked.state.checkpoints;
+    if (baseline === undefined || edited === undefined)
+      throw new Error("the fixture has two checkpoints");
+    const text = "x\n";
+    // Under folders whose names start with a dot, which made them look like an app's locks.
+    const projects = [
+      `${HOME}/Projects/.repo/Cargo.lock`,
+      `${HOME}/.dotfiles/web/yarn.lock`,
+    ];
+    const selected = `${HOME}/.config/notes/notes.lock`;
+    const stateLock = `${HOME}/.config/notes/db.lock`;
+    const written = [...projects, selected, stateLock];
+    const recorded: DesktopApplicationCapture = {
+      ...locked,
+      session: {
+        ...locked.session,
+        windows: locked.session.windows.map((window) => ({
+          ...window,
+          titles: [...window.titles, "Cargo.lock - Notes", "yarn.lock - Notes"],
+        })),
+      },
+      state: {
+        ...locked.state,
+        content_roots: [...locked.state.content_roots, selected],
+        checkpoints: [
+          baseline,
+          {
+            ...edited,
+            changes: [
+              ...edited.changes,
+              ...written.map((path) => change(path, { after: text })),
+            ],
+            retained: [
+              ...edited.retained,
+              ...written.map((path) => retained(path, text)),
+            ],
+          },
+        ],
+      },
+    };
+
+    const { result, directory } = await exportLocked(recorded, [text]);
+
+    const seedFiles = z
+      .object({ seed_files: z.array(z.string()) })
+      .parse(result.normalized_result).seed_files;
+    expect(seedFiles).toEqual(
+      expect.arrayContaining([
+        "Projects/.repo/Cargo.lock",
+        ".dotfiles/web/yarn.lock",
+        ".config/notes/notes.lock",
+      ]),
+    );
+    for (const project of [
+      "Projects/.repo/Cargo.lock",
+      ".dotfiles/web/yarn.lock",
+    ])
+      expect(
+        await exists(join(directory, "envs/notes/seed", project)),
+        project,
+      ).toBe(true);
+    expect(seedFiles).not.toContain(".config/notes/db.lock");
+    expect(seedFiles).not.toContain(".config/notes/.lock");
+    const leftOut = result.limitations.filter((limitation) =>
+      limitation.startsWith("Left out of the seed:"),
+    );
+    expect(leftOut).toHaveLength(1);
+    expect(leftOut[0]).toContain(
+      "~/.config/notes/.lock, ~/.config/notes/db.lock, ~/Documents/.~lock.today.txt#.",
+    );
+  });
+
+  it("names the seed files under a folder the app held files open in, rather than saying nothing there is seeded", async () => {
+    const { result } = await exportLocked();
+
+    const heldOpen = result.limitations.find((limitation) =>
+      limitation.startsWith("The application held files open in"),
+    );
+    expect(heldOpen).toContain("held files open in ~/Documents,");
+    expect(heldOpen).toContain(
+      "the seed holds ~/Documents/today.txt from there",
+    );
+    expect(heldOpen).not.toContain("nothing there is seeded");
   });
 });
 
@@ -579,6 +1039,68 @@ describe("exportDesktopApplication home paths", () => {
   const seed = (directory: string, path: string) =>
     readFile(join(directory, "envs/notes/seed", path), "utf8");
 
+  it("owns and seeds KDE's ~/.config/<name>rc, which the app first wrote during the capture", async () => {
+    const local = capture();
+    const [baseline, edited] = local.state.checkpoints;
+    if (baseline === undefined || edited === undefined)
+      throw new Error("the fixture has two checkpoints");
+    const rc = `${HOME}/.config/notesrc`;
+    const text = "[General]\nShowTipOfDay=false\n";
+    // The inventory names it before it exists, as it names the app's folders.
+    const folder = await writeCaptureFolder(
+      {
+        ...local,
+        application: {
+          ...local.application,
+          state_directories: [
+            ...local.application.state_directories,
+            { path: rc, exists_at_start: false },
+          ],
+        },
+        state: {
+          ...local.state,
+          content_roots: [...local.state.content_roots, rc],
+          state_directories: [...(local.state.state_directories ?? []), rc],
+          checkpoints: [
+            baseline,
+            {
+              ...edited,
+              changes: [
+                ...edited.changes,
+                change(rc, { after: text }, { state: true }),
+              ],
+              retained: [...edited.retained, retained(rc, text)],
+            },
+          ],
+        },
+      },
+      undefined,
+      [text],
+    );
+    const directory = join(
+      await createTestTempDirectory("desktop-export-"),
+      "bundle",
+    );
+
+    const result = await exportDesktopApplication(
+      {
+        capture: folder,
+        directory,
+        name: undefined,
+        tasks: [],
+        seedCheckpoint: "edited",
+      },
+      readers,
+    );
+
+    if (result instanceof Error) throw result;
+    expect(result.normalized_result).toMatchObject({
+      paths: expect.arrayContaining([".config/notesrc"]),
+      seed_files: expect.arrayContaining([".config/notesrc"]),
+    });
+    expect(await seed(directory, ".config/notesrc")).toBe(text);
+  });
+
   it("keeps a file under a symlinked home at its path under the walked home", async () => {
     const home = "/data/ada";
     const { result, directory } = await exportWalked({
@@ -654,6 +1176,291 @@ describe("exportDesktopApplication home paths", () => {
     });
     expect(await seed(directory, ".config/notes/settings.ini")).toBe(settings);
     expect(result.limitations.join("\n")).toContain(`leaves out ${later}`);
+  });
+});
+
+/** Export the seed-then-end capture, or `recorded` with `extraContent`, launched from a desktop entry with `exec`, seeded at `seed`. */
+const exportSeeded = async (
+  exec: string | null,
+  {
+    recorded,
+    extraContent = [],
+    ...options
+  }: {
+    readonly syntheticSeed?: boolean;
+    readonly recorded?: DesktopApplicationCapture;
+    readonly extraContent?: readonly string[];
+  } = {},
+) => {
+  const local = recorded ?? seedEndCapture();
+  const folder = await writeCaptureFolder(
+    {
+      ...local,
+      application: {
+        ...local.application,
+        desktop_entry:
+          exec === null
+            ? null
+            : {
+                id: "org.example.notes",
+                path: "/usr/share/applications/org.example.notes.desktop",
+                name: "Notes",
+                exec,
+                icon: null,
+                startup_wm_class: null,
+                categories: [],
+                mime_types: [],
+                terminal: false,
+              },
+      },
+    },
+    undefined,
+    [EDITED_NOTE, ...extraContent],
+  );
+  const directory = join(
+    await createTestTempDirectory("desktop-export-"),
+    "bundle",
+  );
+  const result = await exportDesktopApplication(
+    {
+      capture: folder,
+      directory,
+      name: "notes",
+      tasks: [],
+      seedCheckpoint: "seed",
+      endCheckpoint: "end",
+      ...options,
+    },
+    readers,
+  );
+  if (result instanceof Error) throw result;
+  const read = (path: string) => readFile(join(directory, path), "utf8");
+  return {
+    result,
+    module: await read("envs/notes/notes_app.py"),
+    readme: await read("README.md"),
+  };
+};
+
+/** The limitations on what the launch opens, found by the lead their formatter gives them. */
+const launchLimitations = (limitations: readonly string[]) =>
+  limitations.filter((line) => line.includes(NO_LAUNCH_DOCUMENT));
+
+/**
+ * The seed-then-end capture of an app whose titles name no file, given the
+ * note and `~/.config/MuseScore`, a link to `target`, as state paths, with
+ * MuseScore's settings there from the start.
+ */
+const linkedSettingsCapture = (target: string): DesktopApplicationCapture => {
+  const base = seedEndCapture();
+  const [baseline, ...later] = base.state.checkpoints;
+  if (baseline === undefined) throw new Error("the fixture has a baseline");
+  return {
+    ...base,
+    session: {
+      ...base.session,
+      windows: base.session.windows.map((window) => ({
+        ...window,
+        titles: ["Untitled - Notes"],
+      })),
+    },
+    state: {
+      ...base.state,
+      content_roots: [...base.state.content_roots, target, NOTE],
+      selected_paths: [
+        { path: `${HOME}/.config/MuseScore`, physical: target },
+        { path: NOTE, physical: NOTE },
+      ],
+      checkpoints: [
+        {
+          ...baseline,
+          retained: [
+            ...baseline.retained,
+            retained(`${target}/MuseScore3.ini`, "[ui]\nwrap=false\n"),
+          ],
+        },
+        ...later,
+      ],
+    },
+  };
+};
+
+describe("exportDesktopApplication launch document", () => {
+  it("opens the seed's one document when the desktop entry takes files", async () => {
+    const { result, module, readme } = await exportSeeded("notes %U");
+
+    expect(module).toContain(
+      `command=["sh", "-c", "cd \\"$HOME\\" 2>/dev/null; exec 'notes' \\"$HOME\\"/'Documents/today.txt'"]`,
+    );
+    expect(readme).toContain(
+      launchDocumentNote({
+        opens: { kind: "seed", document: "Documents/today.txt" },
+      }),
+    );
+    expect(readme).toContain("`~/Documents/today.txt`");
+    expect(launchLimitations(result.limitations)).toEqual([]);
+  });
+
+  it.each([
+    ["elsewhere in the home", "settings/MuseScore"],
+    [
+      "to the note's own folder, where the note's deeper selection decides",
+      "Documents",
+    ],
+  ])(
+    "opens the selected note when a selected settings link leads %s",
+    async (_, target) => {
+      const { result, module } = await exportSeeded("notes %U", {
+        recorded: linkedSettingsCapture(`${HOME}/${target}`),
+      });
+
+      // The selected link is ~/.config/MuseScore, so the settings keep that
+      // spelling and the note stays the one document.
+      expect(result.normalized_result).toMatchObject({
+        seed_files: expect.arrayContaining([
+          "Documents/today.txt",
+          ".config/MuseScore/MuseScore3.ini",
+        ]),
+      });
+      expect(result.normalized_result).not.toMatchObject({
+        seed_files: expect.arrayContaining([`${target}/MuseScore3.ini`]),
+      });
+      expect(module).toContain(
+        `exec 'notes' \\"$HOME\\"/'Documents/today.txt'"]`,
+      );
+      expect(launchLimitations(result.limitations)).toEqual([]);
+    },
+  );
+
+  it.each(["notes", null])(
+    "launches as captured, and says why in the README and limitations, when Exec is %j",
+    async (exec) => {
+      const opened = await exportSeeded("notes %U");
+      const { result, module, readme } = await exportSeeded(exec);
+      const launch = launchLimitations(result.limitations);
+
+      expect(module).toContain(
+        `command=["sh", "-c", "cd \\"$HOME\\" 2>/dev/null; exec 'notes'"]`,
+      );
+      expect(launch).toHaveLength(1);
+      expect(
+        result.limitations.filter((line) => !launch.includes(line)),
+      ).toEqual(opened.result.limitations);
+      for (const line of launch) expect(readme).toContain(line);
+    },
+  );
+
+  it("launches as captured from a baseline seed, which holds no document", async () => {
+    const local = capture();
+    const { result, directory } = await exportCapture({
+      ...local,
+      application: {
+        ...local.application,
+        desktop_entry: {
+          id: "org.example.notes",
+          path: "/usr/share/applications/org.example.notes.desktop",
+          name: "Notes",
+          exec: "notes %F",
+          icon: null,
+          startup_wm_class: null,
+          categories: [],
+          mime_types: [],
+          terminal: false,
+        },
+      },
+    });
+
+    if (result instanceof Error) throw result;
+    expect(launchLimitations(result.limitations)).toEqual([]);
+    expect(
+      await readFile(join(directory, "envs/notes/notes_app.py"), "utf8"),
+    ).toContain(
+      `command=["sh", "-c", "cd \\"$HOME\\" 2>/dev/null; exec 'notes'"]`,
+    );
+  });
+
+  it("says a seed made for the task was made for it, and a captured one is the user's own", async () => {
+    const made = await exportSeeded("notes %U", { syntheticSeed: true });
+    const captured = await exportSeeded("notes %U");
+    const notice = (syntheticSeed: boolean) =>
+      seedWording({ name: "notes", seedCheckpoint: "seed", syntheticSeed })
+        .notice;
+
+    expect(made.result.parameters).toMatchObject({ synthetic_seed: true });
+    expect(captured.result.parameters).toMatchObject({ synthetic_seed: false });
+    for (const [exported, synthetic] of [
+      [made, true],
+      [captured, false],
+    ] as const) {
+      expect(exported.result.limitations).toContain(seedLimitation(synthetic));
+      expect(exported.result.limitations).not.toContain(
+        seedLimitation(!synthetic),
+      );
+      expect(exported.readme).toContain(notice(synthetic));
+      expect(exported.readme).not.toContain(notice(!synthetic));
+    }
+    expect(made.readme).toContain("`envs/notes/seed/`");
+    expect(captured.readme).not.toContain("`envs/notes/seed/`");
+  });
+});
+
+describe("exportDesktopApplication launch document beside its lock", () => {
+  it("leaves LibreOffice's lock out of a selected folder's seed, so the document beside it is the one the launch opens", async () => {
+    const base = seedEndCapture();
+    const [baseline, seed, ...later] = base.state.checkpoints;
+    if (baseline === undefined || seed === undefined)
+      throw new Error("the fixture has a baseline and a seed");
+    const documents = `${HOME}/Documents`;
+    const recorded: DesktopApplicationCapture = {
+      ...base,
+      session: {
+        ...base.session,
+        windows: base.session.windows.map((window) => ({
+          ...window,
+          titles: ["Untitled - Notes"],
+        })),
+      },
+      state: {
+        ...base.state,
+        content_roots: [...base.state.content_roots, documents],
+        selected_paths: [{ path: documents, physical: documents }],
+        checkpoints: [
+          baseline,
+          {
+            ...seed,
+            changes: [
+              ...seed.changes,
+              change(DOCUMENT_LOCK, { after: DOCUMENT_LOCK_TEXT }),
+            ],
+            retained: [
+              ...seed.retained,
+              retained(DOCUMENT_LOCK, DOCUMENT_LOCK_TEXT),
+            ],
+          },
+          ...later,
+        ],
+      },
+    };
+
+    const { result, module } = await exportSeeded("notes %U", {
+      recorded,
+      extraContent: [DOCUMENT_LOCK_TEXT],
+    });
+
+    const seedFiles = z
+      .object({ seed_files: z.array(z.string()) })
+      .parse(result.normalized_result).seed_files;
+    expect(seedFiles).toContain("Documents/today.txt");
+    expect(seedFiles).not.toContain("Documents/.~lock.today.txt#");
+    expect(
+      result.limitations.filter((line) =>
+        line.startsWith("Left out of the seed:"),
+      ),
+    ).toEqual([expect.stringContaining("~/Documents/.~lock.today.txt#")]);
+    expect(module).toContain(
+      `exec 'notes' \\"$HOME\\"/'Documents/today.txt'"]`,
+    );
+    expect(launchLimitations(result.limitations)).toEqual([]);
   });
 });
 

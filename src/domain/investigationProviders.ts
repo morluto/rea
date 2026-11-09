@@ -40,6 +40,13 @@ export const PE_IMPORTS_PROVIDER = Object.freeze({
   version: "1",
 } as const);
 
+/** Provider identity for portable, execution-free Shell Link decoding. */
+export const WINDOWS_SHORTCUT_PROVIDER = Object.freeze({
+  id: "rea-windows-shortcut",
+  name: "REA Windows shortcut parser",
+  version: "1",
+} as const);
+
 /** Provider identity for portable, execution-free ELF note-table decoding. */
 export const DEVICETREE_PROVIDER = Object.freeze({
   id: "rea-devicetree",

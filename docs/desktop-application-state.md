@@ -40,7 +40,16 @@ The role follows from the reasons, in this order: `shared_desktop` for a file
 in the desktop Trash, which the user deleted, whatever else names it;
 `application_state` for application keys in dconf, or a state directory outside shared desktop
 locations; `document` for a file named in a window title or selected by the
-caller, even if the application holds it open; `application_state` for another
+caller, even if the application holds it open, except that a selected file
+under a hidden folder of the home, such as `~/.config/MuseScore`, a dotfile
+there, or a lock an application holds, such as LibreOffice's `.~lock.<name>#`
+beside a document, is `application_state`, judged by the path as the caller
+named it, so a file reached through `~/.config/MuseScore` stays the application's
+when that folder is a link to `~/settings/MuseScore`; the innermost selected
+path holding a file decides, so a score selected itself inside the link's
+target keeps its own name and is a document (a capture written before it
+recorded selected paths is judged by their physical spelling);
+`application_state` for another
 open file outside shared locations; `shared_desktop` for other files in shared
 locations; `unrelated` otherwise. A window title names a file only when no
 other file name character adjoins the name, so `day.txt` does not match
@@ -74,6 +83,9 @@ whether the file was present, the SHA-256 of its retained bytes, and a view:
 | `keyfile` | Only `[group]`, `key=value` and comment lines, with at least one group | Groups of `key` → string value, from files up to 4 MiB                                 |
 | `text`    | Other UTF-8 text                                                       | Lines, up to 5,000                                                                     |
 | `binary`  | NUL bytes or invalid UTF-8                                             | None                                                                                   |
+
+A gzip file is read as the document inside it; see
+[compressed documents](#compressed-documents).
 
 A JSON value holding a number JavaScript would round, such as an integer above
 2^53, is not read rather than shown rounded.
@@ -128,7 +140,15 @@ could misstate its committed rows. The capture records them under its content
 roots, which include both beside a database selected on its own, when its
 baseline walk listed every directory, read every path, entered no other
 device, did not stop early and recorded what it left out, and wherever they change; an excluded log, and any elsewhere, is
-unknown, since an unchanged file and a missing one look alike. A table
+unknown, since an unchanged file and a missing one look alike. After an
+incomplete checkpoint, a database or sidecar without an explicit
+later change remains unconfirmed even if a later walk completes. REA does not
+combine that older file with a newly recorded member of the SQLite set. The
+historical versions remain listed; the affected SQLite view has a `view_error`.
+A baseline non-file at a sidecar path, or a non-directory ancestor, cannot
+establish an absent file. Captures without the required baseline non-file
+inventory must be made again before inspection.
+A table
 that cannot be read keeps its `error` in place of its rows, and changes to that
 database are marked incomplete. dconf
 databases are read with `dconf dump /` against a private file profile, so the
@@ -184,6 +204,37 @@ as Python's `zipfile` does, and hands the zip reader only the records it lists,
 so an archive of hundreds of thousands of entries costs no more to read
 than one of a thousand. An archive whose central directory cannot be read has a
 `view_error` of its own.
+
+## Compressed documents
+
+Gnumeric's `.gnumeric`, Dia's `.dia`, Xournal++'s `.xopp`, GnuCash's default
+book and Inkscape's `.svgz` are XML compressed with gzip. A file that starts
+with gzip's magic bytes, `1f 8b 08`, whatever its name, is read as the
+document inside it: its members joined, then given a format and view by the
+rules above under the file's own name, so a pointer or check into it is
+written exactly as for the same document uncompressed, and the task draft is
+the same. The version records the compression beside the format:
+
+```json
+{
+  "format": "xml",
+  "compression": "gzip",
+  "view": {
+    "root": { "name": "gnm:Workbook", "attributes": {}, "children": [] },
+    "truncated": false
+  },
+  "view_error": null
+}
+```
+
+The document is read only when it is at most 16 MiB and at most 100 times the
+file's size, an archive entry's limits, so decompressing stops there; past
+them, or when the stream is damaged or cut short, the version has `format`
+null and a `view_error`, and a check into it is undecided. A SQLite or dconf
+database inside keeps its format and has a `view_error`, an archive inside is
+read as an archive, and another gzip stream inside is binary. A gzip file
+inside an archive reads as binary. Other compression, such as xz, Zstandard
+or bzip2, is not read: such a file is binary.
 
 ## Kinds of change
 

@@ -68,7 +68,7 @@ export const exportEvidenceBundleInputSchema = z.strictObject({
 export const SESSION_TOOL_CONTRACTS = [
   session(
     "open_binary",
-    "Open a local executable, application bundle, archive, JavaScript, source map, plist, or analysis database after validation. format=dos-com explicitly interprets 1..65280 headerless bytes as a DOS COM analysis image. format=raw-binary interprets headerless bytes with a required architecture and entry_point; file offset 0 maps at that address. Omission preserves header-based detection. provider_id selects one deep provider or deterministic auto selection; the binding remains stable until close or an explicit switch, with no failure fallback. Reopening the same target and profile retains its active database and metadata edits. For editable Ghidra persistence across processes, set REA_GHIDRA_CHECKPOINT_DIR to a private absolute directory in the startup environment (stock ELF/PE/Mach-O on Linux/macOS; restart MCP). Opens and normal close then restore/save automatically; no separate persistence tool or runtime setting update is needed. An optional analysis snapshot is imported atomically and must match the binary identity, concrete provider, and canonical analysis profile exactly; importing into a session with metadata mutations requires closing and reopening it first. Switching targets preserves investigation records. A failed admitted open reports error.details.selection_at_failure, target_at_open_completion, and provider_id_at_open_completion. The target summary and provider id are the selected binary and bound provider when that attempt settled, or null when absent. Later calls can change the selection, so use binary_session for current state. Call close_binary to release engine resources; reset_investigation explicitly clears investigation records.",
+    "Open a local executable, application bundle, archive, JavaScript, source map, plist, or analysis database after validation. format=dos-com explicitly interprets 1..65280 headerless bytes as a DOS COM analysis image. format=raw-binary interprets headerless bytes with a required architecture and entry_point; file offset 0 maps at that address. Omission preserves header-based detection. provider_id selects one deep provider or deterministic auto selection; the binding remains stable until close or an explicit switch, with no failure fallback. Reopening the same target and profile retains its active database and metadata edits. Changing target or provider can retire the active Ghidra database and discard its ephemeral edits, including before a later provider call fails; retained investigation records are historical and do not restore those edits. For editable Ghidra persistence across processes, set REA_GHIDRA_CHECKPOINT_DIR to a private absolute directory in the startup environment (stock ELF/PE/Mach-O on Linux/macOS; restart MCP). Opens and normal close then restore/save automatically; no separate persistence tool or runtime setting update is needed. An optional analysis snapshot is imported atomically and must match the binary identity, concrete provider, and canonical analysis profile exactly; importing into a session with metadata mutations requires closing and reopening it first. Switching targets preserves investigation records. A failed admitted open reports error.details.selection_at_failure, target_at_open_completion, and provider_id_at_open_completion. The target summary and provider id are the selected binary and bound provider when that attempt settled, or null when absent. Later calls can change the selection, so use binary_session for current state. Call close_binary to release engine resources; reset_investigation explicitly clears investigation records.",
     openBinaryInputSchema,
   ),
   session(
@@ -88,7 +88,7 @@ export const SESSION_TOOL_CONTRACTS = [
   ),
   session(
     "binary_session",
-    'Report the active binary target or resource-only app root, provider and capability availability when applicable, client-feature, analysis, and server-identity status without starting analysis. Start with the default summary: after selecting Ghidra, capabilities[].shared_limitations already reports enabled checkpoint or ephemeral mode. Request detail: "complete" only for provider diagnostics, candidate capabilities or static tool flags; omitted_fields lists what summary leaves out.',
+    'Report the active binary target or resource-only app root, provider and capability availability when applicable, client-feature, analysis, and server-identity status without starting analysis. analysis_provider_candidates_observed distinguishes this status request from retained target-selection observations; selection-time readiness may have changed. Set refresh_candidates true to inspect current candidates without changing the active binding or engine. open_binary with an explicit provider_id reselects and may retire the previous engine and its ephemeral edits; reopening the same target without provider_id reuses its current route. A selected provider may report release_verification under its binding; omission means not reported, and reported-version verification does not authenticate executable bytes. Start with the default summary: after selecting Ghidra, capabilities[].shared_limitations already reports enabled checkpoint or ephemeral mode. Request detail: "complete" only for provider diagnostics, candidate capabilities or static tool flags; omitted_fields lists what summary leaves out.',
     binarySessionInputSchema,
   ),
   session(
@@ -108,7 +108,7 @@ export const SESSION_TOOL_CONTRACTS = [
   ),
   session(
     "compare_process_captures",
-    "Compare two compatible process capture observations across terminal, interaction, lifecycle, process, filesystem, command-shim, HTTP, and WebSocket evidence. Optional trace_spec validates exact events against an explicit partial order or finite trace language; concurrency is never inferred from timestamps or broad sorting. Missing, journal-free, or truncated observations are never treated as equivalent.",
+    'Compare two compatible process capture observations, supplied inline or as exact {kind: "retained-evidence", evidence_id} references from this session, across terminal, interaction, lifecycle, process, filesystem, command-shim, HTTP, and WebSocket evidence. Capture-local observer timing is retained as provenance but does not by itself establish a behavior change. Optional trace_spec validates exact events, including caller-selected timing assertions, against an explicit partial order or finite trace language; concurrency is never inferred from timestamps or broad sorting. Missing, journal-free, or truncated observations are never treated as equivalent.',
     processComparisonInputSchema,
   ),
   session(
@@ -123,7 +123,7 @@ export const SESSION_TOOL_CONTRACTS = [
   ),
   session(
     "compare_functions",
-    "Compare two explicit analyze_function Evidence records or exact retained session references across identity, exact provider text, calls, references, strings, and address-normalized CFG topology. Authenticated same-artifact entry coordinates establish correspondence independently of renamed labels; metadata and text changes remain separate. Missing or provider-incompatible facets remain truncated or unknown; every conclusion cites both Evidence sets.",
+    "Compare two explicit analyze_function Evidence records or exact retained session references across identity, exact provider text, calls, references, strings, and address-normalized CFG topology. The same authenticated Evidence record or compatible same-artifact entry coordinates establish correspondence independently of symbol origin; metadata and text changes remain separate. Missing or provider-incompatible facets remain truncated or unknown; every conclusion cites both Evidence sets.",
     functionComparisonInputSchema,
   ),
   session(
@@ -187,7 +187,7 @@ export const SESSION_TOOL_CONTRACTS = [
   {
     ...session(
       "inspect_address_context",
-      "Inspect one explicit reproducible address for its analyzed name, containing procedure, regular and inline comments, and matching bookmarks. Each unsupported facet returns a typed unavailable outcome. A facet rejected for invalid input or a resource constraint retains its canonical error and recovery alongside any successful facets. Use xrefs, assembly, or pseudocode for those deeper views.",
+      "Inspect one explicit reproducible address for its analyzed name, containing procedure, regular and inline comments, and matching bookmarks. Each unsupported facet returns a typed unavailable outcome. A facet rejected for invalid input, source Evidence integrity, or a resource constraint retains its canonical error and recovery alongside successful facets. Use xrefs, assembly, or pseudocode for those deeper views.",
       addressContextInputSchema,
     ),
     requiresActiveTarget: true,

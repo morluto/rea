@@ -4,11 +4,7 @@ import { MAX_JSON_DEPTH, jsonValueSchema } from "../../domain/jsonValue.js";
 import { projectAnalysisError } from "../../domain/analysisErrorProjection.js";
 import { plistUidValue } from "../../domain/apple/plistUid.js";
 import { createPlistNumberProjection } from "../../domain/apple/plistNumbers.js";
-import {
-  nonFiniteRealLimitation,
-  projectPlistValue,
-  unknownScalarLimitation,
-} from "../../domain/apple/plistValue.js";
+import { projectPlistValue } from "../../domain/apple/plistValue.js";
 import { parseXmlPropertyList } from "../../domain/propertyListKeys.js";
 import {
   decodeBinaryPlistScalars,
@@ -63,8 +59,8 @@ it.each([
 ] as const)(
   "bounds ordinary %s by the projected JSON capacity, including scalar wrappers",
   (encoding) => {
-    // One level for typed scalar fields and one for normalized_result.value.
-    const maximum = MAX_JSON_DEPTH - 2;
+    // Typed scalar fields, report.value and Evidence.normalized_result each add a level.
+    const maximum = MAX_JSON_DEPTH - 3;
     for (const depth of [maximum, maximum + 1]) {
       let binary: PlistValue = Buffer.from([0, 1]);
       if (encoding === "binary data")
@@ -88,7 +84,6 @@ it.each([
                   : undefined,
               );
       if (depth > maximum) {
-        expect(parsed.ok).toBe(false);
         if (parsed.ok) throw new Error("Expected nesting refusal");
         if (parsed.error instanceof UnsupportedBinaryPlistUidError)
           throw parsed.error;
@@ -104,7 +99,9 @@ it.each([
       } else {
         if (!parsed.ok) throw parsed.error;
         expect(() =>
-          jsonValueSchema.parse({ value: parsed.value.value }),
+          jsonValueSchema.parse({
+            normalized_result: { value: parsed.value.value },
+          }),
         ).not.toThrow();
         let leaf: unknown = parsed.value.value;
         for (let level = 0; level < depth; level += 1) {
@@ -127,7 +124,6 @@ it.each(["<bogus/>", "<plist><data>ＡＡＥ=</data></plist>"])(
   "keeps malformed XML conversion %s separate from nesting refusal",
   (source) => {
     const parsed = parsePlistXml(source);
-    expect(parsed.ok).toBe(false);
     if (parsed.ok) throw new Error("Expected malformed conversion failure");
     expect(projectAnalysisError(parsed.error)).toMatchObject({
       code: "unreadable_output",
@@ -148,7 +144,6 @@ it("keeps malformed XML source structure separate from retained unknown scalars"
   const parsed = parsePlistXmlSource(
     Buffer.from("<plist><dict><key>missing</key></dict></plist>"),
   );
-  expect(parsed.ok).toBe(false);
   if (parsed.ok) throw new Error("Expected malformed source structure");
   expect(parsed.error.message).toContain("Missing value for key");
 });
@@ -384,7 +379,6 @@ it("rejects a reachable date with a malformed marker", () => {
 
   const parsed = parsePlistBinary(bytes);
 
-  expect(parsed.ok).toBe(false);
   if (parsed.ok) throw new Error("Expected malformed reachable date rejection");
   expect(parsed.error.message).toContain("date marker 0x30 is invalid");
 });
@@ -558,7 +552,6 @@ it("keeps binary plist source values lost by XML conversion", () => {
 
 it("rejects a truncated binary plist source", () => {
   const parsed = parsePlistBinary(Buffer.from("bplist00bad"));
-  expect(parsed.ok).toBe(false);
   if (parsed.ok) throw new Error("Expected malformed binary plist");
   expect(parsed.error.message).toContain("trailer is truncated");
 });
@@ -880,12 +873,11 @@ it("keeps CFPropertyList's non-finite real spellings in XML evidence", () => {
   );
   expect(parsed.value.limitations).toEqual([
     expect.stringContaining("XML conversion"),
-    nonFiniteRealLimitation(3),
-    unknownScalarLimitation(1),
+    expect.stringMatching(/\b3 non-finite real value.*JSON number/iu),
+    expect.stringMatching(
+      /\b1 XML scalar value.*not be established.*literal.*reason/iu,
+    ),
   ]);
-  expect(unknownScalarLimitation(1)).toMatch(
-    /scalar.*not be established.*literal.*reason/iu,
-  );
 });
 
 it("retains nested own dictionary names consistently in native JSON, XML and binary projections", () => {

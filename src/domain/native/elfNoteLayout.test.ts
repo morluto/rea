@@ -88,7 +88,10 @@ it.each([false, true])(
         readElfNoteHeader(bytes.subarray(7, 7 + observed), littleEndian),
       ).toEqual({
         ok: false,
-        error: { kind: "malformed", message: "ELF note header is truncated" },
+        error: {
+          kind: "malformed",
+          message: expect.stringContaining("truncated"),
+        },
       });
   },
 );

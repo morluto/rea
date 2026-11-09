@@ -221,11 +221,12 @@ graph, while `search_scope.discovery` describes whether discovery of applicable
 direct relationships is established. A missing goal is `unknown` when either
 discovery or a relationship read is unestablished. A found path is shortest
 within the observed graph; undiscovered calls may produce a shorter path.
-`truncated` describes relationship reads, not unestablished discovery.
+`truncated` describes relationship reads, not unestablished discovery. Ghidra's recorded incoming references do not establish every computed caller; computed outgoing candidates likewise retain unknown callee discovery. IDA function-edge replies retain their observed truncation status while unclassified call targets remain unknown in discovery.
 `build_call_path` applies the same distinction to supplied function Evidence:
 its `search_scope.exhaustive` describes the supplied graph and
 `search_scope.observed_status` preserves that graph's result. Evidence without
 discovery metadata has unknown discovery. Cancellation remains a tool error.
+:docs/reference/mcp-contracts.md
 
 `trace_feature` validates each reference's containing-procedure resolution using
 the same contract as navigation context. Explicit absence remains a successful
@@ -390,7 +391,12 @@ parent operation, use a discovered ID with a compatible `inspect_analysis_view`;
 neither discovery nor retained selection starts a provider. For records without
 a supported view, use `detail: "records"` to retrieve selected complete records,
 or export the bundle to a caller-selected path. Record and bundle delivery are
-subject to the MCP response budget.
+subject to the MCP response budget. Summary rows are not complete records.
+Retained `procedure_pseudo_code` Evidence supports `summary` and
+`native`/`pseudocode` views of the original observation, including
+`view: {kind: "native", facet: "pseudocode", offset: 0, limit: 4096}`;
+pages do not start a provider or create another decompilation. An
+`analyze_function` dossier is a different observation.
 `retention: "complete-record"` describes stored Evidence, while
 `native_dossier.value_flow` independently reports truncation, unavailable or
 unknown metadata. Missing omission counts remain null. Summary output carries
@@ -985,6 +991,13 @@ from an older request does not override a newer outcome. Request deadlines and
 cancellations neither mark nor clear availability. A new provider client starts
 without these outcomes.
 
+Standalone command operations (such as `inspect_with_objdump` and
+`execute_rizin_command`) similarly reflect observed executable launch failures:
+an unprobed executable is reported available; once a launch failure is observed,
+discovery reports the operation unavailable with the executable remediation
+until a request for it dispatched later succeeds. Direct retry remains available
+without restarting REA.
+
 `detail` selects the projection and the result echoes it. The default
 `summary` keeps open state, target identity, the binding, current-route
 `capabilities`, run, activity and health status, and each provider candidate's
@@ -1008,6 +1021,18 @@ for every selector. A trace whose start and goal resolve to the same address can
 finish without reading relationships, even when neither traversal mode is
 available. Discovery does not block that direct invocation or replace its typed
 partial/error outcomes.
+
+`trace_native_values` includes `value_flow_support` for the provider routed to
+`analyze_function`. `supported` declares that the provider may supply value flow;
+it does not guarantee a model for the selected function. `unavailable` includes
+the provider's reason, and `unknown` means no declaration. The provider ID is
+preserved, or null if no analysis provider is routed. This declaration is separate
+from operation readiness and the availability of call-target resolution. When
+call-target resolution is missing, a direct trace may still return a local graph
+with call-resolution unknowns; even `max_depth: 0` attempts to resolve call sites.
+When support is unknown but the declared operation prerequisites are ready,
+availability can still be true; it does not promise that value flow is present.
+The trace's returned observations and unknowns remain authoritative for that call.
 
 `trace_native_ui_action` reports authored-UI and native-seed modes separately.
 Apple dispatch metadata requires a Mach-O target; another provider may supply
@@ -1049,8 +1074,20 @@ limitations. An unavailable group carries `remediation` when its readiness
 owner supplied a repair instruction; `tool_availability` uses that instruction
 rather than the failure description.
 
-`binary_session.analysis_provider_candidates` is authoritative for deep-engine
-discovery. Each candidate's capability sets, returned with complete detail,
+`binary_session.analysis_provider_candidates` reports deep-engine discovery.
+`analysis_provider_candidates_observed` is `target_selection` when those facts
+were retained from the active target's selection, `status_request` when the
+status request sought candidate observations, and `not_applicable` for resource-only
+sessions. Selection-time readiness may have changed since the target was opened.
+Set `refresh_candidates: true` to inspect candidate readiness and target support
+again without replacing the active binding or engine. That does not resolve a
+new analysis profile or start a provider client. Later transitions and analysis
+calls wait for the inspection to finish, including cleanup. Current-route capabilities
+remain those of the bound session. Candidate statuses can still be unknown when
+an inspection cannot complete.
+`open_binary` with an explicit `provider_id` performs a new selection. Reopening
+the same target without `provider_id` reuses its current route. A changed route
+can retire the previous engine and its ephemeral edits. Each candidate's capability sets, returned with complete detail,
 describe that possible provider;
 they do not select it. The top-level `capabilities` describe the current route,
 while `analysis_provider_binding` identifies the concrete selected route. These
@@ -1062,7 +1099,19 @@ analysis client. `open_binary.provider_id` accepts a concrete provider ID or
 concrete version, selection source, and complete analysis profile through
 `analysis_provider_binding`. Ambiguity and unknown, unavailable, or unsupported
 choices return typed selection details. A selected provider is never replaced
-automatically after a runtime failure.
+automatically after a runtime failure. When the bound route does not declare an
+operation, its error points to `binary_session` with `detail: "complete"` for
+candidate capabilities and an explicit `open_binary` provider choice. A
+candidate's availability does not guarantee support for the selected target;
+switching may discard provider session edits, and retained Evidence does not restore them.
+
+When the selected provider reports `release_verification` in its binding,
+the status compares its reported release version at binding with the provider's
+verified baseline. It does not recheck the executable, authenticate its bytes,
+or guarantee results.
+An unverified release may still be usable; the optional remediation preserves
+the caller's choice. Omission means verification was not reported. Target-free
+discovery does not probe a version solely to populate this fact.
 
 When an admitted `open_binary` attempt fails, `error.details.selection_at_failure`
 records the canonical binary path and SHA-256, resource root (including its
@@ -1317,6 +1366,15 @@ Native call tracing and process capture retain available observations in
 `details.partial_observation` on failure, including when cleanup succeeds.
 The observation reports its partial coverage; cleanup details describe host
 state separately from the execution failure.
+When a completed observation cannot be published because recording a source
+failed, the original source failure remains the error. `partial_observation`
+can carry the failed source and `completed_observation` carries the completed
+result, with `source_closure: "not-established"`. A retained reference is
+reported only when its owning ledger confirms it; an inline result with
+`retention: "unknown"` makes no claim about ledger membership. If an
+observation cannot fit the MCP response, its corresponding `_omitted` detail
+reports the delivery limit. Cleanup failure and other completed source failures
+remain visible separately.
 For these tools, cancellation observed during result finalization or owned
 cleanup also returns typed cancellation with the available observations.
 A normal target exit does not establish request completion. Incomplete cleanup
@@ -1631,7 +1689,7 @@ procedure resolution returns typed unreadable output; provider errors never
 become absence from their message text. `inspect_address_context` requires an explicit address and
 returns name, procedure, comment, inline-comment, and bookmark facets;
 unsupported facets are local `unavailable` outcomes. A facet rejected for
-invalid input or a resource constraint includes its canonical `error`
+invalid input, source Evidence integrity or a resource constraint includes its canonical `error`
 projection, including structured issues or reported limits and recovery,
 alongside the other facet outcomes. Use `current_document`,
 `current_address`, and `current_procedure` for direct single-field lookups; use
