@@ -97,6 +97,14 @@ const readInt64 = (value: Json): string | null => {
 
 /** The JSON mapping permits id fields as either hex strings or base64 bytes. */
 const readHexId = (value: Json, bytes: number): string | null => {
+  const id = readIdBytes(value, bytes);
+  // trace.proto declares an all-zero trace_id or span_id invalid, and the
+  // zero value is what a producer emits when it never assigned one.
+  return id === null || /^0+$/u.test(id) ? null : id;
+};
+
+/** Read an id without judging its value; a parent's zero means "no parent". */
+const readIdBytes = (value: Json, bytes: number): string | null => {
   if (typeof value !== "string" || value.length === 0) return null;
   if (new RegExp(`^[0-9a-fA-F]{${bytes * 2}}$`, "u").test(value))
     return value.toLowerCase();
@@ -286,7 +294,7 @@ const parseSpan = (
         {
           code: "invalid-record",
           pointer,
-          message: `Span at ${pointer} is missing a valid 16-byte traceId or 8-byte spanId.`,
+          message: `Span at ${pointer} has an all-zero traceId or spanId, which trace.proto declares invalid.`,
         },
       ],
     };
@@ -304,7 +312,7 @@ const parseSpan = (
       ],
     };
   const problems: Problem[] = [];
-  const parentSpanId = readHexId(record.parentSpanId, 8);
+  const parentSpanId = readIdBytes(record.parentSpanId, 8);
   // An empty parentSpanId is the OTLP zero value, which declares no parent.
   const parentRecorded =
     record.parentSpanId !== undefined &&

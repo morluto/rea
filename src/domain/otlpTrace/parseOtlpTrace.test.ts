@@ -481,6 +481,25 @@ describe("parseOtlpTrace 64-bit bounds", () => {
       "invalid-record",
     );
   });
+
+  it("rejects a span whose required traceId or spanId is all zero", () => {
+    for (const overrides of [
+      { traceId: "0".repeat(32) },
+      { spanId: "0".repeat(16) },
+    ]) {
+      const report = parse(envelope([span(overrides)]));
+      expect(report.diagnostics.map((entry) => entry.code)).toContain(
+        "invalid-record",
+      );
+      expect(report.summary.spans).toBe(0);
+    }
+    // A zero parentSpanId still means "no parent", not an invalid record.
+    const child = parse(envelope([span({ parentSpanId: "0".repeat(16) })]));
+    expect(child.diagnostics.map((entry) => entry.code)).not.toContain(
+      "invalid-record",
+    );
+    expect(child.summary.spans).toBe(1);
+  });
 });
 
 describe("parseOtlpTrace credential headers", () => {
