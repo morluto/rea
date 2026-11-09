@@ -265,7 +265,8 @@ const upkeepOf = (
   const gained = (pointer: string) =>
     added.has(pointer) &&
     xml(ends.final, pointer) &&
-    attributeKeyOf(pointer) !== undefined &&
+    attributeKeyOf(pointer) === "loext:tab-stop-distance" &&
+    pointer.startsWith("/entries/[name=styles.xml]/view/") &&
     [ends.baseline, ends.final].every((view) =>
       isXmlElement(resolvePointer(view, ownerOfAttribute(pointer))),
     );
@@ -313,8 +314,8 @@ const upkeepOf = (
  * hold whose renumbered attribute changed, as Gnumeric empties a formula cell
  * whose shared expression it renumbers; a UUID or epoch time, or a duration or
  * count under the document's metadata; a time the app stamps, whole or in
- * parts (`inSplitDate`); an attribute an archive entry only gained while
- * another entry holds the edit.
+ * parts (`inSplitDate`); the known style default an archive entry gained
+ * while another entry holds the edit.
  */
 export const changeNoise = (
   change: Pick<DesktopStateDifference, "added" | "changed" | "removed">,

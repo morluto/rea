@@ -193,16 +193,14 @@ export const unretainedOpenedLimitation = (
 export const heldOpenLimitation = (
   directories: readonly string[],
   home: string,
-  seedFiles: readonly string[],
+  seedFiles: readonly { readonly seed: string; readonly source: string }[],
 ): string | undefined => {
   if (directories.length === 0) return undefined;
-  const folders = directories.map((directory) => underHome(directory, home));
-  const there = seedFiles.filter((file) =>
-    folders.some(
-      (folder) =>
-        folder === "" || (folder !== undefined && isWithinAny(file, [folder])),
-    ),
-  );
+  const there = seedFiles
+    .filter((file) =>
+      directories.some((folder) => isWithinAny(file.source, [folder])),
+    )
+    .map((file) => file.seed);
   return `The application held files open in ${counted(directories.map((directory) => fromHome(directory, home)))}, whose content from before the capture was not retained: a file there is seeded only when the capture retained it, such as one written during the capture; the seed holds ${there.length === 0 ? "none" : listed(there, false)} from there.`;
 };
 
