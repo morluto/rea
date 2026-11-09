@@ -5,7 +5,11 @@ import {
   addSemanticGraphRelation,
   addSemanticGraphUnknown,
 } from "./JavaScriptSemanticGraphConstruction.js";
-import { unknownSemanticEvidence } from "./JavaScriptSemanticGraphEvidence.js";
+import {
+  builtinSemanticNode,
+  builtinSemanticRelation,
+  unknownSemanticEvidence,
+} from "./JavaScriptSemanticGraphEvidence.js";
 import type { SemanticFlowProjectionContext } from "./JavaScriptSemanticGraphFlowProjection.js";
 
 /** Project built-in resource acquisition and exact local release handles. */
@@ -25,7 +29,7 @@ export const projectSemanticResources = (
         source: context.callSiteAt(operation.location),
         target: resourceNodes.get(operation.resourceId),
         relation: "acquires",
-        resolution: "resolved",
+        ...builtinSemanticRelation(context.file, operation, "resolved"),
       });
     else projectRelease(context, operation, resourceNodes);
 };
@@ -44,7 +48,9 @@ const addResourceNode = (
         ? null
         : (context.callableNodes.get(operation.ownerCallableId)?.node_id ??
           null),
-    properties: { method: operation.method },
+    ...builtinSemanticNode(context.file, operation, {
+      method: operation.method,
+    }),
   });
 
 const projectRelease = (
@@ -62,8 +68,11 @@ const projectRelease = (
       source: callSite,
       target: resource,
       relation: "releases",
-      resolution:
+      ...builtinSemanticRelation(
+        context.file,
+        operation,
         operation.resolution === "complete" ? "resolved" : "candidate",
+      ),
     });
   if (operation.resolution === "complete") return;
   addSemanticGraphUnknown(context.state, {
