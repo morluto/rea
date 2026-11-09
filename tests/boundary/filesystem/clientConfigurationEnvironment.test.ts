@@ -47,6 +47,7 @@ it("awaits the owner-parsed provider request budget without changing caller stri
   );
   const details = await clientRegistrationEnvironmentDetailsWithBudget(
     parsed,
+    undefined,
     {},
     "effective",
     async (provider) => {
@@ -188,6 +189,7 @@ it.skipIf(process.platform !== "win32").each([
     expect(text).toContain("!!js caller.custom");
     const env = clientRegistrationEnvironmentDetails(
       parseClientConfiguration(text, "dsh"),
+      undefined,
     );
     if (!env.ok) throw env.error;
     expect(env.value.values).toHaveProperty(override, value);
@@ -269,6 +271,7 @@ it
     expect(text).toContain("!!js caller.custom");
     const details = clientRegistrationEnvironmentDetails(
       parseClientConfiguration(text, "dsh"),
+      undefined,
     );
     if (!details.ok) throw details.error;
     expect(details.value.timeoutInputs?.analysisProvider).toBe("ghidra");
@@ -298,7 +301,11 @@ it.skipIf(process.platform !== "win32").each([
       }),
       "json",
     );
-    const result = clientRegistrationEnvironmentDetails(parsed, overrides);
+    const result = clientRegistrationEnvironmentDetails(
+      parsed,
+      undefined,
+      overrides,
+    );
     if (!result.ok) throw result.error;
     expect(result.value.timeoutInputs?.analysisProvider).toBe(expected);
     expect(snapshotEnvironment(result.value.values).REA_ANALYSIS_PROVIDER).toBe(
@@ -447,6 +454,7 @@ it.each(["linux", "win32"] as const)(
 `;
     const details = clientRegistrationEnvironmentDetails(
       parseClientConfiguration(source, "dsh"),
+      undefined,
       {},
       "effective",
       platform,
@@ -474,6 +482,7 @@ it("retains an unresolved JEB endpoint expression until a selected literal repla
   );
   const unresolved = await clientRegistrationEnvironmentDetailsWithBudget(
     parsed,
+    undefined,
     {},
     "effective",
     undefined,
@@ -483,7 +492,7 @@ it("retains an unresolved JEB endpoint expression until a selected literal repla
     new Set(["REA_JEB_MCP_URL"]),
   );
   const endpoint = "http://127.0.0.1:8426/mcp/";
-  const selected = clientRegistrationEnvironmentDetails(parsed, {
+  const selected = clientRegistrationEnvironmentDetails(parsed, undefined, {
     REA_JEB_MCP_URL: endpoint,
   });
   if (!selected.ok) throw selected.error;
@@ -517,6 +526,7 @@ it.each(
     );
     const values = clientRegistrationEnvironment(
       parsed,
+      undefined,
       {},
       "effective",
       platform,
@@ -527,6 +537,7 @@ it.each(
     });
     const details = clientRegistrationEnvironmentDetails(
       parsed,
+      undefined,
       {},
       "effective",
       platform,
@@ -538,6 +549,7 @@ it.each(
     let resolved = false;
     const budget = await clientRegistrationEnvironmentDetailsWithBudget(
       parsed,
+      undefined,
       {},
       "effective",
       async () => {
@@ -553,6 +565,7 @@ it.each(
     expect(resolved).toBe(false);
     const overridden = clientRegistrationEnvironmentDetails(
       parsed,
+      undefined,
       {
         [setting]: setting === "REA_ANALYSIS_PROVIDER" ? "ghidra" : "17000",
       },
@@ -578,7 +591,7 @@ it("retains an unknown companion while deriving unrelated literal timeout facts"
 `,
     "dsh",
   );
-  const details = clientRegistrationEnvironmentDetails(parsed);
+  const details = clientRegistrationEnvironmentDetails(parsed, undefined);
   if (!details.ok) throw details.error;
   expect(details.value.unresolvedSettings).toEqual(
     new Set(["REA_GHIDRA_LANGUAGE_ID"]),
@@ -609,6 +622,7 @@ it("does not resolve a provider budget from an expression omitted from literal v
   expect(
     await clientRegistrationEnvironmentDetailsWithBudget(
       parsed,
+      undefined,
       {},
       "effective",
       undefined,
@@ -620,6 +634,7 @@ it("does not resolve a provider budget from an expression omitted from literal v
   expect(
     await clientRegistrationEnvironmentDetailsWithBudget(
       parsed,
+      undefined,
       {},
       "effective",
       resolveBudget,
@@ -631,6 +646,7 @@ it("does not resolve a provider budget from an expression omitted from literal v
   expect(observations).toEqual([]);
   const resolved = await clientRegistrationEnvironmentDetailsWithBudget(
     parsed,
+    undefined,
     { REA_IDA_MCP_CONFIG: "/selected/ida.json" },
     "effective",
     resolveBudget,
@@ -650,6 +666,7 @@ it("rejects a non-string caller environment key before editing configuration", a
   await writeFile(configPath, source);
   const details = clientRegistrationEnvironmentDetails(
     parseClientConfiguration(source, "json"),
+    undefined,
   );
   expect(details).toMatchObject({
     ok: false,
@@ -922,4 +939,80 @@ it("refuses an unidentified launch command before creating a client configuratio
   await expect(access(join(home, "missing"))).rejects.toMatchObject({
     code: "ENOENT",
   });
+});
+
+it("treats a variable-expanding client's recorded expression as unresolved", () => {
+  const parsed = parseClientConfiguration(
+    JSON.stringify({
+      mcpServers: {
+        rea: {
+          command: "rea",
+          args: ["mcp"],
+          env: { PATH: "${PATH}:/opt/jdk/bin", JAVA_HOME: "/opt/jdk" },
+        },
+      },
+    }),
+    "json",
+  );
+  const qwen = clientRegistrationEnvironmentDetails(parsed, "qwen_code");
+  if (!qwen.ok) throw qwen.error;
+  // Qwen expands the expression from its own environment, so REA records the
+  // name as unresolved rather than treating the literal text as the value.
+  expect(qwen.value.unresolvedSettings).toEqual(new Set(["PATH"]));
+  expect(qwen.value.values.PATH).toBe("${PATH}:/opt/jdk/bin");
+
+  // A client that does not expand expressions keeps the same text as a value.
+  const cursor = clientRegistrationEnvironmentDetails(parsed, "cursor");
+  if (!cursor.ok) throw cursor.error;
+  expect(cursor.value.unresolvedSettings).toEqual(new Set());
+  expect(cursor.value.values.PATH).toBe("${PATH}:/opt/jdk/bin");
+});
+
+it("keeps a typed Qwen setting unresolved without discarding its recorded expression", () => {
+  const parsed = parseClientConfiguration(
+    JSON.stringify({
+      mcpServers: {
+        rea: {
+          command: "rea",
+          args: ["mcp"],
+          env: { REA_GHIDRA_STARTUP_TIMEOUT_MS: "${JOBS}" },
+        },
+      },
+    }),
+    "json",
+  );
+  const details = clientRegistrationEnvironmentDetails(parsed, "qwen_code");
+  expect(details.ok).toBe(true);
+  if (!details.ok) return;
+  expect(details.value.values.REA_GHIDRA_STARTUP_TIMEOUT_MS).toBe("${JOBS}");
+  expect(details.value.unresolvedSettings).toEqual(
+    new Set(["REA_GHIDRA_STARTUP_TIMEOUT_MS"]),
+  );
+});
+
+it("keeps a differently cased Qwen expression unresolved on Windows", () => {
+  const parsed = parseClientConfiguration(
+    JSON.stringify({
+      mcpServers: {
+        rea: {
+          command: "rea",
+          args: ["mcp"],
+          env: { rea_ghidra_startup_timeout_ms: "${JOBS}" },
+        },
+      },
+    }),
+    "json",
+  );
+  const details = clientRegistrationEnvironmentDetails(
+    parsed,
+    "qwen_code",
+    {},
+    "fragment",
+    "win32",
+  );
+  expect(details.ok).toBe(true);
+  if (!details.ok) return;
+  expect(
+    [...details.value.unresolvedSettings].map((name) => name.toUpperCase()),
+  ).toEqual(["REA_GHIDRA_STARTUP_TIMEOUT_MS"]);
 });
