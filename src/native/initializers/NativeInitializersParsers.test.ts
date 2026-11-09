@@ -1161,4 +1161,38 @@ describe("Initializer address mapping", () => {
       value_file_offset: 0x40,
     });
   }, 180_000);
+
+  it("reports a Mach-O bind name over the name budget as incomplete", async () => {
+    const bytes = machoArm64Initializers();
+    const name = `_${"b".repeat(1100)}`;
+    // Rebuild the chained-fixups payload with one DYLD_CHAINED_IMPORT bound by flat lookup.
+    const starts = Buffer.from(bytes.subarray(0x3200 + 28, 0x3200 + 64));
+    const header = Buffer.alloc(28);
+    header.writeUInt32LE(28, 4);
+    header.writeUInt32LE(28 + starts.length, 8);
+    header.writeUInt32LE(28 + starts.length + 4, 12);
+    header.writeUInt32LE(1, 16);
+    header.writeUInt32LE(1, 20);
+    const entry = Buffer.alloc(4);
+    entry.writeUInt32LE(0xfe, 0);
+    const chained = Buffer.concat([
+      header,
+      starts,
+      entry,
+      Buffer.from(`${name}\0`),
+    ]);
+    chained.copy(bytes, 0x3200);
+    bytes.writeUInt32LE(chained.length, 508);
+    bytes.writeBigUInt64LE(1n << 63n, 0x4000);
+    const report = await read(bytes);
+    expect(report.entries[0]).toMatchObject({
+      kind: "mod_init",
+      resolution: "unresolved_import",
+      symbol: null,
+    });
+    expect(report.status).toBe("incomplete");
+    expect(report.limitations).toContain(
+      "1 symbol name(s) exceeded the 1024-byte name budget and were not used.",
+    );
+  });
 });

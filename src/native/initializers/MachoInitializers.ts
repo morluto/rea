@@ -339,13 +339,14 @@ const uncheckedFixupReason = (
 };
 
 const pointerResolution = (
+  scan: MachoScan,
   fixups: PointerFixups | null,
   chained: boolean,
   unchecked: boolean,
   address: bigint,
   raw: bigint,
 ): SlotRelocation => {
-  const resolved = decodePointer(fixups, chained, address, raw);
+  const resolved = decodePointer(scan, fixups, chained, address, raw);
   // A stored word is only the target when every fixup source over it was checked.
   return unchecked && resolved.method === "raw" ? UNRESOLVED : resolved;
 };
@@ -358,6 +359,7 @@ const UNRESOLVED: SlotRelocation = {
 };
 
 const decodePointer = (
+  scan: MachoScan,
   fixups: PointerFixups | null,
   chained: boolean,
   address: bigint,
@@ -389,17 +391,22 @@ const decodePointer = (
       importName: null,
       definedName: null,
     };
-  if (decoded.kind === "bind")
+  if (decoded.kind === "bind") {
+    // The bound name is the only identity of this target, so dropping it is a visible gap.
+    const overBudget =
+      decoded.symbol.length > MAX_NATIVE_INITIALIZER_NAME_BYTES;
+    if (overBudget) {
+      scan.notes.tally("long-symbol-name");
+      scan.incomplete = true;
+    }
     return {
       method: "unresolved_import",
       value: null,
       importName:
-        decoded.symbol.length > 0 &&
-        decoded.symbol.length <= MAX_NATIVE_INITIALIZER_NAME_BYTES
-          ? decoded.symbol
-          : null,
+        decoded.symbol.length > 0 && !overBudget ? decoded.symbol : null,
       definedName: null,
     };
+  }
   return {
     method: "unresolved",
     value: null,
@@ -658,6 +665,7 @@ const slotsOf = (
                 definedName: null,
               }
             : pointerResolution(
+                walk.scan,
                 walk.fixups,
                 walk.chained,
                 walk.unchecked,

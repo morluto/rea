@@ -73,6 +73,9 @@ Each `entries[]` item reports:
 | `unresolved_import` | A relocation or bind against an undefined symbol                     |
 | `unresolved`        | A slot whose value this inspection cannot establish                  |
 
+A bound import name over the 1024-byte name budget is reported as no name and
+makes the report `incomplete` with a counted limitation.
+
 Symbol and section names are untrusted file text and carry
 `trust: "observed-untrusted"`.
 
