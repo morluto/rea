@@ -8,6 +8,7 @@ import {
   completedStableArtifactStream,
   readStableArtifact,
   streamStableArtifact,
+  type StableArtifactSnapshot,
   type StableArtifactStream,
 } from "../../artifacts/readStableArtifact.js";
 import {
@@ -77,10 +78,11 @@ export class ElfDebugLinkProvider implements ElfDebugLinkPort {
     let field: SelectedField = "path";
     let candidatePhase: CandidatePhase | undefined;
     let crc32 = 0;
+    let snapshot: StableArtifactSnapshot | undefined;
     try {
       return await this.#resources.run(async () => {
         field = "path";
-        const snapshot = await readStableArtifact(
+        snapshot = await readStableArtifact(
           input.path,
           input.max_file_bytes,
           options?.signal,
@@ -130,14 +132,16 @@ export class ElfDebugLinkProvider implements ElfDebugLinkPort {
           input,
           field,
           candidatePhase === undefined
-            ? undefined
-            : candidatePhaseObservation(
-                candidatePhase,
-                cause,
-                crc32,
-                input,
-                this.identity,
-              ),
+            ? { imageSnapshot: snapshot }
+            : {
+                retained: candidatePhaseObservation(
+                  candidatePhase,
+                  cause,
+                  crc32,
+                  input,
+                  this.identity,
+                ),
+              },
         ),
       );
     }
@@ -403,7 +407,15 @@ const elfDebugLinkFailure = (
   cause: unknown,
   input: InspectElfDebugLinkInput,
   field: SelectedField,
-  retained: AnalysisPartialObservation | undefined,
+  {
+    retained,
+    imageSnapshot,
+  }: {
+    // The decoded report from a failed candidate phase.
+    readonly retained?: AnalysisPartialObservation;
+    // A fully read image whose ELF decoding then failed keeps its identity.
+    readonly imageSnapshot?: StableArtifactSnapshot | undefined;
+  },
 ) => {
   const primary = elfDebugLinkFailurePrimary(
     artifactFilePrimaryFacts(cause),
@@ -419,5 +431,6 @@ const elfDebugLinkFailure = (
     selectedPath(input, field),
     ELF_DEBUG_LINK_PROVIDER.id,
     OPERATION,
+    imageSnapshot,
   );
 };

@@ -12,12 +12,13 @@ import {
 import { elfDebugLinkFixture } from "./ElfDebugLink.fixture.js";
 
 const image = elfDebugLinkFixture();
+const imageBytes: { current: Buffer } = { current: image };
 const candidateFailure: { current: unknown } = { current: undefined };
 
 vi.mock(import("../../artifacts/readStableArtifact.js"), async (original) => ({
   ...(await original()),
   readStableArtifact: vi.fn(() =>
-    Promise.resolve({ bytes: image, sha256: "ab".repeat(32) }),
+    Promise.resolve({ bytes: imageBytes.current, sha256: "ab".repeat(32) }),
   ) as never,
   streamStableArtifact: vi.fn(() =>
     Promise.reject(candidateFailure.current),
@@ -140,4 +141,24 @@ it("recovers a completed stream's whole-file size, not its prefix length", () =>
     sha256: "cd".repeat(32),
     bytes: 8192,
   });
+});
+
+it("retains the completed image snapshot when ELF decoding fails", async () => {
+  const garbage = Buffer.alloc(128, 0x41);
+  imageBytes.current = garbage;
+  try {
+    const result = await new ElfDebugLinkProvider().inspect(
+      inspectElfDebugLinkInputSchema.parse({ path: "/artifacts/prog" }),
+    );
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error.partialObservation).toEqual({
+      kind: "file-snapshot-hash",
+      path: "/artifacts/prog",
+      sha256: "ab".repeat(32),
+      bytes: garbage.length,
+    });
+  } finally {
+    imageBytes.current = image;
+  }
 });
