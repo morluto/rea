@@ -336,8 +336,10 @@ it is run again, at most twice, and not counted, though its cost is. Before
 each solve the measure stops, `stopped: "budget"`, when the largest cost so
 far would take the total past `budget_usd`; a solve's cost is known only when
 it ends, from Claude Code's last trajectory record, so the first solve always
-runs and a solve that reports no cost stops the measure. A solve that could
-not run at all, such as for want of a model endpoint, ends the measure with
+runs and a solve that reports no cost stops the measure. A solve whose helper
+is stopped before it reports, by the solve's deadline or killed from outside,
+counts as `failed` with no known cost, so the measure records it and stops. A
+solve that could not run at all, such as for want of a model endpoint, ends the measure with
 its error and records nothing.
 
 The result and `difficulty.json`, at the bundle's root, keep per task: the

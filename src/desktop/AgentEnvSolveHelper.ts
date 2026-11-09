@@ -236,8 +236,9 @@ export const runSolveHelper = async (options: {
           };
   })().catch(() => undefined);
   let stopped: Awaited<ReturnType<ProviderProcessSupervisor["stop"]>>;
+  const begun = Date.now();
   try {
-    const deadline = Date.now() + timing.solveMs;
+    const deadline = begun + timing.solveMs;
     while (
       !signal.aborted &&
       Date.now() < deadline &&
@@ -330,11 +331,24 @@ export const runSolveHelper = async (options: {
   if (signal.aborted && report !== undefined)
     throw new SolveCancelledError(report, options.operation, signal.reason);
   signal.throwIfAborted();
+  if (report !== undefined) return report;
   const exit = supervisor.observedExit();
-  return (
-    report ?? {
-      error: `REA's solve helper ended (exit ${String(exit?.code ?? exit?.signal)}) without a report: ${supervisor.snapshot().stderr.text.slice(-2000)}`,
+  const stderr = supervisor.snapshot().stderr.text.slice(-2000);
+  // A helper a signal ended, REA's deadline or an outside kill, was stopped mid-solve; one that exited without a report never ran one.
+  if (exit?.signal != null)
+    return {
+      outcome: "failed",
+      instance_id: null,
+      seconds: (Date.now() - begun) / 1000,
+      checks: [],
+      turns: null,
+      usd: null,
+      agentenv: null,
+      error: `REA's solve helper was stopped (${exit.signal}) without a report: ${stderr}`,
       cleanup: { unknown, sandboxes: [] },
-    }
-  );
+    };
+  return {
+    error: `REA's solve helper ended (exit ${String(exit?.code)}) without a report: ${stderr}`,
+    cleanup: { unknown, sandboxes: [] },
+  };
 };

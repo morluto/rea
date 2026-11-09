@@ -76,7 +76,7 @@ describe("runSolveHelper", () => {
     expect(Date.now() - begun).toBeLessThan(15_000);
   }, 30_000);
 
-  it("reports a helper killed at its deadline without a report as failed, with its cleanup known", async () => {
+  it("records a helper stopped at its deadline without a report as a failed solve of unknown cost, its cleanup known", async () => {
     const runner = await fakeAgentEnvSolves([SOLVE]);
     const environment = { ...runner.environment, FAKE_SOLVE_HANGS: "1" };
     const retained: SolveCleanupOwner[] = [];
@@ -88,8 +88,14 @@ describe("runSolveHelper", () => {
       timing: { solveMs: 1_000, stopMs: 300 },
     });
 
-    expect(report.error).toContain("without a report");
-    expect(report.cleanup).toEqual({ unknown: false, sandboxes: [] });
+    expect(report).toMatchObject({
+      outcome: "failed",
+      usd: null,
+      turns: null,
+      checks: [],
+      cleanup: { unknown: false, sandboxes: [] },
+    });
+    expect(report.error).toMatch(/stopped \(SIG[A-Z]+\) without a report/u);
     expect(retained).toHaveLength(0);
   }, 30_000);
 
