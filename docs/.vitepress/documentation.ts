@@ -44,6 +44,11 @@ export const documentationSections = [
         route: "/binary-diagnostics",
       },
       {
+        text: "Linux kernel build config",
+        source: "guides/native/kernel-build-config.md",
+        route: "/kernel-build-config",
+      },
+      {
         text: "Recorded crash evidence",
         source: "guides/native/recorded-crashes.md",
         route: "/recorded-crashes",
@@ -564,11 +569,6 @@ export const documentationSections = [
         text: "Static JavaScript route inventory",
         source: "javascript-route-inventory.md",
         route: "/javascript-route-inventory",
-      },
-      {
-        text: "Linux kernel build config",
-        source: "kernel-build-config.md",
-        route: "/kernel-build-config",
       },
       {
         text: "Linux kernel modules",

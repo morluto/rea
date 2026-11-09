@@ -490,7 +490,7 @@ option count, and paged `CONFIG_*` entries (`y`, `m`, strings, numbers, and
 member follows it and `IKCFG_ED` follows that member. A gzip bzImage payload
 is inflated and searched; other payload codecs are unsupported and name
 `external_decompression` as the next probe. See
-[Linux kernel build config](../kernel-build-config.md).
+[Linux kernel build config](../guides/native/kernel-build-config.md).
 
 Inspect a CPython 3.7–3.13 `.pyc` header and nested marshal code objects (3.14 and
 3.15 headers are qualified but their marshal layout is not pinned)

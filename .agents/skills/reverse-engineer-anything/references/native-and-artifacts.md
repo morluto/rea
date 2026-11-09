@@ -235,7 +235,7 @@ payloads are incomplete, not absent. A framed blob that does not decode, has a
 bad CRC, or holds non-config text is `malformed`, not absent. xz, lz4, lzma, zstd, bzip2, and lzo
 payloads are unsupported and name `external_decompression`: decompress with an
 external utility, then call `inspect_kernel_build_config` on the result. See
-[Linux kernel build config](https://github.com/morluto/rea/blob/main/docs/kernel-build-config.md).
+[Linux kernel build config](https://github.com/morluto/rea/blob/main/docs/guides/native/kernel-build-config.md).
 
 ## CPython pyc files
 

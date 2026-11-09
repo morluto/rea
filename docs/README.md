@@ -16,6 +16,7 @@ product pages. The VitePress documentation source is this `docs/` tree.
 - [Native binary investigation](guides/native/native-investigation.md)
 - [Go binary build metadata](guides/native/go-binaries.md)
 - [Offline binary diagnostics](guides/native/binary-diagnostics.md)
+- [Linux kernel build config](guides/native/kernel-build-config.md)
 - [Recorded crash evidence](guides/native/recorded-crashes.md)
 
 ## JavaScript and Electron
@@ -178,7 +179,6 @@ the exact commit messages and references from the release they describe.
 - [Intel HEX and S-record images](hex-records.md)
 - [IL2CPP metadata](il2cpp-metadata.md)
 - [Static JavaScript route inventory](javascript-route-inventory.md)
-- [Linux kernel build config](kernel-build-config.md)
 - [Linux kernel modules](kernel-modules.md)
 - [Kuna provider](kuna-provider.md)
 - [Model file declarations](model-artifacts.md)

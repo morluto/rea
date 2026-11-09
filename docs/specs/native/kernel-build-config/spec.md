@@ -14,7 +14,7 @@ This feature adds `inspect_kernel_build_config` and
 report its `Linux version` banner and embedded build config, without
 executing or booting it.
 
-[Linux kernel build config](../../../kernel-build-config.md) describes the
+[Linux kernel build config](../../../guides/native/kernel-build-config.md) describes the
 current behavior and limitations. This directory is the feature
 specification, implementation plan and task list. The guide does not replace
 these files.
