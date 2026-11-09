@@ -8,6 +8,7 @@ import { AnalysisInputError } from "../../domain/analysisErrorCore.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
 import {
   applicationGraphEvidenceInputError,
+  applicationGraphSubjectTarget,
   parseApplicationGraphEvidence,
 } from "./JavaScriptApplicationEvidenceGraph.js";
 import { queryJavaScriptSemanticGraph } from "../../domain/javascript/javascriptSemanticQuery.js";
@@ -63,6 +64,7 @@ export const traceJavaScriptSemanticsEvidence = (
   };
   const { allowed_relations, ...queryParameters } = input.query;
   const evidence = createJavaScriptSemanticTraceEvidence(
+    applicationGraphSubjectTarget(source),
     {
       application_evidence_id: source.evidence.evidence_id,
       query:

@@ -18,8 +18,8 @@ import {
   type JavaScriptFindingContext,
 } from "./javascriptStaticAnalysisState.js";
 
-const inspect = (source: string) => {
-  const file = parseJavaScriptSource(source);
+const inspect = (source: string, path?: string) => {
+  const file = parseJavaScriptSource(source, path);
   if (file === null) throw new Error("Fixture must parse");
   const index = complete(
     indexJavaScriptBindingsWithReceiversSteps(file.program),
@@ -73,8 +73,11 @@ it.each([
 });
 
 it("still checks mutations for a source-proven scoped Electron receiver", () => {
-  const result = inspect(`const {BrowserWindow} = require("electron");
-    const window = new BrowserWindow(); window.webContents.ipc.handle("channel", () => {});`);
+  const result = inspect(
+    `const {BrowserWindow} = require("electron");
+    const window = new BrowserWindow(); window.webContents.ipc.handle("channel", () => {});`,
+    "fixture.cts",
+  );
   expect(result.findings).toHaveLength(1);
   expect(result.mutationIndexCalls).toBeGreaterThan(0);
 });
