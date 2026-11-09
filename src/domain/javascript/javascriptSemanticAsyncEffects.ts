@@ -31,6 +31,7 @@ import {
 } from "./javascriptSemanticOpaqueEffects.js";
 import type { JavaScriptSemanticPropertyPath } from "./javascriptSemanticPropertyPaths.js";
 import { range } from "./javascriptStaticAnalysisHelpers.js";
+import { evaluateSemanticProvenance } from "./javascriptSemanticValues.js";
 import {
   affectsBuiltinPath,
   builtinDataEffectCallablePath,
@@ -375,6 +376,32 @@ const indexEventEmitterSharedEffects = (
           escapes: classEscapes,
         });
       }
+    }
+    // A named initializer import owns its own records, rather than paths on a
+    // class binding. Consume the provenance owner's retained origins, including
+    // candidate origins: uncertainty can withdraw this proof, never create it.
+    const initializerWrites = binding.memberWrites.filter(
+      ({ path }) =>
+        affectsBuiltinPath(path, ["call"]) || path.at(0) === "__proto__",
+    );
+    const initializerObjectEscapes = binding.escapedPaths.filter(
+      ({ path }) => path.length === 0,
+    );
+    if (
+      (initializerWrites.length > 0 || initializerObjectEscapes.length > 0) &&
+      evaluateSemanticProvenance(binding, state).origins.some(
+        ({ specifier, importedPath }) =>
+          eventsInitializerPath(importedPath) &&
+          NODE_EVENTS_SPECIFIERS.some(
+            (candidate) =>
+              candidate.replace(/^node:/u, "") ===
+              specifier.replace(/^node:/u, ""),
+          ),
+      )
+    ) {
+      for (const { node } of initializerWrites) writes.push(node);
+      for (const { node } of initializerObjectEscapes)
+        initializerEscapes.push(node);
     }
     for (const { path, node } of binding.memberWrites)
       retainPrototypeWrite(path, node);

@@ -478,6 +478,31 @@ it.each([
     'require("events").EventEmitter.init',
     true,
   ],
+  [
+    "a named initializer import",
+    'import { EventEmitter, init } from "node:events";',
+    "EventEmitter",
+    "init",
+  ],
+  [
+    "a named initializer alias",
+    'import { EventEmitter, init } from "node:events"; const initialize = init;',
+    "EventEmitter",
+    "initialize",
+  ],
+  [
+    "a namespace initializer",
+    'import * as events from "node:events";',
+    "events.EventEmitter",
+    "events.init",
+  ],
+  [
+    "a member required initializer",
+    'const EventEmitter = require("node:events"); const init = require("events").init;',
+    "EventEmitter",
+    "init",
+    true,
+  ],
 ] as const)(
   "checks initializer escape timing through %s",
   (_name, header, constructor, initializer, commonJs: boolean = false) => {
@@ -497,11 +522,78 @@ e.on("ready");`;
   },
 );
 
-it("still rejects a missing listener when only the initializer call value escapes", () => {
+it("keeps the registration after a destructured required initializer escapes", () => {
+  expect(
+    eventsForCommonJsSource(`const { EventEmitter, init } = require("node:events");
+import { configure } from "./configure.js";
+configure(init);
+const e = new EventEmitter();
+e.on("ready");`),
+  ).toContainEqual({ kind: "register", method: "on", eventName: "ready" });
+});
+
+/**
+ * The inherited call slot is mutable, and init.prototype.constructor leads back
+ * to init itself. Existing prototype/escape facts must retain both surfaces.
+ */
+it.each([
+  "EventEmitter.init.__proto__",
+  "Reflect.getPrototypeOf(EventEmitter.init)",
+  "EventEmitter.init.prototype",
+  "init.__proto__",
+  "Reflect.getPrototypeOf(init)",
+  "init.prototype",
+])(
+  "keeps the registration when the initializer is reachable through %s",
+  (surface) => {
+    expect(
+      eventsForSource(`import { EventEmitter, init } from "node:events";
+import { configure } from "./configure.js";
+configure(${surface});
+const e = new EventEmitter();
+e.on("ready");`),
+    ).toContainEqual({ kind: "register", method: "on", eventName: "ready" });
+  },
+);
+
+it.each(["EventEmitter.init", "init"])(
+  "still rejects a missing listener when only %s.call escapes",
+  (initializer) => {
+    expect(
+      eventsForSource(`import { EventEmitter, init } from "node:events";
+import { configure } from "./configure.js";
+configure(${initializer}.call);
+const e = new EventEmitter();
+e.on("ready");`),
+    ).toEqual([]);
+  },
+);
+
+it.each(["init.call = replacement;", "init.__proto__ = replacement;"])(
+  "checks named initializer mutation timing for %s",
+  (mutation) => {
+    const source = (
+      before: boolean,
+    ) => `import { EventEmitter, init } from "node:events";
+${before ? mutation : ""}
+const e = new EventEmitter();
+${before ? "" : mutation}
+e.on("ready");`;
+    expect(eventsForSource(source(true))).toContainEqual({
+      kind: "register",
+      method: "on",
+      eventName: "ready",
+    });
+    expect(eventsForSource(source(false))).toEqual([]);
+  },
+);
+
+it("still rejects a missing listener beside an unrelated imported initializer escape", () => {
   expect(
     eventsForSource(`import { EventEmitter } from "node:events";
+import { init } from "./unrelated.js";
 import { configure } from "./configure.js";
-configure(EventEmitter.init.call);
+configure(init);
 const e = new EventEmitter();
 e.on("ready");`),
   ).toEqual([]);
