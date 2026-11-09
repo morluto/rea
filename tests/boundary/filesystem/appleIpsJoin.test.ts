@@ -108,6 +108,10 @@ const inspectWithJoin = async (
     join_path: joinPath,
   });
   if (!result.ok) throw result.error;
+  expect(result.value.locations).toEqual([
+    { kind: "artifact-path", path: ipsPath },
+    { kind: "artifact-path", path: joinPath },
+  ]);
   const output = result.value.normalized_result as unknown as {
     readonly join: {
       readonly status: string;
@@ -484,3 +488,45 @@ it("retains architecture diagnostics once per image instead of expanding them pe
     await service.close();
   }
 });
+
+it.each(["S", "C"])(
+  "leaves shared-cache image source %s unjoined despite matching UUID and CPU",
+  async (source) => {
+    const root = await createTestTempDirectory("rea-ips-cache-source-");
+    const path = join(root, "report.ips");
+    await writeFile(
+      path,
+      appleIpsBytes()
+        .toString()
+        .replace('"source": "P"', `"source": "${source}"`),
+    );
+    const joinPath = join(root, "join.bin");
+    await writeFile(
+      joinPath,
+      machoSlice({ cpu: ARM64, uuid: FIXTURE_UUID, textVmaddr: 0x100000000n }),
+    );
+    const service = createAppleIpsService();
+    try {
+      const result = await service.inspect({ path, join_path: joinPath });
+      if (!result.ok) throw result.error;
+      const parsed = appleIpsSchema.parse(result.value.normalized_result);
+      expect(parsed.join).toMatchObject({
+        status: "selected",
+        image_matches: [],
+        frames: expect.arrayContaining([
+          expect.objectContaining({
+            thread_index: 0,
+            frame_index: 0,
+            status: "unjoined",
+          }),
+        ]),
+      });
+      if (parsed.join?.status === "selected")
+        expect(parsed.join.limitations.join(" ")).toContain(
+          "shared-cache-backed",
+        );
+    } finally {
+      await service.close();
+    }
+  },
+);

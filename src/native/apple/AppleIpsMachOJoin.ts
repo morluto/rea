@@ -214,6 +214,12 @@ export const resolveAppleIpsJoin = async (
   const matchedImage = new Map<number, AppleIpsJoinDigest>();
   const rejectedImage = new Map<number, string>();
   for (const image of report.images) {
+    if (image.source === "S" || image.source === "C") {
+      const reason = `image ${String(image.index)} is shared-cache-backed; standalone-image join applicability is unknown`;
+      limitations.push(reason);
+      rejectedImage.set(image.index, reason);
+      continue;
+    }
     const recordedArch = image.arch ?? "";
     if (image.uuid === null || recordedArch === "") continue;
     const candidates = parsed.slices.filter(

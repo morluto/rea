@@ -97,6 +97,9 @@ rea inspect-apple-ips /absolute/path/to/report.ips \
   --join-path /absolute/path/to/App.app/Contents/MacOS/App --json
 ```
 
+Shared-cache image sources `S` and `C` remain unjoined: UUID agreement does not
+establish that a standalone image has the cached layout.
+
 For a FAT container every slice is examined. An image joins only when exactly
 one slice has that UUID **and** an architecture that agrees with the report's
 `arch`; `arm64` and `arm64e` stay distinct, and an all-zero UUID never joins. A
