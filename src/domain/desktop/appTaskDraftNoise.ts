@@ -225,11 +225,12 @@ const volatileAt = (
   xml: boolean,
 ) =>
   (typeof value === "string" &&
-    (isVolatileValue(
-      value,
-      elements.some(isBookkeeping) ||
-        (key !== undefined && isBookkeepingName(key)),
-    ) ||
+    ((xml &&
+      isVolatileValue(
+        value,
+        elements.some(isBookkeeping) ||
+          (key !== undefined && isBookkeepingName(key)),
+      )) ||
       isGarbled(value) ||
       fresh)) ||
   (key !== undefined && ID_COUNTER.test(key.split(":").at(-1) ?? key)) ||
