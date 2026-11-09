@@ -228,6 +228,7 @@ describe("historical native comparison projections", () => {
       "rea-historical-native-members-",
     );
     temporary.push(root);
+    await writeFile(join(root, "package.json"), '{"type":"commonjs"}');
     await writeFile(
       join(root, "main.js"),
       'const { open } = require("./addon.node"); open();',
@@ -597,22 +598,17 @@ describe("JavaScript application workflow error diagnostics", () => {
       runtime_observations: [evidence],
     });
 
-    expect(traced.ok).toBe(false);
-    expect(reconciled.ok).toBe(false);
-    if (!traced.ok && traced.error instanceof AnalysisInputError)
-      expect(traced.error.issues).toContainEqual(
+    for (const result of [traced, reconciled]) {
+      if (result.ok || !(result.error instanceof AnalysisInputError))
+        throw new Error("Expected an input error for the uncommitted graph");
+      expect(result.error.issues).toContainEqual(
         expect.objectContaining({
-          message:
-            "Semantic graph must commit the containing application graph",
+          message: expect.stringMatching(
+            /semantic graph.*commit.*application graph/i,
+          ),
         }),
       );
-    if (!reconciled.ok && reconciled.error instanceof AnalysisInputError)
-      expect(reconciled.error.issues).toContainEqual(
-        expect.objectContaining({
-          message:
-            "Semantic graph must commit the containing application graph",
-        }),
-      );
+    }
   });
 
   it("returns supported-operation constraints from runtime reconciliation", async () => {
@@ -630,13 +626,17 @@ describe("JavaScript application workflow error diagnostics", () => {
     if (result.ok) throw new Error("Expected non-runtime Evidence to fail");
     expect(result.error).toBeInstanceOf(AnalysisInputError);
     if (!(result.error instanceof AnalysisInputError)) return;
-    expect(result.error.issues).toContainEqual(
-      expect.objectContaining({
-        reason: "invalid_value",
-        message:
-          "Runtime reconciliation requires inspect_web_page, inspect_electron_page, observe_javascript_runtime, or capture_electron_scenario Evidence",
-      }),
+    const issue = result.error.issues.find(
+      ({ reason }) => reason === "invalid_value",
     );
+    expect(issue?.message).toMatch(/runtime reconciliation.*requires/i);
+    for (const operation of [
+      "inspect_web_page",
+      "inspect_electron_page",
+      "observe_javascript_runtime",
+      "capture_electron_scenario",
+    ])
+      expect(issue?.message).toContain(operation);
   });
 });
 

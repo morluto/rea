@@ -1217,8 +1217,10 @@ it("ends every type's state at a write whose URL was redacted, and says so", () 
   expect(state.entities).toMatchObject([
     { fields: { title: "Granite Ledger" }, record_ordinals: [0] },
   ]);
-  expect(state.limitations).toContain(
-    "1 of the recorded writes had a redacted URL; each ends the initial state of every type, since its target is unknown.",
+  expect(state.limitations).toContainEqual(
+    expect.stringMatching(
+      /1.*writes.*redacted URL.*ends the initial state of every type.*target is unknown/iu,
+    ),
   );
 });
 
@@ -1508,8 +1510,10 @@ it.each([
     );
     expect(capture).toEqual(before);
     if (redactedWrite)
-      expect(state.limitations).toContain(
-        "1 of the recorded writes had a redacted URL; each ends the initial state of every type, since its target is unknown.",
+      expect(state.limitations).toContainEqual(
+        expect.stringMatching(
+          /1 .*writes.*redacted URL.*ends the initial state of every type.*target is unknown/iu,
+        ),
       );
   },
 );

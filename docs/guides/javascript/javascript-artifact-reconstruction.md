@@ -86,6 +86,11 @@ properties and remains readable without migration.
 
 ## Select sources before analysis
 
+Explicit `source_paths` retain the acquisition owner's requested order, including
+selected dependency files. First-party priority applies only to unscoped analysis.
+Recovered syntax or incomplete semantic examination keeps Electron coverage
+partial even when useful windows or IPC facts were retained.
+
 For a question about known entry sources, supply exact artifact-relative file
 paths in `source_paths`, or repeat `--source-path` on either CLI route:
 
@@ -322,6 +327,12 @@ module facts together with any parent application-projection limit. Cleanup
 failure does not authorize expanding relationships that parent admission declined.
 
 ## What is reconstructed
+
+Electron `BrowserView` and `WebContentsView` expose `webContents` and accept
+`webPreferences`, including declared preloads. `BaseWindow` has neither surface
+of its own. Preload associations retain the parsed constructor's mechanism rather
+than labeling every view as a BrowserWindow. These are static associations, not
+proof that a renderer or preload executed.
 
 The projector reuses the content-addressed artifact inventory and safe artifact
 readers. It retains canonical artifact-relative paths, exact byte counts,
