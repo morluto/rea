@@ -57,18 +57,29 @@ The planned sequence was one PR per step:
 14. [XML text checks](xml-text-checks/spec.md): XML whose DOCTYPE only names
     its DTD read as XML, starting with AbiWord, and checks of an element's
     whole text across the runs an app splits a paragraph into.
-15. [Several tasks](several-tasks/spec.md): one capture yields several
-    tasks, each checked at its own end checkpoint and, when one was taken,
-    failing at its near miss; the eval lists them all and each is witnessed
-    on its own fresh computer.
-16. [Task difficulty](task-difficulty/spec.md): a build tool solves a
-    bundle's task in fresh computers for a model, 3 times and 2 more unless
-    they passed none or all, within a budget, and records its band, cost,
-    turns and failures per check in the bundle.
-17. [Download installs](download-installs/spec.md): applications no package
+15. [Download installs](download-installs/spec.md): applications no package
     offers, from their project's AppImage or tarball pinned by URL and
     SHA-256, unpacked under `/opt/rea-apps` by the build computer and the
     export alike, starting with FreeCAD.
+16. [Readers](file-readers/spec.md): checks of a file REA reads as binary,
+    such as GIMP's `.xcf` or Blender's `.blend`, through the app's own
+    headless command, run in the computer on a private copy of the file.
+17. [Screen judges](screen-judge/spec.md): checks of state no file shows,
+    such as a calculator's result, by a model judging a screenshot against
+    the build's labelled seed and end screenshots.
+18. [Secrets typed unseen](build-secrets/spec.md): a password or key the
+    person keeps in a file on the build host, typed by its handle, which no
+    result, log, record or exported bundle holds; sign-in and licence state
+    withheld from the seed and supplied at run time, seeded only with the
+    person's recorded consent; known handle values are checked explicitly.
+19. [Several tasks](several-tasks/spec.md): one capture yields several
+    tasks, each checked at its own end checkpoint and, when one was taken,
+    failing at its near miss; the eval lists them all and each is witnessed
+    on its own fresh computer.
+20. [Task difficulty](task-difficulty/spec.md): a build tool solves a
+    bundle's task in fresh computers for a model, 3 times and 2 more unless
+    they passed none or all, within a budget, and records its band, cost,
+    turns and failures per check in the bundle.
 
 Version 1 covers Linux with X11, applications whose state lives in files or
 SQLite under the home directory, and real applications from public packages.

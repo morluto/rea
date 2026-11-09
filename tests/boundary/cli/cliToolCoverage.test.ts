@@ -105,6 +105,7 @@ const MCP_TOOLS_WITHOUT_DEDICATED_CLI = Object.freeze([
   "export_build_environment",
   "check_build_task",
   "measure_build_task",
+  "record_build_consent",
 ]);
 
 describe("CLI canonical tool coverage", () => {

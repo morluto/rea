@@ -39,6 +39,8 @@ const computer = {
   startRecording: () => Promise.reject(new Error("unstarted")),
   endRecording: () => Promise.reject(new Error("unended")),
   recordingSegments: () => Promise.reject(new Error("unfetched")),
+  exec: () => Promise.reject(new Error("unrun")),
+  callTool: () => Promise.reject(new Error("uncalled")),
 } as WitnessedComputer;
 
 const witnessAt = async (bundle: string) =>
@@ -46,7 +48,7 @@ const witnessAt = async (bundle: string) =>
     computer,
     new BuildComputerActionLog(),
     SETTLE_TIMING,
-    bundle,
+    { bundle: { path: bundle } },
   );
 
 describe("bundle task reads", () => {

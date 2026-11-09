@@ -59,10 +59,12 @@ const realCliOutputs = async (
     exportRefused = false,
     extraContent = [],
     tasks = [{ task: BUILD_TASK, end_checkpoint: "end" }],
+    exportArgs = [],
   }: {
     exportRefused?: boolean;
     extraContent?: readonly string[];
     tasks?: readonly BuildTaskAtEnd[];
+    exportArgs?: readonly string[];
   } = {},
 ) => {
   const capture = await writeCaptureFolder(
@@ -87,6 +89,7 @@ const realCliOutputs = async (
   const download = join(work, "download-install.json");
   if (install?.downloadInstall !== undefined)
     await writeFile(download, JSON.stringify(install.downloadInstall));
+  const withheld = join(work, "withheld");
   const schema = await serveCli([
     "export-desktop-application",
     "--schema",
@@ -123,6 +126,9 @@ const realCliOutputs = async (
       "--extra-package",
       name,
     ]),
+    ...exportArgs,
+    "--withheld-copy",
+    withheld,
     "--json",
   ]);
   // A refusal prints its error; the exit code alone does not tell them apart.
@@ -138,6 +144,7 @@ const realCliOutputs = async (
     export: join(work, "export.json"),
     bundle,
     schema: join(work, "schema.json"),
+    withheld,
   };
 };
 
@@ -152,7 +159,9 @@ const realCliOutputs = async (
  * `exportRefused` when its export refuses BUILD_TASK, or `tasks` in its
  * place, and `extraContent` the
  * retained bytes it holds beyond the note's; `selected` is what it records
- * when given exactly the `--state-path` of `path`, under the home.
+ * when given exactly the `--state-path` of `path`, under the home;
+ * `serverEnv` adds to the REA server's environment, and `exportArgs` to the
+ * real export's arguments.
  */
 export const buildCaptureFakes = async (
   options: {
@@ -168,6 +177,8 @@ export const buildCaptureFakes = async (
       readonly path: string;
       readonly recorded: DesktopApplicationCapture;
     };
+    readonly serverEnv?: Readonly<Record<string, string>>;
+    readonly exportArgs?: readonly string[];
   } = {},
 ) => {
   const outputs = await realCliOutputs(options.install, options.recorded, {
@@ -178,6 +189,9 @@ export const buildCaptureFakes = async (
       ? {}
       : { extraContent: options.extraContent }),
     ...(options.tasks === undefined ? {} : { tasks: options.tasks }),
+    ...(options.exportArgs === undefined
+      ? {}
+      : { exportArgs: options.exportArgs }),
   });
   const rea = await fakeBuildComputerRea(outputs);
   const chosen = options.selected;
@@ -211,6 +225,7 @@ export const buildCaptureFakes = async (
   const client = await connectBuildServer({
     ...runner.environment,
     REA_BUILD_COMPUTER_REA_ARCHIVE: payload,
+    ...options.serverEnv,
   });
   return { rea, outputs, computer, client };
 };

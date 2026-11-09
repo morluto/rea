@@ -855,6 +855,12 @@ shows, and its near miss's checkpoint, or null, with those that fail there.
 `describe-desktop-application-task` drafts a later task from the end before
 it: `--seed-checkpoint end --end-checkpoint end-add-bread`.
 
+A task's readers run at the seed as the bundle ships it, at its own end and
+at its near miss. A screen-judged task ships the seed's screenshot and its own
+end's as the judge's examples, and is refused when a file shows its change
+since the end before it, or the seed for the first; its near miss is left to
+the witness, so its `near_checkpoint` is null.
+
 ## Solve rate
 
 REA's CLI runs no agent. On a build host, the MCP tool `measure_build_task`

@@ -83,7 +83,7 @@ describe("writeWitnessRecord", () => {
     const computer = { endRecording, recordingSegments };
     const signal = new AbortController().signal;
 
-    const first = await writeWitnessRecord(computer, ended, log, signal);
+    const first = await writeWitnessRecord(computer, ended, log, { signal });
     expect(first.kind).toBe("retry");
     if (first.kind !== "retry") return;
     expect(first.manifest).toBeUndefined();
@@ -92,7 +92,7 @@ describe("writeWitnessRecord", () => {
       access(join(ended.directory, "witness.json")),
     ).rejects.toThrow();
 
-    const second = await writeWitnessRecord(computer, ended, log, signal);
+    const second = await writeWitnessRecord(computer, ended, log, { signal });
     expect(second.kind).toBe("saved");
     expect(endRecording).toHaveBeenCalledTimes(2);
     await expect(
@@ -110,7 +110,7 @@ describe("writeWitnessRecord", () => {
     const computer = { endRecording, recordingSegments };
     const signal = new AbortController().signal;
 
-    const first = await writeWitnessRecord(computer, ended, log, signal);
+    const first = await writeWitnessRecord(computer, ended, log, { signal });
     expect(first.kind).toBe("retry");
     if (first.kind !== "retry") return;
     expect(first.manifest).toEqual(manifest);
@@ -118,13 +118,10 @@ describe("writeWitnessRecord", () => {
       access(join(ended.directory, "witness.json")),
     ).rejects.toThrow();
 
-    const second = await writeWitnessRecord(
-      computer,
-      ended,
-      log,
+    const second = await writeWitnessRecord(computer, ended, log, {
       signal,
-      first.manifest,
-    );
+      pendingManifest: first.manifest,
+    });
     expect(second.kind).toBe("saved");
     expect(endRecording).toHaveBeenCalledTimes(1);
     expect(recordingSegments).toHaveBeenCalledTimes(2);

@@ -1,4 +1,4 @@
-import { access, readFile, writeFile } from "node:fs/promises";
+import { access, mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { describe, expect, it } from "vitest";
@@ -7,12 +7,15 @@ import { createTestTempDirectory } from "../../../tests/fixtures/temporaryDirect
 import { exportDesktopApplication } from "./DesktopApplicationExport.js";
 import {
   BREAD_NOTE,
+  checkpoint,
   EDITED_NOTE,
   NEAR_EGGS_NOTE,
   readers,
+  seedEndCapture,
   severalEndsCapture,
   writeCaptureFolder,
 } from "./desktopCapture.fixture.js";
+import type { DesktopApplicationCapture } from "../../domain/desktop/desktopCapture.js";
 
 const NOTE = "Documents/today.txt";
 
@@ -37,8 +40,20 @@ const exportSeveral = async (
   tasks: readonly unknown[],
   taskEnds: readonly string[],
   near = "near-add-eggs",
+) => exportCapture(severalEndsCapture(near), tasks, taskEnds);
+
+/** Export `recorded` with these tasks and end checkpoints, and a screenshot of each checkpoint `shots` names, as a build computer keeps them. */
+const exportCapture = async (
+  recorded: DesktopApplicationCapture,
+  tasks: readonly unknown[],
+  taskEnds: readonly string[],
+  shots: Readonly<Record<string, string>> = {},
 ) => {
   const scratch = await createTestTempDirectory("desktop-tasks-");
+  const screens = join(scratch, "screens");
+  await mkdir(screens);
+  for (const [name, text] of Object.entries(shots))
+    await writeFile(join(screens, `${name}.jpg`), text);
   const paths = await Promise.all(
     tasks.map(async (task, index) => {
       const path = join(scratch, `task-${String(index)}.json`);
@@ -49,7 +64,7 @@ const exportSeveral = async (
   const directory = join(scratch, "bundle");
   const result = await exportDesktopApplication(
     {
-      capture: await writeCaptureFolder(severalEndsCapture(near), undefined, [
+      capture: await writeCaptureFolder(recorded, undefined, [
         EDITED_NOTE,
         BREAD_NOTE,
         NEAR_EGGS_NOTE,
@@ -60,6 +75,7 @@ const exportSeveral = async (
       taskEnds,
       seedCheckpoint: "seed",
       endCheckpoint: "end",
+      screens,
     },
     readers,
   );
@@ -180,4 +196,119 @@ describe("exportDesktopApplication with several tasks", () => {
       expect(await exists(directory)).toBe(false);
     },
   );
+});
+
+/** A reader that prints the note's lines, as an app's headless mode would print a file REA reads as binary. */
+const LINES_READER = {
+  id: "lines",
+  file: NOTE,
+  argv: [
+    "python3",
+    "-c",
+    "import sys; [print('REA ' + line) for line in open(sys.argv[1]).read().split()]",
+    "{file}",
+  ],
+  output: "lines",
+};
+
+const SHOW_LIST = {
+  name: "show-list",
+  prompt: "In Notes, show the shopping list.",
+  checks: [
+    {
+      id: "shown",
+      kind: "screen_judge",
+      question: "Does the window show the shopping list?",
+    },
+  ],
+};
+
+/** Eggs added by `end`, then the list shown on screen, which no file records, by `end-show-list`. */
+const shownAfterEggsCapture = (): DesktopApplicationCapture => {
+  const base = seedEndCapture();
+  const { checkpoints } = base.state;
+  return {
+    ...base,
+    state: {
+      ...base.state,
+      checkpoints: [
+        ...checkpoints.slice(0, 3),
+        checkpoint("end-show-list", "request", [], []),
+        ...checkpoints.slice(3),
+      ],
+    },
+  };
+};
+
+describe("exportDesktopApplication with several tasks and readers or screen judges", () => {
+  it("runs a later task's readers at its own end checkpoint", async () => {
+    const readBread = {
+      ...ADD_BREAD,
+      checks: [
+        {
+          id: "bread",
+          kind: "lines_present",
+          file: NOTE,
+          reader: "lines",
+          lines: ["bread"],
+        },
+      ],
+      readers: [LINES_READER],
+    };
+    const { result } = await exportSeveral(
+      [ADD_EGGS, readBread],
+      ["add-bread=end-add-bread"],
+    );
+
+    if (result instanceof Error) throw result;
+    expect(result.normalized_result).toMatchObject({
+      tasks: [
+        { name: "add-eggs" },
+        {
+          name: "add-bread",
+          end_checkpoint: "end-add-bread",
+          failing_on_seed: ["bread"],
+        },
+      ],
+    });
+  });
+
+  it("judges a later task's screen from the seed to its own end, past a file the task before it changed", async () => {
+    const { result, directory } = await exportCapture(
+      shownAfterEggsCapture(),
+      [ADD_EGGS, SHOW_LIST],
+      ["show-list=end-show-list"],
+      { seed: "seed shot", "end-show-list": "shown shot" },
+    );
+
+    if (result instanceof Error) throw result;
+    expect(result.normalized_result).toMatchObject({
+      tasks: [
+        { name: "add-eggs", end_checkpoint: "end" },
+        {
+          name: "show-list",
+          end_checkpoint: "end-show-list",
+          failing_on_seed: [],
+        },
+      ],
+    });
+    const verifier = await readFile(
+      join(directory, "artifacts/show-list-check/verify.py"),
+      "utf8",
+    );
+    expect(verifier).toContain(Buffer.from("seed shot").toString("base64"));
+    expect(verifier).toContain(Buffer.from("shown shot").toString("base64"));
+  });
+
+  it("refuses a later screen judge whose own change shows in a file, naming the task", async () => {
+    const { result, directory } = await exportSeveral(
+      [ADD_EGGS, { ...SHOW_LIST, name: "add-bread" }],
+      ["add-bread=end-add-bread"],
+    );
+
+    const message = refusal(result);
+    expect(message).toContain('"add-bread"');
+    expect(message).toContain("between end and end-add-bread");
+    expect(await exists(directory)).toBe(false);
+  });
 });

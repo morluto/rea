@@ -36,7 +36,7 @@ const configRunner = (path: string) =>
 case "$1 $2" in
   "config debug") printf '{"search_path":[{"path":"%s","exists":true}]}' "$AGENT_ENV_CONFIG" ;;
   "config explain") printf '%s' "$FAKE_EXPLANATION" ;;
-  *) echo 'agent-env 0.9.1431' ;;
+  *) echo 'agent-env 0.9.1485' ;;
 esac`,
   );
 
@@ -90,7 +90,7 @@ it.skipIf(process.platform === "win32")(
       run: async (_command, args) => {
         if (args[0] === "--version")
           return {
-            stdout: "agent-env 0.9.1431",
+            stdout: "agent-env 0.9.1485",
             stderr: "",
             stdoutBytes: 19,
             stderrBytes: 0,
@@ -268,7 +268,7 @@ it.skipIf(process.platform === "win32")(
           throw Object.assign(new Error("timed out"), { code: "ETIMEDOUT" });
         }
         return {
-          stdout: "agent-env 0.9.1431",
+          stdout: "agent-env 0.9.1485",
           stderr: "",
           stdoutBytes: 19,
           stderrBytes: 0,
@@ -369,7 +369,7 @@ it.skipIf(process.platform === "win32")(
     await program(join(bin, "docker"), "exit 1");
     await program(
       join(bin, "agent-env"),
-      'if [ "$1" = "--version" ]; then printf x >> "$REA_TEST_RUNNER_LOG"; fi; echo "agent-env 0.9.1431"',
+      'if [ "$1" = "--version" ]; then printf x >> "$REA_TEST_RUNNER_LOG"; fi; echo "agent-env 0.9.1485"',
     );
     const environment = {
       HOME: home,
@@ -706,7 +706,7 @@ it("recognizes a gzip runtime archive with a different top folder", async () => 
 
   const python = (await execute("which", ["python3"])).stdout.trim();
   const runner = join(bin, "agent-env");
-  await writeFile(runner, `#!${python}\nprint('agent-env 0.9.1431')\n`, {
+  await writeFile(runner, `#!${python}\nprint('agent-env 0.9.1485')\n`, {
     mode: 0o755,
   });
   const withoutSystemPython = await readFacts(

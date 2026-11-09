@@ -4,6 +4,7 @@ import {
   parseDesktopTask,
   type DesktopTask,
   type DesktopTaskCheck,
+  type DesktopTaskReader,
 } from "../../domain/desktop/appTask.js";
 import {
   evaluateTaskChecks,
@@ -19,6 +20,13 @@ import {
   taskVerifierArtifact,
 } from "../../domain/desktop/appTaskPython.js";
 import type { DesktopAppExportPlan } from "../../domain/desktop/appExport.js";
+import {
+  DEFAULT_JUDGE_MODEL,
+  SCREEN_EXAMPLE_MAX_BYTES,
+  SCREEN_JUDGE_VOTES,
+  isScreenTask,
+  readableChanges,
+} from "../../domain/desktop/appTaskScreen.js";
 import { STATE_PATH_INPUTS } from "../../domain/desktop/buildCapture.js";
 import {
   versionAt,
@@ -52,7 +60,7 @@ const DRAFT =
 /** What the export knows of the app: its name, owned paths, captured home, host identity, state files by home path and the checkpoints it reads. */
 type TaskTarget = Pick<
   DesktopAppExportPlan,
-  "name" | "paths" | "capturedHome" | "title" | "aptPackage"
+  "name" | "paths" | "capturedHome" | "title" | "aptPackage" | "withheld"
 > & {
   readonly files: ReadonlyMap<string, DesktopStatePath>;
   readonly identity: HostIdentity;
@@ -64,6 +72,15 @@ type TaskTarget = Pick<
   readonly seedViews: ReadonlyMap<string, TaskFileView>;
   /** Home paths the bundle actually ships, including files that are not text. */
   readonly seeded: ReadonlySet<string>;
+  /** Each reader's view of its file, by reader id: at the seed as the bundle ships it, or at a checkpoint's position. */
+  readonly readerViews: (
+    readers: readonly DesktopTaskReader[],
+    at: "seed" | number,
+  ) => Promise<ReadonlyMap<string, TaskFileView>>;
+  /** The screenshot a build computer took at the seed or at a checkpoint's position, too large to ship, or undefined when there is none. */
+  readonly screens: (
+    at: "seed" | number,
+  ) => Promise<Buffer | "too-large" | undefined>;
 };
 
 /** What the export says of one task it kept. */
@@ -86,6 +103,8 @@ export interface AdmittedTasks {
   readonly readme: string;
   /** What the export says about the tasks, such as a prompt that does not name the app. */
   readonly limitations: readonly string[];
+  /** Whether a task judges the screen, whose app then resets by relaunching when it owns no files. */
+  readonly screenJudged?: boolean;
   readonly summaries: readonly TaskSummary[];
 }
 
@@ -142,6 +161,50 @@ interface TaskViews {
   readonly near: ReadonlyMap<string, TaskFileView> | undefined;
 }
 
+/** What a capture's identity check reads of a value: the captured home, or the host's name or user, if it names one. */
+const identityProblem = (
+  values: readonly string[],
+  target: TaskTarget,
+): string | undefined => {
+  for (const value of values) {
+    if (value.includes(target.capturedHome))
+      return `names the captured home ${target.capturedHome}, which the computer's home replaces`;
+    const named = identityLeftIn(value, target.identity);
+    if (named !== undefined)
+      return `names ${named}, the capture host's name or user, which the export removes from the seed`;
+  }
+  return undefined;
+};
+
+/** Why a reader cannot run in this app's computer, or undefined. */
+const readerProblem = (
+  reader: DesktopTaskReader,
+  target: TaskTarget,
+): string | undefined =>
+  isWithinAny(reader.file, target.paths)
+    ? identityProblem([...reader.argv, reader.stdin ?? ""], target)
+    : `reads ${reader.file}, which is not under the app's owned paths (${target.paths.join(", ") || "none"}); data/get serves only those. For the bundle to own it, capture again naming it with ${STATE_PATH_INPUTS}`;
+
+/** What a reader read for a failing check, for the author to fix the check from, or nothing. */
+const readerRead = (
+  check: DesktopTaskCheck,
+  readers: ReadonlyMap<string, TaskFileView>,
+): string => {
+  if (!("reader" in check) || check.reader === undefined) return "";
+  const read = readers.get(check.reader);
+  if (read === undefined || read.view === null) return "";
+  const view = read.view;
+  const lines =
+    read.format === "text" &&
+    typeof view === "object" &&
+    !Array.isArray(view) &&
+    Array.isArray(view.lines)
+      ? view.lines.map((line) => JSON.stringify(line)).join(", ")
+      : JSON.stringify(view);
+  const shown = lines.length > 600 ? `${lines.slice(0, 600)}…` : lines;
+  return `; reader ${check.reader} printed: ${shown}`;
+};
+
 /** Every string in a value, member names included. */
 const valueStrings = (value: JsonValue | undefined): string[] => {
   if (typeof value === "string") return [value];
@@ -159,18 +222,25 @@ const targetProblem = (
   target: TaskTarget,
   views: TaskViews,
 ): string | undefined => {
+  if (check.kind === "screen_judge")
+    return identityProblem([check.question], target);
   if (!isWithinAny(check.file, target.paths))
     return `names ${check.file}, which is not under the app's owned paths (${target.paths.join(", ") || "none"}); data/get serves only those. For the bundle to own it, capture again naming it with ${STATE_PATH_INPUTS}`;
+  if ((target.withheld ?? []).some(({ file }) => file === check.file))
+    return `names ${check.file}, which the bundle withholds from its seed as sign-in or licence state, and data/get never serves; check a file the bundle seeds`;
   // What the check compares and names; its field names, kind and id label it.
   const { id: _id, kind: _kind, ...fields } = check;
-  for (const value of Object.values(fields).flatMap(valueStrings)) {
-    if (value.includes(target.capturedHome))
-      return `names the captured home ${target.capturedHome}, which the computer's home replaces`;
-    const named = identityLeftIn(value, target.identity);
-    if (named !== undefined)
-      return `names ${named}, the capture host's name or user, which the export removes from the seed`;
-  }
-  if (!isPointerCheck(check)) return undefined;
+  const named = identityProblem(
+    Object.values(fields).flatMap(valueStrings),
+    target,
+  );
+  if (named !== undefined) return named;
+  // A reader's view is JSON or lines whatever the file's own format.
+  if (
+    !isPointerCheck(check) ||
+    ("reader" in check && check.reader !== undefined)
+  )
+    return undefined;
   return [views.seed, views.end].some(
     (at) => at.get(check.file)?.format === "text",
   )
@@ -189,29 +259,50 @@ export const shippedSeedCheckView = (
   captured: TaskFileView | undefined,
 ): TaskFileView | undefined => (seeded ? (shipped ?? captured) : undefined);
 
-/** Views of every file at a checkpoint's position, or at the seed as the bundle ships it. */
-const viewsAt = (
+/** The captured views at a checkpoint's position, before export omissions and rewrites. */
+const capturedViewsAt = (
   target: TaskTarget,
-  at: number | "seed",
+  at: number,
 ): ReadonlyMap<string, TaskFileView> => {
   const views = new Map<string, TaskFileView>();
-  const seed = at === "seed";
   for (const [home, path] of target.files) {
-    const version = versionAt(path, seed ? target.ends.seed : at);
-    // A file not retained at the seed is not seeded, so the computer starts without it.
-    if (seed && version?.present === true && version.sha256 === null) continue;
-    const captured = version === undefined ? undefined : versionView(version);
-    const view = seed
-      ? shippedSeedCheckView(
-          target.seeded.has(home),
-          target.seedViews.get(home),
-          captured,
-        )
-      : captured;
+    const version = versionAt(path, at);
+    const view = version === undefined ? undefined : versionView(version);
     if (view !== undefined) views.set(home, view);
   }
   return views;
 };
+
+/** Apply the bundle's omissions and rewritten files to its captured seed. */
+const shippedSeedViews = (
+  target: TaskTarget,
+  captured: ReadonlyMap<string, TaskFileView>,
+): ReadonlyMap<string, TaskFileView> => {
+  const views = new Map<string, TaskFileView>();
+  for (const [home, path] of target.files) {
+    const version = versionAt(path, target.ends.seed);
+    // A file not retained at the seed is not seeded, so the computer starts without it.
+    if (version?.present === true && version.sha256 === null) continue;
+    const view = shippedSeedCheckView(
+      target.seeded.has(home),
+      target.seedViews.get(home),
+      captured.get(home),
+    );
+    if (view !== undefined) views.set(home, view);
+  }
+  return views;
+};
+
+/** The README's list of a task's readers, if it has any. */
+const readersReadme = (task: DesktopTask): string =>
+  task.readers === undefined
+    ? ""
+    : `
+Readers, each run in the computer on a private copy of its file in a fresh home, without the display unless it asks
+for it; the lines it prints starting with \`REA \` are its view:
+
+${task.readers.map((reader) => `- \`${reader.id}\` reads \`${reader.file}\` as ${reader.output}: \`${JSON.stringify(reader.argv)}\`${reader.stdin === undefined ? "" : `, with stdin \`${JSON.stringify(reader.stdin)}\``}`).join("\n")}
+`;
 
 const taskReadme = (
   task: DesktopTask,
@@ -221,7 +312,7 @@ const taskReadme = (
 ## Task \`${task.name}\`
 
 \`tasks/${task.name}.json\` deploys the app, has the agent work through the computer from the prompt below, and grades
-the outcome with \`artifacts/${taskVerifierArtifact(task)}/verify.py\`, which reads the app's \`data/get\` views and needs
+the outcome with \`artifacts/${taskVerifierArtifact(task)}/verify.py\`, which reads the app's \`data/get\` views${task.readers === undefined ? "" : " and runs its readers in the computer"} and needs
 no model. It grades once the app's files have held for ${String(SETTLE_TIMING.windowMs / 1000)} s, so a save the app makes on its own within that
 time of the agent stopping counts; each result's \`settled\` is false when they were still changing ${String(SETTLE_TIMING.boundMs / 1000)} s after the
 first read. \`evals/${app}.toml\` names it, so a run of the bundle runs it.
@@ -234,7 +325,7 @@ ${task.prompt
 Checks, each of which must pass:
 
 ${task.checks.map(({ id, ...check }) => `- \`${id}\`: \`${JSON.stringify(check)}\``).join("\n")}
-
+${readersReadme(task)}
 REA kept the task because its checks fail on the seed (${ids(summary.failing_on_seed)}) and all
 pass at the captured end state, checkpoint \`${summary.end_checkpoint}\`${
   summary.near_checkpoint === null
@@ -250,6 +341,154 @@ whose summary line says \`passed\`; a run that says \`failed\` did not finish an
 
 const ids = (checks: readonly string[]) =>
   checks.map((id) => `\`${id}\``).join(", ");
+
+/** Refuse a check or reader this app's computer cannot serve, naming it after `lead`, which names the task. */
+const refuseTargetProblems = (
+  task: DesktopTask,
+  target: TaskTarget,
+  views: TaskViews,
+  lead: string,
+): void => {
+  for (const check of task.checks) {
+    const problem = targetProblem(check, target, views);
+    if (problem !== undefined)
+      throw refuse(
+        `${lead}Check ${JSON.stringify(check.id)} ${problem}.`,
+        "task",
+        REWRITE,
+      );
+  }
+  for (const reader of task.readers ?? []) {
+    const problem = readerProblem(reader, target);
+    if (problem !== undefined)
+      throw refuse(
+        `${lead}Reader ${JSON.stringify(reader.id)} ${problem}.`,
+        "task",
+        REWRITE,
+      );
+  }
+};
+
+/** The readers' views at a checkpoint's position, as retained, or at the seed, as the bundle ships it: the app's own headless mode on those bytes. */
+const readersAt = async (
+  task: DesktopTask,
+  target: TaskTarget,
+  at: "seed" | number,
+): Promise<ReadonlyMap<string, TaskFileView>> => {
+  const readers = task.readers ?? [];
+  return readers.length === 0 ? new Map() : target.readerViews(readers, at);
+};
+
+/** The README's section on a screen-judged task: its questions and how its judge is configured. */
+const screenReadme = (task: DesktopTask, app: string): string => `
+## Task \`${task.name}\`
+
+\`tasks/${task.name}.json\` deploys the app, has the agent work through the computer from the prompt below, and grades
+the outcome with \`artifacts/${taskVerifierArtifact(task)}/verify.py\`, which takes a screenshot of the computer once the
+agent stops and asks a model, the judge, each question below ${String(SCREEN_JUDGE_VOTES)} times; a check passes when most answers are yes. The
+judge sees two labelled screenshots from the build first: the app at the seed, where the answer is no, and with the
+task done, where it is yes. \`evals/${app}.toml\` names the task, so a run of the bundle runs it.
+
+${task.prompt
+  .split("\n")
+  .map((line) => `> ${line}`)
+  .join("\n")}
+
+Questions, each of which must be answered yes:
+
+${task.checks.map((check) => `- \`${check.id}\`: ${check.kind === "screen_judge" ? check.question : ""}`).join("\n")}
+
+The judge's model is \`[model.roles] judge\` in the runner's \`.agentenv/config.toml\`, else its \`[model] default\`, else
+\`${DEFAULT_JUDGE_MODEL}\`, called through \`LITELLM_BASE_URL\` and \`LITELLM_API_KEY\` or \`[model] base_url\` and \`api_key\`.
+\`agent-env run --judge-model\` does not reach it. Without an endpoint the verifier raises, so the run fails rather than
+scoring the agent. The export judged no screen; REA's witness ran this judge on a fresh screenshot at each stage.
+
+To measure a solve rate, run the task k times (3 by default) and count the runs whose summary line says \`passed\`:
+
+    agent-env run <this folder> --task ${task.name} --agent claude-code --model MODEL
+`;
+
+/** One task the export kept: its summary, README section, verifier, and what the export says about it. */
+interface AdmittedTask {
+  readonly summary: TaskSummary;
+  readonly readme: string;
+  readonly verifier: string;
+  readonly limitations: readonly string[];
+  readonly screenJudged: boolean;
+}
+
+/** Where a task is checked: its end, and the checkpoint its change was made on top of, the seed or the task end before it. */
+interface TaskAt {
+  readonly end: number;
+  readonly before: number;
+}
+
+/**
+ * Admit a screen-judged task: no file shows its change since the checkpoint
+ * it was made on top of, and the build's screenshots at the seed and at the
+ * task's end ship as the judge's examples.
+ */
+const admitScreenTask = async (
+  task: DesktopTask,
+  target: TaskTarget,
+  at: TaskAt,
+  lead: string,
+): Promise<AdmittedTask> => {
+  // Only a file the app owns could take a check instead; the export refuses the rest.
+  const owned = (all: ReadonlyMap<string, TaskFileView>) =>
+    new Map([...all].filter(([file]) => isWithinAny(file, target.paths)));
+  const changed = readableChanges(
+    owned(capturedViewsAt(target, at.before)),
+    owned(capturedViewsAt(target, at.end)),
+  );
+  if (changed.length > 0)
+    throw refuse(
+      `${lead}A screen_judge judges state no file shows, but ${changed.join(", ")} changed between ${at.before === target.ends.seed ? "the seed and the end" : `${target.checkpoints[at.before] ?? "the task before"} and ${target.checkpoints[at.end] ?? "its end"}`} in a way a check can read.`,
+      "task",
+      `Check what changed in those files instead; ${DRAFT}.`,
+    );
+  const [seed, end] = await Promise.all([
+    target.screens("seed"),
+    target.screens(at.end),
+  ]);
+  if (seed === undefined || end === undefined)
+    throw refuse(
+      `${lead}A screen_judge needs the screenshots a build computer takes at the seed and end checkpoints, its judge's examples, and the capture has no ${seed === undefined ? "seed" : "end"} screenshot.`,
+      "task",
+      "Capture the app in a build computer, marking seed and end there, and export from it.",
+    );
+  if (seed === "too-large" || end === "too-large")
+    throw refuse(
+      `${lead}The ${seed === "too-large" ? "seed" : "end"} screenshot is larger than the ${String(SCREEN_EXAMPLE_MAX_BYTES / 1024 / 1024)} MiB a judge's example may take.`,
+      "task",
+      "Capture again with a simpler screen at that checkpoint.",
+    );
+  const examples = {
+    fail: seed.toString("base64"),
+    pass: end.toString("base64"),
+  };
+  return {
+    screenJudged: true,
+    summary: {
+      name: task.name,
+      checks: task.checks.length,
+      end_checkpoint: target.checkpoints[at.end] ?? "baseline",
+      failing_on_seed: [],
+      near_checkpoint: null,
+      failing_on_near: [],
+    },
+    limitations: [
+      ...(namesApp(task.prompt, target)
+        ? []
+        : [
+            `The prompt of task ${task.name} does not name the app (${target.title}), so start it with "In ${target.title}, ".`,
+          ]),
+      `The export judges no screen, so it did not check task ${task.name}'s screen_judge questions on the seed, the end or a near miss: the witness does, running the bundle's own judge on a fresh screenshot at each stage, which needs a model endpoint.`,
+    ],
+    readme: screenReadme(task, target.name),
+    verifier: renderTaskVerifier(task, target.name, examples),
+  };
+};
 
 /** Whether a prompt names the app by its title, environment or package, in any letter case. */
 export const namesApp = (
@@ -308,41 +547,42 @@ const positionOf = (target: TaskTarget, checkpoint: string): number =>
   ).end;
 
 /** One task validated at the seed, at its own end and, when the capture took one, at its near miss. */
-const admitTask = (
+const admitTask = async (
   task: DesktopTask,
-  end: number,
+  at: TaskAt,
   target: TaskTarget,
-): TaskSummary => {
+): Promise<AdmittedTask> => {
+  const { end } = at;
   const endName = target.checkpoints[end] ?? "baseline";
   const nearName = nearCheckpoint(task.name);
   const near = target.checkpoints.includes(nearName)
     ? positionOf(target, nearName)
     : undefined;
   const views: TaskViews = {
-    seed: viewsAt(target, "seed"),
-    end: viewsAt(target, end),
-    near: near === undefined ? undefined : viewsAt(target, near),
+    seed: shippedSeedViews(target, capturedViewsAt(target, target.ends.seed)),
+    end: capturedViewsAt(target, end),
+    near: near === undefined ? undefined : capturedViewsAt(target, near),
   };
   const lead = `Task ${JSON.stringify(task.name)}, checked at ${endName}: `;
-  for (const check of task.checks) {
-    const problem = targetProblem(check, target, views);
-    if (problem !== undefined)
-      throw refuse(
-        `${lead}Check ${JSON.stringify(check.id)} ${problem}.`,
-        "task",
-        REWRITE,
-      );
-  }
-  const failing = evaluateTaskChecks(task.checks, views.end).find(
+  refuseTargetProblems(task, target, views, lead);
+  if (isScreenTask(task)) return admitScreenTask(task, target, at, lead);
+  const read = {
+    end: await readersAt(task, target, end),
+    seed: await readersAt(task, target, "seed"),
+    near: near === undefined ? undefined : await readersAt(task, target, near),
+  };
+  const failing = evaluateTaskChecks(task.checks, views.end, read.end).find(
     (outcome) => !outcome.passed,
   );
-  if (failing !== undefined)
+  if (failing !== undefined) {
+    const check = task.checks.find(({ id }) => id === failing.id);
     throw refuse(
-      `${lead}Check ${JSON.stringify(failing.id)} fails on the captured end state: ${failing.description}.`,
+      `${lead}Check ${JSON.stringify(failing.id)} fails on the captured end state: ${failing.description}${check === undefined ? "" : readerRead(check, read.end)}.`,
       "task",
       `Write checks that the captured end state passes, or check the task at the checkpoint taken once its change was saved; ${DRAFT}.`,
     );
-  const seed = evaluateTaskChecks(task.checks, views.seed).filter(
+  }
+  const seed = evaluateTaskChecks(task.checks, views.seed, read.seed).filter(
     (outcome) => !outcome.passed,
   );
   if (seed.length === 0)
@@ -362,7 +602,7 @@ const admitTask = (
   const missed =
     views.near === undefined
       ? []
-      : evaluateTaskChecks(task.checks, views.near).filter(
+      : evaluateTaskChecks(task.checks, views.near, read.near).filter(
           (outcome) => !outcome.passed,
         );
   const failingOnNear = decidedFailures(missed);
@@ -374,13 +614,24 @@ const admitTask = (
       "task",
       `Tighten the checks so the near miss fails one, or take ${nearName} again on a near miss the task's checks are meant to catch.`,
     );
-  return {
+  const summary: TaskSummary = {
     name: task.name,
     checks: task.checks.length,
     end_checkpoint: endName,
     failing_on_seed: failingOnSeed,
     near_checkpoint: near === undefined ? null : nearName,
     failing_on_near: failingOnNear,
+  };
+  return {
+    summary,
+    screenJudged: false,
+    limitations: namesApp(task.prompt, target)
+      ? []
+      : [
+          `The prompt of task ${task.name} does not name the app (${target.title}): a solving agent's own shell cannot see the computer's files, and the app's name sends it to the screen, so start the prompt with "In ${target.title}, ".`,
+        ],
+    readme: taskReadme(task, target.name, summary),
+    verifier: renderTaskVerifier(task, target.name),
   };
 };
 
@@ -393,6 +644,13 @@ const undecided = (failed: readonly TaskCheckOutcome[]): string =>
   failed
     .map(({ id, description }) => `${JSON.stringify(id)}: ${description}`)
     .join("; ");
+
+/** The checkpoint a task's change was made on top of: the latest of the seed and the other tasks' ends before its own. */
+const changedFrom = (
+  end: number,
+  seed: number,
+  ends: readonly number[],
+): number => Math.max(seed, ...ends.filter((other) => other < end));
 
 /** Read, validate and render the tasks a caller passed with the export, each at its own end checkpoint; undefined for none. */
 export const admitDesktopTasks = async (
@@ -425,36 +683,38 @@ export const admitDesktopTasks = async (
   }
   const ends = taskEndsOf(given.ends, new Set(tasks.map((task) => task.name)));
   if (tasks.length === 0) return undefined;
-  const summaries = tasks.map((task) => {
+  const positions = tasks.map((task) => {
     const named = ends.get(task.name);
-    return admitTask(
-      task,
-      named === undefined ? target.ends.end : positionOf(target, named),
-      target,
-    );
+    return named === undefined ? target.ends.end : positionOf(target, named);
   });
-  return {
-    summaries,
-    limitations: tasks
-      .filter((task) => !namesApp(task.prompt, target))
-      .map(
-        (task) =>
-          `The prompt of task ${task.name} does not name the app (${target.title}): a solving agent's own shell cannot see the computer's files, and the app's name sends it to the screen, so start the prompt with "In ${target.title}, ".`,
+  const admitted: AdmittedTask[] = [];
+  // One at a time: a task's readers run the app's own headless mode.
+  for (const [index, task] of tasks.entries()) {
+    const end = positions[index] as number;
+    admitted.push(
+      await admitTask(
+        task,
+        { end, before: changedFrom(end, target.ends.seed, positions) },
+        target,
       ),
-    readme: tasks
-      .map((task, index) =>
-        taskReadme(task, target.name, summaries[index] as TaskSummary),
-      )
-      .join(""),
+    );
+  }
+  return {
+    summaries: admitted.map(({ summary }) => summary),
+    ...(admitted.some(({ screenJudged }) => screenJudged)
+      ? { screenJudged: true }
+      : {}),
+    limitations: admitted.flatMap(({ limitations }) => limitations),
+    readme: admitted.map(({ readme }) => readme).join(""),
     files: [
-      ...tasks.flatMap((task) => [
+      ...tasks.flatMap((task, index) => [
         {
           path: `tasks/${task.name}.json`,
           content: renderTaskSteps(task, target.name),
         },
         {
           path: `artifacts/${taskVerifierArtifact(task)}/verify.py`,
-          content: renderTaskVerifier(task, target.name),
+          content: (admitted[index] as AdmittedTask).verifier,
         },
       ]),
       { path: `evals/${target.name}.toml`, content: renderTaskEval(tasks) },

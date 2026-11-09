@@ -254,6 +254,12 @@ export const CHECK_VIEWS: Readonly<Record<string, TaskFileView>> = {
           element("details", {}, ["Ada"]),
           element("date", {}, ["2026-11-08T09:00:00Z"]),
         ]),
+        element("person", {}, [
+          element("details", {}, [
+            "Alpha",
+            element("saved", {}, ["٢٠٢٦-١١-٠٧T١٠:١٢:٠٠Z"]),
+          ]),
+        ]),
       ]),
       truncated: false,
     },
@@ -1370,6 +1376,16 @@ const CHILD_TEXT_CASES: readonly (readonly [DesktopTaskCheckInput, boolean])[] =
         at_least: 1,
       },
       false,
+    ],
+    [
+      {
+        kind: "member_count",
+        file: "Documents/people.xml",
+        pointer: "/root/children",
+        matching: "[>details=Alpha٢٠٢٦-١١-٠٧T١٠:١٢:٠٠Z]",
+        equals: 1,
+      },
+      true,
     ],
     [
       {

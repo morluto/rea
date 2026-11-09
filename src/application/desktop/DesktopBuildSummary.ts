@@ -6,6 +6,10 @@ import {
   SEED_CHECKPOINT,
 } from "../../domain/desktop/buildCapture.js";
 import { installsFromPackageFile } from "../../domain/desktop/appExportInstall.js";
+import {
+  SIGN_IN_END,
+  SIGN_IN_START,
+} from "../../domain/desktop/appWithheld.js";
 import { draftNoteSchema } from "../../domain/desktop/appTaskDraftNotes.js";
 import { draftValueSchema } from "../../domain/desktop/appTaskDraftValues.js";
 import { desktopApplicationCaptureSchema } from "../../domain/desktop/desktopCapture.js";
@@ -37,6 +41,8 @@ const draftResultSchema = z.looseObject({
   }),
   guards: z.array(jsonObjectSchema).default([]),
   notes: z.array(draftNoteSchema).default([]),
+  // A draft from before withheld files were left out lists none.
+  withheld_files: z.array(z.string()).default([]),
 });
 
 /** A drafted file's value as the stop returns it. */
@@ -137,6 +143,8 @@ type Draft = {
   readonly guards: Readonly<Record<string, JsonValue>>[];
   /** Why the draft has no files, or why a file's suggestions are thin. */
   readonly notes: DraftNote[];
+  /** Files the sign-in window changed, which the draft leaves out and the export withholds. */
+  readonly withheld_files: string[];
 };
 
 /** A later task's draft, from the end checkpoint before its own, or why there is none. */
@@ -168,28 +176,70 @@ export type StoppedCapture = {
   readonly later_drafts: LaterDraft[];
 };
 
-/** The task draft between two checkpoints, or why there is none. */
+/** One draft withheld because this server has used a declared secret. */
+const withheldDraft = {
+  draft: null,
+  draft_refusal:
+    "Automatic task drafting is unavailable after this server used a declared secret. The capture remains available; write the task manually and export it.",
+} as const;
+
+/** A draft cannot safely be handed off after this server has used a secret: neither the first task's nor a later one's. */
+export const secretDraftRefusal: Pick<
+  StoppedCapture,
+  "draft" | "draft_refusal" | "later_drafts"
+> = { ...withheldDraft, later_drafts: [] };
+
+/** The task draft between two checkpoints, or why there is none; none once this server has used a declared secret. */
 const draftBetween = async (
   computer: ControlledComputer,
   folder: string,
-  ends: { readonly from: string; readonly to: string; readonly file: string },
+  ends: {
+    readonly from: string;
+    readonly to: string;
+    readonly file: string;
+    /** Whether the capture marked both sign-in checkpoints, whose files the draft leaves out. */
+    readonly signIn: boolean;
+  },
+  hasDeclaredSecret: () => boolean,
   signal: AbortSignal,
 ): Promise<Pick<LaterDraft, "draft" | "draft_refusal">> => {
+  if (hasDeclaredSecret()) return withheldDraft;
   const stdout = `${folder}/${ends.file}`;
-  const { stdoutBytes: bytes } = await runRea(
-    computer,
-    [
-      "describe-desktop-application-task",
-      `${folder}/capture`,
-      "--seed-checkpoint",
-      ends.from,
-      "--end-checkpoint",
-      ends.to,
-      "--json",
-    ],
-    { stdout, signal },
-  );
+  const withheld = Symbol("secret draft withheld");
+  let bytes: number;
+  try {
+    const result = await runRea(
+      {
+        exec: (argv, timeout, requestSignal) => {
+          if (hasDeclaredSecret()) return Promise.reject(withheld);
+          return computer.exec(argv, timeout, requestSignal);
+        },
+        homeFiles: computer.homeFiles.bind(computer),
+        redacted: computer.redacted.bind(computer),
+      },
+      [
+        "describe-desktop-application-task",
+        `${folder}/capture`,
+        "--seed-checkpoint",
+        ends.from,
+        "--end-checkpoint",
+        ends.to,
+        ...(ends.signIn
+          ? ["--withhold-from", SIGN_IN_START, "--withhold-to", SIGN_IN_END]
+          : []),
+        "--json",
+      ],
+      { stdout, signal },
+    );
+    bytes = result.stdoutBytes;
+  } catch (cause: unknown) {
+    if (cause === withheld) return withheldDraft;
+    if (hasDeclaredSecret() && !signal.aborted) return withheldDraft;
+    throw cause;
+  }
+  if (hasDeclaredSecret()) return withheldDraft;
   const output = await readOutput(computer, stdout, bytes, signal);
+  if (hasDeclaredSecret()) return withheldDraft;
   if (output.kind === "failure")
     return { draft: null, draft_refusal: output.failure.message };
   const draft = draftResultSchema.parse(output.result);
@@ -211,6 +261,7 @@ const draftBetween = async (
       },
       guards: draft.guards,
       notes: draft.notes.map(draftNote),
+      withheld_files: draft.withheld_files,
     },
   };
 };
@@ -222,16 +273,21 @@ const endsLaterTask = (name: string): boolean =>
 /**
  * The draft between `seed` and `end`, or why there is none, and one draft
  * per later task's end checkpoint taken after `end`, each from the end
- * checkpoint before it, so it shows only that task's change.
+ * checkpoint before it, so it shows only that task's change; none once this
+ * server has used a declared secret.
  */
 const draftTasks = async (
   computer: ControlledComputer,
   folder: string,
   checkpoints: readonly string[],
+  hasDeclaredSecret: () => boolean,
   signal: AbortSignal,
 ): Promise<
   Pick<StoppedCapture, "draft" | "draft_refusal" | "later_drafts">
 > => {
+  if (hasDeclaredSecret()) return secretDraftRefusal;
+  const signIn =
+    checkpoints.includes(SIGN_IN_START) && checkpoints.includes(SIGN_IN_END);
   const missing = [SEED_CHECKPOINT, END_CHECKPOINT].filter(
     (name) => !checkpoints.includes(name),
   );
@@ -244,7 +300,8 @@ const draftTasks = async (
   const first = await draftBetween(
     computer,
     folder,
-    { from: SEED_CHECKPOINT, to: END_CHECKPOINT, file: "draft.json" },
+    { from: SEED_CHECKPOINT, to: END_CHECKPOINT, file: "draft.json", signIn },
+    hasDeclaredSecret,
     signal,
   );
   const later: LaterDraft[] = [];
@@ -256,7 +313,13 @@ const draftTasks = async (
       ...(await draftBetween(
         computer,
         folder,
-        { from, to: name, file: `draft-${String(later.length + 2)}.json` },
+        {
+          from,
+          to: name,
+          file: `draft-${String(later.length + 2)}.json`,
+          signIn,
+        },
+        hasDeclaredSecret,
         signal,
       )),
     });
@@ -275,6 +338,7 @@ const draftTasks = async (
 export const summarizeCapture = async (
   computer: ControlledComputer,
   capture: { readonly folder: string; readonly outputBytes: number },
+  hasDeclaredSecret: () => boolean,
   signal: AbortSignal,
 ): Promise<
   Result<
@@ -321,6 +385,7 @@ export const summarizeCapture = async (
         computer,
         capture.folder,
         recorded.state.checkpoints.map((checkpoint) => checkpoint.name),
+        hasDeclaredSecret,
         signal,
       )),
     },

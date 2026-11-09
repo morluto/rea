@@ -7,6 +7,7 @@ import {
   jsonValueSchema,
   type JsonValue,
 } from "../domain/jsonValue.js";
+import { draftWithheldField } from "./desktopBuildSecretsContract.js";
 
 const strings = z.array(z.string());
 
@@ -66,6 +67,7 @@ export const draftSchema = z.strictObject({
     .describe(
       "Why the draft has no files, or why a file's suggested checks are thin; empty when neither.",
     ),
+  withheld_files: draftWithheldField,
 });
 export const exportedTaskSchema = z.strictObject({
   name: z.string(),

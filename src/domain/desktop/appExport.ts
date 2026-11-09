@@ -17,7 +17,15 @@ import {
   PYTHON_IMPORTS,
   PYTHON_MODULE_NAMES,
   PYTHON_READY_CHECK,
+  PYTHON_WITHHELD_DATA_HOOKS,
+  ownlessBody,
 } from "./appExportPython.js";
+import {
+  withheldNotes,
+  withheldSettingsClass,
+  withheldToml,
+} from "./appExportWithheld.js";
+import type { WithheldFile } from "./appWithheld.js";
 import {
   leftOutFiles,
   unownedReadmeNotes,
@@ -31,6 +39,8 @@ import { SEED_HOME } from "./hostIdentity.js";
 import { capturedFileUrl, type LaunchDocument } from "./seedDocument.js";
 import { posix } from "node:path";
 import { roleFacts, stateDirectoryOf } from "./stateRoles.js";
+import { shellQuote } from "./shellQuote.js";
+export { shellQuote } from "./shellQuote.js";
 
 /** agentenv-framework release targeted by the exported class. */
 export const DESKTOP_EXPORT_FRAMEWORK_VERSION = "0.9.1485";
@@ -67,6 +77,8 @@ export interface DesktopAppExportPlan {
   readonly windowClass: string;
   /** Home-relative paths the app owns for data add, get and reset. */
   readonly paths: readonly string[];
+  /** Relaunch an ownless app for a screen-judged task. */
+  readonly relaunchOnReset?: boolean;
   readonly capturedHome: string;
   /** The checkpoint whose state the seed holds. */
   readonly seedCheckpoint: string;
@@ -94,6 +106,10 @@ export interface DesktopAppExportPlan {
   /** `dconf dump` key file of the application's groups at the seed, or empty. */
   readonly dconf: string;
   readonly captureEvidenceId: string;
+  /** Files withheld from the seed as sign-in or licence state, each a secret setting a deploy takes from the environment. */
+  readonly withheld?: readonly WithheldFile[];
+  /** Withheld files seeded all the same, with the person's consent. */
+  readonly consentedFiles?: readonly string[];
 }
 
 /** A reverse-DNS id, such as `org.xfce.mousepad`, whose last part names the app. */
@@ -406,16 +422,13 @@ export const exportedStateFiles = (
     dconf,
     collisions,
     paths,
+    selected,
     isLeftOut,
   };
 };
 
 /** Text safe inside a Python triple-quoted docstring. */
 const docText = (value: string): string => value.replace(/["\\]/gu, "'");
-
-/** A value as one single-quoted shell word. */
-export const shellQuote = (value: string): string =>
-  `'${value.replaceAll("'", `'"'"'`)}'`;
 
 /**
  * The launch command for the computer, through `sh -c` since the declared
@@ -485,21 +498,23 @@ export const py = (value: string): string => JSON.stringify(value);
 export const pyList = (values: readonly string[]): string =>
   `[${values.map(py).join(", ")}]`;
 
-/** The bundle's env.toml: a computer app deployed alone on the X11 base. */
+/** The bundle's env.toml: a computer app deployed alone on the X11 base, each withheld file's setting a reference to its environment variable. */
 export const renderEnvToml = (
-  plan: Pick<DesktopAppExportPlan, "name" | "className">,
+  plan: Pick<DesktopAppExportPlan, "name" | "className" | "withheld">,
 ): string =>
   [
     `type = "computer_app"`,
     `module = ${py(`${appModuleFile(plan.name)}:${plan.className}`)}`,
     `computer = "ubuntu-24.04"`,
     `driver = "reference"`,
+    ...withheldToml(plan.withheld ?? []),
     "",
   ].join("\n");
 
 /** The class body: data hooks only for owned paths, and captured settings either way. */
 const classBody = (plan: DesktopAppExportPlan): string => {
   const title = docText(plan.title);
+  const withheld = plan.withheld ?? [];
   if (plan.paths.length > 0)
     return `    """${title}, launched at boot with the captured state in its home.
 
@@ -507,23 +522,20 @@ const classBody = (plan: DesktopAppExportPlan): string => {
     the initial state, reset restores it, add writes files under PATHS, and get returns those files plus a typed JSON
     view of each.
     """
-
+${withheldSettingsClass(withheld)}
     def __init__(self) -> None:
         super().__init__()
         if not INITIAL.exists():
             _seed_home(Path.home())
-            _load_dconf(Path.home())
+            _load_dconf(Path.home())${withheld.length === 0 ? "" : "\n            _write_withheld(Path.home(), self.settings, WITHHELD)"}
         _ensure_state_aliases(Path.home())
         keep_initial(self.paths)
-${PYTHON_DATA_HOOKS}${PYTHON_READY_CHECK}`;
-  if (plan.dconf.length > 0)
-    return `    """${title}, launched at boot with its captured settings. It owns no files, so it serves no data operations."""
-
-    def __init__(self) -> None:
-        super().__init__()
-        _load_dconf(Path.home())
-${PYTHON_READY_CHECK}`;
-  return `    """${title}, launched at boot. No state was observed, so it serves no data operations."""\n${PYTHON_READY_CHECK}`;
+${withheld.length === 0 ? PYTHON_DATA_HOOKS : PYTHON_WITHHELD_DATA_HOOKS}${PYTHON_READY_CHECK}`;
+  return ownlessBody(
+    title,
+    plan.dconf.length > 0,
+    plan.relaunchOnReset === true,
+  );
 };
 
 /** The app's package, or a package file's dependencies, then the extra packages, its program's package, its library packages and dconf-cli when settings are loaded. */
@@ -595,7 +607,7 @@ ${plan.download === undefined ? `Package: ${plan.aptPackage}${plan.packageVersio
 ${seedWording(plan).docstring}
 """
 
-${PYTHON_IMPORTS}
+${PYTHON_IMPORTS}${(plan.withheld ?? []).length === 0 ? "" : "from pydantic import SecretStr, create_model\n"}
 HERE = Path(__file__).resolve().parent
 SEED_HOME = ${py(SEED_HOME)}
 PATHS = ${pyList(plan.paths)}
@@ -606,6 +618,7 @@ SEED_MODES = {${Object.entries(plan.seedModes)
     .join(", ")}}
 STATE_ALIASES = [${(plan.stateAliases ?? []).map(({ alias, target }) => `(${py(alias)}, ${py(target)})`).join(", ")}]
 WINDOW_CLASS = ${py(plan.windowClass)}
+WITHHELD = {${(plan.withheld ?? []).map(({ setting, file }) => `${py(setting)}: ${py(file)}`).join(", ")}}
 ${PYTHON_HELPERS}
 
 @computer_app(supports=[{"os": {"type": "linux", "display": ["x11"]}, "arch": ${pyList(plan.architectures)}}])
@@ -732,7 +745,7 @@ ${DESKTOP_EXPORT_FRAMEWORK_VERSION}.
       : `
 - Not seeded, because the capture did not retain their bytes at the seed: ${homeList(plan.unseededFiles)}.
   Capture again with \`--state-path\` naming them, or a larger \`--max-file-bytes\`, to include them.`
-  }${unownedReadmeNotes(plan.unownedFolders, plan.runtimeSeeds, plan.leftOutLocks)}
+  }${withheldNotes(plan)}${unownedReadmeNotes(plan.unownedFolders, plan.runtimeSeeds, plan.leftOutLocks)}
 - \`tasks/smoke.json\` deploys the app.
 
 ${taskSection.length === 0 ? "Run it with `agent-env run <this folder>`." : "Run the task with `agent-env run <this folder>`, or only the deploy with `--task smoke`."}

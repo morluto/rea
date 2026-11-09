@@ -2,6 +2,15 @@ import type { JsonValue } from "../jsonValue.js";
 import { SETTLE_TIMING } from "./appSettle.js";
 import type { DesktopTask } from "./appTask.js";
 import { PYTHON_POINTER } from "./appTaskPythonPointer.js";
+import {
+  PYTHON_READER_VIEWS,
+  renderReaderConstants,
+} from "./appTaskReaders.js";
+import {
+  isScreenTask,
+  renderScreenVerifier,
+  type ScreenExamples,
+} from "./appTaskScreen.js";
 
 /** The verifier's evaluator: the checks' semantics, kept equal to `evaluateTaskChecks`. */
 export const PYTHON_TASK_EVALUATOR = String.raw`
@@ -624,8 +633,22 @@ export const sameTaskVerifier = (hosted: string, bundled: string): boolean => {
   );
 };
 
-/** The verifier artifact: read the app's state through its data/get once its files settle, then evaluate the task's checks. */
-export const renderTaskVerifier = (task: DesktopTask, app: string): string =>
+/** The verifier artifact: a screen-judged task's judge, with the build's examples, or else reads of the app's state through its data/get once its files settle and the task's checks on them. */
+export const renderTaskVerifier = (
+  task: DesktopTask,
+  app: string,
+  examples?: ScreenExamples,
+): string => {
+  if (!isScreenTask(task)) return renderFileVerifier(task, app);
+  if (examples === undefined)
+    throw new TypeError(
+      "A screen-judged task's verifier needs the build's examples.",
+    );
+  return renderScreenVerifier(task, app, examples);
+};
+
+/** The verifier of a task whose checks read files: the app's data/get once its files settle, then the checks. */
+const renderFileVerifier = (task: DesktopTask, app: string): string =>
   `"""Checks of the task ${task.name} against the ${app} app's state, exported by REA from a desktop application capture.
 
 It reads the app's data/get through the computer, takes the typed views of its files and evaluates each check: no
@@ -640,7 +663,7 @@ import json
 import math
 import re
 import time
-
+${task.readers === undefined ? "" : "import sys\nimport types\nimport uuid\n"}
 from agentenv_protocol import client as protocol
 from agentenv_protocol.types import RPC_PATH
 
@@ -657,7 +680,7 @@ SETTLE_WINDOW_S = ${pythonSeconds(SETTLE_TIMING.windowMs)}
 SETTLE_BOUND_S = ${pythonSeconds(SETTLE_TIMING.boundMs)}
 #: Where a data/get file part names its path in the home.
 DATA_OBJECTS = "urn:agentenv:data-objects/v1"
-${PYTHON_TASK_EVALUATOR}${PYTHON_SETTLE}
+${task.readers === undefined ? "" : renderReaderConstants(task.readers)}${PYTHON_TASK_EVALUATOR}${PYTHON_SETTLE}${task.readers === undefined ? "" : PYTHON_READER_VIEWS}
 
 async def verify(mcp_url, env_url):
     card = await protocol.get_card(env_url)
@@ -665,7 +688,7 @@ async def verify(mcp_url, env_url):
     if child is None:
         raise RuntimeError(f"the computer at {env_url} lists no app named {APP}")
     views, settled, read_cut = await _settled_views(env_url + (child.get("url") or RPC_PATH).removesuffix(RPC_PATH))
-    return [{**result, "settled": settled, "read_cut": read_cut} for result in evaluate(CHECKS, views)]
+${task.readers === undefined ? "" : "    readers = await _reader_views(env_url, card)\n"}    return [{**result, "settled": settled, "read_cut": read_cut} for result in ${task.readers === undefined ? "evaluate(CHECKS, views)" : "evaluate_with_readers(CHECKS, views, readers)"}]
 `;
 
 /** The artifact folder of a task's verifier. */
