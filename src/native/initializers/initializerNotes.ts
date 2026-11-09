@@ -7,6 +7,8 @@ import {
 const TALLY_TEXT = {
   "long-symbol-name": (count: number) =>
     `${String(count)} symbol name(s) exceeded the ${String(MAX_NATIVE_INITIALIZER_NAME_BYTES)}-byte name budget and were not used.`,
+  "unreadable-symbol-name": (count: number) =>
+    `${String(count)} symbol name(s) could not be read because the string table is missing or the name offset is outside it.`,
   "relocation-entry-size": (count: number) =>
     `${String(count)} relocation section(s) had an unexpected entry size and were not applied.`,
 } as const;

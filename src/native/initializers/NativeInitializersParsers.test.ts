@@ -26,12 +26,12 @@ const artifact = (bytes: Buffer) => ({
   bytes: bytes.length,
 });
 
-const read = (
+const read = async (
   bytes: Buffer,
   page: { offset?: number; limit?: number; architecture?: "arm64" } = {},
 ) =>
   nativeInitializersSchema.parse(
-    readNativeInitializers(bytes, artifact(bytes), {
+    await readNativeInitializers(bytes, artifact(bytes), {
       path: "/artifacts/image",
       offset: page.offset ?? 0,
       limit: page.limit ?? 64,
@@ -81,7 +81,7 @@ const withExtraSections = (
   return bytes;
 };
 
-const row = (report: ReturnType<typeof read>) =>
+const row = (report: Awaited<ReturnType<typeof read>>) =>
   report.entries.map((entry) => ({
     kind: entry.kind,
     value: entry.value_va,
@@ -91,11 +91,11 @@ const row = (report: ReturnType<typeof read>) =>
   }));
 
 describe("ELF", () => {
-  it("does not treat repeated DT_NEEDED entries as duplicate tags", () => {
-    const report = read(elf64PieInitializers(3));
+  it("does not treat repeated DT_NEEDED entries as duplicate tags", async () => {
+    const report = await read(elf64PieInitializers(3));
     expect(report.status).toBe("parsed");
     expect(report.coverage.status).toBe("complete");
-    expect(row(report)).toEqual(row(read(elf64PieInitializers())));
+    expect(row(report)).toEqual(row(await read(elf64PieInitializers())));
     expect(
       report.limitations.some((line) =>
         line.startsWith("Duplicate dynamic tag"),
@@ -103,8 +103,8 @@ describe("ELF", () => {
     ).toBe(false);
   });
 
-  it("lists PIE slots in declaration order through RELA, RELR and imports", () => {
-    const report = read(elf64PieInitializers());
+  it("lists PIE slots in declaration order through RELA, RELR and imports", async () => {
+    const report = await read(elf64PieInitializers());
     expect(report).toMatchObject({
       format: "elf",
       status: "parsed",
@@ -177,8 +177,8 @@ describe("ELF", () => {
     ).toEqual([...NATIVE_INITIALIZER_LIMITATIONS]);
   });
 
-  it("pages entries without changing their indexes", () => {
-    const report = read(elf64PieInitializers(), { offset: 2, limit: 2 });
+  it("pages entries without changing their indexes", async () => {
+    const report = await read(elf64PieInitializers(), { offset: 2, limit: 2 });
     expect(report.coverage).toMatchObject({
       status: "complete",
       examined_entries: 7,
@@ -189,8 +189,8 @@ describe("ELF", () => {
     expect(report.entries.map((entry) => entry.index)).toEqual([2, 3]);
   });
 
-  it("resolves an ELF32 REL RELATIVE slot from its in-place addend", () => {
-    const report = read(elf32RelativeInitializers());
+  it("resolves an ELF32 REL RELATIVE slot from its in-place addend", async () => {
+    const report = await read(elf32RelativeInitializers());
     expect(report).toMatchObject({ bits: 32, architecture: "x86" });
     expect(row(report)).toEqual([
       {
@@ -204,8 +204,8 @@ describe("ELF", () => {
     expect(report.entries[0]?.slot_bytes).toBe(4);
   });
 
-  it("reads relocatable-object sections by section-relative offset and skips sentinels", () => {
-    const report = read(elfRelocatableCtors());
+  it("reads relocatable-object sections by section-relative offset and skips sentinels", async () => {
+    const report = await read(elfRelocatableCtors());
     expect(report.elf_type).toBe(1);
     expect(row(report)).toEqual([
       {
@@ -243,11 +243,11 @@ describe("ELF", () => {
 });
 
 describe("ELF slot semantics", () => {
-  it("keeps a 32-bit all-ones word in a 64-bit .ctors as a listed value", () => {
+  it("keeps a 32-bit all-ones word in a 64-bit .ctors as a listed value", async () => {
     const bytes = elfRelocatableCtors();
     // The leading .ctors sentinel becomes 0x00000000ffffffff, which is not -1 in ELF64.
     bytes.writeBigUInt64LE(0xffffffffn, 0x200);
-    const report = read(bytes);
+    const report = await read(bytes);
     expect(row(report).filter((entry) => entry.kind === "ctors")).toEqual([
       {
         kind: "ctors",
@@ -269,12 +269,12 @@ describe("ELF slot semantics", () => {
     );
   });
 
-  it("reports no slot address for DT_INIT and DT_FINI fields outside every load segment", () => {
+  it("reports no slot address for DT_INIT and DT_FINI fields outside every load segment", async () => {
     const bytes = elf64PieInitializers();
     // Shrink the only PT_LOAD so PT_DYNAMIC (file offset 0x300) is no longer mapped.
     bytes.writeBigUInt64LE(0x300n, 64 + 32);
     bytes.writeBigUInt64LE(0x300n, 64 + 40);
-    const report = read(bytes);
+    const report = await read(bytes);
     const direct = report.entries.filter(
       (entry) => entry.kind === "init" || entry.kind === "fini",
     );
@@ -292,10 +292,10 @@ describe("ELF slot semantics", () => {
 });
 
 describe("ELF incomplete inputs", () => {
-  it("reports an unsupported relocation machine as incomplete, not as raw zeros", () => {
+  it("reports an unsupported relocation machine as incomplete, not as raw zeros", async () => {
     const bytes = elf64PieInitializers();
     bytes.writeUInt16LE(243, 18);
-    const report = read(bytes);
+    const report = await read(bytes);
     expect(report.status).toBe("incomplete");
     expect(report.coverage.total_entries).toBeNull();
     const slots = report.entries.filter((entry) => entry.kind === "init_array");
@@ -310,12 +310,12 @@ describe("ELF incomplete inputs", () => {
     ).toBe("raw");
   });
 
-  it("bounds a huge declared DT_INIT_ARRAYSZ by the slot budget", () => {
+  it("bounds a huge declared DT_INIT_ARRAYSZ by the slot budget", async () => {
     const bytes = elf64PieInitializers();
     // DT_INIT_ARRAYSZ is the fourth dynamic entry; 2^50 slots is still a safe integer.
     bytes.writeBigUInt64LE(8n << 50n, 0x300 + 3 * 16 + 8);
     const started = performance.now();
-    const report = read(bytes);
+    const report = await read(bytes);
     expect(performance.now() - started).toBeLessThan(10_000);
     expect(report.status).toBe("incomplete");
     expect(report.coverage).toMatchObject({
@@ -330,14 +330,14 @@ describe("ELF incomplete inputs", () => {
     );
   });
 
-  it("stops a file-backed section-derived init_array at the slot budget", () => {
+  it("stops a file-backed section-derived init_array at the slot budget", async () => {
     const base = elfRelocatableCtors();
     const slots = MAX_NATIVE_INITIALIZER_ENTRIES + 4096;
     const bytes = Buffer.concat([base, Buffer.alloc(slots * 8)]);
     // .init_array is section 7 of the relocatable fixture: sh_offset at +24, sh_size at +32.
     bytes.writeBigUInt64LE(BigInt(base.length), 0x500 + 7 * 64 + 24);
     bytes.writeBigUInt64LE(BigInt(slots * 8), 0x500 + 7 * 64 + 32);
-    const report = read(bytes);
+    const report = await read(bytes);
     expect(report.status).toBe("incomplete");
     expect(report.coverage).toMatchObject({
       status: "incomplete",
@@ -349,7 +349,7 @@ describe("ELF incomplete inputs", () => {
     );
   });
 
-  it("reports over-long section and symbol names as null instead of failing the schema", () => {
+  it("reports over-long section and symbol names as null instead of failing the schema", async () => {
     const base = elf64PieInitializers();
     const longSection = `.init_array.${"s".repeat(1100)}`;
     const longSymbol = `ctor_${"y".repeat(1100)}`;
@@ -363,7 +363,7 @@ describe("ELF incomplete inputs", () => {
     // Rename .init_array (section 3) and ctor_a (first .symtab entry after the null symbol).
     bytes.writeUInt32LE(sectionAt - 0x680, 0x800 + 3 * 64);
     bytes.writeUInt32LE(symbolAt - 0x600, 0x598);
-    const report = read(bytes);
+    const report = await read(bytes);
     const slot = report.entries.find((entry) => entry.kind === "init_array");
     expect(slot?.slot_section).toBeNull();
     expect(
@@ -379,14 +379,14 @@ describe("ELF incomplete inputs", () => {
     ).toBe(true);
   });
 
-  it("labels an over-long section-derived array with the request name", () => {
+  it("labels an over-long section-derived array with the request name", async () => {
     const base = elfRelocatableCtors();
     const longSection = `.init_array.${"s".repeat(1100)}`;
     const bytes = Buffer.concat([base, Buffer.from(`${longSection}\0`)]);
     // .shstrtab (section 6) at 0x400 grows to cover the tail; rename .init_array (section 7).
     bytes.writeBigUInt64LE(BigInt(bytes.length - 0x400), 0x500 + 6 * 64 + 32);
     bytes.writeUInt32LE(base.length - 0x400, 0x500 + 7 * 64);
-    const report = read(bytes);
+    const report = await read(bytes);
     const slot = report.entries.find((entry) => entry.kind === "init_array");
     expect(slot).toMatchObject({ slot_section: null, detail: ".init_array" });
     expect(
@@ -398,14 +398,14 @@ describe("ELF incomplete inputs", () => {
 });
 
 describe("ELF table budgets", () => {
-  it("caps symbols in total across every symbol table, not per table", () => {
+  it("caps symbols in total across every symbol table, not per table", async () => {
     const perTable = 40_000;
     // Two zeroed SHT_SYMTAB tables, each under the cap, that exceed it together.
     const bytes = withExtraSections(Buffer.alloc(perTable * 24), (at) => [
       sectionHeader(2, at, perTable * 24, 5, 24),
       sectionHeader(2, at, perTable * 24, 5, 24),
     ]);
-    const report = read(bytes);
+    const report = await read(bytes);
     expect(report.status).toBe("incomplete");
     expect(report.coverage.total_entries).toBeNull();
     expect(report.limitations).toContain(
@@ -413,12 +413,12 @@ describe("ELF table budgets", () => {
     );
   });
 
-  it("reports an unreadable symbol table as incomplete rather than absent", () => {
+  it("reports an unreadable symbol table as incomplete rather than absent", async () => {
     // An SHT_SYMTAB whose size is not a whole number of 24-byte entries.
     const bytes = withExtraSections(Buffer.alloc(32), (at) => [
       sectionHeader(2, at, 25, 5, 24),
     ]);
-    const report = read(bytes);
+    const report = await read(bytes);
     expect(report.status).toBe("incomplete");
     expect(report.limitations).toContain(
       "A symbol table is not stored in the file or its size is not a whole number of entries, so its names were not read.",
@@ -435,8 +435,8 @@ describe("ELF table budgets", () => {
     );
   };
 
-  it("bounds section relocation records in total across repeated headers", () => {
-    const report = read(repeatedRelocations());
+  it("bounds section relocation records in total across repeated headers", async () => {
+    const report = await read(repeatedRelocations());
     expect(report.status).toBe("incomplete");
     expect(report.coverage.total_entries).toBeNull();
     expect(
@@ -447,10 +447,10 @@ describe("ELF table budgets", () => {
       ),
     ).toHaveLength(1);
     // Records past the budget were not applied, but earlier slot results stand.
-    expect(row(report)).toEqual(row(read(elfRelocatableCtors())));
+    expect(row(report)).toEqual(row(await read(elfRelocatableCtors())));
   });
 
-  it("reports a relocation section reached after the record budget is spent", () => {
+  it("reports a relocation section reached after the record budget is spent", async () => {
     // Sixteen full headers spend the budget exactly; the seventeenth is not read.
     const records = 65_536;
     const bytes = withExtraSections(Buffer.alloc(records * 24), (at) => [
@@ -459,7 +459,7 @@ describe("ELF table budgets", () => {
       ),
       sectionHeader(4, at, 24, 4, 24, 1),
     ]);
-    const report = read(bytes);
+    const report = await read(bytes);
     expect(report.status).toBe("incomplete");
     expect(
       report.limitations.filter((line) =>
@@ -470,7 +470,7 @@ describe("ELF table budgets", () => {
     ).toHaveLength(1);
   });
 
-  it("observes cancellation during the section relocation walk", () => {
+  it("observes cancellation during the section relocation walk", async () => {
     const bytes = repeatedRelocations();
     let reads = 0;
     const signal = {
@@ -480,20 +480,20 @@ describe("ELF table budgets", () => {
       },
       reason: new Error("cancelled by test"),
     } as unknown as AbortSignal;
-    expect(() =>
+    await expect(
       readNativeInitializers(
         bytes,
         artifact(bytes),
         { path: "/artifacts/image", offset: 0, limit: 64 },
         signal,
       ),
-    ).toThrow(ArtifactReaderFailure);
+    ).rejects.toThrow(ArtifactReaderFailure);
   });
 });
 
 describe("Mach-O", () => {
-  it("decodes chained pointers, init offsets and raw terminators", () => {
-    const report = read(machoArm64Initializers());
+  it("decodes chained pointers, init offsets and raw terminators", async () => {
+    const report = await read(machoArm64Initializers());
     expect(report).toMatchObject({
       format: "mach-o",
       status: "parsed",
@@ -530,11 +530,11 @@ describe("Mach-O", () => {
     });
   });
 
-  it("marks the report incomplete when a chained-fixup slot cannot be decoded", () => {
+  it("marks the report incomplete when a chained-fixup slot cannot be decoded", async () => {
     const bytes = machoArm64Initializers();
     // A DYLD_CHAINED_PTR_64_OFFSET bind with ordinal 5, but the image has no imports.
     bytes.writeBigUInt64LE((1n << 63n) | 5n, 0x4000);
-    const report = read(bytes);
+    const report = await read(bytes);
     expect(report.entries[0]).toMatchObject({
       kind: "mod_init",
       resolution: "unresolved",
@@ -553,8 +553,10 @@ describe("Mach-O", () => {
     );
   });
 
-  it("reports container file offsets for a selected universal slice", () => {
-    const report = read(machoArm64FatInitializers(), { architecture: "arm64" });
+  it("reports container file offsets for a selected universal slice", async () => {
+    const report = await read(machoArm64FatInitializers(), {
+      architecture: "arm64",
+    });
     expect(report.slice).toMatchObject({
       file_offset: 0x1000,
       architecture: "arm64",
@@ -565,13 +567,13 @@ describe("Mach-O", () => {
     });
   });
 
-  it("rejects bytes that are neither ELF nor Mach-O", () => {
-    expect(() => read(Buffer.alloc(128))).toThrow(BinaryFormatFailure);
+  it("rejects bytes that are neither ELF nor Mach-O", async () => {
+    await expect(read(Buffer.alloc(128))).rejects.toThrow(BinaryFormatFailure);
   });
 });
 
 describe("ELF repeated observations", () => {
-  it("tallies every over-long symbol name into one counted limitation", () => {
+  it("tallies every over-long symbol name into one counted limitation", async () => {
     const rows = 200;
     const strings = Buffer.from(`\0${"x".repeat(1100)}\0`, "utf8");
     const symbolsAt = 1104;
@@ -591,7 +593,7 @@ describe("ELF repeated observations", () => {
       sectionHeader(3, at, strings.length, 0, 0),
       sectionHeader(2, at + symbolsAt, rows * 24, 9, 24),
     ]);
-    const report = read(bytes);
+    const report = await read(bytes);
     expect(report.status).toBe("incomplete");
     expect(
       report.limitations.filter((line) =>
@@ -605,14 +607,14 @@ describe("ELF repeated observations", () => {
     );
   });
 
-  it("tallies relocation sections with an unexpected entry size", () => {
+  it("tallies relocation sections with an unexpected entry size", async () => {
     const sections = 40;
     const bytes = withExtraSections(Buffer.alloc(48), (at) =>
       Array.from({ length: sections }, () =>
         sectionHeader(4, at, 48, 4, 16, 7),
       ),
     );
-    const report = read(bytes);
+    const report = await read(bytes);
     expect(report.status).toBe("incomplete");
     expect(
       report.limitations.filter((line) => line.includes("entry size")),
@@ -624,7 +626,7 @@ describe("ELF repeated observations", () => {
     );
   });
 
-  it("keeps distinct notes to the budget and counts the rest", () => {
+  it("keeps distinct notes to the budget and counts the rest", async () => {
     const notes = new InitializerNotes();
     for (let index = 0; index < 100; index += 1) {
       notes.add(`note ${String(index)}`);
@@ -654,7 +656,7 @@ describe("ELF repeated observations", () => {
 });
 
 describe("ELF section lookups", () => {
-  it("names the smallest covering range and breaks ties by header order", () => {
+  it("names the smallest covering range and breaks ties by header order", async () => {
     const index = buildAddressRangeIndex(
       [
         {
@@ -695,7 +697,7 @@ describe("ELF section lookups", () => {
     ]);
   });
 
-  it("resolves a full slot budget against a near-maximal section table in one pass", () => {
+  it("resolves a full slot budget against a near-maximal section table in one pass", async () => {
     const base = elf64PieInitializers();
     const slots = MAX_NATIVE_INITIALIZER_ENTRIES;
     const payload = Buffer.alloc(slots * 8);
@@ -722,7 +724,7 @@ describe("ELF section lookups", () => {
     bytes.writeBigUInt64LE(BigInt(base.length), 0x300 + 2 * 16 + 8);
     bytes.writeBigUInt64LE(BigInt(slots * 8), 0x300 + 3 * 16 + 8);
     const started = performance.now();
-    const report = read(bytes);
+    const report = await read(bytes);
     // A per-lookup header walk is about 4e9 comparisons here; the index is a few hundred ms.
     expect(performance.now() - started).toBeLessThan(10_000);
     expect(report.coverage.examined_entries).toBe(slots);
@@ -759,7 +761,7 @@ describe("Mach-O symbol tables", () => {
     return command;
   };
 
-  it("caps symbols in total across every LC_SYMTAB, not per command", () => {
+  it("caps symbols in total across every LC_SYMTAB, not per command", async () => {
     const perTable = 40_000;
     const bytes = withSymtabs(
       Buffer.alloc((perTable + 1) * 16),
@@ -768,7 +770,7 @@ describe("Mach-O symbol tables", () => {
         symtab(original, at + 16, perTable),
       ],
     );
-    const report = read(bytes);
+    const report = await read(bytes);
     expect(report.status).toBe("incomplete");
     expect(report.coverage.total_entries).toBeNull();
     expect(report.limitations).toContain(
@@ -777,13 +779,142 @@ describe("Mach-O symbol tables", () => {
     expect(report.entries[0]?.symbol?.name).toBe("_init");
   });
 
-  it("ignores a repeated LC_SYMTAB over the same ranges", () => {
+  it("ignores a repeated LC_SYMTAB over the same ranges", async () => {
     const bytes = withSymtabs(Buffer.alloc(0), (_, original) => [original]);
-    const report = read(bytes);
+    const report = await read(bytes);
     expect(report.status).toBe("parsed");
-    expect(row(report)).toEqual(row(read(machoArm64Initializers())));
+    expect(row(report)).toEqual(row(await read(machoArm64Initializers())));
     expect(report.limitations).toContain(
       "A repeated LC_SYMTAB names the same symbol and string ranges and was ignored.",
+    );
+  });
+});
+
+describe("ELF relocation coverage", () => {
+  it("keeps slots unresolved when a section relocation table that reaches them is skipped", async () => {
+    const bytes = elfRelocatableCtors();
+    // .rela.ctors (section 3) and .rela.init_array (section 8) get a 16-byte entry size.
+    bytes.writeBigUInt64LE(16n, 0x500 + 3 * 64 + 56);
+    bytes.writeBigUInt64LE(16n, 0x500 + 8 * 64 + 56);
+    const report = await read(bytes);
+    expect(report.status).toBe("incomplete");
+    // No stored zero becomes a raw value, and no .ctors slot is dropped as a sentinel.
+    expect(
+      report.entries.map((entry) => [entry.kind, entry.resolution]),
+    ).toEqual([
+      ["init_array", "unresolved"],
+      ["ctors", "unresolved"],
+      ["ctors", "unresolved"],
+      ["ctors", "unresolved"],
+    ]);
+    expect(report.entries.every((entry) => entry.value_va === null)).toBe(true);
+  });
+
+  it("does not treat a dynamic write that overlaps half a slot as leaving it untouched", async () => {
+    const bytes = elf64PieInitializers();
+    // The leading null RELA record becomes R_X86_64_32 at 0x204, the upper half of slot 0x200.
+    bytes.writeBigUInt64LE(0x204n, 0x480);
+    bytes.writeBigUInt64LE(10n, 0x488);
+    const report = await read(bytes);
+    const slots = report.entries.filter((entry) => entry.kind === "init_array");
+    expect(slots.map((entry) => [entry.slot_va, entry.resolution])).toEqual([
+      ["0x200", "unresolved"],
+      ["0x208", "relative_addend"],
+      ["0x210", "unresolved_import"],
+    ]);
+    expect(report.status).toBe("incomplete");
+    expect(report.limitations).toContain(
+      "1 initializer slot(s) are partly overwritten or written more than once by dynamic relocations and are listed as unresolved.",
+    );
+  });
+
+  it("does not reapply a linked image's retained link-time REL record", async () => {
+    const base = elf32RelativeInitializers();
+    const bytes = Buffer.from(base);
+    bytes.writeUInt16LE(2, 16);
+    // Move the loader RELATIVE record off the slot so only the retained record reaches it.
+    bytes.writeUInt32LE(0x104, 0x180);
+    // A non-SHF_ALLOC SHT_REL with R_386_32 against `ctor` at slot 0x100, which already holds 0x80.
+    bytes.writeUInt32LE(0x100, 0x190);
+    bytes.writeUInt32LE((1 << 8) | 1, 0x194);
+    const header = Buffer.alloc(40);
+    header.writeUInt32LE(9, 4);
+    header.writeUInt32LE(0x190, 16);
+    header.writeUInt32LE(8, 20);
+    header.writeUInt32LE(5, 24);
+    header.writeUInt32LE(2, 28);
+    header.writeUInt32LE(8, 36);
+    header.copy(bytes, 0x280 + 8 * 40);
+    bytes.writeUInt16LE(9, 48);
+    const report = await read(bytes);
+    expect(row(report)).toEqual([
+      {
+        kind: "init_array",
+        value: "0x80",
+        section: ".text",
+        symbol: "ctor",
+        resolution: "raw",
+      },
+    ]);
+    expect(report.status).toBe("parsed");
+  });
+
+  it("maps a resolved target whose first byte ends a load segment", async () => {
+    const bytes = elf64PieInitializers();
+    // The first init_array RELATIVE addend points at the last mapped byte.
+    bytes.writeBigInt64LE(BigInt(bytes.length - 1), 0x498 + 16);
+    const report = await read(bytes);
+    const slot = report.entries.find((entry) => entry.kind === "init_array");
+    expect(slot).toMatchObject({
+      value_va: `0x${(bytes.length - 1).toString(16)}`,
+      value_file_offset: bytes.length - 1,
+    });
+  });
+
+  it("pauses during a large dynamic relocation table and observes cancellation there", async () => {
+    const base = elf64PieInitializers();
+    const words = 64 * 1024;
+    const relr = Buffer.alloc(words * 8);
+    // One address entry for the fini slot, then empty bitmaps that only advance the cursor.
+    relr.writeBigUInt64LE(0x220n, 0);
+    for (let word = 1; word < words; word += 1)
+      relr.writeBigUInt64LE(1n, word * 8);
+    const bytes = Buffer.concat([base, relr]);
+    bytes.writeBigUInt64LE(BigInt(bytes.length), 64 + 32);
+    bytes.writeBigUInt64LE(BigInt(bytes.length), 64 + 40);
+    // DT_RELR and DT_RELRSZ are the twelfth and thirteenth dynamic entries.
+    bytes.writeBigUInt64LE(BigInt(base.length), 0x300 + 11 * 16 + 8);
+    bytes.writeBigUInt64LE(BigInt(relr.length), 0x300 + 12 * 16 + 8);
+    expect(row(await read(bytes))).toEqual(row(await read(base)));
+    const controller = new AbortController();
+    let turns = 0;
+    const tick = (): void => {
+      turns += 1;
+      if (turns === 2) controller.abort(new Error("cancelled by test"));
+      else setImmediate(tick);
+    };
+    setImmediate(tick);
+    await expect(
+      readNativeInitializers(
+        bytes,
+        artifact(bytes),
+        { path: "/artifacts/image", offset: 0, limit: 64 },
+        controller.signal,
+      ),
+    ).rejects.toThrow(ArtifactReaderFailure);
+  });
+});
+
+describe("Unreadable symbol names", () => {
+  it("reports an ELF name offset outside its string table as incomplete", async () => {
+    const bytes = elf64PieInitializers();
+    // ctor_a, the first .symtab entry after the null symbol.
+    bytes.writeUInt32LE(0x7fff, 0x598);
+    const report = await read(bytes);
+    expect(report.status).toBe("incomplete");
+    expect(report.entries[0]?.symbol).toBeNull();
+    expect(report.limitations).toContain(
+      "1 symbol name(s) could not be read because the string table is missing or the name offset is outside it.",
     );
   });
 });

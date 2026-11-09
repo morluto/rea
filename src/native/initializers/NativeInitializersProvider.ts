@@ -91,7 +91,7 @@ export class NativeInitializersProvider implements NativeInitializersPort {
           this.#resources,
         );
         assertArtifactReadActive(options?.signal);
-        const report = readNativeInitializers(
+        const report = await readNativeInitializers(
           snapshot.bytes,
           {
             path: input.path,
@@ -111,7 +111,7 @@ export class NativeInitializersProvider implements NativeInitializersPort {
 }
 
 /** Decode one stable buffer. ELF is read whole; Mach-O uses the selected slice. */
-export const readNativeInitializers = (
+export const readNativeInitializers = async (
   bytes: Buffer,
   artifact: NativeInitializers["artifact"],
   input: Pick<
@@ -119,7 +119,7 @@ export const readNativeInitializers = (
     "offset" | "limit" | "architecture" | "path"
   >,
   signal?: AbortSignal,
-): NativeInitializers => {
+): Promise<NativeInitializers> => {
   assertArtifactReadActive(signal);
   const selected = requireSelectedNativeImage(
     OPERATION,
@@ -128,16 +128,16 @@ export const readNativeInitializers = (
     input.architecture,
   );
   const page = { offset: input.offset, limit: input.limit };
-  const inspection = inspectSelected(bytes, selected, page, signal);
+  const inspection = await inspectSelected(bytes, selected, page, signal);
   return { artifact, ...inspection };
 };
 
-const inspectSelected = (
+const inspectSelected = async (
   container: Buffer,
   selected: ReturnType<typeof requireSelectedNativeImage>,
   page: { readonly offset: number; readonly limit: number },
   signal: AbortSignal | undefined,
-): NativeInitializerInspection => {
+): Promise<NativeInitializerInspection> => {
   if (isElf(selected.bytes)) {
     if (selected.selection !== null)
       throw new BinaryFormatFailure(

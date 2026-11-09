@@ -1,3 +1,4 @@
+import { setImmediate as immediate } from "node:timers/promises";
 import { assertArtifactReadActive } from "../../artifacts/ArtifactFileOperation.js";
 import { readElfDynamicEntry } from "../../domain/elfDynamicEntry.js";
 import { elfArchitecture } from "../../domain/elfFixedHeader.js";
@@ -186,14 +187,14 @@ const readDynamicTags = (
   return tags;
 };
 
+/** File offset of `size` bytes at `address`: a whole slot, or a target's first byte. */
 const fileOffsetFor = (
-  scan: ElfScan,
   mappings: Parameters<typeof mappedFileOffset>[0],
   zeroFills: Parameters<typeof mappedFileOffset>[3],
   index: ElfSectionIndex,
   address: bigint,
+  size: number,
 ): number | null => {
-  const size = wordOf(scan.bits);
   try {
     return mappedFileOffset(mappings, address, size, zeroFills);
   } catch (cause) {
@@ -537,17 +538,79 @@ const collectSources = (
 };
 
 interface WriteLoad {
+  /** Exactly one full-width write starts at each slot here, with nothing else overlapping it. */
   readonly writes: ReadonlyMap<bigint, ElfPointerWrite>;
+  /** Slots that a narrower, offset or conflicting write overlaps; their value is unknown. */
+  readonly clobbered: ReadonlySet<bigint>;
   readonly trustRaw: boolean;
 }
 
-const loadWrites = (
+/**
+ * Index of the first slot whose word could overlap a write starting at
+ * `address`, that is the first slot above `address - word`.
+ */
+const firstOverlap = (
+  slots: readonly bigint[],
+  address: bigint,
+  word: number,
+): number => {
+  const from = address - BigInt(word);
+  let low = 0;
+  let high = slots.length;
+  while (low < high) {
+    const mid = (low + high) >>> 1;
+    if ((slots[mid] ?? address) <= from) low = mid + 1;
+    else high = mid;
+  }
+  return low;
+};
+
+/**
+ * Drain the shared dynamic-relocation reader, keeping only writes that touch a
+ * wanted slot. A slot is resolved by a write only when that write starts at the
+ * slot with the pointer width and no other write overlaps the slot, which
+ * matches the shared overlay's `pointerAt` rule without retaining every write.
+ * The reader pauses at the generator's own yield points so a large table does
+ * not block the event loop, and observes cancellation there.
+ */
+const loadWrites = async (
   scan: ElfScan,
   image: ReturnType<typeof readElfImage>,
   wanted: ReadonlySet<bigint>,
-): WriteLoad => {
+  signal: AbortSignal | undefined,
+): Promise<WriteLoad> => {
   if (wanted.size === 0 || image.elf.dynamicSegments.length === 0)
-    return { writes: new Map(), trustRaw: true };
+    return { writes: new Map(), clobbered: new Set(), trustRaw: true };
+  const word = wordOf(scan.bits);
+  const slots = [...wanted].sort((left, right) =>
+    left < right ? -1 : left > right ? 1 : 0,
+  );
+  const writes = new Map<bigint, ElfPointerWrite>();
+  const clobbered = new Set<bigint>();
+  const consider = (write: ElfPointerWrite): void => {
+    const end = write.address + BigInt(write.width);
+    for (
+      let at = firstOverlap(slots, write.address, word);
+      at < slots.length;
+      at += 1
+    ) {
+      const slot = slots[at];
+      if (slot === undefined || slot >= end) break;
+      if (clobbered.has(slot)) continue;
+      const exact = slot === write.address && write.width === word;
+      const previous = writes.get(slot);
+      if (
+        exact &&
+        (previous === undefined ||
+          (previous.value !== null && previous.value === write.value))
+      ) {
+        writes.set(slot, write);
+        continue;
+      }
+      writes.delete(slot);
+      clobbered.add(slot);
+    }
+  };
   try {
     const steps = readElfRelocationWritesSteps(
       scan.bytes,
@@ -561,22 +624,27 @@ const loadWrites = (
       },
       { unsupported: "record" },
     );
-    const writes = new Map<bigint, ElfPointerWrite>();
     let next = steps.next();
     while (!next.done) {
-      const write = next.value;
-      if (write !== undefined && wanted.has(write.address))
-        writes.set(write.address, write);
+      if (next.value === undefined) {
+        await immediate();
+        assertArtifactReadActive(signal);
+      } else consider(next.value);
       next = steps.next();
     }
+    if (clobbered.size > 0)
+      note(
+        scan,
+        `${String(clobbered.size)} initializer slot(s) are partly overwritten or written more than once by dynamic relocations and are listed as unresolved.`,
+      );
     if (!next.value.pointer_coverage_known) {
       const issues = next.value.issues;
       if (issues.length === 0)
         note(scan, "Dynamic relocation coverage is incomplete.");
       for (const issue of issues) note(scan, issue);
-      return { writes, trustRaw: false };
+      return { writes, clobbered, trustRaw: false };
     }
-    return { writes, trustRaw: true };
+    return { writes, clobbered, trustRaw: true };
   } catch (cause) {
     if (!(cause instanceof ElfPointerRelocationFailure)) throw cause;
     if (cause.reason === "native-index-capacity")
@@ -586,7 +654,7 @@ const loadWrites = (
         cause.message,
       );
     note(scan, cause.message);
-    return { writes: new Map(), trustRaw: false };
+    return { writes: new Map(), clobbered: new Set(), trustRaw: false };
   }
 };
 
@@ -660,31 +728,30 @@ const rawRelocation = (
     : { method: "raw", value, importName: null, definedName: null };
 };
 
+const UNRESOLVED: SlotRelocation = {
+  method: "unresolved",
+  value: null,
+  importName: null,
+  definedName: null,
+};
+
+/**
+ * One array slot. `trustRaw` is false when dynamic or section relocation
+ * coverage is incomplete, so a slot with no relocation found may still have one.
+ */
 const resolveSlot = (
   scan: ElfScan,
   slot: Slot,
   write: ElfPointerWrite | undefined,
+  clobbered: boolean,
   sectionRel: SlotRelocation | undefined,
   symbols: readonly ElfInitializerSymbol[] | undefined,
   trustRaw: boolean,
 ): SlotRelocation => {
-  if (write !== undefined && write.width === wordOf(scan.bits))
-    return fromDynamicWrite(scan, write, symbols);
-  if (write !== undefined)
-    return {
-      method: "unresolved",
-      value: null,
-      importName: null,
-      definedName: null,
-    };
+  if (clobbered) return UNRESOLVED;
+  if (write !== undefined) return fromDynamicWrite(scan, write, symbols);
   if (sectionRel !== undefined) return sectionRel;
-  if (!trustRaw)
-    return {
-      method: "unresolved",
-      value: null,
-      importName: null,
-      definedName: null,
-    };
+  if (!trustRaw) return UNRESOLVED;
   return rawRelocation(scan, slot.fileOffset);
 };
 
@@ -716,19 +783,23 @@ interface Target {
   readonly fileOffset: number | null;
 }
 
-/** ET_REL values are offsets inside the relocation symbol's section. */
+/**
+ * Where a resolved value points. `locateTarget` maps one byte, since a function
+ * only needs its first byte mapped. ET_REL values are offsets inside the
+ * relocation symbol's section.
+ */
 const targetOf = (
   scan: ElfScan,
   applied: SlotRelocation,
   sections: readonly NativeSection[],
   index: ElfSectionIndex,
-  locate: (address: bigint) => number | null,
+  locateTarget: (address: bigint) => number | null,
 ): Target => {
   if (applied.value === null) return { section: null, fileOffset: null };
   if (!scan.relocatable)
     return {
       section: index.nameAt(applied.value),
-      fileOffset: locate(applied.value),
+      fileOffset: locateTarget(applied.value),
     };
   const section =
     applied.sectionIndex === undefined
@@ -744,14 +815,14 @@ const targetOf = (
 const collectEntries = (
   scan: ElfScan,
   sources: readonly Source[],
-  writes: ReadonlyMap<bigint, ElfPointerWrite>,
+  loaded: WriteLoad,
   sectionRels: ReadonlyMap<number, SlotRelocation>,
   symbols: readonly ElfInitializerSymbol[] | undefined,
   names: SymbolNames,
   trustRaw: boolean,
   sections: readonly NativeSection[],
   index: ElfSectionIndex,
-  locate: (address: bigint) => number | null,
+  locateTarget: (address: bigint) => number | null,
   signal: AbortSignal | undefined,
 ): { readonly entries: CollectedInitializer[]; readonly examined: number } => {
   const entries: CollectedInitializer[] = [];
@@ -772,7 +843,8 @@ const collectEntries = (
           ? resolveSlot(
               scan,
               slot,
-              scan.relocatable ? undefined : writes.get(slot.va),
+              scan.relocatable ? undefined : loaded.writes.get(slot.va),
+              !scan.relocatable && loaded.clobbered.has(slot.va),
               slot.fileOffset === null
                 ? undefined
                 : sectionRels.get(slot.fileOffset),
@@ -802,7 +874,7 @@ const collectEntries = (
           false,
         );
       }
-      const target = targetOf(scan, applied, sections, index, locate);
+      const target = targetOf(scan, applied, sections, index, locateTarget);
       entries.push({
         index: entries.length,
         kind: source.kind,
@@ -835,11 +907,11 @@ const collectEntries = (
 };
 
 /** Decode ELF initializer and finalizer slots for one thin image. */
-export const readElfInitializers = (
+export const readElfInitializers = async (
   bytes: Buffer,
   page: InitializerPage,
   signal?: AbortSignal,
-): NativeInitializerInspection => {
+): Promise<NativeInitializerInspection> => {
   assertArtifactReadActive(signal);
   const image = readElfImage(bytes);
   const directory = readElfDirectoryFromBuffer(bytes);
@@ -869,7 +941,15 @@ export const readElfInitializers = (
     note(scan, directory.section_names_limitation);
   const index = indexSections(directory.sections);
   const locate = (address: bigint): number | null =>
-    fileOffsetFor(scan, image.mappings, image.zero_fills, index, address);
+    fileOffsetFor(
+      image.mappings,
+      image.zero_fills,
+      index,
+      address,
+      wordOf(scan.bits),
+    );
+  const locateTarget = (address: bigint): number | null =>
+    fileOffsetFor(image.mappings, image.zero_fills, index, address, 1);
   const sources = collectSources(
     scan,
     tags,
@@ -886,7 +966,8 @@ export const readElfInitializers = (
       ),
     ),
   );
-  const loaded = loadWrites(scan, image, wanted);
+  const loaded = await loadWrites(scan, image, wanted, signal);
+  assertArtifactReadActive(signal);
   const symbols = loadElfSymbolIndex(scan, directory.sections, scan.notes);
   if (symbols.incomplete) scan.incomplete = true;
   const uncovered = new Set(
@@ -894,7 +975,8 @@ export const readElfInitializers = (
       source.slots.flatMap((slot) =>
         slot.direct === undefined &&
         slot.fileOffset !== null &&
-        (scan.relocatable || !loaded.writes.has(slot.va))
+        (scan.relocatable ||
+          (!loaded.writes.has(slot.va) && !loaded.clobbered.has(slot.va)))
           ? [slot.fileOffset]
           : [],
       ),
@@ -910,18 +992,19 @@ export const readElfInitializers = (
     fileOffset: locate,
     signal,
   });
-  if (scan.notes.recorded !== notesBeforeRelocs) scan.incomplete = true;
+  if (scan.notes.recorded !== notesBeforeRelocs || !sectionRels.complete)
+    scan.incomplete = true;
   const collected = collectEntries(
     scan,
     sources,
-    loaded.writes,
-    sectionRels,
+    loaded,
+    sectionRels.found,
     dynamicSymbols(directory.sections, tags, symbols.tables),
     symbols,
-    loaded.trustRaw,
+    loaded.trustRaw && sectionRels.complete,
     directory.sections,
     index,
-    locate,
+    locateTarget,
     signal,
   );
   const architecture = elfArchitecture(scan.machine) ?? null;

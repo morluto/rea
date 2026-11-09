@@ -83,12 +83,20 @@ export const readPointerWord = (
   );
 };
 
+/**
+ * Name at `offset`. Offset 0 is the empty name. A missing string table or an
+ * offset outside it is an unreadable name, which `missing` keeps visible.
+ */
 const stringAt = (
   table: Buffer | null,
   offset: number,
   notes: InitializerNotes,
-): { readonly name: string | null; readonly truncated: boolean } => {
-  if (table === null) return { name: null, truncated: false };
+): { readonly name: string | null; readonly missing: boolean } => {
+  if (offset === 0) return { name: null, missing: false };
+  if (table === null) {
+    notes.tally("unreadable-symbol-name");
+    return { name: null, missing: true };
+  }
   const observed = observeElfStringTableEntry(
     table,
     offset,
@@ -96,7 +104,11 @@ const stringAt = (
   );
   if (observed.state === "truncated") {
     notes.tally("long-symbol-name");
-    return { name: null, truncated: true };
+    return { name: null, missing: true };
+  }
+  if (observed.state === "outside") {
+    notes.tally("unreadable-symbol-name");
+    return { name: null, missing: true };
   }
   const text = elfStringTableText(observed);
   if (
@@ -104,8 +116,8 @@ const stringAt = (
     text.length === 0 ||
     text.length > MAX_NATIVE_INITIALIZER_NAME_BYTES
   )
-    return { name: null, truncated: false };
-  return { name: text, truncated: false };
+    return { name: null, missing: false };
+  return { name: text, missing: false };
 };
 
 const tableBytes = (
@@ -140,7 +152,7 @@ const readTable = (
       `Symbol table scanning stopped at ${String(SYMBOL_SCAN)} symbols across all symbol tables. Later names may be missing.`,
     );
   const symbols: ElfInitializerSymbol[] = [];
-  let nameTruncated = false;
+  let nameMissing = false;
   for (let index = 0; index < count; index += 1) {
     const at = start + index * width;
     const parsed = readElfSymbol(
@@ -153,7 +165,7 @@ const readTable = (
       break;
     }
     const named = stringAt(strings, parsed.value.name_offset, notes);
-    nameTruncated ||= named.truncated;
+    nameMissing ||= named.missing;
     symbols.push({
       name: named.name,
       value: parsed.value.value,
@@ -161,7 +173,7 @@ const readTable = (
       type: parsed.value.type,
     });
   }
-  return { symbols, truncated: truncated || nameTruncated };
+  return { symbols, truncated: truncated || nameMissing };
 };
 
 /** Load SHT_SYMTAB and SHT_DYNSYM once. Defined STT_FUNC names win ties. */
@@ -331,28 +343,97 @@ const recordTarget = (
   return Number(target.offset + offset);
 };
 
-/** Section REL/RELA records for slots that dynamic tables do not cover, keyed by slot file offset. */
+/** Section relocations found for wanted slots, and whether every applicable record was read. */
+export interface SectionRelocationScan {
+  readonly found: ReadonlyMap<number, SlotRelocation>;
+  /**
+   * False when a relocation section was skipped, ended early or lies past the
+   * record budget, so an unmatched slot may still have an unread relocation.
+   */
+  readonly complete: boolean;
+}
+
+const SHF_ALLOC = 2n;
+
+/**
+ * Whether records in `section` could reach a wanted slot. ET_REL records only
+ * reach the section named by `sh_info`; a linked image's records may reach any
+ * address.
+ */
+const reachesWanted = (
+  input: SectionRelocInput,
+  wanted: readonly number[],
+  section: NativeSection,
+): boolean => {
+  if (!input.relocatable) return true;
+  const target = input.sections[section.info];
+  if (target === undefined) return true;
+  if (!target.file_backed) return false;
+  const from = Number(target.offset);
+  const to = from + Number(target.size);
+  let low = 0;
+  let high = wanted.length;
+  while (low < high) {
+    const mid = (low + high) >>> 1;
+    if ((wanted[mid] ?? to) < from) low = mid + 1;
+    else high = mid;
+  }
+  return (wanted[low] ?? to) < to;
+};
+
+/** Relocation sections this reader applies: every one in ET_REL, SHF_ALLOC ones otherwise. */
+const applicable = (
+  input: SectionRelocInput,
+  section: NativeSection,
+): "rel" | "rela" | null => {
+  const encoding = encodingOf(section.type);
+  if (encoding === null) return null;
+  if (!input.relocatable && (section.flags & SHF_ALLOC) === 0n) return null;
+  return encoding;
+};
+
+/**
+ * Section REL/RELA records for slots that dynamic tables do not cover, keyed by
+ * slot file offset. In a linked image, a relocation section without SHF_ALLOC
+ * is a link-time record the static linker already applied (for example from
+ * `--emit-relocs`), so the slot already holds its result and is not reapplied.
+ */
 export const sectionRelocations = (
   input: SectionRelocInput,
-): Map<number, SlotRelocation> => {
+): SectionRelocationScan => {
   const found = new Map<number, SlotRelocation>();
-  if (input.wanted.size === 0) return found;
+  if (input.wanted.size === 0) return { found, complete: true };
+  const wanted = [...input.wanted].sort((left, right) => left - right);
   const word = wordOf(input.bits);
+  let complete = true;
+  const skip = (section: NativeSection): void => {
+    if (reachesWanted(input, wanted, section)) complete = false;
+  };
   // One budget across every header, so many headers over one range cannot multiply the work.
   let budget = SECTION_RELOCATION_RECORD_SCAN;
-  for (const section of input.sections) {
-    const encoding = encodingOf(section.type);
-    if (encoding === null || !section.file_backed) continue;
+  for (const [position, section] of input.sections.entries()) {
+    const encoding = applicable(input, section);
+    if (encoding === null) continue;
+    if (!section.file_backed) {
+      skip(section);
+      continue;
+    }
     const width = encoding === "rela" ? word * 3 : word * 2;
     const entsize =
       section.entry_size === 0n ? BigInt(width) : section.entry_size;
     if (entsize !== BigInt(width) || section.size % entsize !== 0n) {
       input.notes.tally("relocation-entry-size");
+      skip(section);
       continue;
     }
     const symbols = input.tables.get(section.link);
     const target = input.relocatable ? input.sections[section.info] : undefined;
-    if (input.relocatable && target === undefined) continue;
+    if (input.relocatable && target === undefined) {
+      input.notes.add(
+        "A relocation section names a target section that does not exist, so its records were not applied.",
+      );
+      continue;
+    }
     const start = Number(section.offset);
     const declared = section.size / entsize;
     const count = Number(declared < BigInt(budget) ? declared : BigInt(budget));
@@ -373,6 +454,7 @@ export const sectionRelocations = (
       );
       if (!parsed.ok) {
         input.notes.add(parsed.error.message);
+        skip(section);
         break;
       }
       const slot = recordTarget(input, target, parsed.value.offset);
@@ -386,7 +468,12 @@ export const sectionRelocations = (
         relocationFromEntry(input, parsed.value, symbols, inplace),
       );
     }
-    if (stopped) break;
+    if (stopped) {
+      // The rest of this section and every later one were not read.
+      for (const later of input.sections.slice(position))
+        if (applicable(input, later) !== null) skip(later);
+      break;
+    }
   }
-  return found;
+  return { found, complete };
 };
