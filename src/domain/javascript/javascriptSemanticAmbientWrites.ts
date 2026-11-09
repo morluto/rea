@@ -1,3 +1,4 @@
+import { javaScriptThisOwner } from "./javascriptSourceParser.js";
 import * as t from "@babel/types";
 
 import {
@@ -38,10 +39,10 @@ import {
 } from "./javascriptSemanticGlobalReference.js";
 import { readSemanticRequireLoader } from "./javascriptSemanticRequireOriginSlot.js";
 import {
-  semanticCopiedReferencePath,
   semanticReferenceIterationUnknown,
   semanticReferenceSourcesInactive,
 } from "./javascriptSemanticReferenceSources.js";
+import { semanticCopiedReferencePath } from "./javascriptSemanticCopiedReferencePaths.js";
 
 export {
   isUnmodifiedGlobalReference,
@@ -60,6 +61,15 @@ const canonicalAmbientPath = (
 };
 
 type AmbientPath = readonly (string | null)[];
+
+const ambientEffectCovers = (
+  effect: JavaScriptSemanticAnalysisState["ambientWriteEffects"][number],
+  target: readonly string[],
+): boolean =>
+  effect.path.length <= target.length &&
+  effect.path.every((key, index) =>
+    semanticPropertyPathKeyMatches(key, target[index]!),
+  );
 
 interface AmbientPathEffectCache {
   readonly writes: number;
@@ -101,11 +111,7 @@ export const semanticAmbientPathMayHaveChangedAt = (
   if (effects === undefined) {
     const matches = (
       effect: JavaScriptSemanticAnalysisState["ambientWriteEffects"][number],
-    ): boolean =>
-      effect.path.length <= path.length &&
-      effect.path.every((key, index) =>
-        semanticPropertyPathKeyMatches(key, path[index]!),
-      );
+    ): boolean => ambientEffectCovers(effect, path);
     effects = [
       ...state.ambientWriteEffects.filter(matches),
       ...state.ambientEscapeEffects.filter(matches),
@@ -204,6 +210,7 @@ type AmbientIdentityUnknownReason =
 
 interface AmbientResolution {
   readonly paths: readonly AmbientPath[];
+  readonly callerPaths: readonly AmbientPath[];
   readonly ownership: "local" | "ambient" | "unknown";
   readonly unknownReasons: readonly AmbientIdentityUnknownReason[];
 }
@@ -239,6 +246,7 @@ export const createAmbientPathResolver = (
     const prior = possibleWrites ? undefined : cached.get(node);
     if (prior !== undefined) return prior;
     const result = new Map<string, AmbientPath>();
+    const callerPaths = new Map<string, AmbientPath>();
     let hasLocalIdentity = false;
     const unknownReasons = new Set<AmbientIdentityUnknownReason>();
     // The caller's write site selects initializers for the written target.
@@ -314,6 +322,7 @@ export const createAmbientPathResolver = (
           if (!possibleWrites) {
             const unresolved: AmbientResolution = {
               paths: [],
+              callerPaths: [...callerPaths.values()],
               ownership: "unknown",
               unknownReasons: ["widened-projection"],
             };
@@ -379,6 +388,22 @@ export const createAmbientPathResolver = (
           resolvedIdentity = true;
           continue;
         }
+        if (t.isThisExpression(root)) {
+          const owner = javaScriptThisOwner(
+            root,
+            state.program,
+            state.parentsByNode,
+          );
+          if (owner === "global") {
+            retain(["global", ...(suffix ?? [])]);
+            resolvedIdentity = true;
+            continue;
+          }
+          if (owner === "caller" && suffix !== undefined) {
+            const path = canonicalAmbientPath(["global", ...suffix]);
+            callerPaths.set(JSON.stringify(path), path);
+          }
+        }
         if (t.isIdentifier(root)) {
           // The wrapper module object is distinct from globalThis.module. Keep
           // its identity through the same alias/projection owner used for writes.
@@ -405,7 +430,7 @@ export const createAmbientPathResolver = (
           const readAt = current.readsAtSelf ? root : capture;
           const atRead =
             possibleWrites && readAt !== undefined
-              ? semanticBindingAtRead(binding, readAt, state.parentsByNode)
+              ? semanticBindingAtRead(binding, readAt, state)
               : undefined;
           const selected = atRead?.binding ?? binding;
           if (possibleWrites && atRead?.hasDefiniteInitializer === false)
@@ -612,6 +637,7 @@ export const createAmbientPathResolver = (
       unknownReasons.add("mixed-identities");
     const resolution: AmbientResolution = {
       paths,
+      callerPaths: [...callerPaths.values()],
       ownership:
         unknownReasons.size > 0
           ? "unknown"
@@ -837,8 +863,8 @@ export function* indexJavaScriptAmbientWritesSteps(
     }
   }
   // Settle other ambient effects first. A syntactic resolver call is safe only
-  // if no write or opaque escape can replace the native member anywhere in
-  // this analysis; otherwise retain its receiver escape conservatively.
+  // if no write or opaque escape can replace its native member before this
+  // invocation; ambiguous execution order remains conservative.
   const resolverReceivers: typeof escapes = [];
   for (const effect of escapes) {
     const { node, target } = effect;
@@ -860,10 +886,32 @@ export function* indexJavaScriptAmbientWritesSteps(
   }
   for (const effect of resolverReceivers) {
     const { node } = effect;
+    const selected = ["global", "require", "resolve"];
+    const mayAffectResolver = (
+      effects: typeof state.ambientWriteEffects,
+      covered: boolean,
+    ): boolean => {
+      if (!covered) return false;
+      const matches = effects.filter((entry) =>
+        ambientEffectCovers(entry, selected),
+      );
+      return (
+        matches.length === 0 ||
+        matches.some(
+          (entry) => semanticEffectTiming(node, entry.node, state) !== "after",
+        )
+      );
+    };
     if (
       (t.isCallExpression(node) || t.isOptionalCallExpression(node)) &&
-      !state.ambientWrites.covers(["global", "require", "resolve"]) &&
-      !state.ambientEscapes.covers(["global", "require", "resolve"]) &&
+      !mayAffectResolver(
+        state.ambientWriteEffects,
+        state.ambientWrites.covers(selected),
+      ) &&
+      !mayAffectResolver(
+        state.ambientEscapeEffects,
+        state.ambientEscapes.covers(selected),
+      ) &&
       readSemanticRequireLoader(node, state, new Set()) === "commonjs-loader"
     )
       continue;
@@ -916,14 +964,6 @@ export const createGlobalReferenceReader = (
     string | null,
     typeof state.ambientWriteEffects
   >();
-  const matches = (
-    effect: (typeof state.ambientWriteEffects)[number],
-    target: readonly string[],
-  ) =>
-    effect.path.length <= target.length &&
-    effect.path.every((key, index) =>
-      semanticPropertyPathKeyMatches(key, target[index]!),
-    );
   return (callee) => {
     const namespace = globalReferenceNamespace(callee, state, path);
     if (namespace === undefined) return { status: "unrelated" };
@@ -940,8 +980,9 @@ export const createGlobalReferenceReader = (
     if (effects === undefined) {
       effects = state.ambientWriteEffects.filter(
         (effect) =>
-          matches(effect, selected) ||
-          (namespace !== null && matches(effect, ["global", namespace])),
+          ambientEffectCovers(effect, selected) ||
+          (namespace !== null &&
+            ambientEffectCovers(effect, ["global", namespace])),
       );
       byNamespace.set(namespace, effects);
     }

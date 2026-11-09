@@ -87,7 +87,7 @@ that matches none of those rules is `unclassified`.
 
 Opened Mach-O and dSYM UUID joins remain unobserved. Symbol names printed
 inside the report are recorded claims and are not verified. Linux ELF cores
-use the separate [recorded crash](recorded-crashes.md) workflow.
+use the separate [recorded crash](guides/native/recorded-crashes.md) workflow.
 
 ## Limits and failures
 

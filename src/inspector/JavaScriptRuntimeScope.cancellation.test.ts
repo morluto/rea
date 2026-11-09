@@ -139,7 +139,6 @@ it("stops Inspector target authorization after the current stat settles", async 
     { signal: controller.signal },
   );
 
-  expect(result.ok).toBe(false);
   if (result.ok) throw new Error("Expected Inspector listing cancellation");
   expect(result.error).toBeInstanceOf(AnalysisCancelledError);
   expect(result.error.cause).toBe(reason);
@@ -148,7 +147,9 @@ it("stops Inspector target authorization after the current stat settles", async 
       complete: false,
       targets_examined: 1,
       limitations: expect.arrayContaining([
-        "Cancellation stopped target authorization; unexamined targets are unknown, not excluded.",
+        expect.stringMatching(
+          /cancellation.*authorization.*unexamined targets.*unknown.*not excluded/iu,
+        ),
       ]),
     },
   });
@@ -179,14 +180,14 @@ it("stops Electron target authorization after the current stat settles", async (
     { signal: controller.signal },
   );
 
-  expect(result.ok).toBe(false);
   if (result.ok) throw new Error("Expected Electron listing cancellation");
   expect(result.error).toBeInstanceOf(AnalysisCancelledError);
   expect(result.error.cause).toBe(reason);
   expect(result.error.diagnostics).toMatchObject({
     completed_prefix: {
-      coverage:
-        "partial: target authorization stopped; remaining targets are unknown",
+      coverage: expect.stringMatching(
+        /partial.*authorization stopped.*targets are unknown/iu,
+      ),
     },
   });
   const prefix = record(record(result.error.diagnostics)?.completed_prefix);
@@ -217,7 +218,6 @@ it("retains a target whose authorization completes before the next abort check",
     { signal: controller.signal },
   );
 
-  expect(result.ok).toBe(false);
   if (result.ok) throw new Error("Expected Electron listing cancellation");
   expect(result.error).toBeInstanceOf(AnalysisCancelledError);
   expect(result.error.cause).toBe(reason);

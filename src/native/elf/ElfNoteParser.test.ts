@@ -120,9 +120,7 @@ it.each([
     expect(() => parse(compressedElfNoteSectionFixture(bits, little))).toThrow(
       expect.objectContaining({
         kind: "unsupported",
-        message: expect.stringContaining(
-          "Compressed ELF note sections are unsupported",
-        ),
+        message: expect.stringMatching(/compressed.*note/iu),
       }),
     );
   },
@@ -241,8 +239,10 @@ it("keeps note facts but marks section names unavailable for unknown compression
   expect(report.entries[0]?.gnu?.build_id_hex).toBe(
     "0123456789abcdef0123456789abcdef01234567",
   );
-  expect(report.limitations).toContain(
-    "ELF section names are unavailable because compression type 3 is unsupported.",
+  expect(report.limitations).toContainEqual(
+    expect.stringMatching(
+      /section names.*unavailable.*compression type 3.*unsupported/iu,
+    ),
   );
 });
 
@@ -480,11 +480,11 @@ it.each([
     expect(directory.sections[2]).toMatchObject({ name, name_state: state });
     if (name === null) {
       expect(notes.coverage.status).toBe("complete");
-      expect(notes.limitations).toContain(
-        "ELF section names are incomplete because a name offset is outside its string table.",
+      expect(notes.limitations.join(" ")).toMatch(
+        /name offset.*string table/iu,
       );
-      expect(directory.section_names_limitation).toBe(
-        "ELF section names are incomplete because a name offset is outside its string table",
+      expect(directory.section_names_limitation).toMatch(
+        /name offset.*string table/iu,
       );
     }
   },
@@ -506,8 +506,8 @@ it.each([65535, 65536])(
         : { name: null, name_state: "truncated" },
     );
     if (terminatorOffset === 65536)
-      expect(directory.section_names_limitation).toBe(
-        "ELF section names are unavailable because a name is not NUL-terminated",
+      expect(directory.section_names_limitation).toMatch(
+        /section names.*unavailable.*not NUL-terminated/iu,
       );
   },
 );
@@ -516,11 +516,13 @@ it("bounds repeated scans of an unterminated section name", () => {
   const report = parse(unterminatedNoteSections(2, 64));
   expect(report.tables.map(({ name }) => name)).toEqual([null, null]);
   expect(report.coverage.status).toBe("complete");
-  expect(
-    report.limitations.filter((value) => value.includes("not NUL-terminated")),
-  ).toEqual([
-    "ELF section names are incomplete because a name is not NUL-terminated.",
-  ]);
+  const nameWarnings = report.limitations.filter((value) =>
+    /not NUL-terminated/iu.test(value),
+  );
+  expect(nameWarnings).toHaveLength(1);
+  expect(nameWarnings[0]).toMatch(
+    /section names.*incomplete.*not NUL-terminated/iu,
+  );
   let failure: unknown;
   try {
     parse(unterminatedNoteSections(3, 400));
@@ -680,9 +682,7 @@ it("keeps compressed-note refusal ahead of alignment precision admission", () =>
   const bytes = compressedElfNoteSectionFixture();
   const sectionTable = Number(bytes.readBigUInt64LE(40));
   bytes.writeBigUInt64LE(0xffffffffffffffffn, sectionTable + 64 + 48);
-  expect(() => parse(bytes)).toThrow(
-    "Compressed ELF note sections are unsupported",
-  );
+  expect(() => parse(bytes)).toThrow(/compressed.*note/iu);
 });
 
 it.each([

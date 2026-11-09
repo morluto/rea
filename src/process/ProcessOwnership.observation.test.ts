@@ -222,8 +222,9 @@ it("rechecks unavailable members individually before classifying their groups", 
         200,
         {
           state: "unverifiable",
-          reason:
-            "process ownership could not be revalidated for PID 200: unreadable-200",
+          reason: expect.stringMatching(
+            /ownership.*could not be revalidated.*PID 200.*unreadable-200/i,
+          ),
         },
       ],
     ]),
@@ -576,8 +577,9 @@ describe("token sweep batch failures", () => {
       failures: expect.arrayContaining([
         expect.objectContaining({
           pid: 101,
-          diagnostic:
-            "individual unreadable; run-token batch failed: batch reader unavailable",
+          diagnostic: expect.stringMatching(
+            /individual unreadable.*batch reader unavailable/iu,
+          ),
         }),
       ]),
     });

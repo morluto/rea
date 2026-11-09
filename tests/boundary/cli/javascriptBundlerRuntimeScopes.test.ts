@@ -26,6 +26,52 @@ const runtimeSource = (
 const appA = runtimeSource("webpackChunkAppA", "a");
 const appB = runtimeSource("webpackChunkAppB", "b");
 
+for (const includesLoader of [false, true]) {
+  cliTest(
+    `preserves only proven Webpack Electron facts (conditional loader=${includesLoader})`,
+    async ({ cli }) => {
+      const root = await createTestTempDirectory("rea-webpack-loader-union-");
+      const assignments = Array.from(
+        { length: 520 },
+        () => `if(flag)box=${includesLoader ? "flag?load:{}" : "{}"};`,
+      ).join("");
+      await writeFixtureFiles(root, {
+        "main.cjs": `(()=>{
+        var modules={
+          1:module=>{module.exports=require("electron")},
+          2:(module,exports,load)=>{
+            const electron=load.n(load(1));
+            new(electron().BrowserWindow)({});
+            electron().ipcMain.handle("ready",()=>{});
+          }
+        },cache={};
+        function load(id){
+          var found=cache[id];if(found!==undefined)return found.exports;
+          var module=cache[id]={exports:{}};
+          return modules[id](module,module.exports,load),module.exports;
+        }
+        load.n=value=>value&&value.__esModule?()=>value.default:()=>value;
+        let box={};${assignments}box.n=()=>0;load(2);
+      })();`,
+      });
+      const output = await cli.run({
+        arguments: ["analyze-javascript-application", root, "--json"],
+      });
+      expect(output.exitCode).toBe(0);
+      const result = javascriptApplicationAnalysisResultSchema.parse(
+        parseEvidence(output.json).normalized_result,
+      );
+      expect(result.summary).toMatchObject({
+        browser_windows: includesLoader ? 0 : 1,
+        ipc: {
+          operations: includesLoader ? 0 : 1,
+          main_handlers: includesLoader ? 0 : 1,
+        },
+      });
+    },
+  );
+}
+
 cliTest(
   "keeps source-derived runtime, module and chunk tuples collision-free",
   async ({ cli }) => {
@@ -128,7 +174,7 @@ for (const scenario of [
     `keeps bundled relationships within their runtime for ${scenario.name}`,
     async ({ cli }) => {
       const root = await createTestTempDirectory("rea-bundler-runtime-scope-");
-      await writeFixtureFiles(root, { "bundle.js": scenario.source });
+      await writeFixtureFiles(root, { "bundle.cjs": scenario.source });
       const output = await cli.run({
         arguments: ["analyze-javascript-application", root, "--json"],
       });
@@ -202,6 +248,49 @@ for (const scenario of [
     },
   );
 }
+
+cliTest(
+  "keeps conditional Electron observations scoped to unknown-host runtimes",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-bundler-unknown-host-");
+    await writeFixtureFiles(root, { "bundle.js": appA + appB });
+    const output = await cli.run({
+      arguments: ["analyze-javascript-application", root, "--json"],
+    });
+    expect(output.exitCode).toBe(0);
+    const { graph } = javascriptApplicationAnalysisResultSchema.parse(
+      parseEvidence(output.json).normalized_result,
+    );
+    expect(graph.coverage.status).toBe("partial");
+    const nodes = new Map(graph.nodes.map((node) => [node.node_id, node]));
+    for (const runtime of ["webpackChunkAppA", "webpackChunkAppB"]) {
+      const module = graph.nodes.find(
+        (node) =>
+          node.identity.strategy === "artifact-local-key" &&
+          node.identity.namespace === `${runtime}:module` &&
+          node.identity.key === "1",
+      );
+      expect(module).toBeDefined();
+      const windowEdge = graph.edges.find(
+        (edge) =>
+          edge.source_node_id === module?.node_id &&
+          edge.relation === "contains" &&
+          nodes.get(edge.target_node_id)?.kind === "browser-window",
+      );
+      expect(windowEdge).toBeDefined();
+      expect(
+        nodes.get(windowEdge!.target_node_id)?.observations,
+      ).toContainEqual(
+        expect.objectContaining({
+          properties: expect.objectContaining({
+            loader_authority: "candidate",
+          }),
+          evidence: expect.objectContaining({ confidence: "low" }),
+        }),
+      );
+    }
+  },
+);
 
 cliTest(
   "shares module IDs across chunks only within the same runtime",

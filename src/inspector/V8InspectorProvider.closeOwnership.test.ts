@@ -181,7 +181,6 @@ it("retains cancelled final-close ownership and retries the exact transport befo
       await observing;
     },
   ]);
-  expect(result.ok).toBe(false);
   if (result.ok) throw new Error("Expected cleanup-incomplete cancellation");
   const error = result.error;
   expect(error.cleanupIncomplete).toBe(true);
@@ -212,7 +211,6 @@ it("retains cancelled final-close ownership and retries the exact transport befo
 
   closeFailures.add(5);
   const cleanupOnly = await observeJavaScriptRuntime(provider(), input);
-  expect(cleanupOnly.ok).toBe(false);
   if (cleanupOnly.ok) throw new Error("Expected close-only cleanup failure");
   expect(cleanupOnly.error.cleanupIncomplete).toBe(true);
   expect(cleanupOnly.error.cleanupResources).toEqual(["browser_transport"]);

@@ -3,7 +3,7 @@ import { persistentDebuggerHostSupported } from "../process/PersistentDebuggerHo
 import { randomUUID } from "node:crypto";
 import { isUtf8 } from "node:buffer";
 import { open, readlink, realpath, stat } from "node:fs/promises";
-import { constants as fsConstants } from "node:fs";
+import { constants as fsConstants, type Stats } from "node:fs";
 import { isatty } from "node:tty";
 
 import {
@@ -25,7 +25,6 @@ import {
   type SpawnedOwnedProviderProcess,
 } from "../process/ProviderProcess.js";
 import {
-  applyDebuggerAdmissionOverride,
   debuggerControlReplyOutput,
   resolveDebuggerSessionLimits,
   type DebuggerAdmissionLimit,
@@ -129,9 +128,6 @@ interface RizinCommandInterruption {
   readonly capture: RizinCommandCapture;
 }
 
-export const isRizinCommandDeadlineExpired = (remainingMs: number): boolean =>
-  remainingMs <= 0;
-
 interface RizinCommandTimeoutEvidenceInput {
   readonly sessionId: string;
   readonly command: string;
@@ -139,22 +135,22 @@ interface RizinCommandTimeoutEvidenceInput {
   readonly inferiorTty: string;
   readonly cleanupFailure: string | undefined;
   readonly launchProvenance: RizinLaunchProvenance;
-  readonly deadline?: DebuggerAdmissionLimit;
+  readonly deadline: DebuggerAdmissionLimit;
 }
 
-export const rizinCommandTimeoutLimitation = (
+const rizinCommandTimeoutLimitation = (
   deadline: DebuggerAdmissionLimit,
 ): string =>
   `The command timed out before its completion marker at ${String(deadline.value)} ms (deadlineExpired). ${debuggerAdmissionRecovery(deadline)} Retained output is partial and completion is unknown.`;
 
-export const createRizinCommandTimeoutEvidence = ({
+const createRizinCommandTimeoutEvidence = ({
   sessionId,
   command,
   result,
   inferiorTty,
   cleanupFailure,
   launchProvenance,
-  deadline = resolveDebuggerSessionLimits({}).commandDeadline,
+  deadline,
 }: RizinCommandTimeoutEvidenceInput): Evidence =>
   createRizinCommandEvidence({
     sessionId,
@@ -270,16 +266,8 @@ export class RizinDebugSessionManager {
   constructor(
     environment: Readonly<NodeJS.ProcessEnv> = process.env,
     options: {
-      /** @internal Test seam. Production uses REA_DEBUGGER_COMMAND_DEADLINE_MS. */
-      readonly frameTimeoutMs?: number;
       /** @internal Test seam; production callers should use the 30 s default. */
       readonly startupTimeoutMs?: number;
-      /** @internal Test seam. Production uses REA_DEBUGGER_MAX_SESSIONS. */
-      readonly maxSessions?: number;
-      /** @internal Test seam. Production uses REA_DEBUGGER_MAX_PENDING_COMMANDS. */
-      readonly maxPendingCommands?: number;
-      /** @internal Test seam. Production uses REA_DEBUGGER_MAX_COMMAND_OUTPUT_BYTES. */
-      readonly maxCommandOutputBytes?: number;
       readonly platform?: NodeJS.Platform;
       readonly stopProcess?: typeof stopOwnedDebuggerProcess;
       readonly spawnProcess?: typeof spawnOwnedProviderProcess;
@@ -288,24 +276,12 @@ export class RizinDebugSessionManager {
     this.#environment = { ...environment };
     this.#command = environment.REA_RIZIN_COMMAND ?? "rizin";
     const limits = resolveDebuggerSessionLimits(this.#environment);
-    this.#commandDeadline = applyDebuggerAdmissionOverride(
-      limits.commandDeadline,
-      options.frameTimeoutMs,
-    );
+    this.#commandDeadline = limits.commandDeadline;
     this.#frameTimeoutMs = this.#commandDeadline.value;
     this.#startupTimeoutMs = options.startupTimeoutMs ?? STARTUP_TIMEOUT_MS;
-    this.#maxSessions = applyDebuggerAdmissionOverride(
-      limits.maxSessions,
-      options.maxSessions,
-    );
-    this.#maxPendingCommands = applyDebuggerAdmissionOverride(
-      limits.maxPendingCommands,
-      options.maxPendingCommands,
-    );
-    this.#commandOutput = applyDebuggerAdmissionOverride(
-      limits.maxCommandOutputBytes,
-      options.maxCommandOutputBytes,
-    );
+    this.#maxSessions = limits.maxSessions;
+    this.#maxPendingCommands = limits.maxPendingCommands;
+    this.#commandOutput = limits.maxCommandOutputBytes;
     this.#maxCommandOutputBytes = this.#commandOutput.value;
     this.#platform = options.platform ?? process.platform;
     this.#stopProcess = options.stopProcess ?? stopOwnedDebuggerProcess;
@@ -332,7 +308,7 @@ export class RizinDebugSessionManager {
             path: ["inferior_tty"],
             reason: "missing_argument",
             message:
-              "Select a persistent readable and writable Linux terminal for inferior output.",
+              "Select a persistent readable and writable Linux terminal for inferior input and output.",
           },
         ]),
       );
@@ -445,6 +421,10 @@ export class RizinDebugSessionManager {
       "-N",
       "-0",
       "-d",
+      // Rizin reads REA's commands from its own stdin. Without this key the
+      // target inherits that stream and, once resumed, reads those commands.
+      "-R",
+      `stdin=${ttyPath}`,
       "-R",
       `stdout=${ttyPath}`,
       "-R",
@@ -1284,6 +1264,7 @@ export class RizinDebugSessionManager {
     );
     await this.#verifyDebuggerExitPolicy(session);
     await this.#verifyInferiorOutputDescriptors(session, pid);
+    await this.#verifyInferiorStdinIsolated(session, pid);
     await this.#runInternalCommand(session, `o- ${fd}`);
     const after = parseRizinPtraceRows(
       await this.#runInternalCommand(session, "olj"),
@@ -1341,6 +1322,34 @@ export class RizinDebugSessionManager {
           `Inferior descriptor ${descriptor} is not routed to the selected TTY.`,
         );
     }
+  }
+
+  /**
+   * Detach resumes the inferior, which would then read the commands that must
+   * confirm the detach. Only sharing the command stream is refused: a target may
+   * close or replace its own stdin, and neither can consume those commands.
+   */
+  async #verifyInferiorStdinIsolated(
+    session: RizinDebugSession,
+    pid: string,
+  ): Promise<void> {
+    let inferiorStdin: Stats;
+    try {
+      inferiorStdin = await stat(`/proc/${pid}/fd/0`);
+    } catch (cause) {
+      if ((cause as NodeJS.ErrnoException).code === "ENOENT") return;
+      throw cause;
+    }
+    const commandStream = await stat(
+      `/proc/${String(session.launched.process.pid)}/fd/0`,
+    );
+    if (
+      inferiorStdin.dev === commandStream.dev &&
+      inferiorStdin.ino === commandStream.ino
+    )
+      throw new Error(
+        "Inferior stdin is the Rizin command stream rather than the selected TTY; detaching would let the target consume debugger commands.",
+      );
   }
 
   async #synchronizeCleanup(session: RizinDebugSession): Promise<void> {
@@ -1758,7 +1767,7 @@ const waitForCommandFrames = async (
       });
     }
     const remaining = deadline - Date.now();
-    if (isRizinCommandDeadlineExpired(remaining))
+    if (remaining <= 0)
       return err({
         kind: "timeout",
         cause: new RizinFrameTimeoutError(),
@@ -1815,7 +1824,7 @@ const waitForCommandFrames = async (
   }
 };
 
-export const truncateUtf8 = (value: string, maximumBytes: number): string => {
+const truncateUtf8 = (value: string, maximumBytes: number): string => {
   if (maximumBytes <= 0) return "";
   // A UTF-16 code unit needs at most three UTF-8 bytes. Buffer.write stops
   // before a partial character; only decode bytes it actually initialized.

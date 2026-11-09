@@ -110,10 +110,17 @@ export interface JavaScriptFindingContext {
     site: t.Node,
     suffix: readonly string[],
   ) =>
-    | { readonly owner: t.NewExpression; readonly path: readonly string[] }
+    | {
+        readonly owner: t.NewExpression;
+        readonly path: readonly string[];
+        readonly authority: { readonly loader_authority?: "candidate" };
+      }
     | undefined;
   readonly xhrOpenRequest?: (node: t.Node) => boolean;
-  readonly rendererLoad?: (callee: t.Node, site: t.Node) => boolean;
+  readonly rendererLoad?: (
+    callee: t.Node,
+    site: t.Node,
+  ) => { readonly loader_authority?: "candidate" } | undefined;
   readonly rpcScan: JavaScriptRpcScan;
   /** Shared bounded argv/nullish argument shapes for optional-slot signatures. */
   readonly expressionShapes: JavaScriptExpressionShapeResolver;
@@ -123,12 +130,15 @@ export interface JavaScriptFindingContext {
   readonly openReceiverFacts?: ReadonlyMap<number, JavaScriptOpenReceiverFact>;
   /** Proven Electron export path segments by root offset. */
   readonly electronBindings?: ReadonlyMap<number, readonly string[]>;
+  /** Conditional Electron export paths, keyed by call/construction root. */
+  readonly electronCandidateBindings?: ReadonlyMap<number, readonly string[]>;
   /** Normalized invocation target from the shared Electron and intrinsic owners. */
   readonly electronInvocationPath?: (
     node: t.CallExpression | t.OptionalCallExpression,
   ) => readonly string[] | undefined;
   /** A possible shared-app mutation does not establish concrete API identity. */
   readonly electronAppPathChangePossible?: (node: t.Node) => boolean;
+  readonly electronCandidateAppPathChangePossible?: (node: t.Node) => boolean;
 }
 
 /** Candidate import, require, worker, or service-worker reference. */
@@ -138,6 +148,8 @@ export interface JavaScriptReferenceInput {
   readonly kind: JavaScriptStaticReference["kind"];
   readonly specifier: string | undefined;
   readonly resolutionBasePath?: string;
+  readonly loader?: JavaScriptStaticReference["loader"];
+  readonly loaderAuthority?: "candidate";
 }
 
 /** Candidate route or network endpoint literal. */

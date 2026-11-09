@@ -20,7 +20,7 @@ import {
   expectOutputError,
   expectOwnerError,
   expectPreemptedCancellation,
-} from "../ownerObservationExpectation.fixture.js";
+} from "../../../tests/fixtures/ownerObservationExpectation.js";
 
 const observeCancelled = async (partial: unknown) => {
   const reason = { requested: "stop before runtime observation completed" };
@@ -75,7 +75,6 @@ it("preserves failed Inspector cleanup when cancellation occurs during observati
     { signal: controller.signal },
   );
 
-  expect(result.ok).toBe(false);
   if (result.ok) throw new Error("Expected failed cleanup");
   expect(result.error).toBe(failure);
   expect(result.error.cleanupIncomplete).toBe(true);

@@ -1,6 +1,7 @@
 import { expect, it } from "vitest";
 
 import { analyzeJavaScriptSemantics } from "./javascriptSemanticAnalysis.js";
+import { analyzeCommonJsSemanticFixture } from "../../../tests/fixtures/javascriptCommonJsAnalysis.js";
 
 /**
  * A listener must be a function, and Node throws `ERR_INVALID_ARG_TYPE` before
@@ -27,10 +28,18 @@ const eventsFor = (call: string) =>
     eventName,
   }));
 
-const eventsForSource = (source: string) =>
-  analyzeJavaScriptSemantics(source).eventOperations.map(
-    ({ kind, method, eventName }) => ({ kind, method, eventName }),
-  );
+const eventsForSource = (
+  source: string,
+  analyze = analyzeJavaScriptSemantics,
+) =>
+  analyze(source).eventOperations.map(({ kind, method, eventName }) => ({
+    kind,
+    method,
+    eventName,
+  }));
+
+const eventsForCommonJsSource = (source: string) =>
+  eventsForSource(source, analyzeCommonJsSemanticFixture);
 
 it.each([
   ["a numeric listener", `e.on("x", 1)`],
@@ -121,6 +130,19 @@ it.each([
     "EventEmitter",
   ],
   ["a default import", `import EE from "node:events";`, "EE"],
+] as const)(
+  "drops a missing listener on a receiver built from %s",
+  (_name, header, constructor) => {
+    expect(
+      eventsForSource(`${header}
+const e = new ${constructor}();
+e.on("x");`),
+    ).toEqual([]);
+  },
+);
+
+/** Unknown hosts retain candidates; only the CommonJS wrapper proves require. */
+it.each([
   [
     "a destructured require",
     `const { EventEmitter } = require("events");`,
@@ -132,15 +154,28 @@ it.each([
     "events.EventEmitter",
   ],
 ] as const)(
-  "drops a missing listener on a receiver built from %s",
+  "requires CommonJS authority to reject a missing listener from %s",
   (_name, header, constructor) => {
-    expect(
-      eventsForSource(`${header}
-const e = new ${constructor}();
-e.on("x");`),
-    ).toEqual([]);
+    const source = `${header}
+const e = new (${constructor})();
+e.on("x");`;
+    expect(eventsForSource(source)).toContainEqual({
+      kind: "register",
+      method: "on",
+      eventName: "x",
+    });
+    expect(eventsForCommonJsSource(source)).toEqual([]);
   },
 );
+
+it("keeps an ESM receiver when a candidate loader may replace its prototype", () => {
+  expect(
+    eventsForSource(`import { EventEmitter } from "node:events";
+const e = new EventEmitter();
+require("node:events").EventEmitter.prototype.on = replacement;
+e.on("ready");`),
+  ).toContainEqual({ kind: "register", method: "on", eventName: "ready" });
+});
 
 it("keeps a missing listener when the receiver was reassigned", () => {
   expect(
@@ -245,7 +280,7 @@ e.on("ready");`),
 /** A member require reaches the same class through the same member expression. */
 it("keeps the registration of a receiver built from a member require", () => {
   expect(
-    eventsForSource(`const events = require("node:events");
+    eventsForCommonJsSource(`const events = require("node:events");
 const original = events.EventEmitter.prototype.addListener;
 const e = new events.EventEmitter();
 events.EventEmitter.prototype.on = function (name, fn = () => {}) { return original.call(this, name, fn); };
@@ -324,7 +359,7 @@ e.on("ready");`),
  */
 it("keeps the registration of a receiver after an inline require write", () => {
   expect(
-    eventsForSource(`const original = require("node:events").EventEmitter.prototype.addListener;
+    eventsForCommonJsSource(`const original = require("node:events").EventEmitter.prototype.addListener;
 require("node:events").EventEmitter.prototype.on = function (name, fn = () => {}) { return original.call(this, name, fn); };
 const { EventEmitter } = require("node:events");
 const e = new EventEmitter();
@@ -495,18 +530,21 @@ it.each([
     'const events = require("node:events");',
     "events.EventEmitter",
     "events",
+    true,
   ],
   [
     "an inline require",
     "",
     'require("node:events").EventEmitter',
     'require("events")',
+    true,
   ],
 ] as const)(
   "keeps the registration when %s escapes after construction",
-  (_name, header, constructor, escaped) => {
+  (_name, header, constructor, escaped, commonJs: boolean = false) => {
+    const events = commonJs ? eventsForCommonJsSource : eventsForSource;
     expect(
-      eventsForSource(`import { configure } from "./configure.js";
+      events(`import { configure } from "./configure.js";
 ${header}
 const e = new (${constructor})();
 configure(${escaped});
@@ -673,13 +711,15 @@ it.each([
     "a required module",
     'const events = require("node:events");',
     "events.EventEmitter",
+    true,
   ],
-  ["an inline require", "", 'require("node:events").EventEmitter'],
+  ["an inline require", "", 'require("node:events").EventEmitter', true],
 ] as const)(
   "keeps a nested receiver when module eval may change %s",
-  (_name, header, constructor) => {
+  (_name, header, constructor, commonJs: boolean = false) => {
+    const events = commonJs ? eventsForCommonJsSource : eventsForSource;
     expect(
-      eventsForSource(`${header}
+      events(`${header}
 const original = (${constructor === "EE" ? "EventEmitter" : constructor}).prototype.on;
 eval(${JSON.stringify(`(${constructor === "EE" ? "EventEmitter" : constructor}).prototype.on = function(name, fn = () => {}) { return original.call(this, name, fn); }`)});
 function run() {
@@ -732,7 +772,7 @@ eval("EventEmitter.prototype.on = replacement");`),
 
 it("still rejects a missing listener beside a shadowed eval call", () => {
   expect(
-    eventsForSource(`const { EventEmitter } = require("node:events");
+    eventsForCommonJsSource(`const { EventEmitter } = require("node:events");
 function run(eval) {
   const e = new EventEmitter();
   eval("ordinary callback");
