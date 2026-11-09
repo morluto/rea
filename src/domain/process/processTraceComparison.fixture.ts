@@ -1,5 +1,6 @@
 import { EMPTY_PROCESS_CAPTURE_EXAMPLE } from "./processCaptureExample.js";
 import { hasCaptureTruncation } from "./processCaptureCoverage.js";
+import { accountFullyObservedProcessCapture } from "./processCapture.fixture.js";
 import {
   parseProcessCapture,
   type ProcessCapture,
@@ -19,6 +20,7 @@ export const processStarted = {
 
 export const capture = (
   values: Pick<ProcessCapture, "frames" | "process_samples"> & {
+    readonly rendered_frames?: ProcessCapture["rendered_frames"];
     readonly event_journal: readonly Pick<
       NonNullable<ProcessCapture["event_journal"]>[number],
       "collection" | "index"
@@ -29,28 +31,10 @@ export const capture = (
     readonly residualUnknowns?: ProcessCapture["residual_unknowns"];
   } = {},
 ): ProcessCapture => {
-  const omittedTerminalFrame = options.omittedTerminalFrame ?? false;
-  const retainedBytes = values.frames.reduce(
-    (total, frame) => total + Buffer.byteLength(frame.raw_data ?? frame.data),
-    0,
-  );
-  const truncationDetails = {
-    ...emptyCapture.truncation_details,
-    raw_terminal: {
-      ...emptyCapture.truncation_details.raw_terminal,
-      observed_bytes: retainedBytes + (omittedTerminalFrame ? 1 : 0),
-      retained_bytes: retainedBytes,
-      observed_frames: values.frames.length + (omittedTerminalFrame ? 1 : 0),
-      retained_frames: values.frames.length,
-    },
-    process: {
-      ...emptyCapture.truncation_details.process,
-      retained_samples: values.process_samples.length,
-    },
-  };
-  return parseProcessCapture({
+  const observed = accountFullyObservedProcessCapture({
     ...emptyCapture,
     frames: values.frames,
+    rendered_frames: values.rendered_frames ?? [],
     process_samples: values.process_samples,
     event_journal: [
       { capture_order: 0, collection: "filesystem_checkpoints", index: 0 },
@@ -74,9 +58,23 @@ export const capture = (
         index: 1,
       },
     ],
+    residual_unknowns: options.residualUnknowns ?? [],
+  });
+  if (!options.omittedTerminalFrame) return parseProcessCapture(observed);
+
+  const raw = observed.truncation_details.raw_terminal;
+  const truncationDetails = {
+    ...observed.truncation_details,
+    raw_terminal: {
+      ...raw,
+      observed_bytes: raw.observed_bytes + 1,
+      observed_frames: raw.observed_frames + 1,
+    },
+  };
+  return parseProcessCapture({
+    ...observed,
     truncated: hasCaptureTruncation(truncationDetails),
     truncation_details: truncationDetails,
-    residual_unknowns: options.residualUnknowns ?? [],
   });
 };
 

@@ -708,9 +708,9 @@ export const compareProcessCaptures = (
           [left, right],
         );
   const timedSources =
-    options.traceSpecification === undefined
-      ? new Set<ProcessObservationSource>()
-      : explicitlyTimedSources(options.traceSpecification);
+    trace?.verdict === "different" && options.traceSpecification !== undefined
+      ? explicitlyTimedSources(options.traceSpecification)
+      : new Set<ProcessObservationSource>();
   const timedDimensions = dimensionsForTraceSources(timedSources);
   const divergenceCandidates = PROCESS_COMPARISON_DIMENSIONS.map(
     (dimension) => {
