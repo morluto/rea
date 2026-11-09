@@ -4,7 +4,7 @@ import {
 } from "node:child_process";
 import { mkdtempSync, writeFileSync, unlinkSync, rmdirSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { chmod, writeFile } from "node:fs/promises";
+import { chmod, mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { expect, it } from "vitest";
@@ -152,6 +152,84 @@ it("respells the captured home in UTF-16 seeds with a byte-order mark, keeping t
     utf16(expected, "be").toString("hex"),
     ...files.slice(2).map((file) => file.toString("hex")),
   ]);
+});
+
+it.each([true, false])(
+  "restores nested selected aliases in either selection order (%s)",
+  async (childFirst) => {
+    const root = await createTestTempDirectory("desktop-nested-alias-");
+    const home = join(root, "home");
+    await mkdir(join(home, ".config", "notes"), { recursive: true });
+    await writeFile(join(home, ".config", "notes", "profile.ini"), "profile");
+    const imports = PYTHON_IMPORTS.split("\n")
+      .filter((line) => !line.includes("agentenv_protocol"))
+      .join("\n");
+    const pairs = childFirst
+      ? '[("settings/profile", ".config/notes"), ("settings", ".local/share/notes")]'
+      : '[("settings", ".local/share/notes"), ("settings/profile", ".config/notes")]';
+    const program = `${imports}
+STATE_ALIASES = ${pairs}
+${PYTHON_HELPERS}
+home = Path(sys.argv[1])
+_ensure_state_aliases(home)
+_ensure_state_aliases(home)
+`;
+    execPython(["-I", "-B", "-c", program, home], { encoding: "utf8" });
+    expect(
+      await readFile(join(home, "settings", "profile", "profile.ini"), "utf8"),
+    ).toBe("profile");
+  },
+);
+
+it("restores a selected settings alias without replacing an existing path", async () => {
+  const root = await createTestTempDirectory("desktop-state-alias-");
+  const home = join(root, "home");
+  await mkdir(join(root, "seed", ".config", "notes"), { recursive: true });
+  await writeFile(
+    join(root, "seed", ".config", "notes", "settings.ini"),
+    "saved",
+  );
+  await mkdir(join(root, "seed", ".config", "notes", "profiles", "work"), {
+    recursive: true,
+  });
+  await writeFile(
+    join(root, "seed", ".config", "notes", "profiles", "work", "profile.ini"),
+    "profile",
+  );
+  const imports = PYTHON_IMPORTS.split("\n")
+    .filter((line) => !line.includes("agentenv_protocol"))
+    .join("\n");
+  const program = `${imports}
+SEED_HOME = "/home/ada"
+TEXT_SEEDS = frozenset()
+STATE_ALIASES = [("settings", ".config/notes")]
+HERE = Path(sys.argv[1])
+${PYTHON_HELPERS}
+home = Path(sys.argv[2])
+_seed_home(home)
+_ensure_state_aliases(home)
+_ensure_state_aliases(home)
+`;
+  execPython(["-I", "-B", "-c", program, root, home], { encoding: "utf8" });
+  expect(await readFile(join(home, "settings", "settings.ini"), "utf8")).toBe(
+    "saved",
+  );
+  expect(
+    await readFile(
+      join(home, "settings", "profiles", "work", "profile.ini"),
+      "utf8",
+    ),
+  ).toBe("profile");
+  const other = join(root, "other-home");
+  await mkdir(other);
+  await writeFile(join(other, "settings"), "preserve");
+  expect(() =>
+    execPython(["-I", "-B", "-c", program, root, other], {
+      encoding: "utf8",
+      stdio: "pipe",
+    }),
+  ).toThrow();
+  expect(await readFile(join(other, "settings"), "utf8")).toBe("preserve");
 });
 
 /** A stand-in xprop answering the root window list and each window's class and state from a table. */

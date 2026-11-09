@@ -57,6 +57,10 @@ import {
   nativeInitializersSchema,
 } from "../../domain/native/nativeInitializers.js";
 import {
+  inspectElfUnwindRangesInputSchema,
+  elfUnwindRangesSchema,
+} from "../../domain/native/elfUnwindRanges.js";
+import {
   inspectAppleIpsInputSchema,
   appleIpsSchema,
 } from "../../domain/native/appleIps.js";
@@ -64,6 +68,10 @@ import {
   inspectKernelModuleInputSchema,
   kernelModuleSchema,
 } from "../../domain/native/kernelModule.js";
+import {
+  inspectKernelBuildConfigInputSchema,
+  kernelBuildConfigSchema,
+} from "../../domain/native/kernelBuildConfig.js";
 import {
   inspectWindowsShortcutInputSchema,
   windowsShortcutSchema,
@@ -165,6 +173,21 @@ export const BINARY_DIAGNOSTICS_TOOL_CONTRACTS = [
     ],
   },
   {
+    name: "inspect_elf_unwind_ranges",
+    ...toolContractMetadata("inspect_elf_unwind_ranges"),
+    kind: "native-provider",
+    description:
+      "Inspect one explicit local ELF32/ELF64 image's .eh_frame and .eh_frame_hdr without executing it or opening a disassembler. Returns a page of FDE function ranges with start, end, size, containing section, exact symbol name when one exists, CIE index, LSDA, and personality, plus version, augmentation, alignments, return-address register, and pointer encoding for only the CIEs those ranges name, with a total CIE count in coverage. Coverage counts ranges that match a symbol, ranges without a symbol, and whether the .eh_frame_hdr search table agrees with the decoded FDEs. .debug_frame is reported present, absent, or incomplete and is not decoded. A missing unwind table is observed absence of those declarations, not proof the image has no functions. Truncated records stay incomplete coverage. Reads a stable regular file; malformed ELF headers and exhausted CIE or FDE budgets return no partial success. CFA instructions are counted and not evaluated. Indirect EH pointers are not dereferenced. Portable on supported Node hosts.",
+    inputSchema: inspectElfUnwindRangesInputSchema,
+    outputSchema: evidenceResultOf(elfUnwindRangesSchema),
+    examples: [
+      {
+        title: "List function ranges from ELF unwind tables",
+        input: { path: "/artifacts/program" },
+      },
+    ],
+  },
+  {
     name: "inspect_apple_ips",
     ...toolContractMetadata("inspect_apple_ips"),
     kind: "native-provider",
@@ -199,6 +222,28 @@ export const BINARY_DIAGNOSTICS_TOOL_CONTRACTS = [
         title:
           "Inspect Linux kernel module license, vermagic, and dependencies",
         input: { path: "/artifacts/demo.ko" },
+      },
+    ],
+  },
+  {
+    name: "inspect_kernel_build_config",
+    ...toolContractMetadata("inspect_kernel_build_config"),
+    kind: "native-provider",
+    description:
+      "Inspect one explicit local Linux kernel image (vmlinux ELF, raw arm64 Image, x86 bzImage/zImage, or configs.ko) without executing it or opening a disassembler. Returns the `Linux version` banner split into version, builder, and compiler, and the embedded CONFIG_IKCONFIG build config: option count, SHA-256 of the inflated text, and paged CONFIG_* entries with value kind (y, m, string, number, not_set), optionally filtered by exact name. A config is accepted only when IKCFG_ST is immediately followed by a gzip member that inflates to config text and is immediately followed by IKCFG_ED, so an ordinary IKCFG_ST string is not a config. A bzImage gzip payload located through the setup header is inflated with a bounded output budget and searched; xz, lz4, lzma, zstd, bzip2, and lzo payloads are named as unsupported with external_decompression as the next probe. Truncated payloads and gzip members are incomplete, not absent. Reads a stable regular file; exhausted budgets return no partial success. Portable on supported Node hosts.",
+    inputSchema: inspectKernelBuildConfigInputSchema,
+    outputSchema: evidenceResultOf(kernelBuildConfigSchema),
+    examples: [
+      {
+        title: "Read a kernel image's version banner and embedded build config",
+        input: { path: "/artifacts/vmlinux" },
+      },
+      {
+        title: "Check one security option in an embedded kernel config",
+        input: {
+          path: "/artifacts/bzImage",
+          name: "CONFIG_SECURITY_SELINUX",
+        },
       },
     ],
   },

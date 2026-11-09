@@ -159,6 +159,39 @@ describe("native UI screenshot validation", () => {
         nodes: [{ children_count: null }],
       });
   });
+
+  it("retains incomplete action observations and their gap", async () => {
+    const partial = {
+      ...snapshot,
+      nodes: [
+        {
+          path: [],
+          role: "AXWindow",
+          title: null,
+          value: null,
+          actions: [],
+          children_count: 0,
+        },
+      ],
+      truncated: true,
+      gaps: [
+        "AX actions unavailable at path []: AXError -25204",
+        "AX value unavailable at path []: AXError -25204",
+      ],
+    };
+    const result = await observeNativeUi(
+      target,
+      "observe_native_ui",
+      { ...scope, accessibility: true },
+      { environment: {}, invoke: async () => ({ ok: true, result: partial }) },
+    );
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.value.initial.truncated).toBe(true);
+      expect(result.value.initial.gaps).toEqual(partial.gaps);
+      expect(result.value.initial.nodes[0]?.actions).toEqual([]);
+    }
+  });
 });
 
 describe("native UI capture selection and budgets", () => {
@@ -538,6 +571,7 @@ describe("native UI interruption provenance", () => {
 describe("native UI target and cancellation failures", () => {
   it.each([
     "accessibility-denied",
+    "accessibility-unavailable",
     "screen-recording-denied",
     "ambiguous-window",
   ])("preserves actionable %s without fallback", async (code) => {
@@ -564,7 +598,10 @@ describe("native UI target and cancellation failures", () => {
             ],
           },
         });
-      else expect(projected.details?.reason).toContain(code);
+      else {
+        expect(projected.code).toBe("capability_unavailable");
+        expect(projected.details?.reason).toContain(code);
+      }
     }
   });
   it("preserves the underlying helper failure reason in diagnostics", async () => {
