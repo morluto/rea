@@ -25,6 +25,7 @@ const HEADER_BYTES_WITH_FEATURES = 0x68;
 const ATTR_SIZE_FIELD = 0x10;
 const ATTRS_SECTION_FIELD = 0x18;
 const DATA_SECTION_FIELD = 0x28;
+const EVENT_TYPES_SECTION_FIELD = 0x38;
 
 /**
  * `struct perf_event_attr` common prefix. Fields past the common prefix depend
@@ -445,8 +446,12 @@ export const parsePerfData = (
   const read = readerFor(little);
   const order = little ? "little-endian" : "big-endian";
   const headerBytes = read.u64(bytes, HEADER_SIZE_FIELD);
+  // A present-but-unrepresentable size is not a truncation: every byte the
+  // field occupies is there, so the file is reported as an unsupported layout
+  // instead of claiming it ended before a field it actually carries.
+  const headerUnrepresentable = headerBytes === null;
   if (
-    headerBytes === null ||
+    headerUnrepresentable ||
     bytes.length < headerBytes ||
     (headerBytes !== HEADER_BYTES_WITHOUT_FEATURES &&
       headerBytes !== HEADER_BYTES_WITH_FEATURES)
@@ -455,8 +460,8 @@ export const parsePerfData = (
       state,
       null,
       "truncated-header",
-      headerBytes === null
-        ? `The file ends at ${bytes.length} bytes, before the size field of the perf_file_header.`
+      headerUnrepresentable
+        ? `The header size exceeds Number.MAX_SAFE_INTEGER, so the declared layout cannot be compared and its sections were not read.`
         : bytes.length < headerBytes
           ? `The header declares ${headerBytes} bytes but the file ends at ${bytes.length}, so its sections were not read.`
           : `The header declares ${headerBytes} bytes; this inventory accepts the ${HEADER_BYTES_WITHOUT_FEATURES}- and ${HEADER_BYTES_WITH_FEATURES}-byte layouts.`,
@@ -488,10 +493,21 @@ export const parsePerfData = (
   const attributeInHeader =
     attributeSection.size > 0 &&
     attributeSection.offset < (headerBytes ?? HEADER_BYTES_WITHOUT_FEATURES);
+  // `event_types` is its own header section; bytes it owns are not attribute
+  // entries, so an attribute walk over them would publish event-type bytes as
+  // events. Only a readable, nonempty extent can conflict.
+  const eventTypes = sectionAt(bytes, read, EVENT_TYPES_SECTION_FIELD).section;
+  const attributeOverlapsEventTypes =
+    eventTypes !== null &&
+    attributeSection.size > 0 &&
+    eventTypes.size > 0 &&
+    attributeSection.offset < eventTypes.offset + eventTypes.size &&
+    eventTypes.offset < attributeSection.offset + attributeSection.size;
   const attributeFits =
     attributeSection.within_file &&
     // The file header precedes the sections; bytes inside it are not attributes.
     !attributeInHeader &&
+    !attributeOverlapsEventTypes &&
     // An empty extent owns no bytes, so it cannot overlap another section:
     // a zero-length data section between attribute entries is not a conflict.
     !(
@@ -526,30 +542,39 @@ export const parsePerfData = (
       state,
       null,
       "attribute-section-overlap",
-      "The attribute and data sections overlap, so neither extent is trusted.",
+      attributeOverlapsEventTypes
+        ? "The attribute and event-types sections overlap, so the attribute extent is not trusted."
+        : "The attribute and data sections overlap, so neither extent is trusted.",
     );
-  else if (attributeSection.size === 0)
-    diagnose(
-      state,
-      null,
-      "empty-attribute-section",
-      "The attribute section is empty; the recording states no events.",
-    );
-  else if (rawStride === null)
-    diagnose(
-      state,
-      null,
-      "unsafe-attribute-size",
-      `The attribute entry stride exceeds Number.MAX_SAFE_INTEGER, so the recorded value cannot be represented and the events were not read.`,
-    );
-  else if (stride <= 0 || stride < ATTR_SIZE_MIN + PERF_FILE_SECTION_BYTES)
-    diagnose(
-      state,
-      null,
-      "unsupported-attribute-size",
-      `The attribute entry stride is ${stride} bytes, which cannot hold an attribute and its ids section.`,
-    );
-  else readEvents(bytes, read, state, attributeSection, stride);
+  else {
+    // A present-but-unrepresentable stride is a fact about the source whatever
+    // the section holds, so it is reported even when no entry needs walking;
+    // the empty section is then a second, independent fact.
+    if (rawStride === null)
+      diagnose(
+        state,
+        null,
+        "unsafe-attribute-size",
+        `The attribute entry stride exceeds Number.MAX_SAFE_INTEGER, so the recorded value cannot be represented and the events were not read.`,
+      );
+    if (attributeSection.size === 0)
+      diagnose(
+        state,
+        null,
+        "empty-attribute-section",
+        "The attribute section is empty; the recording states no events.",
+      );
+    else if (rawStride === null) {
+      // Diagnosed above; no entry was walked.
+    } else if (stride <= 0 || stride < ATTR_SIZE_MIN + PERF_FILE_SECTION_BYTES)
+      diagnose(
+        state,
+        null,
+        "unsupported-attribute-size",
+        `The attribute entry stride is ${stride} bytes, which cannot hold an attribute and its ids section.`,
+      );
+    else readEvents(bytes, read, state, attributeSection, stride);
+  }
   if (state.diagnosticsSuppressed)
     state.diagnostics.push({
       ordinal: null,

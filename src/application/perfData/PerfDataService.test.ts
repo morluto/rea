@@ -39,11 +39,7 @@ it("binds the published source bytes to complete Evidence", async () => {
   const resources = new ArtifactResourceScope();
   try {
     const result = await inspectPerfDataEvidence({ path }, resources);
-    expect(
-      result.ok,
-      result.ok ? undefined : JSON.stringify(result.error),
-    ).toBe(true);
-    if (!result.ok) throw new Error("expected a verified import");
+    if (!result.ok) throw result.error;
     const value = perfDataSchema.parse(result.value.evidence.normalized_result);
     expect(result.value.evidence.operation).toBe("inspect_perf_data");
     expect(value.artifact).toEqual({
@@ -68,8 +64,7 @@ it("rejects a non-perf file as verified Evidence with a diagnostic", async () =>
   const resources = new ArtifactResourceScope();
   try {
     const result = await inspectPerfDataEvidence({ path }, resources);
-    expect(result.ok).toBe(true);
-    if (!result.ok) throw new Error("expected a verified read");
+    if (!result.ok) throw result.error;
     const value = perfDataSchema.parse(result.value.evidence.normalized_result);
     expect(value.events).toEqual([]);
     expect(value.diagnostics).toEqual([
@@ -110,8 +105,7 @@ it("honours the event allowance without discarding the file identity", async () 
       { path, max_events: 1 },
       resources,
     );
-    expect(result.ok).toBe(true);
-    if (!result.ok) throw new Error("expected a verified import");
+    if (!result.ok) throw result.error;
     const value = perfDataSchema.parse(result.value.evidence.normalized_result);
     expect(value.events).toHaveLength(1);
     expect(value.artifact.sha256).toBe(

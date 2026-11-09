@@ -86,13 +86,14 @@ export const deliverApplicationEvidence = async (
       // The parent is still committed evidence; a source the session refuses
       // must not hide it from the caller. Keep the cancellation primary, keep
       // the completed observation inline, and carry the save failure as a
-      // secondary cause.
+      // secondary cause. The parent is delivered inline rather than recorded:
+      // a recorded parent would carry evidence_links the refused sources never
+      // produced, and later closure or export would fail resolving them.
       interrupted.retainPartialObservation(parent);
       interrupted.retainSecondaryFailure(sources.error);
       return delivery.toPartialErrorToolResult(
         interrupted,
         contract.returnsTargetContent,
-        options.recordEvidence,
       );
     }
     // The retained parent carries an open unknown on ordinary completion, so a
