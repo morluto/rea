@@ -191,3 +191,17 @@ artifactReaderLifecycleCases({
     }),
   createReader: (path, admitted) => new UImageArtifactReader(path, admitted),
 });
+
+it("reports impossible over-cap component extents as malformed", async () => {
+  const payload = Buffer.alloc(UIMAGE_MULTI_TABLE_WINDOW);
+  for (let offset = 0; offset < payload.length; offset += 4)
+    payload.writeUInt32BE(1, offset);
+  const reader = new UImageArtifactReader(
+    await fixture(buildUImage({ type: 4, payload })),
+  );
+  try {
+    await expect(entries(reader)).rejects.toMatchObject({ reason: "format" });
+  } finally {
+    await reader.close();
+  }
+});

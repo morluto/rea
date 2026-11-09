@@ -1,5 +1,5 @@
 import { lstat } from "node:fs/promises";
-import { basename, isAbsolute } from "node:path";
+import { basename, isAbsolute, resolve } from "node:path";
 
 import type { DesktopApplicationInventory } from "../../domain/desktop/desktopCapture.js";
 import { isWithinAny } from "../../domain/desktop/desktopStateDiff.js";
@@ -10,33 +10,35 @@ import type { CheckpointScope } from "./DesktopCheckpointRecorder.js";
 
 const unique = (paths: readonly string[]) => [...new Set(paths)];
 
-/**
- * The `-wal` and `-journal` paths beside each selected path that is not a
- * directory: a database selected on its own is unreadable without them, and
- * only a content root records whether they exist.
- */
-const sidecarsOf = async (paths: readonly string[]) => {
-  const sidecars: string[] = [];
-  for (const path of paths) {
-    const directory = await lstat(path).then(
-      (stats) => stats.isDirectory(),
-      () => false,
-    );
-    if (!directory)
-      sidecars.push(...SQLITE_SIDECARS.map(({ suffix }) => `${path}${suffix}`));
-  }
-  return sidecars;
-};
+/** Whether the walked path is a directory. A missing path is not one, matching the sidecar decision. */
+const pathKind = async (path: string): Promise<"file" | "directory"> =>
+  (await lstat(path).then(
+    (stats) => stats.isDirectory(),
+    () => false,
+  ))
+    ? "directory"
+    : "file";
 
-/** The checkpoint scope, and absolute arguments too broad to be part of it. */
+/** A path the caller selected, absolute as named, and the physical path walked for it. */
+export interface SelectedPath {
+  readonly path: string;
+  readonly physical: string;
+  /** The walked path's kind, so a later export does not infer a directory from changes. */
+  readonly kind: "file" | "directory";
+}
+
+/** The checkpoint scope, the selected paths in it, and absolute arguments too broad to be part of it. */
 export interface CaptureScope {
   readonly scope: CheckpointScope;
+  /** `--state-path` values, then absolute arguments, in the scope. */
+  readonly selectedPaths: readonly SelectedPath[];
   /** `/` or a directory containing the home directory, named by `--argument`. */
   readonly broadArguments: readonly string[];
 }
 
 /**
- * Paths in their physical spelling, so walks and exclusions agree. An
+ * Paths in their physical spelling, so walks and exclusions agree; a selected
+ * path keeps the spelling it was named by too, which a link would lose. An
  * absolute argument becomes a content root unless it is `/` or contains the
  * home directory, which would retain and walk whole trees. A selected path
  * that is not a directory brings its SQLite sidecars as content roots too.
@@ -54,23 +56,50 @@ export const captureScope = async (
 ): Promise<CaptureScope> => {
   const canonical = (paths: readonly string[]) =>
     Promise.all(paths.map((path) => canonicalPath(path)));
+  const named = (paths: readonly string[]) =>
+    Promise.all(
+      paths.map(async (path) => ({
+        path: resolve(path),
+        physical: await canonicalPath(path),
+      })),
+    );
   const stateDirectories = await canonical(
     inventory.state_directories.map((entry) => entry.path),
   );
-  const argumentPaths = await canonical(
+  const argumentPaths = await named(
     request.arguments.filter((value) => isAbsolute(value)),
   );
   const broadArguments = unique(
-    argumentPaths.filter((path) => isWithinAny(home, [path])),
+    argumentPaths
+      .map(({ physical }) => physical)
+      .filter((path) => isWithinAny(home, [path])),
   );
-  const selected = [
-    ...(await canonical(request.statePaths)),
-    ...argumentPaths.filter((path) => !broadArguments.includes(path)),
-  ];
+  const selectedPaths = await Promise.all(
+    [
+      ...new Map(
+        [
+          ...(await named(request.statePaths)),
+          ...argumentPaths.filter(
+            ({ physical }) => !broadArguments.includes(physical),
+          ),
+        ].map((entry) => [entry.path, entry]),
+      ).values(),
+    ].map(async (entry) => ({
+      ...entry,
+      kind: await pathKind(entry.physical),
+    })),
+  );
+  const selected = unique(selectedPaths.map(({ physical }) => physical));
+  // A database selected on its own is unreadable without its logs. A directory
+  // is not a database, so a neighbor named like a log stays a normal file.
   const contentRoots = unique([
     ...stateDirectories,
     ...selected,
-    ...(await sidecarsOf(selected)),
+    ...selectedPaths.flatMap(({ physical, kind }) =>
+      kind === "directory"
+        ? []
+        : SQLITE_SIDECARS.map(({ suffix }) => `${physical}${suffix}`),
+    ),
   ]);
   return {
     scope: {
@@ -83,6 +112,7 @@ export const captureScope = async (
       excluded: unique([output, ...(await canonical(request.excludes))]),
       maxEntries: request.maxEntries,
     },
+    selectedPaths,
     broadArguments,
   };
 };

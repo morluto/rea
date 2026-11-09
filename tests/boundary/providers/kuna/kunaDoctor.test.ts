@@ -270,7 +270,7 @@ it.each(["caller", "host"] as const)(
       controller.signal,
     );
     let settled = false;
-    const inspection = host.providerInspections!().then(
+    const inspection = host.providerInspections!([]).then(
       () => {
         settled = true;
         return undefined;
@@ -329,7 +329,7 @@ it("does not launch the composed Kuna probe for an already cancelled caller", as
     controller.signal,
   );
   try {
-    await expect(host.providerInspections!()).rejects.toBeDefined();
+    await expect(host.providerInspections!([])).rejects.toBeDefined();
     expect(await fakeKunaCalls(kuna)).toEqual([]);
   } finally {
     await host.close!();
@@ -344,7 +344,7 @@ it("keeps a healthy composed Kuna inspection when the caller stays active", asyn
     new AbortController().signal,
   );
   try {
-    expect(await host.providerInspections!()).toEqual(
+    expect(await host.providerInspections!([])).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
           id: "kuna",

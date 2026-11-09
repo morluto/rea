@@ -120,7 +120,9 @@ it("accepts sqlite_schema rows without requiring a fabricated declaration", asyn
       row_limit: 20,
       returned_rows: 1,
       truncated: false,
-      order: "unspecified",
+      order: "rowid",
+      row_offset: 0,
+      next_row_offset: null,
     },
   };
   const service = new SqliteDatabaseService({

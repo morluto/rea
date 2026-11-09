@@ -15,6 +15,11 @@ import {
 } from "./javascriptSemanticState.js";
 import { completeSemanticSteps } from "./javascriptSemanticTraversal.js";
 import type { JavaScriptFindingContext } from "./javascriptStaticAnalysisState.js";
+import {
+  ELECTRON_WINDOW_CONSTRUCTOR_SURFACES,
+  electronWindowConstructor,
+  type ElectronWindowConstructorSurface,
+} from "./electronWindowConstructorSurfaces.js";
 
 /** A renderer load belongs to an intact, source-proven BrowserWindow instance. */
 export const electronRendererLoadAuthority = (
@@ -90,17 +95,28 @@ export const resolveElectronBrowserWindowReceiver = (
     receiver = unwrapJavaScriptExpression(initializer.node).node;
   }
   if (!t.isNewExpression(receiver)) return undefined;
-  const constructor = electronCalleePath(receiver.callee, context);
+  const constructorPath = electronCalleePath(receiver.callee, context);
+  const constructorName =
+    constructorPath?.length === 1 ? constructorPath[0] : undefined;
+  const constructor =
+    constructorName === undefined
+      ? undefined
+      : electronWindowConstructor(constructorName);
+  // Receivers are admitted only for constructors whose capability entry proves
+  // the addressed surface, so a window-like construction never gains IPC or
+  // load facts the runtime would not produce.
   if (
-    constructor?.length !== 1 ||
-    constructor[0] !== "BrowserWindow" ||
-    !supportedReceiverPath(path)
+    constructor === undefined ||
+    !supportedReceiverPath(
+      path,
+      ELECTRON_WINDOW_CONSTRUCTOR_SURFACES[constructor],
+    )
   )
     return undefined;
   if (
     context.electronExportIntact?.([
       "electron",
-      "BrowserWindow",
+      constructor,
       "prototype",
       ...path,
     ]) !== true
@@ -119,11 +135,19 @@ export const resolveElectronBrowserWindowReceiver = (
   };
 };
 
-const supportedReceiverPath = (path: readonly string[]): boolean => {
+const supportedReceiverPath = (
+  path: readonly string[],
+  surfaces: ElectronWindowConstructorSurface,
+): boolean => {
+  // A constructor that owns its webContents accepts preferences, preload,
+  // renderer loads and scoped IPC through it; one that does not owns only the
+  // native frame, so none of those surfaces exist on the instance.
+  if (!surfaces.webContents) return false;
   const operation = path.at(-1);
   if (operation === "loadFile" || operation === "loadURL")
     return (
-      path.length === 1 || (path.length === 2 && path[0] === "webContents")
+      (surfaces.selfLoad && path.length === 1) ||
+      (path.length === 2 && path[0] === "webContents")
     );
   return (
     path[0] === "webContents" &&
