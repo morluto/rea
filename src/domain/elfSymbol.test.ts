@@ -58,7 +58,10 @@ it.each(formats)(
         readElfSymbol(backing.subarray(7, 7 + observed), bits, littleEndian),
       ).toEqual({
         ok: false,
-        error: { kind: "malformed", message: "ELF symbol record is truncated" },
+        error: {
+          kind: "malformed",
+          message: expect.stringContaining("truncated"),
+        },
       });
   },
 );

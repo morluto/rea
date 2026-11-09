@@ -39,6 +39,7 @@ import {
   regularFileCancellation,
 } from "../filesystem/OwnedRegularFile.js";
 import {
+  isSelectedRegularFileError,
   NonRegularFileReadError,
   RegularFileChangedError,
   RegularFileOperationCancelled,
@@ -201,10 +202,11 @@ const companionIoFailure = (
   resourcePath: string,
   description: string,
   cause: unknown,
+  admitted = false,
 ): BinaryTargetError | undefined => {
   if (!(cause instanceof Error) || !("code" in cause)) return undefined;
   const code = String(cause.code);
-  return COMPANION_IO_CODES.has(code)
+  return admitted || COMPANION_IO_CODES.has(code)
     ? new BinaryTargetError(
         resourcePath,
         `${description} failed with ${code}`,
@@ -882,10 +884,66 @@ const selectTargetSliceUuid = async (
   return err(targetUuidAbsentRejection(state, input.architecture));
 };
 
+const normalizeMemberFailure = (
+  failureCause: unknown,
+  memberPath: string,
+  state: AdmissionState,
+  memberAdmitted: boolean,
+): unknown => {
+  const rawCause =
+    failureCause instanceof OwnedRegularFileOperationFailure
+      ? failureCause.operationCause
+      : failureCause;
+  if (state.signal?.aborted === true && rawCause === state.signal.reason)
+    return new AnalysisCancelledError("resolve_binary_target", {
+      cause: rawCause,
+    });
+  if (
+    rawCause instanceof AnalysisCancelledError ||
+    rawCause instanceof AnalysisArtifactChangedError ||
+    rawCause instanceof BinaryTargetError
+  )
+    return rawCause;
+  if (rawCause instanceof RegularFileOperationCancelled)
+    return new AnalysisCancelledError("resolve_binary_target", {
+      cause: rawCause.reason,
+    });
+  if (
+    rawCause instanceof RegularFileChangedError ||
+    (memberAdmitted && isSelectedRegularFileError(rawCause))
+  )
+    return new AnalysisArtifactChangedError(
+      "open_binary",
+      memberPath,
+      "the dSYM DWARF member changed while being read",
+      { cause: rawCause },
+    );
+  const ioFailure = companionIoFailure(
+    memberPath,
+    "reading the dSYM DWARF member",
+    rawCause,
+    memberAdmitted,
+  );
+  if (ioFailure !== undefined) return ioFailure;
+  if (
+    !memberAdmitted &&
+    (rawCause instanceof NonRegularFileReadError ||
+      isExpectedAdmissionPathFailure(rawCause))
+  ) {
+    return state.signal?.aborted === true
+      ? new AnalysisCancelledError("resolve_binary_target", {
+          cause: state.signal.reason,
+        })
+      : undefined;
+  }
+  return rawCause;
+};
+
 const normalizeMemberCleanupFailure = (
   failure: RegularFileCleanupFailure,
   memberPath: string,
   state: AdmissionState,
+  memberAdmitted: boolean,
 ): RegularFileCleanupFailure<undefined> => {
   const rawOutcome = failure.outcome;
   let primary: unknown;
@@ -897,44 +955,12 @@ const normalizeMemberCleanupFailure = (
     if (!result.ok)
       primary = debugCompanionRejectedError(state.targetPath, result.error);
   } else {
-    const rawCause =
-      rawOutcome.cause instanceof OwnedRegularFileOperationFailure
-        ? rawOutcome.cause.operationCause
-        : rawOutcome.cause;
-    if (
-      rawCause instanceof AnalysisCancelledError ||
-      rawCause instanceof AnalysisArtifactChangedError ||
-      rawCause instanceof BinaryTargetError
-    )
-      primary = rawCause;
-    else if (rawCause instanceof RegularFileOperationCancelled)
-      primary = new AnalysisCancelledError("resolve_binary_target", {
-        cause: rawCause.reason,
-      });
-    else if (rawCause instanceof RegularFileChangedError)
-      primary = new AnalysisArtifactChangedError(
-        "open_binary",
-        memberPath,
-        "the dSYM DWARF member changed while being read",
-        { cause: rawCause },
-      );
-    else {
-      const ioFailure = companionIoFailure(
-        memberPath,
-        "reading the dSYM DWARF member",
-        rawCause,
-      );
-      if (ioFailure !== undefined) primary = ioFailure;
-      else if (
-        !(rawCause instanceof NonRegularFileReadError) &&
-        !isExpectedAdmissionPathFailure(rawCause)
-      )
-        primary = rawCause;
-      else if (state.signal?.aborted === true)
-        primary = new AnalysisCancelledError("resolve_binary_target", {
-          cause: state.signal.reason,
-        });
-    }
+    primary = normalizeMemberFailure(
+      rawOutcome.cause,
+      memberPath,
+      state,
+      memberAdmitted,
+    );
   }
   const rebuilt = new RegularFileCleanupFailure({
     ...failure,
@@ -956,11 +982,19 @@ const readMemberWithBorrowedResources = async (
     initial: Stats,
   ) => Promise<Result<MachODebugCompanion | null, DebugCompanionRejection>>,
 ): Promise<Result<MachODebugCompanion | null, DebugCompanionRejection>> => {
+  let memberAdmitted = false;
   try {
-    const completion = await withRegularFileCompletion(memberPath, read, {
-      symlinks: "follow",
-      ...(state.signal === undefined ? {} : { signal: state.signal }),
-    });
+    const completion = await withRegularFileCompletion(
+      memberPath,
+      async (handle, initial) => {
+        memberAdmitted = true;
+        return await read(handle, initial);
+      },
+      {
+        symlinks: "follow",
+        ...(state.signal === undefined ? {} : { signal: state.signal }),
+      },
+    );
     if (!completion.value.ok) return completion.value;
     if (completion.cancellation !== undefined)
       throw new AnalysisCancelledError("resolve_binary_target", {
@@ -969,10 +1003,22 @@ const readMemberWithBorrowedResources = async (
     throwIfCancelled(state.signal);
     return completion.value;
   } catch (cause: unknown) {
-    if (state.signal?.aborted === true && cause === state.signal.reason)
-      throw new AnalysisCancelledError("resolve_binary_target", { cause });
-    if (!(cause instanceof RegularFileCleanupFailure)) throw cause;
-    const normalized = normalizeMemberCleanupFailure(cause, memberPath, state);
+    if (!(cause instanceof RegularFileCleanupFailure)) {
+      const primary = normalizeMemberFailure(
+        cause,
+        memberPath,
+        state,
+        memberAdmitted,
+      );
+      if (primary !== undefined) throw primary;
+      return ok(null);
+    }
+    const normalized = normalizeMemberCleanupFailure(
+      cause,
+      memberPath,
+      state,
+      memberAdmitted,
+    );
     if (state.resources === undefined)
       throw normalized instanceof RetainedRegularFileCleanupFailure
         ? normalized
@@ -984,6 +1030,10 @@ const readMemberWithBorrowedResources = async (
     );
     if (retried.failure !== undefined) throw retried.failure;
     if (cause.outcome.kind === "failed") {
+      // Every failure after openRegularFile admits the member (memberAdmitted === true)
+      // keeps normalized.outcome.kind === "failed" and rethrows here; ok(null) is
+      // reached only when openRegularFile rejected a non-regular or unopenable
+      // directory entry before reading and retryRegularFileCleanup closed its handle.
       if (normalized.outcome.kind === "failed") throw normalized.outcome.cause;
       const cancellation =
         cause.operationFailure === undefined
@@ -1174,67 +1224,38 @@ export const admitDebugCompanion = async (input: {
   let admitted: MachODebugCompanion | undefined;
   for (const memberPath of memberPaths.value) {
     throwIfCancelled(state.signal);
-    try {
-      const candidate = await readMemberWithBorrowedResources(
-        memberPath,
-        state,
-        async (handle, initial) => {
-          const inspected = await inspectMemberHandle(
-            memberPath,
-            { handle, initial },
-            selected.value,
-            state,
-          );
-          if (
-            inspected.ok &&
-            inspected.value !== null &&
-            admitted !== undefined &&
-            (admitted.memberSha256 !== inspected.value.memberSha256 ||
-              admitted.memberSizeBytes !== inspected.value.memberSizeBytes)
-          )
-            return err({
-              reason:
-                "dsym_path contains conflicting DWARF members for the selected target UUID",
-              diagnostics: {
-                dsym_path: state.dsymPath,
-                architecture: input.architecture,
-                target_uuid: selected.value.uuid,
-                rejection: "conflicting_matching_members",
-              },
-            });
-          return inspected;
-        },
-      );
-      if (!candidate.ok) return candidate;
-      if (candidate.value !== null) admitted ??= candidate.value;
-    } catch (cause: unknown) {
-      if (
-        cause instanceof RegularFileCleanupFailure ||
-        cause instanceof AnalysisArtifactChangedError
-      )
-        throw cause;
-      if (cause instanceof RegularFileChangedError)
-        throw new AnalysisArtifactChangedError(
-          "open_binary",
+    const candidate = await readMemberWithBorrowedResources(
+      memberPath,
+      state,
+      async (handle, initial) => {
+        const inspected = await inspectMemberHandle(
           memberPath,
-          "the dSYM DWARF member changed while being read",
-          { cause },
+          { handle, initial },
+          selected.value,
+          state,
         );
-      const ioFailure = companionIoFailure(
-        memberPath,
-        "reading the dSYM DWARF member",
-        cause,
-      );
-      if (ioFailure !== undefined) throw ioFailure;
-      if (
-        cause instanceof NonRegularFileReadError ||
-        isExpectedAdmissionPathFailure(cause)
-      ) {
-        throwIfCancelled(state.signal);
-        continue;
-      }
-      throw cause;
-    }
+        if (
+          inspected.ok &&
+          inspected.value !== null &&
+          admitted !== undefined &&
+          (admitted.memberSha256 !== inspected.value.memberSha256 ||
+            admitted.memberSizeBytes !== inspected.value.memberSizeBytes)
+        )
+          return err({
+            reason:
+              "dsym_path contains conflicting DWARF members for the selected target UUID",
+            diagnostics: {
+              dsym_path: state.dsymPath,
+              architecture: input.architecture,
+              target_uuid: selected.value.uuid,
+              rejection: "conflicting_matching_members",
+            },
+          });
+        return inspected;
+      },
+    );
+    if (!candidate.ok) return candidate;
+    if (candidate.value !== null) admitted ??= candidate.value;
   }
   return admitted !== undefined
     ? ok(admitted)

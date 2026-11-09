@@ -580,24 +580,80 @@ it("normalizes RegularFileOperationCancelled and read faults across member close
   await caught.owner.close();
 
   // With borrowed resources, when initial close fails and retry succeeds after a
-  // read fault, the thrown error must be the normalized BinaryTargetError rather
-  // than the raw EIO fault.
+  // read or stability fault (including an admission-path code such as EACCES once
+  // the member handle has been admitted), readMemberWithBorrowedResources must
+  // rethrow the normalized error rather than returning ok(null) / uuid_mismatch.
+  for (const readFault of [
+    errno("EIO"),
+    errno("EACCES"),
+    new RegularFileChangedError(fixture.member),
+  ]) {
+    const resources = new ArtifactResourceScope();
+    fault.openPath = fixture.member;
+    fault.memberReadFailure = readFault;
+    fault.memberCloseFailure = errno("EIO");
+    fault.onMemberClose = (attempt) => {
+      if (attempt === 2) fault.memberCloseFailure = undefined;
+    };
+    const retried = await parseBinaryTarget(fixture.target, {
+      dsymPath: fixture.dsymPath,
+      resources,
+    });
+    expect(retried.ok).toBe(false);
+    if (retried.ok) return;
+    if (readFault instanceof RegularFileChangedError) {
+      expect(retried.error).toBeInstanceOf(AnalysisArtifactChangedError);
+      expect(retried.error).toMatchObject({ path: fixture.member });
+    } else {
+      expect(retried.error).toBeInstanceOf(BinaryTargetError);
+      expect(retried.error).toMatchObject({
+        path: fixture.member,
+        message: expect.stringContaining(
+          `reading the dSYM DWARF member failed with ${String((readFault as { code?: string }).code)}`,
+        ),
+      });
+    }
+    await resources.close();
+  }
+
+  // Conversely, when openRegularFile rejects a non-regular entry before reading
+  // (NonRegularFileReadError) and its initial close fails while retry close
+  // succeeds, readMemberWithBorrowedResources returns ok(null) so the caller skips
+  // that entry and still admits the matching DWARF member.
+  const nonRegularEntry = join(fixture.directory, "00-non-regular");
+  await writeFile(nonRegularEntry, Buffer.alloc(8));
   const resources = new ArtifactResourceScope();
-  fault.memberReadFailure = errno("EIO");
+  fault.openPath = nonRegularEntry;
+  fault.memberReadFailure = undefined;
   fault.memberCloseFailure = errno("EIO");
   fault.onMemberClose = (attempt) => {
     if (attempt === 2) fault.memberCloseFailure = undefined;
   };
-  const retried = await parseBinaryTarget(fixture.target, {
+  fault.onOpenHandle = (openedPath, handle) => {
+    if (openedPath !== nonRegularEntry) return;
+    const originalStat = handle.stat.bind(handle);
+    handle.stat = (async (options?: { bigint?: boolean }) => {
+      const stats = await originalStat(options as never);
+      return Object.assign(Object.create(Object.getPrototypeOf(stats)), stats, {
+        isFile: () => false,
+        isDirectory: () => false,
+      });
+    }) as typeof handle.stat;
+  };
+  const admittedAfterSkip = await parseBinaryTarget(fixture.target, {
     dsymPath: fixture.dsymPath,
     resources,
   });
-  expect(retried.ok).toBe(false);
-  if (retried.ok) return;
-  expect(retried.error).toBeInstanceOf(BinaryTargetError);
-  expect(retried.error.message).toContain(
-    "reading the dSYM DWARF member failed with EIO",
-  );
+  expect(admittedAfterSkip).toMatchObject({
+    ok: true,
+    value: {
+      format: "mach-o",
+      debugCompanion: {
+        memberPath: fixture.member,
+        uuid: UUID,
+      },
+    },
+  });
   await resources.close();
 });
 

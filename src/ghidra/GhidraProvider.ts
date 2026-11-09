@@ -656,6 +656,7 @@ export class GhidraProvider implements AnalysisProviderCandidate {
         return observed.installation;
     }
     let attempt = this.#inspectionAttempt;
+    const draining = attempt?.signal.aborted === true;
     if (attempt === undefined) {
       attempt = new SharedStartupAttempt(
         (signal) =>
@@ -692,6 +693,15 @@ export class GhidraProvider implements AnalysisProviderCandidate {
       throw new AnalysisCancelledError(operation, {
         cause: callerSignal?.reason,
       });
+    if (
+      draining &&
+      !callerSignal?.aborted &&
+      !waited.value.ok &&
+      waited.value.error instanceof AnalysisCancelledError &&
+      !waited.value.error.cleanupIncomplete &&
+      waited.value.error.cause === attempt.signal.reason
+    )
+      return this.#inspectInstallation(callerSignal, operation, scope);
     if (!waited.value.ok)
       throw analysisClientFailureForOperation(
         waited.value.error,

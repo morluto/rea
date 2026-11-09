@@ -133,7 +133,7 @@ export const resolveSwiftcCompileTimeoutMs = (
 };
 
 /** Name the existing swiftc deadline when a helper compile times out. */
-export const swiftcCompileTimeoutRecovery = (timeoutMs: number): string =>
+const swiftcCompileTimeoutRecovery = (timeoutMs: number): string =>
   `The effective REA_SWIFTC_COMPILE_TIMEOUT_MS value is ${String(timeoutMs)} ms (integer range 1..${String(MAX_NODE_TIMER_DELAY_MS)}; omitted default ${String(DEFAULT_SWIFTC_COMPILE_TIMEOUT_MS)} ms). Set it in the environment that starts REA and restart REA; the next ownership-helper compile uses the new value.`;
 
 /** Bound on compiler diagnostics embedded in the inspection failure text. */

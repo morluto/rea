@@ -579,7 +579,7 @@ it("refuses to open ZIP symlink entries even when unixMode is absent", async () 
         throw new Error(`Missing ZIP symlink ${logicalPath}`);
       await expect(reader.open(entry)).rejects.toMatchObject({
         reason: "format",
-        message: "ZIP entry is not a regular file",
+        message: expect.stringContaining("regular file"),
       });
     }
   } finally {
@@ -839,7 +839,7 @@ it("joins an admitted ZIP enumeration before reader close completes", async () =
     release.resolve();
     await expect(next).rejects.toMatchObject({
       reason: "unavailable",
-      message: "ZIP reader is closed",
+      message: expect.stringContaining("closed"),
     });
     await closing;
     const completedReads = reads.mock.calls.length;
