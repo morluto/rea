@@ -5,6 +5,7 @@ import {
   isCancel,
   multiselect,
   outro,
+  select,
 } from "@clack/prompts";
 
 import type {
@@ -30,6 +31,155 @@ const promptStreams = {
   output: process.stderr,
   withGuide: true,
 } as const;
+
+export interface SetupPreferences {
+  readonly mode: "standard" | "custom";
+  readonly runtime: "node" | "bun";
+  readonly pythonRunner: "standard" | "uv" | "none";
+}
+
+/** Interactively select setup profile (quick upstream defaults vs custom runtime/Python). */
+export const promptSetupPreferences = async (
+  accessible: boolean,
+): Promise<SetupPreferences | undefined> => {
+  intro("REA setup profile", promptStreams);
+  if (accessible) {
+    const useQuick = await confirm({
+      ...promptStreams,
+      message:
+        "Use Quick Setup with standard upstream defaults (Node.js runtime, standard Python)?",
+      initialValue: true,
+      vertical: true,
+    });
+    if (isCancel(useQuick)) {
+      cancel("Setup cancelled. No changes were made.", promptStreams);
+      return undefined;
+    }
+    if (useQuick) {
+      return { mode: "standard", runtime: "node", pythonRunner: "standard" };
+    }
+    const useBun = await confirm({
+      ...promptStreams,
+      message: "Use Bun runtime instead of Node.js for agent registrations?",
+      initialValue: false,
+      vertical: true,
+    });
+    if (isCancel(useBun)) {
+      cancel("Setup cancelled. No changes were made.", promptStreams);
+      return undefined;
+    }
+    const connectPython = await confirm({
+      ...promptStreams,
+      message: "Connect Python analysis tools for agent registrations?",
+      initialValue: true,
+      vertical: true,
+    });
+    if (isCancel(connectPython)) {
+      cancel("Setup cancelled. No changes were made.", promptStreams);
+      return undefined;
+    }
+    let pythonRunner: "standard" | "uv" | "none" = "none";
+    if (connectPython) {
+      const useUv = await confirm({
+        ...promptStreams,
+        message:
+          "Connect Python analysis tools via uv + ruff instead of standard Python?",
+        initialValue: false,
+        vertical: true,
+      });
+      if (isCancel(useUv)) {
+        cancel("Setup cancelled. No changes were made.", promptStreams);
+        return undefined;
+      }
+      pythonRunner = useUv ? "uv" : "standard";
+    }
+    return {
+      mode: "custom",
+      runtime: useBun ? "bun" : "node",
+      pythonRunner,
+    };
+  }
+
+  const mode = await select({
+    ...promptStreams,
+    message: "Choose setup profile:",
+    options: [
+      {
+        value: "standard",
+        label: "Quick Setup (Default)",
+        hint: "Upstream recommended: Node.js runtime, standard Python environment",
+      },
+      {
+        value: "custom",
+        label: "Custom Setup",
+        hint: "Configure JavaScript runtime (Node.js/Bun) and Python runner (uv+ruff/system)",
+      },
+    ],
+    initialValue: "standard",
+  });
+  if (isCancel(mode)) {
+    cancel("Setup cancelled. No changes were made.", promptStreams);
+    return undefined;
+  }
+  if (mode === "standard") {
+    return { mode: "standard", runtime: "node", pythonRunner: "standard" };
+  }
+
+  const runtime = await select({
+    ...promptStreams,
+    message: "Which JavaScript runtime should REA use for agent registrations?",
+    options: [
+      {
+        value: "node",
+        label: "Node.js",
+        hint: "Upstream standard runtime",
+      },
+      {
+        value: "bun",
+        label: "Bun",
+        hint: "Fast runtime with native TypeScript support",
+      },
+    ],
+    initialValue: "node",
+  });
+  if (isCancel(runtime)) {
+    cancel("Setup cancelled. No changes were made.", promptStreams);
+    return undefined;
+  }
+
+  const pythonRunner = await select({
+    ...promptStreams,
+    message: "Which Python environment should REA connect for analysis tools?",
+    options: [
+      {
+        value: "standard",
+        label: "Standard / System Python",
+        hint: "Use system python or existing environment",
+      },
+      {
+        value: "uv",
+        label: "uv + ruff",
+        hint: "Modern fast Python package manager and linter",
+      },
+      {
+        value: "none",
+        label: "None / Skip",
+        hint: "Do not configure Python analysis tools",
+      },
+    ],
+    initialValue: "standard",
+  });
+  if (isCancel(pythonRunner)) {
+    cancel("Setup cancelled. No changes were made.", promptStreams);
+    return undefined;
+  }
+
+  return {
+    mode: "custom",
+    runtime: runtime as "node" | "bun",
+    pythonRunner: pythonRunner as "standard" | "uv" | "none",
+  };
+};
 
 /** Select agent targets, then review the resolved plan before consent. */
 export const confirmInteractiveSetup = async (

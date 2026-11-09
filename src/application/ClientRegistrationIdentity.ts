@@ -1,5 +1,5 @@
 import { accessSync, constants, realpathSync } from "node:fs";
-import { isAbsolute } from "node:path";
+import { basename, delimiter, isAbsolute } from "node:path";
 import {
   CURRENT_ENTRYPOINT_PATH,
   normalizeEntrypointPath,
@@ -60,12 +60,45 @@ export const withoutPackageRunnerIdentity = (
     ),
   );
 
+const resolveRuntimeExecutable = (
+  runtime: JavaScriptRuntime["id"],
+  currentExecPath: string,
+  environment: Readonly<NodeJS.ProcessEnv>,
+  platform: NodeJS.Platform,
+): string => {
+  if (runtime === javaScriptRuntime(process.versions).id) {
+    return currentExecPath;
+  }
+  const pathVariable =
+    platform === "win32"
+      ? environment.PATH ?? environment.Path ?? ""
+      : environment.PATH ?? "";
+  const candidateNames =
+    platform === "win32"
+      ? [`${runtime}.exe`, `${runtime}.cmd`, runtime]
+      : [runtime];
+  for (const directory of pathVariable.split(delimiter)) {
+    if (!directory) continue;
+    for (const candidate of candidateNames) {
+      const fullPath = absoluteCallerPath(`${directory}/${candidate}`);
+      try {
+        accessSync(fullPath, constants.X_OK);
+        return fullPath;
+      } catch {
+        // Continue searching PATH.
+      }
+    }
+  }
+  return runtime;
+};
+
 /** Bind the selected REA entrypoint to the runtime already executing setup. */
 export const currentClientRegistrationCommand = (
   selection: {
     readonly platform?: NodeJS.Platform;
     readonly entrypointPath?: string | undefined;
     readonly environment?: Readonly<NodeJS.ProcessEnv>;
+    readonly runtime?: "node" | "bun" | undefined;
   } = {},
 ): readonly string[] => {
   const platform = selection.platform ?? process.platform;
@@ -74,10 +107,18 @@ export const currentClientRegistrationCommand = (
     ? selection.entrypointPath
     : CURRENT_ENTRYPOINT_PATH;
   if (entrypointPath === undefined || entrypointPath.length === 0) return [];
+  const currentRuntime = javaScriptRuntime(process.versions).id;
+  const targetRuntime = selection.runtime ?? currentRuntime;
+  const executable = resolveRuntimeExecutable(
+    targetRuntime,
+    process.execPath,
+    environment,
+    platform,
+  );
   return [
     registrationRuntimePath(
-      process.execPath,
-      javaScriptRuntime(process.versions).id,
+      executable,
+      targetRuntime,
       environment,
       platform,
     ),
@@ -285,13 +326,26 @@ export const classifyClientRegistrationCommand = (
 ): ClientRegistrationCommandIdentity =>
   inspectClientRegistrationCommand(command, currentCommandPath).identity;
 
+const isJavaScriptRuntimeExecutable = (interpreter: string): boolean => {
+  const binary = basename(interpreter).toLowerCase();
+  return (
+    binary === "node" ||
+    binary === "node.exe" ||
+    binary === "bun" ||
+    binary === "bun.exe"
+  );
+};
+
 const inspectDirectRegistrationCommand = (
   command: readonly string[],
   currentCommandPath: string | undefined,
 ): ClientRegistrationCommandFacts => {
   const currentPathAvailable =
     currentCommandPath !== undefined && currentCommandPath.length > 0;
-  if (command.length === 3 && command[2] === "mcp") {
+  if (
+    command.length === 3 &&
+    (command[2] === "mcp" || command[2] === "--mcp")
+  ) {
     const interpreter = command[0] ?? "";
     const entrypoint = command[1] ?? "";
     if (!isAbsolute(interpreter) || !isAbsolute(entrypoint))
@@ -305,7 +359,10 @@ const inspectDirectRegistrationCommand = (
       interpreter,
       process.execPath,
     );
-    if (interpreterIdentity !== "owned")
+    if (
+      interpreterIdentity !== "owned" &&
+      !isJavaScriptRuntimeExecutable(interpreter)
+    )
       return {
         identity: currentPathAvailable ? interpreterIdentity : "unknown",
         launch: "runtime_script",
@@ -325,7 +382,10 @@ const inspectDirectRegistrationCommand = (
       package: undefined,
     };
   }
-  if (command.length === 2 && command[1] === "mcp") {
+  if (
+    command.length === 2 &&
+    (command[1] === "mcp" || command[1] === "--mcp")
+  ) {
     const executable = command[0] ?? "";
     if (executable === PRODUCT_IDENTITY.cliBinary)
       return {

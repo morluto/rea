@@ -11,7 +11,9 @@ import { ConfigurationError } from "../domain/configurationErrors.js";
 import { PRODUCT_IDENTITY } from "../identity.js";
 import { currentClientRegistrationCommand } from "./ClientRegistrationIdentity.js";
 import {
+  javaScriptRuntime,
   SUPPORTED_NODE_VERSION_PROSE,
+  supportsJavaScriptRuntime,
   supportsNodeVersion,
 } from "../domain/runtimeVersion.js";
 import {
@@ -80,11 +82,13 @@ const setupRegistration = (
   platform: NodeJS.Platform,
   homeDirectory: string,
   environment: Readonly<NodeJS.ProcessEnv>,
+  runtime?: "node" | "bun",
 ): Pick<SetupHost, "registrationCommand" | "registrationCommandBlocker"> => {
   const registrationCommand = currentClientRegistrationCommand({
     platform,
     entrypointPath: CURRENT_ENTRYPOINT_PATH,
     environment,
+    runtime,
   });
   const registrationCommandBlocker =
     registrationCommand.length === 0
@@ -114,16 +118,29 @@ export const filterClientsNeedingConfigure = async (
   return detectedClients.filter((_, index) => needs[index]);
 };
 
-/** Refuse a Node.js runtime REA does not support before any setup work. */
-export const hostRemediation = (host: SetupHost): string | undefined =>
-  supportsNodeVersion(host.nodeVersion)
+/** Refuse a JavaScript runtime REA does not support before any setup work. */
+export const hostRemediation = (host: SetupHost): string | undefined => {
+  const runtime =
+    host.runtime ??
+    (host.nodeVersion.length > 0
+      ? javaScriptRuntime({
+          node: host.nodeVersion,
+          bun: process.versions.bun,
+        })
+      : undefined);
+  if (runtime !== undefined && supportsJavaScriptRuntime(runtime)) {
+    return undefined;
+  }
+  return supportsNodeVersion(host.nodeVersion)
     ? undefined
     : `Install ${SUPPORTED_NODE_VERSION_PROSE} and rerun setup.`;
+};
 
 /** Production setup effects for Hopper, agent configuration, and the canonical skill directory. */
 export const systemSetupHost = (
   selectedDoctorHost: DoctorHost | undefined = undefined,
   environment: Readonly<NodeJS.ProcessEnv> = process.env,
+  options?: { readonly runtime?: "node" | "bun" | undefined },
 ): SetupHost => {
   const doctorHost = selectedDoctorHost ?? systemDoctorHost({ environment });
   const platform = doctorHost.platform;
@@ -155,7 +172,12 @@ export const systemSetupHost = (
       await linuxHopperHost.close?.();
     },
   };
-  const registration = setupRegistration(platform, homeDirectory, environment);
+  const registration = setupRegistration(
+    platform,
+    homeDirectory,
+    environment,
+    options?.runtime,
+  );
   const cleanup = new SetupCleanupOwner([
     macCleanup,
     {
@@ -178,6 +200,7 @@ export const systemSetupHost = (
     skillDestinations: (clientIds) =>
       skillDestinations(homeDirectory, clientIds, environment, platform),
     ...registration,
+    runtime: javaScriptRuntime(process.versions),
     nodeVersion: process.versions.node,
     macosVersion: () => doctorHost.macosVersion(),
     linuxDistribution,
