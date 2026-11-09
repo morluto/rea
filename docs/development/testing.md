@@ -602,6 +602,12 @@ For partial Evidence delivery, verify that same-session readback preserves
 identity and provenance without rerunning the provider. Include a no-writer
 control that keeps completed Evidence inline and preserves the original failure.
 
+For a seekable file with a known extent, distinguish a provably impossible wire
+extent from an independent representation limit. Pair the malformed declaration
+with a structurally possible over-limit control. A count-only truncated fixture
+does not establish capacity behavior. This does not require decoding an opaque
+compressed payload merely to apply its declared expansion limit.
+
 When producer order is unspecified, synchronize fixtures on the observed request
 or completion event. A filename, generated key, or fixed delay does not prove
 which item completed before cancellation. Preserve real producer ordering and

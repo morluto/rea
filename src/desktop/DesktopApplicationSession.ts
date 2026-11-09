@@ -28,6 +28,7 @@ import {
 } from "./DesktopSessionObservations.js";
 import type { WindowSample, X11WindowObserver } from "./X11WindowObserver.js";
 
+/** The most of the launched process's stderr a session keeps: its latest bytes, where a failing app's last words are. */
 const STDERR_BYTES = 8 * 1024;
 const TERMINATION_GRACE_MS = 5_000;
 
@@ -312,7 +313,10 @@ const launch = async (
       cleanup:
         spawned.cleanup ?? (() => cleanupOwnedProcessGroup(spawned.ownership)),
     },
-    { maxDiagnosticBytes: { stdout: 0, stderr: STDERR_BYTES } },
+    {
+      maxDiagnosticBytes: { stdout: 0, stderr: STDERR_BYTES },
+      diagnosticRetention: "tail",
+    },
   );
   return { spawned, supervisor };
 };

@@ -4,7 +4,10 @@ import {
 } from "../../artifacts/StableArtifactFailure.js";
 import { isSelectedRegularFileError } from "../../filesystem/RegularFile.js";
 import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
-import { readStableArtifact } from "../../artifacts/readStableArtifact.js";
+import {
+  type StableArtifactSnapshot,
+  readStableArtifact,
+} from "../../artifacts/readStableArtifact.js";
 import {
   artifactFilePrimaryFacts,
   type ArtifactFilePrimaryFacts,
@@ -64,9 +67,10 @@ export class BinaryHardeningProvider implements BinaryHardeningPort {
     input: InspectBinaryHardeningInput,
     options?: ExecutionOptions,
   ) {
+    let snapshot: StableArtifactSnapshot | undefined;
     try {
       return await this.#resources.run(async () => {
-        const snapshot = await readStableArtifact(
+        snapshot = await readStableArtifact(
           input.path,
           input.max_file_bytes,
           options?.signal,
@@ -87,7 +91,7 @@ export class BinaryHardeningProvider implements BinaryHardeningPort {
         return ok(report);
       });
     } catch (cause) {
-      return err(binaryHardeningFailure(cause, input));
+      return err(binaryHardeningFailure(cause, input, snapshot));
     }
   }
 }
@@ -234,6 +238,7 @@ const binaryHardeningFailurePrimary = (
 const binaryHardeningFailure = (
   cause: unknown,
   input: InspectBinaryHardeningInput,
+  snapshot?: StableArtifactSnapshot,
 ): AnalysisError =>
   projectStableArtifactFailure(
     cause,
@@ -241,4 +246,5 @@ const binaryHardeningFailure = (
     input.path,
     BINARY_HARDENING_PROVIDER.id,
     OPERATION,
+    snapshot,
   );
