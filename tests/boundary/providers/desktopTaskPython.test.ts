@@ -78,6 +78,8 @@ async def invoke_extension(url, card, uri, params=None, timeout=30, verify=True,
         if cleanup_failures[0] > 0:
             cleanup_failures[0] -= 1
             return {"exit_code": 1, "stdout": "", "stderr": "permission denied", "timed_out": False}
+        if scenario.get("parallel_retry"):
+            await asyncio.sleep(0)
         return {"exit_code": 0, "stdout": "", "stderr": "", "timed_out": False}
     if scenario.get("concurrent"):
         reader_calls[0] += 1
