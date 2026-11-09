@@ -1,7 +1,10 @@
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { expect, it } from "vitest";
-import { inspectElfNotesInputSchema } from "../../domain/native/elfNotes.js";
+import {
+  elfNotesSchema,
+  inspectElfNotesInputSchema,
+} from "../../domain/native/elfNotes.js";
 import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
 import { decodeElfSectionNameTable } from "../metadata/ElfSectionNameTable.js";
 import { readElfDirectoryFromBuffer } from "../metadata/NativeSectionDirectory.js";
@@ -937,6 +940,107 @@ it("decodes Linux core dump notes for 32-bit big-endian", () => {
     { type: 11, type_name: "AT_UID", value: "0x1f4" },
   ]);
 });
+
+it.each([
+  { osAbi: 0, abiVersion: 0 },
+  { osAbi: 3, abiVersion: 0 },
+])(
+  "decodes Linux core notes under the System V/GNU header profile ($osAbi/$abiVersion)",
+  ({ osAbi, abiVersion }) => {
+    const report = parse(
+      elfNoteFixture({
+        bits: 64,
+        type: 4,
+        ownership: "program",
+        osAbi,
+        abiVersion,
+        notes: Buffer.concat([
+          corePrpsinfoNote({
+            bits: 64,
+            little: true,
+            state: 0,
+            sname: "R",
+            pid: 1234,
+            ppid: 567,
+            pgrp: 890,
+            sid: 321,
+            uid: 70000,
+            gid: 80000,
+            fname: "probe-process",
+            psargs: "",
+          }),
+          gnuBuildIdNote("0123456789abcdef"),
+        ]),
+      }),
+    );
+    expect(report.entries[0]).toMatchObject({
+      owner: "CORE",
+      type: 3,
+      type_name: "core_prpsinfo",
+      core: { prpsinfo: { pid: 1234, uid: 70000, filename: "probe-process" } },
+    });
+    expect(report.entries[1]).toMatchObject({
+      type_name: "gnu_build_id",
+      core: null,
+    });
+    expect(report.limitations.join("\n")).not.toMatch(/CORE note/u);
+  },
+);
+
+it.each([
+  { name: "Solaris OSABI", osAbi: 6, abiVersion: 0 },
+  { name: "FreeBSD OSABI", osAbi: 9, abiVersion: 0 },
+  { name: "unpinned ABI version", osAbi: 0, abiVersion: 1 },
+  { name: "GNU/Linux with a pinned ABI version", osAbi: 3, abiVersion: 1 },
+])(
+  "preserves CORE notes without a Linux layout for a $name header profile",
+  ({ osAbi, abiVersion }) => {
+    const report = parse(
+      elfNoteFixture({
+        bits: 64,
+        type: 4,
+        ownership: "program",
+        osAbi,
+        abiVersion,
+        notes: Buffer.concat([
+          corePrpsinfoNote({
+            bits: 64,
+            little: true,
+            state: 0,
+            sname: "R",
+            pid: 1234,
+            ppid: 567,
+            pgrp: 890,
+            sid: 321,
+            uid: 70000,
+            gid: 80000,
+            fname: "probe-process",
+            psargs: "",
+          }),
+          gnuBuildIdNote("0123456789abcdef"),
+        ]),
+      }),
+    );
+    // Generic inventory stays; only the Linux layout and its names are withheld.
+    expect(report.entries[0]).toMatchObject({
+      owner: "CORE",
+      type: 3,
+      type_name: "unknown",
+      core: null,
+      descsz: 136,
+    });
+    expect(report.entries[0]?.descriptor).toMatchObject({ bytes: 136 });
+    expect(report.entries[0]?.descriptor.sha256).toMatch(/^[0-9a-f]{64}$/u);
+    expect(report.entries[1]).toMatchObject({
+      type_name: "gnu_build_id",
+      gnu: { build_id_hex: "0123456789abcdef" },
+    });
+    expect(report.limitations.join("\n")).toContain(
+      `EI_OSABI ${String(osAbi)}, EI_ABIVERSION ${String(abiVersion)}`,
+    );
+    expect(elfNotesSchema.safeParse(report).success).toBe(true);
+  },
+);
 
 it("tolerates malformed core notes by returning null without throwing", () => {
   const truncatedPrpsinfo = elfNote("CORE", 3, Buffer.alloc(20)); // requires 136 for 64-bit

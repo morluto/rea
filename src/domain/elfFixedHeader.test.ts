@@ -29,6 +29,7 @@ it.each([
         type: 0xfe01,
         flags: 0x89abcdef,
         osAbi: 0,
+        abiVersion: 0,
         architecture: cls === 1 ? "x86" : "x86_64",
       },
     });

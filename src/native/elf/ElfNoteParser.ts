@@ -9,7 +9,10 @@ import { readElfRawTableDeclarations } from "../../domain/elfRawTableDeclaration
 import { createHash } from "node:crypto";
 import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
 import { assertArtifactReadActive } from "../../artifacts/ArtifactFileOperation.js";
-import { readElfFixedHeader } from "../../domain/elfFixedHeader.js";
+import {
+  readElfFixedHeader,
+  type ElfFixedHeader,
+} from "../../domain/elfFixedHeader.js";
 import {
   elfNoteAlignment as noteAlignment,
   elfNoteLayout,
@@ -20,6 +23,7 @@ import type {
   InspectElfNotesInput,
 } from "../../domain/native/elfNotes.js";
 import {
+  admitsLinuxCoreNotes,
   coreNoteTypeName,
   elfObjectTypeName,
   gnuNoteTypeName,
@@ -92,7 +96,7 @@ const GNU_OS_NAMES: Readonly<Record<number, string>> = {
   6: "nacl",
 };
 
-const LIMITATIONS = [
+const FIXED_LIMITATIONS = [
   "This workflow does not execute the image, resolve runtime notes, or verify GNU build-id uniqueness against package catalogs.",
   "PT_NOTE and SHT_NOTE are examined independently; the same file range may appear twice when both tables declare it.",
 ] as const;
@@ -101,6 +105,9 @@ const ABSENT_LIMITATIONS = [
   "No PT_NOTE program header or SHT_NOTE section was declared. That is not proof the image never carried notes in another container or overlay.",
   "This workflow does not execute the image, resolve runtime notes, or verify GNU build-id uniqueness against package catalogs.",
 ] as const;
+
+const foreignCoreLimitation = (osAbi: number, abiVersion: number): string =>
+  `CORE note descriptors are preserved without interpretation because the declared header profile (EI_OSABI ${String(osAbi)}, EI_ABIVERSION ${String(abiVersion)}) does not select the Linux layout; CORE note types are not Linux-exclusive.`;
 
 class ElfReader {
   constructor(
@@ -597,9 +604,10 @@ const decodeCore = (
   little: boolean,
   wide: boolean,
   machine: number,
+  linuxProfile: boolean,
   text: TextBudget,
 ): ElfNotes["entries"][number]["core"] => {
-  if (owner !== "CORE") return null;
+  if (owner !== "CORE" || !linuxProfile) return null;
   if (type === 3) return decodeCorePrpsinfo(descriptor, little, wide, text);
   if (type === 0x46494c45)
     return decodeCoreFile(descriptor, little, wide, text);
@@ -760,15 +768,7 @@ export const parseElfNotes = (
         text,
       ))
         parsed.push(
-          toEntry(
-            note,
-            "program",
-            index,
-            reader.little,
-            wide,
-            header.machine,
-            text,
-          ),
+          toEntry(note, "program", index, reader.little, wide, header, text),
         );
     }
   }
@@ -825,18 +825,11 @@ export const parseElfNotes = (
         text,
       ))
         parsed.push(
-          toEntry(
-            note,
-            "section",
-            index,
-            reader.little,
-            wide,
-            header.machine,
-            text,
-          ),
+          toEntry(note, "section", index, reader.little, wide, header, text),
         );
     }
   }
+  const linuxCore = admitsLinuxCoreNotes(header.osAbi, header.abiVersion);
   const absent = tables.length === 0;
   return {
     artifact,
@@ -853,7 +846,10 @@ export const parseElfNotes = (
       examined_entries: examined.count,
     },
     limitations: [
-      ...(absent ? ABSENT_LIMITATIONS : LIMITATIONS),
+      ...(absent ? ABSENT_LIMITATIONS : FIXED_LIMITATIONS),
+      ...(linuxCore || !parsed.some((entry) => entry.owner === "CORE")
+        ? []
+        : [foreignCoreLimitation(header.osAbi, header.abiVersion)]),
       ...sectionNameLimitations,
     ],
   };
@@ -865,11 +861,12 @@ const toEntry = (
   tableIndex: number,
   little: boolean,
   wide: boolean,
-  machine: number,
+  header: ElfFixedHeader,
   text: TextBudget,
 ): Omit<ElfNotes["entries"][number], "index"> => {
   const gnuOwner = note.owner === "GNU";
   const coreOwner = note.owner === "CORE";
+  const linuxCore = admitsLinuxCoreNotes(header.osAbi, header.abiVersion);
   const range = `${String(note.descriptor_offset)}:${String(note.descsz)}`;
   let digest = text.hashes.get(range);
   if (digest === undefined) {
@@ -887,7 +884,7 @@ const toEntry = (
     type_name: gnuOwner
       ? gnuNoteTypeName(note.type)
       : coreOwner
-        ? coreNoteTypeName(note.type)
+        ? coreNoteTypeName(note.type, linuxCore)
         : "unknown",
     owner: note.owner,
     owner_bytes_hex: note.owner_bytes_hex,
@@ -907,7 +904,8 @@ const toEntry = (
       note.descriptor,
       little,
       wide,
-      machine,
+      header.machine,
+      linuxCore,
       text,
     ),
   };

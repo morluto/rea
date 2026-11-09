@@ -68,8 +68,22 @@ export const gnuNoteTypeName = (type: number): ElfNoteTypeName => {
   }
 };
 
-/** Map CORE n_type when the owner is CORE; other types stay unknown. */
-export const coreNoteTypeName = (type: number): ElfNoteTypeName => {
+/**
+ * CORE note names and descriptor layouts decoded here are Linux's. CORE/type 3
+ * is not Linux-exclusive — Solaris describes historical NT_PRPSINFO notes — so
+ * the declared header profile must select the Linux layout explicitly.
+ */
+export const admitsLinuxCoreNotes = (
+  osAbi: number,
+  abiVersion: number,
+): boolean => abiVersion === 0 && (osAbi === 0 || osAbi === 3);
+
+/** Map CORE n_type when the owner is CORE and the Linux profile is admitted. */
+export const coreNoteTypeName = (
+  type: number,
+  linuxProfile: boolean,
+): ElfNoteTypeName => {
+  if (!linuxProfile) return "unknown";
   switch (type) {
     case 3:
       return "core_prpsinfo";

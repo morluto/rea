@@ -41,8 +41,14 @@ filled when the descriptor matches that type. Other owners keep `gnu` null.
 For Linux `CORE` notes, `core.prpsinfo`, `core.file`, `core.siginfo`, or
 `core.auxv` are decoded for process arguments and status (`NT_PRPSINFO`), mapped
 file memory regions and paths (`NT_FILE`), fault signal and code (`NT_SIGINFO`), and
-auxiliary vectors (`NT_AUXV`) across 32-bit and 64-bit images. Other owners or unparsed
-notes keep `core` null.
+auxiliary vectors (`NT_AUXV`) across 32-bit and 64-bit images. These layouts are
+Linux's, so they are selected only by a header declaring System V/unspecified or
+GNU/Linux `EI_OSABI` with `EI_ABIVERSION` zero. `CORE` note types are not
+Linux-exclusive; under any other header profile the entries keep their owner,
+type, descriptor bytes, and hash, but `type_name` stays `unknown`, `core` stays
+null, and a limitation names the declared profile that withheld the
+interpretation. An unspecified `EI_OSABI` alone does not prove Linux origin.
+Other owners or unparsed notes keep `core` null.
 
 `PT_NOTE` and `SHT_NOTE` are examined independently. The same file range may
 appear twice when both tables declare it.

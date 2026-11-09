@@ -99,6 +99,10 @@ export interface ElfNoteImageOptions {
   readonly ownership?: "program" | "section" | "both" | "none";
   readonly machine?: number;
   readonly type?: number;
+  /** EI_OSABI; unspecified (0) is the default System V header. */
+  readonly osAbi?: number;
+  /** EI_ABIVERSION; the default 0 leaves ABI version unconstrained. */
+  readonly abiVersion?: number;
   readonly alignment?: number;
   readonly sectionName?: string;
 }
@@ -131,6 +135,8 @@ export const elfNoteFixture = (options: ElfNoteImageOptions = {}): Buffer => {
   bytes[4] = bits === 64 ? 2 : 1;
   bytes[5] = little ? 1 : 2;
   bytes[6] = 1;
+  bytes[7] = options.osAbi ?? 0;
+  bytes[8] = options.abiVersion ?? 0;
   write16(bytes, 0x10, options.type ?? 3, little);
   write16(bytes, 0x12, options.machine ?? 62, little);
   write32(bytes, 0x14, 1, little);
