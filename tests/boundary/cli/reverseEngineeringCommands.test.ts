@@ -15,6 +15,7 @@ import {
   evidenceSchema,
 } from "../../../src/domain/evidence.js";
 import { err, ok } from "../../../src/domain/result.js";
+import { ProviderCleanupError } from "../../../src/domain/providerCleanupError.js";
 import { RizinDebugSessionManager } from "../../../src/rizin/RizinDebugSessionManager.js";
 import { closeOwnedDebuggerSessions } from "../../../src/process/ownedDebuggerSession.js";
 import { ReverseEngineeringService as CoreReverseEngineeringService } from "../../../src/application/reverse/ReverseEngineeringService.js";
@@ -395,6 +396,56 @@ it("returns cancellation with the completed observation when the caller interrup
     details: { partial_observation: evidence },
   });
   expect(process.exitCode).toBe(130);
+});
+
+it("retains completed objdump Evidence when final cleanup fails", async () => {
+  const evidence = observation("complete");
+  const result = await runObjdump({
+    inspectWithObjdump: async () => ok(evidence),
+    close: async () => {
+      throw new ProviderCleanupError(
+        "objdump.command",
+        ["owned-run"],
+        { reason: "process cleanup remains incomplete" },
+        { operation: "inspect_with_objdump" },
+      );
+    },
+  });
+
+  expect(result).toMatchObject({
+    code: "cleanup_incomplete",
+    details: {
+      resources: ["owned-run"],
+      partial_observation: evidence,
+    },
+  });
+});
+
+it("retains an unexpected operation failure and an independent cleanup failure", async () => {
+  const result = await runObjdump({
+    inspectWithObjdump: async () => {
+      throw new AnalysisTimeoutError("inspect_with_objdump", 1_000);
+    },
+    close: async () => {
+      throw new ProviderCleanupError(
+        "objdump.command",
+        ["owned-run"],
+        { reason: "process cleanup remains incomplete" },
+        { operation: "inspect_with_objdump" },
+      );
+    },
+  });
+
+  expect(result).toMatchObject({
+    code: "cleanup_incomplete",
+    category: "timeout",
+    details: {
+      diagnostics: {
+        primary_error: { code: "provider_timeout" },
+        cleanup_error: { details: { resources: ["owned-run"] } },
+      },
+    },
+  });
 });
 
 it.each([false, true])(

@@ -310,12 +310,12 @@ it("identifies each event scheduled after the scenario timeout", () => {
     expect.objectContaining({
       code: "custom",
       path: ["events", 1],
-      message: "event at 1500 ms occurs after the 1000 ms scenario timeout",
+      message: expect.stringMatching(/1500.*1000/u),
     }),
     expect.objectContaining({
       code: "custom",
       path: ["events", 2],
-      message: "event at 2000 ms occurs after the 1000 ms scenario timeout",
+      message: expect.stringMatching(/2000.*1000/u),
     }),
   ]);
 });

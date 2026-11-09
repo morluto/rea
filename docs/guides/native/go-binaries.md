@@ -49,14 +49,16 @@ selected dependency versions without reopening the file:
 }
 ```
 
-Go views support `dependencies` (exact `paths`) and `settings` (exact `keys`),
-optional original `indices`, field selection, and pagination. Filters intersect;
-empty filter arrays select no rows and `fields: []` returns only row identity.
-Each row keeps its original `index`, scoped to the parent Evidence and collection;
-duplicate module paths and setting keys keep distinct indices. Page offsets
-count matching records. Exhausting retained rows does not establish complete
-runtime dependencies. Original bytes, unknown lines and all complete metadata
-remain in the parent and can be exported as an Evidence bundle.
+Go views support `dependencies` (exact `paths`), `settings` (exact `keys`) and,
+when collected with `include_string_literals: true`, `string_literals` (exact
+`values` and substring `contains`), plus optional original `indices`, field
+selection, and pagination. Filters intersect; empty filter arrays select no rows
+and `fields: []` returns only row identity. Each row keeps its original `index`,
+scoped to the parent Evidence and collection; duplicate module paths and setting
+keys keep distinct indices. Page offsets count matching records. Exhausting
+retained rows does not establish complete runtime dependencies or string
+coverage. Original bytes, unknown lines and all complete metadata remain in the
+parent and can be exported as an Evidence bundle.
 
 One-shot CLI summaries save complete Evidence before returning the projection:
 
@@ -112,6 +114,22 @@ visible. GOPATH-mode builds may contain only a package `path` and build settings
 their empty dependency array does not establish the absence of dependencies.
 The result's limitations state this explicitly. A module-mode build with a main
 module record and no dependency records has an observed empty dependency list.
+
+When `include_string_literals: true` (CLI `--include-string-literals`, optional
+`max_string_literals` / `--max-string-literals`, default `2000`, maximum `10000`)
+is selected, `string_literals` reports `evidence_kind: "inferred"` alongside
+deduplicated printable UTF-8 literals referenced by word-aligned two-word
+`(ptr, len)` string headers in non-executable initialized data. Because Go packs
+read-only string data contiguously without NUL terminators, slicing by `(ptr, len)`
+recovers exact literal boundaries instead of concatenated C-string runs. Each
+target slice (`1`–`4096` bytes) must stay within a single read-only mapped
+section or segment, decode as printable UTF-8 (`\t`, `\n`, `\r`, joiners
+`U+200C` / `U+200D` and printable Unicode scalar values, excluding control and
+other format characters), and fit within
+a 64 MiB header-scan budget and 512 KiB aggregate string budget
+(`truncated: true` when capped). Compiler-inlined or
+stack-constructed strings without static headers, unapplied relocation addends
+and Mach-O `LC_DYLD_CHAINED_FIXUPS` pointer encodings are noted in `limitations`.
 
 ## Supported boundary
 

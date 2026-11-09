@@ -49,7 +49,6 @@ it.each([
       path,
       operation: "symbols",
     });
-    expect(result.ok).toBe(false);
     if (result.ok) throw new Error("Expected injected boundary rejection");
     expect(result.error.cause).toBe(cause);
     const projected = projectAnalysisError(result.error);

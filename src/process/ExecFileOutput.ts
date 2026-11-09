@@ -139,7 +139,7 @@ export const execFileOutputFailure = (
 };
 
 /** Spawn errnos reporting exhausted host capacity rather than an unusable command. */
-const HOST_SPAWN_CAPACITY_CODES: ReadonlySet<string> = new Set([
+export const HOST_SPAWN_CAPACITY_CODES: ReadonlySet<string> = new Set([
   "EAGAIN",
   "EMFILE",
   "ENFILE",

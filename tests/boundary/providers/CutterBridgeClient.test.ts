@@ -1488,7 +1488,6 @@ describe("CutterBridgeClient: scenario group 9", () => {
       expected_generation: 7,
       command: "pd 4",
     });
-    expect(result.ok).toBe(true);
     if (!result.ok) throw result.error;
     expect(result.value.limitations).toContainEqual(
       expect.stringMatching(/output.*transport limit.*omitted/iu),

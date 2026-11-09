@@ -62,21 +62,6 @@ const projectionBudgetExceeded = Symbol(
   "input issue projection budget exceeded",
 );
 
-/** Bound representation expansion before constructing projected diagnostics. */
-export const projectInputIssuesWithinBudget = (
-  issues: readonly z.core.$ZodIssue[],
-  input: unknown,
-  budgetBytes: number,
-  operation?: string,
-): readonly AnalysisInputIssue[] | undefined => {
-  return projectInputIssueGroupsWithinBudget(
-    issues,
-    input,
-    budgetBytes,
-    operation,
-  )?.flat();
-};
-
 /** Field diagnostics that fit a byte allowance, plus what was dropped. */
 export interface BoundedInputIssues {
   readonly issues: readonly AnalysisInputIssue[];
@@ -302,9 +287,9 @@ const projectIssue = (
       },
     ];
   if (issue.code === "too_small")
-    return [boundedIssue(path, "minimum", numericBound(issue.minimum))];
+    return [boundedIssue(path, "minimum", numericBound(issue.minimum), issue)];
   if (issue.code === "too_big")
-    return [boundedIssue(path, "maximum", numericBound(issue.maximum))];
+    return [boundedIssue(path, "maximum", numericBound(issue.maximum), issue)];
   if (issue.code === "invalid_format")
     return [
       {
@@ -360,12 +345,21 @@ const isSafeExpected = (
 const safeExpected = (value: unknown) =>
   isSafeExpected(value) ? value : "schema-defined value";
 
+/**
+ * `minimum` and `maximum` are inclusive, as in JSON Schema. An exclusive bound
+ * keeps the schema's own message instead of naming a value it rejects.
+ */
 const boundedIssue = (
   path: readonly (string | number)[],
   key: "minimum" | "maximum",
   value: number | undefined,
+  issue: { readonly inclusive?: boolean; readonly message: string },
 ): AnalysisInputIssue => ({
   path,
   reason: "out_of_range",
-  ...(value === undefined ? {} : { [key]: value }),
+  ...(value === undefined
+    ? {}
+    : issue.inclusive === false
+      ? { message: issue.message }
+      : { [key]: value }),
 });

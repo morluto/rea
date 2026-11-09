@@ -145,7 +145,6 @@ it("projects missing and non-file objdump targets with actionable path reasons",
         path,
         operation: "symbols",
       });
-      expect(result.ok).toBe(false);
       if (result.ok) throw new Error("Expected target validation failure");
       const projection = projectAnalysisError(result.error);
       expect(analysisErrorProjectionSchema.safeParse(projection).success).toBe(
@@ -216,7 +215,6 @@ it("keeps target preflight I/O failures out of invalid-input classification", as
       path,
       operation: "symbols",
     });
-    expect(result.ok).toBe(false);
     if (result.ok) throw new Error("Expected target preflight I/O failure");
     expect(result.error).toMatchObject({
       _tag: "ProviderAdapterError",
@@ -283,7 +281,6 @@ it.each([
         path,
         operation: "symbols",
       });
-      expect(result.ok).toBe(false);
       if (result.ok) throw new Error(`Expected ${code} target path failure`);
       expect(result.error).toMatchObject({
         _tag: "AnalysisInputError",

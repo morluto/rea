@@ -67,11 +67,18 @@ See [desktop installations](https://github.com/morluto/rea/blob/main/docs/deskto
 Use `inspect_go_binary` for an explicit local ELF, PE or Mach-O (universal
 files need `architecture`) when the
 question concerns the embedded compiler version, module/dependency versions,
-local replacements or build settings. No `open_binary`, Go installation or
+local replacements, build settings, or static Go string literals packed without
+NUL terminators. Pass `include_string_literals: true`
+(`--include-string-literals`, optional `max_string_literals` /
+`--max-string-literals`) to recover bounded inferred word-aligned `(ptr, len)`
+UTF-8 string slices from read-only data and page them through `go`
+`string_literals` views. No `open_binary`, Go installation or
 target execution is required. The CLI equivalent is `inspect-go-binary PATH`.
 Preserve artifact SHA-256, original file ranges, framed module bytes and every
 unparsed module-text line. A missing record is an unknown, not proof of a
-non-Go binary; observed metadata does not authenticate its claims. Function,
+non-Go binary; observed metadata does not authenticate its claims, and static
+`(ptr, len)` string recovery excludes compiler-inlined stack/immediate strings
+without proving runtime reachability. Function,
 source and type recovery remain a separate native-analysis question.
 
 ## Model files
@@ -684,6 +691,11 @@ numbering gaps leave coverage unknown; a DfuSe suffix CRC mismatch follows
 
 Fresh-import sessions admit annotations; existing-project reuse is read-only.
 Use `annotate_native_function` for one function name and/or entry comments, with at least one explicit change. Review its annotation readback and refreshed dossier inline. Changes are atomic; empty comments clear them, omitted fields preserve them. Later MCP calls observe edits. Normal close saves them when owned Program checkpoint mode is enabled; ephemeral mode discards them. CLI `annotate-native-function` follows the same setting when closing after its updated result. Select the [checkpoint workflow](#continue-editable-ghidra-analysis-across-processes) before edits that must survive a later process. Original executable bytes are unchanged; edits invalidate immutable snapshots. Windows P0 does not admit database mutations. For naming only, `set_address_name` / `set_addresses_names` also work with Ghidra: they name function entries or data addresses (primary labels) and return compact per-address success booleans instead of a dossier. Ghidra rejects batch addresses that request the same name or a name another selected address holds; `raw_result.failures` gives each failure's reason.
+
+A provider switch or different target can retire the active Ghidra database and discard
+its edits, even if the new provider fails on a later call. Same-target,
+same-profile reopen keeps the active database. Retained annotation Evidence
+records what happened; it does not restore the edits.
 
 For `compare_functions`, obtain `analyze_function` Evidence before and after the
 edit while the MCP session is open; annotation Evidence is not a comparison

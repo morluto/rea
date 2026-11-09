@@ -76,7 +76,7 @@ export const resolveProcessScenarioRuntimePaths = async (
  * launches, so capture cannot defer to the host's search: where the lookup
  * stops because a native search can stop there, the scenario is rejected.
  */
-export const resolveExecutable = async (
+const resolveExecutable = async (
   command: string,
   workingDirectory: string,
   searchPath: string | undefined,
