@@ -1,9 +1,14 @@
+import { ERLANG_BEAM_PROVIDER_IDENTITY } from "./ErlangBeamProviderIdentity.js";
 import {
   projectStableArtifactFailure,
+  stableArtifactInputRecovery,
   projectArtifactCloseFailure,
 } from "../artifacts/StableArtifactFailure.js";
 import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
-import { readStableArtifact } from "../artifacts/readStableArtifact.js";
+import {
+  type StableArtifactSnapshot,
+  readStableArtifact,
+} from "../artifacts/readStableArtifact.js";
 import {
   artifactFilePrimaryFacts,
   type ArtifactFilePrimaryFacts,
@@ -30,13 +35,6 @@ import {
 import { err, ok } from "../domain/result.js";
 import { BeamCapacityFailure, parseErlangBeam } from "./BeamParser.js";
 
-/** Bundled format reader identity; module names are separate observed facts. */
-export const ERLANG_BEAM_PROVIDER_IDENTITY = {
-  id: "rea-erlang-beam",
-  name: "REA Erlang BEAM reader",
-  version: "1",
-} as const;
-
 const OPERATION = "inspect_erlang_beam";
 
 /** Portable parser over one bounded, identity-checked regular file. */
@@ -57,9 +55,10 @@ export class BeamProvider implements BeamPort {
   }
 
   async inspect(input: InspectErlangBeamInput, options?: ExecutionOptions) {
+    let snapshot: StableArtifactSnapshot | undefined;
     try {
       return await this.#resources.run(async () => {
-        const snapshot = await readStableArtifact(
+        snapshot = await readStableArtifact(
           input.path,
           input.max_file_bytes,
           options?.signal,
@@ -79,7 +78,7 @@ export class BeamProvider implements BeamPort {
         );
       });
     } catch (cause) {
-      return err(beamFailure(cause, input));
+      return err(beamFailure(cause, input, snapshot));
     }
   }
 }
@@ -160,13 +159,17 @@ const beamFailurePrimary = (
       );
     }
     if (cause.reason === "path" || cause.reason === "format")
-      return new AnalysisInputError(OPERATION, { cause }, [
-        {
-          path: ["path"],
-          reason: "invalid_format",
-          message: cause.message,
-        },
-      ]);
+      return new AnalysisInputError(
+        OPERATION,
+        { cause, ...stableArtifactInputRecovery(cause) },
+        [
+          {
+            path: ["path"],
+            reason: "invalid_format",
+            message: cause.message,
+          },
+        ],
+      );
   }
   if (cause instanceof Error && "code" in cause) {
     if (cause.code === "EACCES" || cause.code === "EPERM")
@@ -194,7 +197,11 @@ const beamFailurePrimary = (
   );
 };
 
-const beamFailure = (cause: unknown, input: InspectErlangBeamInput) => {
+const beamFailure = (
+  cause: unknown,
+  input: InspectErlangBeamInput,
+  snapshot?: StableArtifactSnapshot,
+) => {
   const primary = beamFailurePrimary(artifactFilePrimaryFacts(cause), input);
   return projectStableArtifactFailure(
     cause,
@@ -202,5 +209,6 @@ const beamFailure = (cause: unknown, input: InspectErlangBeamInput) => {
     input.path,
     ERLANG_BEAM_PROVIDER_IDENTITY.id,
     OPERATION,
+    snapshot,
   );
 };

@@ -26,12 +26,19 @@ import {
 } from "../domain/analysisResourceLimits.js";
 import { mcpInputSchemaProfileSchema } from "./mcpInputSchemaProfile.js";
 import { mcpOutputSchemaProfileSchema } from "./mcpOutputSchemaProfile.js";
+import { mcpToolCatalogProfileSchema } from "./mcpToolCatalogProfile.js";
 import { mcpResponseBudgetSchema } from "./mcpResponseBudget.js";
 import { asarMaxHeaderBytesSchema } from "./asarHeaderAdmission.js";
 import { bridgeMaxRequestBytesSchema } from "./bridgeMaxRequestBytes.js";
 import { captureDecoderOldGenerationMiBSchema } from "./captureDecoderHeap.js";
+import { debuggerSessionLimitEnvironmentShape } from "./debuggerSessionLimits.js";
 import { regexMatchingDeadlineMsSchema } from "./regexMatchingDeadline.js";
 import { regexWorkerHeapRequestMiBSchema } from "./regexWorkerHeapRequest.js";
+import {
+  windowsChangeTimeDriftMsSchema,
+  windowsChangeTimeSettleMaxPollsSchema,
+  windowsChangeTimeSettlePollMsSchema,
+} from "./windowsChangeTimeSettle.js";
 import {
   mcpDoctorDeadlineMsSchema,
   mcpFirstCatalogBudgetMsSchema,
@@ -44,6 +51,7 @@ import { processStartConfigurationSchema } from "./processStart.js";
 import { parseJebMcpEndpoint } from "./jebMcpEndpoint.js";
 
 const environmentSchema = z.object({
+  ...debuggerSessionLimitEnvironmentShape,
   REA_ANALYSIS_PROVIDER: analysisProviderSelectorSchema.default("auto"),
   REA_BRIDGE_MAX_REQUEST_BYTES: bridgeMaxRequestBytesSchema.optional(),
   REA_MCP_MAX_RESPONSE_BYTES: mcpResponseBudgetSchema.optional(),
@@ -53,6 +61,11 @@ const environmentSchema = z.object({
     captureDecoderOldGenerationMiBSchema.optional(),
   REA_REGEX_MATCHING_DEADLINE_MS: regexMatchingDeadlineMsSchema.optional(),
   REA_REGEX_WORKER_HEAP_REQUEST_MIB: regexWorkerHeapRequestMiBSchema.optional(),
+  REA_WINDOWS_CHANGE_TIME_DRIFT_MS: windowsChangeTimeDriftMsSchema.optional(),
+  REA_WINDOWS_CHANGE_TIME_SETTLE_POLL_MS:
+    windowsChangeTimeSettlePollMsSchema.optional(),
+  REA_WINDOWS_CHANGE_TIME_SETTLE_MAX_POLLS:
+    windowsChangeTimeSettleMaxPollsSchema.optional(),
   REA_MCP_INITIALIZE_BUDGET_MS: mcpInitializeBudgetMsSchema.optional(),
   REA_MCP_TOOLS_LIST_BUDGET_MS: mcpToolsListBudgetMsSchema.optional(),
   REA_MCP_FIRST_CATALOG_BUDGET_MS: mcpFirstCatalogBudgetMsSchema.optional(),
@@ -60,6 +73,7 @@ const environmentSchema = z.object({
   REA_MCP_INPUT_SCHEMA_PROFILE: mcpInputSchemaProfileSchema.optional(),
   REA_MCP_TOOL_FAMILIES: mcpToolFamiliesSchema.optional(),
   REA_MCP_OUTPUT_SCHEMA_PROFILE: mcpOutputSchemaProfileSchema.optional(),
+  REA_MCP_TOOL_CATALOG_PROFILE: mcpToolCatalogProfileSchema.optional(),
   REA_IDA_MCP_CONFIG: z
     .string()
     .min(1)
@@ -109,6 +123,14 @@ const environmentSchema = z.object({
   ),
   REA_GHIDRA_DECOMPILE_TIMEOUT_SECONDS: ghidraDecompileTimeoutSchema.optional(),
   REA_GHIDRA_PROJECT_PATH: ghidraProjectPathSchema.optional(),
+  REA_GHIDRA_CHECKPOINT_DIR: z
+    .string()
+    .min(1)
+    .refine(
+      (value) => value.startsWith("/") && !value.includes("\0"),
+      "must be an absolute POSIX directory path",
+    )
+    .optional(),
   REA_GHIDRA_PROGRAM_NAME: ghidraProgramNameSchema.optional(),
   REA_GHIDRA_LANGUAGE_ID: ghidraLanguageIdSchema.optional(),
   REA_GHIDRA_COMPILER_SPEC_ID: ghidraCompilerSpecIdSchema.optional(),
@@ -187,7 +209,12 @@ export const parseEnvironmentValues = (
         settings: invalidEntries,
       }),
     );
-  const parsed = environmentSchema.safeParse(environment);
+  // An expression has no known runtime value to validate or default. Its
+  // original text was checked for invalid bytes above and remains with its owner.
+  const literals = Object.fromEntries(
+    Object.entries(environment).filter(([key]) => !unresolvedSettings.has(key)),
+  );
+  const parsed = environmentSchema.safeParse(literals);
   if (!parsed.success) {
     // Zod messages name the constraint, never the rejected value.
     const settings = parsed.error.issues.map((issue) => ({
@@ -229,6 +256,27 @@ export const parseEnvironment = (
   const parsed = parseEnvironmentValues(environment, unresolvedSettings);
   if (!parsed.ok) return parsed;
   const env = parsed.value;
+  if (env.REA_GHIDRA_CHECKPOINT_DIR !== undefined) {
+    const conflicts = [
+      "REA_GHIDRA_PROJECT_PATH",
+      "REA_GHIDRA_SEED_FILE",
+      "REA_GHIDRA_NATIVEAOT_JAR",
+      "REA_GHIDRA_LANGUAGE_ID",
+      "REA_GHIDRA_DISABLED_ANALYZERS",
+    ].filter((key) => Reflect.get(env, key) !== undefined);
+    if (conflicts.length > 0)
+      return err(
+        new ConfigurationError(
+          "Ghidra checkpoints currently support stock fresh-import analysis only",
+          {
+            settings: conflicts.map((setting) => ({
+              setting,
+              constraint: "cannot be combined with REA_GHIDRA_CHECKPOINT_DIR",
+            })),
+          },
+        ),
+      );
+  }
   const project = env.REA_GHIDRA_PROJECT_PATH;
   const incompatible =
     project === undefined

@@ -20,19 +20,37 @@ import {
   KUNA_COMMAND_REMEDIATION,
   KUNA_PROVIDER_ID,
   KUNA_UNSUPPORTED_HOST_REMEDIATION,
+  KUNA_UNVERIFIED_VERSION_REMEDIATION,
   KUNA_VERIFIED_VERSION,
   KUNA_VERSION_PROBE_REMEDIATION,
 } from "./KunaRelease.js";
 
-/** Settings a registration may carry; only those the caller set explicitly. */
-const REGISTRATION_SETTINGS = [
+/** Client settings consulted by this readiness probe. */
+export const KUNA_DOCTOR_SETTINGS = [
   "REA_KUNA_COMMAND",
   "REA_KUNA_CACHE_DIR",
+  // The cache root falls back to these when REA_KUNA_CACHE_DIR is unset, so an
+  // unresolved expression in either leaves the probed directory unknown.
+  "HOME",
+  "USERPROFILE",
+  "XDG_CACHE_HOME",
   "REA_KUNA_CACHE_MAX_BYTES",
   "REA_KUNA_PROJECT_TIMEOUT_MS",
   "REA_KUNA_TIMEOUT_MS",
   "REA_KUNA_JOBS",
 ] as const;
+
+/**
+ * Settings setup writes into a client registration.
+ *
+ * `HOME` and `XDG_CACHE_HOME` are readiness inputs only: they decide where the
+ * cache root falls back to, and recording them would persist the ambient
+ * environment a child already inherits.
+ */
+export const KUNA_REGISTRATION_SETTINGS = KUNA_DOCTOR_SETTINGS.filter(
+  (name) =>
+    name !== "HOME" && name !== "USERPROFILE" && name !== "XDG_CACHE_HOME",
+);
 
 /** Project Kuna readiness into the doctor contract without writing anything. */
 export const inspectKunaProvider = async (
@@ -138,13 +156,16 @@ export const inspectKunaProvider = async (
   }
   const { value } = installation;
   const cache = await cacheCheck(environment, platform);
+  const versionGuidance = value.verified
+    ? null
+    : KUNA_UNVERIFIED_VERSION_REMEDIATION;
   return {
     id: KUNA_PROVIDER_ID,
     configured,
     available: cache.ok,
     providerVersion: value.version,
     registrationEnvironment: Object.fromEntries(
-      REGISTRATION_SETTINGS.flatMap((name) => {
+      KUNA_REGISTRATION_SETTINGS.flatMap((name) => {
         const setting = environment[name];
         return setting === undefined ? [] : [[name, setting]];
       }),
@@ -157,9 +178,9 @@ export const inspectKunaProvider = async (
         detail: `${value.executable} reports Kuna ${value.version} (sha256 ${value.sha256})${
           value.verified
             ? "."
-            : `; REA verified ${KUNA_VERIFIED_VERSION}, so this release's project layout is unverified.`
+            : `; REA verified ${KUNA_VERIFIED_VERSION}, so this release's project layout is unverified. ${versionGuidance}`
         }`,
-        remediation: null,
+        remediation: versionGuidance,
         classification: "config_drift",
         details: {
           executable: value.executable,

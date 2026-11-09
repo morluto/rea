@@ -59,15 +59,45 @@ const environmentSchema = clientConfigurationRecordSchema.transform(
   },
 );
 
+/**
+ * Clients that expand `$VAR` and `${VAR}` in a recorded `env` value from the
+ * environment the client itself runs with.
+ *
+ * REA does not replicate that expansion — it would have to predict a child's
+ * environment — but it must not report the literal text as the value either, or
+ * a consumer that searches for an inherited `PATH` searches for a literal
+ * `${PATH}` entry instead.
+ */
+const VAR_EXPANDING_CLIENTS: ReadonlySet<string> = new Set(["qwen_code"]);
+
+/** Recorded setting names whose value is an expression, not a literal. */
+const expressionSettings = (
+  clientName: string | undefined,
+  values: Readonly<Record<string, string>>,
+): ReadonlySet<string> =>
+  clientName !== undefined && VAR_EXPANDING_CLIENTS.has(clientName)
+    ? new Set(
+        Object.entries(values)
+          .filter(([, value]) =>
+            /\$(?:[A-Za-z_][A-Za-z0-9_]*|\{[A-Za-z_][A-Za-z0-9_]*\})/u.test(
+              value,
+            ),
+          )
+          .map(([name]) => name),
+      )
+    : new Set();
+
 /** Read explicit REA overrides without dropping peers when one value is invalid. */
 export const clientRegistrationEnvironment = (
   parsed: ClientConfigurationDocument | undefined,
+  clientName: string | undefined,
   overrides: Readonly<Record<string, string>> = {},
   validation: "fragment" | "effective" = "effective",
   platform: NodeJS.Platform = process.platform,
 ): Result<Readonly<Record<string, string>>, ConfigurationError> => {
   const details = clientRegistrationEnvironmentDetails(
     parsed,
+    clientName,
     overrides,
     validation,
     platform,
@@ -78,6 +108,7 @@ export const clientRegistrationEnvironment = (
 /** Retain original strings and the parser-owned timeout facts. */
 export const clientRegistrationEnvironmentDetails = (
   parsed: ClientConfigurationDocument | undefined,
+  clientName: string | undefined,
   overrides: Readonly<Record<string, string>> = {},
   validation: "fragment" | "effective" = "effective",
   platform: NodeJS.Platform = process.platform,
@@ -124,12 +155,78 @@ export const clientRegistrationEnvironmentDetails = (
     overrides,
     platform,
   );
-  return validatedDetails(environment, validation, platform);
+  return validatedDetails(
+    environment,
+    validation,
+    platform,
+    expressionSettings(clientName, environment),
+  );
+};
+
+/** Setting names a registration does not carry as the value selected here. */
+export interface RecordedProviderSettings {
+  /** Selected here and absent from the registration's recorded environment. */
+  readonly unrecorded: readonly string[];
+  /** Recorded with text other than the value selected here. */
+  readonly differing: readonly string[];
+  /** Recorded as an expression, or in a map REA could not read. */
+  readonly unresolved: readonly string[];
+}
+
+/**
+ * Compare settings selected in this process with a registration's own file.
+ * The server's environment also depends on what its client passes on, which is
+ * not observable here, so a gap is never a claim about the effective value.
+ * Returns only names: recorded values stay in the file that owns them.
+ */
+export const recordedProviderSettings = (
+  parsed: ClientConfigurationDocument,
+  clientName: string | undefined,
+  selected: Readonly<Record<string, string>>,
+  platform: NodeJS.Platform = process.platform,
+): RecordedProviderSettings | undefined => {
+  const names = Object.keys(selected).sort(compareUnicodeCodePoints);
+  if (names.length === 0) return undefined;
+  const details = clientRegistrationEnvironmentDetails(
+    parsed,
+    clientName,
+    {},
+    "fragment",
+    platform,
+  );
+  if (!details.ok) return { unrecorded: [], differing: [], unresolved: names };
+  const recorded = snapshotEnvironment(details.value.values, platform);
+  // Expression names fold like every other environment name on this platform.
+  const expressions = snapshotEnvironment(
+    Object.fromEntries(
+      [...details.value.unresolvedSettings].map((name) => [name, ""]),
+    ),
+    platform,
+  );
+  const facts = {
+    unrecorded: names.filter(
+      (name) => recorded[name] === undefined && expressions[name] === undefined,
+    ),
+    differing: names.filter(
+      (name) =>
+        expressions[name] === undefined &&
+        recorded[name] !== undefined &&
+        recorded[name] !== selected[name],
+    ),
+    unresolved: names.filter((name) => expressions[name] !== undefined),
+  };
+  return facts.unrecorded.length +
+    facts.differing.length +
+    facts.unresolved.length ===
+    0
+    ? undefined
+    : facts;
 };
 
 /** Resolve the async provider-specific budget through its retained reader owner. */
 export const clientRegistrationEnvironmentDetailsWithBudget = async (
   parsed: ClientConfigurationDocument | undefined,
+  clientName: string | undefined,
   overrides: Readonly<Record<string, string>>,
   validation: "fragment" | "effective",
   resolveProviderRequestBudget: ProviderRequestBudgetResolver | undefined,
@@ -139,6 +236,7 @@ export const clientRegistrationEnvironmentDetailsWithBudget = async (
 > => {
   const details = clientRegistrationEnvironmentDetails(
     parsed,
+    clientName,
     overrides,
     validation,
     platform,
@@ -174,14 +272,23 @@ const validatedDetails = (
   environment: Readonly<Record<string, string>>,
   validation: "fragment" | "effective",
   platform: NodeJS.Platform = process.platform,
+  expressionSettings: ReadonlySet<string> = new Set(),
 ): Result<ClientRegistrationEnvironmentDetails, ConfigurationError> => {
   const runtimeEnvironment = snapshotEnvironment(environment, platform);
+  const unresolved = new Set(
+    Object.keys(
+      snapshotEnvironment(
+        Object.fromEntries([...expressionSettings].map((name) => [name, ""])),
+        platform,
+      ),
+    ),
+  );
   const validated =
     validation === "fragment"
-      ? parseEnvironmentValues(runtimeEnvironment)
-      : parseEnvironment(runtimeEnvironment);
+      ? parseEnvironmentValues(runtimeEnvironment, unresolved)
+      : parseEnvironment(runtimeEnvironment, unresolved);
   if (!validated.ok) return validated;
-  return ok(environmentDetails(environment, validated.value));
+  return ok(environmentDetails(environment, validated.value, unresolved));
 };
 
 const environmentDetails = (

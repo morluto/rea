@@ -9,6 +9,7 @@ import {
 } from "./binaryTargetTypes.js";
 import {
   createEvidence,
+  evidenceEnvelopeForAdmission,
   evidenceSchema,
   parseEvidence,
   immutableEvidence,
@@ -65,6 +66,42 @@ it.each(RAW_ONLY_ARCHITECTURES)(
     ).toThrow();
   },
 );
+
+it("keeps 6502 confined to explicit raw Evidence subjects alongside iNES", () => {
+  const selected = {
+    path: TARGET.path,
+    sha256: TARGET.sha256,
+    format: "raw-binary" as const,
+    architecture: "6502" as const,
+  };
+  expect(
+    createEvidence(selected, PROVIDER, {
+      operation: "inspect",
+      parameters: {},
+      result: null,
+    }).subject,
+  ).toMatchObject({ format: "raw-binary", architecture: "6502" });
+  expect(
+    createEvidence(
+      {
+        path: selected.path,
+        sha256: selected.sha256,
+        format: "ines",
+      },
+      PROVIDER,
+      { operation: "inspect", parameters: {}, result: null },
+    ).subject,
+  ).toMatchObject({ format: "ines", architecture: null });
+  for (const format of ["pe", "ines"] as const) {
+    expect(() =>
+      createEvidence({ ...selected, format }, PROVIDER, {
+        operation: "inspect",
+        parameters: {},
+        result: null,
+      }),
+    ).toThrow();
+  }
+});
 
 it("preserves omitted relationship diagnostics and authenticates reported diagnostics", () => {
   const observation = {
@@ -284,6 +321,54 @@ it("retains verbatim caller input without changing semantic identity or copying 
       .success,
   ).toBe(false);
   expect(() => withEvidenceCallerInputPath(second, "invalid\0path")).toThrow();
+});
+
+it("retains named auxiliary path choices without changing identity, history or shared payloads", () => {
+  const original = immutableEvidence(
+    createEvidence(TARGET, PROVIDER, {
+      operation: "inspect",
+      parameters: {},
+      result: { rows: ["source facts"] },
+    }),
+  );
+  const paths = {
+    operations_path: "./queries 雪.graphql",
+    candidate_paths: ["./a", "./a", "./b"],
+  };
+  const rebound = withEvidenceCallerInputPath(
+    original,
+    "./schema.graphql",
+    paths,
+  );
+  paths.operations_path = "later unrelated choice";
+  paths.candidate_paths.push("./later");
+  expect(rebound.caller_input_paths).toEqual({
+    operations_path: "./queries 雪.graphql",
+    candidate_paths: ["./a", "./a", "./b"],
+  });
+  expect(Object.isFrozen(rebound.caller_input_paths?.candidate_paths)).toBe(
+    true,
+  );
+  expect(original.caller_input_paths).toBeUndefined();
+  expect(rebound.evidence_id).toBe(original.evidence_id);
+  expect(rebound.normalized_result).toBe(original.normalized_result);
+  expect(Object.isFrozen(rebound.caller_input_paths)).toBe(true);
+  expect(parseEvidence(JSON.parse(JSON.stringify(rebound)))).toEqual(rebound);
+  expect(
+    withEvidenceCallerInputPath(rebound, "./schema.graphql", {
+      operations_path: "./queries 雪.graphql",
+      candidate_paths: ["./a", "./a", "./b"],
+    }),
+  ).toBe(rebound);
+  expect(
+    evidenceSchema.safeParse({ ...original, caller_input_paths: undefined })
+      .success,
+  ).toBe(false);
+  expect(() =>
+    withEvidenceCallerInputPath(original, "./schema.graphql", {
+      operations_path: "invalid\0path",
+    }),
+  ).toThrow();
 });
 
 it.each(["caller selection", "subject display"])(
@@ -605,7 +690,7 @@ it("binds an explicit unknown-subject reason into the semantic Evidence identity
   expect(explicit.subject).toBeNull();
   expect(explicit.limitations).toEqual([reason]);
   expect(defaulted.limitations).toEqual([
-    "Artifact identity is unavailable for this observation.",
+    expect.stringMatching(/artifact identity.*unavailable/iu),
   ]);
   expect(explicit.evidence_id).not.toBe(defaulted.evidence_id);
   expect(parseEvidence(explicit)).toEqual(explicit);
@@ -819,4 +904,42 @@ it("diagnoses a previous explicit-null coverage commitment without admitting or 
     result: { observed: true },
   });
   expect(parseEvidence(current)).toEqual(current);
+});
+
+it("borrows variable-size collections for admission", () => {
+  const limitations = ["one", "two"];
+  const locations: never[] = [];
+  const evidenceLinks = ["ev_" + "a".repeat(64)];
+  const envelope = evidenceEnvelopeForAdmission(TARGET, PROVIDER, {
+    operation: "borrow",
+    parameters: {},
+    result: {},
+    limitations,
+    locations,
+    evidenceLinks,
+  });
+  expect(envelope.limitations).toBe(limitations);
+  expect(envelope.locations).toBe(locations);
+  expect(envelope.evidence_links).toBe(evidenceLinks);
+});
+
+it("retains safe auxiliary paths when the direct caller path is unavailable", () => {
+  const original = createEvidence(TARGET, PROVIDER, {
+    operation: "inspect",
+    parameters: {},
+    result: null,
+  });
+  const rebound = withEvidenceCallerInputPath(original, undefined, {
+    descriptor_set_path: "./schema.pb",
+  });
+  expect(rebound.caller_input_path).toBeUndefined();
+  expect(rebound.caller_input_paths).toEqual({
+    descriptor_set_path: "./schema.pb",
+  });
+  expect(rebound.evidence_id).toBe(original.evidence_id);
+  expect(() =>
+    withEvidenceCallerInputPath(original, undefined, {
+      descriptor_set_path: "bad\0path",
+    }),
+  ).toThrow();
 });

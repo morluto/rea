@@ -21,7 +21,9 @@ export const estimateJavaScriptStaticApplicationProjection = (
     facts.electron.ipc.length +
     facts.electron.sender_validations.length +
     facts.electron.utility_processes.length +
-    facts.electron.native_addon_bindings.length;
+    facts.electron.native_addon_bindings.length +
+    facts.electron.protocols.length +
+    (facts.electron.dynamic_code ?? []).length;
   let records = findings * 8;
   let repeatedBytes = 0;
   for (const registration of facts.bundler_registrations) {

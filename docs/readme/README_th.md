@@ -10,7 +10,7 @@
 **เห็นฟีเจอร์ที่ชอบแล้วอยากรู้ว่าทำงานอย่างไร? เข้าใจได้ลึกถึงระดับไบนารี**
 
 [![npm version](https://img.shields.io/npm/v/rea-agents?style=flat-square&color=cb3837)](https://www.npmjs.com/package/rea-agents)
-[![MCP tool catalog](https://img.shields.io/badge/MCP-tool_catalog-5c4ee5?style=flat-square)](../mcp-contracts.md#generated-catalog)
+[![MCP tool catalog](https://img.shields.io/badge/MCP-tool_catalog-5c4ee5?style=flat-square)](../reference/mcp-contracts.md#generated-catalog)
 [![Node.js requirements](https://img.shields.io/badge/Node.js-requirements-339933?style=flat-square&logo=nodedotjs&logoColor=white)](#current-status)
 [![skills.sh](https://skills.sh/b/morluto/rea?style=flat-square)](https://skills.sh/morluto/rea/reverse-engineer-anything)
 [![MIT license](https://img.shields.io/badge/license-MIT-f4c430?style=flat-square)](../../LICENSE)
@@ -19,6 +19,8 @@
 <a href="https://trendshift.io/repositories/82054?utm_source=repository-badge&amp;utm_medium=badge&amp;utm_campaign=badge-repository-82054" target="_blank" rel="noopener noreferrer"><img src="https://trendshift.io/api/badge/repositories/82054" alt="morluto%2Frea | Trendshift" width="250" height="55"/></a>
 
 **[เว็บไซต์](https://rea.tools/th/) · [คู่มือ](https://rea.tools/th/guides/) · [ตัวอย่างการใช้งาน](https://rea.tools/th/showcase/)**
+
+<a href="https://discord.com/invite/GkcryMnJDM"><img alt="เข้าร่วมชุมชน REA บน Discord" src="https://img.shields.io/badge/Join%20us%20on%20Discord-5865F2?style=for-the-badge&logo=discord&logoColor=white" height="40"></a>
 
 [เริ่มต้นอย่างรวดเร็ว](#เริ่มต้นอย่างรวดเร็ว) · [REA ทำงานอย่างไร](#rea-ทำงานอย่างไร) · [สิ่งที่วิเคราะห์ได้](#สิ่งที่วิเคราะห์ได้) · [ตัวอย่างการใช้งาน](#ตัวอย่างการใช้งาน) · [สร้างสภาพแวดล้อม RL](#build-rl-environments) · [คำถามที่พบบ่อย](#คำถามที่พบบ่อย) · [เอกสาร](#เอกสาร)
 
@@ -78,7 +80,7 @@ npx rea-agents setup
 
 เลือกเอเจนต์ ตรวจสอบการเปลี่ยนแปลงที่เสนอ แล้วอนุมัติ ขั้นตอนตั้งค่าจะเพิ่มเซิร์ฟเวอร์ MCP ของ REA และคำแนะนำการทำงานที่ตรงกัน พร้อมสำรองการตั้งค่าที่มีอยู่ จากนั้นเริ่มเอเจนต์ใหม่
 
-ขั้นตอนตั้งค่ารองรับ Claude Code, Codex, Cursor, Gemini CLI, Grok Build และ[เอเจนต์อื่น ๆ](../installation.md#supported-agents) ดู[การติดตั้งและตั้งค่า](../installation.md) สำหรับการตั้งค่าผู้ให้บริการวิเคราะห์และการลงทะเบียน MCP ด้วยตนเอง
+ขั้นตอนตั้งค่ารองรับ Claude Code, Codex, Cursor, Gemini CLI, Grok Build และ[เอเจนต์อื่น ๆ](../getting-started/installation.md#supported-agents) ดู[การติดตั้งและตั้งค่า](../getting-started/installation.md) สำหรับการตั้งค่าผู้ให้บริการวิเคราะห์และการลงทะเบียน MCP ด้วยตนเอง
 
 MCP ใช้สคีมาอินพุตแบบกระชับโดยปริยาย หากต้องการคำอธิบายฟิลด์และการตรวจสอบแบบซ้อนทั้งหมด ให้ตั้ง `REA_MCP_INPUT_SCHEMA_PROFILE=full` ในการลงทะเบียน MCP ทั้งสองแบบคงเครื่องมือครบและใช้การตรวจสอบมาตรฐานฝั่งเซิร์ฟเวอร์เดียวกัน ดูคู่มือสัญญา MCP
 
@@ -107,7 +109,7 @@ npm install --global rea-agents
 rea --help
 ```
 
-สำหรับการวิเคราะห์เนทีฟ ให้ตั้งค่าผู้ให้บริการวิเคราะห์ก่อน ดู[คู่มือ CLI และ Evidence](../cli.md) สำหรับคำสั่งเนทีฟ การเลือกผู้ให้บริการ สแนปช็อต และการใช้งานในสคริปต์
+สำหรับการวิเคราะห์เนทีฟ ให้ตั้งค่าผู้ให้บริการวิเคราะห์ก่อน ดู[คู่มือ CLI และ Evidence](../getting-started/cli.md) สำหรับคำสั่งเนทีฟ การเลือกผู้ให้บริการ สแนปช็อต และการใช้งานในสคริปต์
 
 ### อัปเดต REA
 
@@ -149,44 +151,46 @@ npx rea-agents@latest setup
 
 REA ต้องใช้ Node.js 22.x (>=22.23.4), 24.x (>=24.22.1) หรือ 26+ (>=26.12.1) และ npm เครื่องมือเพิ่มเติมและแพลตฟอร์มที่รองรับขึ้นอยู่กับเป้าหมาย:
 
-| เป้าหมาย                      | สิ่งที่ REA ส่งกลับ                                                                   | ข้อกำหนดและคู่มือ                                                                                                                        |
-| ---------------------------- | ------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
-| ไบนารีเนทีฟ                    | โค้ดเทียม แอสเซมบลี สตริง สัญลักษณ์ การเรียก และการอ้างอิง                                | Hopper, Ghidra, IDA หรือ Kuna; [การวิเคราะห์เนทีฟ](../native-investigation.md)                                                           |
-| โครงสร้าง ELF แบบออฟไลน์       | เซกชัน เซกเมนต์ สัญลักษณ์/รีโลเคชันต้นฉบับ และตัวเลือกกลไกป้องกันที่พบจากการวิเคราะห์แบบสถิต      | pwntools ที่ผู้ใช้จัดเตรียมบน Linux x64; [การวินิจฉัยไบนารี](../binary-diagnostics.md)                                                          |
-| PE certificates              | Authenticode WIN_CERTIFICATE entries and PKCS#7 signer/X.509 identity fields    | Built-in static PE inspection; [PE certificates](../pe-certificates.md)                                                              |
-| PE imports                   | Import and delay-load DLL names, ordinals, IAT RVAs and pefile import hash      | Built-in static PE inspection; [PE imports](../pe-imports.md)                                                                        |
-| ไบต์โค้ด EVM                   | ตัวเลือกฟังก์ชันสำหรับการเรียก ออฟเซ็ตไบต์ อาร์กิวเมนต์และความสามารถในการเปลี่ยนสถานะที่อนุมานได้ | ไฟล์บนเครื่องที่มีไบต์ดิบหรือข้อมูลเลขฐานสิบหกบน Linux x64; [คู่มือ EVM แบบออฟไลน์](../evm-bytecode.md)                                              |
-| Rust binaries                | Embedded cargo-auditable dependency list                                        | [Rust binaries](../rust-binaries.md)                                                                                                 |
-| ELF notes                    | PT_NOTE/SHT_NOTE owners, types, GNU build-id and ABI-tag fields                 | Built-in static ELF inspection; [ELF notes](../elf-notes.md)                                                                         |
-| Linux kernel modules         | .modinfo keys, __versions CRCs, this_module presence, and signature trailer     | Built-in static ELF inspection; [kernel modules](../kernel-modules.md)                                                               |
-| Erlang BEAM                  | IFF chunks, atoms, exports, and tables                                          | Built-in static BEAM inspection; [Erlang BEAM](../erlang-beam.md)                                                                    |
-| Apple IPS crashes            | .ips metadata, threads, images, registers and crash classes                     | Built-in static JSON inspection; [Apple IPS](../apple-ips.md)                                                                        |
-| ข้อมูลการแครชของ Linux ที่บันทึกไว้ | ระเบียน note ดิบ รีจิสเตอร์/สัญญาณของทุกเธรดที่บันทึกไว้ และตัวเลือกการแมปเพิ่มเติม              | pwntools ที่ผู้ใช้จัดเตรียมบน Linux x64; เลือกใช้ GDB/pwndbg เพิ่มเติมได้; [การแครชที่บันทึกไว้](../recorded-crashes.md)                               |
-| ไดเรกทอรีติดตั้งแอปเดสก์ท็อป       | รันไทม์ที่เป็นไปได้ ไฟล์หลักฐาน ตัวบ่งชี้ส่วนประกอบ และขั้นตอนถัดไป                             | ตรวจสอบไดเรกทอรีและส่วนหัวโดยจำกัดขอบเขต；[แอปเดสก์ท็อป](../desktop-applications.md)                                                       |
-| JavaScript / Electron        | โมดูล การนำเข้า ซอร์สแมป เส้นทาง IPC และความสัมพันธ์กับส่วนเสริมเนทีฟ                      | Node.js และ npm; [การวิเคราะห์แอปพลิเคชัน](../javascript-application-workflows.md); Linux: procps `ps`                                   |
-| เว็บไซต์                       | โครงสร้างหน้า สคริปต์ ข้อมูลเครือข่ายที่สังเกตได้ และภาพหน้าจอที่ร้องขอ                         | เบราว์เซอร์ในตระกูล Chrome; [การวิเคราะห์ผ่านเบราว์เซอร์](../browser-observation.md)                                                         |
-| ข้อมูลเครือข่ายที่บันทึกไว้           | คำขอ คำตอบ เพย์โหลดที่ปรากฏ และตำแหน่งต้นทาง                                         | HAR / Fiddler Everywhere SAZ; mitmdump บน Linux สำหรับข้อมูลที่บันทึกในรูปแบบเนทีฟของ mitmproxy; [คู่มือการบันทึกข้อมูล](../web-network-captures.md) |
-| การจับแพ็กเก็ต                  | จุดเชื่อมต่อ, DNS, TLS SNI, การกระจายโปรโตคอล และคำขอ HTTP                          | tshark และ capinfos ที่ผู้เรียกจัดเตรียม; [คู่มือ pcap](../pcap-analysis.md)                                                                   |
-| แอสเซมบลี .NET                | เมทาดาทา คำสั่ง CIL การพึ่งพาเนทีฟที่ประกาศไว้ และการเปรียบเทียบผลการบิลด์                  | การตรวจสอบแบบสถิต; [คู่มือโค้ดแบบจัดการ](../managed-code-analysis.md)                                                                      |
-| PyInstaller                  | CArchive, PYZ, Python bytecode                                                  | Static inspection; [Python packaged applications](../python-packaged-applications.md)                                                |
-| APK ของ Android              | การประกาศใน manifest คลาส เมธอดที่ดีคอมไพล์ และการอ้างอิง                             | JADX แบบไม่มี GUI และ JDK แบบเต็มบน Linux/macOS/Windows x64; [คู่มือ Android](../android-analysis.md)                                      |
-| อุปกรณ์ Android                | อุปกรณ์ แพ็กเกจ โพรเซส บันทึก ดัมพ์ ภาพหน้าจอ และการถ่ายโอน APK/ไฟล์                      | adb ที่ผู้เรียกจัดเตรียม (โปรแกรมจำลองหรืออุปกรณ์จริง); [คู่มือ ADB](../adb-device-analysis.md)                                                    |
-| โปรเจกต์ JEB                  | หน่วยโปรเจกต์จากเอนจิน, แฮชของอาร์ติแฟกต์ และซูโดโค้ดของไทป์/เมท็อด                       | ไคลเอนต์ JEB ที่ผู้เรียกเริ่มและให้บริการ MCP เลือกด้วย REA_JEB_MCP_URL; [คู่มือ JEB](../jeb-analysis.md)                                           |
-| ทรัพยากร Android              | ไฟล์ manifest ที่ถอดรหัสแล้ว ตารางสตริง ภาษา และข้อมูลเวอร์ชัน                            | ตัวเรียก Apktool ที่ผู้เรียกจัดเตรียม; [คู่มือทรัพยากร](../apktool-resource-analysis.md)                                                          |
-| แอป Flutter                  | แฮชสแนปชอต Dart, แฮชไลบรารีราย ABI และที่มาของบิลด์เอนจิน                             | ไม่ต้อง (วิเคราะห์ APK แบบ static); [คู่มือ Flutter](../flutter-analysis.md)                                                                |
-| เฟิร์มแวร์                      | พื้นที่ข้อมูล ผลการแตกไฟล์ และการส่งต่อไปวิเคราะห์เนทีฟ                                     | Binwalk / Unblob บน Linux; [คู่มือเฟิร์มแวร์](../firmware-analysis.md)                                                                     |
-| แพ็กเก็ตที่บันทึกไว้                | ฟิลด์ที่เลือก ค่าซ้ำ ตัวกรอง และกฎการถอดรหัส                                             | Linux: TShark 4.x + prlimit; [คู่มือไฟล์แคปเจอร์](../packet-captures.md)                                                                  |
-| สัญญาณลอจิกที่บันทึกไว้             | คำอธิบายจากตัวถอดรหัส ช่วงตัวอย่าง และข้อมูลวินิจฉัย                                       | Linux: sigrok-cli 0.7.2 + prlimit; [คู่มือสัญญาณ](../signal-recordings.md)                                                               |
-| แพ็กเกจและทรัพยากร             | รายการไฟล์ ค่าแฮช plist โครงสร้างบันเดิลของ Apple และทรัพยากรที่แตกออกมา                | [คู่มืออาร์ติแฟกต์และ JavaScript](../javascript-artifact-reconstruction.md), [แอปพลิเคชัน Apple](../apple-application-analysis.md)           |
-| พฤติกรรมของโปรเซส             | เอาต์พุตเทอร์มินัล การโต้ตอบ ข้อมูลการสิ้นสุดและระบบไฟล์ที่สังเกตได้ และการเปรียบเทียบการรัน       | Linux/macOS ที่มี PTY เนทีฟ; [การบันทึกโปรเซส](../process-capture.md)                                                                      |
-| ไบนารี Go                     | เวอร์ชันคอมไพเลอร์ โมดูล การแทนที่ และค่าบิลด์ที่ฝังอยู่                                      | การตรวจสอบสแตติกในตัว ELF/PE/thin Mach-O; ไม่ต้องติดตั้ง Go                                                                                 |
-| ฐานข้อมูล SQLite               | ตาราง คอลัมน์ ดัชนี วิว ทริกเกอร์ และแถวที่เลือกจากตารางทั่วไป                              | สแนปช็อตฐานข้อมูล/WAL ในเครื่อง; Node.js 24.x >=24.15 หรือ 26+ พร้อมขีดจำกัด SQLite แบบเนทีฟ                                                   |
-| ออบเจ็กต์โค้ด GPU               | เป้าหมาย CUDA/HIP พารามิเตอร์และทรัพยากรเคอร์เนลที่เลือก และข้อความ PTX ที่เก็บไว้           | การตรวจสอบสแตติกในตัว ELF/PE/fatbin/CUBIN/PTX; [GPU](../gpu-code-objects.md)                                                           |
-| ไฟล์โมเดล                     | เมทาดาทา GGUF / safetensors การประกาศเทนเซอร์ และยอดรวมที่คำนวณได้                  | ตรวจสอบส่วนหัว; เลือกแฮชทั้งไฟล์ได้; [GGUF / safetensors](../model-artifacts.md)                                                            |
-| เมทาดาทา IL2CPP              | อิมเมจแอสเซมบลี Unity global-metadata.dat ชื่อชนิด/เมธอด และช่วงดัชนี                   | ถอดรหัสสแตติกเวอร์ชัน 24, 27, 29, 31, 39; ไม่ต้องใช้ Unity                                                                                  |
-| Godot PCK                    | รายการและการแตกไฟล์ ข้อมูลส่วนหัว/ไดเรกทอรีต้นฉบับ และตัวตนเนื้อหาที่เลือก                    | รูปแบบสแตติก 2, 3, 4; ไม่ต้องใช้ Godot                                                                                                    |
-| อาร์ติแฟกต์ WASM                | การตรวจสอบ เซกชัน รูปแบบ WAT นำเข้า/ส่งออกที่ตรงต้นฉบับ และ WAT ที่ถอดรหัส                 | ผู้เรียกจัดเตรียม WABT 1.0.42; `inspect_wasm_artifact`                                                                                    |
-| ลายเซ็น APK                   | ผู้ลงนาม v1/v2/v3/v3.1 ลายนิ้วมือใบรับรอง การหมุนเวียนคีย์ และความสอดคล้องภายในของไดเจสต์   | การตรวจสอบสแตติกในตัว; `inspect_apk_signature`                                                                                         |
+| เป้าหมาย                      | สิ่งที่ REA ส่งกลับ                                                                   | ข้อกำหนดและคู่มือ                                                                                                                                             |
+| ---------------------------- | ------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| ไบนารีเนทีฟ                    | โค้ดเทียม แอสเซมบลี สตริง สัญลักษณ์ การเรียก และการอ้างอิง                                | Hopper, Ghidra, IDA หรือ Kuna; [การวิเคราะห์เนทีฟ](../guides/native/native-investigation.md)                                                                  |
+| โครงสร้าง ELF แบบออฟไลน์       | เซกชัน เซกเมนต์ สัญลักษณ์/รีโลเคชันต้นฉบับ และตัวเลือกกลไกป้องกันที่พบจากการวิเคราะห์แบบสถิต      | pwntools ที่ผู้ใช้จัดเตรียมบน Linux x64; [การวินิจฉัยไบนารี](../guides/native/binary-diagnostics.md)                                                                 |
+| PE certificates              | Authenticode WIN_CERTIFICATE entries and PKCS#7 signer/X.509 identity fields    | Built-in static PE inspection; [PE certificates](../pe-certificates.md)                                                                                   |
+| PE imports                   | Import and delay-load DLL names, ordinals, IAT RVAs and pefile import hash      | Built-in static PE inspection; [PE imports](../pe-imports.md)                                                                                             |
+| Windows shortcuts            | Shell Link target, arguments, working dir, ExtraData and Tracker droid facts    | Built-in static LNK inspection; [Windows shortcuts](../guides/native/windows-shortcut.md)                                                                 |
+| ไบต์โค้ด EVM                   | ตัวเลือกฟังก์ชันสำหรับการเรียก ออฟเซ็ตไบต์ อาร์กิวเมนต์และความสามารถในการเปลี่ยนสถานะที่อนุมานได้ | ไฟล์บนเครื่องที่มีไบต์ดิบหรือข้อมูลเลขฐานสิบหกบน Linux x64; [คู่มือ EVM แบบออฟไลน์](../guides/evm/evm-bytecode.md)                                                        |
+| Rust binaries                | Embedded cargo-auditable dependency list                                        | [Rust binaries](../rust-binaries.md)                                                                                                                      |
+| ELF notes                    | PT_NOTE/SHT_NOTE owners, types, GNU build-id and ABI-tag fields                 | Built-in static ELF inspection; [ELF notes](../elf-notes.md)                                                                                              |
+| Binary hardening             | PIE, NX, RELRO, CFG and related header flags for ELF, PE and Mach-O             | Built-in static header inspection; [binary hardening](../binary-hardening.md)                                                                             |
+| Linux kernel modules         | .modinfo keys, __versions CRCs, this_module presence, and signature trailer     | Built-in static ELF inspection; [kernel modules](../kernel-modules.md)                                                                                    |
+| Erlang BEAM                  | IFF chunks, atoms, exports, and tables                                          | Built-in static BEAM inspection; [Erlang BEAM](../erlang-beam.md)                                                                                         |
+| Apple IPS crashes            | .ips metadata, threads, images, registers and crash classes                     | Built-in static JSON inspection; [Apple IPS](../apple-ips.md)                                                                                             |
+| ข้อมูลการแครชของ Linux ที่บันทึกไว้ | ระเบียน note ดิบ รีจิสเตอร์/สัญญาณของทุกเธรดที่บันทึกไว้ และตัวเลือกการแมปเพิ่มเติม              | pwntools ที่ผู้ใช้จัดเตรียมบน Linux x64; เลือกใช้ GDB/pwndbg เพิ่มเติมได้; [การแครชที่บันทึกไว้](../guides/native/recorded-crashes.md)                                      |
+| ไดเรกทอรีติดตั้งแอปเดสก์ท็อป       | รันไทม์ที่เป็นไปได้ ไฟล์หลักฐาน ตัวบ่งชี้ส่วนประกอบ และขั้นตอนถัดไป                             | ตรวจสอบไดเรกทอรีและส่วนหัวโดยจำกัดขอบเขต；[แอปเดสก์ท็อป](../desktop-applications.md)                                                                            |
+| JavaScript / Electron        | โมดูล การนำเข้า ซอร์สแมป เส้นทาง IPC และความสัมพันธ์กับส่วนเสริมเนทีฟ                      | Node.js และ npm; [การวิเคราะห์แอปพลิเคชัน](../guides/javascript/javascript-application-workflows.md); Linux: procps `ps`                                      |
+| เว็บไซต์                       | โครงสร้างหน้า สคริปต์ ข้อมูลเครือข่ายที่สังเกตได้ และภาพหน้าจอที่ร้องขอ                         | เบราว์เซอร์ในตระกูล Chrome; [การวิเคราะห์ผ่านเบราว์เซอร์](../guides/web/browser-observation.md)                                                                   |
+| ข้อมูลเครือข่ายที่บันทึกไว้           | คำขอ คำตอบ เพย์โหลดที่ปรากฏ และตำแหน่งต้นทาง                                         | HAR / Fiddler Everywhere SAZ; mitmdump บน Linux สำหรับข้อมูลที่บันทึกในรูปแบบเนทีฟของ mitmproxy; [คู่มือการบันทึกข้อมูล](../guides/web/web-network-captures.md)           |
+| การจับแพ็กเก็ต                  | จุดเชื่อมต่อ, DNS, TLS SNI, การกระจายโปรโตคอล และคำขอ HTTP                          | tshark และ capinfos ที่ผู้เรียกจัดเตรียม; [คู่มือ pcap](../guides/data/pcap-analysis.md)                                                                            |
+| แอสเซมบลี .NET                | เมทาดาทา คำสั่ง CIL การพึ่งพาเนทีฟที่ประกาศไว้ และการเปรียบเทียบผลการบิลด์                  | การตรวจสอบแบบสถิต; [คู่มือโค้ดแบบจัดการ](../guides/managed/managed-code-analysis.md)                                                                            |
+| PyInstaller                  | CArchive, PYZ, Python bytecode                                                  | Static inspection; [Python packaged applications](../python-packaged-applications.md)                                                                     |
+| APK ของ Android              | การประกาศใน manifest คลาส เมธอดที่ดีคอมไพล์ และการอ้างอิง                             | JADX แบบไม่มี GUI และ JDK แบบเต็มบน Linux/macOS/Windows x64; [คู่มือ Android](../guides/android/android-analysis.md)                                            |
+| อุปกรณ์ Android                | อุปกรณ์ แพ็กเกจ โพรเซส บันทึก ดัมพ์ ภาพหน้าจอ และการถ่ายโอน APK/ไฟล์                      | adb ที่ผู้เรียกจัดเตรียม (โปรแกรมจำลองหรืออุปกรณ์จริง); [คู่มือ ADB](../guides/android/adb-device-analysis.md)                                                          |
+| โปรเจกต์ JEB                  | หน่วยโปรเจกต์จากเอนจิน, แฮชของอาร์ติแฟกต์ และซูโดโค้ดของไทป์/เมท็อด                       | ไคลเอนต์ JEB ที่ผู้เรียกเริ่มและให้บริการ MCP เลือกด้วย REA_JEB_MCP_URL; [คู่มือ JEB](../providers/jeb-analysis.md)                                                      |
+| ทรัพยากร Android              | ไฟล์ manifest ที่ถอดรหัสแล้ว ตารางสตริง ภาษา และข้อมูลเวอร์ชัน                            | ตัวเรียก Apktool ที่ผู้เรียกจัดเตรียม; [คู่มือทรัพยากร](../guides/android/apktool-resource-analysis.md)                                                                |
+| แอป Flutter                  | แฮชสแนปชอต Dart, แฮชไลบรารีราย ABI และที่มาของบิลด์เอนจิน                             | ไม่ต้อง (วิเคราะห์ APK แบบ static); [คู่มือ Flutter](../guides/android/flutter-analysis.md)                                                                      |
+| เฟิร์มแวร์                      | พื้นที่ข้อมูล ผลการแตกไฟล์ และการส่งต่อไปวิเคราะห์เนทีฟ                                     | Binwalk / Unblob บน Linux; [คู่มือเฟิร์มแวร์](../guides/firmware/firmware-analysis.md)                                                                          |
+| แพ็กเก็ตที่บันทึกไว้                | ฟิลด์ที่เลือก ค่าซ้ำ ตัวกรอง และกฎการถอดรหัส                                             | Linux: TShark 4.x + prlimit; [คู่มือไฟล์แคปเจอร์](../guides/data/packet-captures.md)                                                                           |
+| สัญญาณลอจิกที่บันทึกไว้             | คำอธิบายจากตัวถอดรหัส ช่วงตัวอย่าง และข้อมูลวินิจฉัย                                       | Linux: sigrok-cli 0.7.2 + prlimit; [คู่มือสัญญาณ](../guides/signals/signal-recordings.md)                                                                     |
+| แพ็กเกจและทรัพยากร             | รายการไฟล์ ค่าแฮช plist โครงสร้างบันเดิลของ Apple และทรัพยากรที่แตกออกมา                | [คู่มืออาร์ติแฟกต์และ JavaScript](../guides/javascript/javascript-artifact-reconstruction.md), [แอปพลิเคชัน Apple](../guides/apple/apple-application-analysis.md) |
+| พฤติกรรมของโปรเซส             | เอาต์พุตเทอร์มินัล การโต้ตอบ ข้อมูลการสิ้นสุดและระบบไฟล์ที่สังเกตได้ และการเปรียบเทียบการรัน       | Linux/macOS ที่มี PTY เนทีฟ; [การบันทึกโปรเซส](../guides/runtime/process-capture.md)                                                                            |
+| ไบนารี Go                     | เวอร์ชันคอมไพเลอร์ โมดูล การแทนที่ และค่าบิลด์ที่ฝังอยู่                                      | การตรวจสอบสแตติกในตัว ELF/PE/thin Mach-O; ไม่ต้องติดตั้ง Go                                                                                                      |
+| ฐานข้อมูล SQLite               | ตาราง คอลัมน์ ดัชนี วิว ทริกเกอร์ และแถวที่เลือกจากตารางทั่วไป                              | สแนปช็อตฐานข้อมูล/WAL ในเครื่อง; Node.js 24.x >=24.15 หรือ 26+ พร้อมขีดจำกัด SQLite แบบเนทีฟ                                                                        |
+| ออบเจ็กต์โค้ด GPU               | เป้าหมาย CUDA/HIP พารามิเตอร์และทรัพยากรเคอร์เนลที่เลือก และข้อความ PTX ที่เก็บไว้           | การตรวจสอบสแตติกในตัว ELF/PE/fatbin/CUBIN/PTX; [GPU](../gpu-code-objects.md)                                                                                |
+| ไฟล์โมเดล                     | เมทาดาทา GGUF / safetensors การประกาศเทนเซอร์ และยอดรวมที่คำนวณได้                  | ตรวจสอบส่วนหัว; เลือกแฮชทั้งไฟล์ได้; [GGUF / safetensors](../model-artifacts.md)                                                                                 |
+| เมทาดาทา IL2CPP              | อิมเมจแอสเซมบลี Unity global-metadata.dat ชื่อชนิด/เมธอด และช่วงดัชนี                   | ถอดรหัสสแตติกเวอร์ชัน 24, 27, 29, 31, 39; ไม่ต้องใช้ Unity                                                                                                       |
+| Godot PCK                    | รายการและการแตกไฟล์ ข้อมูลส่วนหัว/ไดเรกทอรีต้นฉบับ และตัวตนเนื้อหาที่เลือก                    | รูปแบบสแตติก 2, 3, 4; ไม่ต้องใช้ Godot                                                                                                                         |
+| อาร์ติแฟกต์ WASM                | การตรวจสอบ เซกชัน รูปแบบ WAT นำเข้า/ส่งออกที่ตรงต้นฉบับ และ WAT ที่ถอดรหัส                 | ผู้เรียกจัดเตรียม WABT 1.0.42; `inspect_wasm_artifact`                                                                                                         |
+| ลายเซ็น APK                   | ผู้ลงนาม v1/v2/v3/v3.1 ลายนิ้วมือใบรับรอง การหมุนเวียนคีย์ และความสอดคล้องภายในของไดเจสต์   | การตรวจสอบสแตติกในตัว; `inspect_apk_signature`                                                                                                              |
 
 การตรวจสอบ JavaScript และ .NET แบบสถิตอ่านไฟล์ที่ให้มาโดยไม่รันแอปพลิเคชัน การบันทึกขณะทำงานจะรันหรือโต้ตอบกับเป้าหมายที่เลือกโดยใช้สิทธิ์ของผู้ใช้คุณ คู่มือการทำงานแต่ละฉบับอธิบายผลที่เกิดขึ้นไว้
 
@@ -196,7 +200,7 @@ REA ต้องใช้ Node.js 22.x (>=22.23.4), 24.x (>=24.22.1) หรื�
 
 สำหรับไบนารีขนาดใหญ่ เพิ่มเวลารอเริ่มต้นด้วย `REA_GHIDRA_STARTUP_TIMEOUT_MS` หรือ `REA_HOPPER_STARTUP_TIMEOUT_MS`
 
-รูปแบบไบนารีเนทีฟและแพลตฟอร์มที่รองรับแตกต่างกันตามผู้ให้บริการวิเคราะห์ ดู[การตั้งค่า Hopper และ Ghidra](../installation.md#hopper), [คู่มือ IDA](../ida-provider.md) [Kuna](../kuna-provider.md) และ[การรองรับ Ghidra บน Windows แบบทดลอง](../windows-ghidra-p0.md) Ghidra ยังรองรับ[การวิเคราะห์ DOS แบบ 16 บิต](../ghidra-dos.md) สำหรับการเลือกผู้ให้บริการ ดู[คู่มือ CLI](../cli.md#choose-a-provider) ตรวจสอบ[ความพร้อมใช้งานในแต่ละรุ่น](../installation.md#released-package-and-main) สำหรับฟีเจอร์ที่เพิ่มหลังรุ่นล่าสุดบน npm
+รูปแบบไบนารีเนทีฟและแพลตฟอร์มที่รองรับแตกต่างกันตามผู้ให้บริการวิเคราะห์ ดู[การตั้งค่า Hopper และ Ghidra](../getting-started/installation.md#hopper), [คู่มือ IDA](../providers/ida-provider.md) [Kuna](../kuna-provider.md) และ[การรองรับ Ghidra บน Windows แบบทดลอง](../providers/windows-ghidra-p0.md) Ghidra ยังรองรับ[การวิเคราะห์ DOS แบบ 16 บิต](../providers/ghidra-dos.md) สำหรับการเลือกผู้ให้บริการ ดู[คู่มือ CLI](../getting-started/cli.md#choose-a-provider) ตรวจสอบ[ความพร้อมใช้งานในแต่ละรุ่น](../getting-started/installation.md#released-package-and-main) สำหรับฟีเจอร์ที่เพิ่มหลังรุ่นล่าสุดบน npm
 
 ## ตัวอย่างการใช้งาน
 
@@ -275,28 +279,28 @@ REA ส่งออกสภาพแวดล้อมที่รันได�
 <details>
 <summary><strong>เอเจนต์ใดใช้ REA ได้บ้าง?</strong></summary>
 
-เอเจนต์ใดก็ตามที่รองรับเซิร์ฟเวอร์ MCP บนเครื่อง ขั้นตอนตั้งค่าจะกำหนดค่าให้กับ[เอเจนต์ที่รองรับ](../installation.md#supported-agents) ส่วนไคลเอนต์อื่นใช้[การลงทะเบียน MCP ด้วยตนเอง](../installation.md#mcp-registry) ได้
+เอเจนต์ใดก็ตามที่รองรับเซิร์ฟเวอร์ MCP บนเครื่อง ขั้นตอนตั้งค่าจะกำหนดค่าให้กับ[เอเจนต์ที่รองรับ](../getting-started/installation.md#supported-agents) ส่วนไคลเอนต์อื่นใช้[การลงทะเบียน MCP ด้วยตนเอง](../getting-started/installation.md#mcp-registry) ได้
 
 </details>
 
 <details>
 <summary><strong>จำเป็นต้องมี Hopper, Ghidra, IDA หรือ Kuna หรือไม่?</strong></summary>
 
-การวิเคราะห์เนทีฟเชิงลึกต้องใช้หนึ่งในเครื่องมือเหล่านี้ การตรวจสอบ JavaScript และ .NET แบบสถิตทำงานได้โดยไม่มีเอนจินวิเคราะห์เนทีฟ ขั้นตอนตั้งค่าสามารถติดตั้ง Hopper หลังได้รับอนุมัติ ส่วน Ghidra, IDA และ Kuna ใช้การติดตั้งที่คุณมีอยู่แล้ว ดู[การตั้งค่าผู้ให้บริการวิเคราะห์](../installation.md#hopper)
+การวิเคราะห์เนทีฟเชิงลึกต้องใช้หนึ่งในเครื่องมือเหล่านี้ การตรวจสอบ JavaScript และ .NET แบบสถิตทำงานได้โดยไม่มีเอนจินวิเคราะห์เนทีฟ ขั้นตอนตั้งค่าสามารถติดตั้ง Hopper หลังได้รับอนุมัติ ส่วน Ghidra, IDA และ Kuna ใช้การติดตั้งที่คุณมีอยู่แล้ว ดู[การตั้งค่าผู้ให้บริการวิเคราะห์](../getting-started/installation.md#hopper)
 
 </details>
 
 <details>
 <summary><strong>ต้องเริ่ม Hopper ก่อนหรือไม่?</strong></summary>
 
-REA เริ่ม Hopper เมื่อการดำเนินการต้องใช้ บน macOS อาจมีหน้าต่างเมื่อรันครั้งแรกให้เลือกโหมดทดลองหรือเปิดใช้ใบอนุญาต ดู[การเริ่ม Hopper และการแก้ไขปัญหา](../installation.md#launcher-paths-and-troubleshooting)
+REA เริ่ม Hopper เมื่อการดำเนินการต้องใช้ บน macOS อาจมีหน้าต่างเมื่อรันครั้งแรกให้เลือกโหมดทดลองหรือเปิดใช้ใบอนุญาต ดู[การเริ่ม Hopper และการแก้ไขปัญหา](../getting-started/installation.md#launcher-paths-and-troubleshooting)
 
 </details>
 
 <details>
 <summary><strong>การติดตั้งสกิลจาก skills.sh ทำอะไร?</strong></summary>
 
-สกิลให้คำแนะนำการตรวจสอบแก่เอเจนต์ ใช้ `npx rea-agents setup` เพื่อลงทะเบียนเซิร์ฟเวอร์ MCP ของ REA และติดตั้งคำแนะนำที่ตรงกัน แล้วเริ่มเอเจนต์ใหม่ ดู[การติดตั้งเฉพาะสกิล](../installation.md#skill-only-installation)
+สกิลให้คำแนะนำการตรวจสอบแก่เอเจนต์ ใช้ `npx rea-agents setup` เพื่อลงทะเบียนเซิร์ฟเวอร์ MCP ของ REA และติดตั้งคำแนะนำที่ตรงกัน แล้วเริ่มเอเจนต์ใหม่ ดู[การติดตั้งเฉพาะสกิล](../getting-started/installation.md#skill-only-installation)
 
 </details>
 
@@ -339,12 +343,12 @@ npx rea-agents@latest setup
 
 เริ่มจาก[คู่มือพร้อมตัวอย่าง](https://rea.tools/th/guides/) บนเว็บไซต์ สำหรับตัวเลือก ข้อกำหนดเบื้องต้น และสัญญาผลลัพธ์ที่แน่นอน:
 
-- [การติดตั้งและตั้งค่า](../installation.md): การลงทะเบียนเอเจนต์ การตั้งค่าผู้ให้บริการ การอัปเดต และการถอนการติดตั้ง
-- [ความพร้อมใช้งานและการแก้ไขปัญหา](../installation.md#check-readiness-for-your-task): ตรวจวินิจฉัยเอเจนต์หรือเอนจินวิเคราะห์หนึ่งตัว
-- [CLI และ Evidence](../cli.md): คำสั่ง การเลือกผู้ให้บริการ สแนปช็อต การนำเข้า/ส่งออก และรหัสการสิ้นสุด
-- [สัญญา MCP](../mcp-contracts.md) และ[พรอมป์ต์สำหรับเอเจนต์](../mcp-prompts.md): ผลลัพธ์เครื่องมือ เซสชัน และการตรวจสอบตามคำแนะนำ
-- [แค็ตตาล็อกเครื่องมือ](../mcp-contracts.md#generated-catalog): รายการเครื่องมือ ผู้ให้บริการ และคำสั่ง CLI ที่สร้างระหว่างการบิลด์
-- [แผนพัฒนา](../roadmap.md): งานที่วางแผนไว้และรายการติดตามความสามารถ
+- [การติดตั้งและตั้งค่า](../getting-started/installation.md): การลงทะเบียนเอเจนต์ การตั้งค่าผู้ให้บริการ การอัปเดต และการถอนการติดตั้ง
+- [ความพร้อมใช้งานและการแก้ไขปัญหา](../getting-started/installation.md#check-readiness-for-your-task): ตรวจวินิจฉัยเอเจนต์หรือเอนจินวิเคราะห์หนึ่งตัว
+- [CLI และ Evidence](../getting-started/cli.md): คำสั่ง การเลือกผู้ให้บริการ สแนปช็อต การนำเข้า/ส่งออก และรหัสการสิ้นสุด
+- [สัญญา MCP](../reference/mcp-contracts.md) และ[พรอมป์ต์สำหรับเอเจนต์](../getting-started/mcp-prompts.md): ผลลัพธ์เครื่องมือ เซสชัน และการตรวจสอบตามคำแนะนำ
+- [แค็ตตาล็อกเครื่องมือ](../reference/mcp-contracts.md#generated-catalog): รายการเครื่องมือ ผู้ให้บริการ และคำสั่ง CLI ที่สร้างระหว่างการบิลด์
+- [แผนพัฒนา](../development/roadmap.md): งานที่วางแผนไว้และรายการติดตามความสามารถ
 
 รายงานช่องโหว่ผ่าน [SECURITY.md](../../SECURITY.md)
 
@@ -376,7 +380,7 @@ applicable licenses.
 
 เรายินดีรับความช่วยเหลือในการพัฒนา REA! [เปิด issue](https://github.com/morluto/rea/issues) เพื่อรายงานบั๊กหรือเสนอฟีเจอร์ หรือ[ส่ง pull request](https://github.com/morluto/rea/pulls) เพื่อปรับปรุงโค้ดหรือเอกสาร
 
-ดู [CONTRIBUTING.md](../../CONTRIBUTING.md) สำหรับการตั้งค่าสภาพแวดล้อมพัฒนาและการตรวจสอบ ดู[การทดสอบ](../testing.md) สำหรับแนวทางการตรวจยืนยัน และ[แผนผังสถาปัตยกรรม](../architecture.mermaid) สำหรับโครงสร้างโปรเจกต์
+ดู [CONTRIBUTING.md](../../CONTRIBUTING.md) สำหรับการตั้งค่าสภาพแวดล้อมพัฒนาและการตรวจสอบ ดู[การทดสอบ](../development/testing.md) สำหรับแนวทางการตรวจยืนยัน และ[แผนผังสถาปัตยกรรม](../architecture/architecture.mermaid) สำหรับโครงสร้างโปรเจกต์
 
 ## สัญญาอนุญาต
 

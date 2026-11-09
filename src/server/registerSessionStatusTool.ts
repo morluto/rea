@@ -1,3 +1,4 @@
+import type { CapabilityAvailabilityProbes } from "../application/CapabilityAvailability.js";
 import {
   BINARY_SESSION_SUMMARY_OMITTED_FIELDS,
   type BinarySessionDetail,
@@ -8,6 +9,8 @@ import type { BinarySessionPort } from "../application/binary/BinarySessionPort.
 import type { ProviderAvailability } from "../application/AnalysisProvider.js";
 import type { JebAnalysisAvailability } from "../application/jeb/JebAnalysisPort.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
+import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
+import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import {
   buildCapabilityInventory,
   compactToolAvailability,
@@ -27,27 +30,8 @@ import { toolRegistrationOptions } from "./toolRegistrationOptions.js";
 import { err } from "../domain/result.js";
 import { CURRENT_ENTRYPOINT_PATH } from "../process/CurrentEntrypointPath.js";
 
-/** Provider-owned live probes used by session discovery. */
-export interface SessionAvailabilityProbes {
-  readonly androidAnalysisAvailability: (
-    signal: AbortSignal,
-  ) => Promise<ProviderAvailability>;
-  readonly adbAnalysisAvailability?: (
-    signal: AbortSignal,
-  ) => Promise<ProviderAvailability>;
-  readonly apktoolAnalysisAvailability?: (
-    signal: AbortSignal,
-  ) => Promise<ProviderAvailability>;
-  readonly jebAnalysisAvailability?: (
-    signal: AbortSignal,
-  ) => Promise<JebAnalysisAvailability>;
-  readonly evmLimiterAvailability?: (
-    signal: AbortSignal,
-  ) => Promise<ProviderAvailability | undefined>;
-}
-
 /** Inputs required to register the binary session status tool. */
-export interface SessionStatusToolOptions extends SessionAvailabilityProbes {
+export interface SessionStatusToolOptions extends CapabilityAvailabilityProbes {
   readonly server: EvidenceMcpServer;
   readonly session: BinarySessionPort;
   readonly contract: ReturnType<typeof toolContract<"binary_session">>;
@@ -60,8 +44,8 @@ export interface SessionStatusToolOptions extends SessionAvailabilityProbes {
  * the established not-configured shape instead of launching probes whose tools
  * cannot appear in the response.
  */
-const probeSessionAvailability = (
-  probes: SessionAvailabilityProbes,
+const probeSessionAvailability = async (
+  probes: CapabilityAvailabilityProbes,
   signal: AbortSignal,
   advertisesFamily: (family: ToolFamilyId) => boolean,
 ): Promise<{
@@ -70,30 +54,45 @@ const probeSessionAvailability = (
   readonly apktool: ProviderAvailability | undefined;
   readonly jeb: JebAnalysisAvailability | undefined;
   readonly evmLimiter: ProviderAvailability | undefined;
-}> =>
-  Promise.all([
-    advertisesFamily("android")
-      ? probes.androidAnalysisAvailability(signal)
-      : undefined,
-    advertisesFamily("adb")
-      ? (probes.adbAnalysisAvailability?.(signal) ?? undefined)
-      : undefined,
-    advertisesFamily("apktool")
-      ? (probes.apktoolAnalysisAvailability?.(signal) ?? undefined)
-      : undefined,
-    advertisesFamily("jeb")
-      ? (probes.jebAnalysisAvailability?.(signal) ?? undefined)
-      : undefined,
-    advertisesFamily("artifact")
-      ? (probes.evmLimiterAvailability?.(signal) ?? undefined)
-      : undefined,
-  ] as const).then(([android, adb, apktool, jeb, evmLimiter]) => ({
-    android,
-    adb,
-    apktool,
-    jeb,
-    evmLimiter,
-  }));
+}> => {
+  const probe = <T>(family: ToolFamilyId, run: () => Promise<T> | undefined) =>
+    advertisesFamily(family) ? Promise.resolve().then(run) : undefined;
+  const pending = [
+    probe("android", () => probes.androidAnalysisAvailability(signal)),
+    probe("adb", () => probes.adbAnalysisAvailability?.(signal)),
+    probe("apktool", () => probes.apktoolAnalysisAvailability?.(signal)),
+    probe("jeb", () => probes.jebAnalysisAvailability?.(signal)),
+    probe("artifact", () => probes.evmLimiterAvailability?.(signal)),
+  ] as const;
+  try {
+    const [android, adb, apktool, jeb, evmLimiter] = await Promise.all(pending);
+    return { android, adb, apktool, jeb, evmLimiter };
+  } catch (cause: unknown) {
+    const settled = await Promise.allSettled(pending);
+    let failure = cause;
+    for (const result of settled) {
+      if (
+        result.status !== "rejected" ||
+        result.reason === cause ||
+        !(result.reason instanceof AnalysisError) ||
+        !result.reason.cleanupIncomplete
+      )
+        continue;
+      const primary =
+        failure instanceof AnalysisError
+          ? failure
+          : new ProviderAdapterError("rea", "binary_session", {
+              cause: failure,
+            });
+      failure = analysisErrorWithCleanupFailure(
+        primary,
+        result.reason,
+        "binary_session",
+      ).bindCleanupDependencies([primary, result.reason]);
+    }
+    throw failure;
+  }
+};
 
 /** Register the read-only provider and target status operation. */
 export const registerSessionStatusTool = (
@@ -121,6 +120,7 @@ export const registerSessionStatusTool = (
         status = await session.status({
           signal: context.mcpReq.signal,
           detail: input.detail,
+          refreshCandidates: input.refresh_candidates,
         });
       } catch (cause) {
         if (!(cause instanceof AnalysisError)) throw cause;

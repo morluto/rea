@@ -2,6 +2,7 @@ import {
   parseEvidence,
   withEvidenceCallerInputPath,
   type Evidence,
+  type CallerInputPaths,
 } from "../domain/evidence.js";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import type { Result } from "../domain/result.js";
@@ -13,19 +14,25 @@ export const bindCliEvidenceCallerPath =
   (
     callerPath: string,
     run: () => Promise<Result<Evidence, AnalysisError>>,
+    additionalPaths?: CallerInputPaths,
   ): (() => Promise<Result<Evidence, AnalysisError>>) =>
   async () => {
     const result = await run();
     if (result.ok)
       return {
         ok: true,
-        value: withEvidenceCallerInputPath(result.value, callerPath),
+        value: withEvidenceCallerInputPath(
+          result.value,
+          callerPath,
+          additionalPaths,
+        ),
       };
     if (result.error.partialObservation !== undefined) {
       try {
         result.error.partialObservation = withEvidenceCallerInputPath(
           parseEvidence(result.error.partialObservation),
           callerPath,
+          additionalPaths,
         );
       } catch (cause) {
         // Raw or invalid partial observations must retain their original form.
@@ -43,9 +50,10 @@ export const finishCliEvidenceCommand = (
   providerId: string,
   operation: string,
   signal: AbortSignal,
+  additionalPaths?: CallerInputPaths,
 ) =>
   finishAnalysisCommand(
-    bindCliEvidenceCallerPath(callerPath, run),
+    bindCliEvidenceCallerPath(callerPath, run, additionalPaths),
     service,
     providerId,
     operation,

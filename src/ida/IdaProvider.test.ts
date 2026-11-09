@@ -1,4 +1,3 @@
-import { launchRegexMatchingLimitation } from "../process/RegexMatcher.js";
 import { AnalysisSettings } from "../application/AnalysisSettings.js";
 import { runtimeAnalysisConfig } from "../config/runtimeAnalysisSettings.js";
 import { describe, expect, it, vi } from "vitest";
@@ -7,6 +6,10 @@ import { join } from "node:path";
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
 
 import { parseConfig } from "../config/parseConfig.js";
+import {
+  BINARY_ARCHITECTURES,
+  type BinaryTarget,
+} from "../domain/binaryTargetTypes.js";
 import {
   RecordingIdaMcp,
   createIdaTarget,
@@ -36,6 +39,7 @@ it.each([
         status: "unavailable",
         code: selected ? "open_options_invalid" : "not_configured",
         reason: expect.stringContaining("REA_IDA_MCP_CONFIG"),
+        remediation: expect.stringContaining("REA_IDA_MCP_CONFIG"),
         diagnostics: {
           configured: selected,
           registration_path: selected ? path : null,
@@ -45,10 +49,11 @@ it.each([
               { setting: "REA_IDA_MCP_CONFIG", constraint: expect.any(String) },
             ],
           },
-          configuration_remediation:
-            expect.stringContaining("REA_IDA_MCP_CONFIG"),
         },
       });
+      expect(snapshot.availability.diagnostics).not.toHaveProperty(
+        "configuration_remediation",
+      );
       expect(connect).not.toHaveBeenCalled();
     } finally {
       const closed = await provider.closeOwnedResources();
@@ -108,7 +113,7 @@ it.each(["missing", "file", "directory", "omitted"] as const)(
       throw new Error("Readiness must not connect to IDA");
     });
     const provider = new IdaProvider(config.value, {}, connect);
-    const before = await readdir(root);
+    const before = (await readdir(root)).sort();
     try {
       const snapshot = await provider.inspectReadinessSnapshot();
       if (kind === "missing" || kind === "file") {
@@ -116,10 +121,10 @@ it.each(["missing", "file", "directory", "omitted"] as const)(
           status: "unavailable",
           code: "open_options_invalid",
           reason: expect.stringContaining(workspace),
+          remediation: expect.stringContaining("workspaceRoot"),
           diagnostics: {
             workspace_root: workspace,
             live_connection_probed: false,
-            configuration_remediation: expect.stringContaining("workspaceRoot"),
           },
         });
         expect(snapshot.capabilities.every(({ available }) => !available)).toBe(
@@ -127,11 +132,18 @@ it.each(["missing", "file", "directory", "omitted"] as const)(
         );
         expect(
           snapshot.capabilities.find(
+            ({ operation }) => operation === "procedure_pseudo_code",
+          ),
+        ).toMatchObject({
+          remediation: expect.stringContaining("workspaceRoot"),
+        });
+        expect(
+          snapshot.capabilities.find(
             ({ operation }) => operation === "procedure_callers",
           )?.reason,
         ).toContain("direct call edges");
       } else expect(snapshot.availability.status).toBe("available");
-      expect(await readdir(root)).toEqual(before);
+      expect((await readdir(root)).sort()).toEqual(before);
       expect(connect).not.toHaveBeenCalled();
     } finally {
       const closed = await provider.closeOwnedResources();
@@ -196,20 +208,47 @@ describe("IDA provider target support", () => {
     const config = parseConfig({});
     if (!config.ok) throw new Error("expected valid configuration");
     const provider = new IdaProvider(config.value, {});
-    expect(
-      provider.inspectTargetSupport({
-        path: "/tmp/chre_pal.so",
+    const support = provider.inspectTargetSupport({
+      path: "/tmp/chre_pal.so",
+      sha256: "a".repeat(64),
+      kind: "executable",
+      format: "elf",
+      architecture: "hexagon",
+      availableArchitectures: ["hexagon"],
+    });
+    expect(support).toMatchObject({
+      status: "unsupported",
+      code: "architecture_unsupported",
+    });
+    expect(support.reason).toContain("hexagon");
+    expect(support.reason).toContain("Ghidra");
+  });
+  it("admits only the families IDA admits today, so new families stay refused", () => {
+    const config = parseConfig({});
+    if (!config.ok) throw new Error("expected valid configuration");
+    const provider = new IdaProvider(config.value, {});
+    const admitted: readonly string[] = ["x86", "x86_64", "arm", "arm64"];
+    for (const architecture of BINARY_ARCHITECTURES) {
+      // Admission reads only kind, format and family, so one ELF shape
+      // covers every recognized family, including any added later.
+      const support = provider.inspectTargetSupport({
+        path: "/tmp/fixture.elf",
         sha256: "a".repeat(64),
         kind: "executable",
         format: "elf",
-        architecture: "hexagon",
-        availableArchitectures: ["hexagon"],
-      }),
-    ).toMatchObject({
-      status: "unsupported",
-      code: "architecture_unsupported",
-      reason: expect.stringContaining("Hexagon"),
-    });
+        architecture,
+        availableArchitectures: [architecture],
+      } as BinaryTarget);
+      expect(support, architecture).toMatchObject(
+        admitted.includes(architecture)
+          ? { status: "supported" }
+          : {
+              status: "unsupported",
+              code: "architecture_unsupported",
+              reason: expect.stringContaining(architecture),
+            },
+      );
+    }
   });
   it("declines thin arm64_32 Mach-O targets without a verified lane", () => {
     const config = parseConfig({});
@@ -305,6 +344,7 @@ it.each(["http", "stdio"] as const)(
       );
       const changed = await provider.resolveAnalysisProfile(target);
       if (!changed.ok) throw changed.error;
+      expect(changed.value.profile?.digest).toEqual(expect.any(String));
       expect(changed.value.profile?.digest).not.toBe(profiles[0]);
     } finally {
       await provider.closeOwnedResources();
@@ -375,10 +415,9 @@ it("applies runtime regex budgets through a bound IDA client and recovers in the
     const capabilities = provider
       .capabilities()
       .find(({ operation }) => operation === "search_strings");
-    expect(capabilities?.limitations).toContain(
-      launchRegexMatchingLimitation(
-        { deadlineMs: 100, source: "runtime" },
-        { heapMiB: 256, source: "runtime" },
+    expect(capabilities?.limitations).toContainEqual(
+      expect.stringMatching(
+        /100 ms matching deadline \(source runtime\).*256 MiB worker heap request \(source runtime\).*update_analysis_settings/iu,
       ),
     );
     settings.update({
@@ -393,10 +432,9 @@ it("applies runtime regex budgets through a bound IDA client and recovers in the
       expect.objectContaining({ address: "0x3000", value }),
     ]);
     if (recovered.ok) {
-      expect(recovered.value.limitations).toContain(
-        launchRegexMatchingLimitation(
-          { deadlineMs: 10000, source: "runtime" },
-          { heapMiB: 256, source: "runtime" },
+      expect(recovered.value.limitations).toContainEqual(
+        expect.stringMatching(
+          /10000 ms matching deadline \(source runtime\).*256 MiB worker heap request \(source runtime\).*update_analysis_settings/iu,
         ),
       );
     }

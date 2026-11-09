@@ -8,7 +8,7 @@ import { CLI_COMMANDS } from "../cliCommandNames.js";
 import { logCliCommand } from "../cliLogging.js";
 import type { Logger } from "pino";
 import type { CliInstance } from "./types.js";
-import { cliIntegerArgument } from "./options.js";
+import { cliDecimalField, cliIntegerArgument } from "./options.js";
 import { withCommandCancellation } from "./commandCancellation.js";
 import {
   analysisEvidenceDeliveryOptions,
@@ -55,8 +55,10 @@ export const registerWebNetworkCaptureCommands = (
         .optional()
         .describe("Zero-based producer ordinals; repeat to select several"),
       ...explicitSensitiveValueOptions,
-      captureTimeoutMs:
+      // Decimal tokens only: numeric coercion would read "0x1" as 1 ms.
+      captureTimeoutMs: cliDecimalField(
         inspectWebNetworkCaptureInputSchema.shape.capture_timeout_ms,
+      ),
     }),
     run: ({ args, options }) =>
       withCommandCancellation((signal) =>
@@ -109,6 +111,12 @@ export const registerWebNetworkCaptureCommands = (
                       : { capture_timeout_ms: options.captureTimeoutMs }),
                   },
                   { signal },
+                  {
+                    capture: args.capturePath,
+                    ...(options.protobufSchema === undefined
+                      ? {}
+                      : { descriptor: options.protobufSchema }),
+                  },
                 ),
               service,
               providerId: "web-network-capture",

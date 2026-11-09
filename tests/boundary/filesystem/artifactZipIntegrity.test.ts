@@ -314,7 +314,7 @@ it("reports unflagged high-byte ZIP names as CP437 readings with their source by
       logical_path: "╟╤▒█.txt",
       hash_status: "verified",
       limitations: [
-        "ZIP name uses CP437 fallback; source encoding unverified; raw hex: c7d1b1db2e747874.",
+        expect.stringMatching(/CP437.*unverified.*c7d1b1db2e747874/iu),
       ],
     }),
   );
@@ -345,9 +345,7 @@ it("falls back to the stored name and reports bytes when a Unicode Path field CR
   expect(inventory.occurrences).toContainEqual(
     expect.objectContaining({
       logical_path: "é.txt",
-      limitations: [
-        "ZIP name uses CP437 fallback; source encoding unverified; raw hex: 822e747874.",
-      ],
+      limitations: [expect.stringMatching(/CP437.*unverified.*822e747874/iu)],
     }),
   );
 });

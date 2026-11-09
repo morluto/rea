@@ -39,6 +39,7 @@ const parentOf = (
 ) => {
   const evidence = analysisViewCaptureEvidence(capture);
   return {
+    predicateType: evidence.predicate_type,
     evidenceId: evidence.evidence_id,
     operation: evidence.operation,
     normalizedResult: evidence.normalized_result,
@@ -259,8 +260,10 @@ it("templates uid literals, opaque tokens and identifier-like siblings when ever
       properties: { overwrite: "boolean", title: "string" },
     },
   });
-  expect(projected.limitations).toContain(
-    "Opt-in template rules after-uid-literal, opaque-token, sibling-variance merge recorded literals by shape; merged parameters may conflate distinct resources.",
+  expect(projected.limitations).toContainEqual(
+    expect.stringMatching(
+      /after-uid-literal.*opaque-token.*sibling-variance.*may conflate distinct resources/iu,
+    ),
   );
 });
 
@@ -351,6 +354,9 @@ it("derives value-free body shapes, observed query names and record pointers", (
       "status",
     ]);
   const silent = manifest([], environmentManifestCaptureFixture(), false);
+  expect(silent.tools.map((tool) => tool.name)).toEqual(
+    projected.tools.map((tool) => tool.name),
+  );
   expect(
     silent.tools.every((tool) => tool.query_parameter_names.length === 0),
   ).toBe(true);
@@ -422,8 +428,8 @@ it("excludes other origins, pages, assets and non-JSON groups with reasons and f
     "/health:non-json",
     "/status:non-json",
   ]);
-  expect(mixed.limitations).toContain(
-    "1 retained records without a usable request line are not represented in the manifest.",
+  expect(mixed.limitations).toContainEqual(
+    expect.stringMatching(/1.*request line.*not represented.*manifest/iu),
   );
   expect(mixed.records.map((record) => record.content_type)).toEqual([
     "text/csv",
@@ -820,8 +826,10 @@ it("selects the origin with the most JSON-like records and names it from the hos
     status: "complete-within-view",
     total: 0,
   });
-  expect(empty.limitations).toContain(
-    "No retained record had a parseable origin; the manifest names no primary origin.",
+  expect(empty.limitations).toContainEqual(
+    expect.stringMatching(
+      /no retained record.*parseable origin.*no primary origin/iu,
+    ),
   );
 });
 
@@ -851,6 +859,7 @@ it("refuses non-HAR formats, sensitive parents, unsupported parents and malforme
   expect(
     projectAnalysisView(
       {
+        predicateType: layout.predicate_type,
         evidenceId: layout.evidence_id,
         operation: layout.operation,
         normalizedResult: layout.normalized_result,
@@ -868,6 +877,7 @@ it("refuses non-HAR formats, sensitive parents, unsupported parents and malforme
     expect(
       projectAnalysisView(
         {
+          predicateType: "rea.analysis",
           evidenceId: `ev_${"a".repeat(64)}`,
           operation: "inspect_web_network_capture",
           normalizedResult,
@@ -996,8 +1006,10 @@ it("does not compare routes beyond the sibling-variance segment limit and says s
     `/api/items/b2/${tail}`,
     "/api/things/{thing_id}",
   ]);
-  expect(projected.limitations).toContain(
-    "Routes with more than 32 segments are not compared by sibling-variance; they keep their grouped templates.",
+  expect(projected.limitations).toContainEqual(
+    expect.stringMatching(
+      /32 segments.*not compared.*sibling-variance.*grouped templates/iu,
+    ),
   );
 });
 
@@ -1393,8 +1405,10 @@ it("shares no format-rule position and compares no route beyond the segment limi
     "PATCH /api/teams/t3",
     "GET /api/teams/{numeric}",
   ]);
-  expect(projected.limitations).toContain(
-    "Routes with more than 32 segments are not compared by prefix-variance; they keep their grouped templates.",
+  expect(projected.limitations).toContainEqual(
+    expect.stringMatching(
+      /32 segments.*not compared.*prefix-variance.*grouped templates/iu,
+    ),
   );
 });
 

@@ -1,10 +1,8 @@
-import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { execFileSync } from "node:child_process";
 import { createPackageWithOptions } from "@electron/asar";
 import { expect, it, onTestFinished } from "vitest";
-import { createServer } from "../../../src/server/createServer.js";
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { advertisedMcpToolSchemas } from "../../fixtures/advertisedMcpTool.js";
@@ -101,17 +99,16 @@ it("advertises exact schemas and retains a compact directory answer with typed s
   const session = createTestBinarySession(() => {
     throw new Error("Directory inspection must not acquire a deep provider");
   });
-  const server = createServer({ kind: "session", session });
-  const client = new Client({ name: "desktop-directory-test", version: "1" });
-  onTestFinished(async () => {
-    await client.close();
-    await server.close();
-    await session.close();
+  const { client } = await createApplicationMcpHarness({
+    session,
+    clientIdentity: { name: "desktop-directory-test", version: "1" },
+    serverOptions: {
+      environment: {
+        ...process.env,
+        REA_MCP_MAX_INPUT_ELEMENTS: process.env.REA_MCP_MAX_INPUT_ELEMENTS,
+      },
+    },
   });
-  const [clientTransport, serverTransport] =
-    InMemoryTransport.createLinkedPair();
-  await server.connect(serverTransport);
-  await client.connect(clientTransport);
   const schemas = await advertisedMcpToolSchemas(
     client,
     "inspect_desktop_application",

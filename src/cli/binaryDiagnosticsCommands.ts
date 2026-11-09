@@ -1,8 +1,10 @@
 import { projectCliAnalysisResult } from "./projectCliAnalysisResult.js";
 import { inspectDevicetreeInputSchema } from "../domain/firmware/devicetree.js";
 import { inspectPeLoadConfigInputSchema } from "../domain/native/peLoadConfig.js";
+import { inspectBinaryHardeningInputSchema } from "../domain/native/binaryHardening.js";
 import { inspectByteEntropyInputSchema } from "../domain/native/byteEntropy.js";
 import { z } from "incur";
+import { cliDecimalField } from "./options.js";
 import {
   createByteEntropyService,
   createRecordedCrashService,
@@ -12,9 +14,11 @@ import {
   createDevicetreeService,
   createKernelModuleService,
   createPeLoadConfigService,
+  createBinaryHardeningService,
   createPeResourcesService,
   createPeCertificatesService,
   createPeImportsService,
+  createWindowsShortcutService,
   createNativeExportsService,
 } from "../composition/binaryDiagnostics.js";
 import { CLI_COMMANDS } from "../cliCommandNames.js";
@@ -27,6 +31,7 @@ import { inspectRecordedCrashInputSchema } from "../domain/native/recordedCrash.
 import { inspectPeResourcesInputSchema } from "../domain/native/peResources.js";
 import { inspectPeCertificatesInputSchema } from "../domain/native/peCertificates.js";
 import { inspectPeImportsInputSchema } from "../domain/native/peImports.js";
+import { inspectWindowsShortcutInputSchema } from "../domain/native/windowsShortcut.js";
 import { inspectNativeExportsInputSchema } from "../domain/native/nativeExports.js";
 import { inspectElfNotesInputSchema } from "../domain/native/elfNotes.js";
 import { inspectAppleIpsInputSchema } from "../domain/native/appleIps.js";
@@ -54,8 +59,10 @@ export const registerBinaryDiagnosticsCommands = (
       path: localPathStringSchema.describe("Local ELF32/ELF64 image"),
     }),
     options: z.object({
-      maxFileBytes: inspectElfNotesInputSchema.shape.max_file_bytes,
-      maxEntries: inspectElfNotesInputSchema.shape.max_entries,
+      maxFileBytes: cliDecimalField(
+        inspectElfNotesInputSchema.shape.max_file_bytes,
+      ),
+      maxEntries: cliDecimalField(inspectElfNotesInputSchema.shape.max_entries),
     }),
     run: ({ args, options }) =>
       withCommandCancellation(async (signal) => {
@@ -90,13 +97,27 @@ export const registerBinaryDiagnosticsCommands = (
       path: localPathStringSchema.describe("Local Apple .ips crash report"),
     }),
     options: z.object({
-      maxFileBytes: inspectAppleIpsInputSchema.shape.max_file_bytes,
-      maxThreads: inspectAppleIpsInputSchema.shape.max_threads,
-      maxFrames: inspectAppleIpsInputSchema.shape.max_frames,
-      maxImages: inspectAppleIpsInputSchema.shape.max_images,
-      maxRegisters: inspectAppleIpsInputSchema.shape.max_registers,
-      maxIntegerTextBytes:
+      maxFileBytes: cliDecimalField(
+        inspectAppleIpsInputSchema.shape.max_file_bytes,
+      ),
+      maxThreads: cliDecimalField(inspectAppleIpsInputSchema.shape.max_threads),
+      maxFrames: cliDecimalField(inspectAppleIpsInputSchema.shape.max_frames),
+      maxImages: cliDecimalField(inspectAppleIpsInputSchema.shape.max_images),
+      maxRegisters: cliDecimalField(
+        inspectAppleIpsInputSchema.shape.max_registers,
+      ),
+      maxIntegerTextBytes: cliDecimalField(
         inspectAppleIpsInputSchema.shape.max_integer_text_bytes,
+      ),
+      joinPath: z
+        .string()
+        .optional()
+        .describe(
+          "Optional local Mach-O executable or dSYM whose slice LC_UUID matches report images",
+        ),
+      maxJoinBytes: cliDecimalField(
+        inspectAppleIpsInputSchema.shape.max_join_bytes,
+      ),
     }),
     run: ({ args, options }) =>
       withCommandCancellation(async (signal) => {
@@ -117,6 +138,10 @@ export const registerBinaryDiagnosticsCommands = (
                     max_images: options.maxImages,
                     max_registers: options.maxRegisters,
                     max_integer_text_bytes: options.maxIntegerTextBytes,
+                    ...(options.joinPath === undefined
+                      ? {}
+                      : { join_path: absoluteCallerPath(options.joinPath) }),
+                    max_join_bytes: options.maxJoinBytes,
                   },
                   { signal },
                 ),
@@ -137,8 +162,12 @@ export const registerBinaryDiagnosticsCommands = (
       ),
     }),
     options: z.object({
-      maxFileBytes: inspectKernelModuleInputSchema.shape.max_file_bytes,
-      maxEntries: inspectKernelModuleInputSchema.shape.max_entries,
+      maxFileBytes: cliDecimalField(
+        inspectKernelModuleInputSchema.shape.max_file_bytes,
+      ),
+      maxEntries: cliDecimalField(
+        inspectKernelModuleInputSchema.shape.max_entries,
+      ),
     }),
     run: ({ args, options }) =>
       withCommandCancellation(async (signal) => {
@@ -173,8 +202,12 @@ export const registerBinaryDiagnosticsCommands = (
       path: localPathStringSchema.describe("Local PE32/PE32+ image"),
     }),
     options: z.object({
-      maxFileBytes: inspectPeLoadConfigInputSchema.shape.max_file_bytes,
-      maxCallbacks: inspectPeLoadConfigInputSchema.shape.max_callbacks,
+      maxFileBytes: cliDecimalField(
+        inspectPeLoadConfigInputSchema.shape.max_file_bytes,
+      ),
+      maxCallbacks: cliDecimalField(
+        inspectPeLoadConfigInputSchema.shape.max_callbacks,
+      ),
     }),
     run: ({ args, options }) =>
       withCommandCancellation(async (signal) => {
@@ -202,21 +235,59 @@ export const registerBinaryDiagnosticsCommands = (
         );
       }),
   });
+  cli.command(CLI_COMMANDS.inspectBinaryHardening, {
+    description:
+      "Inspect ELF, PE, and Mach-O hardening without executing the image",
+    args: z.object({
+      path: localPathStringSchema.describe("Local ELF, PE, or Mach-O image"),
+    }),
+    options: z.object({
+      maxFileBytes: cliDecimalField(
+        inspectBinaryHardeningInputSchema.shape.max_file_bytes,
+      ),
+    }),
+    run: ({ args, options }) =>
+      withCommandCancellation(async (signal) => {
+        const hardening = createBinaryHardeningService();
+        return await logCliCommand(
+          logger,
+          CLI_COMMANDS.inspectBinaryHardening,
+          async () =>
+            finishCliEvidenceCommand(
+              args.path,
+              () =>
+                hardening.inspect(
+                  {
+                    path: absoluteCallerPath(args.path),
+                    max_file_bytes: options.maxFileBytes,
+                  },
+                  { signal },
+                ),
+              hardening,
+              "rea-binary-hardening",
+              "inspect_binary_hardening",
+              signal,
+            ).then(projectCliAnalysisResult),
+        );
+      }),
+  });
   const entropy = createByteEntropyService();
   cli.command(CLI_COMMANDS.inspectByteEntropy, {
     description:
       "Inspect file-wide and block byte entropy without executing the file",
     args: z.object({ path: localPathStringSchema.describe("Local file") }),
     options: z.object({
-      blockSize: inspectByteEntropyInputSchema.shape.block_size.describe(
-        "Power-of-two block size from 256 to 65536 bytes (default 4096)",
-      ),
-      offset: inspectByteEntropyInputSchema.shape.offset.describe(
-        "Window start as a decimal file byte offset (default 0)",
-      ),
-      length: inspectByteEntropyInputSchema.shape.length.describe(
-        "Window length in bytes; omit to extend through EOF",
-      ),
+      // Decimal tokens only: numeric coercion would read "" as 0 and accept
+      // "0x10" or "1e2".
+      blockSize: cliDecimalField(
+        inspectByteEntropyInputSchema.shape.block_size,
+      ).describe("Power-of-two block size from 256 to 65536 bytes"),
+      offset: cliDecimalField(
+        inspectByteEntropyInputSchema.shape.offset,
+      ).describe("Window start as a decimal file byte offset"),
+      length: cliDecimalField(
+        inspectByteEntropyInputSchema.shape.length,
+      ).describe("Window length in bytes; omit to extend through EOF"),
     }),
     run: ({ args, options }) =>
       withCommandCancellation((signal) =>
@@ -248,8 +319,12 @@ export const registerBinaryDiagnosticsCommands = (
       path: localPathStringSchema.describe("Local PE32/PE32+ image"),
     }),
     options: z.object({
-      maxFileBytes: inspectPeCertificatesInputSchema.shape.max_file_bytes,
-      maxEntries: inspectPeCertificatesInputSchema.shape.max_entries,
+      maxFileBytes: cliDecimalField(
+        inspectPeCertificatesInputSchema.shape.max_file_bytes,
+      ),
+      maxEntries: cliDecimalField(
+        inspectPeCertificatesInputSchema.shape.max_entries,
+      ),
     }),
     run: ({ args, options }) =>
       withCommandCancellation(async (signal) => {
@@ -284,9 +359,13 @@ export const registerBinaryDiagnosticsCommands = (
       path: localPathStringSchema.describe("Local PE32/PE32+ image"),
     }),
     options: z.object({
-      maxFileBytes: inspectPeImportsInputSchema.shape.max_file_bytes,
-      maxDlls: inspectPeImportsInputSchema.shape.max_dlls,
-      maxFunctions: inspectPeImportsInputSchema.shape.max_functions,
+      maxFileBytes: cliDecimalField(
+        inspectPeImportsInputSchema.shape.max_file_bytes,
+      ),
+      maxDlls: cliDecimalField(inspectPeImportsInputSchema.shape.max_dlls),
+      maxFunctions: cliDecimalField(
+        inspectPeImportsInputSchema.shape.max_functions,
+      ),
     }),
     run: ({ args, options }) =>
       withCommandCancellation(async (signal) => {
@@ -315,6 +394,56 @@ export const registerBinaryDiagnosticsCommands = (
         );
       }),
   });
+  cli.command(CLI_COMMANDS.inspectWindowsShortcut, {
+    description:
+      "Inspect a Windows Shell Link (.lnk) without resolving or executing the target",
+    args: z.object({
+      path: localPathStringSchema.describe(
+        "Local Windows Shell Link (.lnk) file",
+      ),
+    }),
+    options: z.object({
+      maxFileBytes: cliDecimalField(
+        inspectWindowsShortcutInputSchema.shape.max_file_bytes,
+      ),
+      maxIdListItems: cliDecimalField(
+        inspectWindowsShortcutInputSchema.shape.max_id_list_items,
+      ),
+      maxExtraDataBlocks: cliDecimalField(
+        inspectWindowsShortcutInputSchema.shape.max_extra_data_blocks,
+      ),
+      maxStringBytes: cliDecimalField(
+        inspectWindowsShortcutInputSchema.shape.max_string_bytes,
+      ),
+    }),
+    run: ({ args, options }) =>
+      withCommandCancellation(async (signal) => {
+        const shortcut = createWindowsShortcutService();
+        return await logCliCommand(
+          logger,
+          CLI_COMMANDS.inspectWindowsShortcut,
+          async () =>
+            finishCliEvidenceCommand(
+              args.path,
+              () =>
+                shortcut.inspect(
+                  {
+                    path: absoluteCallerPath(args.path),
+                    max_file_bytes: options.maxFileBytes,
+                    max_id_list_items: options.maxIdListItems,
+                    max_extra_data_blocks: options.maxExtraDataBlocks,
+                    max_string_bytes: options.maxStringBytes,
+                  },
+                  { signal },
+                ),
+              shortcut,
+              "rea-windows-shortcut",
+              "inspect_windows_shortcut",
+              signal,
+            ).then(projectCliAnalysisResult),
+        );
+      }),
+  });
   cli.command(CLI_COMMANDS.inspectPeResources, {
     description:
       "Inspect PE resource identities, payload ranges, hashes and icon-group relationships",
@@ -322,8 +451,12 @@ export const registerBinaryDiagnosticsCommands = (
       path: localPathStringSchema.describe("Local PE32/PE32+ image"),
     }),
     options: z.object({
-      maxFileBytes: inspectPeResourcesInputSchema.shape.max_file_bytes,
-      maxEntries: inspectPeResourcesInputSchema.shape.max_entries,
+      maxFileBytes: cliDecimalField(
+        inspectPeResourcesInputSchema.shape.max_file_bytes,
+      ),
+      maxEntries: cliDecimalField(
+        inspectPeResourcesInputSchema.shape.max_entries,
+      ),
     }),
     run: ({ args, options }) =>
       withCommandCancellation(async (signal) => {
@@ -357,18 +490,18 @@ export const registerBinaryDiagnosticsCommands = (
       path: localPathStringSchema.describe("Local flattened devicetree image"),
     }),
     options: z.object({
-      maxFileBytes: inspectDevicetreeInputSchema.shape.max_file_bytes.describe(
-        "Maximum FDT file size in bytes (default 4194304)",
-      ),
-      maxNodes: inspectDevicetreeInputSchema.shape.max_nodes.describe(
-        "Maximum number of device-tree nodes (default 8192)",
-      ),
-      maxProperties: inspectDevicetreeInputSchema.shape.max_properties.describe(
-        "Maximum number of device-tree properties (default 32768)",
-      ),
-      maxDepth: inspectDevicetreeInputSchema.shape.max_depth.describe(
-        "Maximum device-tree nesting depth (default 64)",
-      ),
+      maxFileBytes: cliDecimalField(
+        inspectDevicetreeInputSchema.shape.max_file_bytes,
+      ).describe("Maximum FDT file size in bytes"),
+      maxNodes: cliDecimalField(
+        inspectDevicetreeInputSchema.shape.max_nodes,
+      ).describe("Maximum number of device-tree nodes"),
+      maxProperties: cliDecimalField(
+        inspectDevicetreeInputSchema.shape.max_properties,
+      ).describe("Maximum number of device-tree properties"),
+      maxDepth: cliDecimalField(
+        inspectDevicetreeInputSchema.shape.max_depth,
+      ).describe("Maximum device-tree nesting depth"),
       ...analysisEvidenceDeliveryOptions,
     }),
     run: ({ args, options }) =>
@@ -408,7 +541,9 @@ export const registerBinaryDiagnosticsCommands = (
       path: localPathStringSchema.describe("Local PE or ELF image"),
     }),
     options: z.object({
-      maxFileBytes: inspectNativeExportsInputSchema.shape.max_file_bytes,
+      maxFileBytes: cliDecimalField(
+        inspectNativeExportsInputSchema.shape.max_file_bytes,
+      ),
       ...analysisEvidenceDeliveryOptions,
     }),
     run: ({ args, options }) =>
@@ -448,8 +583,9 @@ export const registerBinaryDiagnosticsCommands = (
       ),
     }),
     options: z.object({
-      pwntoolsTimeoutMs:
+      pwntoolsTimeoutMs: cliDecimalField(
         inspectBinaryLayoutInputSchema.shape.pwntools_timeout_ms,
+      ),
     }),
     run: ({ args, options }) =>
       withCommandCancellation((signal) =>
@@ -483,8 +619,9 @@ export const registerBinaryDiagnosticsCommands = (
         .boolean()
         .default(false)
         .describe("Add BYO core-only GDB/pwndbg mapping candidates"),
-      pwntoolsTimeoutMs:
+      pwntoolsTimeoutMs: cliDecimalField(
         inspectRecordedCrashInputSchema.shape.pwntools_timeout_ms,
+      ),
     }),
     run: ({ args, options }) =>
       withCommandCancellation((signal) =>

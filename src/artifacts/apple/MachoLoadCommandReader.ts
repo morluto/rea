@@ -7,6 +7,7 @@ import {
   MachoLoadCommandCursor,
   readMachoHeaderDeclarations,
   readMachoCommandStringBytes,
+  readMachoLinkeditDataCommand,
   type MachoCommandStringFailure,
 } from "../../domain/apple/machoLoadCommands.js";
 import {
@@ -412,6 +413,7 @@ export interface MachoSliceHeader {
   readonly cpuType: number;
   readonly cpuSubtype: number;
   readonly fileType: number;
+  readonly flags: number;
   readonly commandCount: number;
   readonly commandBytes: number;
 }
@@ -455,14 +457,22 @@ export const readSliceCommandTable = async (
       "big-endian Mach-O slices are not supported",
       null,
     );
-  const { wide, headerSize, commandCount, commandBytes, fileType, identity } =
-    parsed.value;
+  const {
+    wide,
+    headerSize,
+    commandCount,
+    commandBytes,
+    fileType,
+    flags,
+    identity,
+  } = parsed.value;
   const header: MachoSliceHeader = {
     wide,
     headerSize,
     cpuType: identity.cpuType,
     cpuSubtype: identity.cpuSubtype,
     fileType,
+    flags,
     commandCount,
     commandBytes,
   };
@@ -645,7 +655,8 @@ const readSegmentSpan = (
   const { nameBytes, address: vmaddr, memorySize: vmsize } = parsed.value;
   const end = nameBytes.indexOf(0);
   return {
-    name: new TextDecoder("utf-8", { fatal: false }).decode(
+    // Segment names are fixed-width Mach-O data; a leading BOM is literal name bytes.
+    name: new TextDecoder("utf-8", { fatal: false, ignoreBOM: true }).decode(
       end < 0 ? nameBytes : nameBytes.subarray(0, end),
     ),
     vmaddr,
@@ -761,8 +772,7 @@ const decodeCommand = (
     return;
   }
   if (command === LC_CODE_SIGNATURE) {
-    // linkedit_data_command: cmd, cmdsize, dataoff, datasize.
-    if (body.byteLength < 16)
+    if (readMachoLinkeditDataCommand(LC_CODE_SIGNATURE, body, true) === null)
       throw new MachoFormatIssue(
         "malformed",
         `load command ${index} is too short for LC_CODE_SIGNATURE`,

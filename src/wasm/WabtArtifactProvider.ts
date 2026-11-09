@@ -1,3 +1,4 @@
+import { WabtAdmissionError } from "./WabtAdmissionError.js";
 import { randomUUID, createHash } from "node:crypto";
 import { access, writeFile } from "node:fs/promises";
 import { constants } from "node:fs";
@@ -57,7 +58,10 @@ import { WabtRuntime } from "./WabtRuntime.js";
 import {
   WABT_PROVIDER_IDENTITY,
   WABT_LIMITS,
+  WABT_SOURCE_COMMIT,
   WABT_VERSION,
+  admitWabtVersion,
+  wabtReleaseLine,
 } from "./WabtRelease.js";
 import {
   wabtFailure,
@@ -153,6 +157,9 @@ export class WabtArtifactProvider implements WasmArtifactPort {
       field: ["path"],
     };
     let toolProfile: WasmArtifact["tool_profile"] | undefined;
+    let admittedVersion = WABT_VERSION;
+    let observedRelease: string | undefined;
+    let compatibleLimitation: string | undefined;
     let artifact: WasmArtifact["artifact"] | undefined;
     const candidates: WasmArtifact["candidates"] = [];
     const glue: AcquiredGlue[] = [];
@@ -162,6 +169,10 @@ export class WabtArtifactProvider implements WasmArtifactPort {
       ...(toolProfile === undefined ? {} : { tool_profile: toolProfile }),
       candidates: [...candidates],
       glue: [...glue],
+    });
+    const admittedIdentity = () => ({
+      ...WABT_PROVIDER_IDENTITY,
+      version: `wabt@${admittedVersion}`,
     });
     const acquiredEvidence = () =>
       toolProfile === undefined
@@ -174,7 +185,7 @@ export class WabtArtifactProvider implements WasmArtifactPort {
                   format: "file",
                   sha256: artifact.sha256,
                 },
-            WABT_PROVIDER_IDENTITY,
+            admittedIdentity(),
             {
               operation: OPERATION,
               parameters: input,
@@ -187,6 +198,9 @@ export class WabtArtifactProvider implements WasmArtifactPort {
                   : validationState === "valid"
                     ? "WABT validated the selected module, but inspection did not complete. Acquired file identities and glue references do not establish runtime loading or execution."
                     : "WABT validation has no completed result. Acquired file identities and glue references do not establish module validity, runtime loading or execution.",
+                ...(compatibleLimitation === undefined
+                  ? []
+                  : [compatibleLimitation]),
               ],
             },
           );
@@ -221,9 +235,9 @@ export class WabtArtifactProvider implements WasmArtifactPort {
         });
       const directory = environment.REA_WABT_BIN_DIRECTORY ?? "";
       if (!isAbsolute(directory))
-        throw new Error(
-          "REA_WABT_BIN_DIRECTORY must be an absolute tool directory.",
-        );
+        throw new WabtAdmissionError("directory_not_absolute", {
+          setting: "REA_WABT_BIN_DIRECTORY",
+        });
       const commands: {
         tool: "wasm-validate" | "wasm-objdump" | "wasm2wat";
         path: string;
@@ -348,13 +362,15 @@ export class WabtArtifactProvider implements WasmArtifactPort {
           executable_path: command.path,
           tool: command.tool,
           expected_version: WABT_VERSION,
+          accepted_releases: wabtReleaseLine(),
         };
         const version = await execute(command, ["--version"]);
-        if (
-          version.stdout.text.trim() !== WABT_VERSION ||
-          version.stderr.text !== ""
-        ) {
-          const reason = `Unsupported ${command.tool} version banner; expected ${WABT_VERSION}.`;
+        const admission =
+          version.exitCode === 0 && version.stderr.text === ""
+            ? admitWabtVersion(version.stdout.text)
+            : undefined;
+        if (admission === undefined || admission.status === "unsupported") {
+          const reason = `${admission?.message ?? `Unsupported ${command.tool} version banner`}; expected stdout from ${wabtReleaseLine()} with empty stderr.`;
           throw new AnalysisCapabilityUnavailableError(
             WABT_PROVIDER_IDENTITY.id,
             OPERATION,
@@ -371,14 +387,38 @@ export class WabtArtifactProvider implements WasmArtifactPort {
             },
           );
         }
+        // All three tools come from one directory, so admit only banners that agree.
+        if (observedRelease === undefined) observedRelease = admission.version;
+        if (observedRelease !== admission.version) {
+          const reason = `Configured WABT tools report different releases (${observedRelease} and ${admission.version}); select one complete ${wabtReleaseLine()} installation.`;
+          throw new AnalysisCapabilityUnavailableError(
+            WABT_PROVIDER_IDENTITY.id,
+            OPERATION,
+            reason,
+            {
+              userMessage: reason,
+              diagnostics: versionProbe,
+              capturedOutput: {
+                stdout: version.stdout.text,
+                stderr: version.stderr.text,
+                truncated: version.diagnosticTruncated === true,
+              },
+              remediationAction: wabtConfigurationRecoveryAction(),
+            },
+          );
+        }
+        if (admission.status === "compatible")
+          compatibleLimitation = admission.limitation;
+        admittedVersion = admission.version;
         command.version_banner = version.stdout.text;
         versionProbe = undefined;
       }
       // Success and validation failure report the same admitted tool/execution facts.
       toolProfile = {
         source: "https://github.com/WebAssembly/wabt",
-        release: WABT_VERSION,
-        source_commit: "ff0ef7e0009402740c805a9744c09b05be063e48",
+        release: admittedVersion,
+        source_commit:
+          admittedVersion === WABT_VERSION ? WABT_SOURCE_COMMIT : null,
         commands: commands.map(
           ({ selection: _selection, ...command }) => command,
         ),
@@ -466,7 +506,7 @@ export class WabtArtifactProvider implements WasmArtifactPort {
         objdump === undefined ||
         decode === undefined
       )
-        throw new Error("Incomplete WABT tool profile.");
+        throw new WabtAdmissionError("incomplete_tool_profile");
       const validation = await execute(validate, validate.arguments, true);
       if (validation.exitCode !== 0)
         throw new AnalysisInputError(
@@ -474,7 +514,7 @@ export class WabtArtifactProvider implements WasmArtifactPort {
           {
             partialObservation: createEvidence(
               { path: input.path, format: "file", sha256: selected.sha256 },
-              WABT_PROVIDER_IDENTITY,
+              admittedIdentity(),
               {
                 operation: OPERATION,
                 parameters: input,
@@ -489,6 +529,9 @@ export class WabtArtifactProvider implements WasmArtifactPort {
                 locations: [{ kind: "artifact-path", path: input.path }],
                 limitations: [
                   "WABT rejected these exact selected bytes with --enable-all and --ignore-custom-section-errors; no complete inspection or target execution occurred.",
+                  ...(compatibleLimitation === undefined
+                    ? []
+                    : [compatibleLimitation]),
                 ],
               },
             ),
@@ -607,6 +650,7 @@ export class WabtArtifactProvider implements WasmArtifactPort {
         "JavaScript references are AST-observed static literals only. Candidate matches are associations, not proven data flow, URL-to-file identity or runtime loading. Computed references and aliases are not resolved.",
         "No target execution or implicit fetch. WABT tools are trusted caller-supplied executables; SHA-256 identifies their bytes, not publisher authenticity. No OS memory sandbox is claimed.",
         `Each WABT command has a ${String(commandTimeoutMs)} ms deadline and a fixed 32 MiB combined output budget. The deadline is not a whole-inspection budget. Oversized output fails instead of producing truncated success.`,
+        ...(compatibleLimitation === undefined ? [] : [compatibleLimitation]),
         ...optionalLimitations,
       ];
       const report = wasmArtifactSchema.parse({
@@ -633,7 +677,7 @@ export class WabtArtifactProvider implements WasmArtifactPort {
         limitations,
       });
       result = ok(
-        createAnalysisExecution(report, WABT_PROVIDER_IDENTITY, {
+        createAnalysisExecution(report, admittedIdentity(), {
           subject: {
             path: input.path,
             format: "file",

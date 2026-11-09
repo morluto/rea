@@ -40,6 +40,13 @@ export const PE_IMPORTS_PROVIDER = Object.freeze({
   version: "1",
 } as const);
 
+/** Provider identity for portable, execution-free Shell Link decoding. */
+export const WINDOWS_SHORTCUT_PROVIDER = Object.freeze({
+  id: "rea-windows-shortcut",
+  name: "REA Windows shortcut parser",
+  version: "1",
+} as const);
+
 /** Provider identity for portable, execution-free ELF note-table decoding. */
 export const DEVICETREE_PROVIDER = Object.freeze({
   id: "rea-devicetree",
@@ -181,5 +188,12 @@ export const RECONSTRUCTION_PROVIDER = {
 export const PE_LOAD_CONFIG_PROVIDER = Object.freeze({
   id: "rea-pe-load-config",
   name: "REA PE TLS/load-config parser",
+  version: "1",
+} as const);
+
+/** Provider identity for portable ELF, PE, and Mach-O hardening inspection. */
+export const BINARY_HARDENING_PROVIDER = Object.freeze({
+  id: "rea-binary-hardening",
+  name: "REA binary hardening parser",
   version: "1",
 } as const);
