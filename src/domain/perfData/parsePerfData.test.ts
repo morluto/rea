@@ -262,6 +262,34 @@ describe("parsePerfData section accounting", () => {
     expect(archive.source_coverage.status).toBe("complete-within-scope");
   });
 
+  it("reports a malformed stride even when the attribute section is empty", () => {
+    const bytes = buildPerfRecording({ entries: [], attrBytes: 8 });
+    const archive = parsed(bytes);
+    // An empty section alone leaves scope complete, so a stride that cannot
+    // hold an entry has to be reported on its own or the malformed header
+    // reads as a legitimate empty recording.
+    expect(archive.diagnostics.map(({ code }) => code)).toEqual(
+      expect.arrayContaining([
+        "unsupported-attribute-size",
+        "empty-attribute-section",
+      ]),
+    );
+    expect(archive.source_coverage.status).not.toBe("complete-within-scope");
+  });
+
+  it("refuses to walk attributes when the event-types extent is unrepresentable", () => {
+    const bytes = buildPerfRecording();
+    // The extent owns bytes the walk cannot compare against, so whether the
+    // attributes it covers belong to the event-types section is undecidable.
+    bytes.writeBigUInt64LE(0xffffffffffffffffn, 0x38);
+    const archive = parsed(bytes);
+    expect(archive.events).toEqual([]);
+    expect(archive.diagnostics).toEqual([
+      expect.objectContaining({ code: "unsafe-section-extent" }),
+    ]);
+    expect(archive.source_coverage.status).not.toBe("complete-within-scope");
+  });
+
   it("treats a zero-length data extent as empty rather than overlapping", () => {
     const bytes = buildPerfRecording();
     // A zero-size data section that starts inside the attribute extent owns no

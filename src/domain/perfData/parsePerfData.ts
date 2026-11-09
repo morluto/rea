@@ -496,7 +496,21 @@ export const parsePerfData = (
   // `event_types` is its own header section; bytes it owns are not attribute
   // entries, so an attribute walk over them would publish event-type bytes as
   // events. Only a readable, nonempty extent can conflict.
-  const eventTypes = sectionAt(bytes, read, EVENT_TYPES_SECTION_FIELD).section;
+  const eventTypesRead = sectionAt(bytes, read, EVENT_TYPES_SECTION_FIELD);
+  const eventTypes = eventTypesRead.section;
+  // An unrepresentable `event_types` extent owns unknown bytes, so whether the
+  // walk publishes its contents cannot be decided: treating it as absent is
+  // what the overlap predicate below would do, and the walk would then publish
+  // contested attribute bytes as events while still reporting complete scope.
+  if (eventTypesRead.unrepresentable) {
+    diagnose(
+      state,
+      null,
+      "unsafe-section-extent",
+      "The event-types section extent exceeds Number.MAX_SAFE_INTEGER, so its range cannot be compared with the attribute section.",
+    );
+    return ok(emptyRecording(artifact, state.diagnostics, order));
+  }
   const attributeOverlapsEventTypes =
     eventTypes !== null &&
     attributeSection.size > 0 &&
@@ -557,6 +571,19 @@ export const parsePerfData = (
         "unsafe-attribute-size",
         `The attribute entry stride exceeds Number.MAX_SAFE_INTEGER, so the recorded value cannot be represented and the events were not read.`,
       );
+    // The stride is a fact about the header too, so an unusable one is
+    // reported whatever the section holds: an empty section alone leaves scope
+    // complete, and a malformed stride would then read as a legitimate empty
+    // recording.
+    const strideFitsEntry =
+      rawStride !== null && stride >= ATTR_SIZE_MIN + PERF_FILE_SECTION_BYTES;
+    if (rawStride !== null && !strideFitsEntry)
+      diagnose(
+        state,
+        null,
+        "unsupported-attribute-size",
+        `The attribute entry stride is ${stride} bytes, which cannot hold an attribute and its ids section.`,
+      );
     if (attributeSection.size === 0)
       diagnose(
         state,
@@ -564,16 +591,8 @@ export const parsePerfData = (
         "empty-attribute-section",
         "The attribute section is empty; the recording states no events.",
       );
-    else if (rawStride === null) {
-      // Diagnosed above; no entry was walked.
-    } else if (stride <= 0 || stride < ATTR_SIZE_MIN + PERF_FILE_SECTION_BYTES)
-      diagnose(
-        state,
-        null,
-        "unsupported-attribute-size",
-        `The attribute entry stride is ${stride} bytes, which cannot hold an attribute and its ids section.`,
-      );
-    else readEvents(bytes, read, state, attributeSection, stride);
+    else if (strideFitsEntry)
+      readEvents(bytes, read, state, attributeSection, stride);
   }
   if (state.diagnosticsSuppressed)
     state.diagnostics.push({
