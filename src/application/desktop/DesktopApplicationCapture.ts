@@ -315,6 +315,7 @@ const recordCapture = async (
     state: {
       roots: [...scope.roots],
       content_roots: [...scope.contentRoots],
+      baseline_non_files: recorder.baselineNonFiles,
       state_directories: [...scope.stateDirectories],
       selected_paths: [...context.scope.selectedPaths],
       excluded: [...scope.excluded],

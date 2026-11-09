@@ -119,7 +119,7 @@ cliTest(
     );
     await writeFile(path, JSON.stringify(createEvidenceBundle([parent])));
     const inspect = async (view: JsonValue) => {
-      const result = await cli.run({
+      const result = await runFileCli(cli, {
         arguments: [
           "inspect-analysis-view",
           JSON.stringify({
@@ -177,7 +177,7 @@ cliTest(
     ]);
     const original = JSON.stringify(bundle);
     await writeFile(path, original);
-    const result = await cli.run({
+    const result = await runFileCli(cli, {
       arguments: [
         "inspect-analysis-view",
         JSON.stringify(request),
@@ -280,7 +280,7 @@ cliTest(
         view: { kind: "native", facet: "callees", offset: 0, limit: 1 },
       }),
     );
-    const response = await cli.run({
+    const response = await runFileCli(cli, {
       arguments: ["inspect-analysis-view", request, "--json"],
     });
     expect(response.exitCode).toBe(0);
@@ -319,7 +319,7 @@ cliTest(
     const expected = await inspectAnalysisView(input);
     if (!expected.ok) throw expected.error;
     await writeFile(request, JSON.stringify(input));
-    const response = await cli.run({
+    const response = await runFileCli(cli, {
       arguments: ["inspect-analysis-view", request, "--json"],
     });
     expect(response.exitCode).toBe(0);
@@ -360,7 +360,7 @@ cliTest(
         view: { kind: "api-surface", include_query_parameter_names: true },
       }),
     );
-    const result = await cli.run({
+    const result = await runFileCli(cli, {
       arguments: ["inspect-analysis-view", path, "--json"],
     });
     expect(result.exitCode).toBe(0);
@@ -390,7 +390,7 @@ cliTest(
     await writer.add("main.js", new TextReader("console.log('portable');\n"));
     await writeFile(archive, await writer.close());
     const bundlePath = join(root, "inspection-bundle.json");
-    const inspected = await cli.run({
+    const inspected = await runFileCli(cli, {
       arguments: [
         "inspect-artifact",
         archive,
@@ -440,7 +440,7 @@ cliTest(
       view: { kind: "page", collection: "sections", offset: 0, limit: 20 },
     };
     await writeFile(unsupportedRequest, JSON.stringify(unsupportedInput));
-    const unsupported = await cli.run({
+    const unsupported = await runFileCli(cli, {
       arguments: ["inspect-analysis-view", unsupportedRequest, "--json"],
     });
     expect(unsupported.exitCode).toBe(1);
@@ -468,7 +468,7 @@ cliTest(
         },
       }),
     );
-    const projected = await cli.run({
+    const projected = await runFileCli(cli, {
       arguments: ["inspect-analysis-view", request, "--json"],
     });
     expect(projected.exitCode).toBe(0);
@@ -497,7 +497,7 @@ cliTest(
     const writer = new ZipWriter(new Uint8ArrayWriter());
     await writer.add("main.js", new TextReader("console.log(1);\n"));
     await writeFile(archive, await writer.close());
-    const inspected = await cli.run({
+    const inspected = await runFileCli(cli, {
       arguments: ["inspect-artifact", archive, "--json"],
     });
     expect(inspected.exitCode).toBe(0);
@@ -599,7 +599,7 @@ cliTest(
       ],
     });
     await writeFile(path, JSON.stringify(request));
-    const refused = await cli.run({
+    const refused = await runFileCli(cli, {
       arguments: ["inspect-analysis-view", path, "--json"],
     });
     expect(refused.exitCode).toBe(1);
@@ -648,7 +648,7 @@ cliTest(
         view: { kind: "api-surface" },
       }),
     );
-    const refused = await cli.run({
+    const refused = await runFileCli(cli, {
       arguments: ["inspect-analysis-view", path, "--json"],
       environment,
     });
@@ -679,7 +679,7 @@ cliTest(
         view: { kind: "api-surface" },
       }),
     );
-    const response = await cli.run({
+    const response = await runFileCli(cli, {
       arguments: ["inspect-analysis-view", path, "--json"],
       environment,
     });
@@ -716,7 +716,7 @@ cliTest(
       detail: "summary" as const,
       filters: { evidence_id: parent.evidence_id },
     };
-    const result = await cli.run({
+    const result = await runFileCli(cli, {
       arguments: [
         "inspect-evidence-bundle",
         JSON.stringify({ path, ...options }),
@@ -729,7 +729,7 @@ cliTest(
     if (!expected.ok) throw expected.error;
     expect(result.json).toEqual(expected.value);
     // The same shared owner selects the complete record from the portable file.
-    const records = await cli.run({
+    const records = await runFileCli(cli, {
       arguments: [
         "inspect-evidence-bundle",
         JSON.stringify({ path, ...options, detail: "records", limit: 1 }),
@@ -746,7 +746,7 @@ cliTest(
       records: [parent],
       missing_evidence_links: [],
     });
-    const complete = await cli.run({
+    const complete = await runFileCli(cli, {
       arguments: [
         "inspect-evidence-bundle",
         JSON.stringify({ path }),
@@ -781,7 +781,7 @@ cliTest(
       detail: "links",
       traversal: "retained-closure",
     } as const;
-    const result = await cli.run({
+    const result = await runFileCli(cli, {
       arguments: [
         "inspect-evidence-bundle",
         JSON.stringify({ path, ...options }),
@@ -850,7 +850,7 @@ cliTest(
     };
 
     {
-      const json = await cli.run({
+      const json = await runFileCli(cli, {
         arguments: [
           "inspect-analysis-view",
           input,
@@ -869,7 +869,7 @@ cliTest(
       ).toHaveLength(rowCount);
     }
 
-    const markdown = await cli.run({
+    const markdown = await runFileCli(cli, {
       arguments: [
         "inspect-analysis-view",
         input,
@@ -908,7 +908,7 @@ cliTest(
     const input = join(root, "view.json");
     await mkdir(root, { recursive: true });
     await writeFile(input, JSON.stringify(request));
-    const result = await cli.run({
+    const result = await runFileCli(cli, {
       arguments: ["inspect-analysis-view", input, "--json"],
       environment: {
         HOME: root,
@@ -934,7 +934,7 @@ cliTest(
     const root = await createTestTempDirectory("rea-empty-layout-view-cli-");
     const empty = analysisViewLayoutEvidence(binaryLayoutFixture());
     for (const collection of ["sections", "symbols"] as const) {
-      const result = await cli.run({
+      const result = await runFileCli(cli, {
         arguments: [
           "inspect-analysis-view",
           JSON.stringify({
@@ -965,7 +965,7 @@ cliTest(
       expect(result.json).not.toHaveProperty("details.issues.0.minimum");
       expect(result.json).not.toHaveProperty("details.issues.0.maximum");
     }
-    const populated = await cli.run({
+    const populated = await runFileCli(cli, {
       arguments: [
         "inspect-analysis-view",
         JSON.stringify({
@@ -1022,7 +1022,7 @@ cliTest(
         view: { kind: "native", facet: "pseudocode", offset: 0, limit: 12 },
       }),
     );
-    const result = await cli.run({
+    const result = await runFileCli(cli, {
       arguments: ["inspect-analysis-view", input, "--json"],
       environment: { HOME: root, XDG_CONFIG_HOME: root, XDG_CACHE_HOME: root },
     });
@@ -1065,7 +1065,7 @@ cliTest(
       { kind: "summary" },
       { kind: "evm", facet: "bytecode_hex", offset: 0, limit: 4 },
     ]) {
-      const result = await cli.run({
+      const result = await runFileCli(cli, {
         arguments: [
           "inspect-analysis-view",
           JSON.stringify({
@@ -1087,7 +1087,7 @@ cliTest(
 
 cliTest("rejects malformed JSON before projection", async ({ cli }) => {
   const root = await createTestTempDirectory("rea-analysis-view-cli-bad-");
-  const result = await cli.run({
+  const result = await runFileCli(cli, {
     arguments: ["inspect-analysis-view", "{", "--json"],
     environment: {
       HOME: root,
@@ -1107,7 +1107,7 @@ cliTest("rejects a request that omits source", async ({ cli }) => {
   const root = await createTestTempDirectory("rea-analysis-view-cli-missing-");
   const input = join(root, "missing-source.json");
   await writeFile(input, JSON.stringify({ view: { kind: "summary" } }));
-  const result = await cli.run({
+  const result = await runFileCli(cli, {
     arguments: ["inspect-analysis-view", input, "--json"],
     environment: {
       HOME: root,
@@ -1142,7 +1142,7 @@ for (const [view, reason] of [
           view,
         }),
       );
-      const result = await cli.run({
+      const result = await runFileCli(cli, {
         arguments: ["inspect-analysis-view", input, "--json"],
         environment: {
           HOME: root,
@@ -1195,7 +1195,7 @@ cliTest(
       XDG_CACHE_HOME: root,
     };
     await writeFile(capturePath, bytes);
-    const capture = await cli.run({
+    const capture = await runFileCli(cli, {
       arguments: ["inspect-web-network-capture", capturePath, "har", "--json"],
       environment,
     });
@@ -1212,7 +1212,7 @@ cliTest(
         view: { kind: "api-surface" },
       }),
     );
-    const result = await cli.run({
+    const result = await runFileCli(cli, {
       arguments: ["inspect-analysis-view", input, "--json"],
       environment,
     });
@@ -1266,7 +1266,7 @@ cliTest(
         view,
       }),
     );
-    const result = await cli.run({
+    const result = await runFileCli(cli, {
       arguments: ["inspect-analysis-view", requestPath, "--json"],
     });
     expect(result.exitCode, result.stdout).toBe(0);
@@ -1312,7 +1312,7 @@ cliTest(
         },
       }),
     );
-    const result = await cli.run({
+    const result = await runFileCli(cli, {
       arguments: ["inspect-analysis-view", path, "--json"],
     });
     expect(result.exitCode, result.stdout).toBe(0);
@@ -1348,7 +1348,7 @@ cliTest(
         view: { kind: "environment-manifest" },
       }),
     );
-    const refused = await cli.run({
+    const refused = await runFileCli(cli, {
       arguments: ["inspect-analysis-view", path, "--json"],
     });
     expect(refused.exitCode).toBe(1);
@@ -1383,7 +1383,7 @@ cliTest(
         },
       }),
     );
-    const result = await cli.run({
+    const result = await runFileCli(cli, {
       arguments: ["inspect-analysis-view", path, "--json"],
     });
     expect(result.exitCode, result.stdout).toBe(0);
@@ -1457,7 +1457,7 @@ cliTest.for([
       view: { kind: "environment-state" },
     });
     await writeFile(path, request);
-    const result = await cli.run({
+    const result = await runFileCli(cli, {
       arguments: ["inspect-analysis-view", path, "--json"],
     });
     expect(result.exitCode, result.stdout).toBe(0);
@@ -1485,7 +1485,7 @@ cliTest(
     const root = await createTestTempDirectory("rea-manifest-chain-cli-");
     const capturePath = join(root, "capture.har");
     await writeFile(capturePath, JSON.stringify(environmentManifestHar()));
-    const capture = await cli.run({
+    const capture = await runFileCli(cli, {
       arguments: ["inspect-web-network-capture", capturePath, "har", "--json"],
     });
     expect(capture.exitCode, capture.stdout).toBe(0);
@@ -1498,7 +1498,7 @@ cliTest(
         view: { kind: "environment-manifest" },
       }),
     );
-    const result = await cli.run({
+    const result = await runFileCli(cli, {
       arguments: ["inspect-analysis-view", input, "--json"],
     });
     expect(result.exitCode, result.stdout).toBe(0);

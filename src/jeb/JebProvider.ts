@@ -216,6 +216,8 @@ export class JebProvider implements JebAnalysisPort {
     } catch (cause) {
       if (signal?.aborted === true) throw cause;
       if (cause instanceof AnalysisError) {
+        if (cause.cleanupIncomplete)
+          throw this.#providerFailure("inspect_jeb_client", cause);
         // The failure's owner, such as the discovery deadline, also owns the repair.
         const projected = projectAnalysisError(cause);
         return {
