@@ -1109,7 +1109,9 @@ describe("deferred class/accessor methods and indirect Electron member writes", 
     const analysis = expectNoDirectElectron(source);
     expect(analysis.bundler_registrations).toEqual([]);
   });
+});
 
+describe("indirect Electron member write tracking across call and array helpers", () => {
   it.each([
     [
       "for-of iteration over an array holding an Electron alias",
@@ -1136,6 +1138,65 @@ describe("deferred class/accessor methods and indirect Electron member writes", 
        frozen.ipc.send = () => {};
        e.ipcRenderer.send("FALSE");`,
     ],
+    [
+      "Function.prototype.call helper invocation returning an Electron alias",
+      `const id = (x) => x;
+       let e = r(91288);
+       const saved = e;
+       const a = id.call(null, e);
+       a.ipcRenderer.send = () => {};
+       e = null;
+       saved.ipcRenderer.send("FALSE");`,
+    ],
+    [
+      "Function.prototype.apply helper invocation returning an Electron alias",
+      `const id = (x) => x;
+       let e = r(91288);
+       const saved = e;
+       const a = id.apply(null, [e]);
+       a.ipcRenderer.send = () => {};
+       e = null;
+       saved.ipcRenderer.send("FALSE");`,
+    ],
+    [
+      "Array.from mapping callback returning an Electron alias",
+      `let e = r(91288);
+       const saved = e;
+       const a = Array.from([0], () => e);
+       a[0].ipcRenderer.send = () => {};
+       e = null;
+       saved.ipcRenderer.send("FALSE");`,
+    ],
+    [
+      "Array.from element-forwarding mapper returning an Electron alias",
+      `let e = r(91288);
+       const saved = e;
+       const a = Array.from([e], (item) => item);
+       a[0].ipcRenderer.send = () => {};
+       e = null;
+       saved.ipcRenderer.send("FALSE");`,
+    ],
+    [
+      "awaited async helper call returning an Electron alias",
+      `let e = r(91288);
+       const saved = e;
+       async function later() { return e; }
+       async function mutate() {
+         (await later()).ipcRenderer.send = () => {};
+       }
+       void mutate();
+       e = null;
+       saved.ipcRenderer.send("FALSE");`,
+    ],
+    [
+      "selected rest-parameter array element holding an Electron alias",
+      `let e = r(91288);
+       const saved = e;
+       const list = ((...xs) => xs)(e);
+       list[0].ipcRenderer.send = () => {};
+       e = null;
+       saved.ipcRenderer.send("FALSE");`,
+    ],
   ])("invalidates Electron IPC identity after %s", (_label, consumer) => {
     expectNoDirectElectron(rspackGetterBundle(`(e) => () => e`, consumer));
   });
@@ -1154,5 +1215,135 @@ describe("deferred class/accessor methods and indirect Electron member writes", 
     expect(analysis.electron.ipc).toMatchObject([
       { channel: "UNRELATED_WRITE_OK", side: "renderer", operation: "send" },
     ]);
+  });
+});
+
+describe("wrapper write isolation and definite helper installation receivers", () => {
+  it("preserves Electron IPC identity when mutating fresh async, generator, or rest-array wrappers", () => {
+    const analysis = analyzeJavaScriptStaticSource(
+      rspackGetterBundle(
+        `(e) => () => e`,
+        `const e = r(91288);
+         async function later() { return e; }
+         function* gen() { yield e; }
+         const p = later();
+         p.ipcRenderer = {};
+         const g = gen();
+         g.ipcRenderer = {};
+         const list = ((...xs) => xs)(e);
+         list.ipcRenderer = {};
+         e.ipcRenderer.send("WRAPPER_WRITE_OK");`,
+      ),
+    );
+    expect(analysis.electron.ipc).toMatchObject([
+      { channel: "WRAPPER_WRITE_OK", side: "renderer", operation: "send" },
+    ]);
+  });
+
+  it.each([
+    [
+      "canonical .d helper is installed only on a non-loader receiver",
+      `(() => {
+        var m = {
+          91288: ${EXTERNAL_ELECTRON},
+          85425: (_u, _e, r) => {
+            var n = r(91288);
+            var a = r.n(n);
+            a().ipcRenderer.send("FALSE_D_RECEIVER");
+          }
+        }, c = {};
+        function r(id) {
+          var hit = c[id];
+          if (hit !== void 0) return hit.exports;
+          var mod = (c[id] = { exports: {} });
+          return m[id](mod, mod.exports, r), mod.exports;
+        }
+        const holder = (() => ({}))();
+        holder.d = (exports, definition) => {
+          for (var key in definition) {
+            if (
+              Object.prototype.hasOwnProperty.call(definition, key) &&
+              !Object.prototype.hasOwnProperty.call(exports, key)
+            ) {
+              Object.defineProperty(exports, key, {
+                enumerable: true,
+                get: definition[key],
+              });
+            }
+          }
+        };
+        r.n = (module) => {
+          var getter =
+            module && module.__esModule ? () => module.default : () => module;
+          r.d(getter, { a: getter });
+          return getter;
+        };
+        r(85425);
+      })();`,
+    ],
+    [
+      "canonical .o helper is installed only on a non-loader receiver",
+      `(() => {
+        var m = {
+          91288: ${EXTERNAL_ELECTRON},
+          85425: (_u, _e, r) => {
+            var n = r(91288);
+            var a = r.n(n);
+            a().ipcRenderer.send("FALSE_O_RECEIVER");
+          }
+        }, c = {};
+        function r(id) {
+          var hit = c[id];
+          if (hit !== void 0) return hit.exports;
+          var mod = (c[id] = { exports: {} });
+          return m[id](mod, mod.exports, r), mod.exports;
+        }
+        const holder = (() => ({}))();
+        holder.o = (obj, prop) =>
+          Object.prototype.hasOwnProperty.call(obj, prop);
+        r.d = (exports, definition) => {
+          for (var key in definition) {
+            if (r.o(definition, key) && !r.o(exports, key)) {
+              Object.defineProperty(exports, key, {
+                enumerable: true,
+                get: definition[key],
+              });
+            }
+          }
+        };
+        r.n = (module) => {
+          var getter =
+            module && module.__esModule ? () => module.default : () => module;
+          r.d(getter, { a: getter });
+          return getter;
+        };
+        r(85425);
+      })();`,
+    ],
+    [
+      "canonical .n helper is installed only on a non-loader receiver",
+      `(() => {
+        var m = {
+          91288: ${EXTERNAL_ELECTRON},
+          85425: (_u, _e, r) => {
+            var n = r(91288);
+            var a = r.n(n);
+            a().ipcRenderer.send("FALSE_N_RECEIVER");
+          }
+        }, c = {};
+        function r(id) {
+          var hit = c[id];
+          if (hit !== void 0) return hit.exports;
+          var mod = (c[id] = { exports: {} });
+          return m[id](mod, mod.exports, r), mod.exports;
+        }
+        const holder = (() => ({}))();
+        holder.n = (module) =>
+          module && module.__esModule ? () => module.default : () => module;
+        r(85425);
+      })();`,
+    ],
+  ])("rejects helper installation when %s", (_label, source) => {
+    expectNoDirectElectron(source);
   });
 });

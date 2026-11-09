@@ -392,7 +392,13 @@ const canonicalWebpackInteropBindings = (
   if (
     nWrites.size === 1 &&
     t.isAssignmentExpression(write, { operator: "=" }) &&
-    isInstalledBeforeEntryDispatch(write, bootstrap, loaderBindingIds, state)
+    isInstalledBeforeEntryDispatch(
+      write,
+      "n",
+      bootstrap,
+      loaderBindingIds,
+      state,
+    )
   ) {
     const getterProof = analyzeCanonicalGetter(write, loaderBindingIds, state);
     if (
@@ -557,7 +563,13 @@ const isProvenDefineExportsHelper = (
   if (
     dWrites.size !== 1 ||
     !t.isAssignmentExpression(dWrite, { operator: "=" }) ||
-    !isInstalledBeforeEntryDispatch(dWrite, bootstrap, loaderBindingIds, state)
+    !isInstalledBeforeEntryDispatch(
+      dWrite,
+      "d",
+      bootstrap,
+      loaderBindingIds,
+      state,
+    )
   )
     return false;
   const fn = unwrapJavaScriptExpression(dWrite.right).node;
@@ -662,19 +674,11 @@ const isProvenDefineExportsHelper = (
     const callee = unwrapJavaScriptExpression(unwrapped.callee).node;
     if (
       t.isMemberExpression(callee) &&
-      semanticStaticPropertyKey(callee.property, callee.computed) === "o"
+      semanticStaticPropertyKey(callee.property, callee.computed) === "o" &&
+      isDefiniteLoaderReceiver(callee.object, loaderBindingIds, state)
     ) {
-      const loaderObj = unwrapJavaScriptExpression(callee.object).node;
-      const loaderBinding = t.isIdentifier(loaderObj)
-        ? resolveSemanticBindingState(state, loaderObj, loaderObj.name)
-        : undefined;
-      if (
-        loaderBinding !== undefined &&
-        loaderBindingIds.has(loaderBinding.bindingId)
-      ) {
-        usesHasOwnHelper = true;
-        return true;
-      }
+      usesHasOwnHelper = true;
+      return true;
     }
     return isUnmodifiedHasOwnCallCallee(callee, state);
   };
@@ -832,7 +836,13 @@ const isProvenHasOwnHelper = (
   if (
     oWrites.size !== 1 ||
     !t.isAssignmentExpression(oWrite, { operator: "=" }) ||
-    !isInstalledBeforeEntryDispatch(oWrite, bootstrap, loaderBindingIds, state)
+    !isInstalledBeforeEntryDispatch(
+      oWrite,
+      "o",
+      bootstrap,
+      loaderBindingIds,
+      state,
+    )
   )
     return false;
   const fn = unwrapJavaScriptExpression(oWrite.right).node;
@@ -938,19 +948,8 @@ const isCanonicalGetterDefineCall = (
   const callee = unwrapJavaScriptExpression(call.callee).node;
   if (
     !t.isMemberExpression(callee) ||
-    semanticStaticPropertyKey(callee.property, callee.computed) !== "d"
-  )
-    return false;
-  const loaderObject = unwrapJavaScriptExpression(callee.object).node;
-  if (!t.isIdentifier(loaderObject)) return false;
-  const loaderBinding = resolveSemanticBindingState(
-    state,
-    loaderObject,
-    loaderObject.name,
-  );
-  if (
-    loaderBinding === undefined ||
-    !loaderBindingIds.has(loaderBinding.bindingId)
+    semanticStaticPropertyKey(callee.property, callee.computed) !== "d" ||
+    !isDefiniteLoaderReceiver(callee.object, loaderBindingIds, state)
   )
     return false;
   const [targetArg, descriptorArg] = call.arguments;
@@ -982,12 +981,52 @@ const isCanonicalGetterDefineCall = (
   );
 };
 
+const isDefiniteLoaderReceiver = (
+  node: t.Node,
+  loaderBindingIds: ReadonlySet<string>,
+  state: JavaScriptSemanticAnalysisState,
+): boolean => {
+  let current = unwrapJavaScriptExpression(node).node;
+  let visitedBindings: ReadonlySet<string> = new Set();
+  while (t.isIdentifier(current)) {
+    if (semanticResolutionBlocked(state, current, current.name)) return false;
+    const binding = resolveSemanticBindingState(state, current, current.name);
+    if (binding === undefined) return false;
+    if (
+      state.opaqueEffects.byScope.size > 0 &&
+      semanticOpaqueBindingReadMayHaveChanged(binding, current, state)
+    )
+      return false;
+    if (loaderBindingIds.has(binding.bindingId)) {
+      return (
+        singleDefinition(state, binding.bindingId, "function") ||
+        semanticBindingAtRead(binding, current, state).hasDefiniteInitializer ||
+        semanticStableBindingInitializedBeforeRead(binding, current, state)
+      );
+    }
+    const alias = readBundledAliasInitializer(current, state, visitedBindings);
+    if (alias === undefined || alias.projection.length !== 0) return false;
+    current = unwrapJavaScriptExpression(alias.node).node;
+    visitedBindings = alias.nextVisited;
+  }
+  return false;
+};
+
 const isInstalledBeforeEntryDispatch = (
   write: t.AssignmentExpression,
+  expectedProperty: "n" | "d" | "o",
   bootstrap: Bootstrap,
   loaderBindingIds: ReadonlySet<string>,
   state: JavaScriptSemanticAnalysisState,
 ): boolean => {
+  const left = unwrapJavaScriptExpression(write.left).node;
+  if (
+    !t.isMemberExpression(left) ||
+    semanticStaticPropertyKey(left.property, left.computed) !==
+      expectedProperty ||
+    !isDefiniteLoaderReceiver(left.object, loaderBindingIds, state)
+  )
+    return false;
   let current: t.Node = write;
   let parent = state.parentsByNode.get(current);
   while (t.isSequenceExpression(parent)) {

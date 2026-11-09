@@ -143,6 +143,7 @@ import {
 } from "./javascriptSemanticProjectedSources.js";
 import {
   SemanticPropertyPathCoverage,
+  semanticArrayIndex,
   semanticPropertyPathKeyMatches,
   type JavaScriptSemanticPropertyPath,
 } from "./javascriptSemanticPropertyPaths.js";
@@ -150,7 +151,10 @@ import {
   semanticKnownArrayIterationAt,
   semanticReferenceSourcesInactive,
 } from "./javascriptSemanticReferenceSources.js";
-import { createSemanticReturnedReferences } from "./javascriptSemanticReturnedReferences.js";
+import {
+  createSemanticReturnedReferences,
+  type SemanticReturnedReferenceResult,
+} from "./javascriptSemanticReturnedReferences.js";
 import { indexCommonJsExportReceiversSteps } from "./javascriptCommonJsExportReceivers.js";
 import { createSemanticElectronAppPathChangeQuery } from "./javascriptElectronAppPathChanges.js";
 import type { JavaScriptModuleResolutionMode } from "./javascriptModuleResolutionMode.js";
@@ -1014,10 +1018,11 @@ export function* indexJavaScriptElectronIdentitySteps(
       ? electronExportPath(origin.importedPath)
       : undefined;
   };
-  const returnedReferences = createSemanticReturnedReferences(
-    state,
-    "potential-reference",
-  );
+  const returnQueries: ElectronMemberWriteReturnQueries = {
+    direct: createSemanticReturnedReferences(state, "direct-call"),
+    awaited: createSemanticReturnedReferences(state, "awaited-call"),
+    potential: createSemanticReturnedReferences(state, "potential-reference"),
+  };
   yield* collectJavaScriptIdentityWritesSteps(
     program,
     state.erasedSyntaxNodes,
@@ -1032,7 +1037,7 @@ export function* indexJavaScriptElectronIdentitySteps(
               members,
               state,
               interop,
-              returnedReferences,
+              returnQueries,
               rootOrigin,
               candidateRootExport,
               exportsByBinding,
@@ -1132,6 +1137,12 @@ export function* indexJavaScriptElectronIdentitySteps(
   };
 }
 
+interface ElectronMemberWriteReturnQueries {
+  readonly direct: ReturnType<typeof createSemanticReturnedReferences>;
+  readonly awaited: ReturnType<typeof createSemanticReturnedReferences>;
+  readonly potential: ReturnType<typeof createSemanticReturnedReferences>;
+}
+
 interface ElectronMemberWriteCandidate {
   readonly node: t.Node;
   readonly suffix: JavaScriptSemanticPropertyPath;
@@ -1139,102 +1150,339 @@ interface ElectronMemberWriteCandidate {
   readonly capturedSelections?:
     | readonly SemanticCapturedSelection[]
     | undefined;
+  readonly awaitDepths?: readonly number[] | undefined;
+  readonly iteratedDepths?: readonly number[] | undefined;
 }
 
-const mapInvocationParameterSources = (
-  callables: ReadonlySet<t.Function>,
-  invocation: t.CallExpression | t.OptionalCallExpression,
-  state: JavaScriptSemanticAnalysisState,
-): ReadonlyMap<
-  string,
-  readonly {
-    readonly node: t.Node;
-    readonly projection: JavaScriptSemanticPropertyPath;
-  }[]
-> => {
-  const mapped = new Map<
-    string,
-    {
-      readonly node: t.Node;
-      readonly projection: JavaScriptSemanticPropertyPath;
-    }[]
-  >();
-  if (callables.size === 0 || invocation.arguments.length === 0) return mapped;
-  const expanded = expandJavaScriptInvocationArguments(
-    invocation.arguments,
-    (array) => semanticKnownArrayIterationAt(array, state),
+interface InvocationParameterSource {
+  readonly node: t.Node;
+  readonly projection: JavaScriptSemanticPropertyPath;
+  readonly restElementIndex?: number | null | undefined;
+}
+
+const maySelectArrayElementSegment = (
+  segment: JavaScriptSemanticPropertyPath[number],
+): boolean =>
+  semanticAliasSelectionChoices(segment).some(
+    (choice) =>
+      choice === null ||
+      typeof choice === "number" ||
+      semanticArrayIndex(String(choice)) !== null,
   );
-  const firstSpread = expanded.findIndex((arg) => t.isSpreadElement(arg));
-  const recordBinding = (
-    pattern: t.Node,
-    argNode: t.Node,
-    prefix: JavaScriptSemanticPropertyPath,
-  ): void => {
-    const target = unwrapJavaScriptExpression(pattern).node;
-    if (t.isAssignmentPattern(target)) {
-      recordBinding(target.left, argNode, prefix);
-      return;
-    }
-    if (t.isIdentifier(target)) {
-      const binding = resolveSemanticBindingState(state, target, target.name);
-      if (binding !== undefined) {
-        const list = mapped.get(binding.bindingId) ?? [];
-        list.push({ node: argNode, projection: prefix });
-        mapped.set(binding.bindingId, list);
-      }
-      return;
-    }
-    if (t.isObjectPattern(target)) {
-      for (const prop of target.properties) {
-        if (t.isRestElement(prop))
-          recordBinding(prop.argument, argNode, [
-            ...prefix,
-            { excludedKeys: semanticObjectPatternKeys(target) },
-          ]);
-        else
-          recordBinding(prop.value, argNode, [
-            ...prefix,
-            semanticStaticPropertyKey(prop.key, prop.computed),
-          ]);
-      }
-    } else if (t.isArrayPattern(target)) {
-      target.elements.forEach((elem, idx) => {
-        if (elem === null) return;
-        if (t.isRestElement(elem))
-          recordBinding(elem.argument, argNode, [
-            ...prefix,
-            { excludedKeys: [], startIndex: idx },
-          ]);
-        else recordBinding(elem, argNode, [...prefix, idx]);
-      });
-    }
+
+const selectMappedParameterSuffix = (
+  argSource: InvocationParameterSource,
+  fullSuffix: JavaScriptSemanticPropertyPath,
+): {
+  readonly suffix: JavaScriptSemanticPropertyPath;
+  readonly consumedSegments: number;
+} | null => {
+  if (argSource.restElementIndex === undefined) {
+    return {
+      suffix: [...argSource.projection, ...fullSuffix],
+      consumedSegments: 0,
+    };
+  }
+  if (fullSuffix.length === 0) return null;
+  const [firstSegment, ...remainingSuffix] = fullSuffix;
+  if (firstSegment === undefined || !maySelectArrayElementSegment(firstSegment))
+    return null;
+  if (
+    argSource.restElementIndex !== null &&
+    !semanticAliasSelectionChoices(firstSegment).some((choice) =>
+      semanticPropertyPathKeyMatches(
+        choice,
+        String(argSource.restElementIndex),
+      ),
+    )
+  )
+    return null;
+  return {
+    suffix: [...argSource.projection, ...remainingSuffix],
+    consumedSegments: 1,
   };
-  for (const callable of callables) {
-    const params = runtimeFunctionParameters(callable);
-    params.forEach((param, index) => {
-      if (t.isRestElement(param)) {
-        for (const arg of expanded.slice(
-          firstSpread >= 0 ? Math.min(index, firstSpread) : index,
-        )) {
-          if (t.isSpreadElement(arg))
-            recordBinding(param.argument, arg.argument, [null]);
-          else if (t.isExpression(arg)) recordBinding(param.argument, arg, []);
-        }
+};
+
+const bindParameterPatternSources = (
+  pattern: t.Node,
+  argNode: t.Node,
+  prefix: JavaScriptSemanticPropertyPath,
+  state: JavaScriptSemanticAnalysisState,
+  mapped: Map<string, InvocationParameterSource[]>,
+): void => {
+  const target = unwrapJavaScriptExpression(pattern).node;
+  if (t.isAssignmentPattern(target)) {
+    bindParameterPatternSources(target.left, argNode, prefix, state, mapped);
+    return;
+  }
+  if (t.isIdentifier(target)) {
+    const binding = resolveSemanticBindingState(state, target, target.name);
+    if (binding !== undefined) {
+      const list = mapped.get(binding.bindingId) ?? [];
+      list.push({ node: argNode, projection: prefix });
+      mapped.set(binding.bindingId, list);
+    }
+    return;
+  }
+  if (t.isObjectPattern(target)) {
+    for (const prop of target.properties) {
+      if (t.isRestElement(prop))
+        bindParameterPatternSources(
+          prop.argument,
+          argNode,
+          [...prefix, { excludedKeys: semanticObjectPatternKeys(target) }],
+          state,
+          mapped,
+        );
+      else
+        bindParameterPatternSources(
+          prop.value,
+          argNode,
+          [...prefix, semanticStaticPropertyKey(prop.key, prop.computed)],
+          state,
+          mapped,
+        );
+    }
+  } else if (t.isArrayPattern(target)) {
+    target.elements.forEach((elem, idx) => {
+      if (elem === null) return;
+      if (t.isRestElement(elem))
+        bindParameterPatternSources(
+          elem.argument,
+          argNode,
+          [...prefix, { excludedKeys: [], startIndex: idx }],
+          state,
+          mapped,
+        );
+      else
+        bindParameterPatternSources(
+          elem,
+          argNode,
+          [...prefix, idx],
+          state,
+          mapped,
+        );
+    });
+  }
+};
+
+const bindRestParameterSources = (
+  pattern: t.Node,
+  expanded: readonly (t.Expression | t.SpreadElement | t.ArgumentPlaceholder)[],
+  restStartIndex: number,
+  firstSpread: number,
+  state: JavaScriptSemanticAnalysisState,
+  mapped: Map<string, InvocationParameterSource[]>,
+): void => {
+  const target = unwrapJavaScriptExpression(pattern).node;
+  if (t.isIdentifier(target)) {
+    const binding = resolveSemanticBindingState(state, target, target.name);
+    if (binding === undefined) return;
+    const list = mapped.get(binding.bindingId) ?? [];
+    const definiteEnd =
+      firstSpread < 0
+        ? expanded.length
+        : Math.min(firstSpread, expanded.length);
+    for (let argIdx = restStartIndex; argIdx < definiteEnd; argIdx += 1) {
+      const arg = expanded[argIdx];
+      if (arg !== undefined && t.isExpression(arg))
+        list.push({
+          node: arg,
+          projection: [],
+          restElementIndex: argIdx - restStartIndex,
+        });
+    }
+    if (firstSpread >= 0) {
+      for (const arg of expanded.slice(firstSpread)) {
+        if (t.isSpreadElement(arg))
+          list.push({
+            node: arg.argument,
+            projection: [null],
+            restElementIndex: null,
+          });
+        else if (t.isExpression(arg))
+          list.push({
+            node: arg,
+            projection: [],
+            restElementIndex: null,
+          });
+      }
+    }
+    mapped.set(binding.bindingId, list);
+    return;
+  }
+  if (t.isArrayPattern(target)) {
+    target.elements.forEach((elem, elemIdx) => {
+      if (elem === null) return;
+      const argIndex = restStartIndex + elemIdx;
+      if (t.isRestElement(elem)) {
+        bindRestParameterSources(
+          elem.argument,
+          expanded,
+          argIndex,
+          firstSpread,
+          state,
+          mapped,
+        );
         return;
       }
-      if (firstSpread < 0 || index < firstSpread) {
-        const arg = expanded[index];
+      if (firstSpread < 0 || argIndex < firstSpread) {
+        const arg = expanded[argIndex];
         if (arg !== undefined && t.isExpression(arg))
-          recordBinding(param, arg, []);
+          bindParameterPatternSources(elem, arg, [], state, mapped);
         return;
       }
       for (const arg of expanded.slice(firstSpread)) {
-        if (t.isSpreadElement(arg)) recordBinding(param, arg.argument, [null]);
-        else if (t.isExpression(arg)) recordBinding(param, arg, []);
+        if (t.isSpreadElement(arg))
+          bindParameterPatternSources(
+            elem,
+            arg.argument,
+            [null],
+            state,
+            mapped,
+          );
+        else if (t.isExpression(arg))
+          bindParameterPatternSources(elem, arg, [], state, mapped);
       }
     });
+    return;
   }
-  return mapped;
+  if (t.isObjectPattern(target)) {
+    for (const prop of target.properties) {
+      if (t.isRestElement(prop)) {
+        bindRestParameterSources(
+          prop.argument,
+          expanded,
+          restStartIndex,
+          firstSpread,
+          state,
+          mapped,
+        );
+        continue;
+      }
+      const key = semanticStaticPropertyKey(prop.key, prop.computed);
+      if (key === null) {
+        for (const arg of expanded.slice(
+          firstSpread >= 0
+            ? Math.min(restStartIndex, firstSpread)
+            : restStartIndex,
+        )) {
+          if (t.isSpreadElement(arg))
+            bindParameterPatternSources(
+              prop.value,
+              arg.argument,
+              [null],
+              state,
+              mapped,
+            );
+          else if (t.isExpression(arg))
+            bindParameterPatternSources(prop.value, arg, [], state, mapped);
+        }
+        continue;
+      }
+      const elemIdx = semanticArrayIndex(key);
+      if (elemIdx === null) continue;
+      const argIndex = restStartIndex + elemIdx;
+      if (firstSpread < 0 || argIndex < firstSpread) {
+        const arg = expanded[argIndex];
+        if (arg !== undefined && t.isExpression(arg))
+          bindParameterPatternSources(prop.value, arg, [], state, mapped);
+      } else {
+        for (const arg of expanded.slice(firstSpread)) {
+          if (t.isSpreadElement(arg))
+            bindParameterPatternSources(
+              prop.value,
+              arg.argument,
+              [null],
+              state,
+              mapped,
+            );
+          else if (t.isExpression(arg))
+            bindParameterPatternSources(prop.value, arg, [], state, mapped);
+        }
+      }
+    }
+  }
+};
+
+const mapInvocationParameterSources = (
+  returned: SemanticReturnedReferenceResult,
+  fallbackArguments:
+    | readonly t.CallExpression["arguments"][number][]
+    | undefined,
+  state: JavaScriptSemanticAnalysisState,
+): {
+  readonly parameterSources: ReadonlyMap<
+    string,
+    readonly InvocationParameterSource[]
+  >;
+  readonly receiverSources: readonly t.Expression[];
+  readonly hasOpaqueArguments: boolean;
+} => {
+  const mapped = new Map<string, InvocationParameterSource[]>();
+  const receiverSources: t.Expression[] = [];
+  let hasOpaqueArguments = false;
+  if (returned.callables.size === 0)
+    return { parameterSources: mapped, receiverSources, hasOpaqueArguments };
+  const fallbackExpanded =
+    fallbackArguments === undefined
+      ? undefined
+      : expandJavaScriptInvocationArguments(fallbackArguments, (array) =>
+          semanticKnownArrayIterationAt(array, state),
+        );
+  for (const callable of returned.callables) {
+    if (returned.widenedCallables?.has(callable)) hasOpaqueArguments = true;
+    const contexts =
+      returned.callableInvocations?.get(callable) ??
+      (fallbackExpanded === undefined
+        ? []
+        : [{ receiver: undefined, arguments: fallbackExpanded }]);
+    const params = runtimeFunctionParameters(callable);
+    for (const context of contexts) {
+      if (context.receiver !== undefined && t.isExpression(context.receiver))
+        receiverSources.push(context.receiver);
+      if (context.receiverUnknown) hasOpaqueArguments = true;
+      const expanded = context.arguments;
+      if (expanded === undefined) {
+        hasOpaqueArguments = true;
+        continue;
+      }
+      if (expanded.length === 0) continue;
+      const firstSpread = expanded.findIndex((arg) => t.isSpreadElement(arg));
+      params.forEach((param, index) => {
+        if (t.isRestElement(param)) {
+          bindRestParameterSources(
+            param.argument,
+            expanded,
+            index,
+            firstSpread,
+            state,
+            mapped,
+          );
+          return;
+        }
+        if (firstSpread < 0 || index < firstSpread) {
+          const arg = expanded[index];
+          if (arg !== undefined && t.isExpression(arg))
+            bindParameterPatternSources(param, arg, [], state, mapped);
+          return;
+        }
+        for (const arg of expanded.slice(firstSpread)) {
+          if (t.isSpreadElement(arg))
+            bindParameterPatternSources(
+              param,
+              arg.argument,
+              [null],
+              state,
+              mapped,
+            );
+          else if (t.isExpression(arg))
+            bindParameterPatternSources(param, arg, [], state, mapped);
+        }
+      });
+    }
+  }
+  return { parameterSources: mapped, receiverSources, hasOpaqueArguments };
 };
 
 const enqueueOpaqueInvocationArguments = (
@@ -1243,25 +1491,27 @@ const enqueueOpaqueInvocationArguments = (
   pending: ElectronMemberWriteCandidate[],
 ): void => {
   for (const arg of args) {
-    if (t.isSpreadElement(arg)) {
-      pending.push(
-        { node: arg.argument, suffix: [], readAt: current.readAt },
-        {
-          node: arg.argument,
-          suffix: [null, ...current.suffix],
-          readAt: current.readAt,
-        },
-      );
-    } else if (t.isExpression(arg)) {
-      pending.push(
-        { node: arg, suffix: [], readAt: current.readAt },
-        {
-          node: arg,
-          suffix: [null, ...current.suffix],
-          readAt: current.readAt,
-        },
-      );
-    }
+    const target = t.isSpreadElement(arg)
+      ? arg.argument
+      : t.isExpression(arg)
+        ? arg
+        : undefined;
+    if (target === undefined) continue;
+    pending.push(
+      {
+        node: target,
+        suffix: current.suffix,
+        readAt: current.readAt,
+        awaitDepths: current.awaitDepths,
+        iteratedDepths: current.iteratedDepths,
+      },
+      {
+        node: target,
+        suffix: [null, ...current.suffix],
+        readAt: current.readAt,
+      },
+      { node: target, suffix: [], readAt: current.readAt },
+    );
   }
 };
 
@@ -1271,7 +1521,7 @@ const enqueueNonIdentifierMemberWriteSources = (
   capturedSelections: readonly SemanticCapturedSelection[] | undefined,
   state: JavaScriptSemanticAnalysisState,
   interop: ReturnType<typeof createSemanticModuleInterop>,
-  returnedReferences: ReturnType<typeof createSemanticReturnedReferences>,
+  returnQueries: ElectronMemberWriteReturnQueries,
   addPath: (candidate: JavaScriptSemanticPropertyPath) => void,
   pending: ElectronMemberWriteCandidate[],
 ): void => {
@@ -1293,6 +1543,12 @@ const enqueueNonIdentifierMemberWriteSources = (
     return;
   }
   if (t.isForOfStatement(node)) {
+    const nextIteratedDepths = [
+      ...new Set([
+        ...(current.iteratedDepths ?? []),
+        current.suffix.length + 1,
+      ]),
+    ].sort((left, right) => left - right);
     pending.push({
       node: node.right,
       suffix: [null, ...current.suffix],
@@ -1301,6 +1557,17 @@ const enqueueNonIdentifierMemberWriteSources = (
         capturedSelections,
         1,
       ),
+      iteratedDepths: nextIteratedDepths,
+      ...(node.await
+        ? {
+            awaitDepths: [
+              ...new Set([
+                ...(current.awaitDepths ?? []),
+                current.suffix.length,
+              ]),
+            ].sort((left, right) => left - right),
+          }
+        : {}),
     });
     if (node.await || !semanticKnownArrayIterationAt(node.right, state)) {
       pending.push(
@@ -1309,6 +1576,12 @@ const enqueueNonIdentifierMemberWriteSources = (
           suffix: current.suffix,
           readAt: current.readAt ?? node,
           capturedSelections,
+          iteratedDepths: [
+            ...new Set([
+              ...(current.iteratedDepths ?? []),
+              current.suffix.length,
+            ]),
+          ].sort((left, right) => left - right),
         },
         { node: node.right, suffix: [], readAt: current.readAt ?? node },
       );
@@ -1345,7 +1618,8 @@ const enqueueNonIdentifierMemberWriteSources = (
         ns === "intrinsic" &&
         obj === "Object" &&
         method === "values" &&
-        current.suffix.length > 0
+        current.suffix.length > 0 &&
+        maySelectArrayElementSegment(current.suffix[0]!)
       ) {
         const [target] = callArgs;
         if (target !== undefined && t.isExpression(target))
@@ -1358,28 +1632,225 @@ const enqueueNonIdentifierMemberWriteSources = (
         return;
       }
       if (ns === "intrinsic" && obj === "Array" && method === "from") {
-        const [iterable] = callArgs;
-        if (iterable !== undefined && t.isExpression(iterable)) {
-          pending.push({ ...current, node: iterable, capturedSelections });
-          if (!semanticKnownArrayIterationAt(iterable, state))
+        if (
+          current.suffix.length > 0 &&
+          maySelectArrayElementSegment(current.suffix[0]!)
+        ) {
+          const elementSuffix = current.suffix.slice(1);
+          const [iterable, mapFn, thisArg] = callArgs;
+          const enqueueDirectCopy = (): void => {
+            if (iterable === undefined) return;
+            if (t.isSpreadElement(iterable)) {
+              pending.push(
+                {
+                  node: iterable.argument,
+                  suffix: [null, null, ...elementSuffix],
+                  readAt: current.readAt ?? node,
+                },
+                {
+                  node: iterable.argument,
+                  suffix: [null, ...elementSuffix],
+                  readAt: current.readAt ?? node,
+                },
+              );
+              return;
+            }
+            if (!t.isExpression(iterable)) return;
             pending.push({
+              ...current,
               node: iterable,
-              suffix: [],
+              capturedSelections,
+              iteratedDepths: [
+                ...new Set([
+                  ...(current.iteratedDepths ?? []),
+                  current.suffix.length,
+                ]),
+              ].sort((left, right) => left - right),
+            });
+            if (!semanticKnownArrayIterationAt(iterable, state))
+              pending.push(
+                {
+                  node: iterable,
+                  suffix: [null, ...elementSuffix],
+                  readAt: current.readAt ?? node,
+                  iteratedDepths: [
+                    ...new Set([
+                      ...(current.iteratedDepths ?? []),
+                      elementSuffix.length + 1,
+                    ]),
+                  ].sort((left, right) => left - right),
+                },
+                {
+                  node: iterable,
+                  suffix: elementSuffix,
+                  readAt: current.readAt ?? node,
+                  iteratedDepths: [
+                    ...new Set([
+                      ...(current.iteratedDepths ?? []),
+                      elementSuffix.length,
+                    ]),
+                  ].sort((left, right) => left - right),
+                },
+              );
+          };
+          if (mapFn === undefined) {
+            enqueueDirectCopy();
+            return;
+          }
+          if (
+            t.isSpreadElement(mapFn) ||
+            (iterable !== undefined && t.isSpreadElement(iterable))
+          ) {
+            enqueueDirectCopy();
+            enqueueOpaqueInvocationArguments(
+              callArgs,
+              { ...current, suffix: elementSuffix },
+              pending,
+            );
+            return;
+          }
+          const unwrappedMapFn = unwrapJavaScriptExpression(mapFn).node;
+          const isExplicitUndefined =
+            t.isIdentifier(unwrappedMapFn, { name: "undefined" }) &&
+            !semanticResolutionBlocked(state, unwrappedMapFn, "undefined") &&
+            resolveSemanticBindingState(state, unwrappedMapFn, "undefined") ===
+              undefined;
+          if (isExplicitUndefined) {
+            enqueueDirectCopy();
+            return;
+          }
+          if (!t.isFunction(unwrappedMapFn)) enqueueDirectCopy();
+          const mapped = returnQueries.direct(mapFn);
+          const mapParams = new Map<string, InvocationParameterSource[]>();
+          if (iterable !== undefined && t.isExpression(iterable)) {
+            for (const callable of mapped.callables) {
+              const [firstParam] = runtimeFunctionParameters(callable);
+              if (firstParam === undefined) continue;
+              if (t.isRestElement(firstParam)) {
+                const restTarget = unwrapJavaScriptExpression(
+                  firstParam.argument,
+                ).node;
+                if (t.isIdentifier(restTarget)) {
+                  const restBinding = resolveSemanticBindingState(
+                    state,
+                    restTarget,
+                    restTarget.name,
+                  );
+                  if (restBinding !== undefined) {
+                    const list = mapParams.get(restBinding.bindingId) ?? [];
+                    list.push({
+                      node: iterable,
+                      projection: [null],
+                      restElementIndex: 0,
+                    });
+                    mapParams.set(restBinding.bindingId, list);
+                  }
+                } else {
+                  bindParameterPatternSources(
+                    restTarget,
+                    iterable,
+                    [],
+                    state,
+                    mapParams,
+                  );
+                }
+              } else {
+                bindParameterPatternSources(
+                  firstParam,
+                  iterable,
+                  [null],
+                  state,
+                  mapParams,
+                );
+              }
+            }
+          }
+          for (const ref of mapped.references) {
+            const unwrappedRef = unwrapJavaScriptExpression(ref.node).node;
+            const fullSuffix = [...ref.projection, ...elementSuffix];
+            if (
+              t.isThisExpression(unwrappedRef) &&
+              thisArg !== undefined &&
+              t.isExpression(thisArg)
+            )
+              pending.push({
+                node: thisArg,
+                suffix: fullSuffix,
+                readAt: current.readAt ?? node,
+              });
+            else if (t.isIdentifier(unwrappedRef)) {
+              const refBinding = resolveSemanticBindingState(
+                state,
+                unwrappedRef,
+                unwrappedRef.name,
+              );
+              const mappedArgs =
+                refBinding === undefined
+                  ? undefined
+                  : mapParams.get(refBinding.bindingId);
+              if (mappedArgs !== undefined)
+                for (const argSource of mappedArgs) {
+                  const selected = selectMappedParameterSuffix(
+                    argSource,
+                    fullSuffix,
+                  );
+                  if (selected !== null)
+                    pending.push({
+                      node: argSource.node,
+                      suffix: selected.suffix,
+                      readAt: current.readAt ?? node,
+                    });
+                }
+            }
+            pending.push({
+              node: ref.node,
+              suffix: fullSuffix,
               readAt: current.readAt ?? node,
             });
+          }
+          if (
+            mapped.unresolvedInvocation ||
+            (mapped.callables.size === 0 && mapped.references.length === 0)
+          )
+            enqueueOpaqueInvocationArguments(
+              callArgs,
+              { ...current, suffix: elementSuffix },
+              pending,
+            );
         }
         return;
       }
     }
-    const returned = returnedReferences(node.callee, node);
-    const paramSources = mapInvocationParameterSources(
-      returned.callables,
-      node,
-      state,
-    );
+    const isIterated =
+      current.iteratedDepths?.includes(current.suffix.length) === true;
+    const isAwaited =
+      current.awaitDepths?.includes(current.suffix.length) === true;
+    const returned = isIterated
+      ? returnQueries.potential(node.callee, node)
+      : isAwaited
+        ? returnQueries.awaited(node.callee, node)
+        : returnQueries.direct(node.callee, node);
+    const resultSuffix =
+      isIterated &&
+      current.suffix.length > 0 &&
+      current.suffix[0] === null &&
+      [...returned.callables].some((callable) => callable.generator)
+        ? current.suffix.slice(1)
+        : current.suffix;
+    const { parameterSources, receiverSources, hasOpaqueArguments } =
+      mapInvocationParameterSources(returned, node.arguments, state);
     for (const ref of returned.references) {
       const unwrappedRef = unwrapJavaScriptExpression(ref.node).node;
-      if (t.isIdentifier(unwrappedRef)) {
+      const fullSuffix = [...ref.projection, ...resultSuffix];
+      if (t.isThisExpression(unwrappedRef)) {
+        for (const receiverSource of receiverSources)
+          pending.push({
+            node: receiverSource,
+            suffix: fullSuffix,
+            readAt: current.readAt ?? node,
+            awaitDepths: current.awaitDepths,
+          });
+      } else if (t.isIdentifier(unwrappedRef)) {
         const refBinding = resolveSemanticBindingState(
           state,
           unwrappedRef,
@@ -1388,35 +1859,39 @@ const enqueueNonIdentifierMemberWriteSources = (
         const mappedArgs =
           refBinding === undefined
             ? undefined
-            : paramSources.get(refBinding.bindingId);
+            : parameterSources.get(refBinding.bindingId);
         if (mappedArgs !== undefined) {
-          for (const argSource of mappedArgs)
-            pending.push({
-              node: argSource.node,
-              suffix: [
-                ...argSource.projection,
-                ...ref.projection,
-                ...current.suffix,
-              ],
-              readAt: current.readAt ?? node,
-              capturedSelections: semanticShiftCapturedSelections(
-                capturedSelections,
-                argSource.projection.length + ref.projection.length,
-              ),
-            });
+          for (const argSource of mappedArgs) {
+            const selected = selectMappedParameterSuffix(argSource, fullSuffix);
+            if (selected !== null)
+              pending.push({
+                node: argSource.node,
+                suffix: selected.suffix,
+                readAt: current.readAt ?? node,
+                capturedSelections: semanticShiftCapturedSelections(
+                  capturedSelections,
+                  argSource.projection.length +
+                    ref.projection.length -
+                    selected.consumedSegments,
+                ),
+                awaitDepths: current.awaitDepths,
+              });
+          }
         }
       }
       pending.push({
         node: ref.node,
-        suffix: [...ref.projection, ...current.suffix],
+        suffix: fullSuffix,
         readAt: current.readAt ?? node,
         capturedSelections: semanticShiftCapturedSelections(
           capturedSelections,
           ref.projection.length,
         ),
+        awaitDepths: current.awaitDepths,
       });
     }
     if (
+      hasOpaqueArguments ||
       returned.unresolvedInvocation ||
       (returned.callables.size === 0 && returned.references.length === 0)
     )
@@ -1424,7 +1899,10 @@ const enqueueNonIdentifierMemberWriteSources = (
   } else if (t.isNewExpression(node)) {
     enqueueOpaqueInvocationArguments(node.arguments, current, pending);
   } else if (t.isTaggedTemplateExpression(node)) {
-    for (const ref of returnedReferences(node.tag).references)
+    const returned = current.awaitDepths?.includes(current.suffix.length)
+      ? returnQueries.awaited(node.tag)
+      : returnQueries.direct(node.tag);
+    for (const ref of returned.references)
       pending.push({
         node: ref.node,
         suffix: [...ref.projection, ...current.suffix],
@@ -1433,11 +1911,18 @@ const enqueueNonIdentifierMemberWriteSources = (
           capturedSelections,
           ref.projection.length,
         ),
+        awaitDepths: current.awaitDepths,
       });
-  } else if (
-    (t.isAwaitExpression(node) || t.isYieldExpression(node)) &&
-    node.argument != null
-  ) {
+  } else if (t.isAwaitExpression(node)) {
+    pending.push({
+      ...current,
+      node: node.argument,
+      capturedSelections,
+      awaitDepths: [
+        ...new Set([...(current.awaitDepths ?? []), current.suffix.length]),
+      ].sort((left, right) => left - right),
+    });
+  } else if (t.isYieldExpression(node) && node.argument != null) {
     pending.push({ ...current, node: node.argument, capturedSelections });
   } else if (t.isConditionalExpression(node) || t.isLogicalExpression(node)) {
     pending.push(
@@ -1464,6 +1949,9 @@ const enqueueNonIdentifierMemberWriteSources = (
     current.suffix.length > 0
   ) {
     const [key, ...remaining] = current.suffix;
+    const filteredAwaitDepths = current.awaitDepths?.filter(
+      (depth) => depth !== current.suffix.length,
+    );
     for (const choice of semanticAliasSelectionChoices(key!)) {
       const sources = t.isObjectExpression(node)
         ? semanticObjectPropertyReferences(node, [choice], state)
@@ -1483,6 +1971,10 @@ const enqueueNonIdentifierMemberWriteSources = (
               capturedSelections,
               source,
             ),
+            ...(filteredAwaitDepths === undefined ||
+            filteredAwaitDepths.length === 0
+              ? {}
+              : { awaitDepths: filteredAwaitDepths }),
           });
     }
   }
@@ -1502,6 +1994,8 @@ const enqueueFallbackBindingMemberWriteSources = (
       node: source.node,
       suffix: [...source.projection, ...current.suffix],
       readAt: current.readAt ?? node,
+      awaitDepths: current.awaitDepths,
+      iteratedDepths: current.iteratedDepths,
     });
   }
   const [key, ...remaining] = current.suffix;
@@ -1520,6 +2014,8 @@ const enqueueFallbackBindingMemberWriteSources = (
           node: source.node,
           suffix: [...copied, ...remaining],
           readAt: current.readAt ?? node,
+          awaitDepths: current.awaitDepths,
+          iteratedDepths: current.iteratedDepths,
         });
     }
   }
@@ -1563,7 +2059,7 @@ const electronMemberWriteExports = (
   members: readonly (string | null)[],
   state: JavaScriptSemanticAnalysisState,
   interop: ReturnType<typeof createSemanticModuleInterop>,
-  returnedReferences: ReturnType<typeof createSemanticReturnedReferences>,
+  returnQueries: ElectronMemberWriteReturnQueries,
   rootOrigin: (node: t.Node) => readonly string[] | undefined,
   candidateRootExport: (node: t.Node) => readonly string[] | undefined,
   exportsByBinding: Map<string, readonly string[] | null>,
@@ -1591,7 +2087,12 @@ const electronMemberWriteExports = (
       widened = true;
     }
     const normalized: ElectronMemberWriteCandidate = widened
-      ? { node, suffix: [null] }
+      ? {
+          node,
+          suffix: [null],
+          ...(candidate.awaitDepths?.length ? { awaitDepths: [1] } : {}),
+          ...(candidate.iteratedDepths?.length ? { iteratedDepths: [1] } : {}),
+        }
       : {
           ...candidate,
           node,
@@ -1610,6 +2111,8 @@ const electronMemberWriteExports = (
         depth,
         ownEnumerable,
       ]),
+      normalized.awaitDepths,
+      normalized.iteratedDepths,
     ]);
     const nodeVisits = visited.get(node) ?? new Set<string>();
     if (nodeVisits.has(visitKey)) return;
@@ -1637,6 +2140,8 @@ const electronMemberWriteExports = (
           capturedSelections,
           memberSegments.length,
         ),
+        awaitDepths: current.awaitDepths,
+        iteratedDepths: current.iteratedDepths,
       });
       continue;
     }
@@ -1648,7 +2153,7 @@ const electronMemberWriteExports = (
         capturedSelections,
         state,
         interop,
-        returnedReferences,
+        returnQueries,
         addPath,
         nextPending,
       );
@@ -1704,6 +2209,8 @@ const electronMemberWriteExports = (
             ) ?? []),
             ...(source.capturedSelections ?? []),
           ],
+          awaitDepths: current.awaitDepths,
+          iteratedDepths: current.iteratedDepths,
         });
       continue;
     }
