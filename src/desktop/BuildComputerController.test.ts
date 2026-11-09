@@ -7,6 +7,7 @@ import { fileURLToPath } from "node:url";
 
 import { describe, expect, it } from "vitest";
 
+import { AnalysisResourceConstraintError } from "../domain/analysisErrorCore.js";
 import { guestFileAnswerBytes } from "./AgentEnvComputer.js";
 import {
   batchListedFiles,
@@ -190,7 +191,15 @@ describe("controller arguments", () => {
         payload,
         { timeoutS: 1 },
       ),
-    ).rejects.toThrow(/E2BIG/);
+    ).rejects.toMatchObject({
+      _tag: "AnalysisResourceConstraintError",
+      resource: "transport",
+      reportedLimits: {
+        actual_bytes: expect.any(Number),
+        max_bytes: LINUX_ARGUMENT_VECTOR_BYTES,
+      },
+      remediationAction: expect.any(String),
+    } satisfies Partial<AnalysisResourceConstraintError>);
     expect(called).toBe(false);
   });
 
