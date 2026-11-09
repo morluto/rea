@@ -20,6 +20,7 @@ import {
 } from "./javascriptSemanticAnalysis.js";
 import { semanticArrayIndex } from "./javascriptSemanticPropertyPaths.js";
 import { symbolicLogicalRight } from "./javascriptSymbolicControlFlow.js";
+import { typeScriptEnumInitializer } from "./javascriptTypeScriptEnums.js";
 import {
   moduleFactory,
   modulePropertyName,
@@ -32,6 +33,7 @@ import {
   resolveSemanticBindingState,
   semanticResolutionBlocked,
   type JavaScriptSemanticAnalysisState,
+  type JavaScriptSemanticBindingState,
 } from "./javascriptSemanticState.js";
 import {
   symbolicCondition,
@@ -109,6 +111,10 @@ export class JavaScriptSymbolicBindings {
     ReadonlyMap<string, t.ObjectMethod | t.ObjectProperty> | null
   >();
   readonly #mutated = new Set<string>();
+  readonly #typeScriptEnums = new Map<
+    string,
+    NonNullable<ReturnType<typeof typeScriptEnumInitializer>> | null
+  >();
   readonly #electronIdentity: JavaScriptElectronIdentity;
   readonly #namespaceOwners = new Map<string, t.Function>();
   readonly #moduleFactories = new WeakSet<t.Function>();
@@ -754,6 +760,36 @@ export class JavaScriptSymbolicBindings {
     ]);
   }
 
+  /** A compiled TypeScript enum's members, once its initializer call completes. */
+  #typeScriptEnum(
+    binding: JavaScriptSemanticBindingState,
+    env: SymbolicEnvironment,
+    node: t.Identifier,
+  ): SymbolicValue | undefined {
+    let enumeration = this.#typeScriptEnums.get(binding.bindingId);
+    if (enumeration === undefined) {
+      const found = typeScriptEnumInitializer(binding, this.state);
+      // Any other write can replace the object or one of its members.
+      enumeration =
+        found !== undefined &&
+        !this.#mutated.has(binding.bindingId) &&
+        (this.#writes.get(binding.bindingId) ?? []).every(
+          (write) => write.site === found.assignment,
+        )
+          ? found
+          : null;
+      this.#typeScriptEnums.set(binding.bindingId, enumeration);
+    }
+    if (enumeration === null) return undefined;
+    const boundary = this.#readBoundary(binding.scopeId, env, node);
+    const point =
+      boundary === undefined ? undefined : boundary.node[boundary.edge];
+    const end = enumeration.call.end;
+    if (end != null && point != null && end <= point) return enumeration.value;
+    this.unresolved = true;
+    return symbolicUnknown("initializer not available at this read");
+  }
+
   #identifier(node: t.Identifier, env: SymbolicEnvironment): SymbolicValue {
     const binding = resolveSemanticBindingState(this.state, node, node.name);
     if (
@@ -767,6 +803,8 @@ export class JavaScriptSymbolicBindings {
         ["require", "navigator", "String", "Boolean"].includes(node.name)
         ? { kind: "external", path: [node.name] }
         : symbolicUnknown("unbound identifier");
+    const enumeration = this.#typeScriptEnum(binding, env, node);
+    if (enumeration !== undefined) return enumeration;
     if (binding.definitions.some((d) => d.kind === "assignment"))
       return symbolicUnknown("reassigned binding");
     // Electron member identity is checked at the selected property. A write

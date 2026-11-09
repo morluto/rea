@@ -572,7 +572,12 @@ returned closures, object spreads, and callback parameters. Recovered Electron
 paths retain source ranges, module identities, literal channels and branch
 conditions as static candidates. A channel the IPC call site itself
 determines, such as a local constant, resolves that call's observation rather
-than adding a second one. A channel or registration handler supplied through
+than adding a second one. A member of a compiled TypeScript enum counts as such
+a constant when the binding's only definition is the enum initializer that tsc,
+Babel or esbuild emits: one function call that assigns string or number
+literals to fixed keys of a fresh object. Any other write to the enum, a
+computed key or value, or a read before that call keeps the member unknown.
+A channel or registration handler supplied through
 a wrapper argument is a candidate beside the call's own unresolved
 observation, because callers outside the traced paths may pass other values.
 A wrapper call that is both its own entry and reached through another entry
