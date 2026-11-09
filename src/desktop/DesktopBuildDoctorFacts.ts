@@ -77,7 +77,14 @@ export const readDesktopBuildFacts = async (
     versions.set(path, pending);
     return pending;
   };
-  const archive = await archiveFact(input, agentEnv);
+  const archive = await archiveFact(input, async () =>
+    agentEnv.status === "found"
+      ? agentEnvInterpreter(
+          { ...input.environment, REA_AGENT_ENV_COMMAND: agentEnv.path },
+          "desktop_build_doctor",
+        ).catch(() => "python3")
+      : "python3",
+  );
   const chosenCommand = (
     name: BuildComputerSetting,
     command: DesktopBuildCommand,
@@ -249,7 +256,7 @@ const agentEnvVersion = async (
 /** The setup-packed archive is named by its version; another is read for its package version. */
 const archiveFact = async (
   input: DesktopBuildFactsInput,
-  agentEnv: DesktopBuildCommand,
+  pythonForArchive: () => Promise<string | undefined>,
 ): Promise<DesktopBuildFacts["archive"]> => {
   const selected = input.environment.REA_BUILD_COMPUTER_REA_ARCHIVE;
   const source =
@@ -264,13 +271,14 @@ const archiveFact = async (
   );
   if (!file) return { path, source, status: "missing" };
   if (source === "cache") return { path, source, status: "current" };
-  const python =
-    agentEnv.status === "found"
-      ? await agentEnvInterpreter(
-          { ...input.environment, REA_AGENT_ENV_COMMAND: agentEnv.path },
-          "desktop_build_doctor",
-        ).catch(() => "python3")
-      : "python3";
+  const python = await pythonForArchive();
+  if (python === undefined)
+    return {
+      path,
+      source,
+      status: "unknown",
+      detail: `REA could not identify the selected runner's Python to inspect ${path}.`,
+    };
   const packed = await attempt(input, python, [
     "-I",
     "-c",
@@ -399,7 +407,16 @@ const registrationFacts = async (
           )
             unchecked.push(name);
         } else if (name === "REA_BUILD_COMPUTER_REA_ARCHIVE") {
-          const archive = await archiveFact({ ...input, environment });
+          const archive = await archiveFact(
+            { ...input, environment },
+            async () =>
+              effectiveRunner === undefined || runner?.status === "invalid"
+                ? undefined
+                : agentEnvInterpreter(
+                    { ...environment, REA_AGENT_ENV_COMMAND: effectiveRunner },
+                    "desktop_build_doctor",
+                  ).catch(() => undefined),
+          );
           if (archive.status === "unknown") unchecked.push(name);
           else if (archive.status !== "current") compared.push(name);
         } else unchecked.push(name);
