@@ -295,6 +295,36 @@ describe("Apple IPS Mach-O and dSYM join", () => {
     );
   });
 
+  it.each([
+    { arch: "constructor", cpu: ARM64 },
+    { arch: "__proto__", cpu: ARM64 },
+    { arch: "constructor", cpu: X86_64 },
+    { arch: "__proto__", cpu: X86_64 },
+  ])(
+    "retains unknown architecture $arch for CPU $cpu.type",
+    async ({ arch, cpu }) => {
+      const root = await createTestTempDirectory("rea-ips-prototype-arch-");
+      const report = await inspectWithJoin(
+        root,
+        machoSlice({
+          cpu: { type: cpu.type, subtype: 99 },
+          uuid: FIXTURE_UUID,
+          textVmaddr: 0x100000000n,
+        }),
+        { arch },
+      );
+      expect(report.join.slices).toMatchObject([{ index: 0 }]);
+      expect(report.join).toMatchObject({
+        status: "selected",
+        image_matches: [],
+      });
+      expect(report.join.frames[0]).toMatchObject({ status: "unjoined" });
+      expect(report.join.limitations.join(" ")).toContain(
+        "architecture is unknown",
+      );
+    },
+  );
+
   it("rejects a UUID match whose architecture differs", async () => {
     const root = await createTestTempDirectory("rea-apple-ips-join-arch-");
     const report = await inspectWithJoin(
