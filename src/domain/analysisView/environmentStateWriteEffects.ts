@@ -6,7 +6,6 @@ import {
   isObject,
   locateItem,
   at,
-  same,
   type JsonObject,
   type ParsedRequestBody,
   requestJson,
@@ -176,6 +175,10 @@ export interface EffectContext {
   readonly io: WriteIo;
   readonly records: readonly StateRecordFacts[];
   readonly chronology: StateRecordChronology;
+  readonly overlapsWrite: (
+    record: StateRecordFacts,
+    exclude?: number,
+  ) => boolean;
   /** Whether a record may change state: a write the capture does not show reading only. */
   readonly isWrite: (record: StateRecordFacts) => boolean;
   readonly viewOf: (ordinal: number) => StateView | undefined;
@@ -317,6 +320,7 @@ export const searchFrom = (context: EffectContext, step: WriteStep) => ({
   records: context.records,
   from: step.index,
   chronology: context.chronology,
+  overlapsWrite: context.overlapsWrite,
   viewOf: context.viewOf,
   withBody: context.io.withBody,
   queryOf: context.io.queryOf,

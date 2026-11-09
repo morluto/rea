@@ -463,6 +463,7 @@ export class FirmwareProvider implements FirmwareAnalysisPort {
           execution: processRun,
           files: this.#files,
           signal,
+          deadline,
         });
         result = firmwareResultSchemas.inspect_firmware_regions.parse({
           analysis_timeout_ms: analysisTimeoutMs,
@@ -507,6 +508,7 @@ export class FirmwareProvider implements FirmwareAnalysisPort {
           execution: processRun,
           files: this.#files,
           signal,
+          deadline,
         });
         const normalized = normalizeUnblobReport(report, {
           inputPath: target.inputPath,

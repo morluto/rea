@@ -99,7 +99,8 @@ export const readDotnetBundle = async (
       "unavailable",
       `Unsupported .NET bundle header ${majorVersion}.${minorVersion}; supported versions are 1.0, 2.0 and 6.0`,
     );
-  const count = await cursor.u32();
+  const count = await cursor.i32();
+  if (count < 0) fail(".NET bundle entry count is negative");
   if (count > MAX_ENTRIES)
     throw artifactFixedLimitFailure(
       ".NET bundle entry count",
@@ -110,13 +111,13 @@ export const readDotnetBundle = async (
   const configuration: { offset: number; size: number; type: number }[] = [];
   if (majorVersion >= 2) {
     configuration.push({
-      offset: await cursor.u64(),
-      size: await cursor.u64(),
+      offset: await cursor.nonnegativeI64(),
+      size: await cursor.nonnegativeI64(),
       type: 3,
     });
     configuration.push({
-      offset: await cursor.u64(),
-      size: await cursor.u64(),
+      offset: await cursor.nonnegativeI64(),
+      size: await cursor.nonnegativeI64(),
       type: 4,
     });
     const flags = await cursor.u64();
@@ -134,9 +135,10 @@ export const readDotnetBundle = async (
   let expandedBytes = 0;
   for (let index = 0; index < count; index++) {
     abortIfNeeded(signal);
-    const offset = await cursor.u64();
-    const fileSize = await cursor.u64();
-    const compressedSize = majorVersion === 6 ? await cursor.u64() : 0;
+    const offset = await cursor.nonnegativeI64();
+    const fileSize = await cursor.nonnegativeI64();
+    const compressedSize =
+      majorVersion === 6 ? await cursor.nonnegativeI64() : 0;
     const fileType = (await cursor.take(1))[0]!;
     const path = await cursor.string();
     const normalized = normalizeArtifactPath(path);
@@ -244,8 +246,15 @@ class BundleCursor {
   async u32(): Promise<number> {
     return (await this.take(4)).readUInt32LE();
   }
-  async u64(): Promise<number> {
-    const value = (await this.take(8)).readBigUInt64LE();
+  async i32(): Promise<number> {
+    return (await this.take(4)).readInt32LE();
+  }
+  async nonnegativeI64(): Promise<number> {
+    const value = (await this.take(8)).readBigInt64LE();
+    if (value < 0n) fail(".NET bundle offset or size is negative");
+    return this.exactInteger(value);
+  }
+  private exactInteger(value: bigint): number {
     if (value > BigInt(Number.MAX_SAFE_INTEGER))
       throw artifactFixedLimitFailure(
         ".NET bundle exact integer range",
@@ -253,6 +262,9 @@ class BundleCursor {
         "integer units",
       );
     return Number(value);
+  }
+  async u64(): Promise<number> {
+    return this.exactInteger((await this.take(8)).readBigUInt64LE());
   }
   async string(): Promise<string> {
     let length = 0;
