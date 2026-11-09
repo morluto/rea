@@ -32,9 +32,24 @@ export class ModelHeaderReader {
     this.#headerPrefixBytes = 8;
   }
 
-  /** Minimum bytes implied by the remaining declared header records, never tensor payload. */
-  guarantee(bytes: number): void {
-    const end = this.position + bytes;
+  /** Validate a raw file extent before host conversion or allocation admission. */
+  requireFileExtent(offset: number, length: bigint): void {
+    if (
+      !Number.isSafeInteger(offset) ||
+      offset < 0 ||
+      length < 0n ||
+      BigInt(offset) + length > BigInt(this.size)
+    )
+      rejectModel("Declared extent is outside the file");
+  }
+
+  /** Minimum header bytes; physical validity precedes the independent header budget. */
+  guarantee(bytes: number | bigint): void {
+    if (typeof bytes === "number" && !Number.isSafeInteger(bytes))
+      rejectModel("Invalid header field length");
+    const length = BigInt(bytes);
+    this.requireFileExtent(this.position, length);
+    const end = this.position + Number(length);
     this.#validateEnd(end);
     this.#guaranteedEnd = Math.max(this.#guaranteedEnd, end);
   }
