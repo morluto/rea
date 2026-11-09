@@ -930,28 +930,46 @@ describe("union discriminator variant selection and constraint preservation", ()
     expect(bounded.omittedIssueCount).toBe(0);
   });
 
-  it("preserves non-value discriminator failures and does not collapse when a branch has range constraints", () => {
-    const schema = z.union([
-      z.strictObject({ kind: z.enum(["a", "b"]), foo: z.string() }),
-      z.strictObject({ kind: z.string().min(5), bar: z.string() }),
-    ]);
-    const input = { kind: "x" };
-    const parsed = schema.safeParse(input);
-    if (parsed.success) throw new Error("expected invalid input");
-    const issues = projectInputIssues(parsed.error.issues, input);
-    expect(issues).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          path: ["kind"],
-          reason: "invalid_value",
-          expected: ["a", "b"],
+  it.each(["bogus", "fast"])(
+    "preserves non-value discriminator failures before secondary selector %s",
+    (mode) => {
+      const schema = z.union([
+        z.strictObject({
+          kind: z.enum(["a", "b"]),
+          foo: z.string(),
+          mode: z.literal("fast"),
         }),
-        expect.objectContaining({
-          path: ["kind"],
-          reason: "out_of_range",
-          minimum: 5,
+        z.strictObject({
+          kind: z.string().min(5),
+          bar: z.string(),
+          mode: z.literal("slow"),
         }),
-      ]),
-    );
-  });
+      ]);
+      const input = { kind: "x", mode };
+      const parsed = schema.safeParse(input);
+      if (parsed.success) throw new Error("expected invalid input");
+      const issues = projectInputIssues(parsed.error.issues, input);
+      expect(issues).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            path: ["kind"],
+            reason: "invalid_value",
+            expected: ["a", "b"],
+          }),
+          expect.objectContaining({
+            path: ["kind"],
+            reason: "out_of_range",
+            minimum: 5,
+          }),
+        ]),
+      );
+      const bounded = projectInputIssuesBounded(
+        parsed.error.issues,
+        input,
+        8192,
+      );
+      expect(bounded.issues).toEqual(issues);
+      expect(bounded.omittedIssueCount).toBe(0);
+    },
+  );
 });

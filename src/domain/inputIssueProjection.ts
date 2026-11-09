@@ -269,21 +269,20 @@ const candidateDiscriminatorKeys = (
       keys.push(k);
     }
   }
-  const callerKeys = Object.keys(targetRecord);
-  const remainingBudgetCount =
-    budget !== undefined ? Math.max(0, Math.floor(budget.remaining / 32)) : 32;
-  const maxOtherKeys = Math.min(32, remainingBudgetCount);
-  for (const k of callerKeys) {
-    if (keys.length >= CANDIDATE_DISCRIMINATOR_KEYS.length + maxOtherKeys)
-      break;
-    if (!(CANDIDATE_DISCRIMINATOR_KEYS as readonly string[]).includes(k)) {
-      if (budget !== undefined) {
-        budget.remaining -= 32;
-        if (budget.remaining < 0) throw projectionBudgetExceeded;
-      }
-      keys.push(k);
+  let otherKeys = 0;
+  for (const key in targetRecord) {
+    if (!Object.hasOwn(targetRecord, key)) continue;
+    if ((CANDIDATE_DISCRIMINATOR_KEYS as readonly string[]).includes(key))
+      continue;
+    if (otherKeys >= 32) break;
+    if (budget !== undefined) {
+      budget.remaining -= 32;
+      if (budget.remaining < 0) throw projectionBudgetExceeded;
     }
+    keys.push(key);
+    otherKeys++;
   }
+
   return keys;
 };
 
@@ -298,16 +297,14 @@ const branchAcceptsKey = (
   }
   for (const err of branchErrors) {
     if (err.path.length === 1 && err.path[0] === key) return false;
-    if (
-      err.code === "unrecognized_keys" &&
-      err.path.length === 0 &&
-      err.keys.includes(key)
-    ) {
-      if (budget !== undefined) {
-        budget.remaining -= 4 * err.keys.length;
-        if (budget.remaining < 0) throw projectionBudgetExceeded;
+    if (err.code === "unrecognized_keys" && err.path.length === 0) {
+      for (const rejectedKey of err.keys) {
+        if (budget !== undefined) {
+          budget.remaining -= 4;
+          if (budget.remaining < 0) throw projectionBudgetExceeded;
+        }
+        if (rejectedKey === key) return false;
       }
-      return false;
     }
     if (err.code === "invalid_union" && err.path.length === 0) {
       const anyNestedAccepts = err.errors.some((nested) =>
@@ -426,10 +423,9 @@ const chargeExpectedValuesBudget = (
 const resolveUnionDiscriminatorDiagnostic = (
   currentErrors: readonly (readonly z.core.$ZodIssue[])[],
   path: readonly (string | number)[],
-  targetValue: object,
+  candidateKeys: readonly string[],
   budget?: { remaining: number },
-): readonly AnalysisInputIssue[] | undefined => {
-  const candidateKeys = candidateDiscriminatorKeys(targetValue, budget);
+): readonly AnalysisInputIssue[] | "preserve" | undefined => {
   for (const key of candidateKeys) {
     if (!(CANDIDATE_DISCRIMINATOR_KEYS as readonly string[]).includes(key)) {
       continue;
@@ -442,7 +438,7 @@ const resolveUnionDiscriminatorDiagnostic = (
     const anyBranchHasNonValue = currentErrors.some((branch) =>
       branchHasNonValueKeyIssue(branch, key, budget),
     );
-    if (anyBranchHasNonValue) continue;
+    if (anyBranchHasNonValue) return "preserve";
 
     const anyBranchHasInvalidValue = currentErrors.some((branch) =>
       branchHasDirectKeyIssue(branch, key, "invalid_value", budget),
@@ -479,6 +475,13 @@ const narrowUnionBranches = (
     const matchingBranches = currentErrors.filter((branch) =>
       branchAcceptsKey(branch, key, budget),
     );
+    if (
+      matchingBranches.length === 0 &&
+      currentErrors.some((branch) =>
+        branchHasNonValueKeyIssue(branch, key, budget),
+      )
+    )
+      break;
     if (
       matchingBranches.length > 0 &&
       matchingBranches.length < currentErrors.length
@@ -534,40 +537,44 @@ const projectUnionIssue = (
     targetValue !== null &&
     !Array.isArray(targetValue)
   ) {
+    const candidateKeys = candidateDiscriminatorKeys(targetValue, budget);
     let narrowed = narrowUnionBranches(
       issue.errors,
       targetValue,
       budget,
-      CANDIDATE_DISCRIMINATOR_KEYS,
+      candidateKeys.filter((key) => CANDIDATE_DISCRIMINATOR_KEYS.includes(key)),
     );
-
     if (narrowed.length > 1) {
       const discriminator = resolveUnionDiscriminatorDiagnostic(
         narrowed,
         path,
-        targetValue,
+        candidateKeys,
         budget,
       );
-      if (discriminator !== undefined) return discriminator;
-
-      const payloadNarrowed = narrowUnionBranches(
-        narrowed,
-        targetValue,
-        budget,
-      );
-      if (
-        payloadNarrowed.length > 1 &&
-        payloadNarrowed.length < narrowed.length
-      ) {
-        const secondary = resolveUnionDiscriminatorDiagnostic(
-          payloadNarrowed,
-          path,
+      if (discriminator !== undefined && discriminator !== "preserve")
+        return discriminator;
+      if (discriminator !== "preserve") {
+        const payloadNarrowed = narrowUnionBranches(
+          narrowed,
           targetValue,
           budget,
+          candidateKeys,
         );
-        if (secondary !== undefined) return secondary;
+        if (
+          payloadNarrowed.length > 1 &&
+          payloadNarrowed.length < narrowed.length
+        ) {
+          const secondary = resolveUnionDiscriminatorDiagnostic(
+            payloadNarrowed,
+            path,
+            candidateKeys,
+            budget,
+          );
+          if (secondary !== undefined && secondary !== "preserve")
+            return secondary;
+        }
+        narrowed = payloadNarrowed;
       }
-      narrowed = payloadNarrowed;
     }
 
     activeErrors = narrowed;
