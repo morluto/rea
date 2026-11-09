@@ -265,10 +265,13 @@ cliTest(
     const root = await createTestTempDirectory("rea-js-limit-module-timeout-");
     await Promise.all([
       writeFile(join(root, "package.json"), '{"type":"module"}'),
-      writeFile(join(root, "a.js"), "export const observed = 7;\n"),
+      writeFile(
+        join(root, "a.js"),
+        'import { BrowserWindow } from "electron";\nexport const observed = new BrowserWindow();\n',
+      ),
     ]);
-    // A module package with .js sources runs preload discovery first, which
-    // must leave the timeout to the source pass that retains partial facts.
+    // A module package with .js BrowserWindow candidates runs preload discovery
+    // first, which must leave the timeout to the source pass that retains partial facts.
     const result = await cli.run({
       arguments: [
         "analyze-javascript-application",
