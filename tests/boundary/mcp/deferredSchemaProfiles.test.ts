@@ -10,6 +10,7 @@ import { join, resolve } from "node:path";
 import { afterAll, expect, it, onTestFinished, vi } from "vitest";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
+import { awaitAcknowledgement } from "../../fixtures/lifecycleAcknowledgement.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { closeVerifierResources } from "../../../scripts/lib/verifier-cleanup.mjs";
 import { HOT_TOOL_NAMES } from "../../../src/catalogDiscovery.js";
@@ -22,6 +23,7 @@ import { parseEvidence } from "../../../src/domain/evidence.js";
 import { evidenceBundleSchema } from "../../../src/domain/evidenceBundle.js";
 import { apiContractSchema } from "../../../src/domain/apiContract/apiContract.js";
 import { analysisViewResultSchema } from "../../../src/domain/analysisView/analysisView.js";
+import { SERVER_START_FAILED } from "../../../src/main/messages.js";
 
 const validation = createMcpSchemaValidation();
 afterAll(() => validation.clear());
@@ -46,6 +48,11 @@ const matrix: Configuration[] = ["legacy", "auto"].flatMap((mode, m) =>
     })),
   ),
 );
+
+const lifecycleConfigurations = [
+  { mode: "legacy", input: "full", output: "full", catalog: "full" },
+  { mode: "auto", input: "compact", output: "full", catalog: "hot-cold" },
+] as const;
 
 const connect = async (
   configuration: Configuration,
@@ -322,9 +329,18 @@ it.each(matrix)(
     expect(
       validation.assertions.validate(
         f.definition("inspect_analysis_view").inputSchema,
-        malformed,
+        { source, view },
       ),
-    ).toBe(configuration.input === "compact");
+    ).toBe(true);
+    // Compact advertisements may safely retain more canonical constraints.
+    // Exact rejection belongs to the full projection and the server parser.
+    if (configuration.input === "full")
+      expect(
+        validation.assertions.validate(
+          f.definition("inspect_analysis_view").inputSchema,
+          malformed,
+        ),
+      ).toBe(false);
     const rejected = await f.call("inspect_analysis_view", malformed);
     expect(parseMcpToolError(rejected).error.code).toBe("invalid_request");
     expect(rejected.structuredContent).toBeUndefined();
@@ -407,10 +423,7 @@ const verifyReconnect = async ({
   expect(next.stderr()).toBe("");
 };
 
-it.each([
-  { mode: "legacy", input: "full", output: "full", catalog: "full" },
-  { mode: "auto", input: "compact", output: "full", catalog: "hot-cold" },
-] as const)(
+it.each(lifecycleConfigurations)(
   "keeps a peer callable after cancellation during $mode/$catalog materialization, then reconnects with fresh visibility and Evidence",
   async (configuration) => {
     const control = await createTestTempDirectory(
@@ -474,9 +487,15 @@ registerHooks({
     const rejected = expect(cancelled).rejects.toBe(reason);
     const pending: Promise<unknown>[] = [cancelled, rejected];
     try {
-      await vi.waitFor(
+      const acknowledged = vi.waitFor(
         async () => expect(await readFile(started, "utf8")).toBe("started"),
         { timeout: 2000, interval: 10 },
+      );
+      pending.push(acknowledged);
+      await awaitAcknowledgement(
+        acknowledged,
+        cancelled,
+        "public deferred materialization",
       );
       const peer = f.call("inspect_api_contract", { path, detail: "complete" });
       pending.push(peer);
@@ -543,5 +562,59 @@ registerHooks({
       await writeFile(release, "release");
       await Promise.allSettled(pending);
     }
+  },
+);
+
+it.each(lifecycleConfigurations)(
+  "recovers from a malformed first domain call over $mode/$catalog without replacing advertised schemas",
+  async (configuration) => {
+    const f = await connect(configuration);
+    await f.list();
+    await f.load(["search_guidance", "read_guidance_section"]);
+    const before = await f.list();
+    expect(await f.runtimeLoaded()).toBe(false);
+    const malformed = await f.call("search_guidance", { query: 17 });
+    expect(parseMcpToolError(malformed).error.code).toBe("invalid_request");
+    expect(malformed.structuredContent).toBeUndefined();
+    expect(await f.runtimeLoaded()).toBe(true);
+    await verifyGuidance(f, configuration);
+    expect(await f.list()).toEqual(before);
+    expect(f.stderr()).toBe("");
+  },
+);
+
+it.each(lifecycleConfigurations)(
+  "keeps discovery responsive and rejects domain calls after $mode/$catalog materialization fails",
+  async (configuration) => {
+    // Fault the lazy module's evaluation, preserving its real imports/exports.
+    // Transport startup and discovery must still use the production server.
+    const hook = `data:text/javascript,${encodeURIComponent(`
+import { registerHooks } from "node:module";
+registerHooks({
+  load(url, context, next) {
+    const loaded = next(url, context);
+    if (url.endsWith("/dist/main/eagerRuntime.js") ||
+        loaded.source?.toString().includes("//#region dist/main/eagerRuntime.js\\n"))
+      return { ...loaded, source: 'throw new Error("PRIVATE fixture initialization failure");\\n' + loaded.source.toString() };
+    return loaded;
+  }
+});
+`)}`;
+    const f = await connect(configuration, [`--import=${hook}`]);
+    await f.list();
+    await f.load(["search_guidance", "read_guidance_section"]);
+    const before = await f.list();
+    expect(await f.runtimeLoaded()).toBe(false);
+    for (const query of ["inspect_analysis_view OpenAPI", "unmatched_qzxv"]) {
+      const result = await f.call("search_guidance", { query });
+      expect(result.isError).toBe(true);
+      expect(result.structuredContent).toBeUndefined();
+      expect(JSON.stringify(result)).toContain(SERVER_START_FAILED);
+      expect(JSON.stringify(result)).not.toContain("PRIVATE");
+    }
+    expect(await f.runtimeLoaded()).toBe(true);
+    await f.load(["search_guidance", "read_guidance_section"]);
+    expect(await f.list()).toEqual(before);
+    expect(f.stderr()).toBe("");
   },
 );
