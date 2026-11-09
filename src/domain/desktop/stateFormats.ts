@@ -10,6 +10,7 @@ import {
   opensLikeXml,
   parseXmlDocument,
 } from "../xmlDocument.js";
+import { expatXmlName } from "./expatXmlNames.js";
 
 /** Formats the state view reads into JSON. */
 export type DesktopStateFormat =
@@ -33,7 +34,11 @@ const GVDB_HEADER = "GVariant";
 const ZIP_HEADER = "PK\u0003\u0004";
 const XML_EXTENSIONS = /\.(?:xml|xbel|plist|svg|ui)$/iu;
 /** A DOCTYPE that only names its DTD reads as XML; one with an internal subset, which can declare entities, does not. */
-const XML_POLICY = { doctype: "external", lineEndings: "normalize" } as const;
+const XML_POLICY = {
+  doctype: "external",
+  lineEndings: "normalize",
+  nameSupported: expatXmlName,
+} as const;
 const MAX_TEXT_LINES = 5000;
 const MAX_XML_NODES = 5000;
 const MAX_XML_DEPTH = 64;
