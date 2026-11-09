@@ -1,7 +1,10 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { importVerifierSource } from "../../../scripts/lib/verifier-source-loader.mjs";
-import { parseDumperUnits } from "../../../scripts/verify-dwarf-units.mjs";
+import {
+  dumperFormatGap,
+  parseDumperUnits,
+} from "../../../scripts/verify-dwarf-units.mjs";
 
 describe("DWARF dumper comparison", () => {
   it("reads readelf units when Version is on the next line", () => {
@@ -117,6 +120,16 @@ describe("DWARF dumper comparison", () => {
         ].join("\n"),
       ),
     ).toHaveLength(1);
+  });
+
+  it("skips non-ELF images under readelf and keeps them for format-aware dumpers", () => {
+    const elf = Buffer.from("\u007fELF\u0002\u0001", "binary");
+    const pe = Buffer.from("MZ\u0090\u0000", "binary");
+    expect(dumperFormatGap("readelf", elf)).toBeNull();
+    expect(dumperFormatGap("/usr/bin/readelf", pe)).toBe(
+      "readelf reads ELF files only, so this image was not dumped",
+    );
+    expect(dumperFormatGap("llvm-dwarfdump", pe)).toBeNull();
   });
 
   it("loads verify:dwarf-units through the single verifier source loader", async () => {

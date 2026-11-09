@@ -281,8 +281,20 @@ const inspectUnits = async (binary) => {
   }
 };
 
+const ELF_MAGIC = "\u007fELF";
+
 const isElf = async (path) =>
-  (await readFile(path)).subarray(0, 4).toString("binary") === "\u007fELF";
+  (await readFile(path)).subarray(0, 4).toString("binary") === ELF_MAGIC;
+
+/**
+ * readelf reads ELF files only, so a PE or Mach-O image under it is a host gap
+ * to skip, not a disagreement. Returns the skip reason, or null when it reads.
+ */
+export const dumperFormatGap = (dumperPath, header) =>
+  dumperPath.split("/").at(-1) === "readelf" &&
+  header.subarray(0, 4).toString("binary") !== ELF_MAGIC
+    ? "readelf reads ELF files only, so this image was not dumped"
+    : null;
 
 const linkPe = async (commands, directory, objects) => {
   if (!commandExists("ld.lld"))
@@ -354,6 +366,10 @@ const compileVariant = async (commands, directory, variant) => {
   for (const name of await readdir(directory)) {
     if (name.endsWith(".dwo"))
       await rename(join(directory, name), join(aside, name));
+  }
+  for (const binary of binaries) {
+    const gap = dumperFormatGap(dumper ?? "", await readFile(binary));
+    if (gap !== null) throw new UnavailableVariant(gap);
   }
   return binaries;
 };

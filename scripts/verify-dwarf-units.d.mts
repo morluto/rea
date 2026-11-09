@@ -7,3 +7,8 @@ export interface DumpedDwarfUnit {
 }
 
 export const parseDumperUnits: (text: string) => DumpedDwarfUnit[];
+
+export const dumperFormatGap: (
+  dumperPath: string,
+  header: Uint8Array,
+) => string | null;
