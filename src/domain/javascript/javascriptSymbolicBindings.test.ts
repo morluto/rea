@@ -333,6 +333,40 @@ it.each(['args[0]="real"', 'args[2]="added"', "args.handled=true"])(
   },
 );
 
+it.each([
+  [
+    "a written length",
+    `function g(a,b){return b} function f(...args){args.length=2;return g(...args,"fallback")} inspect(f("first","second"));`,
+  ],
+  [
+    "an index written past its end",
+    `function g(a,b,c,d){return d} function f(...args){args[2]="added";return g(...args,"after")} inspect(f("first","second"));`,
+  ],
+  [
+    "an unknown value",
+    `function g(a,b){return b} function f(x){return g(...x,"fallback")} inspect(f(extraArguments));`,
+  ],
+  [
+    "unknown length through a later rest parameter",
+    `function k(a){return a} function h(x,...rest){return k(...rest,"after")} function f(...args){args.length=1;return h(...args)} inspect(f("first","second"));`,
+  ],
+])("does not position arguments after a spread of %s", (_name, source) => {
+  expect(inspectOne(source).kind).toBe("unknown");
+});
+
+it("keeps argument positions after a spread of known length", () => {
+  expect(
+    inspectOne(
+      `function g(a,b,c){return c} function f(...args){return g(...args,"after")} inspect(f("first","second"));`,
+    ),
+  ).toEqual({ kind: "literal", value: "after" });
+  expect(
+    inspectOne(
+      `function g(a,b){return b} function f(x){return g(x,"kept")} inspect(f(extraArguments));`,
+    ),
+  ).toEqual({ kind: "literal", value: "kept" });
+});
+
 it("builds a parameter's written members once for every read and call", () => {
   const { parsed, resolver } = resolverFor(
     `function f(o){o.channel="real";o.extra=1;inspect(o);inspect(o)}`,

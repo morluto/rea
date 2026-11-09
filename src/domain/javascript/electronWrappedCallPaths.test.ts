@@ -919,6 +919,33 @@ it.each([
     ).toEqual([[null, "direct"], ...substituted]);
   },
 );
+it.each([
+  // A spread of unknown length leaves the later argument's position unknown.
+  ["a written length", "args.length = 2;", "args", []],
+  ["an unknown spread", "", "extraArguments", []],
+  ["a known spread", "", "args", [["app:ping", "wrapper-substitution"]]],
+])(
+  "positions an argument after a spread only when its length is known: %s",
+  (_name, write, spread, substituted) => {
+    const result = analyzeJavaScriptStaticSource(`
+    const { ipcMain } = require("electron");
+    function pick(first, second) {
+      return second;
+    }
+    function register(...args) {
+      ${write}
+      ipcMain.handle(pick(...${spread}, "app:fallback"), () => "pong");
+    }
+    register("app:first", "app:ping");
+  `);
+    expect(
+      result.electron.ipc.map(({ channel, resolution_basis }) => [
+        channel,
+        resolution_basis ?? "direct",
+      ]),
+    ).toEqual([[null, "direct"], ...substituted]);
+  },
+);
 it("does not trace a bridge member its wrapper replaces before exposure", () => {
   const result = analyzeJavaScriptStaticSource(`
     const { contextBridge, ipcRenderer } = require("electron");

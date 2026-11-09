@@ -51,7 +51,12 @@ export interface SymbolicFunction extends SymbolicMetadata {
 }
 
 export type SymbolicValue = (
-  | { readonly kind: "unknown"; readonly reason: string }
+  | {
+      readonly kind: "unknown";
+      readonly reason: string;
+      /** Stands for an unknown number of further elements, as a spread may. */
+      readonly unknownCount?: true;
+    }
   | {
       readonly kind: "literal";
       readonly value: string | number | boolean | null | undefined;
@@ -94,6 +99,15 @@ export const symbolicUnknown = (reason: string): SymbolicValue => ({
   kind: "unknown",
   reason,
 });
+/** The unknown rest of an argument list or array, such as an unknown spread. */
+export const symbolicUnknownCount = (reason: string): SymbolicValue => ({
+  kind: "unknown",
+  reason,
+  unknownCount: true,
+});
+export const symbolicHasUnknownCount = (
+  value: SymbolicValue | undefined,
+): boolean => value?.kind === "unknown" && value.unknownCount === true;
 export const symbolicVariants = (
   value: SymbolicValue,
 ): readonly SymbolicValue[] =>

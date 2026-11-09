@@ -35,8 +35,10 @@ import {
 } from "./javascriptSemanticState.js";
 import {
   symbolicCondition,
+  symbolicHasUnknownCount,
   symbolicUnion,
   symbolicUnknown,
+  symbolicUnknownCount,
   symbolicVariants,
   symbolicTruth,
   type SymbolicCondition,
@@ -83,25 +85,28 @@ const containsOwnedReturn = (root: t.Node): boolean => {
 /**
  * Elements a read of a rest parameter's array observes after its writes.
  * Writes are not ordered against reads, so a written index is unknown. A
- * written length or an index past the end leaves the count unknown; one
- * unknown element then stands for the rest, as for any dynamic spread.
+ * written length or an index past the known elements leaves the count
+ * unknown from that point, which one unknown-count element stands for.
  */
 const writtenArrayElements = (
   elements: readonly SymbolicValue[],
   members: ReadonlySet<string>,
 ): readonly SymbolicValue[] => {
   if (members.has("length"))
-    return [symbolicUnknown("overwritten array length")];
+    return [symbolicUnknownCount("overwritten array length")];
+  const open = symbolicHasUnknownCount(elements.at(-1));
+  const known = open ? elements.length - 1 : elements.length;
   const written = [...elements];
   let grows = false;
   for (const member of members) {
     const index = semanticArrayIndex(member);
     if (index === null) continue;
-    if (index < elements.length)
+    if (index < known)
       written[index] = symbolicUnknown("overwritten object members");
     else grows = true;
   }
-  if (grows) written.push(symbolicUnknown("overwritten array length"));
+  if (grows && !open)
+    written.push(symbolicUnknownCount("overwritten array length"));
   return written;
 };
 
@@ -634,6 +639,14 @@ export class JavaScriptSymbolicBindings {
     caller?: SymbolicEnvironment,
   ): SymbolicEnvironment {
     const values = new Map<string, SymbolicValue>();
+    // Arguments ending in an unknown count leave every later rest unknown.
+    const last = args.at(-1);
+    const restOf = (index: number): readonly SymbolicValue[] =>
+      index >= args.length &&
+      last !== undefined &&
+      symbolicHasUnknownCount(last)
+        ? [last]
+        : args.slice(index);
     runtimeFunctionParameters(fn.node).forEach((param, index) => {
       const target = t.isRestElement(param) ? param.argument : param;
       if (!t.isIdentifier(target)) return;
@@ -646,7 +659,7 @@ export class JavaScriptSymbolicBindings {
         values.set(
           binding.bindingId,
           t.isRestElement(param)
-            ? { kind: "array", values: args.slice(index) }
+            ? { kind: "array", values: restOf(index) }
             : (args[index] ?? symbolicUnknown("runtime parameter")),
         );
     });
@@ -668,13 +681,22 @@ export class JavaScriptSymbolicBindings {
     node: t.CallExpression | t.OptionalCallExpression,
     env: SymbolicEnvironment,
   ): readonly SymbolicValue[] {
-    return node.arguments.flatMap((a) => {
-      if (!t.isSpreadElement(a)) return [this.evaluate(a, env)];
+    const values: SymbolicValue[] = [];
+    for (const a of node.arguments) {
+      if (!t.isSpreadElement(a)) {
+        values.push(this.evaluate(a, env));
+        continue;
+      }
       const value = this.evaluate(a.argument, env);
-      return value.kind === "array"
-        ? value.values
-        : [symbolicUnknown("dynamic spread arguments")];
-    });
+      const spread =
+        value.kind === "array"
+          ? value.values
+          : [symbolicUnknownCount("dynamic spread arguments")];
+      for (const element of spread) values.push(element);
+      // Arguments after a spread of unknown length have unknown positions.
+      if (symbolicHasUnknownCount(spread.at(-1))) break;
+    }
+    return values;
   }
 
   #evaluate(node: t.Node, env: SymbolicEnvironment): SymbolicValue {
