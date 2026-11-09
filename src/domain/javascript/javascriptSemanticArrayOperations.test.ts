@@ -42,6 +42,15 @@ it.each([
   "pop()",
   "shift()",
   "unshift(0)",
+  "includes(0)",
+  "indexOf(0)",
+  "lastIndexOf(0)",
+  "at(0)",
+  "join(',')",
+  "toString()",
+  "keys()",
+  "values()",
+  "entries()",
 ])("preserves unrelated array iteration after discarded native %s", (call) => {
   const source = `const a = new Array(3); a.${call}; const urls = ['/api']; const [url] = urls; fetch(url);`;
   expect(proofFor(source, call.slice(0, call.indexOf("(")))).toEqual([true]);
@@ -125,4 +134,133 @@ it("reconsiders earlier pristine proofs after a deferred receiver escapes", () =
     const b = new Array(3); b[0] = 1; b.fill(0);
   }`),
   ).toEqual([false, false]);
+});
+
+it.each([
+  "includes(0)",
+  "indexOf(0)",
+  "lastIndexOf(0)",
+  "at(0)",
+  "join(',')",
+  "toString()",
+  "keys()",
+  "values()",
+  "entries()",
+])(
+  "keeps read-result consumption outside the pristine receiver contract: %s",
+  (call) => {
+    expect(
+      proofFor(
+        `const a = new Array(3); consume(a.${call});`,
+        call.slice(0, call.indexOf("(")),
+      ),
+    ).toEqual([false]);
+  },
+);
+
+it.each([
+  "new Array(3).includes(0);",
+  "const a = new globalThis.Array('a', 'b'); const b = a; b.includes('a');",
+  "const a = new Array(3); a.includes(0); Array.prototype[0] = replacement;",
+])(
+  "retains pristine Array read certainty without new shape facts: %s",
+  (source) => {
+    expect(proofFor(source, "includes")).toEqual([true]);
+  },
+);
+
+it.each([
+  [
+    "includes",
+    "Object.defineProperty(Array.prototype, '0', {get() { patch(); return 0; }}); const a = new Array(3); a.includes(0);",
+  ],
+  [
+    "includes",
+    "Object.defineProperty(Object.prototype, '0', {get() { patch(); return 0; }}); const a = new Array(3); a.includes(0);",
+  ],
+  ["includes", "const a = new Array(3); a[0] = object; a.includes(0);"],
+  [
+    "includes",
+    "const a = new Array(3); a.includes(0, {valueOf() {patch(a); return 0;}});",
+  ],
+  ["includes", "const a = new Array(3); a.includes(0, (eval(code) ? 0 : 0));"],
+  [
+    "includes",
+    "const a = new Array(3); a.includes(0, ((Array.prototype[0] = replacement) ? 0 : 0));",
+  ],
+  ["join", "const a = new Array(object, 0); a.join(',');"],
+  [
+    "join",
+    "const a = new Array(3); a.join({toString() {patch(a); return ',';}});",
+  ],
+  [
+    "toString",
+    "Array.prototype.join = replacement; const a = new Array(3); a.toString();",
+  ],
+  ["toString", "const a = new Array(3); a.join = replacement; a.toString();"],
+  ["includes", "const a = [0]; a.includes(0);"],
+  ["values", "const a = new Array(3); consume(a); a.values();"],
+])("does not exempt a read with observable hooks: %s", (method, source) => {
+  expect(proofFor(source, method)).toEqual([false]);
+});
+
+it.each([
+  "toLocaleString()",
+  "slice()",
+  "concat()",
+  "flat()",
+  "map(callback)",
+  "filter(callback)",
+  "find(callback)",
+  "some(callback)",
+  "every(callback)",
+  "reduce(callback)",
+  "sort()",
+  "toSorted()",
+  "toReversed()",
+  "toSpliced(0)",
+  "with(0, 1)",
+])(
+  "does not add callback, element-prototype or copying contracts: %s",
+  (call) => {
+    expect(
+      proofFor(
+        `const a = new Array(1, 2); a.${call};`,
+        call.slice(0, call.indexOf("(")),
+      ),
+    ).toEqual([false]);
+  },
+);
+
+it.each([
+  "new Array(3).includes(0);",
+  "const a = new Array(3); a.includes(0);",
+])(
+  "defers even direct pristine reads until propagated effects converge: %s",
+  (source) => {
+    const parsed = parseJavaScriptSource(source);
+    if (parsed === null) throw new Error("Expected read fixture");
+    const index = completeSemanticSteps(
+      indexJavaScriptBindingsWithReceiversSteps(parsed.program),
+    );
+    completeSemanticSteps(index.indexAmbientWritesSteps());
+    completeSemanticSteps(index.indexMemberMutationFactsSteps());
+    const results: (boolean | undefined)[] = [];
+    traverseJavaScriptAst(parsed.program, {
+      enter(node) {
+        if (t.isCallExpression(node))
+          results.push(isIntrinsicNonEscapingArrayCall(node, index.bindings));
+      },
+    });
+    expect(results).toEqual([undefined]);
+  },
+);
+
+it("does not exempt locale conversion through mutable element prototypes", () => {
+  expect(
+    proofFor(
+      "Number.prototype.toLocaleString = patch; const a = new Array(1, 2); a.toLocaleString();",
+      "toLocaleString",
+    ),
+  ).toEqual([false]);
 });

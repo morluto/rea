@@ -26,9 +26,18 @@ const PRISTINE_ARRAY_METHODS = new Set([
   "pop",
   "shift",
   "unshift",
+  "includes",
+  "indexOf",
+  "lastIndexOf",
+  "at",
+  "join",
+  "toString",
+  "keys",
+  "values",
+  "entries",
 ]);
 
-/** These native mutations have no callbacks on pristine arrays with primitive arguments. */
+/** These native operations have no callbacks on pristine arrays with primitive arguments. */
 export const isIntrinsicNonEscapingArrayCall = (
   node: t.CallExpression | t.OptionalCallExpression,
   state: JavaScriptSemanticAnalysisState,
@@ -40,7 +49,8 @@ export const isIntrinsicNonEscapingArrayCall = (
     !PRISTINE_ARRAY_METHODS.has(
       semanticStaticPropertyName(callee.property, callee.computed) ?? "",
     ) ||
-    // Some methods return this; no returned-reference proof is introduced here.
+    // Some results retain this (including iterators); no returned-reference
+    // proof is introduced even for methods whose result is primitive.
     !t.isExpressionStatement(state.parentsByNode.get(node))
   )
     return false;
