@@ -1,4 +1,4 @@
-import { gzipSync } from "node:zlib";
+import { crc32, deflateRawSync, gzipSync } from "node:zlib";
 
 const concat = (...parts: readonly Buffer[]): Buffer => Buffer.concat(parts);
 
@@ -163,3 +163,23 @@ export const bzImageXzFixture = (): Buffer =>
   bzImageFixture(
     concat(Buffer.from([0xfd, 0x37, 0x7a, 0x58, 0x5a, 0x00]), Buffer.alloc(8)),
   );
+
+/**
+ * gzip member with FHCRC and FNAME set, built by hand since `gzipSync` writes
+ * neither. `headerCrc` overrides the header checksum to model damage.
+ */
+export const headerCrcGzipMember = (
+  plain: Buffer,
+  headerCrc?: number,
+): Buffer => {
+  const header = concat(
+    Buffer.from([0x1f, 0x8b, 0x08, 0x0a, 0, 0, 0, 0, 0, 0x03]),
+    Buffer.from("config\0", "latin1"),
+  );
+  const checksum = Buffer.alloc(2);
+  checksum.writeUInt16LE(headerCrc ?? crc32(header) & 0xffff);
+  const trailer = Buffer.alloc(8);
+  trailer.writeUInt32LE(crc32(plain), 0);
+  trailer.writeUInt32LE(plain.length >>> 0, 4);
+  return concat(header, checksum, deflateRawSync(plain), trailer);
+};

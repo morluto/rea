@@ -14,6 +14,7 @@ import {
   bzImageTruncatedGzipFixture,
   bzImageXzFixture,
   embeddedKernelConfig,
+  headerCrcGzipMember,
   kernelBuildConfigFixture,
   nonConfigGzipFixture,
   plainIkcfgStringFixture,
@@ -154,6 +155,35 @@ it("reports a framed member with a bad CRC-32 as malformed, not absent", () => {
   });
   expect(report.coverage.status).toBe("incomplete");
   expect(report.limitations.some((line) => line.includes("CRC-32"))).toBe(true);
+});
+
+it("checks the optional gzip header CRC before accepting a member", () => {
+  const plain = Buffer.from(SAMPLE_KERNEL_CONFIG, "latin1");
+  const frame = (member: Buffer): Buffer =>
+    Buffer.concat([Buffer.from("IKCFG_ST"), member, Buffer.from("IKCFG_ED")]);
+  expect(parse(frame(headerCrcGzipMember(plain))).config).toMatchObject({
+    status: "present",
+    option_count: 9,
+  });
+  const good = headerCrcGzipMember(plain);
+  const damaged = headerCrcGzipMember(
+    plain,
+    (good.readUInt16LE(17) ^ 0xffff) & 0xffff,
+  );
+  expect(parse(frame(damaged)).config.status).not.toBe("present");
+  const payload = parse(
+    bzImageFixture(
+      headerCrcGzipMember(
+        Buffer.concat([
+          Buffer.from(`${SAMPLE_KERNEL_BANNER}\0`, "latin1"),
+          embeddedKernelConfig(),
+        ]),
+        0,
+      ),
+    ),
+  );
+  expect(payload.payload.status).toBe("malformed");
+  expect(payload.config.reason).toBe("payload_gzip_invalid");
 });
 
 it("prefers a valid config over an earlier malformed blob", () => {

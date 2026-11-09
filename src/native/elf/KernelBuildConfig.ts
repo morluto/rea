@@ -90,7 +90,10 @@ const FEXTRA = 0x04;
 const FNAME = 0x08;
 const FCOMMENT = 0x10;
 
-/** Offset after an RFC 1952 member header, or null when the header ends early. */
+/**
+ * Offset after an RFC 1952 member header, null when the header ends early, or
+ * `invalid` when it is not deflate, sets reserved flags, or fails its FHCRC.
+ */
 const gzipHeaderEnd = (
   bytes: Buffer,
   start: number,
@@ -110,8 +113,15 @@ const gzipHeaderEnd = (
     if (zero < 0) return null;
     cursor = zero + 1;
   }
-  if ((flags & FHCRC) !== 0) cursor += 2;
-  return cursor > bytes.length ? null : cursor;
+  if ((flags & FHCRC) === 0) return cursor > bytes.length ? null : cursor;
+  if (cursor + 2 > bytes.length) return null;
+  // FHCRC is the low 16 bits of the CRC-32 of every header byte before it.
+  if (
+    bytes.readUInt16LE(cursor) !==
+    (crc32(bytes.subarray(start, cursor)) & 0xffff)
+  )
+    return "invalid";
+  return cursor + 2;
 };
 
 /**
