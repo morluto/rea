@@ -84,6 +84,10 @@ Die Einrichtung unterstützt Claude Code, Codex, Cursor, Gemini CLI, Grok Build 
 
 MCP verwendet standardmäßig kompakte Eingabeschemas. Für vollständige Feldhinweise und Details zur verschachtelten Validierung setze `REA_MCP_INPUT_SCHEMA_PROFILE=full` in der MCP-Registrierung. Beide Profile behalten alle Tools und dieselbe kanonische Servervalidierung; siehe MCP-Vertragsleitfaden.
 
+Die Einrichtung registriert die gewählte Laufzeit und das REA-Einstiegsskript direkt. Bewahre bei einem Paket-Runner dessen Cache-Eintrag und die Laufzeit auf; lade das Paket aus einem vertrauenswürdigen Verzeichnis außerhalb des Zielprojekts. Siehe die Installationsanleitung.
+
+Vollständige Ausgabeschemas werden standardmäßig angekündigt. Begrenzt dein Client `tools/list`, setze in der MCP-Registrierung `REA_MCP_OUTPUT_SCHEMA_PROFILE=compact` oder `off`. Servervalidierung und strukturierte Ergebnisse bleiben vollständig. Siehe „Output schemas“ im MCP-Vertragsleitfaden.
+
 ### Deinen Agenten fragen
 
 ```text
@@ -173,6 +177,7 @@ REA benötigt Node.js 22.x (>=22.23.4), 24.x (>=24.22.1) oder 26+ (>=26.12.1) so
 | Paketerfassungen                    | Endpunkte, DNS, TLS SNI, Protokollverteilung und HTTP-Anfragen                                                  | Vom Aufrufer bereitgestellte tshark- und capinfos-Binaries; [pcap-Leitfaden](../guides/data/pcap-analysis.md)                                                                   |
 | .NET-Assemblies                     | Metadaten, CIL-Anweisungen, deklarierte native Abhängigkeiten und Build-Vergleiche                              | Statische Untersuchung; [Leitfaden für verwalteten Code](../guides/managed/managed-code-analysis.md)                                                                            |
 | PyInstaller                         | CArchive, PYZ, Python bytecode                                                                                  | Static inspection; [Python packaged applications](../python-packaged-applications.md)                                                                                           |
+| Deno compile binaries               | Virtual files, entry point, recorded options, npm snapshot length                                               | Static inspection; [Deno compile executables](../deno-standalone.md)                                                                                                            |
 | Android-APKs                        | Manifest-Deklarationen, Klassen, dekompilierte Methoden und Verweise                                            | JADX ohne grafische Oberfläche und ein vollständiges JDK unter Linux/macOS/Windows x64; [Android-Leitfaden](../guides/android/android-analysis.md)                              |
 | Android-Geräte                      | Geräte, Pakete, Prozesse, Logs, Dumps, Bildschirmaufnahmen sowie APK- und Dateiübertragungen                    | Vom Aufrufer bereitgestelltes adb (Emulator oder Gerät); [ADB-Leitfaden](../guides/android/adb-device-analysis.md)                                                              |
 | JEB-Projekte                        | Engine-gestützte Projekteinheiten, Artefakt-Prüfsummen und Pseudokode von Typen/Methoden                        | Ein vom Aufrufer gestarteter JEB-Client mit MCP, ausgewählt über REA_JEB_MCP_URL; [JEB-Leitfaden](../providers/jeb-analysis.md)                                                 |

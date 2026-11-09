@@ -14,14 +14,38 @@ const routeViewFromEvidence = (evidence: unknown) =>
     parseEvidence(evidence).normalized_result,
   );
 
-// The full flag matrix (literal, alias, wrapper, dynamic, script/module/commonjs
-// program vars, ...) is asserted in javascriptRouteScan.test.ts, where each case
-// costs an in-process parse. This file only proves that both branches of the
-// public CLI view survive the round trip - a resolved route set and an unresolved
-// flag reported through the unknowns collection - so every extra case here pays a
-// process spawn and pushes the test into its own timeout.
+// The owner tests cover the flag matrix. These public controls distinguish
+// unobserved script scope from observed package scope and preserve resolved
+// routes and explicit unknowns through CLI/MCP views.
 const indexRouteCases = [
   ["literal", "", "true", "js", ["/"], "module", false],
+  [
+    "commonjs",
+    "var INDEX=true;globalThis.INDEX=false;",
+    "INDEX",
+    "js",
+    ["/"],
+    "commonjs",
+    false,
+  ],
+  [
+    "unspecified-package",
+    "var INDEX=true;globalThis.INDEX=false;",
+    "INDEX",
+    "js",
+    ["/"],
+    "unspecified",
+    false,
+  ],
+  [
+    "script-global-jsx",
+    "var INDEX=true;globalThis.INDEX=false;",
+    "INDEX",
+    "jsx",
+    [],
+    "unspecified",
+    true,
+  ],
   [
     "script-global",
     "var INDEX=true;globalThis.INDEX=false;",
@@ -42,14 +66,16 @@ cliTest.for(indexRouteCases)(
     const root = await createTestTempDirectory("rea-index-routes-");
     const path = join(root, name);
     await mkdir(path);
-    await writeFile(
-      join(path, "package.json"),
-      JSON.stringify({
-        name: "index-fixture",
-        private: true,
-        type: sourceType === "module" ? "module" : undefined,
-      }),
-    );
+    if (sourceType !== "script") {
+      await writeFile(
+        join(path, "package.json"),
+        JSON.stringify({
+          name: "index-fixture",
+          private: true,
+          type: sourceType === "unspecified" ? undefined : sourceType,
+        }),
+      );
+    }
     const route = `createBrowserRouter([{index:${flag},Component:Home}])`;
     await writeFile(
       join(path, `routes.${extension}`),
@@ -124,10 +150,6 @@ cliTest(
     const root = await createTestTempDirectory("rea-program-var-routes-");
     const path = join(root, "application");
     await mkdir(path);
-    await writeFile(
-      join(path, "package.json"),
-      JSON.stringify({ name: "program-var-fixture", private: true }),
-    );
     await writeFile(
       join(path, "routes.js"),
       "var PATH='/reports/stale';globalThis.PATH='/other';createBrowserRouter([{path:PATH},{path:'/reports'}]);const independent='/reports/help';",

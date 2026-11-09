@@ -100,8 +100,8 @@ Every result states these, and they are part of the contract:
 
 An unknown magic is a typed `unsupported_target` failure, because the file is not a V8
 code cache. A short header, a payload-length disagreement, or bytes past the declared
-payload is a typed `invalid_request` failure. Neither is a partial parse, and no Evidence
-is recorded for them.
+payload is a typed `invalid_request` failure. Neither produces completed inspection
+Evidence; the stable-read partial observation described above is retained when available.
 
 `max_file_bytes` (default 32 MiB, ceiling 64 MiB) is the caller-selected read budget. The
 payload SHA-256 is computed over the declared payload, so two containers with the same

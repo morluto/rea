@@ -84,6 +84,10 @@ npx rea-agents setup
 
 يستخدم MCP مخططات إدخال مختصرة افتراضيًا. للحصول على إرشادات الحقول الكاملة وتفاصيل التحقق المتداخل، اضبط `REA_MCP_INPUT_SCHEMA_PROFILE=full` في تسجيل MCP. يحتفظ الخياران بجميع الأدوات والتحقق القياسي نفسه على الخادم؛ راجع دليل عقود MCP.
 
+يسجّل الإعداد بيئة التشغيل المحددة وملف دخول REA مباشرةً. عند استخدام مشغّل حزم، احتفظ بإدخال ذاكرة التخزين المؤقت وبيئة التشغيل؛ ونفّذ تنزيل الحزمة من دليل موثوق خارج المشروع المستهدف. راجع دليل التثبيت والإعداد.
+
+تُعلن مخططات الإخراج الكاملة افتراضيًا. إذا حدّ عميلك من حجم `tools/list`، فاضبط `REA_MCP_OUTPUT_SCHEMA_PROFILE=compact` أو `off` في تسجيل MCP؛ يظل التحقق والخروج المنظّم كاملين على الخادم. راجع قسم مخططات الإخراج في دليل عقود MCP.
+
 ### اطلب من وكيلك
 
 ```text
@@ -173,6 +177,7 @@ npx rea-agents@latest setup
 | التقاط الحزم                    | نقاط النهاية وDNS وTLS SNI وتوزيع البروتوكولات وطلبات HTTP                                                  | tshark وcapinfos يوفّرهما المُستدعي؛ [دليل pcap](../guides/data/pcap-analysis.md)                                                                              |
 | تجميعات .NET                    | البيانات الوصفية، وتعليمات CIL، واعتماديات الشيفرة الأصلية المعلنة، ومقارنات البناء                         | فحص ثابت؛ [دليل الشيفرة المُدارة](../guides/managed/managed-code-analysis.md)                                                                                 |
 | PyInstaller                     | CArchive, PYZ, Python bytecode                                                                             | Static inspection; [Python packaged applications](../python-packaged-applications.md)                                                                        |
+| Deno compile binaries           | Virtual files, entry point, recorded options, npm snapshot length                                          | Static inspection; [Deno compile executables](../deno-standalone.md)                                                                                         |
 | حزم Android APK                 | تصريحات ملف manifest، والأصناف، والدوال الناتجة عن فك الترجمة، والمراجع                                     | JADX دون واجهة رسومية وJDK كامل على Linux/macOS/Windows x64؛ [دليل Android](../guides/android/android-analysis.md)                                           |
 | أجهزة Android                   | الأجهزة والحزم والعمليات والسجلات والدامبات ولقطات الشاشة ونقل APK/الملفات                                   | adb يوفّره المُستدعي (محاكي أو جهاز)؛ [دليل ADB](../guides/android/adb-device-analysis.md)                                                                     |
 | مشاريع JEB                      | وحدات المشروع من المحرك وبصمات المصنّفات والكود الزائف للأنواع/الدوال                                        | عميل JEB يبدأه المُستدعي ويقدّم MCP، ويُختار عبر REA_JEB_MCP_URL؛ [دليل JEB](../providers/jeb-analysis.md)                                                      |
