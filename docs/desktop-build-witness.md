@@ -318,9 +318,10 @@ The model endpoint is the one agentenv reads where REA starts,
 Each solve uses a private agentenv sandbox root. If the helper stops before
 reporting cleanup, REA terminates each sandbox agentenv lists under that root
 (`local_sandbox_ids`), including one killed while it recorded its ports, and
-keeps the root when cleanup fails. The pinned provider can remove a folder after an
-unverified teardown, so a missing report still leaves cleanup unknown. On
-macOS, REA cannot verify host processes left by a recovered sandbox.
+keeps the root when cleanup fails. agentenv keeps a sandbox's folder until its
+teardown is confirmed, so once that root is empty the solve's cleanup is
+verified, report or not. On macOS, REA cannot verify host processes left by a
+recovered sandbox.
 
 | Solves finished | Passes    | Band       | Next          |
 | --------------- | --------- | ---------- | ------------- |

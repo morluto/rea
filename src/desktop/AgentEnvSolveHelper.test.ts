@@ -62,16 +62,35 @@ describe("runSolveHelper", () => {
       timing: { solveMs: 60_000, stopMs: 300 },
     });
 
-    await expect(solved).rejects.toMatchObject({
-      cleanupIncomplete: true,
-      cleanupResources: ["agentenv sandbox identity unknown"],
-      diagnostics: {
-        reason: expect.stringContaining("cannot verify a sandbox"),
-      },
-    });
+    // agentenv keeps a sandbox's folder until its teardown is confirmed, so the
+    // emptied private root shows nothing is left up: only the cancellation remains.
+    const failure: unknown = await solved.then(
+      () => undefined,
+      (error: unknown) => error,
+    );
+    expect(failure).toBeInstanceOf(Error);
+    expect((failure as Error).message).toBe("cancelled by the test");
+    expect(failure).not.toHaveProperty("cleanupIncomplete", true);
     await started;
     expect(retained).toHaveLength(0);
     expect(Date.now() - begun).toBeLessThan(15_000);
+  }, 30_000);
+
+  it("reports a helper killed at its deadline without a report as failed, with its cleanup known", async () => {
+    const runner = await fakeAgentEnvSolves([SOLVE]);
+    const environment = { ...runner.environment, FAKE_SOLVE_HANGS: "1" };
+    const retained: SolveCleanupOwner[] = [];
+
+    const report = await runSolveHelper({
+      ...(await options(environment)),
+      signal: new AbortController().signal,
+      retainCleanup: (owner) => retained.push(owner),
+      timing: { solveMs: 1_000, stopMs: 300 },
+    });
+
+    expect(report.error).toContain("without a report");
+    expect(report.cleanup).toEqual({ unknown: false, sandboxes: [] });
+    expect(retained).toHaveLength(0);
   }, 30_000);
 
   it("keeps a helper whose cleanup failed, so closing can retry it, and reports what is left", async () => {

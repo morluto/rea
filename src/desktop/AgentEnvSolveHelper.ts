@@ -259,7 +259,7 @@ export const runSolveHelper = async (options: {
   const pending = new Map(
     (report?.cleanup?.sandboxes ?? []).map((item) => [item.id, item.type]),
   );
-  const unknown = report?.cleanup?.unknown ?? true;
+  let unknown = report?.cleanup?.unknown ?? true;
   const resources = () => [
     ...(processPending
       ? [`process group ${String(spawned.ownership.processGroupId)}`]
@@ -291,6 +291,8 @@ export const runSolveHelper = async (options: {
         failures.push(rootCleanup.reason);
       if (failures.length > 0)
         return { status: "incomplete", reason: failures.join(" ") };
+      // The solve's sandboxes are all local under its private root, and agentenv keeps a sandbox's folder until its teardown is confirmed, so an emptied root leaves none up.
+      if (sandboxRoot.removed) unknown = false;
       if (!unknown) cleanupError?.resolveCleanup();
       return { status: "verified-cleanup" };
     },
@@ -305,7 +307,7 @@ export const runSolveHelper = async (options: {
     const reason =
       cleanup.status === "incomplete"
         ? cleanup.reason
-        : "The helper ended before identifying every sandbox; REA cleaned discoverable folders but cannot verify a sandbox whose folder agentenv already removed.";
+        : "The helper ended before identifying every sandbox, and REA could not empty its sandbox root.";
     cleanupError = new SolveCleanupError(
       report,
       resources(),
@@ -332,7 +334,7 @@ export const runSolveHelper = async (options: {
   return (
     report ?? {
       error: `REA's solve helper ended (exit ${String(exit?.code ?? exit?.signal)}) without a report: ${supervisor.snapshot().stderr.text.slice(-2000)}`,
-      cleanup: { unknown: true, sandboxes: [] },
+      cleanup: { unknown, sandboxes: [] },
     }
   );
 };
