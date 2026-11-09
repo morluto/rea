@@ -303,6 +303,18 @@ _ensure_state_aliases(home)
     }),
   ).toThrow();
   expect(await readFile(join(other, "settings"), "utf8")).toBe("preserve");
+
+  const empty = join(root, "empty-home");
+  await mkdir(empty);
+  const emptySeed = join(root, "empty-seed");
+  await mkdir(emptySeed);
+  execPython(["-I", "-B", "-c", program, emptySeed, empty], {
+    encoding: "utf8",
+  });
+  await writeFile(join(empty, "settings", "new.ini"), "new settings");
+  expect(
+    await readFile(join(empty, ".config", "notes", "new.ini"), "utf8"),
+  ).toBe("new settings");
 });
 
 /** A stand-in xprop answering the root window list and each window's class and state from a table. */
