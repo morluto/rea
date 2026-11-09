@@ -33,7 +33,7 @@ compiled provider/service modules and catalog metadata were byte-identical to
 baseline main `180ba03bf` at the initial source freeze. This does not prove
 arbitrary function introspection equivalence: custom
 `.listener` properties and raw wrapper re-registration retain the limitations
-documented in [Electron observation](../electron-observation.md).
+documented in [Electron observation](../guides/javascript/electron-observation.md).
 
 ## Unchanged real application and observed scenario
 
@@ -102,7 +102,7 @@ events alone do not establish lower token cost.
 Full static checks passed (two tasks, no cache hits): 89.441 s wall,
 88.630288 family CPU s and 4,337,172,480 peak cgroup bytes, with no OOM.
 Documentation checks also passed (6 tasks plus five README consistency cases).
-The [selected JSON record](electron-ipc-listeners-2026-10-16.json) retains exact
+The [selected JSON record](https://github.com/morluto/rea/blob/main/docs/verification/electron-ipc-listeners-2026-10-16.json) retains exact
 source/input identities, failed attempts, coverage, IPC and resource receipts.
 Historical diagnostic helper hashes were not captured and remain explicitly
 unknown; the frozen hash is not assigned to them retrospectively.

@@ -31,7 +31,7 @@ const signalInputShape = z.strictObject({
     .int()
     .nonnegative()
     .default(0)
-    .describe("Skip this many literal LF-separated output lines; default 0"),
+    .describe("Skip this many literal LF-separated output lines"),
   line_limit: z
     .number()
     .int()

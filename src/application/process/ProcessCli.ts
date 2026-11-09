@@ -26,8 +26,10 @@ import { ProcessCaptureResourceScope } from "../../process/capture/ProcessCaptur
 import { ProcessCaptureError } from "../../process/capture/ProcessCaptureError.js";
 import {
   createProcessCaptureEvidence,
+  createProcessScenarioPlanEvidence,
   type ProcessCaptureEvidenceFailure,
 } from "./ProcessEvidence.js";
+import { prepareProcessScenarioPlan } from "./ProcessScenarioPreparation.js";
 import { readJsonFile } from "../JsonFiles.js";
 import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
 import { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
@@ -58,6 +60,17 @@ export const captureProcessScenarioFile = async (
         input,
         { cause: parsed.error },
       );
+    if (parsed.data.dry_run) {
+      const prepared = await prepareProcessScenarioPlan(
+        parsed.data,
+        environment,
+        process.platform,
+        signal,
+      );
+      return prepared.ok
+        ? createProcessScenarioPlanEvidence(prepared.value, process.platform)
+        : cliAnalysisError(prepared.error);
+    }
     const progress = createProgressReporter(
       async (update) => {
         process.stderr.write(`${JSON.stringify({ rea_progress: update })}\n`);
@@ -252,7 +265,7 @@ const cliAnalysisError = (error: AnalysisError): ProcessCliErrorOutput => ({
  * This catch includes target execution, and the projection stays non-retryable.
  * Tell the user what happened; do not ask them to run the command again.
  */
-export const PROCESS_UNEXPECTED_FAILURE_REMEDIATION =
+const PROCESS_UNEXPECTED_FAILURE_REMEDIATION =
   "Do not repeat this command. Tell the user the process command could not complete and ask them to check the input files, then run `rea doctor`.";
 
 /** Preserve typed failures and local diagnostics at the process CLI boundary. */
