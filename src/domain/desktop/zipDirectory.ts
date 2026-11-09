@@ -31,6 +31,23 @@ export interface ZipDirectory {
   readonly count: number;
 }
 
+/** A Zip64 end record may have an opaque variable-length extensible sector. */
+const zip64DirectoryEnd = (view: DataView, record: number, locator: number) => {
+  if (
+    record < 0 ||
+    record + ZIP64_END_BYTES > locator ||
+    view.getUint32(record, true) !== ZIP64_END
+  )
+    return undefined;
+  const size = view.getBigUint64(record + 4, true);
+  if (size < 44n || size !== BigInt(locator - record - 12)) return undefined;
+  return {
+    end: record,
+    size: Number(view.getBigUint64(record + 40, true)),
+    declaredOffset: Number(view.getBigUint64(record + 48, true)),
+  };
+};
+
 /** Where the directory ends, how long it is and the offset it declares, from the end record and any Zip64 one. */
 const directoryEnd = (view: DataView) => {
   const window = Math.max(
@@ -48,20 +65,19 @@ const directoryEnd = (view: DataView) => {
   const end = window + found.value.offset;
   const { totalEntries, directorySize, directoryOffset } = found.value;
   const classic = { end, size: directorySize, declaredOffset: directoryOffset };
-  const record = end - ZIP64_LOCATOR_BYTES - ZIP64_END_BYTES;
+  const locator = end - ZIP64_LOCATOR_BYTES;
   // Like Python's zipfile, a Zip64 locator is followed whether or not the classic record defers to it.
-  if (
-    record < 0 ||
-    view.getUint32(end - ZIP64_LOCATOR_BYTES, true) !== ZIP64_LOCATOR
-  )
+  if (locator < 0 || view.getUint32(locator, true) !== ZIP64_LOCATOR)
     return classic;
-  // Read just before its locator, where zipfile and zip.js look when the locator's own offset holds no Zip64 record.
-  if (view.getUint32(record, true) === ZIP64_END)
-    return {
-      end: record,
-      size: Number(view.getBigUint64(record + 40, true)),
-      declaredOffset: Number(view.getBigUint64(record + 48, true)),
-    };
+  const declared = view.getBigUint64(locator + 8, true);
+  // Follow the declared frame first; opaque extension bytes may themselves
+  // resemble a fixed-size record. Keep the existing prepended-archive fallback.
+  const record =
+    declared <= BigInt(locator - ZIP64_END_BYTES) ? Number(declared) : -1;
+  const located =
+    zip64DirectoryEnd(view, record, locator) ??
+    zip64DirectoryEnd(view, locator - ZIP64_END_BYTES, locator);
+  if (located !== undefined) return located;
   // Without one the classic values stand, as zip.js reads them, unless they are sentinels deferring to it.
   const deferred =
     totalEntries === 0xffff ||
