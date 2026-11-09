@@ -1,4 +1,9 @@
 import { expect, it } from "vitest";
+import {
+  isJsonModuleTarget,
+  isNativeAddonModuleTarget,
+  moduleResolutionModeForJavaScriptReference,
+} from "./javascriptModuleResolutionMode.js";
 import * as t from "@babel/types";
 
 import {
@@ -21,18 +26,54 @@ import {
   parserPluginsForPath,
 } from "./javascriptSourceParser.js";
 
+it("does not treat suffix-only dotfiles as JSON or native addon loaders", () => {
+  expect(isJsonModuleTarget(".json", "json")).toBe(false);
+  expect(isNativeAddonModuleTarget(".node", "native-addon")).toBe(false);
+  expect(isJsonModuleTarget("value.json", "json")).toBe(true);
+  expect(isNativeAddonModuleTarget("value.node", "native-addon")).toBe(true);
+});
+
 it.each([
+  ["entry.cjs", "require"],
+  ["entry.cts", "require"],
+  ["entry.CJS", "import"],
+  ["entry.CTS", "import"],
+  ["entry.TS", "compiler-dependent"],
+] as const)(
+  "uses exact loader evidence for static imports from %s",
+  (path, expected) => {
+    expect(
+      moduleResolutionModeForJavaScriptReference(path, "static-import"),
+    ).toBe(expected);
+  },
+);
+
+it.each([
+  [".js", "module", "unknown"],
+  [".ts", "commonjs", "unknown"],
+  [".mjs", "commonjs", "unknown"],
+  [".cjs", "module", "unknown"],
   ["entry.cjs", "module", "commonjs"],
   ["entry.cts", "module", "commonjs"],
   ["entry.mjs", "commonjs", "module"],
   ["entry.mts", "commonjs", "module"],
+  ["entry.MJS", "commonjs", "unknown"],
+  ["entry.CJS", "module", "unknown"],
+  ["entry.MTS", "commonjs", "unknown"],
+  ["entry.CTS", "module", "unknown"],
   ["entry.d.cts", "module", "unknown"],
+  ["entry.D.cts", "module", "unknown"],
   ["entry.d.ts", "commonjs", "unknown"],
   ["entry.d.mts", "commonjs", "module"],
   ["entry.jsx", "commonjs", "unknown"],
   ["entry.tsx", "commonjs", "unknown"],
   ["entry.js", "module", "module"],
   ["entry.ts", "commonjs", "commonjs"],
+  ["entry.JS", "module", "unknown"],
+  ["entry.JS", "commonjs", "unknown"],
+  ["entry.JS", "unspecified", "unknown"],
+  ["entry.TS", "module", "unknown"],
+  ["entry.TS", "commonjs", "unknown"],
   ["entry.js", "unspecified", "commonjs"],
   ["entry.ts", "unspecified", "unknown"],
   ["entry.js", "unknown", "unknown"],
@@ -62,6 +103,34 @@ it("does not derive factory authority from an ambient require in a proven module
   expect(file.errors).toEqual([]);
   expect(analyzeParsedJavaScriptSemantics(file).moduleLinks).toEqual([]);
   expect([...referenceSourceRequireCalls(file, "entry.js")]).toEqual([]);
+});
+
+it.each([
+  "entry.JS",
+  "entry.MJS",
+  "entry.CJS",
+  "entry.TS",
+  "entry.MTS",
+  "entry.CTS",
+  ".MJS",
+])("retains unknown host authority for mixed module syntax in %s", (path) => {
+  const { file } = parseRecoveredJavaScript(
+    'import {join} from "node:path"; require("./dep.cjs");',
+    path,
+    { plugins: parserPluginsForPath(path) },
+    "module",
+  );
+  expect(javaScriptRuntimeContext(file.program)).toBe("unknown");
+  expect(analyzeParsedJavaScriptSemantics(file).moduleLinks).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({ kind: "import", specifier: "node:path" }),
+      expect.objectContaining({
+        kind: "require",
+        specifier: "./dep.cjs",
+        loaderAuthority: "candidate",
+      }),
+    ]),
+  );
 });
 
 it.each([
@@ -111,6 +180,86 @@ it.each([
     );
   },
 );
+
+it.each([
+  ["unbound", 'require("./dep.cjs");'],
+  ["var redeclaration", 'var require; require("./dep.cjs");'],
+  ["var initializer", 'var require; require = require("./dep.cjs");'],
+] as const)(
+  "does not infer a CommonJS wrapper from %s in unknown runtime context",
+  (_name, source) => {
+    const { file } = parseRecoveredJavaScript(
+      source,
+      "entry.MJS",
+      {},
+      "commonjs",
+    );
+    expect(javaScriptRuntimeContext(file.program)).toBe("unknown");
+    const links = analyzeParsedJavaScriptSemantics(file).moduleLinks;
+    expect(links.filter((link) => link.specifier === "./dep.cjs")).toEqual([
+      expect.objectContaining({
+        kind: "require",
+        loaderAuthority: "candidate",
+      }),
+    ]);
+  },
+);
+
+it.each([
+  ["module.exports = 1;", "default"],
+  ["var module; module.exports = 1;", "default"],
+  ["var exports; exports.value = 1;", "value"],
+] as const)("retains unknown-host export candidates for %s", (source, name) => {
+  const { file } = parseRecoveredJavaScript(
+    source,
+    "entry.MJS",
+    {},
+    "commonjs",
+  );
+  expect(analyzeParsedJavaScriptSemantics(file).moduleLinks).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({
+        kind: "commonjs-export",
+        exportedName: name,
+        loaderAuthority: "candidate",
+      }),
+    ]),
+  );
+});
+
+it("does not claim an unbound module export in a known ES module", () => {
+  const { file } = parseRecoveredJavaScript(
+    "module.exports = 1;",
+    "entry.mjs",
+    {},
+  );
+  expect(analyzeParsedJavaScriptSemantics(file).moduleLinks).toEqual([]);
+});
+
+it("retains conditional require provenance through aliases without claiming a host loader", () => {
+  const source =
+    'const { ipcMain: bus } = require("electron"); const alias = bus;';
+  const { file } = parseRecoveredJavaScript(
+    source,
+    "entry.MJS",
+    {},
+    "commonjs",
+  );
+  const ir = analyzeParsedJavaScriptSemantics(file);
+  for (const name of ["bus", "alias"]) {
+    const binding = ir.bindings.find((item) => item.name === name);
+    expect(binding?.provenance).toMatchObject({
+      status: "ambiguous",
+      origins: [
+        {
+          specifier: "electron",
+          importedPath: ["ipcMain"],
+          loaderAuthority: "candidate",
+        },
+      ],
+    });
+  }
+});
 
 it("detects JavaScript module syntax within an observed unspecified package", () => {
   const { file } = parseRecoveredJavaScript(
