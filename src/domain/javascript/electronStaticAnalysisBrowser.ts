@@ -14,6 +14,7 @@ import { contextBridgeExposureArguments } from "./javascriptContextBridgeExposur
 import {
   boundedExpression,
   collectContextBridgeMembers,
+  electronCandidateAuthority,
   electronCalleePath,
   electronStaticValue,
 } from "./electronStaticAnalysisValues.js";
@@ -38,25 +39,25 @@ import {
   hasElectronOptionObjectCandidate,
   resolveElectronOptionObject,
 } from "./electronStaticOptionObjects.js";
+import {
+  ELECTRON_WINDOW_CONSTRUCTOR_SURFACES,
+  electronWindowConstructor,
+  type ElectronWindowConstructorSurface,
+} from "./electronWindowConstructorSurfaces.js";
 
-/** Constructors whose webPreferences surface is read the same way as BrowserWindow. */
-const WINDOW_CONSTRUCTORS: ReadonlySet<string> =
-  new Set<ElectronWindowConstructor>([
-    "BrowserWindow",
-    "BaseWindow",
-    "BrowserView",
-    "WebContentsView",
-  ]);
+const constructorSurfaces = (
+  constructor: ElectronWindowConstructor,
+): ElectronWindowConstructorSurface =>
+  ELECTRON_WINDOW_CONSTRUCTOR_SURFACES[constructor];
 
-const windowConstructor = (
+/** The modeled window constructor a `new` callee names, if any. */
+const electronWindowConstructorOf = (
   callee: t.Node,
   context: JavaScriptFindingContext,
 ): ElectronWindowConstructor | undefined => {
   const path = electronCalleePath(callee, context);
   const name = path?.length === 1 ? path[0] : undefined;
-  return name !== undefined && WINDOW_CONSTRUCTORS.has(name)
-    ? (name as ElectronWindowConstructor)
-    : undefined;
+  return name === undefined ? undefined : electronWindowConstructor(name);
 };
 
 /** Inspect BrowserWindow, contextBridge, and utility-process syntax. */
@@ -65,10 +66,15 @@ export const inspectElectronBrowserNode = (
   context: JavaScriptFindingContext,
 ): void => {
   if (t.isNewExpression(node)) {
-    if (windowConstructor(node.callee, context) !== undefined) {
-      if (needsConstantOptions(node))
-        context.accumulator.pendingBrowserWindows.push(node);
-      else inspectBrowserWindow(node, context);
+    const constructor = electronWindowConstructorOf(node.callee, context);
+    if (constructor !== undefined) {
+      const preferences = constructorSurfaces(constructor).preferences;
+      if (preferences && needsConstantOptions(node))
+        context.accumulator.pendingBrowserWindows.push({
+          node,
+          constructor,
+        });
+      else inspectBrowserWindow(node, context, constructor);
     }
   }
   if (!t.isCallExpression(node) && !t.isOptionalCallExpression(node)) return;
@@ -95,7 +101,7 @@ export function* finishElectronBrowserWindowsSteps(
   const pending = context.accumulator.pendingBrowserWindows;
   if (pending.length === 0) return;
   if (
-    pending.some((node) => {
+    pending.some(({ node }) => {
       const argument = argumentNode(node.arguments[0]);
       const options = argument && unwrapJavaScriptExpression(argument).node;
       if (t.isIdentifier(options))
@@ -108,8 +114,8 @@ export function* finishElectronBrowserWindowsSteps(
     })
   )
     yield* index.indexMemberMutationFactsSteps();
-  for (const node of pending) {
-    inspectBrowserWindow(node, context, index);
+  for (const { node, constructor } of pending) {
+    inspectBrowserWindow(node, context, constructor, index);
     yield;
   }
   // Inline findings arrive during traversal; deferred findings join that same
@@ -123,19 +129,25 @@ export function* finishElectronBrowserWindowsSteps(
 const inspectBrowserWindow = (
   node: t.NewExpression,
   context: JavaScriptFindingContext,
+  constructorName: ElectronWindowConstructor,
   index?: JavaScriptBindingIndex,
 ): void => {
-  const constructorName =
-    windowConstructor(node.callee, context) ?? "BrowserWindow";
+  // A constructor that accepts no webPreferences has none to read: the literal
+  // option it carries is inert, so reporting it as a preference surface would
+  // invent a preload the runtime never loads.
+  const readsPreferences = constructorSurfaces(constructorName).preferences;
   const argument = argumentNode(node.arguments[0]);
   const options =
     argument === undefined
       ? undefined
       : unwrapJavaScriptExpression(argument).node;
-  const resolvedOptions =
-    (index &&
-      resolveElectronOptionObject(options, node, index, ["webPreferences"])) ??
-    options;
+  const resolvedOptions = readsPreferences
+    ? ((index &&
+        resolveElectronOptionObject(options, node, index, [
+          "webPreferences",
+        ])) ??
+      options)
+    : options;
   const lookup = staticObjectProperty(resolvedOptions, "webPreferences");
   const declaredPreferences =
     lookup.status === "explicit"
@@ -155,12 +167,13 @@ const inspectBrowserWindow = (
   ];
   const collected = collectWindowOptions(
     context.source,
-    lookup.status,
-    resolvedPreferences,
+    readsPreferences ? lookup.status : "missing",
+    readsPreferences ? resolvedPreferences : undefined,
     context.pathIntrinsics,
   );
   context.accumulator.unknownFindings += collected.unknown;
   const finding: ElectronBrowserWindowFinding = {
+    ...electronCandidateAuthority(node.callee, context),
     ...(constructorName === "BrowserWindow"
       ? {}
       : { window_constructor: constructorName }),
@@ -180,6 +193,7 @@ const inspectBrowserWindow = (
     location: range(node),
   };
   if (
+    finding.loader_authority !== "candidate" &&
     finding.preload_path !== null &&
     finding.preload_resolution_context !== null
   )
@@ -330,6 +344,7 @@ const inspectContextBridge = (
         ? { api_key: key.value, api_key_expression: null }
         : { api_key: null, api_key_expression: null };
   const finding: ElectronContextBridgeFinding = {
+    ...electronCandidateAuthority(node.callee, context),
     ...apiKey,
     world: exposure.world,
     world_id: worldId,
@@ -398,6 +413,7 @@ const inspectUtilityProcess = (
           module_expression: null,
         };
   const finding: ElectronUtilityProcessFinding = {
+    ...electronCandidateAuthority(node.callee, context),
     ...moduleReference,
     service_name: serviceName ?? null,
     module_key: null,

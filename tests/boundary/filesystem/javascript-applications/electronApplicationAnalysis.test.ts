@@ -164,6 +164,59 @@ describe("static Electron application analysis", () => {
   });
 });
 
+describe("view constructor surfaces", () => {
+  it("reconstructs view constructors without inventing window surfaces", async () => {
+    const root = await viewConstructorFixtureDirectory();
+
+    const result = await reconstructJavaScriptArtifact({ input_path: root });
+    const graph = parseJavaScriptApplicationGraph(result.graph);
+
+    const windows = graph.nodes.filter(({ kind }) => kind === "browser-window");
+    expect(windows).toHaveLength(2);
+    const byLabel = (prefix: string) =>
+      windows
+        .flatMap(({ observations }) => observations)
+        .find(({ label }) => label.startsWith(`${prefix}@`))?.properties ?? {};
+    const browserWindow = byLabel("BrowserWindow");
+    const baseWindow = byLabel("BaseWindow");
+    // A control: BrowserWindow keeps its construction label and surface.
+    expect(browserWindow).toMatchObject({
+      options_status: "object-literal",
+      web_preferences_status: "object-literal",
+      preload_path: "./browser-preload.js",
+    });
+    expect(browserWindow).not.toHaveProperty("window_constructor");
+    expect(windows.map(({ observations }) => observations[0]?.label)).toEqual(
+      expect.arrayContaining([
+        expect.stringMatching(/^BrowserWindow@/u),
+        expect.stringMatching(/^BaseWindow@/u),
+      ]),
+    );
+    // BaseWindow accepts no webPreferences and exposes no webContents, so its
+    // inert option must not become a preload or an IPC surface.
+    expect(baseWindow).toMatchObject({
+      window_constructor: "BaseWindow",
+      options_status: "object-literal",
+      web_preferences_status: "missing",
+      preload_path: null,
+    });
+    const preloadRoles = graph.nodes.filter(
+      ({ kind }) => kind === "electron-preload",
+    );
+    expect(preloadRoles).toHaveLength(1);
+    expect(preloadRoles[0]?.observations[0]?.properties).toMatchObject({
+      declared_path: "./browser-preload.js",
+    });
+    expect(result.electron_summary.ipc).toMatchObject({
+      main_handlers: 1,
+    });
+    const channels = graph.nodes.filter(({ kind }) => kind === "ipc-channel");
+    expect(channels.flatMap(({ observations }) => observations)).toHaveLength(
+      1,
+    );
+  });
+});
+
 describe("native addon association", () => {
   it.each([
     { native: false, associations: [] },
@@ -177,7 +230,7 @@ describe("native addon association", () => {
       const root = await createTestTempDirectory("rea-electron-addon-kind-");
       await Promise.all([
         writeFile(
-          join(root, "main.js"),
+          join(root, "main.cjs"),
           'const addon = require("./addon.node");\nvoid addon;\n',
         ),
         writeFile(
@@ -602,6 +655,36 @@ const fixtureDirectory = async (): Promise<string> => {
   return root;
 };
 
+const viewConstructorFixtureDirectory = async (): Promise<string> => {
+  const root = await createTestTempDirectory("rea-electron-view-constructors-");
+  await Promise.all([
+    writeFile(
+      join(root, "package.json"),
+      JSON.stringify({
+        name: "rea-electron-view-constructors",
+        main: "main.cjs",
+      }),
+    ),
+    writeFile(join(root, "browser-preload.js"), "module.exports = {};"),
+    writeFile(
+      join(root, "main.cjs"),
+      String.raw`
+const { BrowserWindow, BaseWindow } = require("electron");
+const window = new BrowserWindow({
+  webPreferences: { preload: "./browser-preload.js" },
+});
+window.webContents.ipc.handle("window-channel", () => "window");
+const base = new BaseWindow({
+  width: 800,
+  webPreferences: { preload: "./view-preload.js" },
+});
+base.webContents.ipc.handle("base-channel", () => "base");
+`,
+    ),
+  ]);
+  return root;
+};
+
 const requireAliasFixtureDirectory = async (): Promise<string> => {
   const root = await createTestTempDirectory("rea-electron-require-aliases-");
   await Promise.all([
@@ -690,7 +773,7 @@ const computedMemberFixtureDirectory = async (): Promise<string> => {
   await mkdir(join(root, "native"));
   await Promise.all([
     writeFile(
-      join(root, "main.js"),
+      join(root, "main.cjs"),
       String.raw`
 const member = "read";
 const selected = require("./native/addon.node")[member];
