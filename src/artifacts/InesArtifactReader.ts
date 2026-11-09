@@ -8,6 +8,7 @@ import {
 import type { ArtifactCommand } from "../domain/artifactGraph.js";
 import {
   RegularFileChangedError,
+  RegularFileOperationCancelled,
   assertStableRegularFileIdentity,
   type StableRegularFileDescriptor,
 } from "../filesystem/RegularFile.js";
@@ -92,6 +93,10 @@ export class InesArtifactReader implements ArtifactReader {
       start: offset,
       end: offset + size - 1,
       signal,
+      cancellationFailure: (reason) =>
+        new ArtifactReaderFailure("cancelled", "Artifact inventory cancelled", {
+          cause: reason,
+        }),
     });
     const verify = () => this.#verifySource(signal);
     return Readable.from(
@@ -111,7 +116,6 @@ export class InesArtifactReader implements ArtifactReader {
             );
           await verify();
         } catch (cause: unknown) {
-          abortIfNeeded(signal);
           if (cause instanceof ArtifactReaderFailure) throw cause;
           throw new ArtifactReaderFailure("io", "Could not read iNES region", {
             cause,
@@ -177,7 +181,14 @@ export class InesArtifactReader implements ArtifactReader {
         { symlinks: "reject", ...(signal === undefined ? {} : { signal }) },
       );
     } catch (cause: unknown) {
-      abortIfNeeded(signal);
+      if (cause instanceof RegularFileOperationCancelled)
+        throw new ArtifactReaderFailure(
+          "cancelled",
+          "Artifact inventory cancelled",
+          {
+            cause: cause.reason,
+          },
+        );
       if (cause instanceof RegularFileChangedError)
         throw new ArtifactReaderFailure(
           "integrity",

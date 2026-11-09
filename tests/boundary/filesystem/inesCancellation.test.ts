@@ -318,3 +318,101 @@ it.each([
     }
   },
 );
+
+it.each(["read", "stat"] as const)(
+  "preserves an iNES descriptor %s failure concurrent with cancellation",
+  async (phase) => {
+    const root = await createTestTempDirectory("rea-ines-physical-failure-");
+    const path = join(root, "source.nes");
+    await writeFile(path, inesFixture());
+    const handle = await open(path, "r");
+    const reader = new InesArtifactReader(path, {
+      handle,
+      initial: await handle.stat(),
+    });
+    const controller = new AbortController();
+    const physical = Object.assign(new Error("descriptor I/O failed"), {
+      code: "EIO",
+    });
+    let restore = () => {};
+    try {
+      const entries = [];
+      for await (const entry of reader.entries()) entries.push(entry);
+      const entry = entries[0];
+      if (entry === undefined) throw new Error("Missing iNES region");
+      if (phase === "stat") {
+        const spy = vi
+          .spyOn(handle, "stat")
+          .mockImplementationOnce(async () => {
+            controller.abort("caller stopped");
+            throw physical;
+          });
+        restore = () => spy.mockRestore();
+        await expect(reader.open(entry, controller.signal)).rejects.toBe(
+          physical,
+        );
+      } else {
+        const stream = await reader.open(entry, controller.signal);
+        const spy = vi
+          .spyOn(handle, "read")
+          .mockImplementationOnce(async () => {
+            controller.abort("caller stopped");
+            throw physical;
+          });
+        restore = () => spy.mockRestore();
+        await expect(
+          (async () => {
+            for await (const _ of stream) {
+              /* consume */
+            }
+          })(),
+        ).rejects.toMatchObject({ reason: "io", cause: physical });
+      }
+    } finally {
+      restore();
+      await reader.close();
+      await handle.close();
+    }
+  },
+);
+
+it("preserves the caller reason when a completed iNES read observes cancellation", async () => {
+  const root = await createTestTempDirectory("rea-ines-stream-cancel-");
+  const path = join(root, "source.nes");
+  await writeFile(path, inesFixture());
+  const handle = await open(path, "r");
+  const reader = new InesArtifactReader(path, {
+    handle,
+    initial: await handle.stat(),
+  });
+  const controller = new AbortController();
+  const reason = { source: "caller" };
+  let restore = () => {};
+  try {
+    const entries = [];
+    for await (const entry of reader.entries()) entries.push(entry);
+    const entry = entries[0];
+    if (entry === undefined) throw new Error("Missing iNES region");
+    const stream = await reader.open(entry, controller.signal);
+    const original = handle.read.bind(handle);
+    const spy = vi
+      .spyOn(handle, "read")
+      .mockImplementationOnce(async (...args) => {
+        const result = await original(...args);
+        controller.abort(reason);
+        return result;
+      });
+    restore = () => spy.mockRestore();
+    await expect(
+      (async () => {
+        for await (const _ of stream) {
+          /* consume */
+        }
+      })(),
+    ).rejects.toMatchObject({ reason: "cancelled", cause: reason });
+  } finally {
+    restore();
+    await reader.close();
+    await handle.close();
+  }
+});
