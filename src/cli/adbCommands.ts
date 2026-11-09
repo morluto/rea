@@ -357,11 +357,7 @@ export const registerAdbCommands = (
           throw new Error(`--extra expects type:key:value, received: ${entry}`);
         return {
           type: entry.slice(0, first) as
-            | "string"
-            | "boolean"
-            | "int"
-            | "long"
-            | "float",
+            "string" | "boolean" | "int" | "long" | "float",
           key: entry.slice(first + 1, second),
           value: entry.slice(second + 1),
         };
