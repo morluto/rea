@@ -261,6 +261,10 @@ export interface ElectronProtocolFinding {
 export type ElectronDynamicCodeSource =
   | {
       readonly source_path: string;
+      readonly source_path_base?:
+        | "source-directory"
+        | "literal-path"
+        | undefined;
       readonly source_resolution_context: JavaScriptStaticPathContext;
       readonly source_expression: null;
     }

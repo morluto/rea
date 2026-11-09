@@ -78,6 +78,10 @@ const addDynamicCodeSite = (input: DynamicCodeInput): void => {
           cached_data_status: value.cached_data_status,
           cache_path: cache.source_path,
           cache_expression: cache.source_expression,
+          cache_path_base:
+            cache.source_path === null
+              ? null
+              : (cache.source_path_base ?? null),
           resolved_cache_path: resolved?.resolved_path ?? null,
           resolution_status: resolved?.resolution_status ?? null,
           resolution_context: resolved?.resolution_context ?? null,
@@ -110,6 +114,8 @@ const addDynamicCodeSite = (input: DynamicCodeInput): void => {
       api: value.api,
       cache_path: cache.source_path,
       cache_expression: cache.source_expression,
+      cache_path_base:
+        cache.source_path === null ? null : (cache.source_path_base ?? null),
       resolved_cache_path: resolved?.resolved_path ?? null,
       resolution_status: resolved?.resolution_status ?? null,
       resolution_context: resolved?.resolution_context ?? null,
@@ -130,7 +136,11 @@ const resolveCache = (
   file: JavaScriptArtifactFile,
   cache: ElectronDynamicCodeSource,
 ) => {
-  if (cache.source_path === null) return null;
+  if (
+    cache.source_path === null ||
+    cache.source_path_base !== "source-directory"
+  )
+    return null;
   const resolved = resolveArtifactPathByContext({
     declaredPath: cache.source_path,
     sourcePath: file.path,

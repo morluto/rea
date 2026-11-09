@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { analyzeJavaScriptStaticSource } from "./javascriptStaticAnalysis.js";
 
 import { analyzeCommonJsStaticFixture } from "../../../tests/fixtures/javascriptCommonJsAnalysis.js";
 
@@ -22,6 +23,7 @@ describe("node:vm bytecode cache boundaries", () => {
         cached_data_status: "declared",
         cached_data: {
           source_path: "preload.bundle.cache",
+          source_path_base: "source-directory",
           source_resolution_context: "filesystem-expression",
           source_expression: null,
         },
@@ -77,7 +79,7 @@ it("preserves unknown options and conservative constant-option reads without cla
     ['new vm.Script("x", options);', "unknown"],
     [
       'const options = { cachedData: "./cache" }; new vm.Script("x", options);',
-      "unknown",
+      "declared",
     ],
     ['new vm.Script("x", { cachedData: value, ...options });', "unknown"],
     ['new vm.Script("x", { ...options, cachedData: value });', "declared"],
@@ -87,5 +89,73 @@ it("preserves unknown options and conservative constant-option reads without cla
       cached_data_status: status,
       cached_data: { source_path: null },
     });
+  }
+});
+
+it("keeps cache read authority unknown after overwriting the filesystem method", () => {
+  const analysis = analyze(`
+    const fs = require("node:fs");
+    const vm = require("node:vm");
+    fs.readFileSync = fakeReader;
+    new vm.Script(source, { cachedData: fs.readFileSync("./not-a-native-cache") });
+  `);
+  expect(analysis.electron.dynamic_code?.[0]?.cached_data).toMatchObject({
+    source_path: null,
+    source_resolution_context: null,
+  });
+});
+
+it.each([
+  "new vm.Script(...args);",
+  "new vm.Script(source, ...options);",
+  "vm.compileFunction(...args);",
+  "vm.compileFunction(source, ...args);",
+  "vm.compileFunction(source, [], ...options);",
+])(
+  "does not infer cachedData absence through argument spreads: %s",
+  (source) => {
+    const analysis = analyze('const vm = require("node:vm"); ' + source);
+    expect(analysis.electron.dynamic_code?.[0]?.cached_data_status).toBe(
+      "unknown",
+    );
+  },
+);
+
+it.each(['import * as vm from "node:vm";', 'import vm from "node:vm";'])(
+  "recognizes ESM VM callable authority: %s",
+  (declaration) => {
+    const analysis = analyzeJavaScriptStaticSource(
+      declaration + " new vm.Script(source, { cachedData });",
+    );
+    expect(analysis.electron.dynamic_code?.[0]?.cached_data_status).toBe(
+      "declared",
+    );
+  },
+);
+
+it("does not report a replaced VM method as a built-in compilation", () => {
+  const analysis = analyze(
+    'const vm = require("node:vm"); vm.Script = Fake; new vm.Script(source, { cachedData });',
+  );
+  expect(analysis.electron.dynamic_code ?? []).toEqual([]);
+});
+
+it("retains awaited promise reads without treating an unawaited promise as cache bytes", () => {
+  for (const [awaited, expected] of [
+    ["await ", "preload.bundle.cache"],
+    ["", null],
+  ] as const) {
+    const analysis = analyze(`
+      const fs = require("node:fs/promises");
+      const path = require("node:path");
+      const vm = require("node:vm");
+      async function load() {
+        const cachedData = ${awaited}fs.readFile(path.join(__dirname, "preload.bundle.cache"));
+        new vm.Script(source, { cachedData });
+      }
+    `);
+    expect(analysis.electron.dynamic_code?.[0]?.cached_data.source_path).toBe(
+      expected,
+    );
   }
 });

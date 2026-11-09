@@ -11,7 +11,6 @@ import {
   electronStaticValue,
 } from "./electronStaticAnalysisValues.js";
 import { builtinDataEffectCallablePath } from "./javascriptSemanticDataEffectHelpers.js";
-import { evaluateSemanticExpressionProvenance } from "./javascriptSemanticValues.js";
 import {
   semanticStaticPropertyKey,
   staticObjectProperty,
@@ -69,6 +68,7 @@ export function* finishElectronDynamicCodeSteps(
 ): Generator<void, void> {
   const pending = context.accumulator.pendingDynamicCode;
   if (pending.length === 0) return;
+  yield* index.indexMemberMutationFactsSteps();
   for (const node of pending) {
     const api = t.isNewExpression(node)
       ? vmMemberAt(node.callee, index) === "Script"
@@ -90,58 +90,25 @@ export function* finishElectronDynamicCodeSteps(
   pending.length = 0;
 }
 
-/**
- * The `vm` member name. Provenance through the shared module-origin owner plus a
- * single unrebound `const` initializer establishes that the object is the
- * built-in module and was not reassigned, so a local `vm` names no VM API.
- */
+/** Resolve the complete callable through the shared built-in identity owner. */
 const vmMemberAt = (
   callee: t.Node,
   index: JavaScriptBindingIndex,
 ): string | undefined => {
-  const node = unwrapJavaScriptExpression(callee).node;
-  if (!t.isMemberExpression(node) && !t.isOptionalMemberExpression(node))
-    return undefined;
-  const member = semanticStaticPropertyKey(node.property, node.computed);
-  if (member === null) return undefined;
-  return provenVmModule(node.object, index) ? member : undefined;
-};
-
-const provenVmModule = (
-  object: t.Node,
-  index: JavaScriptBindingIndex,
-): boolean => {
-  const provenance = evaluateSemanticExpressionProvenance(
-    object,
-    index.bindings,
-  );
-  if (provenance.status !== "module") return false;
-  const [origin] = provenance.origins;
-  if (
-    provenance.origins.length !== 1 ||
-    origin === undefined ||
-    origin.specifier.replace(/^node:/u, "") !== "vm" ||
-    origin.importedPath.length !== 0
-  )
-    return false;
-  const expression = unwrapJavaScriptExpression(object).node;
-  if (!t.isIdentifier(expression)) return false;
-  const binding = index.bindingForReferenceAt(expression);
-  return (
-    binding !== undefined &&
-    binding.mutable === false &&
-    semanticStableInitializer(binding, index.bindings) !== undefined
-  );
+  const path = builtinDataEffectCallablePath(callee, index.bindings, ["vm"]);
+  return path?.length === 1 ? path[0] : undefined;
 };
 
 function* addCompilation(input: DynamicCodeInput): Generator<void, void> {
   const { context, node, api, cachedDataArgument } = input;
-  const options =
-    cachedDataArgument === "named"
-      ? argumentNode(node.arguments[1])
-      : argumentNode(node.arguments[2]);
-  const lookup =
-    options === undefined
+  const optionsPosition = cachedDataArgument === "named" ? 1 : 2;
+  const spreadBeforeOptions = node.arguments
+    .slice(0, optionsPosition + 1)
+    .some((argument) => t.isSpreadElement(argument));
+  const options = argumentNode(node.arguments[optionsPosition]);
+  const lookup = spreadBeforeOptions
+    ? ({ status: "dynamic" } as const)
+    : options === undefined
       ? ({ status: "missing" } as const)
       : (() => {
           const resolved = resolveElectronOptionObject(
@@ -216,6 +183,7 @@ const sourceOf = (
       }
     : {
         source_path: fact.path,
+        source_path_base: fact.base,
         source_resolution_context: "filesystem-expression",
         source_expression: null,
       };
@@ -226,15 +194,19 @@ const cachePathExpression = (
   index: JavaScriptBindingIndex,
   node: t.Node,
 ): t.Node | undefined => {
-  const expression = unwrapJavaScriptExpression(node).node;
+  const value = unwrapJavaScriptExpression(node).node;
+  const awaited = t.isAwaitExpression(value);
+  const expression = awaited
+    ? unwrapJavaScriptExpression(value.argument).node
+    : value;
   if (!t.isCallExpression(expression)) return undefined;
   const read = builtinDataEffectCallablePath(
     expression.callee,
     index.bindings,
-    ["fs", "fs/promises"],
+    awaited ? ["fs/promises"] : ["fs"],
   );
   const target =
-    read?.at(-1) === "readFileSync"
+    read?.length === 1 && read[0] === (awaited ? "readFile" : "readFileSync")
       ? argumentNode(expression.arguments[0])
       : undefined;
   return target === undefined

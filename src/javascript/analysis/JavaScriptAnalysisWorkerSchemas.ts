@@ -311,6 +311,9 @@ const electron = z
             cached_data: z.union([
               z.strictObject({
                 source_path: z.string(),
+                source_path_base: z
+                  .enum(["source-directory", "literal-path"])
+                  .optional(),
                 source_resolution_context: z.enum([
                   "filesystem-expression",
                   "module-specifier",

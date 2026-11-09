@@ -142,3 +142,21 @@ it("keeps missing, dynamic and arbitrary cachedData sources distinct", async () 
     });
   }
 });
+
+it("does not resolve a cwd-relative filesystem cache to an inventoried source sibling", async () => {
+  const root = await vmFixture(
+    `const fs = require("node:fs"); const vm = require("node:vm"); new vm.Script(source, { cachedData: fs.readFileSync("./preload.bundle.cache") });`,
+  );
+  const result = await reconstructJavaScriptArtifact({ input_path: root });
+  const graph = parseJavaScriptApplicationGraph(result.graph);
+  const observation = graph.nodes
+    .flatMap(({ observations }) => observations)
+    .find(
+      ({ properties }) => properties.compilation_boundary === "v8-cached-data",
+    );
+  expect(observation?.properties).toMatchObject({
+    cache_path: "./preload.bundle.cache",
+    cache_path_base: "literal-path",
+    resolved_cache_path: null,
+  });
+});
