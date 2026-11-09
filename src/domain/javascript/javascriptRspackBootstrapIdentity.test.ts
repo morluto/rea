@@ -409,7 +409,9 @@ describe("bundled Electron module destructuring and member aliases", () => {
       ),
     );
   });
+});
 
+describe("deferred hoisted and nested-block bundled Electron reads", () => {
   it("recovers deferred reads inside hoisted functions declared before bundled imports while rejecting same-activation pre-init reads", () => {
     const deferredSource = rspackGetterBundle(
       `(e) => { var t = e && e.__esModule ? () => e.default : () => e; return r.d(t, { a: t }), t; }`,
@@ -477,6 +479,64 @@ describe("bundled Electron module destructuring and member aliases", () => {
           `,
       ),
     );
+  });
+
+  it("rejects early hoisted calls, pre-init blocks, and member writes before reassignment while admitting post-init blocks", () => {
+    expectNoDirectElectron(
+      rspackGetterBundle(
+        `(e) => { var t = e && e.__esModule ? () => e.default : () => e; return r.d(t, { a: t }), t; }`,
+        `
+            function report() {
+              const { ipcRenderer } = electron_1;
+              ipcRenderer.send("EARLY_CALL");
+            }
+            try { report(); } catch {}
+            const electron_1 = r(91288);
+          `,
+      ),
+    );
+
+    expectNoDirectElectron(
+      rspackGetterBundle(
+        `(e) => { var t = e && e.__esModule ? () => e.default : () => e; return r.d(t, { a: t }), t; }`,
+        `
+            {
+              const { ipcRenderer } = electron_1;
+              ipcRenderer.send("BLOCK_PRE_INIT");
+            }
+            const electron_1 = r(91288);
+          `,
+      ),
+    );
+
+    expectNoDirectElectron(
+      rspackGetterBundle(
+        `(e) => { var t = e && e.__esModule ? () => e.default : () => e; return r.d(t, { a: t }), t; }`,
+        `
+            let electron_1 = r(91288);
+            const captured = electron_1;
+            electron_1.ipcRenderer.send = () => {};
+            electron_1 = null;
+            captured.ipcRenderer.send("MUTATED_BEFORE_REASSIGN");
+          `,
+      ),
+    );
+
+    const postInitBlockAnalysis = analyzeJavaScriptStaticSource(
+      rspackGetterBundle(
+        `(e) => { var t = e && e.__esModule ? () => e.default : () => e; return r.d(t, { a: t }), t; }`,
+        `
+            const electron_1 = r(91288);
+            {
+              const { ipcRenderer } = electron_1;
+              ipcRenderer.send("POST_INIT_BLOCK");
+            }
+          `,
+      ),
+    );
+    expect(postInitBlockAnalysis.electron.ipc).toMatchObject([
+      { channel: "POST_INIT_BLOCK", side: "renderer", operation: "send" },
+    ]);
   });
 });
 

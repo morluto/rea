@@ -11,7 +11,10 @@ import {
   unwrapJavaScriptExpression,
 } from "./javascriptAstValues.js";
 import { collectJavaScriptIdentityWritesSteps } from "./javascriptElectronMemberWrites.js";
-import { semanticBindingAtRead } from "./javascriptSemanticMutationInitializers.js";
+import {
+  semanticBindingAtRead,
+  semanticStableBindingInitializedBeforeRead,
+} from "./javascriptSemanticMutationInitializers.js";
 import { semanticOpaqueBindingReadMayHaveChanged } from "./javascriptSemanticOpaqueEffects.js";
 import { SEMANTIC_ALIAS_SELECTION_LIMIT } from "./javascriptSemanticResourceLimits.js";
 import { createSemanticModuleInterop } from "./javascriptModuleInterop.js";
@@ -279,11 +282,16 @@ const readBundledAliasInitializer = (
     semanticOpaqueBindingReadMayHaveChanged(binding, identifier, state)
   )
     return undefined;
-  const { binding: snapshot } = semanticBindingAtRead(
+  const { binding: snapshot, hasDefiniteInitializer } = semanticBindingAtRead(
     binding,
     identifier,
     state,
   );
+  if (
+    !hasDefiniteInitializer &&
+    !semanticStableBindingInitializedBeforeRead(binding, identifier, state)
+  )
+    return undefined;
   const initializer = semanticStableInitializer(snapshot, state);
   return initializer === undefined ||
     snapshot.referenceInitializers.some(({ assignment }) => assignment) ||

@@ -73,6 +73,7 @@ import {
 import { semanticBundledRequireOrigin } from "./javascriptBundledRequireOrigin.js";
 import { collectSemanticMemberMutationsSteps } from "./javascriptSemanticMemberMutations.js";
 import {
+  semanticBindingAtRead,
   semanticEffectTiming,
   semanticEffectTimingWithinActivation,
 } from "./javascriptSemanticMutationInitializers.js";
@@ -107,7 +108,10 @@ import {
   semanticCoverage,
   RETURNED_REFERENCE_WIDENING_LIMITATION,
 } from "./javascriptSemanticCoverage.js";
-import { semanticResourceLimitReason } from "./javascriptSemanticResourceLimits.js";
+import {
+  SEMANTIC_ALIAS_SELECTION_LIMIT,
+  semanticResourceLimitReason,
+} from "./javascriptSemanticResourceLimits.js";
 import {
   javaScriptRuntimeContext,
   javaScriptProgramStrictness,
@@ -900,20 +904,134 @@ export function* indexJavaScriptElectronIdentitySteps(
     }
     return rootOrigin(root);
   };
+  const memberWriteExports = (
+    root: t.Node,
+  ): readonly (readonly (string | null)[])[] => {
+    const direct = rootOrigin(root);
+    if (direct !== undefined) return [direct];
+    if (!t.isIdentifier(root)) return [];
+    const results: (readonly (string | null)[])[] = [];
+    const seenPaths = new Set<string>();
+    const addPath = (candidate: readonly (string | null)[]): void => {
+      const key = JSON.stringify(candidate);
+      if (!seenPaths.has(key)) {
+        seenPaths.add(key);
+        results.push(candidate);
+      }
+    };
+    const bundled = semanticBundledRequireOrigin(root, state)?.origin;
+    if (bundled !== undefined && ELECTRON_MODULE.test(bundled.specifier))
+      addPath(electronExportPath(bundled.importedPath));
+    const pending: {
+      readonly identifier: t.Identifier;
+      readonly suffix: readonly (string | null)[];
+    }[] = [{ identifier: root, suffix: [] }];
+    const visited = new Set<string>();
+    while (pending.length > 0) {
+      const current = pending.pop();
+      if (current === undefined) continue;
+      if (
+        semanticResolutionBlocked(
+          state,
+          current.identifier,
+          current.identifier.name,
+        )
+      )
+        continue;
+      const binding = resolveSemanticBindingState(
+        state,
+        current.identifier,
+        current.identifier.name,
+      );
+      if (binding === undefined) continue;
+      const visitKey = `${binding.bindingId}@${String(current.identifier.start ?? -1)}`;
+      if (visited.has(visitKey)) continue;
+      if (visited.size >= SEMANTIC_ALIAS_SELECTION_LIMIT) {
+        state.valueResourceLimits.add("alias-selections");
+        break;
+      }
+      visited.add(visitKey);
+      let stable = exportsByBinding.get(binding.bindingId);
+      if (stable === undefined) {
+        stable = electronExport(binding, state, interop);
+        exportsByBinding.set(binding.bindingId, stable);
+      }
+      if (stable !== null) {
+        addPath([...stable, ...current.suffix]);
+        continue;
+      }
+      const snapshot = semanticBindingAtRead(
+        binding,
+        current.identifier,
+        state,
+      ).binding;
+      for (const origin of snapshot.directOrigins)
+        if (ELECTRON_MODULE.test(origin.specifier))
+          addPath([
+            ...electronExportPath(origin.importedPath),
+            ...current.suffix,
+          ]);
+      for (const source of [
+        ...snapshot.initializers,
+        ...snapshot.referenceInitializers,
+      ]) {
+        const projection = source.projection.map((segment) =>
+          typeof segment === "string" ? segment : null,
+        );
+        const nextSuffix = [...projection, ...current.suffix];
+        const directSource =
+          interop.callOrigin(source.node)?.origin ??
+          electronRequireOrigin(source.node, state)?.origin;
+        if (directSource !== undefined) {
+          if (ELECTRON_MODULE.test(directSource.specifier))
+            addPath([
+              ...electronExportPath(directSource.importedPath),
+              ...nextSuffix,
+            ]);
+          continue;
+        }
+        const { root: sourceRoot, members: sourceMembers } = electronMemberPath(
+          source.node,
+        );
+        if (t.isIdentifier(sourceRoot)) {
+          pending.push({
+            identifier: sourceRoot,
+            suffix: [...sourceMembers, ...nextSuffix],
+          });
+        } else {
+          const rootCallOrigin =
+            interop.callOrigin(sourceRoot)?.origin ??
+            electronRequireOrigin(sourceRoot, state)?.origin;
+          if (
+            rootCallOrigin !== undefined &&
+            ELECTRON_MODULE.test(rootCallOrigin.specifier)
+          )
+            addPath([
+              ...electronExportPath(rootCallOrigin.importedPath),
+              ...sourceMembers,
+              ...nextSuffix,
+            ]);
+        }
+      }
+    }
+    return results;
+  };
   yield* collectJavaScriptIdentityWritesSteps(
     program,
     state.erasedSyntaxNodes,
     (node, kind) => {
       if (kind === "opaque-call") return [interop.opaqueMutationPath(node)];
       const { root, members } = electronMemberPath(node);
-      const exported = kind === "binding" ? undefined : rootOrigin(root);
+      const exportedPaths = kind === "binding" ? [] : memberWriteExports(root);
+      if (exportedPaths.length > 0)
+        return exportedPaths.map((exported) => [
+          "electron",
+          ...exported,
+          ...members,
+        ]);
       const path =
-        exported === undefined
-          ? (interop.intrinsicPath(root) ??
-            (kind === "member"
-              ? interop.boundIntrinsic(root)?.path
-              : undefined))
-          : ["electron", ...exported];
+        interop.intrinsicPath(root) ??
+        (kind === "member" ? interop.boundIntrinsic(root)?.path : undefined);
       return path === undefined ? [] : [[...path, ...members]];
     },
     interop.intrinsicInvocation,

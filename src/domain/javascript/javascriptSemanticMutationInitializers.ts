@@ -28,6 +28,7 @@ import {
   resolveSemanticBindingState,
   semanticResolutionBlocked,
   semanticScopeId,
+  semanticStableInitializer,
   semanticPrototypeOwners,
   type SemanticPrototypeOwner,
   type JavaScriptSemanticBindingState,
@@ -1676,6 +1677,67 @@ export const semanticBindingAtRead = (
       ),
     },
   };
+};
+
+/**
+ * Prove that an unmutated single-initializer variable executes before `read`,
+ * including reads inside later nested blocks/closures and hoisted functions
+ * whose earliest body-level reference follows the declaration.
+ */
+export const semanticStableBindingInitializedBeforeRead = (
+  binding: JavaScriptSemanticBindingState,
+  read: t.Node,
+  state: JavaScriptSemanticAnalysisState,
+): boolean => {
+  const initializer = semanticStableInitializer(binding, state);
+  if (
+    initializer === undefined ||
+    binding.referenceInitializers.some(({ assignment }) => assignment) ||
+    (state.bindingWrites.get(binding.bindingId)?.length ?? 0) > 0
+  )
+    return false;
+  const parents = state.parentsByNode;
+  const sourcePosition = initializerPosition(initializer, parents);
+  if (
+    sourcePosition === null ||
+    initializerMayRetainEntry(initializer, binding, parents)
+  )
+    return false;
+  const firstStatement = sourcePosition.body[0];
+  const bodyOwner =
+    firstStatement === undefined ? undefined : parents.get(firstStatement);
+  const bodyParent =
+    bodyOwner === undefined ? undefined : parents.get(bodyOwner);
+  if (
+    !t.isProgram(bodyOwner) &&
+    !(t.isBlockStatement(bodyOwner) && t.isFunction(bodyParent))
+  )
+    return false;
+  let current: t.Node | undefined = read;
+  let ownerStatement: t.Statement | undefined;
+  let ownerDeclarator: t.VariableDeclarator | undefined;
+  while (current !== undefined) {
+    if (t.isVariableDeclarator(current)) ownerDeclarator = current;
+    if (t.isStatement(current)) {
+      const candidate = statementPosition(current, parents, ownerDeclarator);
+      if (candidate !== null && candidate.body === sourcePosition.body) {
+        ownerStatement = current;
+        if (t.isFunctionDeclaration(ownerStatement)) {
+          const firstRead = moduleFunctionFirstRead(
+            ownerStatement,
+            sourcePosition.body,
+            parents,
+            state,
+          );
+          return firstRead !== null && sourcePosition.index < firstRead;
+        }
+        return positionPrecedes(sourcePosition, candidate);
+      }
+      ownerDeclarator = undefined;
+    }
+    current = parents.get(current);
+  }
+  return false;
 };
 
 const selectInitializers = (
