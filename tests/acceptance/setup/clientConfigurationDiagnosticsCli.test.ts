@@ -234,3 +234,49 @@ cliTest.skipIf(process.platform === "win32" || process.getuid?.() === 0)(
     ]);
   },
 );
+
+cliTest(
+  "doctor reports unknown provider readiness for a malformed selected registration",
+  async ({ cli }) => {
+    const home = await createTestTempDirectory(
+      "rea-doctor-unknown-registration-",
+    );
+    const config = join(home, ".config/opencode/opencode.json");
+    await mkdir(dirname(config), { recursive: true });
+    await writeFile(config, "not JSON");
+    const result = await cli.run({
+      arguments: [
+        "doctor",
+        "--client",
+        "opencode",
+        "--provider",
+        "ghidra",
+        "--json",
+      ],
+      cwd: home,
+      environment: {
+        HOME: home,
+        USERPROFILE: home,
+        XDG_CONFIG_HOME: join(home, ".config"),
+        GHIDRA_INSTALL_DIR: join(home, "ghidra"),
+      },
+    });
+    expect(result.exitCode).toBe(1);
+    expect(result.json).toMatchObject({
+      providerInspections: expect.arrayContaining([
+        expect.objectContaining({
+          id: "ghidra",
+          configured: null,
+          available: null,
+        }),
+      ]),
+      scope_checks: expect.arrayContaining([
+        expect.objectContaining({
+          name: "ghidra",
+          classification: "unknown",
+          ok: false,
+        }),
+      ]),
+    });
+  },
+);

@@ -18,6 +18,7 @@ import {
   createPeResourcesService,
   createPeCertificatesService,
   createPeImportsService,
+  createWindowsShortcutService,
   createNativeExportsService,
 } from "../composition/binaryDiagnostics.js";
 import { CLI_COMMANDS } from "../cliCommandNames.js";
@@ -30,6 +31,7 @@ import { inspectRecordedCrashInputSchema } from "../domain/native/recordedCrash.
 import { inspectPeResourcesInputSchema } from "../domain/native/peResources.js";
 import { inspectPeCertificatesInputSchema } from "../domain/native/peCertificates.js";
 import { inspectPeImportsInputSchema } from "../domain/native/peImports.js";
+import { inspectWindowsShortcutInputSchema } from "../domain/native/windowsShortcut.js";
 import { inspectNativeExportsInputSchema } from "../domain/native/nativeExports.js";
 import { inspectElfNotesInputSchema } from "../domain/native/elfNotes.js";
 import { inspectAppleIpsInputSchema } from "../domain/native/appleIps.js";
@@ -374,6 +376,56 @@ export const registerBinaryDiagnosticsCommands = (
               pe,
               "rea-pe-imports",
               "inspect_pe_imports",
+              signal,
+            ).then(projectCliAnalysisResult),
+        );
+      }),
+  });
+  cli.command(CLI_COMMANDS.inspectWindowsShortcut, {
+    description:
+      "Inspect a Windows Shell Link (.lnk) without resolving or executing the target",
+    args: z.object({
+      path: localPathStringSchema.describe(
+        "Local Windows Shell Link (.lnk) file",
+      ),
+    }),
+    options: z.object({
+      maxFileBytes: cliDecimalField(
+        inspectWindowsShortcutInputSchema.shape.max_file_bytes,
+      ),
+      maxIdListItems: cliDecimalField(
+        inspectWindowsShortcutInputSchema.shape.max_id_list_items,
+      ),
+      maxExtraDataBlocks: cliDecimalField(
+        inspectWindowsShortcutInputSchema.shape.max_extra_data_blocks,
+      ),
+      maxStringBytes: cliDecimalField(
+        inspectWindowsShortcutInputSchema.shape.max_string_bytes,
+      ),
+    }),
+    run: ({ args, options }) =>
+      withCommandCancellation(async (signal) => {
+        const shortcut = createWindowsShortcutService();
+        return await logCliCommand(
+          logger,
+          CLI_COMMANDS.inspectWindowsShortcut,
+          async () =>
+            finishCliEvidenceCommand(
+              args.path,
+              () =>
+                shortcut.inspect(
+                  {
+                    path: absoluteCallerPath(args.path),
+                    max_file_bytes: options.maxFileBytes,
+                    max_id_list_items: options.maxIdListItems,
+                    max_extra_data_blocks: options.maxExtraDataBlocks,
+                    max_string_bytes: options.maxStringBytes,
+                  },
+                  { signal },
+                ),
+              shortcut,
+              "rea-windows-shortcut",
+              "inspect_windows_shortcut",
               signal,
             ).then(projectCliAnalysisResult),
         );

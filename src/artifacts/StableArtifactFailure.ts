@@ -1,3 +1,4 @@
+import type { StableArtifactSnapshot } from "./readStableArtifact.js";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
@@ -52,8 +53,9 @@ export const projectStableArtifactFailure = (
   path: string,
   providerId: string,
   operation: string,
+  snapshot?: StableArtifactSnapshot,
 ): AnalysisError => {
-  const observation = completedStableArtifactObservation(cause, path);
+  const observation = completedStableArtifactObservation(cause, path, snapshot);
   if (observation !== undefined) primary.retainPartialObservation(observation);
   const cleanup = artifactCleanupFailure(cause, providerId, operation);
   if (cleanup === undefined) return primary;
