@@ -42,7 +42,7 @@ interface NativeAddonInventoryIndex {
 interface NativeAddonResolverState {
   readonly input: ElectronNativeAddonResolverInput;
   inventoryIndex: NativeAddonInventoryIndex | undefined;
-  readonly packageRootCache: Map<string, string>;
+  readonly bindingsRootCache: Map<string, string | null>;
   readonly nodeGypBuildCache: Map<string, readonly string[]>;
   readonly bindingsCache: Map<string, readonly string[]>;
   readonly findingCache: WeakMap<
@@ -58,7 +58,7 @@ export const createElectronNativeAddonResolver = (
   const state: NativeAddonResolverState = {
     input,
     inventoryIndex: undefined,
-    packageRootCache: new Map(),
+    bindingsRootCache: new Map(),
     nodeGypBuildCache: new Map(),
     bindingsCache: new Map(),
     findingCache: new WeakMap(),
@@ -86,24 +86,11 @@ export const createElectronNativeAddonResolver = (
           finding.resolution,
         );
       } else {
-        const direct = resolveHelperFromSourcePath(
+        resolved = resolveHelperWithUnpackedFallback(
           state,
           file.path,
           finding.resolution,
         );
-        if (direct.length > 0) {
-          resolved = direct;
-        } else {
-          const unpackedSourcePath = siblingAsarUnpackedSourcePath(file.path);
-          resolved =
-            unpackedSourcePath === undefined
-              ? []
-              : resolveHelperFromSourcePath(
-                  state,
-                  unpackedSourcePath,
-                  finding.resolution,
-                );
-        }
       }
       if (byPath === undefined) {
         byPath = new Map();
@@ -115,12 +102,11 @@ export const createElectronNativeAddonResolver = (
   };
 };
 
-const ensureInventoryIndex = (
-  state: NativeAddonResolverState,
-): NativeAddonInventoryIndex => {
-  if (state.inventoryIndex !== undefined) return state.inventoryIndex;
-  const nativeAddonPaths: string[] = [];
-  const childSegmentsByDir = new Map<string, Set<string>>();
+const addInventoryPathSegments = (
+  childSegmentsByDir: Map<string, Set<string>>,
+  path: string,
+): void => {
+  if (path === "" || path === ".") return;
   const addChildSegment = (dir: string, child: string): void => {
     let set = childSegmentsByDir.get(dir);
     if (set === undefined) {
@@ -129,70 +115,88 @@ const ensureInventoryIndex = (
     }
     set.add(child);
   };
+  const segments = path.split("/");
+  if (segments[0] !== undefined && segments[0] !== "")
+    addChildSegment(".", segments[0]);
+  for (let index = 0; index < segments.length - 1; index += 1) {
+    const child = segments[index + 1];
+    if (child !== undefined && child !== "")
+      addChildSegment(segments.slice(0, index + 1).join("/"), child);
+  }
+};
+
+const ensureInventoryIndex = (
+  state: NativeAddonResolverState,
+): NativeAddonInventoryIndex => {
+  if (state.inventoryIndex !== undefined) return state.inventoryIndex;
+  const nativeAddonPaths: string[] = [];
+  const childSegmentsByDir = new Map<string, Set<string>>();
   for (const [path, file] of state.input.files) {
     if (isNativeAddonFile(path, state.input.files, file))
       nativeAddonPaths.push(path);
-    const segments = path.split("/");
-    if (segments[0] !== undefined && segments[0] !== "")
-      addChildSegment(".", segments[0]);
-    for (let index = 0; index < segments.length - 1; index += 1) {
-      const child = segments[index + 1];
-      if (child !== undefined && child !== "")
-        addChildSegment(segments.slice(0, index + 1).join("/"), child);
-    }
+    addInventoryPathSegments(childSegmentsByDir, path);
+  }
+  if (state.input.directoryPaths !== undefined) {
+    for (const dirPath of state.input.directoryPaths)
+      addInventoryPathSegments(childSegmentsByDir, dirPath);
   }
   nativeAddonPaths.sort(compareUnicodeCodePoints);
   state.inventoryIndex = { nativeAddonPaths, childSegmentsByDir };
   return state.inventoryIndex;
 };
 
-const findEnclosingPackageRoot = (
+const hasBindingsRootMarker = (
+  state: NativeAddonResolverState,
+  directory: string,
+): boolean => {
+  const { childSegmentsByDir } = ensureInventoryIndex(state);
+  const children = childSegmentsByDir.get(directory);
+  if (
+    children?.has("package.json") === true ||
+    children?.has("node_modules") === true
+  )
+    return true;
+  const unanalyzed = state.input.unanalyzedFiles;
+  if (unanalyzed === undefined) return false;
+  const packageJsonPath =
+    directory === "." ? "package.json" : `${directory}/package.json`;
+  const nodeModulesPath =
+    directory === "." ? "node_modules" : `${directory}/node_modules`;
+  return (
+    unanalyzed.get(packageJsonPath) !== undefined ||
+    unanalyzed.get(nodeModulesPath) !== undefined ||
+    unanalyzed.hasDirectory(packageJsonPath, undefined) ||
+    unanalyzed.hasDirectory(nodeModulesPath, undefined)
+  );
+};
+
+const findBindingsModuleRoot = (
   state: NativeAddonResolverState,
   sourceDir: string,
-  fallbackMarkerDirs: readonly string[],
-): string => {
+): string | undefined => {
   const normalizedDir = sourceDir === "" ? "." : sourceDir;
-  const cacheKey = compositeKey([normalizedDir, fallbackMarkerDirs]);
-  const cached = state.packageRootCache.get(cacheKey);
-  if (cached !== undefined) return cached;
+  if (state.bindingsRootCache.has(normalizedDir))
+    return state.bindingsRootCache.get(normalizedDir) ?? undefined;
   let current = normalizedDir;
-  const ancestors: string[] = [];
+  let resolved: string | null = null;
   while (true) {
-    ancestors.push(current);
-    const packageJson =
-      current === "." ? "package.json" : `${current}/package.json`;
-    if (
-      state.input.files.has(packageJson) ||
-      isNodeModulesPackageBoundary(current)
-    ) {
-      state.packageRootCache.set(cacheKey, current);
-      return current;
+    if (hasBindingsRootMarker(state, current)) {
+      resolved = current;
+      break;
     }
-    if (isArchiveContainerBoundary(current)) break;
+    if (state.input.unanalyzedFiles?.coverage.status === "unknown") break;
     const parent = posix.dirname(current);
     if (parent === current) break;
     current = parent;
   }
-  const { childSegmentsByDir } = ensureInventoryIndex(state);
-  for (const ancestor of ancestors) {
-    const children = childSegmentsByDir.get(ancestor);
-    if (
-      children !== undefined &&
-      fallbackMarkerDirs.some((marker) => children.has(marker))
-    ) {
-      state.packageRootCache.set(cacheKey, ancestor);
-      return ancestor;
-    }
-  }
-  state.packageRootCache.set(cacheKey, normalizedDir);
-  return normalizedDir;
+  state.bindingsRootCache.set(normalizedDir, resolved);
+  return resolved ?? undefined;
 };
 
 const resolveHelperSearchRoot = (
   state: NativeAddonResolverState,
   sourcePath: string,
   explicitDirectory: string | null,
-  fallbackMarkerDirs: readonly string[],
 ): string | undefined => {
   const sourceDir = posix.dirname(sourcePath);
   if (explicitDirectory !== null) {
@@ -203,7 +207,7 @@ const resolveHelperSearchRoot = (
     const stripped = joined.replace(/\/+$/u, "");
     return stripped === "" ? "." : stripped;
   }
-  return findEnclosingPackageRoot(state, sourceDir, fallbackMarkerDirs);
+  return findBindingsModuleRoot(state, sourceDir);
 };
 
 const scanNodeGypBuildTargets = (
@@ -257,7 +261,7 @@ const scanBindingsTargets = (
   return matched;
 };
 
-const resolveHelperFromSourcePath = (
+const resolveHelperWithUnpackedFallback = (
   state: NativeAddonResolverState,
   sourcePath: string,
   resolution: Extract<
@@ -265,26 +269,21 @@ const resolveHelperFromSourcePath = (
     { readonly kind: "node-gyp-build" | "bindings" }
   >,
 ): readonly string[] => {
-  if (resolution.kind === "node-gyp-build") {
-    const searchRoot = resolveHelperSearchRoot(
-      state,
-      sourcePath,
-      resolution.directory,
-      ["prebuilds", "build"],
-    );
-    return searchRoot === undefined
-      ? []
-      : scanNodeGypBuildTargets(state, searchRoot);
-  }
-  const searchRoot = resolveHelperSearchRoot(
-    state,
-    sourcePath,
-    resolution.module_root,
-    ["build", "out", "Release", "Debug", "compiled", "addon-build", "lib"],
-  );
-  return searchRoot === undefined
-    ? []
-    : scanBindingsTargets(state, searchRoot, resolution.addon_name);
+  const searchRoot =
+    resolution.kind === "node-gyp-build"
+      ? resolveHelperSearchRoot(state, sourcePath, resolution.directory)
+      : resolveHelperSearchRoot(state, sourcePath, resolution.module_root);
+  if (searchRoot === undefined) return [];
+  const direct =
+    resolution.kind === "node-gyp-build"
+      ? scanNodeGypBuildTargets(state, searchRoot)
+      : scanBindingsTargets(state, searchRoot, resolution.addon_name);
+  if (direct.length > 0) return direct;
+  const unpackedRoot = siblingAsarUnpackedDirectory(searchRoot);
+  if (unpackedRoot === undefined) return [];
+  return resolution.kind === "node-gyp-build"
+    ? scanNodeGypBuildTargets(state, unpackedRoot)
+    : scanBindingsTargets(state, unpackedRoot, resolution.addon_name);
 };
 
 const resolveDirectSpecifierWithUnpackedFallback = (
@@ -455,16 +454,10 @@ const resolveAsarUnpackedFinding = (
       resolution.asar_unpacked_replace_all,
     );
     if (rewrittenDir === undefined) return [];
-    const searchRoot = findEnclosingPackageRoot(state, rewrittenDir, [
-      "build",
-      "out",
-      "Release",
-      "Debug",
-      "compiled",
-      "addon-build",
-      "lib",
-    ]);
-    return scanBindingsTargets(state, searchRoot, resolution.addon_name);
+    const searchRoot = findBindingsModuleRoot(state, rewrittenDir);
+    return searchRoot === undefined
+      ? []
+      : scanBindingsTargets(state, searchRoot, resolution.addon_name);
   }
   if (resolution.resolution_context === "filesystem-expression") {
     const sourceDir = posix.dirname(sourcePath);
@@ -632,23 +625,6 @@ const resolveSinglePath = (
   return outcome.kind === "native" ? outcome.path : undefined;
 };
 
-const isNodeModulesPackageBoundary = (directory: string): boolean => {
-  if (directory === ".") return false;
-  const segments = directory.split("/");
-  const last = segments.at(-1) ?? "";
-  const prev = segments.at(-2) ?? "";
-  const prevPrev = segments.at(-3) ?? "";
-  return (
-    (prev === "node_modules" && !last.startsWith("@")) ||
-    (prevPrev === "node_modules" && prev.startsWith("@"))
-  );
-};
-
-const isArchiveContainerBoundary = (directory: string): boolean => {
-  const base = posix.basename(directory).toLowerCase();
-  return base.endsWith(".asar") || base.endsWith(".asar.unpacked");
-};
-
 const matchesBindingsSearchDirectory = (
   dirSegments: readonly string[],
 ): boolean => {
@@ -701,6 +677,25 @@ const rewriteAppAsarSourcePath = (
     }
   }
   return changed ? copy.join("/") : undefined;
+};
+
+const siblingAsarUnpackedDirectory = (
+  directoryPath: string,
+): string | undefined => {
+  if (directoryPath === "" || directoryPath === ".") return undefined;
+  const segments = directoryPath.split("/");
+  for (let index = segments.length - 1; index >= 0; index -= 1) {
+    const segment = segments[index]!;
+    if (
+      segment.toLowerCase().endsWith(".asar") &&
+      !segment.toLowerCase().endsWith(".asar.unpacked")
+    ) {
+      const copy = [...segments];
+      copy[index] = `${segment}.unpacked`;
+      return copy.join("/");
+    }
+  }
+  return undefined;
 };
 
 const siblingAsarUnpackedSourcePath = (

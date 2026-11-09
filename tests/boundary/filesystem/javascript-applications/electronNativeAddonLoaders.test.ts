@@ -1086,3 +1086,170 @@ it("does not select sibling .node files for trailing-separator directory request
     }),
   ).toEqual([]);
 });
+
+it("follows bindings.getRoot package.json and node_modules markers across markerless node_modules folders", async () => {
+  const appRoot = await createTestTempDirectory("rea-bindings-root-markers-");
+  const pkgDecoyBytes = "markerless-pkg-decoy-addon-bytes";
+  const rootAddonBytes = "application-root-loaded-addon-bytes";
+  const nmMarkerBytes = "empty-node-modules-marker-addon-bytes";
+
+  await writeFixtureFiles(appRoot, {
+    "package.json": JSON.stringify({
+      name: "bindings-markers-app",
+      main: "main.cjs",
+    }),
+    "main.cjs": `
+      const { ipcMain } = require("electron");
+      const markerless = require("./node_modules/pkg/index.cjs");
+      const withNmChild = require("./node_modules/nm-marker-pkg/index.cjs");
+      ipcMain.handle("bindings:markers", () => [markerless, withNmChild]);
+    `,
+    "node_modules/pkg/index.cjs": `
+      const bindings = require("bindings");
+      module.exports = bindings("addon").run;
+    `,
+    "node_modules/pkg/build/Release/addon.node": pkgDecoyBytes,
+    "build/Release/addon.node": rootAddonBytes,
+    "node_modules/nm-marker-pkg/index.cjs": `
+      const bindings = require("bindings");
+      module.exports = bindings("child_marked").exec;
+    `,
+    "node_modules/nm-marker-pkg/build/Release/child_marked.node": nmMarkerBytes,
+  });
+  await mkdir(join(appRoot, "node_modules/nm-marker-pkg/node_modules"), {
+    recursive: true,
+  });
+
+  const analyzed = await analyzeJavaScriptApplication({
+    input_path: appRoot,
+    format: "directory",
+  });
+  if (!analyzed.ok) throw analyzed.error;
+  const parsed = javascriptApplicationAnalysisResultSchema.parse(
+    analyzed.value.normalized_result,
+  );
+  expect(parsed.summary).toMatchObject({
+    native_addon_bindings: 2,
+    resolved_native_addon_bindings: 2,
+  });
+
+  const traced = traceApplicationFeatureEvidence({
+    application: analyzed.value,
+    seed: { kind: "module", value: "main.cjs" },
+    direction: "outgoing",
+    native_observations: [
+      createSimulatedNativeEvidence(
+        join(appRoot, "node_modules/pkg/build/Release/addon.node"),
+        pkgDecoyBytes,
+      ),
+      createSimulatedNativeEvidence(
+        join(appRoot, "build/Release/addon.node"),
+        rootAddonBytes,
+      ),
+      createSimulatedNativeEvidence(
+        join(
+          appRoot,
+          "node_modules/nm-marker-pkg/build/Release/child_marked.node",
+        ),
+        nmMarkerBytes,
+      ),
+    ],
+  });
+  if (!traced.ok) throw traced.error;
+  expect(
+    [...traced.value.result.native_handoffs].sort((left, right) =>
+      (left.artifact_path ?? "").localeCompare(right.artifact_path ?? ""),
+    ),
+  ).toMatchObject([
+    {
+      artifact_path: "build/Release/addon.node",
+      status: "evidence-linked",
+      artifact_sha256: sha256Hex(rootAddonBytes),
+      requested_exports: ["run"],
+    },
+    {
+      artifact_path:
+        "node_modules/nm-marker-pkg/build/Release/child_marked.node",
+      status: "evidence-linked",
+      artifact_sha256: sha256Hex(nmMarkerBytes),
+      requested_exports: ["exec"],
+    },
+  ]);
+});
+
+it("preserves an unknown bindings() module root when neither package.json nor node_modules is proven", async () => {
+  const markerlessRoot = await createTestTempDirectory(
+    "rea-bindings-unknown-root-",
+  );
+  await writeFixtureFiles(markerlessRoot, {
+    "src/main.cjs": `
+      const { ipcMain } = require("electron");
+      const bindings = require("bindings");
+      const orphan = bindings("orphan");
+      ipcMain.handle("bindings:orphan", () => orphan);
+    `,
+    "src/build/Release/orphan.node": "nested-decoy-orphan-bytes",
+    "build/Release/orphan.node": "root-decoy-orphan-bytes",
+  });
+
+  const analyzed = await analyzeJavaScriptApplication({
+    input_path: markerlessRoot,
+    format: "directory",
+  });
+  if (!analyzed.ok) throw analyzed.error;
+  const parsed = javascriptApplicationAnalysisResultSchema.parse(
+    analyzed.value.normalized_result,
+  );
+  expect(parsed.summary).toMatchObject({
+    native_addon_bindings: 1,
+    resolved_native_addon_bindings: 0,
+  });
+
+  const mkEntry = (
+    path: string,
+    kind: JavaScriptArtifactFile["kind"],
+  ): JavaScriptArtifactFile => ({
+    path,
+    sha256: sha256Hex(path),
+    container_sha256: "0".repeat(64),
+    bytes: 16,
+    inventory_artifact_id: "unknown-coverage-fixture",
+    kind,
+    unpacked: false,
+    text: { included: false, reason: "not-applicable" },
+  });
+  const caller = mkEntry("node_modules/pkg/index.cjs", "javascript");
+  const resolver = createElectronNativeAddonResolver({
+    files: new Map([
+      ["package.json", mkEntry("package.json", "package-json")],
+      [caller.path, caller],
+      [
+        "build/Release/addon.node",
+        mkEntry("build/Release/addon.node", "native-addon"),
+      ],
+    ]),
+    jsonDocuments: new JavaScriptJsonDocuments(),
+    unanalyzedFiles: {
+      coverage: { scope: "root", status: "unknown" },
+      get: () => undefined,
+      hasDirectory: () => false,
+    },
+  });
+  expect(
+    resolver.resolve(caller, {
+      module_kind: "require",
+      binding_kind: "require",
+      specifier: "addon.node",
+      members: [],
+      namespace_access: true,
+      dynamic_member_access: false,
+      module_key: null,
+      location: { start: { line: 1, column: 0 }, end: { line: 1, column: 10 } },
+      resolution: {
+        kind: "bindings",
+        addon_name: "addon.node",
+        module_root: null,
+      },
+    }),
+  ).toEqual([]);
+});
