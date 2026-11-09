@@ -68,10 +68,7 @@ const INTEL_SENTINEL = Buffer.concat([
 export interface DenoStandaloneLocation {
   readonly carrier: "mach-o" | "elf" | "pe";
   readonly embedding:
-    | "mach-o-section"
-    | "mach-o-intel-trailer"
-    | "elf-note"
-    | "pe-resource";
+    "mach-o-section" | "mach-o-intel-trailer" | "elf-note" | "pe-resource";
   readonly offset: number;
   readonly length: number;
 }
@@ -284,7 +281,9 @@ const locateMachOSlice = async (
       const record = parsedSection.value;
       if (fixedCString(record.nameBytes) !== SECTION_NAME) continue;
       confirmed = true;
-      found.push(denoSectionRange(record, base, sliceSize, carrier.fileSize));
+      found.push(
+        denoSectionRange(record, segment, base, sliceSize, carrier.fileSize),
+      );
     }
     if (segment.sectionCount <= fitting) return;
     // The first record past the command may still hold its whole name.
@@ -324,7 +323,9 @@ const namesDenoSection = (body: Uint8Array, at: number): boolean =>
 
 /**
  * The file range of a confirmed `d3n0l4nd` record, or a failure. A zero-fill
- * section owns no file bytes, so its declared offset names no payload.
+ * section owns no file bytes, so its declared offset names no payload. Bytes
+ * outside the enclosing segment's file extent are not file backed either,
+ * matching MachoImage, even when the file itself still holds them.
  */
 const denoSectionRange = (
   record: {
@@ -332,6 +333,7 @@ const denoSectionRange = (
     readonly offset: number;
     readonly flags: number;
   },
+  segment: { readonly fileOffset: bigint; readonly fileSize: bigint },
   base: number,
   sliceSize: number,
   fileSize: number,
@@ -341,6 +343,15 @@ const denoSectionRange = (
   if (record.size > BigInt(Number.MAX_SAFE_INTEGER))
     throw denoCarrierFailure(
       "Mach-O d3n0l4nd section size is not a safe integer",
+    );
+  const segmentDelta = BigInt(record.offset) - segment.fileOffset;
+  if (
+    segmentDelta < 0n ||
+    segmentDelta > segment.fileSize ||
+    record.size > segment.fileSize - segmentDelta
+  )
+    throw denoCarrierFailure(
+      "Mach-O d3n0l4nd section exceeds its segment's file extent",
     );
   const length = Number(record.size);
   const fileOffset = record.offset;

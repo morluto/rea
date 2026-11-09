@@ -1434,6 +1434,30 @@ it("fails closed when the d3n0l4nd section is zero-fill", async () => {
   }
 });
 
+it("fails closed when the d3n0l4nd section exceeds its segment's file extent", async () => {
+  // The 64-bit fixture's segment command follows the Mach-O header (32
+  // bytes); its fileoff sits at 40 and its filesize at 48.
+  const fileOffsetAt = 32 + 40;
+  const fileSizeAt = 32 + 48;
+  const shrunk = denoMachO(buildDenoSection());
+  shrunk.writeBigUInt64LE(shrunk.readBigUInt64LE(fileSizeAt) - 1n, fileSizeAt);
+  const shifted = denoMachO(buildDenoSection());
+  shifted.writeBigUInt64LE(
+    shifted.readBigUInt64LE(fileOffsetAt) + 1n,
+    fileOffsetAt,
+  );
+  for (const image of [shrunk, shifted])
+    await expect(
+      locateDenoStandalone(bytesHandle(image), image.length),
+    ).resolves.toMatchObject({
+      status: "present",
+      failure: {
+        reason: "format",
+        message: expect.stringContaining("segment's file extent"),
+      },
+    });
+});
+
 it("leaves a damaged __SUI segment without a d3n0l4nd section to native inventory", async () => {
   // The 64-bit fixture's first section name sits after the Mach-O header
   // (32 bytes) and the segment command header (72 bytes).
