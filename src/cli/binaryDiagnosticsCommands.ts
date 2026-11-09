@@ -99,9 +99,11 @@ export const registerBinaryDiagnosticsCommands = (
       ),
     }),
     options: z.object({
-      maxFileBytes: inspectDwarfUnitsInputSchema.shape.max_file_bytes,
-      offset: inspectDwarfUnitsInputSchema.shape.offset,
-      limit: inspectDwarfUnitsInputSchema.shape.limit,
+      maxFileBytes: cliDecimalField(
+        inspectDwarfUnitsInputSchema.shape.max_file_bytes,
+      ),
+      offset: cliDecimalField(inspectDwarfUnitsInputSchema.shape.offset),
+      limit: cliDecimalField(inspectDwarfUnitsInputSchema.shape.limit),
       architecture: machoSliceArchitectureSchema
         .optional()
         .describe(
