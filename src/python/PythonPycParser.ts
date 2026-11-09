@@ -19,10 +19,7 @@ import {
   PythonPycFormatFailure,
   PythonPycResourceFailure,
 } from "./PythonPyc.errors.js";
-import {
-  PYTHON_PYC_SHARED_TABLE_MAGICS,
-  pythonPycBytecodeIdentity,
-} from "./PythonPycBytecodeEquality.js";
+import { pythonPycBytecodeIdentity } from "./PythonPycBytecodeEquality.js";
 
 const FLAG_REF = 0x80;
 const TYPE_NULL = 0x30;
@@ -244,8 +241,8 @@ export const parsePythonPyc = (
     }`;
     return unsupported(
       identity === null
-        ? `Pyc magic ${magic} is not a pinned CPython identity, so its header cannot be qualified; standalone marshal decoding is pinned for CPython 3.7–3.15.`
-        : `CPython ${identity.pythonVersion} header is recognized (magic ${magic}, ${headerFacts}), but no marshal code layout is pinned for that version, so its code objects cannot be decoded. Standalone marshal decoding is pinned for CPython 3.7–3.15.`,
+        ? `Pyc magic ${magic} is not a pinned CPython identity, so its header cannot be qualified; standalone marshal decoding is pinned for CPython 3.7–3.13 and the 3.14 and 3.15 magics 3627, 3663 and 3666.`
+        : `CPython ${identity.pythonVersion} header is recognized (magic ${magic}, ${headerFacts}), but no marshal code layout is pinned for that version, so its code objects cannot be decoded. Standalone marshal decoding is pinned for CPython 3.7–3.13 and the 3.14 and 3.15 magics 3627, 3663 and 3666.`,
     );
   }
   const flags = bytes.readUInt32LE(4);
@@ -279,7 +276,6 @@ export const parsePythonPyc = (
   const codeObjects = flattenCode(root.value);
   const unknownFlags =
     flags & ~(PYTHON_PYC_HASH_BASED | PYTHON_PYC_CHECK_SOURCE);
-  const sharedTables = PYTHON_PYC_SHARED_TABLE_MAGICS.get(magic);
   return {
     artifact: {
       path: artifact.path,
@@ -308,11 +304,6 @@ export const parsePythonPyc = (
             "Magic 3410 is shared by CPython revisions with different negative co_stacksize/co_flags constructor checks; these raw values are preserved, but this header cannot establish constructor acceptance.",
           ]
         : []),
-      ...(sharedTables === undefined
-        ? []
-        : [
-            `Magic ${magic} is shared by builds with different opcode tables (${sharedTables}); code-object equality uses the raw bytecode, so code objects that differ only in inline cache units stay distinct.`,
-          ]),
       ...(unknownFlags === 0
         ? []
         : [

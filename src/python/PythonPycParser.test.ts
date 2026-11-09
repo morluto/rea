@@ -250,15 +250,13 @@ it("walks slice members for hashability and nested code", () => {
 
 it("rejects slice tags before magic 3608 and follows CPython on null members", () => {
   const sliced = marshalSlice(marshalInt(1), marshalInt(2), MARSHAL_NONE);
-  for (const magic of [3571, 3607]) {
-    expect(() => parse(withSliceConsts(magic, [sliced]))).toThrow(
-      expect.objectContaining({
-        kind: "malformed",
-        message: expect.stringMatching(/0x3a.*3608/),
-      }),
-    );
-  }
-  expect(root(parse(withSliceConsts(3608, [sliced]))).consts).toEqual([
+  expect(() => parse(withSliceConsts(3571, [sliced]))).toThrow(
+    expect.objectContaining({
+      kind: "malformed",
+      message: expect.stringMatching(/0x3a.*3608/),
+    }),
+  );
+  expect(root(parse(withSliceConsts(3627, [sliced]))).consts).toEqual([
     { kind: "slice" },
   ]);
   // A TYPE_NULL member leaves no slice object; the enclosing tuple reports it.
@@ -1625,25 +1623,6 @@ it("hashes a long TYPE_REF tuple chain without recursing", () => {
   expect(root(report).consts[1]).toEqual({ kind: "set", length: 1 });
   expect(report.coverage.status).toBe("complete");
   expect(pythonPycSchema.safeParse(report).success).toBe(true);
-});
-
-it("names the two opcode tables behind magics 3615 and 3620", () => {
-  const file = (magic: number): Buffer =>
-    Buffer.concat([pythonPycHeader(magic), marshalCode("py311")]);
-  const shared = (magic: number) =>
-    expect.arrayContaining([
-      expect.stringMatching(new RegExp(`Magic ${String(magic)} is shared`)),
-    ]);
-  expect(parse(file(3615)).limitations).toEqual(shared(3615));
-  expect(parse(file(3620)).limitations).toEqual(
-    expect.arrayContaining([
-      expect.stringMatching(/Magic 3620 is shared.*3621/),
-    ]),
-  );
-  for (const magic of [3614, 3616, 3619, 3621])
-    expect(parse(file(magic)).limitations, String(magic)).not.toEqual(
-      expect.arrayContaining([expect.stringMatching(/is shared by builds/)]),
-    );
 });
 
 it("rejects code CPython treats as corrupt instead of complete coverage", () => {

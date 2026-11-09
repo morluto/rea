@@ -341,48 +341,6 @@ cliTest(
         createHash("sha256").update(pyc).digest("hex"),
       );
     }
-    // Magics 3615 and 3620 pin no table, so a changed cache keeps its code object.
-    for (const { magic, opcode, cacheUnits } of [
-      { magic: 3615, opcode: 45, cacheUnits: 5 },
-      { magic: 3620, opcode: 88, cacheUnits: 4 },
-    ]) {
-      const cache = Buffer.alloc(cacheUnits * 2);
-      const changedCache = Buffer.from(cache);
-      changedCache[0] = 1;
-      const frozenSet = Buffer.concat([
-        Buffer.from([0x3e, 2, 0, 0, 0]),
-        ...[cache, changedCache].map((payload) =>
-          marshalCode("py311", {
-            bytecode: Buffer.concat([
-              Buffer.from([opcode, 0]),
-              payload,
-              Buffer.from([83, 0]),
-            ]),
-          }),
-        ),
-      ]);
-      const path = join(root, `inline-caches-${String(magic)}.pyc`);
-      await writeFile(
-        path,
-        Buffer.concat([
-          pythonPycHeader(magic),
-          marshalCode("py311", { consts: [frozenSet] }),
-        ]),
-      );
-      const result = await runFileCli(cli, {
-        arguments: ["inspect-python-pyc", path, "--json"],
-      });
-      expect(result.exitCode, result.stderr).toBe(0);
-      const evidence = completePycEvidenceSchema.parse(result.json);
-      expect(evidence.normalized_result.code_objects[0]?.consts).toEqual([
-        expect.objectContaining({ kind: "frozenset", length: 2 }),
-      ]);
-      expect(evidence.normalized_result.limitations).toEqual(
-        expect.arrayContaining([
-          expect.stringMatching(new RegExp(`Magic ${String(magic)} is shared`)),
-        ]),
-      );
-    }
   },
 );
 
