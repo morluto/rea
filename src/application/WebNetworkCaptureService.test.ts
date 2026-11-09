@@ -210,18 +210,23 @@ it("projects completed raw capture facts on failure through the caller's selecti
   });
   const result = await new WebNetworkCaptureService({
     inspect: () => Promise.resolve({ ok: false, error }),
-  }).inspect({
-    capture_path: report.artifact.path,
-    format: "har",
-    record_ordinals: [0],
-    sensitive_values: ["private-marker"],
-  });
+  }).inspect(
+    {
+      capture_path: report.artifact.path,
+      format: "har",
+      record_ordinals: [0],
+      sensitive_values: ["private-marker"],
+    },
+    undefined,
+    { capture: "./capture.har" },
+  );
   if (result.ok) throw new Error("Cancellation must remain the primary result");
   expect(result.error._tag).toBe("AnalysisCancelledError");
   expect(result.error.cause).toBe(reason);
   const partial = parseEvidence(result.error.partialObservation);
   expect(partial).toMatchObject({
     operation: "inspect_web_network_capture",
+    caller_input_path: "./capture.har",
     parameters: { record_ordinals: [0] },
     subject: { local_path: "" },
     normalized_result: {

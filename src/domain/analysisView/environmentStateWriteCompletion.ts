@@ -5,32 +5,43 @@ import {
   segmentsOf,
 } from "./environmentStateRules.js";
 
-/** Ordered write starts and the latest completion among writes through each start. */
+/** Ordered starts and the two latest completions from distinct writes through each start, allowing one exclusion. */
 class CompletionHistory {
   readonly #starts: number[] = [];
-  readonly #ends: (number | undefined)[] = [];
+  readonly #ends: {
+    readonly id: number;
+    readonly end: number | undefined;
+  }[][] = [];
 
   constructor(private readonly retain: (bytes: number) => void) {}
 
   reserve(start: number): void {
-    if (this.#starts.at(-1) !== start) this.retain(ENTRY_BYTES);
+    // Reserve the prefix summary array and up to two distinct write entries.
+    if (this.#starts.at(-1) !== start) this.retain(ENTRY_BYTES * 3);
   }
 
-  append(start: number, end: number | undefined): void {
-    const previous = this.#ends.at(-1);
-    const maximum =
-      end === undefined || (this.#ends.length > 0 && previous === undefined)
-        ? undefined
-        : Math.max(previous ?? -Infinity, end);
-    if (this.#starts.at(-1) === start)
-      this.#ends[this.#ends.length - 1] = maximum;
+  append(start: number, end: number | undefined, id: number): void {
+    const entries = [...(this.#ends.at(-1) ?? []), { id, end }].sort(
+      (a, b) => (b.end ?? Infinity) - (a.end ?? Infinity),
+    );
+    const best = entries
+      .filter(
+        (entry, index) =>
+          entries.findIndex((item) => item.id === entry.id) === index,
+      )
+      .slice(0, 2);
+    if (this.#starts.at(-1) === start) this.#ends[this.#ends.length - 1] = best;
     else {
       this.#starts.push(start);
-      this.#ends.push(maximum);
+      this.#ends.push(best);
     }
   }
 
-  overlaps(start: number | undefined, end: number | undefined): boolean {
+  overlaps(
+    start: number | undefined,
+    end: number | undefined,
+    exclude?: number,
+  ): boolean {
     // Admit same-start writes for a point observation; a known zero-length write
     // is still excluded by its completion below. Otherwise starts at read end are disjoint.
     // Find writes begun before the read completed. Unknown read completion
@@ -48,9 +59,14 @@ class CompletionHistory {
       else high = middle;
     }
     if (low === 0) return false;
-    const completion = this.#ends[low - 1];
+    const completion = this.#ends[low - 1]?.find(
+      (entry) => entry.id !== exclude,
+    );
     return (
-      completion === undefined || start === undefined || completion > start
+      completion !== undefined &&
+      (completion.end === undefined ||
+        start === undefined ||
+        completion.end > start)
     );
   }
 }
@@ -113,7 +129,13 @@ export class CapturedWriteCompletion {
   }
 
   /** Admit writes in nondecreasing chronology start order. */
-  write(path: string, end: number | undefined, start = -Infinity): void {
+  write(
+    path: string,
+    end: number | undefined,
+    start: number | undefined,
+    id: number,
+  ): void {
+    start ??= -Infinity;
     let node = this.#root;
     const ancestors = [node];
     // Finish budgeted path admission before publishing any completion summary.
@@ -127,13 +149,18 @@ export class CapturedWriteCompletion {
     );
     histories.push((node.terminal ??= new CompletionHistory(this.retain)));
     for (const history of histories) history.reserve(start);
-    for (const history of histories) history.append(start, end);
+    for (const history of histories) history.append(start, end, id);
   }
 
   /** Unknown completion or read start cannot prove that a related write finished. */
-  runningAt(path: string, start: number | undefined, end = Infinity): boolean {
+  runningAt(
+    path: string,
+    start: number | undefined,
+    end = Infinity,
+    exclude?: number,
+  ): boolean {
     const running = (history: CompletionHistory | undefined): boolean =>
-      history?.overlaps(start, end) === true;
+      history?.overlaps(start, end, exclude) === true;
     let nodes = new Set([this.#root]);
     for (const segment of segmentsOf(path)) {
       const next = new Set<CompletionPrefix>();
