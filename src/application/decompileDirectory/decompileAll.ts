@@ -210,8 +210,6 @@ export const decompileAll = async (
       ? undefined
       : { output_directory: session.root, index_path: publishedIndex };
   if (primary !== undefined) {
-    if (publishedOutput !== undefined)
-      primary.retainPrimaryDiagnostics({ published_output: publishedOutput });
     if (
       isAborted(signal) &&
       !(
@@ -240,6 +238,8 @@ export const decompileAll = async (
         });
       return err(combined);
     }
+    if (publishedOutput !== undefined)
+      primary.retainPrimaryDiagnostics({ published_output: publishedOutput });
     return err(primary);
   }
   // Finalization succeeded, so committed files and the index are usable on
