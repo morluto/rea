@@ -768,7 +768,9 @@ const resolvedRequestTarget = (
   const evaluated = evaluateSemanticExpression(node, bindings);
   if (evaluated.status === "literal" && typeof evaluated.value === "string")
     return evaluated.value;
-  return objects === "none"
+  // When no object names the target, a URL object passed directly stays
+  // partial, but the string its toString() returns still names it.
+  return objects === "none" && reference === expression
     ? undefined
     : urlObjectRequestTarget(
         node,

@@ -505,3 +505,36 @@ it("reads Electron net targets with the argument forms each API accepts", () => 
     },
   ]);
 });
+
+it("resolves net.request from the string an unchanged URL object returns", () => {
+  expect(
+    endpoints(`
+        import { net } from "electron";
+        const address = new URL("https://api.example.test/ping");
+        const moved = new URL("https://api.example.test/old");
+        moved.pathname = "/new";
+        net.request(address.toString());
+        net.request(address);
+        net.request(moved.toString());
+      `),
+  ).toEqual([
+    {
+      kind: "network",
+      value: "https://api.example.test/ping",
+      mechanism: "call:net.request",
+      resolution: undefined,
+    },
+    {
+      kind: "network",
+      value: "address",
+      mechanism: "call:net.request",
+      resolution: "partial",
+    },
+    {
+      kind: "network",
+      value: "moved.toString()",
+      mechanism: "call:net.request",
+      resolution: "partial",
+    },
+  ]);
+});
