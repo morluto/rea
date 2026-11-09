@@ -45,6 +45,12 @@ type StaticStorage = JavaScriptStaticAnalysis["storage"][number];
 type StaticRolePath = JavaScriptStaticAnalysis["role_paths"][number];
 type StaticSourceMap = JavaScriptStaticAnalysis["source_map_urls"][number];
 
+/** Worker, service-worker, and worklet scripts are URLs, not module specifiers. */
+const isScriptUrlReference = (
+  kind: StaticReference["kind"],
+): kind is "worker" | "service-worker" | "worklet" =>
+  kind === "worker" || kind === "service-worker" || kind === "worklet";
+
 interface FindingInput<Value> {
   readonly file: JavaScriptArtifactFile;
   readonly asset: ApplicationNode;
@@ -236,9 +242,9 @@ const addReference = (
     targets.add(resolved.path);
     omissions.imports.set(input.file.path, targets);
   }
-  if (input.value.kind === "worker" || input.value.kind === "service-worker") {
+  if (isScriptUrlReference(input.value.kind)) {
     const worker = context.accumulator.addNode({
-      kind: input.value.kind === "worker" ? "worker" : "service-worker",
+      kind: input.value.kind,
       identity: artifactLocalIdentity(
         input.file.sha256,
         input.value.kind,
@@ -258,7 +264,10 @@ const addReference = (
             sha256: input.file.sha256,
             path: input.file.path,
             range: input.value.location,
-            operation: "discover-worker",
+            operation:
+              input.value.kind === "worklet"
+                ? "discover-worklet"
+                : "discover-worker",
             coverage: input.coverage,
             limitations: resolved?.limitations ?? [],
           }),
@@ -662,8 +671,7 @@ const resolveReference = (
 ): ResolvedReference | null => {
   const specifier = reference.specifier;
   if (specifier === null) return null;
-  const isWorker =
-    reference.kind === "worker" || reference.kind === "service-worker";
+  const isScriptUrl = isScriptUrlReference(reference.kind);
   const resolutionSourcePath =
     reference.kind === "require" && reference.resolution_base_path !== undefined
       ? posix.normalize(
@@ -674,7 +682,7 @@ const resolveReference = (
     ? specifier.slice(VITE_OUTPUT_DEPENDENCY_PREFIX.length)
     : undefined;
   const chunk =
-    isWorker || viteDependency !== undefined
+    isScriptUrl || viteDependency !== undefined
       ? null
       : resolveBundlerChunkReference(context, sourcePath, reference);
   if (chunk !== null) return chunk;
@@ -683,7 +691,7 @@ const resolveReference = (
   // specifier is an external package name even though the finding sits inside a
   // module range and carries that range's runtime.
   const module =
-    isWorker ||
+    isScriptUrl ||
     reference.module_runtime === undefined ||
     reference.loader === "commonjs-loader"
       ? undefined
@@ -705,7 +713,7 @@ const resolveReference = (
   const resolution =
     viteDependency !== undefined
       ? resolveViteOutputDependency(context, sourcePath, viteDependency)
-      : isWorker
+      : isScriptUrl
         ? resolveArtifactPathByContext({
             declaredPath: specifier,
             sourcePath,
@@ -760,7 +768,7 @@ const resolveReference = (
       : {
           path: null,
           file: null,
-          node: isWorker
+          node: isScriptUrl
             ? null
             : unresolvedReferenceNode(
                 context,

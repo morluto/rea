@@ -158,6 +158,13 @@ export const inspectCall = (
       kind: "service-worker",
       specifier: moduleUrlSpecifier(node, bindings),
     });
+  // Worklet `addModule` strings use the document base URL as well.
+  if (context.workletModuleLoad?.(node) === true)
+    addReference(context, {
+      node,
+      kind: "worklet",
+      specifier: moduleUrlSpecifier(node, bindings),
+    });
   inspectEndpointCall(node, name, first, context, bindings);
   inspectStorageCall(node, name, first, context, bindings);
   if (

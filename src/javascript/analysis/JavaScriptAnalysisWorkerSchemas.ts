@@ -338,6 +338,7 @@ const referenceShape = {
     "require",
     "worker",
     "service-worker",
+    "worklet",
   ]),
 };
 
