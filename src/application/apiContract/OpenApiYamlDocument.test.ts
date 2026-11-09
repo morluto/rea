@@ -204,6 +204,42 @@ it("rejects composition failures and non-scalar keys without escaping the Result
   expect(complexKey).toContain("non-scalar mapping key");
 });
 
+it("keeps parser source excerpts out of public diagnostics", async () => {
+  // `prettyErrors` splices the offending line into the parser's `message`, and
+  // those messages reach `details.issues`. A `$ref` with inline credentials is
+  // the case that matters: the refusal must not echo the selected file.
+  const credential = "https://user:s3cret@example.test/spec";
+  const syntaxError = contractError(
+    await importText(
+      "syntax.yaml",
+      ["openapi: 3.0.4", `info: ${credential}`, "paths: [", ""].join("\n"),
+      "openapi-yaml",
+    ),
+  );
+  expect(syntaxError).not.toContain("s3cret");
+  expect(syntaxError).not.toContain(credential);
+  expect(syntaxError).toMatch(/at line \d+/);
+
+  const unresolvedTag = contractError(
+    await importText(
+      "tagged-credential.yaml",
+      [
+        "openapi: 3.0.4",
+        "info:",
+        "  title: Owned API",
+        '  version: "1"',
+        "paths:",
+        "  /a:",
+        "    get:",
+        `      operationId: !custom ${credential}`,
+      ].join("\n"),
+      "openapi-yaml",
+    ),
+  );
+  expect(unresolvedTag).not.toContain("s3cret");
+  expect(unresolvedTag).toContain("an application-defined tag at line 8");
+});
+
 it("rejects an empty YAML document and non-UTF-8 bytes", async () => {
   expect(
     contractError(await importText("empty.yaml", "", "openapi-yaml")),

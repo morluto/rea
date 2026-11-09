@@ -126,9 +126,10 @@ export const decodeOpenApiYaml = (
   const document = parseDocument(text, {
     // Comments, styles and YAML 1.1 scalar dialects stay unread; the document
     // is composed to the same JSON-compatible shape the JSON profile parses.
-    // `prettyErrors` stays on because `yaml` only fills `linePos` from it, and
-    // a duplicate-key report has to name the source line it read.
-    prettyErrors: true,
+    // `prettyErrors` stays off: it splices the offending source excerpt into
+    // every `message`, and those messages reach public diagnostics. A line is
+    // derived from `pos` through `lineCounter` instead.
+    prettyErrors: false,
     // A repeated key cannot express the JSON profile's last-value-wins member.
     uniqueKeys: true,
     lineCounter,
@@ -136,14 +137,11 @@ export const decodeOpenApiYaml = (
   const duplicate = document.errors.find(
     (error) => error.code === "DUPLICATE_KEY",
   );
-  const duplicateLine = duplicate?.linePos?.[0]?.line;
   if (duplicate !== undefined)
-    // `linePos` is already one-based; the helper adds 1 for its zero-based
-    // callers, so subtract here as the projection-collision branch does.
     return err(
       duplicateKeyDiagnostic(
         path,
-        duplicateLine === undefined ? undefined : duplicateLine - 1,
+        lineCounter.linePos(duplicate.pos[0]).line - 1,
       ),
     );
   // An application-defined tag that nothing resolves is reported as a warning
@@ -157,15 +155,23 @@ export const decodeOpenApiYaml = (
     return err(
       invalidDocument(
         path,
-        `OpenAPI YAML could not be parsed: ${unresolvedTag.message}`,
+        `OpenAPI YAML could not be parsed: an application-defined tag at line ${String(
+          lineCounter.linePos(unresolvedTag.pos[0]).line,
+        )} has no resolver; the JSON profile cannot express a tagged scalar`,
       ),
     );
   if (document.errors.length > 0) {
     const [first] = document.errors;
+    // The parser's own `message` can embed the offending source text, so the
+    // public diagnostic names the position and the error code instead.
     return err(
       invalidDocument(
         path,
-        `OpenAPI YAML could not be parsed: ${first?.message ?? "unknown syntax error"}`,
+        `OpenAPI YAML could not be parsed: ${first?.code ?? "unknown syntax error"}${
+          first === undefined
+            ? ""
+            : ` at line ${String(lineCounter.linePos(first.pos[0]).line)}`
+        }`,
       ),
     );
   }
