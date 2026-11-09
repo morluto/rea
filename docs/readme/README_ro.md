@@ -333,6 +333,12 @@ REA exportă un mediu executabil cu un test de bază care verifică pornirea și
 [Referință pentru medii](../agent-environments.md) ·
 [Vezi demonstrația pe X](https://x.com/reatools/status/2112574822584918075?s=20)
 
+### Medii pentru aplicații desktop
+
+REA poate crea și un mediu pentru o aplicație desktop Linux, pe care un agent o folosește prin capturi de ecran, mouse și tastatură. Dintr-o cerere de un rând, precum „Creează-mi un mediu Gnote în care agentul adaugă ulei de măsline în notița cu lista de cumpărături”, agentul tău instalează aplicația pe un computer de build local, scrie sarcina, exportă mediul și verifică sarcina pe un computer nou. Mașina care îl creează are nevoie de Linux pe amd64 sau arm64, Docker și versiunea frameworkului agentenv fixată de ghid.
+
+[Configurează mediile pentru aplicații desktop](../desktop-build-computer.md)
+
 ## Întrebări frecvente
 
 <details>

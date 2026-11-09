@@ -335,6 +335,12 @@ REA exports a runnable environment with a basic test to check that it starts and
 [Environment reference](docs/agent-environments.md) ·
 [Watch the demo on X](https://x.com/reatools/status/2112574822584918075?s=20)
 
+### Desktop app environments
+
+REA can also build an environment of a Linux desktop app, which an agent uses through screenshots, the mouse and the keyboard. From a one-line request, such as "Build me a Gnote environment where the agent adds olive oil to the shopping list note", your agent installs the app on a local build computer, writes the task, exports the environment and checks the task in a fresh computer. The machine that builds it needs Linux on amd64 or arm64, Docker and the agentenv framework version the guide pins.
+
+[Set up desktop app environments](docs/desktop-build-computer.md)
+
 ## FAQ
 
 <details>

@@ -25,6 +25,21 @@ const dataFrame = (payload: Uint8Array) => {
   return frame;
 };
 
+it("does not interpret fields after a blank trailer line", async () => {
+  const result = await decodeProtobufBody(
+    trailerFrame("grpc-status: 0\r\n\r\ngrpc-status: 7\r\n"),
+    "grpc-web",
+    source,
+    same,
+    new ProtobufBudget(),
+  );
+  expect(result.status).toBe("partial");
+  expect(result.frames[0]?.trailers).toEqual([
+    { name: "grpc-status", value: "0" },
+  ]);
+  expect(result.frames[0]?.examined_bytes).toBe(18);
+});
+
 it("rejects forbidden trailer controls while retaining valid earlier trailers", async () => {
   for (const code of [
     ...Array.from({ length: 32 }, (_, index) => index),

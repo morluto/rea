@@ -22,7 +22,8 @@ For the whole build:
 ## Ask once, upfront
 
 In one message, ask only what the request leaves open, and keep the list for
-the report:
+the report. Skip each question the request answers; when it answers them all,
+start without asking:
 
 1. The app and the task, if either is unclear: what changes, in which
    document.
@@ -195,15 +196,22 @@ the first source that has the app:
   on one line.
 - Qt5 apps saving with QDom, such as KmPlot, write attributes in a random
   order in each process, so check their XML by element, never by whole line.
+- Gnumeric's desktop entry is `org.gnumeric.gnumeric`. Its Save As dialog
+  runs off the 1280×800 screen: type `~/Documents/<name>` in Name and press
+  Return. Rename a sheet with right-click on its tab, then Rename….
 - Parley's title shows the collection's title, so name the file in
-  `state_paths`. A new collection starts with 15 blank entries. While a
-  document is open KDE keeps an autosave and its `.lock` in
+  `state_paths`. File → New opens the new collection's Properties dialog:
+  confirm it with OK, since Cancel keeps the old collection and its autosave
+  lock open. A new collection starts with 15 blank entries: delete them.
+  Pick languages from the dropdown; a typed name keeps the previous locale.
+  While a document is open KDE keeps an autosave and its `.lock` in
   `~/.local/share/stalefiles/parley/`, and there is no File → Close: before
   `seed`, use File → New, then reopen the collection from Open Recent.
-- Sigil unpacks the open book into
-  `.local/share/sigil-ebook/sigil/workspace/Sigil-XXXXXX/` and deletes it on
-  exit; naming the whole `sigil-ebook` folder seeds that stale copy, so name
-  only the book, and its settings files if needed.
+- Sigil: pass `extra_packages: ["libqt5svg5"]`, or its SVG toolbar icons are
+  blank. Its title names the book, so it needs no `state_paths`. It unpacks
+  the open book into `.local/share/sigil-ebook/sigil/workspace/Sigil-XXXXXX/`
+  and deletes it on exit, so never name the whole `sigil-ebook` folder: that
+  seeds the stale copy.
 - What the app saved under the home before `seed`, such as a document in
   `~/Documents` or its settings, is part of the seed. A file you move to the
   Trash is left out, and the export lists it in `limitations`. Trash a stray
@@ -562,9 +570,12 @@ first, show them its prompt and checks and wait for their approval. Then run
 the bundle within the budget, one run at a time, with the runner
 `REA_AGENT_ENV_COMMAND` names:
 `agent-env run <bundle> --task <name> --agent claude-code --model <model>`.
-Count runs reported `passed`. A run `scored below 1` is a miss; one reported
-`failed` did not finish, so run it again if the budget allows instead of
-counting it. Never run past the budget.
+The runner needs a model endpoint in your shell: `LITELLM_BASE_URL` and
+`LITELLM_API_KEY`, or `base_url` and `api_key` under `[model]` in
+`.agentenv/config.toml`. When a run says no model endpoint is set, tell the
+person what to set and stop. Count runs reported `passed`. A run
+`scored below 1` is a miss; one reported `failed` did not finish, so run it
+again if the budget allows instead of counting it. Never run past the budget.
 
 ## Close and report
 

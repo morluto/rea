@@ -321,6 +321,9 @@ itWithCaptureCapability(
         TMPDIR: missingTempRoot,
         TMP: missingTempRoot,
         TEMP: missingTempRoot,
+        // Select caller-owned compilation so a shared Darwin helper cannot
+        // bypass the preparation failure this case exercises.
+        REA_DARWIN_MODULE_CACHE_PATH: join(missingTempRoot, "modules"),
       },
     });
 
@@ -332,7 +335,8 @@ itWithCaptureCapability(
       code: "process_capture_failed",
       details: { execution_failure: expect.stringContaining(missingTempRoot) },
     });
-    // Darwin prepares its native inspector before acquiring capture resources.
+    // With caller-owned compilation, Darwin fails preparing its inspector
+    // before acquiring capture resources.
     // Other hosts reach the capture root allocation, whose failure is accounted.
     const cleanupState =
       process.platform === "darwin" ? "unverified" : "not_required";
