@@ -2,6 +2,7 @@ import { posix } from "node:path";
 
 import {
   logicalPathEscapesRoot,
+  logicalPathNfc,
   normalizeJoinedLogicalPath,
 } from "../../domain/artifactIdentity.js";
 import {
@@ -67,29 +68,35 @@ export const createElectronNativeAddonResolver = (
 
   return {
     resolve(file, finding) {
+      const canonicalFilePath =
+        file.path === "." ? "." : normalizeJoinedLogicalPath(file.path);
       let byPath = state.findingCache.get(finding);
-      const cached = byPath?.get(file.path);
+      const cached = byPath?.get(canonicalFilePath);
       if (cached !== undefined) return cached;
       let resolved: readonly string[];
       if (finding.resolution?.asar_unpacked === true) {
-        resolved = resolveAsarUnpackedFinding(state, file.path, finding);
+        resolved = resolveAsarUnpackedFinding(
+          state,
+          canonicalFilePath,
+          finding,
+        );
       } else if (finding.resolution === undefined) {
         resolved = resolveDirectSpecifierWithUnpackedFallback(
           state.input,
-          file.path,
+          canonicalFilePath,
           finding,
         );
       } else if (finding.resolution.kind === "candidates") {
         resolved = resolveCandidatesWithUnpackedFallback(
           state.input,
-          file.path,
+          canonicalFilePath,
           finding,
           finding.resolution,
         );
       } else {
         resolved = resolveHelperWithUnpackedFallback(
           state,
-          file.path,
+          canonicalFilePath,
           finding.resolution,
         );
       }
@@ -97,7 +104,7 @@ export const createElectronNativeAddonResolver = (
         byPath = new Map();
         state.findingCache.set(finding, byPath);
       }
-      byPath.set(file.path, resolved);
+      byPath.set(canonicalFilePath, resolved);
       return resolved;
     },
   };
@@ -175,7 +182,10 @@ const findBindingsModuleRoot = (
   state: NativeAddonResolverState,
   sourceDir: string,
 ): string | undefined => {
-  const normalizedDir = sourceDir === "" ? "." : sourceDir;
+  const normalizedDir =
+    sourceDir === "" || sourceDir === "."
+      ? "."
+      : normalizeJoinedLogicalPath(sourceDir);
   if (state.bindingsRootCache.has(normalizedDir))
     return state.bindingsRootCache.get(normalizedDir) ?? undefined;
   let current = normalizedDir;
@@ -215,9 +225,10 @@ const scanNodeGypBuildTargets = (
   state: NativeAddonResolverState,
   root: string,
 ): readonly string[] => {
-  const cached = state.nodeGypBuildCache.get(root);
+  const canonicalRoot = root === "." ? "." : normalizeJoinedLogicalPath(root);
+  const cached = state.nodeGypBuildCache.get(canonicalRoot);
   if (cached !== undefined) return cached;
-  const prefix = root === "." ? "" : `${root}/`;
+  const prefix = canonicalRoot === "." ? "" : `${canonicalRoot}/`;
   const matched: string[] = [];
   for (const path of ensureInventoryIndex(state).nativeAddonPaths) {
     if (!isNativeAddonModuleTarget(path, state.input.files.get(path)?.kind))
@@ -233,7 +244,7 @@ const scanNodeGypBuildTargets = (
       (segments[1] === "Release" || segments[1] === "Debug");
     if (isPrebuild || isGypBuild) matched.push(path);
   }
-  state.nodeGypBuildCache.set(root, matched);
+  state.nodeGypBuildCache.set(canonicalRoot, matched);
   return matched;
 };
 
@@ -242,10 +253,12 @@ const scanBindingsTargets = (
   root: string,
   addonName: string,
 ): readonly string[] => {
-  const cacheKey = compositeKey([root, addonName]);
+  const canonicalRoot = root === "." ? "." : normalizeJoinedLogicalPath(root);
+  const canonicalAddonName = logicalPathNfc(addonName);
+  const cacheKey = compositeKey([canonicalRoot, canonicalAddonName]);
   const cached = state.bindingsCache.get(cacheKey);
   if (cached !== undefined) return cached;
-  const prefix = root === "." ? "" : `${root}/`;
+  const prefix = canonicalRoot === "." ? "" : `${canonicalRoot}/`;
   const matched: string[] = [];
   for (const path of ensureInventoryIndex(state).nativeAddonPaths) {
     if (!isNativeAddonModuleTarget(path, state.input.files.get(path)?.kind))
@@ -254,7 +267,7 @@ const scanBindingsTargets = (
     const rel = path.slice(prefix.length);
     const segments = rel.split("/");
     if (segments.includes("node_modules")) continue;
-    if (segments.at(-1) !== addonName) continue;
+    if (segments.at(-1) !== canonicalAddonName) continue;
     if (matchesBindingsSearchDirectory(segments.slice(0, -1)))
       matched.push(path);
   }
@@ -618,7 +631,11 @@ const evaluateAnchoredPathSteps = (
   if (anchoredCurrentEscapesRoot(normalized)) return undefined;
   const rel = posix.relative(ARTIFACT_ROOT_PREFIX, normalized);
   if (rel === "") return hadTrailingSlash ? "./" : ".";
-  return hadTrailingSlash && !rel.endsWith("/") ? `${rel}/` : rel;
+  const canonicalRel = normalizeJoinedLogicalPath(rel);
+  if (logicalPathEscapesRoot(canonicalRel)) return undefined;
+  return hadTrailingSlash && !canonicalRel.endsWith("/")
+    ? `${canonicalRel}/`
+    : canonicalRel;
 };
 
 const resolveOrderedAnchoredDirectory = (

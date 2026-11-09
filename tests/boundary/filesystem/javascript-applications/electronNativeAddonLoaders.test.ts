@@ -1408,3 +1408,97 @@ it("charges a bounded multiple of serialized graph bytes for multi-member multi-
   expect(estimate).toBeGreaterThanOrEqual(3 * serialized);
   expect(estimate).toBeLessThanOrEqual(9 * serialized);
 });
+
+it("canonicalizes decomposed-Unicode helper lookup keys and anchored ASAR roots against the NFC inventory while preserving authored display spelling", async () => {
+  const appRoot = await createTestTempDirectory("rea-native-nfc-helper-keys-");
+  const nfdCafe = "cafe\u0301";
+  const nfcCafe = "caf\u00e9";
+  const bindingsBytes = "nfc-bindings-addon-bytes";
+  const concatAsarBytes = "nfc-concat-asar-ngb-addon-bytes";
+
+  await writeFixtureFiles(appRoot, {
+    "package.json": JSON.stringify({
+      name: "nfc-helper-app",
+      main: "main.cjs",
+    }),
+    "main.cjs": [
+      'const { ipcMain } = require("electron");',
+      'const bindings = require("bindings");',
+      'const load = require("node-gyp-build");',
+      'const { openCafe } = bindings("cafe\\u0301");',
+      'const { runUnpacked } = load((__dirname + "/resources/app.asar/cafe\\u0301-pkg").replace("app.asar", "app.asar.unpacked"));',
+      'ipcMain.handle("cafe:run", () => [openCafe(), runUnpacked()]);',
+    ].join("\n"),
+    [`build/Release/${nfcCafe}.node`]: bindingsBytes,
+    [`resources/app.asar.unpacked/${nfcCafe}-pkg/prebuilds/darwin-arm64/addon.node`]:
+      concatAsarBytes,
+  });
+
+  const staticFacts = analyzeJavaScriptStaticSource(
+    'import bindings from "bindings"; export const addon = bindings("cafe\\u0301");',
+  );
+  expect(staticFacts.electron.native_addon_bindings).toMatchObject([
+    {
+      specifier: `${nfdCafe}.node`,
+      resolution: { kind: "bindings", addon_name: `${nfdCafe}.node` },
+    },
+  ]);
+
+  const analyzed = await analyzeJavaScriptApplication({
+    input_path: appRoot,
+    format: "directory",
+  });
+  if (!analyzed.ok) throw analyzed.error;
+  const parsed = javascriptApplicationAnalysisResultSchema.parse(
+    analyzed.value.normalized_result,
+  );
+  expect(parsed.summary).toMatchObject({
+    native_addon_bindings: 2,
+    resolved_native_addon_bindings: 2,
+  });
+
+  const traced = traceApplicationFeatureEvidence({
+    application: analyzed.value,
+    seed: { kind: "module", value: "main.cjs" },
+    direction: "outgoing",
+    native_observations: [
+      createSimulatedNativeEvidence(
+        join(appRoot, `build/Release/${nfcCafe}.node`),
+        bindingsBytes,
+      ),
+      createSimulatedNativeEvidence(
+        join(
+          appRoot,
+          `resources/app.asar.unpacked/${nfcCafe}-pkg/prebuilds/darwin-arm64/addon.node`,
+        ),
+        concatAsarBytes,
+      ),
+    ],
+  });
+  if (!traced.ok) throw traced.error;
+
+  const byPath = new Map(
+    traced.value.result.native_handoffs.map((handoff) => [
+      handoff.artifact_path,
+      handoff,
+    ]),
+  );
+  expect([...byPath.keys()].sort()).toEqual([
+    `build/Release/${nfcCafe}.node`,
+    `resources/app.asar.unpacked/${nfcCafe}-pkg/prebuilds/darwin-arm64/addon.node`,
+  ]);
+  expect(byPath.get(`build/Release/${nfcCafe}.node`)).toMatchObject({
+    artifact_sha256: sha256Hex(bindingsBytes),
+    status: "evidence-linked",
+    requested_exports: ["openCafe"],
+  });
+  expect(
+    byPath.get(
+      `resources/app.asar.unpacked/${nfcCafe}-pkg/prebuilds/darwin-arm64/addon.node`,
+    ),
+  ).toMatchObject({
+    artifact_sha256: sha256Hex(concatAsarBytes),
+    status: "evidence-linked",
+    requested_exports: ["runUnpacked"],
+  });
+});
