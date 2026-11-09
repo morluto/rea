@@ -207,6 +207,7 @@ export const registerAdbCommands = (
       "device-path": z
         .string()
         .min(1)
+        .regex(/^\/[^\x00]*$/u, "Device path must be absolute")
         .describe("Absolute device directory path to list"),
     }),
     run: ({ args }) =>
