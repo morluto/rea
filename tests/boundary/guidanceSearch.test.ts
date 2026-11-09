@@ -134,6 +134,11 @@ it.each([
     guide: "references/connection-and-recovery.md",
     fact: PRODUCT_IDENTITY.registrationPackageSpecifier,
   },
+  {
+    query: "CLI summary receipt",
+    guide: "references/evidence-workflows.md",
+    fact: "summary.normalized_result.parent_evidence_id",
+  },
 ])(
   "retrieves moved $query guidance from the installed bundle",
   async ({ query, guide, fact }) => {

@@ -98,6 +98,9 @@ Endpoint candidates remain inferences rather than confirmed network behavior.
 ## Read a module without repeating analysis
 
 Use the actual returned parent ID, on the same connection, as `source.evidence_id`.
+For CLI summary exports, take that ID from
+`summary.normalized_result.parent_evidence_id` and pass `--evidence-bundle` with
+the exported bundle's path to each later `inspect-analysis-view` invocation.
 The following IDs are placeholders to replace with returned values. When the
 module's node ID is not already known, page identities before selecting an item.
 Pages return only node IDs, paths and roles; choose a useful page size and follow

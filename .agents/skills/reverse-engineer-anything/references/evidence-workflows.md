@@ -12,8 +12,13 @@ Read only the sections needed for the selected task.
 
 ## Read and compose source Evidence
 
-Evidence-producing tools return Evidence directly in MCP `structuredContent`
-and CLI JSON. Advertised summary delivery retains the complete source separately;
+Evidence-producing MCP tools return Evidence directly in `structuredContent`.
+CLI complete JSON returns Evidence directly. CLI summary delivery through
+`--evidence_output` returns `{summary, evidence_bundle}`: `summary` is the view's
+Evidence, and `evidence_bundle` is the export receipt with its path and byte count.
+Read `summary.normalized_result.parent_evidence_id` for the complete source ID;
+pass the receipt's path to `--evidence-bundle` on a later supported CLI command.
+Advertised summary delivery retains the complete source separately;
 complete inline delivery is available where the connected contract says so. Read `normalized_result` for operation data,
 and cite `evidence_id` when another tool or your explanation needs a stable
 reference. Preserve authority, limitations, coverage, and residual unknowns. If a result
