@@ -8,6 +8,7 @@ import { parseBinaryTarget } from "../../../src/application/BinaryTargetResolver
 import type { JsonValue } from "../../../src/domain/jsonValue.js";
 import type { RecordUnknownInput } from "../../../src/domain/residualUnknown.js";
 import { createAnalysisProfile } from "../../../src/domain/analysisProfile.js";
+import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
 import { HopperStartError } from "../../../src/domain/hopperErrors.js";
 import { ProviderAdapterError } from "../../../src/domain/providerAdapterError.js";
 import { ProviderCleanupError } from "../../../src/domain/providerCleanupError.js";
@@ -218,6 +219,7 @@ it("drains session calls and retires analysis after an admitted external mutatio
   expect((await session.open(target)).ok).toBe(true);
   expect(session.activeTarget()?.path).toBe(target);
   const originalDigest = session.activeTarget()?.sha256;
+  expect(originalDigest).toEqual(expect.any(String));
   const started = createDeferred<void>();
   const release = createDeferred<void>();
 
@@ -248,6 +250,7 @@ it("drains session calls and retires analysis after an admitted external mutatio
   expect(clients).toHaveLength(0);
   expect((await session.open(target)).ok).toBe(true);
   expect((await session.execute("address_name", {})).ok).toBe(true);
+  expect(session.activeTarget()?.sha256).toEqual(expect.any(String));
   expect(session.activeTarget()?.sha256).not.toBe(originalDigest);
   expect(clients.at(-1)?.targetSha256).toBe(session.activeTarget()?.sha256);
   expect(calls).toEqual(["address_name"]);
@@ -259,6 +262,7 @@ it("leaves analysis unbound when a command returns before its writer finishes", 
   const session = createTestBinarySession(createCacheProvider([]));
   expect((await session.open(target)).ok).toBe(true);
   const originalDigest = session.activeTarget()?.sha256;
+  expect(originalDigest).toEqual(expect.any(String));
   const releaseWriter = createDeferred<void>();
   let writer: Promise<void> | undefined;
   const result = await session.withAdmittedExternalMutation(
@@ -278,6 +282,7 @@ it("leaves analysis unbound when a command returns before its writer finishes", 
   await writer;
   expect((await session.execute("address_name", {})).ok).toBe(false);
   expect((await session.open(target)).ok).toBe(true);
+  expect(session.activeTarget()?.sha256).toEqual(expect.any(String));
   expect(session.activeTarget()?.sha256).not.toBe(originalDigest);
   await session.close();
 });
@@ -304,16 +309,80 @@ it("reports an external cleanup blocker until its exact owner confirms release",
       (_value, error) => error,
     );
     expect(await session.status()).toMatchObject({ cleanup_pending: true });
-    expect(await session.open(target)).toEqual(err(failure));
-    await session.close();
+    expect(await session.open(target)).toEqual({
+      ok: false,
+      error: failure,
+      targetAtCompletion: null,
+      providerIdAtCompletion: null,
+      selection: { kind: "none" },
+    });
+    await session.close({ cleanupRetry: { operation: "close_binary" } });
     expect(released).toBe(false);
     expect(await session.status()).toMatchObject({ cleanup_pending: true });
+    expect(await session.status()).not.toHaveProperty("cleanup_retry");
     await lease.release();
     expect(await session.status()).toMatchObject({ cleanup_pending: false });
     expect((await session.open(target)).ok).toBe(true);
   } finally {
     await lease.release();
     await session.close();
+  }
+});
+
+it("does not offer close retry while an external owner also blocks cleanup", async () => {
+  const [target] = await createBinarySessionTargets();
+  const externalFailure = new ProviderCleanupError(
+    "external-debugger",
+    ["external-run"],
+    {},
+  );
+  const clientFailure = new ProviderCleanupError("fixture", ["client-run"], {});
+  let clientReleased = false;
+  const externalLease = new AnalysisCleanupLease(async () => {}, [
+    "external-run",
+  ]);
+  const clientLease = new AnalysisCleanupLease(async () => {
+    clientReleased = true;
+  }, ["client-run"]);
+  externalLease.bindCleanupError(externalFailure);
+  clientLease.bindCleanupError(clientFailure);
+  const provider = createCacheProvider([]);
+  const session = createTestBinarySession({
+    ...provider,
+    createClient: (...args) => {
+      const client = provider.createClient(...args);
+      return {
+        ...client,
+        close: () =>
+          clientReleased ? client.close() : Promise.resolve(err(clientFailure)),
+      };
+    },
+  });
+  try {
+    expect((await session.open(target)).ok).toBe(true);
+    await session.execute("address_name", {
+      address: "0x1000",
+      document: "fixture",
+    });
+    await session.withAdmittedExternalMutation(
+      target,
+      undefined,
+      async () => err(externalFailure),
+      (_value, error) => error,
+    );
+    expect(
+      (await session.close({ cleanupRetry: { operation: "close_binary" } })).ok,
+    ).toBe(false);
+    expect(await session.status()).toMatchObject({
+      open: false,
+      cleanup_pending: true,
+    });
+    expect(await session.status()).not.toHaveProperty("cleanup_retry");
+  } finally {
+    await clientLease.release();
+    await externalLease.release();
+    const closed = await session.close();
+    if (!closed.ok) throw closed.error;
   }
 });
 
@@ -324,6 +393,7 @@ it("retires analysis when an external mutation uses a hard link", async () => {
   const session = createTestBinarySession(createCacheProvider([]));
   expect((await session.open(target)).ok).toBe(true);
   const before = session.activeTarget()?.sha256;
+  expect(before).toEqual(expect.any(String));
 
   const result = await session.withAdmittedExternalMutation(
     alias,
@@ -341,6 +411,7 @@ it("retires analysis when an external mutation uses a hard link", async () => {
   });
   expect(session.activeTarget()).toBeUndefined();
   expect((await session.open(target)).ok).toBe(true);
+  expect(session.activeTarget()?.sha256).toEqual(expect.any(String));
   expect(session.activeTarget()?.sha256).not.toBe(before);
   await session.close();
 });
@@ -457,7 +528,6 @@ it("keeps an externally mutated session unbound until cleanup is retried", async
   );
 
   expect(closeAttempts).toBe(1);
-  expect(mutation.ok).toBe(false);
   if (mutation.ok) throw new Error("Expected cleanup failure");
   expect(mutation.error).toBeInstanceOf(ProviderCleanupError);
   expect(mutation.error.cleanupIncomplete).toBe(true);
@@ -900,7 +970,17 @@ describe("replay of exact immutable calls", () => {
     expect(mismatch.importAnalysisSnapshot(snapshot.value).ok).toBe(true);
     const opened = await mismatch.open(second);
     expect(opened.ok).toBe(false);
-    if (!opened.ok) expect(opened.error._tag).toBe("EvidenceIntegrityError");
+    if (!opened.ok) {
+      expect(opened.error._tag).toBe("EvidenceIntegrityError");
+      expect(projectAnalysisError(opened.error).details).toMatchObject({
+        binding_mismatch: {
+          target: {
+            snapshot: { sha256: snapshot.value.target.sha256 },
+            selected: { sha256: expect.any(String) },
+          },
+        },
+      });
+    }
     await mismatch.close();
 
     const profileMismatchCalls: string[] = [];
@@ -927,7 +1007,14 @@ describe("replay of exact immutable calls", () => {
     expect(profileOpened.ok).toBe(false);
     if (!profileOpened.ok) {
       expect(profileOpened.error._tag).toBe("EvidenceIntegrityError");
-      expect(profileOpened.error.message).toContain("profile_mismatch");
+      expect(projectAnalysisError(profileOpened.error).details).toMatchObject({
+        binding_mismatch: {
+          profile_digest: {
+            snapshot: snapshot.value.binding.analysis_profile.digest,
+            selected: expect.any(String),
+          },
+        },
+      });
     }
     expect(profileMismatchCalls).toEqual([]);
     await profileMismatch.close();
@@ -940,8 +1027,16 @@ describe("replay of exact immutable calls", () => {
       snapshot.value,
     );
     expect(activeImport.ok).toBe(false);
-    if (!activeImport.ok)
-      expect(activeImport.error.message).toContain("profile_mismatch");
+    if (!activeImport.ok) {
+      expect(projectAnalysisError(activeImport.error).details).toMatchObject({
+        binding_mismatch: {
+          profile_digest: {
+            snapshot: snapshot.value.binding.analysis_profile.digest,
+            selected: expect.any(String),
+          },
+        },
+      });
+    }
     await activeProfileMismatch.close();
   });
 });
@@ -1772,7 +1867,13 @@ describe("no replacement start", () => {
     });
     expect((await session.open(first)).ok).toBe(true);
 
-    expect(await session.open(second)).toEqual(err(cleanupError));
+    expect(await session.open(second)).toEqual({
+      ok: false,
+      error: cleanupError,
+      targetAtCompletion: null,
+      providerIdAtCompletion: null,
+      selection: { kind: "none" },
+    });
     expect(created).toBe(1);
     expect(await session.status()).toMatchObject({ open: false });
   });
@@ -1831,7 +1932,13 @@ it("blocks analysis rebinding until the external writer cleanup settles", async 
   );
   expect(result).toEqual(resultOk(err(failure)));
   expect(session.activeTarget()).toBeUndefined();
-  expect(await session.open(target)).toEqual(err(failure));
+  expect(await session.open(target)).toEqual({
+    ok: false,
+    error: failure,
+    targetAtCompletion: null,
+    providerIdAtCompletion: null,
+    selection: { kind: "none" },
+  });
   const anotherMutation = vi.fn(async () => resultOk("unrelated command"));
   expect(
     await session.withAdmittedExternalMutation(

@@ -1,6 +1,7 @@
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
+import { Ajv2020 } from "ajv/dist/2020.js";
 import { expect } from "vitest";
 
 import { toolContract } from "../../../src/contracts/toolContracts.js";
@@ -10,6 +11,80 @@ import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { cliTest, runFileCli } from "../../support/cli/cliFixture.js";
 
 const PACKAGE_LINE = "package:/data/app/example/base.apk=com.example.app";
+
+interface AdbSelectorCase {
+  readonly command: string;
+  readonly field: string;
+  readonly valid: string;
+  readonly invalid: string;
+  readonly constraint: Readonly<Record<string, unknown>>;
+  /** Positional arguments between the serial and the checked field. */
+  readonly between?: Readonly<Record<string, string>>;
+  readonly options?: readonly string[];
+}
+
+cliTest.for<AdbSelectorCase>([
+  {
+    command: "list-adb-directory",
+    field: "device-path",
+    valid: "/sdcard",
+    invalid: "sdcard",
+    constraint: { expected: "regex" },
+  },
+  {
+    command: "pull-adb-file",
+    field: "device-path",
+    valid: "/sdcard/notes.txt",
+    invalid: "sdcard/notes.txt",
+    constraint: { expected: "regex" },
+    options: ["--output-directory", "pulled"],
+  },
+  {
+    command: "push-adb-file",
+    field: "device-path",
+    valid: "/data/local/tmp/payload.bin",
+    invalid: "data/local/tmp/payload.bin",
+    constraint: { expected: "regex" },
+    between: { "local-path": "payload.bin" },
+  },
+  {
+    command: "resolve-adb-packages",
+    field: "query",
+    valid: "a".repeat(256),
+    invalid: "a".repeat(257),
+    constraint: { maximum: 256 },
+  },
+])(
+  "publishes the enforced ADB selector constraint for $command",
+  async (
+    { command, field, valid, invalid, constraint, between = {}, options = [] },
+    { cli },
+  ) => {
+    const schema = await cli.run({
+      arguments: [command, "--schema", "--json"],
+    });
+    expect(schema.exitCode, schema.stderr).toBe(0);
+    const output = schema.json as { args: Parameters<Ajv2020["compile"]>[0] };
+    const validate = new Ajv2020({ strict: false }).compile(output.args);
+    const leading = { serial: "emulator-5554", ...between };
+    expect(validate({ ...leading, [field]: valid })).toBe(true);
+    expect(validate({ ...leading, [field]: invalid })).toBe(false);
+    const result = await cli.run({
+      arguments: [
+        command,
+        ...Object.values(leading),
+        invalid,
+        ...options,
+        "--json",
+      ],
+    });
+    expect(result.exitCode).toBe(1);
+    expect(result.json).toMatchObject({
+      code: "VALIDATION_ERROR",
+      fieldErrors: [expect.objectContaining({ path: field, ...constraint })],
+    });
+  },
+);
 const unrecognized = (count: number) =>
   Array.from(
     { length: count },
@@ -79,20 +154,21 @@ process.exit(91);
             expect.stringContaining("unparsed_lines"),
           );
 
-        if (operation !== "resolve_adb_packages") continue;
-        expect(evidence.normalized_result).toMatchObject({
-          matches: [
-            {
-              package_name: "com.example.app",
-              base_apk_device_path: "/data/app/example/base.apk",
-            },
-          ],
-          exact_match: false,
-        });
-        const reply = await call(operation, {
-          serial: "emulator-5554",
-          query: "example",
-        });
+        const installedPackage = {
+          package_name: "com.example.app",
+          base_apk_device_path: "/data/app/example/base.apk",
+        };
+        expect(evidence.normalized_result).toMatchObject(
+          operation === "resolve_adb_packages"
+            ? { matches: [installedPackage], exact_match: false }
+            : { packages: [installedPackage], scope: "all" },
+        );
+        const reply = await call(
+          operation,
+          operation === "resolve_adb_packages"
+            ? { serial: "emulator-5554", query: "example" }
+            : { serial: "emulator-5554" },
+        );
         expect(reply.isError).not.toBe(true);
         const structured = toolContract(operation).outputSchema.parse(
           reply.structuredContent,

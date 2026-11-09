@@ -84,6 +84,7 @@ it.each(profiles)("preserves directional gaps (%s)", async (profile) => {
         status: "partial",
         limitations: [limitation],
         limited_directions: directions,
+        discovery: { callees: { status: "complete" } },
       };
       const observation = observe(coverage);
       expect(session.recordEvidence(observation).ok).toBe(true);
@@ -121,8 +122,14 @@ it.each(profiles)("preserves directional gaps (%s)", async (profile) => {
           name: "build_call_path",
           arguments: malformed,
         });
+        // Source admission belongs to the Evidence owner in both profiles;
+        // malformed supplied records fail integrity instead of SDK validation.
         expect(parseMcpToolError(rejected)).toMatchObject({
-          error: { code: "invalid_request", category: "invalid_input" },
+          error: {
+            code: "evidence_integrity_mismatch",
+            category: "integrity_mismatch",
+            message: expect.stringContaining("relationship_coverage"),
+          },
         });
       }
       const result = await client.callTool({

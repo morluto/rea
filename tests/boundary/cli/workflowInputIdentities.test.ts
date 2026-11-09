@@ -30,11 +30,22 @@ const runJson = async (
   root: string,
   command: string,
   input: unknown,
+  evidenceBundle?: string,
 ) => {
   const path = join(root, "request.json");
   await writeFile(path, JSON.stringify(input));
-  return cli.run({
-    arguments: [command, path, "--json"],
+  // These JSON commands share no provider state; reuse the fixture-owned CLI
+  // process so the matrix measures validation rather than repeated startup.
+  const run = cli.sharedCliRun?.bind(cli) ?? cli.run.bind(cli);
+  return run({
+    arguments: [
+      command,
+      path,
+      "--json",
+      ...(evidenceBundle === undefined
+        ? []
+        : ["--evidence-bundle", evidenceBundle]),
+    ],
     cwd: root,
     environment: { REA_LOG_LEVEL: "silent" },
   });
@@ -394,6 +405,18 @@ cliTest(
     });
     expect(cliResult.exitCode, cliResult.stdout).toBe(0);
     expect(compareContract.outputSchema.parse(cliResult.json)).toEqual(result);
+    const bundlePath = join(root, "retained-workflow-evidence.json");
+    const exported = await call("export_evidence_bundle", { path: bundlePath });
+    expect(exported.isError).not.toBe(true);
+    const portable = await runJson(
+      cli,
+      root,
+      "compare-application-versions",
+      { left: reference, right: otherReference },
+      bundlePath,
+    );
+    expect(portable.exitCode, portable.stdout).toBe(0);
+    expect(compareContract.outputSchema.parse(portable.json)).toEqual(result);
     expect(
       (
         await call("compare_javascript_export_shapes", {

@@ -121,53 +121,56 @@ const graph = (): NativeCallGraph =>
     limitations: ["Graph caveat", "Graph caveat"],
   });
 
-it("returns useful caller/callee facts with exact source context identity and partial coverage", async () => {
-  const source = parent("procedure_callees", [
-    "ram:0x0010",
-    "ram:0x0010",
-    "ram:0x0020",
-  ]);
-  const before = JSON.stringify(source);
-  const summary = await project(source, { kind: "summary" });
-  expect(summary.value).toMatchObject({
-    kind: "summary",
-    parent_evidence_id: source.evidence_id,
-    source_provider: source.provider,
-    source_parameters: source.parameters,
-    source_analysis_profile_digest: source.analysis_profile?.digest,
-    source_context: {
-      evidence_limitation_count: 1,
-      result_limitation_count: null,
-    },
-    summary: { observations: 3 },
-    items: {
-      type: "addresses",
-      rows: [
-        { source_index: 0, address: "ram:0x0010" },
-        { source_index: 1, address: "ram:0x0010" },
-        { source_index: 2, address: "ram:0x0020" },
-      ],
-    },
-  });
-  expect(summary.evidence.relationship_coverage).toEqual(
-    source.relationship_coverage,
-  );
-  const page = await project(source, {
-    kind: "native-observation",
-    offset: 1,
-    limit: 1,
-  });
-  expect(page.value).toMatchObject({
-    items: { rows: [{ source_index: 1, address: "ram:0x0010" }] },
-    coverage: { total: 3, next_offset: 2, exhausted: false },
-  });
-  expect(page.value).toHaveProperty(
-    "source_context.digest",
-    contextDigest(summary.value),
-  );
-  expect(JSON.stringify(summary.value)).not.toContain('"analysis_profile":');
-  expect(JSON.stringify(source)).toBe(before);
-});
+it.each(["procedure_callees", "xrefs"])(
+  "pages %s addresses with exact source context and duplicate identity",
+  async (operation) => {
+    const source = parent(operation, [
+      "ram:0x0010",
+      "ram:0x0010",
+      "ram:0x0020",
+    ]);
+    const before = JSON.stringify(source);
+    const summary = await project(source, { kind: "summary" });
+    expect(summary.value).toMatchObject({
+      kind: "summary",
+      parent_evidence_id: source.evidence_id,
+      source_provider: source.provider,
+      source_parameters: source.parameters,
+      source_analysis_profile_digest: source.analysis_profile?.digest,
+      source_context: {
+        evidence_limitation_count: 1,
+        result_limitation_count: null,
+      },
+      summary: { observations: 3 },
+      items: {
+        type: "addresses",
+        rows: [
+          { source_index: 0, address: "ram:0x0010" },
+          { source_index: 1, address: "ram:0x0010" },
+          { source_index: 2, address: "ram:0x0020" },
+        ],
+      },
+    });
+    expect(summary.evidence.relationship_coverage).toEqual(
+      source.relationship_coverage,
+    );
+    const page = await project(source, {
+      kind: "native-observation",
+      offset: 1,
+      limit: 1,
+    });
+    expect(page.value).toMatchObject({
+      items: { rows: [{ source_index: 1, address: "ram:0x0010" }] },
+      coverage: { total: 3, next_offset: 2, exhausted: false },
+    });
+    expect(page.value).toHaveProperty(
+      "source_context.digest",
+      contextDigest(summary.value),
+    );
+    expect(JSON.stringify(summary.value)).not.toContain('"analysis_profile":');
+    expect(JSON.stringify(source)).toBe(before);
+  },
+);
 
 it("pages complete context fields and changes its digest when source profile or caveats change", async () => {
   const source = parent("procedure_callers", []);
@@ -249,6 +252,13 @@ it("keeps absent profile and inapplicable result caveats distinct from observed 
   ).toMatchObject({
     source_context: { result_limitation_count: null },
     items: { rows: null },
+    coverage: {
+      status: "unavailable",
+      examined: 0,
+      total: null,
+      next_offset: null,
+      exhausted: false,
+    },
     unknowns: expect.arrayContaining([
       expect.stringContaining("not applicable"),
     ]),
@@ -479,6 +489,8 @@ it("orders canonical numeric graph depths before nonnumeric keys across pages", 
     graph: {
       beta: [node],
       "01": [node],
+      "9007199254740993": [node],
+      "9007199254740992": [node],
       "10": [node],
       "2": [node],
       "1": [node],
@@ -487,11 +499,11 @@ it("orders canonical numeric graph depths before nonnumeric keys across pages", 
     limitations: [],
   });
   const pages = [];
-  for (const offset of [0, 3]) {
+  for (const offset of [0, 4]) {
     const { value } = await project(source, {
       kind: "native-observation",
       offset,
-      limit: 3,
+      limit: 4,
     });
     if (
       value.kind !== "native-observation" ||
@@ -500,14 +512,14 @@ it("orders canonical numeric graph depths before nonnumeric keys across pages", 
       throw new Error("Expected graph page");
     expect(value.items.rows.every((row) => row.source_index === 0)).toBe(true);
     expect(value.coverage).toMatchObject({
-      total: 6,
-      exhausted: offset === 3,
+      total: 8,
+      exhausted: offset === 4,
     });
     pages.push(value.items.rows.map((row) => row.level));
   }
   expect(pages).toEqual([
-    ["0", "1", "2"],
-    ["10", "01", "beta"],
+    ["0", "1", "2", "10"],
+    ["9007199254740992", "9007199254740993", "01", "beta"],
   ]);
 });
 it("keeps context identity across authenticated target path aliases while preserving selected paths", async () => {

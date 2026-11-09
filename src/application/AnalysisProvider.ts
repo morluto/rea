@@ -2,12 +2,14 @@ import type { AnalysisWorkScope } from "./AnalysisWorkScope.js";
 import type { AnalysisObservation } from "../domain/analysisObservation.js";
 import type { ProviderInspectionScope } from "./ProviderInspectionScope.js";
 import type { BinaryTarget } from "../domain/binaryTargetTypes.js";
+import type { TargetApplicability } from "../domain/targetApplicability.js";
 import type { OfficialToolName } from "../contracts/officialToolContracts.js";
 import type { EnhancedToolName } from "../contracts/enhancedInputs.js";
 import type { NativeToolName } from "../contracts/native/nativeToolContracts.js";
 import type { ArtifactAnalysisOperation } from "../contracts/artifactToolContracts.js";
 import type { ManagedToolName } from "../contracts/managed/managedToolContracts.js";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
+import type { AnalysisCapabilityUnavailableError } from "../domain/analysisErrorCore.js";
 import type { AnalysisProfileCommitment } from "../domain/analysisProfile.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import type { Result } from "../domain/result.js";
@@ -17,10 +19,19 @@ import type {
   EvidenceSubjectTarget,
 } from "../domain/evidence.js";
 import { jsonValueSchema } from "../domain/jsonValue.js";
+import {
+  pseudocodeAbsenceSchema,
+  type PseudocodeAbsence,
+} from "../domain/native/pseudocodeAbsence.js";
+import {
+  analysisSourceDescriptorSchema,
+  type AnalysisSourceDescriptor,
+} from "../domain/analysisSource.js";
 import type { ProgressReporter } from "./ProgressReporter.js";
 import type { ProviderRejectionCode } from "../domain/providerSelection.js";
 import type { ProcessLineageObservation } from "../process/ProcessOwnership.js";
 import type { ProviderOperationHealth } from "../domain/providerOperationHealth.js";
+import type { ProviderReleaseVerification } from "../domain/providerReleaseVerification.js";
 import {
   relationshipCoverageSchema,
   type RelationshipCoverage,
@@ -29,8 +40,12 @@ import {
 export interface ExecutionOptions {
   /** Ephemeral state shared only by one composed workflow. */
   readonly workScope?: AnalysisWorkScope;
+  /** A single CLI answer bound to its isolated target, not a persistent default document. */
+  readonly snapshotContext?: "one-shot-target";
   readonly signal?: AbortSignal;
   readonly progress?: ProgressReporter;
+  /** The composed workflow will cite this observation and needs its Evidence. */
+  readonly retainEvidence?: true;
   /**
    * Set when a procedure selector came from provider output, such as a
    * revisited callee, rather than from the caller. A provider-derived
@@ -55,6 +70,14 @@ export type AnalysisOperation =
 /** Atomic successful provider observation with exact producing provenance. */
 export interface AnalysisExecution extends AnalysisObservation {
   readonly provider: ProviderIdentity;
+  /** Provider-observed cause of a null pseudocode result, when known. */
+  readonly pseudocodeAbsence?: PseudocodeAbsence;
+  /**
+   * Compact provider-owned facts for this execution. This is not an Evidence
+   * record and is not restored by snapshot replay; consumers must treat its
+   * absence as unknown.
+   */
+  readonly sourceDescriptor?: AnalysisSourceDescriptor;
   /** Session-issued identity of the committed record consumed by this execution. */
   readonly evidenceId?: string;
   /** Result-specific veto of snapshot replay; Evidence remains retainable. */
@@ -66,15 +89,42 @@ export interface AnalysisExecution extends AnalysisObservation {
    * output.
    */
   readonly referencesTruncated?: boolean;
+  /** The producer needs this observation retained as source Evidence for composed workflows. */
+  readonly requiresSourceEvidence?: true;
+  /** Known reference-discovery gaps; absent means coverage was not reported. */
+  readonly referenceCoverageGaps?: readonly {
+    readonly code: string;
+    readonly scope: "image" | "observation";
+    readonly description: string;
+  }[];
+  /** Typed source facts for this live xref observation; absent means unreported. */
+  readonly referenceClassifications?: readonly {
+    readonly sourceAddress: string;
+    readonly targetAddress: string;
+    readonly kind: "stored_pointer";
+    readonly provenance: string;
+    readonly width: number;
+  }[];
+  /**
+   * Sibling operations known to be unavailable at the provider level when this
+   * operation answered from a standalone or fallback path.
+   */
+  readonly siblingUnavailability?: AnalysisCapabilityUnavailableError;
 }
 
 interface CreateAnalysisExecutionOptions {
   readonly rawResult?: unknown;
+  readonly pseudocodeAbsence?: PseudocodeAbsence;
+  readonly sourceDescriptor?: AnalysisSourceDescriptor;
   readonly analysisProfile?: AnalysisProfileCommitment;
   readonly cachePolicy?: "live";
   readonly limitations?: readonly string[];
   readonly relationshipCoverage?: RelationshipCoverage;
   readonly referencesTruncated?: boolean;
+  readonly requiresSourceEvidence?: true;
+  readonly referenceClassifications?: AnalysisExecution["referenceClassifications"];
+  readonly referenceCoverageGaps?: AnalysisExecution["referenceCoverageGaps"];
+  readonly siblingUnavailability?: AnalysisCapabilityUnavailableError;
   readonly locations?: readonly EvidenceLocation[];
   readonly sourceEvidence?: readonly Evidence[];
   readonly subject?: EvidenceSubjectTarget | null;
@@ -109,6 +159,20 @@ export function createAnalysisExecution(
         ? null
         : jsonValueSchema.parse(options.rawResult),
     provider,
+    ...(options.pseudocodeAbsence === undefined
+      ? {}
+      : {
+          pseudocodeAbsence: pseudocodeAbsenceSchema.parse(
+            options.pseudocodeAbsence,
+          ),
+        }),
+    ...(options.sourceDescriptor === undefined
+      ? {}
+      : {
+          sourceDescriptor: analysisSourceDescriptorSchema.parse(
+            options.sourceDescriptor,
+          ),
+        }),
     ...(options.cachePolicy === undefined
       ? {}
       : { cachePolicy: options.cachePolicy }),
@@ -126,6 +190,18 @@ export function createAnalysisExecution(
     ...(options.referencesTruncated === undefined
       ? {}
       : { referencesTruncated: options.referencesTruncated }),
+    ...(options.requiresSourceEvidence === undefined
+      ? {}
+      : { requiresSourceEvidence: options.requiresSourceEvidence }),
+    ...(options.referenceCoverageGaps === undefined
+      ? {}
+      : { referenceCoverageGaps: options.referenceCoverageGaps }),
+    ...(options.referenceClassifications === undefined
+      ? {}
+      : { referenceClassifications: options.referenceClassifications }),
+    ...(options.siblingUnavailability === undefined
+      ? {}
+      : { siblingUnavailability: options.siblingUnavailability }),
     locations: [...(options.locations ?? [])],
     ...(options.sourceEvidence === undefined
       ? {}
@@ -216,6 +292,11 @@ export interface ProviderIdentity {
 /** Typed analysis profile resolved before provider startup; null means unresolved. */
 export interface AnalysisProfileResolution {
   readonly profile: AnalysisProfileCommitment | null;
+  /** Readiness fact for the resolved selection; omitted means not reported. */
+  readonly releaseVerification?: ProviderReleaseVerification;
+
+  /** Closing a client can publish state that invalidates a previewed profile. */
+  readonly refreshAfterRetirement?: true;
   /** Keep provider-private facts bound to this selection without Evidence serialization. */
   readonly createClient?: AnalysisProviderBoundClientFactory;
 }
@@ -257,9 +338,18 @@ type CapabilityAvailability =
       readonly available: false;
       readonly reason: string;
       readonly availabilityCode?: ProviderRejectionCode;
+      /** Provider-owned explanation and recovery for an attempted operation. */
+      readonly userMessage?: string;
+      /**
+       * Recovery instruction from the owner that made this operation
+       * unavailable. Static capability facts omit it.
+       */
+      readonly remediation?: string;
     };
 
 export type CapabilityDescriptor = CapabilityAvailability & {
+  /** Provider-owned static target requirements, evaluated for an open target. */
+  readonly targetApplicability?: TargetApplicability;
   /**
    * Snapshot opts immutable, profile-bound reads into replay despite incidental
    * private filesystem writes. Live state must always be re-observed. Omitting
@@ -267,12 +357,17 @@ export type CapabilityDescriptor = CapabilityAvailability & {
    * exclusions apply to every policy.
    */
   readonly cachePolicy?: "snapshot" | "live";
+  readonly independentDecompile?: true;
   /** Exact source profile for an operation implemented by a versioned local reader. */
   readonly analysisProfile?: AnalysisProfileCommitment;
   readonly provider: ProviderIdentity;
   readonly operation: Exclude<AnalysisOperation, "health">;
   readonly effects: CapabilityEffects;
   readonly limitations: readonly string[];
+  /** Whether analyze_function can supply value flow for some procedures. */
+  readonly nativeValueFlow?:
+    | { readonly status: "supported" }
+    | { readonly status: "unavailable"; readonly reason: string };
 };
 
 /** Factory and capability declaration for an analysis implementation. */
@@ -301,7 +396,10 @@ export type ProviderAvailability =
   | {
       readonly status: "unavailable";
       readonly code: ProviderRejectionCode;
+      /** What the owner observed; not a repair instruction. */
       readonly reason: string;
+      /** The owner's repair instruction for this exact failure. */
+      readonly remediation: string;
       readonly diagnostics: Readonly<Record<string, JsonValue>>;
     };
 

@@ -10,12 +10,12 @@ import {
   AnalysisTimeoutError,
   AnalysisOutputError,
 } from "../../../src/domain/analysisErrorCore.js";
-import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
 import {
   createEvidence,
   evidenceSchema,
 } from "../../../src/domain/evidence.js";
 import { err, ok } from "../../../src/domain/result.js";
+import { ProviderCleanupError } from "../../../src/domain/providerCleanupError.js";
 import { RizinDebugSessionManager } from "../../../src/rizin/RizinDebugSessionManager.js";
 import { closeOwnedDebuggerSessions } from "../../../src/process/ownedDebuggerSession.js";
 import { ReverseEngineeringService as CoreReverseEngineeringService } from "../../../src/application/reverse/ReverseEngineeringService.js";
@@ -251,7 +251,7 @@ it("promotes only complete production cleanup-only Evidence after CLI cleanup re
     const result = await runObjdump(service, path);
 
     expect(result).toMatchObject({
-      provider: { id: "gnu.objdump" },
+      provider: { id: "objdump.command" },
       normalized_result: { completion_status: "complete" },
     });
     expect(producedCleanupFailure?.cleanupOnly).toBe(true);
@@ -347,7 +347,9 @@ it("preserves an independent timeout after cleanup succeeds", async () => {
     },
   });
   expect(error.cleanupIncomplete).toBe(false);
-  expect(projectAnalysisError(error).details).not.toHaveProperty("cleanup");
+  expect((result as { details: unknown }).details).not.toHaveProperty(
+    "cleanup",
+  );
 });
 
 it("does not project cancellation cleanup as incomplete after a successful retry", async () => {
@@ -362,17 +364,19 @@ it("does not project cancellation cleanup as incomplete after a successful retry
     }),
   };
 
-  await runObjdump(service);
+  const result = await runObjdump(service);
 
   expect(error.cleanupIncomplete).toBe(false);
-  expect(projectAnalysisError(error).details).toMatchObject({
-    cleanup: "complete",
+  expect(result).toMatchObject({
+    code: "cancelled",
+    details: { cleanup: "complete" },
   });
 });
 
 it("returns cancellation with the completed observation when the caller interrupts service close", async () => {
+  const evidence = observation("complete");
   const service = {
-    inspectWithObjdump: vi.fn(async () => ok(observation("complete"))),
+    inspectWithObjdump: vi.fn(async () => ok(evidence)),
     close: vi.fn(async () => {
       process.emit("SIGINT");
     }),
@@ -380,8 +384,61 @@ it("returns cancellation with the completed observation when the caller interrup
 
   const result = await runObjdump(service);
 
-  expect(result).toMatchObject({ code: "cancelled" });
+  expect(result).toMatchObject({
+    code: "cancelled",
+    details: { partial_observation: evidence },
+  });
   expect(process.exitCode).toBe(130);
+});
+
+it("retains completed objdump Evidence when final cleanup fails", async () => {
+  const evidence = observation("complete");
+  const result = await runObjdump({
+    inspectWithObjdump: async () => ok(evidence),
+    close: async () => {
+      throw new ProviderCleanupError(
+        "objdump.command",
+        ["owned-run"],
+        { reason: "process cleanup remains incomplete" },
+        { operation: "inspect_with_objdump" },
+      );
+    },
+  });
+
+  expect(result).toMatchObject({
+    code: "cleanup_incomplete",
+    details: {
+      resources: ["owned-run"],
+      partial_observation: evidence,
+    },
+  });
+});
+
+it("retains an unexpected operation failure and an independent cleanup failure", async () => {
+  const result = await runObjdump({
+    inspectWithObjdump: async () => {
+      throw new AnalysisTimeoutError("inspect_with_objdump", 1_000);
+    },
+    close: async () => {
+      throw new ProviderCleanupError(
+        "objdump.command",
+        ["owned-run"],
+        { reason: "process cleanup remains incomplete" },
+        { operation: "inspect_with_objdump" },
+      );
+    },
+  });
+
+  expect(result).toMatchObject({
+    code: "cleanup_incomplete",
+    category: "timeout",
+    details: {
+      diagnostics: {
+        primary_error: { code: "provider_timeout" },
+        cleanup_error: { details: { resources: ["owned-run"] } },
+      },
+    },
+  });
 });
 
 it.each([false, true])(
@@ -546,7 +603,16 @@ it.each(["incomplete", "interrupt", "control"] as const)(
         rawResult: { output: "registers" },
       },
     );
-    const sessions = new Map([["fixture-session", { id: "fixture-session" }]]);
+    const sessions = new Map([
+      [
+        "fixture-session",
+        {
+          id: "fixture-session",
+          launched: { process: { pid: 4242 } },
+          supervisor: { ref: vi.fn(), unref: vi.fn() },
+        },
+      ],
+    ]);
     vi.spyOn(RizinDebugSessionManager.prototype, "start").mockResolvedValue(
       ok({ session_id: "fixture-session", backend: null }),
     );
@@ -636,6 +702,7 @@ it.each(["incomplete", "interrupt", "control"] as const)(
           details: {
             cleanup: "incomplete",
             resources: ["fixture-session"],
+            diagnostics: { retained_debugger_pids: [4242] },
             partial_observation: {
               operation: "rizin_debug_command",
               parameters: { session_id: "fixture-session" },

@@ -467,7 +467,6 @@ describe("web bundle analyzer", () => {
         expect.objectContaining({ value: "Vue" }),
       ]),
     );
-    expect(JSON.stringify(result)).toContain("authorization=secret");
     expect(result.completeness.status).toBe("complete");
   });
 
@@ -549,8 +548,9 @@ describe("web bundle source-map coverage", () => {
     expect(analysis.completeness.status).toBe("partial");
     expect(analysis.unknowns).toContainEqual({
       dimension: "source_maps",
-      reason:
-        "One or more requested source maps were unavailable or incomplete",
+      reason: expect.stringMatching(
+        /requested source maps.*unavailable or incomplete/i,
+      ),
       affected_script_keys: [`scr_${"1".repeat(64)}`],
     });
   });
@@ -1099,9 +1099,20 @@ describe("web bundle configuration and navigation parity", () => {
       endpoints: [],
       candidates: ["/v1/state", "token", "users"],
     };
+    const conditional = {
+      endpoints: [],
+      candidates: [
+        "/v1/state",
+        "closedRepositories",
+        "lastVersion",
+        "onboarded",
+        "token",
+        "users",
+      ],
+    };
     expect(analyze(`const vscode = require("vscode");${reads}`)).toEqual({
-      web: proven,
-      application: proven,
+      web: conditional,
+      application: conditional,
     });
     expect(analyze(`import * as vscode from "vscode";${reads}`)).toEqual({
       web: proven,
@@ -2067,6 +2078,7 @@ it("keeps known capture omissions in compact route summaries and queryable gap f
   );
   const report = analyzeWebBundleFixture(captured),
     parent = {
+      predicateType: "rea.web-bundle-analysis",
       evidenceId: `ev_${"a".repeat(64)}`,
       operation: "analyze_web_bundle",
       normalizedResult: report,

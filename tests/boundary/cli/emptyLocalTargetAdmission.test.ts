@@ -1,5 +1,6 @@
 import { Cli } from "incur";
 import { expect, it, vi } from "vitest";
+import { registerArtifactCommands } from "../../../src/cli/artifactCommands.js";
 import { registerCoreBinaryCommands } from "../../../src/cli/coreBinaryCommands.js";
 import { registerCoreNativeCommands } from "../../../src/cli/coreNativeCommands.js";
 import { registerManagedCommands } from "../../../src/cli/managedCommands.js";
@@ -16,6 +17,7 @@ const registry = () => {
   const runDirectAnalysis = run();
   const runProviderAnalysis = run();
   const cli = Cli.create("empty-target-admission", { sync: false });
+  registerArtifactCommands(cli, silentLogger, runProviderAnalysis);
   registerCoreBinaryCommands(cli, silentLogger, runDirectAnalysis, {});
   registerCoreNativeCommands(cli, silentLogger, runDirectAnalysis);
   registerManagedCommands(cli, silentLogger, runProviderAnalysis);
@@ -44,6 +46,12 @@ const registry = () => {
 
 // Each command with its other required arguments; the target comes first.
 const commands: readonly (readonly string[])[] = [
+  ["inspect-artifact"],
+  ["extract-artifact"],
+  ["inspect-keyed-archive"],
+  ["trace-dylib-resolution"],
+  ["inspect-asset-catalog"],
+  ["decode-interface-builder"],
   ["inspect"],
   ["decompile", "main"],
   ["xrefs", "0x1000"],
@@ -56,6 +64,7 @@ const commands: readonly (readonly string[])[] = [
   ["read-bytes", "0x1000"],
   ["address-to-file-offset", "0x1000"],
   ["trace-native-values", "main"],
+  ["inspect-native-data-type", "--type", "/MyStruct"],
   ["inspect-native-instruction", "0x1000"],
   ["resolve-native-call-targets", "0x1000"],
   ["inspect-native-dispatch-metadata"],
@@ -83,14 +92,20 @@ const commands: readonly (readonly string[])[] = [
 ];
 
 it.each(commands)(
-  "rejects an empty %s target before resolution and admits explicit .",
+  "rejects an empty or NUL %s target before resolution and admits explicit .",
   async (command, ...rest) => {
     const { serve, runs } = registry();
-    // docs/cli.md: an empty string never selects the working directory.
+    // docs/getting-started/cli.md: an empty string never selects the working directory.
     expect(await serve([command, "", ...rest])).toMatchObject({
       code: "VALIDATION_ERROR",
       fieldErrors: [
         expect.objectContaining({ path: "path", code: "too_small" }),
+      ],
+    });
+    expect(await serve([command, "target\x00name", ...rest])).toMatchObject({
+      code: "VALIDATION_ERROR",
+      fieldErrors: [
+        expect.objectContaining({ path: "path", code: "invalid_format" }),
       ],
     });
     for (const run of runs) expect(run).not.toHaveBeenCalled();

@@ -35,11 +35,14 @@ const observe = async (
     },
   });
   const manager = createRizinTestManager(
-    {},
+    {
+      REA_DEBUGGER_COMMAND_DEADLINE_MS: "100",
+      ...(maximum === undefined
+        ? {}
+        : { REA_DEBUGGER_MAX_COMMAND_OUTPUT_BYTES: String(maximum) }),
+    },
     {
       spawnProcess: injected.spawnProcess,
-      frameTimeoutMs: 100,
-      ...(maximum === undefined ? {} : { maxCommandOutputBytes: maximum }),
     },
   );
   const server = new McpServer({ name: "rizin-output-test", version: "1" });

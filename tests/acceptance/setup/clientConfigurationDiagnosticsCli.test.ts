@@ -181,6 +181,9 @@ cliTest.skipIf(process.platform === "win32" || process.getuid?.() === 0)(
     const home = await createTestTempDirectory(
       "rea-doctor-denied-registration-",
     );
+    const moduleCache = await createTestTempDirectory(
+      "rea-doctor-swift-cache-",
+    );
     const locked = join(home, "owned-denied");
     const target = join(locked, "client.json");
     await mkdir(locked);
@@ -204,6 +207,7 @@ cliTest.skipIf(process.platform === "win32" || process.getuid?.() === 0)(
           HOME: home,
           USERPROFILE: home,
           XDG_CONFIG_HOME: join(home, ".config"),
+          REA_DARWIN_MODULE_CACHE_PATH: moduleCache,
         },
       });
       expect(result.exitCode).toBe(1);
@@ -224,6 +228,9 @@ cliTest.skipIf(process.platform === "win32" || process.getuid?.() === 0)(
       await chmod(locked, 0o700);
     }
     expect(await readFile(target, "utf8")).toBe(original);
-    expect(await readdir(home)).toEqual([".claude.json", "owned-denied"]);
+    expect((await readdir(home)).sort()).toEqual([
+      ".claude.json",
+      "owned-denied",
+    ]);
   },
 );

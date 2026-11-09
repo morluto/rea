@@ -14,6 +14,7 @@ import {
   schemaLiteralValues,
 } from "./jsonSchemaKeywords.js";
 import { digestCanonicalValue } from "../domain/canonicalDigest.js";
+import { getEvidenceInputContract } from "../domain/evidenceInputContract.js";
 
 const PROPERTY_DESCRIPTIONS: Readonly<Record<string, string>> = {
   addresses: "Ordered provider-normalized procedure addresses to analyze.",
@@ -75,11 +76,26 @@ export const toolInputSchemaWithMetadata = <Contract extends ToolContract>(
         libraryOptions: { ...options.libraryOptions, reused: "inline" },
       });
       const examples = advertisedInputExamples(contract);
+      const presented = presentInputJsonSchema(
+        inline,
+        fallbackPropertyDescription,
+      );
+      const sourceGuidance = getEvidenceInputContract(contract.inputSchema)
+        .hasEvidence
+        ? 'Declared Evidence fields accept complete records or {"kind":"retained-evidence","evidence_id":"ev_..."}. For a complete source, use the summary\'s parent_evidence_id.'
+        : undefined;
       return {
         // Keep advertised parameters self-contained for clients that do not
         // resolve local references. The registered canonical schema remains
         // responsible for runtime validation.
-        ...presentInputJsonSchema(inline, fallbackPropertyDescription),
+        ...presented,
+        ...(sourceGuidance === undefined
+          ? {}
+          : {
+              description: [presented.description, sourceGuidance]
+                .filter((text) => typeof text === "string")
+                .join(" "),
+            }),
         ...(examples.length === 0 ? {} : { examples }),
       };
     },

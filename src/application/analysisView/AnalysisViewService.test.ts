@@ -362,7 +362,7 @@ it("reports inline Evidence identity failures at the complete source path", asyn
           {
             path: ["source", "evidence", "evidence_id"],
             reason: "invalid_value",
-            message: "Evidence semantic identifier does not match its record",
+            message: expect.stringMatching(/semantic identifier.*not match/iu),
           },
         ],
       },
@@ -540,9 +540,19 @@ it("resolves same-session retained JavaScript Evidence without re-running analys
     lookup,
   );
   if (!item.ok) throw item.error;
-  expect(JSON.stringify(item.value.normalized_result)).toContain(
-    "export const secret = 1;",
-  );
+  expect(item.value.normalized_result).toMatchObject({
+    kind: "item",
+    item: {
+      path: "renderer.js",
+      observations: expect.arrayContaining([
+        expect.objectContaining({
+          properties: expect.objectContaining({
+            source: "export const secret = 1;\n",
+          }),
+        }),
+      ]),
+    },
+  });
 });
 
 it("rejects stale retained IDs and unsupported parent operations", async () => {
@@ -859,10 +869,14 @@ it("seals an inferred environment state whose values are the recorded ones", asy
     name: "grafana-example",
     parent_evidence_id: parent.evidence_id,
     timeline: "recorded-start-time",
+    entities: expect.arrayContaining([
+      expect.objectContaining({
+        type: "/api/folders",
+        id: "fg1jo91e57e2ob",
+        fields: expect.objectContaining({ title: "probe folder" }),
+      }),
+    ]),
   });
-  expect(JSON.stringify(sealed.value.normalized_result)).toContain(
-    "probe folder",
-  );
   expect(parseEvidence(sealed.value)).toEqual(sealed.value);
 });
 

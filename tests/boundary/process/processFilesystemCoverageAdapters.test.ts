@@ -10,15 +10,14 @@ import {
 } from "node:fs/promises";
 import { join } from "node:path";
 import { promisify } from "node:util";
-import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
-import { expect, it, onTestFinished } from "vitest";
+import { expect, it } from "vitest";
 import { analysisCliErrorEnvelopeSchema } from "../../../src/contracts/errorSchemas.js";
 import { parseEvidence } from "../../../src/domain/evidence.js";
 import { compareProcessCaptures } from "../../../src/domain/process/processComparison.js";
 import { parseProcessCapture } from "../../../src/domain/process/processCaptureParsing.js";
 import { processScenarioSchema } from "../../../src/domain/process/processScenario.js";
 import { FINALIZED_PROCESS_CAPTURE_EXAMPLE } from "../../../src/domain/process/processCapture.fixture.js";
-import { createServer } from "../../../src/server/createServer.js";
+import { createApplicationMcpHarness } from "../../fixtures/applicationMcpHarness.js";
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
@@ -49,17 +48,10 @@ const callCaptureViaMcp = async (scenario: Record<string, unknown>) => {
   const session = createTestBinarySession(() => {
     throw new Error("Process capture must not launch a binary provider");
   });
-  const server = createServer({ kind: "session", session });
-  const client = new Client({ name: "filesystem-coverage", version: "1" });
-  onTestFinished(async () => {
-    await client.close();
-    await server.close();
-    await session.close();
+  const { client } = await createApplicationMcpHarness({
+    session,
+    clientIdentity: { name: "filesystem-coverage", version: "1" },
   });
-  const [clientTransport, serverTransport] =
-    InMemoryTransport.createLinkedPair();
-  await server.connect(serverTransport);
-  await client.connect(clientTransport);
   const result = await client.callTool({
     name: "capture_process_scenario",
     arguments: scenario,
@@ -196,7 +188,10 @@ it
 );
 
 it("documents a finalization scenario and exit record that match the contract", async () => {
-  const document = await readFile("docs/process-capture.md", "utf8");
+  const document = await readFile(
+    "docs/guides/runtime/process-capture.md",
+    "utf8",
+  );
   const blocks = [
     ...(document.split("### Finalization interval")[1] ?? "").matchAll(
       /```json\n([\s\S]*?)\n```/gu,
@@ -219,7 +214,10 @@ it("documents a finalization scenario and exit record that match the contract", 
 itWithCaptureCapability.each(["cli", "mcp"] as const)(
   "hashes the documented complete report despite omitted terminal output through %s",
   async (adapter) => {
-    const document = await readFile("docs/process-capture.md", "utf8");
+    const document = await readFile(
+      "docs/guides/runtime/process-capture.md",
+      "utf8",
+    );
     const example = document
       .split("## Hash a report independently of terminal output")[1]
       ?.match(/```json\n([\s\S]*?)\n```/u)?.[1];

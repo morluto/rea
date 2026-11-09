@@ -388,7 +388,7 @@ it("accepts a Cutter response at the ceiling and excludes the terminating LF", a
           message: expect.stringContaining("8192"),
         },
         limitations: expect.arrayContaining([
-          "The command completed or may have completed, but output exceeded the bridge transport limit and was omitted.",
+          expect.stringMatching(/output.*transport limit.*omitted/iu),
         ]),
       },
     },

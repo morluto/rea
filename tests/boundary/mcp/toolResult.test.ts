@@ -15,6 +15,7 @@ import { toolContract } from "../../../src/contracts/toolContracts.js";
 import type { ToolContract } from "../../../src/contracts/toolContractTypes.js";
 import { err } from "../../../src/domain/result.js";
 import { EvidenceIntegrityError } from "../../../src/domain/evidenceErrors.js";
+import { AnalysisCancelledError } from "../../../src/domain/analysisErrorCore.js";
 import { HopperProcessError } from "../../../src/domain/hopperErrors.js";
 import { processScenarioSchema } from "../../../src/domain/process/processScenario.js";
 import { createToolResultDelivery } from "../../../src/server/toolResult.js";
@@ -372,7 +373,7 @@ describe("tool result projection", () => {
         .details,
     ).not.toHaveProperty("launch_rejection");
   });
-  it("projects bounded private-display coordinates without raw stderr", () => {
+  it("projects private-display diagnostic fields and stderr byte count", () => {
     const result = delivery.toCallToolResult(
       err(
         new HopperProcessError(80, {
@@ -405,6 +406,7 @@ describe("tool result projection", () => {
             mount_read_only: true,
             wsl: true,
             strategy: "user-mount-namespace",
+            xvfb_stderr_bytes: 512,
           },
         },
       },
@@ -525,10 +527,54 @@ describe("untrusted provenance on failed tool results", () => {
       err(new EvidenceIntegrityError("fixture rejects partial")),
     );
     expect(unrecorded.structuredContent).toMatchObject({
-      error: { details: { partial_observation: evidence } },
+      error: {
+        details: {
+          partial_observation: {
+            kind: "inline-evidence",
+            retention: "unknown",
+            evidence,
+          },
+        },
+      },
     });
     expect(unrecorded._meta).toEqual(UNTRUSTED_TARGET_CONTENT);
     expect(original.partialObservation).toBe(evidence);
+  });
+
+  it("preserves cleanup details when an unretained partial exceeds the response budget", () => {
+    const evidence = createEvidence(
+      undefined,
+      { id: "fixture", name: "Fixture", version: "1" },
+      {
+        operation: "get_call_graph",
+        parameters: {},
+        result: { nodes: "x".repeat(8192) },
+      },
+    );
+    const error = new AnalysisCancelledError("get_call_graph", {
+      cleanup: { reason: "close failed", resources: ["session:fixture"] },
+      partialObservation: evidence,
+    });
+    const result = createToolResultDelivery(4096).toPartialErrorToolResult(
+      error,
+      true,
+      () => err(new EvidenceIntegrityError("fixture rejects partial")),
+    );
+    expect(result.structuredContent).toMatchObject({
+      error: {
+        code: "cleanup_incomplete",
+        details: {
+          cleanup: "incomplete",
+          resources: ["session:fixture"],
+          partial_observation_omitted: {
+            reason: "mcp-response-limit",
+            retention: "unknown",
+            evidence_id: evidence.evidence_id,
+          },
+        },
+      },
+    });
+    expect(result.content).toHaveLength(1);
   });
 
   it("marks the response-budget error that replaces an oversized target-content result", () => {

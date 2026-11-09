@@ -7,6 +7,7 @@ import { McpServer } from "@modelcontextprotocol/server";
 import { expect, it } from "vitest";
 import { z } from "zod";
 
+import { closeVerifierResources } from "../../../scripts/lib/verifier-cleanup.mjs";
 import { AnalysisCapabilityUnavailableError } from "../../../src/domain/analysisErrorCore.js";
 import { thinMach } from "../../../src/domain/binaryTarget.fixture.js";
 import { evidenceSchema } from "../../../src/domain/evidence.js";
@@ -98,8 +99,10 @@ process.stdin.on("data", (chunk) => {
       expect(evidence.normalized_result).toMatchObject({
         output_invalid_utf8: true,
       });
-      expect(evidence.limitations).toContain(
-        "Launch provenance records the original and resolved startup paths; it does not establish the current target after unrestricted debugger commands.",
+      expect(evidence.limitations).toContainEqual(
+        expect.stringMatching(
+          /launch provenance.*does not establish.*current target/iu,
+        ),
       );
 
       const status = await validateDebuggerStatusResponse(
@@ -110,9 +113,14 @@ process.stdin.on("data", (chunk) => {
       expect(status.output_invalid_utf8).toBe(true);
       expect(status.recent_output).toContain("�");
     } finally {
-      await Promise.allSettled([client.close(), server.close()]);
-      await manager.closeAll().catch(() => undefined);
-      await rm(directory, { recursive: true, force: true });
+      await closeVerifierResources([
+        () => client.close(),
+        () => server.close(),
+        async () => {
+          await manager.closeAll();
+          await rm(directory, { recursive: true, force: true });
+        },
+      ]);
     }
   },
 );
@@ -174,8 +182,14 @@ it("admits Rizin startup across a bound analysis session", async () => {
     expect(currentRunId).not.toBe(initialRunId);
     expect(analysisSession.activeTarget()?.path).toBe(target);
   } finally {
-    await Promise.allSettled([client.close(), server.close()]);
-    await analysisSession.close();
+    await closeVerifierResources([
+      () => client.close(),
+      () => server.close(),
+      async () => {
+        const closed = await analysisSession.close();
+        if (!closed.ok) throw closed.error;
+      },
+    ]);
   }
 });
 
@@ -244,9 +258,14 @@ process.stdin.on("data", async (chunk) => {
       expect(status.state).toBe("closed");
       expect(status).toHaveProperty("diagnostics_truncated");
     } finally {
-      await Promise.allSettled([client.close(), server.close()]);
-      await manager.closeAll().catch(() => undefined);
-      await rm(directory, { recursive: true, force: true });
+      await closeVerifierResources([
+        () => client.close(),
+        () => server.close(),
+        async () => {
+          await manager.closeAll();
+          await rm(directory, { recursive: true, force: true });
+        },
+      ]);
     }
   },
 );

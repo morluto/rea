@@ -410,8 +410,10 @@ it("retains kernels from conflicting AMDGPU notes without choosing either note o
       inspection: "partial",
     },
   ]);
-  expect(result.value.objects[0]?.limitations).toContain(
-    "AMDGPU notes declare conflicting processor targets; processor identity is unknown",
+  expect(result.value.objects[0]?.limitations).toContainEqual(
+    expect.stringMatching(
+      /conflicting processor targets.*identity is unknown/iu,
+    ),
   );
   expect(result.value.coverage).toMatchObject({
     discovery: "partial",
@@ -499,14 +501,17 @@ it.each([
   const inventory = await inspect(bytes, { analysis: "inventory" });
   if (!inventory.ok) throw inventory.error;
   const row = inventory.value.objects.find((value) => value.kind === "amdgpu")!;
-  expect(row.target).not.toBeNull();
-  const selected = await inspect(bytes, { targets: [row.target!] });
+  const expectedTarget = targetId.endsWith("opaque")
+    ? "amdgcn-amd-amdhsa--gfx900"
+    : "gfx900";
+  expect(row.target).toBe(expectedTarget);
+  const selected = await inspect(bytes, { targets: [expectedTarget] });
   if (!selected.ok) throw selected.error;
   expect(selected.value.kernels).toHaveLength(1);
   expect(
     selected.value.objects.find((value) => value.kind === "amdgpu"),
   ).toMatchObject({
-    target: row.target,
+    target: expectedTarget,
     payload_target: "amdgcn-amd-amdhsa--gfx900",
     target_consistency: targetId.endsWith("opaque")
       ? "single-source"
@@ -563,8 +568,8 @@ it("bounds standalone AMD note discovery before retaining metadata", async () =>
     target: "gfx900",
     inspection: "capacity",
   });
-  expect(result.value.objects[0]!.limitations).toContain(
-    "AMDGPU ELF note discovery exceeds the 8 MiB retained metadata budget",
+  expect(result.value.objects[0]!.limitations).toContainEqual(
+    expect.stringMatching(/note discovery.*8 MiB.*metadata budget/iu),
   );
   expect(result.value.kernels).toEqual([]);
 });

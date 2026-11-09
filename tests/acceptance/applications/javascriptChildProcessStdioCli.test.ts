@@ -352,7 +352,9 @@ cliTest.for(["CLI", "stdio MCP"] as const)(
       );
       expect(stdio, String(command)).toHaveLength(1);
       expect(stdio[0]?.resolution).toBe(
-        mode === "dynamic" ? "candidate" : "resolved",
+        mode === "dynamic" || child.properties.builtin_authority === "candidate"
+          ? "candidate"
+          : "resolved",
       );
       expect(nodes.get(stdio[0]!.target_node_id)).toMatchObject({
         kind: "stdio",

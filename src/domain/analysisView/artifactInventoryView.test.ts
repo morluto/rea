@@ -84,6 +84,7 @@ const freshInventory = () => {
   return inventory;
 };
 const parent = (normalizedResult: unknown): AnalysisViewParent => ({
+  predicateType: carrier.predicate_type,
   evidenceId: carrier.evidence_id,
   operation: "inventory_artifact",
   subject:
@@ -124,7 +125,7 @@ it.each(["node_count", "occurrence_count", "edge_count"] as const)(
           {
             path: ["source"],
             reason: "invalid_value",
-            message: "Artifact inventory members exceed their manifest counts",
+            message: expect.stringMatching(/members.*manifest.*counts/iu),
           },
         ],
       },

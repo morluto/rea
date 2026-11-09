@@ -237,6 +237,10 @@ describe("Ghidra GameCube DOL loader", () => {
     ["DOS COM", { dosCom: true }],
     ["MIPS soft-float", { mipsSoftFloat: true }],
     [
+      "RISC-V calling convention",
+      { riscvCallingConvention: "ilp32-prototype-v1" },
+    ],
+    [
       "raw binary",
       {
         rawBinary: {
@@ -355,6 +359,67 @@ describe("Ghidra headless launcher", () => {
         expect.objectContaining({
           _tag: "GhidraAdmissionError",
           code: "mips_soft_float_scope",
+        }),
+      );
+  });
+
+  it("runs the committed RISC-V policy after the no-return refit and before the bridge", () => {
+    const base = {
+      platform: "linux" as const,
+      projectRoot: "/tmp/project",
+      targetPath: "/tmp/target",
+      bridgeScriptPath: "/package/bridge/ReaGhidraBridge.java",
+      descriptorPath: "/tmp/session.json",
+      ghidraLogPath: "/tmp/ghidra.log",
+      scriptLogPath: "/tmp/script.log",
+      languageOverride: {
+        languageId: "RISCV:LE:32:default",
+        compilerSpecId: "gcc",
+      },
+    };
+    const script = "/package/bridge/ReaGhidraRiscvCallingConvention.java";
+    // PSP, DOS and raw imports carry their own languages, so they omit the pin.
+    const { languageOverride: _pin, ...unpinned } = base;
+    expect(ghidraHeadlessArguments(base)).not.toContain(script);
+    const arguments_ = ghidraHeadlessArguments({
+      ...base,
+      riscvCallingConvention: "ilp32-prototype-v1",
+    });
+    const at = arguments_.indexOf(script);
+    expect(arguments_.slice(at - 1, at + 2)).toEqual([
+      "-postScript",
+      script,
+      "ilp32-prototype-v1",
+    ]);
+    expect(
+      arguments_.indexOf("/package/bridge/ReaGhidraNoReturnFix.java"),
+    ).toBeLessThan(at);
+    expect(at).toBeLessThan(
+      arguments_.indexOf("/package/bridge/ReaGhidraBridge.java"),
+    );
+    for (const conflict of [
+      { psp: true as const },
+      { mipsSoftFloat: true as const },
+      { dosMz: true as const },
+      { dosCom: true as const },
+      {
+        rawBinary: {
+          languageId: "x86:LE:32:default",
+          compilerSpecId: "default",
+          baseAddr: "0x1000",
+        },
+      },
+    ])
+      expect(() =>
+        ghidraHeadlessArguments({
+          ...unpinned,
+          riscvCallingConvention: "ilp32-prototype-v1",
+          ...conflict,
+        }),
+      ).toThrow(
+        expect.objectContaining({
+          _tag: "GhidraAdmissionError",
+          code: "riscv_calling_convention_scope",
         }),
       );
   });
@@ -617,6 +682,10 @@ describe("Ghidra existing project", () => {
     ],
     [{ psp: true as const }, "existing_project_psp"],
     [{ mipsSoftFloat: true as const }, "existing_project_mips_soft_float"],
+    [
+      { riscvCallingConvention: "ilp32-prototype-v1" as const },
+      "existing_project_riscv_calling_convention",
+    ],
     [{ seedPath: "/tmp/runtime/seeds/seeds.tsv" }, "existing_project_analysis"],
     [
       { disabledAnalyzers: ["Decompiler Parameter ID"] },
@@ -799,7 +868,6 @@ describe("Ghidra existing project launcher", () => {
         join(parent, "absent-project"),
         spawned,
       );
-      expect(launched.ok).toBe(false);
       if (launched.ok) throw new Error("launch unexpectedly succeeded");
       // The launcher wraps the copy failure; the reason stays on the cause.
       expect(String(launched.error.cause)).toMatch(/does not exist/u);
@@ -826,7 +894,6 @@ describe("Ghidra existing project launcher", () => {
         sourceProject,
         spawned,
       );
-      expect(launched.ok).toBe(false);
       if (launched.ok) throw new Error("launch unexpectedly succeeded");
       expect(String(launched.error.cause)).toMatch(/rea-project\.gpr/u);
       expect(spawned).toHaveLength(0);
@@ -853,7 +920,6 @@ describe("Ghidra existing project launcher", () => {
         runtime.path,
         spawned,
       );
-      expect(launched.ok).toBe(false);
       if (launched.ok) throw new Error("launch unexpectedly succeeded");
       expect(String(launched.error.cause)).toMatch(
         /overlaps the REA runtime directory/u,
@@ -878,7 +944,6 @@ describe("Ghidra existing project launcher", () => {
         join(runtime.path, "project"),
         spawned,
       );
-      expect(launched.ok).toBe(false);
       if (launched.ok) throw new Error("launch unexpectedly succeeded");
       expect(String(launched.error.cause)).toMatch(
         /overlaps the REA runtime directory/u,
@@ -914,7 +979,6 @@ describe("Ghidra existing project symlink overlap", () => {
         alias,
         spawned,
       );
-      expect(launched.ok).toBe(false);
       if (launched.ok) throw new Error("launch unexpectedly succeeded");
       expect(String(launched.error.cause)).toMatch(
         /overlaps the REA runtime directory/u,
@@ -947,7 +1011,6 @@ describe("Ghidra expanded project admission", () => {
       sourceProject,
       spawned,
     );
-    expect(launched.ok).toBe(false);
     if (launched.ok) throw new Error("launch unexpectedly succeeded");
     expect(String(launched.error.cause)).toMatch(
       /restore saved \.grez archives/u,

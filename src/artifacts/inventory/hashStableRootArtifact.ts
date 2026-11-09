@@ -1,5 +1,4 @@
 import { regularFileCancellation } from "../../filesystem/OwnedRegularFile.js";
-import { lstat } from "node:fs/promises";
 import type { Stats } from "node:fs";
 import type { FileHandle } from "node:fs/promises";
 import { readArtifactFileChunks } from "../readArtifactFileChunks.js";
@@ -7,10 +6,11 @@ import { OwnedFileHandle } from "../../filesystem/OwnedFileHandle.js";
 
 import { ArtifactReaderFailure } from "../ArtifactReader.js";
 import {
+  assertStableRegularFileIdentity,
+  RegularFileChangedError,
   NonRegularFileReadError,
   RegularFileAdmissionFailure,
   openRegularFile,
-  sameRegularFileState,
   type StableRegularFileDescriptor,
 } from "../../filesystem/RegularFile.js";
 import {
@@ -155,12 +155,22 @@ export const hashStableRootArtifactHandle = async (
     signal,
   );
   abortIfNeeded(signal);
-  const [opened, currentPath] = await Promise.all([handle.stat(), lstat(path)]);
-  if (
-    !sameRegularFileState(initial, opened) ||
-    !sameRegularFileState(initial, currentPath) ||
-    digest.bytes !== initial.size
-  )
+  try {
+    await assertStableRegularFileIdentity(handle, path, initial, {
+      symlinks: "reject",
+      ...(signal === undefined ? {} : { signal }),
+    });
+  } catch (cause: unknown) {
+    abortIfNeeded(signal);
+    if (cause instanceof RegularFileChangedError)
+      throw new ArtifactReaderFailure(
+        "integrity",
+        `Root artifact changed during inventory: ${path}`,
+        { cause: cause.cause ?? cause },
+      );
+    throw cause;
+  }
+  if (digest.bytes !== initial.size)
     throw new ArtifactReaderFailure(
       "integrity",
       `Root artifact changed during inventory: ${path}`,
