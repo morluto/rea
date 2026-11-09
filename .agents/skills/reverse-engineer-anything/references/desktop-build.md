@@ -14,7 +14,9 @@ stop.
 For the whole build:
 
 - Drive the app only with `act_on_build_computer`. Never script it, run
-  commands in the computer or write its files another way.
+  commands in the computer or write its files another way. The one command
+  you write for the computer is a task's reader, which REA runs to check a
+  file; it never makes the seed or the edit.
 - Ask the upfront questions once, then work on your own. Pause only when
   blocked.
 - The seed's content is synthetic. Never put real personal data in it.
@@ -353,7 +355,9 @@ the first source that has the app:
      "Compress diagram files" is unticked, which REA reads as plain XML. A format REA reads as binary, such as one
      compressed with xz, has no view: save in a format the app offers that
      REA reads, then reopen the file once and check that a plain Ctrl+S
-     keeps that format.
+     keeps that format. When the task is about the app's own binary
+     format, such as GIMP's `.xcf` or Blender's `.blend`, keep it and check
+     it through a reader (see Read a binary file with a reader).
 4. Only once the seed is saved, `mark_build_checkpoint` with name `seed`.
 5. Make the change the task asks for, as a user would, and save it.
 6. Only once the change is saved, `mark_build_checkpoint` with name `end`.
@@ -365,7 +369,9 @@ the first source that has the app:
    draft command names its own cause to fix. When `draft.files` is empty,
    `draft.notes` says why:
    - `no_change`: nothing was saved between `seed` and `end`. Capture again
-     on a new build computer, and save before marking `end`.
+     on a new build computer, and save before marking `end`. When the app
+     keeps the task's state only on screen, such as a calculator's result,
+     judge the screen instead (see Judge the screen).
    - `unowned_changes` with `no_document`: the app saved your document
      where REA did not count it as the app's. Its `files` list what changed,
      with their roles; the document is among them. Close the computer and
@@ -374,7 +380,7 @@ the first source that has the app:
    - `uncheckable_changes`: the app saved the change in dconf, as gedit does
      its preferences, and no check reads dconf. Saving again does not help:
      choose a change the app saves in a file, and capture again on a new
-     build computer.
+     build computer, or judge the screen (see Judge the screen).
    - `unreadable_changes`: a dconf database changed but REA could not read
      it; `error` says why. This is not evidence the app saved there: report
      the error rather than changing the task.
@@ -394,7 +400,9 @@ the first source that has the app:
    - `long_text`: the element's text is too long to check whole; check a
      phrase in it with `text_contains`.
    - `cut_view` or `unreadable_view`: REA's view holds only part of the
-     file, or none a check can read, such as a binary format (step 3).
+     file, or none a check can read, such as a binary format (step 3). For
+     a binary file, read it with a reader (see Read a binary file with a
+     reader).
 
 ## Write the task
 
@@ -507,6 +515,124 @@ Write `{"name", "prompt", "checks"}` from the draft and what you did.
 
 The kinds and pointer rules are in
 [the desktop tasks section](environments.md#pick-the-checks).
+
+### Read a binary file with a reader
+
+When the draft notes `unreadable_view` on a binary document, add a reader to
+the task: the app's own headless command, which REA runs in the computer on a
+private copy of the file, and whose output a check reads instead of the file.
+Write it in the app's scripting mode, print each fact on a line starting
+with `REA ` (with the space), and name the copy `{file}`:
+
+- GIMP `.xcf`, layer names, as `lines`:
+
+  ```json
+  {
+    "id": "layers",
+    "file": "Documents/poster.xcf",
+    "argv": ["gimp-console-2.10", "-i", "-d", "-f", "-b", "-"],
+    "stdin": "(let ((image (car (gimp-file-load RUN-NONINTERACTIVE \"{file}\" \"{file}\")))) (for-each (lambda (layer) (display \"\\nREA layer \") (display (car (gimp-item-get-name layer)))) (vector->list (cadr (gimp-image-get-layers image)))) (newline))\n(gimp-quit 0)\n",
+    "output": "lines"
+  }
+  ```
+
+  checked with `{"kind": "lines_present", "file": "Documents/poster.xcf", "reader": "layers", "lines": ["layer Summer Sale"]}`.
+  Script-Fu's prompt `ts> ` starts a line, so print a newline before each
+  marked line, as `\nREA` does. A text layer's text is
+  `(car (gimp-text-layer-get-text layer))`.
+
+- Blender `.blend`, objects with their type and location, as `json`:
+
+  ```json
+  {
+    "id": "objects",
+    "file": "Documents/scene.blend",
+    "argv": [
+      "blender",
+      "-b",
+      "--factory-startup",
+      "{file}",
+      "--python-expr",
+      "import bpy, json; print('REA ' + json.dumps({o.name: {'type': o.type, 'location': [round(v, 4) for v in o.location]} for o in bpy.data.objects}, sort_keys=True))"
+    ],
+    "output": "json"
+  }
+  ```
+
+  checked with `{"kind": "value_equals", "file": "Documents/scene.blend", "reader": "objects", "pointer": "/Crate/location/0", "value": 2, "tolerance": 0.001}`.
+  Print every value a check compares as a number or string a check can
+  name, rounded where the app stores floats.
+  Blender 4 shows its Quick Setup splash at every launch until its
+  preferences are saved: with `.config/blender` in `state_paths`, confirm
+  Quick Setup with Continue, save the preferences (Edit → Preferences, then
+  Save Preferences in the menu at its bottom left), and read a probe
+  checkpoint's `changed_files` for `.config/blender/4.0/config/userpref.blend`
+  before `seed`, so solves start on the scene. Blender often takes the first click on a
+  menu or a dialog's button only to focus it: click again.
+
+- A format LibreOffice opens but REA cannot read, such as a legacy `.xls`,
+  converted with `--convert-to`:
+
+  ```json
+  {
+    "id": "cells",
+    "file": "Documents/budget.xls",
+    "argv": [
+      "sh",
+      "-c",
+      "soffice --headless --convert-to csv --outdir out \"$1\" >/dev/null && sed 's/^/REA /' out/*.csv",
+      "sh",
+      "{file}"
+    ],
+    "output": "lines",
+    "timeout_s": 120
+  }
+  ```
+
+  Pass `{file}` to `sh -c` as an argument, as here, rather than inside the
+  script.
+
+The reader runs without the display, in a fresh home with the app's default
+settings, so use the app's headless or batch mode; set `display: true` only
+for an app that has none. It must exit 0 within `timeout_s` (60 s by
+default, at most 300) and print at most 1 MiB. Pick facts the change sets and
+the near miss gets wrong, such as a name or a number, not the app's whole
+output.
+
+Give the task the reader in `readers`, and each check through it `reader`
+and the reader's `file`. `json` readers serve `value_equals`, `value_absent`
+and `member_count`; `lines` readers `lines_present`, `lines_absent` and
+`line_count`. The export runs the reader in the build computer on the seed
+and the end: when a check through it fails on the end, the refusal shows
+what the reader printed, and a reader that fails shows its error and the end
+of its stderr. Fix the reader or the check from that and export again.
+
+### Judge the screen
+
+Only when no file shows the change, as when the draft notes `no_change`
+because the app keeps its state on screen, write the task's checks as
+screen judges: `{"id": "shown", "kind": "screen_judge", "question": "Does the
+calculator's display show 8.568?"}`. A model, the judge, answers the question
+on a screenshot three times, and the check passes when most answers are yes.
+
+- REA keeps a screenshot at each checkpoint. Mark `seed` with the screen
+  showing the state before the task, where the answer is no, and `end` with
+  the change showing, where it is yes: the bundle ships both as the judge's
+  examples.
+- Ask about what the change makes visible, with exact values, so the near
+  miss is a no: a result, a label, a selected item. Avoid what a window
+  moved or a cursor blinking can change.
+- The prompt asks to leave the result showing, since the judge sees only
+  the screen when the agent stops.
+- A task with screen judges holds only screen judges and no readers. The
+  export refuses one when a file shows the change, and checks none of its
+  questions: the witness does, running the bundle's own judge with the
+  runner's model endpoint (`LITELLM_BASE_URL` and `LITELLM_API_KEY`, or
+  `[model]` in `.agentenv/config.toml`) on a fresh screenshot at each stage.
+  Without an endpoint the witness's check fails: say what to set and stop.
+- The judge's model is `[model.roles] judge`, else `[model] default`, else
+  `anthropic/claude-sonnet-5-5`. `agent-env run --judge-model` does not
+  reach it. Each grade costs about $0.02.
 
 ## Export
 
@@ -623,7 +749,8 @@ Report:
 
 - the bundle path and the environment name;
 - the task's name and prompt;
-- each check, and why it proves the edit and fails the near miss;
+- each check, and why it proves the edit and fails the near miss, and each
+  reader's command;
 - each witness stage with its result, the verdict, and the paths of
   `witness.json` and the recording;
 - the seed's contents: `seed_files` and what each holds;

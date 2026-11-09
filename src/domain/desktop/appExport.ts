@@ -17,6 +17,7 @@ import {
   PYTHON_IMPORTS,
   PYTHON_MODULE_NAMES,
   PYTHON_READY_CHECK,
+  ownlessBody,
 } from "./appExportPython.js";
 import {
   leftOutFiles,
@@ -67,6 +68,8 @@ export interface DesktopAppExportPlan {
   readonly windowClass: string;
   /** Home-relative paths the app owns for data add, get and reset. */
   readonly paths: readonly string[];
+  /** Relaunch an ownless app for a screen-judged task. */
+  readonly relaunchOnReset?: boolean;
   readonly capturedHome: string;
   /** The checkpoint whose state the seed holds. */
   readonly seedCheckpoint: string;
@@ -517,14 +520,11 @@ const classBody = (plan: DesktopAppExportPlan): string => {
         _ensure_state_aliases(Path.home())
         keep_initial(self.paths)
 ${PYTHON_DATA_HOOKS}${PYTHON_READY_CHECK}`;
-  if (plan.dconf.length > 0)
-    return `    """${title}, launched at boot with its captured settings. It owns no files, so it serves no data operations."""
-
-    def __init__(self) -> None:
-        super().__init__()
-        _load_dconf(Path.home())
-${PYTHON_READY_CHECK}`;
-  return `    """${title}, launched at boot. No state was observed, so it serves no data operations."""\n${PYTHON_READY_CHECK}`;
+  return ownlessBody(
+    title,
+    plan.dconf.length > 0,
+    plan.relaunchOnReset === true,
+  );
 };
 
 /** The app's package, or a package file's dependencies, then the extra packages, its program's package, its library packages and dconf-cli when settings are loaded. */

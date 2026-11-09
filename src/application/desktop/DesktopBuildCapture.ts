@@ -20,7 +20,9 @@ import {
 import { ProviderAdapterError } from "../../domain/providerAdapterError.js";
 import { err, ok, type Result } from "../../domain/result.js";
 import { AGENTENV_PROVIDER } from "../../desktop/AgentEnvComputerHelper.js";
+import type { AgentEnvComputer } from "../../desktop/AgentEnvComputer.js";
 import type { ControlledComputer } from "../../desktop/BuildComputerController.js";
+import { BuildComputerLongRuns } from "../../desktop/BuildComputerLongRuns.js";
 import {
   endedCapture,
   notAnswered,
@@ -47,6 +49,43 @@ import {
 
 const START = "start_build_capture";
 const MARK = "mark_build_checkpoint";
+
+/** The computer routes a capture uses: REA's controller, and the screenshot it keeps of each checkpoint. */
+type CaptureComputer = ControlledComputer &
+  Pick<AgentEnvComputer, "callTool" | "addHomeFiles">;
+
+/** A checkpoint's screenshot as the export takes a screen judge's examples: JPEG, small enough for a judge's prompt. */
+const CHECKPOINT_SHOT = { format: "jpeg", quality: 70 } as const;
+
+/**
+ * Keep a screenshot of the checkpoint just taken in the capture's screens
+ * folder, where the export finds a screen judge's examples. A screenshot
+ * that fails leaves the checkpoint as it is; only cancellation propagates.
+ */
+const keepScreenshot = async (
+  computer: CaptureComputer,
+  folder: string,
+  name: string,
+  signal: AbortSignal,
+): Promise<void> => {
+  try {
+    const shot = await computer.callTool(
+      "computer_screenshot",
+      CHECKPOINT_SHOT,
+      signal,
+    );
+    const image = shot.content.find((block) => block.type === "image")?.data;
+    if (shot.isError || typeof image !== "string") return;
+    await computer.addHomeFiles(
+      new Map([
+        [`${folder}/screens/${name}.jpg`, Buffer.from(image, "base64")],
+      ]),
+      signal,
+    );
+  } catch (cause: unknown) {
+    if (signal.aborted) throw cause;
+  }
+};
 const STOP = "stop_build_capture";
 const EXPORT = "export_build_environment";
 /** The start's step, for a capture that ended before the app's window opened. */
@@ -226,6 +265,7 @@ const unreleasedError = (
  * can be asked again after a lost answer.
  */
 export class DesktopBuildCapture {
+  readonly longRuns: BuildComputerLongRuns;
   #count = 0;
   #run: CaptureRun | undefined;
   readonly #entry: string | undefined;
@@ -236,9 +276,10 @@ export class DesktopBuildCapture {
   readonly #extraPackages: readonly string[];
 
   constructor(
-    private readonly computer: ControlledComputer,
+    private readonly computer: CaptureComputer,
     request: BuildRequest | undefined,
   ) {
+    this.longRuns = new BuildComputerLongRuns(computer);
     this.#entry = request?.desktop_entry;
     this.#packageFile =
       request?.install.kind === "package_file"
@@ -441,6 +482,7 @@ export class DesktopBuildCapture {
           ),
         );
       run.checkpoints.add(name);
+      await keepScreenshot(this.computer, run.folder, name, signal);
       const {
         kind: _kind,
         changed_files: changed,
@@ -548,6 +590,7 @@ export class DesktopBuildCapture {
       },
       input,
       signal,
+      this.longRuns,
     );
   }
 }

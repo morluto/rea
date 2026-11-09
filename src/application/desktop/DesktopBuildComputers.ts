@@ -51,6 +51,7 @@ import { DesktopBuildCapture } from "./DesktopBuildCapture.js";
 import type { BuildSettle } from "./DesktopBuildSettle.js";
 import { DesktopBuildTurns } from "./DesktopBuildTurns.js";
 import { DesktopBuildWitness } from "./DesktopBuildWitness.js";
+import { ScreenJudgeProcess } from "../../desktop/ScreenJudgeProcess.js";
 
 const START = "start_build_computer";
 const ACT = "act_on_build_computer";
@@ -90,6 +91,10 @@ interface HeldComputer {
   readonly steps: BuildComputerSteps | undefined;
   /** Every action, step and close on the computer takes its turn here. */
   readonly turns: DesktopBuildTurns;
+  readonly cleanup: {
+    resources: readonly string[];
+    errors: Set<WeakRef<ProviderCleanupError>>;
+  };
   closing: boolean;
 }
 
@@ -206,30 +211,79 @@ const liveComputer = (
   computer: AgentEnvComputer,
   workspace: PrivateRuntimeRoot | undefined,
   source: BuildSource,
-  settle: BuildSettle,
+  grading: { readonly settle: BuildSettle; readonly judge: ScreenJudgeProcess },
 ): HeldComputer => {
   const actions = new BuildComputerActionLog();
   const turns = new DesktopBuildTurns();
+  const capture = new DesktopBuildCapture(
+    computer,
+    source.kind === "request" ? source : undefined,
+  );
+  const witness = new DesktopBuildWitness(
+    computer,
+    actions,
+    grading.settle,
+    source.kind === "bundle"
+      ? { path: source.path, judge: grading.judge.judge }
+      : undefined,
+  );
+  let closedComputer: Extract<ComputerRelease, { verified: true }> | undefined;
+  const attempt = async (
+    release: () => Promise<ComputerRelease>,
+  ): Promise<ComputerRelease> => {
+    try {
+      return await release();
+    } catch (cause: unknown) {
+      return {
+        verified: false,
+        reason: cause instanceof Error ? cause.message : String(cause),
+        resources: [],
+      };
+    }
+  };
   return {
     computer,
-    release: () => computer.close(),
+    release: async () => {
+      const [commands, readers, judge] = await Promise.all([
+        attempt(() => capture.longRuns.release()),
+        attempt(() => witness.readers.release()),
+        attempt(() => grading.judge.close()),
+      ]);
+      if (!commands.verified || !readers.verified) {
+        const failed = [commands, readers, judge].filter(
+          (result) => !result.verified,
+        );
+        return {
+          verified: false,
+          reason: failed.map((result) => result.reason).join("; "),
+          resources: [...new Set(failed.flatMap((result) => result.resources))],
+        };
+      }
+      const computerResult =
+        closedComputer === undefined
+          ? await attempt(() => computer.close())
+          : closedComputer;
+      if (computerResult.verified) closedComputer = computerResult;
+      const failed = [judge, computerResult].filter(
+        (result) => !result.verified,
+      );
+      if (failed.length === 0 && computerResult.verified) return computerResult;
+      return {
+        verified: false,
+        reason: failed.map((result) => result.reason).join("; "),
+        resources: [...new Set(failed.flatMap((result) => result.resources))],
+      };
+    },
     workspace,
     actions,
     steps: {
       computer,
-      capture: new DesktopBuildCapture(
-        computer,
-        source.kind === "request" ? source : undefined,
-      ),
-      witness: new DesktopBuildWitness(
-        computer,
-        actions,
-        settle,
-        source.kind === "bundle" ? source.path : undefined,
-      ),
+      capture,
+      witness,
       turns,
     },
     turns,
+    cleanup: { resources: [], errors: new Set() },
     closing: false,
   };
 };
@@ -418,7 +472,11 @@ export class DesktopBuildComputers {
             );
       this.#computers.set(
         id,
-        liveComputer(computer, target.workspace, source, this.settle),
+        liveComputer(computer, target.workspace, source, {
+          settle: this.settle,
+          // The resolved environment, which names a runner found on PATH.
+          judge: new ScreenJudgeProcess(environment),
+        }),
       );
       return ok({
         value: {
@@ -445,6 +503,7 @@ export class DesktopBuildComputers {
         actions: new BuildComputerActionLog(),
         steps: undefined,
         turns: new DesktopBuildTurns(),
+        cleanup: { resources: [], errors: new Set() },
         closing: true,
       });
       const release = await this.#retire(id);
@@ -565,16 +624,29 @@ export class DesktopBuildComputers {
     held.closing = true;
     // Tear down only once the call it cancels has ended; the calls waiting are refused.
     const release = await held.turns.close(() => this.#retire(id));
-    return release.verified
-      ? ok({ computer_id: id, teardown: release.teardown })
-      : err(
-          new ProviderCleanupError(
-            AGENTENV_PROVIDER,
-            release.resources,
-            { reason: release.reason },
-            { operation: CLOSE, remediationAction: release.reason },
-          ),
-        );
+    held.cleanup.resources = release.verified ? [] : release.resources;
+    if (release.verified) {
+      for (const reference of held.cleanup.errors)
+        reference.deref()?.resolveCleanup();
+      held.cleanup.errors.clear();
+      return ok({ computer_id: id, teardown: release.teardown });
+    }
+    const failure = new ProviderCleanupError(
+      AGENTENV_PROVIDER,
+      release.resources,
+      { reason: release.reason },
+      { operation: CLOSE, remediationAction: release.reason },
+    );
+    failure.bindCleanupResourceOwner({
+      get cleanupResources() {
+        return held.cleanup.resources;
+      },
+    });
+    for (const reference of held.cleanup.errors)
+      if (reference.deref() === undefined)
+        held.cleanup.errors.delete(reference);
+    held.cleanup.errors.add(new WeakRef(failure));
+    return err(failure);
   }
 
   /** Release a held computer and its bundle folder; it stays held while either is unconfirmed. */

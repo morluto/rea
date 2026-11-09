@@ -59,7 +59,6 @@ import {
 } from "./DesktopOutputTree.js";
 import {
   retainedCopies,
-  shippedSeedViews,
   writeFiles,
   type SeedVersion,
 } from "./DesktopExportFiles.js";
@@ -67,6 +66,7 @@ import { withRetainedContent } from "./DesktopRetainedContent.js";
 import { planLaunch, seedModes, seedVersions } from "./DesktopExportLaunch.js";
 import { selectStateEnds } from "./DesktopStateVersions.js";
 import { admitDesktopTask, type AdmittedTask } from "./DesktopTaskExport.js";
+import { taskReads } from "./DesktopExportReaders.js";
 
 const OPERATION = "export_desktop_application";
 /** Largest seed file the export copies; the state view reads only 64 MiB. */
@@ -91,6 +91,8 @@ export interface DesktopExportRequest {
   readonly endCheckpoint?: string | undefined;
   /** The seed was made for the task, as in a build computer, rather than taken from the user's own data. */
   readonly syntheticSeed?: boolean | undefined;
+  /** The folder a build computer keeps a screenshot of each checkpoint in, `<name>.jpg`, for a screen judge's examples. */
+  readonly screens?: string | undefined;
 }
 
 /** What the export wrote. */
@@ -301,7 +303,10 @@ const bundleText = (
       text(`${environment}/env.toml`, renderEnvToml(plan)),
       text(
         `${environment}/${appModuleFile(plan.name)}`,
-        renderAppClass(plan),
+        renderAppClass({
+          ...plan,
+          relaunchOnReset: admitted?.screenJudged === true,
+        }),
         dconfHoldsIdentity,
       ),
       text(`${environment}/SKILL.md`, renderSkill(plan)),
@@ -405,25 +410,17 @@ const runExport = async (
       download: await readDownloadInstall(request.downloadInstall, signal),
     });
   const copies = retainedCopies(plan, seeds);
-  // A task's seed checks read the seeds as the bundle ships them, scrubbed.
-  const seedViews =
-    request.tasks.length === 0
-      ? new Map()
-      : await withRetainedContent(
-          request.capture,
-          (content) => shippedSeedViews(content, copies, identity, signal),
-          SEED_MAX_BYTES,
-        );
+  const reads = await taskReads(request, SEED_MAX_BYTES, {
+    copies,
+    files,
+    ends,
+    identity,
+    checkpoints,
+    signal,
+  });
   const admitted = await admitDesktopTask(
     request.tasks,
-    {
-      ...plan,
-      files,
-      identity,
-      ends,
-      seedViews,
-      seeded: new Set(seeds.keys()),
-    },
+    { ...plan, files, identity, ends, ...reads, seeded: new Set(seeds.keys()) },
     signal,
   );
   const { generated, readme } = bundleText(plan, admitted, dconf.holdsIdentity);
