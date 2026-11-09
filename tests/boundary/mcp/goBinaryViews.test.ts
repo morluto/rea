@@ -18,6 +18,7 @@ import {
   createGoBinaryFixture,
   GO_MODULE_TEXT,
 } from "../../fixtures/go/image.js";
+import { createGoRodataStringFixture } from "../../fixtures/go/rodataStringImage.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
@@ -385,5 +386,87 @@ mcpTest(
     } finally {
       await session.close();
     }
+  },
+);
+
+goViewTest(
+  "pages and filters retained Go string_literals through MCP views",
+  async ({ goViews: { client, root, call } }) => {
+    const path = join(root, "strings.elf");
+    const fixture = createGoRodataStringFixture({
+      format: "elf",
+      rodata: Buffer.from(
+        "ListResourceProvidersgenaihttps://example.invalid/v1",
+        "utf8",
+      ),
+      headers: [
+        { section: "data", offsetInSection: 0, ptr: 0x102000n, len: 21n },
+        { section: "data", offsetInSection: 16, ptr: 0x102015n, len: 5n },
+        { section: "data", offsetInSection: 32, ptr: 0x10201an, len: 26n },
+      ],
+    });
+    await writeFile(path, fixture.bytes);
+
+    const summary = goBinarySummaryViewResultSchema.parse(
+      (
+        await call("inspect_go_binary", {
+          path,
+          include_string_literals: true,
+          detail: "summary",
+        })
+      ).normalized_result,
+    );
+    expect(summary.source_coverage.string_literals).toBe("complete");
+    expect(summary.summary.string_literals).toMatchObject({
+      evidence_kind: "inferred",
+      available_count: 3,
+      discovered_count: 3,
+      truncated: false,
+    });
+
+    const source = {
+      kind: "retained-evidence",
+      evidence_id: summary.parent_evidence_id,
+    };
+    const page = goPage(
+      await call("inspect_analysis_view", {
+        source,
+        view: {
+          kind: "go",
+          collection: "string_literals",
+          contains: "genai",
+          fields: ["value", "location"],
+        },
+      }),
+    );
+    expect(page.page).toEqual({
+      collection: "string_literals",
+      rows: [
+        {
+          index: 1,
+          value: "genai",
+          location: { offset: fixture.rodataOffset + 21, bytes: 5 },
+        },
+      ],
+    });
+
+    const unrequestedSummary = goBinarySummaryViewResultSchema.parse(
+      (await call("inspect_go_binary", { path, detail: "summary" }))
+        .normalized_result,
+    );
+    expect(unrequestedSummary.source_coverage.string_literals).toBe(
+      "not-requested",
+    );
+    const refused = await client.callTool({
+      name: "inspect_analysis_view",
+      arguments: {
+        source: {
+          kind: "retained-evidence",
+          evidence_id: unrequestedSummary.parent_evidence_id,
+        },
+        view: { kind: "go", collection: "string_literals" },
+      },
+    });
+    expect(parseMcpToolError(refused).error.code).toBe("invalid_request");
   },
 );

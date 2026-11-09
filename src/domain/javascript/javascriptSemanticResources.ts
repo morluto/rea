@@ -20,7 +20,7 @@ import {
   type JavaScriptSemanticBindingState,
 } from "./javascriptSemanticState.js";
 import {
-  builtinDataEffectMethod,
+  builtinDataEffectIdentity,
   dataEffectMemberCallee,
   outerDataEffectBinding,
   traverseDataEffects,
@@ -45,6 +45,7 @@ const releaseMethodsFor = (
 };
 
 interface ResourceCandidate {
+  readonly builtinAuthority?: "candidate";
   readonly node: t.CallExpression | t.OptionalCallExpression;
   readonly specifier: string;
   readonly method: JavaScriptSemanticResourceOperation["method"];
@@ -339,6 +340,9 @@ const collectAcquisitions = (
       node,
       specifier: reference.specifier,
       method: reference.method,
+      ...(reference.builtinAuthority === undefined
+        ? {}
+        : { builtinAuthority: reference.builtinAuthority }),
       ownerCallableId: context.callableStack.at(-1) ?? null,
       resultBindingId: outerDataEffectBinding(node, context),
     });
@@ -391,6 +395,9 @@ const collectReleases = (
       ownerCallableId: context.callableStack.at(-1) ?? null,
       resultBindingId: binding.bindingId,
       linkedResourceIds: linked.map(resourceCandidateId).sort(),
+      ...(linked.some((value) => value.builtinAuthority === "candidate")
+        ? { builtinAuthority: "candidate" as const }
+        : {}),
       resolution:
         linked.length === 1 &&
         holdsOnlyAcquisitions(binding, linked, context.state)
@@ -440,6 +447,9 @@ const immutableAcquisition = (
   resourceId: resourceCandidateId(candidate),
   kind: "acquire",
   method: candidate.method,
+  ...(candidate.builtinAuthority === undefined
+    ? {}
+    : { builtinAuthority: candidate.builtinAuthority }),
   location: range(candidate.node),
   ownerCallableId: candidate.ownerCallableId,
   resultBindingId: candidate.resultBindingId,
@@ -448,6 +458,7 @@ const immutableAcquisition = (
 });
 
 interface AcquisitionReference {
+  readonly builtinAuthority?: "candidate";
   readonly specifier: string;
   readonly method: JavaScriptSemanticResourceOperation["method"];
 }
@@ -457,7 +468,9 @@ const acquisitionMethod = (
   state: JavaScriptSemanticAnalysisState,
 ): AcquisitionReference | null => {
   for (const specifier of BUILTIN_RESOURCE_SPECIFIERS) {
-    const method = builtinDataEffectMethod(callee, state, [specifier]);
+    const identity = builtinDataEffectIdentity(callee, state, [specifier]);
+    const method =
+      identity?.path.length === 1 ? (identity.path[0] ?? null) : null;
     if (
       method !== null &&
       (
@@ -468,6 +481,9 @@ const acquisitionMethod = (
     )
       return {
         specifier,
+        ...(identity?.builtinAuthority === undefined
+          ? {}
+          : { builtinAuthority: identity.builtinAuthority }),
         method: method as JavaScriptSemanticResourceOperation["method"],
       };
   }
