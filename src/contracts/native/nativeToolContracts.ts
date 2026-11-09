@@ -1,3 +1,4 @@
+import { MAX_NATIVE_PLIST_NESTING_DEPTH } from "../../domain/apple/plistValue.js";
 import { requireOutputSchema } from "../toolOutputSchemaPrimitives.js";
 import { z } from "zod";
 import { nativeCallObservationInputSchema } from "../../domain/native/nativeCallObservation.js";
@@ -121,7 +122,7 @@ export const NATIVE_TOOL_CONTRACTS = [
   ),
   native(
     "inspect_plist",
-    "Requires an open binary or bundle-resource session; use open_binary or open_bundle_resources first. Parse its Info.plist by default, or select a local plist with path within that session. Supplying path does not open a session. Returns normalized JSON rather than plutil text. native_command_timeout_ms is each file or plutil command's wall clock (omitted means 60000 ms). The 67108864-byte plist input and decode allowances and the 998-level nesting allowance have no runtime override. XML sources also require native plutil validation, which can refuse shallower inputs with its own diagnostics. The 4096-byte markup probe is a probe window, not a document cap, and has no runtime override.",
+    `Requires an open binary or bundle-resource session; use open_binary or open_bundle_resources first. Parse its Info.plist by default, or select a local plist with path within that session. Supplying path does not open a session. Returns normalized JSON rather than plutil text. native_command_timeout_ms is each file or plutil command's wall clock (omitted means 60000 ms). The 67108864-byte plist input and decode allowances and the ${MAX_NATIVE_PLIST_NESTING_DEPTH}-level nesting allowance have no runtime override. XML sources also require native plutil validation, which can refuse shallower inputs with its own diagnostics. The 4096-byte markup probe is a probe window, not a document cap, and has no runtime override.`,
     z.object({
       path: localPathStringSchema
         .optional()

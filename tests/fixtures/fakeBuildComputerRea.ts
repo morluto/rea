@@ -7,10 +7,19 @@ import { createTestTempDirectory } from "./temporaryDirectory.js";
 /**
  * A stand-in for REA inside a build computer: `capture-desktop-application`
  * reads its requests from stdin and acknowledges each as REA's capture does,
- * then publishes a prepared capture folder on stop; `describe-...` and
+ * then publishes a prepared capture folder on stop. It prints the failure in
+ * the file `FAKE_REA_CAPTURE_FAILURE` names instead of launching, and the one
+ * in `FAKE_REA_MARK_FAILURE` at its first checkpoint, exiting 1 either way;
+ * `FAKE_REA_APP_EXITS` names the folder it publishes at once, as when the
+ * app exits before its window opens. `describe-...` and
  * `export-...` print outputs the real CLI wrote for that folder, and the
- * export copies the bundle it wrote. Each call notes its arguments, its
- * working folder and which AGENTENV_ variables and APT_CONFIG it saw.
+ * export copies the bundle it wrote. A capture given exactly the
+ * `--state-path` `FAKE_REA_STATE_PATH` publishes `FAKE_REA_SELECTED_CAPTURE`
+ * instead, and the draft and export of its folder print the outputs the real
+ * CLI wrote for that capture. With `FAKE_REA_UNLISTED_CHANGES` set, it
+ * acknowledges checkpoints without their changed files, as a REA before
+ * them did. Each call notes its arguments, its working folder and which
+ * AGENTENV_ variables and APT_CONFIG it saw.
  */
 const FAKE_REA = String.raw`
 import json
@@ -38,13 +47,43 @@ def option(args, name):
     return args[args.index(name) + 1] if name in args else None
 
 
+def options(args, name):
+    return [args[index + 1] for index, value in enumerate(args[:-1]) if value == name]
+
+
+SELECTED = ".fake-selected"
+
+
+def output(capture, name):
+    """The real CLI's output for the capture folder REA names: of the selected capture, or the prepared one."""
+    selected = os.path.exists(os.path.join(capture, SELECTED))
+    return os.environ[f"FAKE_REA_SELECTED_{name}" if selected else f"FAKE_REA_{name}"]
+
+
 command, args = sys.argv[1], sys.argv[2:]
 note("calls.jsonl", {"argv": sys.argv[1:], "cwd": os.getcwd(), "apt_config": os.environ.get("APT_CONFIG"),
                      "agentenv": sorted(name for name in os.environ if name.startswith("AGENTENV_"))})
 if command == "capture-desktop-application":
+    failure = os.environ.get("FAKE_REA_CAPTURE_FAILURE")
+    if failure is not None:
+        with open(failure) as handle:
+            sys.stdout.write(handle.read())
+        sys.exit(1)
     progress("Recorded checkpoint baseline.", {"kind": "checkpoint", "name": "baseline", "trigger": "baseline",
                                                 "at_ms": 0, "entries": 4, "changes": 0, "retained_files": 1,
-                                                "retained_bytes": 17})
+                                                "retained_bytes": 17, "changed_files": [], "more_changed_files": 0})
+    exited = os.environ.get("FAKE_REA_APP_EXITS")
+    if exited is not None:
+        # The app exits before its window opens, so the capture ends on its own and publishes what it saw.
+        progress("Launching notes.")
+        progress("Recorded checkpoint exit.", {"kind": "checkpoint", "name": "exit", "trigger": "exit", "at_ms": 1080,
+                                               "entries": 4, "changes": 0, "retained_files": 0, "retained_bytes": 0,
+                                               "changed_files": [], "more_changed_files": 0})
+        out = option(args, "--output")
+        shutil.copytree(exited, out)
+        with open(os.path.join(out, "capture.json")) as handle:
+            sys.stdout.write(handle.read())
+        sys.exit(0)
     progress("The application window is open.", {"kind": "window_open"})
     taken = set()
     for line in sys.stdin:
@@ -52,24 +91,41 @@ if command == "capture-desktop-application":
         if text == "stop":
             break
         name = text[len("checkpoint "):].strip()
+        failure = os.environ.get("FAKE_REA_MARK_FAILURE")
+        if failure is not None:
+            with open(failure) as handle:
+                sys.stdout.write(handle.read())
+            sys.exit(1)
         if name in taken:
             progress("refused", {"kind": "checkpoint_refused", "name": name,
                                  "reason": f"A checkpoint named {name} was already recorded."})
             continue
         taken.add(name)
-        progress(f"Recorded checkpoint {name}.", {"kind": "checkpoint", "name": name, "trigger": "request",
-                                                   "at_ms": 1000 * len(taken), "entries": 5, "changes": 1,
-                                                   "retained_files": 1, "retained_bytes": 5})
+        event = {"kind": "checkpoint", "name": name, "trigger": "request", "at_ms": 1000 * len(taken),
+                 "entries": 5, "changes": 1, "retained_files": 1, "retained_bytes": 5}
+        if os.environ.get("FAKE_REA_UNLISTED_CHANGES") is None:
+            event.update({"changed_files": ["Documents/today.txt"], "more_changed_files": 0})
+        progress(f"Recorded checkpoint {name}.", event)
     note("stopped.jsonl", {"pid": os.getpid()})
     out = option(args, "--output")
-    shutil.copytree(os.environ["FAKE_REA_CAPTURE"], out)
+    named = os.environ.get("FAKE_REA_STATE_PATH")
+    selected = named is not None and options(args, "--state-path") == [named]
+    shutil.copytree(os.environ["FAKE_REA_SELECTED_CAPTURE" if selected else "FAKE_REA_CAPTURE"], out)
+    if selected:
+        open(os.path.join(out, SELECTED), "w").close()
     with open(os.path.join(out, "capture.json")) as handle:
         sys.stdout.write(handle.read())
 elif command == "describe-desktop-application-task":
-    with open(os.environ["FAKE_REA_DRAFT"]) as handle:
+    with open(output(args[0], "DRAFT")) as handle:
         sys.stdout.write(handle.read())
 elif command == "export-desktop-application":
     if "--schema" in args:
+        if os.environ.get("FAKE_REA_SCHEMA_TOKEN"):
+            if os.environ["FAKE_REA_SCHEMA_TOKEN"] == "invalid":
+                print("fake-control-token-0123456789abcdef")
+                sys.exit(0)
+            print("runtime output fake-control-token-0123456789abcdef", file=sys.stderr)
+            sys.exit(23)
         if os.environ.get("FAKE_REA_SCHEMA_FAILURE"):
             print("runtime cannot load its export command", file=sys.stderr)
             sys.exit(23)
@@ -81,13 +137,15 @@ elif command == "export-desktop-application":
         sys.exit(0)
     with open(option(args, "--task")) as handle:
         note("tasks.jsonl", json.load(handle))
-    exported = os.environ["FAKE_REA_EXPORT"]
-    with open(exported) as handle:
-        output = handle.read()
-    if "code" not in json.loads(output):
-        shutil.copytree(os.environ["FAKE_REA_BUNDLE"], args[1])
-    sys.stdout.write(output)
-    sys.exit(0 if "code" not in json.loads(output) else 1)
+    with open(output(args[0], "EXPORT")) as handle:
+        printed = handle.read()
+    if "code" not in json.loads(printed):
+        shutil.copytree(output(args[0], "BUNDLE"), args[1])
+        copy = option(args, "--withheld-copy") if "--withheld-copy" in args else None
+        if copy is not None and os.path.isdir(os.environ.get("FAKE_REA_WITHHELD", "")):
+            shutil.copytree(os.environ["FAKE_REA_WITHHELD"], copy)
+    sys.stdout.write(printed)
+    sys.exit(0 if "code" not in json.loads(printed) else 1)
 else:
     sys.exit(f"unexpected command {command}")
 `;
@@ -127,6 +185,8 @@ export interface FakeReaOutputs {
   readonly export: string;
   readonly bundle: string;
   readonly schema: string;
+  /** Where the real export copied the files it withheld from the seed. */
+  readonly withheld?: string;
 }
 
 export interface FakeBuildComputerRea {
@@ -167,6 +227,9 @@ export const fakeBuildComputerRea = async (
       FAKE_REA_EXPORT: outputs.export,
       FAKE_REA_BUNDLE: outputs.bundle,
       FAKE_REA_SCHEMA: outputs.schema,
+      ...(outputs.withheld === undefined
+        ? {}
+        : { FAKE_REA_WITHHELD: outputs.withheld }),
     },
     notes: async (name) => {
       const path = join(notes, name);
