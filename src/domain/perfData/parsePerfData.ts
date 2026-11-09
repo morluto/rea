@@ -448,11 +448,15 @@ export const parsePerfData = (
   const headerBytes = read.u64(bytes, HEADER_SIZE_FIELD);
   // A present-but-unrepresentable size is not a truncation: every byte the
   // field occupies is there, so the file is reported as an unsupported layout
-  // instead of claiming it ended before a field it actually carries.
-  const headerUnrepresentable = headerBytes === null;
+  // instead of claiming it ended before a field it actually carries. A field
+  // that is not there at all is a truncation, and `u64` cannot say which it
+  // saw because both cases return null, so test presence on the raw field.
+  const headerSizePresent = read.u64Bits(bytes, HEADER_SIZE_FIELD) !== null;
+  const headerUnrepresentable = headerSizePresent && headerBytes === null;
   if (
+    !headerSizePresent ||
     headerUnrepresentable ||
-    bytes.length < headerBytes ||
+    bytes.length < (headerBytes ?? 0) ||
     (headerBytes !== HEADER_BYTES_WITHOUT_FEATURES &&
       headerBytes !== HEADER_BYTES_WITH_FEATURES)
   ) {
@@ -460,11 +464,13 @@ export const parsePerfData = (
       state,
       null,
       "truncated-header",
-      headerUnrepresentable
-        ? `The header size exceeds Number.MAX_SAFE_INTEGER, so the declared layout cannot be compared and its sections were not read.`
-        : bytes.length < headerBytes
-          ? `The header declares ${headerBytes} bytes but the file ends at ${bytes.length}, so its sections were not read.`
-          : `The header declares ${headerBytes} bytes; this inventory accepts the ${HEADER_BYTES_WITHOUT_FEATURES}- and ${HEADER_BYTES_WITH_FEATURES}-byte layouts.`,
+      !headerSizePresent
+        ? `The file ends before its ${HEADER_SIZE_FIELD + 8}-byte header size field, so its sections were not read.`
+        : headerUnrepresentable
+          ? `The header size exceeds Number.MAX_SAFE_INTEGER, so the declared layout cannot be compared and its sections were not read.`
+          : bytes.length < (headerBytes ?? 0)
+            ? `The header declares ${headerBytes} bytes but the file ends at ${bytes.length}, so its sections were not read.`
+            : `The header declares ${headerBytes} bytes; this inventory accepts the ${HEADER_BYTES_WITHOUT_FEATURES}- and ${HEADER_BYTES_WITH_FEATURES}-byte layouts.`,
     );
     return ok(emptyRecording(artifact, state.diagnostics, order));
   }

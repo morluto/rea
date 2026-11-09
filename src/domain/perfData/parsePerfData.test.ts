@@ -124,6 +124,28 @@ describe("parsePerfData event attributes", () => {
     ]);
   });
 
+  it("names a missing size field as truncation, not an unsafe value", () => {
+    // Valid magic, but the file stops inside the size field, so no size was
+    // ever written. Reporting an over-long size here would name a value the
+    // file does not contain.
+    const archive = parsed(buildPerfRecording().subarray(0, 0x0c));
+    const messages = archive.diagnostics.map(({ message }) => message);
+    expect(archive.diagnostics).toEqual([
+      expect.objectContaining({ code: "truncated-header" }),
+    ]);
+    expect(messages.join("\n")).not.toContain("MAX_SAFE_INTEGER");
+  });
+
+  it("still names an over-long size field as unrepresentable when it is present", () => {
+    const bytes = buildPerfRecording();
+    bytes.writeBigUInt64LE(0xffffffffffffffffn, 0x08);
+    const archive = parsed(bytes);
+    expect(archive.diagnostics).toEqual([
+      expect.objectContaining({ code: "truncated-header" }),
+    ]);
+    expect(archive.diagnostics[0]?.message).toContain("MAX_SAFE_INTEGER");
+  });
+
   it("accepts the pre-feature-bitmap header as absent rather than truncated", () => {
     const archive = parsed(
       buildPerfRecording({ headerBytes: PERF_HEADER_BYTES_WITHOUT_FEATURES }),
