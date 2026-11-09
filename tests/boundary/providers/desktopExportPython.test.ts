@@ -1,4 +1,9 @@
 import {
+  DESKTOP_VIEW_DEFAULTS,
+  desktopViewPolicy,
+  type DesktopViewPolicy,
+} from "../../../src/domain/desktop/desktopViewPolicy.js";
+import {
   execFileSync,
   type ExecFileSyncOptionsWithStringEncoding,
 } from "node:child_process";
@@ -11,6 +16,7 @@ import { expect, it } from "vitest";
 
 import {
   PYTHON_HELPERS,
+  renderPythonHelpers,
   PYTHON_IMPORTS,
 } from "../../../src/domain/desktop/appExportPython.js";
 import {
@@ -445,11 +451,14 @@ it("refuses the JSON numbers REA's state view refuses, as JSON with an error rat
 });
 
 /** The exported module's format, view and error for each named text, and REA's for the same bytes. */
-const textViews = (files: readonly (readonly [string, string])[]) => {
+const textViews = (
+  files: readonly (readonly [string, string])[],
+  policy: DesktopViewPolicy = DESKTOP_VIEW_DEFAULTS,
+) => {
   const imports = PYTHON_IMPORTS.split("\n")
     .filter((line) => !line.includes("agentenv_protocol"))
     .join("\n");
-  const program = `${imports}${PYTHON_HELPERS}
+  const program = `${imports}${renderPythonHelpers(policy)}
 for name, text in json.load(sys.stdin):
     view = _text_view(name, text, len(text.encode()))
     print(json.dumps({"format": view["format"], "view": view["view"], "error": view.get("error")}))
@@ -464,16 +473,98 @@ for name, text in json.load(sys.stdin):
     .map((line) => JSON.parse(line) as unknown);
   const rea = files.map(([name, text]) => {
     const bytes = new TextEncoder().encode(text);
-    const format = detectStateFormat(name, bytes);
+    const format = detectStateFormat(name, bytes, policy);
     if (format !== "text" && format !== "json" && format !== "keyfile")
       throw new Error(`${name} reads as ${format}`);
-    const read = textualView(format, bytes);
+    const read = textualView(format, bytes, policy);
     return read.ok
       ? { format, view: read.value, error: null }
       : { format, view: null, error: read.error };
   });
   return { python, rea };
 };
+
+it("applies the selected desktop view budgets equally in TypeScript and emitted Python", () => {
+  const files = [
+    ["lines.txt", "one\ntwo\nthree"],
+    ["value.json", '{"key":"value"}'],
+  ] as const;
+  const limited = textViews(
+    files,
+    desktopViewPolicy({ text_lines: 2, parsed_bytes: 4 }),
+  );
+  expect(limited.python).toEqual(limited.rea);
+  expect(limited.rea[0]?.view).toMatchObject({
+    lines: ["one", "two"],
+    truncated: true,
+    line_count: 3,
+  });
+  expect(limited.rea[1]?.error).toContain("limit for JSON");
+  const recovered = textViews(
+    files,
+    desktopViewPolicy({ text_lines: 3, parsed_bytes: 64 }),
+  );
+  expect(recovered.python).toEqual(recovered.rea);
+  expect(recovered.rea[0]?.view).toMatchObject({
+    lines: ["one", "two", "three"],
+    truncated: false,
+  });
+  expect(recovered.rea[1]).toEqual({
+    format: "json",
+    view: { key: "value" },
+    error: null,
+  });
+});
+
+it("bounds the emitted reader's probe when an app grows a file after its size check", () => {
+  const imports = PYTHON_IMPORTS.split("\n")
+    .filter((line) => !line.includes("agentenv_protocol"))
+    .join("\n");
+  const program = `${imports}${renderPythonHelpers(desktopViewPolicy({ file_bytes: 4 }))}
+read_bytes = 0
+class ObservedReader:
+    def __init__(self, file):
+        self.file = file
+    def __enter__(self):
+        return self
+    def __exit__(self, *args):
+        self.file.close()
+    def read(self, size=-1):
+        global read_bytes
+        data = self.file.read(size)
+        read_bytes += len(data)
+        return data
+class GrowingPath(type(Path())):
+    def open(self, mode="r", *args, **kwargs):
+        if mode == "rb":
+            Path(str(self)).write_bytes(b"x" * 20000)
+            return ObservedReader(super().open(mode, *args, **kwargs))
+        return super().open(mode, *args, **kwargs)
+with tempfile.TemporaryDirectory() as root:
+    small = Path(root) / "small.txt"
+    small.write_bytes(b"abcd")
+    ordinary = _view(small)
+    growing = GrowingPath(root) / "growing.txt"
+    growing.write_bytes(b"abcd")
+    grown = _view(growing)
+    print(json.dumps({"ordinary": ordinary, "grown": grown, "read_bytes": read_bytes, "grown_bytes": growing.stat().st_size}))
+`;
+  const result = JSON.parse(
+    execPython(["-I", "-B", "-c", program], { encoding: "utf8" }),
+  );
+  expect(result.ordinary).toMatchObject({
+    format: "text",
+    view: { lines: ["abcd"] },
+    truncated: false,
+  });
+  expect(result.grown).toEqual({
+    format: null,
+    view: null,
+    error: "larger than 4 bytes, the most the view reads",
+  });
+  expect(result.read_bytes).toBe(5);
+  expect(result.grown_bytes).toBe(20000);
+});
 
 it("reads text nested past Python's recursion limit as JSON only when all of it is, as REA does", () => {
   const brackets = (open: number, close: number) =>
