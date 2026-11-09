@@ -598,6 +598,35 @@ it.each([
 );
 
 it.each([
+  [`tls.connect("")`],
+  [`tls.connect("", {})`],
+  [`tls.connect("", { port: -1 })`],
+  [`net.connect("", { port: 80 })`],
+  [`tls.connect({ port: 80, socket: {} })`],
+  [`tls.connect({ port: 80, socket: "x" })`],
+  [`tls.connect({ port: 80, socket: 5 })`],
+  [`tls.connect({ port: 80, socket: [] })`],
+  [`tls.connect({ port: 80, socket: () => {} })`],
+] as const)("emits no socket acquisition for %s", (call) => {
+  // An empty first argument is rejected by both `net` and `tls` unless `tls` merges a
+  // usable option over it, and a truthy literal `socket` makes `tls`'s stream wrap throw
+  // whatever the port says. Measured on Node 24.22.1.
+  expect(socketAcquisitionsFor(call)).toEqual([]);
+});
+
+it.each([
+  [`tls.connect("", { port: 80 })`],
+  [`tls.connect("", { path: "/tmp/x.sock" })`],
+  [`tls.connect({ port: 80, socket: null })`],
+  [`tls.connect({ port: 80, socket: false })`],
+  [`tls.connect({ port: 80, socket: 0 })`],
+  [`tls.connect({ port: 80, socket: "" })`],
+] as const)("keeps the socket acquisition for %s", (call) => {
+  expect(socketAcquisitionsFor(call)).toEqual([
+    { kind: "acquire", method: "connect" },
+  ]);
+});
+it.each([
   [`tls.connect({ port: -1, socket: {} })`],
   [`tls.connect({ port: -1, socket: { __proto__: null } })`],
   [`tls.connect({ port: -1, socket: { __proto__: {} } })`],

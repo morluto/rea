@@ -599,11 +599,12 @@ const rejectsSocketPort = (
     if (objects === undefined) return false;
     return rejectsOptionsPortLiteral(objects, specifier, context);
   }
-  // An empty path is a Unix socket with no length, which Node also rejects.
-  if (socketEmptyPath(head)) return true;
-  // A positional port or Unix socket path. `net` validates it and ignores later
-  // options; `tls` still merges the options object, which can replace the port.
-  if (!socketPortPositional(head)) return false;
+  // A positional port, Unix socket path or empty path. `net` validates argument 0 and
+  // ignores later options; `tls` still merges its options object, which can replace the
+  // value. Measured on Node 24.22.1, `tls.connect("", {port: 80})` and
+  // `tls.connect("", {path: "/tmp/x"})` both connect while `tls.connect("", {})` throws,
+  // and `net.connect("", {port: 80})` throws because `net` reads no later options.
+  if (!socketPortPositional(head) && !socketEmptyPath(head)) return false;
   const objects = socketOptionsObjects(node, specifier, context.state);
   if (objects === undefined) return false;
   if (specifier === "net") return rejectsPortValue(head, context);
@@ -611,6 +612,7 @@ const rejectsSocketPort = (
   // port check applies here too: `tls.connect(-1, {path:"/tmp/x"})` connects. An
   // unreadable path or socket leaves the answer unknown, so keep the acquisition.
   const rescue = optionsRescuePort(objects, specifier, context.state);
+  if (rescue === "rejects") return true;
   if (rescue !== "validates") return false;
   // The merged options win when they carry an effective `port`; otherwise the
   // positional value is the one validated. `tls.connect(-1, {})` still throws.
@@ -786,7 +788,7 @@ const socketOptionsObjects = (
   const value = unwrapJavaScriptExpression(first).node;
   const base = t.isObjectExpression(value)
     ? [value]
-    : socketPortPositional(value)
+    : socketPortPositional(value) || socketEmptyPath(value)
       ? []
       : undefined;
   if (base === undefined) return undefined;
@@ -877,8 +879,11 @@ const rejectsOptionsPortLiteral = (
   const read = mergedOptionsProperty(objects, "port");
   if (read.status !== "explicit") return false;
   // One shared rescue decision, so this branch and the positional branch agree.
-  if (optionsRescuePort(objects, specifier, context.state) !== "validates")
-    return false;
+  const rescue = optionsRescuePort(objects, specifier, context.state);
+  // A truthy literal `socket` makes the wrap throw, so no socket exists whatever the
+  // port says.
+  if (rescue === "rejects") return true;
+  if (rescue !== "validates") return false;
   return rejectsPortValue(
     unwrapJavaScriptExpression(read.value as t.Node).node,
     context,
@@ -886,14 +891,44 @@ const rejectsOptionsPortLiteral = (
 };
 
 /**
+ * A literal whose `ToBoolean` is false, so Node's `socket` read skips the wrap entirely.
+ *
+ * Measured on Node 24.22.1, `{port: 80, socket: null}`, `{… socket: false}`,
+ * `{… socket: 0}` and `{… socket: ""}` all connect, while `{… socket: {}}` and every other
+ * truthy literal throw `TypeError` from the stream check.
+ */
+const isStaticallyFalsyOptionLiteral = (value: t.Node): boolean => {
+  if (t.isNullLiteral(value)) return true;
+  if (t.isBooleanLiteral(value)) return !value.value;
+  if (t.isNumericLiteral(value)) return value.value === 0;
+  if (t.isBigIntLiteral(value)) return value.value === 0n;
+  if (t.isStringLiteral(value)) return value.value.length === 0;
+  if (t.isTemplateLiteral(value) && value.expressions.length === 0) {
+    const cooked = value.quasis[0]?.value.cooked;
+    return cooked === "" || cooked === null || cooked === undefined;
+  }
+  if (t.isIdentifier(value)) return value.name === "undefined";
+  if (t.isUnaryExpression(value)) {
+    if (value.operator === "void") return true;
+    if (value.operator === "-") {
+      const operand = unwrapJavaScriptExpression(value.argument).node;
+      return t.isNumericLiteral(operand) && operand.value === 0;
+    }
+  }
+  return false;
+};
+
+/**
  * Whether the merged options make Node skip the port check, or leave it undecided.
  *
  * A non-empty `path` becomes the Unix socket and neutralises the port. For `tls`, a
- * supplied `socket` is wrapped instead of connecting, but only a real stream is: a
- * literal is not, so the port stays validated. Measured on Node 24.22.1, every literal
- * `socket` member throws whether the port is valid or not — `false`, `0` and `""`
- * reach the port check and throw `ERR_SOCKET_BAD_PORT`, while `{}`, `[]` and `() => {}`
- * pass it and then throw a `TypeError` from the stream check.
+ * supplied `socket` is wrapped instead of connecting, but only a real stream is.
+ *
+ * Measured on Node 24.22.1, a truthy literal `socket` member throws `TypeError` from the
+ * stream check whether the port is valid or not — `{port: 80, socket: {}}`,
+ * `{… socket: "x"}`, `{… socket: 5}`, `{… socket: []}` and `{… socket: () => {}}` all
+ * throw — while a falsy one falls through to the port check and connects. So a truthy
+ * literal is a rejection in its own right, not a validation of the port.
  *
  * An unreadable `path` may be a non-empty path and an unreadable `socket` may be a real
  * one, so neither proves the port is validated: the caller must keep the acquisition
@@ -903,7 +938,7 @@ const optionsRescuePort = (
   objects: readonly t.ObjectExpression[],
   specifier: string,
   state: JavaScriptSemanticAnalysisState,
-): "rescues" | "validates" | "unknown" => {
+): "rescues" | "validates" | "rejects" | "unknown" => {
   const path = mergedOptionsProperty(objects, "path");
   if (path.status === "dynamic") return "unknown";
   if (path.status === "explicit") {
@@ -917,10 +952,9 @@ const optionsRescuePort = (
       const value = unwrapJavaScriptExpression(socket.value as t.Node).node;
       // An absent member is not a wrapped stream, so the port is validated.
       if (isAbsentOptionValue(value, state)) return "validates";
-      // A literal cannot be a `net.Socket`, so it never rescues the port check.
-      if (isExactlyReadableLiteral(value, state)) return "validates";
-      // A binding or a call result may be a real socket.
-      return "unknown";
+      // A truthy literal cannot be a `net.Socket`, so the wrap throws instead.
+      if (!isExactlyReadableLiteral(value, state)) return "unknown";
+      return isStaticallyFalsyOptionLiteral(value) ? "validates" : "rejects";
     }
   }
   return "validates";
