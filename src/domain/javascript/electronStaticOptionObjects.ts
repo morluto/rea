@@ -1,5 +1,9 @@
 import * as t from "@babel/types";
 import { unwrapJavaScriptExpression } from "./javascriptAstValues.js";
+import {
+  isTypeOnlyExportDeclaration,
+  isTypeOnlyExportSpecifier,
+} from "./javascriptModuleDeclaration.js";
 import { semanticBindingAtRead } from "./javascriptSemanticMutationInitializers.js";
 import {
   semanticStableInitializer,
@@ -19,7 +23,9 @@ import {
  * name is not the exported binding. Export specifiers and export-default
  * identifiers are therefore resolved through the binding owner and
  * compared by binding id, and the declaration walk stops at a function
- * boundary instead of reaching the function's own export.
+ * boundary instead of reaching the function's own export. Type-only
+ * exports publish no runtime object another module could mutate, so they
+ * are not exports for this check.
  */
 const isExportedBinding = (
   binding: { readonly bindingId: string },
@@ -31,11 +37,9 @@ const isExportedBinding = (
     while (node !== undefined) {
       const parent = index.bindings.parentsByNode.get(node);
       if (parent === undefined) break;
-      if (
-        t.isExportNamedDeclaration(parent) ||
-        t.isExportDefaultDeclaration(parent)
-      )
-        return true;
+      if (t.isExportNamedDeclaration(parent)) {
+        if (!isTypeOnlyExportDeclaration(parent)) return true;
+      } else if (t.isExportDefaultDeclaration(parent)) return true;
       if (t.isFunction(parent) || t.isProgram(parent)) break;
       node = parent;
     }
@@ -47,11 +51,16 @@ const isExportedBinding = (
         index.bindingForReferenceAt(statement.declaration)?.bindingId ===
           binding.bindingId
       );
-    if (!t.isExportNamedDeclaration(statement) || statement.source !== null)
+    if (
+      !t.isExportNamedDeclaration(statement) ||
+      statement.source !== null ||
+      isTypeOnlyExportDeclaration(statement)
+    )
       return false;
     return statement.specifiers.some(
       (specifier) =>
         t.isExportSpecifier(specifier) &&
+        !isTypeOnlyExportSpecifier(specifier) &&
         index.bindingForReferenceAt(specifier.local)?.bindingId ===
           binding.bindingId,
     );

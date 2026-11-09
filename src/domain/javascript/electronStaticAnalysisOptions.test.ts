@@ -228,6 +228,33 @@ describe("Electron module-level constant options in functions", () => {
     },
   );
 
+  it.each([
+    ["type-only specifier", "export { type options };", "object-literal"],
+    ["type-only declaration", "export type { options };", "object-literal"],
+    ["runtime export", "export { options };", "dynamic"],
+  ])(
+    "treats a %s export of a module-level options const at top level: %s",
+    (_label, exportStatement, status) => {
+      const analysis = analyzeJavaScriptStaticSource(`
+      import { BrowserWindow } from "electron";
+      const options = { webPreferences: { sandbox: true } };
+      ${exportStatement}
+      new BrowserWindow(options);
+    `);
+      expect(analysis.electron.browser_windows).toMatchObject([
+        status === "object-literal"
+          ? {
+              options_status: "object-literal",
+              web_preferences_status: "object-literal",
+              web_preferences: [
+                { name: "sandbox", value: { status: "literal", value: true } },
+              ],
+            }
+          : { options_status: "dynamic", web_preferences_status: "dynamic" },
+      ]);
+    },
+  );
+
   it("keeps two windows sharing one module-level const unknown in functions", () => {
     const analysis = analyzeJavaScriptStaticSource(`
       const { BrowserWindow } = require("electron");
