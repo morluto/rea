@@ -257,7 +257,9 @@ it("points a final readiness failure at seeded locks", async () => {
   const seed = join(bundle, "envs", "calc", "seed", "Documents");
   await mkdir(seed, { recursive: true });
   await writeFile(join(seed, ".~lock.q1.ods#"), "lock");
-  const result = await (await connect(runner.environment)).callTool({
+  const result = await (
+    await connect(runner.environment)
+  ).callTool({
     name: "start_build_computer",
     arguments: { source: { kind: "bundle", path: bundle } },
   });

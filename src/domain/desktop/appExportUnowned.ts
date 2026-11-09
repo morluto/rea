@@ -197,7 +197,9 @@ export const heldOpenLimitation = (
 ): string | undefined => {
   if (directories.length === 0) return undefined;
   const there = seedFiles
-    .filter((file) => directories.some((folder) => isWithinAny(file.source, [folder])))
+    .filter((file) =>
+      directories.some((folder) => isWithinAny(file.source, [folder])),
+    )
     .map((file) => file.seed);
   return `The application held files open in ${counted(directories.map((directory) => fromHome(directory, home)))}, whose content from before the capture was not retained: a file there is seeded only when the capture retained it, such as one written during the capture; the seed holds ${there.length === 0 ? "none" : listed(there, false)} from there.`;
 };
