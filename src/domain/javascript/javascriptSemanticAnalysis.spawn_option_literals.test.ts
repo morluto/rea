@@ -26,7 +26,7 @@ it.each([
   [`cp.spawn("x", [], { stdio: "stdio" })`],
   [`cp.fork("x", [], { stdio: "bad" })`],
   [`cp.fork("x", [], { stdio: "" })`],
-  [`cp.execFile("x", [], { stdio: "bad" })`],
+  ['cp.spawn("x", [], { stdio: `ipc` })'],
 ] as const)("emits no spawn for a rejected stdio string: %s", (call) => {
   expect(spawnsFor(call)).toEqual([]);
 });
@@ -38,8 +38,11 @@ it.each([
   [`cp.spawn("x", [], { stdio: "ignore" })`],
   [`cp.spawn("x", [], { stdio: "" })`],
   [`cp.fork("x", [], { stdio: "pipe" })`],
-  // `exec` spreads its options and validates none of them.
+  ['cp.spawn("x", [], { stdio: `pipe` })'],
+  // `exec` spreads its options and validates none of them, and async `execFile` does not
+  // forward `stdio` to its underlying spawn at all, so both return a real child.
   [`cp.exec("x", { stdio: "bad" })`],
+  [`cp.execFile("x", [], { stdio: "bad" })`],
 ] as const)("keeps the spawn for an accepted stdio string: %s", (call) => {
   expect(spawnsFor(call)).toHaveLength(1);
 });
@@ -70,6 +73,12 @@ it.each([
   [`cp.fork("x", [], { cwd: 5 })`],
   [`cp.exec("x", { cwd: 5 })`],
   [`cp.execFile("x", [], { cwd: 5 })`],
+  [`cp.spawn("x", [], { cwd: 1n })`],
+  [`cp.spawn("x", [], { cwd: /x/ })`],
+  [`cp.spawn("x", [], { cwd: () => {} })`],
+  [`cp.spawn("x", [], { cwd: class {} })`],
+  [`cp.spawn("x", [], { cwd: new String("x") })`],
+  [`cp.spawn("x", [], { argv0: 1n })`],
 ] as const)("emits no spawn for a non-string cwd or argv0: %s", (call) => {
   expect(spawnsFor(call)).toEqual([]);
 });
@@ -84,6 +93,9 @@ it.each([
   [`cp.spawn("x", [], { env: 5 })`],
   // A binding is not a literal, so this file leaves the answer to the runtime.
   [`const c = "/tmp"; cp.spawn("x", [], { cwd: c })`],
+  // A no-substitution template is the same string to Node.
+  ['cp.spawn("x", [], { cwd: `/tmp` })'],
+  ['cp.spawn("x", [], { argv0: `x` })'],
 ] as const)("keeps the spawn for an accepted cwd or argv0: %s", (call) => {
   expect(spawnsFor(call)).toHaveLength(1);
 });

@@ -466,14 +466,18 @@ const STREAM_STDIO_MODES = new Set([
 ] as const);
 
 /**
- * Whether a literal `stdio` string makes the call throw before a child exists.
+ * Whether an exact string `stdio` makes the call throw before a child exists.
  *
- * `spawn` and `execFile` pass the string through `getValidStdio` unchanged, so every value
- * outside `STREAM_STDIO_MODES` throws. `fork` appends `"ipc"` to a string and then splits
- * it, so an empty string becomes the single element `"ipc"`, which `fork` refuses because
- * the IPC channel must be paired with at least one standard stream. Measured on Node
+ * `spawn` passes the string to `getValidStdio`, so every value outside
+ * `STREAM_STDIO_MODES` throws. `fork` sends the string through `stdioStringToArray`, which
+ * refuses `""` on its own — it does not split the string and it never appends `"ipc"`, so
+ * the rejection is that one explicit check rather than an IPC-count rule. Measured on Node
  * 24.22.1: `spawn(..., {stdio: ""})` starts a child while `fork(..., {stdio: ""})` throws
  * `ERR_INVALID_ARG_VALUE`.
+ *
+ * `exec` and `execFile` are excluded by the caller: async `execFile` does not forward
+ * `stdio` to its underlying `spawn` at all, so `execFile(..., {stdio: "bad"})` returns a
+ * real child, which `stdioMode` already records as `"default"`.
  */
 const rejectsStdioString = (
   value: string,
@@ -509,26 +513,30 @@ const stdioMode = (
 };
 
 /**
- * Whether a literal `stdio` member is a value Node refuses at the call site.
+ * Whether a `stdio` member is a string Node refuses at the call site.
  *
- * Only a string outside `STREAM_STDIO_MODES` (and `""` on `fork`) is decided here. A
- * number, boolean or object is also refused, but `stdioMode` already reports those as
- * `"dynamic"`, and rejecting them would claim more than the reported mode explains.
+ * The value is read through the shared literal owner rather than the AST kind, because a
+ * no-substitution template literal is the same string to Node: measured on Node 24.22.1,
+ * `{stdio: \`ipc\`}` throws `ERR_INVALID_ARG_VALUE` while `{stdio: \`pipe\`}` starts a
+ * child. A non-string value is left to `stdioMode`, which already reports it as
+ * `"dynamic"`, so this filter only speaks about strings.
  */
 const rejectsStdioLiteral = (
   candidate: SpawnCandidate,
   context: ChildSpawnContext,
 ): boolean => {
-  if (candidate.method === "exec") return false;
+  // Async exec/execFile do not forward options.stdio to their underlying spawn.
+  if (candidate.method === "exec" || candidate.method === "execFile")
+    return false;
   const { options } = spawnArguments(candidate, context);
   if (options === undefined) return false;
   const expression = unwrapJavaScriptExpression(options).node;
   if (context.isNullish(expression)) return false;
   const lookup = staticObjectProperty(expression, "stdio", context.isNullish);
   if (lookup.status !== "explicit") return false;
-  const value = unwrapJavaScriptExpression(lookup.value).node;
-  if (!t.isStringLiteral(value)) return false;
-  return rejectsStdioString(value.value, candidate.method);
+  const literal = readExactJavaScriptLiteral(lookup.value);
+  if (!literal.found || typeof literal.value !== "string") return false;
+  return rejectsStdioString(literal.value, candidate.method);
 };
 
 /**
@@ -597,18 +605,34 @@ const rejectsStringOptionLiteral = (
     if (lookup.status !== "explicit") continue;
     const value = unwrapJavaScriptExpression(lookup.value).node;
     if (context.isNullish(value)) continue;
+    // The value is read through the shared literal owner, so a no-substitution template
+    // literal counts as the string Node receives: measured on Node 24.22.1,
+    // `{cwd: \`/tmp\`}` and `{argv0: \`x\`}` both start a child.
+    const literal = readExactJavaScriptLiteral(value);
+    if (literal.found) {
+      if (typeof literal.value === "string") continue;
+      return true;
+    }
     if (t.isStringLiteral(value)) continue;
-    // `exec` spreads its options into `spawn`'s, so it validates the same members.
-    if (readExactJavaScriptLiteral(value).found) return true;
+    // A shape the literal owner does not price still has a type the syntax settles.
+    // Measured on Node 24.22.1: `{cwd: 1n}`, `{cwd: /x/}`, `{cwd: () => {}}`,
+    // `{cwd: class {}}` and `{cwd: new String("x")}` all throw ERR_INVALID_ARG_TYPE.
     if (
       t.isObjectExpression(value) ||
       t.isArrayExpression(value) ||
-      t.isBooleanLiteral(value)
+      t.isBooleanLiteral(value) ||
+      t.isBigIntLiteral(value) ||
+      t.isRegExpLiteral(value) ||
+      t.isArrowFunctionExpression(value) ||
+      t.isFunctionExpression(value) ||
+      t.isClassExpression(value) ||
+      t.isNewExpression(value)
     )
       return true;
   }
   return false;
 };
+
 /**
  * Node validates the options object before creating anything, so a literal
  * primitive or literal array in that slot throws ERR_INVALID_ARG_TYPE
