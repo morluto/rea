@@ -398,6 +398,11 @@ const readerFailureError = (
   directory: string | undefined,
 ): AnalysisOutputError => {
   const host = hostSystemError(cause);
+  const publication = cause.partialObservation;
+  const published =
+    publication !== undefined &&
+    "kind" in publication &&
+    publication.kind === "environment-bundle-publication";
   const error = new AnalysisOutputError(
     ENVIRONMENT_EXPORT_OPERATION,
     host === undefined ? cause.message : `${cause.message}: ${host.message}`,
@@ -412,9 +417,16 @@ const readerFailureError = (
         ? { cleanup: cause.cleanup }
         : directory === undefined
           ? {}
-          : host === undefined
-            ? { diagnostics: { output_directory: directory } }
-            : hostWriteFailure(directory)),
+          : published
+            ? {
+                userMessage: `The bundle was published to ${directory}, but a later operation failed: ${cause.message}`,
+                remediationAction:
+                  "Inspect the published bundle and resolve the reported failure before using or replacing it.",
+                diagnostics: { output_directory: directory },
+              }
+            : host === undefined
+              ? { diagnostics: { output_directory: directory } }
+              : hostWriteFailure(directory)),
     },
   );
   bindArtifactFileCleanup(cause, error);

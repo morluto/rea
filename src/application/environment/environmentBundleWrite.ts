@@ -8,6 +8,7 @@ import {
   AnalysisAccessDeniedError,
   AnalysisArtifactChangedError,
 } from "../../domain/analysisErrorCore.js";
+import { AnalysisError } from "../../domain/analysisErrorBase.js";
 import type { EnvironmentBundlePublication } from "../../domain/environmentBundleExport.js";
 import { AnalysisCleanupLease } from "../../artifacts/AnalysisCleanupLease.js";
 import { ArtifactFileCleanupFailure } from "../../artifacts/ArtifactFileOperation.js";
@@ -329,6 +330,20 @@ export const writeEnvironmentBundle = async (
         cause.retainPartialObservation(publication);
       if (cause instanceof RegularFileChangedError)
         throw changedArtifact(cause, publication);
+      if (cause instanceof AnalysisError) {
+        cause.retainPartialObservation(publication);
+        throw cause;
+      }
+      if (!(cause instanceof ArtifactReaderFailure)) {
+        const primary = isHostSystemFailure(cause)
+          ? new BundleFileHostFailure(plan.packageSource.path, "reading", cause)
+          : cause;
+        throw new ArtifactReaderFailure(
+          "io",
+          primary instanceof Error ? primary.message : String(primary),
+          { cause: primary, partialObservation: publication },
+        );
+      }
     }
     throw cause;
   }
