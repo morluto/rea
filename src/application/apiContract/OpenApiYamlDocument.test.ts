@@ -166,6 +166,26 @@ it("rejects composition failures and non-scalar keys without escaping the Result
   );
   expect(unresolved).toContain("could not be composed");
 
+  const tagged = contractError(
+    await importText(
+      "tagged.yaml",
+      [
+        "openapi: 3.0.4",
+        "info:",
+        "  title: Owned API",
+        '  version: "1"',
+        "paths:",
+        "  /a:",
+        "    get:",
+        "      operationId: !custom op",
+      ].join("\n"),
+      "openapi-yaml",
+    ),
+  );
+  // The decoder drops an unresolved tag as a warning, which would report the
+  // untouched scalar as an ordinary operation.
+  expect(tagged).toContain("could not be parsed");
+
   const complexKey = contractError(
     await importText(
       "complex-key.yaml",

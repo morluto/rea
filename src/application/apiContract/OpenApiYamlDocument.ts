@@ -146,6 +146,20 @@ export const decodeOpenApiYaml = (
         duplicateLine === undefined ? undefined : duplicateLine - 1,
       ),
     );
+  // An application-defined tag that nothing resolves is reported as a warning
+  // and then dropped from `toJS`, which would report the untouched scalar as a
+  // normal fact. The JSON profile cannot express such a tag either, so the
+  // document is refused rather than projected with a value it never wrote.
+  const unresolvedTag = document.warnings.find(
+    (warning) => warning.code === "TAG_RESOLVE_FAILED",
+  );
+  if (unresolvedTag !== undefined)
+    return err(
+      invalidDocument(
+        path,
+        `OpenAPI YAML could not be parsed: ${unresolvedTag.message}`,
+      ),
+    );
   if (document.errors.length > 0) {
     const [first] = document.errors;
     return err(
