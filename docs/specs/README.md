@@ -10,3 +10,8 @@ for the specification lifecycle, roadmap granularity and producer-owned contract
 
 - [Organization](documentation/organization/spec.md)
   ([plan](documentation/organization/plan.md), [tasks](documentation/organization/tasks.md))
+
+## Native
+
+- [DWARF compile-unit inspection](native/dwarf-units/spec.md)
+  ([plan](native/dwarf-units/plan.md), [tasks](native/dwarf-units/tasks.md))
