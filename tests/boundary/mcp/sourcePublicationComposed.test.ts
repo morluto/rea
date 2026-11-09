@@ -26,7 +26,7 @@ it("preserves the source when an inline result with unknown retention exceeds de
   );
   const { client } = await createApplicationMcpHarness({
     session,
-    serverOptions: { delivery: createToolResultDelivery(10 * 1024) },
+    serverOptions: { delivery: createToolResultDelivery(16 * 1024) },
   });
   const response = await client.callTool({
     name: "compare_application_versions",
