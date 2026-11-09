@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>TH04 Reverse Engineering: DOS Bullet Patterns — REA</title>
+    <title>TH04 Reverse Engineering: DOS Bullet Patterns | REA</title>
     <meta
       name="description"
       content="Inspect TH04's original 16-bit DOS code with REA. Follow the assembly and recovered C++ to see how a ring of bullets is spaced and aimed at the player."
@@ -66,7 +66,7 @@
     <!-- prettier-ignore -->
     <meta property="og:site_name" content="REA" />
     <!-- prettier-ignore -->
-    <meta property="og:title" content="TH04 Reverse Engineering: DOS Bullet Patterns — REA" />
+    <meta property="og:title" content="TH04 Reverse Engineering: DOS Bullet Patterns | REA" />
     <!-- prettier-ignore -->
     <meta property="og:description" content="Inspect TH04&#x27;s original 16-bit DOS code with REA. Follow the assembly and recovered C++ to see how a ring of bullets is spaced and aimed at the player." />
     <!-- prettier-ignore -->
@@ -87,7 +87,7 @@
     <!-- prettier-ignore -->
     <meta name="twitter:card" content="summary_large_image" />
     <!-- prettier-ignore -->
-    <meta name="twitter:title" content="TH04 Reverse Engineering: DOS Bullet Patterns — REA" />
+    <meta name="twitter:title" content="TH04 Reverse Engineering: DOS Bullet Patterns | REA" />
     <!-- prettier-ignore -->
     <meta name="twitter:description" content="Inspect TH04&#x27;s original 16-bit DOS code with REA. Follow the assembly and recovered C++ to see how a ring of bullets is spaced and aimed at the player." />
     <!-- prettier-ignore -->
@@ -99,7 +99,7 @@
     />
     <!-- website:sharing:end -->
     <!-- website:theme:start -->
-    <meta name="theme-color" content="#ffffff" />
+    <meta name="theme-color" content="#f1efeb" />
     <!-- Apply the saved theme before styles load, to avoid a flash on navigation. -->
     <script src="../../assets/theme.js"></script>
     <!-- website:theme:end -->
@@ -112,86 +112,35 @@
     <!-- website:header:start -->
     <!-- prettier-ignore -->
     <header class="site-header">
-      <div class="container header-inner">
+      <div class="header-inner">
         <a class="brand" href="../../" aria-label="REA home"
-          ><span class="brand-name">REA</span
-          ><span class="brand-caption" data-i18n-skip>Reverse Engineer Anything</span></a
+          ><svg class="brand-wordmark" viewBox="0 0 104 40" width="104" height="40" aria-hidden="true" focusable="false"><path fill="currentColor" fill-rule="evenodd" d="M0 0H20A12 12 0 0 1 20 24H8V40H0Z M8 8V16H20A4 4 0 0 0 20 8Z" /><path fill="currentColor" d="M19.6 27.5H28.3L34 40H25.3Z" /><path fill="currentColor" d="M40 0H66V8H48V16H63V24H48V32H66V40H40Z" /><path fill="currentColor" fill-rule="evenodd" d="M72 40V14A14 14 0 0 1 86 0H90A14 14 0 0 1 104 14V40H96V30H80V40Z M80 22H96V14A6 6 0 0 0 90 8H86A6 6 0 0 0 80 14Z" /></svg></a
         >
         <nav class="navigation" aria-label="Main navigation">
-          <a href="../../get-started/" class="nav-start">Get started</a>
           <a href="../../showcase/" aria-current="page">Showcases</a>
           <a href="../../blog/">Blog</a>
           <a href="../../guides/">Guides</a>
+          <a href="../../faq/">FAQ</a>
         </nav>
-        <div class="header-social">
+        <div class="header-actions">
           <details class="language-picker" data-i18n-skip><summary><span aria-hidden="true">文 / A</span> <span>English</span></summary><nav aria-label="English"><a href="../../showcase/th04/" lang="en" dir="ltr" data-language="en" aria-current="true">English</a><a href="../../zh-CN/showcase/th04/" lang="zh-CN" dir="ltr" data-language="zh-CN">简体中文</a><a href="../../zh-TW/showcase/th04/" lang="zh-TW" dir="ltr" data-language="zh-TW">繁體中文</a><a href="../../ja/showcase/th04/" lang="ja" dir="ltr" data-language="ja">日本語</a><a href="../../ko/showcase/th04/" lang="ko" dir="ltr" data-language="ko">한국어</a><a href="../../tr/showcase/th04/" lang="tr" dir="ltr" data-language="tr">Türkçe</a><a href="../../ru/showcase/th04/" lang="ru" dir="ltr" data-language="ru">Русский</a><a href="../../vi/showcase/th04/" lang="vi" dir="ltr" data-language="vi">Tiếng Việt</a><a href="../../th/showcase/th04/" lang="th" dir="ltr" data-language="th">ไทย</a><a href="../../de/showcase/th04/" lang="de" dir="ltr" data-language="de">Deutsch</a><a href="../../es/showcase/th04/" lang="es" dir="ltr" data-language="es">Español</a><a href="../../fr/showcase/th04/" lang="fr" dir="ltr" data-language="fr">Français</a><a href="../../uk/showcase/th04/" lang="uk" dir="ltr" data-language="uk">Українська</a><a href="../../pl/showcase/th04/" lang="pl" dir="ltr" data-language="pl">Polski</a><a href="../../pt-BR/showcase/th04/" lang="pt-BR" dir="ltr" data-language="pt-BR">Português (Brasil)</a><a href="../../ar/showcase/th04/" lang="ar" dir="rtl" data-language="ar">العربية</a><a href="../../fa/showcase/th04/" lang="fa" dir="rtl" data-language="fa">فارسی</a><a href="../../id/showcase/th04/" lang="id" dir="ltr" data-language="id">Bahasa Indonesia</a><a href="../../it/showcase/th04/" lang="it" dir="ltr" data-language="it">Italiano</a><a href="../../el/showcase/th04/" lang="el" dir="ltr" data-language="el">Ελληνικά</a><a href="../../ml/showcase/th04/" lang="ml" dir="ltr" data-language="ml">മലയാളം</a><a href="../../ur-Latn/showcase/th04/" lang="ur-Latn" dir="ltr" data-language="ur-Latn">Roman Urdu</a><a href="../../ro/showcase/th04/" lang="ro" dir="ltr" data-language="ro">Română</a></nav></details>
           <button class="theme-toggle" type="button" data-theme-toggle hidden>
-            <svg class="theme-moon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">
-              <path d="M20.9 13a9 9 0 0 1-9.9-9.9A9 9 0 1 0 20.9 13Z" />
+            <svg class="theme-moon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">
+              <path d="M21.5 14.078C20.3 14.719 18.93 15.082 17.475 15.082C12.749 15.082 8.918 11.251 8.918 6.525C8.918 5.07 9.281 3.7 9.922 2.5C5.668 3.497 2.5 7.315 2.5 11.873C2.5 17.19 6.81 21.5 12.127 21.5C16.685 21.5 20.503 18.332 21.5 14.078Z" />
             </svg>
-            <svg class="theme-sun" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" aria-hidden="true" focusable="false">
-              <circle cx="12" cy="12" r="4" />
-              <path d="M12 2v2m0 16v2M2 12h2m16 0h2M4.93 4.93l1.42 1.42m11.3 11.3 1.42 1.42M4.93 19.07l1.42-1.42m11.3-11.3 1.42-1.42" />
+            <svg class="theme-sun" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true" focusable="false">
+              <path d="M17 12a5 5 0 1 1-10 0 5 5 0 0 1 10 0Z" />
+              <path d="M12 2V3.5M12 20.5V22M19.071 19.071L18.01 18.011M5.989 5.989L4.929 4.929M22 12H20.5M3.5 12H2M19.071 4.929L18.011 5.989M5.99 18.011L4.929 19.071" />
             </svg>
           </button>
-          <a
-            class="nav-github"
-            href="https://github.com/morluto/rea"
-            aria-label="REA on GitHub"
-            title="REA on GitHub"
-          >
-            <svg
-              width="22"
-              height="22"
-              viewBox="0 0 16 16"
-              aria-hidden="true"
-              focusable="false"
-            >
-              <path
-                fill="currentColor"
-                d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82a7.65 7.65 0 0 1 2-.27c.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8Z"
-              />
-            </svg>
-            <span class="nav-github-count" hidden aria-hidden="true"></span>
-          </a>
-          <a
-            class="nav-discord"
-            href="https://discord.gg/GkcryMnJDM"
-            aria-label="Join REA on Discord"
-            title="Join REA on Discord"
-          >
-            <svg
-              width="22"
-              height="22"
-              viewBox="0 0 24 24"
-              aria-hidden="true"
-              focusable="false"
-            >
-              <path
-                fill="currentColor"
-                d="M20.317 4.3698a19.7913 19.7913 0 0 0-4.8851-1.5152.0741.0741 0 0 0-.0785.0371c-.211.3753-.4447.8648-.6083 1.2495-1.8447-.2762-3.68-.2762-5.4868 0-.1636-.3933-.4058-.8742-.6177-1.2495a.077.077 0 0 0-.0785-.037 19.7363 19.7363 0 0 0-4.8852 1.515.0699.0699 0 0 0-.0321.0277C.5334 9.0458-.319 13.5799.0992 18.0578a.0824.0824 0 0 0 .0312.0561c2.0528 1.5076 4.0413 2.4228 5.9929 3.0294a.0777.0777 0 0 0 .0842-.0276c.4616-.6304.8731-1.2952 1.226-1.9942a.076.076 0 0 0-.0416-.1057c-.6528-.2476-1.2743-.5495-1.8722-.8923a.077.077 0 0 1-.0076-.1277c.1258-.0943.2517-.1923.3718-.2914a.0743.0743 0 0 1 .0776-.0105c3.9278 1.7933 8.18 1.7933 12.0614 0a.0739.0739 0 0 1 .0785.0095c.1202.099.246.1981.3728.2924a.077.077 0 0 1-.0066.1276 12.2986 12.2986 0 0 1-1.873.8914.0766.0766 0 0 0-.0407.1067c.3604.698.7719 1.3628 1.225 1.9932a.076.076 0 0 0 .0842.0286c1.961-.6067 3.9495-1.5219 6.0023-3.0294a.077.077 0 0 0 .0313-.0552c.5004-5.177-.8382-9.6739-3.5485-13.6604a.061.061 0 0 0-.0312-.0286ZM8.02 15.3312c-1.1825 0-2.1569-1.0857-2.1569-2.419 0-1.3332.9555-2.4189 2.157-2.4189 1.2108 0 2.1757 1.0952 2.1568 2.419 0 1.3332-.9555 2.4189-2.1569 2.4189Zm7.9748 0c-1.1825 0-2.1569-1.0857-2.1569-2.419 0-1.3332.9554-2.4189 2.1569-2.4189 1.2108 0 2.1757 1.0952 2.1568 2.419 0 1.3332-.946 2.4189-2.1568 2.4189Z"
-              />
-            </svg>
-          </a>
-          <a
-            class="nav-x"
-            href="https://x.com/reatools"
-            aria-label="Follow REA on X"
-            title="Follow REA on X"
-          >
-            <svg
-              width="18"
-              height="18"
-              viewBox="0 0 24 24"
-              aria-hidden="true"
-              focusable="false"
-            >
-              <path
-                fill="currentColor"
-                d="M18.901 1.153h3.68l-8.04 9.19L24 22.846h-7.406l-5.8-7.584-6.638 7.584H.474l8.6-9.83L0 1.154h7.594l5.243 6.932ZM17.61 20.644h2.039L6.486 3.24H4.298Z"
-              />
-            </svg>
-          </a>
+          <a class="nav-github" href="https://github.com/morluto/rea" target="_blank" rel="noopener" aria-label="REA on GitHub" title="REA on GitHub"
+            ><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M6.517 17.113C6.912 17.691 8.109 18.923 9.742 19.233M9.864 22C8.836 21.831 2 19.606 2 12.093C2 5.063 8.002 2 12.001 2C16 2 22 5.063 22 12.093C22 19.606 15.164 21.831 14.136 22C14.136 22 13.927 18.583 14.049 17.997C14.171 17.411 13.755 16.469 13.755 16.469C14.726 16.105 16.204 15.585 16.7 14.187C17.085 13.103 17.327 11.529 16.251 10.049C16.251 10.049 16.532 7.658 16 7.565C15.467 7.473 13.9 8.512 13.9 8.512C13.443 8.382 12.424 8.135 12.002 8.179C11.579 8.135 10.557 8.382 10.1 8.512C10.1 8.512 8.532 7.473 8 7.565C7.468 7.658 7.749 10.049 7.749 10.049C6.673 11.529 6.915 13.103 7.3 14.187C7.796 15.585 9.274 16.105 10.245 16.469C10.245 16.469 9.829 17.411 9.951 17.997C10.073 18.583 9.864 22 9.864 22Z" /></svg
+            ><span class="nav-github-label" translate="no">GitHub</span
+            ><span class="nav-github-stars" hidden aria-hidden="true"
+              ><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" focusable="false"><path d="M12.797 2.905C13.255 3.57 13.948 4.708 14.651 6.045C15.194 7.077 15.466 7.593 15.855 7.87C16.244 8.146 16.812 8.231 17.947 8.401C19.52 8.637 20.681 8.892 21.347 9.055C21.735 9.15 21.998 9.5 21.998 9.9C21.998 10.126 21.913 10.344 21.761 10.511C21.064 11.278 20.349 12.084 19.47 12.961C18.605 13.825 18.172 14.257 18.025 14.726C17.878 15.195 17.983 15.779 18.194 16.947C18.373 17.943 18.557 19.131 18.692 20.422C18.753 21.002 18.292 21.5 17.709 21.5C17.652 21.5 17.597 21.496 17.542 21.482C17.05 21.358 15.919 20.785 14.125 19.724C13.072 19.102 12.546 18.792 11.999 18.792C11.453 18.792 10.927 19.103 9.874 19.724C8.08 20.785 6.95 21.358 6.458 21.482C6.403 21.496 6.348 21.5 6.291 21.5C5.708 21.5 5.247 21.002 5.308 20.422C5.443 19.131 5.627 17.943 5.806 16.947C6.017 15.779 6.122 15.195 5.975 14.726C5.828 14.257 5.395 13.825 4.53 12.961C3.651 12.084 2.936 11.278 2.239 10.511C2.087 10.344 2.002 10.126 2.002 9.9C2.002 9.5 2.265 9.15 2.653 9.055C3.319 8.892 4.48 8.637 6.053 8.401C7.188 8.231 7.756 8.146 8.145 7.87C8.534 7.593 8.806 7.077 9.349 6.045C10.052 4.708 10.745 3.57 11.203 2.905C11.383 2.644 11.683 2.5 12 2.5C12.317 2.5 12.617 2.644 12.797 2.905Z" /></svg
+              ><span class="nav-github-count"></span></span
+          ></a>
+          <a class="button nav-start" href="../../get-started/">Get started</a>
         </div>
       </div>
     </header>
@@ -793,22 +742,44 @@ no_aim:
     <!-- website:footer:start -->
     <!-- prettier-ignore -->
     <footer class="site-footer">
-      <div class="container footer-inner">
-        <p>REA · Reverse Engineer Anything</p>
-        <div class="footer-links">
-          <a href="../../faq/">FAQ</a
-          ><a href="../../contributors/">Contributors</a
-          ><a href="https://github.com/morluto/rea">Source</a
-          ><a href="https://github.com/morluto/rea/blob/main/LICENSE">MIT license</a
-          ><a href="https://discord.gg/GkcryMnJDM">Join the community</a
-          ><a href="https://x.com/reatools">Follow us on X</a>
+      <div class="footer-inner">
+        <div class="footer-top">
+          <nav class="footer-columns" aria-label="Footer">
+            <div>
+              <p>Product</p>
+              <a href="../../get-started/">Get started</a>
+              <a href="../../showcase/">Showcases</a>
+              <a href="../../blog/">Blog</a>
+              <a href="../../guides/">Guides</a>
+            </div>
+            <div>
+              <p>Help</p>
+              <a href="../../faq/">FAQ</a>
+              <a href="https://discord.gg/GkcryMnJDM" translate="no">Discord</a>
+              <a href="https://github.com/morluto/rea/issues/new/choose">GitHub issues</a>
+              <a href="../../contributors/">Contributors</a>
+            </div>
+            <div>
+              <p>Project</p>
+              <a href="https://github.com/morluto/rea">Source code</a>
+              <a href="https://github.com/morluto/rea/blob/main/LICENSE">MIT license</a>
+              <a href="https://x.com/reatools">Follow us on X</a>
+            </div>
+          </nav>
+          <div class="footer-social">
+            <a href="https://github.com/morluto/rea" aria-label="REA on GitHub" title="REA on GitHub"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M6.517 17.113C6.912 17.691 8.109 18.923 9.742 19.233M9.864 22C8.836 21.831 2 19.606 2 12.093C2 5.063 8.002 2 12.001 2C16 2 22 5.063 22 12.093C22 19.606 15.164 21.831 14.136 22C14.136 22 13.927 18.583 14.049 17.997C14.171 17.411 13.755 16.469 13.755 16.469C14.726 16.105 16.204 15.585 16.7 14.187C17.085 13.103 17.327 11.529 16.251 10.049C16.251 10.049 16.532 7.658 16 7.565C15.467 7.473 13.9 8.512 13.9 8.512C13.443 8.382 12.424 8.135 12.002 8.179C11.579 8.135 10.557 8.382 10.1 8.512C10.1 8.512 8.532 7.473 8 7.565C7.468 7.658 7.749 10.049 7.749 10.049C6.673 11.529 6.915 13.103 7.3 14.187C7.796 15.585 9.274 16.105 10.245 16.469C10.245 16.469 9.829 17.411 9.951 17.997C10.073 18.583 9.864 22 9.864 22Z" /></svg></a>
+            <a href="https://discord.gg/GkcryMnJDM" aria-label="Join REA on Discord" title="Join REA on Discord"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M15.5 17.5C16.5 19 17.333 19.667 18 20C19.333 19.667 22 18.2 22 15C22 11.8 20.667 7.333 20 5.5C18 4.3 15.833 4 15 4L14.198 5.604C13.414 5.287 12.406 5.254 12 5.278C11.594 5.254 10.586 5.287 9.802 5.604L9 4C8.167 4 6 4.3 4 5.5C3.333 7.333 2 11.8 2 15C2 18.2 4.667 19.667 6 20C6.667 19.667 7.5 19 8.5 17.5" /><path d="M17.365 11.5C17.365 12.605 16.582 13.5 15.615 13.5C14.649 13.5 13.865 12.605 13.865 11.5C13.865 10.395 14.649 9.5 15.615 9.5C16.582 9.5 17.365 10.395 17.365 11.5Z" /><path d="M10 11.5C10 12.605 9.217 13.5 8.25 13.5C7.284 13.5 6.5 12.605 6.5 11.5C6.5 10.395 7.284 9.5 8.25 9.5C9.217 9.5 10 10.395 10 11.5Z" /><path d="M17.5 16.5C16.402 17.397 14.35 18 12 18C9.65 18 7.598 17.397 6.5 16.5" /></svg></a>
+            <a href="https://x.com/reatools" aria-label="Follow REA on X" title="Follow REA on X"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M3 21L10.548 13.452M21 3L13.452 10.548M13.452 10.548L8 3H3L10.548 13.452M13.452 10.548L21 21H16L10.548 13.452" /></svg></a>
+          </div>
+        </div>
+        <svg class="footer-wordmark" viewBox="0 0 104 40" width="104" height="40" aria-hidden="true" focusable="false"><path fill="currentColor" fill-rule="evenodd" d="M0 0H20A12 12 0 0 1 20 24H8V40H0Z M8 8V16H20A4 4 0 0 0 20 8Z" /><path fill="currentColor" d="M19.6 27.5H28.3L34 40H25.3Z" /><path fill="currentColor" d="M40 0H66V8H48V16H63V24H48V32H66V40H40Z" /><path fill="currentColor" fill-rule="evenodd" d="M72 40V14A14 14 0 0 1 86 0H90A14 14 0 0 1 104 14V40H96V30H80V40Z M80 22H96V14A6 6 0 0 0 90 8H86A6 6 0 0 0 80 14Z" /></svg>
+        <div class="footer-bottom">
+          <p>Reverse engineering with your coding agent.</p>
+          <a class="footer-credit" href="https://altair-studio.com"><span>Website by</span> <svg width="14" height="13" viewBox="13 14 38 36" aria-hidden="true" focusable="false"><path fill="currentColor" d="M28.6 14h6.8L51 50h-7.4L32 22.4 20.4 50H13z" /></svg><span translate="no">Altair Studio</span></a>
         </div>
       </div>
     </footer>
     <p class="sr-only" id="copy-status" role="status" aria-live="polite"></p>
-    <a class="back-to-top" href="#top" aria-label="Back to top">
-      <span aria-hidden="true">↑</span> Top
-    </a>
     <!-- website:footer:end -->
   </body>
 </html>
