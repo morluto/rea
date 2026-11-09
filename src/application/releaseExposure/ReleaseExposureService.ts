@@ -22,7 +22,11 @@ import {
   electronFuseReportSchema,
   type ElectronFuseReport,
 } from "../../domain/electron/electronFuses.js";
-import { createEvidence, type Evidence } from "../../domain/evidence.js";
+import {
+  createEvidence,
+  evidenceSchema,
+  type Evidence,
+} from "../../domain/evidence.js";
 import { evidenceSubjectFormatSchema } from "../../domain/evidenceSubject.js";
 import { goBinarySchema, type GoBinary } from "../../domain/go/goBinary.js";
 import { RELEASE_EXPOSURE_PROVIDER } from "../../domain/investigationProviders.js";
@@ -175,7 +179,8 @@ export class ReleaseExposureService {
   /**
    * Run each owner in order. After cancellation or unfinished cleanup the
    * remaining owners do not run, and their facts stay failed so those checks
-   * report unknown.
+   * report unknown. An owner that stops the audit after completing its
+   * Evidence still settles its own fact from that Evidence.
    */
   async #owners(
     scan: ReleaseExposureScan,
@@ -187,18 +192,21 @@ export class ReleaseExposureService {
     const settle = async <Fact>(
       read: () => Promise<Result<Fact, AnalysisError>>,
       notRun: Fact,
+      present: (value: Evidence) => Fact,
     ): Promise<Fact> => {
       if (stopped.error !== undefined) return notRun;
       const result = await read();
       if (result.ok) return result.value;
       stopped.error = result.error;
-      return notRun;
+      const completed = completedOwnerEvidence(result.error);
+      return completed === undefined ? notRun : present(completed);
     };
-    const desktop = await settle(() => this.#desktopFamily(scan, options), {
-      family: "unknown",
-      reason: OWNER_NOT_RUN,
-      archivePaths: [],
-    });
+    const desktop = await settle(
+      () => this.#desktopFamily(scan, options),
+      { family: "unknown", reason: OWNER_NOT_RUN, archivePaths: [] },
+      (value) =>
+        desktopFamily(value, scan.target.kind, scan.target.selected_path),
+    );
     const prepared = limitNativeSample(
       scan,
       desktop.archivePaths,
@@ -213,12 +221,16 @@ export class ReleaseExposureService {
     for (const candidate of prepared.scan.fuse_candidates) {
       if (bundleReadCovers(candidate, digests, fuseImages)) continue;
       fuseImages.push(
-        await settle(() => this.#fuseImage(candidate, digests, options), {
-          kind: "failed",
-          role: candidate.role,
-          path: candidate.path,
-          reason: OWNER_NOT_RUN,
-        }),
+        await settle(
+          () => this.#fuseImage(candidate, digests, options),
+          {
+            kind: "failed",
+            role: candidate.role,
+            path: candidate.path,
+            reason: OWNER_NOT_RUN,
+          },
+          (value) => fuseImageFact(candidate, digests, value),
+        ),
       );
     }
     const family = fuseImagesRuleOutElectron(
@@ -232,9 +244,22 @@ export class ReleaseExposureService {
     const rustImages: MetadataImageFact[] = [];
     for (const image of prepared.scan.native_images) {
       const notRun = failedMetadata(OWNER_NOT_RUN, image.path);
-      goImages.push(await settle(() => this.#goImage(image, options), notRun));
+      goImages.push(
+        await settle(
+          () => this.#goImage(image, options),
+          notRun,
+          (value) => ({
+            ...goMetadata(image)(value),
+            path: image.path,
+          }),
+        ),
+      );
       rustImages.push(
-        await settle(() => this.#rustImage(image, options), notRun),
+        await settle(
+          () => this.#rustImage(image, options),
+          notRun,
+          (value) => ({ ...rustMetadata(image)(value), path: image.path }),
+        ),
       );
     }
     return {
@@ -341,30 +366,7 @@ export class ReleaseExposureService {
         reason: result.error.message,
       });
     }
-    const report = electronFuseReportSchema.safeParse(
-      result.value.normalized_result,
-    );
-    if (!report.success)
-      return ok({
-        kind: "failed",
-        role: candidate.role,
-        path: candidate.path,
-        reason: "Electron fuse report did not match its schema.",
-      });
-    if (fuseImageChanged(candidate, digests, report.data.artifact.sha256))
-      return ok({
-        kind: "failed",
-        role: candidate.role,
-        path: candidate.path,
-        reason: IMAGE_CHANGED,
-      });
-    return ok({
-      kind: "report",
-      role: candidate.role,
-      path: candidate.path,
-      sha256: report.data.artifact.sha256,
-      implications: fuseImplications(report.data),
-    });
+    return ok(fuseImageFact(candidate, digests, result.value));
   }
 
   async #goImage(
@@ -385,20 +387,7 @@ export class ReleaseExposureService {
           { path: image.path, detail: "complete" },
           options,
         ),
-      (value) => {
-        const report = goBinarySchema.safeParse(value.normalized_result);
-        if (!report.success)
-          return failedMetadata("Go build metadata did not match its schema.");
-        if (imageChanged(image, report.data.artifact.sha256))
-          return failedMetadata(IMAGE_CHANGED);
-        if (report.data.build_info === null) return { kind: "absent" };
-        return {
-          kind: "paths",
-          paths: goPaths(report.data.build_info.module, image.format),
-          complete: report.data.build_info.module.complete,
-          limitations: report.data.limitations,
-        };
-      },
+      goMetadata(image),
     );
   }
 
@@ -416,22 +405,7 @@ export class ReleaseExposureService {
       image.path,
       options,
       () => this.owners.rustBinaries.inspect({ path: image.path }, options),
-      (value) => {
-        const report = rustBinarySchema.safeParse(value.normalized_result);
-        if (!report.success)
-          return failedMetadata(
-            "Rust dependency metadata did not match its schema.",
-          );
-        if (imageChanged(image, report.data.artifact.sha256))
-          return failedMetadata(IMAGE_CHANGED);
-        if (report.data.auditable_metadata === null) return { kind: "absent" };
-        return {
-          kind: "packages",
-          packages: report.data.auditable_metadata.packages.map(
-            (item) => item.name,
-          ),
-        };
-      },
+      rustMetadata(image),
     );
   }
 
@@ -482,6 +456,85 @@ interface OwnerOutcome {
   readonly facts: Omit<ReleaseExposureOwnerFacts, "credential_markers">;
   readonly stopped: AnalysisError | undefined;
 }
+
+/**
+ * The Evidence an owner completed before observing cancellation, which
+ * completeProviderEvidence carries as the error's partial observation.
+ */
+const completedOwnerEvidence = (error: AnalysisError): Evidence | undefined => {
+  const partial = error.partialObservation;
+  return evidenceSchema.safeParse(partial).success
+    ? (partial as Evidence)
+    : undefined;
+};
+
+/** Settle one fuse image from its owner's Evidence. */
+const fuseImageFact = (
+  candidate: ReleaseExposureFuseCandidate,
+  digests: ReadonlyMap<string, string>,
+  value: Evidence,
+): FuseImageFact => {
+  const report = electronFuseReportSchema.safeParse(value.normalized_result);
+  if (!report.success)
+    return {
+      kind: "failed",
+      role: candidate.role,
+      path: candidate.path,
+      reason: "Electron fuse report did not match its schema.",
+    };
+  if (fuseImageChanged(candidate, digests, report.data.artifact.sha256))
+    return {
+      kind: "failed",
+      role: candidate.role,
+      path: candidate.path,
+      reason: IMAGE_CHANGED,
+    };
+  return {
+    kind: "report",
+    role: candidate.role,
+    path: candidate.path,
+    sha256: report.data.artifact.sha256,
+    implications: fuseImplications(report.data),
+  };
+};
+
+/** Settle one image's Go build paths from its owner's Evidence. */
+const goMetadata =
+  (image: ReleaseExposureNativeImage) =>
+  (value: Evidence): MetadataImageFact => {
+    const report = goBinarySchema.safeParse(value.normalized_result);
+    if (!report.success)
+      return failedMetadata("Go build metadata did not match its schema.");
+    if (imageChanged(image, report.data.artifact.sha256))
+      return failedMetadata(IMAGE_CHANGED);
+    if (report.data.build_info === null) return { kind: "absent" };
+    return {
+      kind: "paths",
+      paths: goPaths(report.data.build_info.module, image.format),
+      complete: report.data.build_info.module.complete,
+      limitations: report.data.limitations,
+    };
+  };
+
+/** Settle one image's Rust dependency list from its owner's Evidence. */
+const rustMetadata =
+  (image: ReleaseExposureNativeImage) =>
+  (value: Evidence): MetadataImageFact => {
+    const report = rustBinarySchema.safeParse(value.normalized_result);
+    if (!report.success)
+      return failedMetadata(
+        "Rust dependency metadata did not match its schema.",
+      );
+    if (imageChanged(image, report.data.artifact.sha256))
+      return failedMetadata(IMAGE_CHANGED);
+    if (report.data.auditable_metadata === null) return { kind: "absent" };
+    return {
+      kind: "packages",
+      packages: report.data.auditable_metadata.packages.map(
+        (item) => item.name,
+      ),
+    };
+  };
 
 /** A failure that ends the audit instead of staying on one check. */
 const stopsAudit = (error: AnalysisError): boolean =>

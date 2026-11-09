@@ -328,6 +328,106 @@ describe("ReleaseExposureService cancellation partials", () => {
   });
 });
 
+describe("ReleaseExposureService completed owner Evidence on cancellation", () => {
+  const cancelledWith = (operation: string, result: unknown) =>
+    err(
+      new AnalysisCancelledError(operation, {
+        cause: new Error("caller stopped"),
+        partialObservation: evidence(result),
+      }),
+    );
+  const audit = (result: Awaited<ReturnType<OwnerInspect>>) => {
+    if (result.ok) throw new Error("Expected a failed audit.");
+    expect(result.error).toBeInstanceOf(AnalysisCancelledError);
+    return releaseExposureReportSchema.parse(
+      (result.error.partialObservation as Evidence).normalized_result,
+    );
+  };
+
+  it("keeps Go build paths from Evidence completed before cancellation", async () => {
+    const { service, goBinaries, rustBinaries } = owners(
+      scan({ native_images: [{ path: "/work/app", format: "elf" }] }),
+    );
+    goBinaries.inspect.mockResolvedValue(
+      cancelledWith(
+        "inspect_go_binary",
+        goBinaryReport(
+          goModule([{ key: "CGO_CFLAGS", value: "-I/private/build/include" }]),
+        ),
+      ),
+    );
+    const report = audit(await service.inspect({ path: "/work/app" }));
+    const check = report.checks.find((item) => item.id === "go.build_paths");
+    expect(check?.status).toBe("exposed");
+    expect(check?.observation.samples).toEqual(["/private/build/include"]);
+    expect(rustBinaries.inspect).not.toHaveBeenCalled();
+  });
+
+  it("keeps Rust packages from Evidence completed before cancellation", async () => {
+    const { service, rustBinaries } = owners(
+      scan({ native_images: [{ path: "/work/app", format: "elf" }] }),
+    );
+    rustBinaries.inspect.mockResolvedValue(
+      cancelledWith("inspect_rust_binary", {
+        artifact: { path: "/work/app", sha256: SHA, bytes: 4096 },
+        format: "elf",
+        architecture: "arm64",
+        bits: 64,
+        byte_order: "little",
+        auditable_metadata: {
+          section_name: ".dep-v0",
+          file_offset: 0,
+          section_bytes: 32,
+          compressed_bytes: 32,
+          uncompressed_bytes: 64,
+          format_version: 1,
+          packages: [
+            {
+              name: "serde",
+              version: "1.0.0",
+              source: "crates.io",
+              kind: "runtime",
+              dependencies: [],
+              features: null,
+              root: true,
+            },
+          ],
+          root_package_index: 0,
+          dependency_edges: [],
+          cyclic_dependency_indices: [],
+        },
+        rustc_commit: null,
+        limitations: [],
+      }),
+    );
+    const report = audit(await service.inspect({ path: "/work/app" }));
+    const check = report.checks.find(
+      (item) => item.id === "rust.dependency_metadata",
+    );
+    expect(check?.observation.samples).toContain("serde");
+  });
+
+  it("does not attach completed Go Evidence for a file replaced after inventory", async () => {
+    const { service, goBinaries } = owners(
+      scan({
+        native_images: [{ path: "/work/app", format: "elf", sha256: CHANGED }],
+      }),
+    );
+    goBinaries.inspect.mockResolvedValue(
+      cancelledWith(
+        "inspect_go_binary",
+        goBinaryReport(
+          goModule([{ key: "CGO_CFLAGS", value: "-I/private/build/include" }]),
+        ),
+      ),
+    );
+    const report = audit(await service.inspect({ path: "/work/app" }));
+    const check = report.checks.find((item) => item.id === "go.build_paths");
+    expect(check?.status).toBe("unknown");
+    expect(check?.observation.samples).not.toContain("/private/build/include");
+  });
+});
+
 describe("ReleaseExposureService unfinished owner cleanup", () => {
   const unfinished = (operation: string) =>
     new ProviderCleanupError(
