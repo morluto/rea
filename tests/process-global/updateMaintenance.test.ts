@@ -1,6 +1,7 @@
 import {
   UpdateCommandRunner,
   UPDATE_COMMAND_OUTPUT_BYTES,
+  MAX_UPDATE_TERMINATION_GRACE_MS,
   type UpdateCommandLimits,
 } from "../../src/application/UpdateCommandRunner.js";
 import { mkdir, readFile, rm, writeFile, access } from "node:fs/promises";
@@ -646,19 +647,19 @@ describe("update subprocess boundaries", () => {
   });
 });
 
-describe("update subprocess output collection limits", () => {
-  const probeWithLimits = async (
-    command: readonly string[],
-    limits: UpdateCommandLimits,
-  ) => {
-    const runner = new UpdateCommandRunner(undefined, limits);
-    try {
-      return await runner.runProbe(command, process.env);
-    } finally {
-      await runner.close();
-    }
-  };
+const probeWithLimits = async (
+  command: readonly string[],
+  limits: UpdateCommandLimits,
+) => {
+  const runner = new UpdateCommandRunner(undefined, limits);
+  try {
+    return await runner.runProbe(command, process.env);
+  } finally {
+    await runner.close();
+  }
+};
 
+describe("update subprocess output collection limits", () => {
   it("rejects oversized finite output and reports the retention budget error", async () => {
     const result = await updateCommands.runProbe(
       [
@@ -785,6 +786,120 @@ describe("update subprocess output collection limits", () => {
       { maxOutputBytes: 100 },
     );
     expect(result).toEqual(ok(stdoutContent));
+  });
+});
+
+describe("update subprocess limit validation", () => {
+  it.each([
+    Number.NaN,
+    Number.POSITIVE_INFINITY,
+    Number.NEGATIVE_INFINITY,
+    -1,
+    1.5,
+    Number.MAX_SAFE_INTEGER + 1,
+  ])(
+    "rejects invalid maxOutputBytes override %s before spawning a child process",
+    (maxOutputBytes) => {
+      expect(
+        () => new UpdateCommandRunner(undefined, { maxOutputBytes }),
+      ).toThrow(RangeError);
+      expect(
+        () => new UpdateCommandRunner(undefined, { maxOutputBytes }),
+      ).toThrow(/maxOutputBytes/u);
+    },
+  );
+
+  it.each([
+    Number.NaN,
+    Number.POSITIVE_INFINITY,
+    Number.NEGATIVE_INFINITY,
+    -1,
+    1.5,
+    MAX_UPDATE_TERMINATION_GRACE_MS + 1,
+  ])(
+    "rejects invalid terminationGraceMs override %s before spawning a child process",
+    (terminationGraceMs) => {
+      expect(
+        () => new UpdateCommandRunner(undefined, { terminationGraceMs }),
+      ).toThrow(RangeError);
+      expect(
+        () => new UpdateCommandRunner(undefined, { terminationGraceMs }),
+      ).toThrow(/terminationGraceMs/u);
+    },
+  );
+
+  it.each([
+    Number.NaN,
+    0,
+    -1,
+    Number.POSITIVE_INFINITY,
+    MAX_UPDATE_TERMINATION_GRACE_MS + 1,
+  ])(
+    "rejects invalid probeTimeoutMs override %s before spawning a child process",
+    (probeTimeoutMs) => {
+      expect(() => new UpdateCommandRunner(probeTimeoutMs)).toThrow(RangeError);
+      expect(() => new UpdateCommandRunner(probeTimeoutMs)).toThrow(
+        /probe timeout/u,
+      );
+    },
+  );
+
+  it("rejects non-object limits configuration", () => {
+    expect(
+      () =>
+        new UpdateCommandRunner(
+          undefined,
+          null as unknown as UpdateCommandLimits,
+        ),
+    ).toThrow(TypeError);
+  });
+
+  it("enforces small output budgets and exact boundary behavior", async () => {
+    const script = 'process.stdout.write("hello")';
+    const successfulResult = await probeWithLimits(
+      [process.execPath, "-e", script],
+      { maxOutputBytes: 5 },
+    );
+    expect(successfulResult).toEqual(ok("hello"));
+
+    const boundedFailure = await probeWithLimits(
+      [process.execPath, "-e", script],
+      { maxOutputBytes: 4 },
+    );
+    expect(boundedFailure).toMatchObject({
+      ok: false,
+      error: {
+        kind: "execution",
+        detail: expect.stringContaining("4"),
+      },
+    });
+
+    const emptySuccess = await probeWithLimits(
+      [process.execPath, "-e", 'process.stdout.write("")'],
+      { maxOutputBytes: 0 },
+    );
+    expect(emptySuccess).toEqual(ok(""));
+
+    const zeroBudgetExceeded = await probeWithLimits(
+      [process.execPath, "-e", 'process.stdout.write("x")'],
+      { maxOutputBytes: 0 },
+    );
+    expect(zeroBudgetExceeded).toMatchObject({
+      ok: false,
+      error: {
+        kind: "execution",
+        detail: expect.stringContaining("0"),
+      },
+    });
+  });
+
+  it("accepts maximum valid timer grace period without throwing", () => {
+    expect(
+      () =>
+        new UpdateCommandRunner(undefined, {
+          terminationGraceMs: MAX_UPDATE_TERMINATION_GRACE_MS,
+        }),
+    ).not.toThrow();
   });
 });
 

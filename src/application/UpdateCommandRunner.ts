@@ -22,6 +22,8 @@ import { withoutPackageRunnerIdentity } from "./ClientRegistrationIdentity.js";
 export const UPDATE_COMMAND_OUTPUT_BYTES = 4 * 1024 * 1024;
 /** Grace period before an uncooperative update subprocess is terminated and escalated to SIGKILL. */
 export const DEFAULT_UPDATE_TERMINATION_GRACE_MS = 1_000;
+/** Maximum supported delay for Node.js timers (signed 32-bit integer). */
+export const MAX_UPDATE_TERMINATION_GRACE_MS = 2_147_483_647;
 const UPDATE_PROBE_TIMEOUT_MS = 10_000;
 
 /** Output collection limits applied to update subprocesses. */
@@ -40,6 +42,48 @@ interface ResolvedUpdateCommandLimits {
   readonly terminationGraceMs: number;
 }
 
+const resolveProbeTimeoutMs = (timeoutMs: number): number => {
+  if (
+    !Number.isSafeInteger(timeoutMs) ||
+    timeoutMs <= 0 ||
+    timeoutMs > MAX_UPDATE_TERMINATION_GRACE_MS
+  ) {
+    throw new RangeError(
+      `Update probe timeout must be a positive safe integer up to ${String(MAX_UPDATE_TERMINATION_GRACE_MS)} ms, received ${String(timeoutMs)}.`,
+    );
+  }
+  return timeoutMs;
+};
+
+const resolveUpdateCommandLimits = (
+  limits: UpdateCommandLimits,
+): ResolvedUpdateCommandLimits => {
+  if (typeof limits !== "object" || limits === null) {
+    throw new TypeError("Update command limits must be an object.");
+  }
+  const maxOutputBytes = limits.maxOutputBytes ?? UPDATE_COMMAND_OUTPUT_BYTES;
+  if (!Number.isSafeInteger(maxOutputBytes) || maxOutputBytes < 0) {
+    throw new RangeError(
+      `Update command maxOutputBytes must be a nonnegative safe integer, received ${String(limits.maxOutputBytes)}.`,
+    );
+  }
+  const terminationGraceMs =
+    limits.terminationGraceMs ?? DEFAULT_UPDATE_TERMINATION_GRACE_MS;
+  if (
+    !Number.isSafeInteger(terminationGraceMs) ||
+    terminationGraceMs < 0 ||
+    terminationGraceMs > MAX_UPDATE_TERMINATION_GRACE_MS
+  ) {
+    throw new RangeError(
+      `Update command terminationGraceMs must be a safe integer between 0 and ${String(MAX_UPDATE_TERMINATION_GRACE_MS)} ms, received ${String(limits.terminationGraceMs)}.`,
+    );
+  }
+  return {
+    maxOutputBytes,
+    terminationGraceMs,
+  };
+};
+
 /** The runner owns whether the process started; callers need not infer it from text. */
 export interface UpdateCommandFailure {
   readonly kind: "launch" | "execution";
@@ -56,15 +100,13 @@ export class UpdateCommandRunner {
   readonly #resources = new ArtifactResourceScope();
   readonly #controller = new AbortController();
   readonly #limits: ResolvedUpdateCommandLimits;
+  private readonly probeTimeoutMs: number;
   constructor(
-    private readonly probeTimeoutMs = UPDATE_PROBE_TIMEOUT_MS,
+    probeTimeoutMs = UPDATE_PROBE_TIMEOUT_MS,
     limits: UpdateCommandLimits = {},
   ) {
-    this.#limits = {
-      maxOutputBytes: limits.maxOutputBytes ?? UPDATE_COMMAND_OUTPUT_BYTES,
-      terminationGraceMs:
-        limits.terminationGraceMs ?? DEFAULT_UPDATE_TERMINATION_GRACE_MS,
-    };
+    this.probeTimeoutMs = resolveProbeTimeoutMs(probeTimeoutMs);
+    this.#limits = resolveUpdateCommandLimits(limits);
   }
 
   async runProbe(
