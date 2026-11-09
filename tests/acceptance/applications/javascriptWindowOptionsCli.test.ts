@@ -12,6 +12,7 @@ cliTest(
   async ({ cli }) => {
     const root = await createTestTempDirectory("rea-window-options-");
     await writeFixtureFiles(root, {
+      "package.json": '{"type":"commonjs"}',
       "main.js": [
         'throw new Error("Static input must never execute");',
         'const { BrowserWindow } = require("electron");',
@@ -62,6 +63,24 @@ cliTest(
       properties: {
         source_path: "main.js",
         options_status: "object-literal",
+        web_preferences: expect.arrayContaining([
+          {
+            name: "nodeIntegration",
+            value: { status: "literal", value: true, expression: null },
+          },
+          {
+            name: "contextIsolation",
+            value: { status: "literal", value: false, expression: null },
+          },
+          {
+            name: "preload",
+            value: {
+              status: "literal",
+              value: "./preload.js",
+              expression: null,
+            },
+          },
+        ]),
         resolution_sources: [
           { source: "main.js", start: { line: 5 } },
           { source: "main.js", start: { line: 4 } },

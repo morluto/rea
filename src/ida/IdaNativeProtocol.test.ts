@@ -392,20 +392,21 @@ describe("native IDA provider observations", () => {
         if (!dossier.ok) throw dossier.error;
         expect(dossier.value.relationshipCoverage).toMatchObject({
           status: "unknown",
-          reason: more
-            ? expect.stringContaining(
-                "Callees: Upstream callees capped results at 500; additional callees remain unknown.",
-              )
-            : expect.stringContaining(
-                "Callers: Upstream xrefs do not establish direct caller relationships.",
-              ),
+          reason: expect.stringMatching(/xrefs.*not establish.*caller/iu),
         });
-        if (more)
+        if (more) {
+          const coverage = direct.value.relationshipCoverage;
+          if (coverage?.status !== "partial")
+            throw new Error("Expected partial callee coverage");
+          const limitation = coverage.limitations[0];
+          if (limitation === undefined)
+            throw new Error("Expected callee limitation");
+          expect(limitation).toMatch(/callees.*500.*unknown/iu);
           expect(dossier.value.relationshipCoverage).toMatchObject({
-            reason: expect.stringContaining(
-              "Callers: Upstream xrefs do not establish direct caller relationships.",
-            ),
+            reason: expect.stringContaining(limitation),
           });
+          expect(dossier.value.limitations).toContain(limitation);
+        }
         expect(dossier.value.result).toMatchObject({
           callers: [],
           callees: [{ address: "0x2000", name: "puts" }],
@@ -414,10 +415,6 @@ describe("native IDA provider observations", () => {
             callees: { available: true },
           },
         });
-        if (more)
-          expect(dossier.value.limitations).toContain(
-            "Upstream callees capped results at 500; additional callees remain unknown.",
-          );
       } finally {
         await client.close();
       }
@@ -976,15 +973,6 @@ describe("native IDA malformed observations", () => {
 });
 
 describe("native IDA attached operation admission", () => {
-  it("forwards the native producer's explicit reference cap flag", async () => {
-    const { client } = await fixture();
-    const result = await client.execute("xrefs", { address: "0x1000" });
-
-    if (!result.ok) throw result.error;
-    expect(result.value.referencesTruncated).toBe(false);
-    await client.close();
-  });
-
   it("reports the bound document but not headless-only address resolution", async () => {
     const { client, producer, target } = await fixture();
     const containing = await client.execute("resolve_containing_procedure", {

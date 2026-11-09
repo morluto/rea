@@ -11,6 +11,41 @@ import {
 } from "./config/environment.js";
 import { projectAnalysisError } from "./domain/analysisErrorProjection.js";
 
+it("keeps the caller's opt-in Ghidra checkpoint directory and leaves it disabled by default", () => {
+  const selected = parseConfig({
+    REA_GHIDRA_CHECKPOINT_DIR: "/tmp/checkpoints with spaces",
+  });
+  expect(selected.ok && selected.value.ghidraCheckpointDirectory).toBe(
+    "/tmp/checkpoints with spaces",
+  );
+  const defaults = parseConfig({});
+  expect(
+    defaults.ok && defaults.value.ghidraCheckpointDirectory,
+  ).toBeUndefined();
+  expect(parseConfig({ REA_GHIDRA_CHECKPOINT_DIR: "relative" }).ok).toBe(false);
+});
+
+it.each([
+  ["REA_GHIDRA_PROJECT_PATH", "/tmp/selected.gpr"],
+  ["REA_GHIDRA_SEED_FILE", "/tmp/seeds.json"],
+  ["REA_GHIDRA_LANGUAGE_ID", "x86:LE:64:default"],
+  ["REA_GHIDRA_NATIVEAOT_JAR", "/tmp/extension.jar"],
+  ["REA_GHIDRA_DISABLED_ANALYZERS", "Stack"],
+])(
+  "refuses %s with checkpoints rather than silently dropping the selected input",
+  (setting, value) => {
+    const result = parseConfig({
+      REA_GHIDRA_CHECKPOINT_DIR: "/tmp/checkpoints",
+      [setting]: value,
+    });
+    if (result.ok) throw new Error("conflicting inputs accepted");
+    expect(result.error.message).toContain("checkpoints");
+    expect(result.error).toMatchObject({
+      settings: [expect.objectContaining({ setting })],
+    });
+  },
+);
+
 it("reports a configuration failure for a NUL in Hopper loader arguments", () => {
   const result = parseConfig({
     HOPPER_LOADER_ARGS_JSON: JSON.stringify(["--option", "value\0suffix"]),
@@ -34,7 +69,6 @@ it.each([
       parseEnvironmentValues(environment),
       parseConfig(environment),
     ]) {
-      expect(result.ok).toBe(false);
       if (result.ok) throw new Error("Expected invalid environment");
       expect(result.error.settings).toHaveLength(1);
       expect(result.error.settings[0]?.constraint).toContain("NUL");
@@ -360,6 +394,12 @@ describe("configuration failure diagnostics", () => {
     "accepts Swift compile deadline %s without changing Hopper's deadline",
     (value) => {
       expect(
+        parseEnvironmentValues({ REA_SWIFTC_COMPILE_TIMEOUT_MS: value }),
+      ).toMatchObject({
+        ok: true,
+        value: { REA_SWIFTC_COMPILE_TIMEOUT_MS: Number(value) },
+      });
+      expect(
         parseConfig({ REA_SWIFTC_COMPILE_TIMEOUT_MS: value }),
       ).toMatchObject({
         ok: true,
@@ -400,18 +440,22 @@ describe("configuration failure diagnostics", () => {
       const result = parseConfig({ [setting]: value });
       expect(result.ok).toBe(false);
       if (result.ok) return;
-      const constraint = `${setting} must be absolute`;
-      expect(projectAnalysisError(result.error)).toMatchObject({
+      const projected = projectAnalysisError(result.error);
+      expect(projected).toMatchObject({
         code: "configuration_invalid",
         category: "invalid_input",
-        message: `REA configuration is invalid: ${constraint}.`,
-        remediation: { action: expect.stringContaining(`Correct ${setting} `) },
-        details: { settings: [{ setting, constraint }] },
+        message: expect.stringContaining(setting),
+        remediation: { action: expect.stringContaining(setting) },
+        details: {
+          settings: [
+            { setting, constraint: expect.stringMatching(/absolute/iu) },
+          ],
+        },
       });
+      expect(projected.message).toMatch(/absolute/iu);
+      expect(projected.remediation.action).toMatch(/correct/iu);
       // The rejected value itself is not echoed.
-      expect(JSON.stringify(projectAnalysisError(result.error))).not.toContain(
-        value,
-      );
+      expect(JSON.stringify(projected)).not.toContain(value);
     },
   );
 

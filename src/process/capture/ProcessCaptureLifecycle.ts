@@ -1476,14 +1476,14 @@ export const cleanupReportFailure = (
 };
 
 export const captureTerminalFrames = (options: {
-  readonly terminal: IPty;
+  readonly terminal: Pick<IPty, "onData">;
   readonly scenario: ProcessScenario;
   readonly frames: TerminalFrame[];
   readonly sensitiveOutput?: ProcessSensitiveOutput;
   readonly onSensitiveOutputFailure?: () => void;
   readonly started: number;
   readonly onOutput: () => void;
-  readonly renderer: TerminalRenderer;
+  readonly renderer: Pick<TerminalRenderer, "write">;
   readonly normalizeText: (
     value: string,
     maxBytes: number,

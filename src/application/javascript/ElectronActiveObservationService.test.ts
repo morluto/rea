@@ -172,24 +172,57 @@ it.skipIf(SKIP_PERMISSIONS).each([
   },
 );
 
-it("admits readable selections and hands canonical paths to the provider", async () => {
+it("rejects a regular-file application root before provider capture", async () => {
   const { readable } = await fixture();
   const { provider, capture } = recordingProvider();
-  const application = join(readable, "main.js");
-  await captureElectronScenario(
+  const result = await captureElectronScenario(
     provider,
     electronActiveObservationInputSchema.parse({
       executable_path: process.execPath,
-      application_path: application,
+      application_path: join(readable, "main.js"),
+      application_root: join(readable, "main.js"),
       actions: [],
     }),
   );
-  expect(capture).toHaveBeenCalledOnce();
-  expect(capture.mock.calls[0]?.[0]).toMatchObject({
-    application_path: application,
-    application_root: readable,
+  expect(result.ok).toBe(false);
+  if (result.ok) return;
+  expect(projectAnalysisError(result.error)).toMatchObject({
+    code: "invalid_request",
+    details: {
+      issues: [
+        {
+          path: ["application_root"],
+          reason: "invalid_value",
+          message: expect.stringContaining("not a directory"),
+        },
+      ],
+    },
   });
+  expect(capture).not.toHaveBeenCalled();
 });
+
+it.each([false, true])(
+  "admits readable selections with explicit root %s and hands canonical paths to the provider",
+  async (explicitRoot) => {
+    const { readable } = await fixture();
+    const { provider, capture } = recordingProvider();
+    const application = join(readable, "main.js");
+    await captureElectronScenario(
+      provider,
+      electronActiveObservationInputSchema.parse({
+        executable_path: process.execPath,
+        application_path: application,
+        ...(explicitRoot ? { application_root: readable } : {}),
+        actions: [],
+      }),
+    );
+    expect(capture).toHaveBeenCalledOnce();
+    expect(capture.mock.calls[0]?.[0]).toMatchObject({
+      application_path: application,
+      application_root: readable,
+    });
+  },
+);
 
 it.skipIf(process.platform === "win32")(
   "records selected scenario paths and omission while executing canonical paths",
@@ -216,7 +249,6 @@ it.skipIf(process.platform === "win32")(
       application_path: canonicalApplication,
       application_root: await realpath(readable),
     });
-    expect(result.ok).toBe(true);
     if (!result.ok) throw result.error;
     expect(result.value.parameters).toEqual({
       ...input,

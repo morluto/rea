@@ -1,4 +1,8 @@
+import { writeFile } from "node:fs/promises";
+import { join } from "node:path";
 import { serverInstructions } from "../../../src/server/serverInstructions.js";
+import { SCOPED_NO_TARGET_RECOVERY } from "../../../src/server/recoveryInstructions.js";
+import { NoBinaryOpenError } from "../../../src/domain/configurationErrors.js";
 import { UNTRUSTED_CONTENT_INSTRUCTIONS } from "../../../src/server/toolResultEncoding.js";
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import type {
@@ -8,6 +12,8 @@ import type {
 import { afterEach, describe, expect, it } from "vitest";
 
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
+import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+import { peExportImage } from "../../fixtures/binaryDiagnostics/nativeExports.js";
 import { observed } from "../../fixtures/analysisExecution.js";
 import { err, ok } from "../../../src/domain/result.js";
 import { toolContract } from "../../../src/contracts/toolContracts.js";
@@ -243,7 +249,11 @@ describe.each([
                     kind: "retained-evidence",
                     evidence_id: partial.evidence_id,
                   }
-                : partial,
+                : {
+                    kind: "inline-evidence",
+                    retention: "unknown",
+                    evidence: partial,
+                  },
           }),
         );
         expect(attempts).toEqual([partial]);
@@ -271,4 +281,84 @@ describe.each([
       }
     },
   );
+});
+
+it.each([
+  { scope: "direct", sessionAvailable: false },
+  { scope: "session,direct", sessionAvailable: true },
+  { scope: undefined, sessionAvailable: true },
+])(
+  "guides a missing target using the advertised scope ($scope)",
+  async ({ scope, sessionAvailable }) => {
+    const environment = { ...process.env };
+    if (scope === undefined) delete environment.REA_MCP_TOOL_FAMILIES;
+    else environment.REA_MCP_TOOL_FAMILIES = scope;
+    const client = await connect(environment);
+    const names = (await client.listTools()).tools.map(({ name }) => name);
+    expect(names.includes("open_binary")).toBe(sessionAvailable);
+    const { error } = parseMcpToolError(
+      await client.callTool({
+        name: "read_bytes",
+        arguments: { address: "0x1000", length: 4 },
+      }),
+    );
+    expect(error.code).toBe("target_unavailable");
+    if (sessionAvailable) {
+      expect(error.remediation.action).toBe(new NoBinaryOpenError().message);
+    } else {
+      expect(error.message).toBe(SCOPED_NO_TARGET_RECOVERY);
+      expect(error.remediation.action).toBe(SCOPED_NO_TARGET_RECOVERY);
+      expect(error.remediation.action).toContain("REA_MCP_TOOL_FAMILIES");
+      expect(error.remediation.action).toContain("open_binary");
+      await expect(
+        client.callTool({ name: "open_binary", arguments: { path: "/tmp/x" } }),
+      ).rejects.toThrow(/disabled/u);
+    }
+  },
+);
+
+it("warns that retained evidence does not survive the scoped restart", async () => {
+  const directory = await createTestTempDirectory("rea-scoped-retained-");
+  const path = join(directory, "fixture.exe");
+  await writeFile(path, peExportImage({}));
+  const before = await connect({
+    ...process.env,
+    REA_MCP_TOOL_FAMILIES: "direct,native,application",
+  });
+  const observed = await before.callTool({
+    name: "inspect_native_exports",
+    arguments: { path, detail: "summary" },
+  });
+  expect(observed.isError).not.toBe(true);
+  const summary = observed.structuredContent as {
+    normalized_result: { parent_evidence_id: string };
+  };
+  const view = {
+    source: {
+      kind: "retained-evidence",
+      evidence_id: summary.normalized_result.parent_evidence_id,
+    },
+    view: { kind: "native-exports", collection: "exports" },
+  };
+  expect(
+    (await before.callTool({ name: "inspect_analysis_view", arguments: view }))
+      .isError,
+  ).not.toBe(true);
+  const failure = parseMcpToolError(
+    await before.callTool({
+      name: "read_bytes",
+      arguments: { address: "0x1000", length: 4 },
+    }),
+  );
+  expect(failure.error.remediation.action).toBe(SCOPED_NO_TARGET_RECOVERY);
+  await before.close();
+
+  const after = await connect({
+    ...process.env,
+    REA_MCP_TOOL_FAMILIES: "session,direct,native,application",
+  });
+  const missing = parseMcpToolError(
+    await after.callTool({ name: "inspect_analysis_view", arguments: view }),
+  );
+  expect(missing.error.code).toBe("evidence_integrity_mismatch");
 });

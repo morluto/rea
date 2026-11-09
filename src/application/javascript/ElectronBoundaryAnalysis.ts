@@ -1,6 +1,10 @@
 import type { JavaScriptJsonDocuments } from "./JavaScriptJsonDocuments.js";
 import { compareUnicodeCodePoints } from "../../domain/unicodeCodePointOrder.js";
 import type { ElectronIpcFinding } from "../../domain/javascript/electronStaticAnalysisTypes.js";
+import {
+  ELECTRON_MODULE,
+  ELECTRON_REFERENCE_KINDS,
+} from "../../domain/javascript/javascriptElectronMemberWrites.js";
 import type { ElectronBoundarySummary } from "../../domain/javascript/javascriptApplicationAnalysis.js";
 import type { JavaScriptArtifactAnalysis } from "./JavaScriptArtifactAnalysisTypes.js";
 import type { JavaScriptArtifactFile } from "../../domain/javascript/javascriptArtifactFiles.js";
@@ -68,14 +72,14 @@ export const createElectronIpcContext = (
     .filter(isPairableRendererTransmission)
     .map((transmission) => {
       const owner = owners.get(transmission.key);
+      const channel = transmission.finding.channel;
       const matching =
-        transmission.finding.channel === null
+        channel === null
           ? []
           : handlers.filter(
               (handler) =>
-                (handler.finding.channel === transmission.finding.channel ||
-                  (handler.finding.receiver !== undefined &&
-                    handler.finding.channel === null)) &&
+                (handler.finding.channel === channel ||
+                  mayReceiveChannel(handler, channel)) &&
                 compatibleIpcModes(transmission.finding, handler.finding),
             );
       const candidates = matching.filter(
@@ -86,22 +90,28 @@ export const createElectronIpcContext = (
       const uncertain =
         !coverageComplete ||
         owner == null ||
+        transmission.finding.loader_authority === "candidate" ||
+        matching.some(
+          ({ finding }) => finding.loader_authority === "candidate",
+        ) ||
         matching.some((handler) => owners.get(handler.key) == null);
       return {
         transmission,
         candidates,
         coverageLimitedCandidate:
           !coverageComplete &&
+          transmission.finding.loader_authority !== "candidate" &&
           owner != null &&
           candidates.length === 1 &&
-          candidates[0]?.finding.receiver === undefined &&
+          candidates[0]?.finding.loader_authority !== "candidate" &&
+          isExactIpcHandler(candidates[0]) &&
           !matching.some((handler) => owners.get(handler.key) == null)
             ? (candidates[0] ?? null)
             : null,
         status:
           !uncertain &&
           candidates.length === 1 &&
-          candidates[0]?.finding.receiver === undefined
+          isExactIpcHandler(candidates[0])
             ? "paired"
             : uncertain || matching.length > 0
               ? "ambiguous"
@@ -117,45 +127,174 @@ export const createElectronIpcContext = (
   return { records, owners, states, pairings };
 };
 
+/**
+ * Whether any analyzed source loads an Electron module.
+ *
+ * `analysis_coverage.applicability.electron` is the domain owner of this
+ * question: it already excludes a `type-import`, a `require.resolve` that only
+ * locates the module, a `worker` URL path, and a specifier that is a recovered
+ * bundle module key. Reading the owned fact here keeps the boundary summary and
+ * the published coverage view from disagreeing.
+ *
+ * Historical evidence may predate that field, so the retained references answer
+ * the same question for those files.
+ */
+export const electronModuleReferenced = (
+  analysis: JavaScriptArtifactAnalysis,
+): boolean =>
+  analysis.files.some(({ javascript, semantic }) => {
+    const applicability = javascript?.analysis_coverage?.applicability.electron;
+    if (applicability !== undefined) return applicability === "observed";
+    const links = semantic?.ir.moduleLinks;
+    if (
+      links !== undefined &&
+      links.some(
+        ({ specifier, kind, loaderAuthority }) =>
+          kind !== "type-import" &&
+          loaderAuthority !== "candidate" &&
+          specifier !== null &&
+          ELECTRON_MODULE.test(specifier),
+      )
+    )
+      return true;
+    return (javascript?.references ?? []).some(
+      ({ specifier, kind, operation, loader_authority }) =>
+        operation === "load" &&
+        loader_authority !== "candidate" &&
+        ELECTRON_REFERENCE_KINDS.has(kind) &&
+        specifier !== null &&
+        ELECTRON_MODULE.test(specifier),
+    );
+  });
+
+/** Every Electron boundary fact family the graph reports. */
+export const electronBoundaryFactCount = (
+  analysis: JavaScriptArtifactAnalysis,
+): number =>
+  analysis.files.reduce(
+    (count, { javascript }) =>
+      count +
+      (javascript === null
+        ? 0
+        : javascript.electron.browser_windows.filter(provenElectronFinding)
+            .length +
+          javascript.electron.context_bridge_apis.filter(provenElectronFinding)
+            .length +
+          javascript.electron.ipc.filter(provenElectronFinding).length +
+          javascript.electron.sender_validations.filter(provenElectronFinding)
+            .length +
+          javascript.electron.utility_processes.filter(provenElectronFinding)
+            .length +
+          javascript.electron.native_addon_bindings.filter(
+            provenElectronFinding,
+          ).length +
+          javascript.electron.protocols.filter(provenElectronFinding).length),
+    0,
+  );
+
+const provenElectronFinding = (finding: {
+  readonly loader_authority?: "candidate" | undefined;
+}): boolean => finding.loader_authority !== "candidate";
+
+/** Candidate findings remain in the graph, but are not proven summary counts. */
+export const hasCandidateElectronFindings = (
+  analysis: JavaScriptArtifactAnalysis,
+): boolean =>
+  analysis.files.some(
+    ({ javascript }) =>
+      javascript !== null &&
+      [
+        javascript.electron.browser_windows,
+        javascript.electron.context_bridge_apis,
+        javascript.electron.ipc,
+        javascript.electron.sender_validations,
+        javascript.electron.utility_processes,
+        javascript.electron.native_addon_bindings,
+        javascript.electron.protocols,
+        javascript.electron.app_path_changes ?? [],
+        javascript.electron.call_paths ?? [],
+      ].some((findings) =>
+        findings.some((finding) => !provenElectronFinding(finding)),
+      ),
+  );
+
+/**
+ * Whether the Electron boundary summary came back empty. `undefined` means no
+ * analyzed source names Electron, which is unknown rather than absent: unread
+ * sources and dynamic module names can hide its use.
+ */
+export const electronSemanticsState = (
+  analysis: JavaScriptArtifactAnalysis,
+): "recovered" | "empty" | undefined =>
+  electronModuleReferenced(analysis) === false
+    ? undefined
+    : electronBoundaryFactCount(analysis) === 0
+      ? "empty"
+      : "recovered";
+
 /** Summarize static Electron findings without treating gaps as absence. */
 export const summarizeElectronBoundaries = (
   analysis: JavaScriptArtifactAnalysis,
   ipcContext: ElectronIpcContext,
   directoryPaths?: ReadonlySet<string>,
+  /**
+   * Analysis view used only to describe coverage. A rejected application
+   * projection replaces a file with a placeholder in `analysis`, which would
+   * hide a retained Electron reference, so the caller passes the raw analysis
+   * and both outputs then share one coverage result.
+   */
+  coverageAnalysis: JavaScriptArtifactAnalysis = analysis,
 ): ElectronBoundarySummary => {
   const files = new Map(analysis.files.map(({ file }) => [file.path, file]));
   const javascript = analysis.files.flatMap(({ javascript: value }) =>
     value === null ? [] : [value],
   );
-  const windows = javascript.flatMap(
-    ({ electron }) => electron.browser_windows,
+  const windows = javascript.flatMap(({ electron }) =>
+    electron.browser_windows.filter(provenElectronFinding),
   );
-  const bridges = javascript.flatMap(
-    ({ electron }) => electron.context_bridge_apis,
+  const bridges = javascript.flatMap(({ electron }) =>
+    electron.context_bridge_apis.filter(provenElectronFinding),
   );
-  const validations = javascript.flatMap(
-    ({ electron }) => electron.sender_validations,
+  const validations = javascript.flatMap(({ electron }) =>
+    electron.sender_validations.filter(provenElectronFinding),
   );
   const utilities = analysis.files.flatMap(({ file, javascript: value }) =>
-    (value?.electron.utility_processes ?? []).map((finding) => ({
-      file,
-      finding,
-    })),
+    (value?.electron.utility_processes ?? [])
+      .filter(provenElectronFinding)
+      .map((finding) => ({
+        file,
+        finding,
+      })),
   );
   const nativeBindings = analysis.files.flatMap(({ file, javascript: value }) =>
-    (value?.electron.native_addon_bindings ?? []).map((finding) => ({
-      file,
-      finding,
-    })),
+    (value?.electron.native_addon_bindings ?? [])
+      .filter(provenElectronFinding)
+      .map((finding) => ({
+        file,
+        finding,
+      })),
   );
-  const ipc = ipcContext.records;
-  const pairing = ipcContext.states;
+  const ipc = ipcContext.records.filter(({ finding }) =>
+    provenElectronFinding(finding),
+  );
+  const pairing = ipcContext.states.filter(({ transmission }) =>
+    provenElectronFinding(transmission.finding),
+  );
   const literalChannels = new Set(
     ipc.flatMap(({ finding }) =>
       finding.channel === null ? [] : [finding.channel],
     ),
   );
+  const protocolCount = javascript.reduce(
+    (count, { electron }) =>
+      count + electron.protocols.filter(provenElectronFinding).length,
+    0,
+  );
+  // The coverage state is read from the retained analysis so that a rejected
+  // projection cannot hide an Electron reference the graph still reports.
+  const semantics = electronSemanticsState(coverageAnalysis);
   return {
+    ...(semantics === undefined ? {} : { electron_semantics: semantics }),
     browser_windows: windows.length,
     explicit_web_preferences: windows.reduce(
       (count, window) => count + window.web_preferences.length,
@@ -220,6 +359,7 @@ export const summarizeElectronBoundaries = (
         moduleKind: finding.module_kind,
       }),
     ).length,
+    protocol_registrations: protocolCount,
   };
 };
 
@@ -239,6 +379,27 @@ const isRendererTransmission = ({ finding }: ElectronIpcRecord): boolean =>
 
 const isPairableRendererTransmission = (record: ElectronIpcRecord): boolean =>
   isRendererTransmission(record) && record.finding.operation !== "send-to-host";
+
+/**
+ * An unresolved channel may receive any literal channel, so it competes without
+ * ever pairing. A wrapper site whose invocations all supplied literal channels
+ * is represented by their findings, except guarded invocations, which have none
+ * and still compete for their own channels.
+ */
+const mayReceiveChannel = (
+  { finding }: ElectronIpcRecord,
+  channel: string,
+): boolean =>
+  finding.channel === null &&
+  (finding.receiver !== undefined ||
+    finding.invocation_channels !== "literal" ||
+    finding.guarded_invocation_channels?.includes(channel) === true);
+
+/** Only an ipcMain registration on the same literal channel can be paired. */
+const isExactIpcHandler = (handler: ElectronIpcRecord | undefined): boolean =>
+  handler !== undefined &&
+  handler.finding.receiver === undefined &&
+  handler.finding.channel !== null;
 
 const isMainHandler = ({ finding }: ElectronIpcRecord): boolean =>
   finding.side === "main" &&

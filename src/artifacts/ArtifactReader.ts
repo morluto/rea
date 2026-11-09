@@ -4,6 +4,7 @@ import type {
   ArtifactLimitBoundary,
 } from "../domain/artifactOperationError.js";
 import type {
+  ArtifactContainerIntegrityPair,
   ArtifactIntegrityClaim,
   ArtifactIntegrityDetails,
 } from "../domain/artifactIntegrity.js";
@@ -25,6 +26,8 @@ import type {
 export interface ArtifactReaderFailureOptions extends ErrorOptions {
   /** Recovery guidance established by the producing adapter, separate from diagnostics. */
   readonly userMessage?: string | undefined;
+  /** Regular-file path observed behind a rejected selected symlink; retry still revalidates it. */
+  readonly resolvedPath?: string | undefined;
   readonly cancellation?: { readonly reason: unknown } | undefined;
   readonly cleanup?: AnalysisCleanupObservation | undefined;
   /** Exact authority for all reported cleanup; undefined leaves ownership unknown. */
@@ -193,8 +196,10 @@ export interface ArtifactReader {
     | "directory"
     | ZipPackageFormat
     | "asar"
+    | "ines"
     | "godot-pck"
     | "unityfs"
+    | "wxapkg"
     | "uimage"
     | "pyinstaller"
     | "dotnet-bundle"
@@ -203,6 +208,9 @@ export interface ArtifactReader {
     | "intel-hex"
     | "srec"
     | "esp-image"
+    | "uf2"
+    | "dfuse"
+    | "esp-flash-image"
     | "fit"
     | "file";
   entries(
@@ -212,6 +220,8 @@ export interface ArtifactReader {
   open(entry: ArtifactEntry, signal?: AbortSignal): Promise<Readable>;
   provenance(): readonly ArtifactCommand[];
   formatMetadata?(): ArtifactFormatMetadata | undefined;
+  /** A checksum the container declares over its own bytes, with the observed value. */
+  containerIntegrity?(): ArtifactContainerIntegrityPair | undefined;
   /** Bind materialization to the exact inventoried carrier before creating outputs. */
   prepareContainer?(
     expectedSha256: string,
@@ -223,6 +233,7 @@ export interface ArtifactReader {
 /** Typed adapter failure translated at provider boundary. */
 export class ArtifactReaderFailure extends Error {
   readonly userMessage: string | undefined;
+  readonly resolvedPath: string | undefined;
   readonly cancellation: { readonly reason: unknown } | undefined;
   readonly cleanup: AnalysisCleanupObservation | undefined;
   readonly cleanupLeases: readonly AnalysisCleanupLease[] | undefined;
@@ -248,6 +259,7 @@ export class ArtifactReaderFailure extends Error {
     super(message, options);
     this.name = "ArtifactReaderFailure";
     this.userMessage = options?.userMessage;
+    this.resolvedPath = options?.resolvedPath;
     this.cancellation =
       reason === "cancelled"
         ? (options?.cancellation ?? { reason: options?.cause })
@@ -299,6 +311,7 @@ export class ArtifactReaderFailure extends Error {
       {
         cause: primary,
         userMessage: primary.userMessage,
+        resolvedPath: primary.resolvedPath,
         cancellation: primary.cancellation,
         cleanup: combineCleanup(primary.cleanup, cleanup),
         cleanupLeases:

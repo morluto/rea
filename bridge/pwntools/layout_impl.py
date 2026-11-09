@@ -16,10 +16,10 @@ PROFILE = "pwntools@4.15.0;pyelftools@0.33;unicorn@2.1.2"
 PACKAGES = {"pwntools": "4.15.0", "pyelftools": "0.33", "unicorn": "2.1.2"}
 OUTPUT_BYTES = 64 * 1024 * 1024
 # (e_machine, ELF class bits, byte order) -> architecture pwntools must also report.
-PROFILES = {(62, 64, "little"): "amd64", (3, 32, "little"): "i386", (40, 32, "little"): "arm",
-            (8, 32, "little"): "mips", (8, 32, "big"): "mips"}
-PROFILE_SCOPE = ("Layout profile requires ELF64 x86-64, ELF32 i386, ELF32 ARM little-endian "
-                 "or ELF32 MIPS little- or big-endian objects.")
+PROFILES = {(62, 64, "little"): "amd64", (183, 64, "little"): "aarch64", (3, 32, "little"): "i386",
+            (40, 32, "little"): "arm", (8, 32, "little"): "mips", (8, 32, "big"): "mips"}
+PROFILE_SCOPE = ("Layout profile requires ELF64 x86-64, ELF64 AArch64 little-endian, ELF32 i386, "
+                 "ELF32 ARM little-endian or ELF32 MIPS little- or big-endian objects.")
 
 
 class LayoutFailure(Exception):

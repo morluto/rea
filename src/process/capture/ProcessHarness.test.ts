@@ -706,45 +706,67 @@ it("retains completed observations when finalization fails after clean cleanup",
   ).toBe(true);
 });
 
-it("preserves cancellation while projecting observations and successful cleanup", () => {
-  const capture = parseProcessCapture({
-    ...accountFullyObservedProcessCapture({
-      ...emptyProcessCapture(),
-      frames: [{ sequence: 0, at_ms: 0, data: "observed before cancellation" }],
-    }),
-    event_journal: [],
-  });
-  const cleanup = {
-    owned_process_group: { state: "cleaned" as const, reason: null },
-    terminal_renderer: { state: "cleaned" as const, reason: null },
-    temporary_root: { state: "cleaned" as const, reason: null },
-  };
-  let error: ProcessCaptureError | undefined;
-  try {
-    resolveProcessResult(
-      capture,
-      processCaptureCancelled(),
-      historicalCleanupOutcome(cleanup),
-    );
-  } catch (cause: unknown) {
-    if (!(cause instanceof ProcessCaptureError)) throw cause;
-    error = cause;
-  }
-  if (error === undefined) throw new Error("expected cancellation");
-
-  expect(projectAnalysisError(error)).toMatchObject({
-    code: "cancelled",
-    message: "Process capture was cancelled. Start it again when ready.",
-    details: {
-      operation: "process_capture",
-      cleanup: "complete",
-      cleanup_report: cleanup,
-      partial_observation: {
-        capture: { frames: [{ data: "observed before cancellation" }] },
+it.each([false, true])(
+  "preserves finalization cancellation alongside cleanup intervention=%s",
+  async (signaled) => {
+    const capture = parseProcessCapture({
+      ...accountFullyObservedProcessCapture({
+        ...emptyProcessCapture(),
+        frames: [
+          { sequence: 0, at_ms: 0, data: "observed before cancellation" },
+        ],
+      }),
+      event_journal: [],
+    });
+    const cleanup = await releaseProcessResources({
+      timers: new Set(),
+      terminal: { pid: 321 },
+      renderer: undefined,
+      runId: "finalization-cancellation",
+      temporaryRoot: "/fixture/root",
+      host: {
+        platform: "linux",
+        cleanupProcessGroup: async () => ({ cleaned: true, signaled }),
+        removeTemporaryRoot: async () => undefined,
       },
-    },
-  });
-});
+    });
+    const reason = { request: "cancel after resource cleanup" };
+    let error: ProcessCaptureError | undefined;
+    try {
+      resolveProcessResult(capture, processCaptureCancelled(reason), cleanup);
+    } catch (cause: unknown) {
+      if (!(cause instanceof ProcessCaptureError)) throw cause;
+      error = cause;
+    }
+    if (error === undefined) throw new Error("expected cancellation");
+
+    expect(error.cause).toBe(reason);
+    expect(projectAnalysisError(error)).toMatchObject({
+      code: "cancelled",
+      message: expect.stringMatching(/process capture.*cancelled.*again/iu),
+      details: {
+        operation: "process_capture",
+        cleanup: "complete",
+        cleanup_report: cleanup.report,
+        partial_observation: {
+          capture: {
+            frames: [{ data: "observed before cancellation" }],
+            settlement: {
+              cleanup_outcome: signaled ? "cleaned" : "not_required",
+            },
+            ...(signaled
+              ? {
+                  residual_unknowns: expect.arrayContaining([
+                    PROCESS_CAPTURE_CLEANUP_INTERVENTION_UNKNOWN,
+                  ]),
+                }
+              : {}),
+          },
+        },
+      },
+    });
+  },
+);
 
 it("fails closed on Windows before resolving or launching scenario paths", async () => {
   const scenario = processScenarioSchema.parse({

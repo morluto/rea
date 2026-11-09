@@ -11,6 +11,8 @@ import {
   unwrapJavaScriptExpression,
 } from "./javascriptAstValues.js";
 import { createSemanticExpressionShapeResolver } from "./javascriptSemanticExpressionShapes.js";
+import { semanticRequireOriginCandidate } from "./javascriptSemanticRequireOrigin.js";
+import { javaScriptRuntimeContext } from "./javascriptSourceParser.js";
 import { createGlobalReferenceReader } from "./javascriptSemanticAmbientWrites.js";
 import { javascriptBootstrapAt } from "./javascriptBootstrap.js";
 import { ELECTRON_MODULE } from "./javascriptElectronMemberWrites.js";
@@ -64,6 +66,8 @@ interface SymbolicReadBoundary {
   readonly edge: "start" | "end";
 }
 type SymbolicNamespace = Extract<SymbolicValue, { kind: "namespace" }>;
+
+const SYMBOLIC_DEPTH_LIMIT = 128;
 
 const emptyEnvironment: SymbolicEnvironment = { values: new Map() };
 
@@ -210,15 +214,25 @@ export class JavaScriptSymbolicBindings {
     return emptyEnvironment;
   }
 
+  /** Shared admission; cache hits keep their existing depth-free fast path. */
+  #admitEvaluation(): boolean {
+    if (
+      --this.#remainingEvaluations < 0 ||
+      this.#depth >= SYMBOLIC_DEPTH_LIMIT
+    ) {
+      this.truncated = true;
+      return false;
+    }
+    return true;
+  }
+
   evaluate(
     input: t.Node | null | undefined,
     environment?: SymbolicEnvironment,
   ): SymbolicValue {
     if (!input) return { kind: "literal", value: undefined };
-    if (--this.#remainingEvaluations < 0 || this.#depth >= 128) {
-      this.truncated = true;
+    if (!this.#admitEvaluation())
       return symbolicUnknown("symbolic resource limit");
-    }
     const node = unwrapJavaScriptExpression(input).node;
     const env = environment ?? this.environmentAt(node);
     const cache = this.#cache.get(env) ?? new WeakMap<t.Node, SymbolicValue>();
@@ -278,14 +292,21 @@ export class JavaScriptSymbolicBindings {
     key: string,
     read?: SymbolicPropertyRead,
   ): SymbolicValue {
-    let result: SymbolicValue;
-    if (value.kind === "union")
-      result = symbolicUnion([
-        ...this.#commonProperty(value.values, key, read),
-        ...value.values.map((variant) => this.property(variant, key, read)),
-      ]);
-    else result = this.#property(value, key, read);
-    return this.#withConditions(result, value);
+    if (!this.#admitEvaluation())
+      return symbolicUnknown("symbolic resource limit");
+    this.#depth += 1;
+    try {
+      let result: SymbolicValue;
+      if (value.kind === "union")
+        result = symbolicUnion([
+          ...this.#commonProperty(value.values, key, read),
+          ...value.values.map((variant) => this.property(variant, key, read)),
+        ]);
+      else result = this.#property(value, key, read);
+      return this.#withConditions(result, value);
+    } finally {
+      this.#depth -= 1;
+    }
   }
 
   #commonProperty(
@@ -339,7 +360,13 @@ export class JavaScriptSymbolicBindings {
       ) {
         return symbolicUnknown("overwritten Electron API member");
       }
-      return { kind: "external", path };
+      return {
+        kind: "external",
+        path,
+        ...(value.loaderAuthority === "candidate"
+          ? { loaderAuthority: "candidate" as const }
+          : {}),
+      };
     }
     if (value.kind === "record") {
       const property = value.values.get(key);
@@ -465,40 +492,51 @@ export class JavaScriptSymbolicBindings {
     active = new Set<SymbolicValue>(),
   ): readonly string[] {
     if (active.has(value)) return [];
+    if (!this.#admitEvaluation()) return [];
     active.add(value);
-    if (value.kind === "union")
-      return [...new Set(value.values.flatMap((v) => this.members(v, active)))];
-    if (value.kind === "record") return [...value.values.keys()];
-    if (value.kind === "namespace") {
-      const available = this.#namespaceWrites(value);
-      if (available === undefined) return [];
-      const replacement = available.findLast(
-        (write) => write.path.length === 0,
-      );
-      return replacement
-        ? this.members(
-            this.evaluate(replacement.value, value.environment),
-            active,
-          )
-        : [
-            ...new Set(
-              available.flatMap((w) => (w.path.length === 1 ? w.path : [])),
-            ),
-          ];
-    }
-    if (value.kind !== "object") return [];
-    return [
-      ...new Set(
-        value.node.properties.flatMap((p) =>
-          t.isSpreadElement(p)
-            ? this.members(this.evaluate(p.argument, value.environment), active)
-            : [semanticStaticPropertyKey(p.key, p.computed)].filter(
-                (k): k is string =>
-                  k !== null && !isObjectPrototypeSetter(p, k),
+    this.#depth += 1;
+    try {
+      if (value.kind === "union")
+        return [
+          ...new Set(value.values.flatMap((v) => this.members(v, active))),
+        ];
+      if (value.kind === "record") return [...value.values.keys()];
+      if (value.kind === "namespace") {
+        const available = this.#namespaceWrites(value);
+        if (available === undefined) return [];
+        const replacement = available.findLast(
+          (write) => write.path.length === 0,
+        );
+        return replacement
+          ? this.members(
+              this.evaluate(replacement.value, value.environment),
+              active,
+            )
+          : [
+              ...new Set(
+                available.flatMap((w) => (w.path.length === 1 ? w.path : [])),
               ),
+            ];
+      }
+      if (value.kind !== "object") return [];
+      return [
+        ...new Set(
+          value.node.properties.flatMap((p) =>
+            t.isSpreadElement(p)
+              ? this.members(
+                  this.evaluate(p.argument, value.environment),
+                  active,
+                )
+              : [semanticStaticPropertyKey(p.key, p.computed)].filter(
+                  (k): k is string =>
+                    k !== null && !isObjectPrototypeSetter(p, k),
+                ),
+          ),
         ),
-      ),
-    ];
+      ];
+    } finally {
+      this.#depth -= 1;
+    }
   }
 
   unknownMembers(
@@ -506,39 +544,45 @@ export class JavaScriptSymbolicBindings {
     active = new Set<SymbolicValue>(),
   ): number {
     if (active.has(value)) return 1;
+    if (!this.#admitEvaluation()) return 1;
     active.add(value);
-    if (value.kind === "union")
-      return value.values.reduce(
-        (sum, v) => sum + this.unknownMembers(v, active),
+    this.#depth += 1;
+    try {
+      if (value.kind === "union")
+        return value.values.reduce(
+          (sum, v) => sum + this.unknownMembers(v, active),
+          0,
+        );
+      if (value.kind === "record") return 0;
+      if (value.kind === "namespace") {
+        if (this.#mutated.has(value.bindingId)) return 1;
+        const available = this.#namespaceWrites(value);
+        if (available === undefined) return 1;
+        const replacement = available.findLast(
+          (write) => write.path.length === 0,
+        );
+        return replacement
+          ? this.unknownMembers(
+              this.evaluate(replacement.value, value.environment),
+              active,
+            )
+          : 0;
+      }
+      if (value.kind !== "object") return 1;
+      return value.node.properties.reduce(
+        (sum, p) =>
+          sum +
+          (t.isSpreadElement(p)
+            ? this.unknownMembers(
+                this.evaluate(p.argument, value.environment),
+                new Set(active),
+              )
+            : Number(semanticStaticPropertyKey(p.key, p.computed) === null)),
         0,
       );
-    if (value.kind === "record") return 0;
-    if (value.kind === "namespace") {
-      if (this.#mutated.has(value.bindingId)) return 1;
-      const available = this.#namespaceWrites(value);
-      if (available === undefined) return 1;
-      const replacement = available.findLast(
-        (write) => write.path.length === 0,
-      );
-      return replacement
-        ? this.unknownMembers(
-            this.evaluate(replacement.value, value.environment),
-            active,
-          )
-        : 0;
+    } finally {
+      this.#depth -= 1;
     }
-    if (value.kind !== "object") return 1;
-    return value.node.properties.reduce(
-      (sum, p) =>
-        sum +
-        (t.isSpreadElement(p)
-          ? this.unknownMembers(
-              this.evaluate(p.argument, value.environment),
-              new Set(active),
-            )
-          : Number(semanticStaticPropertyKey(p.key, p.computed) === null)),
-      0,
-    );
   }
 
   /** Calling a generator creates an iterator; advancing it is not modeled. */
@@ -729,13 +773,25 @@ export class JavaScriptSymbolicBindings {
     if (!binding)
       return !semanticResolutionBlocked(this.state, node, node.name) &&
         ["require", "navigator", "String", "Boolean"].includes(node.name)
-        ? { kind: "external", path: [node.name] }
+        ? node.name === "require" &&
+          javaScriptRuntimeContext(this.state.program) === "module"
+          ? symbolicUnknown("CommonJS require is unavailable in an ES module")
+          : {
+              kind: "external",
+              path: [node.name],
+              ...(node.name === "require" &&
+              javaScriptRuntimeContext(this.state.program) === "unknown"
+                ? { loaderAuthority: "candidate" as const }
+                : {}),
+            }
         : symbolicUnknown("unbound identifier");
     if (binding.definitions.some((d) => d.kind === "assignment"))
       return symbolicUnknown("reassigned binding");
     // Electron member identity is checked at the selected property. A write
     // to one method must not erase the module origin or unaffected siblings.
-    const electronOrigin = this.#electronIdentity.exportPath(node);
+    const electronOrigin =
+      this.#electronIdentity.exportPath(node) ??
+      this.#electronIdentity.candidateExportPath(node);
     if (electronOrigin === undefined && this.#mutated.has(binding.bindingId))
       return symbolicUnknown("dynamic member writes");
     for (let e: SymbolicEnvironment | undefined = env; e; e = e.parent) {
@@ -1140,7 +1196,15 @@ export class JavaScriptSymbolicBindings {
           const spec = args[0];
           result =
             spec?.kind === "literal" && typeof spec.value === "string"
-              ? { kind: "external", path: [spec.value] }
+              ? {
+                  kind: "external",
+                  path: [spec.value],
+                  ...(semanticRequireOriginCandidate(node, this.state)?.origin
+                    .loaderAuthority === "candidate" ||
+                  value.loaderAuthority === "candidate"
+                    ? { loaderAuthority: "candidate" as const }
+                    : {}),
+                }
               : symbolicUnknown("dynamic require");
         } else if (
           value.kind !== "function" ||

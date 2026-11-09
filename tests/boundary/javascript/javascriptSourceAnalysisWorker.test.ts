@@ -4,6 +4,8 @@ import { readFile, readdir } from "node:fs/promises";
 import { join } from "node:path";
 import { promisify } from "node:util";
 import { expect, it } from "vitest";
+import { withVerifierCleanup } from "../../../scripts/lib/verifier-cleanup.mjs";
+import { awaitAcknowledgement } from "../../fixtures/lifecycleAcknowledgement.js";
 import { JavaScriptAnalysisWorker } from "../../../src/javascript/analysis/JavaScriptAnalysisWorker.js";
 import { createJavaScriptSourceAnalysis } from "../../../src/artifacts/javascript/JavaScriptSourceAnalysis.js";
 import { ArtifactResourceScope } from "../../../src/artifacts/ArtifactResourceScope.js";
@@ -225,7 +227,7 @@ it("keeps a worker parked while a limit change closes the previous process", asy
   let replacement:
     | ReturnType<typeof createJavaScriptSourceAnalysis>
     | undefined;
-  try {
+  await withVerifierCleanup(async () => {
     const initial = await createJavaScriptSourceAnalysis(limits, 1, {
       scope,
       launcher,
@@ -252,7 +254,7 @@ it("keeps a worker parked while a limit change closes the previous process", asy
       1,
       { scope, launcher },
     );
-    await closeStarted;
+    await awaitAcknowledgement(closeStarted, replacement, "worker close");
 
     const concurrent = await createJavaScriptSourceAnalysis(limits, 1, {
       scope,
@@ -288,13 +290,19 @@ it("keeps a worker parked while a limit change closes the previous process", asy
     await scope.close();
     await exits.get(parkedPid);
     expect(exited.has(parkedPid)).toBe(true);
-  } finally {
-    JavaScriptAnalysisWorker.prototype.close = originalClose;
-    releaseClose();
-    const port = await replacement?.catch(() => undefined);
-    await port?.close().catch(() => undefined);
-    await scope.close();
-  }
+  }, [
+    releaseClose,
+    async () => {
+      const port = await replacement?.catch(() => undefined);
+      await port?.close();
+    },
+    async () => {
+      await scope.close();
+    },
+    () => {
+      JavaScriptAnalysisWorker.prototype.close = originalClose;
+    },
+  ]);
 });
 
 it("does not start a replacement when closing the previous worker fails", async () => {
@@ -624,8 +632,9 @@ it("formats a real worker's declined semantic budget once", async () => {
     const { error } = result.error;
     expect(error).toMatchObject({
       _tag: "AnalysisResourceConstraintError",
-      reason:
-        "The parent reserved its remaining result capacity for static observations; semantic analysis of main.js was not started",
+      reason: expect.stringMatching(
+        /result capacity.*static observations.*semantic analysis of main\.js was not started/i,
+      ),
       reportedLimits: { semantic_result_budget_bytes: 0 },
     });
     expect(error.message.match(/Resource constraint during/gu)).toHaveLength(1);

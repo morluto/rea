@@ -1,3 +1,5 @@
+import type { EvidenceLookup } from "../../application/EvidenceInputResolver.js";
+import type { ExecutionOptions } from "../../application/AnalysisProvider.js";
 import type { EvidenceMcpServer } from "../EvidenceMcpServer.js";
 import type { ServerContext } from "@modelcontextprotocol/server";
 import { runAdmittedToolOperation } from "../admittedToolOperation.js";
@@ -47,6 +49,8 @@ const registerProjection = (context: {
   readonly contract: (typeof APPLICATION_TOOL_CONTRACTS)[number];
   readonly project: (
     input: unknown,
+    lookup?: EvidenceLookup,
+    options?: Pick<ExecutionOptions, "signal">,
   ) => Result<InventoryProjectionEvidenceResult, AnalysisError>;
 }): void => {
   const { server, options, contract, project } = context;
@@ -63,13 +67,19 @@ const registerProjection = (context: {
           const result = await logToolExecution(
             options.logger,
             contract.name,
-            () => Promise.resolve(project(input)),
+            () =>
+              Promise.resolve(
+                project(input, options.evidenceById, {
+                  signal: request.mcpReq.signal,
+                }),
+              ),
           );
           if (!result.ok)
             return server.delivery.toCallToolResult(result, contract);
           const recordedSources = recordEvidenceSources(
             options.recordEvidence,
             result.value.sources,
+            { evidence: result.value.evidence },
           );
           if (!recordedSources.ok)
             return server.delivery.toCallToolResult(recordedSources, contract);

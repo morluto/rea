@@ -1,3 +1,4 @@
+import { ProcessAdmissionError } from "../ProcessAdmissionError.js";
 import type { IPty } from "@lydell/node-pty";
 import type { ProcessCapture } from "../../domain/process/processCaptureParsing.js";
 import type { ProcessScenario } from "../../domain/process/processScenario.js";
@@ -845,9 +846,7 @@ const runProcessScenario = async (
       };
       if (exit.reason === "cancelled")
         throw processCaptureCancelled(signal?.reason);
-      throw new Error(
-        "The captured process exit was not observed because the finalization SIGKILL could not be delivered.",
-      );
+      throw new ProcessAdmissionError("finalization_unobserved");
     }
     if (exit.finalization !== undefined)
       observations.finalization = {

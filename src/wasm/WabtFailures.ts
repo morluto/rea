@@ -1,5 +1,6 @@
 import { analysisSettingLimit } from "../domain/analysisSettingDefinitions.js";
 import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
+import { stableArtifactInputRecovery } from "../artifacts/StableArtifactFailure.js";
 import {
   artifactFileCancellationCause,
   bindArtifactFileCleanup,
@@ -27,11 +28,13 @@ import {
   RuntimeControlUnavailableError,
   runtimeControlCapabilityError,
 } from "../process/RuntimeControlUnavailableError.js";
+import { WabtAdmissionError } from "./WabtAdmissionError.js";
 import {
   DEFAULT_WASM_COMMAND_TIMEOUT_MS,
   MAX_WASM_COMMAND_TIMEOUT_MS,
 } from "../domain/wasm/wasmArtifact.js";
 import {
+  WABT_ACCEPTED_RANGE,
   WABT_LIMITS,
   WABT_PROVIDER_IDENTITY,
   WABT_VERSION,
@@ -45,6 +48,7 @@ export type WabtVersionProbe = {
   readonly executable_path: string;
   readonly tool: string;
   readonly expected_version: typeof WABT_VERSION;
+  readonly accepted_releases: string;
 };
 
 type WabtFailureContext = {
@@ -66,7 +70,7 @@ export const wabtConfigurationRecoveryAction = (cause?: unknown): string => {
         : code === "ENOENT"
           ? "The reported configured tool is missing. "
           : "";
-  return `${action}Set absolute REA_WABT_BIN_DIRECTORY to a directory that contains wasm-validate, wasm-objdump and wasm2wat from WABT ${WABT_VERSION}; each --version must report ${WABT_VERSION} on stdout with empty stderr. Correct the reported tool path, access or release before retrying, not the WASM input. Set this in the shell for the next CLI call, or in the MCP server launch environment and restart that server; a shell export does not update a running MCP server. Do not repeat the unchanged call or install tools implicitly.`;
+  return `${action}Set absolute REA_WABT_BIN_DIRECTORY to a directory that contains wasm-validate, wasm-objdump and wasm2wat from one WABT installation; each --version must report ${WABT_ACCEPTED_RANGE} on stdout with empty stderr. Releases in that range other than ${WABT_VERSION} are admitted and reported as the observed banner. Correct the reported tool path, access or release before retrying, not the WASM input. Set this in the shell for the next CLI call, or in the MCP server launch environment and restart that server; a shell export does not update a running MCP server. Do not repeat the unchanged call or install tools implicitly.`;
 };
 /** Past the output budget, retained text is a prefix of an oversized stream; keep a bounded excerpt of each. */
 const outputLimitExcerpt = (snapshot: ProviderProcessSnapshot) => ({
@@ -237,18 +241,31 @@ const classifyWabtFailure = (
         remediationAction: `The WABT tool allowance is ${String(WABT_LIMITS.toolBytes)} bytes. This release has no runtime override. command_timeout_ms and REA_WABT_BIN_DIRECTORY do not raise it. Select tools within the allowance. Do not repeat the unchanged call.`,
       },
     );
-  if (phase === "configuration")
+  if (phase === "configuration") {
+    const admission = cause instanceof WabtAdmissionError ? cause : undefined;
     return new AnalysisCapabilityUnavailableError(
       WABT_PROVIDER_IDENTITY.id,
       "inspect_wasm_artifact",
-      reason,
+      admission?.code ?? reason,
       {
         cause,
         ...artifactOptions,
-        userMessage: reason,
+        ...(admission === undefined
+          ? {}
+          : {
+              diagnostics: {
+                code: admission.code,
+                ...admission.detail,
+              },
+            }),
+        userMessage:
+          admission === undefined
+            ? reason
+            : "WABT configuration cannot be used",
         remediationAction: wabtConfigurationRecoveryAction(cause),
       },
     );
+  }
   if (
     phase === "artifact" &&
     cause instanceof ArtifactReaderFailure &&
@@ -293,7 +310,13 @@ const classifyWabtFailure = (
   if (phase === "artifact")
     return new AnalysisInputError(
       "inspect_wasm_artifact",
-      { cause, ...artifactOptions },
+      {
+        cause,
+        ...artifactOptions,
+        ...(cause instanceof ArtifactReaderFailure
+          ? stableArtifactInputRecovery(cause)
+          : {}),
+      },
       [
         {
           path: [...(execution?.inputField ?? ["path"])],

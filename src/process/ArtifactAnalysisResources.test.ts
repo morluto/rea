@@ -4,9 +4,11 @@ import {
   ArtifactResourceScope,
 } from "../artifacts/ArtifactResourceScope.js";
 import { withArtifactRegularFile } from "../artifacts/ArtifactFileOperation.js";
-import { writeFile } from "node:fs/promises";
+import { symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
+import { awaitAcknowledgement } from "../../tests/fixtures/lifecycleAcknowledgement.js";
+import { withVerifierCleanup } from "../../scripts/lib/verifier-cleanup.mjs";
 import { OwnedCommandFailure } from "./OwnedCommand.js";
 import { EventEmitter } from "node:events";
 import { PassThrough } from "node:stream";
@@ -25,6 +27,42 @@ import { err, ok } from "../domain/result.js";
 import { ArtifactAnalysisResources } from "./ArtifactAnalysisResources.js";
 import { readLinuxResourceLimits } from "./LinuxResourceLimits.js";
 import { ProviderProcessSupervisor } from "./ProviderProcess.js";
+
+it.runIf(process.platform !== "win32")(
+  "offers a resolved-file retry from the shared selected-artifact boundary",
+  async () => {
+    const root = await createTestTempDirectory("rea-selected-artifact-");
+    const target = join(root, "target.bin");
+    const selected = join(root, "selected");
+    await writeFile(target, "fixture");
+    await symlink(target, selected);
+    const resources = new ArtifactAnalysisResources(
+      "fixture-provider",
+      "decode_signal_recording",
+      readStableArtifact,
+      readLinuxResourceLimits,
+      { message: "busy", details: {} },
+    );
+    try {
+      const result = await resources.run(async () =>
+        ok(
+          await resources.readSelectedArtifact({
+            path: selected,
+            maximumBytes: 1024,
+            allowanceName: "fixture input allowance",
+            observedOutput: undefined,
+          }),
+        ),
+      );
+      if (result.ok) throw new Error("Expected selected symlink refusal");
+      const projected = projectAnalysisError(result.error);
+      expect(projected.remediation.action).toContain(target);
+      expect(projected).not.toHaveProperty("recovery");
+    } finally {
+      await resources.close();
+    }
+  },
+);
 
 it.each(["command", "limiter"])(
   "attributes post-run %s read failure to its exact artifact and retains producer output",
@@ -441,7 +479,6 @@ it.each([
         calls++;
         return ok("unexpected");
       }, AbortSignal.abort(reason));
-      expect(result.ok).toBe(false);
       if (result.ok) throw new Error("Expected cancelled admission");
       expect(result.error.cause).toBe(reason);
       expect(result.error.cleanupResources).toEqual([]);
@@ -623,8 +660,8 @@ it("says REA retains the tighter inherited limit when a producer signal fires", 
     expect(projected.remediation.action).toContain(
       "an unchanged retry may succeed or may fail the same way",
     );
-    expect(projected.remediation.action).not.toContain(
-      "Repeating the unchanged request fails the same way.",
+    expect(projected.remediation.action).not.toMatch(
+      /unchanged request.*fails/iu,
     );
     expect(projected.retryable).toBe(true);
     expect(projected.details).toMatchObject({
@@ -664,8 +701,8 @@ it("keeps an unchanged SIGXFSZ retry uncertain when the inherited limit was not 
     expect(projected.remediation.action).toContain(
       "an unchanged retry may succeed or may fail the same way",
     );
-    expect(projected.remediation.action).not.toContain(
-      "Repeating the unchanged request fails the same way.",
+    expect(projected.remediation.action).not.toMatch(
+      /unchanged request.*fails/iu,
     );
     expect(projected.retryable).toBe(true);
     expect(projected.details).toMatchObject({
@@ -837,7 +874,9 @@ it("observes cancellation after pending descriptor cleanup before admitting repl
     { message: "busy", details: {} },
   );
   let calls = 0;
-  try {
+  const caller = new AbortController();
+  let pending: ReturnType<typeof resources.run> | undefined;
+  await withVerifierCleanup(async () => {
     const first = await resources.run(async () =>
       ok(await resources.read("fixture", 1)),
     );
@@ -845,13 +884,12 @@ it("observes cancellation after pending descriptor cleanup before admitting repl
       ok: false,
       error: { cleanupIncomplete: true },
     });
-    const caller = new AbortController();
     const reason = { request: "cancel while old descriptor closes" };
-    const pending = resources.run(async () => {
+    pending = resources.run(async () => {
       calls++;
       return ok("Must not run");
     }, caller.signal);
-    await started;
+    await awaitAcknowledgement(started, pending, "descriptor cleanup");
     caller.abort(reason);
     releaseCleanup();
     const result = await pending;
@@ -859,10 +897,14 @@ it("observes cancellation after pending descriptor cleanup before admitting repl
     expect(result.error.cause).toBe(reason);
     expect(calls).toBe(0);
     if (!first.ok) expect(first.error.cleanupIncomplete).toBe(false);
-  } finally {
-    releaseCleanup();
-    await resources.close();
-  }
+  }, [
+    () => caller.abort(),
+    releaseCleanup,
+    async () => {
+      await pending;
+    },
+    () => resources.close(),
+  ]);
 });
 
 it.each([false, true])(
