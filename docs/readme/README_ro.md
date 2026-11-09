@@ -99,6 +99,10 @@ validării structurilor imbricate. Ambele profiluri păstrează toate uneltele �
 validarea canonică a serverului. Consultă secțiunea „Compact input schema profile”
 din ghidul contractelor MCP.
 
+Configurarea înregistrează direct mediul de execuție ales și scriptul de intrare REA. Dacă folosești un executor de pachete, păstrează intrarea sa din cache și mediul de execuție; obține pachetul dintr-un director de încredere din afara proiectului țintă. Consultă ghidul de instalare.
+
+Schemele complete de ieșire sunt anunțate implicit. Dacă clientul limitează `tools/list`, setează `REA_MCP_OUTPUT_SCHEMA_PROFILE=compact` sau `off` în înregistrarea MCP. Validarea serverului și rezultatele structurate rămân complete. Consultă „Output schemas” din ghidul contractelor MCP.
+
 ### Cere-i agentului
 
 ```text

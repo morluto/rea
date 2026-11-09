@@ -84,6 +84,10 @@ npx rea-agents setup
 
 MCP 預設使用精簡輸入 Schema，以減少上下文開銷。需要完整欄位說明和巢狀驗證細節時，請在 MCP 註冊中設定 `REA_MCP_INPUT_SCHEMA_PROFILE=full`。兩種設定都保留完整工具集和標準的伺服器驗證；見 MCP 合約指南。
 
+設定會直接登記所選執行環境和 REA 入口指令碼。使用套件執行器時，請保留其快取項目及執行環境，並從目標專案以外的可信任目錄取得套件。 請參閱安裝指南。
+
+預設會公布完整輸出 Schema。若用戶端限制 `tools/list` 的大小，請在 MCP 登記中設定 `REA_MCP_OUTPUT_SCHEMA_PROFILE=compact` 或 `off`。伺服器驗證和結構化結果仍保持完整。 請參閱 MCP 合約指南中的「Output schemas」。
+
 ### 詢問 AI 代理
 
 ```text

@@ -99,6 +99,10 @@ set karein. Dono profiles mein tamam tools aur canonical server validation
 maujood rehte hain. MCP contracts guide ka "Compact input schema profile"
 section dekhein.
 
+Setup chuna hua runtime aur REA entry script seedha register karta hai. Package runner use karne par uski cache entry aur runtime barqarar rakhein; package target project se bahar kisi bharosemand directory se hasil karein. Installation guide dekhein.
+
+Mukammal output schemas default mein advertise hote hain. Agar client `tools/list` ko limit karta hai to MCP registration mein `REA_MCP_OUTPUT_SCHEMA_PROFILE=compact` ya `off` set karein. Server validation aur structured results mukammal rehte hain. MCP contracts guide ka “Output schemas” section dekhein.
+
 ### Apne agent se kahein
 
 ```text

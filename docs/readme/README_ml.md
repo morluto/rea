@@ -86,6 +86,10 @@ Claude Code, Codex, Cursor, Gemini CLI, Grok Build, കൂടാതെ [മറ�
 
 MCP സാധാരണയായി compact input schemas ഉപയോഗിക്കുന്നു. പൂർണ്ണ field guidance-ഉം nested validation details-ഉം വേണമെങ്കിൽ MCP registration-ൽ `REA_MCP_INPUT_SCHEMA_PROFILE=full` സജ്ജമാക്കുക. രണ്ടു profiles-ലും എല്ലാ tools-ഉം ഒരേ canonical server validation-ഉം നിലനിൽക്കും; MCP contracts guide കാണുക.
 
+തിരഞ്ഞെടുത്ത runtime-ഉം REA entry script-ഉം setup നേരിട്ട് രജിസ്റ്റർ ചെയ്യുന്നു. Package runner ഉപയോഗിക്കുമ്പോൾ അതിന്റെ cache entry-യും runtime-ഉം നിലനിർത്തുക; target project-ന് പുറത്തുള്ള വിശ്വസനീയമായ ഡയറക്ടറിയിൽ നിന്ന് package നേടുക. ഇൻസ്റ്റലേഷൻ ഗൈഡ് കാണുക.
+
+പൂർണ്ണ output schema-കൾ സ്ഥിരസ്ഥിതിയായി പരസ്യപ്പെടുത്തുന്നു. Client `tools/list` പരിമിതപ്പെടുത്തുന്നുവെങ്കിൽ MCP registration-ൽ `REA_MCP_OUTPUT_SCHEMA_PROFILE=compact` അല്ലെങ്കിൽ `off` സജ്ജമാക്കുക. Server validation-ഉം structured result-കളും പൂർണ്ണമായി നിലനിൽക്കും. MCP കരാർ ഗൈഡിലെ «Output schemas» കാണുക.
+
 ### നിങ്ങളുടെ agent-നോട് ആവശ്യപ്പെടുക
 
 ```text
