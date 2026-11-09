@@ -18,6 +18,7 @@ import {
 import { DESKTOP_EXPORT_FRAMEWORK_VERSION } from "../domain/desktop/appExport.js";
 import { PRODUCT_IDENTITY } from "../identity.js";
 import { execFileOutputFailure } from "../process/ExecFileOutput.js";
+import { agentEnvInterpreter } from "./AgentEnvComputerHelper.js";
 import {
   agentEnvReportedVersion,
   BUILD_COMPUTER_SETTINGS,
@@ -76,7 +77,7 @@ export const readDesktopBuildFacts = async (
     versions.set(path, pending);
     return pending;
   };
-  const archive = await archiveFact(input);
+  const archive = await archiveFact(input, agentEnv);
   const chosenCommand = (
     name: BuildComputerSetting,
     command: DesktopBuildCommand,
@@ -248,6 +249,7 @@ const agentEnvVersion = async (
 /** The setup-packed archive is named by its version; another is read for its package version. */
 const archiveFact = async (
   input: DesktopBuildFactsInput,
+  agentEnv: DesktopBuildCommand,
 ): Promise<DesktopBuildFacts["archive"]> => {
   const selected = input.environment.REA_BUILD_COMPUTER_REA_ARCHIVE;
   const source =
@@ -262,7 +264,13 @@ const archiveFact = async (
   );
   if (!file) return { path, source, status: "missing" };
   if (source === "cache") return { path, source, status: "current" };
-  const packed = await attempt(input, "python3", [
+  const python = agentEnv.status === "found"
+    ? await agentEnvInterpreter(
+        { ...input.environment, REA_AGENT_ENV_COMMAND: agentEnv.path },
+        "desktop_build_doctor",
+      ).catch(() => "python3")
+    : "python3";
+  const packed = await attempt(input, python, [
     "-I",
     "-c",
     ARCHIVE_VERSION,
