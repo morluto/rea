@@ -617,6 +617,14 @@ const blobRanges = (
   ),
 });
 
+/**
+ * A standalone copy of `value`. Names and values are slices of the decoded
+ * config text, and a V8 slice keeps that whole text alive, so a page must not
+ * hand them out directly.
+ */
+const detached = (value: string): string =>
+  Buffer.from(value, "utf8").toString("utf8");
+
 const acceptedConfig = (
   found: AcceptedConfig,
   input: InspectKernelBuildConfigInput,
@@ -636,7 +644,13 @@ const acceptedConfig = (
     offset: input.offset,
     limit: input.limit,
     name: input.name ?? null,
-    entries: matched.slice(input.offset, input.offset + input.limit),
+    entries: matched
+      .slice(input.offset, input.offset + input.limit)
+      .map((entry) => ({
+        ...entry,
+        name: detached(entry.name),
+        value: entry.value === null ? null : detached(entry.value),
+      })),
   };
 };
 

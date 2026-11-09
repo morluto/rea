@@ -1,4 +1,6 @@
 import { createHash } from "node:crypto";
+import { setFlagsFromString } from "node:v8";
+import { runInNewContext } from "node:vm";
 import { gzipSync } from "node:zlib";
 import { expect, it } from "vitest";
 import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
@@ -592,4 +594,37 @@ it("yields to the event loop while decoding and validating one long value", asyn
   // Turns spent after the inflate returned, while the decoded text is parsed.
   const parsing = new Set(seen.slice(seen.indexOf(seen[1] ?? -1)));
   expect(parsing.size).toBeGreaterThanOrEqual(8);
+});
+
+it("does not keep the decoded config alive through a one-entry page", async () => {
+  setFlagsFromString("--expose-gc");
+  const gc = runInNewContext("gc") as () => void;
+  // Longer than V8's 13-character minimum for a sliced string.
+  const KEPT = "a page value long enough to be a slice";
+  // About 0.9 MiB of text, below the size Node hands out as an external
+  // string, so the decoded text is counted in heapUsed.
+  const lines = Array.from(
+    { length: 3500 },
+    (_, index) =>
+      `CONFIG_OPTION_NUMBER_${String(index)}="${"v".repeat(240)}${String(index)}"`,
+  );
+  const fixtures = Array.from({ length: 8 }, (_, page) =>
+    embeddedKernelConfig(
+      [...lines, `CONFIG_PAGE_${String(page)}="${KEPT}"`, ""].join("\n"),
+    ),
+  );
+  const pages = [];
+  gc();
+  gc();
+  const before = process.memoryUsage().heapUsed;
+  for (const [page, bytes] of fixtures.entries())
+    pages.push(await parse(bytes, { name: `CONFIG_PAGE_${String(page)}` }));
+  gc();
+  gc();
+  const retained = process.memoryUsage().heapUsed - before;
+  expect(pages.map((report) => report.config.entries[0]?.value)).toEqual(
+    Array.from({ length: 8 }, () => KEPT),
+  );
+  // Eight pages that each pinned their decoded text would hold about 7 MiB.
+  expect(retained).toBeLessThan(2 << 20);
 });
