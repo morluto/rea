@@ -193,7 +193,7 @@ const addWindowPreload = (
     kind: "electron-preload",
     anchor: input.file,
     resolution,
-    mechanism: "BrowserWindow:webPreferences.preload",
+    mechanism: `${input.value.window_constructor ?? "BrowserWindow"}:webPreferences.preload`,
     range: input.value.location,
     coverage: input.coverage,
   });

@@ -203,27 +203,30 @@ it("keeps a lookalike construction unproven for a view constructor", () => {
   expect(analysis.electron.ipc).toEqual([]);
 });
 
-it("reads literal webPreferences on a BrowserView construction", () => {
-  expect(
-    analyzeJavaScriptStaticSource(`
-    const { BrowserView } = require("electron");
-    const owner = new BrowserView({ webPreferences: { preload: "./p.js", sandbox: true } });
+it.each(["BrowserView", "WebContentsView"])(
+  "reads literal webPreferences on a %s construction",
+  (constructor) => {
+    expect(
+      analyzeJavaScriptStaticSource(`
+    const { ${constructor} } = require("electron");
+    const owner = new ${constructor}({ webPreferences: { preload: "./p.js", sandbox: true } });
   `).electron.browser_windows,
-  ).toMatchObject([
-    {
-      window_constructor: "BrowserView",
-      web_preferences_status: "object-literal",
-      web_preferences: [
-        { name: "preload", value: { status: "literal", value: "./p.js" } },
-        { name: "sandbox", value: { status: "literal", value: true } },
-      ],
-      preload_path: "./p.js",
-      preload_resolution_context: "module-specifier",
-    },
-  ]);
-});
+    ).toMatchObject([
+      {
+        window_constructor: constructor,
+        web_preferences_status: "object-literal",
+        web_preferences: [
+          { name: "preload", value: { status: "literal", value: "./p.js" } },
+          { name: "sandbox", value: { status: "literal", value: true } },
+        ],
+        preload_path: "./p.js",
+        preload_resolution_context: "module-specifier",
+      },
+    ]);
+  },
+);
 
-it.each(["BaseWindow", "WebContentsView"])(
+it.each(["BaseWindow"])(
   "does not report a webPreferences surface a %s never accepts",
   (constructor) => {
     const analysis = analyzeJavaScriptStaticSource(`

@@ -323,6 +323,12 @@ failure does not authorize expanding relationships that parent admission decline
 
 ## What is reconstructed
 
+Electron `BrowserView` and `WebContentsView` expose `webContents` and accept
+`webPreferences`, including declared preloads. `BaseWindow` has neither surface
+of its own. Preload associations retain the parsed constructor's mechanism rather
+than labeling every view as a BrowserWindow. These are static associations, not
+proof that a renderer or preload executed.
+
 The projector reuses the content-addressed artifact inventory and safe artifact
 readers. It retains canonical artifact-relative paths, exact byte counts,
 SHA-256 digests, inventory IDs, ASAR container identity, and `.asar.unpacked`

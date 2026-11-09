@@ -172,7 +172,7 @@ describe("view constructor surfaces", () => {
     const graph = parseJavaScriptApplicationGraph(result.graph);
 
     const windows = graph.nodes.filter(({ kind }) => kind === "browser-window");
-    expect(windows).toHaveLength(2);
+    expect(windows).toHaveLength(4);
     const byLabel = (prefix: string) =>
       windows
         .flatMap(({ observations }) => observations)
@@ -203,16 +203,34 @@ describe("view constructor surfaces", () => {
     const preloadRoles = graph.nodes.filter(
       ({ kind }) => kind === "electron-preload",
     );
-    expect(preloadRoles).toHaveLength(1);
+    expect(preloadRoles).toHaveLength(3);
     expect(preloadRoles[0]?.observations[0]?.properties).toMatchObject({
       declared_path: "./browser-preload.js",
     });
+    for (const [constructor, path] of [
+      ["BrowserView", "./view-preload.js"],
+      ["WebContentsView", "./contents-preload.js"],
+    ] as const) {
+      expect(byLabel(constructor)).toMatchObject({
+        window_constructor: constructor,
+        web_preferences_status: "object-literal",
+        preload_path: path,
+      });
+      expect(
+        preloadRoles
+          .flatMap((node) => node.observations)
+          .some(
+            ({ properties }) =>
+              properties.mechanism === `${constructor}:webPreferences.preload`,
+          ),
+      ).toBe(true);
+    }
     expect(result.electron_summary.ipc).toMatchObject({
-      main_handlers: 1,
+      main_handlers: 3,
     });
     const channels = graph.nodes.filter(({ kind }) => kind === "ipc-channel");
     expect(channels.flatMap(({ observations }) => observations)).toHaveLength(
-      1,
+      3,
     );
   });
 });
@@ -666,10 +684,12 @@ const viewConstructorFixtureDirectory = async (): Promise<string> => {
       }),
     ),
     writeFile(join(root, "browser-preload.js"), "module.exports = {};"),
+    writeFile(join(root, "view-preload.js"), "module.exports = {};"),
+    writeFile(join(root, "contents-preload.js"), "module.exports = {};"),
     writeFile(
       join(root, "main.cjs"),
       String.raw`
-const { BrowserWindow, BaseWindow } = require("electron");
+const { BrowserWindow, BaseWindow, BrowserView, WebContentsView } = require("electron");
 const window = new BrowserWindow({
   webPreferences: { preload: "./browser-preload.js" },
 });
@@ -679,6 +699,11 @@ const base = new BaseWindow({
   webPreferences: { preload: "./view-preload.js" },
 });
 base.webContents.ipc.handle("base-channel", () => "base");
+const view = new BrowserView({ webPreferences: { preload: "./view-preload.js" } });
+view.webContents.ipc.handle("view-channel", () => "view");
+const options = { webPreferences: { preload: "./contents-preload.js" } };
+const contents = new WebContentsView(options);
+contents.webContents.mainFrame.ipc.handle("contents-channel", () => "contents");
 `,
     ),
   ]);

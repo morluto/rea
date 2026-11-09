@@ -26,9 +26,8 @@ export const ELECTRON_WINDOW_CONSTRUCTOR_SURFACES: Readonly<
   BaseWindow: { preferences: false, webContents: false, selfLoad: false },
   // A BrowserView is constructed with webPreferences and owns its webContents.
   BrowserView: { preferences: true, webContents: true, selfLoad: false },
-  // A WebContentsView exposes webContents, but it is constructed with a
-  // webContents to attach rather than with webPreferences.
-  WebContentsView: { preferences: false, webContents: true, selfLoad: false },
+  // A WebContentsView accepts preferences or an explicitly adopted webContents.
+  WebContentsView: { preferences: true, webContents: true, selfLoad: false },
 };
 
 const CONSTRUCTOR_NAMES: ReadonlySet<string> = new Set(
