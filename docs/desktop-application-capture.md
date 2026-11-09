@@ -126,7 +126,11 @@ remain. Interrupting the command (Ctrl-C) ends the session the same way
 without a further checkpoint; the capture is still written with end reason
 `cancelled`, and the command exits with status 130. Interrupted before the
 application is launched, the command writes no capture and removes the
-content it had retained.
+content it had retained. If cancellation arrives during publication or final
+cleanup, the already-written capture can instead retain its earlier end
+reason. Inspect `capture.json` and the error's `details.partial_observation`
+for the retained capture Evidence. Cleanup failures also report resources
+that could not be released.
 
 If the capture fails for any other reason before `capture.json` is written,
 the application is closed the same way and the content already retained is

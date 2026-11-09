@@ -1,5 +1,10 @@
 # Runtime analysis settings verification
 
+Historical report added in
+[commit f3ed1657f82188fb90914f745a08849537342a23](https://github.com/morluto/rea/commit/f3ed1657f82188fb90914f745a08849537342a23)
+on 2026-10-25. The exact source revisions used for the checks and measurements
+below were not recorded here. This record does not establish current verification.
+
 Verified on macOS with Node 24.22.1, Java 21.0.12.1 and Ghidra 12.1.4.
 This change adds two MCP tools and 11 runtime defaults without a new dependency.
 
