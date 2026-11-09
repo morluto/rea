@@ -1,3 +1,4 @@
+import { applicationFeatureTraceResultSchema } from "../../../src/domain/javascript/javascriptFeatureTraceSchemas.js";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect } from "vitest";
@@ -44,6 +45,35 @@ cliTest(
       )
       .map(({ node_id }) => node_id);
     expect(exportBindingIds).toHaveLength(2);
+    const traceInput = join(root, "trace.json");
+    for (const seed of [
+      { kind: "module", value: "index.js", match: "contains" },
+      { kind: "node-id", value: exportBindingIds[0], match: "exact" },
+    ]) {
+      await writeFile(
+        traceInput,
+        JSON.stringify({ application: evidence, seed }),
+      );
+      const traced = await runFileCli(cli, {
+        arguments: ["trace-application-feature", traceInput, "--json"],
+      });
+      expect(traced.exitCode, traced.stdout + traced.stderr).toBe(0);
+      const trace = applicationFeatureTraceResultSchema.parse(
+        parseEvidence(traced.json).normalized_result,
+      );
+      expect(trace.seed_matches.length).toBeGreaterThan(0);
+      if (seed.kind === "module") {
+        expect(
+          trace.seed_matches.filter((match) =>
+            exportBindingIds.includes(match.node_id),
+          ),
+        ).toEqual([]);
+      } else {
+        expect(trace.seed_matches.map((match) => match.node_id)).toEqual([
+          exportBindingIds[0],
+        ]);
+      }
+    }
     const evidencePath = join(root, "evidence.json");
     await writeFile(evidencePath, JSON.stringify(evidence));
     const queryPath = join(root, "query.json");

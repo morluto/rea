@@ -90,7 +90,8 @@ export const controller = async (
 
 /**
  * Run one `rea` command in the computer with its output in a file under the
- * work folder, after writing the files it reads; the output's size.
+ * work folder, after writing the files it reads. Preserve the exit status and
+ * stderr alongside the output size so callers can diagnose command failures.
  */
 export const runRea = async (
   computer: ControlledComputer,
@@ -99,9 +100,14 @@ export const runRea = async (
     readonly work: string;
     readonly stdout: string;
     readonly files?: Readonly<Record<string, string>>;
+    readonly timeoutS?: number;
     readonly signal: AbortSignal;
   },
-): Promise<number> => {
+): Promise<{
+  readonly stdoutBytes: number;
+  readonly exitCode: number | null;
+  readonly stderr: string;
+}> => {
   const answer = answerSchema.parse(
     await runBuildController(
       computer,
@@ -111,16 +117,20 @@ export const runRea = async (
         argv: [...argv],
         stdout: options.stdout,
         files: { ...options.files },
-        timeout_s: 1800,
+        timeout_s: options.timeoutS ?? 1800,
       },
-      { timeoutS: 1800, signal: options.signal },
+      { timeoutS: options.timeoutS ?? 1800, signal: options.signal },
     ),
   );
   if (answer.exit_code === undefined || answer.stdout_bytes === undefined)
     throw new Error(
       answer.error ?? `rea ${argv[0] ?? ""} did not finish in the computer.`,
     );
-  return answer.stdout_bytes;
+  return {
+    stdoutBytes: answer.stdout_bytes,
+    exitCode: answer.exit_code,
+    stderr: answer.stderr ?? "",
+  };
 };
 
 const listedSchema = z.object({ listing_bytes: z.int().nonnegative() });

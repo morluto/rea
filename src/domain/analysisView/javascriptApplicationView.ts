@@ -1,3 +1,4 @@
+import { isJavaScriptModuleUnit } from "../javascript/javascriptModuleUnits.js";
 import {
   AnalysisInputError,
   type AnalysisInputIssue,
@@ -83,27 +84,12 @@ interface ModuleEntry {
   readonly paths: readonly string[];
 }
 
-/**
- * Exported symbol bindings reuse the `javascript-module` kind but name one
- * export of their owning module, not a module unit.
- */
-const isExportBindingNode = (node: ApplicationNode): boolean =>
-  node.observations.some(
-    ({ properties }) => properties.semantic_role === "export-binding",
-  );
-
-const isModuleNode = (node: ApplicationNode): node is ModuleEntry["node"] =>
-  !isExportBindingNode(node) &&
-  (node.kind === "javascript-asset" ||
-    node.kind === "javascript-module" ||
-    node.kind === "source-module");
-
 /** One owner for the module kinds and path semantics of every module view. */
 function* moduleEntries(
   nodes: readonly ApplicationNode[],
 ): Generator<ModuleEntry> {
   for (const node of nodes) {
-    if (isModuleNode(node)) {
+    if (isJavaScriptModuleUnit(node)) {
       const paths = javascriptModulePaths(node);
       yield { node, path: paths[0] ?? null, paths };
     }
@@ -409,7 +395,7 @@ export const projectJavaScriptApplicationView = (
     // Summary coverage counts modules. Graph nodes that are not modules stay
     // in summary.coverage.application rather than inflating this total.
     const moduleCount = analysis.graph.nodes.reduce(
-      (count, node) => count + Number(isModuleNode(node)),
+      (count, node) => count + Number(isJavaScriptModuleUnit(node)),
       0,
     );
     return ok({
