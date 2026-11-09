@@ -1,6 +1,9 @@
 import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
 import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
-import { readStableArtifact } from "../artifacts/readStableArtifact.js";
+import {
+  type StableArtifactSnapshot,
+  readStableArtifact,
+} from "../artifacts/readStableArtifact.js";
 import {
   artifactFileCancellationCause,
   artifactFilePrimaryFacts,
@@ -58,9 +61,10 @@ export class V8CodeCacheProvider implements V8CodeCachePort {
   }
 
   async inspect(input: InspectV8CodeCacheInput, options?: ExecutionOptions) {
+    let snapshot: StableArtifactSnapshot | undefined;
     try {
       return await this.#resources.run(async () => {
-        const snapshot = await readStableArtifact(
+        snapshot = await readStableArtifact(
           input.path,
           input.max_file_bytes,
           options?.signal,
@@ -80,7 +84,7 @@ export class V8CodeCacheProvider implements V8CodeCachePort {
         );
       });
     } catch (cause) {
-      return err(v8CodeCacheFailure(cause, input));
+      return err(v8CodeCacheFailure(cause, input, snapshot));
     }
   }
 }
@@ -278,7 +282,11 @@ const v8CodeCacheFailurePrimary = (
   );
 };
 
-const v8CodeCacheFailure = (cause: unknown, input: InspectV8CodeCacheInput) => {
+const v8CodeCacheFailure = (
+  cause: unknown,
+  input: InspectV8CodeCacheInput,
+  snapshot?: StableArtifactSnapshot,
+) => {
   const primary = v8CodeCacheFailurePrimary(
     artifactFilePrimaryFacts(cause),
     input,
@@ -289,5 +297,6 @@ const v8CodeCacheFailure = (cause: unknown, input: InspectV8CodeCacheInput) => {
     input.path,
     V8_CODE_CACHE_PROVIDER_IDENTITY.id,
     OPERATION,
+    snapshot,
   );
 };

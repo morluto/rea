@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect } from "vitest";
@@ -95,7 +96,53 @@ cliTest(
     expect(result.exitCode).toBe(1);
     expect(result.json).toMatchObject({
       code: "unsupported_target",
-      details: { operation: "inspect_v8_code_cache" },
+      details: {
+        operation: "inspect_v8_code_cache",
+        partial_observation: {
+          kind: "file-snapshot-hash",
+          path,
+          bytes: foreign.length,
+          sha256: createHash("sha256").update(foreign).digest("hex"),
+        },
+      },
+    });
+  },
+);
+
+cliTest(
+  "retains file identity when a synthetic cache exceeds the string budget",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-v8-budget-");
+    const path = join(root, "synthetic.jsc");
+    const payload = Buffer.from("aaaa\0bbbb");
+    const bytes = Buffer.concat([
+      v8CodeCacheFixture().subarray(0, 32),
+      payload,
+    ]);
+    bytes.writeUInt32LE(payload.length, 20);
+    await writeFile(path, bytes);
+    const result = await cli.run({
+      arguments: [
+        "inspect-v8-code-cache",
+        path,
+        "--max-strings",
+        "1",
+        "--min-string-bytes",
+        "4",
+        "--json",
+      ],
+    });
+    expect(result.exitCode, result.stderr).toBe(1);
+    expect(result.json).toMatchObject({
+      code: "resource_constraint",
+      details: {
+        partial_observation: {
+          kind: "file-snapshot-hash",
+          path,
+          bytes: bytes.length,
+          sha256: createHash("sha256").update(bytes).digest("hex"),
+        },
+      },
     });
   },
 );

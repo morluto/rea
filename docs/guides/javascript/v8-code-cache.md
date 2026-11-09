@@ -58,6 +58,14 @@ marks `vm.compileFunction` (`compile_function`); bit 30 marks `vm.SourceTextModu
 covers `vm.Script` and bytenode output, which carry neither flag. The source-length mask
 is `0x1fffffff`, so both flags sit outside the reported length.
 
+## Failed inspection and provenance
+
+After a stable read completes, format and observation-budget refusals retain a
+`file-snapshot-hash` partial observation with the selected path, exact SHA-256 and
+byte count. This proves which bytes were read; it does not claim the format was
+successfully decoded. A refusal before read completion does not invent an identity.
+Descriptor cleanup remains owned for retry if finalization fails.
+
 ## Embedded byte patterns
 
 `embedded_strings` lists printable runs found in the payload, each with its absolute byte

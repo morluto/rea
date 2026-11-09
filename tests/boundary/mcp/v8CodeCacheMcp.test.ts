@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect } from "vitest";
@@ -124,7 +125,15 @@ mcpTest(
       expect(response.isError).toBe(true);
       expect(parseMcpToolError(response).error).toMatchObject({
         code: "invalid_request",
-        details: { operation: "inspect_v8_code_cache" },
+        details: {
+          operation: "inspect_v8_code_cache",
+          partial_observation: {
+            kind: "file-snapshot-hash",
+            path,
+            bytes: corrupt.length,
+            sha256: createHash("sha256").update(corrupt).digest("hex"),
+          },
+        },
       });
     } finally {
       await session.close();
