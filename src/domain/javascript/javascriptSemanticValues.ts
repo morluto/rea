@@ -42,7 +42,7 @@ import {
   type JavaScriptSemanticAnalysisState,
   type JavaScriptSemanticBindingState,
 } from "./javascriptSemanticState.js";
-import { readSemanticRequireOrigin } from "./javascriptSemanticRequireOriginSlot.js";
+import { readSemanticRequireOriginCandidate } from "./javascriptSemanticRequireOriginSlot.js";
 import { compareUnicodeCodePoints } from "../unicodeCodePointOrder.js";
 import {
   readExactJavaScriptLiteral,
@@ -1230,17 +1230,18 @@ const provenanceForBindingInitializers = (
   } finally {
     context.bindings.delete(binding.bindingId);
   }
-  if (resolved.status !== "module" || initializer.projection.length === 0)
+  if (resolved.origins.length === 0 || initializer.projection.length === 0)
     return resolved;
-  return semanticOriginsProvenance(
-    resolved.origins.map((origin) => ({
-      ...origin,
-      importedPath: [
-        ...origin.importedPath,
-        ...initializer.projection.map((segment) => String(segment)),
-      ],
-    })),
-  );
+  const projected = resolved.origins.map((origin) => ({
+    ...origin,
+    importedPath: [
+      ...origin.importedPath,
+      ...initializer.projection.map((segment) => String(segment)),
+    ],
+  }));
+  return resolved.status === "ambiguous"
+    ? semanticAmbiguousProvenance(projected, resolved.reason)
+    : semanticOriginsProvenance(projected);
 };
 
 const provenanceForExpression = (
@@ -1273,7 +1274,7 @@ const provenanceForExpression = (
       expressionDepth: context.expressionDepth + unwrapped.depth,
     });
   }
-  const required = readSemanticRequireOrigin(node, context.state);
+  const required = readSemanticRequireOriginCandidate(node, context.state);
   if (required !== undefined)
     return semanticOriginsProvenance([required.origin]);
   if (t.isSequenceExpression(node)) {
@@ -1319,14 +1320,14 @@ const provenanceForExpression = (
     }
     const base = provenanceForExpression(current, nestedContext(context));
     const path = members.reverse();
-    return base.status !== "module"
-      ? base
-      : semanticOriginsProvenance(
-          base.origins.map((origin) => ({
-            ...origin,
-            importedPath: [...origin.importedPath, ...path],
-          })),
-        );
+    if (base.origins.length === 0) return base;
+    const projected = base.origins.map((origin) => ({
+      ...origin,
+      importedPath: [...origin.importedPath, ...path],
+    }));
+    return base.status === "ambiguous"
+      ? semanticAmbiguousProvenance(projected, base.reason)
+      : semanticOriginsProvenance(projected);
   }
   if (t.isConditionalExpression(node) || t.isLogicalExpression(node)) {
     const candidates = semanticSelectedBranches(node, context).map((branch) =>
