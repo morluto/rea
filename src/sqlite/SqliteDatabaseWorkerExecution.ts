@@ -37,7 +37,11 @@ import type {
   ProviderProcessStopResult,
 } from "../process/ProviderProcess.js";
 import { capturedSqliteOutput } from "./SqliteDatabaseFailures.js";
-import { SQLITE_DATABASE_LIMITS } from "./SqliteDatabaseLimits.js";
+import {
+  SQLITE_DATABASE_LIMITS,
+  SQLITE_INSPECTION_REASONS,
+  SQLITE_STRUCTURED_INSPECTION_REASONS,
+} from "./SqliteDatabaseLimits.js";
 
 const operation = "inspect_sqlite_database";
 const {
@@ -51,16 +55,9 @@ const replySchema = z.union([
   z.strictObject({ ok: z.literal(true), inspection: inspectionSchema }),
   z.strictObject({
     ok: z.literal(false),
-    reason: z.enum([
-      "format",
-      "selection",
-      "column-selection",
-      "row-evaluation",
-      "unsupported",
-      "unavailable",
-      "output-limit",
-      "memory",
-    ]),
+    reason: z
+      .enum(SQLITE_INSPECTION_REASONS)
+      .exclude(SQLITE_STRUCTURED_INSPECTION_REASONS),
     message: z.string(),
   }),
   z.strictObject({
@@ -94,6 +91,7 @@ const rejectedArgument = {
   unsupported: "path",
   selection: "table",
   "column-selection": "columns",
+  "row-offset": "row_offset",
 } as const;
 
 const rejectedReply = (

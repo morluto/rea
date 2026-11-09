@@ -109,6 +109,8 @@ export class SetupSkillInstallError extends Error {
   readonly reason: string;
   readonly rollbackFailures: readonly SkillInstallRollbackFailure[];
   readonly recoveryBackupPaths: readonly string[];
+  /** All selected files were published and verified before cleanup failed. */
+  readonly completed: boolean;
   readonly cleanupOwners: readonly SkillPublicationCleanupOwner[];
   readonly remediationAction: string;
 
@@ -123,17 +125,20 @@ export class SetupSkillInstallError extends Error {
     readonly reason: string;
     readonly rollbackFailures: readonly SkillInstallRollbackFailure[];
     readonly recoveryBackupPaths: readonly string[];
+    readonly completed?: boolean;
     readonly cleanupOwners?: readonly SkillPublicationCleanupOwner[];
     readonly remediationAction?: string;
     readonly cause: unknown;
   }) {
     const message = [
-      `REA skill ${input.stage} failed at ${input.path}.`,
+      input.completed === true
+        ? "REA skill files were installed and verified, but staging cleanup remains incomplete."
+        : `REA skill ${input.stage} failed at ${input.path}.`,
       `Reason: ${input.reason}`,
       ...(input.rollbackFailures.length === 0
         ? []
         : [
-            `Rollback also failed for ${input.rollbackFailures.map(({ path, reason }) => `${path} (${reason})`).join(", ")}.`,
+            `${input.completed === true ? "Cleanup" : "Rollback"} also failed for ${input.rollbackFailures.map(({ path, reason }) => `${path} (${reason})`).join(", ")}.`,
           ]),
       ...(input.recoveryBackupPaths.length === 0
         ? []
@@ -147,10 +152,13 @@ export class SetupSkillInstallError extends Error {
     this.reason = input.reason;
     this.rollbackFailures = input.rollbackFailures;
     this.recoveryBackupPaths = input.recoveryBackupPaths;
+    this.completed = input.completed ?? false;
     this.cleanupOwners = input.cleanupOwners ?? [];
     this.remediationAction =
       input.remediationAction ??
-      "Correct the reported skill installation failure and rerun setup.";
+      (input.completed === true
+        ? "Resolve the reported retained staging cleanup before continuing; the skill files were already installed and verified."
+        : "Correct the reported skill installation failure and rerun setup.");
   }
 
   get remediation(): string {
@@ -699,6 +707,7 @@ export const installCanonicalSkill = async (
     rollbackFailures.push(
       ...(await closeSkillPublications(cleanupOwners, resources)),
     );
+    if (verified && rollbackFailures.length === 0) return ok("installed");
     return err(
       new SetupSkillInstallError({
         path: failingPath,
@@ -706,6 +715,7 @@ export const installCanonicalSkill = async (
         reason: causeReason(cause),
         rollbackFailures,
         recoveryBackupPaths: [...recoveryPaths.values()],
+        completed: verified,
         cleanupOwners,
         cause,
       }),

@@ -182,7 +182,8 @@ does not establish another instance.
   whether applicable static relationships could have been missed by discovery;
   missing discovery is unknown. Preserve paths supported by observed edges,
   and qualify negative and shortest-path claims by discovery scope. Missing
-  relationship coverage remains `unknown`.
+  relationship coverage remains `unknown`. Computed candidates and unestablished incoming targets qualify directional discovery; they do not by themselves mean that recorded edges were omitted.
+  :docs/development/tool-design.md
 - Declare process, filesystem, network, UI, and mutation effects truthfully;
   enforce the requested target and lifecycle.
 - Add limits only for real format, protocol, authority, or measured resource

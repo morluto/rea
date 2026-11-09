@@ -8,17 +8,22 @@ import type {
 } from "../../domain/desktop/appExport.js";
 import type { TaskFileView } from "../../domain/desktop/appTaskChecks.js";
 import {
+  compressionOf,
+  openStateDocument,
+} from "../../domain/desktop/gzipDocument.js";
+import {
   identityLeftIn,
   type HostIdentity,
 } from "../../domain/desktop/hostIdentity.js";
 import { scrubSeed } from "../../domain/desktop/seedScrub.js";
 import {
-  detectStateFormat,
   isTextualFormat,
   textualView,
 } from "../../domain/desktop/stateFormats.js";
+import { err } from "../../domain/result.js";
 import { refuse } from "./DesktopExportInstall.js";
 import type { RetainedContent } from "./DesktopRetainedContent.js";
+import { readZipView } from "./DesktopZipView.js";
 
 /** A file the export writes from bytes it made. */
 export interface GeneratedFile {
@@ -90,8 +95,8 @@ const retainedBytes = async (
 };
 
 /**
- * The view of each text seed the scrub rewrites, as the bundle ships it, for
- * a task's checks on the seed: the computer starts from these bytes.
+ * The view of each rewritten seed, including a formerly unreadable gzip
+ * seed, as the bundle ships it: the computer starts from these bytes.
  */
 export const shippedSeedViews = async (
   content: RetainedContent,
@@ -102,20 +107,31 @@ export const shippedSeedViews = async (
   const views = new Map<string, TaskFileView>();
   for (const copy of copies) {
     const seed = copy.seed;
-    if (seed === undefined || !isTextualFormat(seed.format)) continue;
+    if (
+      seed === undefined ||
+      (seed.format !== null && !isTextualFormat(seed.format))
+    )
+      continue;
     const bytes = await retainedBytes(content, copy, signal);
     const shipped = scrubSeed(bytes, seed, identity).bytes;
     if (shipped === undefined) continue;
-    const format = detectStateFormat(seed.home, shipped);
-    const view = isTextualFormat(format)
-      ? textualView(format, shipped)
-      : undefined;
-    views.set(
-      seed.home,
-      view === undefined || view.ok
-        ? { format, view: view?.value ?? null }
-        : { format, view: null, error: view.error },
-    );
+    const document = openStateDocument(seed.home, shipped);
+    const { format } = document;
+    const view =
+      "error" in document
+        ? err(document.error)
+        : format === "zip"
+          ? await readZipView(document.bytes, signal)
+          : isTextualFormat(format)
+            ? textualView(format, document.bytes)
+            : undefined;
+    views.set(seed.home, {
+      format,
+      ...compressionOf(document),
+      ...(view === undefined || view.ok
+        ? { view: view?.value ?? null }
+        : { view: null, error: view.error }),
+    });
   }
   return views;
 };
@@ -123,8 +139,10 @@ export const shippedSeedViews = async (
 /**
  * Write the generated files, then each retained file as it is read, so one at
  * a time is in memory: a seed whose text names the capture host becomes a
- * generated file with its own digest. The README follows, listing them. Every
- * file is listed as unscrubbed whose path or content still holds the identity.
+ * generated file with its own digest, and a gzip seed whose document did not
+ * change is listed apart as recompressed. The README follows, listing them.
+ * Every file is listed as unscrubbed whose path or content still holds the
+ * identity.
  */
 export const writeFiles = async (
   tree: SafeOutputTree,
@@ -133,6 +151,7 @@ export const writeFiles = async (
   signal: AbortSignal | undefined,
 ): Promise<SeedScrubReport> => {
   const scrubbed: string[] = [];
+  const recompressed: string[] = [];
   const unscrubbed: string[] = [];
   const write = async (
     path: string,
@@ -173,10 +192,12 @@ export const writeFiles = async (
     if (scrub?.bytes === undefined)
       await write(copy.path, bytes, { sha256: copy.digest, holdsIdentity });
     else {
-      scrubbed.push(copy.path);
+      (scrub.recompressed === true ? recompressed : scrubbed).push(copy.path);
       await write(copy.path, scrub.bytes, { holdsIdentity });
     }
   }
-  await generated(bundle.readme({ scrubbed, unscrubbed: [...unscrubbed] }));
-  return { scrubbed, unscrubbed };
+  await generated(
+    bundle.readme({ scrubbed, recompressed, unscrubbed: [...unscrubbed] }),
+  );
+  return { scrubbed, recompressed, unscrubbed };
 };

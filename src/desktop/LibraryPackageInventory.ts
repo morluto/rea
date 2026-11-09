@@ -80,21 +80,38 @@ const packageOwners = async (
   paths: readonly string[],
   runQuery: QueryRunner,
   signal: AbortSignal | undefined,
-): Promise<Result<ReadonlyMap<string, readonly string[]>, string>> => {
+): Promise<
+  Result<
+    ReadonlyMap<string, readonly string[]>,
+    {
+      readonly owners: ReadonlyMap<string, readonly string[]>;
+      readonly reason: string;
+    }
+  >
+> => {
   // dpkg-query reads an argument with glob characters as a pattern.
-  const literal = paths.filter((path) => !/[*?[\\]/u.test(path));
+  const unique = [...new Set(paths)];
+  const literal = unique.filter((path) => !/[*?[\\]/u.test(path));
   const owners = new Map<string, readonly string[]>();
+  const incomplete = (reason: string) => err({ owners, reason });
   for (let start = 0; start < literal.length; start += QUERY_BATCH) {
     const batch = literal.slice(start, start + QUERY_BATCH);
     const outcome = await runQuery("dpkg-query", ["-S", ...batch], signal);
-    if (outcome === "missing") return err("dpkg-query is not installed");
-    if (outcome === "failed") return err("dpkg-query -S did not finish");
-    for (const path of batch) {
-      const names = parseDpkgOwners(outcome.stdout, path);
-      if (names.length > 0) owners.set(path, names);
-    }
+    if (outcome === "missing") return incomplete("dpkg-query is not installed");
+    if (outcome === "failed") return incomplete("dpkg-query -S did not finish");
+    // Exit 1 identifies unowned paths; a higher exit code answers none of the batch.
+    if (outcome.exitCode > 1)
+      return incomplete(
+        "dpkg-query could not say which packages own the libraries",
+      );
+    for (const path of batch)
+      owners.set(path, parseDpkgOwners(outcome.stdout, path));
   }
-  return ok(owners);
+  return literal.length === unique.length
+    ? ok(owners)
+    : incomplete(
+        "dpkg-query cannot safely query library paths containing pattern characters",
+      );
 };
 
 const incompleteReason = (
@@ -163,23 +180,32 @@ export const inspectLibraryPackages = async (
     runQuery,
     signal,
   );
-  if (!owners.ok)
-    return { ...none(owners.error), missing_libraries: [...closure.missing] };
+  const knownOwners = owners.ok ? owners.value : owners.error.owners;
   const names: string[] = [];
   const unpackaged: string[] = [];
+  let ownershipUnresolved = false;
   for (const library of located) {
     const found = library.candidates
-      .map((candidate) => owners.value.get(candidate))
-      .find((owner) => owner !== undefined);
-    if (found === undefined) unpackaged.push(library.path);
-    else names.push(...found);
+      .map((candidate) => knownOwners.get(candidate))
+      .find((owner) => owner !== undefined && owner.length > 0);
+    if (found !== undefined) names.push(...found);
+    else if (
+      library.candidates.every((candidate) => knownOwners.has(candidate))
+    )
+      unpackaged.push(library.path);
+    else ownershipUnresolved = true;
   }
-  const reason = incompleteReason(closure);
+  const reason = [
+    incompleteReason(closure),
+    owners.ok || !ownershipUnresolved ? undefined : owners.error.reason,
+  ]
+    .filter((value): value is string => value !== undefined)
+    .join("; ");
   return {
     library_packages: [...libraryPackageNames(names, ownPackage)],
     missing_libraries: [...closure.missing].sort(),
     unpackaged_libraries: unpackaged.sort(),
-    ...(reason === undefined ? {} : { library_packages_reason: reason }),
+    ...(reason.length === 0 ? {} : { library_packages_reason: reason }),
   };
 };
 
