@@ -393,6 +393,32 @@ describe("captured RT-Spark image", () => {
     expect(
       report.hardwareClaims.find((claim) => claim.subject === "Reset"),
     ).toMatchObject({ rule: "architecture-register", settled: true });
+    expect(
+      report.hardwareClaims.find(
+        (claim) => claim.subject === "TIM3" && claim.source === "0x08012ef0",
+      ),
+    ).toMatchObject({ basis: "chip_manual" });
+    expect(
+      report.hardwareClaims.find(
+        (claim) => claim.subject === "SDIO" && claim.source === "0x0805fb44",
+      ),
+    ).toMatchObject({ basis: "chip_manual" });
+    expect(
+      report.hardwareClaims.find(
+        (claim) => claim.subject === "RTC" && claim.source === "0x0806466c",
+      ),
+    ).toMatchObject({ basis: "chip_manual" });
+    expect(
+      report.hardwareClaims.find(
+        (claim) => claim.subject === "GPIOI" && claim.source === "0x0800e2de",
+      ),
+    ).toMatchObject({ basis: "chip_manual" });
+    expect(
+      report.hardwareClaims.filter(
+        (claim) =>
+          claim.subject === "ADC1_3" && claim.rule === "chip-manual-name",
+      ),
+    ).toHaveLength(3);
   });
 });
 
