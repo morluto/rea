@@ -270,6 +270,32 @@ it("accepts an FDE with a zero LSDA under a CIE that declares an LSDA encoding",
   });
 });
 
+it("accepts a null personality stored under an indirect encoding", async () => {
+  const value = parsed(elfUnwindFixture({ nullPersonality: true }));
+  expect(value.cies[1]?.personality).toMatchObject({
+    address: "0x0",
+    indirect: false,
+    encoding: { raw: 0x9b },
+  });
+  const result = await accept(value);
+  expect(result.ok).toBe(true);
+  if (!result.ok) throw result.error;
+  expect(result.value.normalized_result).toMatchObject({
+    ranges: [{ personality: null }, { personality: { address: "0x0" } }],
+  });
+});
+
+it("rejects a direct personality reported as indirect", async () => {
+  const value = parsed(elfUnwindFixture({ nullPersonality: true }));
+  const cie = value.cies[1];
+  if (cie?.personality == null) throw new Error("fixture has no personality");
+  cie.personality.encoding = { raw: 0x1b, name: "pcrel|sdata4" };
+  cie.personality.indirect = true;
+  const result = await accept(value);
+  expect(result.ok).toBe(false);
+  if (!result.ok) expect(result.error).toBeInstanceOf(AnalysisOutputError);
+});
+
 it.each([
   [
     "symbol totals",

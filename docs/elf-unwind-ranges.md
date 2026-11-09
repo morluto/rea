@@ -35,8 +35,10 @@ examined. A `.eh_frame` section that is `SHT_NOBITS` or lies outside the file
 is `incomplete` with a null `location`. One that runs past the end of the
 file is `incomplete`, `location` is clamped to its in-file bytes, and the
 records in those bytes are still decoded. Only the first `.eh_frame` and
-`.eh_frame_hdr` section is decoded. A duplicate section keeps
-`coverage.status` at `incomplete`.
+`.eh_frame_hdr` section is decoded, and only the first `PT_GNU_EH_FRAME`
+program header. A duplicate section, or a duplicate `PT_GNU_EH_FRAME` when no
+`.eh_frame_hdr` section supplies the header, keeps `coverage.status` at
+`incomplete`.
 
 `eh_frame_hdr` reports version, the three pointer encodings, the `.eh_frame`
 pointer, the declared FDE count, and how many binary-search table entries
@@ -98,7 +100,10 @@ FDEs are not decoded either. A limitation counts those FDEs and coverage is
 the containing `SHF_ALLOC` section, an exact symbol name when a symbol starts
 at that address, the CIE index, LSDA, and personality. Symbol names, section names,
 and augmentation strings are target-derived and untrusted. Indirect EH
-pointers are not dereferenced.
+pointers are not dereferenced. An FDE whose initial location is indirect names
+a pointer slot, not its function, so it is not reported as a range; a
+limitation counts those FDEs and coverage is `incomplete`. An indirect
+`eh_frame_ptr` does not locate `.eh_frame`, and the header is `incomplete`.
 
 An encoded pointer whose stored value is zero is a null pointer, as libgcc
 reads it: no PC-relative, text, data, or function base is added and an
@@ -132,7 +137,8 @@ was decoded, the scan stops after the last FDE the table names, as libgcc's
 `PT_GNU_EH_FRAME` lookup only binary-searches that table. Later bytes are not
 decoded and a limitation says so. Without a usable table, the scan stops at
 the first record that fails to decode, as libgcc's linear FDE search does,
-and `coverage.status` is `incomplete`. Reaching the end of the segment with
+and `coverage.status` is `incomplete`. A CIE with an unrecognized
+augmentation letter, or an FDE that uses one, also stops that scan. Reaching the end of the segment with
 no terminator also keeps coverage `incomplete`, because the table's extent is
 then unknown.
 
@@ -150,7 +156,10 @@ The selected file is limited to 64 MiB by default (512 MiB maximum).
 separately to CIE records and to FDEs. Exceeding either budget fails without
 partial success. One page returns at most 4096 ranges. Symbol lookup stops
 after 65536 entries across `.symtab` and `.dynsym` combined. Reaching that
-cap keeps `coverage.status` at `incomplete`.
+cap keeps `coverage.status` at `incomplete`. Only symbols at decoded FDE
+starts are kept, and a name is decoded only for a returned range. The names
+on one page share a fixed 16 MiB text allowance; a page that exceeds it fails,
+and a smaller `limit` avoids it.
 
 Malformed ELF headers fail without partial success. This workflow does not
 execute the image, evaluate CFA programs, or follow indirect pointers.

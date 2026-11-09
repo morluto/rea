@@ -5,11 +5,13 @@ import { readElfSymbol } from "../../domain/elfSymbol.js";
 import {
   elfStringTableText,
   observeElfStringTableEntry,
+  type ElfStringTableObservation,
 } from "../../domain/elfStringTable.js";
 import { elfObjectTypeName } from "../../domain/native/elfNotes.js";
 import {
   ELF_UNWIND_LIMITATIONS,
   elfEhPointerEncodingName,
+  MAX_ELF_UNWIND_SYMBOL_TEXT_BYTES,
   MAX_ELF_UNWIND_SYMBOLS,
   type ElfUnwindRanges,
   type InspectElfUnwindRangesInput,
@@ -67,6 +69,14 @@ const UNBOUNDED_STOPPED =
   "The .eh_frame located only through the .eh_frame_hdr eh_frame_ptr has no section bounds or usable search table, so decoding stopped at the first record that failed to decode.";
 const UNBOUNDED_UNTERMINATED =
   "The .eh_frame located only through the .eh_frame_hdr eh_frame_ptr has no section bounds, usable search table or terminator before the end of its PT_LOAD segment, so its extent is unknown.";
+
+/** Counted note for FDEs skipped because their initial location is indirect. */
+const indirectFdeLimitation = (count: number): string =>
+  count === 1
+    ? "1 FDE has an indirect initial location that was not dereferenced; its function start is unknown and it was skipped."
+    : `${String(count)} FDEs have indirect initial locations that were not dereferenced; their function starts are unknown and they were skipped.`;
+const INDIRECT_FRAME_POINTER =
+  "The .eh_frame_hdr eh_frame_ptr is indirect and was not dereferenced, so it does not locate .eh_frame.";
 
 const POINTER_MISMATCH =
   "The .eh_frame_hdr eh_frame_ptr does not match the .eh_frame section address.";
@@ -250,9 +260,10 @@ export const parseElfUnwindRanges = (
   const loads = directory.programs.flatMap((program) =>
     program.type === 1 ? [programSpan(program)] : [],
   );
-  const gnu = directory.programs.flatMap((program) =>
+  const gnuHeaders = directory.programs.flatMap((program) =>
     program.type === ELF_PT_GNU_EH_FRAME ? [programSpan(program)] : [],
-  )[0];
+  );
+  const gnu = gnuHeaders[0];
 
   const named = (name: string): NativeSection[] =>
     directory.sections.filter((section) => section.name === name);
@@ -267,6 +278,12 @@ export const parseElfUnwindRanges = (
   if (hdrSections.length > 1)
     fail(
       "Multiple .eh_frame_hdr sections were declared; only the first was decoded.",
+    );
+  // Only the first PT_GNU_EH_FRAME is read. Its duplicates matter only when
+  // no .eh_frame_hdr section supplies the header instead.
+  if (gnuHeaders.length > 1 && hdrSections.length === 0)
+    fail(
+      "Multiple PT_GNU_EH_FRAME program headers were declared; only the first was decoded.",
     );
 
   const debugSection = debugSections[0];
@@ -727,6 +744,7 @@ export const parseElfUnwindRanges = (
   let cieRecords = 0;
   let fdeRecords = 0;
   let discarded = 0;
+  let indirectFdes = 0;
   const budget = (kind: "CIE" | "FDE"): void => {
     throw new ArtifactReaderFailure(
       "limit",
@@ -818,8 +836,12 @@ export const parseElfUnwindRanges = (
           textrel: textBaseAddress,
           fail,
         });
-        if (cie === "unknown-augmentation") rejectedCies.add(recordStart);
-        else if (cie === null) undecoded = true;
+        // A rejected CIE also ends an unbounded scan: libgcc rejects the
+        // whole table at an unrecognized augmentation.
+        if (cie === "unknown-augmentation") {
+          rejectedCies.add(recordStart);
+          undecoded = true;
+        } else if (cie === null) undecoded = true;
         else {
           const stored = { ...cie, index: cies.length };
           cies.push(stored);
@@ -852,11 +874,14 @@ export const parseElfUnwindRanges = (
                   addressBits: bits,
                   fail,
                 });
-          if (rejected) rejectedFdes += 1;
-          else if (cie === undefined) {
+          if (rejected) {
+            rejectedFdes += 1;
+            undecoded = true;
+          } else if (cie === undefined) {
             fail("An FDE referenced a CIE that was not decoded.");
             undecoded = true;
           } else if (decoded === "discarded") discarded += 1;
+          else if (decoded === "indirect") indirectFdes += 1;
           else if (decoded === null) undecoded = true;
           else ranges.push({ ...decoded, index: ranges.length });
         }
@@ -872,6 +897,7 @@ export const parseElfUnwindRanges = (
       fail(UNBOUNDED_UNTERMINATED);
     if (frameClamped) frameStatus = "incomplete";
     if (discarded > 0) note(discardedLimitation(discarded));
+    if (indirectFdes > 0) fail(indirectFdeLimitation(indirectFdes));
     if (rejectedFdes > 0) fail(unknownAugmentationLimitation(rejectedFdes));
     if (datarelMissing) fail(DATAREL_UNRESOLVED);
     else if (datarelUsed && gotBase !== null)
@@ -886,7 +912,13 @@ export const parseElfUnwindRanges = (
     }
   }
 
-  const symbols = scanSymbols(bytes, directory, signal, fail);
+  const symbols = scanSymbols(
+    bytes,
+    directory,
+    new Set(ranges.map((range) => range.startValue)),
+    signal,
+    fail,
+  );
   const relocatable = directory.elf_type === 1;
   if (relocatable)
     fail(
@@ -902,11 +934,20 @@ export const parseElfUnwindRanges = (
   const containingSection = zeroAddresses
     ? null
     : containingSectionIndex(directory.sections);
-  const placed = ranges.map((range, index) => {
+  const withSymbols = ranges.filter((range) =>
+    symbols.has(range.startValue),
+  ).length;
+  const decodeName = symbolNameDecoder();
+  // Names are decoded only for the returned page.
+  const pageRows = (
+    input.offset >= ranges.length
+      ? []
+      : ranges.slice(input.offset, input.offset + input.limit)
+  ).map((range) => {
     const symbol = symbols.get(range.startValue);
     const section = containingSection?.(range.startValue) ?? null;
     return {
-      index,
+      index: range.index,
       start: range.start,
       end: range.end,
       size: range.size,
@@ -919,21 +960,16 @@ export const parseElfUnwindRanges = (
       symbol:
         symbol === undefined
           ? null
-          : { text: symbol, trust: "untrusted" as const },
+          : { text: decodeName(symbol), trust: "untrusted" as const },
       cie_index: range.cie_index,
       lsda: range.lsda,
       personality: range.personality,
       location: range.location,
     };
   });
-  const withSymbols = placed.filter((range) => range.symbol !== null).length;
-  const pageRows =
-    input.offset >= placed.length
-      ? []
-      : placed.slice(input.offset, input.offset + input.limit);
   const pageCieIndexes = new Set(pageRows.map((range) => range.cie_index));
   const pageCies = cies.filter((cie) => pageCieIndexes.has(cie.index));
-  const agreement = headerAgreement(header, placed, ehSection?.address, note);
+  const agreement = headerAgreement(header, ranges, ehSection?.address, note);
 
   if (header.status === "absent" && frameStatus !== "unknown")
     note(HEADER_ABSENT);
@@ -989,18 +1025,18 @@ export const parseElfUnwindRanges = (
       offset: input.offset,
       limit: input.limit,
       returned: pageRows.length,
-      total: placed.length,
+      total: ranges.length,
       next_offset:
-        input.offset + pageRows.length >= placed.length
+        input.offset + pageRows.length >= ranges.length
           ? null
           : input.offset + pageRows.length,
     },
     coverage: {
       status: incomplete ? "incomplete" : "complete",
-      total_ranges: placed.length,
+      total_ranges: ranges.length,
       total_cies: cies.length,
       ranges_with_symbols: withSymbols,
-      ranges_without_symbols: placed.length - withSymbols,
+      ranges_without_symbols: ranges.length - withSymbols,
       eh_frame_hdr_agreement: agreement,
       examined_records: examined,
     },
@@ -1168,6 +1204,12 @@ const decodeHeader = (
   });
   if (pointer === null || pointer === "omit") {
     fail(".eh_frame_hdr eh_frame_ptr could not be decoded.");
+    return { ...base, version };
+  }
+  // An indirect eh_frame_ptr names a pointer slot, not .eh_frame, and is not
+  // followed, so it locates nothing.
+  if (pointer.indirect) {
+    fail(INDIRECT_FRAME_POINTER);
     return { ...base, version };
   }
   // GNU ld writes omitted count and table encodings when it cannot build the
@@ -1524,6 +1566,7 @@ const decodeFde = (args: {
 }):
   | Omit<FunctionRange, "index" | "section" | "symbol">
   | "discarded"
+  | "indirect"
   | null => {
   const {
     recordStart,
@@ -1553,6 +1596,9 @@ const decodeFde = (args: {
   // A zero initial location marks an FDE whose function the linker discarded
   // (libgcc skips these); it does not name a function.
   if (start.address === 0n) return "discarded";
+  // An indirect initial location is the address of a pointer slot. The slot
+  // is not followed, so the function start is unknown.
+  if (start.indirect) return "indirect";
   // address_range uses only the value format. It is not PC-relative.
   const length = readEncoded(
     start.next,
@@ -1627,15 +1673,25 @@ const decodeFde = (args: {
   };
 };
 
+/** A readable, non-empty symbol name still held as string-table bytes. */
+type SymbolName = Extract<ElfStringTableObservation, { state: "terminated" }>;
+
+/**
+ * Exact-start symbol names for the FDE starts in `wanted`. Each name stays a
+ * view of the string table: text is decoded later, only for returned rows.
+ * Observations are cached per table and name offset, so a name shared by many
+ * symbols is scanned once and decoded at most once.
+ */
 const scanSymbols = (
   bytes: Buffer,
   directory: ReturnType<typeof readElfDirectoryFromBuffer>,
+  wanted: ReadonlySet<bigint>,
   signal: AbortSignal | undefined,
   fail: (text: string) => void,
-): Map<bigint, string> => {
+): Map<bigint, SymbolName> => {
   const found = new Map<
     bigint,
-    { readonly name: string; readonly score: number }
+    { readonly name: SymbolName; readonly score: number }
   >();
   const tables = directory.sections.filter(
     (section) => section.type === SHT_SYMTAB || section.type === SHT_DYNSYM,
@@ -1681,6 +1737,8 @@ const scanSymbols = (
           )
         : null;
     if (stringBytes === null) fail("A symbol string table could not be read.");
+    // Observation per string-table offset; null when the name is unreadable.
+    const names = new Map<number, SymbolName | null>();
     for (let index = 0; index < count; index += 1) {
       assertArtifactReadActive(signal);
       const parsed = readElfSymbol(
@@ -1705,27 +1763,55 @@ const scanSymbols = (
         const owner = byIndex.get(symbol.section_index);
         if (owner !== undefined) address += owner.address;
       }
-      if (stringBytes === null) continue;
-      const observed = observeElfStringTableEntry(
-        stringBytes,
-        symbol.name_offset,
-        65536,
-      );
-      const text = elfStringTableText(observed);
-      if (observed.state !== "terminated" || text === null) {
+      // Only a symbol at a decoded FDE start can name a range.
+      if (stringBytes === null || !wanted.has(address)) continue;
+      let name = names.get(symbol.name_offset);
+      if (name === undefined) {
+        const observed = observeElfStringTableEntry(
+          stringBytes,
+          symbol.name_offset,
+          65536,
+        );
+        name = observed.state === "terminated" ? observed : null;
+        names.set(symbol.name_offset, name);
+      }
+      if (name === null) {
         fail("A symbol name could not be read.");
         continue;
       }
-      if (text.length === 0) continue;
+      if (name.contentBytes === 0) continue;
       const score =
         (symbol.type === STT_FUNC ? 2 : 0) +
         (table.type === SHT_SYMTAB ? 1 : 0);
       const previous = found.get(address);
       if (previous === undefined || score > previous.score)
-        found.set(address, { name: text, score });
+        found.set(address, { name, score });
     }
   }
   return new Map([...found].map(([address, item]) => [address, item.name]));
+};
+
+/**
+ * Decode returned symbol names once each, charging their text against a fixed
+ * allowance before converting it.
+ */
+const symbolNameDecoder = (): ((name: SymbolName) => string) => {
+  const decoded = new Map<SymbolName, string>();
+  let charged = 0;
+  return (name) => {
+    const cached = decoded.get(name);
+    if (cached !== undefined) return cached;
+    charged += name.contentBytes;
+    if (charged > MAX_ELF_UNWIND_SYMBOL_TEXT_BYTES)
+      throw new ArtifactReaderFailure(
+        "limit",
+        `ELF unwind symbol names on this page exceed the ${String(MAX_ELF_UNWIND_SYMBOL_TEXT_BYTES)}-byte retained-text allowance; request a smaller limit.`,
+        { boundary: "capacity" },
+      );
+    const text = elfStringTableText(name) ?? "";
+    decoded.set(name, text);
+    return text;
+  };
 };
 
 /**

@@ -252,8 +252,20 @@ const cieEncodingsOk = (cie: ElfUnwindRanges["cies"][number]): boolean =>
   encodingOk(cie.lsda_encoding) &&
   (cie.personality === null ||
     (encodingOk(cie.personality.encoding) &&
-      cie.personality.indirect ===
-        ((cie.personality.encoding.raw & 0x80) !== 0)));
+      personalityIndirectOk(cie.personality)));
+
+/**
+ * Only an indirect encoding yields an indirect personality, but a raw zero is
+ * a null pointer the decoder never dereferences, so it stays direct.
+ */
+const personalityIndirectOk = (
+  personality: NonNullable<ElfUnwindRanges["cies"][number]["personality"]>,
+): boolean => {
+  const indirectEncoding = (personality.encoding.raw & 0x80) !== 0;
+  return personality.indirect
+    ? indirectEncoding
+    : !indirectEncoding || personality.address === "0x0";
+};
 
 /** `end` is `start + size` wrapped at the ELF address width, as libgcc computes it. */
 const addressSpan = (

@@ -94,6 +94,18 @@ export interface ElfUnwindFixtureOptions {
   readonly unsignedPcrel?: { readonly size?: number };
   /** Append this many `zR` CIEs that no FDE references, before the terminator. */
   readonly extraCies?: number;
+  /**
+   * First CIE uses `indirect|pcrel|sdata4`, so the first FDE initial location
+   * names a pointer slot rather than its function.
+   */
+  readonly indirectStart?: boolean;
+  /** Second CIE stores a raw zero `indirect|pcrel|sdata4` personality. */
+  readonly nullPersonality?: boolean;
+  /**
+   * `.symtab` holds `symbols` entries at distinct addresses, the first at
+   * `UNWIND_FN_A`, all naming one `bytes`-byte string.
+   */
+  readonly sharedName?: { readonly symbols: number; readonly bytes: number };
 }
 
 class Writer {
@@ -241,6 +253,18 @@ interface BuiltFrame {
   readonly fdeOffsets: readonly number[];
 }
 
+/** The first CIE's `R` encoding for the selected frame options. */
+const firstPointerEncoding = (options: {
+  readonly datarelBase?: number;
+  readonly indirectStart?: boolean;
+  readonly unsignedPcrel?: { readonly bits: 32 | 64 };
+}): number => {
+  if (options.unsignedPcrel !== undefined)
+    return options.unsignedPcrel.bits === 64 ? 0x14 : 0x13;
+  if (options.datarelBase !== undefined) return 0x3b;
+  return options.indirectStart === true ? 0x9b : 0x1b;
+};
+
 /** Two CIEs (`zRS` and `zPLRB`) and two pcrel/sdata4 FDEs, then a terminator. */
 const buildUnwindFrame = (
   ehVa: number,
@@ -261,6 +285,8 @@ const buildUnwindFrame = (
       readonly bits: 32 | 64;
       readonly size?: number;
     };
+    readonly indirectStart?: boolean;
+    readonly nullPersonality?: boolean;
   },
 ): BuiltFrame => {
   const w = new Writer(little);
@@ -304,15 +330,7 @@ const buildUnwindFrame = (
   else w.u8(16);
   w.uleb(unknown ? 2 : 1);
   if (unknown) w.u8(0);
-  w.u8(
-    unsigned !== undefined
-      ? unsigned.bits === 64
-        ? 0x14
-        : 0x13
-      : options.datarelBase === undefined
-        ? 0x1b
-        : 0x3b,
-  );
+  w.u8(firstPointerEncoding(options));
   w.u8(0);
   end(cie0);
 
@@ -357,7 +375,8 @@ const buildUnwindFrame = (
     w.u8(17);
     w.uleb(7);
     w.u8(0x9b);
-    pcrel(UNWIND_PERSONALITY);
+    if (options.nullPersonality === true) w.i32(0);
+    else pcrel(UNWIND_PERSONALITY);
     w.u8(0x1b);
     w.u8(0x1b);
     w.u8(0);
@@ -498,6 +517,36 @@ const buildSymbolTable = (
   writeSymbol(1, 1, 0x12, 1, UNWIND_FN_A, UNWIND_FN_A_SIZE);
   writeSymbol(2, 7, 0x12, 1, UNWIND_FN_A + 4, 1);
   writeSymbol(3, 11, 0x11, 1, UNWIND_FN_A, UNWIND_FN_A_SIZE);
+  return { symbols, strings };
+};
+
+/** Function symbols at distinct addresses from `UNWIND_FN_A`, all one name. */
+const buildSharedNameSymbolTable = (
+  bits: 32 | 64,
+  little: boolean,
+  shared: { readonly symbols: number; readonly bytes: number },
+): { readonly symbols: Buffer; readonly strings: Buffer } => {
+  const strings = Buffer.concat([
+    Buffer.from([0]),
+    Buffer.alloc(shared.bytes, "n"),
+    Buffer.from([0]),
+  ]);
+  const width = bits === 64 ? 24 : 16;
+  const symbols = Buffer.alloc(width * (shared.symbols + 1));
+  for (let index = 1; index <= shared.symbols; index += 1) {
+    const at = index * width;
+    const value = UNWIND_FN_A + (index - 1) * 2;
+    write32(symbols, at, 1, little);
+    if (bits === 64) {
+      symbols[at + 4] = 0x12;
+      write16(symbols, at + 6, 1, little);
+      writeWord(symbols, at + 8, value, bits, little);
+    } else {
+      writeWord(symbols, at + 4, value, bits, little);
+      symbols[at + 12] = 0x12;
+      write16(symbols, at + 14, 1, little);
+    }
+  }
   return { symbols, strings };
 };
 
@@ -673,6 +722,8 @@ export const elfUnwindFixture = (
         discardedFde: options.discardedFde ?? false,
         unknownAugmentation: options.unknownAugmentation ?? false,
         extraCies: options.extraCies ?? 0,
+        indirectStart: options.indirectStart ?? false,
+        nullPersonality: options.nullPersonality ?? false,
         ...(options.unsignedPcrel === undefined
           ? {}
           : { unsignedPcrel: { ...options.unsignedPcrel, bits } }),
@@ -692,7 +743,9 @@ export const elfUnwindFixture = (
   const symbols =
     (options.symbolSource ?? "symtab") === "none" || options.symbolCap === true
       ? null
-      : buildSymbolTable(bits, little);
+      : options.sharedName !== undefined
+        ? buildSharedNameSymbolTable(bits, little, options.sharedName)
+        : buildSymbolTable(bits, little);
   const debug =
     options.debugFrame === false || !unwind ? null : Buffer.alloc(4);
   const sections: SectionSpec[] = [
@@ -910,20 +963,24 @@ const sectionlessNamedSections = (
  * `unterminated` drops the `.eh_frame` terminator and appends bytes that are
  * not in the search table: a well-formed FDE for `UNWIND_FN_B`
  * (`"decodable"`), or an FDE whose CIE pointer names the first FDE followed
- * by that well-formed FDE (`"undecodable"`). `emptyTable` declares no
- * search-table rows.
+ * by that well-formed FDE (`"undecodable"`), or a CIE with an unrecognized
+ * augmentation letter followed by that well-formed FDE (`"rejected-cie"`).
+ * `emptyTable` declares no search-table rows. `duplicateProgramHeader`
+ * declares a second PT_GNU_EH_FRAME naming the same bytes.
  */
 export const elfUnwindSectionlessFixture = (
   options: {
     readonly sections?: ".eh_frame" | ".eh_frame_hdr";
     readonly nonAllocOverlay?: boolean;
-    readonly unterminated?: "decodable" | "undecodable";
+    readonly unterminated?: "decodable" | "undecodable" | "rejected-cie";
     readonly emptyTable?: boolean;
+    readonly duplicateProgramHeader?: boolean;
   } = {},
 ): Buffer => {
   const little = true;
   const bits = 64 as const;
-  const ehOff = 176;
+  const phnum = options.duplicateProgramHeader === true ? 3 : 2;
+  const ehOff = 64 + phnum * 56;
   const ehVa = 0x400000 + ehOff;
   const built = buildUnwindFrame(ehVa, little, {
     version3: false,
@@ -986,7 +1043,7 @@ export const elfUnwindSectionlessFixture = (
   writeWord(bytes, 32, 64, bits, little);
   write16(bytes, 52, 64, little);
   write16(bytes, 54, 56, little);
-  write16(bytes, 56, 2, little);
+  write16(bytes, 56, phnum, little);
   write16(bytes, 58, 64, little);
   const load = 64;
   write32(bytes, load, 1, little);
@@ -1003,6 +1060,7 @@ export const elfUnwindSectionlessFixture = (
   writeWord(bytes, gnu + 32, hdr.length, bits, little);
   writeWord(bytes, gnu + 40, hdr.length, bits, little);
   writeWord(bytes, gnu + 48, 4, bits, little);
+  if (phnum === 3) bytes.copy(bytes, gnu + 56, gnu, gnu + 56);
   frame.bytes.copy(bytes, ehOff);
   hdr.copy(bytes, hdrOff);
   if (options.sections === ".eh_frame_hdr")
@@ -1066,7 +1124,7 @@ const unterminatedFrame = (
   terminated: Buffer,
   firstFde: number,
   ehVa: number,
-  kind: "decodable" | "undecodable",
+  kind: "decodable" | "undecodable" | "rejected-cie",
 ): Buffer => {
   const w = new Writer(true);
   w.bytes(terminated.subarray(0, terminated.length - 4));
@@ -1081,6 +1139,20 @@ const unterminatedFrame = (
     if (w.length !== at + 18) throw new Error("FDE size mismatch");
   };
   if (kind === "undecodable") fde(firstFde);
+  if (kind === "rejected-cie") {
+    const at = w.length;
+    w.u32(0);
+    w.u32(0);
+    w.u8(1);
+    w.bytes("zXR\0");
+    w.uleb(1);
+    w.sleb(-4);
+    w.u8(16);
+    w.uleb(2);
+    w.u8(0);
+    w.u8(0x1b);
+    w.patchU32(at, w.length - (at + 4));
+  }
   fde(0);
   return w.finish();
 };

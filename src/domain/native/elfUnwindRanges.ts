@@ -17,6 +17,8 @@ export const MAX_INSPECT_ELF_UNWIND_RANGES = 65536;
 export const MAX_INSPECT_ELF_UNWIND_PAGE = 4096;
 /** Hard ceiling on symbol-table entries scanned, across all tables, for exact-start names. */
 export const MAX_ELF_UNWIND_SYMBOLS = 65536;
+/** Fixed allowance on symbol-name text decoded for one returned page. */
+export const MAX_ELF_UNWIND_SYMBOL_TEXT_BYTES = 16 * 1024 * 1024;
 
 /**
  * Limitation texts the parser emits and the application layer checks for.

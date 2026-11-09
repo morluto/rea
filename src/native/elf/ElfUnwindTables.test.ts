@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { expect, it } from "vitest";
+import { expect, it, vi } from "vitest";
 
 import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
 import {
@@ -19,6 +19,33 @@ import {
   elfUnwindFixture,
   elfUnwindSectionlessFixture,
 } from "./ElfUnwindTables.fixture.js";
+
+// Pass-through spies that count how often symbol names are scanned and decoded.
+const stringTable = vi.hoisted(() => ({
+  observed: [] as number[],
+  decoded: [] as number[],
+}));
+vi.mock("../../domain/elfStringTable.js", async (importOriginal) => {
+  const original =
+    await importOriginal<typeof import("../../domain/elfStringTable.js")>();
+  return {
+    ...original,
+    observeElfStringTableEntry: (
+      ...args: Parameters<typeof original.observeElfStringTableEntry>
+    ) => {
+      const observed = original.observeElfStringTableEntry(...args);
+      stringTable.observed.push(observed.contentBytes);
+      return observed;
+    },
+    elfStringTableText: (
+      ...args: Parameters<typeof original.elfStringTableText>
+    ) => {
+      const text = original.elfStringTableText(...args);
+      stringTable.decoded.push(text?.length ?? 0);
+      return text;
+    },
+  };
+});
 
 const address = (value: number): string => `0x${value.toString(16)}`;
 
@@ -815,4 +842,93 @@ it("wraps an ELF32 FDE end that overflows the address space", () => {
     end: address((UNWIND_FN_A + 0xffffff00) % 2 ** 32),
     size: String(0xffffff00),
   });
+});
+
+it("scans and decodes a symbol name shared by many symbols once, only for FDE starts", () => {
+  const bytes = elfUnwindFixture({
+    header: "match",
+    sharedName: { symbols: 4096, bytes: 60000 },
+  });
+  stringTable.observed.length = 0;
+  stringTable.decoded.length = 0;
+  const report = parse(bytes, { limit: 1 });
+  expect(report.ranges).toHaveLength(1);
+  expect(report.ranges[0]?.symbol?.text).toBe("n".repeat(60000));
+  expect(report.coverage).toMatchObject({
+    total_ranges: 2,
+    ranges_with_symbols: 2,
+  });
+  // Section names are observed too; only the shared symbol name is counted.
+  const shared = (lengths: readonly number[]) =>
+    lengths.filter((length) => length === 60000).length;
+  expect(shared(stringTable.observed)).toBe(1);
+  expect(shared(stringTable.decoded)).toBe(1);
+});
+
+it("skips an FDE whose initial location is indirect instead of reporting the pointer slot", () => {
+  const report = parse(
+    elfUnwindFixture({ header: "match", indirectStart: true }),
+  );
+  expect(report.ranges.map((range) => range.start)).toEqual([
+    address(UNWIND_FN_B),
+  ]);
+  expect(report.coverage.status).toBe("incomplete");
+  expect(report.limitations).toEqual(
+    expect.arrayContaining([
+      "1 FDE has an indirect initial location that was not dereferenced; its function start is unknown and it was skipped.",
+      "Indirect EH pointers were not dereferenced.",
+    ]),
+  );
+});
+
+it("does not locate .eh_frame through an indirect .eh_frame_hdr eh_frame_ptr", () => {
+  const bytes = elfUnwindSectionlessFixture();
+  bytes[Number(bytes.readBigUInt64LE(64 + 56 + 8)) + 1] = 0x9b;
+  const report = parse(bytes);
+  expect(report.eh_frame.status).toBe("unknown");
+  expect(report.ranges).toEqual([]);
+  expect(report.eh_frame_hdr).toMatchObject({
+    status: "incomplete",
+    eh_frame_pointer: null,
+  });
+  expect(report.coverage.status).toBe("incomplete");
+  expect(report.limitations).toContain(
+    "The .eh_frame_hdr eh_frame_ptr is indirect and was not dereferenced, so it does not locate .eh_frame.",
+  );
+});
+
+it("stops a header-located .eh_frame without a search table at a CIE with an unrecognized augmentation", () => {
+  const report = parse(
+    elfUnwindSectionlessFixture({
+      unterminated: "rejected-cie",
+      emptyTable: true,
+    }),
+  );
+  expect(report.ranges.map((range) => range.start)).toEqual([
+    address(UNWIND_FN_A),
+  ]);
+  expect(report.coverage).toMatchObject({
+    status: "incomplete",
+    total_ranges: 1,
+    examined_records: 3,
+  });
+  expect(report.limitations).toEqual(
+    expect.arrayContaining([
+      "A CIE augmentation has an unrecognized letter, so its pointer encodings cannot be trusted; that CIE was not decoded.",
+      "The .eh_frame located only through the .eh_frame_hdr eh_frame_ptr has no section bounds or usable search table, so decoding stopped at the first record that failed to decode.",
+    ]),
+  );
+});
+
+it("reports coverage incomplete when a duplicate PT_GNU_EH_FRAME is ignored", () => {
+  const report = parse(
+    elfUnwindSectionlessFixture({ duplicateProgramHeader: true }),
+  );
+  expect(report.ranges.map((range) => range.start)).toEqual([
+    address(UNWIND_FN_A),
+  ]);
+  expect(report.coverage.status).toBe("incomplete");
+  expect(report.limitations).toContain(
+    "Multiple PT_GNU_EH_FRAME program headers were declared; only the first was decoded.",
+  );
 });
