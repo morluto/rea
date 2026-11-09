@@ -110,13 +110,9 @@ export const observeGhidraEndpoint = async (
           const initial = await file.stat({ bigint: true });
           assertArtifactReadActive(options.signal);
           if (initial.size > BigInt(MAX_TCP_ENDPOINT_BYTES))
-            throw endpointFailure(
-              endpoint,
-              "Ghidra TCP endpoint is invalid",
-              new ArtifactReaderFailure(
-                "limit",
-                `Ghidra endpoint record exceeds its compact publication bound (${initial.size} > ${MAX_TCP_ENDPOINT_BYTES} bytes)`,
-              ),
+            throw new ArtifactReaderFailure(
+              "limit",
+              `Ghidra endpoint record exceeds its compact publication bound (${initial.size} > ${MAX_TCP_ENDPOINT_BYTES} bytes)`,
             );
           const input = readArtifactFileChunks(file, {
             end: initial.size,
@@ -180,21 +176,31 @@ const observationFailure = (
   cause: unknown,
 ): GhidraSessionError => {
   const { cause: primary, origin } = artifactFilePrimaryFacts(cause);
-  let failure =
-    origin === "owned-or-classified" && primary instanceof GhidraSessionError
-      ? primary
-      : cause instanceof ArtifactReaderFailure && cause.reason === "cancelled"
-        ? bindGhidraSessionFailure(() => ({
-            transport: endpoint.transport,
-            endpoint_path: endpoint.path,
-          }))("cancelled", "Ghidra endpoint observation was cancelled", cause, {
-            cancellation: { reason: artifactFileCancellationCause(cause) },
-          })
-        : endpointFailure(
-            endpoint,
-            "Ghidra endpoint observation failed",
-            cause,
-          );
+  let failure: GhidraSessionError;
+  if (origin === "owned-or-classified" && primary instanceof GhidraSessionError)
+    failure = primary;
+  else if (cause instanceof ArtifactReaderFailure && cause.reason === "limit")
+    failure = endpointFailure(
+      endpoint,
+      "Ghidra TCP endpoint is invalid",
+      cause,
+    );
+  else if (
+    cause instanceof ArtifactReaderFailure &&
+    cause.reason === "cancelled"
+  )
+    failure = bindGhidraSessionFailure(() => ({
+      transport: endpoint.transport,
+      endpoint_path: endpoint.path,
+    }))("cancelled", "Ghidra endpoint observation was cancelled", cause, {
+      cancellation: { reason: artifactFileCancellationCause(cause) },
+    });
+  else
+    failure = endpointFailure(
+      endpoint,
+      "Ghidra endpoint observation failed",
+      cause,
+    );
   if (cause instanceof ArtifactReaderFailure && cause.cleanup !== undefined) {
     const cleanup = new ProviderCleanupError(
       "ghidra",

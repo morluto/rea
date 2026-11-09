@@ -430,7 +430,14 @@ it.each(["valid", "oversized"] as const)(
           value: { host: "127.0.0.1", port: 65535 },
         });
       else {
-        expect(result.ok).toBe(false);
+        expect(result).toMatchObject({
+          ok: false,
+          error: {
+            kind: "start",
+            message: "Ghidra TCP endpoint is invalid",
+            cause: { reason: "limit" },
+          },
+        });
         expect(operations).not.toContain("read");
       }
       expect(operations).toContain("close");
