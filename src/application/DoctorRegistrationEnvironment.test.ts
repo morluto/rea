@@ -4,7 +4,12 @@ import { expect, it } from "vitest";
 
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
 import { createDoctorHostFixture as host } from "./Doctor.fixture.js";
-import { runDoctor, systemDoctorHost, type DoctorHost } from "./Doctor.js";
+import {
+  registrationEnvironmentDetail,
+  runDoctor,
+  systemDoctorHost,
+  type DoctorHost,
+} from "./Doctor.js";
 
 const inspection = (
   id: string,
@@ -176,9 +181,16 @@ it("states each comparison result without a claim it did not establish", async (
         ]),
     }),
   );
-  const detail = report.checks.find(({ name }) => name === CHECK)?.detail;
-  expect(detail).toContain("what the server cursor starts receives is unknown");
-  expect(detail).toContain("records other values for JAVA_HOME");
-  expect(detail).toContain("could not resolve its GHIDRA_INSTALL_DIR");
-  expect(detail).not.toContain("does not record");
+  const check = report.checks.find(({ name }) => name === CHECK);
+  expect(check).toMatchObject({
+    classification: "unknown",
+    details: { effective_environment: "unknown" },
+  });
+  expect(check?.detail).toBe(
+    registrationEnvironmentDetail("cursor", {
+      unrecorded: [],
+      differing: ["JAVA_HOME"],
+      unresolved: ["GHIDRA_INSTALL_DIR"],
+    }),
+  );
 });

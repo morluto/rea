@@ -207,6 +207,12 @@ export interface DesktopExecContext {
 
 const FILE_FIELD_CODES = new Set(["%f", "%F", "%u", "%U"]);
 
+/** Whether an `Exec` value takes files: it holds a `%f`, `%F`, `%u` or `%U` field code. */
+export const execTakesFiles = (exec: string): boolean => {
+  const tokens = tokenizeDesktopExec(exec);
+  return tokens.ok && tokens.value.some((token) => FILE_FIELD_CODES.has(token));
+};
+
 /**
  * Expand field codes for a launch with no files, then append caller arguments.
  * File and URL codes are dropped, so the caller's arguments take their place.

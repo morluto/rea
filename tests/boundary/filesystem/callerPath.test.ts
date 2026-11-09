@@ -1,7 +1,3 @@
-import { mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-
 import { expect, it, vi } from "vitest";
 
 import { absoluteCallerPath } from "../../../src/filesystem/callerPath.js";
@@ -76,70 +72,15 @@ it("normalizes separator spellings of absolute Windows paths (#4707)", () => {
     expect(absoluteCallerPath(spelling, win32)).toBe("C:\\Users\\u\\h.exe");
 });
 
-const missing = () => {
-  throw Object.assign(new Error("not found"), { code: "ENOENT" });
-};
-
-it("adopts the filesystem spelling of an existing Windows path (#9373)", () => {
-  const onDisk = "C:\\Temp\\rea-win-test\\sample.bin";
-  const canonicalPath = (path: string) =>
-    path.toLowerCase() === onDisk.toLowerCase() ? onDisk : missing();
-  const win32 = { cwd: "C:\\work", platform: "win32", canonicalPath } as const;
-  for (const spelling of [
-    "C:\\Temp\\rea-win-test\\sample.bin",
-    "C:/Temp/rea-win-test/sample.bin",
-    "C:\\Temp\\.\\rea-win-test\\sample.bin",
-    "c:\\temp\\rea-win-test\\sample.bin",
-    "C:\\TEMP\\REA-WIN-TEST\\SAMPLE.BIN",
-  ])
-    expect(absoluteCallerPath(spelling, win32)).toBe(onDisk);
-});
-
-it("keeps the caller spelling when the Windows lookup changes more than case", () => {
-  const selected = "c:\\Links\\Tool\\sample.bin";
-  for (const target of [
-    // Symbolic link or junction.
-    "D:\\real\\sample.bin",
-    // `subst` drive.
-    "C:\\Users\\u\\Links\\Tool\\sample.bin",
-    // 8.3 short name expanded.
-    "C:\\LinksLongName\\Tool\\sample.bin",
-  ])
-    expect(
-      absoluteCallerPath(selected, {
-        platform: "win32",
-        canonicalPath: () => target,
-      }),
-    ).toBe(selected);
-});
-
-it("keeps the caller spelling of a Windows path that does not exist yet", () => {
+it("keeps unselected Windows share paths lexical", () => {
   expect(
-    absoluteCallerPath("c:\\Out\\Report.JSON", {
+    absoluteCallerPath("\\\\unselected-server\\share\\Source.JS", {
       platform: "win32",
-      canonicalPath: missing,
     }),
-  ).toBe("c:\\Out\\Report.JSON");
+  ).toBe("\\\\unselected-server\\share\\Source.JS");
+  expect(
+    absoluteCallerPath("C:\\CaseSensitive\\Different.js", {
+      platform: "win32",
+    }),
+  ).toBe("C:\\CaseSensitive\\Different.js");
 });
-
-it.skipIf(process.platform !== "win32")(
-  "folds letter case against a real NTFS file (#9373)",
-  () => {
-    // Hosted runners spell tmpdir with 8.3 short names, which stay unexpanded.
-    const directory = realpathSync.native(
-      mkdtempSync(join(tmpdir(), "rea-CallerCase-")),
-    );
-    try {
-      const file = join(directory, "Sample.BIN");
-      writeFileSync(file, "x");
-      const expected = absoluteCallerPath(file);
-      expect(expected.endsWith("Sample.BIN")).toBe(true);
-      expect(absoluteCallerPath(file.toUpperCase())).toBe(expected);
-      expect(absoluteCallerPath(file.toLowerCase())).toBe(expected);
-      const output = join(directory, "New-Output.JSON");
-      expect(absoluteCallerPath(output)).toBe(output);
-    } finally {
-      rmSync(directory, { recursive: true, force: true });
-    }
-  },
-);

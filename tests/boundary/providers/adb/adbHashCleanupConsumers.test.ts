@@ -138,7 +138,7 @@ test.each(digestCases)(
     expect(returnedError.cleanupIncomplete).toBe(true);
     expect(returnedError.diagnostics).toMatchObject({
       primary_error: {
-        details: { partial_observation: { result: expect.any(Object) } },
+        details: { operation: request(f.root).operation },
       },
     });
     expect(

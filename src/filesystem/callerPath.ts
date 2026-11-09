@@ -1,4 +1,3 @@
-import { realpathSync } from "node:fs";
 import { posix, win32 } from "node:path";
 
 /** Append a relative child without collapsing POSIX symlink/.. traversal.
@@ -23,31 +22,17 @@ export const appendCallerPath = (
  * change the named file; every `..` is kept for the filesystem to resolve, and
  * a trailing `/` or `/.` keeps its directory requirement as one trailing `/`.
  * A relative `cwd` is made absolute the same way. Win32 resolves `..`
- * lexically, so normalizing there is exact. Win32 path lookup also ignores
- * letter case, so an existing path takes its filesystem spelling (#9373).
- * Absolute POSIX paths never need the ambient cwd, which may already have
- * been removed during cleanup.
+ * lexically, so normalizing there is exact. Absolute POSIX paths never need
+ * the ambient cwd, which may already have been removed during cleanup.
  */
 export const absoluteCallerPath = (
   path: string,
   {
     cwd,
     platform = process.platform,
-    canonicalPath = process.platform === "win32"
-      ? realpathSync.native
-      : undefined,
-  }: {
-    readonly cwd?: string;
-    readonly platform?: NodeJS.Platform;
-    /** Filesystem spelling of an existing Win32 path; omitted off Windows. */
-    readonly canonicalPath?: (path: string) => string;
-  } = {},
+  }: { readonly cwd?: string; readonly platform?: NodeJS.Platform } = {},
 ): string => {
-  if (platform === "win32")
-    return win32CaseCanonicalPath(
-      win32.resolve(cwd ?? process.cwd(), path),
-      canonicalPath,
-    );
+  if (platform === "win32") return win32.resolve(cwd ?? process.cwd(), path);
   if (!posix.isAbsolute(path)) {
     const selectedCwd = cwd ?? process.cwd();
     const base = posix.isAbsolute(selectedCwd)
@@ -60,26 +45,4 @@ export const absoluteCallerPath = (
     .filter((segment) => segment !== "" && segment !== ".");
   const directory = /\/\.?$/u.test(path) && segments.length > 0;
   return `/${segments.join("/")}${directory ? "/" : ""}`;
-};
-
-/**
- * Adopt the filesystem spelling only when it differs by letter case alone.
- * Any other difference means the lookup followed a link, junction, `subst`
- * drive or 8.3 short name, which would change the caller-selected path.
- * A path that cannot be resolved, such as a requested output, stays as given.
- */
-const win32CaseCanonicalPath = (
-  resolved: string,
-  canonicalPath: ((path: string) => string) | undefined,
-): string => {
-  if (canonicalPath === undefined) return resolved;
-  let canonical: string;
-  try {
-    canonical = canonicalPath(resolved);
-  } catch {
-    return resolved;
-  }
-  return canonical.toLowerCase() === resolved.toLowerCase()
-    ? canonical
-    : resolved;
 };
