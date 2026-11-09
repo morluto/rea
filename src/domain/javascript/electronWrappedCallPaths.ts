@@ -223,21 +223,47 @@ const bridgeContributionKey = (value: ElectronContextBridgeFinding): string =>
  * members of the least resolved one, which also absorbs an alternative that
  * restates another's unresolved source.
  */
+const mergeResolutionSources = (
+  left: ElectronContextBridgeFinding["resolution_sources"],
+  right: ElectronContextBridgeFinding["resolution_sources"],
+): ElectronContextBridgeFinding["resolution_sources"] => {
+  if (left === undefined) return right;
+  if (right === undefined) return left;
+  const merged = new Map(
+    left.map((range) => [javascriptSourceRangeKey(range), range]),
+  );
+  for (const range of right) {
+    const key = javascriptSourceRangeKey(range);
+    if (!merged.has(key)) merged.set(key, range);
+  }
+  return [...merged.values()];
+};
+
 const mergeBridgeExposures = (
   left: ElectronContextBridgeFinding,
   right: ElectronContextBridgeFinding,
   worldExpression: string,
-): ElectronContextBridgeFinding => ({
-  ...left,
-  world_id:
-    JSON.stringify(left.world_id) === JSON.stringify(right.world_id)
-      ? left.world_id
-      : { status: "dynamic", value: null, expression: worldExpression },
-  members: [...new Set([...left.members, ...right.members])].sort(
-    compareUnicodeCodePoints,
-  ),
-  unknown_members: Math.max(left.unknown_members, right.unknown_members),
-});
+): ElectronContextBridgeFinding => {
+  const resolutionSources = mergeResolutionSources(
+    left.resolution_sources,
+    right.resolution_sources,
+  );
+  const { resolution_sources: _omitted, ...rest } = left;
+  return {
+    ...rest,
+    world_id:
+      JSON.stringify(left.world_id) === JSON.stringify(right.world_id)
+        ? left.world_id
+        : { status: "dynamic", value: null, expression: worldExpression },
+    members: [...new Set([...left.members, ...right.members])].sort(
+      compareUnicodeCodePoints,
+    ),
+    unknown_members: Math.max(left.unknown_members, right.unknown_members),
+    ...(resolutionSources !== undefined
+      ? { resolution_sources: resolutionSources }
+      : {}),
+  };
+};
 
 interface PathContext {
   readonly entryNode: t.Node;
@@ -1352,6 +1378,12 @@ export function* collectElectronWrappedCallPathsSteps(
           };
         } else {
           const inventory = bridgeMemberInventory(object);
+          const members =
+            direct !== undefined && direct.members.length > 0
+              ? [...new Set([...direct.members, ...inventory.members])].sort(
+                  compareUnicodeCodePoints,
+                )
+              : inventory.members;
           finding = {
             world: exposure.world,
             world_id: worldId,
@@ -1359,8 +1391,11 @@ export function* collectElectronWrappedCallPathsSteps(
             api_key_expression: null,
             api_status: "dynamic",
             resolution_basis: "wrapper-substitution",
-            members: inventory.members,
+            members,
             unknown_members: inventory.unknown,
+            ...(direct?.resolution_sources !== undefined
+              ? { resolution_sources: direct.resolution_sources }
+              : {}),
             module_key: null,
             location,
           };

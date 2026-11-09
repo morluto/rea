@@ -3,6 +3,7 @@ import * as t from "@babel/types";
 import { compareUnicodeCodePoints } from "../unicodeCodePointOrder.js";
 import type { ElectronStaticValue } from "./electronStaticAnalysisTypes.js";
 import {
+  isObjectPrototypeSetter,
   readExactJavaScriptLiteral,
   semanticStaticPropertyKey,
   unwrapJavaScriptExpression,
@@ -167,6 +168,46 @@ export const collectContextBridgeMembers = (
   };
 };
 
+interface EffectiveObjectProperties {
+  readonly lastStaticIndexByKey: ReadonlyMap<string, number>;
+  readonly lastDynamicOrSpreadIndex: number;
+}
+
+const effectivePropertiesCache = new WeakMap<
+  t.ObjectExpression,
+  EffectiveObjectProperties
+>();
+
+const effectiveObjectProperties = (
+  object: t.ObjectExpression,
+): EffectiveObjectProperties => {
+  const cached = effectivePropertiesCache.get(object);
+  if (cached !== undefined) return cached;
+  const lastStaticIndexByKey = new Map<string, number>();
+  let lastDynamicOrSpreadIndex = -1;
+  for (let index = 0; index < object.properties.length; index += 1) {
+    const property = object.properties[index];
+    if (property === undefined) break;
+    if (t.isSpreadElement(property)) {
+      lastDynamicOrSpreadIndex = index;
+      continue;
+    }
+    const name = semanticStaticPropertyKey(property.key, property.computed);
+    if (name === null) {
+      lastDynamicOrSpreadIndex = index;
+      continue;
+    }
+    if (isObjectPrototypeSetter(property, name)) continue;
+    lastStaticIndexByKey.set(name, index);
+  }
+  const computed: EffectiveObjectProperties = {
+    lastStaticIndexByKey,
+    lastDynamicOrSpreadIndex,
+  };
+  effectivePropertiesCache.set(object, computed);
+  return computed;
+};
+
 const collectMembersAt = (
   object: t.ObjectExpression,
   prefixPath: string,
@@ -181,6 +222,7 @@ const collectMembersAt = (
     state.unknown += 1;
     return;
   }
+  const effective = effectiveObjectProperties(object);
   for (let index = 0; index < object.properties.length; index += 1) {
     if (budget.remainingVisits <= 0) {
       state.unknown += object.properties.length - index;
@@ -198,13 +240,8 @@ const collectMembersAt = (
       state.unknown += 1;
       continue;
     }
-    if (
-      t.isObjectProperty(property) &&
-      !property.computed &&
-      !property.shorthand &&
-      name === "__proto__"
-    )
-      continue;
+    if (isObjectPrototypeSetter(property, name)) continue;
+    if (effective.lastStaticIndexByKey.get(name) !== index) continue;
     const nameBytes = Buffer.byteLength(name, "utf8");
     const pathBytes =
       prefixDepth === 0 ? nameBytes : prefixBytes + 1 + nameBytes;
@@ -216,7 +253,11 @@ const collectMembersAt = (
     budget.remainingBytes -= pathBytes;
     const path = prefixDepth === 0 ? name : `${prefixPath}.${name}`;
     state.members.push(path);
-    if (!t.isObjectProperty(property)) continue;
+    if (
+      !t.isObjectProperty(property) ||
+      effective.lastDynamicOrSpreadIndex > index
+    )
+      continue;
     if (resolveNestedProperty !== undefined) {
       const nested = resolveNestedProperty(property.value, activeNodes);
       if (nested.kind === "object")

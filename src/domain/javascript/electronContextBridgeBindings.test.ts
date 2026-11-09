@@ -334,33 +334,48 @@ it.each([
   [
     "nested const mutated after parent construction",
     "const sub = { a: 1 }; const api = { sub }; sub.extra = 2;",
+    true,
   ],
   [
     "nested mutation through shallow Object.freeze",
     "const sub = { a: 1 }; const api = Object.freeze({ sub }); api.sub.extra = 2;",
+    false,
   ],
   [
     "escaped shallow Object.freeze with nested object",
     "const sub = { a: 1 }; const api = Object.freeze({ sub }); mutate(api);",
+    false,
   ],
-  ["mutable nested let object", "let sub = { a: 1 }; const api = { sub };"],
-  ["self-referential const object", "const api = { self: api };"],
+  [
+    "mutable nested let object",
+    "let sub = { a: 1 }; const api = { sub };",
+    true,
+  ],
+  ["self-referential const object", "const api = { self: api };", true],
   [
     "mutually referencing const objects",
     "const a = { next: b }; const b = { prev: a }; const api = a;",
+    true,
   ],
-])("keeps nested unsoundness %s partial and dynamic", (_label, setup) => {
-  const analysis = analyzeJavaScriptStaticSource(`
+])(
+  "keeps nested unsoundness %s partial and dynamic while retaining proven outer resolution sources",
+  (_label, setup, expectsOuterSource) => {
+    const analysis = analyzeJavaScriptStaticSource(`
         const { contextBridge } = require("electron");
         ${setup}
         contextBridge.exposeInMainWorld("AppApi", api);
       `);
 
-  expect(analysis.parse_status).toBe("partial");
-  const [finding] = analysis.electron.context_bridge_apis;
-  expect(finding?.api_status).toBe("dynamic");
-  expect(finding).not.toHaveProperty("resolution_sources");
-});
+    expect(analysis.parse_status).toBe("partial");
+    const [finding] = analysis.electron.context_bridge_apis;
+    expect(finding?.api_status).toBe("dynamic");
+    if (expectsOuterSource) {
+      expect(finding?.resolution_sources?.length).toBeGreaterThan(0);
+    } else {
+      expect(finding).not.toHaveProperty("resolution_sources");
+    }
+  },
+);
 
 it("preserves symbolic member and world-ID recovery alongside resolved API shapes", () => {
   const analysis = analyzeJavaScriptStaticSource(`
@@ -481,6 +496,9 @@ it("bounds exponential shared const sub-object DAGs and records truncated branch
 
   expect(analysis.parse_status).toBe("partial");
   expect(analysis.electron.context_bridge_apis).toHaveLength(2);
+  expect(
+    analysis.electron.context_bridge_apis[0]?.resolution_sources?.length,
+  ).toBeGreaterThan(0);
   for (const finding of analysis.electron.context_bridge_apis) {
     expect(finding.api_status).toBe("dynamic");
     expect(finding.unknown_members).toBeGreaterThan(0);
@@ -580,6 +598,60 @@ it("preserves shared expose(key, obj) helper behavior across multiple object and
         entry: "ping",
         entry_path: ["ping"],
         channel: "quick:ping",
+      }),
+    ]),
+  );
+});
+
+it("recovers nested member expressions via symbolic fallback and respects overwritten duplicate keys", () => {
+  const analysis = analyzeJavaScriptStaticSource(`
+      const { contextBridge, ipcRenderer } = require("electron");
+      const bag = {
+        sub: {
+          ping: () => ipcRenderer.invoke("bag:sub:ping"),
+        },
+      };
+      const nestedMemberApi = { sub: bag.sub };
+      const overwrittenConstApi = { sub: { old: 1 }, sub: 0 };
+
+      contextBridge.exposeInMainWorld("nestedMemberApi", nestedMemberApi);
+      contextBridge.exposeInMainWorld("overwrittenConstApi", overwrittenConstApi);
+      contextBridge.exposeInMainWorld("overwrittenInlineApi", {
+        sub: { old: 1 },
+        sub: 0,
+      });
+    `);
+
+  expect(analysis.electron.context_bridge_apis).toMatchObject([
+    {
+      api_key: "nestedMemberApi",
+      api_status: "dynamic",
+      resolution_basis: "wrapper-substitution",
+      members: ["sub", "sub.ping"],
+      unknown_members: 0,
+      resolution_sources: [expect.any(Object)],
+    },
+    {
+      api_key: "overwrittenConstApi",
+      api_status: "object-literal",
+      members: ["sub"],
+      unknown_members: 0,
+      resolution_sources: [expect.any(Object)],
+    },
+    {
+      api_key: "overwrittenInlineApi",
+      api_status: "object-literal",
+      members: ["sub"],
+      unknown_members: 0,
+    },
+  ]);
+  expect(analysis.electron.call_paths).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({
+        entry_kind: "bridge-member",
+        entry: "nestedMemberApi.sub.ping",
+        channel: "bag:sub:ping",
+        terminal: "electron.ipcRenderer.invoke",
       }),
     ]),
   );

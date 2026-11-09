@@ -9,14 +9,15 @@ import {
   type ContextBridgeNestedPropertyResolution,
 } from "./electronStaticAnalysisValues.js";
 import { unwrapJavaScriptExpression } from "./javascriptAstValues.js";
-import { semanticBindingAtRead } from "./javascriptSemanticMutationInitializers.js";
 import {
   immutableLexicalInitializerAtRead,
   unwrapUnmodifiedObjectFreezeArgument,
 } from "./javascriptSemanticObjectFreeze.js";
-import type {
-  JavaScriptBindingIndex,
-  JavaScriptSemanticAnalysisState,
+import {
+  resolveSemanticBindingState,
+  semanticResolutionBlocked,
+  type JavaScriptBindingIndex,
+  type JavaScriptSemanticAnalysisState,
 } from "./javascriptSemanticState.js";
 import { javascriptSourceRangeKey } from "./javascriptSourceCoordinates.js";
 import { range } from "./javascriptStaticAnalysisHelpers.js";
@@ -76,7 +77,7 @@ export const hasContextBridgeResolutionCandidate = (
   );
 };
 
-const expressionMayProduceObjectLiteral = (
+const isProvenNonEnumerableLeaf = (
   node: t.Node,
   state: JavaScriptSemanticAnalysisState,
   seen = new Set<t.Node>(),
@@ -84,24 +85,45 @@ const expressionMayProduceObjectLiteral = (
   const current = unwrapJavaScriptExpression(node).node;
   if (seen.has(current)) return false;
   seen.add(current);
-  if (t.isObjectExpression(current)) return true;
+  if (
+    t.isFunction(current) ||
+    t.isStringLiteral(current) ||
+    t.isNumericLiteral(current) ||
+    t.isBooleanLiteral(current) ||
+    t.isNullLiteral(current) ||
+    t.isBigIntLiteral(current) ||
+    t.isRegExpLiteral(current) ||
+    t.isTemplateLiteral(current) ||
+    t.isUnaryExpression(current) ||
+    t.isBinaryExpression(current) ||
+    t.isUpdateExpression(current) ||
+    t.isArrayExpression(current)
+  )
+    return true;
+  if (
+    t.isIdentifier(current) &&
+    current.name === "undefined" &&
+    !semanticResolutionBlocked(state, current, "undefined") &&
+    resolveSemanticBindingState(state, current, "undefined") === undefined
+  )
+    return true;
   const frozen = unwrapUnmodifiedObjectFreezeArgument(current, state);
   if (frozen !== undefined)
-    return expressionMayProduceObjectLiteral(frozen, state, seen);
+    return isProvenNonEnumerableLeaf(frozen, state, seen);
   if (t.isConditionalExpression(current))
     return (
-      expressionMayProduceObjectLiteral(current.consequent, state, seen) ||
-      expressionMayProduceObjectLiteral(current.alternate, state, seen)
+      isProvenNonEnumerableLeaf(current.consequent, state, seen) &&
+      isProvenNonEnumerableLeaf(current.alternate, state, seen)
     );
   if (t.isLogicalExpression(current))
     return (
-      expressionMayProduceObjectLiteral(current.left, state, seen) ||
-      expressionMayProduceObjectLiteral(current.right, state, seen)
+      isProvenNonEnumerableLeaf(current.left, state, seen) &&
+      isProvenNonEnumerableLeaf(current.right, state, seen)
     );
   if (t.isSequenceExpression(current)) {
     const last = current.expressions.at(-1);
     return last !== undefined
-      ? expressionMayProduceObjectLiteral(last, state, seen)
+      ? isProvenNonEnumerableLeaf(last, state, seen)
       : false;
   }
   return false;
@@ -151,7 +173,10 @@ const resolveContextBridgeValue = (
     if (budget.remainingVisits <= 0) return { kind: "invalid-or-cyclic" };
     budget.remainingVisits -= 1;
     const binding = index.bindingForReferenceAt(current);
-    if (binding === undefined) return { kind: "non-object-leaf" };
+    if (binding === undefined)
+      return isProvenNonEnumerableLeaf(current, index.bindings)
+        ? { kind: "non-object-leaf" }
+        : { kind: "invalid-or-cyclic" };
     if (seenBindings.has(binding.bindingId))
       return { kind: "invalid-or-cyclic" };
     seenBindings.add(binding.bindingId);
@@ -160,19 +185,7 @@ const resolveContextBridgeValue = (
       index.bindings,
       index.sourceType,
     );
-    if (lexical === undefined) {
-      const tdzConst =
-        !binding.mutable &&
-        binding.declarationKinds.has("const") &&
-        !semanticBindingAtRead(binding, current, index.bindings)
-          .hasDefiniteInitializer;
-      const mutableObject = binding.initializers.some((init) =>
-        expressionMayProduceObjectLiteral(init.node, index.bindings),
-      );
-      return tdzConst || mutableObject
-        ? { kind: "invalid-or-cyclic" }
-        : { kind: "non-object-leaf" };
-    }
+    if (lexical === undefined) return { kind: "invalid-or-cyclic" };
     if (index.referenceMayHaveChangedAt(site, current))
       return { kind: "invalid-or-cyclic" };
     nextActive.add(current);
@@ -195,9 +208,9 @@ const resolveContextBridgeValue = (
     t.isFunctionDeclaration(current)
   )
     return { kind: "function", fn: current, substituted };
-  return expressionMayProduceObjectLiteral(current, index.bindings)
-    ? { kind: "invalid-or-cyclic" }
-    : { kind: "non-object-leaf" };
+  return isProvenNonEnumerableLeaf(current, index.bindings)
+    ? { kind: "non-object-leaf" }
+    : { kind: "invalid-or-cyclic" };
 };
 
 /** Resolve a contextBridge API expression and any nested immutable const/frozen objects. */
@@ -260,9 +273,9 @@ export const resolveContextBridgeApi = (
       unwrapUnmodifiedObjectFreezeArgument(unwrapped, index.bindings) ===
         undefined
     ) {
-      return expressionMayProduceObjectLiteral(unwrapped, index.bindings)
-        ? { kind: "unknown" }
-        : { kind: "leaf" };
+      return isProvenNonEnumerableLeaf(unwrapped, index.bindings)
+        ? { kind: "leaf" }
+        : { kind: "unknown" };
     }
     const resolved = resolveContextBridgeValue(
       value,
