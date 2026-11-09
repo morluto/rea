@@ -159,7 +159,7 @@ const launcherDigestMismatchRemediation = ({
   [
     `The ${packageFamily} package signature verified under the pinned publisher key, but its Hopper launcher SHA-256 ${observedSha256} differs from the release feed's main_exe_hash ${declaredSha256};`,
     "this indicates stale feed metadata rather than a tampered download, so retrying the same release will fail identically.",
-    "If the package manager already installed the authentic package, set HOPPER_LAUNCHER_PATH to its launcher; otherwise retry setup once the vendor republishes a main_exe_hash that matches the package.",
+    "Retry setup once the vendor republishes a main_exe_hash that matches the package.",
   ].join(" ");
 
 const stageFailure = (

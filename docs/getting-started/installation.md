@@ -730,9 +730,8 @@ result reports `code: integrity_mismatch` with a `launcherDigestMismatch` field
 naming the `packageFamily`, the `declaredSha256` from the feed and the
 `observedSha256` measured inside the signed package. That pair means the vendor
 feed is stale rather than the download being tampered with, so retrying the
-same release fails identically. If the package manager already installed the
-authentic package, set `HOPPER_LAUNCHER_PATH` to its launcher; otherwise retry
-once the vendor republishes a matching hash.
+same release fails identically. Retry once the vendor republishes a matching
+hash.
 
 Hopper metadata and package downloads require HTTPS throughout the redirect
 chain; a redirect to HTTP or to a URL carrying credentials is refused before

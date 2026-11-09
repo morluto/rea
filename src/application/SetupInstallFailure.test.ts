@@ -122,6 +122,9 @@ describe("Linux Hopper launcher digest mismatch", () => {
     expect(result.remediation).toContain(mismatch.observedSha256);
     expect(result.remediation).toContain(mismatch.declaredSha256);
     expect(result.remediation).toContain("stale feed metadata");
+    // A launcher-path override cannot recover this: the mismatch is refused
+    // before the archive is retained, so no cache entry backs the override.
+    expect(result.remediation).not.toContain("HOPPER_LAUNCHER_PATH");
   });
 
   it("keeps the generic recovery for an integrity failure without package facts", () => {
