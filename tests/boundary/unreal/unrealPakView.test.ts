@@ -48,3 +48,28 @@ it("tells an unread encrypted index apart from a decoded empty one", async () =>
   });
   expect(empty.unknowns).not.toContain(UNREAD_ENCRYPTED_INDEX_UNKNOWN);
 });
+
+it("accepts a relocated subject with the same digest and refuses another digest", async () => {
+  const root = await createTestTempDirectory("rea-unreal-view-");
+  const path = join(root, "Game.pak");
+  await writeFile(path, createPakFixture({ layout: "v11" }).bytes);
+  const provider = new UnrealPakProvider();
+  const inspected = await provider.inspect({ path });
+  await provider.close();
+  if (!inspected.ok) throw new Error("fixture must decode");
+  const project = (localPath: string, sha256: string) =>
+    projectUnrealPakView(
+      {
+        evidenceId: "ev_" + "0".repeat(64),
+        operation: "inspect_unreal_pak",
+        predicateType: "rea.analysis",
+        normalizedResult: inspected.value,
+        subject: { format: "file", local_path: localPath, digest: { sha256 } },
+        limitations: [],
+      } as never,
+      { kind: "summary" },
+    ).ok;
+  const { sha256 } = inspected.value.artifact;
+  expect(project("/imported/elsewhere/Game.pak", sha256)).toBe(true);
+  expect(project(path, "0".repeat(64))).toBe(false);
+});

@@ -151,6 +151,7 @@ the exact commit messages and references from the release they describe.
 - [Offline Playwright traces](playwright-traces.md)
 - [Testing lanes and provider verification](testing-lanes.md)
 - [UF2 and DfuSe images](uf2-dfuse.md)
+- [Unreal pak indexes](unreal-pak.md)
 - [WeChat mini-program wxapkg archives](wxapkg.md)
 - [Binary hardening](binary-hardening.md)
 - [Desktop application capture](desktop-application-capture.md)

@@ -92,7 +92,6 @@ export default defineConfig({
       {
         text: "Documentation directory",
         items: [
-          { text: "Unreal pak indexes", link: "/unreal-pak" },
           { text: "All guides", link: "/documentation" },
           { text: "Authoring conventions", link: "/development/documentation" },
           { text: "Feature specifications", link: "/specs/" },
