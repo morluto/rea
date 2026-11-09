@@ -468,7 +468,12 @@ it.skipIf(process.platform === "win32")(
       join(bin, "docker"),
       'if [ "$1" = info ]; then echo /tmp; else exit 0; fi',
     );
-    await program(join(bin, "agent-env"), 'echo "agent-env 0.9.1431"');
+    const python = (await execute("which", ["python3"])).stdout.trim();
+    await writeFile(
+      join(bin, "agent-env"),
+      `#!${python}\nprint("agent-env 0.9.1431")\n`,
+      { mode: 0o755 },
+    );
     const packed = join(root, "packed");
     await mkdir(join(packed, "runtime", "scripts"), { recursive: true });
     await writeFile(join(packed, "runtime", "scripts", "rea.mjs"), "");
@@ -511,6 +516,47 @@ it.skipIf(process.platform === "win32")(
     expect(facts.registrations[0]?.differing ?? []).toEqual([]);
     expect(facts.registrations[0]?.unchecked ?? []).toEqual([]);
     expect(JSON.stringify(facts.registrations)).not.toContain(root);
+    const registration = (runner: string) =>
+      JSON.stringify({
+        mcpServers: {
+          rea: {
+            command: process.execPath,
+            args: ["/opt/rea/scripts/rea.mjs", "mcp"],
+            env: {
+              REA_DOCKER_COMMAND: docker,
+              REA_BUILD_COMPUTER_REA_ARCHIVE: archive,
+              REA_AGENT_ENV_COMMAND: runner,
+            },
+          },
+        },
+      });
+    const clientFacts = () =>
+      readFacts(
+        {
+          HOME: home,
+          USERPROFILE: home,
+          PATH: `${bin}:/usr/bin:/bin`,
+          XDG_CACHE_HOME: join(root, "cache"),
+        },
+        ["claude_code"],
+      );
+    await writeFile(
+      join(home, ".claude.json"),
+      registration(join(root, "missing-runner")),
+    );
+    expect((await clientFacts()).registrations[0]?.unchecked).toContain(
+      "REA_BUILD_COMPUTER_REA_ARCHIVE",
+    );
+    const wrapper = join(root, "wrapper");
+    await program(wrapper, 'echo "agent-env 0.9.1431"');
+    await writeFile(join(home, ".claude.json"), registration(wrapper));
+    expect((await clientFacts()).registrations[0]?.unchecked).toContain(
+      "REA_BUILD_COMPUTER_REA_ARCHIVE",
+    );
+    await writeFile(
+      join(home, ".claude.json"),
+      registration(join(bin, "agent-env")),
+    );
     await rm(archive);
     expect(
       (
