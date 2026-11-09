@@ -41,6 +41,20 @@ function* yamlNodes(root: unknown): Generator<Node> {
   }
 }
 
+/**
+ * Anchor name to its first named node, in document order. Built iteratively
+ * for the same reason `yamlNodes` is: the recursive walk overflows on a deeply
+ * nested document before the refusal can be reported.
+ */
+const yamlAnchors = (root: unknown): Map<string, Node> => {
+  const anchors = new Map<string, Node>();
+  for (const node of yamlNodes(root)) {
+    const anchor = (node as { readonly anchor?: string }).anchor;
+    if (anchor !== undefined && !anchors.has(anchor)) anchors.set(anchor, node);
+  }
+  return anchors;
+};
+
 const invalidDocument = (path: string, message: string): AnalysisError =>
   new AnalysisInputError(
     API_CONTRACT_OPERATION,
@@ -179,6 +193,7 @@ export const decodeOpenApiYaml = (
   // would become a property name no source document wrote, and two distinct
   // keys could collapse onto one member. The JSON profile only accepts string
   // member names, so refuse the document instead of inventing one.
+  const anchors = yamlAnchors(document.contents);
   for (const node of yamlNodes(document.contents)) {
     if (!isMap<unknown, unknown>(node)) continue;
     const projected = new Set<string>();
@@ -191,8 +206,11 @@ export const decodeOpenApiYaml = (
             "OpenAPI YAML uses a non-scalar mapping key; the JSON profile can only express string member names",
           ),
         );
-      // A source alias whose anchor is a collection resolves to one here.
-      const resolved = isAlias(key) ? key.resolve(document) : key;
+      // `Alias.resolve(document)` walks the whole document recursively and can
+      // overflow on a deeply nested one, so keys resolve from this iterative
+      // table built before the scan. An anchor is its first named node, which
+      // is the scope `yaml` itself resolves an alias against.
+      const resolved = isAlias(key) ? anchors.get(key.source) : key;
       if (
         resolved === undefined ||
         !isScalar(resolved) ||
@@ -204,6 +222,11 @@ export const decodeOpenApiYaml = (
             "OpenAPI YAML uses a non-scalar mapping key; the JSON profile can only express string member names",
           ),
         );
+      // A numeric or boolean key is a YAML scalar; it is projected to its
+      // string form, which is the only JSON member name available. `responses`
+      // uses numeric status codes (`200:`) as a matter of course, so refusing
+      // non-string keys outright would reject valid documents. Callers that
+      // read a key as a token (`additionalOperations` methods) validate it.
       // Distinct source keys can share one projected member name: `1` and
       // `"1"` both become the property `"1"`, and an alias key can name one a
       // literal already names. `uniqueKeys` compares source nodes, so it
