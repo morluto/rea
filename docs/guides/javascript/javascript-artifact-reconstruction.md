@@ -526,6 +526,25 @@ If fingerprint construction reaches its structural
 bound, the fingerprint is unavailable and its status is `truncated`; a bounded
 prefix is never presented as a complete stable fingerprint.
 
+## Cached-data compilation boundaries
+
+The [feature specification](../../specs/javascript/v8-cached-data/spec.md) defines
+the static admission and uncertainty contract.
+
+A `node:vm` compilation reports whether `cachedData` is declared, absent or
+unknown. Explicitly supplied undefined bytes are treated as absent; shadowed
+identifiers remain declarations. Source syntax alone does not establish valid cache bytes, V8 acceptance
+or execution. The summary counts declared compilations, not executions.
+
+A proven synchronous filesystem read or awaited promise-based read supplies a
+cache path. The producer retains its path base: source-directory expressions
+can name inventoried artifacts, while relative literal paths depend on the
+target working directory and remain unresolved. Other supplied values retain
+their bounded source expression. Declared paths, exact-file lookup
+status, candidate paths and resolution limitations remain separate; an unresolved
+path never becomes a resolved file. Opaque inventoried cache bytes can remain
+unavailable to the JavaScript resolver even when their occurrence is known.
+
 ## Authority and unknowns
 
 API identity is a derivation: a familiar method or property name does not
