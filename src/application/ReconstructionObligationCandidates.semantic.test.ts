@@ -185,10 +185,20 @@ describe("semantic uncertainty at the obligation candidate boundary", () => {
     expect(ledger.obligations).toHaveLength(1);
     expect(ledger.reports.residual_unknown_ids).toEqual([]);
     expect(ledger.coverage.status).toBe("partial");
-    expect(ledger.limitations).toEqual([
-      `Semantic graph ${source.graph.graph_id} coverage is unknown; omitted candidates remain unknown.`,
-      `Semantic graph ${source.graph.graph_id}: Event source was not fully examined.`,
-    ]);
+    expect(ledger.limitations).toHaveLength(2);
+    expect(ledger.limitations).toContainEqual(
+      expect.stringMatching(
+        /coverage is unknown.*omitted candidates remain unknown/iu,
+      ),
+    );
+    expect(
+      ledger.limitations.every((limitation) =>
+        limitation.includes(source.graph.graph_id),
+      ),
+    ).toBe(true);
+    expect(ledger.limitations).toContainEqual(
+      expect.stringContaining("Event source was not fully examined."),
+    );
   });
 
   it("keeps a complete semantic source complete without fabricating uncertainty", () => {

@@ -1,3 +1,5 @@
+import { readEvidenceBundle } from "../../../src/application/EvidenceBundleFiles.js";
+import { analysisViewResultSchema } from "../../../src/domain/analysisView/analysisViewResult.js";
 import { writeFile } from "node:fs/promises";
 import { createHash } from "node:crypto";
 import { join } from "node:path";
@@ -141,6 +143,44 @@ cliTest(
     expect(result.exitCode, result.stderr).toBe(0);
     const fromCli = parseEvidence(result.json);
     expect(fromCli.normalized_result).toEqual(parent.normalized_result);
+    const output = join(fixture.root, "evidence.json");
+    const published = await run({
+      arguments: [
+        "inspect-otlp-trace",
+        fixture.path,
+        "--detail",
+        "summary",
+        "--evidence_output",
+        output,
+        "--json",
+      ],
+    });
+    expect(published.exitCode, published.stderr).toBe(0);
+    const projected = parseEvidence(
+      (published.json as { summary: unknown }).summary,
+    );
+    const summary = analysisViewResultSchema.parse(projected.normalized_result);
+    const saved = await readEvidenceBundle(output);
+    if (!saved.ok) throw saved.error;
+    const retained = saved.value.records.find(
+      (record) => record.operation === "inspect_otlp_trace",
+    );
+    expect(retained).toBeDefined();
+    if (retained === undefined) throw new Error("Missing complete OTLP parent");
+    expect(retained.normalized_result).toEqual(report);
+    expect(summary).toMatchObject({
+      kind: "summary",
+      parent_evidence_id: retained.evidence_id,
+      parent_digest: retained.evidence_id.slice(3),
+      summary: {
+        summary: report.summary,
+        source_coverage: report.source_coverage,
+        resource_count: 1,
+        scope_count: 1,
+      },
+    });
+    if (summary.kind === "summary")
+      expect(summary.summary).not.toHaveProperty("spans");
   },
 );
 

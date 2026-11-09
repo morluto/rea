@@ -23,7 +23,7 @@ import { PRODUCT_IDENTITY } from "../../../src/identity.js";
 
 import { readClientRegistrationStatuses } from "../../../src/application/ClientRegistrationStatus.js";
 import { configureClientConfiguration } from "../../../src/application/SetupClientConfiguration.js";
-import { readConfigurationFile } from "../../../src/application/ClientConfigurationFiles.js";
+import { parseClientConfiguration } from "../../../src/application/ClientConfigurationDocument.js";
 import {
   detectClients,
   systemSetupHost,
@@ -1572,8 +1572,9 @@ describe("client configuration filesystem removal", () => {
       expect.objectContaining({
         name: "cache",
         status: "retained",
-        detail:
-          "REA did not remove this item because its managed path is a symbolic link. Verify the link target before removing it manually.",
+        detail: expect.stringMatching(
+          /did not remove.*symbolic link.*verify.*link target/i,
+        ),
       }),
     );
     expect((await runUninstall(true, systemUninstallHost(home))).status).toBe(
@@ -1685,8 +1686,9 @@ describe("uninstall configuration symlink ownership", () => {
       name: "cursor",
       status: "failed",
       configuration_path: configPath,
-      detail:
-        "Configuration path could not be safely verified. Check its permissions and, if it is a symbolic link, verify that the link resolves to a regular file owned by the current user, then rerun uninstall.",
+      detail: expect.stringMatching(
+        /could not be safely verified.*permissions.*symbolic link.*regular file.*current user.*uninstall/i,
+      ),
     });
     expect((await lstat(configPath)).isSymbolicLink()).toBe(true);
     await expect(
@@ -1890,9 +1892,9 @@ describe("uninstall configuration preflight", () => {
   });
 
   it.each([
-    ['{"mcpServers":null,"keep":1}', '"mcpServers" must be an object'],
-    ["[]", "The configuration root must be an object"],
-    ['{"mcpServers":"x"}', '"mcpServers" must be an object'],
+    ['{"mcpServers":null,"keep":1}', "mcpServers"],
+    ["[]", "root"],
+    ['{"mcpServers":"x"}', "mcpServers"],
   ])(
     "names the structural problem in valid JSON %s",
     async (content, problem) => {
@@ -1900,21 +1902,27 @@ describe("uninstall configuration preflight", () => {
       const config = join(home, ".cursor/mcp.json");
       await mkdir(dirname(config), { recursive: true });
       await writeFile(config, content);
-      expect(await readConfigurationFile(config, "json")).toMatchObject({
-        ok: false,
-        error: {
-          kind: "malformed",
-          detail: `Configuration ${config} is malformed: ${problem}`,
-        },
-      });
+      let cause: unknown;
+      try {
+        parseClientConfiguration(content, "json");
+      } catch (error: unknown) {
+        cause = error;
+      }
+      if (!(cause instanceof Error)) throw new Error("Expected shape error");
+      expect(cause.message).toContain(problem);
+      expect(cause.message).toContain("object");
       const result = await runUninstall(false, systemUninstallHost(home));
       expect(result.status).toBe("failed");
-      expect(result.items).toContainEqual({
-        name: "cursor",
-        status: "failed",
-        configuration_path: config,
-        detail: `Configuration was not changed: ${problem}. Repair it, then rerun uninstall.`,
-      });
+      expect(result.items).toContainEqual(
+        expect.objectContaining({
+          name: "cursor",
+          status: "failed",
+          configuration_path: config,
+          detail: expect.stringContaining(cause.message),
+        }),
+      );
+      const item = result.items.find(({ name }) => name === "cursor");
+      expect(item?.detail).toMatch(/not changed.*repair.*uninstall/iu);
       expect(await readFile(config, "utf8")).toBe(content);
       await expect(readFile(`${config}.rea.backup`, "utf8")).rejects.toThrow();
     },

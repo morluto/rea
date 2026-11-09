@@ -1,12 +1,15 @@
 import {
   CDP_DISCOVERY_RESPONSE_TIMEOUT_MS,
   DEFAULT_CDP_COMMAND_TIMEOUT_MS,
+  MAX_BROWSER_DEADLINE_MS,
 } from "../domain/browserDeadline.js";
 import type { BrowserObservationEndpoint } from "../domain/browserObservation.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
 import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
+import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
 import { BrowserObservationError } from "../domain/browserObservationError.js";
 import type { BrowserObservationOperation } from "../domain/browserObservationErrors.js";
+import { CdpCommandRejection } from "./CdpCommandRejection.js";
 import { CdpConnection } from "./CdpConnection.js";
 import {
   CdpTargetSessionOwner,
@@ -35,6 +38,7 @@ export interface CdpOpenedEndpoint {
    * the user to approve each socket. HTTP discovery opens no socket.
    */
   readonly connection: CdpConnection | undefined;
+  readonly reusableBrowserSocket?: boolean;
 }
 
 /**
@@ -48,60 +52,104 @@ export const openCdpEndpoint = async (
   timeoutMs?: number,
   owner?: CdpTargetSessionOwner,
   commandTimeoutMs?: number,
+  options?: { readonly reuseBrowserSocket?: boolean },
 ): Promise<CdpOpenedEndpoint> => {
+  const discoveryTimeoutMs = timeoutMs ?? CDP_DISCOVERY_RESPONSE_TIMEOUT_MS;
   if (endpoint.transport === "http_discovery")
     return {
-      discovery: await discoverCdpEndpoint(endpoint.url, operation, signal),
+      discovery: await discoverCdpEndpoint(
+        endpoint.url,
+        operation,
+        signal,
+        discoveryTimeoutMs,
+      ),
       connection: undefined,
     };
-  const discoveryTimeoutMs = timeoutMs ?? CDP_DISCOVERY_RESPONSE_TIMEOUT_MS;
+  const reuseBrowserSocket =
+    owner !== undefined && options?.reuseBrowserSocket === true;
   // The browser-socket handshake and discovery commands stay on the discovery
   // deadline. The selected command deadline starts only after discovery returns.
+  const discoveryGuardTimeoutMs = Math.min(
+    MAX_BROWSER_DEADLINE_MS,
+    discoveryTimeoutMs + 1_000,
+  );
   const discoveryLimits = {
-    commandTimeoutMs: discoveryTimeoutMs,
-    // Stay past the discovery abort so a stalled open is labeled as discovery,
-    // not as a command_timeout_ms handshake.
-    handshakeTimeoutMs: discoveryTimeoutMs + 1_000,
+    // Stay past the discovery abort so a stalled open or discovery command is
+    // labeled as discovery, not as command_timeout_ms, without overflowing
+    // 32-bit timers.
+    commandTimeoutMs: discoveryGuardTimeoutMs,
+    handshakeTimeoutMs: discoveryGuardTimeoutMs,
   };
   return await withCdpDiscoveryDeadline(
     operation,
     signal,
     async (deadlineSignal) => {
-      const connection =
-        owner === undefined
-          ? await CdpConnection.connect(
-              endpoint.url,
-              operation,
-              deadlineSignal,
-              discoveryLimits,
-            )
-          : await owner.connect(
-              endpoint.url,
-              operation,
-              { signal: deadlineSignal },
-              "browser-endpoint",
-              discoveryLimits,
-            );
+      const acquired = reuseBrowserSocket
+        ? await owner.acquireBrowserSocket(
+            endpoint.url,
+            operation,
+            { signal: deadlineSignal },
+            discoveryLimits,
+          )
+        : {
+            connection:
+              owner === undefined
+                ? await CdpConnection.connect(
+                    endpoint.url,
+                    operation,
+                    deadlineSignal,
+                    discoveryLimits,
+                  )
+                : await owner.connect(
+                    endpoint.url,
+                    operation,
+                    { signal: deadlineSignal },
+                    "browser-endpoint",
+                    discoveryLimits,
+                  ),
+            reused: false,
+          };
       try {
         const discovery = await discoverCdpBrowserSocket(
-          connection,
+          acquired.connection,
           endpoint.url,
           operation,
           deadlineSignal,
         );
-        connection.selectCommandTimeout(
-          commandTimeoutMs ?? DEFAULT_CDP_COMMAND_TIMEOUT_MS,
-        );
+        const selectedTimeout =
+          commandTimeoutMs ?? DEFAULT_CDP_COMMAND_TIMEOUT_MS;
+        if (reuseBrowserSocket) {
+          owner.admitBrowserSocket(endpoint.url, acquired.connection);
+          return {
+            discovery,
+            connection: acquired.connection.withOperation(
+              operation,
+              selectedTimeout,
+            ),
+            reusableBrowserSocket: true,
+          };
+        }
+        acquired.connection.selectCommandTimeout(selectedTimeout);
         return {
           discovery,
-          connection,
+          connection: acquired.connection,
         };
       } catch (cause: unknown) {
+        const releaseLeaseOnly =
+          reuseBrowserSocket &&
+          deadlineSignal.aborted &&
+          cause instanceof AnalysisCancelledError &&
+          acquired.connection.isReusable();
         return await failCdpOpenAfterCleanup(
-          connection,
+          acquired.connection,
           cause,
           operation,
           owner,
+          reuseBrowserSocket
+            ? releaseLeaseOnly
+              ? "release"
+              : "evict"
+            : "finish",
         );
       }
     },
@@ -176,9 +224,14 @@ export const failCdpOpenAfterCleanup = async (
   primary: unknown,
   operation: BrowserObservationOperation,
   owner?: CdpTargetSessionOwner,
+  ownerDisposition: "finish" | "evict" | "release" = "finish",
 ): Promise<never> => {
   try {
     if (owner === undefined) await connection.close();
+    else if (ownerDisposition === "release")
+      await owner.releaseBrowserSocket(connection);
+    else if (ownerDisposition === "evict")
+      await owner.evictBrowserSocket(connection);
     else await owner.finish(connection);
   } catch (cleanup: unknown) {
     throw combineOpenFailure(primary, cleanup, operation);
@@ -202,17 +255,24 @@ const combineOpenFailure = (
         { cause: primary },
       );
 
-/** Disable enabled domains, detach browser sessions, and close REA's socket. */
+/** Disable enabled domains, detach browser sessions, and release or close REA's socket. */
 export const closeCdpTargetSession = async (
   targetSession: CdpTargetSession,
   enabledDomains: readonly string[],
   signal?: AbortSignal,
   owner?: CdpTargetSessionOwner,
+  reuseBrowserSocket = false,
 ): Promise<void> => {
   if (owner !== undefined) {
-    await owner.finish(targetSession.connection, () =>
-      cleanupCdpTargetCommands(targetSession, enabledDomains, signal),
-    );
+    if (reuseBrowserSocket) {
+      await owner.releaseBrowserSocket(targetSession.connection, () =>
+        cleanupCdpTargetCommands(targetSession, enabledDomains, signal),
+      );
+      return;
+    }
+    await owner.finish(targetSession.connection, async () => {
+      await cleanupCdpTargetCommands(targetSession, enabledDomains, signal);
+    });
     return;
   }
   await cleanupCdpTargetCommands(targetSession, enabledDomains, signal);
@@ -223,7 +283,7 @@ const cleanupCdpTargetCommands = async (
   targetSession: CdpTargetSession,
   enabledDomains: readonly string[],
   signal?: AbortSignal,
-): Promise<void> => {
+): Promise<boolean> => {
   const { connection, sessionId } = targetSession;
   const cleanup = new AbortController();
   const domainSignal =
@@ -244,28 +304,40 @@ const cleanupCdpTargetCommands = async (
             domainSignal,
           );
         } catch {
-          // Best-effort domain cleanup; transport close is the definitive boundary.
+          // Best-effort domain cleanup; session detachment or transport close follows.
         }
       }
     }
+    if (sessionId === undefined) return true;
     // Cancellation skips optional domain shutdown but still releases the
     // attached session using its independent, bounded cleanup signal.
-    if (!cleanup.signal.aborted && sessionId !== undefined)
-      try {
-        await connection.send(
-          "Target.detachFromTarget",
-          { sessionId },
-          undefined,
-          cleanup.signal,
-        );
-      } catch {
-        // Best-effort detach; transport close is the definitive boundary.
-      }
+    if (cleanup.signal.aborted) return false;
+    try {
+      await connection.send(
+        "Target.detachFromTarget",
+        { sessionId },
+        undefined,
+        cleanup.signal,
+      );
+      return true;
+    } catch (cause: unknown) {
+      if (isAlreadyDetachedSessionRejection(cause)) return true;
+      // If detachment is unconfirmed, transport close becomes the definitive boundary.
+      return false;
+    }
   } finally {
     clearTimeout(timeout);
     cleanup.abort();
   }
 };
+
+const isAlreadyDetachedSessionRejection = (cause: unknown): boolean =>
+  cause instanceof CdpCommandRejection &&
+  (cause.code === -32_001 ||
+    (cause.reportedMessage !== null &&
+      /no session with given id|session with given id not found/iu.test(
+        cause.reportedMessage,
+      )));
 
 const attachedSessionId = (
   value: unknown,

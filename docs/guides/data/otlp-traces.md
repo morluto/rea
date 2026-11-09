@@ -74,3 +74,12 @@ limitation; it never silently shortens the inventory without saying so.
 Diagnostics retain the first 1000 findings in processing order, sorted by ID
 for display. If more occur, a limitation gives the omitted count; later findings
 are counted without retaining or hashing them.
+
+## Retain the complete inventory with a summary
+
+Use `--detail summary --evidence_output /absolute/new-evidence.bundle.json`
+for counts, artifact identity and source coverage in the reply. The bundle
+retains the complete parent Evidence, including the inventoried records and
+diagnostics. The summary names that parent and its digest. Complete summary
+projection does not imply complete source coverage; format limits, omissions
+and unsupported content remain explicit in `source_coverage`.

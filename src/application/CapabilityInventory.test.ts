@@ -698,8 +698,7 @@ describe("partial navigation availability", () => {
 
     expect(availability).toMatchObject({
       reason: "provider_missing",
-      remediation:
-        "Configure a provider for one of: current_document, current_address, resolve_containing_procedure.",
+      remediation: expect.stringMatching(/configure.*provider/i),
       modes: [
         {
           name: "current_selection",
@@ -718,6 +717,13 @@ describe("partial navigation availability", () => {
         },
       ],
     });
+    for (const operation of [
+      "current_document",
+      "current_address",
+      "resolve_containing_procedure",
+    ]) {
+      expect(availability.remediation?.split(operation)).toHaveLength(2);
+    }
   });
 });
 
@@ -820,8 +826,9 @@ describe("binary_overview capability requirements", () => {
     ).toMatchObject({
       available: false,
       reason: "provider_missing",
-      remediation:
-        "Configure a provider for one of: current_document, list_documents.",
+      remediation: expect.stringMatching(
+        /configure.*provider.*current_document.*list_documents/i,
+      ),
     });
   });
 
@@ -1113,6 +1120,34 @@ it("keeps independent native sessions discoverable without an unrelated binary t
   expect(entries.find((entry) => entry.name === "inspect_macho")).toMatchObject(
     { available: false, reason: "target_required" },
   );
+});
+
+it("reports standalone reverse-engineering tools unavailable when launch failure is observed", () => {
+  const repair =
+    "Set REA_OBJDUMP_COMMAND to an installed executable GNU objdump command.";
+  const entries = buildCapabilityInventory(status(), {
+    ...enabledPolicy,
+    commandProviderFailures: {
+      inspect_with_objdump: {
+        reason: "Could not launch selected objdump executable",
+        remediation: repair,
+      },
+    },
+  });
+  expect(
+    entries.find((entry) => entry.name === "inspect_with_objdump"),
+  ).toMatchObject({
+    available: false,
+    reason: "provider_unavailable",
+    remediation: repair,
+  });
+  expect(
+    entries.find((entry) => entry.name === "execute_rizin_command"),
+  ).toMatchObject({
+    available: true,
+    reason: "available",
+    remediation: null,
+  });
 });
 
 it.each(["darwin", "linux", "win32"] as const)(

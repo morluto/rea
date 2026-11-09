@@ -68,7 +68,7 @@ export interface WindowsChangeTimeSettleLimits {
   readonly maxPollsSource: "default" | "setting";
 }
 
-export const windowsChangeTimeSettingFailure = (
+const windowsChangeTimeSettingFailure = (
   bound: WindowsChangeTimeBound,
   currentValue: string,
 ): WindowsChangeTimeSettingFailure => ({
@@ -83,7 +83,7 @@ export const windowsChangeTimeSettingFailure = (
 });
 
 /** Name the rejected value, its source, the allowed range, and the required restart. */
-export const windowsChangeTimeSettingMessage = (
+const windowsChangeTimeSettingMessage = (
   failure: WindowsChangeTimeSettingFailure,
 ): string =>
   `The effective ${failure.setting} value is ${failure.currentValue} ${failure.unit} (source ${failure.source}; default ${String(failure.defaultValue)} ${failure.unit}, floor ${String(failure.floor)} ${failure.unit}, maximum ${String(failure.maximum)} ${failure.unit}). Set ${failure.setting} in the environment that starts REA to a positive decimal integer from ${String(failure.floor)} to ${String(failure.maximum)}, then restart REA.`;

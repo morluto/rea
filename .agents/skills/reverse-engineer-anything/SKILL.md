@@ -1,8 +1,8 @@
 ---
 name: reverse-engineer-anything
-description: Reverse engineer native, managed, Electron/JavaScript, packaged, firmware, and browser targets with REA, and build agent environments (AgentEnv bundles) of web applications from a live instance or a capture. Use shipped-artifact or requested runtime evidence to explain features, compare versions, decompile code, or guide a reconstruction. Skip REA for ordinary source-repository architecture analysis.
+description: Reverse engineer native, managed, Electron/JavaScript, packaged, firmware, and browser targets with REA, and build agent environments (AgentEnv bundles) of web applications from a live instance or a capture, and of Linux desktop apps with a task from a request. Use shipped-artifact or requested runtime evidence to explain features, compare versions, decompile code, or guide a reconstruction. Skip REA for ordinary source-repository architecture analysis.
 metadata:
-  version: "60"
+  version: "61"
 ---
 
 # REA
@@ -140,6 +140,10 @@ explicit path or endpoint and do not need it.
 - Task for a desktop application's exported environment, from a
   `capture-desktop-application` folder: read
   [desktop application tasks](references/environments.md#tasks-for-a-desktop-application-environment).
+- Environment of a Linux desktop app with a task, from a request such as
+  "build me an Inkscape environment where the agent changes a poster's
+  headline": read [desktop builds](references/desktop-build.md). You drive the
+  app on a build computer from `start_build_computer`, then export and witness.
 - Fiddler Everywhere traffic or a native `.saz` capture: read the
   [Fiddler workflow](references/runtime-observation.md#fiddler-everywhere-traffic-debugging).
   Inspect saved SAZ with `inspect_web_network_capture` and `format: "saz"`;
@@ -210,11 +214,15 @@ explicit path or endpoint and do not need it.
   `parent_evidence_id` for exact function or `bytecode_hex`/stdout/stderr pages.
   Candidate coverage does not establish interface completeness. See the
   [EVM bytecode guide](https://github.com/morluto/rea/blob/main/docs/guides/evm/evm-bytecode.md).
-- Embedded Go compiler, module or build-setting metadata: `inspect_go_binary`
-  with the explicit local file. This built-in target-free inspection requires no
-  Go installation or disassembler. Preserve raw module bytes and source ranges;
-  absent metadata does not prove a binary is not Go, and unparsed text records
-  remain explicit. See the
+- Embedded Go compiler, module, build-setting metadata, or static `(ptr, len)`
+  string literals: `inspect_go_binary` with the explicit local file (pass
+  `include_string_literals: true` and optional `max_string_literals` for bounded
+  inferred static string-header recovery, and page retained rows with
+  `inspect_analysis_view` kind `go` collection `string_literals`). This built-in
+  target-free inspection requires no Go installation or disassembler. Preserve
+  raw module bytes and source ranges; absent metadata does not prove a binary is
+  not Go, static string recovery excludes compiler-inlined stack or immediate
+  strings, and unparsed text records remain explicit. See the
   [Go binary guide](https://github.com/morluto/rea/blob/main/docs/guides/native/go-binaries.md).
 - Embedded CUDA/HIP code objects: `inspect_gpu_code_objects`; inventory targets
   first, then decode selected payloads and query retained GPU Evidence.
@@ -539,6 +547,8 @@ as complete while required questions remain open.
   [references/environments.md](references/environments.md)
 - Tasks for a desktop application's exported environment:
   [references/environments.md](references/environments.md#tasks-for-a-desktop-application-environment)
+- A desktop app environment from a request, built and witnessed on build
+  computers: [references/desktop-build.md](references/desktop-build.md)
 
 ## Finish the task
 

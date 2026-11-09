@@ -245,6 +245,41 @@ tests added, and passes now.
 - `DesktopBuildTurns.test.ts`: a running call that finishes after a close
   keeps its result.
 
+## Opening the seed's document
+
+Run on 2026-11-05: source tests and gates on macOS; the desktop source tests
+again on the Ubuntu 24.04 amd64 VM (40 files, 422 passed, none skipped).
+
+- `seedDocument.test.ts`: the seed's one document is appended when `Exec`
+  holds `%F`, `%U`, `%f` or `%u`, and the launch respells it as
+  `"$HOME"/'Documents/poster.svg'`; two documents, none, an `Exec` without a
+  file field code and a capture without a desktop entry keep the command and
+  give the reason; a command already naming a file under the home is kept.
+- `appExport.test.ts`: the README says what the launch opens, or why it
+  opens nothing; a seed made for the task is worded as such in the README
+  and the class, and a captured one as the user's real data.
+- `DesktopApplicationExport.test.ts`: from a seed-and-end capture launched
+  through `notes %U`, the class launches `notes` with the note; through
+  `notes`, or without a desktop entry, and from a baseline seed with no
+  document, it launches as captured and a limitation says why;
+  `--synthetic-seed` changes the limitation and the README and is recorded
+  as `synthetic_seed`.
+- `buildCaptureMcp.test.ts`: `export_build_environment` runs the export
+  with `--synthetic-seed`, and the real CLI's README for that capture says
+  the seed was made for the task.
+
+The blind Inkscape build's capture was gone with its build computer, so the
+bundle could not be exported again. Instead, a copy of that bundle had only
+its `Launch` command replaced by the one this code renders for its seed (one
+document, `Documents/poster.svg`; the image's `Exec=inkscape %F`). A computer
+of it came up in 47 s with Inkscape showing `poster.svg` and no Welcome
+screen, and `data/reset` relaunched it on the poster again. Three Claude Code
+runs with Sonnet 5.5 all passed, in 11, 9 and 10 turns for $0.70, $0.46 and
+$0.72 ($0.63 on average); the same bundle opening on the Welcome screen had
+taken 18, 23 and 21 turns for $0.70, $1.55 and $0.51 ($0.92). Cache reads
+fell from 585-714K tokens to 181-225K; the cost is mostly cache writes,
+which varied from 17K to 189K tokens whatever the turns.
+
 ## Limits of this verification
 
 - The witness acts were scripted by this agent from the task's prompt; no
