@@ -121,7 +121,9 @@ export const erlangBeamSchema = z.strictObject({
     status: z.enum(["complete", "partial"]),
     examined_chunks: uint,
     atoms: uint,
-    trailing_bytes: uint,
+    // Defaulted so Evidence retained by builds predating this field still
+    // reparses; every new parse emits the concrete count.
+    trailing_bytes: uint.default(0),
   }),
   limitations: z.array(z.string()),
 });
