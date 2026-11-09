@@ -12,6 +12,7 @@ import {
   readExactJavaScriptLiteral,
   semanticStaticPropertyKey,
   semanticStaticPropertyName,
+  staticObjectProperty,
   unwrapJavaScriptExpression,
 } from "./javascriptAstValues.js";
 import {
@@ -271,6 +272,9 @@ const collectRequests = (
       !URL.canParse(endpoint)
     )
       return;
+    // `http`/`https` validate the path before the request exists, so an unescaped
+    // character throws from the call itself.
+    if (rejectsHttpPathLiteral(node, method)) return;
     output.push({
       node,
       operation: {
@@ -579,6 +583,47 @@ const requestFields = (
   });
 };
 
+/**
+ * The characters Node refuses in an `http.request` path.
+ *
+ * `checkInvalidHeaderChar` is not what runs here; the path goes through
+ * `validatePath`/`ERR_UNESCAPED_CHARACTERS`. Measured by enumerating every ASCII code point
+ * inside a literal path on Node 24.22.1, exactly `0x00`-`0x20` are refused and `0x21`-`0x7f`
+ * are accepted, so this is a closed range rather than a list of known-bad characters. A
+ * space is in it: `path: "/a b"` throws while `"/a%20b"` connects. Non-ASCII is accepted, so
+ * `path: "/aéb"` connects.
+ */
+const UNESCAPED_PATH_CHARACTER = /[\u0000-\u0020]/u;
+
+/**
+ * Whether a literal `options.path` makes `http.request` throw before any request exists.
+ *
+ * `http` and `https` validate the path before the request is built, so a literal carrying a
+ * refused character throws `ERR_UNESCAPED_CHARACTERS` from the call itself. Measured on Node
+ * 24.22.1, an empty path is accepted because Node treats `""` as "not given" and falls back
+ * to `/`.
+ */
+const rejectsHttpPathLiteral = (
+  node: t.CallExpression | t.OptionalCallExpression | t.NewExpression,
+  method: JavaScriptSemanticRequestOperation["method"],
+): boolean => {
+  if (method !== "get" && method !== "request") return false;
+  if (node.arguments.some((argument) => t.isSpreadElement(argument)))
+    return false;
+  const first = node.arguments[0];
+  const firstValue =
+    first === undefined ? undefined : unwrapJavaScriptExpression(first).node;
+  const options =
+    firstValue !== undefined && t.isObjectExpression(firstValue)
+      ? firstValue
+      : unwrapJavaScriptExpression(node.arguments[1] ?? first!).node;
+  if (!t.isObjectExpression(options)) return false;
+  const lookup = staticObjectProperty(options, "path");
+  if (lookup.status !== "explicit") return false;
+  const literal = readExactJavaScriptLiteral(lookup.value);
+  if (!literal.found || typeof literal.value !== "string") return false;
+  return UNESCAPED_PATH_CHARACTER.test(literal.value);
+};
 const requestEndpoint = (
   node: t.CallExpression | t.OptionalCallExpression | t.NewExpression,
 ): string | null =>
