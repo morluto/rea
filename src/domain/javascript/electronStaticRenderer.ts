@@ -39,6 +39,14 @@ export const isElectronRendererLoad = (
   );
 };
 
+/** Window constructors that own a `webContents` surface for IPC receivers. */
+const WINDOW_OWNER_CONSTRUCTORS: ReadonlySet<string> = new Set([
+  "BrowserWindow",
+  "BaseWindow",
+  "BrowserView",
+  "WebContentsView",
+]);
+
 /** Source allocation identity, not a claim about runtime window/frame identity. */
 export const resolveElectronBrowserWindowReceiver = (
   node: t.Node,
@@ -84,16 +92,18 @@ export const resolveElectronBrowserWindowReceiver = (
   }
   if (!t.isNewExpression(receiver)) return undefined;
   const constructor = electronCalleePath(receiver.callee, context);
+  const constructorName = constructor?.[0];
   if (
     constructor?.length !== 1 ||
-    constructor[0] !== "BrowserWindow" ||
-    !supportedReceiverPath(path)
+    constructorName === undefined ||
+    !WINDOW_OWNER_CONSTRUCTORS.has(constructorName) ||
+    !supportedReceiverPath(path, constructorName)
   )
     return undefined;
   if (
     context.electronExportIntact?.([
       "electron",
-      "BrowserWindow",
+      constructorName,
       "prototype",
       ...path,
     ]) !== true
@@ -108,11 +118,18 @@ export const resolveElectronBrowserWindowReceiver = (
   return { owner: receiver, path };
 };
 
-const supportedReceiverPath = (path: readonly string[]): boolean => {
+const supportedReceiverPath = (
+  path: readonly string[],
+  constructor: string,
+): boolean => {
+  // Only BrowserWindow exposes loadFile/loadURL on itself; the others load
+  // through their webContents.
+  const selfOwnsLoad = constructor === "BrowserWindow";
   const operation = path.at(-1);
   if (operation === "loadFile" || operation === "loadURL")
     return (
-      path.length === 1 || (path.length === 2 && path[0] === "webContents")
+      (selfOwnsLoad && path.length === 1) ||
+      (path.length === 2 && path[0] === "webContents")
     );
   return (
     path[0] === "webContents" &&

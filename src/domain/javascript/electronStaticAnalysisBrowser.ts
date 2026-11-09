@@ -8,6 +8,7 @@ import type {
   ElectronStaticValue,
   ElectronUtilityProcessFinding,
   ElectronWebPreference,
+  ElectronWindowConstructor,
 } from "./electronStaticAnalysisTypes.js";
 import { contextBridgeExposureArguments } from "./javascriptContextBridgeExposure.js";
 import {
@@ -38,14 +39,33 @@ import {
   resolveElectronOptionObject,
 } from "./electronStaticOptionObjects.js";
 
+/** Constructors whose webPreferences surface is read the same way as BrowserWindow. */
+const WINDOW_CONSTRUCTORS: ReadonlySet<string> =
+  new Set<ElectronWindowConstructor>([
+    "BrowserWindow",
+    "BaseWindow",
+    "BrowserView",
+    "WebContentsView",
+  ]);
+
+const windowConstructor = (
+  callee: t.Node,
+  context: JavaScriptFindingContext,
+): ElectronWindowConstructor | undefined => {
+  const path = electronCalleePath(callee, context);
+  const name = path?.length === 1 ? path[0] : undefined;
+  return name !== undefined && WINDOW_CONSTRUCTORS.has(name)
+    ? (name as ElectronWindowConstructor)
+    : undefined;
+};
+
 /** Inspect BrowserWindow, contextBridge, and utility-process syntax. */
 export const inspectElectronBrowserNode = (
   node: t.Node,
   context: JavaScriptFindingContext,
 ): void => {
   if (t.isNewExpression(node)) {
-    const path = electronCalleePath(node.callee, context);
-    if (path?.length === 1 && path[0] === "BrowserWindow") {
+    if (windowConstructor(node.callee, context) !== undefined) {
       if (needsConstantOptions(node))
         context.accumulator.pendingBrowserWindows.push(node);
       else inspectBrowserWindow(node, context);
@@ -105,6 +125,8 @@ const inspectBrowserWindow = (
   context: JavaScriptFindingContext,
   index?: JavaScriptBindingIndex,
 ): void => {
+  const constructorName =
+    windowConstructor(node.callee, context) ?? "BrowserWindow";
   const argument = argumentNode(node.arguments[0]);
   const options =
     argument === undefined
@@ -139,6 +161,9 @@ const inspectBrowserWindow = (
   );
   context.accumulator.unknownFindings += collected.unknown;
   const finding: ElectronBrowserWindowFinding = {
+    ...(constructorName === "BrowserWindow"
+      ? {}
+      : { window_constructor: constructorName }),
     options_status:
       resolvedOptions === undefined
         ? "missing"
@@ -166,14 +191,14 @@ const inspectBrowserWindow = (
         role: "preload",
         path: finding.preload_path,
         resolution_context: finding.preload_resolution_context,
-        mechanism: "BrowserWindow:webPreferences.preload",
+        mechanism: `${constructorName}:webPreferences.preload`,
         module_key: null,
         location: range(node),
       },
     });
   addLocatedFinding(context, {
     collection: context.accumulator.browserWindows,
-    key: "electron-window\0BrowserWindow",
+    key: `electron-window\0${constructorName}`,
     node,
     value: finding,
   });

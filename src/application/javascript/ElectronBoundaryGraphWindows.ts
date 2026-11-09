@@ -81,6 +81,7 @@ const addBrowserWindow = (
   input: FindingInput<ElectronBrowserWindowFinding>,
 ): void => {
   const { context, file, value, coverage } = input;
+  const constructor = value.window_constructor ?? "BrowserWindow";
   const window = context.accumulator.addNode({
     kind: "browser-window",
     identity: artifactLocalIdentity(
@@ -90,8 +91,11 @@ const addBrowserWindow = (
     ),
     observations: [
       {
-        label: `BrowserWindow@${javascriptSourceRangeKey(value.location)}`,
+        label: `${constructor}@${javascriptSourceRangeKey(value.location)}`,
         properties: {
+          ...(value.window_constructor === undefined
+            ? {}
+            : { window_constructor: value.window_constructor }),
           source_path: file.path,
           options_status: value.options_status,
           web_preferences_status: value.web_preferences_status,
@@ -164,7 +168,7 @@ const addWindowPreload = (
     kind: "electron-preload",
     anchor: input.file,
     resolution,
-    mechanism: "BrowserWindow:webPreferences.preload",
+    mechanism: `${input.value.window_constructor ?? "BrowserWindow"}:webPreferences.preload`,
     range: input.value.location,
     coverage: input.coverage,
   });
