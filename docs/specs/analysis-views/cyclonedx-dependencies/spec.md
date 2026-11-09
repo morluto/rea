@@ -31,7 +31,9 @@ access.
   `metadata.component` to a recorded Rust root package with a dependency entry
   and `rea:cargo:root`; a null root stays unknown. Record only main-module
   edges for Go and mark them with `rea:go:graph`; omit the empty `dependsOn`
-  entry for a Go record that did not parse completely.
+  entry for a Go record that did not parse completely. Relate
+  `metadata.component` to a decoded Go main module with a dependency entry and
+  `rea:go:main`, even when that list is omitted; add neither without one.
 - Report `compositions` as `incomplete` for partial coverage and `unknown`
   otherwise, never `complete`.
 - Keep artifact identity, the parent Evidence id, a view digest, coverage,

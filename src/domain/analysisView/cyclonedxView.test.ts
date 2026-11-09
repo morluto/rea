@@ -252,6 +252,10 @@ it("projects Go modules with Package URLs, replacements and main-module edges", 
   ]);
   expect(view.document.dependencies).toEqual([
     {
+      ref: view.document.metadata.component["bom-ref"],
+      dependsOn: ["pkg:golang/example.com/tool@%28devel%29"],
+    },
+    {
       ref: "pkg:golang/example.com/tool@%28devel%29",
       dependsOn: [
         "pkg:golang/github.com/azure/go-autorest@v0.11.29",
@@ -439,6 +443,62 @@ it("does not report an embedded list for parse-complete GOPATH metadata", () => 
   );
 });
 
+it("links the binary to its decoded Go main module, even when its list is incomplete", () => {
+  const binaryRef = `sha256:${SHA}`;
+  const main = "pkg:golang/example.com/tool@v1.2.3";
+  const dep = "pkg:golang/example.com/dep@v1.0.0";
+  const moduleRecord = (
+    mainModule: GoModule | null,
+    dependencies: GoModule[],
+    complete: boolean,
+  ) => ({
+    path: "example.com/tool",
+    main: mainModule,
+    dependencies,
+    settings: [],
+    unparsed_lines: complete ? [] : ["dep\tbroken"],
+    unparsed_line_bytes_base64: [],
+    complete,
+  });
+
+  const complete = projectGo(
+    goReport(
+      moduleRecord(
+        goModule("example.com/tool", "v1.2.3"),
+        [goModule("example.com/dep", "v1.0.0")],
+        true,
+      ),
+    ),
+  );
+  expect(complete.document.dependencies).toEqual([
+    { ref: binaryRef, dependsOn: [main] },
+    { ref: main, dependsOn: [dep] },
+  ]);
+  expect(propertyValues(complete.document.properties, "rea:go:main")).toEqual([
+    main,
+  ]);
+
+  const incomplete = projectGo(
+    goReport(moduleRecord(goModule("example.com/tool", "v1.2.3"), [], false)),
+  );
+  expect(incomplete.document.dependencies).toEqual([
+    { ref: binaryRef, dependsOn: [main] },
+  ]);
+  expect(propertyValues(incomplete.document.properties, "rea:go:main")).toEqual(
+    [main],
+  );
+
+  const mainless = projectGo(
+    goReport(moduleRecord(null, [goModule("example.com/dep", "v1.0.0")], true)),
+  );
+  expect(
+    (mainless.document.dependencies ?? []).map((entry) => entry.ref),
+  ).not.toContain(binaryRef);
+  expect(propertyValues(mainless.document.properties, "rea:go:main")).toEqual(
+    [],
+  );
+});
+
 it("omits an unparsed Go dependency list instead of claiming it is empty", () => {
   const incomplete = projectGo(
     goReport({
@@ -455,7 +515,12 @@ it("omits an unparsed Go dependency list instead of claiming it is empty", () =>
     aggregate: "incomplete",
     records: "partial",
   });
-  expect(incomplete.document.dependencies).toBeUndefined();
+  expect(incomplete.document.dependencies).toEqual([
+    {
+      ref: incomplete.document.metadata.component["bom-ref"],
+      dependsOn: ["pkg:golang/example.com/tool@v1.2.3"],
+    },
+  ]);
   expect(
     incomplete.document.components.map((component) => component.purl),
   ).toEqual(["pkg:golang/example.com/tool@v1.2.3"]);
@@ -476,6 +541,10 @@ it("omits an unparsed Go dependency list instead of claiming it is empty", () =>
     records: "present",
   });
   expect(observedEmpty.document.dependencies).toEqual([
+    {
+      ref: observedEmpty.document.metadata.component["bom-ref"],
+      dependsOn: ["pkg:golang/example.com/tool@v1.2.3"],
+    },
     { ref: "pkg:golang/example.com/tool@v1.2.3", dependsOn: [] },
   ]);
 
@@ -491,6 +560,10 @@ it("omits an unparsed Go dependency list instead of claiming it is empty", () =>
     }),
   );
   expect(parsedWithGap.document.dependencies).toEqual([
+    {
+      ref: parsedWithGap.document.metadata.component["bom-ref"],
+      dependsOn: ["pkg:golang/example.com/tool@v1.2.3"],
+    },
     {
       ref: "pkg:golang/example.com/tool@v1.2.3",
       dependsOn: ["pkg:golang/example.com/dep@v1.0.0"],
@@ -952,6 +1025,10 @@ it("keeps a local Go path unknown and retains a module identity", () => {
     expect(unknownsNaming(view.unknowns, `${path} `), path).toHaveLength(1);
   expect(view.document.dependencies).toEqual([
     {
+      ref: view.document.metadata.component["bom-ref"],
+      dependsOn: ["pkg:golang/example.com/tool@%28devel%29"],
+    },
+    {
       ref: "pkg:golang/example.com/tool@%28devel%29",
       dependsOn: [
         "go-module:1",
@@ -1053,6 +1130,10 @@ it("keeps an empty Go path unknown and versions a replacement as itself", () => 
   expect(JSON.stringify(view.document)).not.toContain("pkg:golang@");
   expect(view.document.dependencies).toEqual([
     {
+      ref: view.document.metadata.component["bom-ref"],
+      dependsOn: ["go-module:0"],
+    },
+    {
       ref: "go-module:0",
       dependsOn: ["go-module:1", "go-module:2", fork],
     },
@@ -1134,6 +1215,7 @@ it("keeps a Go dependency whose Package URL matches the main module", () => {
   );
   const purl = "pkg:golang/example.com/tool@v1.0.0";
   expect(view.document.dependencies).toEqual([
+    { ref: view.document.metadata.component["bom-ref"], dependsOn: [purl] },
     { ref: purl, dependsOn: [`${purl}#1`] },
   ]);
 });

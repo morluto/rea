@@ -44,7 +44,10 @@ entry from `metadata.component` to that package and the document property
 `rea:cargo:root` give its `bom-ref`. A record without a root adds neither, so
 the binary's own package stays unknown. Go build information has no module graph, so the document
 records only edges from the main module to each module and sets `rea:go:graph`
-to `main-module-edges`.
+to `main-module-edges`. A decoded main module also gets a dependency entry from
+`metadata.component` and the document property `rea:go:main` with its
+`bom-ref`, including when an incomplete module record leaves out the main
+module's own dependency list. Without a decoded main module, neither is added.
 
 `compositions` is `incomplete` when the producer reports partial coverage and
 `unknown` otherwise. It is never `complete`. An embedded record does not

@@ -431,13 +431,15 @@ const projectSizedDocument = (
       },
     },
     components,
-    ...(dependencies === undefined
-      ? {}
+    ...(subjectRef === undefined
+      ? dependencies === undefined
+        ? {}
+        : { dependencies }
       : {
-          dependencies:
-            subjectRef === undefined
-              ? dependencies
-              : [{ ref: binaryRef, dependsOn: [subjectRef] }, ...dependencies],
+          dependencies: [
+            { ref: binaryRef, dependsOn: [subjectRef] },
+            ...(dependencies ?? []),
+          ],
         }),
     compositions: [
       {
@@ -586,7 +588,13 @@ const projectGoCycloneDx = (
     [COMPOSITION_LIMITATION, GO_GRAPH_LIMITATION],
     components,
     dependencies,
-    [{ name: "rea:go:graph", value: "main-module-edges" }],
+    [
+      { name: "rea:go:graph", value: "main-module-edges" },
+      ...(mainRef === undefined
+        ? []
+        : [{ name: "rea:go:main", value: mainRef }]),
+    ],
+    mainRef,
   );
 };
 
