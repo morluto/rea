@@ -57,8 +57,9 @@ Evidence; the bundle itself is complete.
 The class file is `<name>_app.py` with hyphens as underscores, for example
 `mousepad_app.py`: agentenv imports it under its stem, so a plain `<name>.py`
 could shadow a standard library module such as `calendar`. A class name that
-would collide with a name the module imports or defines, such as `Path`, takes
-an `App` suffix.
+would collide with a name the module imports or defines, including built-in
+exceptions used by its readers, takes an `App` suffix: `PathApp` or
+`ValueErrorApp`, for example. The environment name remains unchanged.
 
 The class declares:
 
