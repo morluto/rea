@@ -256,7 +256,7 @@ const withSeededLocks = async (
     : new ComputerStartFailure(
         `${cause.message} ${seededLockStartNotice(locks)}`,
         cause.remediation,
-        cause.cause === undefined ? undefined : { cause: cause.cause },
+        { cause: cause.cause, reason: cause.reason },
       );
 };
 
