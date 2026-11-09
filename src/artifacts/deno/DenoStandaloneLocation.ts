@@ -232,6 +232,9 @@ const locateMachOSlice = async (
   const found: SectionRange[] = [];
   const owned: OwnedRange[] = [];
   let confirmed = false;
+  // A __SUI segment is libsui's, but only a d3n0l4nd section in it makes the
+  // image Deno's. Damage seen first is kept until that name is confirmed.
+  let damage: string | undefined;
   const framed = frameLoadCommands(table, (command) => {
     if (command.command !== LC_SEGMENT && command.command !== LC_SEGMENT_64)
       return;
@@ -252,14 +255,15 @@ const locateMachOSlice = async (
       owned.push({ start, end: start + segment.fileSize });
     }
     if (segmentName !== SEGMENT_NAME) return;
-    confirmed = true;
     const sectionSize = segment64 ? 80 : 68;
-    if (
-      segment.sectionCount >
-      Math.floor((command.body.byteLength - segment.headerSize) / sectionSize)
-    )
-      throw denoCarrierFailure("Mach-O __SUI segment is truncated");
-    for (let index = 0; index < segment.sectionCount; index += 1) {
+    const fitting = Math.floor(
+      (command.body.byteLength - segment.headerSize) / sectionSize,
+    );
+    for (
+      let index = 0;
+      index < Math.min(segment.sectionCount, fitting);
+      index += 1
+    ) {
       abortIfNeeded(carrier.signal);
       const at = segment.headerSize + index * sectionSize;
       const parsedSection = readMachoSectionHeader(
@@ -267,10 +271,13 @@ const locateMachOSlice = async (
         segment64,
         true,
       );
-      if (!parsedSection.ok)
-        throw denoCarrierFailure("Mach-O __SUI section is truncated");
+      if (!parsedSection.ok) {
+        damage ??= "Mach-O __SUI section is truncated";
+        return;
+      }
       const record = parsedSection.value;
       if (fixedCString(record.nameBytes) !== SECTION_NAME) continue;
+      confirmed = true;
       if (record.size > BigInt(Number.MAX_SAFE_INTEGER))
         throw denoCarrierFailure(
           "Mach-O d3n0l4nd section size is not a safe integer",
@@ -290,7 +297,10 @@ const locateMachOSlice = async (
         embedding: "mach-o-section",
       });
     }
+    if (segment.sectionCount > fitting)
+      damage ??= "Mach-O __SUI segment is truncated";
   });
+  if (confirmed && damage !== undefined) throw denoCarrierFailure(damage);
   if (confirmed && framed.status !== "framed")
     throw denoCarrierFailure("Mach-O load commands are truncated");
   // Commands after a framing failure were not visited and may hold __SUI.
@@ -301,6 +311,9 @@ const locateMachOSlice = async (
       found,
       unread: `load commands cannot be framed: ${framed.reason}`,
     };
+  // A damaged __SUI segment may hold an unread d3n0l4nd section, so the
+  // slice is not fully examined and the trailer search cannot stand for it.
+  if (damage !== undefined) return { found, unread: damage };
   const cpu = fatCpu ?? table.header.cpuType;
   if (found.length > 0 || cpu === CPU_TYPE_ARM64)
     return { found, unread: null };

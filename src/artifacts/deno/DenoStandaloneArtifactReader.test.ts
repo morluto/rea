@@ -1371,3 +1371,34 @@ it("rejects a universal Deno image whose sibling slice cannot be read", async ()
     locateDenoStandalone(bytesHandle(native), native.length),
   ).resolves.toEqual({ status: "absent" });
 });
+
+it("leaves a damaged __SUI segment without a d3n0l4nd section to native inventory", async () => {
+  // The 64-bit fixture's first section name sits after the Mach-O header
+  // (32 bytes) and the segment command header (72 bytes).
+  const sectionNameAt = 32 + 72;
+  const named = (name: string): Buffer => {
+    const image = denoMachO(buildDenoSection());
+    image.fill(0, sectionNameAt, sectionNameAt + 16);
+    image.write(name, sectionNameAt, "latin1");
+    // ncmds declares a second command that the table does not hold.
+    image.writeUInt32LE(2, 16);
+    return image;
+  };
+  const other = named("notdeno");
+  await expect(
+    locateDenoStandalone(bytesHandle(other), other.length),
+  ).resolves.toEqual({ status: "absent" });
+  const snapshot = await inventoryOf("notdeno", other);
+  expect(snapshot.manifest.root_format).not.toBe("deno-standalone");
+  // A confirmed d3n0l4nd section beside the same damage still fails closed.
+  const deno = named("d3n0l4nd");
+  await expect(
+    locateDenoStandalone(bytesHandle(deno), deno.length),
+  ).resolves.toMatchObject({
+    status: "present",
+    failure: {
+      reason: "format",
+      message: expect.stringContaining("load commands are truncated"),
+    },
+  });
+});
