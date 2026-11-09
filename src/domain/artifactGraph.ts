@@ -60,6 +60,7 @@ const artifactKindSchema = z.enum([
 export const ARTIFACT_FORMAT_IDS = [
   "dotnet-bundle",
   "bun-standalone",
+  "deno-standalone",
   "dmg",
   "zip",
   "pkg",
