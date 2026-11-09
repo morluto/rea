@@ -11,3 +11,4 @@
 - [x] Fix the blind validation run's gaps and the export's install source for a `.deb`.
 - [x] Fix the second review's gaps: one call at a time per computer, the recording's request id, undecided checks and the bundle's file list.
 - [x] Leave a failure that a cut view may have caused undecided: a missing line, row or value.
+- [x] Open the seed's one document at launch, and word a seed made for the task as such.
