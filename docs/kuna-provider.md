@@ -24,6 +24,13 @@ This validates the embedded bundle, not the rest of the snapshot container.
 
 ## Configure
 
+Doctor uses the selected client's effective registration environment. An
+unresolved setting that affects the probe keeps readiness unknown rather than
+falling back to the terminal account. Kuna's home-based cache fallback includes
+`USERPROFILE` when `HOME` is absent; an explicit cache root or a selected nonempty
+`HOME` makes that fallback irrelevant. These home settings are probe dependencies
+and are not persisted as ambient provider registration settings.
+
 ```bash
 export REA_KUNA_COMMAND=/absolute/path/to/kuna
 rea doctor --provider kuna
