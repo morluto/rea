@@ -246,7 +246,7 @@ export const registerAdbCommands = (
       namespace: z
         .enum(["system", "secure", "global"])
         .describe("Settings namespace to read"),
-      key: z.string().min(1).describe("Setting key to read"),
+      key: z.string().min(1).max(256).regex(/^[A-Za-z0-9_.-]+$/).describe("Setting key to read"),
     }),
     run: ({ args }) =>
       execute(CLI_COMMANDS.readAdbSetting, "read_adb_setting", {
