@@ -20,7 +20,7 @@ import { parseMachoLayout } from "../AppleMachoSelection.js";
 import {
   BinaryFormatFailure,
   BinaryMappingFailure,
-  mappedFileOffset,
+  createFileMappingIndex,
   type ImageSection,
 } from "../metadata/BinaryContainer.js";
 import { readMachoImage } from "../metadata/MachoImage.js";
@@ -766,20 +766,22 @@ export const readMachoInitializers = (
     header.value.wide,
     header.value.littleEndian,
   );
+  // Built once per image, so each slot and target lookup is logarithmic.
+  const mappings = createFileMappingIndex(
+    container.mappings,
+    container.zero_fills,
+  );
   const locate = (address: bigint, size: number): number | null => {
     try {
-      return (
-        image.fileBase +
-        mappedFileOffset(
-          container.mappings,
-          address,
-          size,
-          container.zero_fills,
-        )
-      );
+      return image.fileBase + mappings.offset(address, size);
     } catch (cause) {
-      if (cause instanceof BinaryMappingFailure) return null;
-      throw cause;
+      if (!(cause instanceof BinaryMappingFailure)) throw cause;
+      if (cause.reason === "ambiguous")
+        note(
+          scan,
+          "An address has ambiguous file mappings (overlapping load segments with different file offsets, or file and zero-fill memory), so its file offset is not reported.",
+        );
+      return null;
     }
   };
   const walk: SectionWalk = {

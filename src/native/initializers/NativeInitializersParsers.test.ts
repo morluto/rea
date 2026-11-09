@@ -1071,3 +1071,94 @@ describe("Initializer target semantics", () => {
     await expect(read(bytes)).rejects.toThrow(BinaryFormatFailure);
   });
 });
+
+describe("Initializer address mapping", () => {
+  it("reports no target file offset when load segments map it ambiguously", async () => {
+    const bytes = elf64PieInitializers();
+    // A third PT_LOAD maps 0x100..0x140 from file offset 0x200, conflicting with the identity load.
+    bytes.writeUInt16LE(3, 56);
+    bytes.writeUInt32LE(1, 176);
+    bytes.writeUInt32LE(5, 180);
+    bytes.writeBigUInt64LE(0x200n, 184);
+    bytes.writeBigUInt64LE(0x100n, 192);
+    bytes.writeBigUInt64LE(0x100n, 200);
+    bytes.writeBigUInt64LE(0x40n, 208);
+    bytes.writeBigUInt64LE(0x40n, 216);
+    bytes.writeBigUInt64LE(1n, 224);
+    const report = await read(bytes);
+    const preinit = report.entries.find(
+      (entry) => entry.kind === "preinit_array",
+    );
+    expect(preinit).toMatchObject({
+      value_va: "0x100",
+      value_file_offset: null,
+    });
+    expect(report.status).toBe("incomplete");
+    expect(report.limitations).toContain(
+      "An address has ambiguous file mappings (overlapping load segments with different file offsets, or file and zero-fill memory), so its file offset is not reported.",
+    );
+  });
+
+  it("looks up a full slot budget of targets against many load segments through one index", async () => {
+    const loads = 8192;
+    const slots = MAX_NATIVE_INITIALIZER_ENTRIES;
+    const arrayAt = 0x80000;
+    const shstr = Buffer.from("\0.init_array\0.shstrtab\0", "utf8");
+    const stringsAt = arrayAt + slots * 8;
+    const headersAt = stringsAt + 0x40;
+    const bytes = Buffer.alloc(headersAt + 3 * 64);
+    bytes.set([0x7f, 0x45, 0x4c, 0x46, 2, 1, 1], 0);
+    bytes.writeUInt16LE(2, 16);
+    bytes.writeUInt16LE(62, 18);
+    bytes.writeUInt32LE(1, 20);
+    bytes.writeBigUInt64LE(64n, 32);
+    bytes.writeBigUInt64LE(BigInt(headersAt), 40);
+    bytes.writeUInt16LE(64, 52);
+    bytes.writeUInt16LE(56, 54);
+    bytes.writeUInt16LE(loads, 56);
+    bytes.writeUInt16LE(64, 58);
+    bytes.writeUInt16LE(3, 60);
+    bytes.writeUInt16LE(2, 62);
+    // Identical identity PT_LOADs over the whole file: consistent, but each is scanned per lookup without an index.
+    for (let load = 0; load < loads; load += 1) {
+      const at = 64 + load * 56;
+      bytes.writeUInt32LE(1, at);
+      bytes.writeUInt32LE(5, at + 4);
+      bytes.writeBigUInt64LE(BigInt(bytes.length), at + 32);
+      bytes.writeBigUInt64LE(BigInt(bytes.length), at + 40);
+      bytes.writeBigUInt64LE(1n, at + 48);
+    }
+    for (let slot = 0; slot < slots; slot += 1)
+      bytes.writeBigUInt64LE(0x40n, arrayAt + slot * 8);
+    shstr.copy(bytes, stringsAt);
+    const header = (
+      index: number,
+      name: number,
+      type: number,
+      offset: number,
+      size: number,
+      flags: number,
+      address: number,
+    ): void => {
+      const at = headersAt + index * 64;
+      bytes.writeUInt32LE(name, at);
+      bytes.writeUInt32LE(type, at + 4);
+      bytes.writeBigUInt64LE(BigInt(flags), at + 8);
+      bytes.writeBigUInt64LE(BigInt(address), at + 16);
+      bytes.writeBigUInt64LE(BigInt(offset), at + 24);
+      bytes.writeBigUInt64LE(BigInt(size), at + 32);
+      bytes.writeBigUInt64LE(1n, at + 48);
+    };
+    header(1, 1, 14, arrayAt, slots * 8, 3, arrayAt);
+    header(2, 13, 3, stringsAt, shstr.length, 0, 0);
+    const started = performance.now();
+    const report = await read(bytes);
+    // A per-lookup mapping scan is about 5e8 iterations here; the index is well under a second.
+    expect(performance.now() - started).toBeLessThan(5_000);
+    expect(report.coverage.examined_entries).toBe(slots);
+    expect(report.entries[0]).toMatchObject({
+      value_va: "0x40",
+      value_file_offset: 0x40,
+    });
+  }, 180_000);
+});

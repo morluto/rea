@@ -19,7 +19,9 @@ import {
   BinaryFormatFailure,
   BinaryMappingFailure,
   BinaryResourceFailure,
+  createFileMappingIndex,
   mappedFileOffset,
+  type FileMappingIndex,
 } from "../metadata/BinaryContainer.js";
 import { readElfDirectoryFromBuffer } from "../metadata/NativeSectionDirectory.js";
 import type { NativeSection } from "../metadata/NativeSectionDirectory.js";
@@ -188,21 +190,33 @@ const readDynamicTags = (
   return tags;
 };
 
-/** File offset of `size` bytes at `address`: a whole slot, or a target's first byte. */
+/**
+ * File offset of `size` bytes at `address`: a whole slot, or a target's first
+ * byte. `mappings` is built once per image, so each lookup is logarithmic. Only
+ * a genuinely unmapped span falls back to section headers; an ambiguous one
+ * stays unknown and makes the report incomplete.
+ */
 const fileOffsetFor = (
-  mappings: Parameters<typeof mappedFileOffset>[0],
-  zeroFills: Parameters<typeof mappedFileOffset>[3],
+  scan: ElfScan,
+  mappings: FileMappingIndex,
   index: ElfSectionIndex,
   address: bigint,
   size: number,
 ): number | null => {
   try {
-    return mappedFileOffset(mappings, address, size, zeroFills);
+    return mappings.offset(address, size);
   } catch (cause) {
     if (!(cause instanceof BinaryMappingFailure)) throw cause;
+    if (cause.reason === "ambiguous") {
+      note(scan, AMBIGUOUS_MAPPING);
+      return null;
+    }
     return index.fileOffsetAt(address, size);
   }
 };
+
+const AMBIGUOUS_MAPPING =
+  "An address has ambiguous file mappings (overlapping load segments with different file offsets, or file and zero-fill memory), so its file offset is not reported.";
 
 const vaForFile = (
   mappings: Parameters<typeof mappedFileOffset>[0],
@@ -947,16 +961,11 @@ export const readElfInitializers = async (
   if (!namesKnown && directory.section_names_limitation !== undefined)
     note(scan, directory.section_names_limitation);
   const index = indexSections(directory.sections);
+  const mappings = createFileMappingIndex(image.mappings, image.zero_fills);
   const locate = (address: bigint): number | null =>
-    fileOffsetFor(
-      image.mappings,
-      image.zero_fills,
-      index,
-      address,
-      wordOf(scan.bits),
-    );
+    fileOffsetFor(scan, mappings, index, address, wordOf(scan.bits));
   const locateTarget = (address: bigint): number | null =>
-    fileOffsetFor(image.mappings, image.zero_fills, index, address, 1);
+    fileOffsetFor(scan, mappings, index, address, 1);
   const sources = collectSources(
     scan,
     tags,
@@ -997,7 +1006,7 @@ export const readElfInitializers = async (
     tables: symbols.tables,
     notes: scan.notes,
     fileOffset: (address, width) =>
-      fileOffsetFor(image.mappings, image.zero_fills, index, address, width),
+      fileOffsetFor(scan, mappings, index, address, width),
     signal,
   });
   if (scan.notes.recorded !== notesBeforeRelocs || !sectionRels.complete)
