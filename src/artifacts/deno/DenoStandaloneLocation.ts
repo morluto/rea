@@ -381,12 +381,16 @@ const locateIntelTrailers = async (
   let trailers: IntelTrailer[] = [];
   /** Sentinels of marker-confirmed trailers whose payload runs past the slice. */
   let truncated: number[] = [];
+  /** Sentinels of marker-confirmed trailers too short to hold their marker. */
+  let undersized: number[] = [];
+  const pending = (): boolean =>
+    trailers.length > 0 || truncated.length > 0 || undersized.length > 0;
   while (position > base) {
     abortIfNeeded(carrier.signal);
     const chunkStart = Math.max(base, position - INTEL_CHUNK_BYTES);
     const chunk = await readExact(carrier, chunkStart, position - chunkStart);
     if (chunk === undefined) {
-      if (trailers.length > 0 || truncated.length > 0)
+      if (pending())
         throw denoCarrierFailure("Intel Mach-O slice is truncated");
       return { found: [], unread: "is truncated before its trailer search" };
     }
@@ -397,8 +401,7 @@ const locateIntelTrailers = async (
       if (index < 0 || index > searchFrom) break;
       examined += 1;
       if (examined > MAX_DENO_INTEL_TRAILER_SENTINELS) {
-        if (trailers.length > 0 || truncated.length > 0)
-          throw denoIntelSentinelLimit();
+        if (pending()) throw denoIntelSentinelLimit();
         return {
           found: [],
           unread: `has more than ${String(MAX_DENO_INTEL_TRAILER_SENTINELS)} trailer sentinels`,
@@ -414,15 +417,20 @@ const locateIntelTrailers = async (
       const sliceEnd = base + sliceSize;
       const offset = sentinelStart + INTEL_SENTINEL.length + 8;
       if (offset < base || offset > sliceEnd) continue;
-      if (claimed < BigInt(DENO_SECTION_MAGIC.length)) continue;
-      // The marker is checked before the length is judged, so an oversized
-      // or unsafe length word cannot hide a confirmed trailer.
+      // The marker is checked before the length is judged, so an undersized,
+      // oversized or unsafe length word cannot hide a confirmed trailer.
       const marker = await readExact(
         carrier,
         offset,
         DENO_SECTION_MAGIC.length,
       );
       if (marker === undefined || !marker.equals(DENO_SECTION_MAGIC)) continue;
+      if (claimed < BigInt(DENO_SECTION_MAGIC.length)) {
+        // A length shorter than the marker is malformed. Like a truncated
+        // trailer, it fails closed unless an enclosing trailer holds it.
+        undersized.push(sentinelStart);
+        continue;
+      }
       if (claimed > BigInt(sliceEnd - offset)) {
         // A marker-confirmed trailer whose payload runs past the slice is a
         // truncated Deno app, whether or not it would enclose a confirmed
@@ -437,6 +445,7 @@ const locateIntelTrailers = async (
       const inside = (at: number): boolean => at >= offset && at < end;
       trailers = trailers.filter((trailer) => !inside(trailer.sentinelOffset));
       truncated = truncated.filter((at) => !inside(at));
+      undersized = undersized.filter((at) => !inside(at));
       trailers.push({
         sentinelOffset: sentinelStart,
         offset,
@@ -449,6 +458,10 @@ const locateIntelTrailers = async (
   }
   if (truncated.length > 0)
     throw denoCarrierFailure("Intel Mach-O Deno trailer is truncated");
+  if (undersized.length > 0)
+    throw denoCarrierFailure(
+      "Intel Mach-O Deno trailer length is shorter than its marker",
+    );
   return { found: trailers, unread: null };
 };
 

@@ -1590,6 +1590,25 @@ it("fails closed when the enclosing Intel trailer length is not a safe integer",
   });
 });
 
+it.each([0n, 7n])(
+  "fails closed when the enclosing Intel trailer length is %s",
+  async (claimed) => {
+    const { outer } = nestedIntelApp();
+    const bytes = denoIntelTrailer(outer);
+    // Only the outer length word changes; its d3n0l4nd marker stays readable.
+    bytes.writeBigUInt64LE(claimed, bytes.length - outer.length - 8);
+    await expect(
+      locateDenoStandalone(bytesHandle(bytes), bytes.length),
+    ).resolves.toMatchObject({
+      status: "present",
+      failure: {
+        reason: "format",
+        message: expect.stringContaining("shorter than its marker"),
+      },
+    });
+  },
+);
+
 it("counts short ELF note tables against the note allowance", async () => {
   // One PT_NOTE program header per distinct one-byte table.
   const count = MAX_INSPECT_ELF_NOTE_ENTRIES + 1;
