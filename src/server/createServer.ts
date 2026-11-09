@@ -22,6 +22,7 @@ import { registerElfNotesTool } from "./registerElfNotesTool.js";
 import { registerAppleIpsTool } from "./registerAppleIpsTool.js";
 import { registerKernelModuleTool } from "./registerKernelModuleTool.js";
 import { registerPeLoadConfigTool } from "./registerPeLoadConfigTool.js";
+import { registerBinaryHardeningTool } from "./registerBinaryHardeningTool.js";
 import { registerPeCertificatesTool } from "./registerPeCertificatesTool.js";
 import { registerPeImportsTool } from "./registerPeImportsTool.js";
 import { registerPeResourcesTool } from "./registerPeResourcesTool.js";
@@ -30,6 +31,7 @@ import { registerEvmTools } from "./registerEvmTools.js";
 import { registerSqliteTools } from "./registerSqliteTools.js";
 import { registerRecordedCrashTools } from "./registerRecordedCrashTools.js";
 import { registerDesktopApplicationTool } from "./registerDesktopApplicationTool.js";
+import { registerDesktopBuildTools } from "./registerDesktopBuildTools.js";
 import { registerModelArtifactTools } from "./registerModelArtifactTools.js";
 import { registerGoTools } from "./registerGoTools.js";
 import { registerIl2cppTools } from "./registerIl2cppTools.js";
@@ -42,6 +44,7 @@ import { registerFridaTools } from "./registerFridaTools.js";
 import { EvidenceMcpServer } from "./EvidenceMcpServer.js";
 import { catalogIdentityForToolFamilies } from "../catalogIdentity.js";
 import { parseMcpToolFamilies } from "../config/mcpToolFamilies.js";
+import { parseMcpToolCatalogProfile } from "../config/mcpToolCatalogProfile.js";
 import { createToolResultDelivery } from "./toolResult.js";
 import type { ToolResultDelivery } from "./ToolResultDelivery.js";
 import { parseMcpResponseBudget } from "../config/mcpResponseBudget.js";
@@ -170,6 +173,10 @@ export const createServer = (
   const compactInputPresentation =
     selectCompactInputSchemaPresentation(environment);
   const selectedOutputSchemaProfile = outputSchemaProfile(environment);
+  const catalogProfile = parseMcpToolCatalogProfile(
+    environment.REA_MCP_TOOL_CATALOG_PROFILE,
+  );
+  if (!catalogProfile.ok) throw catalogProfile.error;
   const advertisedToolFamilies = selectAdvertisedToolFamilies(environment);
   const providerEnvironment = captureProviderEnvironment(
     options.providerEnvironment,
@@ -198,6 +205,7 @@ export const createServer = (
     webSourceLocation,
     webModuleTrace,
     desktopApplication,
+    desktopBuildComputers,
     goBinary,
     rustBinary,
     erlangBeam,
@@ -211,6 +219,7 @@ export const createServer = (
     appleIps,
     kernelModule,
     peLoadConfig,
+    binaryHardening,
     peCertificates,
     peImports,
     electronFuses,
@@ -279,15 +288,31 @@ export const createServer = (
             policy: (): AvailabilityPolicy => {
               const value = basePolicy();
               const failures = capabilities.observeProviderLoadFailures();
-              return Object.keys(failures).length === 0
-                ? value
-                : {
-                    ...value,
-                    optionalProviderLoadFailures: {
-                      ...value.optionalProviderLoadFailures,
-                      ...failures,
-                    },
-                  };
+              const commandFailures =
+                capabilities.observeCommandProviderFailures();
+              const hasFailures = Object.keys(failures).length > 0;
+              const hasCommandFailures =
+                Object.keys(commandFailures).length > 0;
+              if (!hasFailures && !hasCommandFailures) return value;
+              return {
+                ...value,
+                ...(hasFailures
+                  ? {
+                      optionalProviderLoadFailures: {
+                        ...value.optionalProviderLoadFailures,
+                        ...failures,
+                      },
+                    }
+                  : {}),
+                ...(hasCommandFailures
+                  ? {
+                      commandProviderFailures: {
+                        ...value.commandProviderFailures,
+                        ...commandFailures,
+                      },
+                    }
+                  : {}),
+              };
             },
           };
         })();
@@ -343,6 +368,9 @@ export const createServer = (
     recordUnknown,
     evidenceById,
     withAdmittedAnalysis: analysisAdmission,
+    ...(session === undefined
+      ? {}
+      : { admitRecovery: session.admitRecoveryObservation.bind(session) }),
   };
   const evidenceOptions = {
     logger: toolLogger,
@@ -360,6 +388,12 @@ export const createServer = (
     enhanced: () =>
       registerEnhancedTools(server, {
         ...analysisOptions,
+        ...(session === undefined
+          ? {}
+          : { evidenceForAnalysis: session.evidenceForAnalysis.bind(session) }),
+        ...(session === undefined
+          ? {}
+          : { admitRecovery: session.admitRecoveryObservation.bind(session) }),
         analysisProfile:
           session === undefined
             ? undefined
@@ -478,6 +512,13 @@ export const createServer = (
       registerPeLoadConfigTool(
         server,
         peLoadConfig,
+        toolLogger,
+        recordEvidence,
+        analysisAdmission,
+      );
+      registerBinaryHardeningTool(
+        server,
+        binaryHardening,
         toolLogger,
         recordEvidence,
         analysisAdmission,
@@ -786,6 +827,7 @@ export const createServer = (
         recordEvidenceWithUnknown,
         withAdmittedAnalysis: analysisAdmission,
       });
+      registerDesktopBuildTools(server, desktopBuildComputers, toolLogger);
     },
     session: () => {
       if (session === undefined) return;
@@ -801,6 +843,7 @@ export const createServer = (
     },
   });
   registerGuidedPrompts(server, analysis, session);
+  if (catalogProfile.value === "hot-cold") server.enableProgressiveCatalog();
   return server;
 };
 

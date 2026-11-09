@@ -31,7 +31,7 @@ const { values } = parseArgs({
 });
 if (values.target === undefined || process.env.REA_IDA_MCP_CONFIG === undefined)
   throw new Error(
-    "IDA verification requires --target and REA_IDA_MCP_CONFIG; see docs/ida-provider.md. No toolchain is installed by this lane.",
+    "IDA verification requires --target and REA_IDA_MCP_CONFIG; see docs/providers/ida-provider.md. No toolchain is installed by this lane.",
   );
 if (
   (values["second-procedure"] === undefined) !==
@@ -79,7 +79,7 @@ if (
     values["second-marker"] === undefined)
 )
   throw new Error(
-    "Native IDA verification requires --second-procedure and --second-marker to verify distinct-function switching; see docs/ida-provider.md.",
+    "Native IDA verification requires --second-procedure and --second-marker to verify distinct-function switching; see docs/providers/ida-provider.md.",
   );
 const environment = Object.fromEntries(
   Object.entries({

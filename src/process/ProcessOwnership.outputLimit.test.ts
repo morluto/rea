@@ -196,3 +196,35 @@ it("keeps Windows process inspection independent of the POSIX table setting", as
   await expect(host.listProcesses()).resolves.toEqual([]);
   await expect(host.prepare?.()).resolves.toBeUndefined();
 });
+
+it("preserves host spawn exhaustion instead of reporting a missing ps", async () => {
+  const failure = Object.assign(new Error("host process limit"), {
+    code: "EAGAIN",
+  });
+  const execute: typeof import("./ExecFileOutput.js").execFileOutput =
+    async () => {
+      throw failure;
+    };
+  const host = createSystemProcessOwnershipHost(
+    "linux",
+    {},
+    { execFileOutput: execute },
+  );
+  await expect(host.prepare?.()).rejects.toBe(failure);
+});
+
+it("validates the process table budget before attempting ps", async () => {
+  let invoked = false;
+  const execute: typeof import("./ExecFileOutput.js").execFileOutput =
+    async () => {
+      invoked = true;
+      throw new Error("unexpected execution");
+    };
+  const host = createSystemProcessOwnershipHost(
+    "linux",
+    { REA_PROCESS_TABLE_MAX_BYTES: "invalid" },
+    { execFileOutput: execute },
+  );
+  await expect(host.prepare?.()).rejects.toBeInstanceOf(ConfigurationError);
+  expect(invoked).toBe(false);
+});
