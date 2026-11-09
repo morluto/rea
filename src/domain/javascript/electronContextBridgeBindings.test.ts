@@ -1513,3 +1513,145 @@ it("preserves fresh containers for known intrinsic return values while retaining
     "real-post",
   ]);
 });
+
+it("preserves exact entry selections and last-entry-wins semantics across Object.fromEntries, Object.entries, and empty Array.from mappers", () => {
+  const source = `
+      const e = require("electron");
+      const { contextBridge, ipcRenderer } = e;
+      const dynKey = unknownKey();
+
+      const v = Object.fromEntries([["ipc", ipcRenderer], ["local", {}]]);
+      v.local.invoke = () => 0;
+
+      const dupSafe = Object.fromEntries([["ipc", ipcRenderer], ["ipc", {}]]);
+      dupSafe.ipc.send = () => 0;
+
+      const overwrittenDyn = Object.fromEntries([[dynKey, ipcRenderer], ["ipc", {}]]);
+      overwrittenDyn.ipc.postMessage = () => 0;
+
+      const ents = Object.entries({ ipc: ipcRenderer, local: {} });
+      ents[1][1].once = () => 0;
+      ents[0][0] = "renamed";
+
+      const roundtrip = Object.fromEntries(
+        Object.entries({ ipc: ipcRenderer, local: {} }),
+      );
+      roundtrip.local.on = () => 0;
+
+      for (const item of Array.from([], () => e)) item.ipcRenderer = {};
+
+      const dupHit = Object.fromEntries([["ipc", {}], ["ipc", ipcRenderer]]);
+      dupHit.ipc.sendSync = () => 0;
+
+      const trailingDyn = Object.fromEntries([["ipc", {}], [dynKey, ipcRenderer]]);
+      trailingDyn.ipc.sendToHost = () => 0;
+
+      Object.entries({ local: {}, ipc: ipcRenderer })[1][1].removeAllListeners = () => 0;
+
+      contextBridge.exposeInMainWorld("api", {
+        intactInvoke: () => ipcRenderer.invoke("real-invoke"),
+        intactSend: () => ipcRenderer.send("real-send"),
+        intactPost: () => ipcRenderer.postMessage("real-post", "*"),
+        intactOnce: () => ipcRenderer.once("real-once", () => {}),
+        intactOn: () => ipcRenderer.on("real-on", () => {}),
+        overwrittenSync: () => ipcRenderer.sendSync("fake-sync"),
+        overwrittenHost: () => ipcRenderer.sendToHost("fake-host"),
+        overwrittenRemoveAll: () => ipcRenderer.removeAllListeners("fake-remove-all"),
+      });
+    `;
+  const parsed = parseJavaScriptSource(source, "preload.cjs");
+  if (parsed === null) throw new Error("Expected CommonJS parse");
+  const analysis = analyzeParsedJavaScriptStaticSource(source, parsed);
+
+  expect(analysis.parse_status).toBe("complete");
+  expect(analysis.electron.ipc.map(({ channel }) => channel)).toEqual([
+    "real-invoke",
+    "real-send",
+    "real-post",
+    "real-once",
+    "real-on",
+  ]);
+});
+
+it("keeps property descriptor accessor functions separate from getter return values unless invoked", () => {
+  const source = `
+      const { contextBridge, ipcRenderer } = require("electron");
+
+      const d = Object.getOwnPropertyDescriptor(
+        { get ipc() { return ipcRenderer; } },
+        "ipc",
+      );
+      d.get.invoke = () => 0;
+      (d.value ?? {}).send = () => 0;
+
+      const rd = Reflect.getOwnPropertyDescriptor(
+        { set ipc(_next) { return ipcRenderer; } },
+        "ipc",
+      );
+      rd.set.postMessage = () => 0;
+
+      const ds = Object.getOwnPropertyDescriptors({
+        get ipc() { return ipcRenderer; },
+      });
+      ds.ipc.get.once = () => 0;
+
+      const inherited = Object.getOwnPropertyDescriptor(
+        Object.create({ ipc: ipcRenderer }),
+        "ipc",
+      );
+      (inherited?.value ?? {}).on = () => 0;
+
+      const defined = Object.defineProperty({}, "ipc", {
+        get() { return ipcRenderer; },
+      });
+      Object.getOwnPropertyDescriptor(defined, "ipc").get.addListener = () => 0;
+
+      (() => {
+        const box = { x: { ipcRenderer: {} } };
+        const snap = box.x;
+        box.x = { ipcRenderer };
+        snap.ipcRenderer.addListener = () => 0;
+      })();
+
+      const topBox = { x: { ipcRenderer: {} } };
+      const topSnap = topBox.x;
+      topBox.x = { ipcRenderer };
+      (() => {
+        topSnap.ipcRenderer.addListener = () => 0;
+      })();
+
+      Object.getOwnPropertyDescriptor(
+        { ipc: ipcRenderer },
+        "ipc",
+      ).value.sendSync = () => 0;
+
+      Object.getOwnPropertyDescriptor(
+        { get ipc() { return ipcRenderer; } },
+        "ipc",
+      ).get().sendToHost = () => 0;
+
+      contextBridge.exposeInMainWorld("api", {
+        intactInvoke: () => ipcRenderer.invoke("real-invoke"),
+        intactSend: () => ipcRenderer.send("real-send"),
+        intactPost: () => ipcRenderer.postMessage("real-post", "*"),
+        intactOnce: () => ipcRenderer.once("real-once", () => {}),
+        intactOn: () => ipcRenderer.on("real-on", () => {}),
+        intactAdd: () => ipcRenderer.addListener("real-add", () => {}),
+        overwrittenSync: () => ipcRenderer.sendSync("fake-sync"),
+        overwrittenHost: () => ipcRenderer.sendToHost("fake-host"),
+      });
+    `;
+  const parsed = parseJavaScriptSource(source, "preload.cjs");
+  if (parsed === null) throw new Error("Expected CommonJS parse");
+  const analysis = analyzeParsedJavaScriptStaticSource(source, parsed);
+
+  expect(analysis.parse_status).toBe("complete");
+  expect(analysis.electron.ipc.map(({ channel }) => channel)).toEqual([
+    "real-invoke",
+    "real-send",
+    "real-post",
+    "real-once",
+    "real-on",
+    "real-add",
+  ]);
+});

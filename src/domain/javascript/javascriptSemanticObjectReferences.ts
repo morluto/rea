@@ -655,6 +655,20 @@ export const semanticObjectAccessorReferences = (
     lookup,
   ).run();
 
+/** Select own data-property values without invoking accessors or following prototypes. */
+export const semanticObjectOwnDataPropertyReferences = (
+  node: t.ObjectExpression,
+  path: PropertyPath,
+  state: JavaScriptSemanticAnalysisState,
+): readonly JavaScriptSemanticObjectReference[] =>
+  new ObjectReferenceWalk(
+    node,
+    path,
+    new SemanticGetterQuery(state),
+    "value",
+    "own",
+  ).run();
+
 class ObjectReferenceWalk {
   readonly #references: JavaScriptSemanticObjectReference[] = [];
   readonly #overwritten = new Set<string>();
@@ -669,7 +683,7 @@ class ObjectReferenceWalk {
     readonly node: t.ObjectExpression,
     path: PropertyPath,
     readonly query: SemanticGetterQuery,
-    readonly accessor?: "get" | "set",
+    readonly accessor?: "get" | "set" | "value",
     readonly accessorLookup: "prototype" | "own" = "prototype",
   ) {
     [this.#key, ...this.#remaining] = path;
@@ -695,7 +709,7 @@ class ObjectReferenceWalk {
     if (typeof selected !== "object" && this.#overwritten.has(String(selected)))
       return;
     // Spread creates data properties; the source descriptor is not installed.
-    if (this.accessor === undefined)
+    if (this.accessor === undefined || this.accessor === "value")
       this.#references.push({
         node: property.argument,
         path: [this.#spreadKey(), ...this.#remaining],
@@ -749,13 +763,21 @@ class ObjectReferenceWalk {
     // An earlier unknown computed key cannot replace a later definite slot.
     // Spreads obey the same overwrite proof; paired named accessors below
     // retain their separate getter/setter semantics.
+    const targetAccessor =
+      this.accessor === "get" || this.accessor === "set"
+        ? this.accessor
+        : this.accessor === undefined
+          ? "get"
+          : undefined;
     if (
       name === null &&
       this.#key != null &&
       typeof this.#key !== "object" &&
-      (t.isObjectMethod(property) && property.kind === (this.accessor ?? "get")
+      (targetAccessor !== undefined &&
+      t.isObjectMethod(property) &&
+      property.kind === targetAccessor
         ? this.#data.has(String(this.#key)) ||
-          (this.accessor === "set" ? this.#setters : this.#getters).has(
+          (targetAccessor === "set" ? this.#setters : this.#getters).has(
             String(this.#key),
           )
         : this.#overwritten.has(String(this.#key)))
@@ -766,13 +788,13 @@ class ObjectReferenceWalk {
       !semanticPropertyPathKeyMatches(this.#key ?? null, name)
     )
       return;
-    if (this.accessor !== undefined) {
+    if (this.accessor === "get" || this.accessor === "set") {
       if (t.isObjectMethod(property) && property.kind === this.accessor)
         this.#references.push({ node: property, path: [] });
       return;
     }
     if (t.isObjectMethod(property)) {
-      if (property.kind === "get")
+      if (property.kind === "get" && this.accessor === undefined)
         this.query.schedule(
           { getter: property, owner: this.node },
           this.#remaining,

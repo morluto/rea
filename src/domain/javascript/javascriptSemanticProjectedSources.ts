@@ -1,10 +1,13 @@
 import * as t from "@babel/types";
-import type {
-  JavaScriptSemanticAnalysisState,
-  JavaScriptSemanticBindingState,
+import {
+  resolveSemanticBindingState,
+  semanticResolutionBlocked,
+  type JavaScriptSemanticAnalysisState,
+  type JavaScriptSemanticBindingState,
 } from "./javascriptSemanticState.js";
 import type { JavaScriptSemanticPropertyPath } from "./javascriptSemanticPropertyPaths.js";
 import { unwrapJavaScriptExpression } from "./javascriptAstValues.js";
+import { unwrapUnmodifiedObjectFreezeArgument } from "./javascriptSemanticObjectFreeze.js";
 import {
   semanticObjectPropertyReferences,
   semanticArrayPropertyReferences,
@@ -13,6 +16,7 @@ import {
 import { SEMANTIC_ALIAS_SELECTION_LIMIT } from "./javascriptSemanticResourceLimits.js";
 import {
   semanticBindingAtRead,
+  semanticBindingEffectFollowsRead,
   semanticDefiniteEffectPrecedesReference,
   semanticEffectTiming,
   semanticTopLevelEffectFollowsCapture,
@@ -211,6 +215,37 @@ export function semanticProjectedSourceFactsAtRead(
   return projectedSourceFactsAtRead(...arguments_);
 }
 
+const effectFollowsFreshOrLexicalBindingRead = (
+  binding: JavaScriptSemanticBindingState,
+  read: t.Node,
+  effect: t.Node | undefined,
+  state: JavaScriptSemanticAnalysisState,
+): boolean => {
+  if (
+    effect === undefined ||
+    binding.referenceInitializers.length > 0 ||
+    (state.bindingWrites.get(binding.bindingId)?.length ?? 0) > 0
+  )
+    return false;
+  const initializer = binding.initializers[0];
+  if (binding.initializers.length !== 1 || initializer === undefined)
+    return false;
+  const unfrozen =
+    unwrapUnmodifiedObjectFreezeArgument(initializer.node, state) ??
+    initializer.node;
+  const origin = unwrapJavaScriptExpression(unfrozen).node;
+  const freshOrLexical =
+    t.isObjectExpression(origin) ||
+    t.isArrayExpression(origin) ||
+    (t.isIdentifier(origin) &&
+      !semanticResolutionBlocked(state, origin, origin.name) &&
+      resolveSemanticBindingState(state, origin, origin.name) !== undefined);
+  return (
+    freshOrLexical &&
+    semanticBindingEffectFollowsRead(binding, read, effect, state.parentsByNode)
+  );
+};
+
 const projectedSourceFactsAtRead = (
   binding: JavaScriptSemanticBindingState,
   reference: t.Node,
@@ -281,11 +316,17 @@ const projectedSourceFactsAtRead = (
         capture !== undefined &&
         receiverAt !== undefined &&
         samePrefix(replacement, effect) &&
-        semanticTopLevelEffectFollowsCapture(
+        (semanticTopLevelEffectFollowsCapture(
           capture,
           replacement.node,
           state.parentsByNode,
-        ) &&
+        ) ||
+          effectFollowsFreshOrLexicalBindingRead(
+            binding,
+            capture,
+            replacement.node,
+            state,
+          )) &&
         semanticDefiniteEffectPrecedesReference(
           replacement.node,
           receiverAt,
@@ -302,22 +343,31 @@ const projectedSourceFactsAtRead = (
   // cheapest and rejects most records of a binding with many member paths.
   const matches = (
     effect: JavaScriptSemanticBindingState["memberWrites"][number],
-  ) =>
-    semanticEffectPathMatches(effect.path, path) &&
-    (effect.receiverInitializers === undefined ||
-      effect.receiverInitializers.length === 0 ||
-      captured.length === 0 ||
-      effect.receiverInitializers.some((receiver) =>
-        captured.some(
-          (source) =>
-            source.node === receiver.node &&
-            JSON.stringify(source.projection) ===
-              JSON.stringify(receiver.projection),
-        ),
-      )) &&
-    semanticEffectTiming(selectedAt(effect.path.length), effect.node, state) !==
-      "after" &&
-    !targetsReplacedPrefix(effect);
+  ) => {
+    const selectedSite = selectedAt(effect.path.length);
+    return (
+      semanticEffectPathMatches(effect.path, path) &&
+      (effect.receiverInitializers === undefined ||
+        effect.receiverInitializers.length === 0 ||
+        captured.length === 0 ||
+        effect.receiverInitializers.some((receiver) =>
+          captured.some(
+            (source) =>
+              source.node === receiver.node &&
+              JSON.stringify(source.projection) ===
+                JSON.stringify(receiver.projection),
+          ),
+        )) &&
+      semanticEffectTiming(selectedSite, effect.node, state) !== "after" &&
+      !effectFollowsFreshOrLexicalBindingRead(
+        binding,
+        selectedSite,
+        effect.node,
+        state,
+      ) &&
+      !targetsReplacedPrefix(effect)
+    );
+  };
   const writes = semanticEffectPathCandidates(
     binding.memberWrites,
     path,
