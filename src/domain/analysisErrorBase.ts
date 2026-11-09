@@ -1,4 +1,4 @@
-import type { AppleIps } from "./native/appleIps.js";
+import type { AppleIpsPartialObservation } from "./native/appleIps.js";
 import type { PlaywrightTrace } from "./playwrightTrace/playwrightTrace.js";
 import type { GraphqlContract } from "./apiContract/graphqlContract.js";
 import type { SavedAnalysisSnapshotPartialObservation } from "./savedAnalysisSnapshot.js";
@@ -507,7 +507,7 @@ export type AnalysisPartialObservation =
   | Evidence
   | BinaryLayout
   | RecordedCrash
-  | AppleIps
+  | AppleIpsPartialObservation
   | RecordedCrashPartialObservation
   | AndroidPartialObservation
   | FirmwarePartialObservation

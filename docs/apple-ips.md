@@ -157,7 +157,6 @@ rea inspect-apple-ips /absolute/path/to/report.ips --max-integer-text-bytes 1677
 read, defaulting to 64 MiB. This workflow does not execute a target, launch
 atos, or search for dSYMs.
 
-
 ## Join admission and failures
 
 The join uses the shared Mach-O container, slice, command-table and segment
@@ -171,3 +170,10 @@ expansion. If a selected join read, interpretation or allowance fails, the error
 retains the completed IPS report. Join read limits and recovery use
 `max_join_bytes`, even when the report and join paths are identical. Cancellation
 retains the caller's reason independently of those completed facts.
+
+When a failure follows a completed join-file read, `partial_observation` retains
+both the decoded report and a `join_artifact` receipt with the independently
+observed path, SHA-256 and byte count. Frame rejection reasons reference
+`join.limitations`; source-sized architecture diagnostics are retained once per
+image rather than copied into every frame. Universal-image admission includes
+the shared reader's supported hidden ARM64 row and rejects overlapping slices.

@@ -1,3 +1,4 @@
+import { completedStableArtifactObservation } from "../../artifacts/StableArtifactObservation.js";
 import { FieldReader } from "./AppleIpsFieldReader.js";
 import type { AppleIps } from "../../domain/native/appleIps.js";
 import type { StableArtifactSnapshot } from "../../artifacts/readStableArtifact.js";
@@ -113,7 +114,7 @@ export class AppleIpsProvider implements AppleIpsPort {
         assertArtifactReadActive(options?.signal);
         return ok({
           ...report,
-          join: resolveAppleIpsJoin(
+          join: await resolveAppleIpsJoin(
             report,
             { ...joinArtifact, path: input.join_path },
             {
@@ -137,8 +138,20 @@ export class AppleIpsProvider implements AppleIpsPort {
         },
         activeField === "path" ? "path" : "join_path",
       );
-      if (completedReport !== undefined)
-        primary.retainPartialObservation(completedReport);
+      if (completedReport !== undefined) {
+        const joinArtifact = completedStableArtifactObservation(
+          cause,
+          activePath,
+          completedSnapshot,
+        );
+        primary.retainPartialObservation(
+          input.join_path !== undefined &&
+            activePath === input.join_path &&
+            joinArtifact !== undefined
+            ? { ...completedReport, join_artifact: joinArtifact }
+            : completedReport,
+        );
+      }
       const failure = projectStableArtifactFailure(
         cause,
         primary,

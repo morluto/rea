@@ -5,7 +5,7 @@ import {
   appleIpsSchema,
 } from "../../../src/domain/native/appleIps.js";
 import { join } from "node:path";
-import { writeFile } from "node:fs/promises";
+import { readFile, writeFile } from "node:fs/promises";
 import { describe, expect, it } from "vitest";
 import { createAppleIpsService } from "../../../src/composition/binaryDiagnostics.js";
 import { appleIpsBytes } from "../../fixtures/binaryDiagnostics/appleIps.js";
@@ -111,6 +111,10 @@ const inspectWithJoin = async (
   const output = result.value.normalized_result as unknown as {
     readonly join: {
       readonly status: string;
+      readonly slices: readonly {
+        readonly index: number;
+        readonly arch: string;
+      }[];
       readonly reason?: string;
       readonly image_matches: readonly {
         readonly image_index: number;
@@ -180,8 +184,11 @@ describe("Apple IPS Mach-O and dSYM join", () => {
     expect(report.join.image_matches).toEqual([]);
     expect(report.join.frames[0]).toMatchObject({
       status: "unjoined",
-      reason: expect.stringContaining("does not match x86_64"),
+      reason: expect.stringContaining("join.limitations"),
     });
+    expect(report.join.limitations.join(" ")).toContain(
+      "does not match x86_64",
+    );
     expect(report.join.limitations.join("\n")).toContain(
       "does not match x86_64",
     );
@@ -309,7 +316,21 @@ it("retains completed report facts on a failed join read and charges join intege
     });
     expect(limited).toMatchObject({ ok: false });
     if (limited.ok) throw new Error("Join expansion exceeded its allowance");
-    expect(limited.error.partialObservation).toEqual(report);
+    expect(limited.error.partialObservation).toEqual({
+      ...report,
+      join_artifact: {
+        kind: "file-snapshot-hash",
+        path: joinPath,
+        sha256: createHash("sha256")
+          .update(await readFile(joinPath))
+          .digest("hex"),
+        bytes: machoSlice({
+          cpu: ARM64,
+          uuid: FIXTURE_UUID,
+          textVmaddr: 0x100000000n,
+        }).length,
+      },
+    });
     const complete = await service.inspect({ path, join_path: joinPath });
     if (!complete.ok) throw complete.error;
     const joined = appleIpsSchema.parse(complete.value.normalized_result);
@@ -369,6 +390,96 @@ it("uses the selected join budget even when report and join paths are identical"
     });
     expect(JSON.stringify(failure)).toContain("max_join_bytes");
     expect(JSON.stringify(failure)).not.toContain("Raise max_file_bytes");
+  } finally {
+    await service.close();
+  }
+});
+
+it("includes an admitted hidden ARM64 compatibility slice", async () => {
+  const root = await createTestTempDirectory("rea-ips-fat-admission-");
+  const specs = [
+    { cpu: X86_64, uuid: OTHER_UUID, textVmaddr: 0x100000000n },
+    { cpu: ARM64, uuid: FIXTURE_UUID, textVmaddr: 0x100000000n },
+  ];
+  const hidden = fatImage(specs);
+  hidden.writeUInt32BE(1, 4);
+  const hiddenReport = await inspectWithJoin(root, hidden);
+  expect(hiddenReport.join).toMatchObject({
+    status: "selected",
+    slices: [
+      expect.objectContaining({ index: 0, arch: "x86_64" }),
+      expect.objectContaining({ index: 1, arch: "arm64" }),
+    ],
+  });
+  expect(
+    hiddenReport.join?.status === "selected" &&
+      hiddenReport.join.frames[0]?.status,
+  ).toBe("joined");
+});
+
+it("rejects overlapping FAT slices through shared container admission", async () => {
+  const root = await createTestTempDirectory("rea-ips-overlapping-fat-");
+  await writeFile(join(root, "report.ips"), appleIpsBytes());
+  const spec = { cpu: ARM64, uuid: FIXTURE_UUID, textVmaddr: 0x100000000n };
+  const overlap = fatImage([spec, spec]);
+  overlap.writeUInt32BE(overlap.readUInt32BE(16), 36);
+  const joinPath = join(root, "overlap.bin");
+  await writeFile(joinPath, overlap);
+  const service = createAppleIpsService();
+  try {
+    const rejected = await service.inspect({
+      path: join(root, "report.ips"),
+      join_path: joinPath,
+    });
+    if (!rejected.ok) throw rejected.error;
+    expect(
+      appleIpsSchema.parse(rejected.value.normalized_result).join,
+    ).toMatchObject({
+      status: "unreadable",
+      reason: expect.stringContaining("overlap"),
+    });
+  } finally {
+    await service.close();
+  }
+});
+
+it("retains architecture diagnostics once per image instead of expanding them per frame", async () => {
+  const root = await createTestTempDirectory("rea-ips-architecture-size-");
+  const ips = JSON.parse(
+    appleIpsBytes().toString().split("\n").slice(1).join("\n"),
+  );
+  ips.usedImages[0].arch = "unrecognized-".repeat(1024);
+  ips.threads[0].frames = Array.from({ length: 32 }, () => ({
+    imageIndex: 0,
+    imageOffset: 824,
+  }));
+  const path = join(root, "large.ips");
+  await writeFile(
+    path,
+    appleIpsBytes().toString().split("\n")[0] + "\n" + JSON.stringify(ips),
+  );
+  const joinPath = join(root, "join.bin");
+  await writeFile(
+    joinPath,
+    machoSlice({ cpu: ARM64, uuid: FIXTURE_UUID, textVmaddr: 0x100000000n }),
+  );
+  const service = createAppleIpsService();
+  try {
+    const result = await service.inspect({ path, join_path: joinPath });
+    if (!result.ok) throw result.error;
+    const report = appleIpsSchema.parse(result.value.normalized_result);
+    expect(report.join?.status).toBe("selected");
+    if (report.join?.status !== "selected") throw new Error("Missing join");
+    expect(report.join.limitations.join(" ")).toContain(ips.usedImages[0].arch);
+    expect(report.join.frames[0]?.reason).toContain("join.limitations");
+    expect(
+      report.join.frames.every(
+        ({ reason }) => !reason?.includes(ips.usedImages[0].arch),
+      ),
+    ).toBe(true);
+    expect(Buffer.byteLength(JSON.stringify(report.join.frames))).toBeLessThan(
+      8192,
+    );
   } finally {
     await service.close();
   }

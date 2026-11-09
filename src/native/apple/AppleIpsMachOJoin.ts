@@ -1,7 +1,5 @@
-import {
-  readUniversalMachoImage,
-  readUniversalMachoSlice,
-} from "../../domain/apple/machoImageSelection.js";
+import { readMachoContainer } from "../../artifacts/apple/MachoLoadCommandReader.js";
+import { readUniversalMachoSlice } from "../../domain/apple/machoImageSelection.js";
 import {
   readMachoLoadCommandTableHeader,
   MachoLoadCommandCursor,
@@ -12,10 +10,7 @@ import {
 } from "../../domain/apple/machoSegmentHeader.js";
 import { FieldReader } from "./AppleIpsFieldReader.js";
 import { machoArchitectureName } from "../../domain/apple/machoCpuIdentity.js";
-import type {
-  AppleIps,
-  AppleIpsJoin,
-} from "../../domain/native/appleIps.js";
+import type { AppleIps, AppleIpsJoin } from "../../domain/native/appleIps.js";
 
 /**
  * Slice identity join between a recorded Apple .ips report and one
@@ -51,10 +46,19 @@ type SliceParse =
   | { readonly kind: "slices"; readonly slices: readonly SliceIdentity[] }
   | { readonly kind: "unreadable"; readonly reason: string };
 
-const readSliceIdentities = (bytes: Buffer): SliceParse => {
-  const fat = readUniversalMachoImage(bytes);
-  if (!fat.ok) return { kind: "unreadable", reason: fat.error.message };
-  if (fat.value === null) {
+const readSliceIdentities = async (bytes: Buffer): Promise<SliceParse> => {
+  const container = await readMachoContainer(
+    async (offset, length) => bytes.subarray(offset, offset + length),
+    bytes.length,
+  );
+  if (container.kind === "issue")
+    return { kind: "unreadable", reason: container.reason };
+  if (container.kind === "not-mach-o")
+    return {
+      kind: "unreadable",
+      reason: "Selected join is not a Mach-O image",
+    };
+  if (container.kind === "thin") {
     const slice = sliceAt(bytes, 0n, 0);
     return slice === null
       ? {
@@ -63,11 +67,22 @@ const readSliceIdentities = (bytes: Buffer): SliceParse => {
         }
       : { kind: "slices", slices: [slice] };
   }
-  if (fat.value.slices.length > MAX_SLICES)
+  const { header, hidden } = container;
+  const issue = header.rangeIssues.find((value) => value !== null);
+  if (issue !== undefined) return { kind: "unreadable", reason: issue.reason };
+  if (hidden !== null && hidden.status !== "declared")
+    return { kind: "unreadable", reason: hidden.reason };
+  if (hidden?.status === "declared" && hidden.rangeIssue !== null)
+    return { kind: "unreadable", reason: hidden.rangeIssue };
+  const declarations = [
+    ...header.slices,
+    ...(hidden?.status === "declared" ? [hidden.declaration] : []),
+  ];
+  if (declarations.length > MAX_SLICES)
     return { kind: "unreadable", reason: "Join slice allowance exceeded" };
   const slices: SliceIdentity[] = [];
-  for (const declaration of fat.value.slices) {
-    const selected = readUniversalMachoSlice(bytes, fat.value, declaration);
+  for (const declaration of declarations) {
+    const selected = readUniversalMachoSlice(bytes, header, declaration);
     if (!selected.ok)
       return { kind: "unreadable", reason: selected.error.message };
     const slice = sliceAt(
@@ -175,7 +190,7 @@ const architecturesAgree = (recorded: string, slice: string): boolean => {
 };
 
 /** Resolve every report image and frame against the selected artifact. */
-export const resolveAppleIpsJoin = (
+export const resolveAppleIpsJoin = async (
   report: AppleIps,
   artifact: {
     readonly path: string;
@@ -184,8 +199,8 @@ export const resolveAppleIpsJoin = (
   },
   input: { readonly path: string; readonly max_join_bytes: number },
   read: FieldReader,
-): AppleIpsJoin => {
-  const parsed = readSliceIdentities(artifact.bytes);
+): Promise<AppleIpsJoin> => {
+  const parsed = await readSliceIdentities(artifact.bytes);
   if (parsed.kind === "unreadable")
     return {
       status: "unreadable",
@@ -319,7 +334,11 @@ const frameJoin = (
   if (digest === undefined) {
     const rejectReason = rejected.get(imageIndex);
     if (rejectReason !== undefined)
-      return unjoined(threadIndex, frame.frame_index, rejectReason);
+      return unjoined(
+        threadIndex,
+        frame.frame_index,
+        `image ${String(imageIndex)} did not join; see join.limitations`,
+      );
     const uuidMatched = slices.some(({ uuid }) => uuid === image.uuid);
     return unjoined(
       threadIndex,

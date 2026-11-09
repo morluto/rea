@@ -1,3 +1,4 @@
+import type { FileSnapshotPartialObservation } from "../fileSnapshotObservation.js";
 import { z } from "zod";
 
 import { digestSchema } from "../digests.js";
@@ -434,4 +435,9 @@ export const appleIpsReportIntegerTextBytes = (report: AppleIps): number => {
       bytes += appleIpsIntegerTextBytes(frame.static_address);
   }
   return bytes;
+};
+
+/** Decoded report and independently completed join identity retained on failure. */
+export type AppleIpsPartialObservation = AppleIps & {
+  readonly join_artifact?: FileSnapshotPartialObservation;
 };
