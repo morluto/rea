@@ -429,6 +429,50 @@ it("names a null mapping key by the projection toJS writes", async () => {
   expect(nullKey.ok).toBe(true);
 });
 
+it("refuses numeric keys whose member name would not match the source", async () => {
+  const cases: readonly (readonly [string, string])[] = [
+    ["1e999", "an overflowing number the parser resolves to Infinity"],
+    ["0.10000000000000001", "a decimal the parser rounds"],
+    [".5", "a leading-dot decimal"],
+  ];
+  for (const [key, why] of cases) {
+    const unsafe = await importText(
+      `lossy-key-${key.replace(/[^\w]/gu, "_")}.yaml`,
+      [
+        "openapi: 3.0.4",
+        'info: {title: Owned API, version: "1"}',
+        "paths:",
+        "  /pets:",
+        "    additionalOperations:",
+        `      ${key}: {get: {operationId: lossy}}`,
+      ].join("\n"),
+      "openapi-yaml",
+    );
+    // `toJS` projects the parsed value, not the token, so these keys would
+    // name a member the source never wrote: 1e999 becomes "Infinity".
+    expect(contractError(unsafe), why).toContain(
+      "numeric mapping key the parser cannot project exactly",
+    );
+  }
+});
+
+it("keeps a numeric key the parser projects back to its own token", async () => {
+  const exact = await importText(
+    "exact-numeric-key.yaml",
+    [
+      "openapi: 3.0.4",
+      'info: {title: Owned API, version: "1"}',
+      "paths:",
+      "  /pets:",
+      "    additionalOperations:",
+      "      2: {get: {operationId: two}}",
+    ].join("\n"),
+    "openapi-yaml",
+  );
+  // `String(2) === "2"`, so the projected member name is the source key.
+  expect(exact.ok).toBe(true);
+});
+
 it("refuses an integer key the parser has already rounded", async () => {
   const unsafe = await importText(
     "unsafe-integer-key.yaml",
@@ -443,7 +487,7 @@ it("refuses an integer key the parser has already rounded", async () => {
     "openapi-yaml",
   );
   expect(contractError(unsafe)).toContain(
-    "integer mapping key beyond the exactly-representable range",
+    "numeric mapping key the parser cannot project exactly",
   );
   if (unsafe.ok) throw new Error("expected a refusal");
   expect(unsafe.error).toMatchObject({

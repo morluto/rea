@@ -71,6 +71,11 @@ const yamlAnchors = (root: unknown): Map<string, readonly Node[]> => {
 /**
  * The binding an alias resolves to: the last anchor of that name starting
  * before the alias, which is the scope `toJS` projects.
+ *
+ * Bindings are sorted by source position, so the answer is the rightmost entry
+ * below the alias. A document may rebind one name many times, and a linear scan
+ * from the first binding turns the pre-`toJS` collision walk quadratic; search
+ * instead.
  */
 const resolveAlias = (
   alias: Alias,
@@ -80,12 +85,16 @@ const resolveAlias = (
   const bindings = anchors.get(source);
   if (bindings === undefined) return undefined;
   const position = alias.range?.[0] ?? Number.POSITIVE_INFINITY;
-  let resolved: Node | undefined;
-  for (const binding of bindings) {
-    if ((binding.range?.[0] ?? 0) >= position) break;
-    resolved = binding;
+  let low = 0;
+  let high = bindings.length;
+  while (low < high) {
+    const middle = (low + high) >>> 1;
+    const binding = bindings[middle];
+    if (binding !== undefined && (binding.range?.[0] ?? 0) < position)
+      low = middle + 1;
+    else high = middle;
   }
-  return resolved;
+  return low === 0 ? undefined : bindings[low - 1];
 };
 
 const invalidDocument = (path: string, message: string): AnalysisError =>
@@ -269,20 +278,26 @@ export const decodeOpenApiYaml = (
       //
       // The name has to match `toJS`'s own projection (`stringifyKey`): a null
       // key becomes the empty member name, not `"null"`, so an unquoted `null`
-      // and a quoted `"null"` are distinct members. An integer the parser has
-      // already rounded would otherwise name a member the source never wrote,
-      // so an unsafe one is refused rather than projected under the rounded
-      // value.
-      const scalar: { readonly value: unknown } = resolved;
+      // and a quoted `"null"` are distinct members. The parser has already
+      // resolved the plain scalar to a JavaScript number, so any key whose
+      // compiled value does not round-trip to the member name it projects
+      // would name a member the source never wrote. Quoted scalars are strings,
+      // and that is already the member name, so only plain scalars are checked.
+      const scalar: {
+        readonly value: unknown;
+        readonly type?: string | undefined;
+        readonly source?: string | undefined;
+      } = resolved;
       if (
         typeof scalar.value === "number" &&
-        Number.isInteger(scalar.value) &&
-        !Number.isSafeInteger(scalar.value)
+        scalar.type === "PLAIN" &&
+        scalar.source !== undefined &&
+        String(scalar.value) !== scalar.source
       )
         return err(
           invalidDocument(
             path,
-            "OpenAPI YAML uses an integer mapping key beyond the exactly-representable range; the JSON profile cannot name that member without changing its value",
+            "OpenAPI YAML uses a numeric mapping key the parser cannot project exactly; the JSON profile cannot name that member without changing its value",
           ),
         );
       const member = scalar.value === null ? "" : String(scalar.value);
