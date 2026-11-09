@@ -176,7 +176,7 @@ describe("view constructor surfaces", () => {
     const byLabel = (prefix: string) =>
       windows
         .flatMap(({ observations }) => observations)
-        .find(({ label }) => label.startsWith(`${prefix}@`))?.properties ?? {};
+        .find(({ label }) => label?.startsWith(`${prefix}@`))?.properties ?? {};
     const browserWindow = byLabel("BrowserWindow");
     const baseWindow = byLabel("BaseWindow");
     // A control: BrowserWindow keeps its construction label and surface.
