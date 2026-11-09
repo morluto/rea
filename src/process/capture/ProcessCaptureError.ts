@@ -79,6 +79,7 @@ export const normalizeCaptureFailure = (
       ...(compiler === undefined
         ? {}
         : {
+            ...(compiler.outcome === "timed_out" ? { retryable: true } : {}),
             capturedOutput: {
               stdout: "",
               stderr: compiler.stderr,
