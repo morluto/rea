@@ -52,6 +52,7 @@ const report: AppleIps = {
     type_mismatches: [],
   },
   unlisted_body_keys: [],
+  join: null,
   limitations: ["Opened Mach-O and dSYM UUID joins remain unobserved."],
 };
 

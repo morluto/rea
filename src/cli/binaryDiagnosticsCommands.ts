@@ -107,6 +107,15 @@ export const registerBinaryDiagnosticsCommands = (
       maxIntegerTextBytes: cliDecimalField(
         inspectAppleIpsInputSchema.shape.max_integer_text_bytes,
       ),
+      joinPath: z
+        .string()
+        .optional()
+        .describe(
+          "Optional local Mach-O executable or dSYM whose slice LC_UUID matches report images",
+        ),
+      maxJoinBytes: cliDecimalField(
+        inspectAppleIpsInputSchema.shape.max_join_bytes,
+      ),
     }),
     run: ({ args, options }) =>
       withCommandCancellation(async (signal) => {
@@ -127,6 +136,10 @@ export const registerBinaryDiagnosticsCommands = (
                     max_images: options.maxImages,
                     max_registers: options.maxRegisters,
                     max_integer_text_bytes: options.maxIntegerTextBytes,
+                    ...(options.joinPath === undefined
+                      ? {}
+                      : { join_path: absoluteCallerPath(options.joinPath) }),
+                    max_join_bytes: options.maxJoinBytes,
                   },
                   { signal },
                 ),

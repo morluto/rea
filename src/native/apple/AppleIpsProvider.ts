@@ -44,6 +44,7 @@ import {
   type AppleIpsSelectedBoundary,
 } from "./AppleIps.errors.js";
 import { parseAppleIps } from "./AppleIpsParser.js";
+import { resolveAppleIpsJoin } from "./AppleIpsMachOJoin.js";
 
 const OPERATION = "inspect_apple_ips";
 
@@ -85,7 +86,26 @@ export class AppleIpsProvider implements AppleIpsPort {
           input,
         );
         assertArtifactReadActive(options?.signal);
-        return ok(report);
+        if (input.join_path === undefined) return ok(report);
+        const joinArtifact = await readStableArtifact(
+          input.join_path,
+          input.max_join_bytes,
+          options?.signal,
+          undefined,
+          this.#resources,
+        );
+        assertArtifactReadActive(options?.signal);
+        return ok({
+          ...report,
+          join: resolveAppleIpsJoin(
+            report,
+            { ...joinArtifact, path: input.join_path },
+            {
+              path: input.join_path,
+              max_join_bytes: input.max_join_bytes,
+            },
+          ),
+        });
       });
     } catch (cause) {
       return err(appleIpsFailure(cause, input));
