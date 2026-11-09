@@ -82,6 +82,7 @@ it("substitutes numeric modules, named exports and captured wrapper arguments", 
   const env = resolver.bind(fn, []);
   expect(resolver.evaluate(fn.node.body.callee, env)).toEqual({
     kind: "external",
+    loaderAuthority: "candidate",
     path: ["electron", "ipcRenderer", "send"],
   });
   expect(resolver.arguments(fn.node.body, env)[0]).toEqual({
@@ -127,7 +128,11 @@ it("checks block lexical initializers against their containing function call", (
       );
     },
   });
-  expect(resolved).toEqual({ kind: "external", path: ["electron"] });
+  expect(resolved).toEqual({
+    kind: "external",
+    loaderAuthority: "candidate",
+    path: ["electron"],
+  });
 });
 
 it("keeps same-factory reads before initialization unresolved", () => {
@@ -236,8 +241,16 @@ it("keeps function declarations hoisted and checks closures at invocation", () =
     inspect(localRead());
   `);
   expect(inspected[0]).toMatchObject({ kind: "function" });
-  expect(inspected[1]).toEqual({ kind: "external", path: ["electron"] });
-  expect(inspected[2]).toEqual({ kind: "external", path: ["electron"] });
+  expect(inspected[1]).toEqual({
+    kind: "external",
+    loaderAuthority: "candidate",
+    path: ["electron"],
+  });
+  expect(inspected[2]).toEqual({
+    kind: "external",
+    loaderAuthority: "candidate",
+    path: ["electron"],
+  });
 });
 
 it("keeps a synchronous cross-function callback before initialization unresolved", () => {
@@ -288,7 +301,11 @@ it("uses completed activation provenance for a returned closure", () => {
       const value = require("electron");
       return () => value;
     }`);
-  expect(result).toEqual({ kind: "external", path: ["electron"] });
+  expect(result).toEqual({
+    kind: "external",
+    loaderAuthority: "candidate",
+    path: ["electron"],
+  });
 });
 
 it("does not treat statements after a returned closure as initialized", () => {
@@ -898,7 +915,11 @@ it.each([
     })();`);
     expect(value.kind).toBe(kind);
     if (kind === "external")
-      expect(value).toEqual({ kind: "external", path: ["electron"] });
+      expect(value).toEqual({
+        kind: "external",
+        loaderAuthority: "candidate",
+        path: ["electron"],
+      });
   },
 );
 
@@ -910,7 +931,11 @@ it("reads a literal prototype only from its actual prototype setter", () => {
     inspectOne(
       'inspect(({__proto__:require("electron"),ordinary:1}).__proto__);',
     ),
-  ).toEqual({ kind: "external", path: ["electron"] });
+  ).toEqual({
+    kind: "external",
+    loaderAuthority: "candidate",
+    path: ["electron"],
+  });
 });
 
 it.each(["local", "outer"])(
@@ -1029,5 +1054,25 @@ it("keeps repeated cached queries within an independent depth budget", () => {
     },
   );
   expect(values).toHaveLength(1);
+  expect(resolver.truncated).toBe(false);
+});
+
+it("retains each external selection guard once across deep member reads", () => {
+  const { parsed, resolver } = resolverFor("if (guard) {};");
+  const condition = { node: parsed.program.body[0]!, positive: true as const };
+  let value: SymbolicValue = {
+    kind: "external",
+    path: ["electron"],
+    loaderAuthority: "candidate",
+    conditions: [condition],
+  };
+  for (let index = 0; index < 32; index++) {
+    value = resolver.property(value, `member${index}`);
+  }
+  expect(value).toMatchObject({
+    kind: "external",
+    loaderAuthority: "candidate",
+    conditions: [condition],
+  });
   expect(resolver.truncated).toBe(false);
 });
