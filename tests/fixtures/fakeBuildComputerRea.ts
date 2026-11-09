@@ -99,7 +99,7 @@ elif command == "export-desktop-application":
             if os.environ["FAKE_REA_SCHEMA_TOKEN"] == "invalid":
                 print("fake-control-token-0123456789abcdef")
                 sys.exit(0)
-            print("runtime output fake-control-token-0123456789abcdef")
+            print("runtime output fake-control-token-0123456789abcdef", file=sys.stderr)
             sys.exit(23)
         if os.environ.get("FAKE_REA_SCHEMA_FAILURE"):
             print("runtime cannot load its export command", file=sys.stderr)

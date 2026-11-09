@@ -359,6 +359,10 @@ remaining content budget is not read, unless stored content of the same size
 could make it a duplicate. Files that could not be
 retained are listed with the reason: too large, over the content budget,
 changed since the walk, changed during the read, or unreadable.
+The baseline also records the paths and types of non-file entries it observed,
+including symlinks, without following them. This is required to distinguish an
+unreadable SQLite sidecar from an absent one. Captures made before this field
+was added must be made again before state inspection, task drafting or export.
 Directories the application held files open in, but whose starting content was
 not retained, are listed so a second capture can pass them with
 `--state-path`.
