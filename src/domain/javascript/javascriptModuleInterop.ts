@@ -365,11 +365,81 @@ export const createSemanticModuleInterop = (
     }
   };
 
+  const freshIntrinsicCallTarget = (
+    call: t.CallExpression | t.OptionalCallExpression,
+  ): "fresh" | "not-fresh" | t.Expression => {
+    const invocation = resolveJavaScriptIntrinsicInvocation(
+      call,
+      intrinsicPath,
+      boundIntrinsic,
+      intrinsicReadChanged,
+      nativeArrayIteration,
+    );
+    if (invocation?.kind !== "known" || invocation.path.length !== 3)
+      return "not-fresh";
+    const [ns, owner, method] = invocation.path;
+    if (ns !== "intrinsic") return "not-fresh";
+    if (
+      owner === "Object" &&
+      (method === "create" ||
+        method === "fromEntries" ||
+        method === "entries" ||
+        method === "keys" ||
+        method === "values" ||
+        method === "getOwnPropertyNames" ||
+        method === "getOwnPropertySymbols" ||
+        method === "getOwnPropertyDescriptor" ||
+        method === "getOwnPropertyDescriptors" ||
+        method === "groupBy")
+    )
+      return "fresh";
+    if (
+      owner === "Reflect" &&
+      (method === "ownKeys" || method === "getOwnPropertyDescriptor")
+    )
+      return "fresh";
+    if (
+      owner === "Array" &&
+      (method === "of" || method === "from" || method === "fromAsync")
+    ) {
+      const receiver =
+        invocation.receiver === undefined
+          ? undefined
+          : unwrapJavaScriptExpression(invocation.receiver).node;
+      return receiver === undefined ||
+        readExactJavaScriptLiteral(receiver).found ||
+        t.isUnaryExpression(receiver, { operator: "void" }) ||
+        isUnshadowedGlobal(receiver, state, "undefined") ||
+        isUnshadowedGlobal(receiver, state, "Array")
+        ? "fresh"
+        : "not-fresh";
+    }
+    if (
+      owner === "Object" &&
+      (method === "freeze" ||
+        method === "seal" ||
+        method === "preventExtensions" ||
+        method === "assign" ||
+        method === "defineProperty" ||
+        method === "defineProperties" ||
+        method === "setPrototypeOf")
+    ) {
+      const firstArg = invocation.arguments?.[0];
+      return firstArg !== undefined && t.isExpression(firstArg)
+        ? firstArg
+        : "not-fresh";
+    }
+    return "not-fresh";
+  };
+
   const isFreshObject = (node: t.Node): boolean => {
     const visited = new Set<string>();
+    const visitedNodes = new Set<t.Node>();
     let current = node;
     for (;;) {
       current = unwrapJavaScriptExpression(current).node;
+      if (visitedNodes.has(current)) return false;
+      visitedNodes.add(current);
       if (
         t.isObjectExpression(current) ||
         t.isArrayExpression(current) ||
@@ -378,6 +448,13 @@ export const createSemanticModuleInterop = (
         t.isRegExpLiteral(current)
       )
         return true;
+      if (t.isCallExpression(current) || t.isOptionalCallExpression(current)) {
+        const callTarget = freshIntrinsicCallTarget(current);
+        if (callTarget === "fresh") return true;
+        if (callTarget === "not-fresh") return false;
+        current = callTarget;
+        continue;
+      }
       if (!t.isIdentifier(current)) return false;
       const binding = resolveSemanticBindingState(state, current, current.name);
       const initializer = unprojectedInitializer(binding, state);

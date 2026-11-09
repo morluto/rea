@@ -80,6 +80,7 @@ import {
 } from "./javascriptBundledRequireOrigin.js";
 import { collectSemanticMemberMutationsSteps } from "./javascriptSemanticMemberMutations.js";
 import {
+  isUnshadowedGlobal,
   semanticBindingAtRead,
   semanticEffectTiming,
   semanticEffectTimingWithinActivation,
@@ -103,6 +104,7 @@ import { collectJavaScriptDerivedSemanticsSteps } from "./javascriptSemanticDeri
 import {
   evaluateSemanticExpression,
   evaluateSemanticProvenance,
+  evaluateSemanticSelectedBranches,
   clearSemanticValueCaches,
   semanticValueDefinitelyDefined,
 } from "./javascriptSemanticValues.js";
@@ -113,6 +115,7 @@ import {
   electronExportPath,
   electronMemberPath,
   ELECTRON_MODULE,
+  type JavaScriptIntrinsicInvocation,
 } from "./javascriptElectronMemberWrites.js";
 import { range } from "./javascriptStaticAnalysisHelpers.js";
 import {
@@ -2579,7 +2582,7 @@ const bindArrayFromMapperParameters = (
           state,
           mapParams,
           undefined,
-          iterable,
+          slotContext.callSite,
         );
       continue;
     }
@@ -2596,7 +2599,7 @@ const bindArrayFromMapperParameters = (
           list.push({
             node: iterable,
             projection: [seg],
-            capturedSelections: [{ at: iterable, depth: 1 }],
+            capturedSelections: [{ at: slotContext.callSite, depth: 1 }],
             restElementIndex: 0,
           });
         mapParams.set(restBinding.bindingId, list);
@@ -2618,7 +2621,7 @@ const bindArrayFromMapperParameters = (
                 list.push({
                   node: iterable,
                   projection: [seg],
-                  capturedSelections: [{ at: iterable, depth: 1 }],
+                  capturedSelections: [{ at: slotContext.callSite, depth: 1 }],
                   restElementIndex: 0,
                 });
               mapParams.set(innerBinding.bindingId, list);
@@ -2633,7 +2636,7 @@ const bindArrayFromMapperParameters = (
               state,
               mapParams,
               undefined,
-              iterable,
+              slotContext.callSite,
             );
         }
       }
@@ -2650,7 +2653,7 @@ const bindArrayFromMapperParameters = (
               state,
               mapParams,
               undefined,
-              iterable,
+              slotContext.callSite,
             );
       }
     }
@@ -2957,6 +2960,550 @@ const createNextCallFrame = (
   };
 };
 
+interface KnownIntrinsicMemberWriteContext {
+  readonly callNode: t.CallExpression | t.OptionalCallExpression;
+  readonly intrinsic: JavaScriptIntrinsicInvocation;
+  readonly current: ElectronMemberWriteCandidate;
+  readonly capturedSelections: readonly SemanticCapturedSelection[] | undefined;
+  readonly state: JavaScriptSemanticAnalysisState;
+  readonly interop: ReturnType<typeof createSemanticModuleInterop>;
+  readonly pending: ElectronMemberWriteCandidate[];
+}
+
+const hasStandardArrayConstructorReceiver = (
+  intrinsic: JavaScriptIntrinsicInvocation,
+  state: JavaScriptSemanticAnalysisState,
+): boolean => {
+  if (intrinsic.receiver === undefined) return true;
+  const receiver = unwrapJavaScriptExpression(intrinsic.receiver).node;
+  return (
+    readExactJavaScriptLiteral(receiver).found ||
+    isDefinitelyUndefinedExpression(receiver, state) ||
+    isUnshadowedGlobal(receiver, state, "Array")
+  );
+};
+
+const enqueueDescriptorValueMemberWriteSources = (
+  ctx: KnownIntrinsicMemberWriteContext,
+  descArg: t.Expression | t.SpreadElement | t.ArgumentPlaceholder | undefined,
+  remainingSuffix: JavaScriptSemanticPropertyPath,
+  respectDefaultNonEnumerable: boolean,
+): void => {
+  if (
+    descArg === undefined ||
+    (!t.isSpreadElement(descArg) &&
+      isDefinitelyUndefinedExpression(descArg, ctx.state))
+  )
+    return;
+  if (!t.isSpreadElement(descArg)) {
+    const descObj = resolveUnmutatedObjectExpression(
+      descArg,
+      ctx.state,
+      ctx.callNode,
+    );
+    if (descObj !== undefined) {
+      let plainData = true;
+      let valueNode: t.Node | undefined;
+      let enumerableValue: boolean | undefined = respectDefaultNonEnumerable
+        ? false
+        : true;
+      for (const prop of descObj.properties) {
+        if (!t.isObjectProperty(prop)) {
+          plainData = false;
+          break;
+        }
+        const key = semanticStaticPropertyKey(prop.key, prop.computed);
+        if (
+          key === null ||
+          isObjectPrototypeSetter(prop, key) ||
+          key === "get" ||
+          key === "set"
+        ) {
+          plainData = false;
+          break;
+        }
+        if (key === "value") valueNode = prop.value;
+        else if (key === "enumerable") {
+          const lit = readExactJavaScriptLiteral(prop.value);
+          enumerableValue = lit.found ? Boolean(lit.value) : undefined;
+        }
+      }
+      if (plainData) {
+        const requiresOwnEnumerable =
+          ctx.capturedSelections?.some(
+            (capture) => capture.depth === 1 && capture.ownEnumerable,
+          ) === true;
+        if (requiresOwnEnumerable && enumerableValue === false) return;
+        if (valueNode !== undefined)
+          ctx.pending.push({
+            ...ctx.current,
+            node: valueNode,
+            suffix: remainingSuffix,
+            readAt: ctx.current.readAt ?? ctx.callNode,
+            capturedSelections: semanticShiftCapturedSelections(
+              ctx.capturedSelections,
+              -1,
+            ),
+          });
+        return;
+      }
+    }
+  }
+  if (t.isExpression(descArg) || t.isSpreadElement(descArg))
+    enqueueOpaqueInvocationArguments(
+      [descArg],
+      { ...ctx.current, suffix: remainingSuffix },
+      ctx.pending,
+    );
+};
+
+const enqueueDescriptorMapMemberWriteSources = (
+  ctx: KnownIntrinsicMemberWriteContext,
+  propsArg: t.Expression | t.SpreadElement | t.ArgumentPlaceholder | undefined,
+  firstSeg: JavaScriptSemanticPropertyPath[number],
+  remainingSuffix: JavaScriptSemanticPropertyPath,
+): ReadonlySet<string> => {
+  if (
+    propsArg === undefined ||
+    (!t.isSpreadElement(propsArg) &&
+      isDefinitelyUndefinedExpression(propsArg, ctx.state))
+  )
+    return new Set();
+  if (!t.isSpreadElement(propsArg)) {
+    const propsObj = resolveUnmutatedObjectExpression(
+      propsArg,
+      ctx.state,
+      ctx.callNode,
+    );
+    if (propsObj !== undefined) {
+      const entries = new Map<string, t.ObjectProperty>();
+      let staticEntries = true;
+      for (const prop of propsObj.properties) {
+        if (!t.isObjectProperty(prop)) {
+          staticEntries = false;
+          break;
+        }
+        const key = semanticStaticPropertyKey(prop.key, prop.computed);
+        if (key === null || isObjectPrototypeSetter(prop, key)) {
+          staticEntries = false;
+          break;
+        }
+        entries.set(key, prop);
+      }
+      if (staticEntries) {
+        const shadowed = new Set<string>();
+        for (const [key, prop] of entries) {
+          shadowed.add(key);
+          if (
+            semanticPropertyPathKeyMatches(firstSeg, key) &&
+            t.isExpression(prop.value)
+          )
+            enqueueDescriptorValueMemberWriteSources(
+              ctx,
+              prop.value,
+              remainingSuffix,
+              true,
+            );
+        }
+        return shadowed;
+      }
+    }
+  }
+  if (t.isExpression(propsArg) || t.isSpreadElement(propsArg))
+    enqueueOpaqueInvocationArguments(
+      [propsArg],
+      { ...ctx.current, suffix: remainingSuffix },
+      ctx.pending,
+    );
+  return new Set();
+};
+
+const enqueuePrototypeLinkMemberWriteSources = (
+  ctx: KnownIntrinsicMemberWriteContext,
+  proto: t.Expression | t.SpreadElement | t.ArgumentPlaceholder | undefined,
+  shadowedKeys: ReadonlySet<string>,
+): boolean => {
+  if (proto === undefined) return true;
+  if (t.isSpreadElement(proto) || !t.isExpression(proto)) return false;
+  if (t.isNullLiteral(unwrapJavaScriptExpression(proto).node)) return true;
+  if (
+    ctx.capturedSelections?.some(
+      (capture) => capture.depth === 1 && capture.ownEnumerable,
+    )
+  )
+    return true;
+  const [firstSeg, ...remainingSuffix] = ctx.current.suffix;
+  for (const choice of semanticAliasSelectionChoices(firstSeg!)) {
+    if (typeof choice === "string" && shadowedKeys.has(choice)) continue;
+    ctx.pending.push({
+      ...ctx.current,
+      node: proto,
+      suffix: [choice, ...remainingSuffix],
+      capturedSelections: ctx.capturedSelections,
+    });
+    if (
+      (choice === null || choice === "__proto__") &&
+      !shadowedKeys.has("__proto__")
+    )
+      ctx.pending.push({
+        ...ctx.current,
+        node: proto,
+        suffix: remainingSuffix,
+        readAt: ctx.current.readAt ?? ctx.callNode,
+        capturedSelections: semanticShiftCapturedSelections(
+          ctx.capturedSelections,
+          -1,
+        ),
+      });
+  }
+  return true;
+};
+
+const enqueueArrayOfMemberWriteSources = (
+  ctx: KnownIntrinsicMemberWriteContext,
+): boolean => {
+  if (!hasStandardArrayConstructorReceiver(ctx.intrinsic, ctx.state))
+    return false;
+  if (
+    ctx.current.suffix.length === 0 ||
+    !maySelectArrayElementSegment(ctx.current.suffix[0]!)
+  )
+    return true;
+  const callArgs = ctx.intrinsic.arguments;
+  if (callArgs === undefined) return false;
+  const elements: (t.Expression | t.SpreadElement)[] = [];
+  for (const arg of callArgs) {
+    if (!t.isExpression(arg) && !t.isSpreadElement(arg)) return false;
+    elements.push(arg);
+  }
+  const synthetic = t.arrayExpression(elements);
+  const [key, ...remaining] = ctx.current.suffix;
+  const filteredAwaitDepths = ctx.current.awaitDepths?.filter(
+    (depth) => depth !== ctx.current.suffix.length,
+  );
+  for (const choice of semanticAliasSelectionChoices(key!)) {
+    for (const source of semanticArrayPropertyReferences(synthetic, [choice])) {
+      const nextSuffix = [...source.path, ...remaining];
+      const isSpreadSource = source.iterableFallbackPath !== undefined;
+      ctx.pending.push({
+        node: source.node,
+        suffix: nextSuffix,
+        readAt: ctx.current.readAt ?? ctx.callNode,
+        capturedSelections: semanticCapturedSelectionsAfterPropertyRead(
+          ctx.capturedSelections,
+          source.capturedSelectionAt === undefined
+            ? source
+            : { ...source, capturedSelectionAt: ctx.callNode },
+        ),
+        iteratedDepths: isSpreadSource
+          ? [
+              ...new Set([
+                ...(ctx.current.iteratedDepths ?? []),
+                nextSuffix.length,
+              ]),
+            ].sort((left, right) => left - right)
+          : ctx.current.iteratedDepths,
+        iteratedElementDepths: isSpreadSource
+          ? [
+              ...new Set([
+                ...(ctx.current.iteratedElementDepths ?? []),
+                nextSuffix.length,
+              ]),
+            ].sort((left, right) => left - right)
+          : ctx.current.iteratedElementDepths,
+        callFrame: ctx.current.callFrame,
+        ...(filteredAwaitDepths === undefined ||
+        filteredAwaitDepths.length === 0
+          ? {}
+          : { awaitDepths: filteredAwaitDepths }),
+      });
+    }
+  }
+  return true;
+};
+
+const enqueueObjectMutatorIntrinsicMemberWriteSources = (
+  ctx: KnownIntrinsicMemberWriteContext,
+): boolean => {
+  const [, obj, method] = ctx.intrinsic.path;
+  const callArgs = ctx.intrinsic.arguments;
+  if (obj !== "Object") return false;
+  if (
+    method !== "defineProperty" &&
+    method !== "defineProperties" &&
+    method !== "setPrototypeOf"
+  )
+    return false;
+  if (callArgs === undefined) return false;
+  const [target] = callArgs;
+  if (target === undefined) return true;
+  if (!t.isExpression(target)) return false;
+  if (ctx.current.suffix.length === 0) {
+    ctx.pending.push({
+      ...ctx.current,
+      node: target,
+      capturedSelections: ctx.capturedSelections,
+    });
+    return true;
+  }
+  if (method === "setPrototypeOf") {
+    ctx.pending.push({
+      ...ctx.current,
+      node: target,
+      capturedSelections: ctx.capturedSelections,
+    });
+    return enqueuePrototypeLinkMemberWriteSources(
+      ctx,
+      callArgs[1],
+      new Set<string>(),
+    );
+  }
+  if (method === "defineProperty") {
+    const [firstSeg, ...remainingSuffix] = ctx.current.suffix;
+    const keyArg = callArgs[1];
+    if (keyArg !== undefined && t.isSpreadElement(keyArg)) return false;
+    const staticKey =
+      keyArg === undefined ? "undefined" : ctx.interop.staticString(keyArg);
+    ctx.pending.push({
+      ...ctx.current,
+      node: target,
+      capturedSelections: ctx.capturedSelections,
+    });
+    if (
+      staticKey === undefined ||
+      semanticPropertyPathKeyMatches(firstSeg!, staticKey)
+    )
+      enqueueDescriptorValueMemberWriteSources(
+        ctx,
+        callArgs[2],
+        remainingSuffix,
+        true,
+      );
+    return true;
+  }
+  const [firstSeg, ...remainingSuffix] = ctx.current.suffix;
+  enqueueDescriptorMapMemberWriteSources(
+    ctx,
+    callArgs[1],
+    firstSeg!,
+    remainingSuffix,
+  );
+  ctx.pending.push({
+    ...ctx.current,
+    node: target,
+    capturedSelections: ctx.capturedSelections,
+  });
+  return true;
+};
+
+const enqueueContainerIntrinsicMemberWriteSources = (
+  ctx: KnownIntrinsicMemberWriteContext,
+): boolean => {
+  if (ctx.intrinsic.path.length !== 3 || ctx.intrinsic.path[0] !== "intrinsic")
+    return false;
+  const [, obj, method] = ctx.intrinsic.path;
+  const callArgs = ctx.intrinsic.arguments;
+  if (
+    (obj === "Object" &&
+      (method === "keys" ||
+        method === "getOwnPropertyNames" ||
+        method === "getOwnPropertySymbols" ||
+        method === "is" ||
+        method === "hasOwn" ||
+        method === "isExtensible" ||
+        method === "isFrozen" ||
+        method === "isSealed")) ||
+    (obj === "Array" && method === "isArray") ||
+    (obj === "Reflect" &&
+      (method === "defineProperty" ||
+        method === "deleteProperty" ||
+        method === "has" ||
+        method === "isExtensible" ||
+        method === "preventExtensions" ||
+        method === "set" ||
+        method === "setPrototypeOf" ||
+        method === "ownKeys"))
+  )
+    return true;
+  if ((obj === "Object" || obj === "Reflect") && method === "getPrototypeOf") {
+    if (callArgs === undefined) return false;
+    const [target] = callArgs;
+    if (target === undefined) return true;
+    if (!t.isExpression(target)) return false;
+    ctx.pending.push({
+      ...ctx.current,
+      node: target,
+      suffix: ["__proto__", ...ctx.current.suffix],
+      readAt: ctx.current.readAt ?? ctx.callNode,
+      capturedSelections: semanticShiftCapturedSelections(
+        ctx.capturedSelections,
+        1,
+      ),
+    });
+    return true;
+  }
+  if (obj === "Object" && method === "create") {
+    if (ctx.current.suffix.length === 0) return true;
+    if (callArgs === undefined) return false;
+    const [firstSeg, ...remainingSuffix] = ctx.current.suffix;
+    const shadowed = enqueueDescriptorMapMemberWriteSources(
+      ctx,
+      callArgs[1],
+      firstSeg!,
+      remainingSuffix,
+    );
+    return enqueuePrototypeLinkMemberWriteSources(ctx, callArgs[0], shadowed);
+  }
+  if (obj === "Array" && method === "of")
+    return enqueueArrayOfMemberWriteSources(ctx);
+  if (obj === "Array" && method === "fromAsync") {
+    if (!hasStandardArrayConstructorReceiver(ctx.intrinsic, ctx.state))
+      return false;
+    return ctx.current.suffix.length === 0;
+  }
+  if (enqueueObjectMutatorIntrinsicMemberWriteSources(ctx)) return true;
+  if (obj === "Object" && method === "entries") {
+    if (ctx.current.suffix.length <= 1) return true;
+    if (
+      !maySelectArrayElementSegment(ctx.current.suffix[0]!) ||
+      !semanticPropertyPathKeyMatches(ctx.current.suffix[1]!, "1")
+    )
+      return true;
+    if (callArgs === undefined) return false;
+    const [target] = callArgs;
+    if (target === undefined) return true;
+    if (!t.isExpression(target)) return false;
+    ctx.pending.push({
+      ...ctx.current,
+      node: target,
+      suffix: [null, ...ctx.current.suffix.slice(2)],
+      readAt: ctx.current.readAt ?? ctx.callNode,
+      capturedSelections: [
+        ...(semanticShiftCapturedSelections(ctx.capturedSelections, -1) ?? []),
+        { at: ctx.callNode, depth: 1, ownEnumerable: true },
+      ],
+    });
+    return true;
+  }
+  if (obj === "Object" && method === "fromEntries") {
+    if (ctx.current.suffix.length === 0) return true;
+    if (callArgs === undefined) return false;
+    const [iterable] = callArgs;
+    if (iterable === undefined) return true;
+    if (!t.isExpression(iterable)) return false;
+    ctx.pending.push({
+      ...ctx.current,
+      node: iterable,
+      suffix: [null, 1, ...ctx.current.suffix.slice(1)],
+      readAt: ctx.current.readAt ?? ctx.callNode,
+      capturedSelections: [
+        ...(semanticShiftCapturedSelections(ctx.capturedSelections, 1) ?? []),
+        { at: ctx.callNode, depth: 1 },
+        { at: ctx.callNode, depth: 2 },
+      ],
+    });
+    if (!semanticKnownArrayIterationAt(iterable, ctx.state))
+      enqueueOpaqueInvocationArguments(
+        [iterable],
+        { ...ctx.current, suffix: ctx.current.suffix.slice(1) },
+        ctx.pending,
+      );
+    return true;
+  }
+  if (obj === "Object" && method === "groupBy") {
+    if (ctx.current.suffix.length <= 1) return true;
+    if (!maySelectArrayElementSegment(ctx.current.suffix[1]!)) return true;
+    if (callArgs === undefined) return false;
+    const [items] = callArgs;
+    if (items === undefined) return true;
+    if (!t.isExpression(items)) return false;
+    ctx.pending.push({
+      ...ctx.current,
+      node: items,
+      suffix: [null, ...ctx.current.suffix.slice(2)],
+      readAt: ctx.current.readAt ?? ctx.callNode,
+      capturedSelections: [
+        ...(semanticShiftCapturedSelections(ctx.capturedSelections, -1) ?? []),
+        { at: ctx.callNode, depth: 1 },
+      ],
+    });
+    if (!semanticKnownArrayIterationAt(items, ctx.state))
+      enqueueOpaqueInvocationArguments(
+        [items],
+        { ...ctx.current, suffix: ctx.current.suffix.slice(2) },
+        ctx.pending,
+      );
+    return true;
+  }
+  return enqueueDescriptorReaderIntrinsicMemberWriteSources(ctx);
+};
+
+const enqueueDescriptorReaderIntrinsicMemberWriteSources = (
+  ctx: KnownIntrinsicMemberWriteContext,
+): boolean => {
+  const [, obj, method] = ctx.intrinsic.path;
+  const callArgs = ctx.intrinsic.arguments;
+  if (
+    (obj === "Object" || obj === "Reflect") &&
+    method === "getOwnPropertyDescriptor"
+  ) {
+    if (ctx.current.suffix.length === 0) return true;
+    const [descProp, ...rest] = ctx.current.suffix;
+    if (
+      !semanticPropertyPathKeyMatches(descProp!, "value") &&
+      !semanticPropertyPathKeyMatches(descProp!, "get") &&
+      !semanticPropertyPathKeyMatches(descProp!, "set")
+    )
+      return true;
+    if (callArgs === undefined) return false;
+    const [target, keyArg] = callArgs;
+    if (target === undefined) return true;
+    if (!t.isExpression(target)) return false;
+    if (keyArg !== undefined && t.isSpreadElement(keyArg)) return false;
+    const keySeg =
+      keyArg === undefined
+        ? "undefined"
+        : (ctx.interop.staticString(keyArg) ?? null);
+    ctx.pending.push({
+      ...ctx.current,
+      node: target,
+      suffix: [keySeg, ...rest],
+      readAt: ctx.current.readAt ?? ctx.callNode,
+      capturedSelections: [
+        ...(ctx.capturedSelections ?? []),
+        { at: ctx.callNode, depth: 1 },
+      ],
+    });
+    return true;
+  }
+  if (obj === "Object" && method === "getOwnPropertyDescriptors") {
+    if (ctx.current.suffix.length <= 1) return true;
+    const [propSeg, descProp, ...rest] = ctx.current.suffix;
+    if (
+      !semanticPropertyPathKeyMatches(descProp!, "value") &&
+      !semanticPropertyPathKeyMatches(descProp!, "get") &&
+      !semanticPropertyPathKeyMatches(descProp!, "set")
+    )
+      return true;
+    if (callArgs === undefined) return false;
+    const [target] = callArgs;
+    if (target === undefined) return true;
+    if (!t.isExpression(target)) return false;
+    ctx.pending.push({
+      ...ctx.current,
+      node: target,
+      suffix: [propSeg!, ...rest],
+      readAt: ctx.current.readAt ?? ctx.callNode,
+      capturedSelections: [
+        ...(semanticShiftCapturedSelections(ctx.capturedSelections, -1) ?? []),
+        { at: ctx.callNode, depth: 1 },
+      ],
+    });
+    return true;
+  }
+  return false;
+};
+
 const enqueueNonIdentifierMemberWriteSources = (
   node: t.Node,
   current: ElectronMemberWriteCandidate,
@@ -3082,22 +3629,30 @@ const enqueueNonIdentifierMemberWriteSources = (
     const intrinsic = t.isTaggedTemplateExpression(node)
       ? undefined
       : interop.intrinsicInvocation(node);
-    if (intrinsic?.kind === "known") {
+    if (intrinsic?.kind === "known" && intrinsic.path.length === 3) {
       const [ns, obj, method] = intrinsic.path;
-      const callArgs = intrinsic.arguments ?? [];
+      const callArgs = intrinsic.arguments;
       if (
         ns === "intrinsic" &&
         obj === "Object" &&
         (method === "freeze" ||
           method === "seal" ||
-          method === "preventExtensions")
+          method === "preventExtensions") &&
+        callArgs !== undefined
       ) {
         const [target] = callArgs;
-        if (target !== undefined && t.isExpression(target))
+        if (target === undefined) return;
+        if (t.isExpression(target)) {
           pending.push({ ...current, node: target, capturedSelections });
-        return;
+          return;
+        }
       }
-      if (ns === "intrinsic" && obj === "Object" && method === "assign") {
+      if (
+        ns === "intrinsic" &&
+        obj === "Object" &&
+        method === "assign" &&
+        callArgs !== undefined
+      ) {
         if (callArgs.length === 0) return;
         const [target, ...sources] = callArgs;
         if (target === undefined) return;
@@ -3157,7 +3712,8 @@ const enqueueNonIdentifierMemberWriteSources = (
                 capturedSelections: [
                   ...(semanticShiftCapturedSelections(capturedSelections, 1) ??
                     []),
-                  { at: src.argument, depth: 2, ownEnumerable: true },
+                  { at: src.argument, depth: 1 },
+                  { at: node, depth: 2, ownEnumerable: true },
                 ],
                 awaitDepths: current.awaitDepths,
                 iteratedDepths: current.iteratedDepths,
@@ -3189,7 +3745,7 @@ const enqueueNonIdentifierMemberWriteSources = (
               readAt: current.readAt ?? node,
               capturedSelections: [
                 ...(capturedSelections ?? []),
-                { at: src, depth: 1, ownEnumerable: true },
+                { at: node, depth: 1, ownEnumerable: true },
               ],
             });
             if (!canPrune) continue;
@@ -3224,125 +3780,128 @@ const enqueueNonIdentifierMemberWriteSources = (
         }
         return;
       }
-      if (
-        ns === "intrinsic" &&
-        obj === "Object" &&
-        method === "values" &&
-        current.suffix.length > 0 &&
-        maySelectArrayElementSegment(current.suffix[0]!)
-      ) {
-        const [target] = callArgs;
-        if (target !== undefined && t.isExpression(target)) {
-          const remainingSuffix = current.suffix.slice(1);
-          const readAt = current.readAt ?? node;
-          const targetCapturedSelections: readonly SemanticCapturedSelection[] =
-            [
-              ...(capturedSelections ?? []),
-              { at: target, depth: 1, ownEnumerable: true },
-            ];
-          const resolvedValuesTarget = resolveSingleExpressionInCallFrame(
-            target,
-            node,
-            current.callFrame,
-            state,
-          );
-          const staticKeys = staticObjectValuesKeys(
-            resolvedValuesTarget?.node ?? target,
-            state,
-            resolvedValuesTarget?.captureAt ?? node,
-          );
-          if (staticKeys !== undefined) {
-            for (const seg of selectArrayFromInputSegments(
-              current.suffix[0]!,
-              staticKeys.length,
-            )) {
-              if (typeof seg === "number") {
-                const key = staticKeys[seg];
-                if (key !== undefined)
-                  pending.push({
-                    ...current,
-                    node: target,
-                    suffix: [key, ...remainingSuffix],
-                    readAt,
-                    capturedSelections: targetCapturedSelections,
-                  });
-              } else if (
-                seg !== null &&
-                typeof seg === "object" &&
-                staticKeys.length <= SEMANTIC_ALIAS_SELECTION_LIMIT
-              ) {
-                for (
-                  let idx = seg.startIndex ?? 0;
-                  idx < staticKeys.length;
-                  idx += 1
-                ) {
-                  if (!seg.excludedKeys.includes(String(idx)))
+      if (ns === "intrinsic" && obj === "Object" && method === "values") {
+        if (current.suffix.length === 0) return;
+        if (!maySelectArrayElementSegment(current.suffix[0]!)) return;
+        if (callArgs !== undefined) {
+          const [target] = callArgs;
+          if (target === undefined) return;
+          if (t.isExpression(target)) {
+            const remainingSuffix = current.suffix.slice(1);
+            const readAt = current.readAt ?? node;
+            const targetCapturedSelections: readonly SemanticCapturedSelection[] =
+              [
+                ...(capturedSelections ?? []),
+                { at: node, depth: 1, ownEnumerable: true },
+              ];
+            const resolvedValuesTarget = resolveSingleExpressionInCallFrame(
+              target,
+              node,
+              current.callFrame,
+              state,
+            );
+            const staticKeys = staticObjectValuesKeys(
+              resolvedValuesTarget?.node ?? target,
+              state,
+              resolvedValuesTarget?.captureAt ?? node,
+            );
+            if (staticKeys !== undefined) {
+              for (const seg of selectArrayFromInputSegments(
+                current.suffix[0]!,
+                staticKeys.length,
+              )) {
+                if (typeof seg === "number") {
+                  const key = staticKeys[seg];
+                  if (key !== undefined)
                     pending.push({
                       ...current,
                       node: target,
-                      suffix: [staticKeys[idx]!, ...remainingSuffix],
+                      suffix: [key, ...remainingSuffix],
                       readAt,
                       capturedSelections: targetCapturedSelections,
                     });
-                }
-              } else if (
-                seg === null &&
-                staticKeys.length <= SEMANTIC_ALIAS_SELECTION_LIMIT
-              ) {
-                for (const key of staticKeys)
+                } else if (
+                  seg !== null &&
+                  typeof seg === "object" &&
+                  staticKeys.length <= SEMANTIC_ALIAS_SELECTION_LIMIT
+                ) {
+                  for (
+                    let idx = seg.startIndex ?? 0;
+                    idx < staticKeys.length;
+                    idx += 1
+                  ) {
+                    if (!seg.excludedKeys.includes(String(idx)))
+                      pending.push({
+                        ...current,
+                        node: target,
+                        suffix: [staticKeys[idx]!, ...remainingSuffix],
+                        readAt,
+                        capturedSelections: targetCapturedSelections,
+                      });
+                  }
+                } else if (
+                  seg === null &&
+                  staticKeys.length <= SEMANTIC_ALIAS_SELECTION_LIMIT
+                ) {
+                  for (const key of staticKeys)
+                    pending.push({
+                      ...current,
+                      node: target,
+                      suffix: [key, ...remainingSuffix],
+                      readAt,
+                      capturedSelections: targetCapturedSelections,
+                    });
+                } else {
                   pending.push({
                     ...current,
                     node: target,
-                    suffix: [key, ...remainingSuffix],
+                    suffix: [null, ...remainingSuffix],
                     readAt,
                     capturedSelections: targetCapturedSelections,
                   });
-              } else {
+                }
+              }
+              return;
+            }
+            const denseLen = denseKnownArrayLengthAt(
+              resolvedValuesTarget?.node ?? target,
+              state,
+              resolvedValuesTarget?.captureAt ?? node,
+            );
+            if (denseLen !== undefined) {
+              for (const seg of selectArrayFromInputSegments(
+                current.suffix[0]!,
+                denseLen,
+              ))
                 pending.push({
                   ...current,
                   node: target,
-                  suffix: [null, ...remainingSuffix],
+                  suffix: [seg, ...remainingSuffix],
                   readAt,
                   capturedSelections: targetCapturedSelections,
                 });
-              }
+              return;
             }
+            pending.push({
+              node: target,
+              suffix: [null, ...remainingSuffix],
+              readAt,
+              capturedSelections: targetCapturedSelections,
+              callFrame: current.callFrame,
+            });
             return;
           }
-          const denseLen = denseKnownArrayLengthAt(
-            resolvedValuesTarget?.node ?? target,
-            state,
-            resolvedValuesTarget?.captureAt ?? node,
-          );
-          if (denseLen !== undefined) {
-            for (const seg of selectArrayFromInputSegments(
-              current.suffix[0]!,
-              denseLen,
-            ))
-              pending.push({
-                ...current,
-                node: target,
-                suffix: [seg, ...remainingSuffix],
-                readAt,
-                capturedSelections: targetCapturedSelections,
-              });
-            return;
-          }
-          pending.push({
-            node: target,
-            suffix: [null, ...remainingSuffix],
-            readAt,
-            capturedSelections: targetCapturedSelections,
-            callFrame: current.callFrame,
-          });
         }
-        return;
       }
-      if (ns === "intrinsic" && obj === "Array" && method === "from") {
-        if (
-          current.suffix.length > 0 &&
-          maySelectArrayElementSegment(current.suffix[0]!)
-        ) {
+      if (
+        ns === "intrinsic" &&
+        obj === "Array" &&
+        method === "from" &&
+        hasStandardArrayConstructorReceiver(intrinsic, state)
+      ) {
+        if (current.suffix.length === 0) return;
+        if (!maySelectArrayElementSegment(current.suffix[0]!)) return;
+        if (callArgs !== undefined) {
           const elementSuffix = current.suffix.slice(1);
           const readAt = current.readAt ?? node;
           const [iterable, mapFn, thisArg] = callArgs;
@@ -3408,7 +3967,7 @@ const enqueueNonIdentifierMemberWriteSources = (
                       1,
                     ) ?? []),
                     { at: iterable.argument, depth: 1 },
-                    { at: iterable.argument, depth: 2 },
+                    { at: node, depth: 2 },
                   ],
                   callFrame: current.callFrame,
                 },
@@ -3427,7 +3986,7 @@ const enqueueNonIdentifierMemberWriteSources = (
             }
             if (!t.isExpression(iterable)) return;
             const iterableCapturedSelections: readonly SemanticCapturedSelection[] =
-              [...(capturedSelections ?? []), { at: iterable, depth: 1 }];
+              [...(capturedSelections ?? []), { at: node, depth: 1 }];
             if (knownArrayIter) {
               for (const seg of inputSegments) {
                 const nextSuffix = [seg, ...elementSuffix];
@@ -3637,9 +4196,22 @@ const enqueueNonIdentifierMemberWriteSources = (
               { ...current, suffix: elementSuffix },
               pending,
             );
+          return;
         }
-        return;
       }
+      if (
+        !t.isTaggedTemplateExpression(node) &&
+        enqueueContainerIntrinsicMemberWriteSources({
+          callNode: node,
+          intrinsic,
+          current,
+          capturedSelections,
+          state,
+          interop,
+          pending,
+        })
+      )
+        return;
     }
     const calleeNode = t.isTaggedTemplateExpression(node)
       ? node.tag
@@ -3755,18 +4327,8 @@ const enqueueNonIdentifierMemberWriteSources = (
   } else if (t.isYieldExpression(node) && node.argument != null) {
     pending.push({ ...current, node: node.argument, capturedSelections });
   } else if (t.isConditionalExpression(node) || t.isLogicalExpression(node)) {
-    pending.push(
-      {
-        ...current,
-        node: t.isConditionalExpression(node) ? node.consequent : node.left,
-        capturedSelections,
-      },
-      {
-        ...current,
-        node: t.isConditionalExpression(node) ? node.alternate : node.right,
-        capturedSelections,
-      },
-    );
+    for (const branch of evaluateSemanticSelectedBranches(node, state))
+      pending.push({ ...current, node: branch, capturedSelections });
   } else if (t.isSequenceExpression(node)) {
     const last = node.expressions.at(-1);
     if (last !== undefined)
@@ -4167,23 +4729,19 @@ const objectAssignTargetAllowsOverwrite = (
     return hasNullPrototype || !hasAmbientObjectPrototypeMutation(state);
   }
   if (hasAmbientObjectPrototypeMutation(state)) return false;
-  if (t.isConditionalExpression(node)) {
+  if (t.isConditionalExpression(node) || t.isLogicalExpression(node)) {
+    const branches = evaluateSemanticSelectedBranches(node, state);
     return (
-      objectAssignTargetAllowsOverwrite(
-        node.consequent,
-        choice,
-        state,
-        interop,
-        captureAt,
-        nextVisited,
-      ) &&
-      objectAssignTargetAllowsOverwrite(
-        node.alternate,
-        choice,
-        state,
-        interop,
-        captureAt,
-        nextVisited,
+      branches.length > 0 &&
+      branches.every((branch) =>
+        objectAssignTargetAllowsOverwrite(
+          branch,
+          choice,
+          state,
+          interop,
+          captureAt,
+          nextVisited,
+        ),
       )
     );
   }
@@ -4270,22 +4828,24 @@ const definiteObjectAssignSourceKeys = (
     }
     return keys;
   }
-  if (t.isConditionalExpression(node)) {
-    const consequentKeys = definiteObjectAssignSourceKeys(
-      node.consequent,
-      state,
-      interop,
-      captureAt,
-      nextVisited,
-    );
-    const alternateKeys = definiteObjectAssignSourceKeys(
-      node.alternate,
-      state,
-      interop,
-      captureAt,
-      nextVisited,
-    );
-    return new Set([...consequentKeys].filter((k) => alternateKeys.has(k)));
+  if (t.isConditionalExpression(node) || t.isLogicalExpression(node)) {
+    const branches = evaluateSemanticSelectedBranches(node, state);
+    if (branches.length === 0) return new Set();
+    let intersection: Set<string> | undefined;
+    for (const branch of branches) {
+      const branchKeys = definiteObjectAssignSourceKeys(
+        branch,
+        state,
+        interop,
+        captureAt,
+        nextVisited,
+      );
+      intersection =
+        intersection === undefined
+          ? new Set(branchKeys)
+          : new Set([...intersection].filter((k) => branchKeys.has(k)));
+    }
+    return intersection ?? new Set();
   }
   if (t.isSequenceExpression(node)) {
     const last = node.expressions.at(-1);

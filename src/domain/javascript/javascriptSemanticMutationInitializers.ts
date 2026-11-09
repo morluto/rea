@@ -608,6 +608,34 @@ const directMutationPosition = (
   return computed;
 };
 
+const definiteEffectPrecedesEnclosingInvocation = (
+  effect: t.Node,
+  reference: t.Node,
+  parents: WeakMap<t.Node, t.Node>,
+): boolean => {
+  if (
+    effect === reference ||
+    (!t.isCallExpression(reference) &&
+      !t.isOptionalCallExpression(reference) &&
+      !t.isNewExpression(reference) &&
+      !t.isTaggedTemplateExpression(reference))
+  )
+    return false;
+  let current: t.Node = effect;
+  while (true) {
+    const parent = parents.get(current);
+    if (
+      parent === undefined ||
+      t.isFunction(parent) ||
+      t.isLoop(parent) ||
+      semanticBranchMayBeSkipped(parent, current)
+    )
+      return false;
+    if (parent === reference) return true;
+    current = parent;
+  }
+};
+
 /** Prove that an unconditional member replacement precedes this read. */
 export const semanticDefiniteEffectPrecedesReference = (
   effect: t.Node,
@@ -623,7 +651,8 @@ export const semanticDefiniteEffectPrecedesReference = (
     before.body === after.position.body &&
     before.index === after.position.index &&
     before.declaratorIndex === after.position.declaratorIndex &&
-    expressionEvaluationOrder(effect, reference, parents) === "before"
+    (expressionEvaluationOrder(effect, reference, parents) === "before" ||
+      definiteEffectPrecedesEnclosingInvocation(effect, reference, parents))
   );
 };
 

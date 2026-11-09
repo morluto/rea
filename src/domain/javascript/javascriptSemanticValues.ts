@@ -809,6 +809,20 @@ const semanticSelectedBranches = (
     : [choice ? { node: node.right } : left];
 };
 
+/** Select reachable conditional or short-circuit branches using the value owner. */
+export const evaluateSemanticSelectedBranches = (
+  node: t.ConditionalExpression | t.LogicalExpression,
+  state: JavaScriptSemanticAnalysisState,
+): readonly t.Node[] =>
+  semanticSelectedBranches(node, {
+    state,
+    bindings: new Map(),
+    expressionDepth: 0,
+    primitiveBindingValues: primitiveBindingValuesFor(state),
+    dependence: { lowest: CALLER_INDEPENDENT },
+    memo: createEvaluationMemo(state),
+  }).map((branch) => branch.node);
+
 /** All retained alternatives must agree before discarding a branch. */
 const semanticCondition = (
   value: JavaScriptSemanticValue,

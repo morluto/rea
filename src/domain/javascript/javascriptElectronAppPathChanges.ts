@@ -37,6 +37,7 @@ import {
   type CommonJsExportSite,
 } from "./javascriptCommonJsExportReceivers.js";
 import { completeSemanticSteps } from "./javascriptSemanticTraversal.js";
+import { evaluateSemanticSelectedBranches } from "./javascriptSemanticValues.js";
 
 interface Candidate {
   readonly node: t.Node;
@@ -290,14 +291,8 @@ export const createSemanticElectronAppPathChangeQuery = (
         t.isConditionalExpression(node) ||
         t.isLogicalExpression(node)
       ) {
-        enqueue({
-          ...current,
-          node: t.isConditionalExpression(node) ? node.consequent : node.left,
-        });
-        enqueue({
-          ...current,
-          node: t.isConditionalExpression(node) ? node.alternate : node.right,
-        });
+        for (const branch of evaluateSemanticSelectedBranches(node, state))
+          enqueue({ ...current, node: branch });
       } else if (t.isSequenceExpression(node)) {
         const last = node.expressions.at(-1);
         if (last !== undefined) enqueue({ ...current, node: last });

@@ -1371,3 +1371,145 @@ it("retains default activation when an outer frame mutates or omits a forwarded 
     "real-host",
   ]);
 });
+
+it("prunes unreachable conditional and logical arms before attributing Electron member writes", () => {
+  const source = `
+      const { contextBridge, ipcRenderer } = require("electron");
+      const truthyFlag = true;
+
+      const condAlias = truthyFlag ? {} : ipcRenderer;
+      condAlias.invoke = () => 0;
+
+      const orAlias = {} || ipcRenderer;
+      orAlias.send = () => 0;
+
+      const andAlias = (false && ipcRenderer) || {};
+      andAlias.postMessage = () => 0;
+
+      const nullishAlias = {} ?? ipcRenderer;
+      nullishAlias.sendToHost = () => 0;
+
+      const reachableAlias = !truthyFlag ? {} : ipcRenderer;
+      reachableAlias.sendSync = () => 0;
+
+      contextBridge.exposeInMainWorld("api", {
+        intactInvoke: () => ipcRenderer.invoke("real-invoke"),
+        intactSend: () => ipcRenderer.send("real-send"),
+        intactPost: () => ipcRenderer.postMessage("real-post", "*"),
+        intactHost: () => ipcRenderer.sendToHost("real-host"),
+        overwrittenSync: () => ipcRenderer.sendSync("fake-sync"),
+      });
+    `;
+  const parsed = parseJavaScriptSource(source, "preload.cjs");
+  if (parsed === null) throw new Error("Expected CommonJS parse");
+  const analysis = analyzeParsedJavaScriptStaticSource(source, parsed);
+
+  expect(analysis.parse_status).toBe("complete");
+  expect(analysis.electron.ipc.map(({ channel }) => channel)).toEqual([
+    "real-invoke",
+    "real-send",
+    "real-post",
+    "real-host",
+  ]);
+});
+
+it("snapshots Object.assign and Array.from copies after argument evaluation while preserving argument object identity", () => {
+  const source = `
+      const { contextBridge, ipcRenderer } = require("electron");
+
+      const src = { ipc: ipcRenderer };
+      const copy = Object.assign({}, src, ((src.ipc = {}), {}));
+      copy.ipc.invoke = () => 0;
+
+      const spreadElem = { ipc: ipcRenderer };
+      const spreadHolder = [spreadElem];
+      const spreadCopy = Object.assign(
+        {},
+        ...spreadHolder,
+        ((spreadElem.ipc = {}), {}),
+      );
+      spreadCopy.ipc.send = () => 0;
+
+      const slot = { ipc: ipcRenderer };
+      const mapped = Array.from(
+        [slot],
+        (x) => x.ipc,
+        ((slot.ipc = {}), undefined),
+      );
+      mapped[0].postMessage = () => 0;
+
+      let rebound = { ipc: ipcRenderer };
+      const reboundCopy = Object.assign({}, rebound, ((rebound = {}), {}));
+      reboundCopy.ipc.sendSync = () => 0;
+
+      const unpackedArr = [{ ipc: ipcRenderer }];
+      const unpackedCopy = Object.assign(
+        {},
+        ...unpackedArr,
+        ((unpackedArr[0] = {}), {}),
+      );
+      unpackedCopy.ipc.sendToHost = () => 0;
+
+      contextBridge.exposeInMainWorld("api", {
+        intactInvoke: () => ipcRenderer.invoke("real-invoke"),
+        intactSend: () => ipcRenderer.send("real-send"),
+        intactPost: () => ipcRenderer.postMessage("real-post", "*"),
+        overwrittenSync: () => ipcRenderer.sendSync("fake-sync"),
+        overwrittenHost: () => ipcRenderer.sendToHost("fake-host"),
+      });
+    `;
+  const parsed = parseJavaScriptSource(source, "preload.cjs");
+  if (parsed === null) throw new Error("Expected CommonJS parse");
+  const analysis = analyzeParsedJavaScriptStaticSource(source, parsed);
+
+  expect(analysis.parse_status).toBe("complete");
+  expect(analysis.electron.ipc.map(({ channel }) => channel)).toEqual([
+    "real-invoke",
+    "real-send",
+    "real-post",
+  ]);
+});
+
+it("preserves fresh containers for known intrinsic return values while retaining prototype and element projections", () => {
+  const source = `
+      const e = require("electron");
+      const { contextBridge, ipcRenderer } = e;
+
+      const local = Object.create(ipcRenderer);
+      Object.defineProperty(local, "invoke", { value: () => 0 });
+      local.send = () => 0;
+
+      const arr = Array.of(ipcRenderer);
+      Object.defineProperty(arr, "0", { value: {} });
+      arr.push = () => 0;
+
+      const vals = Object.values(ipcRenderer);
+      vals.push = () => 0;
+
+      const fromEnt = Object.fromEntries([["ipc", ipcRenderer]]);
+      Object.defineProperty(fromEnt, "other", { value: 1 });
+
+      const protoChild = Object.create(e);
+      protoChild.ipcRenderer.sendSync = () => 0;
+
+      Array.of(ipcRenderer)[0].sendToHost = () => 0;
+
+      contextBridge.exposeInMainWorld("api", {
+        intactInvoke: () => ipcRenderer.invoke("real-invoke"),
+        intactSend: () => ipcRenderer.send("real-send"),
+        intactPost: () => ipcRenderer.postMessage("real-post", "*"),
+        overwrittenSync: () => ipcRenderer.sendSync("fake-sync"),
+        overwrittenHost: () => ipcRenderer.sendToHost("fake-host"),
+      });
+    `;
+  const parsed = parseJavaScriptSource(source, "preload.cjs");
+  if (parsed === null) throw new Error("Expected CommonJS parse");
+  const analysis = analyzeParsedJavaScriptStaticSource(source, parsed);
+
+  expect(analysis.parse_status).toBe("complete");
+  expect(analysis.electron.ipc.map(({ channel }) => channel)).toEqual([
+    "real-invoke",
+    "real-send",
+    "real-post",
+  ]);
+});
