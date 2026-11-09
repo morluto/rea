@@ -554,4 +554,4 @@ when a DOCTYPE names a DTD. Known differences remain:
 
 Unless it was [made for the task](#a-seed-made-for-the-task), the seed is the
 user's real data. Keep the bundle local and do not publish it.
-The class targets agentenv-framework 0.9.1482.
+The class targets agentenv-framework 0.9.1485.

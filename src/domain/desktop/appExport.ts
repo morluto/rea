@@ -33,7 +33,7 @@ import { posix } from "node:path";
 import { roleFacts, stateDirectoryOf } from "./stateRoles.js";
 
 /** agentenv-framework release targeted by the exported class. */
-export const DESKTOP_EXPORT_FRAMEWORK_VERSION = "0.9.1482";
+export const DESKTOP_EXPORT_FRAMEWORK_VERSION = "0.9.1485";
 
 /** Everything the export renders, decided from a capture and its state view. */
 export interface DesktopAppExportPlan {

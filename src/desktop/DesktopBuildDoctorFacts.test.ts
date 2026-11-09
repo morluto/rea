@@ -290,7 +290,7 @@ it.skipIf(process.platform === "win32")(
   async () => {
     const { root, bin, home } = await buildHost("rea-desktop-empty-runner-");
     const runner = join(bin, "agent-env");
-    await program(runner, 'echo "agent-env 0.9.1482"');
+    await program(runner, 'echo "agent-env 0.9.1485"');
     const environment = {
       HOME: home,
       USERPROFILE: home,
@@ -319,7 +319,7 @@ it.skipIf(process.platform === "win32")(
     ).toBe(runner);
     const facts = await readFacts(environment, ["claude_code"]);
     expect(facts.registrations[0]).toMatchObject({
-      runner: { status: "current", version: "0.9.1482" },
+      runner: { status: "current", version: "0.9.1485" },
     });
     expect(facts.registrations[0]?.differing ?? []).not.toContain(
       "REA_AGENT_ENV_COMMAND",
