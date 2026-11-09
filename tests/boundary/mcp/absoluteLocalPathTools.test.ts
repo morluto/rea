@@ -127,15 +127,12 @@ it("rejects one relative path field at a time on tools/list", async () => {
     "inspect_elf_notes.path",
     "inspect_kernel_module.path",
     "inspect_byte_entropy.path",
-<<<<<<< HEAD
     "inspect_api_contract.path",
     "inspect_api_contract.operations_path",
     "inspect_devicetree.path",
     "inspect_playwright_trace.path",
     "inspect_python_pyc.path",
-=======
     "inspect_v8_code_cache.path",
->>>>>>> 09ae65483 (test(v8): cover the new tool in the absolute-path boundary test)
     "export_web_scripts.capture_path",
     "export_web_scripts.output_directory",
     "recover_javascript_sources.path",
