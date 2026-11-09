@@ -115,11 +115,13 @@ it("keeps bridge entry paths stable through worker validation and API seed match
   const expectedPaths = [
     expect.objectContaining({
       path_id: expect.any(String),
+      loader_authority: "candidate",
       entry_path: ["desktop", "nested.write"],
       channel: "literal",
     }),
     expect.objectContaining({
       path_id: expect.any(String),
+      loader_authority: "candidate",
       entry_path: ["desktop", "nested", "write"],
       channel: "nested",
     }),
