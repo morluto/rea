@@ -863,6 +863,26 @@ describe("evaluateTaskChecks attribute text, child-text selectors and member cou
       expectOutcome(outcome(check), cut, [check.file]);
   });
 
+  it("explains that a missing array in a cut view is undecided", () => {
+    for (const [file, pointer] of [
+      ["Documents/cut.xml", "/root/missing"],
+      ["Documents/listing.zip", "/entries/1/view/root/missing"],
+    ] as const) {
+      const result = outcome({
+        kind: "member_count",
+        file,
+        pointer,
+        equals: 0,
+      });
+      expect(result).toEqual({
+        id: "c",
+        passed: false,
+        undecided: true,
+        description: `the view of ${file} is truncated, so what it leaves out is unknown`,
+      });
+    }
+  });
+
   it("decides a failure on what the view holds, and says what it found", () => {
     expectOutcome(
       outcome({
