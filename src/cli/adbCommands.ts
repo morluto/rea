@@ -43,14 +43,7 @@ export const registerAdbCommands = (
   const serial = adbInputSchemas.inspect_adb_device.shape.serial.describe(
     "Device serial exactly as `adb devices` reports it",
   );
-  const packageName = z
-    .string()
-    .min(1)
-    .max(256)
-    .regex(
-      /^[A-Za-z][A-Za-z0-9_]*(\.[A-Za-z][A-Za-z0-9_]*)*$/u,
-      "Package name must be dot-separated Java identifiers",
-    );
+  const packageName = adbInputSchemas.pull_adb_package.shape.package;
 
   cli.command(CLI_COMMANDS.inspectAdbClient, {
     description:
