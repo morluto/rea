@@ -98,6 +98,59 @@ it("preserves the source when an inline result with unknown retention exceeds de
   expect(boundedSession.exportEvidenceBundle().records).toEqual([]);
 });
 
+it("preserves both identities and distinct retention when neither payload fits the original ten-KiB reply", async () => {
+  const maximumResponseBytes = 10 * 1024;
+  const completed = compareApplicationVersionsEvidence(
+    JAVASCRIPT_APPLICATION_VERSION_COMPARISON_EXAMPLE,
+  );
+  if (!completed.ok) throw completed.error;
+  const session = new BinarySession(
+    createTestProviderRouter(() => {
+      throw new Error("no provider needed");
+    }),
+    new InvestigationRecords({ maximumRepresentationBytes: 0 }),
+  );
+  const { client } = await createApplicationMcpHarness({
+    session,
+    serverOptions: { delivery: createToolResultDelivery(maximumResponseBytes) },
+  });
+  const response = await client.callTool({
+    name: "compare_application_versions",
+    arguments: JAVASCRIPT_APPLICATION_VERSION_COMPARISON_EXAMPLE,
+  });
+  const error = parseMcpToolError(response).error;
+  expect(error.remediation.action).toContain(
+    recoveryOmissionRemediation("unknown"),
+  );
+  expect(error.remediation.action).toContain(
+    recoveryOmissionRemediation("unretained"),
+  );
+  expect(error).toMatchObject({
+    code: "resource_constraint",
+    details: {
+      partial_observation_omitted: {
+        reason: "mcp-response-limit",
+        retention: "unretained",
+        constraint: "receive-buffer",
+        evidence_id:
+          JAVASCRIPT_APPLICATION_VERSION_COMPARISON_EXAMPLE.left.evidence_id,
+      },
+      completed_observation_omitted: {
+        reason: "mcp-response-limit",
+        retention: "unknown",
+        evidence_id: completed.value.evidence.evidence_id,
+        source_closure: "not-established",
+      },
+    },
+  });
+  expect(error.details).not.toHaveProperty("partial_observation");
+  expect(error.details).not.toHaveProperty("completed_observation");
+  expect(Buffer.byteLength(JSON.stringify(response))).toBeLessThanOrEqual(
+    maximumResponseBytes,
+  );
+  expect(session.exportEvidenceBundle().records).toEqual([]);
+});
+
 it("does not infer ledger membership from an independently registered reader", async () => {
   const computed = compareApplicationVersionsEvidence(
     JAVASCRIPT_APPLICATION_VERSION_COMPARISON_EXAMPLE,

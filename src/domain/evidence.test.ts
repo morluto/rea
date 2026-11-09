@@ -331,16 +331,24 @@ it("retains named auxiliary path choices without changing identity, history or s
       result: { rows: ["source facts"] },
     }),
   );
-  const paths = { operations_path: "./queries 雪.graphql" };
+  const paths = {
+    operations_path: "./queries 雪.graphql",
+    candidate_paths: ["./a", "./a", "./b"],
+  };
   const rebound = withEvidenceCallerInputPath(
     original,
     "./schema.graphql",
     paths,
   );
   paths.operations_path = "later unrelated choice";
+  paths.candidate_paths.push("./later");
   expect(rebound.caller_input_paths).toEqual({
     operations_path: "./queries 雪.graphql",
+    candidate_paths: ["./a", "./a", "./b"],
   });
+  expect(Object.isFrozen(rebound.caller_input_paths?.candidate_paths)).toBe(
+    true,
+  );
   expect(original.caller_input_paths).toBeUndefined();
   expect(rebound.evidence_id).toBe(original.evidence_id);
   expect(rebound.normalized_result).toBe(original.normalized_result);
@@ -349,6 +357,7 @@ it("retains named auxiliary path choices without changing identity, history or s
   expect(
     withEvidenceCallerInputPath(rebound, "./schema.graphql", {
       operations_path: "./queries 雪.graphql",
+      candidate_paths: ["./a", "./a", "./b"],
     }),
   ).toBe(rebound);
   expect(

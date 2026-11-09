@@ -33,8 +33,27 @@ export type ElectronBrowserWindowPreload =
       readonly preload_resolution_context: null;
     };
 
-/** Statically visible BrowserWindow construction and preference surface. */
+/**
+ * Constructors that create a window-like Electron surface. Each one is read
+ * through the capability table in `electronWindowConstructorSurfaces.ts`,
+ * because they do not all expose the same ones.
+ */
+export type ElectronWindowConstructor =
+  | "BrowserWindow"
+  | "BaseWindow"
+  | "BrowserView"
+  | "WebContentsView";
+
+/** Statically visible window construction and preference surface. */
 export type ElectronBrowserWindowFinding = ElectronBrowserWindowPreload & {
+  /**
+   * Constructor that produced this surface. Absent means `BrowserWindow`; the
+   * others are named so the construction site is never read as a window API.
+   */
+  readonly window_constructor?: Exclude<
+    ElectronWindowConstructor,
+    "BrowserWindow"
+  >;
   readonly options_status: "object-literal" | "dynamic" | "missing";
   readonly web_preferences_status: "object-literal" | "dynamic" | "missing";
   readonly web_preferences: readonly ElectronWebPreference[];

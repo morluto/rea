@@ -209,7 +209,12 @@ export const parseEnvironmentValues = (
         settings: invalidEntries,
       }),
     );
-  const parsed = environmentSchema.safeParse(environment);
+  // An expression has no known runtime value to validate or default. Its
+  // original text was checked for invalid bytes above and remains with its owner.
+  const literals = Object.fromEntries(
+    Object.entries(environment).filter(([key]) => !unresolvedSettings.has(key)),
+  );
+  const parsed = environmentSchema.safeParse(literals);
   if (!parsed.success) {
     // Zod messages name the constraint, never the rejected value.
     const settings = parsed.error.issues.map((issue) => ({
