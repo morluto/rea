@@ -1,5 +1,30 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { readNativeInitializers } from "./NativeInitializersProvider.js";
+
+/** Pass-through spies on the shared mapping module, so tests can count lookups made from other modules. */
+const mapping = vi.hoisted(() => ({
+  scans: vi.fn(),
+  indexes: vi.fn(),
+}));
+vi.mock("../metadata/BinaryContainer.js", async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import("../metadata/BinaryContainer.js")>();
+  return {
+    ...actual,
+    mappedFileOffset: (
+      ...args: Parameters<typeof actual.mappedFileOffset>
+    ): number => {
+      mapping.scans(...args);
+      return actual.mappedFileOffset(...args);
+    },
+    createFileMappingIndex: (
+      ...args: Parameters<typeof actual.createFileMappingIndex>
+    ) => {
+      mapping.indexes(...args);
+      return actual.createFileMappingIndex(...args);
+    },
+  };
+});
 import {
   elf32RelativeInitializers,
   elf64PieInitializers,
@@ -1099,10 +1124,9 @@ describe("Initializer address mapping", () => {
     );
   });
 
-  it("looks up a full slot budget of targets against many load segments through one index", async () => {
-    const loads = 8192;
-    const slots = MAX_NATIVE_INITIALIZER_ENTRIES;
-    const arrayAt = 0x80000;
+  /** ELF64 ET_EXEC with `loads` identical identity PT_LOADs and an `.init_array` of `slots` slots, each pointing at 0x40. */
+  const manyLoads = (loads: number, slots: number): Buffer => {
+    const arrayAt = 0x1000;
     const shstr = Buffer.from("\0.init_array\0.shstrtab\0", "utf8");
     const stringsAt = arrayAt + slots * 8;
     const headersAt = stringsAt + 0x40;
@@ -1119,7 +1143,6 @@ describe("Initializer address mapping", () => {
     bytes.writeUInt16LE(64, 58);
     bytes.writeUInt16LE(3, 60);
     bytes.writeUInt16LE(2, 62);
-    // Identical identity PT_LOADs over the whole file: consistent, but each is scanned per lookup without an index.
     for (let load = 0; load < loads; load += 1) {
       const at = 64 + load * 56;
       bytes.writeUInt32LE(1, at);
@@ -1138,29 +1161,43 @@ describe("Initializer address mapping", () => {
       offset: number,
       size: number,
       flags: number,
-      address: number,
     ): void => {
       const at = headersAt + index * 64;
       bytes.writeUInt32LE(name, at);
       bytes.writeUInt32LE(type, at + 4);
       bytes.writeBigUInt64LE(BigInt(flags), at + 8);
-      bytes.writeBigUInt64LE(BigInt(address), at + 16);
+      bytes.writeBigUInt64LE(BigInt(offset), at + 16);
       bytes.writeBigUInt64LE(BigInt(offset), at + 24);
       bytes.writeBigUInt64LE(BigInt(size), at + 32);
       bytes.writeBigUInt64LE(1n, at + 48);
     };
-    header(1, 1, 14, arrayAt, slots * 8, 3, arrayAt);
-    header(2, 13, 3, stringsAt, shstr.length, 0, 0);
-    const started = performance.now();
-    const report = await read(bytes);
-    // A per-lookup mapping scan is about 5e8 iterations here; the index is well under a second.
-    expect(performance.now() - started).toBeLessThan(5_000);
-    expect(report.coverage.examined_entries).toBe(slots);
-    expect(report.entries[0]).toMatchObject({
-      value_va: "0x40",
-      value_file_offset: 0x40,
-    });
-  }, 180_000);
+    header(1, 1, 14, arrayAt, slots * 8, 3);
+    header(2, 13, 3, stringsAt, shstr.length, 0);
+    return bytes;
+  };
+
+  it("builds one mapping index per image instead of scanning every load per slot", async () => {
+    // Calls into the mapping module made from other modules, per inspection.
+    const mappingCalls = async (slots: number) => {
+      mapping.scans.mockClear();
+      mapping.indexes.mockClear();
+      const report = await read(manyLoads(4, slots));
+      expect(report.coverage.examined_entries).toBe(slots);
+      expect(report.entries[0]).toMatchObject({
+        value_va: "0x40",
+        value_file_offset: 0x40,
+      });
+      return {
+        scans: mapping.scans.mock.calls.length,
+        indexes: mapping.indexes.mock.calls.length,
+      };
+    };
+    const few = await mappingCalls(8);
+    const many = await mappingCalls(64);
+    // A per-slot linear scan grows with the slot count; indexed lookups do not.
+    expect(many).toEqual(few);
+    expect(many.indexes).toBeGreaterThan(0);
+  });
 
   it("reports a Mach-O bind name over the name budget as incomplete", async () => {
     const bytes = machoArm64Initializers();
