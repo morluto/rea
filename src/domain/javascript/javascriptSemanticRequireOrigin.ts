@@ -1633,12 +1633,25 @@ const MUTABLE_BUILTIN_DEFAULTS = new Set([
   "path/posix",
   "path/win32",
   "url",
+  "buffer",
+  "stream",
+  // `Stream` extends `EventEmitter`, so a member installed on that ancestor is inherited
+  // by every fs stream. Measured on Node 24.22.1, defining `start` on
+  // `EventEmitter.prototype` makes `createReadStream(p, {start:-1})` return a handle
+  // while the unmutated call throws `ERR_OUT_OF_RANGE`.
+  "events",
+  // `fs.createReadStream` builds its `StringDecoder` from this module at first use, so a
+  // replaced export changes which encodings a read stream accepts. Measured on Node
+  // 24.22.1 with an admitting `Buffer.isEncoding`, replacing `StringDecoder` through the
+  // default export constructs a handle from `{encoding:"nope"}`.
+  "string_decoder",
 ]);
 
 /** Mutable default/object selections share CommonJS identity; namespace slots do not. */
 export const semanticMutableBuiltinOrigin = <Key = never>(
   origin: JavaScriptModuleOrigin,
   selected: readonly Key[] = [],
+  escaped = false,
 ):
   | { readonly specifier: string; readonly path: readonly (Key | string)[] }
   | undefined => {
@@ -1648,6 +1661,30 @@ export const semanticMutableBuiltinOrigin = <Key = never>(
   const specifier = origin.specifier.replace(/^node:/u, "");
   if (!MUTABLE_BUILTIN_DEFAULTS.has(specifier)) return undefined;
   if (path[0] === "default") return { specifier, path: path.slice(1) };
+  // Named imports cannot replace their namespace slots, but their exported
+  // constructor objects still share identity with the CommonJS built-in.
+  if (
+    (selected.length > 0 || escaped) &&
+    ((specifier === "fs" &&
+      (path[0] === "ReadStream" ||
+        path[0] === "WriteStream" ||
+        path[0] === "FileReadStream" ||
+        path[0] === "FileWriteStream")) ||
+      (specifier === "buffer" && path[0] === "Buffer") ||
+      // `Stream` is the ancestor both fs stream classes extend, so a member installed
+      // through a named `Stream` import reaches them. Measured on Node 24.22.1, the
+      // named-import form constructs a handle from `{start:-1}` exactly like the
+      // CommonJS form.
+      (specifier === "stream" &&
+        (path[0] === "Readable" ||
+          path[0] === "Writable" ||
+          path[0] === "Stream")) ||
+      (specifier === "events" && path[0] === "EventEmitter") ||
+      // The default-import form is handled by the `default` arm above; this covers a
+      // named `StringDecoder` import, whose binding is the same constructor object.
+      (specifier === "string_decoder" && path[0] === "StringDecoder"))
+  )
+    return { specifier, path };
   if (specifier === "process" && (path[0] === "env" || path[0] === "argv"))
     return { specifier, path };
   return specifier === "fs" && path[0] === "promises"

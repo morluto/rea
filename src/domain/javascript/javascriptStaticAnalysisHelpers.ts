@@ -555,6 +555,28 @@ export const FS_OPEN_FLAGS: ReadonlySet<string> = new Set([
   "xw+",
 ]);
 
+/**
+ * Encodings Node's `Buffer` accepts, so an `encoding` stream option can be decided.
+ *
+ * `Buffer.isEncoding` is the authority, but this module is the pure domain layer and
+ * does not reach for Node globals. The set is the documented list; a value outside it
+ * is one Node rejects at the call site.
+ */
+export const BUFFER_ENCODINGS: ReadonlySet<string> = new Set([
+  "ascii",
+  "base64",
+  "base64url",
+  "binary",
+  "hex",
+  "latin1",
+  "ucs-2",
+  "ucs2",
+  "utf-16le",
+  "utf8",
+  "utf-8",
+  "utf16le",
+]);
+
 /** Reserved browsing-context names (ASCII case-insensitive). */
 const BROWSING_CONTEXT_KEYWORDS = new Set([
   "_blank",
