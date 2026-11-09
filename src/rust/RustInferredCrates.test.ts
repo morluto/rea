@@ -948,3 +948,89 @@ it("recovers Cargo Git checkout slugs longer than 128 bytes and marks over-cap c
   expect(overCapResult.inferred_crates.discovered_count).toBe(0);
   expect(overCapResult.inferred_crates.truncated).toBe(true);
 });
+
+it("recovers IPv6-hosted Cargo registry crates and rejects malformed registry host components", () => {
+  const bytes = createRustImage({
+    format: "elf",
+    omitSection: true,
+    readOnlyBytes: Buffer.from(
+      [
+        "/cargo/registry/src/[::1]-1ecc6299db9ec823/v6dep-0.1.0/src/lib.rs",
+        "/cargo/registry/src/[2001:db8::1]-6f17d22bba15001f/full_v6-1.2.3/src/lib.rs",
+        "C:\\cargo\\registry\\src\\[::ffff:127.0.0.1]-fedcba9876543210\\mapped_v6-0.4.0\\src\\lib.rs",
+        "/cargo/registry/src/127.0.0.1-1ecc6299db9ec823/v4dep-0.1.0/src/lib.rs",
+        "/cargo/registry/src/[]-1ecc6299db9ec823/bad_empty-0.1.0/src/lib.rs",
+        "/cargo/registry/src/[::1-1ecc6299db9ec823/bad_open-0.1.0/src/lib.rs",
+        "/cargo/registry/src/::1]-1ecc6299db9ec823/bad_close-0.1.0/src/lib.rs",
+        "/cargo/registry/src/[not-ipv6]-1ecc6299db9ec823/bad_host-0.1.0/src/lib.rs",
+        "/cargo/registry/src/[::1]:8080-1ecc6299db9ec823/bad_port-0.1.0/src/lib.rs",
+        "/cargo/registry/src/127.0.0.1:8080-1ecc6299db9ec823/bad_v4_port-0.1.0/src/lib.rs",
+        "/cargo/registry/src/[1:2:3:4:5:6:7::8]-1ecc6299db9ec823/bad_groups-0.1.0/src/lib.rs",
+        "/cargo/registry/src/.-1ecc6299db9ec823/bad_dot-0.1.0/src/lib.rs",
+      ].join("\0") + "\0",
+      "latin1",
+    ),
+  });
+  const result = recoverRustSourceFingerprints(
+    bytes,
+    readBinaryContainer(bytes),
+  );
+  expect(result.inferred_crates.truncated).toBe(false);
+  expect(
+    result.inferred_crates.items.map(({ name, version, registry_index }) => ({
+      name,
+      version,
+      registry_index,
+    })),
+  ).toEqual([
+    {
+      name: "v6dep",
+      version: "0.1.0",
+      registry_index: "[::1]-1ecc6299db9ec823",
+    },
+    {
+      name: "full_v6",
+      version: "1.2.3",
+      registry_index: "[2001:db8::1]-6f17d22bba15001f",
+    },
+    {
+      name: "mapped_v6",
+      version: "0.4.0",
+      registry_index: "[::ffff:127.0.0.1]-fedcba9876543210",
+    },
+    {
+      name: "v4dep",
+      version: "0.1.0",
+      registry_index: "127.0.0.1-1ecc6299db9ec823",
+    },
+  ]);
+
+  const validReport = {
+    artifact: { path: "/artifacts/ipv6", sha256: "a".repeat(64), bytes: 8192 },
+    format: "elf" as const,
+    architecture: "amd64",
+    bits: 64 as const,
+    byte_order: "little" as const,
+    auditable_metadata: null,
+    rustc_commit: null,
+    inferred_crates: result.inferred_crates,
+    rustc_versions: result.rustc_versions,
+    limitations: [],
+  };
+  expect(rustBinarySchema.safeParse(validReport).success).toBe(true);
+
+  for (const invalidIndex of [
+    "[]-1ecc6299db9ec823",
+    "[::1-1ecc6299db9ec823",
+    "::1]-1ecc6299db9ec823",
+    "[not-ipv6]-1ecc6299db9ec823",
+    "[::1]:8080-1ecc6299db9ec823",
+    "127.0.0.1:8080-1ecc6299db9ec823",
+    "[1:2:3:4:5:6:7::8]-1ecc6299db9ec823",
+    ".-1ecc6299db9ec823",
+  ]) {
+    const invalidReport = structuredClone(validReport);
+    invalidReport.inferred_crates.items[0]!.registry_index = invalidIndex;
+    expect(rustBinarySchema.safeParse(invalidReport).success).toBe(false);
+  }
+});

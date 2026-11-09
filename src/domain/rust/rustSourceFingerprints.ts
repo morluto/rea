@@ -17,6 +17,11 @@ export const isAsciiDigit = (code: number): boolean =>
 export const isLowerHex = (code: number): boolean =>
   (code >= 0x30 && code <= 0x39) || (code >= 0x61 && code <= 0x66);
 
+export const isAsciiHex = (code: number): boolean =>
+  isAsciiDigit(code) ||
+  (code >= 0x41 && code <= 0x46) ||
+  (code >= 0x61 && code <= 0x66);
+
 export const isAsciiAlpha = (code: number): boolean =>
   (code >= 0x41 && code <= 0x5a) || (code >= 0x61 && code <= 0x7a);
 
@@ -28,6 +33,40 @@ export const isCrateNameByte = (code: number): boolean =>
 
 export const isRegistryOrGitSlugByte = (code: number): boolean =>
   isCrateNameByte(code) || code === 0x2e;
+
+/**
+ * Printable non-space ASCII bytes permitted in unbracketed Cargo registry host
+ * or local path-segment identifiers (`url::Url::host_str()` / fallback segment).
+ */
+export const isCargoRegistryHostByte = (code: number): boolean =>
+  code >= 0x21 &&
+  code <= 0x7e &&
+  code !== 0x22 &&
+  code !== 0x23 &&
+  code !== 0x2f &&
+  code !== 0x3a &&
+  code !== 0x3c &&
+  code !== 0x3e &&
+  code !== 0x3f &&
+  code !== 0x40 &&
+  code !== 0x5b &&
+  code !== 0x5c &&
+  code !== 0x5d &&
+  code !== 0x5e &&
+  code !== 0x60 &&
+  code !== 0x7b &&
+  code !== 0x7c &&
+  code !== 0x7d;
+
+/**
+ * Scanner byte class for `<index-host-hash>` in `cargo/registry/src/<index-host-hash>/`,
+ * admitting both unbracketed host identifiers and bracketed IPv6 literals (`[::1]`).
+ */
+export const isCargoRegistryIndexByte = (code: number): boolean =>
+  isCargoRegistryHostByte(code) ||
+  code === 0x3a ||
+  code === 0x5b ||
+  code === 0x5d;
 
 /**
  * Cargo derives git checkout directory slugs from the final `url::Url` path
@@ -181,20 +220,113 @@ export const splitCargoRegistryCrateSegment = (
   return null;
 };
 
-/** Validate `<index-host-hash>` in `cargo/registry/src/<index-host-hash>/`. */
-export const isValidCargoRegistryIndex = (segment: string): boolean => {
-  if (
-    segment.length < 1 ||
-    segment.length > MAX_CARGO_REGISTRY_INDEX_BYTES ||
-    segment === "." ||
-    segment === ".."
-  )
+const isValidIpv4Tail = (text: string, start: number): boolean => {
+  let cursor = start;
+  for (let part = 0; part < 4; part += 1) {
+    if (part > 0) {
+      if (cursor >= text.length || text.charCodeAt(cursor) !== 0x2e)
+        return false;
+      cursor += 1;
+    }
+    const octetStart = cursor;
+    let value = 0;
+    while (
+      cursor < text.length &&
+      cursor - octetStart < 3 &&
+      isAsciiDigit(text.charCodeAt(cursor))
+    ) {
+      value = value * 10 + (text.charCodeAt(cursor) - 0x30);
+      cursor += 1;
+    }
+    const digits = cursor - octetStart;
+    if (digits === 0 || value > 255) return false;
+    if (digits > 1 && text.charCodeAt(octetStart) === 0x30) return false;
+  }
+  return cursor === text.length;
+};
+
+/** Linear RFC 4291 / WHATWG URL IPv6 literal check (without surrounding brackets). */
+export const isValidIpv6Literal = (text: string): boolean => {
+  if (text.length < 2 || text.length > 45) return false;
+  let cursor = 0;
+  let groups = 0;
+  let hasCompression = false;
+  if (text.charCodeAt(0) === 0x3a) {
+    if (text.charCodeAt(1) !== 0x3a) return false;
+    hasCompression = true;
+    cursor = 2;
+    if (cursor === text.length) return true;
+  }
+  while (cursor < text.length) {
+    const groupStart = cursor;
+    while (cursor < text.length && isAsciiHex(text.charCodeAt(cursor)))
+      cursor += 1;
+    if (cursor < text.length && text.charCodeAt(cursor) === 0x2e) {
+      if (!isValidIpv4Tail(text, groupStart)) return false;
+      groups += 2;
+      return hasCompression ? groups <= 7 : groups === 8;
+    }
+    const groupDigits = cursor - groupStart;
+    if (groupDigits < 1 || groupDigits > 4) return false;
+    groups += 1;
+    if (cursor === text.length) break;
+    if (text.charCodeAt(cursor) !== 0x3a) return false;
+    cursor += 1;
+    if (cursor === text.length) return false;
+    if (text.charCodeAt(cursor) === 0x3a) {
+      if (hasCompression) return false;
+      hasCompression = true;
+      cursor += 1;
+      if (cursor === text.length) break;
+    }
+  }
+  return hasCompression ? groups <= 7 : groups === 8;
+};
+
+const hasTrailingCargoHashSuffix = (segment: string): boolean => {
+  if (segment.length < 18 || segment.charCodeAt(segment.length - 17) !== 0x2d)
     return false;
-  for (let index = 0; index < segment.length; index += 1) {
-    if (!isRegistryOrGitSlugByte(segment.charCodeAt(index))) return false;
+  for (let index = segment.length - 16; index < segment.length; index += 1) {
+    if (!isLowerHex(segment.charCodeAt(index))) return false;
   }
   return true;
 };
+
+/**
+ * Validate Cargo's `<ident>[-<16-lower-hex>]` registry directory grammar without
+ * imposing the retained byte cap (reused for over-cap truncation classification).
+ */
+export const isValidCargoRegistryHostComponent = (segment: string): boolean => {
+  if (segment.length === 0 || segment === "." || segment === "..") return false;
+  const host = hasTrailingCargoHashSuffix(segment)
+    ? segment.slice(0, segment.length - 17)
+    : segment;
+  if (host.length === 0 || host === "." || host === "..") return false;
+  if (host.charCodeAt(0) === 0x5b) {
+    return (
+      host.charCodeAt(host.length - 1) === 0x5d &&
+      isValidIpv6Literal(host.slice(1, -1))
+    );
+  }
+  for (let index = 0; index < host.length; index += 1) {
+    const code = host.charCodeAt(index);
+    if (!isCargoRegistryHostByte(code)) return false;
+    if (
+      code === 0x25 &&
+      (index + 2 >= host.length ||
+        !isAsciiHex(host.charCodeAt(index + 1)) ||
+        !isAsciiHex(host.charCodeAt(index + 2)))
+    )
+      return false;
+  }
+  return true;
+};
+
+/** Validate `<index-host-hash>` in `cargo/registry/src/<index-host-hash>/`. */
+export const isValidCargoRegistryIndex = (segment: string): boolean =>
+  segment.length >= 1 &&
+  segment.length <= MAX_CARGO_REGISTRY_INDEX_BYTES &&
+  isValidCargoRegistryHostComponent(segment);
 
 /** Validate `<repo_slug>-<16-hex-id>` and `<7..40-hex-rev>` from Cargo git checkouts. */
 export const splitCargoGitCheckoutSegments = (

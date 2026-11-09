@@ -14,9 +14,10 @@ import {
   MAX_CARGO_REGISTRY_CRATE_DIR_BYTES,
   MAX_CARGO_REGISTRY_INDEX_BYTES,
   isCargoGitSlugByte,
+  isCargoRegistryIndexByte,
   isCrateNameByte,
   isLowerHex,
-  isRegistryOrGitSlugByte,
+  isValidCargoRegistryHostComponent,
   isValidCargoRegistryIndex,
   isValidCargoSemver,
   parseRustcVersionBannerAt,
@@ -227,7 +228,7 @@ const parseCargoRegistryCrateAt = (
   );
   while (
     indexEnd < maxIndexLookahead &&
-    isRegistryOrGitSlugByte(region[indexEnd] ?? 0)
+    isCargoRegistryIndexByte(region[indexEnd] ?? 0)
   )
     indexEnd += 1;
   if (indexEnd === indexStart || !isPathSeparator(region[indexEnd] ?? 0))
@@ -253,8 +254,7 @@ const parseCargoRegistryCrateAt = (
   ) {
     const indexSlice = region.toString("latin1", indexStart, indexEnd);
     const crateSlice = region.toString("latin1", crateStart, crateEnd);
-    return indexSlice !== "." &&
-      indexSlice !== ".." &&
+    return isValidCargoRegistryHostComponent(indexSlice) &&
       hasUnboundedRegistryCrateShape(crateSlice)
       ? "overlong"
       : null;
