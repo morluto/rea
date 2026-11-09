@@ -11,7 +11,7 @@ import {
 } from "./javascriptSemanticTypedArrays.js";
 
 import {
-  semanticBuiltinModuleEffectOrigin,
+  semanticModuleAcquisitionEffectOrigin,
   semanticGlobalProcessOrigin,
   semanticGlobalProcessPathOrigin,
   semanticOriginalGlobalProcessAt,
@@ -741,6 +741,8 @@ export function* collectSemanticMemberMutationsSteps(
         readonly bindings: ReadonlySet<string>;
         readonly originAt: t.Node | undefined;
         readonly definiteReceiver: boolean;
+        /** Only value-preserving branches may carry an await to an acquisition. */
+        readonly awaitedModuleAcquisition?: boolean;
         readonly exactKey?: string;
         readonly joined?: {
           readonly key: string;
@@ -876,7 +878,11 @@ export function* collectSemanticMemberMutationsSteps(
       const expression = unwrapJavaScriptExpression(current.node).node;
       const moduleEffectOrigin =
         semanticRequireOriginCandidate(expression, state, true)?.origin ??
-        semanticBuiltinModuleEffectOrigin(expression, state);
+        semanticModuleAcquisitionEffectOrigin(
+          expression,
+          state,
+          current.awaitedModuleAcquisition,
+        );
       if (moduleEffectOrigin !== undefined) {
         recordRequiredEffect(
           moduleEffectOrigin.specifier,
@@ -1317,8 +1323,17 @@ export function* collectSemanticMemberMutationsSteps(
           ]),
         });
       } else {
+        // Escape flattening must not discard the await before its value branch
+        // reaches a direct acquisition. Other escapes keep the shared cache.
+        const awaitedModuleAcquisition =
+          t.isAwaitExpression(expression) ||
+          (current.awaitedModuleAcquisition === true &&
+            (t.isConditionalExpression(expression) ||
+              t.isLogicalExpression(expression) ||
+              t.isSequenceExpression(expression) ||
+              t.isAssignmentExpression(expression)));
         const references =
-          effect === "escape"
+          effect === "escape" && !awaitedModuleAcquisition
             ? escapedReferenceLeaves(
                 expression,
                 current.path,
@@ -1373,6 +1388,11 @@ export function* collectSemanticMemberMutationsSteps(
           else
             enqueue({
               ...value,
+              // This await consumes the branch value, not a property, alias,
+              // container child, or callback result. Those paths drop it.
+              ...(awaitedModuleAcquisition
+                ? { awaitedModuleAcquisition: true }
+                : {}),
               bindings: current.bindings,
               definiteReceiver:
                 current.definiteReceiver &&
@@ -2141,7 +2161,7 @@ const observableMutationPaths = (
     const hasParsedRequireOrigin = binding.initializers.some(
       ({ node }) =>
         semanticRequireOriginCandidate(node, state) !== undefined ||
-        semanticBuiltinModuleEffectOrigin(node, state) !== undefined ||
+        semanticModuleAcquisitionEffectOrigin(node, state) !== undefined ||
         hasSemanticCreateRequireFactoryOrigin(node, state),
     );
     if (

@@ -407,6 +407,125 @@ e.on("ready");`),
   ).toContainEqual({ kind: "register", method: "on", eventName: "ready" });
 });
 
+it.each([
+  ["inline named", "", "(await import('node:events')).EventEmitter"],
+  ["inline default", "", "(await import('events')).default"],
+  [
+    "conditional namespace",
+    "",
+    "(await (flag ? import('events') : import('node:events'))).EventEmitter",
+  ],
+  [
+    "sequence namespace",
+    "",
+    "(await (sideEffect(), import('events'))).EventEmitter",
+  ],
+  [
+    "assignment namespace",
+    "let namespacePromise;",
+    "(await (namespacePromise = import('events'))).EventEmitter",
+  ],
+  ["logical namespace", "", "(await (other || import('events'))).EventEmitter"],
+  [
+    "bound namespace",
+    "const events = await import('events');",
+    "events.EventEmitter",
+  ],
+  [
+    "destructured named",
+    "const { EventEmitter: EE } = await import('node:events');",
+    "EE",
+  ],
+  [
+    "bound alias",
+    "const events = await import('events'); const alias = events;",
+    "alias.EventEmitter",
+  ],
+] as const)(
+  "orders shared prototype changes through %s dynamic import",
+  (_name, setup, constructor) => {
+    const source = (
+      before: boolean,
+    ) => `import { EventEmitter } from "node:events";
+${setup}
+const e = new EventEmitter();
+${before ? `${constructor}.prototype.on = replacement;` : ""}
+e.on("ready");
+${before ? "" : `${constructor}.prototype.on = replacement;`}`;
+    expect(eventsForSource(source(true))).toContainEqual({
+      kind: "register",
+      method: "on",
+      eventName: "ready",
+    });
+    expect(eventsForSource(source(false))).toEqual([]);
+  },
+);
+
+it("retains a prototype exposed through awaited import", () => {
+  expect(
+    eventsForSource(`import { EventEmitter } from "node:events";
+import { configure } from "./configure.js";
+const e = new EventEmitter();
+configure((await import('events')).EventEmitter.prototype);
+e.on("ready");`),
+  ).toContainEqual({ kind: "register", method: "on", eventName: "ready" });
+});
+
+it.each([
+  "flag ? import('events') : import('node:events')",
+  "sideEffect(), import('events')",
+  "promise = import('events')",
+  "other || import('events')",
+])("orders escapes through awaited branch namespaces: %s", (acquisition) => {
+  const source = (
+    before: boolean,
+  ) => `import { EventEmitter } from "node:events";
+import { configure } from "./configure.js";
+let promise;
+const e = new EventEmitter();
+${before ? `configure((await (${acquisition})).EventEmitter.prototype);` : ""}
+e.on("ready");
+${before ? "" : `configure((await (${acquisition})).EventEmitter.prototype);`}`;
+  expect(eventsForSource(source(true))).toContainEqual({
+    kind: "register",
+    method: "on",
+    eventName: "ready",
+  });
+  expect(eventsForSource(source(false))).toEqual([]);
+});
+
+it("keeps dynamic import effects whose callback timing is unknown", () => {
+  expect(
+    eventsForSource(`import { EventEmitter } from "node:events";
+async function patch() { (await import('events')).EventEmitter.prototype.on = replacement; }
+const e = new EventEmitter();
+e.on("ready");`),
+  ).toContainEqual({ kind: "register", method: "on", eventName: "ready" });
+});
+
+// These callback/Promise routes retain uncertainty without proving a module origin.
+it.each([
+  "await import('events').then(ns => { ns.EventEmitter.prototype.on = replacement; });",
+  "await import('events').then(({ default: EE }) => { EE.prototype.on = replacement; });",
+  "const promise = import('events'); (await promise).EventEmitter.prototype.on = replacement;",
+  "const [ns] = await Promise.all([import('events')]); ns.EventEmitter.prototype.on = replacement;",
+])("preserves uncertain dynamic acquisition effects: %s", (mutation) => {
+  expect(
+    eventsForSource(`import { EventEmitter } from "node:events";
+const e = new EventEmitter();
+${mutation}
+e.on("ready");`),
+  ).toContainEqual({ kind: "register", method: "on", eventName: "ready" });
+});
+
+it("does not grant native constructor proof from effect-only dynamic import", () => {
+  expect(
+    eventsForSource(`const events = await import('events');
+const e = new events.EventEmitter();
+e.on("ready");`),
+  ).toContainEqual({ kind: "register", method: "on", eventName: "ready" });
+});
+
 /**
  * The added checks must not withdraw the proof from an untouched namespace
  * receiver, or the guard would never apply to the member-expression forms.

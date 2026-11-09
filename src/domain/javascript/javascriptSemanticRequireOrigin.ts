@@ -1668,19 +1668,35 @@ export const semanticGlobalProcessPathOrigin = (
 };
 
 /**
- * Retain possible shared-module effects from Node's inline acquisition API.
+ * Retain possible shared-module effects from inline module acquisitions.
  * This reader is mutation-only: it must not grant loader or constructor proof.
  */
-export const semanticBuiltinModuleEffectOrigin = (
+export const semanticModuleAcquisitionEffectOrigin = (
   node: t.Node | null | undefined,
   state: JavaScriptSemanticAnalysisState,
+  awaitedDirectValue = false,
 ): JavaScriptModuleOrigin | undefined => {
   const chain = semanticMemberChain(node);
-  const call = chain?.root;
-  if (
-    chain === undefined ||
-    (!t.isCallExpression(call) && !t.isOptionalCallExpression(call))
-  )
+  if (chain === undefined) return undefined;
+  const call = chain.root;
+  const acquisition = t.isAwaitExpression(call)
+    ? unwrapJavaScriptExpression(call.argument).node
+    : awaitedDirectValue && chain.members.length === 0
+      ? call
+      : undefined;
+  if (t.isImportExpression(acquisition)) {
+    const specifier = stringValue(acquisition.source);
+    return specifier === undefined
+      ? undefined
+      : {
+          specifier,
+          importedPath: chain.members,
+          resolutionMode: "import",
+          loaderAuthority: "candidate",
+        };
+  }
+  // An unawaited import is a Promise, not the acquired module namespace.
+  if (!t.isCallExpression(call) && !t.isOptionalCallExpression(call))
     return undefined;
   const specifier = stringValue(call.arguments[0]);
   if (specifier === undefined) return undefined;
