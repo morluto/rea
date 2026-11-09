@@ -229,7 +229,7 @@ describe("historical native comparison projections", () => {
     );
     temporary.push(root);
     await writeFile(
-      join(root, "main.js"),
+      join(root, "main.cjs"),
       'const { open } = require("./addon.node"); open();',
     );
     await writeFile(join(root, "addon.node"), "inert fixture; never executed");
