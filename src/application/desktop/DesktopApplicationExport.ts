@@ -324,12 +324,16 @@ const exportLimitations = (
     readonly collisions: readonly HomePathCollision[];
     readonly identity: HostIdentity;
     readonly trashed: readonly string[];
+    readonly files: ReadonlyMap<string, StatePath>;
   },
 ): string[] => {
   const opened = heldOpenLimitation(
     capture.state.unretained_opened_directories,
     capture.host.home,
-    plan.seedFiles,
+    plan.seedFiles.flatMap((seed) => {
+      const source = facts.files.get(seed)?.path;
+      return source === undefined ? [] : [{ seed, source }];
+    }),
   );
   const opens = launchDocumentLimitation(plan.opens);
   const unowned = unownedFoldersLimitation(plan.unownedFolders);
@@ -438,6 +442,7 @@ const runExport = async (
     collisions,
     identity,
     trashed,
+    files,
   });
   const result: DesktopExportResult = {
     directory: request.directory,

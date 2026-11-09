@@ -177,11 +177,17 @@ describe("the limitations on folders the app held files open in", () => {
   it("names the seed files there in the export's, and says when there are none", () => {
     const home = "/home/user";
     const seeded = heldOpenLimitation([`${home}/Documents`], home, [
-      ".config/libreoffice/4/user/registrymodifications.xcu",
-      "Documents/q1-sales.ods",
+      {
+        seed: ".config/libreoffice/4/user/registrymodifications.xcu",
+        source: `${home}/.config/libreoffice/4/user/registrymodifications.xcu`,
+      },
+      { seed: "Documents/q1-sales.ods", source: `${home}/Documents/q1-sales.ods` },
     ]);
     const none = heldOpenLimitation([`${home}/Documents`], home, [
-      ".config/libreoffice/4/user/registrymodifications.xcu",
+      {
+        seed: ".config/libreoffice/4/user/registrymodifications.xcu",
+        source: `${home}/.config/libreoffice/4/user/registrymodifications.xcu`,
+      },
     ]);
 
     expect(seeded).toContain("held files open in ~/Documents,");
@@ -190,6 +196,11 @@ describe("the limitations on folders the app held files open in", () => {
     );
     expect(seeded).not.toContain("registrymodifications");
     expect(none).toContain("the seed holds none from there");
+    expect(
+      heldOpenLimitation([`${home}/data`], home, [
+        { seed: "Documents/note.txt", source: `${home}/data/note.txt` },
+      ]),
+    ).toContain("the seed holds ~/Documents/note.txt from there");
     expect(heldOpenLimitation([], home, [])).toBeUndefined();
   });
 });
