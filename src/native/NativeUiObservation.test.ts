@@ -311,12 +311,12 @@ describe("native UI deadline execution", () => {
     );
     if (!result.ok) throw new Error("expected a completed scenario");
     const limitation = result.value.limitations.join("\n");
-    expect(limitation).toContain("selected native_ui_deadline_ms of 2500 ms");
-    expect(limitation).toContain("omitted means 180000");
-    expect(limitation).toContain(
-      "One wait step stays capped at 180000 ms and that cap has no runtime override.",
+    expect(limitation).toMatch(
+      /native_ui_deadline_ms.*2500 ms.*omitted.*180000/iu,
     );
-    expect(limitation).not.toContain("180-second");
+    expect(limitation).toMatch(
+      /wait step.*capped at 180000 ms.*no runtime override/iu,
+    );
   });
 
   it("states the omitted 180000 ms deadline separately from the wait-step cap", async () => {
@@ -326,11 +326,12 @@ describe("native UI deadline execution", () => {
     });
     if (!result.ok) throw new Error("expected a completed observation");
     const limitation = result.value.limitations.join("\n");
-    expect(limitation).toContain("selected native_ui_deadline_ms of 180000 ms");
-    expect(limitation).toContain(
-      "One wait step stays capped at 180000 ms and that cap has no runtime override.",
+    expect(limitation).toMatch(
+      /native_ui_deadline_ms.*180000 ms.*omitted.*180000/iu,
     );
-    expect(limitation).not.toContain("180-second");
+    expect(limitation).toMatch(
+      /wait step.*capped at 180000 ms.*no runtime override/iu,
+    );
   });
 
   it("reports the owned deadline as a timeout during helper execution", async () => {

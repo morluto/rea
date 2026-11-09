@@ -5,6 +5,51 @@ import { expect } from "vitest";
 
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
+import { buildGamecubeDol } from "../../../src/domain/gamecubeDol.fixture.js";
+
+cliTest(
+  "validates GameCube format and architecture selections",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-dol-cli-");
+    const path = join(root, "image.dol");
+    await writeFile(path, buildGamecubeDol());
+    const result = await cli.run({
+      arguments: [
+        "inspect",
+        path,
+        "--target-format",
+        "gamecube-dol",
+        "--architecture",
+        "arm64",
+        "--json",
+      ],
+      environment: { HOME: root, XDG_CONFIG_HOME: root, XDG_CACHE_HOME: root },
+    });
+    expect(result.exitCode).toBe(1);
+    expect(result.json).toMatchObject({
+      code: "invalid_request",
+      details: {
+        reason: expect.stringMatching(
+          /gamecube-dol.*architecture.*DOL header/iu,
+        ),
+      },
+    });
+    const invalid = await cli.run({
+      arguments: ["inspect", path, "--target-format", "gamecube", "--json"],
+      environment: { HOME: root, XDG_CONFIG_HOME: root, XDG_CACHE_HOME: root },
+    });
+    expect(invalid.exitCode).not.toBe(0);
+    expect(invalid.json).toMatchObject({
+      code: "VALIDATION_ERROR",
+      fieldErrors: expect.arrayContaining([
+        expect.objectContaining({
+          code: "invalid_value",
+          path: "target-format",
+        }),
+      ]),
+    });
+  },
+);
 
 cliTest(
   "rejects a headerless image until architecture and entry are supplied",

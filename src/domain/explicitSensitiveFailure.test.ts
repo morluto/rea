@@ -85,6 +85,30 @@ it.each([
   expect(JSON.stringify(projected)).not.toContain("explicit-secret");
 });
 
+it("preserves sanitized capability recovery specificity", () => {
+  for (const [options, expected] of [
+    [{ remediationAction: "Repair explicit-secret" }, "Repair [REDACTED]"],
+    [
+      { fallbackRemediationAction: "Select explicit-secret" },
+      "Select [REDACTED]",
+    ],
+  ] as const) {
+    const error = new AnalysisCapabilityUnavailableError(
+      "provider",
+      "inspect",
+      "unsupported",
+      options,
+    );
+    const sanitized = redactExplicitFailure(error, ["explicit-secret"]);
+    expect(projectAnalysisError(sanitized).remediation.action).toBe(expected);
+    if (!(sanitized instanceof AnalysisCapabilityUnavailableError))
+      throw new Error("expected capability failure");
+    expect(sanitized.remediationAction === undefined).toBe(
+      "fallbackRemediationAction" in options,
+    );
+  }
+});
+
 it.each([
   ["/metadata/private~1~0/numeric", ["private/~"], "/metadata"],
   ["/metadata/private/child", ["private"], "/metadata"],

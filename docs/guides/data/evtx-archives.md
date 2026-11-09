@@ -56,3 +56,12 @@ its neighbours are still read.
 number of records decoded; both report a diagnostic instead of silently
 truncating. Diagnostic growth is bounded separately, because one malformed
 chunk can contain many bad records.
+
+## Retain the complete inventory with a summary
+
+Use `--detail summary --evidence_output /absolute/new-evidence.bundle.json`
+for counts, artifact identity and source coverage in the reply. The bundle
+retains the complete parent Evidence, including the inventoried records and
+diagnostics. The summary names that parent and its digest. Complete summary
+projection does not imply complete source coverage; format limits, omissions
+and unsupported content remain explicit in `source_coverage`.
