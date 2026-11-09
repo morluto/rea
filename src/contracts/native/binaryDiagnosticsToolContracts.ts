@@ -149,13 +149,20 @@ export const BINARY_DIAGNOSTICS_TOOL_CONTRACTS = [
     ...toolContractMetadata("inspect_apple_ips"),
     kind: "native-provider",
     description:
-      "Inspect one explicit local Apple .ips crash report without executing a target, launching atos, or opening a disassembler. Parses the first-line metadata object and, when bug_type is the string 309, the crash body: process identity, exception and termination facts, threads, usedImages, lossless integer registers, and deterministic classification from documented SIGKILL, EXC_GUARD, pointer-authentication and dyld strings. Other bug_type values, including 288 stackshots, return no crash result. A missing or truncated body fails without partial success. Opened Mach-O and dSYM UUID joins remain unobserved. Portable on supported Node hosts; no Xcode or pwntools required.",
+      "Inspect one explicit local Apple .ips crash report without executing a target, launching atos, or opening a disassembler. Parses the first-line metadata object and, when bug_type is the string 309, the crash body: process identity, exception and termination facts, threads, usedImages, lossless integer registers, and deterministic classification from documented SIGKILL, EXC_GUARD, pointer-authentication and dyld strings. Other bug_type values, including 288 stackshots, return no crash result. A missing or truncated body fails without partial success. With join_path, every frame whose image UUID and architecture match a slice LC_UUID reports the slice static __TEXT vmaddr plus its image offset as a static address; symbolication and dSYM symbol lookup remain unobserved. Portable on supported Node hosts; no Xcode or pwntools required.",
     inputSchema: inspectAppleIpsInputSchema,
     outputSchema: evidenceResultOf(appleIpsSchema),
     examples: [
       {
         title: "Inspect an Apple .ips crash report",
         input: { path: "/artifacts/app.ips" },
+      },
+      {
+        title: "Join report frames to the crashed Mach-O",
+        input: {
+          path: "/artifacts/app.ips",
+          join_path: "/artifacts/App.app/Contents/MacOS/App",
+        },
       },
     ],
   },
