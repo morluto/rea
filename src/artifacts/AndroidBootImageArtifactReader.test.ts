@@ -223,6 +223,44 @@ it("extracts two vendor ramdisks without inventing fragment load addresses", asy
   expect(stored.get("bootconfig")?.equals(bootconfig)).toBe(true);
 });
 
+it("keeps canonically equivalent ramdisk names distinct after normalization", async () => {
+  const composed = "\u00e9";
+  const decomposed = "e\u0301";
+  const first = Buffer.from("composed-bytes");
+  const second = Buffer.from("decomposed-bytes");
+  const path = await writeCarrier(
+    "vendor_boot.img",
+    buildVendorBootImage({
+      version: 4,
+      ramdisks: [
+        { name: composed, type: 1, bytes: first },
+        { name: decomposed, type: 1, bytes: second },
+      ],
+    }),
+  );
+  const snapshot = await scanCanonicalArtifactInventory(path);
+  const fragments = snapshot.occurrences.filter((row) =>
+    row.logical_path.startsWith("vendor_ramdisk/"),
+  );
+  expect(fragments.map((row) => row.logical_path)).toEqual([
+    `vendor_ramdisk/${composed}`,
+    `vendor_ramdisk/${composed}-1`,
+  ]);
+  const hex = (name: string): string =>
+    Buffer.concat([Buffer.from(name, "utf8"), Buffer.alloc(32)])
+      .subarray(0, 32)
+      .toString("hex");
+  expect(
+    fragments.map(
+      (row) =>
+        (row.format_metadata as { name_bytes_hex?: string }).name_bytes_hex,
+    ),
+  ).toEqual([hex(composed), hex(decomposed)]);
+  const stored = await openAll(path);
+  expect(stored.get(`vendor_ramdisk/${composed}`)?.equals(first)).toBe(true);
+  expect(stored.get(`vendor_ramdisk/${composed}-1`)?.equals(second)).toBe(true);
+});
+
 it("records an AVB footer without treating it as a child", async () => {
   const image = buildBootImage({ version: 3, cmdline: "console=tty0" });
   const path = await writeCarrier("avb.img", appendAvbFooter(image));

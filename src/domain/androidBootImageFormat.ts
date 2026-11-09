@@ -1,3 +1,4 @@
+import { logicalPathNfc } from "./artifactIdentity.js";
 import { err, ok, type Result } from "./result.js";
 
 /**
@@ -908,7 +909,9 @@ const vendorRamdiskPath = (
     text !== "." &&
     text !== ".." &&
     !text.includes("/")
-      ? text
+      ? // Inventory keys logical paths by their NFC spelling, so uniqueness
+        // is checked in that spelling; name_bytes_hex keeps the stored bytes.
+        logicalPathNfc(text)
       : `ramdisk-${String(index)}`;
   // `-<index>` can itself match an earlier name (`x` beside `x-2`, or a
   // fallback `ramdisk-<index>` beside a real name of that form). Keep
