@@ -585,8 +585,10 @@ const locateElfNotes = async (carrier: Carrier): Promise<SectionRange[]> => {
       addTable(parsed.value.offset, parsed.value.size, parsed.value.alignment);
     }
   let minimumNotes = 0;
+  // Every nonempty table costs at least one read, a short one for its
+  // trailing bytes, so each counts against the note allowance.
   for (const table of tables.values())
-    if (table.length >= 12) minimumNotes += table.copies;
+    if (table.length > 0) minimumNotes += table.copies;
   let examined = 0;
   if (minimumNotes > MAX_INSPECT_ELF_NOTE_ENTRIES)
     walk.damage ??= denoElfNoteLimit();
@@ -682,19 +684,37 @@ const scanElfNoteTable = async (
     }
     cursor += layout.next;
   }
-  // Fewer than 12 bytes remain. Zero padding is accepted; anything else is
-  // unaccounted table data, which is Deno's only if a SUI note is confirmed.
-  if (cursor < table.length) {
-    const tail = await readExact(
-      carrier,
-      table.offset + cursor,
-      table.length - cursor,
-    );
-    if (tail === undefined) return stop("ELF note table is truncated", notes);
-    if (tail.some((byte) => byte !== 0))
-      return stop("ELF note table has trailing non-zero bytes", notes);
-  }
-  return notes;
+  if (cursor >= table.length) return notes;
+  // A table too short for any note still costs one read of its tail.
+  const counted = Math.max(notes, 1);
+  const tailIssue =
+    examined + counted * table.copies > MAX_INSPECT_ELF_NOTE_ENTRIES
+      ? denoElfNoteLimit()
+      : await noteTableTailIssue(carrier, table, cursor);
+  walk.damage ??= tailIssue;
+  return counted;
+};
+
+/**
+ * Fewer than 12 bytes remain after the last note. Zero padding is accepted;
+ * anything else is unaccounted table data, which is Deno's only if a SUI
+ * note is confirmed.
+ */
+const noteTableTailIssue = async (
+  carrier: Carrier,
+  table: ElfNoteTable,
+  cursor: number,
+): Promise<ArtifactReaderFailure | undefined> => {
+  const tail = await readExact(
+    carrier,
+    table.offset + cursor,
+    table.length - cursor,
+  );
+  if (tail === undefined)
+    return denoCarrierFailure("ELF note table is truncated");
+  if (tail.some((byte) => byte !== 0))
+    return denoCarrierFailure("ELF note table has trailing non-zero bytes");
+  return undefined;
 };
 
 /** Whether a SUI note whose extent was rejected still names `d3n0l4nd`. */

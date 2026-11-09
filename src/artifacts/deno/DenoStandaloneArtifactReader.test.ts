@@ -1571,3 +1571,40 @@ it("fails closed when the enclosing Intel trailer length is not a safe integer",
     },
   });
 });
+
+it("counts short ELF note tables against the note allowance", async () => {
+  // One PT_NOTE program header per distinct one-byte table.
+  const count = MAX_INSPECT_ELF_NOTE_ENTRIES + 1;
+  const phoff = 64;
+  const dataAt = phoff + count * 56;
+  const bytes = Buffer.alloc(dataAt + count);
+  bytes.writeUInt32LE(0x464c457f, 0);
+  bytes[4] = 2;
+  bytes[5] = 1;
+  bytes[6] = 1;
+  bytes.writeUInt16LE(2, 0x10);
+  bytes.writeUInt16LE(62, 0x12);
+  bytes.writeUInt32LE(1, 0x14);
+  bytes.writeBigUInt64LE(BigInt(phoff), 0x20);
+  bytes.writeUInt16LE(64, 0x34);
+  bytes.writeUInt16LE(56, 0x36);
+  bytes.writeUInt16LE(count, 0x38);
+  for (let index = 0; index < count; index += 1) {
+    const at = phoff + index * 56;
+    bytes.writeUInt32LE(4, at);
+    bytes.writeBigUInt64LE(BigInt(dataAt + index), at + 8);
+    bytes.writeBigUInt64LE(1n, at + 32);
+    bytes.writeBigUInt64LE(1n, at + 48);
+  }
+  let reads = 0;
+  await expect(
+    locateDenoStandalone(
+      bytesHandle(bytes, () => {
+        reads += 1;
+      }),
+      bytes.length,
+    ),
+  ).resolves.toEqual({ status: "absent" });
+  // The header reads are fixed; no table is read once the allowance is spent.
+  expect(reads).toBeLessThan(count);
+});
