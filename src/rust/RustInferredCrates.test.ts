@@ -1,7 +1,7 @@
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect, it } from "vitest";
+import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
 import {
   MAX_RUST_FINGERPRINT_SCAN_BYTES,
   rustBinarySchema,
@@ -498,7 +498,7 @@ it("enforces universal Mach-O slice range containment and parity on rustBinarySc
 });
 
 it("rebases universal Mach-O slice offsets and preserves default parity in RustBinaryProvider", async () => {
-  const dir = await mkdtemp(join(tmpdir(), "rea-rust-provider-slice-"));
+  const dir = await createTestTempDirectory("rea-rust-provider-slice-");
   const provider = new RustBinaryProvider();
   try {
     const universalPath = join(dir, "universal.macho");
@@ -554,11 +554,10 @@ it("rebases universal Mach-O slice offsets and preserves default parity in RustB
     ).toBeGreaterThan(8192 + 2048);
   } finally {
     await provider.close();
-    await rm(dir, { recursive: true, force: true });
   }
 });
 
-it("retains git checkout_id so distinct forks at the same commit do not collapse", () => {
+it("retains git checkout_id and non-crate leading slug bytes while rejecting dot-only slugs", () => {
   const bytes = createRustImage({
     format: "elf",
     omitSection: true,
@@ -567,6 +566,10 @@ it("retains git checkout_id so distinct forks at the same commit do not collapse
         "/cargo/git/checkouts/foo-1111111111111111/abcdef1/src/lib.rs",
         "/cargo/git/checkouts/foo-2222222222222222/abcdef1/src/lib.rs",
         "/cargo/git/checkouts/foo-1111111111111111/abcdef1/src/other.rs",
+        "/cargo/git/checkouts/.dot-repo-0123456789abcdef/a1b2c3d/src/lib.rs",
+        "/cargo/git/checkouts/-dash+repo-fedcba9876543210/a1b2c3d/src/lib.rs",
+        "/cargo/git/checkouts/.-0123456789abcdef/a1b2c3d/src/lib.rs",
+        "/cargo/git/checkouts/..-0123456789abcdef/a1b2c3d/src/lib.rs",
       ].join("\0") + "\0",
       "latin1",
     ),
@@ -575,7 +578,7 @@ it("retains git checkout_id so distinct forks at the same commit do not collapse
     bytes,
     readBinaryContainer(bytes),
   );
-  expect(result.inferred_crates.discovered_count).toBe(2);
+  expect(result.inferred_crates.discovered_count).toBe(4);
   expect(
     result.inferred_crates.items.map(
       ({ first_file_offset: _offset, ...item }) => item,
@@ -599,10 +602,28 @@ it("retains git checkout_id so distinct forks at the same commit do not collapse
       revision: "abcdef1",
       reference_count: 1,
     },
+    {
+      name: ".dot-repo",
+      version: null,
+      source_kind: "git",
+      registry_index: null,
+      checkout_id: "0123456789abcdef",
+      revision: "a1b2c3d",
+      reference_count: 1,
+    },
+    {
+      name: "-dash+repo",
+      version: null,
+      source_kind: "git",
+      registry_index: null,
+      checkout_id: "fedcba9876543210",
+      revision: "a1b2c3d",
+      reference_count: 1,
+    },
   ]);
 
   const validReport = {
-    artifact: { path: "/artifacts/git", sha256: "a".repeat(64), bytes: 4096 },
+    artifact: { path: "/artifacts/git", sha256: "a".repeat(64), bytes: 8192 },
     format: "elf" as const,
     architecture: "amd64",
     bits: 64 as const,

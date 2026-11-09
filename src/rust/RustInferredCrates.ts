@@ -10,6 +10,7 @@ import {
   type RustcVersions,
 } from "../domain/rust/rustBinary.js";
 import {
+  isCargoGitSlugByte,
   isCrateNameByte,
   isLowerHex,
   isRegistryOrGitSlugByte,
@@ -235,7 +236,7 @@ const parseCargoCrateAt = (
     const maxCheckoutEnd = Math.min(region.length, checkoutStart + 146);
     while (
       checkoutEnd < maxCheckoutEnd &&
-      isRegistryOrGitSlugByte(region[checkoutEnd] ?? 0)
+      isCargoGitSlugByte(region[checkoutEnd] ?? 0)
     )
       checkoutEnd += 1;
     if (

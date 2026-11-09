@@ -29,6 +29,12 @@ export const isCrateNameByte = (code: number): boolean =>
 export const isRegistryOrGitSlugByte = (code: number): boolean =>
   isCrateNameByte(code) || code === 0x2e;
 
+export const isCargoGitSlugByte = (code: number): boolean =>
+  isRegistryOrGitSlugByte(code) ||
+  code === 0x2b ||
+  code === 0x7e ||
+  code === 0x25;
+
 const isSemverIdentByte = (code: number): boolean =>
   isAsciiAlnum(code) || code === 0x2d;
 
@@ -162,10 +168,8 @@ export const splitCargoGitCheckoutSegments = (
   }
   const name = checkoutDir.slice(0, separatorIndex);
   if (name === "." || name === "..") return null;
-  const first = name.charCodeAt(0);
-  if (!isAsciiAlnum(first) && first !== 0x5f) return null;
   for (let index = 0; index < name.length; index += 1) {
-    if (!isRegistryOrGitSlugByte(name.charCodeAt(index))) return null;
+    if (!isCargoGitSlugByte(name.charCodeAt(index))) return null;
   }
   if (revisionSegment.length < 7 || revisionSegment.length > 40) return null;
   for (let index = 0; index < revisionSegment.length; index += 1) {
