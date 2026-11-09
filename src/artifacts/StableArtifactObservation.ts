@@ -3,8 +3,8 @@ import {
   type FileSnapshotPartialObservation,
 } from "../domain/fileSnapshotObservation.js";
 import {
-  completedStableArtifact,
   type StableArtifactSnapshot,
+  completedStableArtifact,
 } from "./readStableArtifact.js";
 
 /** Identity facts of one completed stable read; they do not establish decoded content. */
@@ -26,9 +26,9 @@ export const stableArtifactObservation = (
 export const completedStableArtifactObservation = (
   cause: unknown,
   path: string,
-  completed?: StableArtifactSnapshot,
+  completedSnapshot?: StableArtifactSnapshot,
 ): FileSnapshotPartialObservation | undefined => {
-  const snapshot = completedStableArtifact(cause) ?? completed;
+  const snapshot = completedSnapshot ?? completedStableArtifact(cause);
   return snapshot === undefined
     ? undefined
     : stableArtifactObservation(snapshot, path);

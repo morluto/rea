@@ -26,6 +26,7 @@ import { registerPeLoadConfigTool } from "./registerPeLoadConfigTool.js";
 import { registerBinaryHardeningTool } from "./registerBinaryHardeningTool.js";
 import { registerPeCertificatesTool } from "./registerPeCertificatesTool.js";
 import { registerPeImportsTool } from "./registerPeImportsTool.js";
+import { registerWindowsShortcutTool } from "./registerWindowsShortcutTool.js";
 import { registerPeResourcesTool } from "./registerPeResourcesTool.js";
 import { registerNativeExportsTool } from "./registerNativeExportsTool.js";
 import { registerEvmTools } from "./registerEvmTools.js";
@@ -39,6 +40,7 @@ import { registerIl2cppTools } from "./registerIl2cppTools.js";
 import { registerRustTools } from "./registerRustTools.js";
 import { registerPythonPycTool } from "./registerPythonPycTool.js";
 import { registerErlangTools } from "./registerErlangTools.js";
+import { registerV8CodeCacheTool } from "./registerV8CodeCacheTool.js";
 import { registerAnalysisViewTool } from "./registerAnalysisViewTool.js";
 import { registerBinaryDiagnosticsTools } from "./registerBinaryDiagnosticsTools.js";
 import { registerFridaTools } from "./registerFridaTools.js";
@@ -210,6 +212,7 @@ export const createServer = (
     goBinary,
     rustBinary,
     erlangBeam,
+    v8CodeCache,
     modelArtifact,
     gpuCodeObjects,
     il2cppMetadata,
@@ -224,6 +227,7 @@ export const createServer = (
     binaryHardening,
     peCertificates,
     peImports,
+    windowsShortcut,
     electronFuses,
     pythonPyc,
     webNetworkCapture,
@@ -290,15 +294,31 @@ export const createServer = (
             policy: (): AvailabilityPolicy => {
               const value = basePolicy();
               const failures = capabilities.observeProviderLoadFailures();
-              return Object.keys(failures).length === 0
-                ? value
-                : {
-                    ...value,
-                    optionalProviderLoadFailures: {
-                      ...value.optionalProviderLoadFailures,
-                      ...failures,
-                    },
-                  };
+              const commandFailures =
+                capabilities.observeCommandProviderFailures();
+              const hasFailures = Object.keys(failures).length > 0;
+              const hasCommandFailures =
+                Object.keys(commandFailures).length > 0;
+              if (!hasFailures && !hasCommandFailures) return value;
+              return {
+                ...value,
+                ...(hasFailures
+                  ? {
+                      optionalProviderLoadFailures: {
+                        ...value.optionalProviderLoadFailures,
+                        ...failures,
+                      },
+                    }
+                  : {}),
+                ...(hasCommandFailures
+                  ? {
+                      commandProviderFailures: {
+                        ...value.commandProviderFailures,
+                        ...commandFailures,
+                      },
+                    }
+                  : {}),
+              };
             },
           };
         })();
@@ -354,6 +374,9 @@ export const createServer = (
     recordUnknown,
     evidenceById,
     withAdmittedAnalysis: analysisAdmission,
+    ...(session === undefined
+      ? {}
+      : { admitRecovery: session.admitRecoveryObservation.bind(session) }),
   };
   const evidenceOptions = {
     logger: toolLogger,
@@ -371,6 +394,12 @@ export const createServer = (
     enhanced: () =>
       registerEnhancedTools(server, {
         ...analysisOptions,
+        ...(session === undefined
+          ? {}
+          : { evidenceForAnalysis: session.evidenceForAnalysis.bind(session) }),
+        ...(session === undefined
+          ? {}
+          : { admitRecovery: session.admitRecoveryObservation.bind(session) }),
         analysisProfile:
           session === undefined
             ? undefined
@@ -522,6 +551,13 @@ export const createServer = (
         recordEvidence,
         analysisAdmission,
       );
+      registerWindowsShortcutTool(
+        server,
+        windowsShortcut,
+        toolLogger,
+        recordEvidence,
+        analysisAdmission,
+      );
       registerRecordedCrashTools(
         server,
         recordedCrash,
@@ -603,6 +639,13 @@ export const createServer = (
         recordEvidence,
         analysisAdmission,
         evidenceById,
+      );
+      registerV8CodeCacheTool(
+        server,
+        v8CodeCache,
+        toolLogger,
+        recordEvidence,
+        analysisAdmission,
       );
       registerWasmTools(
         server,

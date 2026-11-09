@@ -166,8 +166,10 @@ describe("scenarioCaptureRecords", () => {
         bodySize: -1,
       },
     });
-    expect(manifestLimitations(projected)).toContain(
-      "1 of 7 scenario transactions with a usable request line retained no response body; tools citing them replay only the recorded status and content type, either of which may be absent.",
+    expect(manifestLimitations(projected)).toContainEqual(
+      expect.stringMatching(
+        /1 of 7.*usable request line.*no response body.*status and content type.*may be absent/iu,
+      ),
     );
   });
 

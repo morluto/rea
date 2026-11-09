@@ -11,6 +11,8 @@ import {
   unwrapJavaScriptExpression,
 } from "./javascriptAstValues.js";
 import { createSemanticExpressionShapeResolver } from "./javascriptSemanticExpressionShapes.js";
+import { semanticRequireOriginCandidate } from "./javascriptSemanticRequireOrigin.js";
+import { javaScriptRuntimeContext } from "./javascriptSourceParser.js";
 import { createGlobalReferenceReader } from "./javascriptSemanticAmbientWrites.js";
 import { javascriptBootstrapAt } from "./javascriptBootstrap.js";
 import { ELECTRON_MODULE } from "./javascriptElectronMemberWrites.js";
@@ -358,7 +360,13 @@ export class JavaScriptSymbolicBindings {
       ) {
         return symbolicUnknown("overwritten Electron API member");
       }
-      return { kind: "external", path };
+      return {
+        kind: "external",
+        path,
+        ...(value.loaderAuthority === "candidate"
+          ? { loaderAuthority: "candidate" as const }
+          : {}),
+      };
     }
     if (value.kind === "record") {
       const property = value.values.get(key);
@@ -765,13 +773,25 @@ export class JavaScriptSymbolicBindings {
     if (!binding)
       return !semanticResolutionBlocked(this.state, node, node.name) &&
         ["require", "navigator", "String", "Boolean"].includes(node.name)
-        ? { kind: "external", path: [node.name] }
+        ? node.name === "require" &&
+          javaScriptRuntimeContext(this.state.program) === "module"
+          ? symbolicUnknown("CommonJS require is unavailable in an ES module")
+          : {
+              kind: "external",
+              path: [node.name],
+              ...(node.name === "require" &&
+              javaScriptRuntimeContext(this.state.program) === "unknown"
+                ? { loaderAuthority: "candidate" as const }
+                : {}),
+            }
         : symbolicUnknown("unbound identifier");
     if (binding.definitions.some((d) => d.kind === "assignment"))
       return symbolicUnknown("reassigned binding");
     // Electron member identity is checked at the selected property. A write
     // to one method must not erase the module origin or unaffected siblings.
-    const electronOrigin = this.#electronIdentity.exportPath(node);
+    const electronOrigin =
+      this.#electronIdentity.exportPath(node) ??
+      this.#electronIdentity.candidateExportPath(node);
     if (electronOrigin === undefined && this.#mutated.has(binding.bindingId))
       return symbolicUnknown("dynamic member writes");
     for (let e: SymbolicEnvironment | undefined = env; e; e = e.parent) {
@@ -1176,7 +1196,15 @@ export class JavaScriptSymbolicBindings {
           const spec = args[0];
           result =
             spec?.kind === "literal" && typeof spec.value === "string"
-              ? { kind: "external", path: [spec.value] }
+              ? {
+                  kind: "external",
+                  path: [spec.value],
+                  ...(semanticRequireOriginCandidate(node, this.state)?.origin
+                    .loaderAuthority === "candidate" ||
+                  value.loaderAuthority === "candidate"
+                    ? { loaderAuthority: "candidate" as const }
+                    : {}),
+                }
               : symbolicUnknown("dynamic require");
         } else if (
           value.kind !== "function" ||

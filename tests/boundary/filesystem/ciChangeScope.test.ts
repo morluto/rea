@@ -341,8 +341,6 @@ it.each([
   "tests/boundary/providers/GdbSessionManagerCoverage.test.ts",
   "tests/boundary/providers/GdbCommandQueue.test.ts",
   "tests/boundary/providers/RizinDebugSessionCoverage.part3.test.ts",
-  "tests/boundary/providers/RizinCommandTimeout.test.ts",
-  "tests/boundary/providers/RizinTimeoutEvidence.test.ts",
   "tests/boundary/providers/GdbSessionReviewRegressions.test.ts",
   "tests/boundary/providers/gdbTestHelpers.ts",
   "tests/boundary/providers/RizinDebugSessionReviewRegressions.test.ts",
@@ -834,6 +832,14 @@ it.each([
     { code: true, runtime: true, package: true },
   ],
   ["src/adb/AdbConfiguration.ts", { code: true, runtime: true, package: true }],
+  [
+    "src/application/binaryDiagnostics/ByteEntropyService.ts",
+    { code: true, runtime: true, package: true },
+  ],
+  [
+    "tests/acceptance/byteEntropyWindowsIdentity.test.ts",
+    { code: true, runtime: true, package: true },
+  ],
   [
     "src/apktool/ApktoolConfiguration.ts",
     { code: true, runtime: true, package: true },
