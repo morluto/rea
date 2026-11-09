@@ -47,6 +47,13 @@ computer would not have that entry. An `--executable` runs from
 the current directory, as it would from a shell, and a relative path to it is
 resolved there.
 
+A nested desktop file uses a dashed ID: `vendor/app.desktop` has ID
+`vendor-app`. REA checks path spellings that can encode that ID within each
+XDG root before trying the next root. Unrelated directories do not affect
+selection. If an applicable path cannot be examined or the bounded search
+cannot establish absence, capture reports an incomplete desktop-entry search
+rather than selecting a different application from a later root.
+
 Desktop-entry string values retain literal trailing spaces. For example,
 `Path=/tmp/workspace ` and `Path=/tmp/workspace\s` name the same directory
 ending in a space. Use the escaped spelling to make such a suffix visible.
@@ -60,6 +67,9 @@ environment, and reads commands from stdin, one per line. The application gets
 REA's environment without the `AGENTENV_*` variables an agent environment sets,
 such as its control token: an app the exported computer launches never has
 them, and an app captured inside a computer must not hold a credential to it.
+It also gets `LIBC_FATAL_STDERR_=1`, so glibc writes a fatal error, such as
+an abort's reason, to the app's stderr rather than its terminal, and an app
+that exits at launch reports it.
 
 | Line                                        | Effect                                                      |
 | ------------------------------------------- | ----------------------------------------------------------- |
@@ -119,7 +129,11 @@ remain. Interrupting the command (Ctrl-C) ends the session the same way
 without a further checkpoint; the capture is still written with end reason
 `cancelled`, and the command exits with status 130. Interrupted before the
 application is launched, the command writes no capture and removes the
-content it had retained.
+content it had retained. If cancellation arrives during publication or final
+cleanup, the already-written capture can instead retain its earlier end
+reason. Inspect `capture.json` and the error's `details.partial_observation`
+for the retained capture Evidence. Cleanup failures also report resources
+that could not be released.
 
 If the capture fails for any other reason before `capture.json` is written,
 the application is closed the same way and the content already retained is
@@ -314,7 +328,10 @@ dot-folder named after the package, the executable, the desktop entry's full
 id and its last part, and the entry's name, with whether each existed at the
 start. A folder in those places whose name is one of these in another letter
 case joins them, such as GIMP's `~/.config/GIMP` for the `gimp` package; only
-the whole name is compared, so `~/.config/GIMPshop` does not. Dotfiles in the
+the whole name is compared, so `~/.config/GIMPshop` does not. A file under a
+folder the application creates during the capture beside one of them, with
+the same name in another letter case or with a version added (`-3.1` or
+`3`), as TreeLine's `~/.treeline-3.1`, is its state too. Dotfiles in the
 home named after the application (`.<name>rc`, or
 `.<name>` followed by `-`, `.` or `_`, for a name of three or more characters)
 that exist at the start join them, since an application may only read such a
@@ -326,7 +343,10 @@ id rather than the `flatpak` launcher, and adds `~/.var/app/<id>`.
 **Session.** When it started, how long it ran and why it ended; the launched
 process's exit status; every process seen in the application's tree; every
 client window with its class pair, titles, owner pid and type, marked when it
-belongs to the application; when the first application window appeared; the
+belongs to the application. Titles and class names decode xprop's quoted
+delimiters, newline and tab escapes, and three-digit octal byte escapes;
+unsupported escape spellings leave that string unknown rather than inventing
+text. The session also records when the first application window appeared; the
 most common class pair of the application's windows, for matching its window
 later; files the application's processes held open under the walked roots; the last
 8 KiB of the launched process's stderr, where a failing app's last words are,
@@ -388,7 +408,10 @@ was added must be made again before state inspection, task drafting or export.
 Directories the application held files open in, but whose starting content was
 not retained, are listed so a second capture can pass them with
 `--state-path`, or `state_paths` on a build computer's `start_build_capture`,
-and a limitation names them, spelled from `~/` under the home.
+and a limitation names them, spelled from `~/` under the home. A lock file
+the application held open, such as Poedit's `~/poedit.lock` or Lucene's
+`write.lock`, makes no folder such a directory, since it holds nothing to
+retain.
 
 **Limitations.** What the capture could not establish, such as a truncated
 walk or a missing window.

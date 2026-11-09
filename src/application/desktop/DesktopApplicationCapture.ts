@@ -1,19 +1,20 @@
 import { arch, hostname, userInfo } from "node:os";
-import { dirname } from "node:path";
 
 import { AnalysisCancelledError } from "../../domain/analysisErrorCore.js";
 import {
   projectAnalysisError,
   type AnalysisErrorProjection,
 } from "../../domain/analysisErrorProjection.js";
-import { unretainedOpenedLimitation } from "../../domain/desktop/appExportUnowned.js";
+import {
+  unretainedOpenedDirectories,
+  unretainedOpenedLimitation,
+} from "../../domain/desktop/appExportUnowned.js";
 import {
   checkpointTaken,
   type DesktopApplicationCapture,
   type DesktopCaptureEvent,
   type DesktopSession,
 } from "../../domain/desktop/desktopCapture.js";
-import { isWithinAny } from "../../domain/desktop/desktopStateDiff.js";
 import { createEvidence, type Evidence } from "../../domain/evidence.js";
 import { DesktopContentStore } from "../../desktop/DesktopContentStore.js";
 import {
@@ -88,8 +89,6 @@ export interface DesktopCaptureHost {
 export interface DesktopCaptureErrorOutput extends AnalysisErrorProjection {
   readonly error: "Desktop capture failed";
 }
-
-const unique = (paths: readonly string[]) => [...new Set(paths)];
 
 /** The host's name and the user's, each left out when the system cannot say, as for a user with no passwd entry. */
 const hostIdentity = (): { hostname?: string; user?: string } => {
@@ -261,13 +260,14 @@ const recordCapture = async (
     store,
   );
   const recorder = new CheckpointRecorder(scope, store);
-  const acknowledge = async () => {
+  const acknowledge = async (titles: readonly string[] = []) => {
     const taken = recorder.checkpoints.at(-1);
     if (taken === undefined) return;
     const event = checkpointTaken(
       taken,
       home,
       context.scope.selectedPaths.map(({ physical }) => physical),
+      titles,
     );
     await host.report(
       `Recorded checkpoint ${taken.name}: ${String(event.changes)} change(s), ${String(event.retained_files)} file(s) retained.`,
@@ -288,20 +288,19 @@ const recordCapture = async (
     maxDurationMs: request.maxDurationSeconds * 1000,
     pollIntervalMs: POLL_INTERVAL_MS,
     nextRequest: host.nextRequest,
-    checkpoint: async (name, trigger, atMs, openedFiles) => {
+    checkpoint: async (name, trigger, atMs, seen) => {
       await host.report(`Recording checkpoint ${name}.`);
-      recorder.openedFiles = openedFiles;
+      recorder.openedFiles = seen.openedFiles;
       await recorder.record(name, trigger, atMs, signal);
-      await acknowledge();
+      await acknowledge(seen.titles);
     },
     report: host.report,
     signal,
   });
   const { session, unreleased } = outcome;
-  const unretained = unique(
-    session.opened_files
-      .map((file) => dirname(file.path))
-      .filter((directory) => !isWithinAny(directory, scope.contentRoots)),
+  const unretained = unretainedOpenedDirectories(
+    session.opened_files.map((file) => file.path),
+    { ...scope, home },
   );
   const capture: DesktopApplicationCapture = {
     host: {
@@ -324,7 +323,7 @@ const recordCapture = async (
       content_files: store.files,
       content_bytes: store.bytes,
       omitted_content: [...store.omissions],
-      unretained_opened_directories: unretained,
+      unretained_opened_directories: [...unretained],
     },
     limitations: [
       ...admitted.limitations,

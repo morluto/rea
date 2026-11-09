@@ -114,6 +114,8 @@ export type ImageSection = {
       };
       readonly segment_mapping: FileMapping | null;
       readonly segment_unmapped: boolean;
+      /** Declared `reloff` and `nreloc`, which only object files populate. */
+      readonly relocations: { readonly offset: number; readonly count: number };
     }
 );
 

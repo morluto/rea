@@ -82,7 +82,8 @@ See [desktop builds](https://github.com/morluto/rea/blob/main/.agents/skills/rev
    the values the change added, changed and removed with what each was and
    became, at the pointer a check names it by; suggested checks with a
    placeholder prompt; and `guards`, optional checks that the rest kept its
-   seed values. The draft's
+   seed values: like siblings' fields, each line kept beside new text, and
+   the count of a list whose members were only edited. The draft's
    [task section](desktop-application-tasks.md#describe-the-change) describes
    each. `notes`, each with a `code` and a `message`, say why a draft has no
    files: `no_change` when no file under the home changed between them and
@@ -92,14 +93,19 @@ See [desktop builds](https://github.com/morluto/rea/blob/main/.agents/skills/rev
    `uncheckable_changes` when the app's keys in dconf were read and changed,
    listing the database in `files`, since no check reads dconf (a version
    the capture kept no copy of, as it keeps none of the database at the
-   start, counts as holding none of the app's keys);
+   start, is `unreadable_changes`, not an empty key list);
    `unreadable_changes` when a dconf database changed but REA could not read
-   it, such as without `dconf-cli`, with the read `error`, so whose keys
-   changed is unknown; and `no_document` when no file has the document role.
+   it, such as without `dconf-cli` or when a present version's bytes were
+   not retained, with the read `error`, so whose keys changed is unknown;
+   and `no_document` when no file has the document role.
    `unowned_changes` and `no_document` point at `state_paths`. They also say,
    for a drafted `file`, why its suggestions are thin: `by_position`,
-   `view_state_only`, `long_text`, `cut_view` or `unreadable_view`.
-6. Write the task: its name, the prompt in the user's own words, and checks
+   `view_state_only`, `long_text`, `cut_view`, `unreadable_view`,
+   `volatile_lines`, `generated_reference` or `read_as_text`.
+6. Write the task: its name, the prompt in the user's own words naming the
+   app (a solving agent's own shell cannot see the computer's files, and the
+   export's limitations say when a prompt names neither the app's title,
+   environment nor package), and checks
    that hold after the change and not on the seed, from the suggestions,
    `values` and any `guards` worth keeping.
 7. `export_build_environment` with the task and a new or empty `directory`.
@@ -117,23 +123,30 @@ See [desktop builds](https://github.com/morluto/rea/blob/main/.agents/skills/rev
    eight collapsed to their top folder, such as `~/.config/MuseScore`, and a
    count of the rest; capture again with them in `state_paths` to own them.
    Lock files the app holds while it runs, such as LibreOffice's profile
-   `.lock` and its document lock `.~lock.<name>#`, are left out of the seed,
-   since a copied one can keep the app from starting, and the limitations
-   and the README list them after "Left out of the seed"; a project's
-   `Cargo.lock` or `yarn.lock`, a document or a path in `state_paths` is
-   seeded. They name seeded
+   `.lock` and its document lock `.~lock.<name>#`, GnuCash's
+   `<book>.LCK` or Grisbi's `.<file>.lock` beside its file, are left out of
+   the seed, since a copied one can keep the app from starting or saving. The
+   limitations and README list them after "Left out of the seed". A project's
+   `Cargo.lock` or `yarn.lock`, a document or a path in `state_paths`, and app
+   logs that are not locks are seeded. The limitations name seeded
    WebKit or Chromium storage and caches too, which the app keeps for its
    own running. When the application held files open in a folder whose
    starting content the capture did not retain, a limitation names the
    folder and the seed files in it. For a
    `.deb` app that no apt source the capture found offers, the export takes
-   the request's URL with `--package-url`; one apt offers installs from apt. REA lists the bundle's files with their sizes
-   and SHA-256 in the computer, into a file beside the bundle that it reads
-   through `data/get`, since a large bundle's list outgrows a command's
-   output; it then brings the files back through the driver's
-   `data/get` in answers of at most 8 MiB, and checks and writes each answer
-   into the folder before asking for the next, so one answer at a time is
-   held; a failure leaves no partial folder.
+   the request's URL with `--package-url`; one apt offers installs from apt.
+   Either way the request's `dependencies` reach the export as
+   `--extra-package`, as an archive request's `extra_packages` do, so a
+   runtime piece the agent named, such as MyPaint's `librsvg2-common`, is
+   installed beside the app; the limitations and the README list them,
+   except the app itself and dependencies the bundle already names for a
+   `.deb` it installs from the file. REA lists the bundle's files
+   with their sizes and SHA-256 in the computer, into a file beside the
+   bundle that it reads through `data/get`, since a large bundle's list
+   outgrows a command's output; it then brings the files back through the
+   driver's `data/get` in answers of at most 8 MiB, and checks and writes
+   each answer into the folder before asking for the next, so one answer at
+   a time is held; a failure leaves no partial folder.
 8. `close_build_computer`.
 
 A checkpoint name is lowercase letters, digits, dot, dash and underscore; the
@@ -142,10 +155,14 @@ is a name already taken. The acknowledgement comes from the capture after it
 has walked the home and retained what changed: `entries` walked, `changes`
 since the checkpoint before, `retained_files` and `retained_bytes`, and up to
 ten `changed_files`, home-relative, with `more_changed_files` counting the
-rest. Folders are left out; files under `state_paths` come first, then
-those the app held open, then those in its state directories, then the rest,
-and caches and WebKit or Chromium storage last, each by path, so a save's
-document leads the list. When the computer's REA is older than these lists,
+rest. Folders are left out. Files an app window's title has named so far
+come first, as a document saved and no longer held open is in Gnumeric, LyX
+or Tiled; then files named themselves in `state_paths`; then those the app
+holds open, those under a selected folder and those in its state
+directories; then the rest; and caches and WebKit, Chromium or QtWebEngine
+storage last, even under a selected folder such as `.config/libreoffice`
+with its icon cache, each by path. So a save's document leads the list.
+When the computer's REA is older than these lists,
 as when `REA_BUILD_COMPUTER_REA_ARCHIVE` still names an earlier build, the
 checkpoint is still taken and both are `null`: which files changed is
 unknown. Pack the current REA into the archive to get them back.

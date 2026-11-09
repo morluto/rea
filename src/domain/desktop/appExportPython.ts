@@ -1,3 +1,4 @@
+import { XML_ELEMENT_OPENING } from "../xmlDocument.js";
 import { PYTHON_JSON_READER } from "./appExportPythonJson.js";
 import { PYTHON_XML_READER } from "./appExportPythonXml.js";
 import { PYTHON_ZIP_HELPERS } from "./appExportPythonZip.js";
@@ -38,9 +39,37 @@ from agentenv_protocol.computer.app_data import INITIAL, add, get, in_thread, ke
 from agentenv_protocol.types import DataPart
 `;
 
+/** Translate the shared XML grammar's code point escapes into Python regex escapes. */
+const PYTHON_XML_ELEMENT_OPENING = XML_ELEMENT_OPENING.replaceAll(
+  /\\u\{([0-9a-f]+)\}/giu,
+  (_, code: string) => `\\U${code.padStart(8, "0")}`,
+);
+
 /** Python helpers the class uses to seed the home, load dconf keys and read typed views. */
 export const PYTHON_HELPERS = String.raw`
 XML_SUFFIXES = (".xml", ".xbel", ".plist", ".svg", ".ui")
+XML_ELEMENT_OPENING = re.compile(r"${PYTHON_XML_ELEMENT_OPENING}")
+def _opens_element(text: str) -> bool:
+    """Whether text opens with an element, after a DOCTYPE with no internal subset or none. A '[' inside a quoted id is not a subset."""
+    if XML_ELEMENT_OPENING.match(text):
+        return True
+    declared = re.match(r"(?:<\?xml[^>]*>\s*)?<!DOCTYPE\b", text)
+    if declared is None:
+        return False
+    quote = ""
+    for index in range(declared.end(), len(text)):
+        character = text[index]
+        if quote:
+            if character == quote:
+                quote = ""
+            continue
+        if character in ('"', "'"):
+            quote = character
+        elif character == "[":
+            return False
+        elif character == ">":
+            return XML_ELEMENT_OPENING.match(text[index + 1:].lstrip()) is not None
+    return False
 GROUP_HEADER = re.compile(r"^\[([^\]]+)\]$")
 LINE_BREAK = re.compile(r"\r?\n")
 SQLITE_HEADER = b"SQLite format 3\x00"
@@ -114,6 +143,28 @@ def _seed_home(home: Path) -> None:
         else:
             data = _respelled_utf16(data, home)
         target.write_bytes(data)
+        mode = SEED_MODES.get(relative)
+        if mode is not None:
+            target.chmod(mode)
+
+
+def _ensure_state_aliases(home: Path) -> None:
+    """Restore selected aliases without replacing any existing user data."""
+    aliases = sorted(STATE_ALIASES, key=lambda pair: len(Path(pair[0]).parts))
+    for alias, target in aliases:
+        link = home / alias
+        destination = home / target
+        has_children = any(Path(alias) in Path(child).parents for child, _ in aliases)
+        if link.is_symlink() and link.resolve() == destination.resolve():
+            if has_children:
+                destination.mkdir(parents=True, exist_ok=True)
+            continue
+        if os.path.lexists(link):
+            raise FileExistsError(f"Cannot restore selected state alias; path already exists: {link}")
+        link.parent.mkdir(parents=True, exist_ok=True)
+        if has_children:
+            destination.mkdir(parents=True, exist_ok=True)
+        link.symlink_to(destination)
 
 
 def _ensure_state_aliases(home: Path) -> None:
@@ -282,7 +333,9 @@ def _text_view(name: str, text: str, size: int) -> dict:
         if view is not None:
             return view
     lowered = name.lower()
-    if lowered.endswith(XML_SUFFIXES) or trimmed.startswith("<?xml"):
+    # Text that opens with an element, after a DOCTYPE with no internal subset or none, is XML if it parses, whatever
+    # the file is called, as a Freeplane map or KmPlot's <!DOCTYPE kmpdoc> plot.
+    if lowered.endswith(XML_SUFFIXES) or trimmed.startswith("<?xml") or _opens_element(trimmed):
         view = _xml_view(text)
         return _text(text) if view is None else {"format": "xml", "view": view, "truncated": view["truncated"]}
     if _is_keyfile(text):
@@ -347,6 +400,7 @@ const PYTHON_CONSTANTS = [
   "PATHS",
   "DCONF",
   "TEXT_SEEDS",
+  "SEED_MODES",
   "STATE_ALIASES",
   "WINDOW_CLASS",
 ] as const;

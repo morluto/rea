@@ -11,7 +11,7 @@ import {
   PYTHON_READY_CHECK,
 } from "./appExportPython.js";
 import {
-  isLockFile,
+  leftOutFiles,
   unownedReadmeNotes,
   type RuntimeSeeds,
 } from "./appExportUnowned.js";
@@ -47,6 +47,8 @@ export interface DesktopAppExportPlan {
   readonly packageFile: ExportPackageFile | null;
   /** The package of the program the desktop entry runs, installed by name after the app's; absent when the app's package owns it. */
   readonly executablePackage?: string;
+  /** Packages installed beside the app because the export was asked for them; absent when none. */
+  readonly extraPackages?: readonly string[];
   /** Whether the app is Electron, whose launch then runs without Chromium's sandbox. */
   readonly electron: boolean;
   readonly command: readonly string[];
@@ -64,6 +66,8 @@ export interface DesktopAppExportPlan {
   readonly seedFiles: readonly string[];
   /** Seed files read as text, which get the seed's home path respelled. */
   readonly textSeeds: readonly string[];
+  /** Seed files' permission bits at the seed where the capture recorded them and they are not the 0644 a written file gets. */
+  readonly seedModes: Readonly<Record<string, number>>;
   /** Home-relative selected aliases that resolve to an app state path. */
   readonly stateAliases?: readonly {
     readonly alias: string;
@@ -82,16 +86,23 @@ export interface DesktopAppExportPlan {
   readonly captureEvidenceId: string;
 }
 
-/** A lowercase environment name from a desktop entry id or program, prefixed `app-` when the name check refuses it. */
+/** A reverse-DNS id, such as `org.xfce.mousepad`, whose last part names the app. */
+const REVERSE_DNS = /^[a-z][\w-]*(?:\.[a-z][\w-]*)+\.([^.]+)$/iu;
+/** A version at the end of another id, such as `-3.0` in `glabels-3.0`. */
+const TRAILING_VERSION = /(?<=.)[-_]\d+(?:\.\d+)*$/u;
+
+/**
+ * A lowercase environment name from a desktop entry id or program: a
+ * reverse-DNS id's last part, or else the whole id without a trailing
+ * version; prefixed `app-` when the name check refuses it.
+ */
 export const environmentName = (
   source: string,
   accepted: (name: string) => boolean,
 ): string => {
   const name =
-    source
-      .split(".")
-      .at(-1)
-      ?.toLowerCase()
+    (REVERSE_DNS.exec(source)?.[1] ?? source.replace(TRAILING_VERSION, ""))
+      .toLowerCase()
       .replace(/[^a-z0-9]+/gu, "-")
       .replace(/^-+/u, "")
       .slice(0, 48)
@@ -343,8 +354,9 @@ export const stateFilesByHomePath = (
 /**
  * The state view's files and dconf databases by home path, the paths the app
  * owns, and which home files the seed leaves out as locks the app holds, as
- * the export decides them. A document or a path the caller selected is never
- * left out, whatever its name.
+ * the export decides them. A document or a file under a selected path is
+ * seeded, except a lock beside its file, which stays out unless that lock
+ * was the selected path.
  */
 export const exportedStateFiles = (
   capture: DesktopApplicationCapture,
@@ -363,17 +375,20 @@ export const exportedStateFiles = (
     ...capture.application.state_directories.map((entry) => entry.path),
     ...(capture.state.state_directories ?? []),
   ]);
+  const selected = homePaths(roleFacts(capture).selectedRoots);
+  const isLeftOut = leftOutFiles(files, stateDirectories, selected);
+  // A lock directly in the home or a shared folder must not own that path, as Poedit's `~/poedit.lock` would. One inside the app's own folder still marks the folder, so settings beside the lock stay seeded.
+  const marksFolder = (home: string) => {
+    const folder = home.split("/").slice(0, -1).join("/");
+    return !SHARED_FOLDERS.has(folder);
+  };
   const paths = ownedPaths(
-    withRole("application_state"),
+    withRole("application_state").filter(
+      (home) => !isLeftOut(home) || marksFolder(home),
+    ),
     withRole("document"),
     stateDirectories,
   );
-  const usersOwn = new Set([
-    ...withRole("document"),
-    ...homePaths(roleFacts(capture).selectedRoots),
-  ]);
-  const isLeftOutLock = (home: string) =>
-    !usersOwn.has(home) && isLockFile(home, stateDirectories);
   return {
     homePath,
     stateAliases,
@@ -381,7 +396,8 @@ export const exportedStateFiles = (
     dconf,
     collisions,
     paths,
-    isLeftOutLock,
+    selected,
+    isLeftOut,
   };
 };
 
@@ -507,10 +523,11 @@ const installName = (plan: DesktopAppExportPlan): string =>
     ? plan.aptPackage
     : `${plan.aptPackage}/${plan.aptRelease}`;
 
-/** The app's package, or a package file's dependencies, then its program's package, its library packages and dconf-cli when settings are loaded. */
+/** The app's package, or a package file's dependencies, then the extra packages, its program's package, its library packages and dconf-cli when settings are loaded. */
 const aptPackages = (plan: DesktopAppExportPlan): readonly string[] => [
   ...new Set([
     ...(plan.packageFile?.dependencies ?? [installName(plan)]),
+    ...(plan.extraPackages ?? []),
     ...(plan.executablePackage === undefined ? [] : [plan.executablePackage]),
     ...plan.libraryPackages,
     ...(plan.dconf.length === 0 ? [] : ["dconf-cli"]),
@@ -580,6 +597,9 @@ SEED_HOME = ${py(SEED_HOME)}
 PATHS = ${pyList(plan.paths)}
 DCONF = ${py(plan.dconf)}
 TEXT_SEEDS = frozenset(${pyList(plan.textSeeds)})
+SEED_MODES = {${Object.entries(plan.seedModes)
+    .map(([home, mode]) => `${py(home)}: 0o${mode.toString(8)}`)
+    .join(", ")}}
 STATE_ALIASES = [${(plan.stateAliases ?? []).map(({ alias, target }) => `(${py(alias)}, ${py(target)})`).join(", ")}]
 WINDOW_CLASS = ${py(plan.windowClass)}
 ${PYTHON_HELPERS}
@@ -642,6 +662,12 @@ const packageFileNotes = ({ packageFile: file }: DesktopAppExportPlan) =>
 const installNotes = (plan: DesktopAppExportPlan): string =>
   [
     ...packageFileNotes(plan),
+    ...(plan.extraPackages === undefined
+      ? []
+      : [
+          `- Installed beside the app because the export was asked for them with \`--extra-package\`, as a build computer asks
+  for the packages its request named: ${plan.extraPackages.map((name) => `\`${name}\``).join(", ")}.`,
+        ]),
     ...(plan.executablePackage === undefined
       ? []
       : [
@@ -685,13 +711,16 @@ export const launchDocumentNote = ({
 
 /**
  * Bundle files: seeds the export rewrote to remove the capture host's
- * identity, gzip seeds it compressed again only to clear their headers, and
- * files that still hold the identity.
+ * identity, gzip seeds it compressed again only to clear their headers,
+ * files that still hold the identity, and seeds it left LibreOffice's
+ * recovery list out of.
  */
 export interface SeedScrubReport {
   readonly scrubbed: readonly string[];
   readonly recompressed: readonly string[];
   readonly unscrubbed: readonly string[];
+  /** Seeds whose LibreOffice recovery list was left out, as `~/<path>`. */
+  readonly recovered?: readonly string[];
 }
 
 const homeList = (paths: readonly string[]) =>
@@ -704,6 +733,7 @@ const scrubNotes = ({
   scrubbed,
   recompressed,
   unscrubbed,
+  recovered = [],
 }: SeedScrubReport): string =>
   [
     ...(scrubbed.length === 0
@@ -713,6 +743,12 @@ const scrubNotes = ({
       ? []
       : [
           `\n  ${String(recompressed.length)} gzip file(s) were compressed again only to clear their headers, their content unchanged.`,
+        ]),
+    ...(recovered.length === 0
+      ? []
+      : [
+          `\n- LibreOffice's list of the documents it had open, which would start it into document recovery instead of
+  its window, is left out of ${bundleList(recovered)}.`,
         ]),
     ...(unscrubbed.length === 0
       ? []

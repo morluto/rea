@@ -1,7 +1,7 @@
 <div align="center">
 
 [English](../../README.md) · [简体中文](README_zh.md) · [繁體中文](README_zh-TW.md) · [日本語](README_ja.md) · [한국어](README_ko.md) · [Türkçe](README_tr.md) · **Русский** · [Tiếng Việt](README_vi.md) · [ไทย](README_th.md) · [Deutsch](README_de.md) · [Español](README_es.md) · [Français](README_fr.md) · [Українська](README_uk.md) · [Polski](README_pl.md) · [Português (Brasil)](README_pt-BR.md) · [العربية](README_ar.md) · [فارسی](README_fa.md) · [Bahasa Indonesia](README_id.md) · [Italiano](README_it.md)
-· [Ελληνικά](README_el.md) · [മലയാളം](README_ml.md) · [Roman Urdu](README_ur-Latn.md) · [Română](README_ro.md)
+· [Ελληνικά](README_el.md) · [മലയാളം](README_ml.md) · [Roman Urdu](README_ur-Latn.md) · [Română](README_ro.md) · [Български](README_bg.md)
 
 # REA: Реверс-инжиниринг чего угодно
 
@@ -83,6 +83,10 @@ npx rea-agents setup
 Настройка поддерживает Claude Code, Codex, Cursor, Gemini CLI, Grok Build и [других агентов](../getting-started/installation.md#supported-agents). Настройка провайдеров и ручная регистрация MCP описаны в разделе [установка и настройка](../getting-started/installation.md).
 
 MCP по умолчанию использует компактные входные схемы. Для полного описания полей и вложенной валидации задайте `REA_MCP_INPUT_SCHEMA_PROFILE=full` в регистрации MCP. Оба профиля сохраняют все инструменты и одинаковую каноническую проверку на сервере; см. руководство по контрактам MCP.
+
+Настройка напрямую регистрирует выбранную среду выполнения и входной скрипт REA. При использовании средства запуска пакетов сохраняйте его запись в кэше и среду выполнения; получайте пакет из доверенного каталога вне целевого проекта. См. руководство по установке.
+
+Полные схемы вывода объявляются по умолчанию. Если клиент ограничивает `tools/list`, задайте `REA_MCP_OUTPUT_SCHEMA_PROFILE=compact` или `off` в регистрации MCP. Проверка на сервере и структурированные результаты остаются полными. См. раздел «Output schemas» в руководстве по контрактам MCP.
 
 ### Задайте вопрос агенту
 
@@ -183,6 +187,7 @@ REA требует Node.js 22.x (>=22.23.4), 24.x (>=24.22.1) или 26+ (>=26.1
 | Пакеты и ресурсы                    | Списки файлов, хеши, plist, структура пакетов Apple и извлечённые ресурсы                                                  | [Руководство по артефактам и JavaScript](../guides/javascript/javascript-artifact-reconstruction.md), [приложения Apple](../guides/apple/apple-application-analysis.md) |
 | Поведение процессов                 | Вывод терминала, взаимодействия, наблюдения за завершением и файловой системой, сравнения запусков                         | Linux/macOS с нативным PTY; [захват процессов](../guides/runtime/process-capture.md)                                                                                    |
 | PyInstaller                         | CArchive, PYZ, Python bytecode                                                                                             | Static inspection; [Python packaged applications](../python-packaged-applications.md)                                                                                   |
+| Deno compile binaries               | Virtual files, entry point, recorded options, npm snapshot length                                                          | Static inspection; [Deno compile executables](../deno-standalone.md)                                                                                                    |
 | Бинарные файлы Go                   | Встроенная версия компилятора, модули, замены и параметры сборки                                                           | Встроенный статический анализ ELF/PE/thin Mach-O; Установка Go не нужна                                                                                                 |
 | Базы SQLite                         | Таблицы, столбцы, индексы, представления, триггеры и выбранные строки обычных таблиц                                       | Локальный снимок БД/WAL; Node.js 24.x >=24.15 или 26+ с нативными ограничениями SQLite                                                                                  |
 | Объекты кода GPU                    | Цели CUDA/HIP, параметры и ресурсы выбранных ядер, сохранённый текст PTX                                                   | Встроенный статический анализ ELF/PE/fatbin/CUBIN/PTX; [GPU](../gpu-code-objects.md)                                                                                    |
@@ -273,6 +278,12 @@ REA экспортирует готовое к запуску окружение
 [Руководство по созданию окружения](https://rea.tools/guides/rl-environments/) ·
 [Справочник окружений](../agent-environments.md) ·
 [Смотреть демо в X](https://x.com/reatools/status/2112574822584918075?s=20)
+
+### Окружения десктопных приложений
+
+REA также может создать окружение десктопного приложения для Linux, которым агент пользуется через снимки экрана, мышь и клавиатуру. По запросу в одну строку, например «Создай окружение Gnote, где агент добавляет оливковое масло в заметку со списком покупок», ваш агент устанавливает приложение на локальный компьютер сборки, пишет задание, экспортирует окружение и проверяет задание на новом компьютере. Машине, которая его собирает, нужны Linux на amd64 или arm64, Docker и версия фреймворка agentenv, указанная в руководстве.
+
+[Настройка окружений десктопных приложений](../desktop-build-computer.md)
 
 ## Частые вопросы
 

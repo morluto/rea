@@ -19,10 +19,12 @@ import { INSTALL_SCRIPT } from "../../domain/desktop/appExportInstall.js";
 import {
   heldOpenLimitation,
   leftOutLocksLimitation,
+  trashedFiles,
   runtimeSeeds,
   runtimeSeedsLimitation,
   unownedChangedFolders,
   unownedFoldersLimitation,
+  unreadDconfLimitation,
 } from "../../domain/desktop/appExportUnowned.js";
 import { installLimitations } from "../../domain/desktop/appExportInstallLimitations.js";
 import type { DesktopApplicationCapture } from "../../domain/desktop/desktopCapture.js";
@@ -33,6 +35,7 @@ import {
 } from "../../domain/desktop/desktopState.js";
 import { isWithinAny } from "../../domain/desktop/desktopStateDiff.js";
 import type { HostIdentity } from "../../domain/desktop/hostIdentity.js";
+import { recoveryListLimitation } from "../../domain/desktop/seedRecoveryList.js";
 import { scrubDconf } from "../../domain/desktop/seedScrub.js";
 import { createEvidence, type Evidence } from "../../domain/evidence.js";
 import type { JsonValue } from "../../domain/jsonValue.js";
@@ -60,7 +63,7 @@ import {
   type SeedVersion,
 } from "./DesktopExportFiles.js";
 import { withRetainedContent } from "./DesktopRetainedContent.js";
-import { planLaunch, seedVersions } from "./DesktopExportLaunch.js";
+import { planLaunch, seedModes, seedVersions } from "./DesktopExportLaunch.js";
 import { selectStateEnds } from "./DesktopStateVersions.js";
 import { admitDesktopTask, type AdmittedTask } from "./DesktopTaskExport.js";
 
@@ -77,6 +80,8 @@ export interface DesktopExportRequest {
   readonly tasks: readonly string[];
   /** Where the computer downloads the captured package file from, for an application installed from one. */
   readonly packageUrl?: string | undefined;
+  /** Packages installed beside the application, such as a runtime piece a build request named. */
+  readonly extraPackages?: readonly string[] | undefined;
   /** The checkpoint the seed is taken at; the baseline when omitted. */
   readonly seedCheckpoint?: string | undefined;
   /** The checkpoint a task's end state is read at; the last when omitted. */
@@ -156,20 +161,6 @@ const unseededFiles = (
   return [...new Set([...listed, ...omitted])].sort();
 };
 
-/** Files in the desktop Trash at the seed, which the state view never makes the app's, so the seed leaves them out. */
-const trashedFiles = (
-  files: ReadonlyMap<string, StatePath>,
-  seed: number,
-): readonly string[] =>
-  [...files]
-    .filter(
-      ([, path]) =>
-        path.reasons.includes("desktop_trash") &&
-        versionAt(path, seed)?.present === true,
-    )
-    .map(([home]) => home)
-    .sort();
-
 /** Decide the bundle from the capture and its state view at the seed, with each seed's digest. */
 const planExport = (
   request: DesktopExportRequest,
@@ -195,10 +186,12 @@ const planExport = (
     capture,
     source,
     request.packageUrl,
+    request.extraPackages,
   );
   const electron = application.executable.electron_markers.length > 0;
-  const { homePath, stateAliases, files, collisions, paths, isLeftOutLock } =
-    exportedStateFiles(capture, state);
+  const stateFiles = exportedStateFiles(capture, state);
+  const { homePath, stateAliases, files, collisions, paths, isLeftOut } =
+    stateFiles;
   const { text: dconf, ...dconfScrub } = seedDconf(
     state,
     context.seed,
@@ -208,7 +201,7 @@ const planExport = (
     files,
     paths,
     context.seed,
-    isLeftOutLock,
+    isLeftOut,
   );
   const unseeded = unseededFiles(capture, homePath, files, {
     paths,
@@ -229,6 +222,9 @@ const planExport = (
     ...(install.executablePackage === undefined
       ? {}
       : { executablePackage: install.executablePackage }),
+    ...(install.extraPackages === undefined
+      ? {}
+      : { extraPackages: install.extraPackages }),
     electron,
     command: launch.command,
     opens: launch.opens,
@@ -239,21 +235,22 @@ const planExport = (
     syntheticSeed: request.syntheticSeed === true,
     seedFiles: [...seeds.keys()].sort(),
     textSeeds,
+    seedModes: seedModes(capture, seeds, files, context.seed),
     stateAliases,
-    unseededFiles: unseeded.filter((file) => !isLeftOutLock(file)),
+    unseededFiles: unseeded.filter((file) => !isLeftOut(file)),
     leftOutLocks: [
-      ...new Set([...locks, ...unseeded.filter(isLeftOutLock)]),
+      ...new Set([...locks, ...unseeded.filter(isLeftOut)]),
     ].sort(),
-    unownedFolders: unownedChangedFolders(files, paths),
+    unownedFolders: unownedChangedFolders(files, paths, isLeftOut),
     runtimeSeeds: runtimeSeeds([...seeds.keys()]),
     dconf,
     captureEvidenceId: context.evidenceId,
   };
-  const limitations = installLimitations(
-    install,
-    application.package,
-    electron,
-  );
+  const unreadDconf = unreadDconfLimitation(stateFiles.dconf, context.seed);
+  const limitations = [
+    ...installLimitations(install, application.package, electron),
+    ...(unreadDconf === undefined ? [] : [unreadDconf]),
+  ];
   return {
     plan,
     seeds,
@@ -327,6 +324,9 @@ const exportLimitations = (
     readonly collisions: readonly HomePathCollision[];
     readonly identity: HostIdentity;
     readonly trashed: readonly string[];
+    readonly recovered: readonly string[];
+    /** What the export says about the task, such as a prompt that does not name the app. */
+    readonly task: readonly string[];
     readonly files: ReadonlyMap<string, StatePath>;
   },
 ): string[] => {
@@ -342,6 +342,7 @@ const exportLimitations = (
   const unowned = unownedFoldersLimitation(plan.unownedFolders);
   const runtime = runtimeSeedsLimitation(plan.runtimeSeeds);
   const locks = leftOutLocksLimitation(plan.leftOutLocks);
+  const recovered = recoveryListLimitation(facts.recovered);
   const trashed = trashedFilesLimitation(facts.trashed);
   return [
     seedLimitation(plan.syntheticSeed),
@@ -354,6 +355,7 @@ const exportLimitations = (
           `${String(plan.unseededFiles.length)} file(s) under the owned paths existed at the seed but were not retained, so they are not seeded.`,
         ]),
     ...(locks === undefined ? [] : [locks]),
+    ...(recovered === undefined ? [] : [recovered]),
     ...(unowned === undefined ? [] : [unowned]),
     ...(runtime === undefined ? [] : [runtime]),
     ...(trashed === undefined ? [] : [trashed]),
@@ -367,6 +369,7 @@ const exportLimitations = (
       ({ home, kept, dropped }) =>
         `${dropped} and ${kept} both map to ~/${home}; the export uses ${kept} and leaves out ${dropped}.`,
     ),
+    ...facts.task,
   ];
 };
 
@@ -449,6 +452,8 @@ const runExport = async (
     collisions,
     identity,
     trashed,
+    recovered: scrub.recovered ?? [],
+    task: admitted?.limitations ?? [],
     files,
   });
   const result: DesktopExportResult = {
@@ -497,6 +502,7 @@ export const exportDesktopApplication = async (
         named: request.name !== undefined,
         tasks: request.tasks.length,
         package_url: request.packageUrl !== undefined,
+        extra_packages: [...(request.extraPackages ?? [])],
         seed_checkpoint: request.seedCheckpoint ?? null,
         end_checkpoint: request.endCheckpoint ?? null,
         synthetic_seed: request.syntheticSeed === true,

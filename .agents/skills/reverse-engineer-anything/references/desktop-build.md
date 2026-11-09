@@ -5,9 +5,11 @@ task, such as "Build me an Inkscape environment where the agent changes a
 poster's headline and saves it". You are the building agent: you drive the
 app on a build computer through REA's MCP tools, write the task, export the
 bundle and witness it in a fresh computer. REA runs no model. The tools are
-MCP-only and need Docker, `REA_AGENT_ENV_COMMAND` and
-`REA_BUILD_COMPUTER_REA_ARCHIVE` where the REA server starts; when a start
-reports one missing, tell the person what to set and stop.
+MCP-only and need a Linux host with Docker, agentenv and REA's packed
+runtime. When a start reports one missing, tell the person to run
+`rea doctor --provider desktop_build` and apply its fixes, or
+`rea setup --client <client> --desktop-build` and restart the client, and
+stop.
 
 For the whole build:
 
@@ -22,7 +24,8 @@ For the whole build:
 ## Ask once, upfront
 
 In one message, ask only what the request leaves open, and keep the list for
-the report:
+the report. Skip each question the request answers; when it answers them all,
+start without asking:
 
 1. The app and the task, if either is unclear: what changes, in which
    document.
@@ -30,6 +33,13 @@ the report:
 3. Whether they want solver runs after the witness: how many (the budget)
    and with which model.
 4. If so, whether they want to review the task before those runs.
+
+When you cannot ask, as in a headless `claude -p` run, do not stop: take
+these defaults for whatever the request leaves open, say which you took in
+your first message and in the report, and go on. Install from the Ubuntu
+archive, make a synthetic seed, skip the review, and make 3 solver runs
+within $4 in all, with the model the request names or else the runner's
+default.
 
 ## When you are blocked
 
@@ -61,9 +71,19 @@ the first source that has the app:
   `suite` `noble`, `components` `["main"]`. `key_file` is the repository's
   signing key saved on this host; for a PPA, fetch it from
   keyserver.ubuntu.com by the fingerprint its Launchpad page shows.
-- For a `.deb`, ask the requester for its URL and SHA-256; do not fetch a
-  vendor's download page yourself. List its `Depends` as `dependencies`:
-  it installs with the network off.
+- When the app exits at launch for want of a runtime piece its package does
+  not install, start a new build computer with that package in
+  `extra_packages`, up to 16 archive names; the export installs them too.
+  MyPaint needs
+  `{"kind": "archive", "package": "mypaint", "extra_packages": ["librsvg2-common"]}`
+  for its SVG icons, and Freeplane `["openjdk-17-jre"]`, since its launcher
+  refuses noble's Java 21. Name one up front, too, when a package the app
+  only recommends holds its content, such as QElectroTech's element library
+  `qelectrotech-data`, without which no component can be placed.
+- Take the `.deb` path only when the app is not in the archive at all, not
+  to add a package. Ask the requester for its URL and SHA-256; do not fetch
+  a vendor's download page yourself. List its `Depends` as `dependencies`,
+  with any runtime piece it lacks: it installs with the network off.
 - Flatpak, AppImage and snaps are not supported yet: say so and stop. An
   archive package that only installs a snap, such as noble's `firefox`,
   counts as a snap. A package with no build for this host's architecture
@@ -88,8 +108,10 @@ the first source that has the app:
   [the build-computer guide](https://github.com/morluto/rea/blob/main/docs/desktop-build-computer.md).
 - Take a `screenshot` before pointing: points are pixels of the latest
   frame. If a response is too large, ask for a `region`, or `jpeg` with a
-  lower `quality`. A region crops the latest frame and becomes it: take a
-  full screenshot before pointing again.
+  lower `quality`. A screenshot with `region` does not capture the screen
+  again; it crops the latest frame, so take a full screenshot, or a `wait`
+  with `screenshot: true`, first. The crop then becomes the latest frame:
+  take a full screenshot before pointing again.
 - A drawn caret does not prove keyboard focus. After using a toolbar
   control, click into the document, then type a few characters and look
   before a long text.
@@ -114,7 +136,9 @@ the first source that has the app:
   `~/Documents` and its sidebar has no Documents entry. Type only the file
   name. A dialog taller than the 1280×800 screen hides its buttons:
   maximize it from its title bar, or confirm it with `key` Return, as when
-  HomeBank's Save button is off-screen.
+  HomeBank's Save button is off-screen. When a GTK Save dialog ignores
+  clicks or runs off the screen, type `~/Documents/<name>` in its Name field
+  and press Return.
 - Answer the app's save questions, such as keeping the format, then check
   the saved path in the title or status bar, or the dialog's folder when
   the app shows only the name, and that it shows no unsaved mark, before
@@ -123,13 +147,114 @@ the first source that has the app:
   files, confirms the save.
 - Qt spin boxes change their value on scroll: move the pointer off them
   before you scroll.
+- gLabels edits an object's text in Object properties → Text, not on the
+  canvas.
+- In Grisbi's transaction form Return moves to the next field; only Return
+  in the last field, Notes, records the transaction.
+- ghostwriter autosaves a new document as `~/Documents/untitled-1.md`: name
+  it with File → Rename, not Save As; Ctrl+Shift+S does nothing, and Enter
+  after a checklist item starts another `- [ ]` item.
+- KMyMoney's first launch opens the New File Setup wizard; Finish asks for a
+  storage type (XML), then a Save As where typing `Documents/<name>.kmy`
+  works. Its date field is a sectioned Qt editor: double-click the month and
+  type each part, since Ctrl+A garbles it. A new transaction's payee comes
+  prefilled and selected. Amounts are saved as reduced fractions, such as
+  `-1749/20`, so compare them exactly. Untick Help → Tip of the Day → "Show
+  tips on startup" before `seed`, or the tip appears at every boot.
+- QElectroTech: an element dropped from Collections follows the pointer until
+  a click on the folio places it. Its title shows only the app, so it needs
+  `state_paths`; its settings are in `~/.qet`.
+- Rosegarden: after a dialog its Transport window can take keyboard focus,
+  so save with File → Save.
+- Pencil2D: the Tools dock is too narrow for its buttons, so use shortcuts
+  (B for the brush); double-click a layer's name to rename it.
+- Umbrello: the title shows no unsaved mark, so confirm a save with a probe
+  checkpoint. An Untitled document autosaves `~/autosave.xmi`: delete it
+  before `seed`. Add attributes from the tree: right-click the class → New →
+  Attribute.
+- Hydrogen: the computer has no audio device, so Hydrogen falls back to a
+  null driver and its BPM field snaps back to 120 within about 100 ms.
+  Before `seed`, set Preferences → Audio System → ALSA with device `null`
+  and click "Apply and restart output", which `~/.hydrogen/hydrogen.conf`
+  keeps for the seed; also set autosaves per hour to 0, and dismiss the
+  development-version dialog with "Don't show again". `pulseaudio` as an
+  extra package does not help.
+- Poedit cannot add entries by hand. Use File → New, pick the language and
+  save to `Documents` first (Sources Paths stays locked until then), then
+  Properties → Sources Paths → + → Add Files with a source such as
+  `/usr/lib/python3.12/argparse.py`. It writes `fr.mo` beside the `.po`, and
+  the language box's autocomplete popup takes the first OK click.
+- CherryTree: its first-run autosave "Choose Storage Type" dialog swallows
+  keys, so save once early as `.ctd` and untick autosave.
+- Glade: a new widget's id is empty until you set it, and a second save
+  writes a `.glade~` backup, which shows in the draft as an unrelated
+  change. A backup present at `seed` is seeded with the document, so trash
+  it before `seed`. The draft names a button's `<child>` by the id
+  its widget carries, `[name=child][>object@id=submit_button]`, which moving
+  the button keeps; give the widget an id before `seed` so it can.
+- VYM: the title never names the map, so pass `Documents/<map>.vym` in
+  `state_paths`. Its settings live in `.config/InSilmaril` and are written
+  only at a clean exit. It writes `<map>.vym.lock` while a map is open, so
+  close the map before `seed`. Press A only after clicking a branch on the
+  canvas: keys typed in the tree editor run other shortcuts.
+- KmPlot: Create → Cartesian Plot, then edit the formula in the Function
+  tab and press Return. It stores minus as U+2212 (`−`). Its file:// title
+  still names the file.
+- RedNotebook keeps each month in `~/.rednotebook/data/YYYY-MM.txt`, YAML
+  read as text, folded at about column 80: pick check phrases the fold keeps
+  on one line.
+- Qt5 apps saving with QDom, such as KmPlot, write attributes in a random
+  order in each process, so check their XML by element, never by whole line.
+- Gnumeric's desktop entry is `org.gnumeric.gnumeric`. Its Save As dialog
+  runs off the 1280×800 screen: type `~/Documents/<name>` in Name and press
+  Return. Rename a sheet with right-click on its tab, then Rename….
+- Parley's title shows the collection's title, so name the file in
+  `state_paths`. File → New opens the new collection's Properties dialog:
+  confirm it with OK, since Cancel keeps the old collection and its autosave
+  lock open. A new collection starts with 15 blank entries: delete them.
+  Pick languages from the dropdown; a typed name keeps the previous locale.
+  While a document is open KDE keeps an autosave and its `.lock` in
+  `~/.local/share/stalefiles/parley/`, and there is no File → Close: before
+  `seed`, use File → New, then reopen the collection from Open Recent.
+- Sigil: pass `extra_packages: ["libqt5svg5"]`, or its SVG toolbar icons are
+  blank. Its title names the book, so it needs no `state_paths`. It unpacks
+  the open book into `.local/share/sigil-ebook/sigil/workspace/Sigil-XXXXXX/`
+  and deletes it on exit, so never name the whole `sigil-ebook` folder: that
+  seeds the stale copy.
 - What the app saved under the home before `seed`, such as a document in
   `~/Documents` or its settings, is part of the seed. A file you move to the
   Trash is left out, and the export lists it in `limitations`. Trash a stray
-  file rather than starting over.
+  file rather than starting over. JabRef 3.8 writes `<file>.bak` and
+  `<file>.sav` beside a `.bib` it saves; in the owned folder they are seeded
+  and show in the draft as noise, so trash them before `seed` if they should
+  not ship.
 - Dismiss first-run dialogs, such as a welcome screen, before `seed`. A
   choice the app saves only later, such as Inkscape's "show this every
   time", may not reach the seed, so expect the dialog in the witness too.
+- Some apps write their settings late: Freeplane writes
+  `~/.config/freeplane/1.7.x/auto.properties` only once Preferences is
+  confirmed, and a seed without it reopens its documentation map. Before
+  `seed`, open the app's preferences and confirm them, then read a probe
+  checkpoint's `changed_files` to see the settings file written.
+- Before `seed`, click into the document to clear any selection the app
+  would save: Gnote saves its cursor and selection with the note.
+- An app whose state folder is named after it, such as
+  `~/.local/share/gnote`, or after it and its version, such as TreeLine's
+  `~/.treeline-3.1`, is found without `state_paths`.
+- TreeLine: File → New opens a template window. Book List's CATEGORY makes
+  AUTHOR children by default; change it under Data → Configure Data Types →
+  Default Child Type. A new child opens an inline rename showing "", so
+  press Escape and fill its fields in the Data Edit tab. Ctrl+A adds a child
+  node even while a field has focus. Clicking a node already selected starts
+  an inline rename, so Ctrl+X then cuts its text: cut a node from its
+  context menu. It saves nodes sorted by their
+  generated uid1, so their order changes from run to run. The draft names a
+  new node by its format and a field of its `data`,
+  `/nodes/[format=BOOK][>data~1Title=The Silk Roads]`, and checks its other
+  fields through that, so give each new node a title no other node has.
+- After an app crashes, capture again on a fresh computer, so the seed
+  carries no crash-recovery state, such as MyPaint's "Recover interrupted
+  work?".
 - Give what the task changes a stable name where the app has one, such as an
   id in Inkscape's Object Properties, so a check can select it.
 - Expect apps to split text into runs: Writer's revision ids split an
@@ -137,6 +262,13 @@ the first source that has the app:
   `P1`, and AbiWord wraps each insertion in `<c>`. Check such text whole
   with `text_equals` (see Write the task), and find the paragraph by
   something the edit keeps, such as AbiWord's `xid`.
+- Freeplane's first launch opens a documentation map: close it with Ctrl+W.
+  Its Ctrl+N asks for a template.
+- MyPaint 2.0.1 crashes on brush strokes on the build computer: build its
+  seed with flood fill and layer operations.
+- GnuCash's Ctrl+S on a new book opens a Save dialog with no format choice:
+  use File > Save As to pick XML. Close the book (File > New File) before
+  `seed`, so its `.LCK` lock is not seeded.
 
 ## Build the seed and the edit
 
@@ -150,8 +282,10 @@ the first source that has the app:
    `package_lists_error` may stop the capture finding the package's
    sources; the export says when that matters. When the app exits before
    its window opens, the error gives its exit code and the end of its
-   stderr, which may name what it lacks, such as a Java runtime: try
-   another install source, or stop as for an install this flow cannot do.
+   stderr, which may name what it lacks, such as an icon loader or a Java
+   runtime: close the computer and start a new one with that package in
+   `extra_packages` (see Choose the install), or stop as for an install
+   this flow cannot do.
    - REA counts a file as the app's document only when the app's window
      title shows its file name or `~/` path. When the title shows something
      else, such as MuseScore's score title, pass the path you will save the
@@ -160,7 +294,9 @@ the first source that has the app:
      It need not exist yet. Add the app's settings folder when its name
      differs from the app's, such as `.config/MuseScore`, so the seed keeps
      the dismissed first-run dialogs. Do not pass the document as a launch
-     argument to make REA see it: `state_paths` is the way.
+     argument to make REA see it: `state_paths` is the way. gLabels' title
+     leaves out the file's extension and Grisbi's shows the entity's name,
+     so both need it.
    - An app whose document is a folder of pages, such as a Zim notebook
      (`Notebooks/Notes`, a `.txt` file per page), never shows a file in its
      title: pass the folder in `state_paths`. Every page in it is then a
@@ -180,13 +316,14 @@ the first source that has the app:
      document: that state is the seed. Build it in the app and mark `seed`
      once the app has written. To see whether it has, mark a throwaway
      checkpoint, such as `probe-1`, and read its `changed_files`: up to ten
-     files that changed since the checkpoint before, those under
-     `state_paths` first, then those the app held open, caches last, with
-     `more_changed_files` counting the rest.
+     files that changed since the checkpoint before, those a window title
+     named first, then those under `state_paths` and those the app held
+     open, caches last, with `more_changed_files` counting the rest.
    - The app's own compressed format works when it is gzip, such as
      Gnumeric's `.gnumeric`, Dia's `.dia` or Inkscape's `.svgz`: REA reads
      the document inside, and checks point into it as into the same
-     document uncompressed. A format REA reads as binary, such as one
+     document uncompressed. Compression may be off by default: Dia's
+     "Compress diagram files" is unticked, which REA reads as plain XML. A format REA reads as binary, such as one
      compressed with xz, has no view: save in a format the app offers that
      REA reads, then reopen the file once and check that a plain Ctrl+S
      keeps that format.
@@ -217,8 +354,13 @@ the first source that has the app:
 
    A note with a `file` says why that file's suggestions are thin:
    - `by_position`: only position names what changed; its `elements` lack
-     a naming attribute. Check an ancestor's text, or give the element a
-     name in the app, such as an id, and capture again.
+     a naming attribute. Name a record that keeps its fields as child
+     elements by one of them, as Osmo's contact by
+     `[name=contact][>first_name=Delphine]`, a JSON record by a field
+     inside it, `[>data/Title=…]` (`~1` for the `/` inside a pointer), or
+     an element by an id its child carries, `[>object@id=…]`; count records
+     with `member_count`, `matching` `[name=contact]`; otherwise check an
+     ancestor's text, or give the element an id in the app and capture again.
    - `view_state_only`: every change is view state, a renumbered id or a
      time the app stamps, and its `pointers` are the checks kept. The edit
      was likely not saved: capture again and save it before `end`.
@@ -233,9 +375,11 @@ Write `{"name", "prompt", "checks"}` from the draft and what you did.
 
 - `name`: lowercase letters, digits and hyphens, not `smoke`.
 - `prompt`: what the requester wants, in their words and the app's terms,
-  naming the document as a user would and ending with saving it: "Change the
-  poster's headline in Documents/poster.svg to Summer Bake Sale and save
-  it." Leave saving out for an app that saves on its own, after every change
+  starting with the app's name, naming the document as a user would and
+  ending with saving it: "In Inkscape, change the poster's headline in
+  Documents/poster.svg to Summer Bake Sale and save it." Name the app: the
+  solving agent's own shell cannot see the computer's files, and the app's
+  name sends it to the screen. Leave saving out for an app that saves on its own, after every change
   or a few seconds after the last one, such as Osmo or Gnote: grading waits
   until the app's files have held for 3 s, so the solving agent need not
   wait for the save. A save more than 3 s after the agent stops is still
@@ -246,16 +390,24 @@ Write `{"name", "prompt", "checks"}` from the draft and what you did.
   what the user did and drop what follows from how the app saves.
 - Compare exact values, so a typo or a wrong number fails.
 - Read each file's `values` before writing checks: every value the change
-  added, changed and removed, with `before` and `after` (a scalar, or an
-  element as compact XML, cut at 600 characters) at the pointer a check
-  names it by, so copy the pointer and the `after` value into a check.
+  added, changed and removed, with `before` and `after` (an uncut scalar, or
+  a preview cut at 600 characters) at the pointer a check names it by. Copy
+  the pointer. Copy `after` into `value` only when it is an uncut scalar: a
+  string without a trailing `…`, a number, or a boolean. Compact XML and a
+  JSON array or object are preview strings, so a `value_equals` check needs
+  the structured value from the file's view, and element text uses
+  `text_equals` or `text_contains`.
   Only XML files, archives, JSON and key files have values: a text file's
   or SQLite database's `change` already lists its lines and rows.
-  `refers_to` says what a number stands for, such as `category="44"`
-  naming `<cat key="44" name="Groceries"/>`; use it for the prompt's words.
+  `refers_to` says what a number or id stands for, such as `category="44"`
+  naming `<cat key="44" name="Groceries"/>`, or a new KMyMoney
+  transaction's splits naming their account and payee; use it for the
+  prompt's words. `alternatives` gives a changed value's pointer by the
+  element's other names, such as a label beside an id, to pick another key
+  without another export.
   Skip entries whose `note` is `by_position` (no check can use that
   pointer) or noise (`view_state`, `renumbered`, `volatile`,
-  `timestamp`, `upkeep`). `values_cut` means a limit left some out.
+  `timestamp`, `upkeep`, `layout`). `values_cut` means a limit left some out.
 - Select elements by what they hold, never by position: SVG text by id,
   `/root/children/[name=g][@inkscape:label=Layer 1]/children/[name=text][@id=headline]/children/[name=tspan]/children/0`,
   or an ODF paragraph by style,
@@ -278,8 +430,10 @@ Write `{"name", "prompt", "checks"}` from the draft and what you did.
   unchanged element is in `draft.guards` when it is a like sibling of a
   changed one, and otherwise use the app's usual numbering, such as another
   paragraph's `xid`, and let the export confirm it.
-- In an ODS spreadsheet no attribute names a row or a cell. Name the sheet
-  in the seed, and check its whole text: `text_equals` on
+- In an ODS spreadsheet no attribute names a row: the draft names it by its
+  label cell, `[name=table:table-row][>table:table-cell=February]`. Where no
+  cell names it alone, name the sheet in the seed, and check its whole
+  text: `text_equals` on
   `/entries/[name=content.xml]/view/root/children/[name=office:body]/children/[name=office:spreadsheet]/children/[name=table:table][@table:name=Q1 Sales]`,
   or a stretch of it with `text_contains`. Cell texts join with nothing
   between, so a row reads `February23100`.
@@ -287,11 +441,14 @@ Write `{"name", "prompt", "checks"}` from the draft and what you did.
   draft compares the whole text with `text_equals`. This rejects longer or
   negated items, but can reject a correct edit with different ordering or
   spacing. Report that limitation when the task permits such variations.
-- Some apps keep text in an attribute, such as Scribus's `<ITEXT CH=...>`.
-  `text_equals` cannot join it, so check the attribute with `value_equals`:
-  `/root/children/[name=DOCUMENT]/children/[name=PAGEOBJECT][@ANNAME=Headline]/children/[name=StoryText]/children/[name=ITEXT]/attributes/CH`.
-  A partial edit the app restyles splits the text into several runs and
-  fails that check; list it in the report's limitations.
+- For a note placed by its own `x` and `y`, such as Xournal++'s `<text>`
+  on a layer, the draft checks its text on the layer with `text_contains`,
+  which passes wherever the user puts it, and guards each note it kept.
+- Some apps keep text in an attribute, one element per run, such as
+  Scribus's `<ITEXT CH=...>`: add `"text_attribute": "CH"` to `text_equals`
+  or `text_contains` on the frame,
+  `/root/children/[name=DOCUMENT]/children/[name=PAGEOBJECT][@ANNAME=Headline]`,
+  to read its runs' values joined.
 - When the draft shows no values or no checks, a scratch export can expose
   `envs/<env>/seed/` only after the task has at least one valid check: it must
   pass on the captured end state and fail on the seed. Before the first
@@ -345,10 +502,23 @@ expect its first-run wizard, a tour or a "restore session?" question at every
 boot. If the witness shows one, capture again on a new build computer with
 those folders in `state_paths`, and dismiss the dialogs before `seed`. Lock
 files the app holds while it runs, such as LibreOffice's `.lock` and
-`.~lock.<name>#`, are left out of the seed and listed after "Left out of the
-seed", so you need not close the document or delete them before `seed`. The
-limitations also name seeded WebKit or Chromium storage and caches; when the
-witness's boot is clean, list them in the report.
+`.~lock.<name>#`, GnuCash's `<book>.LCK` or Grisbi's `.<file>.lock`, are
+left out of the seed and listed after "Left out of the seed". An app can
+still start fine yet refuse every save when a lock was seeded, so close the
+document before `seed` where the app lets you (apps other than LibreOffice,
+such as Rosegarden, also write `.~lock.<name>#` and autosaves beside a
+document, and closing it covers them too), and treat "file is locked"
+on a save in the witness as a seeded lock: delete it from the bundle's seed
+and witness again in a new computer. In LibreOffice, own the profile
+(`state_paths: [".config/libreoffice"]`) for a clean boot, and close the
+document before `seed`, then reopen it from Recent Documents to make the
+change: the export also leaves out the recovery list LibreOffice writes while
+a document is open, which would start the bundle into document recovery. A
+limitation naming `~/.config/dconf/user` as unread means the app's dconf
+settings, such as a first-run tip you turned off, are not seeded: capture
+again on a new build computer. The limitations also name seeded WebKit,
+Chromium or QtWebEngine storage and caches; when the witness's boot is clean,
+list them in the report.
 
 Keep the build computer open until the witness holds: a task fix exports
 again from it.
@@ -404,14 +574,17 @@ Stop after three witnesses and report what still fails.
 
 ## Solver runs
 
-Only if the requester asked for them. If they wanted to review the task
-first, show them its prompt and checks and wait for their approval. Then run
-the bundle within the budget, one run at a time, with the runner
-`REA_AGENT_ENV_COMMAND` names:
+Only if the requester asked for them, or by the headless default above. If
+they wanted to review the task first, show them its prompt and checks and
+wait for their approval. Then run the bundle within the budget, one run at a
+time, with `REA_AGENT_ENV_COMMAND`'s runner, or else `agent-env` on PATH:
 `agent-env run <bundle> --task <name> --agent claude-code --model <model>`.
-Count runs reported `passed`. A run `scored below 1` is a miss; one reported
-`failed` did not finish, so run it again if the budget allows instead of
-counting it. Never run past the budget.
+The runner needs a model endpoint in your shell: `LITELLM_BASE_URL` and
+`LITELLM_API_KEY`, or `base_url` and `api_key` under `[model]` in
+`.agentenv/config.toml`. When a run says no model endpoint is set, tell the
+person what to set and stop. Count runs reported `passed`. A run
+`scored below 1` is a miss; one reported `failed` did not finish, so run it
+again if the budget allows instead of counting it. Never run past the budget.
 
 ## Close and report
 

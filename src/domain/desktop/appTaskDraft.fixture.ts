@@ -2,6 +2,7 @@ import type { JsonValue } from "../jsonValue.js";
 import type { DesktopTaskCheckInput } from "./appTask.js";
 import { evaluateTaskChecks } from "./appTaskChecks.js";
 import { draftTaskFiles, type TaskDraftFile } from "./appTaskDraft.js";
+import { leftOutFiles } from "./appExportUnowned.js";
 import type { DesktopStatePath } from "./desktopState.js";
 import { xmlView } from "./stateFormats.js";
 
@@ -35,11 +36,17 @@ export const statePath = (
 /** The draft of files by home path, every one served, from the seed to the end. */
 export const draftOf = (
   files: Record<string, DesktopStatePath>,
+  selected: readonly string[] = [],
 ): readonly TaskDraftFile[] =>
-  draftTaskFiles(new Map(Object.entries(files)), () => true, {
-    seed: 0,
-    end: 1,
-  });
+  draftTaskFiles(
+    new Map(Object.entries(files)),
+    () => true,
+    {
+      seed: 0,
+      end: 1,
+    },
+    leftOutFiles(new Map(Object.entries(files)), [], selected),
+  );
 
 /** An XML text's view, which a test's own text always has. */
 export const xml = (text: string): JsonValue => {

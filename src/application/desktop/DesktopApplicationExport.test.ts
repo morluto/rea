@@ -8,6 +8,7 @@ import { z } from "zod";
 import { createTestTempDirectory } from "../../../tests/fixtures/temporaryDirectory.js";
 import { SafeOutputTree } from "../../artifacts/SafeOutputTree.js";
 import {
+  VARICAD_FILE,
   VARICAD_URL,
   varicadPackage,
 } from "../../domain/desktop/debianPackageFile.fixture.js";
@@ -612,12 +613,12 @@ const DOCUMENT_LOCK_TEXT =
 
 const exportLocked = async (
   recorded = lockedCapture(),
-  extraContent: readonly string[] = [],
+  content: readonly string[] = [],
 ) => {
   const folder = await writeCaptureFolder(recorded, undefined, [
     PROFILE_LOCK_TEXT,
     DOCUMENT_LOCK_TEXT,
-    ...extraContent,
+    ...content,
   ]);
   const directory = join(
     await createTestTempDirectory("desktop-export-"),
@@ -759,6 +760,380 @@ describe("exportDesktopApplication of lock files and folders the app held files 
       "the seed holds ~/Documents/today.txt from there",
     );
     expect(heldOpen).not.toContain("nothing there is seeded");
+  });
+});
+
+describe("exportDesktopApplication of a lock named for the file beside it", () => {
+  it("leaves out a lock named for the file beside it, as GnuCash's <book>.LCK and Grisbi's .<file>.lock, and seeds lone ones", async () => {
+    const locked = lockedCapture();
+    const [baseline, edited] = locked.state.checkpoints;
+    if (baseline === undefined || edited === undefined)
+      throw new Error("the fixture has two checkpoints");
+    const documents = `${HOME}/Documents`;
+    const written = [
+      [`${documents}/household.gnucash`, "<gnc-v2/>\n"],
+      [`${documents}/household.gnucash.LCK`, "x\n"],
+      [`${documents}/household.gsb`, "<Grisbi/>\n"],
+      // Grisbi's lock is empty.
+      [`${documents}/.household.gsb.lock`, ""],
+      [`${documents}/notes.lck`, "x\n"],
+      [`${documents}/.notes.lock`, "x\n"],
+    ] as const;
+    const recorded: DesktopApplicationCapture = {
+      ...locked,
+      state: {
+        ...locked.state,
+        checkpoints: [
+          baseline,
+          {
+            ...edited,
+            changes: [
+              ...edited.changes,
+              ...written.map(([path, text]) => change(path, { after: text })),
+            ],
+            retained: [
+              ...edited.retained,
+              ...written.map(([path, text]) => retained(path, text)),
+            ],
+          },
+        ],
+      },
+    };
+
+    const { result, directory } = await exportLocked(recorded, [
+      "<gnc-v2/>\n",
+      "<Grisbi/>\n",
+      "",
+      "x\n",
+    ]);
+
+    const seedFiles = z
+      .object({ seed_files: z.array(z.string()) })
+      .parse(result.normalized_result).seed_files;
+    expect(seedFiles).toEqual(
+      expect.arrayContaining([
+        "Documents/household.gnucash",
+        "Documents/household.gsb",
+        "Documents/notes.lck",
+        "Documents/.notes.lock",
+      ]),
+    );
+    const locks = [
+      "Documents/household.gnucash.LCK",
+      "Documents/.household.gsb.lock",
+    ];
+    const module = await readFile(
+      join(directory, "envs/notes/notes_app.py"),
+      "utf8",
+    );
+    const leftOut = result.limitations.find((limitation) =>
+      limitation.startsWith("Left out of the seed:"),
+    );
+    for (const lock of locks) {
+      expect(seedFiles).not.toContain(lock);
+      expect(await exists(join(directory, "envs/notes/seed", lock))).toBe(
+        false,
+      );
+      // The text seeds the app respells at boot do not name it either.
+      expect(module).not.toContain(lock);
+      expect(leftOut).toContain(`~/${lock}`);
+    }
+  });
+});
+
+/** The locked capture with `written` files added at `edited`, each a state file, held open, or neither, with its mode. */
+const withWritten = (
+  written: readonly (readonly [
+    string,
+    string,
+    "state" | "opened" | "neither",
+    number,
+  ])[],
+): DesktopApplicationCapture => {
+  const locked = lockedCapture();
+  const [baseline, edited] = locked.state.checkpoints;
+  if (baseline === undefined || edited === undefined)
+    throw new Error("the fixture has two checkpoints");
+  return {
+    ...locked,
+    state: {
+      ...locked.state,
+      checkpoints: [
+        baseline,
+        {
+          ...edited,
+          changes: [
+            ...edited.changes,
+            ...written.map(([path, text, mark, mode]) => {
+              const made = change(
+                path,
+                { after: text },
+                { state: mark === "state" },
+              );
+              return {
+                ...made,
+                after: { ...made.after, mode },
+                opened_by_application: mark === "opened",
+              };
+            }),
+          ],
+          retained: [
+            ...edited.retained,
+            ...written.map(([path, text]) => retained(path, text)),
+          ],
+        },
+      ],
+    },
+  };
+};
+
+describe("exportDesktopApplication of Poedit's locks and a seed's mode", () => {
+  it("leaves out a lock in the home and Lucene's write.lock, and never owns the home's lock", async () => {
+    const index = `${HOME}/.local/share/notes/TranslationMemory`;
+    const { result } = await exportLocked(
+      withWritten([
+        // wxWidgets' single-instance lock, which holds a PID and must stay 0600.
+        [`${HOME}/poedit.lock`, "4242\n", "opened", 0o600],
+        [`${index}/write.lock`, "", "state", 0o644],
+        [`${index}/segments_2`, "seg\n", "state", 0o644],
+      ]),
+      ["4242\n", "", "seg\n"],
+    );
+
+    const exported = z
+      .object({ seed_files: z.array(z.string()), paths: z.array(z.string()) })
+      .parse(result.normalized_result);
+    expect(exported.seed_files).toContain(
+      ".local/share/notes/TranslationMemory/segments_2",
+    );
+    expect(exported.seed_files).not.toContain("poedit.lock");
+    expect(exported.seed_files).not.toContain(
+      ".local/share/notes/TranslationMemory/write.lock",
+    );
+    expect(exported.paths).not.toContain("poedit.lock");
+    expect(
+      result.limitations.find((limitation) =>
+        limitation.startsWith("Left out of the seed: lock files"),
+      ),
+    ).toContain("~/.local/share/notes/TranslationMemory/write.lock");
+    // Nothing tells the agent to own the home's lock.
+    expect(
+      result.limitations.filter((limitation) =>
+        limitation.includes("~/poedit.lock"),
+      ),
+    ).toEqual([]);
+  });
+
+  it("keeps a seed file's captured mode when it is not the bundle's 0644", async () => {
+    const { directory } = await exportLocked(
+      withWritten([
+        [`${HOME}/.config/notes/secret.ini`, "[s]\n", "state", 0o600],
+        [`${HOME}/.config/notes/run.sh`, "#!/bin/sh\n", "state", 0o755],
+      ]),
+      ["[s]\n", "#!/bin/sh\n"],
+    );
+
+    expect(
+      await readFile(join(directory, "envs/notes/notes_app.py"), "utf8"),
+    ).toContain(
+      'SEED_MODES = {".config/notes/run.sh": 0o755, ".config/notes/secret.ini": 0o600}',
+    );
+  });
+});
+
+describe("exportDesktopApplication of the app's logs", () => {
+  it("seeds unselected app logs and leaves their locks out", async () => {
+    const locked = lockedCapture();
+    const [baseline, edited] = locked.state.checkpoints;
+    if (baseline === undefined || edited === undefined)
+      throw new Error("the fixture has two checkpoints");
+    const logLine = "os_version = 7.0.0-1014-aws\n";
+    const history = "Ada: Hello\nLin: Welcome\n";
+    const freeplane = `${HOME}/.config/notes/1.7.x/logs/log.0`;
+    // QElectroTech's log in its own folder, which it holds open as it does its settings.
+    const qet = `${HOME}/.qet`;
+    const selected = `${HOME}/.config/notes/notes.log`;
+    const document = `${HOME}/Documents/build.log`;
+    const written = [
+      [`${HOME}/.config/notes/history.log`, history, "state"],
+      [freeplane, logLine, "state"],
+      [`${freeplane}.lck`, "", "state"],
+      [`${qet}/20261106.log`, logLine, "opened"],
+      [`${qet}/qelectrotech.conf`, "[ui]\n", "opened"],
+      [selected, logLine, "state"],
+      [document, logLine, "neither"],
+      // LevelDB's write-ahead logs hold saved writes, in browser storage or not.
+      [
+        `${HOME}/.config/notes/Local Storage/leveldb/000003.log`,
+        logLine,
+        "state",
+      ],
+      [`${HOME}/.config/notes/sync/000005.log`, logLine, "state"],
+      [`${HOME}/.config/notes/sync/CURRENT`, "MANIFEST-000004\n", "state"],
+    ] as const;
+    const recorded: DesktopApplicationCapture = {
+      ...locked,
+      session: {
+        ...locked.session,
+        windows: locked.session.windows.map((window) => ({
+          ...window,
+          titles: [...window.titles, "build.log - Notes"],
+        })),
+      },
+      state: {
+        ...locked.state,
+        content_roots: [...locked.state.content_roots, selected],
+        checkpoints: [
+          baseline,
+          {
+            ...edited,
+            changes: [
+              ...edited.changes,
+              ...written.map(([path, text, mark]) => ({
+                ...change(path, { after: text }, { state: mark === "state" }),
+                opened_by_application: mark === "opened",
+              })),
+            ],
+            retained: [
+              ...edited.retained,
+              ...written.map(([path, text]) => retained(path, text)),
+            ],
+          },
+        ],
+      },
+    };
+
+    const { result, directory } = await exportLocked(recorded, [
+      history,
+      logLine,
+      "",
+      "[ui]\n",
+      "MANIFEST-000004\n",
+    ]);
+
+    const seedFiles = z
+      .object({ seed_files: z.array(z.string()) })
+      .parse(result.normalized_result).seed_files;
+    expect(seedFiles).toEqual(
+      expect.arrayContaining([
+        ".config/notes/history.log",
+        ".qet/qelectrotech.conf",
+        ".config/notes/notes.log",
+        "Documents/build.log",
+        ".config/notes/Local Storage/leveldb/000003.log",
+        ".config/notes/sync/000005.log",
+      ]),
+    );
+    for (const log of [".config/notes/1.7.x/logs/log.0", ".qet/20261106.log"]) {
+      expect(seedFiles).toContain(log);
+      expect(
+        await readFile(join(directory, "envs/notes/seed", log), "utf8"),
+      ).toBe(logLine);
+    }
+    expect(
+      await readFile(
+        join(directory, "envs/notes/seed/.config/notes/history.log"),
+        "utf8",
+      ),
+    ).toBe(history);
+    const lock = ".config/notes/1.7.x/logs/log.0.lck";
+    expect(seedFiles).not.toContain(lock);
+    expect(await exists(join(directory, "envs/notes/seed", lock))).toBe(false);
+    expect(
+      result.limitations.some((limitation) => limitation.includes(`~/${lock}`)),
+    ).toBe(true);
+  });
+
+  it("seeds a log under a folder named as a state path, but not a lock there", async () => {
+    const history = `${HOME}/.config/notes/history`;
+    const written = withWritten([
+      [`${history}/2026-11-06.log`, "saved\n", "state", 0o644],
+      [`${history}/notes.txt`, "saved\n", "state", 0o644],
+      [`${history}/.~lock.notes.txt#`, "saved\n", "state", 0o644],
+    ]);
+
+    const { result } = await exportLocked(
+      {
+        ...written,
+        state: {
+          ...written.state,
+          content_roots: [...written.state.content_roots, history],
+        },
+      },
+      ["saved\n"],
+    );
+
+    const seedFiles = z
+      .object({ seed_files: z.array(z.string()) })
+      .parse(result.normalized_result).seed_files;
+    expect(seedFiles).toContain(".config/notes/history/2026-11-06.log");
+    expect(seedFiles).not.toContain(".config/notes/history/.~lock.notes.txt#");
+  });
+});
+
+describe("exportDesktopApplication of LibreOffice's recovery list", () => {
+  it("leaves the documents to recover out of a seeded registrymodifications.xcu, and says so", async () => {
+    // LibreOffice lists the documents it has open while it runs; seeded, it starts into recovery instead of its window.
+    const registry = `${HOME}/.config/notes/registrymodifications.xcu`;
+    const kept =
+      '<item oor:path="/org.openoffice.Office.Common/Misc"><prop oor:name="FirstRun" oor:op="fuse"><value>false</value></prop></item>';
+    const text = [
+      '<?xml version="1.0" encoding="UTF-8"?>',
+      '<oor:items xmlns:oor="http://openoffice.org/2001/registry">',
+      kept,
+      `<item oor:path="/org.openoffice.Office.Recovery/RecoveryList"><node oor:name="recovery_item_1" oor:op="replace"><prop oor:name="OriginalURL" oor:op="fuse"><value>file://${HOME}/Documents/talk.odp</value></prop></node></item>`,
+      "</oor:items>",
+      "",
+    ].join("\n");
+    const local = capture();
+    const [baseline, ...later] = local.state.checkpoints;
+    if (baseline === undefined) throw new Error("the fixture has a baseline");
+    const folder = await writeCaptureFolder(
+      {
+        ...local,
+        state: {
+          ...local.state,
+          checkpoints: [
+            {
+              ...baseline,
+              retained: [...baseline.retained, retained(registry, text)],
+            },
+            ...later,
+          ],
+        },
+      },
+      undefined,
+      [text],
+    );
+    const directory = join(
+      await createTestTempDirectory("desktop-export-"),
+      "bundle",
+    );
+
+    const result = await exportDesktopApplication(
+      { capture: folder, directory, name: undefined, tasks: [] },
+      readers,
+    );
+
+    if (result instanceof Error) throw result;
+    const seeded = await readFile(
+      join(
+        directory,
+        "envs/notes/seed/.config/notes/registrymodifications.xcu",
+      ),
+      "utf8",
+    );
+    expect(seeded).not.toContain("RecoveryList");
+    expect(seeded).toContain(kept);
+    const named = "~/.config/notes/registrymodifications.xcu";
+    expect(
+      result.limitations.filter((limitation) => limitation.includes(named)),
+    ).toHaveLength(1);
+    expect(await readFile(join(directory, "README.md"), "utf8")).toContain(
+      `\`${named}\``,
+    );
+    // The recovery item held the home; with it gone nothing was rewritten for the identity.
+    expect(result.normalized_result).toMatchObject({ scrubbed_files: [] });
   });
 });
 
@@ -1020,6 +1395,45 @@ describe("exportDesktopApplication from a package file", () => {
     );
   });
 
+  it("installs an extra package beside an app apt offers, though its captured .deb names it as one alternative", async () => {
+    const local = capture();
+    const folder = await writeCaptureFolder({
+      ...local,
+      application: {
+        ...local.application,
+        package: varicadPackage({
+          sources: [
+            "http://archive.ubuntu.com/ubuntu noble/universe amd64 Packages",
+          ],
+          source_origins: ["Ubuntu"],
+          package_file: {
+            ...VARICAD_FILE,
+            depends: ["openjdk-17-jre | java-runtime"],
+          },
+        }),
+      },
+    });
+    const directory = join(
+      await createTestTempDirectory("desktop-export-"),
+      "bundle",
+    );
+    const result = await exportDesktopApplication(
+      {
+        capture: folder,
+        directory,
+        name: undefined,
+        tasks: [],
+        extraPackages: ["openjdk-17-jre"],
+      },
+      readers,
+    );
+
+    if (result instanceof Error) throw result;
+    expect(
+      await readFile(join(directory, "envs/notes/notes_app.py"), "utf8"),
+    ).toContain('packages=Packages(apt=["varicad2026-en", "openjdk-17-jre"])');
+  });
+
   it("refuses the capture without --package-url and writes nothing", async () => {
     const { result, directory } = await exportPackageFile(undefined);
 
@@ -1179,17 +1593,17 @@ describe("exportDesktopApplication home paths", () => {
   });
 });
 
-/** Export the seed-then-end capture, or `recorded` with `extraContent`, launched from a desktop entry with `exec`, seeded at `seed`. */
+/** Export the seed-then-end capture, or `recorded` with the retained `content` beside the note's, launched from a desktop entry with `exec`, seeded at `seed`. */
 const exportSeeded = async (
   exec: string | null,
   {
     recorded,
-    extraContent = [],
+    content = [],
     ...options
   }: {
     readonly syntheticSeed?: boolean;
     readonly recorded?: DesktopApplicationCapture;
-    readonly extraContent?: readonly string[];
+    readonly content?: readonly string[];
   } = {},
 ) => {
   const local = recorded ?? seedEndCapture();
@@ -1215,7 +1629,7 @@ const exportSeeded = async (
       },
     },
     undefined,
-    [EDITED_NOTE, ...extraContent],
+    [EDITED_NOTE, ...content],
   );
   const directory = join(
     await createTestTempDirectory("desktop-export-"),
@@ -1284,6 +1698,58 @@ const linkedSettingsCapture = (target: string): DesktopApplicationCapture => {
     },
   };
 };
+
+describe("exportDesktopApplication launch document by a title", () => {
+  it("opens the one document when a title shows its folder's path, which names no dconf file", async () => {
+    // CherryTree's title shows the document's folder, whose path holds the segment "user".
+    const base = seedEndCapture();
+    const [baseline, seed, ...later] = base.state.checkpoints;
+    if (baseline === undefined || seed === undefined)
+      throw new Error("the fixture has a seed checkpoint");
+    const dconf = [
+      [`${HOME}/.cache/dconf/user`, "x\n"],
+      [`${HOME}/.config/dconf/user`, "GVariant notes"],
+    ] as const;
+    const recorded: DesktopApplicationCapture = {
+      ...base,
+      session: {
+        ...base.session,
+        windows: base.session.windows.map((window) => ({
+          ...window,
+          titles: ["today.txt - /home/user/Documents - Notes 1.1.2"],
+        })),
+      },
+      state: {
+        ...base.state,
+        checkpoints: [
+          baseline,
+          {
+            ...seed,
+            changes: [
+              ...seed.changes,
+              ...dconf.map(([path, text]) => change(path, { after: text })),
+            ],
+            retained: [
+              ...seed.retained,
+              ...dconf.map(([path, text]) => retained(path, text)),
+            ],
+          },
+          ...later,
+        ],
+      },
+    };
+
+    const { result, module } = await exportSeeded("notes %U", {
+      recorded,
+      content: dconf.map(([, text]) => text),
+    });
+
+    expect(module).toContain(
+      `exec 'notes' \\"$HOME\\"/'Documents/today.txt'"]`,
+    );
+    expect(launchLimitations(result.limitations)).toEqual([]);
+  });
+});
 
 describe("exportDesktopApplication launch document", () => {
   it("opens the seed's one document when the desktop entry takes files", async () => {
@@ -1379,6 +1845,30 @@ describe("exportDesktopApplication launch document", () => {
     );
   });
 
+  it("names the environment for a desktop entry id ending in a version by the id without it", async () => {
+    const local = capture();
+    const { result } = await exportCapture({
+      ...local,
+      application: {
+        ...local.application,
+        desktop_entry: {
+          id: "glabels-3.0",
+          path: "/usr/share/applications/glabels-3.0.desktop",
+          name: "gLabels Label Designer",
+          exec: "glabels-3 %F",
+          icon: null,
+          startup_wm_class: null,
+          categories: [],
+          mime_types: [],
+          terminal: false,
+        },
+      },
+    });
+
+    if (result instanceof Error) throw result;
+    expect(result.normalized_result).toMatchObject({ environment: "glabels" });
+  });
+
   it("says a seed made for the task was made for it, and a captured one is the user's own", async () => {
     const made = await exportSeeded("notes %U", { syntheticSeed: true });
     const captured = await exportSeeded("notes %U");
@@ -1444,7 +1934,7 @@ describe("exportDesktopApplication launch document beside its lock", () => {
 
     const { result, module } = await exportSeeded("notes %U", {
       recorded,
-      extraContent: [DOCUMENT_LOCK_TEXT],
+      content: [DOCUMENT_LOCK_TEXT],
     });
 
     const seedFiles = z

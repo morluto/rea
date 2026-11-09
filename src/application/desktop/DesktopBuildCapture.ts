@@ -3,7 +3,10 @@ import { z } from "zod";
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
 import { AnalysisCancelledError } from "../../domain/analysisErrorCore.js";
 import type { BuildRequest } from "../../domain/desktop/appBuild.js";
-import { BUILD_PACKAGE_FILE } from "../../domain/desktop/appBuild.js";
+import {
+  BUILD_PACKAGE_FILE,
+  extraPackagesOf,
+} from "../../domain/desktop/appBuild.js";
 import {
   END_CHECKPOINT,
   SEED_CHECKPOINT,
@@ -49,7 +52,7 @@ const STARTING: CaptureStep = {
   operation: START,
   when: "before the app's window opened",
   afterAppExit:
-    "The app does not run as installed: check what it needs, such as a runtime its stderr names, or install it from another source on a new build computer, and close this one.",
+    "The app does not run as installed: check what it needs, such as a runtime its stderr names, and name that package in an archive install's extra_packages, or install the app from another source, on a new build computer; close this one.",
 };
 /** A checkpoint's step, for a capture that ended before acknowledging it. */
 const marking = (name: string): CaptureStep => ({
@@ -225,6 +228,8 @@ export class DesktopBuildCapture {
   #run: CaptureRun | undefined;
   readonly #entry: string | undefined;
   readonly #packageFile: { readonly url: string } | undefined;
+  /** What the request named beside the app, which the export installs too, so a package file's dependencies outlive an install by name. */
+  readonly #extraPackages: readonly string[];
 
   constructor(
     private readonly computer: ControlledComputer,
@@ -235,6 +240,7 @@ export class DesktopBuildCapture {
       request?.install.kind === "package_file"
         ? { url: request.install.url }
         : undefined;
+    this.#extraPackages = request === undefined ? [] : extraPackagesOf(request);
   }
 
   async start(
@@ -529,6 +535,7 @@ export class DesktopBuildCapture {
         ...(this.#packageFile === undefined || run.packageFile !== true
           ? {}
           : { packageUrl: this.#packageFile.url }),
+        extraPackages: this.#extraPackages,
       },
       input,
       signal,

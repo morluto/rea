@@ -138,7 +138,7 @@ export const zipEntryAt = (
 ): Record<string, JsonValue> | "none" | undefined => {
   const [first, second] = pointer.slice(1).split("/");
   if (first !== "entries" || second === undefined) return undefined;
-  const entry = locatePointer(view, `/entries/${second}`);
+  const entry = locatePointer(view, `/entries/${second}`, "zip");
   if (entry.kind !== "value") return "none";
   return isRecord(entry.value) ? entry.value : undefined;
 };

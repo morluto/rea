@@ -1,4 +1,6 @@
+import { isWellFormedXml, opensLikeXml } from "../xmlDocument.js";
 import type { NamedFacts } from "./appTaskDraftNamed.js";
+import { doctypeHasInternalSubset } from "./stateFormats.js";
 
 /** Why a file in a draft has few or no suggested checks, one code per reason. */
 export const FILE_NOTE_CODES = [
@@ -7,6 +9,9 @@ export const FILE_NOTE_CODES = [
   "long_text",
   "cut_view",
   "unreadable_view",
+  "volatile_lines",
+  "generated_reference",
+  "read_as_text",
 ] as const;
 
 /** One reason a drafted file's suggestions are thin, with the facts it rests on. */
@@ -21,6 +26,23 @@ export interface FileNote {
 }
 
 const MAX_LISTED = 5;
+
+/** Explain a relationship whose generated ID cannot be compared across runs. */
+export const generatedReferenceNotes = (
+  file: string,
+  pointers: readonly string[],
+): FileNote[] =>
+  pointers.length === 0
+    ? []
+    : [
+        {
+          code: "generated_reference",
+          file,
+          message:
+            "Some array values refer to newly generated record IDs and cannot be checked exactly across runs; review the relationship manually.",
+          pointers: pointers.slice(0, MAX_LISTED),
+        },
+      ];
 
 /** What a file's change says about whether its views can show it. */
 export interface ChangeShape {
@@ -102,3 +124,50 @@ export const fileNotes = (
   ...viewNotes(file, change),
   ...(facts === undefined ? [] : factNotes(file, facts)),
 ];
+
+/** The text a check of whether a file opens like XML reads, enough for a declaration and a DOCTYPE. */
+const OPENING_CHARS = 2048;
+
+/** The bounded opening used to recognize a text view of an XML document. */
+const textOpening = (lines: readonly string[]): string => {
+  let opening = "";
+  for (const line of lines) {
+    opening += `${line}\n`;
+    if (opening.length > OPENING_CHARS) break;
+  }
+  return opening.trimStart();
+};
+
+/** Text views can preserve XML that the structured reader cannot admit. */
+export const textOpensXml = (lines: readonly string[]): boolean =>
+  opensLikeXml(textOpening(lines));
+
+/**
+ * A note on a text file that opens like XML, with a declaration, a DOCTYPE
+ * or an element, and so reads as text only because it is not XML REA reads:
+ * its DOCTYPE has an internal subset, which can declare entities, or it is
+ * not well formed. Its checks compare lines, which hold attributes in the
+ * order the app wrote them.
+ */
+export const readAsTextNotes = (
+  file: string,
+  lines: readonly string[],
+): FileNote[] => {
+  const opening = textOpening(lines);
+  if (!opensLikeXml(opening)) return [];
+  if (
+    !doctypeHasInternalSubset(opening) &&
+    isWellFormedXml(opening, { doctype: "external" })
+  )
+    return [];
+  const why = doctypeHasInternalSubset(opening)
+    ? "its DOCTYPE has an internal subset, which can declare entities"
+    : "it is not well-formed XML";
+  return [
+    {
+      code: "read_as_text",
+      file,
+      message: `~/${file} opens like XML but reads as text, since ${why}, so its checks compare lines, each holding its attributes in the order the app wrote them.`,
+    },
+  ];
+};

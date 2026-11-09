@@ -58,7 +58,9 @@ const coordinate = z
 const SCREENSHOT_FIELDS = {
   region: fixedTupleSchema([z.number(), z.number(), z.number(), z.number()])
     .optional()
-    .describe("screenshot: [x0, y0, x1, y1] to crop to."),
+    .describe(
+      "screenshot: [x0, y0, x1, y1] to crop to. It does not capture the screen again; it crops the latest frame, so take a full screenshot, or a wait with screenshot true, first.",
+    ),
   format: z.enum(["png", "jpeg"]).optional(),
   quality: z.int().min(1).max(100).optional().describe("jpeg quality."),
 };
@@ -103,7 +105,9 @@ export const computerActionInputSchema = z.strictObject({
     .array(fixedTupleSchema([z.number(), z.number()]))
     .min(2)
     .optional()
-    .describe("drag: [x, y] points from press to release."),
+    .describe(
+      "drag: 2 to 50 [x, y] points from press to release; the driver refuses more.",
+    ),
   duration_ms: z.int().nonnegative().optional(),
   direction: z.enum(["up", "down", "left", "right"]).optional(),
   amount: z.int().positive().optional().describe("scroll: notches."),

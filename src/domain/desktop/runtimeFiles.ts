@@ -9,9 +9,30 @@ const LOCK_NAMES = new Set([
   ".parentlock",
   "parent.lock",
   "singletonlock",
+  // Lucene's index lock, as Poedit's translation memory holds.
+  "write.lock",
 ]);
 /** LibreOffice's lock beside a document it has open: `.~lock.<name>#`. */
 const DOCUMENT_LOCK = /^\.~lock\..+#$/u;
+/**
+ * A lock named for the file beside it: GnuCash's `<file>.LCK`, Grisbi's
+ * `.<file>.lock`, and VYM's `<file>.<ext>.lock`. A project's `Gemfile.lock`
+ * or `Cargo.lock` does not match.
+ */
+const SIBLING_LOCKS = [
+  /^(.+)\.lck$/iu,
+  /^\.(.+)\.(?:lock|lck)$/iu,
+  /^([^.].*\.[^.]+)\.lock$/iu,
+];
+
+/** Every file a sibling lock's name could refer to. A hidden `.lck` matches more than one pattern, so the caller checks each against the files beside it. */
+export const siblingLockTargets = (file: string): readonly string[] => {
+  const name = file.split("/").at(-1) ?? "";
+  return SIBLING_LOCKS.flatMap((lock) => {
+    const locked = lock.exec(name)?.[1];
+    return locked === undefined ? [] : [locked];
+  });
+};
 
 /** Whether a file is named as a lock an app holds while it runs, wherever it lies: a profile lock or LibreOffice's document lock. */
 export const isLockName = (file: string): boolean => {
@@ -19,8 +40,10 @@ export const isLockName = (file: string): boolean => {
   return LOCK_NAMES.has(name.toLowerCase()) || DOCUMENT_LOCK.test(name);
 };
 
-/** Folders WebKit and Chromium keep pages' storage in, lowercase. */
+/** Folders WebKit and Chromium keep pages' storage in, lowercase; QtWebEngine's is its whole profile. */
 const WEB_STORAGE_FOLDERS = new Set([
+  "qtwebengine",
+  "platform notifications",
   "local storage",
   "session storage",
   "indexeddb",
@@ -43,6 +66,8 @@ const WEB_STORAGE_FILES = new Set([
   "transportsecurity",
   "trust tokens",
   "trust tokens-journal",
+  "visited links",
+  "user_prefs.json",
 ]);
 
 /**
@@ -55,7 +80,6 @@ export const runtimeFile = (
 ): { readonly kind: RuntimeFileKind; readonly path: string } | undefined => {
   const segments = file.split("/");
   const name = (segments.at(-1) ?? "").toLowerCase();
-  if (WEB_STORAGE_FILES.has(name)) return { kind: "web_storage", path: file };
   const folders = segments.slice(0, -1);
   const upTo = (index: number) => segments.slice(0, index + 1).join("/");
   // WebKit keeps each origin's storage under storage/, beside a salt.
@@ -65,6 +89,7 @@ export const runtimeFile = (
       (folder === "storage" && (name === "salt" || name === "origin")),
   );
   if (storage >= 0) return { kind: "web_storage", path: upTo(storage) };
+  if (WEB_STORAGE_FILES.has(name)) return { kind: "web_storage", path: file };
   const cache = folders.findIndex((folder) =>
     /(?:cache|^caches)$/iu.test(folder),
   );
