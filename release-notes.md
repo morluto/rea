@@ -1077,8 +1077,10 @@
 * **tests:** reduce repeated schema compilation and CLI startup ([6b3372e](https://github.com/morluto/rea/commit/6b3372e2598a222707c580e7243defe939808ef7))
 * **tests:** reuse bounded CLI workers for native matching errors ([#9163](https://github.com/morluto/rea/issues/9163)) ([98c589e](https://github.com/morluto/rea/commit/98c589e42019b4cc2c3c6aee1f6d2031e2de2441))
 * **tests:** reuse bounded CLI workers in mobile archive checks ([#9116](https://github.com/morluto/rea/issues/9116)) ([afc9cfe](https://github.com/morluto/rea/commit/afc9cfe9ff63c5ccef2d0a6f6c71d1d26281d431))
+* **tests:** reuse CLI reader for browser input diagnostics ([4b27c51](https://github.com/morluto/rea/commit/4b27c5172456a8b799febfa9f2297ef14c5f5639))
 * **tests:** reuse CLI sessions for analysis data cases ([0b42dc5](https://github.com/morluto/rea/commit/0b42dc56d1501ca7fc7af1f0fc52018a496f5768))
 * **tests:** reuse CLI sessions in Electron call-path regressions ([#9335](https://github.com/morluto/rea/issues/9335)) ([72d5e72](https://github.com/morluto/rea/commit/72d5e72e6d7b7997c4ecb11972fc405be8ec67d2))
+* **tests:** reuse CLI workers for Rust and certificate cases ([99d00d1](https://github.com/morluto/rea/commit/99d00d1041e9dd66736239c5f607c7178938c118))
 
 
 ### Code Refactoring
@@ -1370,6 +1372,7 @@
 * reduce brittle assertions and test-only runtime paths ([#9289](https://github.com/morluto/rea/issues/9289)) ([352a846](https://github.com/morluto/rea/commit/352a8461272b4214651066f8ffae87f64947ee8b))
 * reduce wording coupling and prune redundant coverage ([1596d6a](https://github.com/morluto/rea/commit/1596d6a275e5569426f1932b5eb1327f0f877f72))
 * **reference:** pin excluded package main resolution ([#7941](https://github.com/morluto/rea/issues/7941)) ([7c57005](https://github.com/morluto/rea/commit/7c5700542ec37756f0974b54b0246c01e397dfa0))
+* **reference:** separate loader fixture data from assertions ([228ca6a](https://github.com/morluto/rea/commit/228ca6a9da99329f5370a62ad013f934c74a5273))
 * repair snapshot and setup isolation checks ([80427af](https://github.com/morluto/rea/commit/80427af8cc6e398c19311d200339fe5179b411b8))
 * **rust:** assert non-retryable compiler-hash capacity in CLI and MCP ([#5504](https://github.com/morluto/rea/issues/5504)) ([#7520](https://github.com/morluto/rea/issues/7520)) ([3959b68](https://github.com/morluto/rea/commit/3959b68d910c8abf6d07bd0ce22173505f74c11e))
 * **search:** cover Unicode literal syntax and astral case folding ([#6685](https://github.com/morluto/rea/issues/6685)) ([7ad3d79](https://github.com/morluto/rea/commit/7ad3d7928bb6d50b498939875e216043fc9d9ed1))
