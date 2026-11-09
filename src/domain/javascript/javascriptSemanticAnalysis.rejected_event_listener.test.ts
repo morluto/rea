@@ -1430,3 +1430,59 @@ it.each([
     { kind: "register", method, eventName: null },
   ]);
 });
+
+it.each([
+  ["direct write", "Function.prototype.call = wrapper;"],
+  ["qualified write", "globalThis.Function.prototype.call = wrapper;"],
+  [
+    "prototype alias",
+    "const proto = Function.prototype; proto.call = wrapper;",
+  ],
+  ["prototype escape", "configure(Function.prototype);"],
+  ["unknown property", "Function.prototype[key] = wrapper;"],
+])(
+  "orders the initializer's inherited call dependency: %s",
+  (_name, mutation) => {
+    const source = (
+      before: boolean,
+    ) => `import { EventEmitter } from "node:events";
+import { wrapper, configure } from "./patch.js";
+${before ? mutation : ""}
+const e = new EventEmitter();
+${before ? "" : mutation}
+e.on("ready");`;
+    expect(eventsForSource(source(true))).toContainEqual({
+      kind: "register",
+      method: "on",
+      eventName: "ready",
+    });
+    expect(eventsForSource(source(false))).toEqual([]);
+  },
+);
+
+it("keeps unknown timing on the initializer's inherited call dependency", () => {
+  expect(
+    eventsForSource(`import { EventEmitter } from "node:events";
+import { wrapper } from "./patch.js";
+function patch() { Function.prototype.call = wrapper; }
+const e = new EventEmitter();
+e.on("ready");`),
+  ).toContainEqual({ kind: "register", method: "on", eventName: "ready" });
+});
+
+it.each([
+  "configure(Function.prototype.call);",
+  "Function.prototype.tag = wrapper;",
+  "function patch(Function) { Function.prototype.call = wrapper; }",
+])(
+  "preserves native proof without an inherited call-slot change: %s",
+  (mutation) => {
+    expect(
+      eventsForSource(`import { EventEmitter } from "node:events";
+import { wrapper, configure } from "./patch.js";
+${mutation}
+const e = new EventEmitter();
+e.on("ready");`),
+    ).toEqual([]);
+  },
+);

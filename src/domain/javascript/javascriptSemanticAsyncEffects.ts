@@ -24,7 +24,10 @@ import {
   semanticTopLevelEffectFollowsCapture,
 } from "./javascriptSemanticMutationInitializers.js";
 import { traverseJavaScriptValueAst } from "./javascriptSemanticTraversal.js";
-import { isUnmodifiedGlobalReference } from "./javascriptSemanticAmbientWrites.js";
+import {
+  isUnmodifiedGlobalReference,
+  semanticAmbientPathMayHaveChangedAt,
+} from "./javascriptSemanticAmbientWrites.js";
 import {
   semanticOpaqueNameMayHaveChanged,
   semanticSharedModuleMayHaveOpaqueEffect,
@@ -555,6 +558,18 @@ const nodeEventEmitterReceiver = (
     return false;
   const construction = nodeEventEmitterConstruction(initializer.node, state);
   if (construction === null) return false;
+  // Node allocates through EventEmitter.init.call(this, opts). The inherited
+  // call slot is shared by functions, so its ambient effects belong to the
+  // allocation even when no events binding was written or exposed.
+  if (
+    semanticAmbientPathMayHaveChangedAt(construction, state, [
+      "global",
+      "Function",
+      "prototype",
+      "call",
+    ])
+  )
+    return false;
   // Reaching the class is not the same as reaching the method: the class object
   // and the `init` hook Node runs while constructing can both be reshaped, so a
   // construction whose surface was touched keeps its operation.
