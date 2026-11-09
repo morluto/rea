@@ -54,9 +54,11 @@ reader reports it under the name the measurement supports. Treat that name as an
 observation, not as a claim about what any other build stores there.
 `header.producer` names the producer family from the flag bits in that word. Bit 29
 marks `vm.compileFunction` (`compile_function`); bit 30 marks `vm.SourceTextModule`
-(`module`), which a check that only tests bit 29 reports as a plain script. `script`
-covers `vm.Script` and bytenode output, which carry neither flag. The source-length mask
-is `0x1fffffff`, so both flags sit outside the reported length.
+(`module`). When neither flag is present, the producer remains `unknown`:
+`vm.Script`, bytenode output and older unflagged function caches cannot be
+separated by those bits alone. The source-length mask is `0x1fffffff`, so both
+flags sit outside the reported length. This describes the admitted header
+profile rather than a version-independent V8 ABI.
 
 ## Failed inspection and provenance
 
