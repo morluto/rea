@@ -73,16 +73,6 @@ export const installLimitations = (
       : [
           `The computer installs ${install.extraPackages.join(", ")} beside the application because the export was asked for them with --extra-package, as a build computer asks for the packages its request named.`,
         ]),
-    ...(install.extraPackages === undefined
-      ? []
-      : [
-          `The computer installs ${install.extraPackages.join(", ")} beside the application because the export was asked for them with --extra-package, as a build computer asks for the packages its request named.`,
-        ]),
-    ...(install.extraPackages === undefined
-      ? []
-      : [
-          `The computer installs ${install.extraPackages.join(", ")} beside the application because the export was asked for them with --extra-package, as a build computer asks for the packages its request named.`,
-        ]),
     ...install.skipped.map(
       (repository) => `The apt repository ${repository} was left out.`,
     ),

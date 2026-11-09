@@ -96,7 +96,34 @@ const checkpointOptions = {
     .describe(
       "Checkpoint whose state a task must pass on; the capture's last by default",
     ),
+  withholdFrom: z
+    .string()
+    .optional()
+    .describe(
+      "Checkpoint marked before a sign-in or licence activation; files under the owned paths that changed after it, up to --withhold-to, are withheld from the seed and the draft",
+    ),
+  withholdTo: z
+    .string()
+    .optional()
+    .describe("Checkpoint marked after the sign-in or licence activation"),
+  withholdPath: z
+    .array(z.string())
+    .optional()
+    .describe(
+      "Home-relative file under the owned paths to withhold as sign-in or licence state, such as one written at first launch; repeat for more",
+    ),
 };
+
+/** The withhold selection the checkpoint options name. */
+const withholdOf = (options: {
+  readonly withholdFrom?: string | undefined;
+  readonly withholdTo?: string | undefined;
+  readonly withholdPath?: readonly string[] | undefined;
+}) => ({
+  from: options.withholdFrom,
+  to: options.withholdTo,
+  paths: options.withholdPath ?? [],
+});
 
 /**
  * Run a desktop operation with SQLite and dconf readers, finishing through
@@ -184,6 +211,48 @@ const withStateReaders = async (
   ).then(projectCliAnalysisResult);
 };
 
+/** The export's options for withheld state beyond the window: seeding it with consent, the consent file and the copy. */
+const withheldExportOptions = {
+  seedWithheld: z
+    .boolean()
+    .default(false)
+    .describe(
+      "Seed the withheld files after all, which needs a seed_sign_in consent in --consent",
+    ),
+  consent: z
+    .string()
+    .optional()
+    .describe(
+      "consent.json holding the person's consents, which the bundle ships",
+    ),
+  withheldCopy: z
+    .string()
+    .optional()
+    .describe(
+      "New or empty folder outside the bundle the withheld files are copied into, for whoever supplies them at run time",
+    ),
+};
+
+/** The export request's withheld fields from the CLI options, paths made absolute. */
+const withheldRequestOf = (
+  options: Parameters<typeof withholdOf>[0] & {
+    readonly seedWithheld: boolean;
+    readonly consent?: string | undefined;
+    readonly withheldCopy?: string | undefined;
+  },
+) => ({
+  withhold: withholdOf(options),
+  seedWithheld: options.seedWithheld,
+  consent:
+    options.consent === undefined
+      ? undefined
+      : absoluteCallerPath(options.consent),
+  withheldCopy:
+    options.withheldCopy === undefined
+      ? undefined
+      : absoluteCallerPath(options.withheldCopy),
+});
+
 /** Register the export of a capture folder as a computer app bundle. */
 const registerDesktopExportCommand = (
   cli: CliInstance,
@@ -242,8 +311,9 @@ const registerDesktopExportCommand = (
         .string()
         .optional()
         .describe(
-          "Folder holding a screenshot of each checkpoint as <name>.jpg, which a build computer takes; a task's screen_judge checks ship the seed's and the end's as their judge's examples",
+          "Folder holding checkpoint screenshots for screen-judge examples.",
         ),
+      ...withheldExportOptions,
       ...checkpointOptions,
     }),
     run: ({ args, options }) =>
@@ -280,6 +350,7 @@ const registerDesktopExportCommand = (
                       options.screens === undefined
                         ? undefined
                         : absoluteCallerPath(options.screens),
+                    ...withheldRequestOf(options),
                   },
                   readers,
                   signal,
@@ -323,7 +394,11 @@ const registerDesktopTaskCommand = (
                   absoluteCallerPath(args.capture),
                   readers,
                   signal,
-                  { seed: options.seedCheckpoint, end: options.endCheckpoint },
+                  {
+                    seed: options.seedCheckpoint,
+                    end: options.endCheckpoint,
+                    withhold: withholdOf(options),
+                  },
                 ),
             );
           },

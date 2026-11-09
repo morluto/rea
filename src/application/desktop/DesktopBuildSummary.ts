@@ -6,6 +6,10 @@ import {
   SEED_CHECKPOINT,
 } from "../../domain/desktop/buildCapture.js";
 import { installsFromPackageFile } from "../../domain/desktop/appExportInstall.js";
+import {
+  SIGN_IN_END,
+  SIGN_IN_START,
+} from "../../domain/desktop/appWithheld.js";
 import { draftNoteSchema } from "../../domain/desktop/appTaskDraftNotes.js";
 import { draftValueSchema } from "../../domain/desktop/appTaskDraftValues.js";
 import { desktopApplicationCaptureSchema } from "../../domain/desktop/desktopCapture.js";
@@ -42,6 +46,8 @@ const draftResultSchema = z.looseObject({
   }),
   guards: z.array(jsonObjectSchema).default([]),
   notes: z.array(draftNoteSchema).default([]),
+  // A draft from before withheld files were left out lists none.
+  withheld_files: z.array(z.string()).default([]),
 });
 
 /** A drafted file's value as the stop returns it. */
@@ -157,17 +163,28 @@ export type StoppedCapture = {
     readonly guards: Readonly<Record<string, JsonValue>>[];
     /** Why the draft has no files, or why a file's suggestions are thin. */
     readonly notes: DraftNote[];
+    /** Files the sign-in window changed, which the draft leaves out and the export withholds. */
+    readonly withheld_files: string[];
   } | null;
   readonly draft_refusal?: string;
 };
+
+/** A draft cannot safely be handed off after this server has used a secret. */
+export const secretDraftRefusal = {
+  draft: null,
+  draft_refusal:
+    "Automatic task drafting is unavailable after this server used a declared secret. The capture remains available; write the task manually and export it.",
+} as const;
 
 /** The task draft between `seed` and `end`, or why there is none. */
 const draftTask = async (
   computer: ControlledComputer,
   folder: string,
   checkpoints: ReadonlySet<string>,
+  hasDeclaredSecret: () => boolean,
   signal: AbortSignal,
 ): Promise<Pick<StoppedCapture, "draft" | "draft_refusal">> => {
+  if (hasDeclaredSecret()) return secretDraftRefusal;
   const missing = [SEED_CHECKPOINT, END_CHECKPOINT].filter(
     (name) => !checkpoints.has(name),
   );
@@ -177,17 +194,38 @@ const draftTask = async (
       draft_refusal: `No draft: the capture has no ${missing.join(" or ")} checkpoint; capture again and mark ${SEED_CHECKPOINT} once the seed is saved and ${END_CHECKPOINT} once the edit is.`,
     };
   const stdout = `${folder}/draft.json`;
-  const { stdoutBytes: bytes } = await runRea(
-    computer,
-    [
-      "describe-desktop-application-task",
-      `${folder}/capture`,
-      ...ENDS,
-      "--json",
-    ],
-    { stdout, signal },
-  );
+  const withheld = Symbol("secret draft withheld");
+  let bytes: number;
+  try {
+    const result = await runRea(
+      {
+        exec: (argv, timeout, requestSignal) => {
+          if (hasDeclaredSecret()) return Promise.reject(withheld);
+          return computer.exec(argv, timeout, requestSignal);
+        },
+        homeFiles: computer.homeFiles.bind(computer),
+        redacted: computer.redacted.bind(computer),
+      },
+      [
+        "describe-desktop-application-task",
+        `${folder}/capture`,
+        ...ENDS,
+        ...(checkpoints.has(SIGN_IN_START) && checkpoints.has(SIGN_IN_END)
+          ? ["--withhold-from", SIGN_IN_START, "--withhold-to", SIGN_IN_END]
+          : []),
+        "--json",
+      ],
+      { stdout, signal },
+    );
+    bytes = result.stdoutBytes;
+  } catch (cause: unknown) {
+    if (cause === withheld) return secretDraftRefusal;
+    if (hasDeclaredSecret() && !signal.aborted) return secretDraftRefusal;
+    throw cause;
+  }
+  if (hasDeclaredSecret()) return secretDraftRefusal;
   const output = await readOutput(computer, stdout, bytes, signal);
+  if (hasDeclaredSecret()) return secretDraftRefusal;
   if (output.kind === "failure")
     return { draft: null, draft_refusal: output.failure.message };
   const draft = draftResultSchema.parse(output.result);
@@ -209,6 +247,7 @@ const draftTask = async (
       },
       guards: draft.guards,
       notes: draft.notes.map(draftNote),
+      withheld_files: draft.withheld_files,
     },
   };
 };
@@ -223,6 +262,7 @@ const draftTask = async (
 export const summarizeCapture = async (
   computer: ControlledComputer,
   capture: { readonly folder: string; readonly outputBytes: number },
+  hasDeclaredSecret: () => boolean,
   signal: AbortSignal,
 ): Promise<
   Result<
@@ -265,7 +305,13 @@ export const summarizeCapture = async (
         sources: [...installed.sources],
       },
       limitations: [...recorded.limitations],
-      ...(await draftTask(computer, capture.folder, checkpoints, signal)),
+      ...(await draftTask(
+        computer,
+        capture.folder,
+        checkpoints,
+        hasDeclaredSecret,
+        signal,
+      )),
     },
   });
 };

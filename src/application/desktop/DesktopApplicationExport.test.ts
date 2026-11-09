@@ -25,11 +25,11 @@ import {
   launchDocumentNote,
   seedWording,
 } from "../../domain/desktop/appExport.js";
+import { exportDesktopApplication } from "./DesktopApplicationExport.js";
 import {
-  exportDesktopApplication,
   seedLimitation,
   trashedFilesLimitation,
-} from "./DesktopApplicationExport.js";
+} from "./DesktopExportLimitations.js";
 import {
   EDITED_NOTE,
   HOME,

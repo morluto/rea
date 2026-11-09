@@ -220,6 +220,39 @@ export const isJsonText = (text: string): boolean => {
   return scan.expect === "after" && scan.depth === 0;
 };
 
+/** Decode JSON string tokens in bounded chunks without constructing the document. */
+export function* jsonStringChunks(
+  text: string,
+  chunkSize = 8192,
+): Generator<{ readonly text: string; readonly first: boolean }> {
+  if (!isJsonText(text)) return;
+  for (let at = 0; at < text.length;) {
+    if (text.charAt(at) !== '"') {
+      at += 1;
+      continue;
+    }
+    const end = jsonStringEnd(text, at);
+    if (end < 0) return;
+    let start = at + 1;
+    let first = true;
+    while (start < end - 1) {
+      let next = start;
+      while (next < end - 1 && next - start < chunkSize) {
+        if (text.charAt(next) === "\\")
+          next += text.charAt(next + 1) === "u" ? 6 : 2;
+        else next += 1;
+      }
+      yield {
+        text: JSON.parse(`"${text.slice(start, next)}"`) as string,
+        first,
+      };
+      first = false;
+      start = next;
+    }
+    at = end;
+  }
+}
+
 /** Whether a file's name or leading text marks it as JSON, which it is if it parses. */
 const namedJson = (path: string, trimmed: string): boolean =>
   path.toLowerCase().endsWith(".json") || /^[[{]/u.test(trimmed);

@@ -27,6 +27,7 @@ import {
   type WitnessStage,
   type WitnessStageRecord,
 } from "../../domain/desktop/buildWitness.js";
+import type { JsonValue } from "../../domain/jsonValue.js";
 import { ProviderAdapterError } from "../../domain/providerAdapterError.js";
 import { err, ok, type Result } from "../../domain/result.js";
 import type {
@@ -197,13 +198,21 @@ export class DesktopBuildWitness {
    */
   readonly #recordingRequest = `rea-witness:${randomUUID()}`;
 
-  /** `bundle` is the folder the computer was started from, if it was; the witness takes only the task it holds. */
+  readonly #bundle: WitnessBundle | undefined;
+  readonly #redact: (value: JsonValue) => JsonValue;
+
+  /** `bundle` is the folder the computer was started from, if it was; the witness takes only the task it holds. `redact` puts known secrets' handles in place of their values in the record. */
   constructor(
     private readonly computer: WitnessedComputer,
     private readonly actions: ReadonlyActionLog,
     private readonly settle: BuildSettle = SETTLE_TIMING,
-    private readonly bundle?: WitnessBundle,
+    options: {
+      readonly bundle?: WitnessBundle | undefined;
+      readonly redact?: (value: JsonValue) => JsonValue;
+    } = {},
   ) {
+    this.#bundle = options.bundle;
+    this.#redact = options.redact ?? ((value) => value);
     this.readers = new DesktopRemoteTaskReaders(
       (argv, timeout, signal, requestId) =>
         this.computer.exec(argv, timeout, signal, requestId),
@@ -257,7 +266,7 @@ export class DesktopBuildWitness {
     progress: ProgressReporter,
   ): Promise<Result<Graded, AnalysisError>> {
     if (isScreenTask(task))
-      return judgeScreenTask(this.computer, this.bundle, task, signal);
+      return judgeScreenTask(this.computer, this.#bundle, task, signal);
     try {
       const read = await settledAppData(
         (turn) => this.computer.appData("data/get", turn),
@@ -269,19 +278,26 @@ export class DesktopBuildWitness {
             .catch(() => undefined),
       );
       const views = appStateViews(read.parts);
-      if (!views.ok)
-        return err(
-          refused(
-            views.error,
-            "Start the computer from a bundle export_build_environment wrote.",
-          ),
-        );
       const readers = await this.readers.read(task.readers ?? [], signal);
-      return ok({
-        results: [...evaluateTaskChecks(task.checks, views.value, readers)],
-        settled: read.settled,
-        read_cut: read.readCut,
-      });
+      return views.ok
+        ? ok({
+            results: [
+              ...evaluateTaskChecks(
+                task.checks,
+                views.value,
+                readers,
+                this.#redact,
+              ),
+            ],
+            settled: read.settled,
+            read_cut: read.readCut,
+          })
+        : err(
+            refused(
+              views.error,
+              "Start the computer from a bundle export_build_environment wrote.",
+            ),
+          );
     } catch (cause: unknown) {
       return err(
         cause instanceof AnalysisError
@@ -383,8 +399,11 @@ export class DesktopBuildWitness {
       this.computer,
       witness,
       witness.logged,
-      signal,
-      witness.pendingManifest,
+      {
+        signal,
+        redact: this.#redact,
+        pendingManifest: witness.pendingManifest,
+      },
     );
     if (written.kind === "retry") {
       if (written.manifest !== undefined)
@@ -514,9 +533,9 @@ export class DesktopBuildWitness {
         ),
       );
     let differs: string | undefined;
-    if (this.bundle !== undefined) {
+    if (this.#bundle !== undefined) {
       try {
-        differs = await bundleTaskDifference(this.bundle.path, task, signal);
+        differs = await bundleTaskDifference(this.#bundle.path, task, signal);
       } catch (cause: unknown) {
         // A cancelled read, an I/O failure, or a handle that would not close
         // stays a Result. A cleanup lease stays bound to that error.

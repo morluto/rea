@@ -1,3 +1,5 @@
+import { BUNDLE_SETTING_VARIABLE } from "./buildComputerSettings.js";
+import { buildSecretHandleSchema } from "./buildSecrets.js";
 import { createHash } from "node:crypto";
 
 import { z } from "zod";
@@ -141,6 +143,15 @@ export const buildSourceSchema = z.discriminatedUnion("kind", [
     path: absoluteLocalPathStringSchema.describe(
       "An agentenv bundle folder whose tasks/smoke.json deploys one computer, such as an exported one.",
     ),
+    settings: z
+      .record(
+        z.string().regex(BUNDLE_SETTING_VARIABLE),
+        buildSecretHandleSchema,
+      )
+      .optional()
+      .describe(
+        "Each environment variable a withheld file's setting reads, as the export's withheld_files names it, mapped to the handle of the secret holding its value; REA supplies the value to the deploy and no result shows it. Build host control names are reserved.",
+      ),
   }),
 ]);
 export type BuildSource = z.output<typeof buildSourceSchema>;

@@ -32,7 +32,15 @@ it.each([4, 8])(
     }));
     await exportBuild(
       computer,
-      { folder: ".rea-build/c", attempt: 0, extraPackages: [] },
+      {
+        folder: ".rea-build/c",
+        attempt: 0,
+        extraPackages: [],
+        secrets: [],
+        keep: async (handle: string) => handle,
+        signIn: false,
+        consents: [],
+      },
       {
         directory: "/unused",
         task: {
@@ -84,7 +92,15 @@ it.each([
     };
     await exportBuild(
       computer,
-      { folder: ".rea-build/c", attempt: 0, extraPackages: [] },
+      {
+        folder: ".rea-build/c",
+        attempt: 0,
+        extraPackages: [],
+        secrets: [],
+        keep: async (handle: string) => handle,
+        signIn: false,
+        consents: [],
+      },
       {
         directory: "/unused",
         task: {

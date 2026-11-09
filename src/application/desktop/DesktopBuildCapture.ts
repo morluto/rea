@@ -1,14 +1,20 @@
+import type { DownloadInstall } from "../../domain/desktop/appDownloadInstall.js";
 import { z } from "zod";
 
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
 import { AnalysisCancelledError } from "../../domain/analysisErrorCore.js";
 import type { BuildRequest } from "../../domain/desktop/appBuild.js";
 import {
+  SIGN_IN_END,
+  SIGN_IN_START,
+  type BuildConsent,
+} from "../../domain/desktop/appWithheld.js";
+import type { KnownSecret } from "../../domain/desktop/buildSecrets.js";
+import {
   BUILD_PACKAGE_FILE,
   downloadInstallOf,
   extraPackagesOf,
 } from "../../domain/desktop/appBuild.js";
-import type { DownloadInstall } from "../../domain/desktop/appDownloadInstall.js";
 import {
   END_CHECKPOINT,
   SEED_CHECKPOINT,
@@ -17,6 +23,7 @@ import {
   captureProgressEvent,
   type DesktopCaptureEvent,
 } from "../../domain/desktop/desktopCapture.js";
+import type { JsonValue } from "../../domain/jsonValue.js";
 import { ProviderAdapterError } from "../../domain/providerAdapterError.js";
 import { err, ok, type Result } from "../../domain/result.js";
 import { AGENTENV_PROVIDER } from "../../desktop/AgentEnvComputerHelper.js";
@@ -44,6 +51,7 @@ import {
 } from "./DesktopBuildExport.js";
 import {
   summarizeCapture,
+  secretDraftRefusal,
   type StoppedCapture,
 } from "./DesktopBuildSummary.js";
 
@@ -275,9 +283,24 @@ export class DesktopBuildCapture {
   /** What the request named beside the app, which the export installs too, so a package file's dependencies outlive an install by name. */
   readonly #extraPackages: readonly string[];
 
+  /** The person's consents, in their words, which the export writes into consent.json. */
+  readonly #consents: BuildConsent[] = [];
+
+  /** `secrets` lists the secrets no exported bundle may hold, keeps the withheld files' bytes as secrets, and redacts a quote of the app's output before it is cut. */
   constructor(
     private readonly computer: CaptureComputer,
     request: BuildRequest | undefined,
+    private readonly secrets: {
+      readonly all: (signal?: AbortSignal) => Promise<readonly KnownSecret[]>;
+      readonly keep: (handle: string, bytes: Buffer) => Promise<string>;
+      readonly redact: (text: string) => string;
+      readonly hasDeclaredSecret: boolean;
+    } = {
+      all: () => Promise.resolve([]),
+      keep: (handle) => Promise.resolve(handle),
+      redact: (text) => text,
+      hasDeclaredSecret: false,
+    },
   ) {
     this.longRuns = new BuildComputerLongRuns(computer);
     this.#entry = request?.desktop_entry;
@@ -414,7 +437,7 @@ export class DesktopBuildCapture {
       return err({
         failure: await endedCapture(
           this.computer,
-          { ...STARTING, folder: run.folder },
+          { ...STARTING, folder: run.folder, redact: this.secrets.redact },
           answer,
           signal,
         ),
@@ -476,7 +499,11 @@ export class DesktopBuildCapture {
         return err(
           await endedCapture(
             this.computer,
-            { ...marking(name), folder: run.folder },
+            {
+              ...marking(name),
+              folder: run.folder,
+              redact: this.secrets.redact,
+            },
             answer,
             signal,
           ),
@@ -520,7 +547,11 @@ export class DesktopBuildCapture {
         : err(unreleasedError(STOP, run, undefined));
     if (run === undefined || run.status === "released")
       return err(refused(STOP, ...NOT_RUNNING));
-    if (run.stopped !== undefined) return ok(run.stopped);
+    if (run.stopped !== undefined) {
+      if (this.secrets.hasDeclaredSecret)
+        run.stopped = { ...run.stopped, ...secretDraftRefusal };
+      return ok(run.stopped);
+    }
     try {
       if (run.outputBytes === undefined) {
         const answer = await controller(
@@ -530,13 +561,14 @@ export class DesktopBuildCapture {
           { timeoutS: 600, signal },
         );
         if (answer.exit_code === undefined || answer.output_bytes === undefined)
-          return err(notAnswered(STOP, answer));
+          return err(notAnswered(STOP, answer, this.secrets.redact));
         run.status = "stopped";
         run.outputBytes = answer.output_bytes;
       }
       const summary = await summarizeCapture(
         this.computer,
         { folder: run.folder, outputBytes: run.outputBytes },
+        () => this.secrets.hasDeclaredSecret,
         signal,
       );
       if (!summary.ok) {
@@ -545,8 +577,10 @@ export class DesktopBuildCapture {
       }
       run.checkpoints = summary.value.checkpoints;
       run.packageFile = summary.value.packageFile;
-      run.stopped = summary.value.stopped;
-      return ok(summary.value.stopped);
+      run.stopped = this.secrets.hasDeclaredSecret
+        ? { ...summary.value.stopped, ...secretDraftRefusal }
+        : summary.value.stopped;
+      return ok(run.stopped);
     } catch (cause: unknown) {
       return err(
         cause instanceof AnalysisError
@@ -554,6 +588,24 @@ export class DesktopBuildCapture {
           : adapterError(STOP, errorText(cause), cause),
       );
     }
+  }
+
+  /** Record a consent the person gave, in their own words, relayed by the agent; the export ships every one. */
+  recordConsent({
+    url,
+    ...consent
+  }: Omit<BuildConsent, "recorded_at" | "source">): {
+    readonly consent: Readonly<Record<string, JsonValue>>;
+    readonly consents: number;
+  } {
+    const recorded = {
+      ...consent,
+      ...(url === undefined ? {} : { url }),
+      recorded_at: new Date().toISOString(),
+      source: "relayed" as const,
+    };
+    this.#consents.push(recorded);
+    return { consent: recorded, consents: this.#consents.length };
   }
 
   /** Export the bundle with the agent's task inside the computer and write it to a folder on this host. */
@@ -574,7 +626,41 @@ export class DesktopBuildCapture {
           "Capture with start_build_capture, mark seed and end, then call stop_build_capture.",
         ),
       );
+    const signIn = [SIGN_IN_START, SIGN_IN_END].filter((name) =>
+      run.checkpoints.has(name),
+    );
+    if (signIn.length === 1)
+      return err(
+        refused(
+          EXPORT,
+          `The capture has ${signIn.join("")} but not ${signIn[0] === SIGN_IN_START ? SIGN_IN_END : SIGN_IN_START}, so REA cannot tell which files the sign-in wrote.`,
+          `Capture again on a new build computer, marking ${SIGN_IN_START} before the sign-in and ${SIGN_IN_END} after it.`,
+        ),
+      );
+    if (
+      input.seed_sign_in === true &&
+      !this.#consents.some(({ kind }) => kind === "seed_sign_in")
+    )
+      return err(
+        refused(
+          EXPORT,
+          "Seeding the withheld sign-in state needs the person's consent, and record_build_consent recorded none on this computer.",
+          "Ask the person whether the bundle may hold their signed-in state; if they say yes, record their words with record_build_consent, kind seed_sign_in, then export again. Otherwise export without seed_sign_in.",
+        ),
+      );
     run.exports += 1;
+    let secrets: readonly KnownSecret[];
+    try {
+      secrets = await this.secrets.all(signal);
+    } catch (cause: unknown) {
+      return err(
+        cause instanceof AnalysisError
+          ? cause
+          : signal.aborted
+            ? new AnalysisCancelledError(EXPORT, { cause: signal.reason })
+            : adapterError(EXPORT, errorText(cause), cause),
+      );
+    }
     return exportBuild(
       this.computer,
       {
@@ -583,10 +669,14 @@ export class DesktopBuildCapture {
         ...(this.#packageFile === undefined || run.packageFile !== true
           ? {}
           : { packageUrl: this.#packageFile.url }),
+        extraPackages: this.#extraPackages,
         ...(this.#download === undefined
           ? {}
           : { downloadInstall: this.#download }),
-        extraPackages: this.#extraPackages,
+        secrets,
+        keep: this.secrets.keep,
+        signIn: signIn.length === 2,
+        consents: [...this.#consents],
       },
       input,
       signal,

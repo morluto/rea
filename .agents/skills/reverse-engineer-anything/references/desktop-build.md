@@ -48,15 +48,40 @@ default.
 Stop, say what you need and wait only for:
 
 - a licence the app or its installer asks someone to accept: never accept it
-  yourself; name it and where to read it, and go on only once the person
-  says they accept it;
-- credentials: they may only be typed as handles you never see, and the
-  build tools have none yet, so say the app needs a sign-in and stop. Never
-  ask for a password in chat;
-- a signed-in state in the seed: ask before seeding one;
+  on your own; name it and where to read it, and go on only once the person
+  says they accept it. Then record their words with `record_build_consent`,
+  kind `licence`, and accept it on their behalf;
+- credentials: ask the person to write each secret, and nothing else, in a
+  file named after a handle you choose, such as `keepassxc-master`, in
+  `~/.config/rea/build-secrets/` on this host (under `$XDG_CONFIG_HOME` when
+  it is set), readable only by them (`chmod 600`), and wait until they say it
+  is there; then type it with `type_secret` (see Drive the app). Never ask
+  for a password or key in chat, and never read, list or print that folder;
+- a signed-in state in the seed: by default the export withholds it (see
+  Sign-in and licence state). Seed it only when the person says the bundle
+  may hold it: record their words with `record_build_consent`, kind
+  `seed_sign_in`, and export with `seed_sign_in: true`;
 - an install this flow cannot do, below.
 
 Decide everything else yourself and note it in the report.
+
+## Sign-in and licence state
+
+What an app writes when someone signs in or activates a licence is withheld
+from the seed: the bundle's receiver supplies their own. Mark
+`pre-sign-in` with `mark_build_checkpoint` just before the sign-in or
+activation and `post-sign-in` just after, both before `seed`: every file
+under the owned paths that changed between them is withheld, and the draft
+leaves it out. A file the app writes at first launch, such as a trial's
+licence file, changes before you can mark anything: name it in
+`export_build_environment`'s `withhold`. The export lists each withheld file
+in `withheld_files` with the environment variable a deploy reads it from and
+the handle of the secret REA keeps its bytes in; a check may not name one.
+The export refuses a seed file holding a withheld file's exact bytes, such as
+a `.bak` copy, but a backup that differs from it is not caught: trash backups
+before `seed`.
+Explicitly withhold any other files the person identifies as sensitive;
+REA does not infer secrecy from a value's shape or a file name.
 
 ## Choose the install
 
@@ -88,31 +113,10 @@ the first source that has the app:
   to add a package. Ask the requester for its URL and SHA-256; do not fetch
   a vendor's download page yourself. List its `Depends` as `dependencies`,
   with any runtime piece it lacks: it installs with the network off.
-- Take an AppImage or a tarball only when no package has the app. Pin it by
-  the release file's URL for this host's architecture and the SHA-256 its
-  project publishes, such as a GitHub release asset's digest or the
-  release's `SHA256SUMS`; ask the requester when the project publishes none.
-  The computer downloads it when the bundle is put, refuses other bytes, and
-  unpacks it under `/opt/rea-apps/<desktop_entry>` with the network off; the
-  export downloads the same file.
-- An AppImage installs its own desktop entry, so `desktop_entry` is the
-  `.desktop` file at the top of the image, such as FreeCAD's
-  `org.freecad.FreeCAD`. A wrong name fails the start with the entries the
-  image has: start again with one of them. The image brings its libraries,
-  so `extra_packages` is rarely needed; FreeCAD 1.1.4's needs none.
-- A tarball has no entry of its own. `program` is the program's path inside
-  the archive, such as `firefox/firefox`; REA writes an entry named
-  `desktop_entry` that runs it with the files it opens, and `name` is what
-  the Applications menu shows. A tarball uses the computer's libraries: name
-  what its program lacks in `extra_packages`. gzip, bzip2 and xz archives
-  are read, zstd ones are not.
-- Flatpak and snaps are not supported: say so and stop. Flatpak's sandbox
-  needs user namespaces the computer's container does not grant, so a
-  Flathub app installs but never opens; ask for the project's AppImage,
-  tarball or `.deb` when it ships one. An archive package that only installs
-  a snap, such as noble's `firefox`, counts as a snap. A package with no
-  build for this host's architecture (some PPAs are amd64 only) cannot be
-  installed either.
+- Flatpak, AppImage and snaps are not supported yet: say so and stop. An
+  archive package that only installs a snap, such as noble's `firefox`,
+  counts as a snap. A package with no build for this host's architecture
+  (some PPAs are amd64 only) cannot be installed either.
 - `desktop_entry` is the package's `.desktop` file name under
   `/usr/share/applications` without `.desktop`, such as
   `org.inkscape.Inkscape`. Add `window_class` when you know it; Inkscape's
@@ -149,6 +153,14 @@ the first source that has the app:
   close it while capturing; the capture ends when the app exits. When the
   app is closed at any other time, open it from Applications → Other → the
   environment's name.
+- Type a secret with `{"action": "type_secret", "secret": "<handle>"}`,
+  only into a field that masks what is typed: check in a screenshot that it
+  is a password field, which shows dots. A screenshot shows any field that
+  shows its text, such as many licence-key boxes, so never type a secret into
+  one: say the app needs a secret the build cannot type unseen, and stop.
+  `type_secret` takes no `screenshot`; look with a `wait` after it. A refusal
+  names the secret's file and what is wrong with it: tell the person, never
+  the value.
 - Prefer shortcuts and typing to long pointer paths: `key` takes `keys`, an
   array holding one chord's keys, such as
   `{"action": "key", "keys": ["Control", "s"]}`, and `type` turns `\n` into
@@ -366,7 +378,9 @@ the first source that has the app:
    checks), `draft.guards`, `draft.notes` and `limitations`. When `draft`
    is null, read `draft_refusal` first: a missing `seed` or `end`
    checkpoint means capturing again on a new build computer, while a failed
-   draft command names its own cause to fix. When `draft.files` is empty,
+   draft command names its own cause to fix. If a declared secret was used,
+   automatic drafting is withheld: write the task manually and export it.
+   When `draft.files` is empty,
    `draft.notes` says why:
    - `no_change`: nothing was saved between `seed` and `end`. Capture again
      on a new build computer, and save before marking `end`. When the app
@@ -645,7 +659,9 @@ unless at least one check fails on the seed and every check passes at the
 end, and says why, such as a pointer that names nothing at the end. A
 check that the rest is untouched passes on the seed too, which is fine. On
 a refusal, fix the task and export again, into another folder if that one
-is no longer empty. Keep
+is no longer empty. A refusal naming a secret's handle means a file of the
+bundle holds that secret, most often an app's sign-in or licence state in
+the seed: do not work around it, but report it and stop. Keep
 `seed_files`, `scrubbed_files`, `unscrubbed_files` and `limitations` for the
 report.
 
@@ -684,7 +700,10 @@ check between stages to steer the edit: a solving agent never sees the
 checks. Give every `check_build_task` the task exactly as exported.
 
 1. `start_build_computer` with
-   `{"source": {"kind": "bundle", "path": "<bundle>"}}`. The app starts
+   `{"source": {"kind": "bundle", "path": "<bundle>"}}`, adding
+   `"settings": {"<variable>": "<handle>"}` for each of the export's
+   `withheld_files`, or the deploy is refused for want of them, and agentenv
+   keeps that bundle's build failed, so start from a fresh copy of it. The app starts
    with the seed's files in place and opens the seed's document when the
    seed holds exactly one and the app takes a file. When the export's
    `limitations` say it opens no document, open it from the prompt's path,

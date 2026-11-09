@@ -67,6 +67,11 @@ The planned sequence was one PR per step:
 17. [Screen judges](screen-judge/spec.md): checks of state no file shows,
     such as a calculator's result, by a model judging a screenshot against
     the build's labelled seed and end screenshots.
+18. [Secrets typed unseen](build-secrets/spec.md): a password or key the
+    person keeps in a file on the build host, typed by its handle, which no
+    result, log, record or exported bundle holds; sign-in and licence state
+    withheld from the seed and supplied at run time, seeded only with the
+    person's recorded consent; known handle values are checked explicitly.
 
 Version 1 covers Linux with X11, applications whose state lives in files or
 SQLite under the home directory, and real applications from public packages.

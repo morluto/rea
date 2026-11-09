@@ -48,7 +48,7 @@ const witnessAt = async (bundle: string) =>
     computer,
     new BuildComputerActionLog(),
     SETTLE_TIMING,
-    { path: bundle },
+    { bundle: { path: bundle } },
   );
 
 describe("bundle task reads", () => {
