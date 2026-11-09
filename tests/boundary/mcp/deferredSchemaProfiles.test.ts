@@ -618,3 +618,87 @@ registerHooks({
     expect(f.stderr()).toBe("");
   },
 );
+
+it.each(lifecycleConfigurations)(
+  "materializes through a prompt operation over $mode/$catalog and preserves schemas and live Evidence completion",
+  async (configuration) => {
+    const f = await connect(configuration);
+    await f.list();
+    await f.load([
+      "inspect_api_contract",
+      "export_evidence_bundle",
+      "search_guidance",
+      "read_guidance_section",
+    ]);
+    const toolsBefore = await f.list();
+    const promptsBefore = await f.client.listPrompts();
+    expect(promptsBefore.prompts.map(({ name }) => name)).toContain(
+      "verify_reconstruction",
+    );
+    expect(await f.runtimeLoaded()).toBe(false);
+    const complete = () =>
+      f.client.complete({
+        ref: { type: "ref/prompt", name: "verify_reconstruction" },
+        argument: { name: "comparison_evidence_id", value: "ev_" },
+      });
+    // Use retrieval first on legacy, completion first on modern; neither
+    // operation should execute an analysis or create Evidence observations.
+    if (configuration.mode === "auto")
+      expect((await complete()).completion.values).toEqual([]);
+    const prompt = await f.client.getPrompt({
+      name: "investigate_feature",
+      arguments: { feature: "declared GET /items" },
+    });
+    expect(await f.runtimeLoaded()).toBe(true);
+    expect(prompt.messages).toHaveLength(1);
+    expect(prompt.messages[0]).toMatchObject({
+      role: "user",
+      content: {
+        type: "text",
+        text: expect.stringContaining('"feature":"declared GET /items"'),
+      },
+    });
+    if (configuration.mode === "legacy")
+      expect((await complete()).completion.values).toEqual([]);
+    await expect(
+      f.client.getPrompt({
+        name: "investigate_feature",
+        arguments: { feature: "   " },
+      }),
+    ).rejects.toThrow(/Invalid arguments/u);
+    expect(await f.client.listPrompts()).toEqual(promptsBefore);
+    expect(await f.list()).toEqual(toolsBefore);
+    const exportPath = join(f.root, "prompt-only.json");
+    expect(
+      (await f.call("export_evidence_bundle", { path: exportPath })).isError,
+    ).not.toBe(true);
+    expect(
+      evidenceBundleSchema.parse(JSON.parse(await readFile(exportPath, "utf8")))
+        .records,
+    ).toEqual([]);
+    const path = join(f.root, "completion.json");
+    await writeFile(
+      path,
+      JSON.stringify({
+        openapi: "3.1.0",
+        info: { title: "Prompt completion", version: "1" },
+        paths: { "/items": { get: { operationId: "listItems" } } },
+      }),
+    );
+    const result = await f.call("inspect_api_contract", {
+      path,
+      detail: "complete",
+    });
+    expect(result.isError).not.toBe(true);
+    const evidence = parseEvidence(result.structuredContent);
+    expect(
+      apiContractSchema.parse(evidence.normalized_result).operations,
+    ).toMatchObject([{ method: "GET", path: "/items" }]);
+    expect((await complete()).completion.values).toEqual([
+      evidence.evidence_id,
+    ]);
+    await verifyGuidance(f, configuration);
+    expect(await f.list()).toEqual(toolsBefore);
+    expect(f.stderr()).toBe("");
+  },
+);
