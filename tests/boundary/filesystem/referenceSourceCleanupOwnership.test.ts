@@ -411,3 +411,53 @@ it("keeps cancelled traversal typed when native directory close rejects after in
   });
   expect(closeCalls).toBe(1);
 });
+
+it("preserves null cancellation and retained directory cleanup across retry", async () => {
+  const root = await createTestTempDirectory("rea-reference-null-close-");
+  const resources = new ArtifactResourceScope();
+  onTestFinished(() => resources.close().catch(() => undefined));
+  const controller = new AbortController();
+  const closeFailure = new Error("directory close temporarily denied");
+  let closeCalls = 0;
+  let releaseFixture: (() => Promise<void>) | undefined;
+  opendirMock.mockImplementation(async (...args) => {
+    const directory = await actual.opendir(...args);
+    const operations: DirectoryOperations = directory;
+    const close = operations.close.bind(directory);
+    releaseFixture = close;
+    vi.spyOn(operations, "close").mockImplementation(async () => {
+      closeCalls += 1;
+      if (closeCalls === 1) throw closeFailure;
+      await close();
+    });
+    return directory;
+  });
+  const result = await readReferenceSource(root, resources, {
+    signal: controller.signal,
+    beforeDirectory: async () => {
+      controller.abort(null);
+      return ok(undefined);
+    },
+  });
+  if (result.ok) throw new Error("Expected cancellation and cleanup failure");
+  expect(result.error.code).toBe("cancelled");
+  expect(result.error.cause).toBeNull();
+  expect(result.error.cleanup).toEqual({
+    resources: [root],
+    reason: expect.stringContaining(closeFailure.message),
+  });
+  expect(result.error.partial).toMatchObject({ entries: [], bytesRead: 0 });
+  expect(resources.hasPending).toBe(true);
+  expect(resources.cleanupResources).toEqual([root]);
+  expect(closeCalls).toBe(1);
+  await expect(resources.close()).rejects.toMatchObject({
+    cleanup: {
+      resources: [root],
+      reason: expect.stringContaining(closeFailure.message),
+    },
+  });
+  expect(resources.hasPending).toBe(true);
+  expect(resources.cleanupResources).toEqual([root]);
+  expect(closeCalls).toBe(1);
+  await releaseFixture?.();
+});
