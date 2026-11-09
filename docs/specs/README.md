@@ -6,6 +6,11 @@ directory owns one `spec.md`, one `plan.md` and one `tasks.md`.
 Follow [documentation ownership and authoring](../development/documentation.md#feature-lifecycle)
 for the specification lifecycle, roadmap granularity and producer-owned contracts.
 
+## API contract
+
+- [OpenAPI YAML inventory](api-contract/openapi-yaml/spec.md)
+  ([plan](api-contract/openapi-yaml/plan.md), [tasks](api-contract/openapi-yaml/tasks.md))
+
 ## Documentation
 
 - [Organization](documentation/organization/spec.md)
