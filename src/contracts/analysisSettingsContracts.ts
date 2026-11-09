@@ -44,7 +44,7 @@ const descriptor = z.strictObject({
   default_value: z.number().nullable(),
   source: z.enum(["default", "setting", "runtime", "invalid"]),
   configuration_error: analysisErrorProjectionSchema.optional(),
-  unit: z.enum(["bytes", "ms", "seconds", "MiB"]),
+  unit: z.enum(["bytes", "ms", "seconds", "MiB", "count"]),
   minimum: z.number(),
   maximum: z.number(),
   applies_at: z.enum(["next_operation", "next_worker", "next_startup"]),
