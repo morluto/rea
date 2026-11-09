@@ -43,6 +43,7 @@ import {
   type JavaScriptSemanticBindingState,
 } from "./javascriptSemanticState.js";
 import { readSemanticRequireOriginCandidate } from "./javascriptSemanticRequireOriginSlot.js";
+import { unwrapUnmodifiedObjectFreezeArgument } from "./javascriptSemanticObjectFreeze.js";
 import { compareUnicodeCodePoints } from "../unicodeCodePointOrder.js";
 import {
   readExactJavaScriptLiteral,
@@ -1277,6 +1278,12 @@ const provenanceForExpression = (
   const required = readSemanticRequireOriginCandidate(node, context.state);
   if (required !== undefined)
     return semanticOriginsProvenance([required.origin]);
+  const frozenArgument = unwrapUnmodifiedObjectFreezeArgument(
+    node,
+    context.state,
+  );
+  if (frozenArgument !== undefined)
+    return provenanceForExpression(frozenArgument, nestedContext(context));
   if (t.isSequenceExpression(node)) {
     const finalExpression = node.expressions.at(-1);
     return finalExpression === undefined

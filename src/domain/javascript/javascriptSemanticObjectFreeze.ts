@@ -8,8 +8,15 @@ import {
   globalReferenceNamespace,
   isUnmodifiedGlobalReference,
 } from "./javascriptSemanticGlobalReference.js";
-import { semanticBindingAtRead } from "./javascriptSemanticMutationInitializers.js";
+import {
+  semanticBindingAtRead,
+  semanticEffectTiming,
+} from "./javascriptSemanticMutationInitializers.js";
 import { semanticOpaqueGlobalMayHaveChanged } from "./javascriptSemanticOpaqueEffects.js";
+import {
+  semanticPropertyPathKeyMatches,
+  type JavaScriptSemanticPropertyPath,
+} from "./javascriptSemanticPropertyPaths.js";
 import { javaScriptRuntimeContext } from "./javascriptSourceParser.js";
 import {
   resolveSemanticBindingState,
@@ -18,8 +25,59 @@ import {
   type JavaScriptSemanticBindingState,
 } from "./javascriptSemanticState.js";
 
+const ambientEffectCoversGlobalProperty = (
+  path: JavaScriptSemanticPropertyPath,
+  name: string,
+): boolean =>
+  path.length > 0 &&
+  path.length <= 2 &&
+  semanticPropertyPathKeyMatches(path[0]!, "global") &&
+  (path.length === 1 || semanticPropertyPathKeyMatches(path[1]!, name));
+
+/**
+ * Classic-script top-level function declarations mirror onto the global object,
+ * so an ambient property write or global escape that is not proven to follow the
+ * read boundary can replace the function value observed at that read.
+ */
+export const mayClassicGlobalFunctionHaveBeenOverwrittenAtRead = (
+  binding: JavaScriptSemanticBindingState,
+  readNode: t.Node | undefined,
+  state: JavaScriptSemanticAnalysisState,
+): boolean => {
+  if (
+    javaScriptRuntimeContext(state.program) !== "unknown" ||
+    binding.kind !== "function" ||
+    !binding.scopeId.startsWith("scope:program:")
+  )
+    return false;
+  const hasCoveringWrite = state.ambientWrites.covers(["global", binding.name]);
+  const writeEffects = hasCoveringWrite
+    ? state.ambientWriteEffects.filter(({ path }) =>
+        ambientEffectCoversGlobalProperty(path, binding.name),
+      )
+    : [];
+  const escapeEffects = state.ambientEscapeEffects.filter(({ path }) =>
+    ambientEffectCoversGlobalProperty(path, binding.name),
+  );
+  if (
+    readNode !== undefined &&
+    semanticOpaqueGlobalMayHaveChanged(readNode, state)
+  )
+    return true;
+  if (hasCoveringWrite && writeEffects.length === 0) return true;
+  const relevantEffects = [...writeEffects, ...escapeEffects];
+  if (relevantEffects.length === 0) return false;
+  if (readNode === undefined) return true;
+  return relevantEffects.some(
+    (effect) =>
+      effect.node === undefined ||
+      semanticEffectTiming(readNode, effect.node, state) !== "after",
+  );
+};
+
 const isImmutableConstOrFunctionBinding = (
   binding: JavaScriptSemanticBindingState,
+  readNode: t.Node,
   state: JavaScriptSemanticAnalysisState,
 ): boolean => {
   if (binding.mutable) return false;
@@ -35,12 +93,12 @@ const isImmutableConstOrFunctionBinding = (
     binding.definitions.length === 1 &&
     binding.definitions[0]?.kind === "function"
   ) {
-    // Classic-script top-level function declarations mirror onto the global
-    // object, so an ambient property write can replace the function binding.
     if (
-      javaScriptRuntimeContext(state.program) === "unknown" &&
-      binding.scopeId.startsWith("scope:program:") &&
-      state.ambientWrites.covers(["global", binding.name])
+      mayClassicGlobalFunctionHaveBeenOverwrittenAtRead(
+        binding,
+        readNode,
+        state,
+      )
     )
       return false;
     return true;
@@ -65,7 +123,7 @@ export const immutableLexicalInitializerAtRead = (
   );
   if (
     binding === undefined ||
-    !isImmutableConstOrFunctionBinding(binding, state)
+    !isImmutableConstOrFunctionBinding(binding, identifier, state)
   )
     return undefined;
   const initializer = semanticStableInitializer(binding, state);

@@ -1735,12 +1735,16 @@ export function* collectSemanticMemberMutationsSteps(
     const effectsBefore = recordedEffectCount;
     const iterablesBefore = iterableReferences.length;
     const iterationBefore: boolean = state.arrayIterationUnknown;
+    const freezesBefore = deferredObjectFreezeCalls.size;
+    const receiversBefore = deferredMapReceivers.size;
+    let inactivePendingCount = 0;
     for (const [index, reference] of pendingReferences.splice(0).entries()) {
       if (index % 64 === 0) yield;
       const { initializer } = reference;
-      if (semanticReferenceSourcesInactive(initializer, state))
+      if (semanticReferenceSourcesInactive(initializer, state)) {
         pendingReferences.push(reference);
-      else if (t.isForOfStatement(initializer.node))
+        inactivePendingCount += 1;
+      } else if (t.isForOfStatement(initializer.node))
         deferIterable({
           node: initializer.node.right,
           projection: [],
@@ -1874,10 +1878,12 @@ export function* collectSemanticMemberMutationsSteps(
       markReceiver(node.callee, node);
     }
     if (
-      pendingReferences.length === 0 &&
+      pendingReferences.length === inactivePendingCount &&
       recordedEffectCount === effectsBefore &&
       iterableReferences.length === iterablesBefore &&
-      state.arrayIterationUnknown === iterationBefore
+      state.arrayIterationUnknown === iterationBefore &&
+      deferredObjectFreezeCalls.size === freezesBefore &&
+      deferredMapReceivers.size === receiversBefore
     )
       break;
   }

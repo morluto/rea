@@ -69,6 +69,13 @@ export interface SemanticReturnedReferenceResult {
   readonly references: readonly SemanticReturnedReference[];
   /** Source-local callable targets resolved by the same binding/projection owner. */
   readonly callables: ReadonlySet<t.Function>;
+  /** Actual invocation contexts reaching each callable when an invocation was supplied. */
+  readonly callableInvocations?: ReadonlyMap<
+    t.Function,
+    readonly JavaScriptSourceInvocationContext[]
+  >;
+  /** Callables reached after context widening where positional arguments could not be preserved. */
+  readonly widenedCallables?: ReadonlySet<t.Function>;
   /** A visible invocation-method mutation prevents a source-local result proof. */
   readonly unresolvedInvocation?: boolean;
   /** Both states close the supported source-local may-target graph. Widened joins projections without dropping represented targets; it does not claim runtime completeness. */
@@ -136,6 +143,11 @@ export const createSemanticReturnedReferences = (
       { readonly writes: number; readonly escapes: number }
     >();
     const functions = new Set<t.Function>();
+    const callableInvocations = new Map<
+      t.Function,
+      JavaScriptSourceInvocationContext[]
+    >();
+    const widenedCallables = new Set<t.Function>();
     const work: Candidate[] = [];
     // A transition depends on the source read and current projection, not the
     // initializer history used to reach it. Keeping history out of the key lets
@@ -150,9 +162,20 @@ export const createSemanticReturnedReferences = (
     const result: {
       references: readonly SemanticReturnedReference[];
       callables: ReadonlySet<t.Function>;
+      callableInvocations: ReadonlyMap<
+        t.Function,
+        readonly JavaScriptSourceInvocationContext[]
+      >;
+      widenedCallables: ReadonlySet<t.Function>;
       precision: SemanticReturnedReferenceResult["precision"];
       unresolvedInvocation?: boolean;
-    } = { references: [], callables: functions, precision: "exact" };
+    } = {
+      references: [],
+      callables: functions,
+      callableInvocations,
+      widenedCallables,
+      precision: "exact",
+    };
     // The invocation owner retains the actual callable receiver. A bare alias
     // of fn.call has lost that receiver and cannot execute fn by itself.
     const nativeArrayIteration = (array: t.ArrayExpression) =>
@@ -470,9 +493,16 @@ export const createSemanticReturnedReferences = (
         const last = node.expressions.at(-1);
         if (last !== undefined) pending.push({ ...current, node: last });
       } else if (t.isFunction(node)) {
-        if (current.path === undefined || current.path.length === 0)
+        if (current.path === undefined || current.path.length === 0) {
           functions.add(node);
-        else if (
+          if (current.path === undefined || current.invocation === undefined) {
+            if (invocation !== undefined) widenedCallables.add(node);
+          } else {
+            const existingContexts = callableInvocations.get(node) ?? [];
+            existingContexts.push(current.invocation);
+            callableInvocations.set(node, existingContexts);
+          }
+        } else if (
           current.invocation !== undefined &&
           current.path.every((key) =>
             semanticAliasSelectionChoices(key).every(

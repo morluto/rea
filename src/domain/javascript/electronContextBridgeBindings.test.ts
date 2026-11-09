@@ -779,3 +779,91 @@ it("rechecks Object.freeze exemptions when getter-mediated ambient writes propag
     "resolution_sources",
   );
 });
+
+it("terminates cleanly when an unused destructuring default references an object", () => {
+  const analysis = analyzeJavaScriptStaticSource(`
+      const { contextBridge, ipcRenderer } = require("electron");
+      const spare = {};
+      const { selected = spare } = { selected: {} };
+      mutate(selected);
+      const api = Object.freeze({
+        ping: () => ipcRenderer.invoke("default:ping"),
+      });
+      contextBridge.exposeInMainWorld("api", api);
+    `);
+
+  expect(analysis.parse_status).toBe("partial");
+  expect(analysis.electron.context_bridge_apis).toMatchObject([
+    {
+      api_key: "api",
+      api_status: "object-literal",
+      members: ["ping"],
+      unknown_members: 0,
+    },
+  ]);
+});
+
+it("preserves classic-script function snapshots taken before a global overwrite while rejecting deferred closure reads", () => {
+  const analysis = analyzeJavaScriptStaticSource(`
+      const { contextBridge, ipcRenderer } = require("electron");
+      function forward() { ipcRenderer.send("ping"); }
+      function makeApi() { return { viaFactory: forward }; }
+      const snapshotApi = { forward };
+      const factoryApi = makeApi();
+      const deferredApi = { run: () => forward() };
+      globalThis.forward = replacement;
+      const postWriteApi = { forward };
+      contextBridge.exposeInMainWorld("snapshotApi", snapshotApi);
+      contextBridge.exposeInMainWorld("factoryApi", factoryApi);
+      contextBridge.exposeInMainWorld("deferredApi", deferredApi);
+      contextBridge.exposeInMainWorld("postWriteApi", postWriteApi);
+    `);
+
+  expect(analysis.parse_status).toBe("partial");
+  const bridgeCalls = (analysis.electron.call_paths ?? []).filter(
+    ({ entry_kind }) => entry_kind === "bridge-member",
+  );
+  expect(bridgeCalls).toEqual([
+    expect.objectContaining({
+      entry_kind: "bridge-member",
+      entry: "snapshotApi.forward",
+      channel: "ping",
+      terminal: "electron.ipcRenderer.send",
+    }),
+    expect.objectContaining({
+      entry_kind: "bridge-member",
+      entry: "factoryApi.viaFactory",
+      channel: "ping",
+      terminal: "electron.ipcRenderer.send",
+    }),
+  ]);
+});
+
+it("invalidates shallow-frozen Electron member aliases when a shared method is overwritten", () => {
+  const source = `
+      const { contextBridge, ipcRenderer } = require("electron");
+      const a = Object.freeze({ ipc: ipcRenderer });
+      const b = Object.freeze({ ipc: ipcRenderer });
+      a.ipc.invoke = () => 0;
+      contextBridge.exposeInMainWorld("api", {
+        run: () => b.ipc.invoke("fake"),
+        keep: () => b.ipc.send("real"),
+      });
+    `;
+  const parsed = parseJavaScriptSource(source, "preload.cjs");
+  if (parsed === null) throw new Error("Expected CommonJS parse");
+  const analysis = analyzeParsedJavaScriptStaticSource(source, parsed);
+
+  expect(analysis.parse_status).toBe("complete");
+  const bridgeCalls = (analysis.electron.call_paths ?? []).filter(
+    ({ entry_kind }) => entry_kind === "bridge-member",
+  );
+  expect(bridgeCalls).toEqual([
+    expect.objectContaining({
+      entry_kind: "bridge-member",
+      entry: "api.keep",
+      channel: "real",
+      terminal: "electron.ipcRenderer.send",
+    }),
+  ]);
+});

@@ -30,7 +30,10 @@ import {
   completeSemanticSteps,
   traverseJavaScriptAst,
 } from "./javascriptSemanticTraversal.js";
-import { unwrapUnmodifiedObjectFreezeArgument } from "./javascriptSemanticObjectFreeze.js";
+import {
+  mayClassicGlobalFunctionHaveBeenOverwrittenAtRead,
+  unwrapUnmodifiedObjectFreezeArgument,
+} from "./javascriptSemanticObjectFreeze.js";
 import {
   resolveSemanticBindingState,
   semanticResolutionBlocked,
@@ -789,10 +792,11 @@ export class JavaScriptSymbolicBindings {
     if (binding.definitions.some((d) => d.kind === "assignment"))
       return symbolicUnknown("reassigned binding");
     if (
-      javaScriptRuntimeContext(this.state.program) === "unknown" &&
-      binding.kind === "function" &&
-      binding.scopeId.startsWith("scope:program:") &&
-      this.state.ambientWrites.covers(["global", binding.name])
+      mayClassicGlobalFunctionHaveBeenOverwrittenAtRead(
+        binding,
+        this.#classicGlobalReadSite(node, env),
+        this.state,
+      )
     )
       return symbolicUnknown("classic-script global function overwrite");
     // Electron member identity is checked at the selected property. A write
@@ -842,6 +846,23 @@ export class JavaScriptSymbolicBindings {
       });
     }
     return value;
+  }
+
+  #classicGlobalReadSite(
+    node: t.Identifier,
+    env: SymbolicEnvironment,
+  ): t.Node | undefined {
+    let site: t.Node = node;
+    let current: SymbolicEnvironment = env;
+    while (
+      current.caller !== undefined &&
+      this.#nodeWithin(site, current.scopeNode)
+    ) {
+      if (current.point === undefined) return undefined;
+      site = current.point;
+      current = current.caller;
+    }
+    return site;
   }
 
   #readBoundary(

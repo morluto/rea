@@ -185,7 +185,7 @@ const electron = z
           loader_authority: z.literal("candidate").exactOptional(),
           entry_kind: z.enum(["bridge-member", "ipc-handler"]),
           entry: z.string(),
-          entry_path: strings.optional(),
+          entry_path: strings.exactOptional(),
           channel: z.string().nullable(),
           terminal: z.string(),
           resolution: z.literal("candidate"),
@@ -209,13 +209,6 @@ const electron = z
             z.strictObject({ expression: z.string(), location: range }),
           ),
         }),
-      )
-      .transform((paths) =>
-        paths.map(({ entry_kind, entry, entry_path, ...rest }) =>
-          entry_path === undefined
-            ? { entry_kind, entry, ...rest }
-            : { entry_kind, entry, entry_path, ...rest },
-        ),
       )
       .optional(),
     browser_windows: z.array(
