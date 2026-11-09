@@ -389,5 +389,7 @@ user's to choose.
 
 Tell the user the task's name, prompt and checks, and how to measure a solve
 rate: run `agent-env run DIRECTORY --task NAME --agent claude-code` with
-`--model MODEL` three times and count the runs reported `passed`. Do not run
+`--model MODEL` three times and count the runs reported `passed`. The runs
+need a model endpoint: `LITELLM_BASE_URL` and `LITELLM_API_KEY`, or
+`base_url` and `api_key` under `[model]` in `.agentenv/config.toml`. Do not run
 agents unless asked. The bundle's seed is the user's real data: keep it local.
