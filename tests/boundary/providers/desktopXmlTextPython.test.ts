@@ -5,8 +5,8 @@ import { pathToFileURL } from "node:url";
 import { describe, expect, it } from "vitest";
 
 import type { DesktopTaskCheck } from "../../../src/domain/desktop/appTask.js";
-import { elementText } from "../../../src/domain/desktop/appTaskChecks.js";
 import { xmlView } from "../../../src/domain/desktop/stateFormats.js";
+import { elementText } from "../../../src/domain/desktop/viewPointer.js";
 import type { JsonValue } from "../../../src/domain/jsonValue.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import {

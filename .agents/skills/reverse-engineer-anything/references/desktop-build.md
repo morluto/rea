@@ -288,8 +288,11 @@ the first source that has the app:
 
    A note with a `file` says why that file's suggestions are thin:
    - `by_position`: only position names what changed; its `elements` lack
-     a naming attribute. Check an ancestor's text, or give the element a
-     name in the app, such as an id, and capture again.
+     a naming attribute. Name a record that keeps its fields as child
+     elements by one of them, as Osmo's contact by
+     `[name=contact][>first_name=Delphine]`, and count records with
+     `member_count`, `matching` `[name=contact]`; otherwise check an
+     ancestor's text, or give the element an id in the app and capture again.
    - `view_state_only`: every change is view state, a renumbered id or a
      time the app stamps, and its `pointers` are the checks kept. The edit
      was likely not saved: capture again and save it before `end`.
@@ -319,9 +322,13 @@ Write `{"name", "prompt", "checks"}` from the draft and what you did.
   what the user did and drop what follows from how the app saves.
 - Compare exact values, so a typo or a wrong number fails.
 - Read each file's `values` before writing checks: every value the change
-  added, changed and removed, with `before` and `after` (a scalar, or an
-  element as compact XML, cut at 600 characters) at the pointer a check
-  names it by, so copy the pointer and the `after` value into a check.
+  added, changed and removed, with `before` and `after` (an uncut scalar, or
+  a preview cut at 600 characters) at the pointer a check names it by. Copy
+  the pointer. Copy `after` into `value` only when it is an uncut scalar: a
+  string without a trailing `…`, a number, or a boolean. Compact XML and a
+  JSON array or object are preview strings, so a `value_equals` check needs
+  the structured value from the file's view, and element text uses
+  `text_equals` or `text_contains`.
   Only XML files, archives, JSON and key files have values: a text file's
   or SQLite database's `change` already lists its lines and rows.
   `refers_to` says what a number stands for, such as `category="44"`
@@ -360,11 +367,11 @@ Write `{"name", "prompt", "checks"}` from the draft and what you did.
   draft compares the whole text with `text_equals`. This rejects longer or
   negated items, but can reject a correct edit with different ordering or
   spacing. Report that limitation when the task permits such variations.
-- Some apps keep text in an attribute, such as Scribus's `<ITEXT CH=...>`.
-  `text_equals` cannot join it, so check the attribute with `value_equals`:
-  `/root/children/[name=DOCUMENT]/children/[name=PAGEOBJECT][@ANNAME=Headline]/children/[name=StoryText]/children/[name=ITEXT]/attributes/CH`.
-  A partial edit the app restyles splits the text into several runs and
-  fails that check; list it in the report's limitations.
+- Some apps keep text in an attribute, one element per run, such as
+  Scribus's `<ITEXT CH=...>`: add `"text_attribute": "CH"` to `text_equals`
+  or `text_contains` on the frame,
+  `/root/children/[name=DOCUMENT]/children/[name=PAGEOBJECT][@ANNAME=Headline]`,
+  to read its runs' values joined.
 - When the draft shows no values or no checks, a scratch export can expose
   `envs/<env>/seed/` only after the task has at least one valid check: it must
   pass on the captured end state and fail on the seed. Before the first

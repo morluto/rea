@@ -120,6 +120,7 @@ export const xmlElementRanges = (
   const ranges: { start: number; end: number }[] = [];
   // Each open element's start, and whether it was picked.
   const open: { start: number; picked: boolean }[] = [];
+  let selectedAncestor = false;
   try {
     checkXmlSyntax(source, policy.doctype, (syntax) => {
       // Saxes reports the opening after reading the name and one character past it, none of which is `<`.
@@ -131,7 +132,7 @@ export const xmlElementRanges = (
       });
       syntax.on("opentag", (tag: SaxesTagNS) => {
         const element = open.at(-1);
-        if (element === undefined || open.some(({ picked }) => picked)) return;
+        if (element === undefined || selectedAncestor) return;
         element.picked = select({
           uri: tag.uri,
           local: tag.local,
@@ -140,11 +141,14 @@ export const xmlElementRanges = (
               (attribute) => attribute.uri === uri && attribute.local === local,
             )?.value,
         });
+        selectedAncestor = element.picked;
       });
       syntax.on("closetag", () => {
         const element = open.pop();
-        if (element?.picked === true)
+        if (element?.picked === true) {
           ranges.push({ start: element.start, end: syntax.position });
+          selectedAncestor = false;
+        }
       });
     });
     return ok(ranges.sort((left, right) => left.start - right.start));

@@ -1,4 +1,5 @@
 import type { JsonValue } from "../jsonValue.js";
+import { spellCondition, type Condition } from "./viewSelector.js";
 
 const isRecord = (
   value: JsonValue | null | undefined,
@@ -26,9 +27,11 @@ export interface Candidates {
 /** Attributes, from the best ranked, that pair into two-attribute selectors. */
 export const MAX_PAIRED = 6;
 
-export type Attribute = { readonly key: string; readonly value: string };
+/** An attribute a selector conditions on, as `@KEY=VALUE`. */
+export type Attribute = Omit<Condition, "prefix">;
 
-export const condition = ({ key, value }: Attribute) => `[@${key}=${value}]`;
+export const condition = ({ key, value }: Attribute) =>
+  spellCondition({ prefix: "@", key, value });
 
 /** A two-attribute selector's conditions, its keys in canonical order, so the order an app writes attributes in never splits a count. */
 export const pairSuffix = (first: Attribute, second: Attribute) =>

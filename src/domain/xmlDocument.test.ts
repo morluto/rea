@@ -233,3 +233,14 @@ it("gives the source range of each picked element, the outermost, through line b
     xmlElementRanges("<r><x></r>", () => true, { doctype: "reject" }).ok,
   ).toBe(false);
 });
+
+it("selects sibling outermost matches after a deeply nested nonmatching branch", () => {
+  const source = `<root>${"<n>".repeat(4000)}${"</n>".repeat(4000)}<x><x/></x><x/></root>`;
+  const ranges = xmlElementRanges(source, ({ local }) => local === "x", {
+    doctype: "reject",
+  });
+  if (!ranges.ok) throw ranges.error;
+  expect(
+    ranges.value.map(({ start, end }) => source.slice(start, end)),
+  ).toEqual(["<x><x/></x>", "<x/>"]);
+});

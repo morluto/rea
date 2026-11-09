@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import type { JsonValue } from "../jsonValue.js";
-import { locatePointer, pairMembers } from "./viewPointer.js";
+import { locatePointer, memberLookup, pairMembers } from "./viewPointer.js";
 
 const element = (
   name: string,
@@ -108,6 +108,44 @@ describe("locatePointer", () => {
       kind: "none",
     });
     expect(locatePointer(null, "/x")).toMatchObject({ kind: "none" });
+  });
+
+  it("names a member by a child element's text, its whitespace collapsed, alike in locatePointer and memberLookup", () => {
+    const ada = element("contact", {}, [
+      element("first", {}, ["Ada"]),
+      element("first", {}, ["\n Ann  Lee "]),
+    ]);
+    const bob = element("contact", {}, [element("first", {}, ["Bob"])]);
+    const members: JsonValue[] = [
+      "Ada",
+      { ">first": "Ada", name: "first" },
+      ada,
+      bob,
+      element("group", {}, [element("first", {}, ["Bob"])]),
+    ];
+    const named = (token: string) => [
+      locatePointer({ members }, `/members/${token}`),
+      memberLookup(members, [token])(token),
+    ];
+
+    expect(named("[>first=Ann Lee]")).toEqual([
+      expect.objectContaining({ kind: "value", value: ada }),
+      ada,
+    ]);
+    expect(named("[>first=Ada][>first=Ann Lee]")[1]).toBe(ada);
+    expect(named("[name=contact][>first=Bob]")[1]).toBe(bob);
+    expect(named("[>first=Bob]")).toEqual([
+      expect.objectContaining({ kind: "unresolved" }),
+      undefined,
+    ]);
+    expect(named("[>first=Zed]")).toEqual([
+      expect.objectContaining({ kind: "none" }),
+      undefined,
+    ]);
+    expect(named("[>=Ada]")).toEqual([
+      expect.objectContaining({ kind: "unresolved" }),
+      undefined,
+    ]);
   });
 });
 

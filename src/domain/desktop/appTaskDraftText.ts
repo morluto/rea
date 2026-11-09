@@ -1,6 +1,5 @@
 import type { JsonValue } from "../jsonValue.js";
 import type { DesktopTaskCheckInput } from "./appTask.js";
-import { elementText, isXmlElement } from "./appTaskChecks.js";
 import {
   holdsSplitDate,
   isBookkeeping,
@@ -10,7 +9,7 @@ import {
 import { valueEqualsCheck } from "./appTaskDraftScalars.js";
 import { rankAttributes } from "./attributeRank.js";
 import type { DesktopStateDifference } from "./stateChanges.js";
-import { resolvePointer } from "./viewPointer.js";
+import { elementText, isXmlElement, resolvePointer } from "./viewPointer.js";
 
 /** The pointers a diff lists, of every kind. */
 type Listed = Pick<DesktopStateDifference, "added" | "changed" | "removed">;
@@ -343,17 +342,33 @@ const recordLike = (value: JsonValue | undefined): boolean =>
 const TEXT_TAG = /^(?:p|h|h[1-6]|para|simpara|li|text|tspan|span|a)$/u;
 
 /**
+ * A tag of a formatting run inside a piece of text, compared without its
+ * namespace and without case. `link` and `code` stay out: some records name a
+ * field that, and a field is not a run.
+ */
+const FORMAT_TAG =
+  /^(?:span|a|s|c|tspan|tab|line-break|soft-page-break|br|b|i|u|em|strong|bold|italic|underline|emphasis|sub|sup|small|font|mark|q|r|t|run|hyperlink)$/u;
+
+const isFormatTag = (tag: string) =>
+  FORMAT_TAG.test((tag.split(":").at(-1) ?? tag).toLowerCase());
+
+/**
  * Whether an element holds fields: only elements, layout whitespace aside, as
  * Tellico's `<entry>` holds `<title>` and `<publisher>`, or a record holds
  * repeated `<field>` elements, whatever they are called; unless it is text
- * made of runs: its tag names a paragraph or other text (`TEXT_TAG`), or a
- * child's text opens or closes with whitespace, as a sentence splits into
- * runs, `Meet ` and a linked `Monday`, where a field holds a value whole.
+ * made of runs: its tag names a paragraph or other text (`TEXT_TAG`), every
+ * element child is a formatting run (`FORMAT_TAG`), as a list item
+ * `<bold>olive oil</bold>`, or a child's text opens or closes with
+ * whitespace, as a sentence splits into runs, `Meet ` and a linked `Monday`,
+ * where a field holds a value whole.
  */
 export const holdsFields = (value: JsonValue | undefined): boolean =>
   recordLike(value) &&
   isXmlElement(value) &&
   !TEXT_TAG.test(value.name.split(":").at(-1) ?? value.name) &&
+  !value.children.every(
+    (child) => !isXmlElement(child) || isFormatTag(child.name),
+  ) &&
   !value.children.some((child) => {
     const text = isXmlElement(child) ? elementText(child) : "";
     return text.trim() !== "" && text.trim() !== text;
