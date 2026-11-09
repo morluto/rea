@@ -277,33 +277,22 @@ const locateMachOSlice = async (
         true,
       );
       if (!parsedSection.ok) {
+        if (namesDenoSection(command.body, at)) throw denoSectionTruncated();
         damage ??= "Mach-O __SUI section is truncated";
         return;
       }
       const record = parsedSection.value;
       if (fixedCString(record.nameBytes) !== SECTION_NAME) continue;
       confirmed = true;
-      if (record.size > BigInt(Number.MAX_SAFE_INTEGER))
-        throw denoCarrierFailure(
-          "Mach-O d3n0l4nd section size is not a safe integer",
-        );
-      const length = Number(record.size);
-      const fileOffset = record.offset;
-      if (
-        fileOffset > sliceSize ||
-        length > sliceSize - fileOffset ||
-        base + fileOffset > carrier.fileSize ||
-        length > carrier.fileSize - (base + fileOffset)
-      )
-        throw denoCarrierFailure("Mach-O d3n0l4nd section exceeds the image");
-      found.push({
-        offset: base + fileOffset,
-        length,
-        embedding: "mach-o-section",
-      });
+      found.push(denoSectionRange(record, base, sliceSize, carrier.fileSize));
     }
-    if (segment.sectionCount > fitting)
-      damage ??= "Mach-O __SUI segment is truncated";
+    if (segment.sectionCount <= fitting) return;
+    // The first record past the command may still hold its whole name.
+    if (
+      namesDenoSection(command.body, segment.headerSize + fitting * sectionSize)
+    )
+      throw denoSectionTruncated();
+    damage ??= "Mach-O __SUI segment is truncated";
   });
   if (confirmed && damage !== undefined) throw denoCarrierFailure(damage);
   if (confirmed && framed.status !== "framed")
@@ -324,6 +313,41 @@ const locateMachOSlice = async (
     return { found, unread: null };
   return locateIntelTrailers(carrier, base, sliceSize, owned);
 };
+
+/**
+ * Whether the section record at `at` names `d3n0l4nd`. The 16-byte name is
+ * read apart from the rest of the record, so a record truncated after its
+ * name still confirms Deno.
+ */
+const namesDenoSection = (body: Uint8Array, at: number): boolean =>
+  at + 16 <= body.byteLength &&
+  fixedCString(body.subarray(at, at + 16)) === SECTION_NAME;
+
+/** The file range of a confirmed `d3n0l4nd` record, or a failure. */
+const denoSectionRange = (
+  record: { readonly size: bigint; readonly offset: number },
+  base: number,
+  sliceSize: number,
+  fileSize: number,
+): SectionRange => {
+  if (record.size > BigInt(Number.MAX_SAFE_INTEGER))
+    throw denoCarrierFailure(
+      "Mach-O d3n0l4nd section size is not a safe integer",
+    );
+  const length = Number(record.size);
+  const fileOffset = record.offset;
+  if (
+    fileOffset > sliceSize ||
+    length > sliceSize - fileOffset ||
+    base + fileOffset > fileSize ||
+    length > fileSize - (base + fileOffset)
+  )
+    throw denoCarrierFailure("Mach-O d3n0l4nd section exceeds the image");
+  return { offset: base + fileOffset, length, embedding: "mach-o-section" };
+};
+
+const denoSectionTruncated = (): ArtifactReaderFailure =>
+  denoCarrierFailure("Mach-O d3n0l4nd section is truncated");
 
 /**
  * libsui appends `<~sui-data~>` + `0xdeadbeef` + u64 length + payload. A code

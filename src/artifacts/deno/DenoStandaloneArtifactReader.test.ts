@@ -1459,3 +1459,31 @@ it("fails closed on a confirmed SUI note whose descriptor size exceeds its table
     locateDenoStandalone(bytesHandle(other), other.length),
   ).resolves.toEqual({ status: "absent" });
 });
+
+it("fails closed on a truncated __SUI section record that names d3n0l4nd", async () => {
+  const truncated = (name: string): Buffer => {
+    const image = denoMachO(buildDenoSection());
+    // cmdsize 104 keeps the segment header and both 16-byte section names,
+    // but not the rest of the one declared section record.
+    image.writeUInt32LE(104, 20);
+    image.writeUInt32LE(104, 32 + 4);
+    const sectionNameAt = 32 + 72;
+    image.fill(0, sectionNameAt, sectionNameAt + 16);
+    image.write(name, sectionNameAt, "latin1");
+    return image;
+  };
+  const deno = truncated("d3n0l4nd");
+  await expect(
+    locateDenoStandalone(bytesHandle(deno), deno.length),
+  ).resolves.toMatchObject({
+    status: "present",
+    failure: {
+      reason: "format",
+      message: expect.stringContaining("d3n0l4nd section is truncated"),
+    },
+  });
+  const other = truncated("notdeno");
+  await expect(
+    locateDenoStandalone(bytesHandle(other), other.length),
+  ).resolves.toEqual({ status: "absent" });
+});
