@@ -259,7 +259,7 @@ export const detectStateFormat = (
   )
     return "json";
   if (namedXml(path, trimmed))
-    return parseXmlDocument(text, XML_POLICY).ok ? "xml" : "text";
+    return isWellFormedXml(text, XML_POLICY) ? "xml" : "text";
   return isKeyfile(text) ? "keyfile" : "text";
 };
 
