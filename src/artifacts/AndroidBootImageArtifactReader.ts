@@ -1,21 +1,15 @@
-import { Readable, Transform, pipeline } from "node:stream";
 import type { FileHandle } from "node:fs/promises";
-import { setImmediate } from "node:timers/promises";
 
 import { readArtifactFileBytes } from "./ArtifactFileRange.js";
-import { ArtifactFileSource } from "./ArtifactFileSource.js";
-import { assertArtifactReadActive } from "./ArtifactFileOperation.js";
 import {
   ArtifactReaderFailure,
   artifactFixedLimitFailure,
-  copyArtifactEntry,
-  sameArtifactEntry,
-  type ArtifactEntry,
-  type ArtifactReader,
-  type ArtifactTraversalOptions,
 } from "./ArtifactReader.js";
-import { ArtifactResourceScope } from "./ArtifactResourceScope.js";
-import { readFileHandleChunks } from "../filesystem/readFileHandleChunks.js";
+import {
+  PositionalArtifactReader,
+  type PositionalArtifactEntries,
+  type PositionalArtifactEntry,
+} from "./PositionalArtifactReader.js";
 import type { StableRegularFileDescriptor } from "../filesystem/RegularFile.js";
 import type {
   AndroidBootImageEntryMetadata,
@@ -36,9 +30,7 @@ import {
   type VendorRamdiskTableParse,
 } from "../domain/androidBootImageFormat.js";
 
-type BootEntry = ArtifactEntry & {
-  readonly byteOffset: number;
-  readonly declaredSize: number;
+type BootEntry = PositionalArtifactEntry & {
   readonly formatMetadata: AndroidBootImageEntryMetadata;
 };
 
@@ -46,163 +38,22 @@ const COMPRESSION_LIMITATION =
   "Compression was identified from the leading magic only and the stored bytes were not decompressed.";
 
 /** Read an Android boot or vendor_boot image without unpacking or verifying it. */
-export class AndroidBootImageArtifactReader implements ArtifactReader {
-  readonly format = "android-boot-image" as const;
-  readonly #scope = new ArtifactResourceScope();
-  readonly #entries = new Map<string, BootEntry>();
-  readonly #streams = new Set<Readable>();
-  readonly #source: ArtifactFileSource;
-  #prepared: Promise<void> | undefined;
+export class AndroidBootImageArtifactReader extends PositionalArtifactReader {
+  override readonly format = "android-boot-image" as const;
   #header: AndroidBootImageMetadata | undefined;
-  #limitations: readonly string[] = [];
-  #closing = false;
 
   constructor(path: string, admitted?: StableRegularFileDescriptor) {
-    this.#source = new ArtifactFileSource(path, "Android boot image", admitted);
+    super(path, "Android boot image", admitted);
   }
 
   formatMetadata(): AndroidBootImageMetadata | undefined {
     return this.#header === undefined ? undefined : { ...this.#header };
   }
 
-  async prepareContainer(
-    expectedSha256: string,
+  protected override async prepareEntries(
     signal?: AbortSignal,
-  ): Promise<void> {
-    await this.#scope.run(async () => {
-      this.#assertOpen(signal);
-      await this.#source.bindSha256(expectedSha256, signal);
-    });
-  }
-
-  async *entries(
-    signal?: AbortSignal,
-    options?: ArtifactTraversalOptions,
-  ): AsyncIterable<ArtifactEntry> {
-    await this.#scope.run(async () => {
-      this.#assertOpen(signal);
-      this.#prepared ??= this.#prepare(signal);
-      await this.#prepared;
-      await this.#source.read(signal);
-    });
-    this.#assertOpen(signal);
-    options?.onCoverage?.({
-      status: "complete",
-      limitations: [...this.#limitations],
-    });
-    let index = 0;
-    for (const entry of this.#entries.values()) {
-      if (index % 256 === 0) await setImmediate();
-      index += 1;
-      this.#assertOpen(signal);
-      yield copyArtifactEntry(entry);
-    }
-    this.#assertOpen(signal);
-  }
-
-  async open(entry: ArtifactEntry, signal?: AbortSignal): Promise<Readable> {
-    return this.#scope.run(async () => {
-      this.#assertOpen(signal);
-      const stored = this.#entries.get(entry.adapterKey);
-      if (stored === undefined || !sameArtifactEntry(entry, stored))
-        throw new ArtifactReaderFailure(
-          "integrity",
-          "Android boot image entry does not match its owning inventory",
-        );
-      const { handle } = await this.#source.read(signal);
-      this.#assertOpen(signal);
-      const source =
-        stored.declaredSize === 0
-          ? Readable.from([])
-          : readFileHandleChunks(handle, {
-              start: stored.byteOffset,
-              end: stored.byteOffset + stored.declaredSize - 1,
-              signal,
-              cancellationFailure: (reason) =>
-                new ArtifactReaderFailure(
-                  "cancelled",
-                  "Android boot image read cancelled",
-                  { cause: reason },
-                ),
-            });
-      const output = this.#memberStream(stored, signal);
-      output.on("error", () => undefined);
-      this.#streams.add(output);
-      let producerComplete = false;
-      const onAbort = (): void => {
-        if (!producerComplete || output.destroyed) return;
-        output.destroy(
-          new ArtifactReaderFailure(
-            "cancelled",
-            "Android boot image read cancelled",
-            { cause: signal?.reason },
-          ),
-        );
-      };
-      const retired = new Promise<void>((resolve) => {
-        output.once("close", () => {
-          this.#streams.delete(output);
-          signal?.removeEventListener("abort", onAbort);
-          resolve();
-        });
-      });
-      signal?.addEventListener("abort", onAbort, { once: true });
-      if (signal?.aborted) onAbort();
-      void this.#scope
-        .run(async () => {
-          await Promise.all([
-            new Promise<void>((resolve) =>
-              pipeline(source, output, () => {
-                producerComplete = true;
-                if (signal?.aborted) onAbort();
-                resolve();
-              }),
-            ),
-            retired,
-          ]);
-        })
-        .catch((cause: unknown) =>
-          output.destroy(
-            cause instanceof Error
-              ? cause
-              : new Error("Android boot image stream ownership failed", {
-                  cause,
-                }),
-          ),
-        );
-      return output;
-    });
-  }
-
-  async close(): Promise<void> {
-    this.#closing = true;
-    for (const stream of this.#streams)
-      stream.destroy(
-        new ArtifactReaderFailure(
-          "unavailable",
-          "Android boot image reader closed",
-        ),
-      );
-    await this.#scope.close();
-    await this.#source.close();
-    this.#entries.clear();
-  }
-
-  provenance(): readonly [] {
-    return [];
-  }
-
-  #assertOpen(signal?: AbortSignal): void {
-    assertArtifactReadActive(signal);
-    if (this.#closing)
-      throw new ArtifactReaderFailure(
-        "unavailable",
-        "Android boot image reader closed",
-      );
-  }
-
-  async #prepare(signal?: AbortSignal): Promise<void> {
-    const { handle, initial } = await this.#source.read(signal);
+  ): Promise<PositionalArtifactEntries> {
+    const { handle, initial } = await this.verifyCarrier(signal);
     const headerBytes = await readArtifactFileBytes(
       handle,
       0,
@@ -210,7 +61,7 @@ export class AndroidBootImageArtifactReader implements ArtifactReader {
       initial.size,
       signal,
     );
-    this.#assertOpen(signal);
+    this.assertOpen(signal);
     const parsed = parseAndroidBootHeader(headerBytes, initial.size);
     if (!parsed.ok) throw parseFailure(parsed.error);
     const header = parsed.value;
@@ -224,17 +75,24 @@ export class AndroidBootImageArtifactReader implements ArtifactReader {
       signal,
     );
     this.#header = toMetadata(header, avb, plans.length);
-    this.#limitations = [
-      ...header.limitations,
-      ...(table?.limitations ?? []),
-      ...avb.limitations,
-    ];
+    const entries = new Map<string, BootEntry>();
     for (const plan of plans) {
       const entry = entryFor(plan, compressions.get(plan.path) ?? null);
-      if (this.#entries.has(entry.adapterKey))
+      if (entries.has(entry.adapterKey))
         throw formatFailure(`duplicate component path ${plan.path}`);
-      this.#entries.set(entry.adapterKey, entry);
+      entries.set(entry.adapterKey, entry);
     }
+    return {
+      entries: [...entries.values()],
+      coverage: {
+        status: "complete",
+        limitations: [
+          ...header.limitations,
+          ...(table?.limitations ?? []),
+          ...avb.limitations,
+        ],
+      },
+    };
   }
 
   async #vendorTable(
@@ -252,7 +110,7 @@ export class AndroidBootImageArtifactReader implements ArtifactReader {
       header.vendorRamdiskTableEntrySize === null
     )
       throw formatFailure("vendor ramdisk table is missing its section");
-    this.#assertOpen(signal);
+    this.assertOpen(signal);
     const bytes = await readArtifactFileBytes(
       handle,
       range.offset,
@@ -279,7 +137,7 @@ export class AndroidBootImageArtifactReader implements ArtifactReader {
     signal?: AbortSignal,
   ): Promise<AvbFooterFacts> {
     const trailing = fileSize - header.imageEnd;
-    this.#assertOpen(signal);
+    this.assertOpen(signal);
     const tail =
       trailing >= AVB_FOOTER_SIZE
         ? await readArtifactFileBytes(
@@ -316,7 +174,7 @@ export class AndroidBootImageArtifactReader implements ArtifactReader {
   ): Promise<ReadonlyMap<string, AndroidBootCompression | null>> {
     const observed = new Map<string, AndroidBootCompression | null>();
     for (const plan of plans) {
-      this.#assertOpen(signal);
+      this.assertOpen(signal);
       const prefix = await readArtifactFileBytes(
         handle,
         plan.offset,
@@ -327,32 +185,6 @@ export class AndroidBootImageArtifactReader implements ArtifactReader {
       observed.set(plan.path, compressionFromPrefix(prefix));
     }
     return observed;
-  }
-
-  #memberStream(entry: BootEntry, signal?: AbortSignal): Transform {
-    let bytes = 0;
-    const check = async (): Promise<void> => {
-      if (bytes !== entry.declaredSize)
-        throw formatFailure(`member ended early: ${entry.path}`);
-      await this.#source.read(signal);
-    };
-    return new Transform({
-      transform(chunk: Buffer, _encoding, callback) {
-        bytes += chunk.length;
-        callback(null, chunk);
-      },
-      flush(callback) {
-        void check().then(
-          () => callback(),
-          (cause: unknown) =>
-            callback(
-              cause instanceof Error
-                ? cause
-                : new Error("Android boot image read failed", { cause }),
-            ),
-        );
-      },
-    });
   }
 }
 
