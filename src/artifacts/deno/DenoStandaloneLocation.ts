@@ -68,7 +68,10 @@ const INTEL_SENTINEL = Buffer.concat([
 export interface DenoStandaloneLocation {
   readonly carrier: "mach-o" | "elf" | "pe";
   readonly embedding:
-    "mach-o-section" | "mach-o-intel-trailer" | "elf-note" | "pe-resource";
+    | "mach-o-section"
+    | "mach-o-intel-trailer"
+    | "elf-note"
+    | "pe-resource";
   readonly offset: number;
   readonly length: number;
 }
