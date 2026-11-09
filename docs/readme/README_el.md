@@ -86,6 +86,10 @@ npx rea-agents setup
 
 Το MCP χρησιμοποιεί συμπαγή σχήματα εισόδου από προεπιλογή. Για πλήρεις οδηγίες πεδίων και ένθετης επικύρωσης, όρισε `REA_MCP_INPUT_SCHEMA_PROFILE=full` στην καταχώριση MCP. Και τα δύο προφίλ διατηρούν όλα τα εργαλεία και την ίδια κανονική επικύρωση διακομιστή· δες τον οδηγό συμβολαίων MCP.
 
+Η εγκατάσταση καταχωρίζει απευθείας τον επιλεγμένο runtime και το αρχικό script του REA. Αν χρησιμοποιείς package runner, διατήρησε την καταχώριση cache και τον runtime· απόκτησε το πακέτο από έμπιστο κατάλογο έξω από το έργο-στόχο. Δες τον οδηγό εγκατάστασης.
+
+Τα πλήρη σχήματα εξόδου ανακοινώνονται από προεπιλογή. Αν ο client περιορίζει το `tools/list`, όρισε `REA_MCP_OUTPUT_SCHEMA_PROFILE=compact` ή `off` στην καταχώριση MCP. Η επικύρωση του διακομιστή και τα δομημένα αποτελέσματα παραμένουν πλήρη. Δες το «Output schemas» στον οδηγό συμβάσεων MCP.
+
 ### Ζήτησε από τον agent σου
 
 ```text
@@ -175,6 +179,7 @@ npx rea-agents@latest setup
 | Αποθηκευμένες καταγραφές δικτύου       | Αιτήματα, αποκρίσεις, διαθέσιμα δεδομένα φορτίου και θέσεις στην πηγή                                                       | HAR ή SAZ του Fiddler Everywhere· mitmdump σε Linux για την εγγενή μορφή mitmproxy· [οδηγός καταγραφών](../guides/web/web-network-captures.md)                |
 | Assemblies .NET                        | Μεταδεδομένα, εντολές CIL, δηλωμένες εξαρτήσεις από κώδικα μηχανής και συγκρίσεις builds                                    | Καμία πρόσθετη απαίτηση (μόνο στατική ανάλυση)· [οδηγός διαχειριζόμενου κώδικα](../guides/managed/managed-code-analysis.md)                                   |
 | PyInstaller                            | CArchive, PYZ, Python bytecode                                                                                              | Static inspection; [Python packaged applications](../python-packaged-applications.md)                                                                         |
+| Deno compile binaries                  | Virtual files, entry point, recorded options, npm snapshot length                                                           | Static inspection; [Deno compile executables](../deno-standalone.md)                                                                                          |
 | APK Android                            | Δηλώσεις manifest, κλάσεις, απομεταγλωττισμένες μέθοδοι και αναφορές                                                        | JADX χωρίς γραφικό περιβάλλον και πλήρες JDK σε Linux/macOS/Windows x64· [οδηγός Android](../guides/android/android-analysis.md)                              |
 | Συσκευές Android                       | Συσκευές, πακέτα, διεργασίες, logs, dumps, στιγμιότυπα οθόνης και μεταφορές APK/αρχείων                                     | adb που παρέχει ο χρήστης (εξομοιωτής ή φυσική συσκευή)· [οδηγός ADB](../guides/android/adb-device-analysis.md)                                               |
 | Έργα JEB                               | Μονάδες έργου από τη μηχανή ανάλυσης, ψηφιακά αποτυπώματα αρχείων και ψευδοκώδικα τύπων/μεθόδων                             | Client JEB που έχει ξεκινήσει ο χρήστης και παρέχει MCP, επιλεγμένος μέσω REA_JEB_MCP_URL· [οδηγός JEB](../providers/jeb-analysis.md)                         |
