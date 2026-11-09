@@ -649,7 +649,7 @@ A view is never more certain than its parent: a summary or other view of
 `inferred` Evidence is `inferred`. Other views are `derived`, unless the
 view kind itself infers, as described below.
 
-`inspect_analysis_view` also accepts `api-surface` for retained HAR capture Evidence,
+`inspect_analysis_view` also accepts `api-surface` for retained HAR or SAZ capture Evidence,
 grouping request lines by method, origin and format-rule path template. Templated
 segments are inferences. Because paging follows the full grouping, every page is
 inferred Evidence whenever any group is templated, and derived Evidence only when

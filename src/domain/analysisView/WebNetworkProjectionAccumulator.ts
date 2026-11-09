@@ -21,7 +21,7 @@ import {
   type Reserve,
 } from "./webNetworkRouteTemplates.js";
 
-/** Shared retained/temporary byte accounting for views that group retained HAR records. */
+/** Shared retained/temporary byte accounting for views that group retained capture records. */
 export abstract class WebNetworkProjectionAccumulator {
   readonly #limitations = new Set<string>();
   #retainedBytes = 0;
@@ -119,13 +119,17 @@ export abstract class WebNetworkProjectionAccumulator {
   }
 }
 
-/** Authenticate and gate a retained HAR parent before a grouping view reads any record. */
-export const admitHarCaptureParent = (
+/** Authenticate and gate a retained capture parent before a grouping view reads any record. */
+export const admitWebNetworkCaptureParent = (
   parent: AnalysisViewParent,
   viewKind: "api-surface" | "environment-manifest" | "environment-state",
   accumulator: WebNetworkProjectionAccumulator,
-  context: { readonly operation?: string; readonly sourceField?: string } = {},
-): Result<WebNetworkCapture, AnalysisError> => {
+  context: {
+    readonly operation?: string;
+    readonly sourceField?: string;
+    readonly allowSaz?: boolean;
+  } = {},
+): Result<WebNetworkCapture & { format: "har" | "saz" }, AnalysisError> => {
   const operation = context.operation ?? "inspect_analysis_view";
   const sourceField = context.sourceField ?? "source";
   const unsupported = (reason: string, remediationAction?: string) =>
@@ -156,7 +160,12 @@ export const admitHarCaptureParent = (
         { cause: parsed.error },
       ),
     );
-  if (parsed.data.format !== "har")
+  const { format } = parsed.data;
+  if (
+    (format !== "har" && format !== "saz") ||
+    (format === "saz" &&
+      (viewKind !== "api-surface" || context.allowSaz !== true))
+  )
     return unsupported(
       `${viewKind} does not support capture format ${parsed.data.format}.`,
     );
@@ -188,5 +197,5 @@ export const admitHarCaptureParent = (
       "sensitive_values_unretained",
       "This view cannot safely project this capture because sensitivity declarations are not retained. Use a compatible capture or summary view to inspect retained observations. Do not remove sensitivity declarations to bypass this restriction.",
     );
-  return ok(parsed.data);
+  return ok({ ...parsed.data, format });
 };

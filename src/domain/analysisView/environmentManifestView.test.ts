@@ -111,6 +111,44 @@ const syntheticCapture = (
   return capture;
 };
 
+it.each([
+  ["response", "application/json;\r\n charset=utf-8", "application/json"],
+  ["request", "application/json", "application/json;\r\n charset=utf-8"],
+])(
+  "preserves HAR API types and manifest body shapes with newlines in %s MIME parameters",
+  (_, responseMime, requestMime) => {
+    const capture = syntheticCapture([
+      [
+        "POST",
+        "https://api.test/items",
+        responseMime,
+        '{"title":"recorded value"}',
+        requestMime,
+      ],
+    ]);
+    const before = structuredClone(capture);
+    const surface = projectAnalysisView(parentOf(capture), {
+      kind: "api-surface",
+      offset: 0,
+      limit: 50,
+    });
+    if (!surface.ok) throw surface.error;
+    expect(surface.value).toMatchObject({
+      groups: [{ content_types: ["application/json"] }],
+      unknowns: [],
+    });
+    const projected = manifest([], capture);
+    expect(projected.tools).toHaveLength(1);
+    expect(projected.tools[0]).toMatchObject({
+      method: "POST",
+      path_template: "/items",
+      content_types: ["application/json"],
+      body_shape: { type: "object", properties: { title: "string" } },
+    });
+    expect(capture).toEqual(before);
+  },
+);
+
 it("keeps every template identical to the api-surface grouping when no opt-in rule is selected", () => {
   const parent = parentOf();
   const result = projectAnalysisView(parent, view());

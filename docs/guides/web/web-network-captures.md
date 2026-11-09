@@ -381,7 +381,7 @@ duplicates or the original numeric spelling of parsed native floats.
 
 ## Derived API surface
 
-Pass retained HAR Evidence to `inspect_analysis_view` with
+Pass retained HAR or SAZ Evidence to `inspect_analysis_view` with
 `view: {"kind":"api-surface","offset":0,"limit":50}`. Omitted offset and limit
 are 0 and 50. The view groups request lines by method, WHATWG URL origin and
 path template, sorted by origin, template and method. Query strings, fragments,
@@ -433,8 +433,37 @@ Unavailable request objects or methods are explicitly excluded. Unavailable
 response fields, including HAR's `status: 0` and an empty `mimeType`, remain
 unknown, not invented statuses or MIME types.
 
+SAZ uses the already parsed request line, the three-digit textual response
+status and a single case-insensitive `Content-Type` response header. Accepted
+header continuations recognized by the SAZ parser are retained in a separate
+`value_unfolded` field alongside the unchanged raw `value`. The view uses this
+parsed field for MIME interpretation after admitting the original text's
+resource cost. Remaining line breaks, malformed or duplicate Content-Type
+declarations remain unknown, including identical duplicates. Older exports
+with folded values but no parsed field must be recaptured to establish a MIME
+type. Bodies and Session XML are not interpreted. Only a
+recorded absolute request URL establishes the origin: origin-form paths,
+CONNECT authority targets and `*` targets are excluded as `url-unparseable`;
+Host headers and session metadata do not supply a guessed scheme or origin.
+Record ordinals still link to the parent's original SAZ archive member names.
+
+For a saved SAZ, inspect it once and pass its complete Evidence to the existing
+view command:
+
+```sh
+rea inspect-web-network-capture /absolute/path/capture.saz saz --format json
+rea inspect-analysis-view /absolute/path/view-request.json --format json
+```
+
+`view-request.json` contains `source: {"kind":"inline","evidence": <complete Evidence>}`
+and `view: {"kind":"api-surface"}`. In MCP, use `inspect_analysis_view` with
+`source: {"kind":"retained-evidence","evidence_id":"<parent_evidence_id>"}`;
+when capture inspection used `detail: "summary"`, take `parent_evidence_id`
+from the summary's `normalized_result`. Both forms work after the original
+archive is removed, without another decoder run or conversion to HAR.
+
 The view makes no handler-identity, schema or causality claim. It performs no
-network activity. Native mitmproxy, SAZ and qlog captures return a typed unsupported error.
+network activity. Native mitmproxy and qlog captures return a typed unsupported error.
 Parents inspected with `sensitive_values`, or whose Evidence does not record
 `sensitive_value_count`, return a typed unsupported error whose reason is the
 canonical token `sensitive_values_unretained`. The view would write path

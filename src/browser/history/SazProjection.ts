@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { isUtf8 } from "node:buffer";
 import type { JsonValue } from "../../domain/jsonValue.js";
+import { parseRecordedTransportUrl } from "../../domain/recordedTransportUrl.js";
 import {
   WEB_NETWORK_CAPTURE_LIMITS,
   type WebNetworkCaptureRecord,
@@ -33,7 +34,10 @@ export const projectSazRecord = (
         "SAZ projection exceeds the complete-evidence nesting budget. This release has no runtime override.",
         pointer,
       );
-    if (parent !== undefined && redactor.harCredential(pointer, parent))
+    const sourcePointer = pointer.endsWith("/value_unfolded")
+      ? pointer.slice(0, -"_unfolded".length)
+      : pointer;
+    if (parent !== undefined && redactor.harCredential(sourcePointer, parent))
       return redactor.credential(pointer);
     if (Buffer.isBuffer(value)) {
       const base64 = value.toString("base64");
@@ -72,6 +76,29 @@ export const projectSazRecord = (
       return isUtf8(value) ? value.toString("utf8") : null;
     }
     if (typeof value === "string") {
+      const originalHeader = parent?.value;
+      // Inherit exclusions from the source header: unfolding can change URL
+      // recognition or remove characters from an explicitly sensitive literal.
+      if (
+        /^\/(request|response)\/headers\/\d+\/value_unfolded$/u.test(pointer) &&
+        typeof originalHeader === "string"
+      ) {
+        if (
+          redactor.harTransportUrl(sourcePointer, parent) &&
+          parseRecordedTransportUrl(originalHeader).credentials !== null
+        )
+          return redactor.credential(pointer);
+        if (
+          sensitiveValues.some((literal) => originalHeader.includes(literal)) ||
+          redactor.sensitiveBytes(Buffer.from(originalHeader, "latin1"))
+        ) {
+          redactor.redactions.push({
+            pointer,
+            reason: "explicit-sensitive-value",
+          });
+          return null;
+        }
+      }
       // HTTP fields are Latin-1 views of bytes. A UTF-8 declaration must also
       // exclude its byte spelling, even when its display is mojibake.
       if (
@@ -88,7 +115,7 @@ export const projectSazRecord = (
       return redactor.text(
         value,
         pointer,
-        redactor.harTransportUrl(pointer, parent),
+        redactor.harTransportUrl(sourcePointer, parent),
       );
     }
     if (value === null || typeof value === "boolean") return value;

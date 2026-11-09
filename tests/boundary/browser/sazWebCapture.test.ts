@@ -125,6 +125,158 @@ const cli = async (path: string, extra: string[] = []) => {
   return parseEvidence(JSON.parse(result.stdout));
 };
 
+it("derives portable and retained SAZ API surfaces after removing the archive", async () => {
+  const bytes = await archive([
+    [
+      "raw/1_c.txt",
+      Buffer.from(
+        "GET https://user:password@api.test/items/1?omit=value HTTP/1.1\r\n\r\n",
+      ),
+    ],
+    [
+      "raw/1_s.txt",
+      Buffer.from(
+        "HTTP/1.1 200 OK\r\nContent-Type:\r\n\tapplication/json; charset=utf-8\r\n\r\n{}",
+      ),
+    ],
+    [
+      "raw/2_c.txt",
+      Buffer.from("GET https://api.test/items/2 HTTP/1.1\r\n\r\n"),
+    ],
+    [
+      "raw/2_s.txt",
+      Buffer.from(
+        "HTTP/1.1 404 Not Found\ncontent-type:\n text/plain\n\nmissing",
+      ),
+    ],
+    [
+      "raw/3_c.txt",
+      Buffer.from("POST /relative HTTP/1.1\r\nHost: api.test\r\n\r\n"),
+    ],
+    [
+      "raw/4_c.txt",
+      Buffer.from("POST https://api.test/items HTTP/1.1\r\n\r\n"),
+    ],
+  ]);
+  const path = await fixture(bytes);
+  const parent = await cli(path);
+  expect(parent.normalized_result).toMatchObject({
+    records: [
+      {
+        reported: {
+          response: {
+            headers: [
+              {
+                name: "Content-Type",
+                value: "\r\n\tapplication/json; charset=utf-8",
+              },
+            ],
+          },
+        },
+      },
+      {
+        reported: {
+          response: {
+            headers: [{ name: "content-type", value: "\n text/plain" }],
+          },
+        },
+      },
+      {},
+      {},
+    ],
+  });
+  const { call } = await connectLocalToolsMcp();
+  const summary = parseEvidence(
+    (
+      await call("inspect_web_network_capture", {
+        capture_path: path,
+        format: "saz",
+        detail: "summary",
+      })
+    ).structuredContent,
+  );
+  const { parent_evidence_id } = z
+    .object({ parent_evidence_id: z.string() })
+    .parse(summary.normalized_result);
+  expect(parent_evidence_id).toBe(parent.evidence_id);
+  expect(
+    createHash("sha256")
+      .update(await readFile(path))
+      .digest("hex"),
+  ).toBe(parent.subject?.digest.sha256);
+  await unlink(path);
+
+  const input = `${path}.view.json`;
+  await writeFile(
+    input,
+    JSON.stringify({
+      source: { kind: "inline", evidence: parent },
+      view: { kind: "api-surface" },
+    }),
+  );
+  const { stdout } = await promisify(execFile)(
+    process.execPath,
+    [entrypoint, "inspect-analysis-view", input, "--format", "json"],
+    { timeout: 40_000, maxBuffer: 4 * 1024 * 1024 },
+  );
+  const portable = parseEvidence(JSON.parse(stdout));
+  expect(portable).toMatchObject({
+    confidence: "inferred",
+    evidence_links: [parent.evidence_id],
+    normalized_result: {
+      parent_evidence_id,
+      records: { examined: 4, total: 4, excluded: 1 },
+      coverage: { total: 2, exhausted: true },
+      groups: [
+        {
+          method: "POST",
+          path_template: "/items",
+          record_ordinals: [3],
+          statuses: [],
+          content_types: [],
+        },
+        {
+          method: "GET",
+          path_template: "/items/{numeric}",
+          record_ordinals: [0, 1],
+          statuses: [200, 404],
+          content_types: ["application/json", "text/plain"],
+        },
+      ],
+      excluded_records: [{ ordinal: 2, reason: "url-unparseable" }],
+    },
+  });
+  // Match the planted query name as a JSON token: limitation prose may say "omitted".
+  for (const secret of ["password", '"omit"', "omit=value", "missing"])
+    expect(JSON.stringify(portable)).not.toContain(secret);
+  const source = { kind: "retained-evidence", evidence_id: parent_evidence_id };
+  const retained = parseEvidence(
+    (
+      await call("inspect_analysis_view", {
+        source,
+        view: { kind: "api-surface" },
+      })
+    ).structuredContent,
+  );
+  expect(retained).toEqual(portable);
+  const page = parseEvidence(
+    (
+      await call("inspect_analysis_view", {
+        source,
+        view: { kind: "api-surface", offset: 1, limit: 1 },
+      })
+    ).structuredContent,
+  );
+  expect(page).toMatchObject({
+    confidence: "inferred",
+    normalized_result: {
+      groups: [{ method: "GET", record_ordinals: [0, 1] }],
+      records: { examined: 4, total: 4, excluded: 1 },
+      coverage: { total: 2, examined: 1, exhausted: true, next_offset: null },
+    },
+  });
+});
+
 it("uses HTTP optional whitespace for SAZ identity codings without changing raw headers", async () => {
   const body = Buffer.from([0, 0, 0, 0, 2, 8, 1]);
   const codings = [
@@ -542,6 +694,63 @@ it("inspects native SAZ through the public CLI and MCP with equal evidence, byte
   ).toEqual(fromMcp);
 }, 60_000);
 
+it("excludes folded URL credentials from CLI, MCP and exported SAZ Evidence", async () => {
+  const secret = "synthetic-password-2884";
+  const bytes = await archive([
+    [
+      "raw/1_c.txt",
+      Buffer.from("GET https://api.test/items/1 HTTP/1.1\r\n\r\n"),
+    ],
+    [
+      "raw/1_s.txt",
+      Buffer.from(
+        `HTTP/1.1 302 Found\r\nLocation: ht\r\n\ttps://user:${secret}@api.test/\r\nContent-Type:\r\n\tapplication/json\r\n\r\n{}`,
+      ),
+    ],
+  ]);
+  const path = await fixture(bytes);
+  const evidence = await cli(path);
+  const capture = webNetworkCaptureSchema.parse(evidence.normalized_result);
+  expect(capture.records[0]?.reported).toMatchObject({
+    response: {
+      headers: [
+        { name: "Location", value: null, value_unfolded: null },
+        {
+          name: "Content-Type",
+          value: "\r\n\tapplication/json",
+          value_unfolded: " application/json",
+        },
+      ],
+    },
+  });
+  expect(capture.records[0]?.redactions).toContainEqual({
+    pointer: "/response/headers/0/value_unfolded",
+    reason: "transport-credential",
+  });
+  expect(JSON.stringify(evidence)).not.toContain(secret);
+  const { client, call } = await connectLocalToolsMcp();
+  const result = await call("inspect_web_network_capture", {
+    capture_path: path,
+    format: "saz",
+  });
+  expect(result.isError).not.toBe(true);
+  expect(parseEvidence(result.structuredContent)).toEqual(evidence);
+  const bundle = await client.callTool({
+    name: "get_evidence_bundle",
+    arguments: { detail: "complete" },
+  });
+  expect(bundle.isError).not.toBe(true);
+  expect(JSON.stringify(bundle)).not.toContain(secret);
+  const exported = z
+    .object({ result: z.object({ records: z.array(z.unknown()) }) })
+    .parse(bundle.structuredContent)
+    .result.records.map(parseEvidence);
+  expect(
+    exported.find((record) => record.evidence_id === evidence.evidence_id),
+  ).toEqual(evidence);
+  expect(Buffer.compare(await readFile(path), bytes)).toBe(0);
+}, 60_000);
+
 it("pages retained SAZ Evidence through public MCP and portable CLI after source deletion", async () => {
   const path = await fixture(await archive());
   const { call } = await connectSazMcp();
@@ -897,16 +1106,16 @@ it.each([
   const path = await fixture(bytes);
   const result = await cliResponse(path, ["--record", "0"]);
   expect(result.ok, result.stdout).toBe(false);
-  expect(JSON.parse(result.stdout).category).toBe(
+  const failure = JSON.parse(result.stdout);
+  expect(failure.category).toBe(
     ["encrypted", "unknown-member", "dtd"].includes(variant)
       ? "unsupported_provider"
       : "invalid_input",
   );
   // Expanded size is a caller-correctable input bound, not a decoder failure.
   if (variant === "expanded-limit") {
-    const error = JSON.parse(result.stdout);
-    expect(error.code).toBe("invalid_request");
-    expect(error.details.issues).toEqual([
+    expect(failure.code).toBe("invalid_request");
+    expect(failure.details.issues).toEqual([
       expect.objectContaining({
         path: ["capture_path", ""],
         reason: "out_of_range",
@@ -925,19 +1134,19 @@ it.each([
     const mcpFailure = parseMcpToolError(response);
     expect(mcpFailure).toMatchObject({
       error: {
-        code: error.code,
-        category: error.category,
-        details: error.details,
+        code: failure.code,
+        category: failure.category,
+        details: failure.details,
       },
     });
-    expect(error).not.toHaveProperty("normalized_result");
+    expect(failure).not.toHaveProperty("normalized_result");
     const sourceObservation = {
       kind: "file-snapshot-hash",
       path,
       sha256: createHash("sha256").update(bytes).digest("hex"),
       bytes: bytes.length,
     };
-    expect(error.details.partial_observation).toEqual(sourceObservation);
+    expect(failure.details.partial_observation).toEqual(sourceObservation);
     expect(mcpFailure).not.toHaveProperty("normalized_result");
     expect(mcpFailure.error.details?.partial_observation).toEqual(
       sourceObservation,

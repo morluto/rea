@@ -28,7 +28,8 @@ export const decodeSazHttp = (bytes: Buffer, request: boolean) => {
     : /^(HTTP\/\d+(?:\.\d+)?) +(\d{3})(?: (.*))?$/.exec(first);
   if (fields === null)
     throw new CaptureFormatError("format", "SAZ HTTP start line is malformed.");
-  const headers: { name: string; value: string }[] = [];
+  const headers: { name: string; value: string; value_unfolded?: string }[] =
+    [];
   for (const line of lines) {
     if (/^[ \t]/.test(line)) {
       const previous = headers.at(-1);
@@ -37,6 +38,9 @@ export const decodeSazHttp = (bytes: Buffer, request: boolean) => {
           "format",
           "SAZ HTTP header continuation has no field.",
         );
+      // Only the framing selected above establishes a continuation. Preserve
+      // the original spelling alongside the parser-owned unfolded value.
+      previous.value_unfolded = `${previous.value_unfolded ?? previous.value} ${line.replace(/^[ \t]+/u, "")}`;
       previous.value += `${split < 0 ? "\n" : "\r\n"}${line}`;
       continue;
     }

@@ -13,7 +13,7 @@ import { digestCanonicalValue } from "../../domain/canonicalDigest.js";
 import { err, ok, type Result } from "../../domain/result.js";
 import { JAVASCRIPT_APPLICATION_WORKFLOW_PROVIDER } from "../../domain/investigationProviders.js";
 import { WebNetworkApiSurfaceAccumulator } from "../../domain/analysisView/WebNetworkApiSurfaceAccumulator.js";
-import { admitHarCaptureParent } from "../../domain/analysisView/WebNetworkProjectionAccumulator.js";
+import { admitWebNetworkCaptureParent } from "../../domain/analysisView/WebNetworkProjectionAccumulator.js";
 import { compareStaticObservedEndpoints } from "../../domain/javascript/staticObservedEndpoints.js";
 import type { StaticObservedEndpointComparison } from "../../domain/javascript/staticObservedEndpointSchemas.js";
 import {
@@ -81,7 +81,7 @@ const readSources = (
       ]),
     );
   const captureEvidence = input.capture;
-  const admitted = admitHarCaptureParent(
+  const admitted = admitWebNetworkCaptureParent(
     {
       evidenceId: captureEvidence.evidence_id,
       operation: captureEvidence.operation,

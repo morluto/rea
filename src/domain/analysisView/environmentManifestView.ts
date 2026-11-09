@@ -11,7 +11,7 @@ import {
   TEMPLATE_RULES,
   type TemplateRule,
 } from "./environmentManifestRules.js";
-import { admitHarCaptureParent } from "./WebNetworkProjectionAccumulator.js";
+import { admitWebNetworkCaptureParent } from "./WebNetworkProjectionAccumulator.js";
 import {
   admitScenarioCaptureParent,
   type ScenarioResponseBodyRetention,
@@ -76,7 +76,7 @@ const admitCaptureParent = (
         })
       : scenario;
   }
-  const har = admitHarCaptureParent(parent, viewKind, accumulator);
+  const har = admitWebNetworkCaptureParent(parent, viewKind, accumulator);
   return har.ok
     ? ok({ operation: "inspect_web_network_capture", ...har.value })
     : har;
