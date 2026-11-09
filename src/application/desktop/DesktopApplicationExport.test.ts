@@ -19,6 +19,7 @@ import type {
   DesktopApplicationCapture,
 } from "../../domain/desktop/desktopCapture.js";
 import { renderBuildBundle } from "../../domain/desktop/appBuild.js";
+import { readDownloadInstall } from "./DesktopExportInstall.js";
 import {
   NO_LAUNCH_DOCUMENT,
   launchDocumentNote,
@@ -1523,6 +1524,25 @@ const exportDownload = async (
   );
   return { result, directory };
 };
+
+it("bounds download-install input and preserves cancellation", async () => {
+  const oversized = await exportDownload(downloadCapture(), {
+    text: "a".repeat(64 * 1024),
+  });
+  expect(oversized.result).toMatchObject({
+    _tag: "AnalysisInputError",
+    issues: [expect.objectContaining({ path: ["download_install"] })],
+  });
+  const controller = new AbortController();
+  const reason = new Error("cancelled input read");
+  controller.abort(reason);
+  await expect(
+    readDownloadInstall(
+      join(await createTestTempDirectory("download-input-"), "file"),
+      controller.signal,
+    ),
+  ).rejects.toBe(reason);
+});
 
 describe("exportDesktopApplication from a download", () => {
   it("declares the AppImage's download and the same script the build computer extracted it with, without the app", async () => {

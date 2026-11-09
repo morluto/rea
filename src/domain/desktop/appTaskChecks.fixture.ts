@@ -258,6 +258,16 @@ export const CHECK_VIEWS: Readonly<Record<string, TaskFileView>> = {
       truncated: false,
     },
   },
+  "Documents/placed-notes.xml": {
+    format: "xml",
+    view: {
+      root: element("layer", {}, [
+        element("text", { x: "1", y: "2" }, ["Buy eggs"]),
+        element("text", { x: "3", y: "4" }, ["Do not Buy eggs"]),
+      ]),
+      truncated: false,
+    },
+  },
   "Documents/flyer.sla": {
     format: "xml",
     view: {
@@ -1341,6 +1351,26 @@ const ledger = "Documents/ledger.json";
 /** Members named by a child element's text, its whitespace collapsed, alone or with other conditions. */
 const CHILD_TEXT_CASES: readonly (readonly [DesktopTaskCheckInput, boolean])[] =
   [
+    [
+      {
+        kind: "member_count",
+        file: "Documents/placed-notes.xml",
+        pointer: "/root/children",
+        matching: "[name=text][>text()=Buy eggs]",
+        equals: 1,
+      },
+      true,
+    ],
+    [
+      {
+        kind: "member_count",
+        file: "Documents/placed-notes.xml",
+        pointer: "/root/children",
+        matching: "[name=text][>text()=eggs]",
+        at_least: 1,
+      },
+      false,
+    ],
     [
       {
         kind: "member_count",

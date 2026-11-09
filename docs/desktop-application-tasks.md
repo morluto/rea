@@ -96,8 +96,8 @@ operation `describe_desktop_application_task` and predicate type
   in `.log` remain eligible for checks.
   A text file gains `lines_present` for its new lines and `lines_absent` for
   lines it lost (when either is at most ten), and `line_count` for each line
-  holding a letter whose count changed; a new line holding a value REA
-  recognizes as generated, such as a named epoch time or `ID_329023692`, gets a
+  holding a letter whose count changed; a new line holding an XML attribute
+  REA recognizes as generated, such as a named epoch time or `ID_329023692`, gets a
   `line_count` of the lines `contains` its text up to that value, as
   `<node TEXT="Water filter" ID="`, at the end's number, where both views
   hold the whole file, instead of a `lines_present` another save would
@@ -329,7 +329,7 @@ operation `describe_desktop_application_task` and predicate type
   - An element placed by its own position, holding numeric `x` and `y` as a
     like sibling does, as Xournal++ places each `<text>` note on a layer, is
     an item of its own, never a run of the others' text: one added whole
-    gets a `text_contains` of its text on the element holding the items,
+    gets a `member_count` matching its whole text with whitespace collapsed,
     which passes wherever it is placed, and that list's `member_count`.
   - Noise leaves the suggestions when the file's change holds anything
     else, a change only position reaches included: view state, which a tag
@@ -443,7 +443,7 @@ operation `describe_desktop_application_task` and predicate type
   a line with no text of its own, a command such as `\end_layout`, tags
   alone such as `<fonts>` or `</node>`, or a key alone such as a RedNotebook
   day's `24:`, nor a line that repeats; an item placed by its own position
-  that an edit added, a `text_contains` of each of up to four kept items'
+  that an edit added, a `member_count` matching each of up to four kept items'
   text, nearest first. Where members were only edited, a
   `member_count` of the innermost list holding the edited element that an
   edit goes through by a member with like siblings, a record rather than a
@@ -602,6 +602,9 @@ rather than by its position:
   the XML view keeps an element's attributes.
 - `[>PATH=VALUE]` names the member that holds `VALUE` at a path of one to
   three `/`-separated steps inside it. `>` reads XML and JSON differently:
+
+  For XML, `[>text()=VALUE]` compares the member's own whole text, with
+  whitespace collapsed, to `VALUE`. In JSON, `text()` remains a field name.
 
   | Form                                   | In an XML element                                                                                                                               | In a JSON record                                    |
   | -------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------- |

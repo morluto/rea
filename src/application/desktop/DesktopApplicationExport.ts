@@ -404,7 +404,7 @@ const runExport = async (
       evidenceId: evidence.evidence_id,
       seed: ends.seed,
       identity,
-      download: await readDownloadInstall(request.downloadInstall),
+      download: await readDownloadInstall(request.downloadInstall, signal),
     });
   const copies = retainedCopies(plan, seeds);
   // A task's seed checks read the seeds as the bundle ships them, scrubbed.

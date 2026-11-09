@@ -336,6 +336,7 @@ describe("desktop build registration settings", () => {
       );
       expect(check.detail).toContain(Object.values(fact)[0]![0]);
       expect(check.details).toMatchObject({ registrations: [fact] });
+      expect(check.remediation).toContain("client's REA registration");
     }
   });
   it("names the registration's missing settings, never their values", async () => {

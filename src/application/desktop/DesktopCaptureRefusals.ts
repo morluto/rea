@@ -11,6 +11,11 @@ import {
 } from "../../domain/analysisErrorCore.js";
 import { ProviderAdapterError } from "../../domain/providerAdapterError.js";
 import { describeValidationFailure } from "../../domain/validationFailure.js";
+import { regularFileCancellation } from "../../filesystem/OwnedRegularFile.js";
+import {
+  bindRegularFileCleanup,
+  RetainedRegularFileCleanupFailure,
+} from "../RegularFileRead.js";
 import type { LinuxApplicationRefusal } from "../../desktop/LinuxApplicationInventory.js";
 import { resolveProgram } from "../../desktop/ProgramLookup.js";
 import type { ObservedWindow } from "../../desktop/X11WindowObserver.js";
@@ -196,6 +201,29 @@ export const desktopOperationFailure = (
   label: string,
 ): AnalysisError => {
   if (cause instanceof AnalysisError) return cause;
+  if (cause instanceof RetainedRegularFileCleanupFailure) {
+    const cancellation = regularFileCancellation(cause);
+    const primary =
+      cause.outcome.kind === "failed" &&
+      cause.outcome.cause instanceof AnalysisError
+        ? cause.outcome.cause
+        : cancellation === undefined
+          ? undefined
+          : new AnalysisCancelledError(operation, {
+              cause: cancellation.reason,
+            });
+    const error = new ProviderAdapterError(DESKTOP_PROVIDER.id, operation, {
+      cause,
+      ...(primary === undefined ? {} : { cleanupPrimary: primary }),
+      cleanup: {
+        reason: describeValidationFailure(cause.cleanupCause),
+        resources: [cause.path],
+      },
+      userMessage: `${label} could not close an input file.`,
+    });
+    bindRegularFileCleanup(cause, error);
+    return error;
+  }
   // A resource that could not be released stays reported, with its owner.
   if (cause instanceof ArtifactReaderFailure && cause.cleanup !== undefined) {
     const error = new ProviderAdapterError(DESKTOP_PROVIDER.id, operation, {
