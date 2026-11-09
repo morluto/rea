@@ -409,7 +409,8 @@ export const parseElfUnwindRanges = (
   // DW_EH_PE_textrel base, resolved once per image.
   const textBaseAddress: bigint | null =
     loads.find((load) => (load.flags & 1) !== 0)?.virtualAddress ??
-    named(".text")[0]?.address ??
+    named(".text").find((section) => (section.flags & SHF_ALLOC) !== 0n)
+      ?.address ??
     null;
 
   const within = (offset: number, size: number): boolean =>
@@ -1135,7 +1136,9 @@ const resolveGotBase = (
     }
   }
   for (const name of [".got.plt", ".got"]) {
-    const section = named(name)[0];
+    const section = named(name).find(
+      (candidate) => (candidate.flags & SHF_ALLOC) !== 0n,
+    );
     if (section !== undefined && section.address !== 0n)
       return { address: section.address, source: `the ${name} section` };
   }

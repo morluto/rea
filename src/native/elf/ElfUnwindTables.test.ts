@@ -454,7 +454,10 @@ const findSection = (bytes: Buffer, name: string) => {
     const nameAt = namesOffset + bytes.readUInt32LE(at);
     const end = bytes.indexOf(0, nameAt);
     if (bytes.toString("latin1", nameAt, end) === name)
-      return { offset: Number(bytes.readBigUInt64LE(at + 24)) };
+      return {
+        offset: Number(bytes.readBigUInt64LE(at + 24)),
+        headerOffset: at,
+      };
   }
   throw new Error(`fixture has no ${name}`);
 };
@@ -549,6 +552,16 @@ it("resolves .eh_frame datarel pointers against the GOT, not .eh_frame_hdr", () 
     "DW_EH_PE_datarel .eh_frame values were resolved against the GOT base from the .got.plt section.",
   );
   expect(UNWIND_GOT_VA).not.toBe(UNWIND_HDR_VA);
+});
+
+it("does not use a non-allocated GOT section as the data-relative base", () => {
+  const bytes = elfUnwindFixture({ header: "match", datarel: "got" });
+  const { headerOffset } = findSection(bytes, ".got.plt");
+  bytes.writeBigUInt64LE(1n, headerOffset + 8);
+  bytes.writeBigUInt64LE(0x500000n, headerOffset + 16);
+  const report = parse(bytes);
+  expect(report.coverage.status).toBe("incomplete");
+  expect(report.ranges.map((range) => range.start)).not.toContain("0x4fc100");
 });
 
 it("leaves .eh_frame datarel pointers unresolved when no GOT is declared", () => {
