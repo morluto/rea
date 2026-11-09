@@ -24,6 +24,7 @@ it("ships every agentenv helper the desktop code launches in the package", async
     "bridge/agentenv/capture.py",
     "bridge/agentenv/computer.py",
     "bridge/agentenv/solve.py",
+    "bridge/agentenv/solve_cleanup.py",
   ]);
   for (const helper of launched) expect(files).toContain(helper);
 });
