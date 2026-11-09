@@ -1,38 +1,57 @@
 @echo off
+setlocal EnableExtensions
 chcp 65001 >nul
 title REA Quick Tools - Reverse Engineer Anything (Windows)
 color 0A
 
 :: ---- Analysis engine environment -------------------------------------------
 :: Only set defaults when the caller has not chosen an installation already.
+:: Everything below runs inside this setlocal, so no assignment leaks into the
+:: calling shell when the launcher exits.
 if not defined GHIDRA_INSTALL_DIR if exist "C:\tools\ghidra_12.1.4_PUBLIC" set "GHIDRA_INSTALL_DIR=C:\tools\ghidra_12.1.4_PUBLIC"
 if not defined JAVA_HOME if exist "C:\Program Files\Java\jdk-22" set "JAVA_HOME=C:\Program Files\Java\jdk-22"
 
-:: ---- Locate the REA launcher -----------------------------------------------
-:: Order: npm global shim on PATH, %APPDATA%\npm shim, then a source checkout
-:: two levels above this script (tools\windows\ -> repo root).
+:: ---- Locate the REA CLI ------------------------------------------------------
+:: Preferred: node.exe plus the packaged rea.mjs entry, executed directly so a
+:: child process cannot replace this menu and percent signs in analyst-provided
+:: paths survive untouched. Fallback: the npm global rea.cmd shim via CALL,
+:: which keeps the original launcher behavior when the entry cannot be located.
+set "NODE_EXE="
+for %%I in (node.exe) do if exist "%%~$PATH:I" set "NODE_EXE=%%~$PATH:I"
+set "REA_ENTRY="
+if defined NODE_EXE for %%D in ("%APPDATA%\npm\node_modules\rea-agents" "%~dp0..\..") do if not defined REA_ENTRY if exist "%%~D\scripts\rea.mjs" set "REA_ENTRY=%%~D\scripts\rea.mjs"
+if defined REA_ENTRY goto HAVE_REA
 set "REA_CMD="
 for %%I in (rea.cmd) do if not defined REA_CMD if exist "%%~$PATH:I" set "REA_CMD=%%~$PATH:I"
 if not defined REA_CMD if exist "%APPDATA%\npm\rea.cmd" set "REA_CMD=%APPDATA%\npm\rea.cmd"
-if not defined REA_CMD if exist "%~dp0..\..\scripts\rea.mjs" set "REA_SOURCE=%~dp0..\..\scripts\rea.mjs"
-if not defined REA_CMD if not defined REA_SOURCE goto NO_REA
+if not defined REA_CMD goto NO_REA
 goto HAVE_REA
 
 :NO_REA
 echo [ERROR] ไม่พบคำสั่ง rea ในระบบ
 echo.
 echo ติดตั้งก่อนด้วยคำสั่ง:  npm install -g rea-agents
+echo แล้วตรวจสอบด้วย:       rea doctor
 echo.
 pause
 exit /b 1
 
 :HAVE_REA
 
-:: Check if a file was dragged and dropped onto this script
-if not "%~1"=="" (
-    set "TARGET=%~1"
-    goto FILE_DROPPED
-)
+:: Capture a dragged-and-dropped target BEFORE enabling delayed expansion so
+:: the raw argument is stored literally (no percent or exclamation re-expansion).
+:: Explorer strips nothing; %~1 removes the surrounding quotes it adds, and
+:: Windows filenames cannot contain quote characters, so the line stays safe.
+set "TARGET=%~1"
+set "HAS_ARG="
+if not "%~1"=="" set "HAS_ARG=1"
+
+:: Every interactive path from here on references analyst-provided values only
+:: through delayed expansion (!VAR!), which cmd substitutes after parsing: menu
+:: input, pasted paths and search terms can therefore not inject commands.
+setlocal EnableDelayedExpansion
+
+if defined HAS_ARG goto FILE_DROPPED
 
 :MENU
 cls
@@ -47,21 +66,23 @@ echo  [4] เปิดคู่มือภาษาไทย (thai-guide.md)
 echo  [5] ออกจากโปรแกรม
 echo.
 echo ========================================================
+set "choice="
 set /p choice="เลือกเมนู [1-5]: "
 :: stop when stdin is closed instead of looping forever
 if not defined choice exit /b 0
 
-if "%choice%"=="1" goto DOCTOR
-if "%choice%"=="2" goto MCP_DOCTOR
-if "%choice%"=="3" goto INPUT_PATH
-if "%choice%"=="4" goto GUIDE
-if "%choice%"=="5" exit /b
+if "!choice!"=="1" goto DOCTOR
+if "!choice!"=="2" goto MCP_DOCTOR
+if "!choice!"=="3" goto INPUT_PATH
+if "!choice!"=="4" goto GUIDE
+if "!choice!"=="5" exit /b
 goto MENU
 
 :DOCTOR
 cls
 echo [กำลังตรวจสอบสถานะ REA...]
-call :RUN_REA doctor --client codex --client hermes
+set "REA_ARGS=doctor --client codex --client hermes"
+call :RUN_REA
 echo.
 pause
 goto MENU
@@ -69,7 +90,8 @@ goto MENU
 :MCP_DOCTOR
 cls
 echo [กำลังตรวจสอบ MCP Server...]
-call :RUN_REA mcp doctor
+set "REA_ARGS=mcp doctor"
+call :RUN_REA
 echo.
 pause
 goto MENU
@@ -79,21 +101,22 @@ cls
 set "TARGET_INPUT="
 set /p TARGET_INPUT="วางหรือพิมพ์ Path ของไฟล์ที่ต้องการวิเคราะห์: "
 if not defined TARGET_INPUT goto MENU
-:: Strip surrounding quotes the user may have pasted
-set "TARGET=%TARGET_INPUT:"=%"
-if not exist "%TARGET%" goto BAD_TARGET
+:: Strip surrounding quotes the user may have pasted; delayed expansion keeps
+:: ampersands and percent signs in the value literal.
+set "TARGET=!TARGET_INPUT:"=!"
+if not exist "!TARGET!" goto BAD_TARGET
 goto FILE_DROPPED
 
 :BAD_TARGET
 echo.
-echo ไม่พบไฟล์: "%TARGET%"
+echo ไม่พบไฟล์: "!TARGET!"
 pause
 goto MENU
 
 :FILE_DROPPED
 cls
 echo ========================================================
-echo  ไฟล์เป้าหมาย: "%TARGET%"
+echo  ไฟล์เป้าหมาย: "!TARGET!"
 echo ========================================================
 echo.
 echo  [1] Decompile ฟังก์ชัน entry ด้วย Ghidra (C/C++)
@@ -109,63 +132,69 @@ set "file_choice="
 set /p file_choice="เลือกการดำเนินการ [1-7]: "
 if not defined file_choice goto MENU
 
-if "%file_choice%"=="1" goto DO_ENTRY
-if "%file_choice%"=="2" goto DO_FUNCTION
-if "%file_choice%"=="3" goto DO_PE
-if "%file_choice%"=="4" goto DO_STRINGS
-if "%file_choice%"=="5" goto DO_PROCEDURES
-if "%file_choice%"=="6" goto DO_MANAGED
-if "%file_choice%"=="7" goto MENU
+if "!file_choice!"=="1" goto DO_ENTRY
+if "!file_choice!"=="2" goto DO_FUNCTION
+if "!file_choice!"=="3" goto DO_PE
+if "!file_choice!"=="4" goto DO_STRINGS
+if "!file_choice!"=="5" goto DO_PROCEDURES
+if "!file_choice!"=="6" goto DO_MANAGED
+if "!file_choice!"=="7" goto MENU
 goto FILE_DROPPED
 
 :DO_ENTRY
 cls
 echo [กำลัง Decompile ฟังก์ชัน entry ด้วย Ghidra...]
-call :RUN_REA decompile "%TARGET%" entry --provider ghidra
+set "REA_ARGS=decompile "!TARGET!" entry --provider ghidra"
+call :RUN_REA
 pause
 goto FILE_DROPPED
 
 :DO_FUNCTION
-set "func_name="
-set /p func_name="พิมพ์ชื่อฟังก์ชันหรือ Memory Address (เช่น FUN_1400021b4): "
-if not defined func_name goto FILE_DROPPED
+set "FUNC_NAME="
+set /p FUNC_NAME="พิมพ์ชื่อฟังก์ชันหรือ Memory Address (เช่น FUN_1400021b4): "
+if not defined FUNC_NAME goto FILE_DROPPED
 cls
-echo [กำลัง Decompile ฟังก์ชัน %func_name%...]
-call :RUN_REA decompile "%TARGET%" "%func_name%" --provider ghidra
+echo [กำลัง Decompile ฟังก์ชันตามชื่อที่ระบุ...]
+set "REA_ARGS=decompile "!TARGET!" "!FUNC_NAME!" --provider ghidra"
+call :RUN_REA
 pause
 goto FILE_DROPPED
 
 :DO_PE
 cls
 echo [กำลังวิเคราะห์ PE Resources...]
-call :RUN_REA inspect-pe-resources "%TARGET%"
+set "REA_ARGS=inspect-pe-resources "!TARGET!""
+call :RUN_REA
 pause
 goto FILE_DROPPED
 
 :DO_STRINGS
-set "search_term="
-set /p search_term="พิมพ์คำที่ต้องการค้นหาใน Strings: "
-if not defined search_term goto FILE_DROPPED
+set "SEARCH_TERM="
+set /p SEARCH_TERM="พิมพ์คำที่ต้องการค้นหาใน Strings: "
+if not defined SEARCH_TERM goto FILE_DROPPED
 cls
-echo [กำลังค้นหาข้อความ: %search_term%...]
-call :RUN_REA search "%TARGET%" "%search_term%" --kind strings --provider ghidra
+echo [กำลังค้นหาข้อความใน Strings...]
+set "REA_ARGS=search "!TARGET!" "!SEARCH_TERM!" --kind strings --provider ghidra"
+call :RUN_REA
 pause
 goto FILE_DROPPED
 
 :DO_PROCEDURES
-set "proc_term="
-set /p proc_term="พิมพ์ชื่อ Procedure ที่ต้องการค้นหา: "
-if not defined proc_term goto FILE_DROPPED
+set "PROC_TERM="
+set /p PROC_TERM="พิมพ์ชื่อ Procedure ที่ต้องการค้นหา: "
+if not defined PROC_TERM goto FILE_DROPPED
 cls
-echo [กำลังค้นหาฟังก์ชัน: %proc_term%...]
-call :RUN_REA search "%TARGET%" "%proc_term%" --kind procedures --provider ghidra
+echo [กำลังค้นหาฟังก์ชันตามชื่อที่ระบุ...]
+set "REA_ARGS=search "!TARGET!" "!PROC_TERM!" --kind procedures --provider ghidra"
+call :RUN_REA
 pause
 goto FILE_DROPPED
 
 :DO_MANAGED
 cls
 echo [กำลังตรวจสอบ .NET Managed Artifact...]
-call :RUN_REA inspect-managed-artifact "%TARGET%"
+set "REA_ARGS=inspect-managed-artifact "!TARGET!""
+call :RUN_REA
 pause
 goto FILE_DROPPED
 
@@ -182,14 +211,18 @@ pause
 goto MENU
 
 :OPEN_GUIDE
-start notepad "%GUIDE_FILE%"
+start notepad "!GUIDE_FILE!"
 goto MENU
 
 :: ---- run rea with the resolved launcher ------------------------------------
+:: REA_ARGS is built with delayed expansion at the action sites. Expanding it
+:: once here keeps operator and percent characters inside the value literal;
+:: analyst input never travels through the parse-time %* expansion.
 :RUN_REA
-if defined REA_CMD (
-    call "%REA_CMD%" %*
+if defined REA_ENTRY (
+    "%NODE_EXE%" "%REA_ENTRY%" !REA_ARGS!
     goto :eof
 )
-node "%REA_SOURCE%" %*
+:: The shim fallback re-expands percents once (inherent to npm .cmd shims).
+call "%REA_CMD%" !REA_ARGS!
 goto :eof

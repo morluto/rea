@@ -5,6 +5,7 @@
 ---
 
 ## 1. การทำงานหลักของ REA
+
 - **Decompile โค้ด Native Binary (C/C++)**: แปลงฟังก์ชัน Machine Code กลับเป็น Pseudo-C ด้วย Ghidra 12.1.4
 - **วิเคราะห์โครงสร้าง PE / DLL / .NET**: อ่าน PE Header, ส่วนประกอบ Resources, Icon Group, Hash, Section และ Managed CLI metadata
 - **วิเคราะห์ JavaScript / Electron / Web**: กู้คืน Source code, สร้าง Semantic Dependency Graph, ตรวจสอบ Data Flow, Call Flow และ Export ต่างๆ
@@ -13,20 +14,24 @@
 
 ---
 
-## 2. สถานะการติดตั้งในระบบปัจจุบัน
-- **REA CLI & MCP**: เวอร์ชัน 6.4.0 (Global npm package)
-- **Native Decompiler Engine**: **Ghidra 12.1.4** ติดตั้งที่ `C:	ools\ghidra_12.1.4_PUBLIC` (พร้อม Environment Variable `GHIDRA_INSTALL_DIR`)
-- **Java Runtime**: Java JDK 22.0.1 (`C:\Program Files\Java\jdk-22`)
-- **Agent Integration**:
-  - **Codex**: `~/.codex/config.toml` (สถานะ: aligned พร้อม GHIDRA env)
-  - **Hermes**: `~/.hermes/config.yaml` (สถานะ: aligned พร้อม GHIDRA env)
-  - **OpenCodex Proxy**: รันอยู่ที่ `http://127.0.0.1:10100`
+## 2. สถานะการติดตั้ง (ตรวจสอบบนเครื่องของคุณเอง)
+
+หมายเหตุ: ค่าด้านล่างเป็นตัวอย่างรูปแบบเท่านั้น ไม่ใช่ผลตรวจของเครื่องใดเครื่องหนึ่ง — ตรวจสอบด้วยคำสั่งจริงเสมอ
+
+| รายการ                            | วิธีตรวจสอบ                                                                                                        |
+| --------------------------------- | ---------------------------------------------------------------------------------------------------------------- |
+| เวอร์ชัน REA CLI                    | `rea --version`                                                                                                  |
+| Native Decompiler Engine (Ghidra) | ตั้งค่าตัวแปร `GHIDRA_INSTALL_DIR` ชี้ไปที่โฟลเดอร์ Ghidra ที่ติดตั้ง (เช่น `C:	ools\ghidra_12.1.4_PUBLIC`) แล้วรัน `rea doctor` |
+| Java Runtime                      | ตั้งค่าตัวแปร `JAVA_HOME` ชี้ไปที่ JDK ที่ติดตั้ง (Ghidra 12.x ต้องการ JDK 22+)                                                |
+| สถานะรวมทั้งระบบ                    | `rea doctor --client codex --client hermes`                                                                      |
+| MCP Server                        | `rea mcp doctor`                                                                                                 |
 
 ---
 
 ## 3. คำสั่ง CLI ที่สำคัญ (คำสั่งด่วน)
 
 ### 3.1 การ Decompile Native Binary ด้วย Ghidra
+
 ```bash
 # Decompile ฟังก์ชัน entry หรือฟังก์ชันที่ระบุในไฟล์ .exe / .dll เป็นโค้ดภาษา C
 rea decompile "path/to/app.exe" entry --provider ghidra
@@ -34,11 +39,12 @@ rea decompile "path/to/app.exe" entry --provider ghidra
 # Decompile ฟังก์ชันตามชื่อหรือ address เช่น FUN_1400021b4
 rea decompile "path/to/app.exe" FUN_1400021b4 --provider ghidra
 
-# ค้นหา Procedure หรือฟังก์ชันใน Binary
-rea search "path/to/app.exe" "main" --provider ghidra
+# ค้นหา Procedure หรือฟังก์ชันใน Binary (ต้องระบุ --kind procedures มิฉะนั้นจะค้นหา strings)
+rea search "path/to/app.exe" "main" --kind procedures --provider ghidra
 ```
 
 ### 3.2 การวิเคราะห์ PE Resource และ .NET Artifacts
+
 ```bash
 # วิเคราะห์ Resource ของไฟล์ Executable (.exe, .dll)
 rea inspect-pe-resources "path/to/app.exe"
@@ -48,15 +54,20 @@ rea inspect-managed-artifact "path/to/app.dll"
 ```
 
 ### 3.3 การวิเคราะห์ JavaScript / Electron / Web
+
 ```bash
 # วิเคราะห์โครงสร้างโปรเจกต์ JavaScript / Electron
 rea analyze-javascript-application "path/to/project_or_asar"
 
-# วิเคราะห์ Web Bundle จาก URL
-rea analyze-web-bundle --url "https://example.com"
+# วิเคราะห์ Web Bundle ผ่าน CDP: เปิดเบราว์เซอร์ด้วย --remote-debugging-port=9222 ก่อน
+# 1) ดูรายการ target ที่เปิดอยู่
+rea list-browser-targets http://127.0.0.1:9222 --json
+# 2) นำ TARGET_ID จากผลลัพธ์ข้างต้นมาวิเคราะห์
+rea analyze-web-bundle http://127.0.0.1:9222 TARGET_ID --json
 ```
 
 ### 3.4 การตรวจสอบสถานะระบบ
+
 ```bash
 # ตรวจสอบสถานะการทำงานของ REA และเครื่องมือวิเคราะห์
 rea doctor --client codex --client hermes
