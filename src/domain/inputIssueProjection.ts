@@ -249,49 +249,124 @@ const CANDIDATE_DISCRIMINATOR_KEYS: readonly string[] = [
   "facet",
   "format",
   "source",
+  "action",
+  "mode",
 ];
 
-const candidateDiscriminatorKeys = (targetValue: object): readonly string[] => [
-  ...CANDIDATE_DISCRIMINATOR_KEYS.filter((k) => k in targetValue),
-  ...Object.keys(targetValue).filter(
-    (k) => !(CANDIDATE_DISCRIMINATOR_KEYS as readonly string[]).includes(k),
-  ),
-];
+const candidateDiscriminatorKeys = (
+  targetValue: object,
+  budget?: { remaining: number },
+): readonly string[] => {
+  const targetRecord = targetValue as Record<string, unknown>;
+  const keys: string[] = [];
+  for (const k of CANDIDATE_DISCRIMINATOR_KEYS) {
+    if (Object.hasOwn(targetRecord, k)) {
+      if (budget !== undefined) {
+        budget.remaining -= 32;
+        if (budget.remaining < 0) throw projectionBudgetExceeded;
+      }
+      keys.push(k);
+    }
+  }
+  const callerKeys = Object.keys(targetRecord);
+  const remainingBudgetCount =
+    budget !== undefined ? Math.max(0, Math.floor(budget.remaining / 32)) : 32;
+  const maxOtherKeys = Math.min(32, remainingBudgetCount);
+  for (const k of callerKeys) {
+    if (keys.length >= CANDIDATE_DISCRIMINATOR_KEYS.length + maxOtherKeys)
+      break;
+    if (!(CANDIDATE_DISCRIMINATOR_KEYS as readonly string[]).includes(k)) {
+      if (budget !== undefined) {
+        budget.remaining -= 32;
+        if (budget.remaining < 0) throw projectionBudgetExceeded;
+      }
+      keys.push(k);
+    }
+  }
+  return keys;
+};
 
-const branchIssuesForRelativeKey = (
+const branchAcceptsKey = (
   branchErrors: readonly z.core.$ZodIssue[],
   key: string,
-): readonly z.core.$ZodIssue[] => {
-  const result: z.core.$ZodIssue[] = [];
+  budget?: { remaining: number },
+): boolean => {
+  if (budget !== undefined) {
+    budget.remaining -= 16;
+    if (budget.remaining < 0) throw projectionBudgetExceeded;
+  }
   for (const err of branchErrors) {
-    if (err.path.length === 1 && err.path[0] === key) {
-      result.push(err);
-    } else if (
+    if (err.path.length === 1 && err.path[0] === key) return false;
+    if (
       err.code === "unrecognized_keys" &&
       err.path.length === 0 &&
       err.keys.includes(key)
     ) {
-      result.push(err);
+      if (budget !== undefined) {
+        budget.remaining -= 4 * err.keys.length;
+        if (budget.remaining < 0) throw projectionBudgetExceeded;
+      }
+      return false;
+    }
+    if (err.code === "invalid_union" && err.path.length === 0) {
+      const anyNestedAccepts = err.errors.some((nested) =>
+        branchAcceptsKey(nested, key, budget),
+      );
+      if (!anyNestedAccepts) return false;
+    }
+  }
+  return true;
+};
+
+const extractIssueExpectedValues = (
+  issue: z.core.$ZodIssue,
+): readonly unknown[] => {
+  if ("values" in issue && Array.isArray(issue.values)) return issue.values;
+  if ("options" in issue && Array.isArray(issue.options)) return issue.options;
+  if ("expected" in issue && issue.expected !== undefined)
+    return [issue.expected];
+  return [];
+};
+
+const collectKeyExpectedValues = (
+  branchErrors: readonly z.core.$ZodIssue[],
+  key: string,
+  budget?: { remaining: number },
+): readonly unknown[] => {
+  if (budget !== undefined) {
+    budget.remaining -= 16;
+    if (budget.remaining < 0) throw projectionBudgetExceeded;
+  }
+  const result: unknown[] = [];
+  for (const err of branchErrors) {
+    if (err.path.length === 1 && err.path[0] === key) {
+      const expected = extractIssueExpectedValues(err);
+      if (budget !== undefined && expected.length > 0) {
+        budget.remaining -= 16 * expected.length;
+        if (budget.remaining < 0) throw projectionBudgetExceeded;
+      }
+      result.push(...expected);
     } else if (err.code === "invalid_union" && err.path.length === 0) {
-      for (const nestedBranch of err.errors) {
-        result.push(...branchIssuesForRelativeKey(nestedBranch, key));
+      for (const nested of err.errors) {
+        result.push(...collectKeyExpectedValues(nested, key, budget));
       }
     }
   }
   return result;
 };
 
-const extractBranchExpectedValues = (
-  issues: readonly z.core.$ZodIssue[],
-): readonly unknown[] =>
-  issues.flatMap((issue) => {
-    if ("values" in issue && Array.isArray(issue.values)) return issue.values;
-    if ("options" in issue && Array.isArray(issue.options))
-      return issue.options;
-    if ("expected" in issue && issue.expected !== undefined)
-      return [issue.expected];
-    return [];
-  });
+const chargeExpectedValuesBudget = (
+  path: readonly (string | number)[],
+  uniqueExpected: readonly unknown[],
+  budget?: { remaining: number },
+): void => {
+  if (budget === undefined) return;
+  budget.remaining -= 32 + 8 * (path.length + 1);
+  for (const item of uniqueExpected) {
+    budget.remaining -= typeof item === "string" ? 6 * item.length + 32 : 32;
+  }
+  if (budget.remaining < 0) throw projectionBudgetExceeded;
+};
 
 const resolveUnionDiscriminatorDiagnostic = (
   currentErrors: readonly (readonly z.core.$ZodIssue[])[],
@@ -299,33 +374,21 @@ const resolveUnionDiscriminatorDiagnostic = (
   targetValue: object,
   budget?: { remaining: number },
 ): readonly AnalysisInputIssue[] | undefined => {
-  const candidateKeys = candidateDiscriminatorKeys(targetValue);
+  const candidateKeys = candidateDiscriminatorKeys(targetValue, budget);
   for (const key of candidateKeys) {
-    const allBranchesRejectWithInvalidValue = currentErrors.every((branch) => {
-      const issues = branchIssuesForRelativeKey(branch, key);
-      return (
-        issues.length > 0 &&
-        issues.every((branchIssue) => branchIssue.code === "invalid_value")
-      );
-    });
-    if (!allBranchesRejectWithInvalidValue) continue;
-    const allKeyIssues = currentErrors.flatMap((branch) =>
-      branchIssuesForRelativeKey(branch, key),
-    );
-    const uniqueExpected = [
-      ...new Set(
-        extractBranchExpectedValues(allKeyIssues).filter(isSafeExpected),
-      ),
-    ];
-    if (uniqueExpected.length === 0) continue;
-    if (budget !== undefined) {
-      budget.remaining -= 32 + 8 * (path.length + 1);
-      for (const item of uniqueExpected) {
-        budget.remaining -=
-          typeof item === "string" ? 6 * item.length + 32 : 32;
-      }
-      if (budget.remaining < 0) throw projectionBudgetExceeded;
+    if (!(CANDIDATE_DISCRIMINATOR_KEYS as readonly string[]).includes(key)) {
+      continue;
     }
+    const allBranchesReject = currentErrors.every(
+      (branch) => !branchAcceptsKey(branch, key, budget),
+    );
+    if (!allBranchesReject) continue;
+    const allExpected = currentErrors.flatMap((branch) =>
+      collectKeyExpectedValues(branch, key, budget),
+    );
+    const uniqueExpected = [...new Set(allExpected.filter(isSafeExpected))];
+    if (uniqueExpected.length === 0) continue;
+    chargeExpectedValuesBudget(path, uniqueExpected, budget);
     return [
       {
         path: [...path, key],
@@ -340,12 +403,13 @@ const resolveUnionDiscriminatorDiagnostic = (
 const narrowUnionBranches = (
   errors: readonly (readonly z.core.$ZodIssue[])[],
   targetValue: object,
+  budget?: { remaining: number },
 ): readonly (readonly z.core.$ZodIssue[])[] => {
   let currentErrors = errors;
-  const candidateKeys = candidateDiscriminatorKeys(targetValue);
+  const candidateKeys = candidateDiscriminatorKeys(targetValue, budget);
   for (const key of candidateKeys) {
-    const matchingBranches = currentErrors.filter(
-      (branch) => branchIssuesForRelativeKey(branch, key).length === 0,
+    const matchingBranches = currentErrors.filter((branch) =>
+      branchAcceptsKey(branch, key, budget),
     );
     if (
       matchingBranches.length > 0 &&
@@ -402,14 +466,28 @@ const projectUnionIssue = (
     targetValue !== null &&
     !Array.isArray(targetValue)
   ) {
-    const narrowed = narrowUnionBranches(issue.errors, targetValue);
-    const discriminatorDiagnostic = resolveUnionDiscriminatorDiagnostic(
-      narrowed,
-      path,
-      targetValue,
-      budget,
-    );
-    if (discriminatorDiagnostic !== undefined) return discriminatorDiagnostic;
+    if (issue.errors.length > 1) {
+      const topDiscriminator = resolveUnionDiscriminatorDiagnostic(
+        issue.errors,
+        path,
+        targetValue,
+        budget,
+      );
+      if (topDiscriminator !== undefined) return topDiscriminator;
+    }
+
+    const narrowed = narrowUnionBranches(issue.errors, targetValue, budget);
+
+    if (narrowed.length > 1 && narrowed.length < issue.errors.length) {
+      const secondaryDiscriminator = resolveUnionDiscriminatorDiagnostic(
+        narrowed,
+        path,
+        targetValue,
+        budget,
+      );
+      if (secondaryDiscriminator !== undefined) return secondaryDiscriminator;
+    }
+
     activeErrors = narrowed;
   }
 

@@ -5,10 +5,12 @@ import {
   analysisInputErrorFromIssues,
   analysisOperationInputErrorFromIssues,
   projectInputIssues,
+  projectInputIssuesBounded,
   projectInputIssueGroupsWithinBudget,
 } from "./inputIssueProjection.js";
 import { projectAnalysisError } from "./analysisErrorProjection.js";
 import { processScenarioSchema } from "./process/processScenario.js";
+import { applicationFeatureSeedSchema } from "./javascript/javascriptFeatureTraceSchemas.js";
 import { OFFICIAL_TOOL_CONTRACTS } from "../contracts/officialToolContracts.js";
 import { APPLICATION_TOOL_CONTRACTS } from "../contracts/applicationToolContracts.js";
 import { ENHANCED_TOOL_CONTRACTS } from "../contracts/enhancedToolContracts.js";
@@ -736,5 +738,82 @@ describe("inspect_analysis_view cross-kind sub-selector guidance", () => {
         message: expect.stringMatching(/page.*modules/i),
       }),
     );
+  });
+});
+
+describe("discriminated union nested alternatives and budget", () => {
+  it("preserves valid discriminator options across nested alternatives before payload narrowing", () => {
+    const input = { kind: "node", value: "main", match: "exact" };
+    const parsed = applicationFeatureSeedSchema.safeParse(input);
+    if (parsed.success) throw new Error("expected invalid input");
+    const issues = projectInputIssues(parsed.error.issues, input);
+    expect(issues).toEqual([
+      {
+        path: ["kind"],
+        reason: "invalid_value",
+        expected: [
+          "node-id",
+          "route",
+          "string",
+          "channel",
+          "module",
+          "native-export",
+          "api",
+        ],
+      },
+    ]);
+  });
+
+  it("retains missing field diagnostics alongside invalid enums when narrowed to one branch", () => {
+    const input = { kind: "node-id", match: "bogus" };
+    const parsed = applicationFeatureSeedSchema.safeParse(input);
+    if (parsed.success) throw new Error("expected invalid input");
+    const issues = projectInputIssues(parsed.error.issues, input);
+    expect(issues).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          path: ["match"],
+          reason: "invalid_value",
+        }),
+        expect.objectContaining({
+          path: ["value"],
+          reason: "missing_argument",
+        }),
+      ]),
+    );
+  });
+
+  it("does not emit spurious sibling expected values when a nested alternative accepts a field", () => {
+    const input = { kind: "api", value: "foo", case_sensitive: "bad" };
+    const parsed = applicationFeatureSeedSchema.safeParse(input);
+    if (parsed.success) throw new Error("expected invalid input");
+    const issues = projectInputIssues(parsed.error.issues, input);
+    expect(issues).toContainEqual(
+      expect.objectContaining({
+        path: ["case_sensitive"],
+        reason: "invalid_type",
+        expected: "boolean",
+      }),
+    );
+    expect(issues.some((issue) => issue.path.join(".") === "value")).toBe(
+      false,
+    );
+  });
+
+  it("enforces projection budget and bounds discriminator candidate key checks", () => {
+    const hugeInput: Record<string, unknown> = {
+      kind: "unknown_kind",
+    };
+    for (let i = 0; i < 500; i += 1) {
+      hugeInput[`extra_${String(i)}`] = `val_${String(i)}`;
+    }
+    const parsed = applicationFeatureSeedSchema.safeParse(hugeInput);
+    if (parsed.success) throw new Error("expected invalid input");
+    const bounded = projectInputIssuesBounded(
+      parsed.error.issues,
+      hugeInput,
+      40,
+    );
+    expect(bounded.omittedIssueCount).toBeGreaterThan(0);
   });
 });
