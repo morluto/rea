@@ -6,6 +6,7 @@ import {
   MAX_RUST_FINGERPRINT_SCAN_BYTES,
   rustBinarySchema,
 } from "../domain/rust/rustBinary.js";
+import { parseExactRustcVersionBanner } from "../domain/rust/rustSourceFingerprints.js";
 import type { BinaryContainer } from "../native/metadata/BinaryContainer.js";
 import { readBinaryContainer } from "../native/metadata/readBinaryContainer.js";
 import {
@@ -13,7 +14,10 @@ import {
   createUniversalRustMachoImage,
 } from "../../tests/fixtures/rust/image.js";
 import { RustBinaryProvider } from "./RustBinaryProvider.js";
-import { recoverRustSourceFingerprints } from "./RustInferredCrates.js";
+import {
+  recoverRustSourceFingerprints,
+  recoverRustSourceFingerprintsAsync,
+} from "./RustInferredCrates.js";
 
 it("recovers hyphenated, numeric, pre-release, build-metadata, Windows, and git Cargo crates", () => {
   const rodata = Buffer.from(
@@ -59,6 +63,7 @@ it("recovers hyphenated, numeric, pre-release, build-metadata, Windows, and git 
       version: "0.7.13",
       source_kind: "registry",
       registry_index: "index.crates.io-6f17d22bba15001f",
+      checkout_id: null,
       revision: null,
       reference_count: 2,
     },
@@ -67,6 +72,7 @@ it("recovers hyphenated, numeric, pre-release, build-metadata, Windows, and git 
       version: "0.3.31",
       source_kind: "registry",
       registry_index: "index.crates.io-6f17d22bba15001f",
+      checkout_id: null,
       revision: null,
       reference_count: 1,
     },
@@ -75,6 +81,7 @@ it("recovers hyphenated, numeric, pre-release, build-metadata, Windows, and git 
       version: "0.15.2",
       source_kind: "registry",
       registry_index: "index.crates.io-6f17d22bba15001f",
+      checkout_id: null,
       revision: null,
       reference_count: 1,
     },
@@ -83,6 +90,7 @@ it("recovers hyphenated, numeric, pre-release, build-metadata, Windows, and git 
       version: "0.3.1",
       source_kind: "registry",
       registry_index: "github.com-1ecc6299db9ec823",
+      checkout_id: null,
       revision: null,
       reference_count: 1,
     },
@@ -91,6 +99,7 @@ it("recovers hyphenated, numeric, pre-release, build-metadata, Windows, and git 
       version: "1.0.217-alpha.1",
       source_kind: "registry",
       registry_index: "index.crates.io-6f17d22bba15001f",
+      checkout_id: null,
       revision: null,
       reference_count: 1,
     },
@@ -99,6 +108,7 @@ it("recovers hyphenated, numeric, pre-release, build-metadata, Windows, and git 
       version: "2.0.13+zstd.1.5.6",
       source_kind: "registry",
       registry_index: "index.crates.io-6f17d22bba15001f",
+      checkout_id: null,
       revision: null,
       reference_count: 1,
     },
@@ -107,6 +117,7 @@ it("recovers hyphenated, numeric, pre-release, build-metadata, Windows, and git 
       version: "0.2.0",
       source_kind: "registry",
       registry_index: "index.crates.io-6f17d22bba15001f",
+      checkout_id: null,
       revision: null,
       reference_count: 1,
     },
@@ -115,6 +126,7 @@ it("recovers hyphenated, numeric, pre-release, build-metadata, Windows, and git 
       version: null,
       source_kind: "git",
       registry_index: null,
+      checkout_id: "0123456789abcdef",
       revision: "a1b2c3d",
       reference_count: 2,
     },
@@ -123,6 +135,7 @@ it("recovers hyphenated, numeric, pre-release, build-metadata, Windows, and git 
       version: null,
       source_kind: "git",
       registry_index: null,
+      checkout_id: "fedcba9876543210",
       revision: "0123456789abcdef0123456789abcdef01234567",
       reference_count: 1,
     },
@@ -281,6 +294,7 @@ it("recovers tokens straddling the 1 MiB scan window boundary without double-cou
       version: "1.43.0",
       source_kind: "registry",
       registry_index: "index.crates.io-6f17d22bba15001f",
+      checkout_id: null,
       revision: null,
       first_file_offset: cargoStart,
       reference_count: 1,
@@ -444,6 +458,7 @@ it("enforces universal Mach-O slice range containment and parity on rustBinarySc
           version: "1.43.0",
           source_kind: "registry" as const,
           registry_index: "index.crates.io-6f17d22bba15001f",
+          checkout_id: null,
           revision: null,
           first_file_offset: 4200,
           reference_count: 1,
@@ -528,6 +543,7 @@ it("rebases universal Mach-O slice offsets and preserves default parity in RustB
         version: "0.7.13",
         source_kind: "registry",
         registry_index: "index.crates.io-6f17d22bba15001f",
+        checkout_id: null,
         revision: null,
         first_file_offset: 8192 + 2049,
         reference_count: 1,
@@ -540,4 +556,196 @@ it("rebases universal Mach-O slice offsets and preserves default parity in RustB
     await provider.close();
     await rm(dir, { recursive: true, force: true });
   }
+});
+
+it("retains git checkout_id so distinct forks at the same commit do not collapse", () => {
+  const bytes = createRustImage({
+    format: "elf",
+    omitSection: true,
+    readOnlyBytes: Buffer.from(
+      [
+        "/cargo/git/checkouts/foo-1111111111111111/abcdef1/src/lib.rs",
+        "/cargo/git/checkouts/foo-2222222222222222/abcdef1/src/lib.rs",
+        "/cargo/git/checkouts/foo-1111111111111111/abcdef1/src/other.rs",
+      ].join("\0") + "\0",
+      "latin1",
+    ),
+  });
+  const result = recoverRustSourceFingerprints(
+    bytes,
+    readBinaryContainer(bytes),
+  );
+  expect(result.inferred_crates.discovered_count).toBe(2);
+  expect(
+    result.inferred_crates.items.map(
+      ({ first_file_offset: _offset, ...item }) => item,
+    ),
+  ).toEqual([
+    {
+      name: "foo",
+      version: null,
+      source_kind: "git",
+      registry_index: null,
+      checkout_id: "1111111111111111",
+      revision: "abcdef1",
+      reference_count: 2,
+    },
+    {
+      name: "foo",
+      version: null,
+      source_kind: "git",
+      registry_index: null,
+      checkout_id: "2222222222222222",
+      revision: "abcdef1",
+      reference_count: 1,
+    },
+  ]);
+
+  const validReport = {
+    artifact: { path: "/artifacts/git", sha256: "a".repeat(64), bytes: 4096 },
+    format: "elf" as const,
+    architecture: "amd64",
+    bits: 64 as const,
+    byte_order: "little" as const,
+    auditable_metadata: null,
+    rustc_commit: null,
+    inferred_crates: result.inferred_crates,
+    rustc_versions: result.rustc_versions,
+    limitations: [],
+  };
+  expect(rustBinarySchema.safeParse(validReport).success).toBe(true);
+
+  const duplicateCheckout = structuredClone(validReport);
+  duplicateCheckout.inferred_crates.items[1]!.checkout_id = "1111111111111111";
+  expect(rustBinarySchema.safeParse(duplicateCheckout).success).toBe(false);
+
+  const missingCheckout = structuredClone(validReport);
+  missingCheckout.inferred_crates.items[0]!.checkout_id = null;
+  expect(rustBinarySchema.safeParse(missingCheckout).success).toBe(false);
+});
+
+it("rejects numeric prerelease leading zeros while preserving build metadata and alphanumeric prereleases", () => {
+  const bytes = createRustImage({
+    format: "elf",
+    omitSection: true,
+    readOnlyBytes: Buffer.from(
+      [
+        "/cargo/registry/src/index.crates.io-6f17d22bba15001f/bad_num-1.2.3-01/src/lib.rs",
+        "/cargo/registry/src/index.crates.io-6f17d22bba15001f/bad_second-1.0.0-alpha.01/src/lib.rs",
+        "/cargo/registry/src/index.crates.io-6f17d22bba15001f/good_build-1.0.0+01/src/lib.rs",
+        "/cargo/registry/src/index.crates.io-6f17d22bba15001f/good_alnum-1.0.0-01a/src/lib.rs",
+        "/cargo/registry/src/index.crates.io-6f17d22bba15001f/good_zero-1.0.0-0/src/lib.rs",
+      ].join("\0") + "\0",
+      "latin1",
+    ),
+  });
+  const result = recoverRustSourceFingerprints(
+    bytes,
+    readBinaryContainer(bytes),
+  );
+  expect(
+    result.inferred_crates.items.map(({ name, version }) => ({
+      name,
+      version,
+    })),
+  ).toEqual([
+    { name: "good_build", version: "1.0.0+01" },
+    { name: "good_alnum", version: "1.0.0-01a" },
+    { name: "good_zero", version: "1.0.0-0" },
+  ]);
+});
+
+it("rejects overlong rustc channel banners without emitting invalid prefixes", () => {
+  const dotAtLimit = `rustc 1.85.0-nightly.${"a".repeat(80)}.bcdef`;
+  const dotJustAfterLimit = `rustc 1.85.0-nightly.${"a".repeat(81)}.bcdef`;
+  const overlongAlnum = `rustc 1.85.0-nightly.${"a".repeat(95)}`;
+  const validNightly = "rustc 1.85.0-nightly.2025.02.17";
+  const bytes = createRustImage({
+    format: "elf",
+    omitSection: true,
+    readOnlyBytes: Buffer.from(
+      [dotAtLimit, dotJustAfterLimit, overlongAlnum, validNightly].join("\0") +
+        "\0",
+      "latin1",
+    ),
+  });
+  const result = recoverRustSourceFingerprints(
+    bytes,
+    readBinaryContainer(bytes),
+  );
+  expect(result.rustc_versions.items.map((item) => item.banner)).toEqual([
+    validNightly,
+  ]);
+  for (const item of result.rustc_versions.items) {
+    expect(parseExactRustcVersionBanner(item.banner)).not.toBeNull();
+  }
+});
+
+const createPeReadOnlyContainer = (size: number): BinaryContainer => ({
+  format: "pe",
+  architecture: "amd64",
+  bits: 64,
+  byte_order: "little",
+  mappings: [],
+  zero_fills: [],
+  sections: [
+    {
+      format: "pe",
+      name: ".rdata",
+      offset: 0,
+      size,
+      virtual_address: 0x1000,
+      virtual_size: size,
+      raw_size: size,
+      file_alignment: 512,
+      characteristics: 0x40000040,
+      compressed: false,
+      read_only: true,
+      file_backed: true,
+    },
+  ],
+});
+
+it("omits incomplete rustc banners truncated at the 64 MiB scan budget boundary", () => {
+  for (const [banner, offsetBeforeBudget] of [
+    ["rustc 1.85.10\0", "rustc 1.85.1".length],
+    ["rustc 1.85.10 (4d91de4e4 2025-02-17)\0", "rustc 1.85.10 (4d91de4".length],
+  ] as const) {
+    const bytes = Buffer.alloc(MAX_RUST_FINGERPRINT_SCAN_BYTES + 128);
+    bytes.write(
+      banner,
+      MAX_RUST_FINGERPRINT_SCAN_BYTES - offsetBeforeBudget,
+      "latin1",
+    );
+    const result = recoverRustSourceFingerprints(
+      bytes,
+      createPeReadOnlyContainer(bytes.length),
+    );
+    expect(result.rustc_versions.truncated).toBe(true);
+    expect(result.rustc_versions.items).toEqual([]);
+  }
+});
+
+it("yields between scan windows so queued event-loop AbortSignal callbacks cancel mid-scan", async () => {
+  const bytes = Buffer.alloc(8 * 1024 * 1024);
+  const container = createPeReadOnlyContainer(bytes.length);
+  const controller = new AbortController();
+  let activeChecks = 0;
+  const pending = recoverRustSourceFingerprintsAsync(
+    bytes,
+    container,
+    1000,
+    () => {
+      activeChecks += 1;
+      if (controller.signal.aborted) {
+        throw new Error(String(controller.signal.reason));
+      }
+    },
+  );
+  setImmediate(() => {
+    controller.abort("queued event-loop cancellation");
+  });
+  await expect(pending).rejects.toThrow("queued event-loop cancellation");
+  expect(activeChecks).toBeGreaterThanOrEqual(3);
+  expect(activeChecks).toBeLessThan(12);
 });

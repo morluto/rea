@@ -1,3 +1,5 @@
+import { setImmediate } from "node:timers/promises";
+
 import {
   DEFAULT_MAX_RUST_INFERRED_CRATES,
   MAX_RUSTC_VERSIONS_LIMIT,
@@ -46,6 +48,7 @@ interface MutableInferredCrate {
   readonly version: string | null;
   readonly source_kind: "registry" | "git";
   readonly registry_index: string | null;
+  readonly checkout_id: string | null;
   readonly revision: string | null;
   readonly first_file_offset: number;
   reference_count: number;
@@ -216,6 +219,7 @@ const parseCargoCrateAt = (
       version: split.version,
       source_kind: "registry",
       registry_index: registryIndex,
+      checkout_id: null,
       revision: null,
     };
   }
@@ -260,12 +264,209 @@ const parseCargoCrateAt = (
       version: null,
       source_kind: "git",
       registry_index: null,
+      checkout_id: split.checkout_id,
       revision: split.revision,
     };
   }
 
   return null;
 };
+
+interface FingerprintAccumulator {
+  readonly cratesByKey: Map<string, MutableInferredCrate>;
+  readonly retainedCrates: MutableInferredCrate[];
+  readonly versionsByBanner: Map<string, MutableRustcVersion>;
+  readonly retainedVersions: MutableRustcVersion[];
+  readonly maxInferredCrates: number;
+  cratesOverflowed: boolean;
+  versionsOverflowed: boolean;
+}
+
+function* scanWindowCargoCandidates(
+  region: Buffer,
+  rangeOffset: number,
+  windowStart: number,
+  windowEnd: number,
+  state: FingerprintAccumulator,
+): Generator<void, void> {
+  const cargoSlice = region.subarray(
+    windowStart,
+    Math.min(region.length, windowEnd + CARGO_TOKEN.length - 1),
+  );
+  let cargoCursor = 0;
+  let cargoHits = 0;
+  while (cargoCursor < cargoSlice.length) {
+    const at = cargoSlice.indexOf(CARGO_TOKEN, cargoCursor);
+    if (at < 0 || windowStart + at >= windowEnd) break;
+    cargoHits += 1;
+    if ((cargoHits & (CANCELLATION_STRIDE - 1)) === 0) yield;
+    const matchStart = windowStart + at;
+    const parsed = parseCargoCrateAt(region, matchStart);
+    if (parsed !== null) {
+      const key = JSON.stringify([
+        parsed.source_kind,
+        parsed.name,
+        parsed.version,
+        parsed.registry_index,
+        parsed.checkout_id,
+        parsed.revision,
+      ]);
+      const existing = state.cratesByKey.get(key);
+      if (existing !== undefined) {
+        existing.reference_count += 1;
+      } else if (state.cratesByKey.size < MAX_TRACKED_INFERRED_CRATES) {
+        const retained = state.retainedCrates.length < state.maxInferredCrates;
+        if (!retained) state.cratesOverflowed = true;
+        const entry: MutableInferredCrate = {
+          ...parsed,
+          first_file_offset: rangeOffset + matchStart,
+          reference_count: 1,
+          retained,
+        };
+        state.cratesByKey.set(key, entry);
+        if (retained) state.retainedCrates.push(entry);
+      } else {
+        state.cratesOverflowed = true;
+      }
+    }
+    cargoCursor = at + CARGO_TOKEN.length;
+  }
+}
+
+function* scanWindowRustcCandidates(
+  region: Buffer,
+  rangeOffset: number,
+  windowStart: number,
+  windowEnd: number,
+  regionTruncated: boolean,
+  state: FingerprintAccumulator,
+): Generator<void, void> {
+  const rustcSlice = region.subarray(
+    windowStart,
+    Math.min(region.length, windowEnd + RUSTC_TOKEN.length - 1),
+  );
+  let rustcCursor = 0;
+  let rustcHits = 0;
+  while (rustcCursor < rustcSlice.length) {
+    const at = rustcSlice.indexOf(RUSTC_TOKEN, rustcCursor);
+    if (at < 0 || windowStart + at >= windowEnd) break;
+    rustcHits += 1;
+    if ((rustcHits & (CANCELLATION_STRIDE - 1)) === 0) yield;
+    const matchStart = windowStart + at;
+    const parsed = parseRustcVersionBannerAt(
+      region,
+      matchStart,
+      regionTruncated,
+    );
+    if (parsed !== null) {
+      const existing = state.versionsByBanner.get(parsed.banner);
+      if (existing !== undefined) {
+        existing.reference_count += 1;
+      } else if (state.versionsByBanner.size < MAX_TRACKED_RUSTC_VERSIONS) {
+        const retained =
+          state.retainedVersions.length < MAX_RUSTC_VERSIONS_LIMIT;
+        if (!retained) state.versionsOverflowed = true;
+        const entry: MutableRustcVersion = {
+          ...parsed,
+          first_file_offset: rangeOffset + matchStart,
+          reference_count: 1,
+          retained,
+        };
+        state.versionsByBanner.set(parsed.banner, entry);
+        if (retained) state.retainedVersions.push(entry);
+      } else {
+        state.versionsOverflowed = true;
+      }
+    }
+    rustcCursor = at + RUSTC_TOKEN.length;
+  }
+}
+
+function* recoverRustSourceFingerprintsSteps(
+  bytes: Buffer,
+  container: BinaryContainer,
+  maxInferredCrates: number,
+): Generator<void, RecoveredRustSourceFingerprints> {
+  const ranges = candidateFingerprintRanges(bytes, container);
+  const state: FingerprintAccumulator = {
+    cratesByKey: new Map(),
+    retainedCrates: [],
+    versionsByBanner: new Map(),
+    retainedVersions: [],
+    maxInferredCrates,
+    cratesOverflowed: false,
+    versionsOverflowed: false,
+  };
+  let remainingBudget = MAX_RUST_FINGERPRINT_SCAN_BYTES;
+  let scanTruncated = false;
+
+  for (const range of ranges) {
+    yield;
+    if (remainingBudget <= 0) {
+      scanTruncated = true;
+      break;
+    }
+    const rangeBytes = range.end - range.offset;
+    const admittedBytes = Math.min(rangeBytes, remainingBudget);
+    const regionTruncated = admittedBytes < rangeBytes;
+    if (regionTruncated) scanTruncated = true;
+    remainingBudget -= admittedBytes;
+
+    const region = bytes.subarray(range.offset, range.offset + admittedBytes);
+    for (
+      let windowStart = 0;
+      windowStart < region.length;
+      windowStart += SCAN_WINDOW_BYTES
+    ) {
+      yield;
+      const windowEnd = Math.min(
+        region.length,
+        windowStart + SCAN_WINDOW_BYTES,
+      );
+      yield* scanWindowCargoCandidates(
+        region,
+        range.offset,
+        windowStart,
+        windowEnd,
+        state,
+      );
+      yield* scanWindowRustcCandidates(
+        region,
+        range.offset,
+        windowStart,
+        windowEnd,
+        regionTruncated,
+        state,
+      );
+    }
+  }
+
+  return {
+    inferred_crates: {
+      evidence_kind: "inferred",
+      items: state.retainedCrates.map(
+        ({ retained: _retained, ...item }) => item,
+      ),
+      discovered_count: state.cratesByKey.size,
+      max_items: maxInferredCrates,
+      truncated:
+        scanTruncated ||
+        state.cratesOverflowed ||
+        state.cratesByKey.size > state.retainedCrates.length,
+    },
+    rustc_versions: {
+      evidence_kind: "inferred",
+      items: state.retainedVersions.map(
+        ({ retained: _retained, ...item }) => item,
+      ),
+      discovered_count: state.versionsByBanner.size,
+      truncated:
+        scanTruncated ||
+        state.versionsOverflowed ||
+        state.versionsByBanner.size > state.retainedVersions.length,
+    },
+  };
+}
 
 /**
  * Linearly scan read-only ranges and safe ELF `.comment` sections for Cargo
@@ -277,138 +478,38 @@ export const recoverRustSourceFingerprints = (
   maxInferredCrates: number = DEFAULT_MAX_RUST_INFERRED_CRATES,
   checkActive?: () => void,
 ): RecoveredRustSourceFingerprints => {
-  const ranges = candidateFingerprintRanges(bytes, container);
-  const cratesByKey = new Map<string, MutableInferredCrate>();
-  const retainedCrates: MutableInferredCrate[] = [];
-  const versionsByBanner = new Map<string, MutableRustcVersion>();
-  const retainedVersions: MutableRustcVersion[] = [];
-
-  let remainingBudget = MAX_RUST_FINGERPRINT_SCAN_BYTES;
-  let scanTruncated = false;
-  let cratesOverflowed = false;
-  let versionsOverflowed = false;
-
-  for (const range of ranges) {
+  const steps = recoverRustSourceFingerprintsSteps(
+    bytes,
+    container,
+    maxInferredCrates,
+  );
+  for (;;) {
     checkActive?.();
-    if (remainingBudget <= 0) {
-      scanTruncated = true;
-      break;
-    }
-    const rangeBytes = range.end - range.offset;
-    const admittedBytes = Math.min(rangeBytes, remainingBudget);
-    if (admittedBytes < rangeBytes) scanTruncated = true;
-    remainingBudget -= admittedBytes;
-
-    const region = bytes.subarray(range.offset, range.offset + admittedBytes);
-    for (
-      let windowStart = 0;
-      windowStart < region.length;
-      windowStart += SCAN_WINDOW_BYTES
-    ) {
-      checkActive?.();
-      const windowEnd = Math.min(
-        region.length,
-        windowStart + SCAN_WINDOW_BYTES,
-      );
-
-      const cargoSlice = region.subarray(
-        windowStart,
-        Math.min(region.length, windowEnd + CARGO_TOKEN.length - 1),
-      );
-      let cargoCursor = 0;
-      let cargoHits = 0;
-      while (cargoCursor < cargoSlice.length) {
-        const at = cargoSlice.indexOf(CARGO_TOKEN, cargoCursor);
-        if (at < 0 || windowStart + at >= windowEnd) break;
-        cargoHits += 1;
-        if ((cargoHits & (CANCELLATION_STRIDE - 1)) === 0) checkActive?.();
-        const matchStart = windowStart + at;
-        const parsed = parseCargoCrateAt(region, matchStart);
-        if (parsed !== null) {
-          const key = JSON.stringify([
-            parsed.source_kind,
-            parsed.name,
-            parsed.version,
-            parsed.registry_index,
-            parsed.revision,
-          ]);
-          const existing = cratesByKey.get(key);
-          if (existing !== undefined) {
-            existing.reference_count += 1;
-          } else if (cratesByKey.size < MAX_TRACKED_INFERRED_CRATES) {
-            const retained = retainedCrates.length < maxInferredCrates;
-            if (!retained) cratesOverflowed = true;
-            const entry: MutableInferredCrate = {
-              ...parsed,
-              first_file_offset: range.offset + matchStart,
-              reference_count: 1,
-              retained,
-            };
-            cratesByKey.set(key, entry);
-            if (retained) retainedCrates.push(entry);
-          } else {
-            cratesOverflowed = true;
-          }
-        }
-        cargoCursor = at + CARGO_TOKEN.length;
-      }
-
-      const rustcSlice = region.subarray(
-        windowStart,
-        Math.min(region.length, windowEnd + RUSTC_TOKEN.length - 1),
-      );
-      let rustcCursor = 0;
-      let rustcHits = 0;
-      while (rustcCursor < rustcSlice.length) {
-        const at = rustcSlice.indexOf(RUSTC_TOKEN, rustcCursor);
-        if (at < 0 || windowStart + at >= windowEnd) break;
-        rustcHits += 1;
-        if ((rustcHits & (CANCELLATION_STRIDE - 1)) === 0) checkActive?.();
-        const matchStart = windowStart + at;
-        const parsed = parseRustcVersionBannerAt(region, matchStart);
-        if (parsed !== null) {
-          const existing = versionsByBanner.get(parsed.banner);
-          if (existing !== undefined) {
-            existing.reference_count += 1;
-          } else if (versionsByBanner.size < MAX_TRACKED_RUSTC_VERSIONS) {
-            const retained = retainedVersions.length < MAX_RUSTC_VERSIONS_LIMIT;
-            if (!retained) versionsOverflowed = true;
-            const entry: MutableRustcVersion = {
-              ...parsed,
-              first_file_offset: range.offset + matchStart,
-              reference_count: 1,
-              retained,
-            };
-            versionsByBanner.set(parsed.banner, entry);
-            if (retained) retainedVersions.push(entry);
-          } else {
-            versionsOverflowed = true;
-          }
-        }
-        rustcCursor = at + RUSTC_TOKEN.length;
-      }
-    }
+    const next = steps.next();
+    if (next.done) return next.value;
   }
+};
 
-  return {
-    inferred_crates: {
-      evidence_kind: "inferred",
-      items: retainedCrates.map(({ retained: _retained, ...item }) => item),
-      discovered_count: cratesByKey.size,
-      max_items: maxInferredCrates,
-      truncated:
-        scanTruncated ||
-        cratesOverflowed ||
-        cratesByKey.size > retainedCrates.length,
-    },
-    rustc_versions: {
-      evidence_kind: "inferred",
-      items: retainedVersions.map(({ retained: _retained, ...item }) => item),
-      discovered_count: versionsByBanner.size,
-      truncated:
-        scanTruncated ||
-        versionsOverflowed ||
-        versionsByBanner.size > retainedVersions.length,
-    },
-  };
+/**
+ * Asynchronous fingerprint scan yielding between bounded chunks so queued
+ * `AbortSignal` timers, CLI interrupts, and MCP cancellations fire promptly.
+ */
+export const recoverRustSourceFingerprintsAsync = async (
+  bytes: Buffer,
+  container: BinaryContainer,
+  maxInferredCrates: number = DEFAULT_MAX_RUST_INFERRED_CRATES,
+  checkActive?: () => void,
+): Promise<RecoveredRustSourceFingerprints> => {
+  const steps = recoverRustSourceFingerprintsSteps(
+    bytes,
+    container,
+    maxInferredCrates,
+  );
+  for (;;) {
+    checkActive?.();
+    const next = steps.next();
+    if (next.done) return next.value;
+    checkActive?.();
+    await setImmediate();
+  }
 };

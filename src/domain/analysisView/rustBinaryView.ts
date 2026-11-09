@@ -298,6 +298,9 @@ export const projectRustBinaryView = (
         ...((fields?.has("registry_index") ?? true) && {
           registry_index: row.registry_index,
         }),
+        ...((fields?.has("checkout_id") ?? true) && {
+          checkout_id: row.checkout_id,
+        }),
         ...((fields?.has("revision") ?? true) && { revision: row.revision }),
         ...((fields?.has("first_file_offset") ?? true) && {
           first_file_offset: row.first_file_offset,

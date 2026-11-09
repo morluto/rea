@@ -49,24 +49,37 @@ const readDotSeparatedIdentifiers = (
 ): number => {
   if (start >= text.length) return -1;
   let cursor = start;
+  let segmentStart = start;
   let segmentLength = 0;
+  let segmentDigitsOnly = true;
+  const hasLeadingZeroNumericSegment = (): boolean =>
+    stopAtPlus &&
+    segmentDigitsOnly &&
+    segmentLength > 1 &&
+    text.charCodeAt(segmentStart) === 0x30;
   while (cursor < text.length) {
     const code = text.charCodeAt(cursor);
     if (isSemverIdentByte(code)) {
+      if (!isAsciiDigit(code)) segmentDigitsOnly = false;
       segmentLength += 1;
       cursor += 1;
       continue;
     }
     if (code === 0x2e) {
-      if (segmentLength === 0) return -1;
-      segmentLength = 0;
+      if (segmentLength === 0 || hasLeadingZeroNumericSegment()) return -1;
       cursor += 1;
+      segmentStart = cursor;
+      segmentLength = 0;
+      segmentDigitsOnly = true;
       continue;
     }
-    if (stopAtPlus && code === 0x2b) return segmentLength === 0 ? -1 : cursor;
+    if (stopAtPlus && code === 0x2b)
+      return segmentLength === 0 || hasLeadingZeroNumericSegment()
+        ? -1
+        : cursor;
     return -1;
   }
-  return segmentLength === 0 ? -1 : cursor;
+  return segmentLength === 0 || hasLeadingZeroNumericSegment() ? -1 : cursor;
 };
 
 /** Linear SemVer 2.0 check matching Cargo package version syntax. */
@@ -136,7 +149,11 @@ export const isValidCargoRegistryIndex = (segment: string): boolean => {
 export const splitCargoGitCheckoutSegments = (
   checkoutDir: string,
   revisionSegment: string,
-): { readonly name: string; readonly revision: string } | null => {
+): {
+  readonly name: string;
+  readonly checkout_id: string;
+  readonly revision: string;
+} | null => {
   if (checkoutDir.length < 18 || checkoutDir.length > 145) return null;
   const separatorIndex = checkoutDir.length - 17;
   if (checkoutDir.charCodeAt(separatorIndex) !== 0x2d) return null;
@@ -154,7 +171,11 @@ export const splitCargoGitCheckoutSegments = (
   for (let index = 0; index < revisionSegment.length; index += 1) {
     if (!isLowerHex(revisionSegment.charCodeAt(index))) return null;
   }
-  return { name, revision: revisionSegment };
+  return {
+    name,
+    checkout_id: checkoutDir.slice(separatorIndex + 1),
+    revision: revisionSegment,
+  };
 };
 
 const matchesAscii = (
@@ -239,6 +260,83 @@ const parseCommitAndDateSuffix = (
   };
 };
 
+const MAX_RUSTC_BANNER_VERSION_BYTES = 96;
+const MAX_RUSTC_BANNER_BYTES = 160;
+const MAX_RUSTC_COMMIT_SUFFIX_BYTES = 54;
+
+const hasInvalidBannerTerminator = (
+  bytes: Uint8Array,
+  cursor: number,
+  truncatedEnd: boolean,
+): boolean => {
+  if (truncatedEnd && cursor >= bytes.length) return true;
+  if (cursor >= bytes.length) return false;
+  const trailing = bytes[cursor] ?? 0;
+  if (isAsciiAlnum(trailing) || trailing === 0x5f || trailing === 0x2b)
+    return true;
+  if (trailing === 0x2d) return truncatedEnd && cursor + 8 >= bytes.length;
+  if (trailing === 0x2e) {
+    return truncatedEnd
+      ? cursor + 1 >= bytes.length || isAsciiAlnum(bytes[cursor + 1] ?? 0)
+      : cursor + 1 < bytes.length && isAsciiAlnum(bytes[cursor + 1] ?? 0);
+  }
+  return false;
+};
+
+const readRustcChannelSuffix = (
+  bytes: Uint8Array,
+  versionStart: number,
+  hyphenOffset: number,
+  truncatedEnd: boolean,
+): {
+  readonly channel: ParsedRustcBanner["channel"];
+  readonly endOffset: number;
+} | null => {
+  let channel: ParsedRustcBanner["channel"];
+  let cursor = hyphenOffset;
+  if (matchesAscii(bytes, cursor + 1, "nightly")) {
+    channel = "nightly";
+    cursor += 8;
+  } else if (matchesAscii(bytes, cursor + 1, "beta")) {
+    channel = "beta";
+    cursor += 5;
+  } else if (matchesAscii(bytes, cursor + 1, "dev")) {
+    channel = "dev";
+    cursor += 4;
+  } else {
+    return null;
+  }
+  while (
+    cursor < bytes.length &&
+    cursor - versionStart <= MAX_RUSTC_BANNER_VERSION_BYTES
+  ) {
+    const byte = bytes[cursor] ?? 0;
+    if (isAsciiAlnum(byte)) {
+      cursor += 1;
+      continue;
+    }
+    if (
+      (byte === 0x2e || byte === 0x2d) &&
+      cursor + 1 < bytes.length &&
+      isAsciiAlnum(bytes[cursor + 1] ?? 0)
+    ) {
+      cursor += 1;
+      continue;
+    }
+    break;
+  }
+  if (cursor - versionStart > MAX_RUSTC_BANNER_VERSION_BYTES) return null;
+  const lastByte = bytes[cursor - 1] ?? 0;
+  if (lastByte === 0x2e || lastByte === 0x2d) return null;
+  const trailing = cursor < bytes.length ? (bytes[cursor] ?? 0) : 0;
+  if (
+    trailing === 0x2d ||
+    hasInvalidBannerTerminator(bytes, cursor, truncatedEnd)
+  )
+    return null;
+  return { channel, endOffset: cursor };
+};
+
 /**
  * Parse a `rustc [version ]<MAJOR.MINOR.PATCH>[-channel][ (<hex> <YYYY-MM-DD>)]`
  * banner starting at `start` in `bytes`.
@@ -246,6 +344,7 @@ const parseCommitAndDateSuffix = (
 export const parseRustcVersionBannerAt = (
   bytes: Uint8Array,
   start: number,
+  truncatedEnd = false,
 ): ParsedRustcBanner | null => {
   if (!matchesAscii(bytes, start, "rustc ")) return null;
   if (start > 0 && isCrateNameByte(bytes[start - 1] ?? 0)) return null;
@@ -262,67 +361,46 @@ export const parseRustcVersionBannerAt = (
 
   let channel: ParsedRustcBanner["channel"] = "stable";
   if (cursor < bytes.length && bytes[cursor] === 0x2d) {
-    if (matchesAscii(bytes, cursor + 1, "nightly")) {
-      channel = "nightly";
-      cursor += 8;
-    } else if (matchesAscii(bytes, cursor + 1, "beta")) {
-      channel = "beta";
-      cursor += 5;
-    } else if (matchesAscii(bytes, cursor + 1, "dev")) {
-      channel = "dev";
-      cursor += 4;
-    } else {
-      return null;
-    }
-    while (cursor < bytes.length && cursor - versionStart < 96) {
-      const byte = bytes[cursor] ?? 0;
-      if (isAsciiAlnum(byte)) {
-        cursor += 1;
-        continue;
-      }
-      if (
-        (byte === 0x2e || byte === 0x2d) &&
-        cursor + 1 < bytes.length &&
-        isAsciiAlnum(bytes[cursor + 1] ?? 0)
-      ) {
-        cursor += 1;
-        continue;
-      }
-      break;
-    }
-    const trailing = cursor < bytes.length ? (bytes[cursor] ?? 0) : 0;
-    if (trailing === 0x2d || trailing === 0x5f || trailing === 0x2b)
-      return null;
-  } else if (cursor < bytes.length) {
-    const trailing = bytes[cursor] ?? 0;
-    if (isAsciiAlnum(trailing) || trailing === 0x5f || trailing === 0x2b)
-      return null;
-    if (
-      trailing === 0x2e &&
-      cursor + 1 < bytes.length &&
-      isAsciiAlnum(bytes[cursor + 1] ?? 0)
-    )
-      return null;
+    const parsedChannel = readRustcChannelSuffix(
+      bytes,
+      versionStart,
+      cursor,
+      truncatedEnd,
+    );
+    if (parsedChannel === null) return null;
+    channel = parsedChannel.channel;
+    cursor = parsedChannel.endOffset;
+  } else if (hasInvalidBannerTerminator(bytes, cursor, truncatedEnd)) {
+    return null;
   }
 
   const versionEnd = cursor;
-  if (versionEnd - start > 160 || versionEnd - versionStart > 128) return null;
+  if (
+    versionEnd - start > MAX_RUSTC_BANNER_BYTES ||
+    versionEnd - versionStart > MAX_RUSTC_BANNER_VERSION_BYTES
+  )
+    return null;
   const version = asciiSlice(bytes, versionStart, versionEnd);
 
-  if (
-    cursor + 2 < bytes.length &&
-    bytes[cursor] === 0x20 &&
-    bytes[cursor + 1] === 0x28
-  ) {
-    const suffix = parseCommitAndDateSuffix(bytes, cursor + 2);
-    if (suffix !== null && suffix.endOffset - start <= 160) {
-      return {
-        banner: asciiSlice(bytes, start, suffix.endOffset),
-        version,
-        channel,
-        commit_hash: suffix.commitHash,
-        commit_date: suffix.commitDate,
-      };
+  if (cursor < bytes.length && bytes[cursor] === 0x20) {
+    if (truncatedEnd && cursor + 1 >= bytes.length) return null;
+    if (cursor + 1 < bytes.length && bytes[cursor + 1] === 0x28) {
+      const suffix =
+        cursor + 2 < bytes.length
+          ? parseCommitAndDateSuffix(bytes, cursor + 2)
+          : null;
+      if (suffix !== null) {
+        if (suffix.endOffset - start > MAX_RUSTC_BANNER_BYTES) return null;
+        return {
+          banner: asciiSlice(bytes, start, suffix.endOffset),
+          version,
+          channel,
+          commit_hash: suffix.commitHash,
+          commit_date: suffix.commitDate,
+        };
+      }
+      if (truncatedEnd && bytes.length - cursor < MAX_RUSTC_COMMIT_SUFFIX_BYTES)
+        return null;
     }
   }
   return {

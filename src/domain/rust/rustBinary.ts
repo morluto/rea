@@ -36,6 +36,7 @@ export const rustMaxInferredCratesSchema = z
 
 const index = z.int().nonnegative();
 const rustcHash = z.string().regex(/^[0-9a-f]{40}$/u);
+const cargoGitCheckoutId = z.string().regex(/^[0-9a-f]{16}$/u);
 const shortOrFullHexHash = z.string().regex(/^[0-9a-f]{7,40}$/u);
 export const rustPackageFeaturesSchema = z.array(z.string().min(1)).nullable();
 export const rustInferredCrateSourceKindSchema = z.enum(["registry", "git"]);
@@ -92,6 +93,7 @@ export const rustInferredCrateSchema = z.strictObject({
   version: z.string().min(5).max(128).nullable(),
   source_kind: rustInferredCrateSourceKindSchema,
   registry_index: z.string().min(1).max(128).nullable(),
+  checkout_id: cargoGitCheckoutId.nullable(),
   revision: shortOrFullHexHash.nullable(),
   first_file_offset: index,
   reference_count: z.int().positive(),
@@ -482,6 +484,7 @@ const isValidInferredCrateFields = (item: RustInferredCrate): boolean => {
     return (
       item.version !== null &&
       item.registry_index !== null &&
+      item.checkout_id === null &&
       item.revision === null &&
       isValidCargoSemver(item.version) &&
       isValidCargoRegistryIndex(item.registry_index) &&
@@ -489,15 +492,18 @@ const isValidInferredCrateFields = (item: RustInferredCrate): boolean => {
         item.name
     );
   }
-  return (
-    item.version === null &&
-    item.registry_index === null &&
-    item.revision !== null &&
-    splitCargoGitCheckoutSegments(
-      `${item.name}-0000000000000000`,
-      item.revision,
-    )?.name === item.name
+  if (
+    item.version !== null ||
+    item.registry_index !== null ||
+    item.checkout_id === null ||
+    item.revision === null
+  )
+    return false;
+  const split = splitCargoGitCheckoutSegments(
+    `${item.name}-${item.checkout_id}`,
+    item.revision,
   );
+  return split?.name === item.name && split.checkout_id === item.checkout_id;
 };
 
 const checkInferredCrates = (
@@ -538,6 +544,7 @@ const checkInferredCrates = (
       item.name,
       item.version,
       item.registry_index,
+      item.checkout_id,
       item.revision,
     ]);
     if (seen.has(key))

@@ -36,7 +36,7 @@ import { fixedAllowanceOptions } from "../domain/fixedAllowanceRemediation.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import { err, ok, type Result } from "../domain/result.js";
 import {
-  readRustBinaryImage,
+  readRustBinaryImageAsync,
   type RustBinaryImage,
 } from "./RustBinaryImage.js";
 import { requireSelectedNativeImage } from "../native/metadata/MachoSliceSelection.js";
@@ -88,7 +88,7 @@ export class RustBinaryProvider implements RustBinaryPort {
           input.architecture,
         );
         const image = inFile(
-          readRustBinaryImage(selected.bytes, {
+          await readRustBinaryImageAsync(selected.bytes, {
             includeInferredCrates: input.include_inferred_crates === true,
             maxInferredCrates: input.max_inferred_crates,
             checkActive: () => assertArtifactReadActive(options?.signal),
@@ -198,9 +198,7 @@ const outputLimit = (path: string) =>
 export const RUST_RESOURCE_GUARD_LIMITATION =
   "Resource guards bound the selected file to 256 MiB, the compressed dependency stream to 1 MiB, inflated JSON to the smaller of 8 MiB and 64 times the consumed compressed-stream length, and the complete report to 8 MiB. Package and dependency counts are admitted against that output budget before schema cloning, graph objects, or reverse-edge allocation.";
 
-const limitationsFor = (
-  image: ReturnType<typeof readRustBinaryImage>,
-): string[] => [
+const limitationsFor = (image: RustBinaryImage): string[] => [
   "Embedded dependency metadata is file content. It does not authenticate package names, versions, sources, or the compiler that produced the binary.",
   image.inferred_crates === undefined
     ? "Only the .dep-v0 dependency section and read-only compiler path strings are inspected. Functions, types, and runtime behavior are not recovered."
@@ -265,9 +263,7 @@ const unknownFormatLimitation = (
   ];
 };
 
-const rustcLimitation = (
-  commit: ReturnType<typeof readRustBinaryImage>["rustc_commit"],
-): string[] => {
+const rustcLimitation = (commit: RustBinaryImage["rustc_commit"]): string[] => {
   if (commit === null)
     return [
       "No /rustc/<40-hex>/ path was found in read-only data, so a rustc commit hash is unknown.",

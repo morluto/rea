@@ -33,7 +33,8 @@ Mach-O, and universal Mach-O slices.
     versions stay unambiguous.
   - Git checkout source paths
     (`cargo/git/checkouts/<repo_slug>-<16-hex-id>/<7..40-hex-rev>/` across `/`
-    and `\` separators).
+    and `\` separators, retaining both `checkout_id` and `revision` so distinct
+    forks sharing a repository slug and commit stay distinct).
 - Recover deduplicated `rustc_versions` (`evidence_kind: "inferred"`, capped at
   `64` banners) for `rustc [version ]<MAJOR.MINOR.PATCH>[-channel][ (<hex> <YYYY-MM-DD>)]`
   strings in read-only and ELF `.comment` sections.

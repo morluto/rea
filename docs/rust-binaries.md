@@ -153,7 +153,7 @@ rea inspect-rust-binary /artifacts/application --include-inferred-crates --max-i
 When requested, the result adds two `evidence_kind: "inferred"` inventories:
 
 - `inferred_crates`, with `items` (`name`, `version`, `source_kind` `"registry" | "git"`,
-  `registry_index`, `revision`, `first_file_offset`, `reference_count`),
+  `registry_index`, `checkout_id`, `revision`, `first_file_offset`, `reference_count`),
   `discovered_count`, `max_items`, and `truncated`:
   - Registry paths match `/cargo/registry/src/<index>/<crate>-<semver>/`,
     `/.cargo/registry/src/...`, and Windows `\` spellings, splitting `<crate>-<semver>`
@@ -161,7 +161,7 @@ When requested, the result adds two `evidence_kind: "inferred"` inventories:
     hyphenated crate names (`tokio-util-0.7.13`, `x86_64-0.15.2`) and pre-release
     or build-metadata versions remain unambiguous.
   - Git checkout paths match `cargo/git/checkouts/<repo_slug>-<16-hex-id>/<7..40-hex-rev>/`
-    with `/` or `\` separators (`version: null`, `registry_index: null`, `revision`).
+    with `/` or `\` separators (`version: null`, `registry_index: null`, `checkout_id`, `revision`).
 - `rustc_versions`, capped at 64 unique banners (`banner`, `version`, `channel`,
   `commit_hash`, `commit_date`, `first_file_offset`, `reference_count`), matching
   both `rustc <semver> (<hex> <YYYY-MM-DD>)` and ELF `.comment`

@@ -881,6 +881,7 @@ cliTest(
         version: "0.7.13",
         source_kind: "registry",
         registry_index: "index.crates.io-6f17d22bba15001f",
+        checkout_id: null,
         revision: null,
         first_file_offset: 8192 + 2049,
         reference_count: 1,

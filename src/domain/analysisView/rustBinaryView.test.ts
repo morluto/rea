@@ -239,6 +239,7 @@ it("refuses inferred_crates view when uncollected and pages/filters inferred_cra
           version: "0.7.13",
           source_kind: "registry",
           registry_index: "index.crates.io-6f17d22bba15001f",
+          checkout_id: null,
           revision: null,
           first_file_offset: 100,
           reference_count: 3,
@@ -248,6 +249,7 @@ it("refuses inferred_crates view when uncollected and pages/filters inferred_cra
           version: null,
           source_kind: "git",
           registry_index: null,
+          checkout_id: "0123456789abcdef",
           revision: "a1b2c3d",
           first_file_offset: 220,
           reference_count: 1,
@@ -303,7 +305,7 @@ it("refuses inferred_crates view when uncollected and pages/filters inferred_cra
     collection: "inferred_crates",
     source_kind: "git",
     contains: "quin",
-    fields: ["name", "revision"],
+    fields: ["name", "checkout_id", "revision"],
     offset: 0,
     limit: 10,
   });
@@ -311,6 +313,13 @@ it("refuses inferred_crates view when uncollected and pages/filters inferred_cra
     throw new Error("Expected inferred_crates page");
   expect(gitOnly.value.page).toEqual({
     collection: "inferred_crates",
-    rows: [{ index: 1, name: "quinn", revision: "a1b2c3d" }],
+    rows: [
+      {
+        index: 1,
+        name: "quinn",
+        checkout_id: "0123456789abcdef",
+        revision: "a1b2c3d",
+      },
+    ],
   });
 });
