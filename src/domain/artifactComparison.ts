@@ -270,10 +270,15 @@ const compareOccurrences = (
     const rightMatches = rightByPath.get(path) ?? [];
     if (leftMatches.length > 1 || rightMatches.length > 1) {
       hasAmbiguousDuplicatePaths = true;
+      const integrityMismatch = [...leftMatches, ...rightMatches].some(
+        ({ hash_status: status }) => status === "mismatched",
+      );
       output.push({
         logical_path: path,
-        classification: "unknown",
-        dimensions: ["availability"],
+        classification: integrityMismatch ? "contradiction" : "unknown",
+        dimensions: integrityMismatch
+          ? ["availability", "integrity"]
+          : ["availability"],
         left_occurrence_id: null,
         right_occurrence_id: null,
         left_artifact_id: null,
@@ -787,8 +792,8 @@ const summarize = (
     contradiction: 0,
   };
   for (const change of changes) counts[change.classification] += 1;
-  // Change rows are keyed by logical path, and one unknown row for a duplicate
-  // path stands for every left occurrence on it. Only occurrences on paths
+  // Change rows are keyed by logical path, and one row for a duplicate path
+  // stands for every left occurrence on it. Only occurrences on paths
   // without a left-side change are affirmatively unchanged.
   const changedPaths = new Set(
     changes
