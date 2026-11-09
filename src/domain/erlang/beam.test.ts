@@ -102,6 +102,8 @@ it("reparses retained BEAM Evidence that predates the trailing-bytes field", () 
     limitations: [],
   };
   const parsed = erlangBeamSchema.parse(legacy);
-  expect(parsed.coverage.trailing_bytes).toBe(0);
+  // Preserved as unknown, not a fabricated zero, even though the bounds imply a
+  // trailer; the producing build never measured it.
+  expect(parsed.coverage.trailing_bytes).toBeUndefined();
   expect(parsed.coverage.status).toBe("complete");
 });
