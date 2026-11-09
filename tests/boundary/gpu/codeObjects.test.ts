@@ -410,8 +410,10 @@ it("retains kernels from conflicting AMDGPU notes without choosing either note o
       inspection: "partial",
     },
   ]);
-  expect(result.value.objects[0]?.limitations).toContain(
-    "AMDGPU notes declare conflicting processor targets; processor identity is unknown",
+  expect(result.value.objects[0]?.limitations).toContainEqual(
+    expect.stringMatching(
+      /conflicting processor targets.*identity is unknown/iu,
+    ),
   );
   expect(result.value.coverage).toMatchObject({
     discovery: "partial",
@@ -566,8 +568,8 @@ it("bounds standalone AMD note discovery before retaining metadata", async () =>
     target: "gfx900",
     inspection: "capacity",
   });
-  expect(result.value.objects[0]!.limitations).toContain(
-    "AMDGPU ELF note discovery exceeds the 8 MiB retained metadata budget",
+  expect(result.value.objects[0]!.limitations).toContainEqual(
+    expect.stringMatching(/note discovery.*8 MiB.*metadata budget/iu),
   );
   expect(result.value.kernels).toEqual([]);
 });

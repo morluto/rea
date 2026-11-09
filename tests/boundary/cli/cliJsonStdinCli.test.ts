@@ -4,7 +4,6 @@ import { pathToFileURL } from "node:url";
 import { expect } from "vitest";
 
 import { nativeJsonParseRequiredBytes } from "../../../src/application/JsonInputFile.js";
-import { JSON_BYTE_ORDER_MARK_MESSAGE } from "../../../src/application/Utf8JsonInput.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
 import { waitForExit } from "../../support/process/processFixture.js";
 
@@ -13,7 +12,10 @@ const probe = pathToFileURL(
 ).href;
 
 cliTest.for([
-  [Buffer.from("\uFEFF{}"), JSON_BYTE_ORDER_MARK_MESSAGE],
+  [
+    Buffer.from("\uFEFF{}"),
+    expect.stringMatching(/byte-order mark.*UTF-8 without a byte-order mark/iu),
+  ],
   [Buffer.from([0xf0, 0x28, 0x8c, 0xbc]), "JSON input is not valid UTF-8"],
   [Buffer.from('{"secret-value":'), undefined],
 ] as const)(

@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { localPathStringSchema } from "../localPath.js";
+import { absoluteLocalPathStringSchema } from "../localPath.js";
 import {
   traceDiagnosticSchema,
   traceEventSchema,
@@ -56,7 +56,7 @@ export const playwrightTraceViewRequestSchema = z.discriminatedUnion(
   ],
 );
 export const inspectPlaywrightTraceInputSchema = z.strictObject({
-  path: localPathStringSchema.describe(
+  path: absoluteLocalPathStringSchema.describe(
     "Absolute path to an offline Playwright v10 trace ZIP",
   ),
   detail: z.enum(["summary", "complete"]).default("summary"),

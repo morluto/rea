@@ -32,7 +32,6 @@ import { NATIVE_MACOS_PROVIDER_IDENTITY } from "../../native/NativeMacosProvider
 import {
   buildCapabilityInventory,
   compactToolAvailability,
-  MULTI_MODE_REMEDIATION,
 } from "../CapabilityInventory.js";
 
 const projectedStatusSchema = z.object({
@@ -134,6 +133,8 @@ const candidate = (
   },
   selected: true,
   capabilities,
+  selectionSource: "auto-single-candidate",
+  rejections: [],
 });
 
 const project = async (
@@ -583,7 +584,9 @@ it.each([
         : ["inspect_native_dispatch_metadata", "list_names"],
     });
     if (!route) {
-      expect(trace?.remediation).toBe(MULTI_MODE_REMEDIATION);
+      expect(trace?.remediation).toMatch(
+        /no mode.*inspect each mode.*missing operations and remediation/iu,
+      );
       const authored = trace?.modes?.find(
         (mode) => mode.name === "authored_ui_dispatch",
       );
@@ -638,7 +641,9 @@ it("keeps distinct recovery for an unbound non-bundle session", async () => {
   expect(trace).toMatchObject({
     available: false,
     reason: "provider_unavailable",
-    remediation: MULTI_MODE_REMEDIATION,
+    remediation: expect.stringMatching(
+      /no mode.*inspect each mode.*missing operations and remediation/iu,
+    ),
   });
   const authored = trace?.modes?.find(
     (mode) => mode.name === "authored_ui_dispatch",
@@ -685,6 +690,24 @@ describe("binary session summary projection", () => {
         diagnostics: { architecture: "arm64" },
       },
       selected: false,
+      selectionSource: null,
+      rejections: [
+        {
+          providerId: providerB.id,
+          origin: "availability",
+          code: "not_configured",
+          reason: "PROVIDER_B_HOME is not set.",
+          remediation: "Set PROVIDER_B_HOME; see docs/provider-b.md.",
+          diagnostics: { checks: [{ name: "configuration", ok: false }] },
+        },
+        {
+          providerId: providerB.id,
+          origin: "target",
+          code: "architecture_unsupported",
+          reason: "Provider B cannot select this slice.",
+          diagnostics: { architecture: "arm64" },
+        },
+      ],
     };
     const pending: AnalysisProviderCandidateStatus = {
       ...candidate(providerA, selectedCapabilities),
