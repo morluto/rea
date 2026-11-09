@@ -37,6 +37,7 @@ const RELEASE_METHODS = ["close", "destroy", "end"] as const;
 const releaseMethodsFor = (
   acquisition: ResourceCandidate,
 ): readonly ("close" | "destroy" | "end")[] => {
+  if (acquisition.resultIsPromise) return [];
   const key = `${acquisition.specifier}:${acquisition.method}`;
   const table: Readonly<
     Record<string, readonly ("close" | "destroy" | "end")[]>
@@ -51,6 +52,8 @@ interface ResourceCandidate {
   readonly method: JavaScriptSemanticResourceOperation["method"];
   readonly ownerCallableId: string | null;
   readonly resultBindingId: string | null;
+  /** The lexical result is the opening Promise, not its fulfilled FileHandle. */
+  readonly resultIsPromise: boolean;
 }
 
 /** Recover built-in filesystem/network acquisition and local release handles. */
@@ -345,6 +348,15 @@ const collectAcquisitions = (
         : { builtinAuthority: reference.builtinAuthority }),
       ownerCallableId: context.callableStack.at(-1) ?? null,
       resultBindingId: outerDataEffectBinding(node, context),
+      resultIsPromise:
+        reference.builtinAuthority === undefined &&
+        reference.specifier === "fs/promises" &&
+        reference.method === "open" &&
+        !context.ancestors.some(
+          (parent) =>
+            t.isAwaitExpression(parent) &&
+            unwrapJavaScriptExpression(parent.argument).node === node,
+        ),
     });
   });
   return output;
@@ -424,7 +436,7 @@ const holdsOnlyAcquisitions = (
     ({ node, projection }) => {
       if (projection.length > 0) return false;
       let value = unwrapJavaScriptExpression(node).node;
-      if (t.isAwaitExpression(value))
+      while (t.isAwaitExpression(value))
         value = unwrapJavaScriptExpression(value.argument).node;
       return (
         isNullishPlaceholder(value, state) ||

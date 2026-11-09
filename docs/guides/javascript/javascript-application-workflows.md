@@ -223,6 +223,10 @@ registrations/removals and dispatch, Node timers and cancellation handles, async
 `node:child_process` creation and ownership, configuration sources and direct
 defaults, request construction and response consumers, parse/coercion/
 validation boundaries, and built-in resource acquisition/release.
+For `fs/promises.open`, a binding receiving the Promise is distinct from one
+receiving the awaited FileHandle. Awaiting the Promise later does not replace
+the original binding; its `close()` is not a FileHandle release. Acquisitions
+remain retained, and unknown loader authority keeps its existing candidate tag.
 Reassignments connect retained right-hand reads to the binding or property
 write. Compound assignments also retain the previous-value input; logical
 assignments keep conditional inputs as candidates. These edges describe

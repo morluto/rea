@@ -1,15 +1,41 @@
 import { expect, it } from "vitest";
 
 import { analyzeJavaScriptSemantics } from "./javascriptSemanticAnalysis.js";
+import { analyzeCommonJsSemanticFixture } from "../../../tests/fixtures/javascriptCommonJsAnalysis.js";
+
+const operations = (source: string) => {
+  const result = analyzeJavaScriptSemantics(source);
+  expect(result.coverage.status).toBe("complete");
+  return result.resourceOperations;
+};
 
 const releases = (source: string) =>
-  analyzeJavaScriptSemantics(source)
-    .resourceOperations.filter(({ kind }) => kind === "release")
+  operations(source)
+    .filter(({ kind }) => kind === "release")
     .map(({ method, linkedResourceIds, resolution }) => ({
       method,
       linked: linkedResourceIds.length,
       resolution,
     }));
+
+const commonJsPromise = `const { open } = require("node:fs/promises"); const h = open("input.txt"); h.close();`;
+
+it("keeps conditional release facts when the loader is unknown", () => {
+  expect(
+    operations(commonJsPromise).filter(({ kind }) => kind === "release"),
+  ).toEqual([expect.objectContaining({ builtinAuthority: "candidate" })]);
+});
+
+it("does not close a Promise through a proven CommonJS builtin", () => {
+  const result = analyzeCommonJsSemanticFixture(commonJsPromise);
+  expect(result.coverage.status).toBe("complete");
+  expect(
+    result.resourceOperations.filter(({ kind }) => kind === "acquire"),
+  ).toHaveLength(1);
+  expect(
+    result.resourceOperations.filter(({ kind }) => kind === "release"),
+  ).toEqual([]);
+});
 
 it.each([
   [
@@ -56,4 +82,46 @@ it.each([
       stream.destroy();
     `),
   ).toEqual([{ method: "destroy", linked: 1, resolution: "partial" }]);
+});
+
+it.each([
+  'const h = open("input.txt"); h.close();',
+  'let h; h = open("input.txt"); h.close();',
+  'const h = open("input.txt"); await h; h.close();',
+  'const h = open("input.txt"); await h.close();',
+  'const h = open("input.txt"); h["close"]();',
+  'const h = open("input.txt"); const later = () => h.close();',
+])("does not release a FileHandle through its Promise: %s", (body) => {
+  const result = operations(`import { open } from "node:fs/promises"; ${body}`);
+  expect(result.filter(({ kind }) => kind === "acquire")).toHaveLength(1);
+  expect(result.filter(({ kind }) => kind === "release")).toEqual([]);
+});
+
+it.each([
+  'const stream = await await open("input.txt");',
+  'const stream = (await (open("input.txt")));',
+])("retains the directly awaited FileHandle through %s", (acquire) => {
+  expect(
+    releases(
+      `import { open } from "node:fs/promises"; ${acquire} stream.close();`,
+    ),
+  ).toEqual([{ method: "close", linked: 1, resolution: "complete" }]);
+});
+
+it("keeps the awaited candidate partial when a Promise can replace it", () => {
+  const result = operations(`
+    import { open } from "node:fs/promises";
+    let h = await open("input.txt");
+    if (replace) h = open("other.txt");
+    h.close();
+  `);
+  expect(result.filter(({ kind }) => kind === "acquire")).toHaveLength(2);
+  expect(
+    result
+      .filter(({ kind }) => kind === "release")
+      .map(({ linkedResourceIds, resolution }) => ({
+        linked: linkedResourceIds.length,
+        resolution,
+      })),
+  ).toEqual([{ linked: 1, resolution: "partial" }]);
 });
