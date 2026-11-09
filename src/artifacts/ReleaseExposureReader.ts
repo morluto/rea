@@ -1556,7 +1556,10 @@ const examineLoadedText = (
         if (isScriptPageMember(member))
           examineHtmlScripts(state, member, text.text);
       }
-    }
+    } else if (!isCssMember(member) && nodeShebang(loaded.bytes) === undefined)
+      // A program named by an unresolved variable may be Node, so the
+      // member's maps stay unassessed rather than absent.
+      state.skippedMaps += 1;
   } else {
     // The allowance bounds the read, so a read that yielded no text still spends it.
     state.textBytes += state.memberBytesRead - bytesReadBefore;
@@ -1581,26 +1584,48 @@ const examineLoadedText = (
 };
 
 /**
- * Whether a partial header leaves a Node shebang undecided: none was read, or
- * it could start one and ends before the shebang line does.
+ * Whether a header leaves a Node shebang undecided: none was read, it could
+ * start one and ends before the shebang line does, or its program is named by
+ * an environment variable.
  */
 const shebangUndecided = (header: Buffer | null): boolean =>
   header === null ||
-  ("#!".startsWith(header.toString("latin1", 0, 2)) && !header.includes(0x0a));
+  ("#!".startsWith(header.toString("latin1", 0, 2)) &&
+    !header.includes(0x0a)) ||
+  nodeShebang(header) === undefined;
 
 /**
  * A shebang that runs Node makes a file a script whatever it is called. The
  * path classifier cannot see this, so the first bytes read establish it.
  */
-const hasNodeShebang = (prefix: Buffer): boolean => {
+const hasNodeShebang = (prefix: Buffer): boolean =>
+  nodeShebang(prefix) === true;
+
+/**
+ * Whether a shebang runs Node. An `env -S` program whose name comes from a
+ * `${NAME}` the scan cannot resolve, such as `${NODE_BIN}`, may be Node, so
+ * it is undefined rather than false.
+ */
+const nodeShebang = (prefix: Buffer): boolean | undefined => {
   if (prefix.toString("latin1", 0, 2) !== "#!") return false;
   const [line = ""] = prefix.toString("latin1", 2).split("\n", 1);
   const [, interpreter = "", operands = ""] =
     /^(\S*)[ \t]*(.*)$/su.exec(line.trim()) ?? [];
   const program =
-    basename(interpreter) === "env" ? envProgram(operands) : interpreter;
-  return program !== undefined && /^node(?:js)?$/u.test(basename(program));
+    basename(interpreter) === "env"
+      ? envProgram(operands)
+      : { text: interpreter, expands: false };
+  if (program === undefined) return false;
+  const name = basename(program.text);
+  if (/^node(?:js)?$/u.test(name)) return true;
+  return program.expands && name.includes("${") ? undefined : false;
 };
+
+/** One `env` field, and whether `env -S` expands a `${NAME}` inside it. */
+interface EnvField {
+  readonly text: string;
+  readonly expands: boolean;
+}
 
 /** `env` options whose argument is the next field, as in `-u NODE_OPTIONS`. */
 const ENV_OPTION_WITH_ARGUMENT = new Set([
@@ -1617,20 +1642,21 @@ const ENV_OPTION_WITH_ARGUMENT = new Set([
  * rest of the line as one string and splits it as `env` does, so quoted
  * spaces stay inside their field.
  */
-const envProgram = (operands: string): string | undefined => {
-  const fields: string[] = [];
+const envProgram = (operands: string): EnvField | undefined => {
+  const fields: EnvField[] = [];
   let rest = operands;
-  const next = (): string | undefined => {
+  const next = (): EnvField | undefined => {
     if (fields.length > 0) return fields.shift();
     const [, field, after = ""] = /^[ \t]*([^ \t]+)(.*)$/su.exec(rest) ?? [];
     rest = after;
-    return field;
+    return field === undefined ? undefined : { text: field, expands: false };
   };
-  for (let field = next(); field !== undefined; field = next()) {
+  for (let entry = next(); entry !== undefined; entry = next()) {
+    const field = entry.text;
     // Past `--` nothing is an option, but settings still come first.
     if (field === "--") {
       for (let word = next(); word !== undefined; word = next())
-        if (!word.includes("=")) return word;
+        if (!word.text.includes("=")) return word;
       return undefined;
     }
     if (ENV_OPTION_WITH_ARGUMENT.has(field)) {
@@ -1653,7 +1679,7 @@ const envProgram = (operands: string): string | undefined => {
       continue;
     }
     if (field.startsWith("-") || field.includes("=")) continue;
-    return field;
+    return entry;
   }
   return undefined;
 };
@@ -1678,16 +1704,18 @@ const ENV_SPLIT_ESCAPES: Readonly<Record<string, string>> = {
  * escapes above, `\_` separates fields outside quotes and is a space inside
  * them, `\c` ends the string, and a `#` that starts a field begins a comment.
  * `${NAME}` stays as written: it can only change a value, never which field is
- * the program. A string `env` itself rejects, such as an unterminated quote or
- * an unknown escape, runs nothing.
+ * the program, so its field is marked as expanding. A string `env` itself
+ * rejects, such as an unterminated quote or an unknown escape, runs nothing.
  */
-const splitEnvString = (text: string): string[] | undefined => {
-  const fields: string[] = [];
+const splitEnvString = (text: string): EnvField[] | undefined => {
+  const fields: EnvField[] = [];
   let field: string | null = null;
+  let expands = false;
   let quote: "'" | '"' | null = null;
   const end = (): void => {
-    if (field !== null) fields.push(field);
+    if (field !== null) fields.push({ text: field, expands });
     field = null;
+    expands = false;
   };
   for (let index = 0; index < text.length; index += 1) {
     const character = text[index] ?? "";
@@ -1718,6 +1746,7 @@ const splitEnvString = (text: string): string[] | undefined => {
       field = (field ?? "") + value;
       continue;
     }
+    if (character === "$" && text[index + 1] === "{") expands = true;
     if (quote === '"') {
       if (character === '"') quote = null;
       else field += character;
@@ -3115,11 +3144,13 @@ const classifySiblingMap = async (
     return;
   // A Node shebang names a script, as it does for a member's `.map`.
   if (prefix !== null && hasNodeShebang(prefix)) return;
-  // An undecided PE header may be native, so it is no linker-map evidence.
+  // An undecided PE header may be native, so it is no linker-map evidence,
+  // nor is a shebang whose program an unresolved variable names.
   if (
     prefix === null ||
     isUndecidedPeHeader(prefix) ||
-    mayHaveSourceMapPrefix(prefix)
+    mayHaveSourceMapPrefix(prefix) ||
+    nodeShebang(prefix) === undefined
   )
     state.skippedCompanions += 1;
   else noteLinkerMapGuess(state, sibling);

@@ -3911,6 +3911,40 @@ describe("ReleaseExposureReader Node shebang scripts", () => {
   });
 });
 
+describe("ReleaseExposureReader env -S programs named by a variable", () => {
+  const script = (shebang: string): string =>
+    `${shebang}\nrun();\n//# sourceMappingURL=data:application/json;base64,${embeddedSourceMap().toString("base64")}\n`;
+
+  const shebangRoot = async (): Promise<string> =>
+    createTestTempDirectory("rea-release-exposure-shebang-");
+
+  it.each([
+    ["#!/usr/bin/env -S ${NODE_BIN}"],
+    ['#!/usr/bin/env -S "${NODE_BIN}" --no-warnings'],
+    ["#!/usr/bin/env -S MODE=production /opt/${RUNTIME}"],
+  ])("leaves the maps of %j unassessed", async (shebang) => {
+    const root = await shebangRoot();
+    await writeFile(join(root, "runner"), script(shebang));
+    const scanned = await inspect(root);
+    expect(scanned.source_maps).toMatchObject({ embedded: 0, skipped: 1 });
+    expect(sourceMapSourcesStatus(scanned)).toBe("unknown");
+  });
+
+  it.each([
+    ["#!/usr/bin/env -S '${NODE_BIN}'"],
+    ["#!/usr/bin/env -S \\${NODE_BIN}"],
+    ["#!/usr/bin/env -S ${RUNTIME_DIR}/bin/deno"],
+  ])(
+    "does not read the literal or resolved program of %j as Node",
+    async (shebang) => {
+      const root = await shebangRoot();
+      await writeFile(join(root, "runner"), script(shebang));
+      const scanned = await inspect(root);
+      expect(scanned.source_maps).toMatchObject({ embedded: 0, skipped: 0 });
+    },
+  );
+});
+
 describe("ReleaseExposureReader unreadable launchers", () => {
   it("keeps coverage unknown for an extensionless launcher that cannot be read", async () => {
     const root = await createTestTempDirectory("rea-release-exposure-shebang-");
