@@ -28,6 +28,11 @@ this effective scope. A claim verifier must commit to its own surfaces and
 their reachable dependencies, including their artifact and implemented-owner
 digests. Callers do not need to duplicate the transitive closure in the request.
 
+Listed `residual_unknown_ids` select unknown identities from the Evidence bundle.
+The evaluator uses each identity's latest revision: resolved questions do not
+block the boundary, while reopened questions do. An active, unallowed question
+retains its cited supporting, contradicting and mutation Evidence in the result.
+
 ## Comparable verifier Evidence
 
 At least one record explicitly cited by the latest verifier observation must
