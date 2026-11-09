@@ -5,6 +5,7 @@ import {
   retainSemanticAmbientEffect,
 } from "./javascriptSemanticAmbientWrites.js";
 import { isIntrinsicNonEscapingMapCall } from "./javascriptSemanticMapOperations.js";
+import { isIntrinsicNonEscapingXhrOpen } from "./javascriptNetworkRequests.js";
 import {
   isIntrinsicTypedArrayConstruction,
   isTypedArrayNumericIndex,
@@ -355,7 +356,16 @@ export function* collectSemanticMemberMutationsSteps(
   state: JavaScriptSemanticAnalysisState,
   referenceMayHaveChangedAt: JavaScriptBindingIndex["referenceMayHaveChangedAt"],
 ): Generator<void, void> {
-  const deferredMapReceivers = new Set<
+  const intrinsicReceiverCall = (
+    node: t.CallExpression | t.OptionalCallExpression,
+    index?: Pick<JavaScriptBindingIndex, "referenceMayHaveChangedAt">,
+  ): boolean | undefined => {
+    const map = isIntrinsicNonEscapingMapCall(node, state, index);
+    return map === false
+      ? isIntrinsicNonEscapingXhrOpen(node, state, index)
+      : map;
+  };
+  const deferredIntrinsicReceivers = new Set<
     t.CallExpression | t.OptionalCallExpression
   >();
   // The binding pass already retained callable nodes. Ordinary data-only code
@@ -1720,9 +1730,9 @@ export function* collectSemanticMemberMutationsSteps(
           else markEscaped(argument, node);
         // Constructing a member does not pass its container as `this`.
         if (!t.isNewExpression(node)) {
-          const intrinsicMapCall = isIntrinsicNonEscapingMapCall(node, state);
-          if (intrinsicMapCall === undefined) deferredMapReceivers.add(node);
-          else if (!intrinsicMapCall) markReceiver(node.callee, node);
+          const intrinsicCall = intrinsicReceiverCall(node);
+          if (intrinsicCall === undefined) deferredIntrinsicReceivers.add(node);
+          else if (!intrinsicCall) markReceiver(node.callee, node);
         }
       } else if (t.isTaggedTemplateExpression(node)) {
         for (const source of returnedReferences(node.tag).references)
@@ -1738,7 +1748,7 @@ export function* collectSemanticMemberMutationsSteps(
   while (
     pendingReferences.length > 0 ||
     iterableReferences.length > 0 ||
-    deferredMapReceivers.size > 0
+    deferredIntrinsicReceivers.size > 0
   ) {
     const effectsBefore = recordedEffectCount;
     const iterablesBefore = iterableReferences.length;
@@ -1841,19 +1851,15 @@ export function* collectSemanticMemberMutationsSteps(
         reference,
       );
     }
-    // Proven native Map operations do not expose their receiver to user code.
+    // Proven native Map and pristine XHR calls do not expose their receivers.
     // Settle genuine effects first, then replay every unproven receiver escape.
     // Keep proven sites until convergence: later propagated effects can revoke them.
     let receiverIndex = 0;
-    for (const node of deferredMapReceivers) {
+    for (const node of deferredIntrinsicReceivers) {
       if (receiverIndex++ % 64 === 0) yield;
-      if (
-        isIntrinsicNonEscapingMapCall(node, state, {
-          referenceMayHaveChangedAt,
-        }) === true
-      )
+      if (intrinsicReceiverCall(node, { referenceMayHaveChangedAt }) === true)
         continue;
-      deferredMapReceivers.delete(node);
+      deferredIntrinsicReceivers.delete(node);
       markReceiver(node.callee, node);
     }
     if (

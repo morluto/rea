@@ -2381,3 +2381,95 @@ it.each([
       .map(({ value }) => value),
   ).toEqual(observed ? [] : ["/xhr"]);
 });
+
+it.each([
+  [
+    "const a = new XMLHttpRequest(), b = new XMLHttpRequest(); a.open('GET', '/a');",
+    false,
+  ],
+  [
+    "const b = new XMLHttpRequest(); new XMLHttpRequest().open('GET', '/a');",
+    false,
+  ],
+  [
+    "const a = new XMLHttpRequest(), b = new XMLHttpRequest(); const alias = a; alias.open('GET', '/a');",
+    false,
+  ],
+  [
+    "const a = new XMLHttpRequest(), b = new XMLHttpRequest(); const method = 'GET'; a.open(method, '/a', true); a.open('GET', '/again');",
+    false,
+  ],
+  [
+    "const a = new XMLHttpRequest(), b = new XMLHttpRequest(); a.open('GET', '/a'); a.onreadystatechange = handler;",
+    false,
+  ],
+  [
+    "const a = new XMLHttpRequest(), b = new XMLHttpRequest(); a.onreadystatechange = handler; a.open('GET', '/a');",
+    true,
+  ],
+  [
+    "const a = new XMLHttpRequest(), b = new XMLHttpRequest(); a.addEventListener('readystatechange', handler); a.open('GET', '/a');",
+    true,
+  ],
+  [
+    "const a = new XMLHttpRequest(), b = new XMLHttpRequest(); a.send(); a.open('GET', '/a');",
+    true,
+  ],
+  [
+    "const a = new XMLHttpRequest(), b = new XMLHttpRequest(); a.open('GET', { toString() { a.onreadystatechange = handler; return '/a'; } });",
+    true,
+  ],
+  [
+    "const a = new XMLHttpRequest(), b = new XMLHttpRequest(); a.open('GET', unknownUrl);",
+    true,
+  ],
+  [
+    "const a = new XMLHttpRequest(), b = new XMLHttpRequest(); a.open(...args);",
+    true,
+  ],
+  [
+    "const a = new XMLHttpRequest(), b = new XMLHttpRequest(); a.open = custom; a.open('GET', '/a');",
+    true,
+  ],
+  [
+    "const a = new XMLHttpRequest(), b = new XMLHttpRequest(); XMLHttpRequest.prototype.open = custom; a.open('GET', '/a');",
+    true,
+  ],
+  [
+    "const a = new XMLHttpRequest(), b = new XMLHttpRequest(); XMLHttpRequest.prototype.onreadystatechange = handler; a.open('GET', '/a');",
+    true,
+  ],
+  [
+    "const a = new XMLHttpRequest(), b = new XMLHttpRequest(); configure(XMLHttpRequest.prototype); a.open('GET', '/a');",
+    true,
+  ],
+  [
+    "const a = new XMLHttpRequest(), b = new XMLHttpRequest(); eval('a.onreadystatechange = handler'); a.open('GET', '/a');",
+    true,
+  ],
+] as const)(
+  "keeps pristine XHR calls separate from potentially configured receivers: %s",
+  (setup, candidate) => {
+    const source = `${setup} b.open('GET', '/b');`;
+    const result = analyzeWebBundleFixture(inspection(source));
+    expect(
+      result.observations.endpoints
+        .filter(({ value }) => value === "/b")
+        .map(({ value }) => value),
+    ).toEqual(candidate ? [] : ["/b"]);
+    expect(
+      result.inferences
+        .filter(
+          ({ kind, value }) => kind === "endpoint_candidate" && value === "/b",
+        )
+        .map(({ value }) => value),
+    ).toEqual(candidate ? ["/b"] : []);
+    const endpoint = analyzeJavaScriptStaticSource(source).endpoints.find(
+      ({ value }) => value === "/b",
+    );
+    expect(endpoint?.interpretation ?? null).toBe(
+      candidate ? "candidate" : null,
+    );
+    expect(endpoint).toBeDefined();
+  },
+);

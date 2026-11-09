@@ -5,6 +5,8 @@ import {
 } from "./javascriptAstValues.js";
 import { semanticBindingAtRead } from "./javascriptSemanticMutationInitializers.js";
 import { semanticOpaqueGlobalMayHaveChanged } from "./javascriptSemanticOpaqueEffects.js";
+import { evaluateSemanticExpression } from "./javascriptSemanticValues.js";
+import { semanticPrimitiveCandidates } from "./javascriptSemanticPrimitives.js";
 import {
   resolveSemanticBindingState,
   semanticStableInitializer,
@@ -43,6 +45,7 @@ const isXhrOpenRequest = (
   node: t.Node,
   bindings: JavaScriptSemanticAnalysisState,
   index?: Pick<JavaScriptBindingIndex, "referenceMayHaveChangedAt">,
+  purpose: "request" | "receiver" = "request",
 ): boolean | undefined => {
   if (!t.isCallExpression(node) && !t.isOptionalCallExpression(node))
     return false;
@@ -52,11 +55,32 @@ const isXhrOpenRequest = (
     semanticStaticPropertyName(callee.property, callee.computed) !== "open"
   )
     return false;
+  // Native open can dispatch readystatechange. Its receiver is nonescaping
+  // only when no handler or prior opaque operation can have configured it.
+  // Primitive arguments also avoid user code during WebIDL string conversion.
   if (
-    ["XMLHttpRequest", "Object"].some((owner) =>
-      ["open", "__proto__"].some((member) =>
+    purpose === "receiver" &&
+    node.arguments.some(
+      (argument) =>
+        t.isSpreadElement(argument) ||
+        semanticPrimitiveCandidates(
+          evaluateSemanticExpression(argument, bindings),
+        ) === null,
+    )
+  )
+    return false;
+  const prototypeOwners =
+    purpose === "receiver"
+      ? ["XMLHttpRequest", "XMLHttpRequestEventTarget", "EventTarget", "Object"]
+      : ["XMLHttpRequest", "Object"];
+  if (
+    prototypeOwners.some((owner) =>
+      (purpose === "receiver"
+        ? ["open", "__proto__", "onreadystatechange"]
+        : ["open", "__proto__"]
+      ).some((member) =>
         semanticAmbientPathMayHaveChangedAt(
-          callee,
+          purpose === "receiver" ? node : callee,
           bindings,
           ["global", owner, "prototype", member],
           node,
@@ -70,8 +94,10 @@ const isXhrOpenRequest = (
   while (t.isIdentifier(receiver)) {
     if (
       index !== undefined &&
-      (index.referenceMayHaveChangedAt(node, receiver, ["open"]) ||
-        index.referenceMayHaveChangedAt(node, receiver, ["__proto__"]))
+      (purpose === "receiver"
+        ? index.referenceMayHaveChangedAt(node, receiver, [])
+        : index.referenceMayHaveChangedAt(node, receiver, ["open"]) ||
+          index.referenceMayHaveChangedAt(node, receiver, ["__proto__"]))
     )
       return false;
     const binding = resolveSemanticBindingState(
@@ -98,6 +124,13 @@ const isXhrOpenRequest = (
     return false;
   return index === undefined && seen.size > 0 ? undefined : true;
 };
+
+/** A pristine native open is safe for the mutation producer, not every XHR call. */
+export const isIntrinsicNonEscapingXhrOpen = (
+  node: t.Node,
+  bindings: JavaScriptSemanticAnalysisState,
+  index?: Pick<JavaScriptBindingIndex, "referenceMayHaveChangedAt">,
+): boolean | undefined => isXhrOpenRequest(node, bindings, index, "receiver");
 
 /** Resolve once through the shared mutation index when lexical proof needs it. */
 export const createXhrOpenRequestQuery =

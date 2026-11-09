@@ -26,6 +26,14 @@ it.each([
   "(process?.getBuiltinModule?.('events')).EventEmitter.prototype.on = replacement;",
   "const events = process.getBuiltinModule('events'); events.EventEmitter.prototype.on = replacement;",
   "const events = process.getBuiltinModule('events'); const alias = events; alias.EventEmitter.prototype.on = replacement;",
+  "const { getBuiltinModule: get } = process; get('events').EventEmitter.prototype.on = replacement;",
+  "const get = process.getBuiltinModule; get('events').EventEmitter.prototype.on = replacement;",
+  "const get = globalThis.process.getBuiltinModule; get('events').EventEmitter.prototype.on = replacement;",
+  "const get0 = process.getBuiltinModule; const get = get0; get('events').EventEmitter.prototype.on = replacement;",
+  "const host = process; host.getBuiltinModule('events').EventEmitter.prototype.on = replacement;",
+  "const holder = { get: process.getBuiltinModule }; holder.get('events').EventEmitter.prototype.on = replacement;",
+  "const get = process.getBuiltinModule; process.getBuiltinModule = other; get('events').EventEmitter.prototype.on = replacement;",
+
   "import process from 'node:process'; process.getBuiltinModule('events').EventEmitter.prototype.on = replacement;",
   "import { getBuiltinModule } from 'node:process'; getBuiltinModule('events').EventEmitter.prototype.on = replacement;",
   "import * as process from 'node:process'; const get = process.getBuiltinModule; get('events').EventEmitter.prototype.on = replacement;",
@@ -65,6 +73,11 @@ it.each([
   "process = other; process.getBuiltinModule('events').EventEmitter.prototype.on = replacement;",
   "const process = other; process.getBuiltinModule('events').EventEmitter.prototype.on = replacement;",
   "other.getBuiltinModule('events').EventEmitter.prototype.on = replacement;",
+  "const process = other; const { getBuiltinModule: get } = process; get('events').EventEmitter.prototype.on = replacement;",
+  "function run(process) { const get = process.getBuiltinModule; get('events').EventEmitter.prototype.on = replacement; }",
+  "let get = process.getBuiltinModule; get = other; get('events').EventEmitter.prototype.on = replacement;",
+  "const get = other.getBuiltinModule; get('events').EventEmitter.prototype.on = replacement;",
+
   "process.getBuiltinModule(specifier).EventEmitter.prototype.on = replacement;",
 ])(
   "does not invent module identity outside supported acquisition facts: %s",

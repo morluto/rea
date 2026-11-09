@@ -346,6 +346,36 @@ it.each([
     "alias.EventEmitter",
   ],
   [
+    "destructured global getter",
+    "const { getBuiltinModule: get } = process;",
+    "get('events').EventEmitter",
+  ],
+  [
+    "extracted global getter",
+    "const get = process.getBuiltinModule;",
+    "get('events').EventEmitter",
+  ],
+  [
+    "qualified global getter",
+    "const get = globalThis.process.getBuiltinModule;",
+    "get('events').EventEmitter",
+  ],
+  [
+    "global getter alias",
+    "const get0 = process.getBuiltinModule; const get = get0;",
+    "get('events').EventEmitter",
+  ],
+  [
+    "process object alias",
+    "const host = process;",
+    "host.getBuiltinModule('events').EventEmitter",
+  ],
+  [
+    "stored global getter",
+    "const holder = { get: process.getBuiltinModule };",
+    "holder.get('events').EventEmitter",
+  ],
+  [
     "imported process",
     "import process from 'node:process';",
     "process.getBuiltinModule('events').EventEmitter",

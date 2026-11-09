@@ -61,6 +61,7 @@ import {
   type JavaScriptRequireOrigin,
 } from "./javascriptSemanticRequireOriginSlot.js";
 import {
+  createAmbientPathResolver,
   isUnmodifiedGlobalReference,
   isUnmodifiedImportMetaUrl,
 } from "./javascriptSemanticAmbientWrites.js";
@@ -1667,6 +1668,38 @@ export const semanticGlobalProcessPathOrigin = (
   };
 };
 
+const moduleAcquisitionAmbientReaders = new WeakMap<
+  JavaScriptSemanticAnalysisState,
+  ReturnType<typeof createAmbientPathResolver>
+>();
+
+/** Candidate acquisition effects consume aliases from the shared ambient owner. */
+const hasGlobalBuiltinGetterAlias = (
+  callee: t.Node,
+  state: JavaScriptSemanticAnalysisState,
+): boolean => {
+  const root = semanticMemberChain(callee)?.root;
+  if (
+    !t.isIdentifier(root) ||
+    resolveSemanticBindingState(state, root, root.name) === undefined
+  )
+    return false;
+  let read = moduleAcquisitionAmbientReaders.get(state);
+  if (read === undefined) {
+    // Possible-effect mode selects aliases at each read and does not cache a
+    // result across mutation-index updates. It grants no native authority.
+    read = createAmbientPathResolver(state, true);
+    moduleAcquisitionAmbientReaders.set(state, read);
+  }
+  return read(callee, callee).paths.some(
+    (path) =>
+      path.length === 3 &&
+      path[0] === "global" &&
+      path[1] === "process" &&
+      path[2] === "getBuiltinModule",
+  );
+};
+
 /**
  * Retain possible shared-module effects from inline module acquisitions.
  * This reader is mutation-only: it must not grant loader or constructor proof.
@@ -1729,7 +1762,9 @@ export const semanticModuleAcquisitionEffectOrigin = (
         );
       },
     );
-  return globalProcessGetter || importedProcessGetter
+  return globalProcessGetter ||
+    importedProcessGetter ||
+    hasGlobalBuiltinGetterAlias(callee, state)
     ? {
         specifier,
         importedPath: chain.members,

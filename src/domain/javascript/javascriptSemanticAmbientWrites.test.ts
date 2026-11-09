@@ -427,6 +427,14 @@ it("shares matching ambient records across reads instead of scanning unrelated e
       indexJavaScriptBindingsWithReceiversSteps(parsed.program),
     );
     completeSemanticSteps(index.indexMemberMutationFactsSteps());
+    // Producer proofs can already warm this path. Grow facts once so the
+    // measured reads include one cold lookup followed by shared warm lookups.
+    retainSemanticAmbientEffect(
+      index.bindings,
+      "write",
+      ["global", "addedAfterIndex"],
+      parsed.program,
+    );
     let reads = 0;
     for (const effect of [
       ...index.bindings.ambientWriteEffects,
@@ -458,7 +466,9 @@ it("shares matching ambient records across reads instead of scanning unrelated e
     });
     return reads;
   };
-  expect(work(64)).toBeLessThan(3 * work(32));
+  const smaller = work(32);
+  expect(smaller).toBeGreaterThan(0);
+  expect(work(64)).toBeLessThan(3 * smaller);
 });
 
 it.each(["write", "escape"] as const)(
