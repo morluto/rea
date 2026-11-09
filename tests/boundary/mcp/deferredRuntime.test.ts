@@ -415,6 +415,42 @@ globalThis.Date = class extends NativeDate {
   });
 });
 
+it("announces the deferred stdio server with the project tag before any tool call", () => {
+  const child = spawnSync(
+    process.execPath,
+    [
+      "--input-type=module",
+      "--eval",
+      `
+import assert from "node:assert/strict";
+import { runDeferred } from "./dist/main/deferredRuntime.js";
+import { parseConfig } from "./dist/config/parseConfig.js";
+const config = parseConfig({ HOME: process.env.HOME });
+assert.equal(config.ok, true);
+const result = await runDeferred({
+  env: {},
+  // The banner goes through the injected writer, like every other human line.
+  writeStderr: (text) => process.stderr.write(text),
+  setExitCode: () => {},
+  registerShutdown: () => () => undefined,
+  serve: (factory) => {
+    factory({});
+    return { close: () => Promise.resolve() };
+  },
+}, config.value);
+assert.equal(result, 0);
+`,
+    ],
+    { cwd: process.cwd(), encoding: "utf8", timeout: 20000 },
+  );
+  expect(child.error).toBeUndefined();
+  expect(child.status, child.stderr).toBe(0);
+  expect(child.stdout).toBe("");
+  expect(child.stderr.trim()).toMatch(
+    /^\[rea\] MCP server ready — REA \d+\.\d+\.\d+, \d+ tools, stdio \(analysis runtime deferred\)$/u,
+  );
+});
+
 it.each([
   { level: "info", asynchronous: false, errorObject: true },
   { level: "info", asynchronous: true, errorObject: false },
@@ -602,6 +638,7 @@ console.log("MIXED_CLEANUP_RETRIED");
     expect(child.error).toBeUndefined();
     expect(child.status, child.stderr).toBe(0);
     expect(child.stdout).toBe("MIXED_CLEANUP_RETRIED\n");
+    // This spawn injects a no-op writeStderr, so the banner has no destination.
     expect(child.stderr).toBe("");
   },
 );

@@ -1,4 +1,5 @@
 import type { AnalysisSettings } from "../application/AnalysisSettings.js";
+import type { CapabilityAvailabilityFacts } from "../application/CapabilityAvailability.js";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { DEFAULT_MCP_MAX_INPUT_ELEMENTS } from "../config/mcpInputBudget.js";
 
@@ -312,6 +313,8 @@ export class EvidenceMcpServerCore extends RequestTrackingMcpServer {
   private catalogChangeDepth = 0;
   private catalogChanged = false;
   analysisSettings: AnalysisSettings | undefined;
+  /** Facts this composition observed; the owning transport announces them once. */
+  capabilityAvailability: CapabilityAvailabilityFacts | undefined;
   /** Transport-owned Evidence uses the same lifetime as application writes. */
   withAdmittedAnalysis: WithAdmittedAnalysis | undefined;
   private identity: ReturnType<typeof createCatalogIdentity> | undefined;
