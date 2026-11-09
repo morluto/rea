@@ -13,6 +13,10 @@ folder to build the environment; this step builds nothing.
 
 ## Requirements
 
+- The baseline records each observed non-file path and its type without
+  following symlinks, so a later state reader can distinguish an absent SQLite
+  sidecar from an observed non-file.
+
 - The command is CLI only. A capture is a long interactive session whose
   checkpoints come from stdin lines (empty, `checkpoint [name]` or other
   text) and which ends on `stop` or the end of stdin, when the launched
@@ -44,12 +48,28 @@ folder to build the environment; this step builds nothing.
   folders also name the state directories), and identifies the package:
   snap, flatpak and AppImage from paths (and the AppImage magic, and a
   `flatpak run` launch), otherwise
-  the dpkg owner with its version, architecture, the apt sources listing the
-  installed version and the `o=` origin apt reports for each source. It marks
+  the dpkg owner of the launched desktop entry, or else of the executable,
+  with its version, architecture, the apt sources listing the
+  installed version and the `o=` origin apt reports for each source. The
+  entry's package is the one that installs the application: LibreOffice
+  Writer's entry belongs to `libreoffice-writer`, while the `libreoffice` it
+  runs belongs to `libreoffice-common`, which does not depend on Writer. When
+  the two differ, `executable_package` names the executable's, with
+  `executable_package_reason` when neither the Ubuntu 24.04 archive nor a
+  declared vendor repository offers it or apt could not say; each vendor
+  repository records in `supplies` the library packages and executable's
+  package only vendor repositories offer that its package files list. When
+  a package owns the entry but none owns the program, nor the file it resolves
+  to, `executable_package_reason` says so without `executable_package`. A
+  `dpkg-query` lookup that does not finish or exits with an error leaves the
+  package
+  `unknown`, with a limitation naming the path. It marks
   Electron applications by the fuse sentinel or `resources/app.asar`, and
   lists candidate state directories under the XDG folders and dot-folders
   named after the package, executable, desktop entry's full id and last part,
-  and name; a `flatpak run` launch uses the application id (its first operand
+  and name, and every folder present there whose name is one of those in
+  another letter case, such as GIMP's `~/.config/GIMP`; a `flatpak run`
+  launch uses the application id (its first operand
   after options and their values) instead of the launcher's name and adds
   `~/.var/app/<id>`. An `--executable` runs from the caller's
   directory, which also resolves a relative path to it.

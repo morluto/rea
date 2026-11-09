@@ -194,7 +194,7 @@ export const createBinaryNinjaMcpConnection = (
       diagnostics: {
         reason,
         recovery:
-          "Start the Binary Ninja GUI MCP server (Plugins > MCP > Start Server) and check REA_BINARY_NINJA_MCP_CONFIG; see docs/binary-ninja.md.",
+          "Start the Binary Ninja GUI MCP server (Plugins > MCP > Start Server) and check REA_BINARY_NINJA_MCP_CONFIG; see docs/providers/binary-ninja.md.",
       },
     });
   };

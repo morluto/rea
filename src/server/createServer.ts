@@ -31,6 +31,7 @@ import { registerEvmTools } from "./registerEvmTools.js";
 import { registerSqliteTools } from "./registerSqliteTools.js";
 import { registerRecordedCrashTools } from "./registerRecordedCrashTools.js";
 import { registerDesktopApplicationTool } from "./registerDesktopApplicationTool.js";
+import { registerDesktopBuildTools } from "./registerDesktopBuildTools.js";
 import { registerModelArtifactTools } from "./registerModelArtifactTools.js";
 import { registerGoTools } from "./registerGoTools.js";
 import { registerIl2cppTools } from "./registerIl2cppTools.js";
@@ -204,6 +205,7 @@ export const createServer = (
     webSourceLocation,
     webModuleTrace,
     desktopApplication,
+    desktopBuildComputers,
     goBinary,
     rustBinary,
     erlangBeam,
@@ -350,6 +352,9 @@ export const createServer = (
     recordUnknown,
     evidenceById,
     withAdmittedAnalysis: analysisAdmission,
+    ...(session === undefined
+      ? {}
+      : { admitRecovery: session.admitRecoveryObservation.bind(session) }),
   };
   const evidenceOptions = {
     logger: toolLogger,
@@ -367,6 +372,12 @@ export const createServer = (
     enhanced: () =>
       registerEnhancedTools(server, {
         ...analysisOptions,
+        ...(session === undefined
+          ? {}
+          : { evidenceForAnalysis: session.evidenceForAnalysis.bind(session) }),
+        ...(session === undefined
+          ? {}
+          : { admitRecovery: session.admitRecoveryObservation.bind(session) }),
         analysisProfile:
           session === undefined
             ? undefined
@@ -800,6 +811,7 @@ export const createServer = (
         recordEvidenceWithUnknown,
         withAdmittedAnalysis: analysisAdmission,
       });
+      registerDesktopBuildTools(server, desktopBuildComputers, toolLogger);
     },
     session: () => {
       if (session === undefined) return;

@@ -73,7 +73,7 @@ export const readBinaryNinjaConfiguration = (
       if (!parsed.success)
         return err(
           binaryNinjaConfigurationError(
-            "REA_BINARY_NINJA_MCP_CONFIG must contain the Binary Ninja GUI MCP url and optional Authorization header; see docs/binary-ninja.md.",
+            "REA_BINARY_NINJA_MCP_CONFIG must contain the Binary Ninja GUI MCP url and optional Authorization header; see docs/providers/binary-ninja.md.",
             parsed.error,
           ),
         );
@@ -85,7 +85,7 @@ export const readBinaryNinjaConfiguration = (
         // credentials. Return only schema-owned guidance, without that cause.
         return err(
           binaryNinjaConfigurationError(
-            "REA_BINARY_NINJA_MCP_CONFIG headers must use valid HTTP names and values (no newlines or non-byte characters); see docs/binary-ninja.md.",
+            "REA_BINARY_NINJA_MCP_CONFIG headers must use valid HTTP names and values (no newlines or non-byte characters); see docs/providers/binary-ninja.md.",
           ),
         );
       }

@@ -2,6 +2,7 @@ import { createEvidence } from "../../domain/evidence.js";
 import {
   createJavaScriptApplicationGraph,
   createJavaScriptApplicationNode,
+  createJavaScriptApplicationEdge,
 } from "../../domain/javascript/javascriptApplicationGraph.js";
 import { createWebTextArtifact } from "../../domain/webContentArtifact.js";
 import {
@@ -63,11 +64,46 @@ const asset = createJavaScriptApplicationNode({
     },
   ],
 });
+const root = createJavaScriptApplicationNode({
+  kind: "artifact",
+  identity: {
+    strategy: "content-digest",
+    stability: "global-exact",
+    sha256: applicationSha256,
+  },
+  observations: [
+    {
+      label: "artifact root",
+      properties: { format: "directory" },
+      evidence: {
+        ...graphEvidence,
+        artifact: {
+          available: true,
+          artifact_id: `art_${applicationSha256}`,
+          sha256: applicationSha256,
+        },
+        location: {
+          available: true,
+          value: { kind: "artifact-path", path: "artifact-root" },
+        },
+        extractor: { ...graphEvidence.extractor, operation: "inventory-root" },
+      },
+    },
+  ],
+});
 const graph = createJavaScriptApplicationGraph({
   schema: "JavaScriptApplicationGraph",
-  root_node_ids: [asset.node_id],
-  nodes: [asset],
-  edges: [],
+  root_node_ids: [root.node_id],
+  nodes: [asset, root],
+  edges: [
+    createJavaScriptApplicationEdge({
+      source_node_id: root.node_id,
+      target_node_id: asset.node_id,
+      relation: "contains",
+      properties: { path: "renderer.js" },
+      evidence: graphEvidence,
+    }),
+  ],
   coverage: completeCoverage,
   limitations: [],
 });

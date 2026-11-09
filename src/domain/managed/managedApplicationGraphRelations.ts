@@ -15,14 +15,14 @@ import type {
 /** Opcodes that transfer control to their method operand. */
 const CALL_OPCODES = new Set(["call", "callvirt", "newobj", "jmp"]);
 
-const FIELD_ACCESS_KINDS: Readonly<Record<string, string>> = {
-  ldfld: "read",
-  ldsfld: "read",
-  stfld: "write",
-  stsfld: "write",
-  ldflda: "address",
-  ldsflda: "address",
-};
+const FIELD_ACCESS_KINDS = new Map([
+  ["ldfld", "read"],
+  ["ldsfld", "read"],
+  ["stfld", "write"],
+  ["stsfld", "write"],
+  ["ldflda", "address"],
+  ["ldsflda", "address"],
+]);
 
 /** ECMA-335 MemberRef table tokens name members outside the defining tables. */
 const isMemberReference = (token: string): boolean =>
@@ -146,7 +146,7 @@ export const addMemberRelations = (
           access: [
             ...new Set(
               [...opcodes.keys()].map(
-                (opcode) => FIELD_ACCESS_KINDS[opcode] ?? "unknown",
+                (opcode) => FIELD_ACCESS_KINDS.get(opcode) ?? "unknown",
               ),
             ),
           ].sort(),

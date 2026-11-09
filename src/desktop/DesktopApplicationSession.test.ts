@@ -1,4 +1,4 @@
-import { readdir } from "node:fs/promises";
+import { readdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { describe, expect, it, vi } from "vitest";
@@ -63,6 +63,33 @@ describe.skipIf(process.platform !== "linux")("runDesktopSession", () => {
     await expect(runDesktopSession(plan)).rejects.toBe(failure);
     expect(checkpoints).toEqual(["stop", "exit"]);
     expect(vi.mocked(terminateTokenOwnedProcesses)).toHaveBeenCalledTimes(1);
+  }, 30_000);
+
+  it("launches the application without the agent environment's variables", async () => {
+    const root = await createTestTempDirectory("desktop-session-env-");
+    const plan = shellPlan(root, `env > "${join(root, "env")}"`);
+
+    await runDesktopSession({
+      ...plan,
+      environment: {
+        ...plan.environment,
+        AGENTENV_CONTROL_TOKEN: "control",
+        AGENTENV_URL: "http://127.0.0.1:1",
+        NOT_AGENTENV_KEPT: "kept",
+      },
+    });
+
+    const names = (await readFile(join(root, "env"), "utf8"))
+      .split("\n")
+      .map((line) => line.split("=")[0]);
+    expect(names.filter((name) => name?.startsWith("AGENTENV_"))).toEqual([]);
+    expect(names).toEqual(
+      expect.arrayContaining([
+        "NOT_AGENTENV_KEPT",
+        "PATH",
+        "REA_PROCESS_RUN_ID",
+      ]),
+    );
   }, 30_000);
 });
 

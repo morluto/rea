@@ -46,7 +46,7 @@ export const inspectBinaryNinjaRegistration = async (
             : "Binary Ninja MCP registration is not configured.",
         remediation: valid
           ? null
-          : "Set REA_BINARY_NINJA_MCP_CONFIG to your Binary Ninja GUI MCP registration JSON; see docs/binary-ninja.md.",
+          : "Set REA_BINARY_NINJA_MCP_CONFIG to your Binary Ninja GUI MCP registration JSON; see docs/providers/binary-ninja.md.",
         classification:
           path === undefined ? "missing_analysis_engine" : "config_drift",
       },

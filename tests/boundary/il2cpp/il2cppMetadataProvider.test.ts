@@ -93,7 +93,6 @@ it("bounds repeated literal output during decoding and reuses one span instead o
   await writeFile(path, sharedLiteralMetadata(Buffer.alloc(4096, 65), 20));
   const decode = vi.spyOn(TextDecoder.prototype, "decode");
   const result = await inspectMetadata(path, 12_000);
-  expect(result.ok).toBe(false);
   if (result.ok) throw new Error("Expanded literals accepted");
   expect(result.error).toBeInstanceOf(AnalysisResourceConstraintError);
   expect(result.error.partialObservation).toMatchObject({
@@ -206,7 +205,6 @@ it("keeps observed source facts with a complete-report refusal", async () => {
   const bytes = createIl2cppMetadataFixture().bytes;
   await writeFile(path, bytes);
   const result = await inspectMetadata(path, 256);
-  expect(result.ok).toBe(false);
   if (result.ok) throw new Error("Expected report allowance refusal");
   expect(result.error).toBeInstanceOf(AnalysisResourceConstraintError);
   expect(result.error.partialObservation).toMatchObject({
@@ -275,7 +273,6 @@ it.each([
         { path },
         { signal: controller.signal },
       );
-      expect(result.ok).toBe(false);
       if (result.ok) throw new Error("Expected cancellation");
       expect(result.error).toBeInstanceOf(AnalysisCancelledError);
       expect(result.error.cause).toBe(reason);
@@ -440,7 +437,6 @@ it.each([false, true])(
         { path },
         { signal: controller.signal },
       );
-      expect(result.ok).toBe(false);
       if (result.ok) throw new Error("Expected the independent failure");
       expect(result.error).not.toBeInstanceOf(AnalysisCancelledError);
       expect(result.error.cause).toBe(failure);
@@ -455,7 +451,6 @@ it("retains the exact empty source observation without claiming a decoded invent
   const path = join(root, "empty.dat");
   await writeFile(path, Buffer.alloc(0));
   const result = await inspectMetadata(path);
-  expect(result.ok).toBe(false);
   if (result.ok) throw new Error("Expected unsupported empty metadata");
   expect(result.error.message).toContain("unrecognized-magic");
   expect(result.error.partialObservation).toMatchObject({
@@ -479,7 +474,6 @@ it("retains the exact source when recognized magic has no complete version", asy
   await writeFile(path, bytes);
   const result = await inspectMetadata(path);
 
-  expect(result.ok).toBe(false);
   if (result.ok) throw new Error("Expected truncated metadata prefix");
   expect(result.error).toMatchObject({
     _tag: "AnalysisInputError",
@@ -516,7 +510,6 @@ it("keeps the metadata source observation when the selected binary does not link
   const provider = new Il2cppMetadataProvider();
   try {
     const result = await provider.inspect({ path, binary_path: binaryPath });
-    expect(result.ok).toBe(false);
     if (result.ok) throw new Error("Expected the binary to be refused");
     expect(result.error.partialObservation).toMatchObject({
       operation: "observe_il2cpp_metadata_source",
@@ -562,7 +555,6 @@ it("accepts cancellation between binary linking batches and keeps the metadata s
       { path, binary_path: binaryPath },
       { signal: controller.signal },
     );
-    expect(result.ok).toBe(false);
     if (result.ok) throw new Error("Expected cancellation");
     expect(result.error).toBeInstanceOf(AnalysisCancelledError);
     expect(yields).toBe(decodeYields + 2);
@@ -622,7 +614,6 @@ it("refuses duplicate MethodDef tokens before publishing linked Evidence or Ghid
       { path, binary_path: binaryPath, detail: "complete" },
       { path: foldedSeeds },
     );
-    expect(accepted.ok).toBe(true);
     if (!accepted.ok) throw accepted.error;
     const result = il2cppMetadataSchema.parse(accepted.value.normalized_result);
     expect(result.method_addresses[0]?.address).toBe(
@@ -644,7 +635,6 @@ it("retains both observed file identities and the selected architecture when nat
   const provider = new Il2cppMetadataProvider();
   try {
     const result = await provider.inspect({ path, binary_path });
-    expect(result.ok).toBe(false);
     if (result.ok) throw new Error("Unresolved registration accepted");
     expect(result.error.partialObservation).toMatchObject({
       normalized_result: {
@@ -820,7 +810,6 @@ it("names the metadata, not the binary, when linking reads a malformed metadata 
   const provider = new Il2cppMetadataProvider();
   try {
     const result = await provider.inspect({ path, binary_path: binaryPath });
-    expect(result.ok).toBe(false);
     if (result.ok) throw new Error("Expected the metadata name to be refused");
     expect(result.error).toMatchObject({
       _tag: "AnalysisInputError",
@@ -879,7 +868,6 @@ it("refuses generic rows that exceed the report budget and keeps the requested p
       binary_path,
       generic_instances: true,
     });
-    expect(result.ok).toBe(false);
     if (result.ok) throw new Error("Expected report allowance refusal");
     expect(result.error).toBeInstanceOf(AnalysisResourceConstraintError);
     expect(result.error.partialObservation).toMatchObject({

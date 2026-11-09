@@ -31,7 +31,7 @@ if (
   process.env.REA_BINARY_NINJA_MCP_CONFIG === undefined
 )
   throw new Error(
-    "Binary Ninja verification requires --target, --procedure and REA_BINARY_NINJA_MCP_CONFIG, with the target open in the Binary Ninja GUI and its MCP server started; see docs/binary-ninja.md. No toolchain is installed by this lane.",
+    "Binary Ninja verification requires --target, --procedure and REA_BINARY_NINJA_MCP_CONFIG, with the target open in the Binary Ninja GUI and its MCP server started; see docs/providers/binary-ninja.md. No toolchain is installed by this lane.",
   );
 if (
   (values["second-procedure"] === undefined) !==

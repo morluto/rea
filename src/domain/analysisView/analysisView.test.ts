@@ -23,7 +23,7 @@ import {
 } from "../javascript/javascriptApplicationGraph.js";
 import {
   createJavaScriptSemanticGraph,
-  createImmutableJavaScriptSemanticGraphSteps,
+  sealTransferredJavaScriptSemanticGraphSteps,
 } from "../javascript/javascriptSemanticGraph.js";
 import { sourceMapReference } from "../javascript/javascriptApplicationGraph.fixture.js";
 import { createArtifactInspection } from "../artifactInspection.js";
@@ -883,7 +883,9 @@ it("projects typed module facts without source bodies and keeps source coverage 
 
 it("counts retained range observations including repeats and skips unavailable locations", () => {
   const analysis = analysisViewJavaScriptAnalysis();
-  const original = analysis.graph.nodes[0];
+  const original = analysis.graph.nodes.find(
+    ({ kind }) => kind === "javascript-asset",
+  );
   const observed = original?.observations[0];
   if (!original || !observed) throw new Error("missing module observation");
   const range = {
@@ -929,6 +931,7 @@ it("counts retained range observations including repeats and skips unavailable l
     ...application,
     nodes: [node],
     root_node_ids: [node.node_id],
+    edges: [],
   });
   const parent = javascriptParent(
     analysisViewBindJavaScriptGraphs(analysis, graph),
@@ -997,7 +1000,9 @@ it("validates typed module selectors without coercing null or empty paths", () =
 
 it("keeps mixed observation support distinct instead of promoting a module to observed", () => {
   const analysis = analysisViewJavaScriptAnalysis();
-  const original = analysis.graph.nodes[0];
+  const original = analysis.graph.nodes.find(
+    ({ kind }) => kind === "javascript-asset",
+  );
   const observed = original?.observations[0];
   if (!original || !observed) throw new Error("missing module observation");
   const inferred = {
@@ -1025,6 +1030,7 @@ it("keeps mixed observation support distinct instead of promoting a module to ob
     ...application,
     nodes: [node],
     root_node_ids: [node.node_id],
+    edges: [],
   });
   const result = projectAnalysisView(
     javascriptParent(analysisViewBindJavaScriptGraphs(analysis, graph)),
@@ -1093,7 +1099,6 @@ it("rejects ambiguous JavaScript module paths with candidate node ids", () => {
     collection: "modules",
     selector: { path: "renderer.js" },
   });
-  expect(result.ok).toBe(false);
   if (result.ok) throw new Error("expected ambiguous path");
   expect(result.error).toMatchObject({
     _tag: "AnalysisInputError",
@@ -1282,7 +1287,7 @@ it("reuses authenticated graphs while rejecting malformed metadata and imported 
   );
   const { graph_id: _semanticId, ...semantic } = analysis.semantic_graph;
   const semanticGraph = complete(
-    createImmutableJavaScriptSemanticGraphSteps({
+    sealTransferredJavaScriptSemanticGraphSteps({
       ...semantic,
       application_graph_id: graph.graph_id,
     }),

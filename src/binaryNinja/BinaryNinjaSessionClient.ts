@@ -97,7 +97,7 @@ interface FailureContext {
 }
 
 const RECOVERY =
-  "Open the selected target in the Binary Ninja GUI, start Plugins > MCP > Start Server, and check REA_BINARY_NINJA_MCP_CONFIG; see docs/binary-ninja.md.";
+  "Open the selected target in the Binary Ninja GUI, start Plugins > MCP > Start Server, and check REA_BINARY_NINJA_MCP_CONFIG; see docs/providers/binary-ninja.md.";
 
 /** Serial read-only session whose lifecycle authority excludes the attached GUI file. */
 export class BinaryNinjaSessionClient implements AnalysisClient {
@@ -469,7 +469,7 @@ export class BinaryNinjaSessionClient implements AnalysisClient {
       (name) => !tools.has(name),
     );
     if (missing.length > 0) {
-      const summary = `The Binary Ninja MCP server is missing built-in tools: ${missing.join(", ")}. REA requires the built-in GUI MCP server of Binary Ninja 6.0 or later; see docs/binary-ninja.md.`;
+      const summary = `The Binary Ninja MCP server is missing built-in tools: ${missing.join(", ")}. REA requires the built-in GUI MCP server of Binary Ninja 6.0 or later; see docs/providers/binary-ninja.md.`;
       throw new ProviderAdapterError(
         BINARY_NINJA_PROVIDER_IDENTITY.id,
         "initialize",

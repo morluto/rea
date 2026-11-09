@@ -189,7 +189,6 @@ it.skipIf(process.platform !== "win32").each([
     const env = clientRegistrationEnvironmentDetails(
       parseClientConfiguration(text, "dsh"),
     );
-    expect(env.ok).toBe(true);
     if (!env.ok) throw env.error;
     expect(env.value.values).toHaveProperty(override, value);
     expect(
@@ -271,7 +270,6 @@ it
     const details = clientRegistrationEnvironmentDetails(
       parseClientConfiguration(text, "dsh"),
     );
-    expect(details.ok).toBe(true);
     if (!details.ok) throw details.error;
     expect(details.value.timeoutInputs?.analysisProvider).toBe("ghidra");
     expect(
@@ -301,7 +299,6 @@ it.skipIf(process.platform !== "win32").each([
       "json",
     );
     const result = clientRegistrationEnvironmentDetails(parsed, overrides);
-    expect(result.ok).toBe(true);
     if (!result.ok) throw result.error;
     expect(result.value.timeoutInputs?.analysisProvider).toBe(expected);
     expect(snapshotEnvironment(result.value.values).REA_ANALYSIS_PROVIDER).toBe(
@@ -454,7 +451,6 @@ it.each(["linux", "win32"] as const)(
       "effective",
       platform,
     );
-    expect(details.ok).toBe(true);
     if (!details.ok) throw details.error;
     expect(Object.entries(details.value.values)).toEqual([
       ["__proto__", "selected"],
@@ -482,7 +478,6 @@ it("retains an unresolved JEB endpoint expression until a selected literal repla
     "effective",
     undefined,
   );
-  expect(unresolved.ok).toBe(true);
   if (!unresolved.ok) throw unresolved.error;
   expect(unresolved.value.unresolvedSettings).toEqual(
     new Set(["REA_JEB_MCP_URL"]),
@@ -491,7 +486,6 @@ it("retains an unresolved JEB endpoint expression until a selected literal repla
   const selected = clientRegistrationEnvironmentDetails(parsed, {
     REA_JEB_MCP_URL: endpoint,
   });
-  expect(selected.ok).toBe(true);
   if (!selected.ok) throw selected.error;
   expect(selected.value.values.REA_JEB_MCP_URL).toBe(endpoint);
   expect(selected.value.unresolvedSettings.size).toBe(0);
@@ -537,7 +531,6 @@ it.each(
       "effective",
       platform,
     );
-    expect(details.ok).toBe(true);
     if (!details.ok) throw details.error;
     expect(details.value.values).toEqual({ CALLER_SETTING: "retained" });
     expect(details.value.unresolvedSettings).toEqual(new Set([setting]));
@@ -566,7 +559,6 @@ it.each(
       "effective",
       platform,
     );
-    expect(overridden.ok).toBe(true);
     if (!overridden.ok) throw overridden.error;
     expect(overridden.value.unresolvedSettings.size).toBe(0);
     expect(overridden.value.timeoutInputs).toBeDefined();
@@ -587,7 +579,6 @@ it("retains an unknown companion while deriving unrelated literal timeout facts"
     "dsh",
   );
   const details = clientRegistrationEnvironmentDetails(parsed);
-  expect(details.ok).toBe(true);
   if (!details.ok) throw details.error;
   expect(details.value.unresolvedSettings).toEqual(
     new Set(["REA_GHIDRA_LANGUAGE_ID"]),
