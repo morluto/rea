@@ -58,6 +58,8 @@ const report = (selected: string | undefined) => ({
           returned_rows: 1,
           truncated: false,
           order: "unspecified",
+          row_offset: 0,
+          next_row_offset: null,
         },
   limitations: [],
 });

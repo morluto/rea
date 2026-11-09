@@ -123,3 +123,49 @@ export const knownArgumentMistakeRemediation = (
   }
   return hints.length === 0 ? undefined : hints.join(" ");
 };
+
+/** Deterministic correction metadata for a known cross-kind selector confusion in inspect_analysis_view. */
+export interface ViewMistakeGuidance {
+  readonly message: string;
+  readonly remediation?: string;
+}
+
+/** Deterministic guidance for common cross-kind selector confusion in inspect_analysis_view. */
+export const knownViewMistakeGuidance = (
+  operation: string | undefined,
+  input: unknown,
+  path: readonly (string | number)[],
+): ViewMistakeGuidance | undefined => {
+  if (operation !== "inspect_analysis_view") return undefined;
+  const isViewProjection =
+    path.length >= 2 &&
+    path[path.length - 2] === "view" &&
+    path[path.length - 1] === "projection";
+  if (!isViewProjection) return undefined;
+
+  const rawView =
+    typeof input === "object" && input !== null
+      ? ((input as Record<string, unknown>).view ??
+        (
+          (input as Record<string, unknown>).input as
+            | Record<string, unknown>
+            | undefined
+        )?.view)
+      : undefined;
+  if (typeof rawView !== "object" || rawView === null) return undefined;
+
+  const viewRecord = rawView as Record<string, unknown>;
+  if (
+    viewRecord.kind === "javascript" &&
+    viewRecord.collection === "modules" &&
+    viewRecord.projection === undefined
+  ) {
+    return {
+      message:
+        "To page modules, use view: { kind: 'page', collection: 'modules' }. For module references, specify projection: 'references'.",
+      remediation:
+        "Use view: { kind: 'page', collection: 'modules' } to page modules, or set projection: 'references'.",
+    };
+  }
+  return undefined;
+};
