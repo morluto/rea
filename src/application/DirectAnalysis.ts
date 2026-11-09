@@ -21,10 +21,7 @@ import {
   tryParseEvidence,
   withEvidenceCallerInputPath,
 } from "../domain/evidence.js";
-import {
-  createImmutableEvidenceBundle,
-  type EvidenceBundle,
-} from "../domain/evidenceBundle.js";
+import { createImmutableEvidenceBundle } from "../domain/evidenceBundle.js";
 import {
   retainAnalysisResultSources,
   type AnalysisResultWithSources,
@@ -159,8 +156,6 @@ export const runDirectAnalysis = async (
     readonly entryPoint?: string;
     readonly espFlash?: EspFlashSelection;
     readonly includeEvidenceSources?: boolean;
-    /** Capture the exact session Evidence available to a one-shot CLI adapter. */
-    readonly onEvidenceBundle?: (bundle: EvidenceBundle) => void;
   } = {},
 ): Promise<AnalysisResultWithSources<Evidence, JsonValue>> =>
   withProcessCancellation(options.signal, (signal) =>
@@ -171,9 +166,6 @@ export const runDirectAnalysis = async (
       ...(options.includeEvidenceSources === true
         ? { includeEvidenceSources: true }
         : {}),
-      ...(options.onEvidenceBundle === undefined
-        ? {}
-        : { onEvidenceBundle: options.onEvidenceBundle }),
       ...targetSelection(options),
       ...(options.providerId === undefined
         ? {}
@@ -405,7 +397,6 @@ const runAnalysis = async (
     readonly snapshotPath: string | undefined;
     readonly signal: AbortSignal;
     readonly evidenceParameters?: Readonly<Record<string, JsonValue>>;
-    readonly onEvidenceBundle?: (bundle: EvidenceBundle) => void;
     readonly createSession?: () => BinarySession | Promise<BinarySession>;
     readonly includeEvidenceSources?: boolean;
     readonly providerId?: AnalysisProviderSelector;
@@ -539,7 +530,6 @@ const runAnalysis = async (
             );
             if (!captured.ok)
               return err(captured.error.retainPartialObservation(evidence));
-            options.onEvidenceBundle?.(snapshot.evidence_bundle);
             return ok(evidence);
           }
         }
@@ -649,7 +639,6 @@ const runAnalysis = async (
           return err(written.error.retainPartialObservation(evidence));
       }
     }
-    options.onEvidenceBundle?.(session.exportEvidenceBundle());
     return ok(evidence);
   };
   const outcome = await withSessionCleanup<{

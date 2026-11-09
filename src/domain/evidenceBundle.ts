@@ -250,7 +250,9 @@ export const evidenceBundleForTarget = (
   );
 };
 
-const referencedEvidenceIds = (unknown: ResidualUnknown): readonly string[] => [
+export const referencedEvidenceIds = (
+  unknown: ResidualUnknown,
+): readonly string[] => [
   ...unknown.supporting_evidence_ids,
   ...unknown.contradicting_evidence_ids,
   ...unknown.mutation_evidence_ids,
@@ -452,13 +454,7 @@ const validateUnknownGraph = (
     unknownById.set(id, head);
   }
   for (const unknown of unknowns) {
-    const referencedEvidence = [
-      ...unknown.supporting_evidence_ids,
-      ...unknown.contradicting_evidence_ids,
-      ...unknown.mutation_evidence_ids,
-      ...(unknown.resolution?.evidence_ids ?? []),
-    ];
-    for (const evidenceId of referencedEvidence)
+    for (const evidenceId of referencedEvidenceIds(unknown))
       if (!evidenceById.has(evidenceId))
         throw new InvalidResidualUnknownGraphError({
           kind: "missing_evidence",

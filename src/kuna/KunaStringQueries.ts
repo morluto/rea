@@ -123,13 +123,8 @@ export class KunaStringQueries {
     if (this.#inventory !== undefined) return ok(this.#inventory);
     if (this.#failure !== undefined) return err(this.#failure);
     if (this.#pending?.signal.aborted === true) {
-      const stopped = await this.work.wait(this.#pending, signal, operation);
-      if (!stopped.ok && !(stopped.error instanceof AnalysisCancelledError))
-        return stopped;
-      if (signal?.aborted === true)
-        return err(
-          new AnalysisCancelledError(operation, { cause: signal?.reason }),
-        );
+      const stopped = await this.work.retire(this.#pending, signal, operation);
+      if (!stopped.ok) return stopped;
       return this.#load(installation, operation, signal);
     }
     if (this.#pending === undefined) {
