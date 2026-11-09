@@ -40,6 +40,8 @@ export interface NugetArchiveMember {
 export interface ParseNugetPackageOptions {
   /** Member paths beyond this count are not inventoried. */
   readonly maxEntries: number;
+  /** Whether the archive reader exhausted its directory, independently of retained count. */
+  readonly inventoryComplete?: boolean;
 }
 
 /** A failure that belongs to the package as a whole, not to one member. */
@@ -407,7 +409,7 @@ export const parseNugetPackage = (
   const nuspecs: NugetNuspec[] = [];
   const assets: NugetAsset[] = [];
   let nuspecMembers = 0;
-  let truncated = false;
+  let truncated = options.inventoryComplete === false;
   const nameLimitations = new Set<string>();
   // Normalisation is recorded but never reduces coverage, so it needs its own
   // set: a fully read package with a `./` member is not a partial package.

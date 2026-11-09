@@ -1008,6 +1008,13 @@ from an older request does not override a newer outcome. Request deadlines and
 cancellations neither mark nor clear availability. A new provider client starts
 without these outcomes.
 
+Standalone command operations (such as `inspect_with_objdump` and
+`execute_rizin_command`) similarly reflect observed executable launch failures:
+an unprobed executable is reported available; once a launch failure is observed,
+discovery reports the operation unavailable with the executable remediation
+until a request for it dispatched later succeeds. Direct retry remains available
+without restarting REA.
+
 `detail` selects the projection and the result echoes it. The default
 `summary` keeps open state, target identity, the binding, current-route
 `capabilities`, run, activity and health status, and each provider candidate's

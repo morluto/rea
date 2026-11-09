@@ -66,6 +66,18 @@ Every distinct document is reported separately and a `duplicate-nuspec`
 diagnostic is added, so a disagreement between them is visible instead of one
 being silently chosen.
 
+## Delivery and retained evidence
+
+Summary delivery reports declaration counts and source coverage while retaining the
+full package inventory as parent Evidence. Reaching the member limit marks the
+inventory partial only when another directory entry exists; exact end of archive
+is complete within the stated scope.
+
+Hashing and ZIP inspection use the same admitted file descriptor. Replacing or
+changing the selected file is refused rather than mixing an old digest with new
+contents. A cleanup failure retains the resource for retry and preserves any
+completed inventory in the error Evidence.
+
 ## Limits
 
 - File admission is 64 MiB and the member allowance is 20,000. A larger package

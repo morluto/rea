@@ -2,16 +2,20 @@ import { isAbsolute } from "node:path";
 import {
   artifactFileCancellationCause,
   artifactFilePrimaryFacts,
+  bindArtifactFileCleanup,
 } from "../../artifacts/ArtifactFileOperation.js";
 import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
 import type { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
-import { readStableArtifact } from "../../artifacts/readStableArtifact.js";
+import { ArtifactFileSource } from "../../artifacts/ArtifactFileSource.js";
+import { hashReadableToCompletion } from "../../artifacts/ArtifactHash.js";
+import { readFileHandleChunks } from "../../filesystem/readFileHandleChunks.js";
+import { ProviderCleanupError } from "../../domain/providerCleanupError.js";
 import { ZipArtifactReader } from "../../artifacts/ZipArtifactReader.js";
 import {
   projectStableArtifactFailure,
   stableArtifactInputRecovery,
 } from "../../artifacts/StableArtifactFailure.js";
-import type { AnalysisError } from "../../domain/analysisErrorBase.js";
+import { AnalysisError } from "../../domain/analysisErrorBase.js";
 import {
   AnalysisAccessDeniedError,
   AnalysisArtifactChangedError,
@@ -74,7 +78,14 @@ const readFailure = (
   failure: unknown,
   input: InspectNugetPackageInput,
 ): AnalysisError => {
-  const { cause, origin } = artifactFilePrimaryFacts(failure);
+  if (failure instanceof AnalysisError) return failure;
+  const { cause: primary, origin } = artifactFilePrimaryFacts(failure);
+  const cause =
+    origin === "owned-or-classified" &&
+    primary instanceof ArtifactReaderFailure &&
+    primary.reason === "io"
+      ? primary.cause
+      : primary;
   if (
     origin === "owned-or-classified" &&
     cause instanceof ArtifactReaderFailure
@@ -139,35 +150,6 @@ const readFailure = (
     "NuGet package read failed.",
     { cause: failure },
   );
-};
-
-const readArchive = async (
-  input: InspectNugetPackageInput,
-  resources: ArtifactResourceScope,
-  signal?: AbortSignal,
-): Promise<Result<{ bytes: Buffer; sha256: string }, AnalysisError>> => {
-  try {
-    const source = await resources.run(() =>
-      readStableArtifact(
-        input.path,
-        input.max_file_bytes,
-        signal,
-        undefined,
-        resources,
-      ),
-    );
-    return ok(source);
-  } catch (failure: unknown) {
-    return err(
-      projectStableArtifactFailure(
-        failure,
-        readFailure(failure, input),
-        input.path,
-        NUGET_PACKAGE_PROVIDER.id,
-        operation,
-      ),
-    );
-  }
 };
 
 /**
@@ -237,10 +219,14 @@ const inventoryMembers = async (
   reader: ZipArtifactReader,
   input: InspectNugetPackageInput,
   signal?: AbortSignal,
-): Promise<NugetArchiveMember[]> => {
+): Promise<{
+  readonly members: NugetArchiveMember[];
+  readonly complete: boolean;
+}> => {
   const members: NugetArchiveMember[] = [];
   for await (const entry of reader.entries(signal)) {
-    if (members.length >= input.max_entries) break;
+    if (members.length >= input.max_entries)
+      return { members, complete: false };
     // Admit the owning path before opening the member: a `../x.nuspec` entry
     // is refused as an unsafe path by the parser, and opening it first would
     // let a read failure report the archive as unreadable instead.
@@ -264,7 +250,7 @@ const inventoryMembers = async (
       limitations: entry.limitations,
     });
   }
-  return members;
+  return { members, complete: true };
 };
 
 export interface NugetPackageInspection {
@@ -291,81 +277,163 @@ export const inspectNugetPackageEvidence = async (
     return err(
       inputFailure("Expected an absolute filesystem path on this host."),
     );
-  const source = await readArchive(input, resources, options.signal);
-  if (!source.ok) return source;
-  const { bytes, sha256 } = source.value;
-  const artifact: NugetPackageArtifact = {
-    path: input.path,
-    sha256,
-    bytes: bytes.length,
-  };
-  const reader = new ZipArtifactReader(input.path, "zip");
-  let members: NugetArchiveMember[];
-  // A close that fails leaves the reader owning its descriptor, so the failure
-  // is carried into the result instead of being swallowed: dropping it would
-  // report a clean inventory from a reader that never released the archive.
-  let closeFailure: unknown;
   try {
-    members = await resources.run(() =>
-      inventoryMembers(reader, input, options.signal),
-    );
-  } catch (failure: unknown) {
-    const refusal = readFailure(failure, input);
-    // The file was admitted and hashed before the ZIP stage; a decoder refusal
-    // does not undo that identity, so keep it as a partial observation.
-    refusal.retainPartialObservation({
-      kind: "file-snapshot-hash",
-      path: input.path,
-      sha256,
-      bytes: bytes.length,
-    });
-    await reader.close().catch((failure: unknown) => {
-      closeFailure = failure;
-    });
-    if (closeFailure !== undefined)
-      refusal.retainSecondaryFailure(
-        inputFailure(
-          "The ZIP reader could not be closed after the inventory failed; the archive may still be open.",
-          closeFailure,
-        ),
+    return await resources.run(async () => {
+      const source = new ArtifactFileSource(input.path, "NuGet package");
+      let reader: ZipArtifactReader | undefined;
+      // ZIP borrows the descriptor; its streams must release before the file owner.
+      const owner = {
+        kind: "lease" as const,
+        resource: input.path,
+        lease: {
+          release: async () => {
+            await reader?.close();
+            await source.close();
+          },
+        },
+      };
+      let artifact: NugetPackageArtifact | undefined;
+      let outcome: Result<NugetPackageInspection, AnalysisError>;
+      try {
+        const admittedFile = await source.readSelectedPath(options.signal);
+        if (admittedFile.initial.size > input.max_file_bytes)
+          throw new ArtifactReaderFailure(
+            "limit",
+            `Selected artifact exceeds ${String(input.max_file_bytes)} bytes: ${input.path}`,
+            { boundary: "file-size" },
+          );
+        const hashed = await hashReadableToCompletion(
+          readFileHandleChunks(admittedFile.handle, {
+            end: input.max_file_bytes,
+            signal: options.signal,
+            cancellationFailure: (reason) =>
+              new ArtifactReaderFailure(
+                "cancelled",
+                "NuGet package read cancelled",
+                { cause: reason },
+              ),
+          }),
+          options.signal,
+        );
+        if (hashed.bytes > input.max_file_bytes)
+          throw new ArtifactReaderFailure(
+            "limit",
+            `Selected artifact grew beyond its byte limit: ${input.path}`,
+            { boundary: "file-size" },
+          );
+        await source.readSelectedPath();
+        if (hashed.bytes !== admittedFile.initial.size)
+          throw new ArtifactReaderFailure(
+            "integrity",
+            `NuGet package changed during hashing: ${input.path}`,
+          );
+        artifact = {
+          path: input.path,
+          sha256: hashed.sha256,
+          bytes: hashed.bytes,
+        };
+        reader = new ZipArtifactReader(
+          input.path,
+          "zip",
+          undefined,
+          admittedFile,
+        );
+        const inventoryMembersResult = await inventoryMembers(
+          reader,
+          input,
+          options.signal,
+        );
+        await source.readSelectedPath();
+        const parsed = parseNugetPackage(
+          artifact,
+          inventoryMembersResult.members,
+          {
+            maxEntries: input.max_entries,
+            inventoryComplete: inventoryMembersResult.complete,
+          },
+        );
+        if (!parsed.ok) throw inputFailure(parsed.error.message);
+        const inventory = parsed.value;
+        const evidence = createEvidence(
+          { path: input.path, format: "file", sha256: artifact.sha256 },
+          NUGET_PACKAGE_PROVIDER,
+          {
+            operation,
+            predicateType: "rea.nuget-package-inventory",
+            parameters: {
+              path: input.path,
+              format: input.format,
+              max_file_bytes: input.max_file_bytes,
+              max_entries: input.max_entries,
+            },
+            result: inventory,
+            confidence: "observed",
+            limitations: inventory.limitations,
+            locations: [{ kind: "artifact-path", path: input.path }],
+          },
+        );
+
+        outcome = ok({ evidence, observation: artifact });
+      } catch (failure: unknown) {
+        const refusal = readFailure(failure, input);
+        if (artifact !== undefined)
+          refusal.retainPartialObservation({
+            kind: "file-snapshot-hash",
+            ...artifact,
+          });
+        outcome = err(refusal);
+      }
+      const released = await resources.release(owner);
+      if (released.kind === "failed") {
+        const failure = resources.cleanupFailure(
+          outcome.ok
+            ? { kind: "completed" }
+            : { kind: "failed", cause: outcome.error },
+          [released],
+          outcome.ok
+            ? outcome.value.evidence
+            : outcome.error.partialObservation,
+        );
+        if (!outcome.ok)
+          return err(
+            projectStableArtifactFailure(
+              failure,
+              outcome.error,
+              input.path,
+              NUGET_PACKAGE_PROVIDER.id,
+              operation,
+            ),
+          );
+        const cleanup = new ProviderCleanupError(
+          NUGET_PACKAGE_PROVIDER.id,
+          resources.cleanupResources,
+          { reason: failure.message },
+          {
+            operation,
+            cause: failure,
+            completedObservation: outcome.value.evidence,
+          },
+        );
+        cleanup.retainPartialObservation(outcome.value.evidence);
+        bindArtifactFileCleanup(failure, cleanup);
+        return err(cleanup);
+      }
+      if (!outcome.ok) return outcome;
+      const completed = completeProviderEvidence(
+        outcome.value.evidence,
+        options.signal,
       );
-    return err(refusal);
-  }
-  await reader.close().catch((failure: unknown) => {
-    closeFailure = failure;
-  });
-  if (closeFailure !== undefined)
+      return completed.ok ? outcome : completed;
+    });
+  } catch (failure: unknown) {
     return err(
-      inputFailure(
-        "The ZIP reader could not be closed, so the archive may still be open and the inventory is not published.",
-        closeFailure,
+      projectStableArtifactFailure(
+        failure,
+        readFailure(failure, input),
+        input.path,
+        NUGET_PACKAGE_PROVIDER.id,
+        operation,
       ),
     );
-  const parsed = parseNugetPackage(artifact, members, {
-    maxEntries: input.max_entries,
-  });
-  if (!parsed.ok) return err(inputFailure(parsed.error.message));
-  const inventory = parsed.value;
-  const evidence = createEvidence(
-    { path: input.path, format: "file", sha256 },
-    NUGET_PACKAGE_PROVIDER,
-    {
-      operation,
-      predicateType: "rea.nuget-package-inventory",
-      parameters: {
-        path: input.path,
-        format: input.format,
-        max_file_bytes: input.max_file_bytes,
-        max_entries: input.max_entries,
-      },
-      result: inventory,
-      confidence: "observed",
-      limitations: inventory.limitations,
-      locations: [{ kind: "artifact-path", path: input.path }],
-    },
-  );
-  const completed = completeProviderEvidence(evidence, options.signal);
-  return completed.ok
-    ? ok({ evidence: completed.value, observation: artifact })
-    : completed;
+  }
 };

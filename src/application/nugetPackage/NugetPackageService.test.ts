@@ -1,7 +1,9 @@
-import { writeFile } from "node:fs/promises";
+import { ZipArtifactReader } from "../../artifacts/ZipArtifactReader.js";
+import { projectAnalysisError } from "../../domain/analysisErrorProjection.js";
+import { rename, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
-import { expect, it, onTestFinished } from "vitest";
+import { expect, it, onTestFinished, vi } from "vitest";
 
 import { createTestTempDirectory } from "../../../tests/fixtures/temporaryDirectory.js";
 import { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
@@ -262,4 +264,149 @@ it("keeps the admitted file snapshot when a later ZIP read fails", async () => {
     kind: "file-snapshot-hash",
     path,
   });
+});
+
+it.each([false, true])(
+  "distinguishes exhausted inventory from a longer archive at max_entries, longer=%s",
+  async (longer) => {
+    const root = await createTestTempDirectory("rea-nuget-coverage-");
+    const path = join(root, "limited.nupkg");
+    await writeFile(
+      path,
+      zip([
+        { path: "Example.Package.nuspec", text: NUSPEC },
+        ...(longer ? [{ path: "extra.txt", text: "extra" }] : []),
+      ]),
+    );
+    const resources = new ArtifactResourceScope();
+    onTestFinished(() => resources.close());
+    const result = await inspectNugetPackageEvidence(
+      { path, max_entries: 1 },
+      resources,
+    );
+    if (!result.ok) throw result.error;
+    const report = result.value.evidence
+      .normalized_result as unknown as NugetPackage;
+    expect(report.assets).toHaveLength(1);
+    expect(report.source_coverage.status).toBe(
+      longer ? "partial" : "complete-within-scope",
+    );
+    expect(
+      report.diagnostics.some((entry) => entry.code === "entry-limit-reached"),
+    ).toBe(longer);
+  },
+);
+
+it.skipIf(process.platform === "win32")(
+  "rejects selected-path replacement between hashing and ZIP enumeration",
+  async () => {
+    const root = await createTestTempDirectory("rea-nuget-replace-");
+    const path = await writePackage(root);
+    const original = ZipArtifactReader.prototype.entries;
+    const entries = vi
+      .spyOn(ZipArtifactReader.prototype, "entries")
+      .mockImplementation(async function* (this: ZipArtifactReader, signal) {
+        await rename(path, path + ".original");
+        await writeFile(
+          path,
+          zip([
+            {
+              path: "different.nuspec",
+              text: NUSPEC.replace("Example.Package", "Other.Package"),
+            },
+          ]),
+        );
+        yield* original.call(this, signal);
+      });
+    const resources = new ArtifactResourceScope();
+    try {
+      const result = await inspectNugetPackageEvidence({ path }, resources);
+      expect(result).toMatchObject({
+        ok: false,
+        error: { _tag: "AnalysisArtifactChangedError" },
+      });
+    } finally {
+      entries.mockRestore();
+      await resources.close();
+    }
+  },
+);
+
+it("retains the exact failed ZIP cleanup owner for retry and the completed inventory", async () => {
+  const root = await createTestTempDirectory("rea-nuget-close-");
+  const path = await writePackage(root);
+  const original = ZipArtifactReader.prototype.close;
+  let denied = true;
+  const close = vi
+    .spyOn(ZipArtifactReader.prototype, "close")
+    .mockImplementation(async function (this: ZipArtifactReader) {
+      if (denied) throw new Error("ZIP close denied");
+      await original.call(this);
+    });
+  const resources = new ArtifactResourceScope();
+  try {
+    const result = await inspectNugetPackageEvidence({ path }, resources);
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("Expected cleanup refusal");
+    expect(projectAnalysisError(result.error)).toMatchObject({
+      code: "cleanup_incomplete",
+    });
+    expect(resources.hasPending).toBe(true);
+    const retried = await inspectNugetPackageEvidence({ path }, resources);
+    expect(retried.ok).toBe(false);
+    if (retried.ok) throw new Error("Expected retained cleanup refusal");
+    expect(projectAnalysisError(retried.error)).toMatchObject({
+      code: "cleanup_incomplete",
+    });
+    expect(resources.cleanupResources).toEqual([path]);
+
+    expect(result.error.partialObservation).toMatchObject({
+      operation: "inspect_nuget_package",
+      normalized_result: { summary: { assemblies: 2 } },
+    });
+    denied = false;
+    await resources.close();
+    expect(resources.hasPending).toBe(false);
+  } finally {
+    denied = false;
+    await resources.close();
+    close.mockRestore();
+  }
+});
+
+it("preserves caller cancellation and completed Evidence when ZIP finalization aborts", async () => {
+  const root = await createTestTempDirectory("rea-nuget-close-cancel-");
+  const path = await writePackage(root);
+  const controller = new AbortController();
+  const reason = { request: "cancel after ZIP close" };
+  const original = ZipArtifactReader.prototype.close;
+  const close = vi
+    .spyOn(ZipArtifactReader.prototype, "close")
+    .mockImplementation(async function (this: ZipArtifactReader) {
+      await original.call(this);
+      controller.abort(reason);
+    });
+  const resources = new ArtifactResourceScope();
+  try {
+    const result = await inspectNugetPackageEvidence({ path }, resources, {
+      signal: controller.signal,
+    });
+    expect(result).toMatchObject({
+      ok: false,
+      error: {
+        _tag: "AnalysisCancelledError",
+        cause: reason,
+        partialObservation: {
+          operation: "inspect_nuget_package",
+          normalized_result: { summary: { assemblies: 2 } },
+        },
+      },
+    });
+    if (result.ok) throw new Error("Expected finalization cancellation");
+    expect(result.error.cause).toBe(reason);
+    expect(resources.hasPending).toBe(false);
+  } finally {
+    close.mockRestore();
+    await resources.close();
+  }
 });
