@@ -66,14 +66,17 @@ def _entry_bytes(archive, info):
 
 def _zip_entry(archive, info, refusal):
     """One entry of a zip view: its name, size and digest, and its own format and view, or why it was not read."""
-    entry = {"name": info.filename, "size": info.file_size, "sha256": None, "format": None, "view": None,
+    # zipfile can override a UTF-8-flagged name with a Unicode Path extra field.
+    # REA's ZIP reader gives the explicitly UTF-8 stored name precedence.
+    name = info.orig_filename if info.flag_bits & 0x800 else info.filename
+    entry = {"name": name, "size": info.file_size, "sha256": None, "format": None, "view": None,
              "view_error": refusal}
     if refusal is not None:
         return entry
     data = _entry_bytes(archive, info)
     if data is None:
         return {**entry, "view_error": "its compressed data is damaged"}
-    view = _entry_view(info.filename, data)
+    view = _entry_view(name, data)
     return {**entry, "sha256": hashlib.sha256(data).hexdigest(), "format": view["format"],
             "view": view.get("view"), "view_error": view.get("error")}
 

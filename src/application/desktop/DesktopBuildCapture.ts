@@ -134,7 +134,9 @@ const checkExportRuntime = async (
       { stdout: path, timeoutS: 30, signal },
     );
     if (command.exitCode !== 0 && command.stderr !== "")
-      return err(schemaCommandError(command.exitCode, command.stderr));
+      return err(
+        schemaCommandError(command.exitCode, computer.redacted(command.stderr)),
+      );
     if (command.stdoutBytes > 1024 * 1024)
       return err(
         adapterError(

@@ -315,7 +315,8 @@ const validReport = (
     );
   if (report.applicability !== "applicable") return false;
   if (
-    report.coverage.status !== "complete" ||
+    (report.coverage.status !== "complete" &&
+      report.coverage.status !== "partial") ||
     report.modinfo === null ||
     report.versions === null ||
     report.this_module === null ||
