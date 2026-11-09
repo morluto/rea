@@ -175,7 +175,6 @@ export const materializeArtifactInventoryInScope = async (
     try {
       canonicalSource = await realpath(sourcePath);
     } catch (cause: unknown) {
-      abortIfNeeded(signal);
       if (inventorySourceChanged(cause))
         throw new ArtifactReaderFailure(
           "integrity",
@@ -184,6 +183,7 @@ export const materializeArtifactInventoryInScope = async (
         );
       throw cause;
     }
+    abortIfNeeded(signal);
     if ((await lstat(canonicalSource)).isDirectory()) {
       const { canonicalOutput } = await SafeOutputTree.resolveDestination(
         input.outputRoot,

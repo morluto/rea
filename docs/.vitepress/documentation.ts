@@ -49,9 +49,19 @@ export const documentationSections = [
         route: "/elf-unwind-ranges",
       },
       {
+        text: "Linux kernel build config",
+        source: "guides/native/kernel-build-config.md",
+        route: "/kernel-build-config",
+      },
+      {
         text: "Recorded crash evidence",
         source: "guides/native/recorded-crashes.md",
         route: "/recorded-crashes",
+      },
+      {
+        text: "Windows Shell Link shortcuts",
+        source: "guides/native/windows-shortcut.md",
+        route: "/windows-shortcut",
       },
     ],
   },
@@ -92,6 +102,11 @@ export const documentationSections = [
         text: "Electron file-page observation",
         source: "guides/javascript/electron-observation.md",
         route: "/electron-observation",
+      },
+      {
+        text: "V8 code cache inspection",
+        source: "guides/javascript/v8-code-cache.md",
+        route: "/v8-code-cache",
       },
     ],
   },

@@ -14,6 +14,8 @@ import { PeCertificatesService } from "../application/binaryDiagnostics/PeCertif
 import { PeCertificatesProvider } from "../native/pe/PeCertificatesProvider.js";
 import { PeImportsService } from "../application/binaryDiagnostics/PeImportsService.js";
 import { PeImportsProvider } from "../native/pe/PeImportsProvider.js";
+import { WindowsShortcutService } from "../application/binaryDiagnostics/WindowsShortcutService.js";
+import { WindowsShortcutProvider } from "../native/windows/WindowsShortcutProvider.js";
 import { ElfNotesService } from "../application/binaryDiagnostics/ElfNotesService.js";
 import { ElfNotesProvider } from "../native/elf/ElfNotesProvider.js";
 import { ElfUnwindRangesService } from "../application/binaryDiagnostics/ElfUnwindRangesService.js";
@@ -22,6 +24,8 @@ import { AppleIpsService } from "../application/binaryDiagnostics/AppleIpsServic
 import { AppleIpsProvider } from "../native/apple/AppleIpsProvider.js";
 import { KernelModuleService } from "../application/binaryDiagnostics/KernelModuleService.js";
 import { KernelModuleProvider } from "../native/elf/KernelModuleProvider.js";
+import { KernelBuildConfigService } from "../application/binaryDiagnostics/KernelBuildConfigService.js";
+import { KernelBuildConfigProvider } from "../native/elf/KernelBuildConfigProvider.js";
 import type { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
 import { NativeExportsService } from "../application/binaryDiagnostics/NativeExportsService.js";
 import { NativeExportsProvider } from "../native/exports/NativeExportsProvider.js";
@@ -45,6 +49,10 @@ export const createPeCertificatesService = (): PeCertificatesService =>
 export const createPeImportsService = (): PeImportsService =>
   new PeImportsService(new PeImportsProvider());
 
+/** Portable Shell Link inspection with no COM, engine or target resolution. */
+export const createWindowsShortcutService = (): WindowsShortcutService =>
+  new WindowsShortcutService(new WindowsShortcutProvider());
+
 /** Portable PE/ELF export tables with no engine, toolchain or target acquisition. */
 export const createNativeExportsService = (): NativeExportsService =>
   new NativeExportsService(new NativeExportsProvider());
@@ -62,6 +70,9 @@ export const createAppleIpsService = (): AppleIpsService =>
 /** Portable Linux kernel-module metadata inspection with no engine or host `modinfo`. */
 export const createKernelModuleService = (): KernelModuleService =>
   new KernelModuleService(new KernelModuleProvider());
+/** Portable Linux kernel banner and embedded build-config inspection with no engine or host tools. */
+export const createKernelBuildConfigService = (): KernelBuildConfigService =>
+  new KernelBuildConfigService(new KernelBuildConfigProvider());
 
 /** Compose the offline adapter without import-time I/O or dependency acquisition. */
 export const createBinaryLayoutService = (

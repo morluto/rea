@@ -17,3 +17,5 @@ for the specification lifecycle, roadmap granularity and producer-owned contract
   ([plan](native/go-string-literals/plan.md), [tasks](native/go-string-literals/tasks.md))
 - [ELF unwind function ranges](native/elf-unwind-ranges/spec.md)
   ([plan](native/elf-unwind-ranges/plan.md), [tasks](native/elf-unwind-ranges/tasks.md))
+- [Linux kernel build config](native/kernel-build-config/spec.md)
+  ([plan](native/kernel-build-config/plan.md), [tasks](native/kernel-build-config/tasks.md))

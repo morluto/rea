@@ -149,6 +149,20 @@ table or overlay. Bound snapshots, loaded IAT contents, and export-forward
 resolution remain unobserved. See
 [PE import and delay-load tables](https://github.com/morluto/rea/blob/main/docs/pe-imports.md).
 
+## Windows Shell Link shortcuts
+
+Use `inspect_windows_shortcut` for an explicit local `.lnk` file when the
+question concerns the recorded target path, arguments, working directory, icon
+location, volume serial, network share names, ExtraData blocks, or Tracker
+droid identifiers. No `open_binary`, Windows SDK, COM, or target execution is
+required. The CLI equivalent is `inspect-windows-shortcut PATH`. Preserve
+artifact SHA-256, FILETIME raw decimals, IDList type bytes, and ExtraData
+signatures. Unknown IDList items and ExtraData signatures remain raw with
+SHA-256; they are not guessed. Version-1 UUID MAC and timestamp values are
+labelled derived. A missing optional section is observed absence of that
+structure. See
+[Windows Shell Link shortcuts](https://github.com/morluto/rea/blob/main/docs/guides/native/windows-shortcut.md).
+
 ## PE TLS callbacks and load configuration
 
 Use `inspect_pe_load_config` for an explicit local PE32/PE32+ image when the
@@ -231,6 +245,27 @@ container. gzip, xz, and zstd whole-file containers are unsupported and name
 `external_decompression` as the next probe: use an external codec utility to
 decompress into a separate file, then call `inspect_kernel_module` on that file. See
 [Linux kernel modules](https://github.com/morluto/rea/blob/main/docs/kernel-modules.md).
+
+## Linux kernel build config
+
+Use `inspect_kernel_build_config` for an explicit local kernel image (`vmlinux`
+ELF, raw arm64 `Image`, x86 `bzImage`/`zImage`, or `configs.ko`) when the
+question is which kernel version it is or how it was configured. No
+`open_binary`, Linux host, or `extract-ikconfig` is required. The CLI
+equivalent is `inspect-kernel-build-config PATH`; pass `name` for one exact
+`CONFIG_*` option and `offset`/`limit` to page the rest. Preserve the banner
+version, builder, and compiler, the config SHA-256 and option count, and each
+entry's value kind (`y`, `m`, `string`, `number`, `not_set`). A config is
+accepted only when `IKCFG_ST` is immediately followed by a valid gzip member
+and `IKCFG_ED`, so an ordinary `IKCFG_ST` string is not a config. Offsets with
+`space: "inflated_payload"` are positions in an inflated bzImage payload, not
+file offsets. An absent config describes only the searched bytes; the kernel
+may have been built without `CONFIG_IKCONFIG` or with it as a module. Truncated
+payloads are incomplete, not absent. A framed blob that does not decode, has a
+bad CRC, or holds non-config text is `malformed`, not absent. xz, lz4, lzma, zstd, bzip2, and lzo
+payloads are unsupported and name `external_decompression`: decompress with an
+external utility, then call `inspect_kernel_build_config` on the result. See
+[Linux kernel build config](https://github.com/morluto/rea/blob/main/docs/guides/native/kernel-build-config.md).
 
 ## CPython pyc files
 

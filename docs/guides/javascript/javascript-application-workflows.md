@@ -50,6 +50,9 @@ A path-filtered reference reports the caller-selected path while keeping its
 shared node identity. Item selection also accepts any retained path when it
 identifies one module; if several module kinds share that path, select the
 reported `node_id`. Node-ID selection uses the stable representative path.
+Exported symbol bindings reuse the `javascript-module` kind but name one export
+of their owning module, so module pages, items, and summary counts include only
+module units and an exported module never becomes an extra path candidate.
 
 ## Retained module facts
 

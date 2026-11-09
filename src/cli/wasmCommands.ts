@@ -107,6 +107,17 @@ export const registerWasmCommands = (
             "wabt-artifact",
             "inspect_wasm_artifact",
             signal,
+            options.glue_paths === undefined &&
+              options.candidate_paths === undefined
+              ? undefined
+              : {
+                  ...(options.glue_paths === undefined
+                    ? {}
+                    : { glue_paths: options.glue_paths }),
+                  ...(options.candidate_paths === undefined
+                    ? {}
+                    : { candidate_paths: options.candidate_paths }),
+                },
           ).then(projectCliAnalysisResult),
         ),
       ),

@@ -95,7 +95,10 @@ export const observeGhidraEndpoint = async (
         return { path: endpoint.path };
       }
       if (process.platform === "win32") {
-        const encoded = readWindowsPrivateRuntimeFile(endpoint.path);
+        const encoded = readWindowsPrivateRuntimeFile(
+          endpoint.path,
+          MAX_TCP_ENDPOINT_BYTES,
+        );
         assertArtifactReadActive(options.signal);
         return parseTcpEndpoint(endpoint, encoded);
       }

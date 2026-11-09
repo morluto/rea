@@ -40,6 +40,13 @@ export const PE_IMPORTS_PROVIDER = Object.freeze({
   version: "1",
 } as const);
 
+/** Provider identity for portable, execution-free Shell Link decoding. */
+export const WINDOWS_SHORTCUT_PROVIDER = Object.freeze({
+  id: "rea-windows-shortcut",
+  name: "REA Windows shortcut parser",
+  version: "1",
+} as const);
+
 /** Provider identity for portable, execution-free ELF note-table decoding. */
 export const DEVICETREE_PROVIDER = Object.freeze({
   id: "rea-devicetree",
@@ -70,6 +77,13 @@ export const APPLE_IPS_PROVIDER = Object.freeze({
 export const KERNEL_MODULE_PROVIDER = Object.freeze({
   id: "rea-kernel-module",
   name: "REA kernel module parser",
+  version: "1",
+} as const);
+
+/** Provider identity for portable, execution-free Linux kernel banner and IKCONFIG decoding. */
+export const KERNEL_BUILD_CONFIG_PROVIDER = Object.freeze({
+  id: "rea-kernel-build-config",
+  name: "REA kernel build config parser",
   version: "1",
 } as const);
 
