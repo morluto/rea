@@ -32,6 +32,10 @@ export const finishAnalysisCommand = async <
     readonly recoverCompletedObservation?: (
       observation: AnalysisPartialObservation,
     ) => Value | undefined;
+    /** Recover a producer-specific completed result after its cleanup is confirmed. */
+    readonly recoverResolvedCleanup?: (
+      error: AnalysisError,
+    ) => Value | undefined;
   } = {},
 ): Promise<Result<Value, ReturnType<typeof projectAnalysisError>>> => {
   // The command releases its provider resources and runtime before the caller
@@ -57,6 +61,7 @@ export const finishAnalysisCommand = async <
     !result.ok && options.failureProjection === "initial"
       ? projectFailure(result.error)
       : undefined;
+  const hadIncompleteCleanup = !result.ok && result.error.cleanupIncomplete;
   const initialDiagnosticFailure =
     initialFailure !== undefined &&
     !result.ok &&
@@ -94,6 +99,16 @@ export const finishAnalysisCommand = async <
   await dispatchQueuedInterrupts();
   if (initialFailure !== undefined && cleanup === undefined)
     return err(initialFailure);
+  if (
+    initialFailure === undefined &&
+    cleanup === undefined &&
+    !result.ok &&
+    hadIncompleteCleanup &&
+    !result.error.cleanupIncomplete
+  ) {
+    const recovered = options.recoverResolvedCleanup?.(result.error);
+    if (recovered !== undefined) result = ok(recovered);
+  }
   if (
     initialFailure === undefined &&
     !result.ok &&

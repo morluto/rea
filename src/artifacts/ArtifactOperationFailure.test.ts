@@ -43,5 +43,9 @@ it("keeps producer-owned recovery through cleanup wrapping and public projection
   expect(projected.message).toBe(userMessage);
   expect(projected.remediation.action).toBe(userMessage);
   expect(projected.details?.detail).toBe("Exact command diagnostic");
-  expect(projected.details?.cleanup).toBeDefined();
+  expect(projected.details).toMatchObject({
+    cleanup: "incomplete",
+    cleanup_reason: "Owned staging cleanup needs retry",
+    resources: ["owned staging"],
+  });
 });

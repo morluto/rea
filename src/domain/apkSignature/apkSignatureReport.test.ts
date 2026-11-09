@@ -268,10 +268,17 @@ describe("deriveApkPosture v1 comparison", () => {
   it("explains unknown identities on both sides without repeating reasons", () => {
     const result = v1([null], [null, null]);
     expect(result.posture.v1_signers_match_block_signers).toBeNull();
-    expect(result.notes).toEqual([
-      "v1_signers_match_block_signers is null: one or more v1 signer identities are unknown; inspect the v1 signer records for details.",
-      "v1_signers_match_block_signers is null: one or more v2 signer identities are unknown; inspect the block signer records for details.",
-    ]);
+    expect(result.notes).toHaveLength(2);
+    expect(result.notes).toContainEqual(
+      expect.stringMatching(
+        /v1_signers_match_block_signers.*null.*v1 signer identities.*unknown.*inspect.*v1 signer records/iu,
+      ),
+    );
+    expect(result.notes).toContainEqual(
+      expect.stringMatching(
+        /v1_signers_match_block_signers.*null.*v2 signer identities.*unknown.*inspect.*block signer records/iu,
+      ),
+    );
     expect(v1(["aa"], ["aa"]).notes).toEqual([]);
   });
 

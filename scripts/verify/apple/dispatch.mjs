@@ -394,7 +394,7 @@ try {
     } catch (cause) {
       assert.equal(cause.code, 1);
       cliFailure = analysisErrorProjectionSchema.parse(
-        cliOperationFailurePayload(JSON.parse(cause.stdout)),
+        cliOperationFailurePayload(JSON.parse(cause.snapshot.stdout.text)),
       );
     }
     assert.equal(cliFailure.code, "unsupported_target");

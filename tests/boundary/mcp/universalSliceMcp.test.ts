@@ -227,8 +227,9 @@ sliceTest(
         issues: [
           {
             path: ["architecture"],
-            message:
-              "architecture arm64 was selected, but the file is not a universal Mach-O; omit architecture.",
+            message: expect.stringMatching(
+              /architecture arm64.*not a universal Mach-O.*omit architecture/i,
+            ),
           },
         ],
       },

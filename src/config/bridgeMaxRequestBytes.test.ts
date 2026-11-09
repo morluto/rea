@@ -5,7 +5,6 @@ import { parseEnvironment } from "./environment.js";
 import { parseConfig } from "./parseConfig.js";
 import {
   BRIDGE_MAX_REQUEST_BYTES_SETTING,
-  bridgeMaxRequestBytesConstraint,
   DEFAULT_BRIDGE_MAX_REQUEST,
   DEFAULT_BRIDGE_MAX_REQUEST_BYTES,
   MAXIMUM_BRIDGE_MAX_REQUEST_BYTES,
@@ -119,10 +118,16 @@ it.each([
   const parsed = parseBridgeMaxRequestBytes(value);
   expect(parsed.ok).toBe(false);
   if (parsed.ok) return;
+  expect(parsed.error.message).toContain(BRIDGE_MAX_REQUEST_BYTES_SETTING);
+  expect(parsed.error.message).toMatch(/positive decimal integer/i);
+  expect(parsed.error.message).toMatch(/7464 to 536870887 bytes/i);
+  expect(parsed.error.message).toMatch(/default.*16777216 bytes/i);
+  expect(parsed.error.message).toMatch(/symbol.name/i);
+  expect(parsed.error.message).toMatch(/framing/i);
   expect(parsed.error.settings).toEqual([
     {
       setting: BRIDGE_MAX_REQUEST_BYTES_SETTING,
-      constraint: bridgeMaxRequestBytesConstraint,
+      constraint: parsed.error.message,
     },
   ]);
   expect(projectAnalysisError(parsed.error).code).toBe("configuration_invalid");
@@ -134,12 +139,12 @@ it.each([
   expect(startup.error._tag).toBe("ConfigurationError");
   expect(startup.error.settings).toContainEqual({
     setting: BRIDGE_MAX_REQUEST_BYTES_SETTING,
-    constraint: bridgeMaxRequestBytesConstraint,
+    constraint: parsed.error.message,
   });
   if (doctor.ok) throw new Error(`Doctor accepted ${JSON.stringify(value)}`);
   expect(doctor.error._tag).toBe("ConfigurationError");
   expect(doctor.error.settings).toContainEqual({
     setting: BRIDGE_MAX_REQUEST_BYTES_SETTING,
-    constraint: bridgeMaxRequestBytesConstraint,
+    constraint: parsed.error.message,
   });
 });

@@ -1,7 +1,6 @@
 import { expect, it } from "vitest";
 import { parseOpenStep } from "plist";
 
-import { plistNestingLimitMessage } from "./apple/plistValue.js";
 import {
   decodeOpenStepPropertyList,
   OpenStepPropertyListError,
@@ -105,12 +104,12 @@ it("bounds compound keys and later siblings at their owning parse", () => {
   const deep = "(".repeat(30_000) + "x" + ")".repeat(30_000);
   for (const source of [`((x),${deep})`, `{(key)=${deep};}`, `{${deep}=x;}`])
     expect(() => decodeOpenStepPropertyList(source)).toThrow(
-      plistNestingLimitMessage(),
+      /128 nesting levels/iu,
     );
   // A scalar key identifies its parent's member rather than adding value depth.
   expect(decodeOpenStepPropertyList("{ key = (); }", 1)).toEqual({ key: [] });
   expect(() => decodeOpenStepPropertyList("{ (key) = (); }", 1)).toThrow(
-    plistNestingLimitMessage(1),
+    /1 nesting levels/iu,
   );
 });
 

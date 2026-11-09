@@ -609,10 +609,10 @@ process.stdin.on("data", () => process.stdout.write(Buffer.from([0xff, 0])));
 `,
     );
     await chmod(provider, 0o700);
-    const manager = createRizinTestManager(
-      { REA_RIZIN_COMMAND: provider },
-      { frameTimeoutMs: 40 },
-    );
+    const manager = createRizinTestManager({
+      REA_RIZIN_COMMAND: provider,
+      REA_DEBUGGER_COMMAND_DEADLINE_MS: "40",
+    });
     managers.push(manager);
     const started = await manager.start({
       path: "/tmp/fixture.bin",
@@ -669,10 +669,10 @@ process.stdin.on("data", (chunk) => {
 `,
     );
     await chmod(provider, 0o700);
-    const manager = createRizinTestManager(
-      { REA_RIZIN_COMMAND: provider },
-      { frameTimeoutMs: 5_000 },
-    );
+    const manager = createRizinTestManager({
+      REA_RIZIN_COMMAND: provider,
+      REA_DEBUGGER_COMMAND_DEADLINE_MS: "5000",
+    });
     managers.push(manager);
     const callerSelectedPath = "./cancelled/../fixture.bin";
     const resolvedPath = absoluteCallerPath(callerSelectedPath);

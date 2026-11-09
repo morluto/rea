@@ -4,15 +4,11 @@ import {
   projectRetainedAnalysis,
   type AnalysisViewRetention,
 } from "../analysisView/AnalysisViewService.js";
-import { isAbsolute } from "node:path";
 
 import type { ExecutionOptions } from "../AnalysisProvider.js";
 import type { ApkSignaturePort } from "./ApkSignaturePort.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
-import {
-  AnalysisInputError,
-  AnalysisOutputError,
-} from "../../domain/analysisErrorCore.js";
+import { AnalysisOutputError } from "../../domain/analysisErrorCore.js";
 import {
   apkSignatureMatchesSubject,
   apkSignatureResultSchema,
@@ -48,16 +44,6 @@ export class ApkSignatureService {
       options?.signal,
     );
     if (!input.ok) return input;
-    if (!isAbsolute(input.value.path))
-      return err(
-        new AnalysisInputError(OPERATION, undefined, [
-          {
-            path: ["path"],
-            reason: "invalid_format",
-            message: "Expected an absolute filesystem path on this host.",
-          },
-        ]),
-      );
     const { detail, view, ...parameters } = input.value;
     if (detail === "summary") {
       const ready = requireAnalysisViewRetention(OPERATION, retention);

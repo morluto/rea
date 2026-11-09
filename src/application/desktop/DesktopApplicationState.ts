@@ -12,9 +12,9 @@ import type {
   DesktopApplicationState,
   DesktopStatePath,
 } from "../../domain/desktop/desktopState.js";
+import { openStateDocument } from "../../domain/desktop/gzipDocument.js";
 import { diffStateViews } from "../../domain/desktop/stateChanges.js";
 import {
-  detectStateFormat,
   keyfileView,
   plainRecord,
   SQLITE_SIDECARS,
@@ -24,6 +24,7 @@ import {
   applicationNames,
   isApplicationDconfGroup,
   roleFacts,
+  selectedHomePath,
   stateReasons,
   stateRole,
 } from "../../domain/desktop/stateRoles.js";
@@ -40,10 +41,9 @@ import {
   type RetainedContent,
 } from "./DesktopRetainedContent.js";
 import {
-  digestsAt,
   indexState,
+  observedFileAt,
   pathVersions,
-  presenceAt,
   statePaths,
   type StateIndex,
 } from "./DesktopStateVersions.js";
@@ -147,7 +147,7 @@ const dconfGroups = (text: string, names: ReadonlySet<string>) => {
  * removal keeps the directory's owner and is reported with the read's outcome.
  */
 const withStaged = async <Value>(
-  files: readonly { readonly name: string; readonly bytes: Buffer }[],
+  files: readonly { readonly name: string; readonly bytes: Uint8Array }[],
   read: (paths: readonly string[]) => Promise<Value>,
 ): Promise<Value> => {
   const root = await PrivateRuntimeRoot.create({
@@ -185,18 +185,12 @@ type ViewOutcome =
 
 const failed = (error: string): ViewOutcome => ({ view: null, error });
 
-/** One retained version's verified bytes, with its format already detected. */
+/** One retained version's verified document, a gzip file's decompressed, with its format already detected. */
 interface ReadInput {
   readonly path: string;
-  readonly bytes: Buffer;
+  readonly bytes: Uint8Array;
   readonly version: Version;
 }
-
-/** Whether a database's sidecar file existed at a version, and its retained digest. */
-const sidecarAt = (path: string, version: Version, index: StateIndex) => ({
-  present: presenceAt(path, index)[version.checkpoint_index] ?? null,
-  sha256: digestsAt(path, index)[version.checkpoint_index] ?? null,
-});
 
 /**
  * A sidecar's verified bytes to stage beside the database, or why the
@@ -208,9 +202,9 @@ const sidecarBytes = async (
   sidecar: (typeof SQLITE_SIDECARS)[number],
   context: ViewContext,
 ): Promise<Result<Buffer | undefined, string>> => {
-  const { present, sha256 } = sidecarAt(
+  const { present, sha256 } = observedFileAt(
     `${path}${sidecar.suffix}`,
-    version,
+    version.checkpoint_index,
     context.index,
   );
   if (present === null)
@@ -230,6 +224,15 @@ const sqliteView = async (
   input: ReadInput,
   context: ViewContext,
 ): Promise<ViewOutcome> => {
+  const database = observedFileAt(
+    input.path,
+    input.version.checkpoint_index,
+    context.index,
+  );
+  if (database.present !== true || database.sha256 !== input.version.sha256)
+    return failed(
+      "the capture did not confirm the database's retained version at this checkpoint",
+    );
   // The SQLite reader accepts an inactive rollback journal and refuses a hot one.
   const staged = [{ name: "state.db", bytes: input.bytes }];
   for (const sidecar of SQLITE_SIDECARS) {
@@ -338,8 +341,14 @@ const readVersion = async (
     version.view_error = `retained content ${bytes.error}`;
     return;
   }
-  version.format = detectStateFormat(path, bytes.value);
-  const outcome = await viewOf({ path, bytes: bytes.value, version }, context);
+  const document = openStateDocument(path, bytes.value);
+  version.format = document.format;
+  if (document.compression !== undefined)
+    version.compression = document.compression;
+  const outcome =
+    "error" in document
+      ? failed(document.error)
+      : await viewOf({ path, bytes: document.bytes, version }, context);
   version.view = outcome.view;
   version.view_error = outcome.error;
 };
@@ -375,10 +384,14 @@ const describePath = async (
     ),
   ];
   const home = capture.host.home;
+  const role = stateRole(reasons, selectedHomePath(facts, path));
   return {
     path,
     home_path: path.startsWith(`${home}/`) ? path.slice(home.length + 1) : null,
-    role: stateRole(reasons),
+    role:
+      facts.sqliteSidecars?.has(path) === true && role === "unrelated"
+        ? "application_state"
+        : role,
     reasons,
     format:
       versions.findLast((version) => version.format !== null)?.format ?? null,
@@ -398,6 +411,7 @@ const STATE_LIMITATIONS = [
   "JSON and key file views read files of at most 4 MiB, JSON nested at most 500 levels and only numbers JavaScript holds exactly; other files of those formats have a view_error.",
   "dconf views keep only groups whose path names the application.",
   "Zip views list at most 1,000 entries and read an entry only when it is unencrypted, stored or deflated, at most 16 MiB and at most 100 times its compressed size, up to 64 MiB per archive; databases and archives inside an archive are not read.",
+  "A gzip file's view is its document's, read only when it is at most 16 MiB and at most 100 times the file's size; a database inside one is not read, nor a gzip file inside an archive.",
 ];
 
 /** Read a capture folder into the application's state view. */

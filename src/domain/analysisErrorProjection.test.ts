@@ -1207,6 +1207,10 @@ describe("analysis error projection: operational diagnostics", () => {
     expect(exited.remediation.action).toBe(
       analysisErrorRemediationAction(exitedError),
     );
+    expect(exited.message).toMatch(
+      /Hopper exited.*search_strings.*exit code 7/iu,
+    );
+    expect(exited.remediation.action).toMatch(/close_binary.*open.*retry/iu);
 
     const unknownError = new HopperProcessError(null, {
       operation: "search_strings",
@@ -1225,6 +1229,12 @@ describe("analysis error projection: operational diagnostics", () => {
     expect(unknown.remediation.action).toBe(
       analysisErrorRemediationAction(unknownError),
     );
+    expect(unknown.message).toMatch(
+      /could not determine.*busy, exited, or unreachable/iu,
+    );
+    expect(unknown.remediation.action).toMatch(
+      /provider_operation_health.*before retrying or restarting/iu,
+    );
 
     const unreachableError = new HopperProcessError(null, {
       operation: "search_strings",
@@ -1242,6 +1252,12 @@ describe("analysis error projection: operational diagnostics", () => {
       message: analysisErrorUserMessage(unreachableError),
       remediation: { action: analysisErrorRemediationAction(unreachableError) },
     });
+    expect(unreachable.message).toMatch(
+      /unreachable.*process exit was not observed/iu,
+    );
+    expect(unreachable.remediation.action).toMatch(
+      /close_binary.*Evidence and Unknown history.*export_evidence_bundle/iu,
+    );
   });
 });
 
@@ -1415,8 +1431,8 @@ it("preserves ordinary configuration recovery and projects a producer-owned sess
       remediationAction: "Repair the running session, then retry.",
     }),
   );
-  expect(original.remediation.action).toBe(
-    "Correct REA_EXAMPLE in the environment that starts REA (your shell or the MCP client's registration), then rerun.",
+  expect(original.remediation.action).toMatch(
+    /correct.*REA_EXAMPLE.*environment.*shell.*MCP.*registration.*rerun/iu,
   );
   expect(repairing).toEqual({
     ...original,
@@ -1613,6 +1629,24 @@ describe("analysis error projection: composed failures for a caller lifetime", (
         primary_error: projectAnalysisError(primary, lifetime),
         cleanup_error: { code: "cleanup_incomplete" },
       });
+  });
+
+  it("keeps caller lifetime for a secondary failure embedded in child diagnostics", () => {
+    const primary = new AnalysisInputError("read_bytes", undefined, []);
+    const secondary = new AnalysisTimeoutError("search_strings", 250, {
+      limit: analysisSettingLimit("regex.matching_deadline_ms", 250, "setting"),
+      continuingCallerGuidance: continuingOnly,
+    });
+    primary.retainSecondaryFailure(secondary);
+    const history = childFailureDiagnostics({
+      primary_error: { error: primary },
+    });
+    expect(history.diagnostics?.primary_error).toEqual(
+      projectAnalysisError(primary, "continuing"),
+    );
+    expect(history.invocationDiagnostics?.primary_error).toEqual(
+      projectAnalysisError(primary, "invocation"),
+    );
   });
 
   it("records one lifetime form when no child depends on the caller", () => {

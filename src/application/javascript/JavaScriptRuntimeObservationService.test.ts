@@ -20,7 +20,7 @@ import {
   expectOutputError,
   expectOwnerError,
   expectPreemptedCancellation,
-} from "../ownerObservationExpectation.fixture.js";
+} from "../../../tests/fixtures/ownerObservationExpectation.js";
 
 const observeCancelled = async (partial: unknown) => {
   const reason = { requested: "stop before runtime observation completed" };

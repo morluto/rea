@@ -12,7 +12,6 @@ import {
   DEFAULT_REGEX_MATCHING_DEADLINE,
   parseRegexMatchingDeadline,
   REGEX_MATCHING_DEADLINE_SETTING,
-  regexMatchingDeadlineConstraint,
   regexMatchingDeadlineRecovery,
 } from "./regexMatchingDeadline.js";
 import { MAXIMUM_REGEX_MATCHING_DEADLINE_MS } from "../domain/analysisResourceLimits.js";
@@ -59,6 +58,18 @@ it("keeps the 5000 ms deadline when the setting is unset", () => {
     },
   });
   expect(projected.remediation.action).toContain(recovery);
+  expect(projected.remediation.action).toContain(
+    REGEX_MATCHING_DEADLINE_SETTING,
+  );
+  expect(projected.remediation.action).toContain("5000 ms");
+  expect(projected.remediation.action).toContain("source default");
+  expect(projected.remediation.action).toContain("update_analysis_settings");
+  expect(projected.remediation.action).toContain("regex.matching_deadline_ms");
+  expect(projected.remediation.action).toMatch(/restart REA/i);
+  expect(projected.remediation.action).toMatch(/without a REA restart/i);
+  expect(projected.remediation.action).toMatch(
+    /heap does not raise this deadline/i,
+  );
 });
 
 it("uses a valid REA_REGEX_MATCHING_DEADLINE_MS override", () => {
@@ -123,18 +134,22 @@ it.each([
   const parsed = parseRegexMatchingDeadline(value);
   if (parsed.ok) throw new Error(`Accepted ${JSON.stringify(value)}`);
   expect(parsed.error).toBeInstanceOf(ConfigurationError);
+  expect(parsed.error.message).toContain(REGEX_MATCHING_DEADLINE_SETTING);
+  expect(parsed.error.message).toMatch(/positive decimal integer/i);
+  expect(parsed.error.message).toMatch(/1 to 2147483647 ms/i);
+  expect(parsed.error.message).toMatch(/default.*5000 ms/i);
+  expect(parsed.error.message).toMatch(/Node.*1 ms/i);
   expect(parsed.error.settings).toEqual([
     {
       setting: "REA_REGEX_MATCHING_DEADLINE_MS",
-      constraint: regexMatchingDeadlineConstraint,
+      constraint: parsed.error.message,
     },
   ]);
-  expect(parsed.error.message).toBe(regexMatchingDeadlineConstraint);
   const startup = parseEnvironment({ REA_REGEX_MATCHING_DEADLINE_MS: value });
   if (startup.ok) throw new Error(`Startup accepted ${JSON.stringify(value)}`);
   expect(startup.error.settings).toContainEqual({
     setting: REGEX_MATCHING_DEADLINE_SETTING,
-    constraint: regexMatchingDeadlineConstraint,
+    constraint: parsed.error.message,
   });
   const config = parseConfig({ REA_REGEX_MATCHING_DEADLINE_MS: value });
   if (config.ok)
