@@ -8,7 +8,7 @@ import {
   createCliInventory,
 } from "../../../scripts/lib/catalog-cli.mjs";
 
-type CliInstance = ReturnType<typeof createCli>;
+type CliInstance = Awaited<ReturnType<typeof createCli>>;
 type CommandMap = NonNullable<ReturnType<typeof Cli.toCommands.get>>;
 
 const registeredCommands: WeakMap<object, CommandMap> = Cli.toCommands;
@@ -51,7 +51,7 @@ describe("CLI option aliases", () => {
   });
 
   it("register only single-character short flags", async () => {
-    const cli = createCli({});
+    const cli = await createCli({});
     const invalid: string[] = [];
     const undescribed: string[] = [];
     for (const command of createCliInventory(cli).primary) {
@@ -86,7 +86,7 @@ describe("CLI option aliases", () => {
   });
 
   it("accepts kebab-case long options without registered aliases", async () => {
-    const cli = createCli({});
+    const cli = await createCli({});
     const result = await serve(cli, [
       "inspect-plist",
       "/nonexistent/REA.app",

@@ -111,7 +111,7 @@ it.each([
     control.closeCalls = 0;
     control.cleanupFailure = undefined;
     let stdout = "";
-    const pending = createCli({ REA_LOG_LEVEL: "silent" }).serve(
+    const pending = (await createCli({ REA_LOG_LEVEL: "silent" })).serve(
       [
         "environment-serve",
         files.manifestPath,

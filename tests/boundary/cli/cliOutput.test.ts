@@ -724,7 +724,7 @@ describe("compiled CLI output boundary", () => {
           [
             'import { createCli } from "./dist/cli.js";',
             'Object.defineProperty(process.stdout, "isTTY", { value: true });',
-            'await createCli({}).serve(["analyze"], { exit: (code) => { process.exitCode = code; } });',
+            'await (await createCli({})).serve(["analyze"], { exit: (code) => { process.exitCode = code; } });',
           ].join("\n"),
         ],
         { cwd: process.cwd() },

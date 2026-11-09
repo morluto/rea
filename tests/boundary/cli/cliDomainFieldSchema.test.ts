@@ -5,7 +5,7 @@ import { expect, it } from "vitest";
 
 import { createCli } from "../../../src/cli.js";
 
-type CliInstance = ReturnType<typeof createCli>;
+type CliInstance = Awaited<ReturnType<typeof createCli>>;
 type CommandMap = NonNullable<ReturnType<typeof Cli.toCommands.get>>;
 
 const registeredCommands: WeakMap<object, CommandMap> = Cli.toCommands;
@@ -39,7 +39,7 @@ const absoluteMapping =
   process.platform === "win32" ? "C:\\mapping.txt" : "/tmp/mapping.txt";
 
 it("advertises the domain constraints for android, adb settings, and browser selectors", async () => {
-  const cli = createCli({});
+  const cli = await createCli({});
   const ajv = new Ajv2020({ strict: false, validateFormats: false });
   const validate = async (
     command: string,

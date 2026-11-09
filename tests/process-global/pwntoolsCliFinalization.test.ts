@@ -102,7 +102,9 @@ const runCli = async (
     new BinaryLayoutService(provider),
   );
   let stdout = "";
-  await createCli({}).serve(["inspect-binary-layout", path, "--json"], {
+  await (
+    await createCli({})
+  ).serve(["inspect-binary-layout", path, "--json"], {
     env: {},
     stdout: (text) => {
       stdout += text;

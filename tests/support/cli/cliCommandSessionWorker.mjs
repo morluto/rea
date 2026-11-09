@@ -203,7 +203,9 @@ async function runOneShot(args) {
       let wroteOutput = false;
       const resultOutput = createCliResultOutput(outputOptions, destination);
       try {
-        await createCli(process.env, resultOutput).serve(cliArgs, {
+        await (
+          await createCli(process.env, resultOutput)
+        ).serve(cliArgs, {
           stdout: (output) => {
             if (resultOutput?.handled) {
               if (resultOutput.failed) process.stderr.write(output);

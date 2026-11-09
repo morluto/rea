@@ -23,7 +23,9 @@ it("setup carries explicit Hopper loader selections into Cursor without persisti
   };
   const setup = async () => {
     let stdout = "";
-    await createCli(environment).serve(
+    await (
+      await createCli(environment)
+    ).serve(
       ["setup", "--client", "cursor", "--skill=false", "--yes", "--json"],
       {
         env: environment,

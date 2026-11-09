@@ -1,10 +1,17 @@
 #!/usr/bin/env node
 
+import { enableCompileCache } from "node:module";
 import { access } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { prepareCliProcessEnvironment } from "./lib/cli-process-environment.mjs";
+
+// Reuse V8 bytecode for the compiled runtime across invocations. Node keys
+// entries by source content and runtime version, honors NODE_COMPILE_CACHE and
+// NODE_DISABLE_COMPILE_CACHE, and reports failures as a status instead of
+// throwing, so an unwritable cache only loses the speedup.
+enableCompileCache();
 
 // Route production MCP before importing Incur. Incur owns registration helpers
 // such as `mcp add`, while the MCP runtime serves the tool catalog over stdio
@@ -180,8 +187,19 @@ if (!(await compiledRuntimeExists(runtimeFiles))) {
         await import("../dist/cli-runtime/cliResultOutput.js");
       let wroteOutput = false;
       const resultOutput = createCliResultOutput(outputOptions, process.stdout);
+      // Load only the command group that owns the selected top-level command.
+      // Completion words are partial, so completion keeps every group.
+      const command = isShellCompletion
+        ? undefined
+        : builtinArguments.splitIncurBuiltinArguments(cliArgs).command[0];
       try {
-        await createCli(process.env, resultOutput).serve(cliArgs, {
+        const cli = await createCli(
+          process.env,
+          resultOutput,
+          undefined,
+          command,
+        );
+        await cli.serve(cliArgs, {
           stdout: (output) => {
             if (resultOutput?.handled) {
               if (resultOutput.failed && !stdoutClosed)

@@ -22,6 +22,7 @@
         "scripts/bundle-runtime.mjs",
         "scripts/record-catalog-digests.mjs",
         "scripts/record-mcp-catalog.mjs",
+        "scripts/record-cli-command-groups.mjs",
         "scripts/generate-package-metadata.mjs",
         "src/**/*.{cts,mts,ts,tsx}",
         "src/**/package.json",

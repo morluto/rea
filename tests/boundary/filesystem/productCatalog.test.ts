@@ -125,18 +125,18 @@ describe("canonical product catalog", () => {
 });
 
 describe("canonical CLI catalog", () => {
-  it("uses the same primary command names as the actual Incur router", () => {
-    const inventory = createCliInventory(createCli());
+  it("uses the same primary command names as the actual Incur router", async () => {
+    const inventory = createCliInventory(await createCli());
     expect(inventory.primary).toEqual([...CLI_COMMAND_NAMES].sort());
     expect(inventory.aliases).toEqual([]);
   }, 30_000);
 
-  it("describes every primary command argument and option", () => {
-    expect(cliCommandDescriptionIssues(createCli())).toEqual([]);
+  it("describes every primary command argument and option", async () => {
+    expect(cliCommandDescriptionIssues(await createCli())).toEqual([]);
   });
 
-  it("exposes the shared provider selector on every deep-analysis command", () => {
-    const cli = createCli();
+  it("exposes the shared provider selector on every deep-analysis command", async () => {
+    const cli = await createCli();
     for (const name of [
       "analyze",
       "inspect",
@@ -152,8 +152,10 @@ describe("canonical CLI catalog", () => {
     }
   });
 
-  it("does not impose a private result limit on feature tracing", () => {
-    expect(cliCommandOptionNames(createCli(), "trace")).not.toContain("limit");
+  it("does not impose a private result limit on feature tracing", async () => {
+    expect(cliCommandOptionNames(await createCli(), "trace")).not.toContain(
+      "limit",
+    );
   });
 });
 

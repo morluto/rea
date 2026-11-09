@@ -12,7 +12,7 @@ it.each([
 ])(
   "keeps correction fields and concise guidance for invalid CLI arguments: %j",
   async (...argv) => {
-    const cli = createCli({});
+    const cli = await createCli({});
     let text = "";
     let exit = 0;
     await cli.serve([...argv, "--json"], {

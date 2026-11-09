@@ -1,10 +1,8 @@
 import { afterEach, expect, it } from "vitest";
 
 import { ArtifactResourceScope } from "../../../src/artifacts/ArtifactResourceScope.js";
-import {
-  closeCliJavaScriptResources,
-  runCliJavaScriptApplicationAnalysis,
-} from "../../../src/cli/javascriptApplicationAnalysis.js";
+import { closeCliJavaScriptResources } from "../../../src/cli/cliJavaScriptResources.js";
+import { runCliJavaScriptApplicationAnalysis } from "../../../src/cli/javascriptApplicationAnalysis.js";
 
 const originalClose = ArtifactResourceScope.prototype.close;
 

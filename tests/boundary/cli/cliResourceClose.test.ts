@@ -1,7 +1,7 @@
 import { afterEach, expect, it, vi } from "vitest";
 import { closeCliResources } from "../../../src/cli.js";
-import * as javascript from "../../../src/cli/javascriptApplicationAnalysis.js";
-import * as guidance from "../../../src/cli/guidanceCommands.js";
+import * as javascript from "../../../src/cli/cliJavaScriptResources.js";
+import * as guidance from "../../../src/cli/cliGuidanceResources.js";
 
 afterEach(() => vi.restoreAllMocks());
 

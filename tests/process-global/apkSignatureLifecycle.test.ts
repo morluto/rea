@@ -251,16 +251,15 @@ it("projects a provider close that still fails through the public CLI", async ()
   fault.path = path;
   fault.failClose = "always";
   let stdout = "";
-  await createCli({}).serve(
-    [CLI_COMMANDS.inspectApkSignature, path, "--json"],
-    {
-      env: {},
-      stdout: (text) => {
-        stdout += text;
-      },
-      exit: () => undefined,
+  await (
+    await createCli({})
+  ).serve([CLI_COMMANDS.inspectApkSignature, path, "--json"], {
+    env: {},
+    stdout: (text) => {
+      stdout += text;
     },
-  );
+    exit: () => undefined,
+  });
   fault.failClose = "never";
   expect(JSON.parse(stdout)).toMatchObject({
     code: "cleanup_incomplete",

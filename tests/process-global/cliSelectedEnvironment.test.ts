@@ -14,7 +14,7 @@ afterEach(() => {
 });
 
 const serve = async (
-  cli: ReturnType<typeof createCli>,
+  cli: Awaited<ReturnType<typeof createCli>>,
   arguments_: string[],
 ) => {
   let stdout = "";
@@ -37,7 +37,7 @@ describe("CLI selected environment", () => {
       REA_ANALYSIS_PROVIDER: "selected-provider",
       HOPPER_LAUNCHER_PATH: process.execPath,
     };
-    const cli = createCli(environment);
+    const cli = await createCli(environment);
     environment.REA_ANALYSIS_PROVIDER = "changed-provider";
     environment.HOPPER_LAUNCHER_PATH = "/changed/hopper";
     const root = await createTestTempDirectory("rea-cli-selected-env-");
@@ -83,7 +83,7 @@ describe("CLI selected environment", () => {
       target,
       Buffer.from("504b0506000000000000000000000000000000000000", "hex"),
     );
-    const cli = createCli({
+    const cli = await createCli({
       REA_SELECTED_CAPTURE_SENTINEL: "selected-value-must-not-be-captured",
     });
     const result = await serve(cli, ["inspect-artifact", target]);
@@ -129,7 +129,7 @@ it.skipIf(process.platform === "win32").each([
           '"\n',
         { mode: 0o755 },
       );
-    const cli = createCli({
+    const cli = await createCli({
       REA_TSHARK_COMMAND: tshark,
       REA_CAPINFOS_COMMAND: capinfos,
       ...selected,

@@ -35,7 +35,7 @@ it("inspects a keyless app bundle through the public CLI and preserves resource 
     }),
   );
 
-  const cli = createCli({ REA_LOG_LEVEL: "silent" });
+  const cli = await createCli({ REA_LOG_LEVEL: "silent" });
   let stdout = "";
   let exitCode = 0;
   await cli.serve(
