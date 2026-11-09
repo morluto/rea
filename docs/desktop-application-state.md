@@ -25,7 +25,7 @@ changed later. Each path records the evidence the capture holds about it:
 | ------------------------ | ------------------------------------------------------------------------- |
 | `state_directory`        | It lies in one of the application's state directories, in either spelling |
 | `opened_by_application`  | An application process held it open during a sample                       |
-| `named_in_window_title`  | An application window title spelled its name or `~/` path on its own      |
+| `named_in_window_title`  | An application window title spelled its name, `~/` or absolute path whole |
 | `selected_path`          | It lies under a `--state-path` or absolute `--argument` of the capture    |
 | `dconf_application_keys` | It is a dconf database holding groups whose path names the application    |
 | `desktop_service`        | It lies where desktop services and toolkits keep shared files, or caches  |
@@ -53,7 +53,13 @@ recorded selected paths is judged by their physical spelling);
 open file outside shared locations; `shared_desktop` for other files in shared
 locations; `unrelated` otherwise. A window title names a file only when no
 other file name character adjoins the name, so `day.txt` does not match
-`today.txt - Notes`.
+`today.txt - Notes`, and never by a folder of a path the title shows: in
+CherryTree's `home-notebook.ctd - /home/user/Documents - CherryTree 1.1.2`,
+`user` names no file. A name without an extension, such as `Makefile`, must
+also stand on its own rather than end a longer path, as in
+`Makefile - Editor`. A file under `~/.cache` or `~/.config/dconf` is never
+named by a title. The capture's checkpoint acknowledgements rank files by the
+same rule.
 
 Application names, which select dconf groups, come from the package, the
 executable, the desktop entry's id and `StartupWMClass`, and the window match.
@@ -79,13 +85,20 @@ whether the file was present, the SHA-256 of its retained bytes, and a view:
 | `dconf`   | The `GVariant` header                                                  | Groups whose path names the application, plus the names of the other groups            |
 | `zip`     | A zip local file header, `PK\x03\x04`, whatever the name               | Its file entries in archive order, each with its own format and view                   |
 | `json`    | A `.json` name or a leading `{` or `[` that parses                     | The parsed value, from files up to 4 MiB nested up to 500 levels                       |
-| `xml`     | An XML name or declaration that parses                                 | An element tree (`name`, `attributes`, `children`); text kept exactly, DTDs never read |
+| `xml`     | An XML name, a declaration or a leading element that parses            | An element tree (`name`, `attributes`, `children`); text kept exactly, DTDs never read |
 | `keyfile` | Only `[group]`, `key=value` and comment lines, with at least one group | Groups of `key` → string value, from files up to 4 MiB                                 |
 | `text`    | Other UTF-8 text                                                       | Lines, up to 5,000                                                                     |
 | `binary`  | NUL bytes or invalid UTF-8                                             | None                                                                                   |
 
 A gzip file is read as the document inside it; see
 [compressed documents](#compressed-documents).
+
+Text that opens with an element, such as a Freeplane map's
+`<map version="freeplane 1.7.0">` with no declaration, or with a DOCTYPE that
+has no internal subset and then an element, such as a KmPlot plot's
+`<!DOCTYPE kmpdoc>` before `<kmpdoc version="4">`, is XML when the whole text
+is well formed, whatever the file is called, a `.txt` file included;
+otherwise it stays text. The exported verifier makes the same choice.
 
 A JSON value holding a number JavaScript would round, such as an integer above
 2^53, is not read rather than shown rounded.
