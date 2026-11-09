@@ -10,6 +10,16 @@ for (const command of [
   "inspect-erlang-beam",
   "inspect-rust-binary",
   "inspect-go-binary",
+  "inspect-elf-notes",
+  "inspect-devicetree",
+  "inspect-pe-imports",
+  "inspect-kernel-module",
+  "inspect-apple-ips",
+  "inspect-pe-load-config",
+  "inspect-pe-certificates",
+  "inspect-pe-resources",
+  "inspect-native-exports",
+  "inspect-binary-hardening",
 ]) {
   cliTest(
     `${command} retains the completed file identity after format refusal`,
