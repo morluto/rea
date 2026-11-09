@@ -12,7 +12,7 @@ import {
   assertStableRegularFileIdentity,
   type StableRegularFileDescriptor,
 } from "../filesystem/RegularFile.js";
-import { readFileHandleChunks } from "../filesystem/readFileHandleChunks.js";
+import { readArtifactFileChunks } from "./readArtifactFileChunks.js";
 import type { OwnedFileHandle } from "../filesystem/OwnedFileHandle.js";
 import {
   ArtifactReaderFailure,
@@ -89,14 +89,10 @@ export class InesArtifactReader implements ArtifactReader {
     const size = produced.declaredSize;
     if (offset === null || size === null || size <= 0)
       throw new ArtifactReaderFailure("integrity", "Invalid iNES region range");
-    const stream = readFileHandleChunks(this.source.handle, {
+    const stream = readArtifactFileChunks(this.source.handle, {
       start: offset,
       end: offset + size - 1,
       signal,
-      cancellationFailure: (reason) =>
-        new ArtifactReaderFailure("cancelled", "Artifact inventory cancelled", {
-          cause: reason,
-        }),
     });
     const verify = () => this.#verifySource(signal);
     return Readable.from(
