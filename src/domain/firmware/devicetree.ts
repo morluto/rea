@@ -1,10 +1,10 @@
 import { z } from "zod";
 import { digestSchema } from "../digests.js";
-import { localPathStringSchema } from "../localPath.js";
+import { absoluteLocalPathStringSchema } from "../localPath.js";
 const uint = z.number().int().min(0).max(0xffffffff);
 export const MAX_DEVICETREE_FILE_BYTES = 16777216;
 export const inspectDevicetreeInputSchema = z.strictObject({
-  path: localPathStringSchema,
+  path: absoluteLocalPathStringSchema,
   max_file_bytes: z
     .number()
     .int()

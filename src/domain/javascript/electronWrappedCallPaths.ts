@@ -69,6 +69,7 @@ const ipcEndpointKey = (value: ElectronIpcFinding): string =>
     value.side,
     value.operation,
     value.channel,
+    value.loader_authority ?? "proven",
     javascriptSourceRangeKey(value.location),
   ]);
 
@@ -211,7 +212,12 @@ interface BridgeExposure {
 }
 
 const bridgeExposureKey = (value: ElectronContextBridgeFinding): string =>
-  JSON.stringify([value.world, value.api_key, value.api_key_expression]);
+  JSON.stringify([
+    value.world,
+    value.api_key,
+    value.api_key_expression,
+    value.loader_authority ?? "proven",
+  ]);
 
 const bridgeContributionKey = (value: ElectronContextBridgeFinding): string =>
   JSON.stringify([value.world_id, value.members, value.unknown_members]);
@@ -266,6 +272,7 @@ const mergeBridgeExposures = (
 };
 
 interface PathContext {
+  readonly loader_authority?: "candidate";
   readonly entryNode: t.Node;
   /** Source ranges of the local calls this path made since its entry. */
   readonly calls: string[];
@@ -455,11 +462,15 @@ export function* collectElectronWrappedCallPathsSteps(
       accumulator.unknownFindings += 1;
       return null;
     }
+    const authorityContext =
+      value.kind === "external" && value.loaderAuthority === "candidate"
+        ? { ...context, loader_authority: "candidate" as const }
+        : context;
     return (
       value.conditions?.reduce(
         (current, branch) => condition(current, branch.node, branch.positive),
-        context,
-      ) ?? context
+        authorityContext,
+      ) ?? authorityContext
     );
   };
   // Duplicate checks consult only facts at the same endpoint and call site.
@@ -808,6 +819,8 @@ export function* collectElectronWrappedCallPathsSteps(
     return site;
   };
   const bridgeInventoryBudget = createContextBridgeMemberBudget();
+  const seenInventoryValues = new WeakSet<SymbolicValue>();
+  const seenBridgeFunctionValues = new WeakSet<SymbolicValue>();
   const functionlessBridgeObjects = new WeakSet<SymbolicValue>();
   let remainingBridgeFunctionVisits = contextBridgeMemberVisitLimit * 4;
   let remainingBridgeFunctionBytes = contextBridgeMemberByteLimit * 4;
@@ -818,19 +831,25 @@ export function* collectElectronWrappedCallPathsSteps(
    */
   const bridgeMemberInventory = (
     object: SymbolicValue,
+    initialMembers?: readonly string[],
   ): { readonly members: readonly string[]; readonly unknown: number } => {
-    const members = new Set<string>();
+    const members = new Set<string>(initialMembers);
     let unknown = 0;
+    let sharedEncountered = false;
     const visit = (
       value: SymbolicValue,
       prefixPath: string,
       prefixDepth: number,
       prefixBytes: number,
+      inSharedSubtree = false,
     ): void => {
       if (prefixDepth >= contextBridgeMemberPathDepth) {
         unknown += 1;
         return;
       }
+      const shared = inSharedSubtree || seenInventoryValues.has(value);
+      if (shared) sharedEncountered = true;
+      seenInventoryValues.add(value);
       if (prefixDepth === 0) {
         for (const variant of symbolicVariants(value)) {
           if (variant.kind !== "function")
@@ -841,25 +860,33 @@ export function* collectElectronWrappedCallPathsSteps(
       }
       const keys = resolver.members(value);
       for (let index = 0; index < keys.length; index += 1) {
+        const gated = shared || bridgeInventoryBudget.truncated;
         if (
           --remainingVisits < 0 ||
-          bridgeInventoryBudget.remainingVisits <= 0
+          (gated &&
+            (bridgeInventoryBudget.remainingVisits <= 0 ||
+              members.size >= contextBridgeMemberVisitLimit))
         ) {
+          if (gated) {
+            bridgeInventoryBudget.remainingVisits = 0;
+            bridgeInventoryBudget.truncated = true;
+          }
           unknown += keys.length - index;
           return;
         }
-        bridgeInventoryBudget.remainingVisits -= 1;
+        if (gated) bridgeInventoryBudget.remainingVisits -= 1;
         const member = keys[index];
         if (member === undefined) break;
         const memberBytes = Buffer.byteLength(member, "utf8");
         const pathBytes =
           prefixDepth === 0 ? memberBytes : prefixBytes + 1 + memberBytes;
-        if (pathBytes > bridgeInventoryBudget.remainingBytes) {
+        if (gated && pathBytes > bridgeInventoryBudget.remainingBytes) {
           bridgeInventoryBudget.remainingVisits = 0;
+          bridgeInventoryBudget.truncated = true;
           unknown += keys.length - index;
           return;
         }
-        bridgeInventoryBudget.remainingBytes -= pathBytes;
+        if (gated) bridgeInventoryBudget.remainingBytes -= pathBytes;
         const path = prefixDepth === 0 ? member : `${prefixPath}.${member}`;
         members.add(path);
         for (const variant of symbolicVariants(
@@ -871,13 +898,21 @@ export function* collectElectronWrappedCallPathsSteps(
               variant.kind === "namespace") &&
             !variant.conditions?.length
           )
-            visit(variant, path, prefixDepth + 1, pathBytes);
+            visit(variant, path, prefixDepth + 1, pathBytes, shared);
         if (remainingVisits < 0) return;
       }
     };
     visit(object, "", 0, 0);
+    const sorted = [...members].sort(compareUnicodeCodePoints);
+    if (sharedEncountered && sorted.length > contextBridgeMemberVisitLimit) {
+      unknown += sorted.length - contextBridgeMemberVisitLimit;
+      return {
+        members: sorted.slice(0, contextBridgeMemberVisitLimit),
+        unknown,
+      };
+    }
     return {
-      members: [...members].sort(compareUnicodeCodePoints),
+      members: sorted,
       unknown,
     };
   };
@@ -886,6 +921,7 @@ export function* collectElectronWrappedCallPathsSteps(
     segments: readonly string[] = [],
     prefixBytes = 0,
     active = new Set<SymbolicValue>(),
+    inSharedSubtree = false,
   ): Generator<
     {
       readonly name: string;
@@ -900,6 +936,8 @@ export function* collectElectronWrappedCallPathsSteps(
       accumulator.electronCallPathLimitReached = true;
       return true;
     }
+    const shared = inSharedSubtree || seenBridgeFunctionValues.has(value);
+    seenBridgeFunctionValues.add(value);
     const nested = new Set(active);
     nested.add(value);
     let foundFunction = false;
@@ -909,17 +947,17 @@ export function* collectElectronWrappedCallPathsSteps(
         truncated = true;
         break;
       }
-      if (remainingBridgeFunctionVisits <= 0) {
+      if (shared && remainingBridgeFunctionVisits <= 0) {
         accumulator.unknownFindings += 1;
         accumulator.electronCallPathLimitReached = true;
         truncated = true;
         break;
       }
-      remainingBridgeFunctionVisits -= 1;
+      if (shared) remainingBridgeFunctionVisits -= 1;
       const memberBytes = Buffer.byteLength(member, "utf8");
       const nextBytes =
         segments.length === 0 ? memberBytes : prefixBytes + 1 + memberBytes;
-      if (nextBytes > remainingBridgeFunctionBytes) {
+      if (shared && nextBytes > remainingBridgeFunctionBytes) {
         remainingBridgeFunctionVisits = 0;
         accumulator.unknownFindings += 1;
         accumulator.electronCallPathLimitReached = true;
@@ -935,7 +973,7 @@ export function* collectElectronWrappedCallPathsSteps(
       const path = [...segments, member];
       for (const variant of variants) {
         if (variant.kind === "function") {
-          remainingBridgeFunctionBytes -= nextBytes;
+          if (shared) remainingBridgeFunctionBytes -= nextBytes;
           foundFunction = true;
           yield { name: path.join("."), path, fn: variant };
         } else if (resolver.members(variant).length > 0) {
@@ -944,11 +982,15 @@ export function* collectElectronWrappedCallPathsSteps(
             path,
             nextBytes,
             nested,
+            shared,
           );
           foundFunction ||= childFound;
         }
       }
-      if (remainingVisits < 0 || remainingBridgeFunctionVisits <= 0) {
+      if (
+        remainingVisits < 0 ||
+        (shared && remainingBridgeFunctionVisits <= 0)
+      ) {
         truncated = true;
         break;
       }
@@ -1001,6 +1043,9 @@ export function* collectElectronWrappedCallPathsSteps(
   ): void => {
     if (context.entryKind === null) return;
     const path: ElectronCallPath = {
+      ...(context.loader_authority === "candidate"
+        ? { loader_authority: "candidate" as const }
+        : {}),
       entry_kind: context.entryKind,
       entry: context.entry,
       ...(context.entryKind !== "bridge-member" ||
@@ -1086,6 +1131,9 @@ export function* collectElectronWrappedCallPathsSteps(
         ? undefined
         : range(context.entryNode);
     const findingContext = {
+      ...(context.loader_authority === "candidate"
+        ? { loader_authority: "candidate" as const }
+        : {}),
       module_key: null,
       location,
       ...(invocationLocation === undefined
@@ -1327,8 +1375,8 @@ export function* collectElectronWrappedCallPathsSteps(
       return unresolved();
     }
     const keyContext = metadataContext(worldContext, key);
-    if (!keyContext || !metadataContext(keyContext, object))
-      return unresolved();
+    const exposureContext = keyContext && metadataContext(keyContext, object);
+    if (!keyContext || !exposureContext) return unresolved();
     // This report shape has no predicate field, so a guarded world or object
     // cannot be recorded as an unconditional exposure fact.
     const guardedWorld = worldValue !== null && hasConditions(worldValue);
@@ -1358,10 +1406,16 @@ export function* collectElectronWrappedCallPathsSteps(
         (direct.api_key === null ||
           (direct.world_id?.status === "dynamic" &&
             worldId?.status === "literal"));
+      const candidateAuthority =
+        exposureContext.loader_authority === "candidate" ||
+        direct?.loader_authority === "candidate";
       if (!directCompleteApi || resolvedDirectHeader) {
         let finding: ElectronContextBridgeFinding;
         if (directCompleteApi) {
           finding = {
+            ...(candidateAuthority
+              ? { loader_authority: "candidate" as const }
+              : {}),
             world: exposure.world,
             world_id: worldId,
             api_key: key.value,
@@ -1377,14 +1431,12 @@ export function* collectElectronWrappedCallPathsSteps(
             location,
           };
         } else {
-          const inventory = bridgeMemberInventory(object);
-          const members =
-            direct !== undefined && direct.members.length > 0
-              ? [...new Set([...direct.members, ...inventory.members])].sort(
-                  compareUnicodeCodePoints,
-                )
-              : inventory.members;
+          const inventory = bridgeMemberInventory(object, direct?.members);
+          const members = inventory.members;
           finding = {
+            ...(candidateAuthority
+              ? { loader_authority: "candidate" as const }
+              : {}),
             world: exposure.world,
             world_id: worldId,
             api_key: key.value,

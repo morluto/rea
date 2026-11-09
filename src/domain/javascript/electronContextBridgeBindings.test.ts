@@ -725,3 +725,57 @@ it("recovers nested member expressions via symbolic fallback and respects overwr
     ]),
   );
 });
+
+it("rechecks Object.freeze exemptions when getter-mediated ambient writes propagate later", () => {
+  const analysis = analyzeJavaScriptStaticSource(`
+      import { contextBridge, ipcRenderer } from "electron";
+
+      const exposed = { safe: () => ipcRenderer.invoke("safe:call") };
+      function readChannel() {
+        const value = { channel: "stale:channel" };
+        Object.freeze(value);
+        Object.freeze(exposed);
+        return value.channel;
+      }
+
+      const holder = {
+        target: Object,
+        get alias() {
+          return this.target;
+        },
+      };
+      holder.alias.freeze = (x) => {
+        x.channel = "mutated:channel";
+        x.injected = true;
+        return x;
+      };
+
+      const channel = readChannel();
+      ipcRenderer.send(channel);
+      contextBridge.exposeInMainWorld("DelayedFreezeOverwrite", exposed);
+    `);
+
+  expect(analysis.parse_status).toBe("partial");
+  expect(analysis.electron.ipc).toMatchObject([
+    {
+      side: "renderer",
+      operation: "invoke",
+      channel: "safe:call",
+    },
+    {
+      side: "renderer",
+      operation: "send",
+      channel: null,
+      channel_expression: "channel",
+    },
+  ]);
+  expect(analysis.electron.context_bridge_apis).toMatchObject([
+    {
+      api_key: "DelayedFreezeOverwrite",
+      api_status: "dynamic",
+    },
+  ]);
+  expect(analysis.electron.context_bridge_apis[0]).not.toHaveProperty(
+    "resolution_sources",
+  );
+});

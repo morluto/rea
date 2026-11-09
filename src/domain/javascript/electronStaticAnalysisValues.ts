@@ -20,8 +20,23 @@ export const electronCalleePath = (
   const { root, members } = electronMemberPath(callee);
   if (!members.every((member): member is string => member !== null))
     return undefined;
-  const exported = context.electronBindings?.get(root.start ?? -1);
+  const exported =
+    context.electronBindings?.get(root.start ?? -1) ??
+    context.electronCandidateBindings?.get(root.start ?? -1);
   return exported === undefined ? undefined : [...exported, ...members];
+};
+
+/** Keep the identity uncertainty attached to each derived finding. */
+export const electronCandidateAuthority = (
+  callee: t.Node,
+  context: JavaScriptFindingContext,
+): { readonly loader_authority?: "candidate" } => {
+  const { root } = electronMemberPath(callee);
+  const offset = root.start ?? -1;
+  return context.electronBindings?.has(offset) !== true &&
+    context.electronCandidateBindings?.has(offset) === true
+    ? { loader_authority: "candidate" }
+    : {};
 };
 
 /** Preserve one literal value or the exact inert expression. */
@@ -91,12 +106,16 @@ export const contextBridgeMemberByteLimit = 131_072;
 export interface ContextBridgeMemberBudget {
   remainingVisits: number;
   remainingBytes: number;
+  truncated: boolean;
+  readonly seenNodes: WeakSet<t.Node>;
 }
 
 export const createContextBridgeMemberBudget =
   (): ContextBridgeMemberBudget => ({
     remainingVisits: contextBridgeMemberVisitLimit,
     remainingBytes: contextBridgeMemberByteLimit,
+    truncated: false,
+    seenNodes: new WeakSet(),
   });
 
 export type ContextBridgeNestedPropertyResolution =
@@ -217,18 +236,28 @@ const collectMembersAt = (
   activeNodes: ReadonlySet<t.Node>,
   budget: ContextBridgeMemberBudget,
   resolveNestedProperty?: ContextBridgeNestedPropertyResolver,
+  inSharedSubtree = false,
 ): void => {
   if (prefixDepth >= contextBridgeMemberPathDepth) {
     state.unknown += 1;
     return;
   }
+  const shared = inSharedSubtree || budget.seenNodes.has(object);
+  budget.seenNodes.add(object);
   const effective = effectiveObjectProperties(object);
   for (let index = 0; index < object.properties.length; index += 1) {
-    if (budget.remainingVisits <= 0) {
+    const gated = shared || budget.truncated;
+    if (
+      gated &&
+      (budget.remainingVisits <= 0 ||
+        state.members.length >= contextBridgeMemberVisitLimit)
+    ) {
+      budget.remainingVisits = 0;
+      budget.truncated = true;
       state.unknown += object.properties.length - index;
       return;
     }
-    budget.remainingVisits -= 1;
+    if (gated) budget.remainingVisits -= 1;
     const property = object.properties[index];
     if (property === undefined) break;
     if (t.isSpreadElement(property)) {
@@ -245,12 +274,13 @@ const collectMembersAt = (
     const nameBytes = Buffer.byteLength(name, "utf8");
     const pathBytes =
       prefixDepth === 0 ? nameBytes : prefixBytes + 1 + nameBytes;
-    if (pathBytes > budget.remainingBytes) {
+    if (gated && pathBytes > budget.remainingBytes) {
       budget.remainingVisits = 0;
+      budget.truncated = true;
       state.unknown += object.properties.length - index;
       return;
     }
-    budget.remainingBytes -= pathBytes;
+    if (gated) budget.remainingBytes -= pathBytes;
     const path = prefixDepth === 0 ? name : `${prefixPath}.${name}`;
     state.members.push(path);
     if (
@@ -270,6 +300,7 @@ const collectMembersAt = (
           nested.activeNodes,
           budget,
           resolveNestedProperty,
+          shared,
         );
       else if (nested.kind === "unknown") state.unknown += 1;
       continue;
@@ -286,6 +317,8 @@ const collectMembersAt = (
         state,
         nextActive,
         budget,
+        undefined,
+        shared,
       );
     }
   }

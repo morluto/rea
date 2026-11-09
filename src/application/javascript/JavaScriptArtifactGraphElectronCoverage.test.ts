@@ -118,9 +118,25 @@ const graphFor = async (
 };
 
 describe("Electron semantic coverage", () => {
+  it.each(["main.js", "main.MJS"])(
+    "does not present candidate Electron boundaries as proven coverage for %s",
+    async (path) => {
+      const { limitations, electronSemantics } = await graphFor(
+        'const { BrowserWindow } = require("electron"); new BrowserWindow();',
+        undefined,
+        path,
+      );
+      expect(electronSemantics).toBeUndefined();
+      expect(limitations.join(" ")).toContain("Conditional Electron findings");
+      expect(limitations).not.toContain(EMPTY_COVERAGE);
+    },
+  );
+
   it("reports empty Electron coverage when the module is referenced but nothing is recovered", async () => {
     const { limitations, electronSemantics } = await graphFor(
       `const { app } = require("electron");\napp.whenReady();\n`,
+      undefined,
+      "main.cjs",
     );
     expect(limitations).toContain(EMPTY_COVERAGE);
     expect(electronSemantics).toBe("empty");
@@ -129,6 +145,8 @@ describe("Electron semantic coverage", () => {
   it("reports idle-coverage limits, not empty coverage, once a boundary fact is recovered", async () => {
     const { limitations, electronSemantics } = await graphFor(
       `const { ipcMain } = require("electron");\nipcMain.handle("ping", () => 1);\n`,
+      undefined,
+      "main.cjs",
     );
     expect(limitations).not.toContain(EMPTY_COVERAGE);
     expect(limitations).toContainEqual(
@@ -171,6 +189,8 @@ describe("Electron semantic coverage", () => {
   it("matches a supported Electron subpath and ignores an unrelated package", async () => {
     const subpath = await graphFor(
       `const { app } = require("electron/main");\napp.whenReady();\n`,
+      undefined,
+      "main.cjs",
     );
     expect(subpath.electronSemantics).toBe("empty");
     const unrelated = await graphFor(
@@ -193,6 +213,7 @@ describe("Electron semantic coverage", () => {
           limits: null,
         },
       }),
+      "main.cjs",
     );
     expect(electronSemantics).toBe("empty");
     expect(limitations).toContain(EMPTY_COVERAGE);
@@ -207,6 +228,7 @@ describe("Electron semantic coverage", () => {
         ...entry,
         semantic: null,
       }),
+      "main.cjs",
     );
     expect(electronSemantics).toBe("empty");
   });
@@ -304,6 +326,8 @@ it("classifies a bundle module by its loader, not by its name", async () => {
         `100:(e,t,n)=>{"use strict";const s=n(45840);s.ipcMain.handle("x",()=>1)}`,
       `n(100);`,
     ),
+    undefined,
+    "main.cjs",
   );
   expect(external.electronSemantics).toBe("recovered");
 
@@ -315,6 +339,8 @@ it("classifies a bundle module by its loader, not by its name", async () => {
         `100:(e,t,n)=>{"use strict";const s=n("electron");s.ipcMain.handle("x",()=>1)}`,
       `n(100);`,
     ),
+    undefined,
+    "main.cjs",
   );
   expect(externalUnderKey.electronSemantics).toBe("recovered");
 });
@@ -323,7 +349,7 @@ const buildSyntheticContextBridgeGraph = async () => {
   const mainEntry = await analyzedEntry(
     `
       const { BrowserWindow, ipcMain } = require("electron");
-      new BrowserWindow({ webPreferences: { preload: "./preload.js" } });
+      new BrowserWindow({ webPreferences: { preload: "./preload.cjs" } });
       ipcMain.handle("items:upload", (event, payload) =>
         event.sender.send("items:ack", payload),
       );
@@ -331,7 +357,7 @@ const buildSyntheticContextBridgeGraph = async () => {
         event.sender.send("items:seen", message),
       );
     `,
-    "main.js",
+    "main.cjs",
   );
   const preloadEntry = await analyzedEntry(
     `
@@ -343,10 +369,10 @@ const buildSyntheticContextBridgeGraph = async () => {
       contextBridge.exposeInMainWorld("uploadItem", uploadItem);
       contextBridge.exposeInMainWorld("InlineApi", { ready: true });
     `,
-    "preload.js",
+    "preload.cjs",
   );
   const pkgFile: JavaScriptArtifactFile = {
-    ...fileFor('{"name":"synthetic-app","main":"main.js"}', "package.json"),
+    ...fileFor('{"name":"synthetic-app","main":"main.cjs"}', "package.json"),
     kind: "package-json",
   };
   const analysis: JavaScriptArtifactAnalysis = {
@@ -359,9 +385,9 @@ const buildSyntheticContextBridgeGraph = async () => {
         status: "included",
         name: "synthetic-app",
         version: "1.0.0",
-        main: "main.js",
+        main: "main.cjs",
         main_status: "declared",
-        main_entrypoint: "main.js",
+        main_entrypoint: "main.cjs",
         renderer_declarations: {},
         renderer_entrypoint: null,
         limitation: null,
@@ -421,8 +447,8 @@ it("projects constant-resolved and callable contextBridge exposures with IPC pai
       members: ["nested", "nested.notify"],
       unknown_members: 0,
       resolution_sources: [
-        expect.objectContaining({ source: "preload.js" }),
-        expect.objectContaining({ source: "preload.js" }),
+        expect.objectContaining({ source: "preload.cjs" }),
+        expect.objectContaining({ source: "preload.cjs" }),
       ],
     },
     evidence: expect.objectContaining({
@@ -438,7 +464,7 @@ it("projects constant-resolved and callable contextBridge exposures with IPC pai
       api_status: "function",
       members: [],
       unknown_members: 0,
-      resolution_sources: [expect.objectContaining({ source: "preload.js" })],
+      resolution_sources: [expect.objectContaining({ source: "preload.cjs" })],
     },
     evidence: expect.objectContaining({
       authority: "static-relationship-inference",

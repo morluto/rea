@@ -14,6 +14,7 @@ import {
   boundedExpression,
   collectContextBridgeMembers,
   createContextBridgeMemberBudget,
+  electronCandidateAuthority,
   electronCalleePath,
   electronStaticValue,
 } from "./electronStaticAnalysisValues.js";
@@ -145,6 +146,7 @@ const inspectBrowserWindow = (
   );
   context.accumulator.unknownFindings += collected.unknown;
   const finding: ElectronBrowserWindowFinding = {
+    ...electronCandidateAuthority(node.callee, context),
     options_status:
       resolvedOptions === undefined
         ? "missing"
@@ -161,6 +163,7 @@ const inspectBrowserWindow = (
     location: range(node),
   };
   if (
+    finding.loader_authority !== "candidate" &&
     finding.preload_path !== null &&
     finding.preload_resolution_context !== null
   )
@@ -355,6 +358,7 @@ const inspectContextBridge = (
         ? { api_key: key.value, api_key_expression: null }
         : { api_key: null, api_key_expression: null };
   const finding: ElectronContextBridgeFinding = {
+    ...electronCandidateAuthority(node.callee, context),
     ...apiKey,
     world: exposure.world,
     world_id: worldId,
@@ -426,6 +430,7 @@ const inspectUtilityProcess = (
           module_expression: null,
         };
   const finding: ElectronUtilityProcessFinding = {
+    ...electronCandidateAuthority(node.callee, context),
     ...moduleReference,
     service_name: serviceName ?? null,
     module_key: null,

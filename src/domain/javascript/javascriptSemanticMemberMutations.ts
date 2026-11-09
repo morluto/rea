@@ -20,7 +20,7 @@ import {
   semanticOriginalGlobalProcessAt,
   semanticMutableBuiltinOrigin,
   semanticRequireExportsIdentity,
-  semanticRequireOrigin,
+  semanticRequireOriginCandidate,
   semanticRequireLoaderAt,
   hasSemanticCreateRequireFactoryOrigin,
 } from "./javascriptSemanticRequireOrigin.js";
@@ -361,6 +361,9 @@ export function* collectSemanticMemberMutationsSteps(
   const deferredMapReceivers = new Set<
     t.CallExpression | t.OptionalCallExpression
   >();
+  const deferredObjectFreezeCalls = new Set<
+    t.CallExpression | t.OptionalCallExpression
+  >();
   // The binding pass already retained callable nodes. Ordinary data-only code
   // must not pay an alias walk for every member read or assignment.
   const accessorKeys = {
@@ -487,6 +490,7 @@ export function* collectSemanticMemberMutationsSteps(
     path: PropertyPath,
     effect: ValueEffect,
     node: t.Node | undefined,
+    loaderAuthority?: "candidate",
   ): void => {
     const identity = semanticRequireExportsIdentity(specifier, path);
     let effectPath = identity.path;
@@ -512,6 +516,7 @@ export function* collectSemanticMemberMutationsSteps(
       "required",
       identity.specifier,
       effect,
+      loaderAuthority,
       effectPath,
       node?.start,
       node?.end,
@@ -520,7 +525,12 @@ export function* collectSemanticMemberMutationsSteps(
     recordedRequiredEffects.add(key);
     recordedEffectCount += 1;
     const effects = state.requiredModuleEffects.get(identity.specifier) ?? [];
-    effects.push({ path: effectPath, node, kind: effect });
+    effects.push({
+      path: effectPath,
+      node,
+      kind: effect,
+      ...(loaderAuthority === undefined ? {} : { loaderAuthority }),
+    });
     state.requiredModuleEffects.set(identity.specifier, effects);
   };
   // Traversal states that differ only in coverage fields a record never
@@ -870,13 +880,14 @@ export function* collectSemanticMemberMutationsSteps(
       )
         continue;
       const expression = unwrapJavaScriptExpression(current.node).node;
-      const required = semanticRequireOrigin(expression, state);
+      const required = semanticRequireOriginCandidate(expression, state, true);
       if (required !== undefined) {
         recordRequiredEffect(
           required.origin.specifier,
           [...required.origin.importedPath, ...current.path],
           effect,
           mutation,
+          required.origin.loaderAuthority,
         );
         continue;
       }
@@ -1160,6 +1171,7 @@ export function* collectSemanticMemberMutationsSteps(
                 shared.path,
                 effect,
                 mutation,
+                origin.loaderAuthority,
               );
           }
           const receiverInitializers = [
@@ -1675,7 +1687,12 @@ export function* collectSemanticMemberMutationsSteps(
         t.isOptionalCallExpression(node) ||
         t.isNewExpression(node)
       ) {
-        if (!isIntrinsicOrdinaryObjectFreezeCall(node, state)) {
+        if (
+          (t.isCallExpression(node) || t.isOptionalCallExpression(node)) &&
+          isIntrinsicOrdinaryObjectFreezeCall(node, state)
+        )
+          deferredObjectFreezeCalls.add(node);
+        else {
           for (const source of returnedReferences(node.callee).references)
             markEscaped(source.node, node, source.projection);
           for (const argument of node.arguments)
@@ -1712,7 +1729,8 @@ export function* collectSemanticMemberMutationsSteps(
   while (
     pendingReferences.length > 0 ||
     iterableReferences.length > 0 ||
-    deferredMapReceivers.size > 0
+    deferredMapReceivers.size > 0 ||
+    deferredObjectFreezeCalls.size > 0
   ) {
     const effectsBefore = recordedEffectCount;
     const iterablesBefore = iterableReferences.length;
@@ -1815,6 +1833,32 @@ export function* collectSemanticMemberMutationsSteps(
         reference,
       );
     }
+    // Later ambient or getter-mediated writes can revoke an earlier
+    // Object.freeze exemption; replay full call effects when revoked.
+    let freezeIndex = 0;
+    for (const node of deferredObjectFreezeCalls) {
+      if (freezeIndex++ % 64 === 0) yield;
+      if (isIntrinsicOrdinaryObjectFreezeCall(node, state)) continue;
+      deferredObjectFreezeCalls.delete(node);
+      for (const source of returnedReferences(node.callee).references)
+        markEscaped(source.node, node, source.projection);
+      for (const argument of node.arguments)
+        if (t.isSpreadElement(argument))
+          deferIterable({
+            node: argument.argument,
+            projection: [],
+            path: [null],
+            fallbackPath: [],
+            bindings: new Set(),
+            effect: "escape",
+            mutation: node,
+            originAt: node,
+          });
+        else markEscaped(argument, node);
+      const mapLookup = isIntrinsicMapLookup(node, state);
+      if (mapLookup === undefined) deferredMapReceivers.add(node);
+      else if (!mapLookup) markReceiver(node.callee, node);
+    }
     // Native Map lookup methods do not expose their receiver to user code.
     // Settle genuine effects first, then replay every unproven receiver escape.
     // Keep proven sites until convergence: later propagated effects can revoke them.
@@ -1830,6 +1874,7 @@ export function* collectSemanticMemberMutationsSteps(
       markReceiver(node.callee, node);
     }
     if (
+      pendingReferences.length === 0 &&
       recordedEffectCount === effectsBefore &&
       iterableReferences.length === iterablesBefore &&
       state.arrayIterationUnknown === iterationBefore
@@ -2119,7 +2164,7 @@ const observableMutationPaths = (
     // exact member paths instead of widening the first path to a wildcard.
     const hasParsedRequireOrigin = binding.initializers.some(
       ({ node }) =>
-        semanticRequireOrigin(node, state) !== undefined ||
+        semanticRequireOriginCandidate(node, state) !== undefined ||
         hasSemanticCreateRequireFactoryOrigin(node, state),
     );
     if (

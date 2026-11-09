@@ -158,16 +158,16 @@ const resolveContextBridgeValue = (
       index.bindings,
     );
     if (frozen !== undefined) {
-      if (budget.remainingVisits <= 0) return { kind: "invalid-or-cyclic" };
-      budget.remainingVisits -= 1;
+      if (budget.seenNodes.has(current)) {
+        if (budget.remainingVisits <= 0) return { kind: "invalid-or-cyclic" };
+        budget.remainingVisits -= 1;
+      } else budget.seenNodes.add(current);
       nextActive.add(current);
       substituted = true;
       current = unwrapJavaScriptExpression(frozen).node;
       continue;
     }
     if (!t.isIdentifier(current)) break;
-    if (budget.remainingVisits <= 0) return { kind: "invalid-or-cyclic" };
-    budget.remainingVisits -= 1;
     const binding = index.bindingForReferenceAt(current);
     if (binding === undefined)
       return isProvenNonEnumerableLeaf(current, index.bindings)
@@ -180,6 +180,10 @@ const resolveContextBridgeValue = (
     if (lexical === undefined) return { kind: "invalid-or-cyclic" };
     if (index.referenceMayHaveChangedAt(site, current))
       return { kind: "invalid-or-cyclic" };
+    if (budget.seenNodes.has(lexical.node)) {
+      if (budget.remainingVisits <= 0) return { kind: "invalid-or-cyclic" };
+      budget.remainingVisits -= 1;
+    } else budget.seenNodes.add(lexical.node);
     nextActive.add(current);
     substituted = true;
     current = unwrapJavaScriptExpression(lexical.node).node;

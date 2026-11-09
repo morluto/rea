@@ -8,7 +8,8 @@ import { toolContract } from "../../src/contracts/toolContracts.js";
 import { javascriptApplicationAnalysisResultSchema } from "../../src/domain/javascript/javascriptApplicationAnalysis.js";
 import { projectedExportReturnShapesSchema } from "../../src/domain/javascript/javascriptExportShapeComparisonSchemas.js";
 import { createTestTempDirectory } from "./temporaryDirectory.js";
-import type { TestCli } from "../support/cli/cliFixture.js";
+import { runFileCli, type TestCli } from "../support/cli/cliFixture.js";
+import { createMcpSchemaValidation } from "./mcpSchemaValidation.js";
 
 const exportedReturnFields = (value: unknown) => {
   const analysis = javascriptApplicationAnalysisResultSchema.parse(value);
@@ -44,7 +45,7 @@ const analyzeReturnShapesThroughCli = async (
 ) => {
   const root = await createTestTempDirectory("rea-return-shapes-");
   await writeFile(join(root, fileName), source);
-  const cliResponse = await cli.run({
+  const cliResponse = await runFileCli(cli, {
     arguments: [
       "analyze-javascript-application",
       root,
@@ -82,7 +83,11 @@ export const verifyJavaScriptReturnShapes = async (
     check,
     fileName,
   );
-  const client = new Client({ name: "return-shapes-e2e", version: "1" });
+  const validation = createMcpSchemaValidation();
+  const client = new Client(
+    { name: "return-shapes-e2e", version: "1" },
+    { jsonSchemaValidator: validation },
+  );
   const transport = new StdioClientTransport({
     command: process.execPath,
     args: [resolve("scripts/rea.mjs"), "mcp"],
@@ -112,5 +117,6 @@ export const verifyJavaScriptReturnShapes = async (
   } finally {
     await client.close();
     await transport.close();
+    validation.clear();
   }
 };
