@@ -11,6 +11,7 @@ import {
 } from "./javascriptSemanticTypedArrays.js";
 
 import {
+  semanticBuiltinModuleEffectOrigin,
   semanticGlobalProcessOrigin,
   semanticGlobalProcessPathOrigin,
   semanticOriginalGlobalProcessAt,
@@ -873,14 +874,16 @@ export function* collectSemanticMemberMutationsSteps(
       )
         continue;
       const expression = unwrapJavaScriptExpression(current.node).node;
-      const required = semanticRequireOriginCandidate(expression, state, true);
-      if (required !== undefined) {
+      const moduleEffectOrigin =
+        semanticRequireOriginCandidate(expression, state, true)?.origin ??
+        semanticBuiltinModuleEffectOrigin(expression, state);
+      if (moduleEffectOrigin !== undefined) {
         recordRequiredEffect(
-          required.origin.specifier,
-          [...required.origin.importedPath, ...current.path],
+          moduleEffectOrigin.specifier,
+          [...moduleEffectOrigin.importedPath, ...current.path],
           effect,
           mutation,
-          required.origin.loaderAuthority,
+          moduleEffectOrigin.loaderAuthority,
         );
         continue;
       }
@@ -2138,6 +2141,7 @@ const observableMutationPaths = (
     const hasParsedRequireOrigin = binding.initializers.some(
       ({ node }) =>
         semanticRequireOriginCandidate(node, state) !== undefined ||
+        semanticBuiltinModuleEffectOrigin(node, state) !== undefined ||
         hasSemanticCreateRequireFactoryOrigin(node, state),
     );
     if (

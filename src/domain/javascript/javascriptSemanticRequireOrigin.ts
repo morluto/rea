@@ -8,6 +8,7 @@ import {
 } from "./javascriptSemanticProjectedSources.js";
 import * as t from "@babel/types";
 import { traverseJavaScriptValueAst } from "./javascriptSemanticTraversal.js";
+import { evaluateSemanticExpressionProvenance } from "./javascriptSemanticValues.js";
 
 import { BUILTIN_RESOURCE_METHODS } from "./javascriptBuiltinResourceMethods.js";
 import { javaScriptRuntimeContext } from "./javascriptSourceParser.js";
@@ -1664,6 +1665,62 @@ export const semanticGlobalProcessPathOrigin = (
     importedPath: members.slice(1),
     resolutionMode: "require",
   };
+};
+
+/**
+ * Retain possible shared-module effects from Node's inline acquisition API.
+ * This reader is mutation-only: it must not grant loader or constructor proof.
+ */
+export const semanticBuiltinModuleEffectOrigin = (
+  node: t.Node | null | undefined,
+  state: JavaScriptSemanticAnalysisState,
+): JavaScriptModuleOrigin | undefined => {
+  const chain = semanticMemberChain(node);
+  const call = chain?.root;
+  if (
+    chain === undefined ||
+    (!t.isCallExpression(call) && !t.isOptionalCallExpression(call))
+  )
+    return undefined;
+  const specifier = stringValue(call.arguments[0]);
+  if (specifier === undefined) return undefined;
+  const callee = unwrapJavaScriptExpression(call.callee).node;
+  let globalProcessGetter = false;
+  if (
+    (t.isMemberExpression(callee) || t.isOptionalMemberExpression(callee)) &&
+    semanticStaticPropertyKey(callee.property, callee.computed) ===
+      "getBuiltinModule"
+  ) {
+    const receiver = unwrapJavaScriptExpression(callee.object).node;
+    const processOrigin =
+      semanticGlobalProcessOrigin(receiver, state) ??
+      semanticGlobalProcessPathOrigin(receiver, state);
+    globalProcessGetter = processOrigin?.importedPath.length === 0;
+  }
+  const importedProcessGetter =
+    !globalProcessGetter &&
+    evaluateSemanticExpressionProvenance(callee, state).origins.some(
+      (origin) => {
+        if (origin.specifier.replace(/^node:/u, "") !== "process") return false;
+        const path = origin.importedPath;
+        // Only an ESM default denotes the namespace, not a literal require property.
+        return (
+          (path.length === 1 && path[0] === "getBuiltinModule") ||
+          (origin.resolutionMode !== "require" &&
+            path.length === 2 &&
+            path[0] === "default" &&
+            path[1] === "getBuiltinModule")
+        );
+      },
+    );
+  return globalProcessGetter || importedProcessGetter
+    ? {
+        specifier,
+        importedPath: chain.members,
+        resolutionMode: "require",
+        loaderAuthority: "candidate",
+      }
+    : undefined;
 };
 
 /** Check one unknown-host wrapper candidate at its source-ordered read. */

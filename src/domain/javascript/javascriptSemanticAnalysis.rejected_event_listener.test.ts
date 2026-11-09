@@ -333,6 +333,80 @@ e.on("ready");`),
   ).toContainEqual({ kind: "register", method: "on", eventName: "ready" });
 });
 
+it.each([
+  ["inline", "", "process.getBuiltinModule('events').EventEmitter"],
+  [
+    "qualified",
+    "",
+    "globalThis.process.getBuiltinModule('node:events').EventEmitter",
+  ],
+  [
+    "bound alias",
+    "const events = process.getBuiltinModule('events'); const alias = events;",
+    "alias.EventEmitter",
+  ],
+  [
+    "imported process",
+    "import process from 'node:process';",
+    "process.getBuiltinModule('events').EventEmitter",
+  ],
+  [
+    "imported getter",
+    "import { getBuiltinModule } from 'node:process';",
+    "getBuiltinModule('events').EventEmitter",
+  ],
+  [
+    "extracted imported getter",
+    "import * as process from 'node:process'; const get = process.getBuiltinModule;",
+    "get('events').EventEmitter",
+  ],
+] as const)(
+  "orders shared prototype changes through %s builtin acquisition",
+  (_name, setup, constructor) => {
+    const source = (
+      before: boolean,
+    ) => `import { EventEmitter } from "node:events";
+${setup}
+const e = new EventEmitter();
+${before ? `${constructor}.prototype.on = replacement;` : ""}
+e.on("ready");
+${before ? "" : `${constructor}.prototype.on = replacement;`}`;
+    expect(eventsForSource(source(true))).toContainEqual({
+      kind: "register",
+      method: "on",
+      eventName: "ready",
+    });
+    expect(eventsForSource(source(false))).toEqual([]);
+  },
+);
+
+it("retains a prototype exposed through builtin acquisition", () => {
+  expect(
+    eventsForSource(`import { EventEmitter } from "node:events";
+import { configure } from "./configure.js";
+const e = new EventEmitter();
+configure(process.getBuiltinModule('events').EventEmitter.prototype);
+e.on("ready");`),
+  ).toContainEqual({ kind: "register", method: "on", eventName: "ready" });
+});
+
+it("keeps builtin acquisition effects whose callback timing is unknown", () => {
+  expect(
+    eventsForSource(`import { EventEmitter } from "node:events";
+function patch() { process.getBuiltinModule('events').EventEmitter.prototype.on = replacement; }
+const e = new EventEmitter();
+e.on("ready");`),
+  ).toContainEqual({ kind: "register", method: "on", eventName: "ready" });
+});
+
+it("does not grant native constructor proof from effect-only builtin acquisition", () => {
+  expect(
+    eventsForSource(`const events = process.getBuiltinModule('events');
+const e = new events.EventEmitter();
+e.on("ready");`),
+  ).toContainEqual({ kind: "register", method: "on", eventName: "ready" });
+});
+
 /**
  * The added checks must not withdraw the proof from an untouched namespace
  * receiver, or the guard would never apply to the member-expression forms.
