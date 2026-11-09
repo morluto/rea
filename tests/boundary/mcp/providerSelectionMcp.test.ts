@@ -146,6 +146,32 @@ const expectUnknownProviderKeepsBinding = async (
   );
 };
 
+const expectRefreshedExplicitBinding = async (mcp: Client): Promise<void> => {
+  for (const detail of ["summary", "complete"] as const) {
+    const refreshed = structured(
+      await mcp.callTool({
+        name: "binary_session",
+        arguments: { detail, refresh_candidates: true },
+      }),
+    );
+    expect(refreshed.result).toMatchObject({
+      analysis_provider_binding: { selection_source: "request" },
+      analysis_provider_candidates: [
+        {
+          provider: { id: "alpha" },
+          selected: false,
+          selection_source: null,
+        },
+        {
+          provider: { id: "beta" },
+          selected: true,
+          selection_source: "request",
+        },
+      ],
+    });
+  }
+};
+
 describe("provider selection over MCP", () => {
   it("keeps open_binary and binary_session binding semantics exact", async () => {
     const directory = await createTestTempDirectory("rea-provider-mcp-");
@@ -285,6 +311,9 @@ describe("provider selection over MCP", () => {
         { provider: { id: "beta", version: "1" }, selected: true },
       ],
     });
+
+    await expectRefreshedExplicitBinding(mcp);
+    expect(starts).toEqual(["beta"]);
 
     await expectUnknownProviderKeepsBinding(
       mcp,
