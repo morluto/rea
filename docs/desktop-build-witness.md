@@ -222,7 +222,12 @@ Then, with the task exactly as exported:
 `check_build_task` reads the app's `data/get`, takes the views it returns
 beside the files and evaluates each check with REA's evaluator, the one the
 export validates tasks with and the exported verifier mirrors, one result per
-check. Like the verifier, it grades only once the app's files settle, since an
+check. Once the files settle it runs the task's
+[readers](desktop-application-tasks.md#readers) in the computer through
+`computer-exec/v1`, as the verifier does, and a check through a reader reads
+that reader's view. A task of [screen judges](desktop-application-tasks.md#screen-judges)
+reads no files: REA takes a screenshot and runs the bundle's own judge on it
+with the agentenv runner's Python and model endpoint. Like the verifier, it grades only once the app's files settle, since an
 app such as Gnote saves a few seconds after the last key. It reads `data/get`
 every 0.5 s and grades once every file's bytes have held for 3 s, counted
 from the read that returned them. 15 s after the first read began, it grades
@@ -239,7 +244,7 @@ that fails after it, such as on a failed read of the app's state or a lost
 reply to the recording's start, can be asked again, and asks for the
 recording under the same id, which the computer answers with the recording
 it already began. The stages come in order. The edit and the near miss each
-need an applied click, drag, scroll, type or key since the stage before, with
+need an applied click, drag, scroll, type, typed secret or key since the stage before, with
 no reset after the last of them, since a reset puts the seed back rather than
 changing the app; `after_reset` needs the reset as the last change, and a
 reset that leaves any check unlike on the seed fails the witness, its

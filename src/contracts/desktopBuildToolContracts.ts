@@ -29,6 +29,7 @@ import {
 } from "../domain/jsonValue.js";
 import { absoluteLocalPathStringSchema } from "../domain/localPath.js";
 import type { ToolContract } from "./toolContractTypes.js";
+import * as secrets from "./desktopBuildSecretsContract.js";
 import { toolContractMetadata } from "./toolEffects.js";
 
 const computerId = z.uuid().describe("The id start_build_computer returned.");
@@ -181,7 +182,7 @@ export const DESKTOP_BUILD_TOOL_CONTRACTS = [
     name: "act_on_build_computer",
     ...toolContractMetadata("act_on_build_computer"),
     kind: "application",
-    description: `Drive the app on a build computer: one action, ${COMPUTER_ACTIONS.join(", ")}. Each but reset is sent to the computer's computer_<action> tool with the fields given, which are the driver's own arguments; reset restores the app's data to its seed with data/reset, which relaunches the app, and returns once the computer is ready again; a screenshot asked of it that then fails leaves the reset done, its result naming why in screenshot_error. Points are pixels of the latest frame, so take a screenshot first, or space norm on a 0..norm_scale grid; count 2 double-clicks; a drag's path takes 2 to 50 points; a screenshot with region does not capture the screen again, it crops the latest frame, so take a full screenshot, or a wait with screenshot true, first; keys names one chord in W3C names, and spellings such as ctrl+s are translated. Returns the driver's content unchanged, its images included, and its structured result; an action's screenshot is taken at once, so after one that opens a menu or a window, take it with a wait instead; a refusal, such as a stale frame, is an error with the computer's message. Each action is logged on the computer. Actions, capture steps and checks on one computer run one at a time, in the order they arrive; computers run side by side.`,
+    description: `Drive the app on a build computer: one action, ${COMPUTER_ACTIONS.join(", ")}. Each but reset and type_secret is sent to the computer's computer_<action> tool with the fields given, which are the driver's own arguments; type_secret types into the focused field the value of the secret its handle names, a file the person wrote in REA's build-secrets folder on this host (${secrets.BUILD_SECRETS_FOLDER}), readable only by them: no result, log or record shows the value, only the handle, so it takes no screenshot, and the field must be one that masks what is typed, since a later screenshot shows the screen; reset restores the app's data to its seed with data/reset, which relaunches the app, and returns once the computer is ready again; a screenshot asked of it that then fails leaves the reset done, its result naming why in screenshot_error. Points are pixels of the latest frame, so take a screenshot first, or space norm on a 0..norm_scale grid; count 2 double-clicks; a drag's path takes 2 to 50 points; a screenshot with region does not capture the screen again, it crops the latest frame, so take a full screenshot, or a wait with screenshot true, first; keys names one chord in W3C names, and spellings such as ctrl+s are translated. Returns the driver's content unchanged, its images included, and its structured result; an action's screenshot is taken at once, so after one that opens a menu or a window, take it with a wait instead; a refusal, such as a stale frame, is an error with the computer's message. Each action is logged on the computer. Actions, capture steps and checks on one computer run one at a time, in the order they arrive; computers run side by side.`,
     inputSchema: computerActionInputSchema,
     outputSchema: z.strictObject({
       computer_id: z.uuid(),
@@ -215,6 +216,7 @@ export const DESKTOP_BUILD_TOOL_CONTRACTS = [
           keys: ["Control", "s"],
         },
       },
+      secrets.TYPE_SECRET_EXAMPLE,
     ],
   },
   {
@@ -314,7 +316,7 @@ export const DESKTOP_BUILD_TOOL_CONTRACTS = [
     name: "stop_build_capture",
     ...toolContractMetadata("stop_build_capture"),
     kind: "application",
-    description: `Stop the capture: the app is closed and the capture finishes inside the computer. Returns its checkpoints, the package and sources it found, its limitations and, when ${SEED_CHECKPOINT} and ${END_CHECKPOINT} were marked, the task draft between them: the files that changed under the paths the bundle owns, each with its net change and, for XML files, archives, JSON and key files, the values it added, changed and removed (before and after, at the pointers a check names them by); suggested checks; and guards, optional checks that the rest stays as it was. Notes say why a draft is empty (nothing changed; the changes lie outside the owned paths, listed with their roles; the app saved its change only in dconf, which no check reads; a dconf database changed that REA could not read; or REA recognized no document: capture again with state_paths naming the file, or make a change the app saves in a file) or why a file's suggestions are thin (only position names the change, it is all view state, its text is too long, or its view is cut or unreadable). Write the task from the draft, its prompt in the user's words, and give it to export_build_environment.`,
+    description: `Stop the capture: the app is closed and the capture finishes inside the computer. Returns its checkpoints, the package and sources it found, its limitations and, when ${SEED_CHECKPOINT} and ${END_CHECKPOINT} were marked and this server has not used a declared secret, the task draft between them: the files that changed under the paths the bundle owns, each with its net change and, for XML files, archives, JSON and key files, the values it added, changed and removed (before and after, at the pointers a check names them by); suggested checks; and guards, optional checks that the rest stays as it was. Notes say why a draft is empty (nothing changed; the changes lie outside the owned paths, listed with their roles; the app saved its change only in dconf, which no check reads; a dconf database changed that REA could not read; or REA recognized no document: capture again with state_paths naming the file, or make a change the app saves in a file) or why a file's suggestions are thin (only position names the change, it is all view state, its text is too long, or its view is cut or unreadable). If the server has used a declared secret, automatic drafting is withheld before it runs; write the task manually and give it to export_build_environment. Otherwise write the task from the draft, its prompt in the user's words.`,
     inputSchema: z.strictObject({ computer_id: computerId }),
     outputSchema: z.strictObject({
       computer_id: z.uuid(),
@@ -368,6 +370,7 @@ export const DESKTOP_BUILD_TOOL_CONTRACTS = [
             .describe(
               "Why the draft has no files, or why a file's suggested checks are thin; empty when neither.",
             ),
+          withheld_files: secrets.draftWithheldField,
         })
         .nullable(),
       draft_refusal: z.string().optional(),
@@ -380,7 +383,7 @@ export const DESKTOP_BUILD_TOOL_CONTRACTS = [
     name: "export_build_environment",
     ...toolContractMetadata("export_build_environment"),
     kind: "application",
-    description: `Export the stopped capture as an agentenv computer app bundle with the given task, inside the computer, seeded at ${SEED_CHECKPOINT} and checked at ${END_CHECKPOINT}, then copy the bundle to a new or empty folder on this host, every file checked against its digest. A task the export refuses, such as a check that already passes on the seed, is an error naming why. Witness the bundle next: start_build_computer from the folder and check_build_task.`,
+    description: `Export the stopped capture as an agentenv computer app bundle with the given task, inside the computer, seeded at ${SEED_CHECKPOINT} and checked at ${END_CHECKPOINT}, then copy the bundle to a new or empty folder on this host, every file checked against its digest. A bundle whose file names or contents hold a secret from REA's build-secrets folder, as it is, in UTF-16, hex, base64, URL encoding or inside a gzip file, is refused and written nowhere, the error naming the secrets' handles and the files. ${secrets.WITHHELD_EXPORT_DESCRIPTION} A task the export refuses, such as a check that already passes on the seed, is an error naming why. Witness the bundle next: start_build_computer from the folder and check_build_task.`,
     inputSchema: z.strictObject({
       computer_id: computerId,
       task: desktopTaskSchema,
@@ -392,6 +395,7 @@ export const DESKTOP_BUILD_TOOL_CONTRACTS = [
         .min(1)
         .optional()
         .describe("The environment's name; derived from the app by default."),
+      ...secrets.withholdInputFields,
     }),
     outputSchema: z.strictObject({
       computer_id: z.uuid(),
@@ -407,6 +411,7 @@ export const DESKTOP_BUILD_TOOL_CONTRACTS = [
       recompressed_files: strings,
       unscrubbed_files: strings,
       limitations: strings,
+      ...secrets.withheldOutputFields,
     }),
     examples: [
       {
@@ -423,7 +428,7 @@ export const DESKTOP_BUILD_TOOL_CONTRACTS = [
     name: "check_build_task",
     ...toolContractMetadata("check_build_task"),
     kind: "application",
-    description: `Grade a task's checks against the app's live state on a computer of an exported bundle: REA reads the app's data/get views and evaluates each check as the bundle's verifier does, one result per check, once the app's files settle: it reads data/get every ${String(SETTLE_TIMING.intervalMs / 1000)} s and grades once every file has held for ${String(SETTLE_TIMING.windowMs / 1000)} s, counted from the read that returned its bytes, so an app that saves a few seconds after the last key is graded on what it saved; no read begins ${String(SETTLE_TIMING.boundMs / 1000)} s or more after the first one began, one still in flight then is cut (read_cut), and files still changing are graded on the last completed read, with settled false. With stage, the check is part of the witness, in order: seed (give directory; REA begins recording) must fail a check, and on a computer started from a bundle folder it refuses a task whose steps and verifier in the bundle differ from what the export writes for it; after_edit, after acting on the app from the task's prompt alone, must pass every check; near_miss, after a deliberately almost-right change, must fail one; after_reset, after act_on_build_computer action reset, must give each check the result it had on the seed. Only a check that fails on what the app's view shows counts as failing: one that fails because the view could not be read or is cut short is undecided, and a stage only undecided checks would settle files nothing and is refused, to be checked again. A stage that does not hold, or after_reset, ends the witness: REA ends the recording and writes witness.json, the record as Evidence, with the recording's segments into directory, and returns the record.`,
+    description: `Grade a task's checks against the app's live state on a computer of an exported bundle: REA reads the app's data/get views and evaluates each check as the bundle's verifier does, one result per check, once the app's files settle (a screen_judge task instead takes a screenshot and runs the bundle's own judge on it with the agentenv runner's Python and model endpoint, three votes a question): it reads data/get every ${String(SETTLE_TIMING.intervalMs / 1000)} s and grades once every file has held for ${String(SETTLE_TIMING.windowMs / 1000)} s, counted from the read that returned its bytes, so an app that saves a few seconds after the last key is graded on what it saved; no read begins ${String(SETTLE_TIMING.boundMs / 1000)} s or more after the first one began, one still in flight then is cut (read_cut), and files still changing are graded on the last completed read, with settled false. With stage, the check is part of the witness, in order: seed (give directory; REA begins recording) must fail a check, and on a computer started from a bundle folder it refuses a task whose steps and verifier in the bundle differ from what the export writes for it; after_edit, after acting on the app from the task's prompt alone, must pass every check; near_miss, after a deliberately almost-right change, must fail one; after_reset, after act_on_build_computer action reset, must give each check the result it had on the seed. Only a check that fails on what the app's view shows counts as failing: one that fails because the view could not be read or is cut short is undecided, and a stage only undecided checks would settle files nothing and is refused, to be checked again. A stage that does not hold, or after_reset, ends the witness: REA ends the recording and writes witness.json, the record as Evidence, with the recording's segments into directory, and returns the record.`,
     inputSchema: z.strictObject({
       computer_id: computerId,
       task: desktopTaskSchema,
@@ -470,6 +475,7 @@ export const DESKTOP_BUILD_TOOL_CONTRACTS = [
       },
     ],
   },
+  secrets.RECORD_BUILD_CONSENT_CONTRACT,
   {
     name: "close_build_computer",
     ...toolContractMetadata("close_build_computer"),

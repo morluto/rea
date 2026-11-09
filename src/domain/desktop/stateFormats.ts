@@ -34,7 +34,7 @@ const GVDB_HEADER = "GVariant";
 const ZIP_HEADER = "PK\u0003\u0004";
 const XML_EXTENSIONS = /\.(?:xml|xbel|plist|svg|ui)$/iu;
 /** A DOCTYPE that only names its DTD reads as XML; one with an internal subset, which can declare entities, does not. */
-const XML_POLICY = {
+export const XML_POLICY = {
   doctype: "external",
   lineEndings: "normalize",
   nameSupported: expatXmlName,
@@ -219,6 +219,39 @@ export const isJsonText = (text: string): boolean => {
   }
   return scan.expect === "after" && scan.depth === 0;
 };
+
+/** Decode JSON string tokens in bounded chunks without constructing the document. */
+export function* jsonStringChunks(
+  text: string,
+  chunkSize = 8192,
+): Generator<{ readonly text: string; readonly first: boolean }> {
+  if (!isJsonText(text)) return;
+  for (let at = 0; at < text.length;) {
+    if (text.charAt(at) !== '"') {
+      at += 1;
+      continue;
+    }
+    const end = jsonStringEnd(text, at);
+    if (end < 0) return;
+    let start = at + 1;
+    let first = true;
+    while (start < end - 1) {
+      let next = start;
+      while (next < end - 1 && next - start < chunkSize) {
+        if (text.charAt(next) === "\\")
+          next += text.charAt(next + 1) === "u" ? 6 : 2;
+        else next += 1;
+      }
+      yield {
+        text: JSON.parse(`"${text.slice(start, next)}"`) as string,
+        first,
+      };
+      first = false;
+      start = next;
+    }
+    at = end;
+  }
+}
 
 /** Whether a file's name or leading text marks it as JSON, which it is if it parses. */
 const namedJson = (path: string, trimmed: string): boolean =>

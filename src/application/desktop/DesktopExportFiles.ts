@@ -116,6 +116,19 @@ const shippedSeed = (
   };
 };
 
+/** A seed's bytes as the bundle ships them, for a task's reader to read at the seed. */
+export const shippedSeedBytes = async (
+  content: RetainedContent,
+  copy: RetainedCopy,
+  identity: HostIdentity,
+  signal: AbortSignal | undefined,
+): Promise<Buffer> => {
+  const bytes = await retainedBytes(content, copy, signal);
+  return copy.seed === undefined
+    ? bytes
+    : (shippedSeed(bytes, copy.seed, identity).bytes ?? bytes);
+};
+
 /**
  * The view of each rewritten seed, including a formerly unreadable gzip
  * seed, as the bundle ships it: the computer starts from these bytes.
