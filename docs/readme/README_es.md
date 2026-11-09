@@ -1,7 +1,7 @@
 <div align="center">
 
 [English](../../README.md) · [简体中文](README_zh.md) · [繁體中文](README_zh-TW.md) · [日本語](README_ja.md) · [한국어](README_ko.md) · [Türkçe](README_tr.md) · [Русский](README_ru.md) · [Tiếng Việt](README_vi.md) · [ไทย](README_th.md) · [Deutsch](README_de.md) · **Español** · [Français](README_fr.md) · [Українська](README_uk.md) · [Polski](README_pl.md) · [Português (Brasil)](README_pt-BR.md) · [العربية](README_ar.md) · [فارسی](README_fa.md) · [Bahasa Indonesia](README_id.md) · [Italiano](README_it.md)
-· [Ελληνικά](README_el.md) · [മലയാളം](README_ml.md) · [Roman Urdu](README_ur-Latn.md) · [Română](README_ro.md)
+· [Ελληνικά](README_el.md) · [മലയാളം](README_ml.md) · [Roman Urdu](README_ur-Latn.md) · [Română](README_ro.md) · [Български](README_bg.md)
 
 # REA: Ingeniería inversa de cualquier cosa
 
@@ -84,6 +84,10 @@ La configuración admite Claude Code, Codex, Cursor, Gemini CLI, Grok Build y [o
 
 MCP usa esquemas de entrada compactos por defecto. Para ver todas las instrucciones de campos y la validación anidada, establece `REA_MCP_INPUT_SCHEMA_PROFILE=full` en el registro MCP. Ambos perfiles conservan todas las herramientas y la misma validación canónica del servidor; consulta la guía de contratos MCP.
 
+La configuración registra directamente el entorno de ejecución elegido y el script de entrada de REA. Si usas un ejecutor de paquetes, conserva su entrada de caché y el entorno de ejecución; descarga el paquete desde un directorio de confianza fuera del proyecto objetivo. Consulta la guía de instalación.
+
+Los esquemas de salida completos se anuncian por defecto. Si tu cliente limita `tools/list`, establece `REA_MCP_OUTPUT_SCHEMA_PROFILE=compact` o `off` en el registro MCP. La validación del servidor y los resultados estructurados siguen siendo completos. Consulta «Output schemas» en la guía de contratos MCP.
+
 ### Pregunta a tu agente
 
 ```text
@@ -157,6 +161,7 @@ REA requiere Node.js 22.x (>=22.23.4), 24.x (>=24.22.1) o 26+ (>=26.12.1), adem�
 | Estructura ELF sin ejecutar | Secciones, segmentos, símbolos/reubicaciones originales y posibles medidas de mitigación detectadas mediante análisis estático | pwntools proporcionado por quien llama, en Linux x64; [diagnóstico de binarios](../guides/native/binary-diagnostics.md)                                               |
 | PE certificates             | Authenticode WIN_CERTIFICATE entries and PKCS#7 signer/X.509 identity fields                                                   | Built-in static PE inspection; [PE certificates](../pe-certificates.md)                                                                                               |
 | PE imports                  | Import and delay-load DLL names, ordinals, IAT RVAs and pefile import hash                                                     | Built-in static PE inspection; [PE imports](../pe-imports.md)                                                                                                         |
+| Windows shortcuts           | Shell Link target, arguments, working dir, ExtraData and Tracker droid facts                                                   | Built-in static LNK inspection; [Windows shortcuts](../guides/native/windows-shortcut.md)                                                                             |
 | Bytecode EVM                | Selectores de despacho, desplazamientos en bytes, argumentos inferidos y mutabilidad                                           | Entrada local con bytes sin procesar o representación hexadecimal, en Linux x64; [guía de EVM sin ejecutar](../guides/evm/evm-bytecode.md)                            |
 | Rust binaries               | Embedded cargo-auditable dependency list                                                                                       | [Rust binaries](../rust-binaries.md)                                                                                                                                  |
 | ELF notes                   | PT_NOTE/SHT_NOTE owners, types, GNU build-id and ABI-tag fields                                                                | Built-in static ELF inspection; [ELF notes](../elf-notes.md)                                                                                                          |
@@ -172,6 +177,7 @@ REA requiere Node.js 22.x (>=22.23.4), 24.x (>=24.22.1) o 26+ (>=26.12.1), adem�
 | Capturas de paquetes        | Endpoints, DNS, TLS SNI, distribución de protocolos y solicitudes HTTP                                                         | tshark y capinfos suministrados por el autor de la llamada; [guía pcap](../guides/data/pcap-analysis.md)                                                              |
 | Ensamblados .NET            | Metadatos, instrucciones CIL, dependencias nativas declaradas y comparaciones de compilaciones                                 | Inspección estática; [guía de código administrado](../guides/managed/managed-code-analysis.md)                                                                        |
 | PyInstaller                 | CArchive, PYZ, Python bytecode                                                                                                 | Static inspection; [Python packaged applications](../python-packaged-applications.md)                                                                                 |
+| Deno compile binaries       | Virtual files, entry point, recorded options, npm snapshot length                                                              | Static inspection; [Deno compile executables](../deno-standalone.md)                                                                                                  |
 | APK de Android              | Declaraciones del manifiesto, clases, métodos descompilados y referencias                                                      | JADX sin interfaz gráfica y un JDK completo en Linux/macOS/Windows x64; [guía de Android](../guides/android/android-analysis.md)                                      |
 | Dispositivos Android        | Dispositivos, paquetes, procesos, registros, volcados, capturas de pantalla y transferencias de APK/archivos                   | adb suministrado por el autor de la llamada (emulador o dispositivo); [guía de ADB](../guides/android/adb-device-analysis.md)                                         |
 | Proyectos JEB               | Unidades de proyecto del motor, resúmenes de artefactos y pseudocódigo de tipos/métodos                                        | Un cliente JEB iniciado por el autor de la llamada que sirve MCP, seleccionado con REA_JEB_MCP_URL; [guía de JEB](../providers/jeb-analysis.md)                       |
@@ -272,6 +278,12 @@ REA exporta un entorno ejecutable con una prueba básica que comprueba que arran
 [Guía para crear un entorno](https://rea.tools/guides/rl-environments/) ·
 [Referencia de entornos](../agent-environments.md) ·
 [Ver la demo en X](https://x.com/reatools/status/2112574822584918075?s=20)
+
+### Entornos de aplicaciones de escritorio
+
+REA también puede crear un entorno de una aplicación de escritorio de Linux, que un agente usa mediante capturas de pantalla, el ratón y el teclado. A partir de una petición de una línea, como «Créame un entorno de Gnote en el que el agente añada aceite de oliva a la nota de la lista de la compra», tu agente instala la aplicación en un ordenador de compilación local, escribe la tarea, exporta el entorno y comprueba la tarea en un ordenador nuevo. El equipo que lo crea necesita Linux en amd64 o arm64, Docker y la versión del framework agentenv que fija la guía.
+
+[Configurar entornos de aplicaciones de escritorio](../desktop-build-computer.md)
 
 ## Preguntas frecuentes
 

@@ -7,6 +7,11 @@ import type { RetainedResourceScope } from "../application/AnalysisProvider.js";
 import type { Result } from "../domain/result.js";
 import type { ConfigurationError } from "../domain/configurationErrors.js";
 
+/** Registration setting read by Binary Ninja's readiness probe. */
+export const BINARY_NINJA_DOCTOR_SETTINGS = [
+  "REA_BINARY_NINJA_MCP_CONFIG",
+] as const;
+
 /** Check the registration without connecting, and retain only the configuration file reference. */
 export const inspectBinaryNinjaRegistration = async (
   path: string | undefined,

@@ -190,7 +190,9 @@ const collectHashes = (
 
 const hashAt = (region: Buffer, start: number): string | null => {
   const end = start + HASH_BYTES;
-  if (end >= region.length || region[end] !== 0x2f) return null;
+  // Windows builds join the remapped `/rustc/<hash>` prefix with `\`.
+  if (end >= region.length || (region[end] !== 0x2f && region[end] !== 0x5c))
+    return null;
   for (let index = start; index < end; index += 1) {
     const byte = region[index] ?? 0;
     const hex =

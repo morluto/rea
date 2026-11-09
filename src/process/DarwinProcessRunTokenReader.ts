@@ -647,13 +647,18 @@ export const createDarwinProcessRunTokenReader = (
       if (operation?.aborting === true) {
         const waited = await waitForCompilation(operation, signal);
         if (waited.kind === "cancelled") throw waited.reason;
-        if (
-          !waited.result.ok &&
-          waited.result.error instanceof
-            DarwinProcessOwnershipInspectionError &&
-          waited.result.error.cleanupFailure !== undefined
-        )
-          throw waited.result.error;
+        if (!waited.result.ok) {
+          const failure = waited.result.error;
+          if (
+            (failure instanceof DarwinProcessOwnershipInspectionError &&
+              failure.cleanupFailure !== undefined) ||
+            !isExpectedAbort(
+              operation.primaryFailure?.cause,
+              operation.controller.signal,
+            )
+          )
+            throw failure;
+        }
         continue;
       }
       operation ??= beginCompilation();

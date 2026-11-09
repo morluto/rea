@@ -5,7 +5,10 @@ import {
   stableArtifactInputRecovery,
 } from "../artifacts/StableArtifactFailure.js";
 import { isSelectedRegularFileError } from "../filesystem/RegularFile.js";
-import { readStableArtifact } from "../artifacts/readStableArtifact.js";
+import {
+  type StableArtifactSnapshot,
+  readStableArtifact,
+} from "../artifacts/readStableArtifact.js";
 import {
   artifactFilePrimaryFacts,
   type ArtifactFilePrimaryFacts,
@@ -144,7 +147,11 @@ const failureForPrimary = (
   });
 };
 
-const failureFor = (cause: unknown, path: string): AnalysisError => {
+const failureFor = (
+  cause: unknown,
+  path: string,
+  snapshot?: StableArtifactSnapshot,
+): AnalysisError => {
   const primary = failureForPrimary(artifactFilePrimaryFacts(cause), path);
   return projectStableArtifactFailure(
     cause,
@@ -152,6 +159,7 @@ const failureFor = (cause: unknown, path: string): AnalysisError => {
     path,
     GO_BINARY_PROVIDER_IDENTITY.id,
     OPERATION,
+    snapshot,
   );
 };
 
@@ -276,9 +284,10 @@ export class GoBinaryProvider implements GoBinaryPort {
     input: Omit<InspectGoBinaryInput, "detail">,
     options?: ExecutionOptions,
   ): Promise<Result<GoBinary, AnalysisError>> {
+    let snapshot: StableArtifactSnapshot | undefined;
     try {
       return await this.#resources.run(async () => {
-        const snapshot = await readStableArtifact(
+        snapshot = await readStableArtifact(
           input.path,
           INPUT_BYTES,
           options?.signal,
@@ -342,7 +351,7 @@ export class GoBinaryProvider implements GoBinaryPort {
         return ok(parsed.data);
       });
     } catch (cause: unknown) {
-      return err(failureFor(cause, input.path));
+      return err(failureFor(cause, input.path, snapshot));
     }
   }
 }

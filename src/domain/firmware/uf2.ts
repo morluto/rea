@@ -8,6 +8,7 @@ import { UF2_FAMILY_REGISTRY, uf2FamilyName } from "./uf2Families.js";
 export const UF2_BLOCK_BYTES = 512;
 const UF2_DATA_OFFSET = 32;
 const UF2_DATA_BYTES = 476;
+const UF2_MD5_BYTES = 24;
 const UF2_MAGIC_START0 = 0x0a32_4655;
 const UF2_MAGIC_START1 = 0x9e5d_5157;
 const UF2_MAGIC_END = 0x0ab1_6f30;
@@ -236,9 +237,12 @@ class StreamingUf2Decoder implements RegionDecoder<Uf2Image> {
           ? "end magic number does not match"
           : size > UF2_DATA_BYTES
             ? `payload size ${String(size)} exceeds the ${String(UF2_DATA_BYTES)}-byte data area`
-            : address + size > ADDRESS_SPACE
-              ? `payload at ${hex32(address)} with ${String(size)} bytes wraps past 0xffffffff`
-              : undefined;
+            : (flags & UF2_FLAG_MD5) !== 0 &&
+                size > UF2_DATA_BYTES - UF2_MD5_BYTES
+              ? "payload overlaps the reserved MD5 checksum metadata"
+              : address + size > ADDRESS_SPACE
+                ? `payload at ${hex32(address)} with ${String(size)} bytes wraps past 0xffffffff`
+                : undefined;
     if (fault !== undefined) {
       this.#invalid += 1;
       this.#firstInvalid ??= { block: index, reason: fault };

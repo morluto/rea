@@ -7,8 +7,10 @@ import { safeParseJson } from "../safeJson.js";
 import {
   declaredDocumentType,
   isWellFormedXml,
+  opensLikeXml,
   parseXmlDocument,
 } from "../xmlDocument.js";
+import { expatXmlName } from "./expatXmlNames.js";
 
 /** Formats the state view reads into JSON. */
 export type DesktopStateFormat =
@@ -32,7 +34,11 @@ const GVDB_HEADER = "GVariant";
 const ZIP_HEADER = "PK\u0003\u0004";
 const XML_EXTENSIONS = /\.(?:xml|xbel|plist|svg|ui)$/iu;
 /** A DOCTYPE that only names its DTD reads as XML; one with an internal subset, which can declare entities, does not. */
-const XML_POLICY = { doctype: "external", lineEndings: "normalize" } as const;
+export const XML_POLICY = {
+  doctype: "external",
+  lineEndings: "normalize",
+  nameSupported: expatXmlName,
+} as const;
 const MAX_TEXT_LINES = 5000;
 const MAX_XML_NODES = 5000;
 const MAX_XML_DEPTH = 64;
@@ -214,6 +220,39 @@ export const isJsonText = (text: string): boolean => {
   return scan.expect === "after" && scan.depth === 0;
 };
 
+/** Decode JSON string tokens in bounded chunks without constructing the document. */
+export function* jsonStringChunks(
+  text: string,
+  chunkSize = 8192,
+): Generator<{ readonly text: string; readonly first: boolean }> {
+  if (!isJsonText(text)) return;
+  for (let at = 0; at < text.length;) {
+    if (text.charAt(at) !== '"') {
+      at += 1;
+      continue;
+    }
+    const end = jsonStringEnd(text, at);
+    if (end < 0) return;
+    let start = at + 1;
+    let first = true;
+    while (start < end - 1) {
+      let next = start;
+      while (next < end - 1 && next - start < chunkSize) {
+        if (text.charAt(next) === "\\")
+          next += text.charAt(next + 1) === "u" ? 6 : 2;
+        else next += 1;
+      }
+      yield {
+        text: JSON.parse(`"${text.slice(start, next)}"`) as string,
+        first,
+      };
+      first = false;
+      start = next;
+    }
+    at = end;
+  }
+}
+
 /** Whether a file's name or leading text marks it as JSON, which it is if it parses. */
 const namedJson = (path: string, trimmed: string): boolean =>
   path.toLowerCase().endsWith(".json") || /^[[{]/u.test(trimmed);
@@ -221,6 +260,59 @@ const namedJson = (path: string, trimmed: string): boolean =>
 /** Whether a file's name or XML declaration marks it as XML, which it is if it parses. */
 const namedXml = (path: string, trimmed: string): boolean =>
   XML_EXTENSIONS.test(path) || trimmed.startsWith("<?xml");
+
+/**
+ * Whether text opens with an element, as a Freeplane map's `<map version=…>`
+ * without a declaration, or with a DOCTYPE that has no internal subset and
+ * then an element, as KmPlot's `<!DOCTYPE kmpdoc><kmpdoc …>`, so it is XML
+ * if it is well formed, whatever the file is called. A DOCTYPE with an
+ * internal subset, which may declare entities, never opens one.
+ */
+/**
+ * Whether a DOCTYPE before `>` opens an internal subset. A `[` inside a
+ * quoted system or public id, as `state[1].dtd`, does not.
+ */
+const doctypeOpensSubset = (text: string, from: number): boolean => {
+  let quote = "";
+  for (let index = from; index < text.length; index += 1) {
+    const character = text[index] ?? "";
+    if (quote !== "") {
+      if (character === quote) quote = "";
+      continue;
+    }
+    if (character === '"' || character === "'") quote = character;
+    else if (character === "[") return true;
+    else if (character === ">") return false;
+  }
+  return false;
+};
+
+const opensElement = (trimmed: string): boolean => {
+  if (!trimmed.startsWith("<!DOCTYPE") && opensLikeXml(trimmed)) return true;
+  const declared = /^(?:<\?xml[^>]*>\s*)?<!DOCTYPE\b/u.exec(trimmed);
+  if (declared === null) return false;
+  let quote = "";
+  for (let index = declared[0].length; index < trimmed.length; index += 1) {
+    const character = trimmed[index] ?? "";
+    if (quote !== "") {
+      if (character === quote) quote = "";
+      continue;
+    }
+    if (character === '"' || character === "'") quote = character;
+    else if (character === "[") return false;
+    else if (character === ">") {
+      const rest = trimmed.slice(index + 1).trimStart();
+      return opensLikeXml(rest);
+    }
+  }
+  return false;
+};
+
+/** Whether `opening` has a DOCTYPE whose internal subset starts outside quotes. */
+export const doctypeHasInternalSubset = (opening: string): boolean => {
+  const declared = /^(?:<\?xml[^>]*>\s*)?<!DOCTYPE\b/u.exec(opening);
+  return declared !== null && doctypeOpensSubset(opening, declared[0].length);
+};
 
 /**
  * Whether decoded text is JSON or XML as `detectStateFormat` reads it, told
@@ -233,7 +325,10 @@ export const textSyntaxFormat = (
 ): "json" | "xml" | "text" => {
   const trimmed = text.trimStart();
   if (namedJson(path, trimmed) && isJsonText(text)) return "json";
-  if (namedXml(path, trimmed) && isWellFormedXml(text, XML_POLICY))
+  if (
+    (namedXml(path, trimmed) || opensElement(trimmed)) &&
+    isWellFormedXml(text, { doctype: "external" })
+  )
     return "xml";
   return "text";
 };
@@ -258,8 +353,9 @@ export const detectStateFormat = (
       : safeParseJson(text).ok)
   )
     return "json";
-  if (namedXml(path, trimmed))
-    return parseXmlDocument(text, XML_POLICY).ok ? "xml" : "text";
+  // Check syntax without constructing a document for format detection.
+  if (namedXml(path, trimmed) || opensElement(trimmed))
+    return isWellFormedXml(text, XML_POLICY) ? "xml" : "text";
   return isKeyfile(text) ? "keyfile" : "text";
 };
 

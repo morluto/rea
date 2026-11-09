@@ -182,6 +182,9 @@ const PATH_SCOPES = {
   // Four-host installed-package matrix and the Windows curated lane.
   package: [
     ...WINDOWS_EXECUTABLE_SELECTION_INPUTS,
+    // Selected-file spelling requires the real Windows identity workflow.
+    "src/application/binaryDiagnostics/ByteEntropyService.ts",
+    "tests/acceptance/byteEntropyWindowsIdentity.test.ts",
     // Both host compilers must be exercised when their installation, options,
     // or entrypoints change; Linux's accelerated checker cannot stand in for Go.
     "scripts/run-typescript.*",
@@ -630,6 +633,7 @@ const PATH_SCOPES = {
     "src/ghidra/GhidraReleasePolicy.ts",
     "scripts/verify-ghidra-bridge-sources.mjs",
     "tests/conformance/ghidra/ReaArmContextProbe.java",
+    "tests/conformance/ghidra/ReaComputedCallCoverageProbe.java",
     "tests/conformance/ghidra/ReaDecodeProbe.java",
     ".github/workflows/ghidra-bridge-sources.yml",
   ],

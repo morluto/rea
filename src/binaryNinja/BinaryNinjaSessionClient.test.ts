@@ -106,6 +106,41 @@ it.each([
 );
 
 describe("Binary Ninja target binding", () => {
+  it("keeps a digest mismatch when the caller cancels during view restoration", async () => {
+    const { client, producer } = await fixture();
+    await value(client, "list_procedures");
+    producer.rawBytes = Buffer.from(producer.rawBytes).fill(0, 0, 4);
+    const controller = new AbortController();
+    let readRaw = false;
+    producer.beforeCall = (name) => {
+      if (name === "bn_memory_read") readRaw = true;
+      if (readRaw && name === "bn_binary_view_set_active")
+        controller.abort("cancel during restore");
+    };
+    try {
+      const result = await client.execute(
+        "list_procedures",
+        {},
+        { signal: controller.signal },
+      );
+      expect(result).toMatchObject({
+        ok: false,
+        error: {
+          _tag: "ProviderAdapterError",
+          operation: "verify_target",
+          diagnostics: { reason: "target_digest_mismatch" },
+          userMessage: expect.stringContaining(
+            "do not match the selected target",
+          ),
+        },
+      });
+      expect(controller.signal.aborted).toBe(true);
+      expect(producer.active).toBe("view_1");
+    } finally {
+      expect((await client.close()).ok).toBe(true);
+    }
+  });
+
   it("accounts for earlier pages when admitting the next inventory page", async () => {
     const { client, producer } = await fixture();
     await value(client, "list_procedures");

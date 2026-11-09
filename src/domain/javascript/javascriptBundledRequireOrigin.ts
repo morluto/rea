@@ -14,9 +14,10 @@ import { semanticBindingAtRead } from "./javascriptSemanticMutationInitializers.
 import { SEMANTIC_ALIAS_SELECTION_LIMIT } from "./javascriptSemanticResourceLimits.js";
 import { createSemanticModuleInterop } from "./javascriptModuleInterop.js";
 import {
-  semanticRequireOrigin,
+  semanticRequireOriginCandidate,
   type JavaScriptRequireOrigin,
 } from "./javascriptSemanticRequireOrigin.js";
+import type { JavaScriptModuleOrigin } from "./javascriptSemanticIr.js";
 import {
   resolveSemanticBindingState,
   semanticResolutionBlocked,
@@ -42,7 +43,7 @@ interface BootstrapExternals {
   /** Loader bindings with the canonical n.n getter installed before dispatch. */
   readonly interopGetterBindingIds: ReadonlySet<string>;
   /** Table keys whose factory only re-exports one unshadowed literal require; null when a key repeats. */
-  readonly externals: ReadonlyMap<string, string | null>;
+  readonly externals: ReadonlyMap<string, JavaScriptModuleOrigin | null>;
 }
 
 const proofs = new WeakMap<
@@ -63,6 +64,15 @@ export const semanticBundledRequireOrigin = (
   node: t.Node | null | undefined,
   state: JavaScriptSemanticAnalysisState,
 ): JavaScriptRequireOrigin | undefined => {
+  const result = semanticBundledRequireOriginCandidate(node, state);
+  return result?.origin.loaderAuthority === "candidate" ? undefined : result;
+};
+
+/** Retain conditional externals without treating the bootstrap as host proof. */
+export const semanticBundledRequireOriginCandidate = (
+  node: t.Node | null | undefined,
+  state: JavaScriptSemanticAnalysisState,
+): JavaScriptRequireOrigin | undefined => {
   const chain = semanticMemberChain(node);
   const current = chain?.root;
   if (
@@ -80,7 +90,10 @@ export const semanticBundledRequireOrigin = (
     // CommonJS external, invoking that getter yields the exact exports object;
     // bind its identity to the proven registry result while retaining the
     // nested loader call as the source of provenance.
-    const nested = semanticBundledRequireOrigin(current.arguments[0], state);
+    const nested = semanticBundledRequireOriginCandidate(
+      current.arguments[0],
+      state,
+    );
     const loaderBinding = resolveSemanticBindingState(
       state,
       current.callee.object,
@@ -136,11 +149,11 @@ export const semanticBundledRequireOrigin = (
     const proof = bootstrapExternals(ancestor, state);
     if (proof === null || !proof.loaderBindingIds.has(binding.bindingId))
       continue;
-    const specifier = proof.externals.get(key);
-    return typeof specifier === "string"
+    const origin = proof.externals.get(key);
+    return origin !== null && origin !== undefined
       ? {
           origin: {
-            specifier,
+            ...origin,
             importedPath: chain.members,
             resolutionMode: "require",
           },
@@ -299,7 +312,7 @@ const isInstalledBeforeEntryDispatch = (
 };
 
 const bootstrapProofForLoaderCall = (
-  call: t.CallExpression,
+  call: t.CallExpression | t.OptionalCallExpression,
   loaderBindingId: string,
   state: JavaScriptSemanticAnalysisState,
 ): BootstrapExternals | undefined => {
@@ -403,7 +416,7 @@ const proveBootstrapExternals = (
     state,
   );
   if (integrity === undefined) return null;
-  const externals = new Map<string, string | null>();
+  const externals = new Map<string, JavaScriptModuleOrigin | null>();
   for (const { property, factory } of factories) {
     const key = modulePropertyName(property);
     const specifier = integrity.replacedKeys.has(key)
@@ -430,7 +443,7 @@ const proveBootstrapExternals = (
 const externalSpecifier = (
   factory: t.FunctionExpression | t.ArrowFunctionExpression | t.ObjectMethod,
   state: JavaScriptSemanticAnalysisState,
-): string | undefined => {
+): JavaScriptModuleOrigin | undefined => {
   const moduleParameter = javascriptBundlerFactoryRoles(
     factory,
     BOOTSTRAP_RUNTIME,
@@ -474,9 +487,12 @@ const externalSpecifier = (
     target?.bindingId !== moduleBinding.bindingId
   )
     return undefined;
-  const required = semanticRequireOrigin(expression.right, state)?.origin;
+  const required = semanticRequireOriginCandidate(
+    expression.right,
+    state,
+  )?.origin;
   return required !== undefined && required.importedPath.length === 0
-    ? required.specifier
+    ? required
     : undefined;
 };
 

@@ -215,7 +215,7 @@ export class BinaryNinjaSessionClient implements AnalysisClient {
         }),
       );
     } catch (cause: unknown) {
-      return err(this.#failure(operation, cause, options, context));
+      return err(this.#failure(operation, cause, context));
     }
   }
 
@@ -262,18 +262,10 @@ export class BinaryNinjaSessionClient implements AnalysisClient {
   #failure(
     operation: string,
     cause: unknown,
-    options: ExecutionOptions | undefined,
     { parameters, runner, before, after }: FailureContext,
   ): AnalysisError {
     let failure: AnalysisError;
-    if (wasCancelled(options))
-      failure = new AnalysisCancelledError(operation, {
-        cause: options?.signal?.reason,
-        ...(cause instanceof AnalysisError
-          ? { diagnostics: cause.diagnostics }
-          : {}),
-      });
-    else if (
+    if (
       cause instanceof ProviderAdapterError &&
       cause.operation === "transport"
     )
