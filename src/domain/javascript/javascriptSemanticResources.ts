@@ -11,6 +11,7 @@ import type {
 } from "./javascriptSemanticIr.js";
 import {
   isNullishJavaScriptSyntax,
+  readExactJavaScriptLiteral,
   semanticStaticPropertyName,
   unwrapJavaScriptExpression,
 } from "./javascriptAstValues.js";
@@ -558,68 +559,105 @@ const TLS_PROTOCOL_VERSIONS = new Set([
 ]);
 
 /**
+ * The options object `tls.connect` reads for each supported call shape.
+ *
+ * Node accepts `(options)`, `(port, options)`, `(port, host, options)` and
+ * `(path, options)`. Measured on Node 24.22.1, `tls.connect(443, {minVersion: "nope"})`,
+ * `tls.connect(443, "127.0.0.1", {minVersion: "nope"})` and
+ * `tls.connect("/tmp/x.sock", {minVersion: "nope"})` all throw, so an object in any of
+ * those slots is the one to read. A spread argument shifts the position, so it leaves the
+ * answer undecided rather than picking the wrong slot.
+ */
+const tlsOptionsArguments = (
+  node: t.CallExpression | t.OptionalCallExpression,
+): readonly t.ObjectExpression[] | undefined => {
+  const args = node.arguments;
+  if (args.some((argument) => t.isSpreadElement(argument))) return undefined;
+  const objects: t.ObjectExpression[] = [];
+  for (const argument of args) {
+    const value = unwrapJavaScriptExpression(argument as t.Node).node;
+    // Every object literal in the argument list is a candidate; the loop below decides
+    // whether it carries a version member at all.
+    if (t.isObjectExpression(value)) objects.push(value);
+  }
+  return objects;
+};
+
+/**
  * Whether a `tls` options literal carries a protocol version Node rejects.
  *
  * `tls.connect` resolves the version before it opens a socket, so a bad literal throws
  * from the call itself and no socket exists. Measured on Node 24.22.1: `null` and
  * `undefined` are accepted as "not given", every other non-string value throws
  * `ERR_TLS_INVALID_PROTOCOL_VERSION` (a BigInt throws `TypeError`), and a string is
- * accepted only when it is one of `TLS_PROTOCOL_VERSIONS`. Only `tls` reads these
- * members, so `net` is not consulted.
+ * accepted only when it is one of `TLS_PROTOCOL_VERSIONS`. An accepted `minVersion` does
+ * not make a rejected `maxVersion` irrelevant — both are resolved, so both are checked.
+ * Only `tls` reads these members, so `net` is not consulted.
  */
 const rejectsTlsProtocolVersionLiteral = (
   node: t.CallExpression | t.OptionalCallExpression,
   specifier: string,
 ): boolean => {
   if (specifier !== "tls") return false;
-  const first = node.arguments[0];
-  if (first === undefined || t.isSpreadElement(first)) return false;
-  const options = unwrapJavaScriptExpression(first).node;
-  if (!t.isObjectExpression(options)) return false;
-  // A spread or an accessor can install the member without writing it here.
-  if (
-    options.properties.some(
-      (property) =>
-        t.isSpreadElement(property) ||
-        property.computed ||
-        t.isObjectMethod(property),
-    )
-  )
-    return false;
-  for (const member of ["minVersion", "maxVersion"]) {
-    // The last assignment wins, the same way the options object is built.
-    let read: t.Node | undefined;
-    for (const property of options.properties) {
-      if (t.isSpreadElement(property) || t.isObjectMethod(property)) continue;
-      if (
-        semanticStaticPropertyName(property.key, property.computed) !== member
-      )
-        continue;
-      read = property.value;
-    }
-    if (read === undefined) continue;
-    const value = unwrapJavaScriptExpression(read).node;
-    // `null` and `undefined` mean "not given", which Node accepts.
-    if (isNullishJavaScriptSyntax(value)) continue;
-    if (t.isStringLiteral(value))
-      return !TLS_PROTOCOL_VERSIONS.has(value.value);
-    if (t.isTemplateLiteral(value) && value.expressions.length === 0) {
-      const cooked = value.quasis[0]?.value.cooked;
-      if (cooked !== null && cooked !== undefined)
-        return !TLS_PROTOCOL_VERSIONS.has(cooked);
-      continue;
-    }
-    // A non-string literal is never a version name, so the call throws.
+  const objects = tlsOptionsArguments(node);
+  if (objects === undefined) return false;
+  for (const options of objects) {
+    // A spread or an accessor can install the member without writing it here.
     if (
-      t.isNumericLiteral(value) ||
-      t.isBooleanLiteral(value) ||
-      t.isBigIntLiteral(value) ||
-      t.isObjectExpression(value) ||
-      t.isArrayExpression(value) ||
-      t.isRegExpLiteral(value) ||
-      t.isNullLiteral(value)
+      options.properties.some(
+        (property) =>
+          t.isSpreadElement(property) ||
+          property.computed ||
+          t.isObjectMethod(property),
+      )
     )
-      return true;
+      continue;
+    for (const member of ["minVersion", "maxVersion"] as const) {
+      // The last assignment wins, the same way the options object is built.
+      let read: t.Node | undefined;
+      for (const property of options.properties) {
+        if (t.isSpreadElement(property) || t.isObjectMethod(property)) continue;
+        if (
+          semanticStaticPropertyName(property.key, property.computed) !== member
+        )
+          continue;
+        read = property.value;
+      }
+      if (read === undefined) continue;
+      const value = unwrapJavaScriptExpression(read).node;
+      // `null` and `undefined` mean "not given", which Node accepts.
+      if (isNullishJavaScriptSyntax(value)) continue;
+      if (t.isStringLiteral(value)) {
+        if (!TLS_PROTOCOL_VERSIONS.has(value.value)) return true;
+        continue;
+      }
+      if (t.isTemplateLiteral(value) && value.expressions.length === 0) {
+        const cooked = value.quasis[0]?.value.cooked;
+        if (cooked === null || cooked === undefined) continue;
+        if (!TLS_PROTOCOL_VERSIONS.has(cooked)) return true;
+        continue;
+      }
+      // A signed number is the same non-string version Node refuses. The shared literal
+      // reader excludes `-0`, so a `+`/`-` sign over a numeric literal is decided here
+      // rather than left as unknown.
+      if (
+        t.isUnaryExpression(value) &&
+        (value.operator === "+" || value.operator === "-") &&
+        t.isNumericLiteral(unwrapJavaScriptExpression(value.argument).node)
+      )
+        return true;
+      if (readExactJavaScriptLiteral(value).found) return true;
+      // A non-string literal is never a version name, so the call throws.
+      if (
+        t.isNumericLiteral(value) ||
+        t.isBooleanLiteral(value) ||
+        t.isBigIntLiteral(value) ||
+        t.isObjectExpression(value) ||
+        t.isArrayExpression(value) ||
+        t.isRegExpLiteral(value)
+      )
+        return true;
+    }
   }
   return false;
 };

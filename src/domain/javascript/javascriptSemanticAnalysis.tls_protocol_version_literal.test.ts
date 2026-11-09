@@ -22,6 +22,57 @@ const acquisitionsFor = (body: string) =>
     .map(({ kind, method }) => ({ kind, method }));
 
 it.each([
+  [
+    "a rejected maximum beside an accepted minimum",
+    `tls.connect({ port: 80, minVersion: "TLSv1.2", maxVersion: "nope" })`,
+  ],
+  [
+    "a rejected minimum beside an accepted maximum",
+    `tls.connect({ port: 80, minVersion: "nope", maxVersion: "TLSv1.3" })`,
+  ],
+  [
+    "an options object in the port slot",
+    `tls.connect(443, { minVersion: "nope" })`,
+  ],
+  [
+    "an options object after port and host",
+    `tls.connect(443, "127.0.0.1", { minVersion: "nope" })`,
+  ],
+  [
+    "an options object after a Unix path",
+    `tls.connect("/tmp/x.sock", { minVersion: "nope" })`,
+  ],
+  ["a negative version", `tls.connect({ port: 80, minVersion: -1 })`],
+  ["a unary-plus version", `tls.connect({ port: 80, minVersion: +1 })`],
+  ["a negative-zero version", `tls.connect({ port: 80, minVersion: -0 })`],
+  ["a negative maximum", `tls.connect({ port: 80, maxVersion: -1 })`],
+] as const)("emits no socket acquisition for %s", (_name, call) => {
+  // Both members are resolved before the socket opens, so an accepted minimum does not
+  // make a rejected maximum irrelevant. `tls` also reads the options object from every
+  // positional overload. Measured on Node 24.22.1.
+  expect(acquisitionsFor(call)).toEqual([]);
+});
+
+it.each([
+  [
+    "both versions accepted",
+    `tls.connect({ port: 80, minVersion: "TLSv1.2", maxVersion: "TLSv1.3" })`,
+  ],
+  ["a port-slot options object", `tls.connect(443, { minVersion: "TLSv1.2" })`],
+  [
+    "a path-slot options object",
+    `tls.connect("/tmp/x.sock", { minVersion: "TLSv1.3" })`,
+  ],
+  [
+    "a spread argument",
+    `const o = { minVersion: "nope" }; tls.connect(443, ...[o])`,
+  ],
+] as const)("keeps the socket acquisition for %s", (_name, call) => {
+  expect(acquisitionsFor(call)).toEqual([
+    { kind: "acquire", method: "connect" },
+  ]);
+});
+it.each([
   ["an unknown version name", `tls.connect({ port: 80, minVersion: "nope" })`],
   ["the TLSv1.0 spelling", `tls.connect({ port: 80, minVersion: "TLSv1.0" })`],
   ["a lower-case name", `tls.connect({ port: 80, minVersion: "tlsv1.2" })`],
