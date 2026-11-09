@@ -21,7 +21,10 @@ import {
 import { SafeOutputTree } from "../../artifacts/SafeOutputTree.js";
 import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
 import { OwnedFileHandle } from "../../filesystem/OwnedFileHandle.js";
-import { AnalysisOutputError } from "../../domain/analysisErrorCore.js";
+import {
+  AnalysisInputError,
+  AnalysisOutputError,
+} from "../../domain/analysisErrorCore.js";
 import {
   exportEnvironmentBundle,
   readEnvironmentExportInputs,
@@ -585,3 +588,32 @@ it
     }
   },
 );
+
+it("refuses an output destination whose parent path contains a regular file", async () => {
+  const root = await createTestTempDirectory("rea-bundle-parent-file-");
+  const files = await writeEnvironmentServeFiles(root);
+  const inputs = await readEnvironmentExportInputs(
+    files.manifestPath,
+    files.capturePath,
+  );
+  if (!inputs.ok) throw inputs.error;
+  const occupied = join(root, "parentfile");
+  await writeFile(occupied, "keep\n");
+  for (const directory of [
+    join(occupied, "bundle"),
+    join(occupied, "missing", "bundle"),
+  ]) {
+    const result = await exportEnvironmentBundle({
+      ...inputs.value,
+      source: environmentServeSource(),
+      directory,
+    });
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("Expected refusal");
+    expect(result.error).toBeInstanceOf(AnalysisInputError);
+    expect(result.error).toMatchObject({
+      operation: "environment-export",
+      issues: [{ path: ["directory"], reason: "invalid_value" }],
+    });
+  }
+});
