@@ -521,9 +521,11 @@ cliTest(
       await call("inspect_model_artifact", { path }),
     );
     expect(offsetFailure.error).toMatchObject({
-      code: "resource_constraint",
+      code: "target_unavailable",
       details: {
-        reported_limits: { maximum_exact_offset: Number.MAX_SAFE_INTEGER },
+        constraint: "file_format_rejected",
+        path,
+        reason: "Declared extent is outside the file",
       },
     });
   },
