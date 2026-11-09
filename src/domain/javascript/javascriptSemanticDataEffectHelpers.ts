@@ -725,6 +725,7 @@ const BUILTIN_RECEIVER_METHODS: Readonly<Record<string, ReadonlySet<string>>> =
     path: new Set(["resolve", "join", "dirname"]),
     "path/posix": new Set(["resolve", "join", "dirname"]),
     url: new Set(["fileURLToPath"]),
+    vm: new Set(["compileFunction"]),
     fs: new Set([
       "readFile",
       "readFileSync",
