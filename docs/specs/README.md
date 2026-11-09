@@ -30,3 +30,4 @@ for new work, roadmap granularity and producer-owned contracts.
 - [Deno compile executable inventory and extraction](artifacts/deno-standalone/spec.md) ([plan](artifacts/deno-standalone/plan.md), [tasks](artifacts/deno-standalone/tasks.md))
 - [ELF unwind function ranges](native/elf-unwind-ranges/spec.md) ([plan](native/elf-unwind-ranges/plan.md), [tasks](native/elf-unwind-ranges/tasks.md))
 - [Linux kernel build config](native/kernel-build-config/spec.md) ([plan](native/kernel-build-config/plan.md), [tasks](native/kernel-build-config/tasks.md))
+- [Native initializers](native/native-initializers/spec.md) ([plan](native/native-initializers/plan.md), [tasks](native/native-initializers/tasks.md))

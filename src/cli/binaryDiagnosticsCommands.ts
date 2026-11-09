@@ -10,6 +10,7 @@ import {
   createRecordedCrashService,
   createBinaryLayoutService,
   createElfNotesService,
+  createNativeInitializersService,
   createElfUnwindRangesService,
   createAppleIpsService,
   createDevicetreeService,
@@ -36,6 +37,8 @@ import { inspectPeImportsInputSchema } from "../domain/native/peImports.js";
 import { inspectWindowsShortcutInputSchema } from "../domain/native/windowsShortcut.js";
 import { inspectNativeExportsInputSchema } from "../domain/native/nativeExports.js";
 import { inspectElfNotesInputSchema } from "../domain/native/elfNotes.js";
+import { inspectNativeInitializersInputSchema } from "../domain/native/nativeInitializers.js";
+import { machoSliceArchitectureSchema } from "../domain/apple/machoTargetSelection.js";
 import { inspectElfUnwindRangesInputSchema } from "../domain/native/elfUnwindRanges.js";
 import { inspectAppleIpsInputSchema } from "../domain/native/appleIps.js";
 import { inspectKernelModuleInputSchema } from "../domain/native/kernelModule.js";
@@ -94,6 +97,59 @@ export const registerBinaryDiagnosticsCommands = (
         );
       }),
   });
+  cli.command(CLI_COMMANDS.inspectNativeInitializers, {
+    description:
+      "List ELF and Mach-O initializer and finalizer functions without executing the image",
+    args: z.object({
+      path: localPathStringSchema.describe(
+        "Local ELF32/ELF64, thin Mach-O or universal Mach-O image",
+      ),
+    }),
+    options: z.object({
+      maxFileBytes: cliDecimalField(
+        inspectNativeInitializersInputSchema.shape.max_file_bytes,
+      ),
+      offset: cliDecimalField(
+        inspectNativeInitializersInputSchema.shape.offset,
+      ),
+      limit: cliDecimalField(inspectNativeInitializersInputSchema.shape.limit),
+      architecture: machoSliceArchitectureSchema
+        .optional()
+        .describe(
+          "CPU family of the slice to read from a universal Mach-O; required for universal files",
+        ),
+    }),
+    run: ({ args, options }) =>
+      withCommandCancellation(async (signal) => {
+        const initializers = createNativeInitializersService();
+        return await logCliCommand(
+          logger,
+          CLI_COMMANDS.inspectNativeInitializers,
+          async () =>
+            finishCliEvidenceCommand(
+              args.path,
+              () =>
+                initializers.inspect(
+                  {
+                    path: absoluteCallerPath(args.path),
+                    max_file_bytes: options.maxFileBytes,
+                    offset: options.offset,
+                    limit: options.limit,
+                    ...(options.architecture === undefined
+                      ? {}
+                      : { architecture: options.architecture }),
+                  },
+                  { signal },
+                ),
+              initializers,
+              "rea-native-initializers",
+              "inspect_native_initializers",
+              signal,
+            ).then(projectCliAnalysisResult),
+        );
+      }),
+  });
+
   cli.command(CLI_COMMANDS.inspectElfUnwindRanges, {
     description:
       "Inspect ELF unwind function ranges without executing the image",

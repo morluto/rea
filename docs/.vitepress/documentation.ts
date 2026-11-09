@@ -44,6 +44,11 @@ export const documentationSections = [
         route: "/binary-diagnostics",
       },
       {
+        text: "ELF and Mach-O initializer functions",
+        source: "guides/native/native-initializers.md",
+        route: "/native-initializers",
+      },
+      {
         text: "ELF unwind function ranges",
         source: "guides/native/elf-unwind-ranges.md",
         route: "/elf-unwind-ranges",

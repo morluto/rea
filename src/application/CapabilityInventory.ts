@@ -630,6 +630,7 @@ const workflowAvailabilityFor = (
     return { reason: "available", remediation: null };
   if (
     name === "inspect_elf_notes" ||
+    name === "inspect_native_initializers" ||
     name === "inspect_elf_unwind_ranges" ||
     name === "inspect_devicetree" ||
     name === "inspect_kernel_module" ||
