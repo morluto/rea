@@ -15,3 +15,5 @@ for the specification lifecycle, roadmap granularity and producer-owned contract
 
 - [Go static string-header literal recovery](native/go-string-literals/spec.md)
   ([plan](native/go-string-literals/plan.md), [tasks](native/go-string-literals/tasks.md))
+- [Linux kernel build config](native/kernel-build-config/spec.md)
+  ([plan](native/kernel-build-config/plan.md), [tasks](native/kernel-build-config/tasks.md))

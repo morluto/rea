@@ -83,6 +83,7 @@ import {
   createElfNotesService,
   createAppleIpsService,
   createKernelModuleService,
+  createKernelBuildConfigService,
 } from "./binaryDiagnostics.js";
 
 import type { PacketCaptureService } from "../application/captures/PacketCaptureService.js";
@@ -362,6 +363,7 @@ const modules = {
   elfNotes: service(() => createElfNotesService()),
   appleIps: service(() => createAppleIpsService()),
   kernelModule: service(() => createKernelModuleService()),
+  kernelBuildConfig: service(() => createKernelBuildConfigService()),
   peLoadConfig: service(() => createPeLoadConfigService()),
   binaryHardening: service(() => createBinaryHardeningService()),
   peCertificates: service(() => createPeCertificatesService()),
