@@ -948,6 +948,11 @@ describe("setup cancellation during installation and cleanup", () => {
     expect(received).toBe(controller.signal);
     expect(failure).toBeInstanceOf(AnalysisCancelledError);
     expect(failure).toMatchObject({ cause: reason });
+    expect((failure as AnalysisCancelledError).diagnostics).toMatchObject({
+      setup_progress: {
+        hopperOutcome: { status: "failed", code: "setup_cancelled" },
+      },
+    });
     expect(host.configurations).toBe(0);
   });
 
