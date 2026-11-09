@@ -3,9 +3,11 @@ import { dexDescriptorSchema } from "./dexTypes.js";
 
 const count = z.int().nonnegative().safe();
 
-/** The most rows one request returns; the full inventory is counted, not listed. */
-export const ANDROID_KOTLIN_METADATA_MAX_ROWS = 500;
-/** Rows returned when the caller selects no limit. */
+/** The most classes complete delivery lists inline. */
+export const ANDROID_KOTLIN_METADATA_INLINE_ROWS = 500;
+/** The most classes a retained inventory can hold; a 4 MiB byte allowance may stop earlier. */
+export const ANDROID_KOTLIN_METADATA_RETAINED_ROWS = 100_000;
+/** Rows listed when the caller selects no limit. */
 export const ANDROID_KOTLIN_METADATA_DEFAULT_ROWS = 100;
 
 /** Caller selection; an exact class selects the one decoded declaration. */
@@ -27,10 +29,10 @@ export const androidKotlinMetadataSelectionSchema = z.strictObject({
   limit: z
     .int()
     .min(1)
-    .max(ANDROID_KOTLIN_METADATA_MAX_ROWS)
+    .max(ANDROID_KOTLIN_METADATA_INLINE_ROWS)
     .optional()
     .describe(
-      `Maximum listed classes (default ${ANDROID_KOTLIN_METADATA_DEFAULT_ROWS}, maximum ${ANDROID_KOTLIN_METADATA_MAX_ROWS})`,
+      `Maximum listed classes (default ${ANDROID_KOTLIN_METADATA_DEFAULT_ROWS}, maximum ${ANDROID_KOTLIN_METADATA_INLINE_ROWS})`,
     ),
 });
 

@@ -49,6 +49,9 @@ export const readAndroidKotlinMetadata = async (
     sum(facts.kinds) !== sum(facts.versions) ||
     facts.matching_classes > coverage.classes_with_metadata ||
     facts.classes.length > Math.min(limit, facts.matching_classes) ||
+    // A shortfall below the requested limit must be an explicit retained-allowance gap.
+    (facts.classes.length < Math.min(limit, facts.matching_classes) &&
+      facts.unknowns.length === 0) ||
     (coverage.status === "complete" &&
       (coverage.examined_dex_entries !== coverage.dex_entries ||
         facts.unknowns.length !== 0)) ||

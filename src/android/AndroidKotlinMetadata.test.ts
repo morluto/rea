@@ -125,7 +125,7 @@ it("keeps a malformed annotation as an explicit undecodable row", async () => {
   source.coverage.undecodable_classes = 1;
   source.versions = [{ version: "2.1.0", classes: 2 }];
   source.kinds = [{ kind: "class", classes: 2 }];
-  source.matching_classes = 2;
+  source.matching_classes = 1;
   source.classes = [
     {
       class_name: "fixture.Broken",
@@ -158,6 +158,9 @@ it("keeps usable facts and explicit incomplete DEX coverage", async () => {
 });
 
 it.each([
+  (source: ReturnType<typeof facts>) => {
+    source.matching_classes = 3;
+  },
   (source: ReturnType<typeof facts>) => {
     source.coverage.examined_dex_entries = 2;
   },

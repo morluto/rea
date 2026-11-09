@@ -434,7 +434,8 @@ class ReaJadxBridge {
   }
 
   // ---- Kotlin metadata -------------------------------------------------------
-  private static final int KOTLIN_ROW_LIMIT = 500;
+  /** Rows are bounded by the retained JSON allowance as well as by the caller's limit. */
+  private static final int KOTLIN_ROW_LIMIT = 100_000;
   private static final int KOTLIN_MEMBER_LIMIT = 200;
 
   /** Raw `k` value of kotlin.Metadata; unrecognized values stay visible as "unknown". */
@@ -572,6 +573,8 @@ class ReaJadxBridge {
     Map<String, Integer> versions = new TreeMap<>();
     Map<String, Integer> kinds = new TreeMap<>();
     int[] counters = new int[6]; // entries, examined entries, classes, with metadata, undecodable, matching
+    long[] retainedBytes = {2048};
+    boolean[] allowanceReached = {false};
     readRootDexMembers(apk, "Kotlin metadata", "APK ZIP Kotlin metadata inventory could not finish its reader",
         new RootDexAccounting() {
           @Override public void dexEntryFound() { counters[0]++; }
@@ -642,7 +645,18 @@ class ReaJadxBridge {
                   : packagePrefix == null || className.startsWith(packagePrefix);
               if (selected) {
                 counters[5]++;
-                if (rows.size() < rowLimit) rows.add(row);
+                if (rows.size() < rowLimit && !allowanceReached[0]) {
+                  // The serialized row is escaped again inside the MCP frame, which doubles quoting.
+                  long bytes = 2L * JSON.toJson(row).length();
+                  if (retainedBytes[0] + bytes > NATIVE_JSON_BYTES - 4096) {
+                    allowanceReached[0] = true;
+                    if (unknowns.size() < 16) unknowns.add(
+                        "Kotlin metadata rows exceed the 4 MiB retained JSON allowance; remaining matching classes are counted but not listed. Narrow with package_prefix to list them.");
+                  } else {
+                    retainedBytes[0] += bytes;
+                    rows.add(row);
+                  }
+                }
               }
             }
           }

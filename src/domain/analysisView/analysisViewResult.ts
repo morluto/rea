@@ -291,6 +291,11 @@ import {
   androidMethodSummarySchema,
 } from "./androidSymbolView.js";
 import { androidJniSummarySchema } from "./androidJniView.js";
+import { androidKotlinSummarySchema } from "./androidKotlinView.js";
+import {
+  androidKotlinViewRequestSchema,
+  androidKotlinViewItemsSchema,
+} from "../android/androidKotlinQuery.js";
 import {
   androidJniViewRequestSchema,
   androidJniViewItemsSchema,
@@ -385,6 +390,7 @@ const viewResultBase = {
     "inspect_android_class",
     "inspect_android_method",
     "inspect_android_jni_bindings",
+    "inspect_android_kotlin_metadata",
     "inspect_pcap_capture",
     "inspect_dart_aot",
     "inspect_il2cpp_metadata",
@@ -715,6 +721,23 @@ export const androidJniSummaryViewResultSchema = z.strictObject({
   ...summaryViewResultBase,
   parent_operation: z.literal("inspect_android_jni_bindings"),
   summary: androidJniSummarySchema,
+});
+export const androidKotlinSummaryViewResultSchema = z.strictObject({
+  ...summaryViewResultBase,
+  parent_operation: z.literal("inspect_android_kotlin_metadata"),
+  summary: androidKotlinSummarySchema,
+});
+export const androidKotlinPageViewResultSchema = z.strictObject({
+  ...viewResultBase,
+  kind: z.literal("android-kotlin"),
+  parent_operation: z.literal("inspect_android_kotlin_metadata"),
+  view: androidKotlinViewRequestSchema,
+  items: androidKotlinViewItemsSchema,
+  source: z.strictObject({
+    coverage: androidKotlinSummarySchema.shape.coverage,
+    matching_classes: z.int().nonnegative(),
+    retained_classes: z.int().nonnegative(),
+  }),
 });
 export const androidJniPageViewResultSchema = z.strictObject({
   ...viewResultBase,
@@ -1359,6 +1382,7 @@ export const analysisViewResultSchema = z.discriminatedUnion("kind", [
     browserScenarioSummaryViewResultSchema,
     androidPackageSummaryViewResultSchema,
     androidJniSummaryViewResultSchema,
+    androidKotlinSummaryViewResultSchema,
     androidClassSummaryViewResultSchema,
     androidMethodSummaryViewResultSchema,
     pcapCaptureSummaryViewResultSchema,
@@ -1546,6 +1570,7 @@ export const analysisViewResultSchema = z.discriminatedUnion("kind", [
   }),
   androidPackageViewResultSchema,
   androidJniPageViewResultSchema,
+  androidKotlinPageViewResultSchema,
   z.strictObject({
     kind: z.literal("dart-aot"),
     view: dartAotViewRequestSchema,
