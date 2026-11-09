@@ -11,7 +11,7 @@ v26.11.0. We acquired eight public shipped maps from
 These eight preload-selected maps total 18,319,814 bytes and 834,659 structural
 records; they are not the complete eleven-map scope of the issue. Pinned URLs,
 SHA-256 values, counts and independently decoded lookup expectations are in
-[artifacts.json](source-map-budgets-2026-11-09/artifacts.json).
+[artifacts.json](https://github.com/morluto/rea/blob/main/docs/verification/source-map-budgets-2026-11-09/artifacts.json).
 
 The completed point task reads and verifies a selected generated script, analyst
 manifest and map, runs the actual owned source codec, checks every equal-position
@@ -28,7 +28,7 @@ Each cell below is the median of three fresh-process runs. A baseline call uses
 candidate selects 8 MiB on its first call. Other policies are identical. All
 18 point runs exit successfully, verify the oracle and leave their process groups
 empty. The baseline source snapshot and individual measurements/digests are in
-[measurements.json](source-map-budgets-2026-11-09/measurements.json).
+[measurements.json](https://github.com/morluto/rea/blob/main/docs/verification/source-map-budgets-2026-11-09/measurements.json).
 
 | Map / workflow               | Calls | Estimated task tokens | Wall s | CPU s | Sampled host-group RSS MiB |
 | ---------------------------- | ----: | --------------------: | -----: | ----: | -------------------------: |

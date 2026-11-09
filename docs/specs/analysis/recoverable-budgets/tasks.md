@@ -112,7 +112,7 @@ test files exactly once; architecture guards passed across 2,696 source files.
 The runtime/skill build, type/lint and generated-documentation checks passed.
 The retained native Ghidra lane was rerun against the integrated code and again
 confirmed live budget recovery, unchanged target bytes, Program continuity and
-cleanup; see its [integration receipt](../../../verification/runtime-analysis-settings-ghidra-integration-2026-11-09.json).
+cleanup; see its [integration receipt](https://github.com/morluto/rea/blob/main/docs/verification/runtime-analysis-settings-ghidra-integration-2026-11-09.json).
 Historical calibration and earlier receipts retain their original runtime pins;
 they are not performance measurements of the integrated head. `check:pr` was
 not run.

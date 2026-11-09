@@ -19,7 +19,7 @@ The task returns every alternative at one generated point, preserving source/map
 identity and original source positions, plus a 512 UTF-16-code-unit snippet around
 each mapped point. Inputs are the pinned public Actual Budget Theme, main
 `index.CMrE7aQb`, and `DateSelect.BVYaCNUe` maps and generated scripts in the existing
-[artifact manifest](source-map-budgets-2026-11-09/artifacts.json). Acquisition used
+[artifact manifest](https://github.com/morluto/rea/blob/main/docs/verification/source-map-budgets-2026-11-09/artifacts.json). Acquisition used
 verified cached public bytes and the existing acquisition helper's explicitly
 incomplete analyst-manifest construction. No application or browser was executed.
 The independent [VLQ oracle](https://github.com/morluto/rea/blob/main/docs/verification/source-map-budgets-2026-11-09/oracle.py) supplies the
