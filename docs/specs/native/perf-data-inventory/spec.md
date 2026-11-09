@@ -50,6 +50,13 @@ byte order or size.
 
 ## Authority and overlap
 
+An attribute extent that reaches into the declared file header is reported as
+`header-attribute-overlap`, which names the header rather than claiming the
+attribute and data extents collide. An `attr_size` above JavaScript's
+safe-integer range is reported as `unsafe-attribute-size`, and
+`file_header.attribute_bytes` stays null rather than publishing a stride of
+zero that the file did not state.
+
 Reads the selected local file only. CLI accepts a local path; MCP requires an
 absolute path on the current host. No provider is contacted and no target is
 executed or replayed. Delivery is the complete inventory: this operation has no

@@ -65,6 +65,8 @@ interface DecodeState {
   readonly maxEvents: number;
   eventLimitReported: boolean;
   diagnosticsSuppressed: boolean;
+  /** Some input was left unexamined; an informational diagnostic is not that. */
+  incomplete: boolean;
   /** Identifiers read so far; an unusable section leaves a group's count unknown. */
   identifiers: number;
   /** Every retained identifier, to bound the total across entries. */
@@ -90,6 +92,9 @@ const diagnose = (
     return;
   }
   state.diagnostics.push({ ordinal, code, message });
+  // `empty-attribute-section` states the recording carries no events; nothing
+  // was left unexamined, so it must not turn a complete inventory partial.
+  if (code !== "empty-attribute-section") state.incomplete = true;
 };
 
 /** Endianness-aware fixed-width field readers over the whole file. */
@@ -141,21 +146,38 @@ const swapBitfield = (word: bigint): bigint => {
   return swapped;
 };
 
+/** A zero extent the parser reports when it never trusted a section header. */
+const INERT_SECTION: Section = { offset: 0, size: 0, within_file: false };
+
 interface Section {
   readonly offset: number;
   readonly size: number;
   readonly within_file: boolean;
 }
 
-const sectionAt = (
-  bytes: Buffer,
-  read: Reader,
-  field: number,
-): Section | null => {
+/**
+ * A section header as it was read. A fully present extent above
+ * Number.MAX_SAFE_INTEGER is read, just not comparable, so it is reported back
+ * as its own fact instead of as a header that could not be read at all.
+ */
+type SectionRead = {
+  readonly section: Section | null;
+  readonly unrepresentable: boolean;
+};
+
+const sectionAt = (bytes: Buffer, read: Reader, field: number): SectionRead => {
   const offset = read.u64(bytes, field);
   const size = read.u64(bytes, field + 8);
-  if (offset === null || size === null) return null;
-  return { offset, size, within_file: withinFile(bytes.length, offset, size) };
+  if (offset === null || size === null)
+    return { section: null, unrepresentable: true };
+  return {
+    section: {
+      offset,
+      size,
+      within_file: withinFile(bytes.length, offset, size),
+    },
+    unrepresentable: false,
+  };
 };
 
 /**
@@ -195,6 +217,9 @@ const readEvents = (
         "truncated-event-attribute",
         `The attribute section ends ${stride - (end - cursor)} bytes into the entry at ${cursor}; it was not read.`,
       );
+      // The walk stopped early: later entries can carry identifiers this pass
+      // never saw, so the retained list is a prefix rather than the inventory.
+      state.identifiersPresent = false;
       return;
     }
     const declared = read.u32(bytes, cursor + ATTR_SIZE_OFFSET);
@@ -208,14 +233,18 @@ const readEvents = (
         "unsupported-attribute-size",
         `The entry at ${cursor} declares a ${declared}-byte attribute, which cannot fit the ${stride}-byte stride.`,
       );
+      // Same early stop as a truncated entry: the entries behind this one were
+      // never examined, so the identifier inventory stays incomplete.
+      state.identifiersPresent = false;
       return;
     }
     const ordinal = state.events.length;
-    const ids = sectionAt(
+    const idsRead = sectionAt(
       bytes,
       read,
       cursor + stride - PERF_FILE_SECTION_BYTES,
     );
+    const ids = idsRead.section;
     if (ids === null) {
       diagnose(
         state,
@@ -226,7 +255,11 @@ const readEvents = (
     }
     const idsList: number[] = [];
     let idsTruncated = false;
-    if (ids !== null) {
+    if (ids === null) {
+      // The entry names an ids section, so this group's identifiers exist even
+      // though the extent that locates them could not be read.
+      state.identifiersPresent = false;
+    } else {
       // The writer places the id arrays outside the attribute entries, so an
       // offset inside the entry is not required; containment in the file is.
       if (ids.size % 8 !== 0 || !ids.within_file) {
@@ -242,6 +275,13 @@ const readEvents = (
         for (let at = ids.offset; at < ids.offset + ids.size; at += 8) {
           if (state.identified.length >= MAX_RETAINED_IDENTIFIERS) {
             idsTruncated = true;
+            state.identifiersPresent = false;
+            diagnose(
+              state,
+              ordinal,
+              "identifier-inventory-truncated",
+              `The retained identifier inventory reached its ${String(MAX_RETAINED_IDENTIFIERS)}-identifier allowance, so this and later identifiers in the extent were not retained.`,
+            );
             break;
           }
           const id = read.u64(bytes, at);
@@ -328,8 +368,8 @@ const emptyRecording = (
     attribute_bytes: 0,
     feature_bitmap: "absent",
   },
-  attribute_section: { offset: 0, size: 0, within_file: false },
-  data_section: { offset: 0, size: 0, within_file: false },
+  attribute_section: INERT_SECTION,
+  data_section: INERT_SECTION,
   events: [],
   diagnostics: withIds(diagnostics, artifact.sha256, 0),
   summary: {
@@ -387,6 +427,7 @@ export const parsePerfData = (
     maxEvents: options.maxEvents,
     eventLimitReported: false,
     diagnosticsSuppressed: false,
+    incomplete: false,
     identifiers: 0,
     identified: [],
     identifiersPresent: true,
@@ -422,39 +463,63 @@ export const parsePerfData = (
     );
     return ok(emptyRecording(artifact, state.diagnostics, order));
   }
-  const stride = read.u64(bytes, ATTR_SIZE_FIELD) ?? 0;
-  const attributeSection = sectionAt(bytes, read, ATTRS_SECTION_FIELD);
-  const dataSection = sectionAt(bytes, read, DATA_SECTION_FIELD);
-  if (attributeSection === null || dataSection === null) {
+  const rawStride = read.u64(bytes, ATTR_SIZE_FIELD);
+  // A present-but-unrepresentable field stays unknown instead of becoming the
+  // zero-byte stride a different diagnostic would report.
+  const stride = rawStride ?? 0;
+  const attributeRead = sectionAt(bytes, read, ATTRS_SECTION_FIELD);
+  const dataRead = sectionAt(bytes, read, DATA_SECTION_FIELD);
+  const attributeSection = attributeRead.section;
+  const dataSection = dataRead.section;
+  if (
+    attributeSection === null ||
+    dataSection === null ||
+    attributeRead.unrepresentable ||
+    dataRead.unrepresentable
+  ) {
     diagnose(
       state,
       null,
-      "truncated-header",
-      "The attribute or data section header could not be read.",
+      "unsafe-section-extent",
+      "The attribute or data section extent exceeds Number.MAX_SAFE_INTEGER, so its range cannot be compared with the file.",
     );
     return ok(emptyRecording(artifact, state.diagnostics, order));
   }
+  const attributeInHeader =
+    attributeSection.size > 0 &&
+    attributeSection.offset < (headerBytes ?? HEADER_BYTES_WITHOUT_FEATURES);
   const attributeFits =
     attributeSection.within_file &&
     // The file header precedes the sections; bytes inside it are not attributes.
+    !attributeInHeader &&
+    // An empty extent owns no bytes, so it cannot overlap another section:
+    // a zero-length data section between attribute entries is not a conflict.
     !(
       attributeSection.size > 0 &&
-      attributeSection.offset < (headerBytes ?? HEADER_BYTES_WITHOUT_FEATURES)
-    ) &&
-    !(
-      attributeSection.offset <= dataSection.offset &&
-      attributeSection.offset + attributeSection.size > dataSection.offset
-    ) &&
-    !(
-      attributeSection.offset > dataSection.offset &&
-      dataSection.offset + dataSection.size > attributeSection.offset
+      dataSection.size > 0 &&
+      ((attributeSection.offset <= dataSection.offset &&
+        attributeSection.offset + attributeSection.size > dataSection.offset) ||
+        (attributeSection.offset > dataSection.offset &&
+          dataSection.offset + dataSection.size > attributeSection.offset))
     );
+  // A rejected attribute extent means no entry was examined, so the recording
+  // states no identifier inventory this pass can defend. Reporting `true` with
+  // a zero count would present an unread section as a complete empty one.
+  if (!attributeFits && attributeSection.size > 0)
+    state.identifiersPresent = false;
   if (!attributeSection.within_file)
     diagnose(
       state,
       null,
       "invalid-attribute-section",
       `The attribute section declares bytes ${attributeSection.offset}..${attributeSection.offset + attributeSection.size}, past the ${bytes.length}-byte file.`,
+    );
+  else if (attributeInHeader)
+    diagnose(
+      state,
+      null,
+      "header-attribute-overlap",
+      `The attribute section declares bytes ${attributeSection.offset}..${attributeSection.offset + attributeSection.size} inside the ${String(headerBytes)}-byte file header, so the attribute extent is not trusted.`,
     );
   else if (!attributeFits)
     diagnose(
@@ -469,6 +534,13 @@ export const parsePerfData = (
       null,
       "empty-attribute-section",
       "The attribute section is empty; the recording states no events.",
+    );
+  else if (rawStride === null)
+    diagnose(
+      state,
+      null,
+      "unsafe-attribute-size",
+      `The attribute entry stride exceeds Number.MAX_SAFE_INTEGER, so the recorded value cannot be represented and the events were not read.`,
     );
   else if (stride <= 0 || stride < ATTR_SIZE_MIN + PERF_FILE_SECTION_BYTES)
     diagnose(
@@ -492,7 +564,7 @@ export const parsePerfData = (
       magic: "PERFILE2",
       byte_order: order,
       header_bytes: headerBytes,
-      attribute_bytes: stride,
+      attribute_bytes: rawStride,
       feature_bitmap:
         headerBytes === HEADER_BYTES_WITH_FEATURES ? "present" : "absent",
     },
@@ -506,11 +578,7 @@ export const parsePerfData = (
       identifiers_present: state.identifiersPresent,
       diagnostics: state.diagnostics.length,
     },
-    source_coverage: coverage(
-      !state.eventLimitReported &&
-        !state.diagnosticsSuppressed &&
-        state.diagnostics.length === 0,
-    ),
+    source_coverage: coverage(!state.incomplete),
     limitations: LIMITATIONS,
   });
 };

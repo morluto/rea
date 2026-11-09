@@ -191,6 +191,22 @@ describe("parsePerfData event attributes", () => {
     ]);
   });
 
+  it("marks the inventory incomplete when an ids section cannot be located", () => {
+    const bytes = buildPerfRecording();
+    // An offset above the safe-integer range is unreadable, not absent: the
+    // group still owns identifiers this pass never saw.
+    bytes.writeBigUInt64LE(
+      0xffffffffffffffffn,
+      PERF_HEADER_BYTES + PERF_ATTR_BYTES,
+    );
+    const archive = parsed(bytes);
+    expect(archive.events[0]?.ids).toEqual([]);
+    expect(archive.summary.identifiers_present).toBe(false);
+    expect(archive.diagnostics).toEqual([
+      expect.objectContaining({ code: "invalid-ids-section", ordinal: 0 }),
+    ]);
+  });
+
   it("rejects an attribute that declares less than a usable event", () => {
     const bytes = buildPerfRecording();
     bytes.writeUInt32LE(8, PERF_HEADER_BYTES + 0x04);
@@ -208,12 +224,95 @@ describe("parsePerfData event attributes", () => {
   });
 });
 
+describe("parsePerfData section accounting", () => {
+  it("reports a header overlap as the header's fault, not the data extent's", () => {
+    const bytes = buildPerfRecording();
+    // Point the attribute extent at bytes inside the file header while the data
+    // extent stays disjoint: only the header rule is broken.
+    bytes.writeBigUInt64LE(BigInt(PERF_HEADER_BYTES - 8), 0x18);
+    const archive = parsed(bytes);
+    expect(archive.diagnostics).toEqual([
+      expect.objectContaining({ code: "header-attribute-overlap" }),
+    ]);
+    expect(archive.diagnostics.map(({ code }) => code)).not.toContain(
+      "attribute-section-overlap",
+    );
+  });
+
+  it("keeps an unrepresentable attribute stride unknown instead of zero", () => {
+    const bytes = buildPerfRecording();
+    bytes.writeBigUInt64LE(0xffffffffffffffffn, 0x10);
+    const archive = parsed(bytes);
+    expect(archive.file_header.attribute_bytes).toBeNull();
+    expect(archive.events).toEqual([]);
+    expect(archive.diagnostics).toEqual([
+      expect.objectContaining({ code: "unsafe-attribute-size" }),
+    ]);
+  });
+
+  it("reports an explicitly empty attribute section as complete", () => {
+    const bytes = buildPerfRecording({ entries: [] });
+    const archive = parsed(bytes);
+    expect(archive.diagnostics).toEqual([
+      expect.objectContaining({ code: "empty-attribute-section" }),
+    ]);
+    // Nothing was left unexamined, so the informational diagnostic must not
+    // present a fully read empty inventory as partial.
+    expect(archive.summary.identifiers_present).toBe(true);
+    expect(archive.source_coverage.status).toBe("complete-within-scope");
+  });
+
+  it("treats a zero-length data extent as empty rather than overlapping", () => {
+    const bytes = buildPerfRecording();
+    // A zero-size data section that starts inside the attribute extent owns no
+    // bytes, so it cannot conflict with the attributes that do.
+    bytes.writeBigUInt64LE(BigInt(PERF_HEADER_BYTES), 0x28);
+    bytes.writeBigUInt64LE(0n, 0x30);
+    const archive = parsed(bytes);
+    expect(archive.diagnostics.map(({ code }) => code)).not.toContain(
+      "attribute-section-overlap",
+    );
+    expect(archive.events).toHaveLength(1);
+    expect(archive.summary.identifiers_present).toBe(true);
+  });
+
+  it("reports an unrepresentable section extent as its own fact", () => {
+    const bytes = buildPerfRecording();
+    bytes.writeBigUInt64LE(0xffffffffffffffffn, 0x30);
+    const archive = parsed(bytes);
+    // The field was present and read; nothing is missing from the file, so this
+    // must not be reported as a truncated header.
+    expect(archive.diagnostics).toEqual([
+      expect.objectContaining({ code: "unsafe-section-extent" }),
+    ]);
+    expect(archive.diagnostics.map(({ code }) => code)).not.toContain(
+      "truncated-header",
+    );
+  });
+
+  it("marks the identifier inventory incomplete when its allowance truncates it", () => {
+    const ids = Array.from({ length: 200_001 }, (_unused, index) => index + 1);
+    const archive = parsed(
+      buildPerfRecording({ entries: [perfEntry({ ids })] }),
+    );
+    expect(archive.events[0]?.ids_truncated).toBe(true);
+    expect(archive.summary.identifiers_present).toBe(false);
+    expect(archive.diagnostics).toEqual([
+      expect.objectContaining({ code: "identifier-inventory-truncated" }),
+    ]);
+    expect(archive.source_coverage.status).not.toBe("complete-within-scope");
+  });
+});
+
 describe("parsePerfData attribute widths", () => {
   it("reads the id descriptor at the end of the entry stride", () => {
-    // `attr_size` is the writer's stride; `perf_event_attr.size` may be smaller.
-    const bytes = buildPerfRecording({ attrBytes: 64 });
+    // Keep the normal stride and shrink only the declared `perf_event_attr.size`.
+    // Shrinking `attrBytes` shrinks the stride with it, so the descriptor sits at
+    // the same offset either way and the case cannot tell the two apart.
+    const bytes = buildPerfRecording();
+    bytes.writeUInt32LE(64, PERF_HEADER_BYTES + 0x04);
     const archive = parsed(bytes);
-    expect(archive.file_header.attribute_bytes).toBe(80);
+    expect(archive.file_header.attribute_bytes).toBe(PERF_STRIDE);
     expect(archive.events[0]?.attr_bytes).toBe(64);
     expect(archive.events[0]?.ids).toEqual([7]);
     expect(archive.diagnostics).toEqual([]);
@@ -339,5 +438,36 @@ describe("parsePerfData attribute widths", () => {
       PERF_HEADER_BYTES + 0x08,
     );
     expect(parsed(bytes).events[0]?.config).toBe(null);
+  });
+});
+
+describe("parsePerfData identifier completeness", () => {
+  it("does not report an empty, truncated entry as a complete inventory", () => {
+    const bytes = buildPerfRecording({
+      entries: [perfEntry(), perfEntry({ ids: [7, 8] })],
+    });
+    // Shrink the attribute section so the second entry cannot fit: its ids are
+    // never examined, and the retained list is only a prefix.
+    const firstStride = PERF_STRIDE;
+    bytes.writeBigUInt64LE(BigInt(firstStride + 8), 0x20);
+    const archive = parsed(bytes);
+    expect(archive.events).toHaveLength(1);
+    expect(archive.diagnostics).toEqual([
+      expect.objectContaining({ code: "truncated-event-attribute" }),
+    ]);
+    expect(archive.summary.identifiers_present).toBe(false);
+  });
+
+  it("does not report a rejected attribute section as a complete inventory", () => {
+    const bytes = buildPerfRecording();
+    // Point the attribute section past the end of the file: no entry is
+    // examined, so the identifier inventory cannot be called complete.
+    bytes.writeBigUInt64LE(0xffffn, 0x18);
+    const archive = parsed(bytes);
+    expect(archive.events).toEqual([]);
+    expect(archive.diagnostics).toEqual([
+      expect.objectContaining({ code: "invalid-attribute-section" }),
+    ]);
+    expect(archive.summary.identifiers_present).toBe(false);
   });
 });
