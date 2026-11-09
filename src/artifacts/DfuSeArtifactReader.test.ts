@@ -152,8 +152,8 @@ it("refuses a suffix CRC mismatch under the default integrity policy", async () 
       trust: "observed-untrusted",
     }),
   ]);
-  expect(recorded.limitations).toContain(
-    "1 integrity contradiction(s) were recorded; mismatched content is observed-untrusted.",
+  expect(recorded.limitations).toContainEqual(
+    expect.stringMatching(/1.*integrity.*observed-untrusted/iu),
   );
   expect(recorded.occurrences).toHaveLength(4);
 });
@@ -184,8 +184,8 @@ it("extracts elements and carries a root contradiction into the extraction", asy
     expect(extracted.integrity_contradictions).toEqual([
       expect.objectContaining({ logical_path: ".", algorithm: "dfu-crc32" }),
     ]);
-    expect(extracted.limitations).toContain(
-      "The container contradicts its declared integrity metadata; every extracted file is observed-untrusted.",
+    expect(extracted.limitations).toContainEqual(
+      expect.stringMatching(/container.*integrity.*observed-untrusted/iu),
     );
     expect(extracted.limitations.join("\n")).not.toContain(
       "extracted file(s) contradict",

@@ -302,7 +302,9 @@ Use this when the user has a folder from `rea capture-desktop-application` and
 wants a task for the environment `rea export-desktop-application` makes from
 it: a prompt for a computer-use agent and checks that grade what the agent
 left in the app's files. You write the prompt and the checks; REA validates
-the task against the capture and exports it. These commands are CLI only.
+the task against the capture and exports it. These commands are CLI only. To
+build the environment and its task from a request instead, follow
+[desktop builds](desktop-build.md).
 
 ### Describe the change
 

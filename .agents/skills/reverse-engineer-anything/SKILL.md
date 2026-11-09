@@ -1,8 +1,8 @@
 ---
 name: reverse-engineer-anything
-description: Reverse engineer native, managed, Electron/JavaScript, packaged, firmware, and browser targets with REA, and build agent environments (AgentEnv bundles) of web applications from a live instance or a capture. Use shipped-artifact or requested runtime evidence to explain features, compare versions, decompile code, or guide a reconstruction. Skip REA for ordinary source-repository architecture analysis.
+description: Reverse engineer native, managed, Electron/JavaScript, packaged, firmware, and browser targets with REA, and build agent environments (AgentEnv bundles) of web applications from a live instance or a capture, and of Linux desktop apps with a task from a request. Use shipped-artifact or requested runtime evidence to explain features, compare versions, decompile code, or guide a reconstruction. Skip REA for ordinary source-repository architecture analysis.
 metadata:
-  version: "62"
+  version: "63"
 ---
 
 # REA
@@ -71,6 +71,7 @@ code are different questions; follow the selected artifact's application layer.
 | Native execution, live calls, instrumentation, process effects; browser/Electron runtime or agent-performed actions              | [Runtime observation](references/runtime-observation.md): select the observation and declared lifecycle first. Already-open page: `list_browser_targets`; Electron: `list_electron_targets`; agent actions: `capture_browser_scenario`.            |
 | Recorded HAR/SAZ/mitmproxy/qlog, packet capture, protocol-field discovery or logic/signal recording                              | [Recorded captures](references/recorded-captures.md): `inspect_web_network_capture`, packet/signal inspection or decoder discovery as appropriate; no live acquisition or recorded-URL fetch.                                                      |
 | Web AgentEnv bundle from a live instance or capture; task for an exported desktop environment                                    | [Environments](references/environments.md), including its desktop-task section: read before recording/export; `capture_browser_scenario` then `export_environment_bundle` for a live web bundle.                                                   |
+| Linux desktop application environment built from a user request                                                                  | [Desktop builds](references/desktop-build.md): drive the selected app on a build computer, then export and witness.                                                                                                                                |
 | Retained Evidence paging/composition, comparisons, unknowns or a broader investigation                                           | [Evidence workflows](references/evidence-workflows.md): use existing source IDs and the smallest view that answers the question.                                                                                                                   |
 
 If a needed tool is unadvertised, inspect `binary_session {}` and

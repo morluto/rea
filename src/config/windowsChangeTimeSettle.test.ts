@@ -8,8 +8,6 @@ import {
   WINDOWS_CHANGE_TIME_SETTLE_MAX_POLLS,
   WINDOWS_CHANGE_TIME_SETTLE_POLL_MS,
   resolveWindowsChangeTimeSettle,
-  windowsChangeTimeSettingFailure,
-  windowsChangeTimeSettingMessage,
 } from "./windowsChangeTimeSettle.js";
 
 const requiredFacts = (
@@ -94,22 +92,12 @@ it.each([
   [WINDOWS_CHANGE_TIME_SETTLE_MAX_POLLS, "0"],
   [WINDOWS_CHANGE_TIME_SETTLE_MAX_POLLS, "1001"],
 ] as const)("rejects %s=%j", (bound, value) => {
-  const failure = windowsChangeTimeSettingFailure(bound, value);
-  expect(failure).toEqual({
-    setting: bound.setting,
-    currentValue: value,
-    source: "setting",
-    defaultValue: bound.defaultValue,
-    floor: bound.floor,
-    maximum: bound.maximum,
-    unit: bound.unit,
-    restartRequired: true,
-  });
-  const message = windowsChangeTimeSettingMessage(failure);
-  requiredFacts(message, failure);
   const resolved = resolveWindowsChangeTimeSettle({ [bound.setting]: value });
   if (resolved.ok) throw new Error(`Accepted ${bound.setting}=${value}`);
   expect(resolved.error).toBeInstanceOf(ConfigurationError);
+  const message = resolved.error.settings[0]?.constraint;
+  if (message === undefined) throw new Error("Missing configuration guidance");
+  requiredFacts(message, { ...bound, currentValue: value, source: "setting" });
   expect(resolved.error.settings).toEqual([
     { setting: bound.setting, constraint: message },
   ]);

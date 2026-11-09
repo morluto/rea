@@ -158,6 +158,7 @@ export const finalizeInspectorCapture = async ({
   const contexts = [...state.contexts.values()]
     .map((context) => ({
       context_key: context.contextKey,
+      execution_context_id: context.executionContextId,
       state: context.state,
       name: context.name,
       origin: context.origin,
@@ -251,6 +252,7 @@ const scriptFromDraft = (
     location,
     ...(location.kind === "file" ? { reported_url: draft.rawUrl } : {}),
     execution_context_key: draft.executionContextKey,
+    execution_context_id: draft.executionContextId,
     cdp_hash: draft.cdpHash,
     length: draft.length,
     is_module: draft.isModule,
@@ -260,6 +262,7 @@ const scriptFromDraft = (
     location,
     ...(location.kind === "file" ? { reported_url: draft.rawUrl } : {}),
     execution_context_key: draft.executionContextKey,
+    execution_context_id: draft.executionContextId,
     cdp_hash: draft.cdpHash,
     length: draft.length,
     is_module: draft.isModule,

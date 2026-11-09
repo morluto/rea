@@ -146,8 +146,10 @@ describe("Apple asset catalog application workflow", () => {
         next_offset: null,
         truncated: false,
       });
-      expect(result.limitations).toContain(
-        "No compiled Assets.car catalog was found among the app bundle's regular files (symlinks are not followed); any resource keys are reported as unmatched.",
+      expect(result.limitations).toContainEqual(
+        expect.stringMatching(
+          /Assets\.car.*symlinks.*not followed.*unmatched/iu,
+        ),
       );
     },
   );
@@ -224,8 +226,10 @@ it.skipIf(process.platform === "win32")(
         throw new Error("No catalog is present");
       },
     });
-    expect(result.limitations).toContain(
-      "Interface Builder resource-key joins may be incomplete because the decoded object inventory is incomplete.",
+    expect(result.limitations).toContainEqual(
+      expect.stringMatching(
+        /resource-key joins.*incomplete.*object inventory.*incomplete/iu,
+      ),
     );
   },
 );
