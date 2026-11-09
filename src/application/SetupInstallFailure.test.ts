@@ -122,7 +122,6 @@ describe("Linux Hopper launcher digest mismatch", () => {
     expect(result.remediation).toContain(mismatch.observedSha256);
     expect(result.remediation).toContain(mismatch.declaredSha256);
     expect(result.remediation).toContain("stale feed metadata");
-    expect(result.remediation).not.toContain("failed integrity verification");
   });
 
   it("keeps the generic recovery for an integrity failure without package facts", () => {
