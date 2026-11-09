@@ -41,6 +41,12 @@ export const registerAdbCommands = (
     .min(1)
     .describe("Device serial exactly as `adb devices` reports it");
 
+  const devicePath = z
+    .string()
+    .min(1)
+    .regex(/^\/[^\x00]*$/u, "Device path must be absolute")
+    .describe("Absolute device filesystem path");
+
   cli.command(CLI_COMMANDS.inspectAdbClient, {
     description:
       "Inspect the caller-selected adb client without contacting devices",
@@ -142,7 +148,7 @@ export const registerAdbCommands = (
     description: "Pull one device file to a local copy with a SHA-256 digest",
     args: z.object({
       serial,
-      "device-path": z.string().min(1).describe("Absolute device path to pull"),
+      "device-path": devicePath.describe("Absolute device path to pull"),
     }),
     options: z.object({
       "output-directory": z
@@ -163,7 +169,7 @@ export const registerAdbCommands = (
     args: z.object({
       serial,
       "local-path": z.string().min(1).describe("Existing local file"),
-      "device-path": z.string().min(1).describe("Absolute device destination"),
+      "device-path": devicePath.describe("Absolute device destination"),
     }),
     options: z.object({
       overwrite: z
