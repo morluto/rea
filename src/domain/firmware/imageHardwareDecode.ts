@@ -4,6 +4,11 @@ import {
   type HardwareClaim,
   type HardwareClaimInput,
 } from "./hardwareFactBasis.js";
+import { lookupHardwareRegister } from "./hardwareRegisterCatalog.js";
+import {
+  type HardwareArchitecture,
+  hardwareArchitectureSchema,
+} from "./hardwareMemoryMap.js";
 import {
   lookupSocPeripheral,
   type SocPlatform,
@@ -69,9 +74,28 @@ export type ImageHardwareObservation =
       readonly fields: readonly PllFieldLayout[];
       /** Null when the image writes the PLL word and does not switch SYSCLK. */
       readonly clockSwitch: { readonly site: string } | null;
+    }
+  | {
+      readonly kind: "register-access";
+      readonly site: string;
+      readonly address: bigint;
+      readonly immediate: bigint | null;
+    }
+  | {
+      readonly kind: "offset-write";
+      readonly site: string;
+      readonly base: bigint;
+      readonly offset: bigint;
+      readonly mask: bigint | null;
+    }
+  | {
+      readonly kind: "immediate";
+      readonly site: string;
+      readonly value: bigint;
     };
 
 export interface ImageHardwareDecodeInput {
+  readonly architecture: HardwareArchitecture | null;
   readonly platform: SocPlatform | null;
   readonly pinPlacement: PinPlacement | null;
   readonly vectors: readonly VectorManualEntry[];
@@ -143,7 +167,29 @@ const pllImmediateSchema = z.strictObject({
   clockSwitch: z.strictObject({ site: z.string() }).nullable(),
 });
 
+const registerAccessSchema = z.strictObject({
+  kind: z.literal("register-access"),
+  site: z.string(),
+  address: z.bigint(),
+  immediate: z.bigint().nullable(),
+});
+
+const offsetWriteSchema = z.strictObject({
+  kind: z.literal("offset-write"),
+  site: z.string(),
+  base: z.bigint(),
+  offset: z.bigint(),
+  mask: z.bigint().nullable(),
+});
+
+const immediateSchema = z.strictObject({
+  kind: z.literal("immediate"),
+  site: z.string(),
+  value: z.bigint(),
+});
+
 export const imageHardwareDecodeInputSchema = z.strictObject({
+  architecture: hardwareArchitectureSchema.nullable(),
   platform: socPlatformSchema.nullable(),
   pinPlacement: pinPlacementSchema.nullable(),
   vectors: z.array(vectorManualEntrySchema),
@@ -155,6 +201,9 @@ export const imageHardwareDecodeInputSchema = z.strictObject({
       sfudTableSchema,
       vectorSlotSchema,
       pllImmediateSchema,
+      registerAccessSchema,
+      offsetWriteSchema,
+      immediateSchema,
     ]),
   ),
 });
@@ -338,6 +387,81 @@ const pllClaims = (
   ];
 };
 
+const registerAccessClaims = (
+  observation: Extract<ImageHardwareObservation, { kind: "register-access" }>,
+  input: ImageHardwareDecodeInput,
+): HardwareClaim[] => {
+  const address = hex(observation.address);
+  const named =
+    input.architecture === null
+      ? null
+      : lookupHardwareRegister(address, input.architecture);
+  const peripheral =
+    input.platform === null
+      ? null
+      : lookupSocPeripheral(observation.address, input.platform);
+  const claims = [
+    claimFrom(
+      { rule: "observed-address", addressSeen: true, fromRoundedPage: false },
+      address,
+      observation.site,
+    ),
+    named === null
+      ? claimFrom(
+          { rule: "chip-manual-name", addressHit: peripheral !== null },
+          peripheral?.name ?? address,
+          observation.site,
+        )
+      : claimFrom(
+          {
+            rule: "architecture-register",
+            architectureHit: true,
+            placementIsBoardSpecific: false,
+          },
+          named.mnemonic,
+          observation.site,
+        ),
+  ];
+  if (observation.immediate === null) return claims;
+  return [
+    ...claims,
+    claimFrom(
+      { rule: "instruction-decode", decodedByInstruction: true },
+      `immediate:${observation.site}:${address}`,
+      hex(observation.immediate),
+    ),
+  ];
+};
+
+const offsetWriteClaims = (
+  observation: Extract<ImageHardwareObservation, { kind: "offset-write" }>,
+  platform: SocPlatform | null,
+): HardwareClaim[] => {
+  const peripheral =
+    platform === null ? null : lookupSocPeripheral(observation.base, platform);
+  const claims = [
+    claimFrom(
+      { rule: "chip-manual-name", addressHit: peripheral !== null },
+      peripheral?.name ?? hex(observation.base),
+      observation.site,
+    ),
+    claimFrom(
+      { rule: "instruction-decode", decodedByInstruction: true },
+      `offset:${observation.site}`,
+      hex(observation.offset),
+    ),
+  ];
+  if (observation.mask === null) return claims;
+  return [
+    ...claims,
+    claimFrom(
+      { rule: "instruction-decode", decodedByInstruction: true },
+      `mask:${observation.site}`,
+      hex(observation.mask),
+    ),
+  ];
+};
+
 const claimsForObservation = (
   observation: ImageHardwareObservation,
   input: ImageHardwareDecodeInput,
@@ -365,6 +489,18 @@ const claimsForObservation = (
       return [vectorClaim(observation, input.vectors)];
     case "pll-immediate":
       return pllClaims(observation);
+    case "register-access":
+      return registerAccessClaims(observation, input);
+    case "offset-write":
+      return offsetWriteClaims(observation, input.platform);
+    case "immediate":
+      return [
+        claimFrom(
+          { rule: "instruction-decode", decodedByInstruction: true },
+          `immediate:${observation.site}`,
+          hex(observation.value),
+        ),
+      ];
   }
 };
 

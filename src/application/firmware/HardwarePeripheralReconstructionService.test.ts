@@ -358,8 +358,15 @@ describe("captured RT-Spark image", () => {
       ),
     ).toMatchObject({ rule: "driver-linkage", settled: true });
     expect(
-      report.hardwareClaims.find((claim) => claim.subject === "SPI2"),
+      report.hardwareClaims.find(
+        (claim) => claim.subject === "SPI2" && claim.source === "0x080604e4",
+      ),
     ).toBeUndefined();
+    expect(
+      report.hardwareClaims.find(
+        (claim) => claim.subject === "SPI2" && claim.source === "0x080742b0",
+      ),
+    ).toMatchObject({ basis: "chip_manual" });
     expect(
       report.hardwareClaims.find((claim) => claim.subject === "pin:0x5c"),
     ).toMatchObject({
@@ -419,6 +426,50 @@ describe("captured RT-Spark image", () => {
           claim.subject === "ADC1_3" && claim.rule === "chip-manual-name",
       ),
     ).toHaveLength(3);
+  });
+
+  it("keeps boot immediates raw and names architectural registers", () => {
+    const report = reconstructHardwareFromReferences(
+      [],
+      "cortex-m",
+      "rt_spark_boot",
+      null,
+      "stm32f407-rt-spark",
+    );
+    expect(
+      report.hardwareClaims.find((claim) => claim.subject === "VTOR"),
+    ).toMatchObject({ rule: "architecture-register", source: "0x0800c704" });
+    expect(
+      report.hardwareClaims.find((claim) => claim.subject === "CPACR"),
+    ).toMatchObject({ rule: "architecture-register" });
+    expect(
+      report.hardwareClaims.find(
+        (claim) => claim.subject === "immediate:0x0800c704:0xe000ed08",
+      ),
+    ).toMatchObject({ source: "0x8000000" });
+    expect(
+      report.hardwareClaims.find(
+        (claim) => claim.subject === "immediate:0x08054fc2",
+      ),
+    ).toMatchObject({ source: "0x1f4" });
+    expect(
+      report.hardwareClaims.some((claim) =>
+        /500|millisecond|\bms\b/i.test(claim.reason),
+      ),
+    ).toBe(false);
+    expect(
+      report.hardwareClaims.find(
+        (claim) => claim.subject === "SPI2" && claim.source === "0x080742b0",
+      ),
+    ).toMatchObject({ basis: "chip_manual" });
+    expect(
+      report.hardwareClaims.find(
+        (claim) => claim.subject === "mask:0x0800e244",
+      ),
+    ).toMatchObject({ source: "0x10" });
+    expect(
+      report.hardwareClaims.find((claim) => claim.subject === "uart1"),
+    ).toMatchObject({ rule: "driver-linkage", source: "0x0800c786" });
   });
 });
 

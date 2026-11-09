@@ -143,6 +143,14 @@ const ARM_SCS_REGISTERS: readonly RegisterEntry[] = [
     standard: "ARMv7-M / ARMv8-M Architecture",
   },
   {
+    address: 0xe000ed88n,
+    name: "Coprocessor Access Control Register",
+    mnemonic: "CPACR",
+    blockName: "SCB",
+    description: "Enables access to the floating-point coprocessor",
+    standard: "ARMv7-M / ARMv8-M Architecture",
+  },
+  {
     address: 0xe000ed0cn,
     name: "Application Interrupt and Reset Control Register",
     mnemonic: "AIRCR",

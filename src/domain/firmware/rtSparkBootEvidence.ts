@@ -293,6 +293,7 @@ const spiLoadSite: Readonly<Record<string, string>> = {
  * Built from the boot record so the pin list, SFUD rows, and PLL word stay one list.
  */
 export const rtSparkImageObservations: ImageHardwareDecodeInput = {
+  architecture: "cortex-m",
   platform: "stm32f4",
   pinPlacement: {
     origin: BigInt(rtSparkBootEvidence.pinDecode.gpioBase),
@@ -464,5 +465,61 @@ export const rtSparkImageObservations: ImageHardwareDecodeInput = {
       clockSwitch: null,
     },
     { kind: "vector-slot", site: "0x08000004", index: 1 },
+    ...rtSparkBootEvidence.registerWrites.flatMap((write) => {
+      if (write.register === "RCC_PLLCFGR") return [];
+      const immediate = /0x[0-9a-f]+/i.exec(write.operation);
+      return [
+        {
+          kind: "register-access" as const,
+          site: write.functionAddress,
+          address: BigInt(write.base) + BigInt(write.offset),
+          immediate: immediate === null ? null : BigInt(immediate[0]),
+        },
+      ];
+    }),
+    {
+      kind: "offset-write",
+      site: rtSparkBootEvidence.usartClock.functionAddress,
+      base: BigInt(rtSparkBootEvidence.usartClock.clockBase),
+      offset: BigInt(rtSparkBootEvidence.usartClock.clockOffset),
+      mask: 0x10n,
+    },
+    {
+      kind: "loaded-address",
+      site: rtSparkBootEvidence.usartDeviceRecord.address,
+      address: BigInt(rtSparkBootEvidence.usartDeviceRecord.base),
+      fromRoundedPage: false,
+    },
+    ...rtSparkBootEvidence.spiControllers.controllers.map((item, index) => ({
+      kind: "loaded-address" as const,
+      site: `0x${(BigInt(rtSparkBootEvidence.spiControllers.table) + BigInt(index) * 4n).toString(16).padStart(8, "0")}`,
+      address: BigInt(item.base),
+      fromRoundedPage: false,
+    })),
+    ...rtSparkBootEvidence.delayCalls.map((call) => ({
+      kind: "immediate" as const,
+      site: call.site,
+      value: BigInt(call.immediate),
+    })),
+    {
+      kind: "immediate",
+      site: rtSparkBootEvidence.usartSetup.functionAddress,
+      value: BigInt(rtSparkBootEvidence.usartSetup.configWord),
+    },
+    {
+      kind: "immediate",
+      site: rtSparkBootEvidence.spiFlashInit.attach.functionAddress,
+      value: BigInt(rtSparkBootEvidence.spiFlashInit.attach.pinMask),
+    },
+    {
+      kind: "bus-name",
+      site: rtSparkBootEvidence.console.deviceNameSite,
+      name: rtSparkBootEvidence.console.deviceName,
+    },
+    {
+      kind: "bus-name",
+      site: rtSparkBootEvidence.console.greetingFunction,
+      name: rtSparkBootEvidence.console.greeting,
+    },
   ],
 };

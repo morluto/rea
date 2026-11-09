@@ -4,6 +4,7 @@ import { hardwareClaimsFromImage } from "./imageHardwareDecode.js";
 describe("image hardware decode", () => {
   it("names an STM32F1 pin from the caller origin and leaves the role open", () => {
     const claims = hardwareClaimsFromImage({
+      architecture: null,
       platform: "stm32f1",
       pinPlacement: { origin: 0x40010800n, stride: 0x400n, portLimit: 7 },
       vectors: [],
@@ -43,6 +44,7 @@ describe("image hardware decode", () => {
 
   it("keeps a support table and a missing clock switch unsettled", () => {
     const claims = hardwareClaimsFromImage({
+      architecture: "cortex-m",
       platform: "stm32f4",
       pinPlacement: null,
       vectors: [{ index: 16, rule: "chip-manual-name", name: "WWDG" }],
