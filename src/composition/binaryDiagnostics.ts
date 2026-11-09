@@ -26,6 +26,8 @@ import { AppleIpsService } from "../application/binaryDiagnostics/AppleIpsServic
 import { AppleIpsProvider } from "../native/apple/AppleIpsProvider.js";
 import { KernelModuleService } from "../application/binaryDiagnostics/KernelModuleService.js";
 import { KernelModuleProvider } from "../native/elf/KernelModuleProvider.js";
+import { ElfDependenciesService } from "../application/binaryDiagnostics/ElfDependenciesService.js";
+import { ElfDependenciesProvider } from "../native/elf/ElfDependenciesProvider.js";
 import { KernelBuildConfigService } from "../application/binaryDiagnostics/KernelBuildConfigService.js";
 import { KernelBuildConfigProvider } from "../native/elf/KernelBuildConfigProvider.js";
 import type { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
@@ -78,6 +80,10 @@ export const createKernelModuleService = (): KernelModuleService =>
 /** Portable Linux kernel banner and embedded build-config inspection with no engine or host tools. */
 export const createKernelBuildConfigService = (): KernelBuildConfigService =>
   new KernelBuildConfigService(new KernelBuildConfigProvider());
+
+/** Portable ELF dynamic-dependency inspection with no loader or host `ldd`. */
+export const createElfDependenciesService = (): ElfDependenciesService =>
+  new ElfDependenciesService(new ElfDependenciesProvider());
 
 /** Compose the offline adapter without import-time I/O or dependency acquisition. */
 export const createBinaryLayoutService = (

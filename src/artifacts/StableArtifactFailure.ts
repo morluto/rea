@@ -1,10 +1,10 @@
-import type { StableArtifactSnapshot } from "./readStableArtifact.js";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { ArtifactReaderFailure } from "./ArtifactReader.js";
 import { bindArtifactFileCleanup } from "./ArtifactFileOperation.js";
 import { completedStableArtifactObservation } from "./StableArtifactObservation.js";
+import type { StableArtifactSnapshot } from "./readStableArtifact.js";
 
 /** Name an observed regular-file retry that admission will validate again. */
 export const regularFileSymlinkRecovery = (resolvedPath: string): string =>
@@ -46,7 +46,7 @@ export const projectArtifactCloseFailure = (
   return error;
 };
 
-/** Preserve completed physical identity and exact cleanup ownership around a provider's primary failure. */
+/** Preserve completed physical identity, including a snapshot whose decoding failed, and exact cleanup ownership around a provider's primary failure. */
 export const projectStableArtifactFailure = (
   cause: unknown,
   primary: AnalysisError,

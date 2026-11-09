@@ -19,6 +19,7 @@ const fileCommands = [
   "inspect-native-initializers",
   "inspect-elf-unwind-ranges",
   "inspect-kernel-module",
+  "inspect-elf-dependencies",
   "inspect-kernel-build-config",
   "inspect-byte-entropy",
   "inspect-pe-resources",

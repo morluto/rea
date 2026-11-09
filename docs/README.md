@@ -175,6 +175,7 @@ the exact commit messages and references from the release they describe.
 - [Flattened devicetree inspection](devicetree.md)
 - [Electron fuse state](electron-fuses.md)
 - [ELF note tables](elf-notes.md)
+- [ELF dependency tables](elf-dependencies.md)
 - [Erlang BEAM files](erlang-beam.md)
 - [ESP images](esp-image.md)
 - [GameCube DOL analysis through Ghidra](ghidra-dol.md)

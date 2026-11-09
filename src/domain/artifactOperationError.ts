@@ -38,6 +38,7 @@ export class ArtifactOperationError extends AnalysisError {
       | "inspect_api_contract"
       | "inspect_playwright_trace"
       | "inspect_kernel_module"
+      | "inspect_elf_dependencies"
       | "inspect_kernel_build_config"
       | "inspect_erlang_beam"
       | "inspect_v8_code_cache"

@@ -23,6 +23,7 @@ import { registerNativeInitializersTool } from "./registerNativeInitializersTool
 import { registerElfUnwindRangesTool } from "./registerElfUnwindRangesTool.js";
 import { registerAppleIpsTool } from "./registerAppleIpsTool.js";
 import { registerKernelModuleTool } from "./registerKernelModuleTool.js";
+import { registerElfDependenciesTool } from "./registerElfDependenciesTool.js";
 import { registerKernelBuildConfigTool } from "./registerKernelBuildConfigTool.js";
 import { registerPeLoadConfigTool } from "./registerPeLoadConfigTool.js";
 import { registerBinaryHardeningTool } from "./registerBinaryHardeningTool.js";
@@ -226,6 +227,7 @@ export const createServer = (
     elfUnwindRanges,
     appleIps,
     kernelModule,
+    elfDependencies,
     kernelBuildConfig,
     peLoadConfig,
     binaryHardening,
@@ -531,6 +533,14 @@ export const createServer = (
         kernelModule,
         toolLogger,
         recordEvidence,
+        analysisAdmission,
+      );
+      registerElfDependenciesTool(
+        server,
+        elfDependencies,
+        toolLogger,
+        recordEvidence,
+        evidenceById,
         analysisAdmission,
       );
       registerKernelBuildConfigTool(

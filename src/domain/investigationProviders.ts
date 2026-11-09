@@ -80,6 +80,13 @@ export const KERNEL_MODULE_PROVIDER = Object.freeze({
   version: "1",
 } as const);
 
+/** Provider identity for portable, execution-free ELF dynamic-dependency inventories. */
+export const ELF_DEPENDENCIES_PROVIDER = Object.freeze({
+  id: "rea-elf-dependencies",
+  name: "REA ELF dependency parser",
+  version: "1",
+} as const);
+
 /** Provider identity for portable, execution-free ELF and Mach-O initializer and finalizer tables. */
 export const NATIVE_INITIALIZERS_PROVIDER = Object.freeze({
   id: "rea-native-initializers",
