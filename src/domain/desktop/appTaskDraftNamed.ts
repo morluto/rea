@@ -13,6 +13,14 @@ import {
 } from "./appTaskDraftAttributeText.js";
 import { draftCounts } from "./appTaskDraftCounts.js";
 import { nestedRecordChecks } from "./appTaskDraftNested.js";
+import {
+  generatedIdsInAdditions,
+  generatedRecordId,
+} from "./appTaskDraftJson.js";
+import {
+  generatedReferenceNotes,
+  type FileNote,
+} from "./appTaskDraftFileNotes.js";
 import { draftGuards } from "./appTaskDraftGuards.js";
 import {
   attributeKeyOf,
@@ -135,6 +143,7 @@ export interface NamedDraft {
   readonly valuesCut: boolean;
   readonly guards: Suggestion[];
   readonly facts: NamedFacts;
+  readonly notes?: readonly FileNote[];
 }
 
 /** Noise checks a document keeps when its change is nothing else, so an author still sees one. */
@@ -156,6 +165,9 @@ interface CollectContext {
   readonly limit: NamedOptions["limit"];
   readonly texts: WholeTextSuggestions;
   readonly noise: (pointer: string) => NoiseReason | undefined;
+  readonly generatedId: (pointer: string) => boolean;
+  readonly generatedIds: ReadonlySet<string>;
+  readonly generatedReferences: string[];
 }
 
 /** Whether a check reads a pointer that is noise. */
@@ -250,12 +262,22 @@ const equals = (
     collapseWhitespace(value) === collapseWhitespace(before) &&
     /\/children\/[^/]+$/u.test(pointer) &&
     tree.xml(ends.final, pointer);
+  const generatedReference =
+    typeof value === "string" &&
+    collected.context.generatedIds.has(value) &&
+    Array.isArray(
+      resolvePointer(ends.final, pointer.replace(/\/[^/]+$/u, ""), "zip"),
+    );
+  if (generatedReference) collected.context.generatedReferences.push(pointer);
   if (
     !room(collected, list) ||
     texts.covers(pointer) ||
     value === undefined ||
     (isRecord(value) && Object.keys(value).length > 0) ||
     isStamp(value) ||
+    (valueFormat(tree, ends.final, pointer) === "json" &&
+      collected.context.generatedId(pointer)) ||
+    generatedReference ||
     (tree.xml(ends.final, pointer) && inSplitDate(ends.final, pointer)) ||
     isLayoutText(tree, ends.final, pointer, value) ||
     relaid
@@ -571,6 +593,19 @@ export const namedDraft = (
     ends.final,
     tree === ARCHIVE ? "zip" : "xml",
   );
+  const generatedId =
+    tree === ARCHIVE ? generatedRecordId(ends, "zip") : () => false;
+  const generatedIds =
+    tree === ARCHIVE
+      ? generatedIdsInAdditions(
+          ends,
+          "zip",
+          change.added,
+          (pointer) => valueFormat(tree, ends.final, pointer) === "json",
+          generatedId,
+        )
+      : new Set<string>();
+  const generatedReferences: string[] = [];
   const noise = changeNoise(change, ends, (view, pointer) =>
     valueFormat(tree, view, pointer),
   );
@@ -585,7 +620,17 @@ export const namedDraft = (
     noise: (pointer) => noise(pointer) !== undefined,
   });
   const checks = collectChecks(
-    { file, ends, tree, limit: options.limit, texts, noise },
+    {
+      file,
+      ends,
+      tree,
+      limit: options.limit,
+      texts,
+      noise,
+      generatedId,
+      generatedIds,
+      generatedReferences,
+    },
     change,
   );
   const noisy = (check: Suggestion) => isNoisy(noise, check);
@@ -654,6 +699,7 @@ export const namedDraft = (
     values,
     valuesCut: cut,
     guards,
+    notes: generatedReferenceNotes(file, generatedReferences),
     facts: factsOf(checks, texts, {
       listed,
       noise,
