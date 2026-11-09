@@ -44,6 +44,8 @@ const LC_DYSYMTAB = 0xb;
 const LC_DYLD_INFO = 0x22;
 const LC_DYLD_INFO_ONLY = 0x80000022;
 const MH_OBJECT = 0x1;
+const CPU_TYPE_ARM = 12;
+const CPU_TYPE_ARM64_32 = 0x0200000c;
 /** nlist records decoded across every LC_SYMTAB together. */
 const SYMBOL_SCAN = 65536;
 /** Object-file section relocation entries read across every initializer section together. */
@@ -432,6 +434,8 @@ interface SectionWalk {
   readonly unchecked: boolean;
   /** MH_OBJECT: section relocation entries, not dyld fixups, set slot values. */
   readonly object: boolean;
+  /** CPU_TYPE_ARM: function pointers may carry the Thumb bit. */
+  readonly thumb: boolean;
   readonly base: bigint;
   readonly symbols: MachoSymbols;
   readonly sections: ReturnType<typeof indexSections>;
@@ -664,13 +668,22 @@ const slotsOf = (
       if (relocations !== undefined) walk.scan.unappliedObjectRelocations += 1;
       else if (!offsets) walk.scan.undecoded += 1;
     }
+    // 32-bit ARM: bit 0 selects Thumb state, so it is cleared to find the code.
+    const code =
+      applied.value === null
+        ? null
+        : walk.thumb
+          ? applied.value & ~1n
+          : applied.value;
     const symbol =
       applied.method === "unresolved_import"
         ? applied.importName
         : (applied.definedName ??
           (applied.value === null
             ? null
-            : (walk.symbols.names.get(applied.value) ?? null)));
+            : (walk.symbols.names.get(applied.value) ??
+              (code === null ? null : walk.symbols.names.get(code)) ??
+              null)));
     entries.push({
       index: entries.length,
       kind,
@@ -678,13 +691,9 @@ const slotsOf = (
       slotFileOffset: walk.fileBase + slotFile,
       slotBytes: stride === 4 ? 4 : 8,
       valueVa: applied.value,
-      valueFileOffset:
-        applied.value === null ? null : walk.locate(applied.value, 1),
+      valueFileOffset: code === null ? null : walk.locate(code, 1),
       slotSection: section.name,
-      section:
-        applied.value === null
-          ? null
-          : containing(walk.sections, applied.value),
+      section: code === null ? null : containing(walk.sections, code),
       symbol,
       resolution: applied.method,
       detail,
@@ -736,6 +745,12 @@ export const readMachoInitializers = (
     unappliedObjectRelocations: 0,
   };
   const cpu = header.value.identity.cpuType >>> 0;
+  // arm64_32 pointers are four bytes, so slot width cannot follow a 64-bit header.
+  if (cpu === CPU_TYPE_ARM64_32 && container.bits === 64)
+    throw new BinaryFormatFailure(
+      "malformed",
+      "arm64_32 Mach-O uses 4-byte pointers but declares a 64-bit header",
+    );
   const little = container.byte_order === "little";
   // Object files carry section relocations, not dyld fixups.
   const object = header.value.fileType === MH_OBJECT;
@@ -775,6 +790,7 @@ export const readMachoInitializers = (
     chained: container.macho_chained_fixups === true,
     unchecked: unchecked !== null,
     object,
+    thumb: cpu === CPU_TYPE_ARM,
     base,
     symbols,
     sections: indexSections(container.sections),

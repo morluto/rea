@@ -26,8 +26,10 @@ slot's location, resolved target and how that target was obtained. The
   `LC_DYLD_INFO` rebases (reported separately), `MH_OBJECT` section
   relocations and `__init_offsets` image-base offsets. Anything else is
   `unresolved`, never a stored zero.
-- Relocation coverage is per slot. A slot that a dynamic relocation only
-  partly overwrites or writes more than once is `unresolved`. A slot with no
+- Relocation coverage is per slot. A slot that a dynamic or section relocation
+  only partly overwrites or writes more than once is `unresolved`, and so is an
+  absolute relocation against an `STT_GNU_IFUNC` resolver. On 32-bit ARM the
+  Thumb bit is cleared for target section and file-offset lookup only. A slot with no
   relocation found is `unresolved` when a dynamic table, or a section table
   that could reach it, was not fully read; such a `.ctors` slot is not dropped
   as a sentinel. A linked image's non-`SHF_ALLOC` relocation sections were

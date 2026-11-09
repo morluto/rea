@@ -1050,4 +1050,24 @@ describe("Initializer target semantics", () => {
       resolution: "relative_addend",
     });
   });
+
+  it("clears the Mach-O ARM Thumb bit when locating and naming a target", async () => {
+    const bytes = macho32Initializers(0);
+    bytes.writeUInt32LE(12, 4);
+    bytes.writeUInt32LE(0x1101, 0x1000);
+    const report = await read(bytes);
+    expect(report.entries[0]).toMatchObject({
+      value_va: "0x1101",
+      value_file_offset: 0x100,
+      section: { name: "__TEXT,__text" },
+      symbol: { name: "_init" },
+      resolution: "raw",
+    });
+  });
+
+  it("rejects an arm64_32 image that declares a 64-bit header", async () => {
+    const bytes = machoArm64Initializers();
+    bytes.writeUInt32LE(0x0200000c, 4);
+    await expect(read(bytes)).rejects.toThrow(BinaryFormatFailure);
+  });
 });

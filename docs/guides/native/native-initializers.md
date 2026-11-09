@@ -86,11 +86,21 @@ Section `REL` / `RELA` tables are applied to slots that no dynamic relocation
 covers. When such a table is skipped for an unexpected entry size, cannot be
 read, or lies past the record budget, every slot it could reach that has no
 relocation found is `unresolved`, and a `.ctors` slot is not dropped as a
-sentinel. In a relocatable object a table reaches only the section named by
-its `sh_info`. In a linked image, a relocation section without `SHF_ALLOC`
+sentinel. A section record that writes only part of a slot, starts inside it,
+or repeats it also leaves the slot `unresolved`. In a relocatable object a
+table reaches only the section named by its `sh_info`. In a linked image, a relocation section without `SHF_ALLOC`
 (such as one kept by `--emit-relocs`) was already applied by the static
 linker, so the slot's stored word is used rather than applying the record
 again.
+
+An absolute relocation against an `STT_GNU_IFUNC` symbol is `unresolved`: the
+symbol value is the resolver, and the loader stores whatever the resolver
+returns.
+
+On 32-bit ARM (ELF `EM_ARM` and Mach-O `CPU_TYPE_ARM`), bit 0 of a function
+pointer selects Thumb state. `value_va` keeps the pointer as stored, while
+`value_file_offset` and `section` describe the code address with that bit
+cleared. A Mach-O symbol is matched at either address.
 
 In a relocatable object (`ET_REL`) every section starts at address 0. Slot
 and value addresses are offsets inside the named section, and a limitation
@@ -106,7 +116,8 @@ is `unresolved` otherwise. Legacy external relocations (`LC_DYSYMTAB`
 relocation entries set the slot: a pointer-width `UNSIGNED` entry against a
 defined symbol gives `symbol_addend`, one against an undefined symbol gives
 `unresolved_import`, a section-ordinal entry keeps the stored address, and any
-other entry leaves the slot `unresolved`.
+other entry leaves the slot `unresolved`. An `arm64_32` image that declares a
+64-bit header is rejected as malformed, since its pointers are four bytes.
 
 `.ctors` and `.dtors` values `0` and `-1` are list sentinels and are omitted.
 `-1` means all ones at the image's pointer width: `0xffffffff` in ELF32 and
