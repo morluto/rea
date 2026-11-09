@@ -158,8 +158,9 @@ When requested, the result adds two `evidence_kind: "inferred"` inventories:
   - Registry paths match `/cargo/registry/src/<index>/<crate>-<semver>/`,
     `/.cargo/registry/src/...`, and Windows `\` spellings, splitting `<crate>-<semver>`
     at the first `-` followed by a valid Cargo SemVer `MAJOR.MINOR.PATCH` so
-    hyphenated crate names (`tokio-util-0.7.13`, `x86_64-0.15.2`) and pre-release
-    or build-metadata versions remain unambiguous.
+    hyphenated or Cargo-valid Unicode XID crate names (`tokio-util-0.7.13`,
+    `x86_64-0.15.2`, `unicodé-0.1.0`) and pre-release or build-metadata versions
+    remain unambiguous.
   - Git checkout paths match `cargo/git/checkouts/<repo_slug>-<16-hex-id>/<7..40-hex-rev>/`
     with `/` or `\` separators (`version: null`, `registry_index: null`, `checkout_id`, `revision`).
 - `rustc_versions`, capped at 64 unique banners (`banner`, `version`, `channel`,

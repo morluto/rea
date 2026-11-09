@@ -13,13 +13,13 @@ import {
   MAX_CARGO_GIT_CHECKOUT_DIR_BYTES,
   MAX_CARGO_REGISTRY_CRATE_DIR_BYTES,
   MAX_CARGO_REGISTRY_INDEX_BYTES,
+  hasUnboundedCargoRegistryCrateShape,
   isCargoGitSlugByte,
   isCargoRegistryIndexByte,
   isCrateNameByte,
   isLowerHex,
   isValidCargoRegistryHostComponent,
   isValidCargoRegistryIndex,
-  isValidCargoSemver,
   parseRustcVersionBannerAt,
   splitCargoGitCheckoutSegments,
   splitCargoRegistryCrateSegment,
@@ -162,8 +162,24 @@ const matchesAscii = (
   return true;
 };
 
+const UTF8_FATAL_DECODER = new TextDecoder("utf-8", {
+  fatal: true,
+  ignoreBOM: true,
+});
+
+const decodeStrictUtf8 = (bytes: Uint8Array): string | null => {
+  try {
+    return UTF8_FATAL_DECODER.decode(bytes);
+  } catch {
+    return null;
+  }
+};
+
 const isRegistryCrateDirByte = (byte: number): boolean =>
-  isCrateNameByte(byte) || byte === 0x2e || byte === 0x2b;
+  isCrateNameByte(byte) ||
+  byte === 0x2e ||
+  byte === 0x2b ||
+  (byte >= 0x80 && byte <= 0xf4);
 
 const MAX_OVERLONG_CARGO_LOOKAHEAD_BYTES = 4096;
 
@@ -171,24 +187,6 @@ type ParsedCargoCrateCandidate = Omit<
   RustInferredCrate,
   "first_file_offset" | "reference_count"
 >;
-
-const hasUnboundedRegistryCrateShape = (segment: string): boolean => {
-  const first = segment.charCodeAt(0);
-  if (
-    (first < 0x30 || first > 0x39) &&
-    (first < 0x41 || first > 0x5a) &&
-    (first < 0x61 || first > 0x7a) &&
-    first !== 0x5f
-  )
-    return false;
-  for (let index = 1; index <= segment.length - 6; index += 1) {
-    const code = segment.charCodeAt(index);
-    if (!isCrateNameByte(code)) return false;
-    if (code === 0x2d && isValidCargoSemver(segment.slice(index + 1)))
-      return true;
-  }
-  return false;
-};
 
 const hasValidGitCheckoutTailAndRevision = (
   region: Buffer,
@@ -248,32 +246,30 @@ const parseCargoRegistryCrateAt = (
   if (crateEnd - crateStart < 7 || !isPathSeparator(region[crateEnd] ?? 0))
     return null;
 
+  const registryIndex = region.toString("latin1", indexStart, indexEnd);
+  if (!isValidCargoRegistryHostComponent(registryIndex)) return null;
+  const crateSegment = decodeStrictUtf8(region.subarray(crateStart, crateEnd));
+  if (crateSegment === null) return null;
+
   if (
-    indexEnd - indexStart > MAX_CARGO_REGISTRY_INDEX_BYTES ||
-    crateEnd - crateStart > MAX_CARGO_REGISTRY_CRATE_DIR_BYTES
+    indexEnd - indexStart <= MAX_CARGO_REGISTRY_INDEX_BYTES &&
+    isValidCargoRegistryIndex(registryIndex) &&
+    crateEnd - crateStart <= MAX_CARGO_REGISTRY_CRATE_DIR_BYTES
   ) {
-    const indexSlice = region.toString("latin1", indexStart, indexEnd);
-    const crateSlice = region.toString("latin1", crateStart, crateEnd);
-    return isValidCargoRegistryHostComponent(indexSlice) &&
-      hasUnboundedRegistryCrateShape(crateSlice)
-      ? "overlong"
-      : null;
+    const split = splitCargoRegistryCrateSegment(crateSegment);
+    if (split !== null) {
+      return {
+        name: split.name,
+        version: split.version,
+        source_kind: "registry",
+        registry_index: registryIndex,
+        checkout_id: null,
+        revision: null,
+      };
+    }
   }
 
-  const registryIndex = region.toString("latin1", indexStart, indexEnd);
-  if (!isValidCargoRegistryIndex(registryIndex)) return null;
-  const split = splitCargoRegistryCrateSegment(
-    region.toString("latin1", crateStart, crateEnd),
-  );
-  if (split === null) return null;
-  return {
-    name: split.name,
-    version: split.version,
-    source_kind: "registry",
-    registry_index: registryIndex,
-    checkout_id: null,
-    revision: null,
-  };
+  return hasUnboundedCargoRegistryCrateShape(crateSegment) ? "overlong" : null;
 };
 
 const parseCargoGitCheckoutAt = (

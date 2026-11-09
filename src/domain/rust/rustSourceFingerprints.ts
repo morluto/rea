@@ -1,6 +1,6 @@
 /**
- * Canonical ASCII parsers and validators for path-inferred Cargo crates and
- * rustc toolchain version banners. Kept regex-free so scans stay linear.
+ * Canonical linear byte and UTF-8 parsers and validators for path-inferred
+ * Cargo crates and rustc toolchain version banners.
  */
 
 export interface ParsedRustcBanner {
@@ -193,32 +193,95 @@ export const isValidCargoSemver = (text: string): boolean => {
   return false;
 };
 
-/**
- * Split `<crate_name>-<semver>` at the first `-` followed by a valid Cargo
- * SemVer so hyphenated crate names and pre-release versions stay unambiguous.
- */
-export const splitCargoRegistryCrateSegment = (
+const UNICODE_XID_START = /^\p{XID_Start}$/u;
+const UNICODE_XID_CONTINUE = /^\p{XID_Continue}$/u;
+
+const codePointUtf8Bytes = (codePoint: number): number => {
+  if (codePoint <= 0x7f) return 1;
+  if (codePoint <= 0x7ff) return 2;
+  if (codePoint <= 0xffff) return 3;
+  return 4;
+};
+
+/** UTF-8 byte length of `text` computed in a single scalar pass. */
+export const utf8ByteLength = (text: string): number => {
+  let bytes = 0;
+  for (const ch of text) {
+    bytes += codePointUtf8Bytes(ch.codePointAt(0) ?? 0);
+  }
+  return bytes;
+};
+
+const isCargoCrateStartChar = (ch: string, codePoint: number): boolean => {
+  if (codePoint <= 0x7f) return isAsciiAlnum(codePoint) || codePoint === 0x5f;
+  return codePoint <= 0xd7ff || codePoint >= 0xe000
+    ? UNICODE_XID_START.test(ch)
+    : false;
+};
+
+const isCargoCrateContinueChar = (ch: string, codePoint: number): boolean => {
+  if (codePoint <= 0x7f) return isCrateNameByte(codePoint);
+  return codePoint <= 0xd7ff || codePoint >= 0xe000
+    ? UNICODE_XID_CONTINUE.test(ch)
+    : false;
+};
+
+const parseCargoRegistryCrateSegment = (
   segment: string,
+  enforceByteBounds: boolean,
 ): { readonly name: string; readonly version: string } | null => {
-  if (segment.length < 7 || segment.length > MAX_CARGO_REGISTRY_CRATE_DIR_BYTES)
-    return null;
-  const first = segment.charCodeAt(0);
-  if (!isAsciiAlnum(first) && first !== 0x5f) return null;
-  for (let index = 1; index <= segment.length - 6; index += 1) {
-    const code = segment.charCodeAt(index);
-    if (!isCrateNameByte(code)) return null;
-    if (
-      code === 0x2d &&
-      index <= MAX_CARGO_CRATE_NAME_BYTES &&
-      isAsciiDigit(segment.charCodeAt(index + 1))
-    ) {
-      const version = segment.slice(index + 1);
-      if (isValidCargoSemver(version))
-        return { name: segment.slice(0, index), version };
+  if (segment.length < 7) return null;
+  let utf16Index = 0;
+  let nameUtf8Bytes = 0;
+  for (const ch of segment) {
+    const codePoint = ch.codePointAt(0) ?? 0;
+    if (utf16Index === 0) {
+      if (!isCargoCrateStartChar(ch, codePoint)) return null;
+    } else {
+      if (!isCargoCrateContinueChar(ch, codePoint)) return null;
+      if (
+        codePoint === 0x2d &&
+        (!enforceByteBounds || nameUtf8Bytes <= MAX_CARGO_CRATE_NAME_BYTES) &&
+        utf16Index + 1 < segment.length &&
+        isAsciiDigit(segment.charCodeAt(utf16Index + 1))
+      ) {
+        const version = segment.slice(utf16Index + 1);
+        if (isValidCargoSemver(version)) {
+          if (
+            enforceByteBounds &&
+            nameUtf8Bytes + 1 + version.length >
+              MAX_CARGO_REGISTRY_CRATE_DIR_BYTES
+          )
+            return null;
+          return { name: segment.slice(0, utf16Index), version };
+        }
+      }
     }
+    nameUtf8Bytes += codePointUtf8Bytes(codePoint);
+    if (enforceByteBounds && nameUtf8Bytes > MAX_CARGO_CRATE_NAME_BYTES)
+      return null;
+    utf16Index += ch.length;
+    if (utf16Index > segment.length - 5) break;
   }
   return null;
 };
+
+/**
+ * Split `<crate_name>-<semver>` at the first `-` followed by a valid Cargo
+ * SemVer so hyphenated or Unicode XID crate names and pre-release versions
+ * stay unambiguous.
+ */
+export const splitCargoRegistryCrateSegment = (
+  segment: string,
+): { readonly name: string; readonly version: string } | null =>
+  parseCargoRegistryCrateSegment(segment, true);
+
+/**
+ * Grammar check for `<crate_name>-<semver>` without enforcing the retained
+ * crate-name byte cap (used to distinguish over-cap crates from noise).
+ */
+export const hasUnboundedCargoRegistryCrateShape = (segment: string): boolean =>
+  parseCargoRegistryCrateSegment(segment, false) !== null;
 
 const isValidIpv4Tail = (text: string, start: number): boolean => {
   let cursor = start;
@@ -623,10 +686,12 @@ export const minimumInferredCrateMatchBytes = (crate: {
   readonly source_kind: "registry" | "git";
   readonly registry_index: string | null;
   readonly revision: string | null;
-}): number =>
-  crate.source_kind === "registry"
+}): number => {
+  const nameBytes = utf8ByteLength(crate.name);
+  return crate.source_kind === "registry"
     ? 22 +
-      (crate.registry_index?.length ?? 0) +
-      crate.name.length +
-      (crate.version?.length ?? 0)
-    : 39 + crate.name.length + (crate.revision?.length ?? 0);
+        (crate.registry_index?.length ?? 0) +
+        nameBytes +
+        (crate.version?.length ?? 0)
+    : 39 + nameBytes + (crate.revision?.length ?? 0);
+};

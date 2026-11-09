@@ -1034,3 +1034,113 @@ it("recovers IPv6-hosted Cargo registry crates and rejects malformed registry ho
     expect(rustBinarySchema.safeParse(invalidReport).success).toBe(false);
   }
 });
+
+it("recovers Cargo-valid Unicode registry crate names and enforces UTF-8 byte bounds and validity", () => {
+  const exact256Utf8Name = "é".repeat(128);
+  const rodata = Buffer.concat([
+    Buffer.from(
+      [
+        "/cargo/registry/src/private.example-1ecc6299db9ec823/ascii_dep-0.1.0/src/lib.rs",
+        "/cargo/registry/src/private.example-1ecc6299db9ec823/unicodé-0.2.0/src/lib.rs",
+        "/cargo/registry/src/private.example-1ecc6299db9ec823/αβγ-delta-1.0.0-alpha.1/src/lib.rs",
+        "/cargo/registry/src/private.example-1ecc6299db9ec823/漢字_crate-2.3.4/src/lib.rs",
+        `/cargo/registry/src/private.example-1ecc6299db9ec823/${exact256Utf8Name}-1.0.0/src/lib.rs`,
+        "/cargo/registry/src/private.example-1ecc6299db9ec823/emoji😀-0.1.0/src/lib.rs",
+        "/cargo/registry/src/private.example-1ecc6299db9ec823/\u00b7bad_start-0.1.0/src/lib.rs",
+      ].join("\0") + "\0",
+      "utf8",
+    ),
+    Buffer.from(
+      "/cargo/registry/src/private.example-1ecc6299db9ec823/bad",
+      "ascii",
+    ),
+    Buffer.from([0xc3]),
+    Buffer.from("-0.1.0/src/lib.rs\0", "ascii"),
+  ]);
+  const bytes = createRustImage({
+    format: "elf",
+    omitSection: true,
+    readOnlyBytes: rodata,
+  });
+  const result = recoverRustSourceFingerprints(
+    bytes,
+    readBinaryContainer(bytes),
+  );
+  expect(result.inferred_crates.truncated).toBe(false);
+  expect(result.inferred_crates.discovered_count).toBe(5);
+  expect(
+    result.inferred_crates.items.map(({ name, version }) => ({
+      name,
+      version,
+    })),
+  ).toEqual([
+    { name: "ascii_dep", version: "0.1.0" },
+    { name: "unicodé", version: "0.2.0" },
+    { name: "αβγ-delta", version: "1.0.0-alpha.1" },
+    { name: "漢字_crate", version: "2.3.4" },
+    { name: exact256Utf8Name, version: "1.0.0" },
+  ]);
+
+  const validReport = {
+    artifact: {
+      path: "/artifacts/unicode",
+      sha256: "a".repeat(64),
+      bytes: bytes.length,
+    },
+    format: "elf" as const,
+    architecture: "amd64",
+    bits: 64 as const,
+    byte_order: "little" as const,
+    auditable_metadata: null,
+    rustc_commit: null,
+    inferred_crates: result.inferred_crates,
+    rustc_versions: result.rustc_versions,
+    limitations: [],
+  };
+  expect(rustBinarySchema.safeParse(validReport).success).toBe(true);
+
+  // Retained-report offset check must measure UTF-8 bytes ("漢字_crate" = 12 bytes, not 8 UTF-16 units).
+  const kanjiItem = structuredClone(result.inferred_crates.items[3]!);
+  const minKanjiSpan =
+    22 + kanjiItem.registry_index!.length + 12 + kanjiItem.version!.length;
+  kanjiItem.first_file_offset = 100;
+  const tightValid = {
+    ...validReport,
+    artifact: { ...validReport.artifact, bytes: 100 + minKanjiSpan },
+    inferred_crates: {
+      ...result.inferred_crates,
+      items: [kanjiItem],
+      discovered_count: 1,
+    },
+  };
+  expect(rustBinarySchema.safeParse(tightValid).success).toBe(true);
+  expect(
+    rustBinarySchema.safeParse({
+      ...tightValid,
+      artifact: { ...validReport.artifact, bytes: 100 + minKanjiSpan - 1 },
+    }).success,
+  ).toBe(false);
+
+  for (const invalidName of ["é".repeat(129), "emoji😀", "bad\ud800"]) {
+    const bad = structuredClone(tightValid);
+    bad.artifact.bytes = 4096;
+    bad.inferred_crates.items[0]!.name = invalidName;
+    expect(rustBinarySchema.safeParse(bad).success).toBe(false);
+  }
+
+  const overCapBytes = createRustImage({
+    format: "elf",
+    omitSection: true,
+    readOnlyBytes: Buffer.from(
+      `/cargo/registry/src/private.example-1ecc6299db9ec823/${"é".repeat(129)}-0.1.0/src/lib.rs\0`,
+      "utf8",
+    ),
+  });
+  const overCapResult = recoverRustSourceFingerprints(
+    overCapBytes,
+    readBinaryContainer(overCapBytes),
+  );
+  expect(overCapResult.inferred_crates.items).toEqual([]);
+  expect(overCapResult.inferred_crates.discovered_count).toBe(0);
+  expect(overCapResult.inferred_crates.truncated).toBe(true);
+});
