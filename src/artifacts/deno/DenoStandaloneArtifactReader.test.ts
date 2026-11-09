@@ -1770,3 +1770,20 @@ it("does not promote a Deno helper stored in an unrelated SUI section", async ()
     locateDenoStandalone(bytesHandle(image), image.length),
   ).resolves.toEqual({ status: "absent" });
 });
+
+it("rejects a confirmed Deno section when header and segment widths disagree", async () => {
+  const original = denoMachO(buildDenoSection());
+  const image = Buffer.concat([
+    original.subarray(0, 28),
+    original.subarray(32),
+  ]);
+  image.writeUInt32LE(0xfeedface, 0);
+  image.writeBigUInt64LE(image.readBigUInt64LE(28 + 40) - 4n, 28 + 40);
+  image.writeUInt32LE(image.readUInt32LE(28 + 72 + 48) - 4, 28 + 72 + 48);
+  await expect(
+    locateDenoStandalone(bytesHandle(image), image.length),
+  ).resolves.toMatchObject({
+    status: "present",
+    failure: { reason: "format" },
+  });
+});
