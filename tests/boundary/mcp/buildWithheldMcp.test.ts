@@ -4,7 +4,7 @@ import { isAbsolute, join } from "node:path";
 
 import type { Client } from "@modelcontextprotocol/client";
 import type { CallToolResult } from "@modelcontextprotocol/server";
-import { expect, it } from "vitest";
+import { expect, it, vi } from "vitest";
 
 import {
   change,
@@ -13,6 +13,7 @@ import {
   seedEndCapture,
 } from "../../../src/application/desktop/desktopCapture.fixture.js";
 import { toolContract } from "../../../src/contracts/toolContracts.js";
+import { DesktopBuildSecrets } from "../../../src/application/desktop/DesktopBuildSecrets.js";
 import type { DesktopApplicationCapture } from "../../../src/domain/desktop/desktopCapture.js";
 import {
   BUILD_REQUEST as REQUEST,
@@ -175,6 +176,83 @@ it("withholds a file the agent names, keeps its bytes in a secret file only the 
   expect(parseMcpToolError(unsafe as CallToolResult).error.code).toBe(
     "invalid_request",
   );
+});
+
+it("reports the published bundle and completed handle if a later withheld file cannot be saved", async () => {
+  const second = ".config/notes/second.ini";
+  const secondContent = "[ui]\nsize=12\n";
+  const base = seedEndCapture();
+  const [first, ...rest] = base.state.checkpoints;
+  if (first === undefined) throw new Error("missing baseline");
+  const recorded = {
+    ...base,
+    state: {
+      ...base.state,
+      checkpoints: [
+        {
+          ...first,
+          retained: [
+            ...first.retained,
+            retained(`${HOME}/${second}`, secondContent),
+          ],
+        },
+        ...rest,
+      ],
+    },
+  };
+  const config = await createTestTempDirectory("xdg-config-");
+  const secrets = join(config, "rea", "build-secrets");
+  await mkdir(secrets, { recursive: true, mode: 0o700 });
+  await writeFile(
+    join(secrets, "rea-notes-config-notes-second-ini"),
+    "YW5vdGhlci12YWx1ZQ==",
+    { mode: 0o600 },
+  );
+  const { client } = await buildCaptureFakes({
+    serverEnv: { XDG_CONFIG_HOME: config },
+    recorded,
+    extraContent: [secondContent],
+    exportArgs: ["--withhold-path", SETTINGS, "--withhold-path", second],
+  });
+  const id = await startBuildComputer(client, REQUEST);
+  await captureThrough(client, id, ["seed", "end"]);
+  const original = DesktopBuildSecrets.prototype.keep;
+  let calls = 0;
+  const spy = vi
+    .spyOn(DesktopBuildSecrets.prototype, "keep")
+    .mockImplementation(async function (
+      this: DesktopBuildSecrets,
+      handle,
+      bytes,
+    ) {
+      if (++calls === 2) throw new Error("injected withheld write failure");
+      return original.call(this, handle, bytes);
+    });
+  try {
+    const { result, directory } = await exportTo(client, id, {
+      withhold: [SETTINGS, second],
+    });
+    const error = parseMcpToolError(result).error;
+    expect(error).toMatchObject({
+      details: {
+        diagnostics: {
+          published_bundle: {
+            directory,
+            environment: "notes",
+            withheld_files: [
+              expect.objectContaining({ handle: expect.any(String) }),
+            ],
+          },
+        },
+      },
+    });
+    const facts = JSON.stringify(error);
+    expect(facts).toContain("rea-notes-config-notes-second-ini-2");
+    expect(facts).not.toContain(secondContent);
+    expect(await readdir(directory)).not.toEqual([]);
+  } finally {
+    spy.mockRestore();
+  }
 });
 
 it("keeps a later build's withheld bytes under a handle of their own, leaving an earlier build's secret as it was", async () => {

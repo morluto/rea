@@ -3,6 +3,7 @@ import { Readable } from "node:stream";
 import { z } from "zod";
 
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
+import { AnalysisCancelledError } from "../../domain/analysisErrorCore.js";
 import type { desktopTaskSchema } from "../../domain/desktop/appTask.js";
 import { counted } from "../../domain/desktop/appExportUnowned.js";
 import {
@@ -15,6 +16,7 @@ import {
   isUncheckedGzip,
   MAX_GUNZIPPED_BYTES,
   redactSecrets,
+  redactSecretsInJson,
   secretsIn,
   type KnownSecret,
 } from "../../domain/desktop/buildSecrets.js";
@@ -257,25 +259,33 @@ const keepWithheld = async (
   {
     keep,
     signal,
+    completed,
   }: {
     readonly keep: (handle: string, bytes: Buffer) => Promise<string>;
     readonly signal: AbortSignal;
+    readonly completed: WithheldReport[];
   },
 ): Promise<WithheldReport[]> => {
   if (files.length === 0) return [];
-  const handles = new Map(files.map(({ file, handle }) => [file, handle]));
+  const handles = new Map(files.map((entry) => [entry.file, entry]));
   const kept = new Map<string, string>();
   await fetchHomeFolder(
     computer,
     folder,
     {
       file: async ({ path, bytes }) => {
-        const handle = handles.get(path);
-        if (handle !== undefined) kept.set(path, await keep(handle, bytes));
+        const report = handles.get(path);
+        if (report !== undefined) {
+          const actual = await keep(report.handle, bytes);
+          kept.set(path, actual);
+          completed.push({ ...report, handle: actual });
+        }
       },
     },
     signal,
   );
+  if (kept.size !== handles.size)
+    throw new Error("The exported bundle did not supply every withheld file.");
   return files.map(({ file, variable, handle }) => ({
     file,
     variable,
@@ -319,6 +329,15 @@ export const exportBuild = async (
   const withheld = `${bundle}-withheld`;
   const stdout = `${folder}/export-${attempt}.json`;
   const taskFile = `${JSON.stringify(request.task, null, 2)}\n`;
+  const completed: WithheldReport[] = [];
+  let published:
+    | {
+        readonly directory: string;
+        readonly environment: string;
+        readonly files: number;
+        readonly bytes: number;
+      }
+    | undefined;
   try {
     const { stdoutBytes: bytes } = await runRea(
       computer,
@@ -364,9 +383,15 @@ export const exportBuild = async (
       signal,
     );
     if (!written.ok) return written;
+    published = {
+      directory: request.directory,
+      environment: result.environment,
+      ...written.value,
+    };
     const kept = await keepWithheld(computer, withheld, result.withheld_files, {
       keep: capture.keep,
       signal,
+      completed,
     });
     return ok({
       directory: request.directory,
@@ -383,10 +408,23 @@ export const exportBuild = async (
       consented_files: result.consented_files,
     });
   } catch (cause: unknown) {
-    return err(
+    const failure =
       cause instanceof AnalysisError
         ? cause
-        : adapterError(EXPORT, errorText(cause), cause),
-    );
+        : signal.aborted && cause === signal.reason
+          ? new AnalysisCancelledError(EXPORT, { cause })
+          : adapterError(
+              EXPORT,
+              redactSecrets(errorText(cause), capture.secrets),
+              cause,
+            );
+    if (published !== undefined)
+      failure.retainDiagnostics({
+        published_bundle: redactSecretsInJson(
+          { ...published, withheld_files: completed },
+          capture.secrets,
+        ),
+      });
+    return err(failure);
   }
 };
