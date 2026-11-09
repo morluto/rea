@@ -76,8 +76,8 @@ export class GgufHeader {
     const length = await this.#unsigned(8);
     if (maximum !== undefined && length > maximum)
       rejectModel("GGUF name exceeds its format byte limit");
-    if (retain) this.#budget.charge(6 * length + 2);
     this.reader.guarantee(length);
+    if (retain) this.#budget.charge(6 * length + 2);
     // Omitted preview entries still need validation, but not decoded strings.
     // Keep the streaming decoder for values spanning multiple read chunks.
     if (!retain && length <= 65536) {
@@ -278,8 +278,8 @@ export class GgufHeader {
       declared_metadata_count: metadataCount,
       declared_tensor_count: tensorCount,
     });
-    this.#budget.charge((tensorCount + metadataCount) * 512);
     this.reader.guarantee(tensorCount * 20 + metadataCount * 13);
+    this.#budget.charge((tensorCount + metadataCount) * 512);
     const metadata: ModelMetadata[] = [];
     const keys = new Set<string>();
     let alignment = 32;

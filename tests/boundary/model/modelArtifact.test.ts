@@ -886,6 +886,28 @@ it("refuses an oversized declared header before reading or expanding it", async 
 const malformed = [
   ["truncated GGUF", () => ggufFixture().bytes.subarray(0, 21)],
   [
+    "GGUF string whose declared bytes exceed the file and report budget",
+    () => {
+      const base = ggufFixture({ tensors: [] });
+      return ggufFixture({
+        tensors: [],
+        metadata: [
+          { key: "custom.value", type: 8, value: base.u64(6_000_000n) },
+        ],
+      }).bytes;
+    },
+  ],
+  [
+    "GGUF count whose minimum directory exceeds the file and report budget",
+    () => {
+      const header = Buffer.alloc(24);
+      header.write("GGUF");
+      header.writeUInt32LE(3, 4);
+      header.writeBigUInt64LE(65537n, 8);
+      return header;
+    },
+  ],
+  [
     "invalid UTF8",
     () => {
       const f = ggufFixture({
@@ -1061,6 +1083,37 @@ it.each(malformed)(
     });
   },
 );
+
+it("retains GGUF representation capacity when declared string bytes can fit", async () => {
+  const base = ggufFixture({ tensors: [] });
+  const bytes = ggufFixture({
+    tensors: [],
+    metadata: [{ key: "custom.value", type: 8, value: base.u64(6_000_000n) }],
+  }).bytes;
+  const { provider, path } = await providerAt(bytes);
+  await truncate(path, bytes.length + 6_000_000);
+  const result = await provider.inspect({ path, hash: "header" });
+  if (result.ok) throw new Error("Oversized representation was accepted");
+  expect(result.error).toMatchObject({
+    _tag: "AnalysisResourceConstraintError",
+    reportedLimits: { maximum_representation_bytes: MODEL_REPORT_BYTES },
+  });
+});
+
+it("retains GGUF representation capacity when the declared directory can fit", async () => {
+  const header = Buffer.alloc(24);
+  header.write("GGUF");
+  header.writeUInt32LE(3, 4);
+  header.writeBigUInt64LE(65537n, 8);
+  const { provider, path } = await providerAt(header);
+  await truncate(path, 24 + 65537 * 20);
+  const result = await provider.inspect({ path, hash: "header" });
+  if (result.ok) throw new Error("Oversized representation was accepted");
+  expect(result.error).toMatchObject({
+    _tag: "AnalysisResourceConstraintError",
+    reportedLimits: { maximum_representation_bytes: MODEL_REPORT_BYTES },
+  });
+});
 
 it("retains GGUF declarations and metadata when storage overlap is refused", async () => {
   const seed = ggufFixture();
