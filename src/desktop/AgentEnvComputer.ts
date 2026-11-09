@@ -230,6 +230,7 @@ export class ComputerStartFailure extends Error {
     message: string,
     readonly remediation: string | undefined,
     options?: ErrorOptions,
+    readonly stage?: "readiness",
   ) {
     super(message, options);
     this.name = "ComputerStartFailure";
@@ -356,6 +357,7 @@ export class AgentEnvComputer {
       );
     phase.name = "waiting for the computer's readiness checks";
     let client: StructuredContentMcpClient | undefined;
+    let stage: "readiness" | undefined;
     try {
       client = await connectDriver(handshake.mcp_url, signal);
       const computer = new AgentEnvComputer({
@@ -365,7 +367,9 @@ export class AgentEnvComputer {
         helper,
         client,
       });
+      stage = "readiness";
       await computer.#waitReady(signal);
+      stage = undefined;
       phase.name = "waiting for the desktop to draw";
       const frame = await drawnScreenshot(
         (retry) => computer.callTool("computer_screenshot", {}, retry),
@@ -379,6 +383,7 @@ export class AgentEnvComputer {
         `The computer came up but REA could not use it: ${cause instanceof Error ? cause.message : String(cause)}`,
         undefined,
         { cause },
+        stage,
       );
     }
   }
