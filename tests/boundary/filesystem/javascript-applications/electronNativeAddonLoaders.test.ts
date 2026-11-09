@@ -11,7 +11,9 @@ import { traceApplicationFeatureEvidence } from "../../../../src/application/jav
 import { projectAnalysisError } from "../../../../src/domain/analysisErrorProjection.js";
 import { createEvidence } from "../../../../src/domain/evidence.js";
 import { javascriptApplicationAnalysisResultSchema } from "../../../../src/domain/javascript/javascriptApplicationAnalysis.js";
+import { estimateJavaScriptStaticApplicationProjection } from "../../../../src/domain/javascript/javascriptApplicationProjectionResources.js";
 import type { JavaScriptArtifactFile } from "../../../../src/domain/javascript/javascriptArtifactFiles.js";
+import { analyzeJavaScriptStaticSource } from "../../../../src/domain/javascript/javascriptStaticAnalysis.js";
 import { createTestTempDirectory } from "../../../fixtures/temporaryDirectory.js";
 import { writeFixtureFiles } from "../../../support/javascriptApplicationFixture.js";
 import { analyzeJavaScriptApplication } from "../../../support/javascriptApplicationScope.js";
@@ -1252,4 +1254,141 @@ it("preserves an unknown bindings() module root when neither package.json nor no
       },
     }),
   ).toEqual([]);
+});
+
+it("evaluates string replacement before parent-segment normalization for concatenated and template ASAR paths", async () => {
+  const root = await createTestTempDirectory("rea-asar-string-order-");
+  const packedConcat = "packed-concat-addon-binary";
+  const unpackedConcat = "unpacked-concat-decoy-binary";
+  const packedTemplate = "packed-template-addon-binary";
+  const unpackedTemplate = "unpacked-template-decoy-binary";
+  const packedJoined = "packed-joined-decoy-binary";
+  const unpackedJoined = "unpacked-joined-addon-binary";
+  const packedReplaceAll = "packed-replace-all-decoy-binary";
+  const unpackedReplaceAll = "unpacked-replace-all-addon-binary";
+
+  await writeFixtureFiles(root, {
+    "resources/app.asar/package.json": JSON.stringify({
+      name: "asar-string-order-app",
+      main: "main.cjs",
+    }),
+    "resources/app.asar/main.cjs": `
+      const { ipcMain } = require("electron");
+      const path = require("node:path");
+      const a = require((__dirname + "/../app.asar/concat.node").replace("app.asar", "app.asar.unpacked"));
+      const b = require(\`\${__dirname}/../app.asar/template.node\`.replace("app.asar", "app.asar.unpacked"));
+      const c = require(path.join(__dirname, "../app.asar/joined.node").replace("app.asar", "app.asar.unpacked"));
+      const d = require((__dirname + "/../app.asar/all.node").replaceAll("app.asar", "app.asar.unpacked"));
+      ipcMain.handle("order:check", () => [a.run(), b.run(), c.run(), d.run()]);
+    `,
+    "resources/app.asar/concat.node": packedConcat,
+    "resources/app.asar.unpacked/concat.node": unpackedConcat,
+    "resources/app.asar/template.node": packedTemplate,
+    "resources/app.asar.unpacked/template.node": unpackedTemplate,
+    "resources/app.asar/joined.node": packedJoined,
+    "resources/app.asar.unpacked/joined.node": unpackedJoined,
+    "resources/app.asar/all.node": packedReplaceAll,
+    "resources/app.asar.unpacked/all.node": unpackedReplaceAll,
+  });
+
+  const analyzed = await analyzeJavaScriptApplication({ input_path: root });
+  if (!analyzed.ok) throw analyzed.error;
+  const nativeObservations = [
+    createSimulatedNativeEvidence(
+      join(root, "resources/app.asar/concat.node"),
+      packedConcat,
+    ),
+    createSimulatedNativeEvidence(
+      join(root, "resources/app.asar/template.node"),
+      packedTemplate,
+    ),
+    createSimulatedNativeEvidence(
+      join(root, "resources/app.asar.unpacked/joined.node"),
+      unpackedJoined,
+    ),
+    createSimulatedNativeEvidence(
+      join(root, "resources/app.asar.unpacked/all.node"),
+      unpackedReplaceAll,
+    ),
+  ];
+  const traced = traceApplicationFeatureEvidence({
+    application: analyzed.value,
+    seed: { kind: "module", value: "resources/app.asar/main.cjs" },
+    direction: "outgoing",
+    native_observations: nativeObservations,
+  });
+  if (!traced.ok) throw traced.error;
+
+  const byPath = new Map(
+    traced.value.result.native_handoffs.map((handoff) => [
+      handoff.artifact_path,
+      handoff,
+    ]),
+  );
+  expect([...byPath.keys()].sort()).toEqual([
+    "resources/app.asar.unpacked/all.node",
+    "resources/app.asar.unpacked/joined.node",
+    "resources/app.asar/concat.node",
+    "resources/app.asar/template.node",
+  ]);
+  expect(byPath.get("resources/app.asar/concat.node")).toMatchObject({
+    artifact_sha256: sha256Hex(packedConcat),
+    status: "evidence-linked",
+  });
+  expect(byPath.get("resources/app.asar/template.node")).toMatchObject({
+    artifact_sha256: sha256Hex(packedTemplate),
+    status: "evidence-linked",
+  });
+  expect(byPath.get("resources/app.asar.unpacked/joined.node")).toMatchObject({
+    artifact_sha256: sha256Hex(unpackedJoined),
+    status: "evidence-linked",
+  });
+  expect(byPath.get("resources/app.asar.unpacked/all.node")).toMatchObject({
+    artifact_sha256: sha256Hex(unpackedReplaceAll),
+    status: "evidence-linked",
+  });
+});
+
+it("charges a bounded multiple of serialized graph bytes for multi-member multi-prebuild native bindings", async () => {
+  const root = await createTestTempDirectory("rea-native-member-budget-");
+  const members = Array.from(
+    { length: 60 },
+    (_, index) => `nativeSymbol_${String(index).padStart(3, "0")}`,
+  );
+  const sourceText = [
+    'import nodeGypBuild from "node-gyp-build";',
+    `const { ${members.join(", ")} } = nodeGypBuild(import.meta.dirname);`,
+    `export const first = ${members[0]};`,
+  ].join("\n");
+  const prebuilds: Record<string, string> = {
+    "package.json": JSON.stringify({
+      name: "multi-prebuild-pkg",
+      type: "module",
+      main: "index.mjs",
+    }),
+    "index.mjs": sourceText,
+  };
+  const targetCount = 12;
+  for (let index = 0; index < targetCount; index += 1) {
+    prebuilds[`prebuilds/target-${String(index).padStart(2, "0")}/addon.node`] =
+      `binary-${String(index)}`;
+  }
+  await writeFixtureFiles(root, prebuilds);
+
+  const analyzed = await analyzeJavaScriptApplication({ input_path: root });
+  if (!analyzed.ok) throw analyzed.error;
+  const result = javascriptApplicationAnalysisResultSchema.parse(
+    analyzed.value.normalized_result,
+  );
+  const facts = analyzeJavaScriptStaticSource(sourceText);
+  const checkpointBytes = Buffer.byteLength(JSON.stringify(facts));
+  const estimate = estimateJavaScriptStaticApplicationProjection(
+    facts,
+    checkpointBytes,
+    "index.mjs",
+    () => targetCount,
+  );
+  const serialized = Buffer.byteLength(JSON.stringify(result.graph));
+  expect(estimate).toBeGreaterThanOrEqual(3 * serialized);
+  expect(estimate).toBeLessThanOrEqual(9 * serialized);
 });

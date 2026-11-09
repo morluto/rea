@@ -699,3 +699,89 @@ it("preserves trailing directory separators in path joins and URLs while allowin
   expect(esm.parse_status).toBe("complete");
   expect(esm.electron.native_addon_bindings).toEqual([]);
 });
+
+it("preserves string-operation order before ASAR path normalization and charges repeated member payloads per target", () => {
+  const ordered = analyzeCommonJsStaticFixture(`
+    const load = require("node-gyp-build");
+    const concatAddon = require((__dirname + "/../app.asar/addon.node").replace("app.asar", "app.asar.unpacked"));
+    const templateAddon = require(\`\${__dirname}/../app.asar/tpl.node\`.replace("app.asar", "app.asar.unpacked"));
+    const concatHelper = load((__dirname + "/../app.asar/pkg").replace("app.asar", "app.asar.unpacked"));
+    void concatAddon, templateAddon, concatHelper;
+  `);
+  expect(ordered.electron.native_addon_bindings).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({
+        specifier: "../app.asar/addon.node",
+        resolution: {
+          kind: "candidates",
+          lookup: "commonjs",
+          resolution_context: "filesystem-expression",
+          candidates: ["../app.asar/addon.node"],
+          asar_unpacked: true,
+          asar_unpacked_candidate_steps: [
+            [
+              { kind: "concat", value: "/../app.asar/addon.node" },
+              { kind: "replace_asar_unpacked" },
+            ],
+          ],
+        },
+      }),
+      expect.objectContaining({
+        specifier: "../app.asar/tpl.node",
+        resolution: {
+          kind: "candidates",
+          lookup: "commonjs",
+          resolution_context: "filesystem-expression",
+          candidates: ["../app.asar/tpl.node"],
+          asar_unpacked: true,
+          asar_unpacked_candidate_steps: [
+            [
+              { kind: "concat", value: "/../app.asar/tpl.node" },
+              { kind: "replace_asar_unpacked" },
+            ],
+          ],
+        },
+      }),
+      expect.objectContaining({
+        specifier: "node-gyp-build:../app.asar/pkg",
+        resolution: {
+          kind: "node-gyp-build",
+          directory: "../app.asar/pkg",
+          asar_unpacked: true,
+          asar_unpacked_steps: [
+            { kind: "concat", value: "/../app.asar/pkg" },
+            { kind: "replace_asar_unpacked" },
+          ],
+        },
+      }),
+    ]),
+  );
+
+  const memberNames = Array.from(
+    { length: 80 },
+    (_, index) => `nativeExportMember_${String(index).padStart(3, "0")}`,
+  );
+  const destructured = analyzeCommonJsStaticFixture(`
+    const load = require("node-gyp-build");
+    const { ${memberNames.join(", ")} } = load(__dirname);
+    void ${memberNames[0]};
+  `);
+  const singleTarget = estimateJavaScriptStaticApplicationProjection(
+    destructured,
+    512,
+    "node_modules/pkg/index.cjs",
+    () => 1,
+  );
+  const manyTargets = estimateJavaScriptStaticApplicationProjection(
+    destructured,
+    512,
+    "node_modules/pkg/index.cjs",
+    () => 21,
+  );
+  const repeatedMemberJsonBytes = Buffer.byteLength(
+    JSON.stringify(destructured.electron.native_addon_bindings[0]!.members),
+  );
+  expect(manyTargets - singleTarget).toBeGreaterThanOrEqual(
+    20 * repeatedMemberJsonBytes * 8,
+  );
+});

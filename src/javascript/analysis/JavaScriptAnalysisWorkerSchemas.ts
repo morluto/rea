@@ -176,6 +176,18 @@ const utilityShape = {
   ...electronFindingContext,
   service_name: z.string().nullable(),
 };
+const anchoredPathStep = z.discriminatedUnion("kind", [
+  z.strictObject({ kind: z.literal("concat"), value: z.string() }),
+  z.strictObject({
+    kind: z.literal("join"),
+    segments: strings,
+    strip_trailing_separator: z.boolean().exactOptional(),
+  }),
+  z.strictObject({
+    kind: z.literal("replace_asar_unpacked"),
+    replace_all: z.boolean().exactOptional(),
+  }),
+]);
 const electron = z
   .strictObject({
     app_path_changes: z
@@ -315,6 +327,7 @@ const electron = z
                   replace_all: z.boolean().exactOptional(),
                 })
                 .exactOptional(),
+              asar_unpacked_steps: z.array(anchoredPathStep).exactOptional(),
             }),
             z.strictObject({
               kind: z.literal("bindings"),
@@ -328,6 +341,7 @@ const electron = z
                   replace_all: z.boolean().exactOptional(),
                 })
                 .exactOptional(),
+              asar_unpacked_steps: z.array(anchoredPathStep).exactOptional(),
             }),
             z.strictObject({
               kind: z.literal("candidates"),
@@ -343,6 +357,9 @@ const electron = z
                   directory: z.string(),
                   replace_all: z.boolean().exactOptional(),
                 })
+                .exactOptional(),
+              asar_unpacked_candidate_steps: z
+                .array(z.array(anchoredPathStep))
                 .exactOptional(),
             }),
           ])

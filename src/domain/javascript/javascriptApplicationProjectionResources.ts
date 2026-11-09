@@ -44,15 +44,18 @@ export const estimateJavaScriptStaticApplicationProjection = (
   }
   for (const binding of facts.electron.native_addon_bindings) {
     const resolvedTargets = resolvedNativeAddonTargets?.(binding);
-    records +=
-      binding.members.length * 3 +
-      (resolvedTargets !== undefined
-        ? resolvedTargets * 2
+    const targetCount =
+      resolvedTargets !== undefined
+        ? resolvedTargets
         : binding.resolution?.kind === "candidates"
-          ? binding.resolution.candidates.length * 2
+          ? binding.resolution.candidates.length
           : binding.resolution === undefined
             ? 0
-            : 4);
+            : 2;
+    records += binding.members.length * 3 + targetCount * 2;
+    // Every resolved target's exposes edge repeats the requested member list.
+    repeatedBytes +=
+      Buffer.byteLength(JSON.stringify(binding.members)) * targetCount;
   }
   for (const path of facts.electron.call_paths ?? []) {
     // One contextual node and edge per step, with repeated guards and identity.

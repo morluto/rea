@@ -232,6 +232,16 @@ export interface ElectronAsarUnpackedRewriteScope {
   readonly replace_all?: boolean;
 }
 
+/** Ordered string or path operation evaluated from `dirname(sourcePath)`. */
+export type ElectronAnchoredPathStep =
+  | { readonly kind: "concat"; readonly value: string }
+  | {
+      readonly kind: "join";
+      readonly segments: readonly string[];
+      readonly strip_trailing_separator?: boolean;
+    }
+  | { readonly kind: "replace_asar_unpacked"; readonly replace_all?: boolean };
+
 /** Proven loader or bounded path-candidate metadata for a native .node binding. */
 export type ElectronNativeAddonResolution =
   | {
@@ -240,6 +250,7 @@ export type ElectronNativeAddonResolution =
       readonly asar_unpacked?: boolean;
       readonly asar_unpacked_replace_all?: boolean;
       readonly asar_unpacked_scope?: ElectronAsarUnpackedRewriteScope;
+      readonly asar_unpacked_steps?: readonly ElectronAnchoredPathStep[];
     }
   | {
       readonly kind: "bindings";
@@ -248,6 +259,7 @@ export type ElectronNativeAddonResolution =
       readonly asar_unpacked?: boolean;
       readonly asar_unpacked_replace_all?: boolean;
       readonly asar_unpacked_scope?: ElectronAsarUnpackedRewriteScope;
+      readonly asar_unpacked_steps?: readonly ElectronAnchoredPathStep[];
     }
   | {
       readonly kind: "candidates";
@@ -259,6 +271,7 @@ export type ElectronNativeAddonResolution =
       readonly asar_unpacked?: boolean;
       readonly asar_unpacked_replace_all?: boolean;
       readonly asar_unpacked_scope?: ElectronAsarUnpackedRewriteScope;
+      readonly asar_unpacked_candidate_steps?: readonly (readonly ElectronAnchoredPathStep[])[];
     };
 
 /** JavaScript-side binding or re-export requested from one native .node addon. */

@@ -9,6 +9,7 @@ import {
   compositeKey,
 } from "../../domain/unicodeCodePointOrder.js";
 import type {
+  ElectronAnchoredPathStep,
   ElectronAsarUnpackedRewriteScope,
   ElectronNativeAddonBindingFinding,
 } from "../../domain/javascript/electronStaticAnalysisTypes.js";
@@ -425,24 +426,36 @@ const resolveAsarUnpackedFinding = (
   const resolution = finding.resolution;
   if (resolution === undefined) return [];
   if (resolution.kind === "node-gyp-build") {
-    const searchRoot = resolveRewrittenAnchoredDirectory(
-      sourcePath,
-      resolution.directory,
-      resolution.asar_unpacked_scope,
-      resolution.asar_unpacked_replace_all,
-    );
+    const searchRoot =
+      resolution.asar_unpacked_steps !== undefined
+        ? resolveOrderedAnchoredDirectory(
+            sourcePath,
+            resolution.asar_unpacked_steps,
+          )
+        : resolveRewrittenAnchoredDirectory(
+            sourcePath,
+            resolution.directory,
+            resolution.asar_unpacked_scope,
+            resolution.asar_unpacked_replace_all,
+          );
     return searchRoot === undefined
       ? []
       : scanNodeGypBuildTargets(state, searchRoot);
   }
   if (resolution.kind === "bindings") {
     if (resolution.module_root !== null) {
-      const searchRoot = resolveRewrittenAnchoredDirectory(
-        sourcePath,
-        resolution.module_root,
-        resolution.asar_unpacked_scope,
-        resolution.asar_unpacked_replace_all,
-      );
+      const searchRoot =
+        resolution.asar_unpacked_steps !== undefined
+          ? resolveOrderedAnchoredDirectory(
+              sourcePath,
+              resolution.asar_unpacked_steps,
+            )
+          : resolveRewrittenAnchoredDirectory(
+              sourcePath,
+              resolution.module_root,
+              resolution.asar_unpacked_scope,
+              resolution.asar_unpacked_replace_all,
+            );
       return searchRoot === undefined
         ? []
         : scanBindingsTargets(state, searchRoot, resolution.addon_name);
@@ -461,13 +474,20 @@ const resolveAsarUnpackedFinding = (
   }
   if (resolution.resolution_context === "filesystem-expression") {
     const sourceDir = posix.dirname(sourcePath);
-    const matched = resolution.candidates.flatMap((candidate) => {
-      const rewrittenPath = resolveRewrittenAnchoredPath(
-        sourcePath,
-        candidate,
-        resolution.asar_unpacked_scope,
-        resolution.asar_unpacked_replace_all,
-      );
+    const rewrittenCandidates =
+      resolution.asar_unpacked_candidate_steps !== undefined
+        ? resolution.asar_unpacked_candidate_steps.map((steps) =>
+            evaluateAnchoredPathSteps(sourcePath, steps),
+          )
+        : resolution.candidates.map((candidate) =>
+            resolveRewrittenAnchoredPath(
+              sourcePath,
+              candidate,
+              resolution.asar_unpacked_scope,
+              resolution.asar_unpacked_replace_all,
+            ),
+          );
+    const matched = rewrittenCandidates.flatMap((rewrittenPath) => {
       if (rewrittenPath === undefined || rewrittenPath === ".") return [];
       const relativeRaw = posix.relative(sourceDir, rewrittenPath);
       const relativeToSource =
@@ -539,6 +559,76 @@ const resolveRewrittenAnchoredPath = (
   );
   if (logicalPathEscapesRoot(finalJoined)) return undefined;
   return finalJoined === "" ? "." : finalJoined;
+};
+
+const ARTIFACT_ROOT_PREFIX = "/__rea_artifact_root__";
+
+const anchoredCurrentEscapesRoot = (value: string): boolean => {
+  const normalized = posix.normalize(value);
+  return (
+    normalized !== ARTIFACT_ROOT_PREFIX &&
+    !normalized.startsWith(`${ARTIFACT_ROOT_PREFIX}/`)
+  );
+};
+
+const evaluateAnchoredPathSteps = (
+  sourcePath: string,
+  steps: readonly ElectronAnchoredPathStep[],
+): string | undefined => {
+  const sourceDir = posix.dirname(sourcePath);
+  let current =
+    sourceDir === "." || sourceDir === ""
+      ? ARTIFACT_ROOT_PREFIX
+      : `${ARTIFACT_ROOT_PREFIX}/${sourceDir}`;
+  for (const step of steps) {
+    if (step.kind === "concat") {
+      if (
+        step.value.includes("\0") ||
+        step.value.includes("\\") ||
+        step.value.includes("__rea_artifact_root__")
+      )
+        return undefined;
+      current += step.value;
+      if (anchoredCurrentEscapesRoot(current)) return undefined;
+    } else if (step.kind === "join") {
+      if (
+        step.segments.some(
+          (seg) =>
+            seg.includes("\0") ||
+            seg.includes("\\") ||
+            seg.includes("__rea_artifact_root__"),
+        )
+      )
+        return undefined;
+      const joined = posix.join(current, ...step.segments);
+      current =
+        step.strip_trailing_separator === true && joined !== "/"
+          ? joined.replace(/\/$/u, "")
+          : joined;
+      if (anchoredCurrentEscapesRoot(current)) return undefined;
+    } else {
+      current =
+        step.replace_all === true
+          ? current.replaceAll("app.asar", "app.asar.unpacked")
+          : current.replace("app.asar", "app.asar.unpacked");
+    }
+  }
+  const hadTrailingSlash = current.endsWith("/");
+  const normalized = posix.normalize(current);
+  if (anchoredCurrentEscapesRoot(normalized)) return undefined;
+  const rel = posix.relative(ARTIFACT_ROOT_PREFIX, normalized);
+  if (rel === "") return hadTrailingSlash ? "./" : ".";
+  return hadTrailingSlash && !rel.endsWith("/") ? `${rel}/` : rel;
+};
+
+const resolveOrderedAnchoredDirectory = (
+  sourcePath: string,
+  steps: readonly ElectronAnchoredPathStep[],
+): string | undefined => {
+  const rewritten = evaluateAnchoredPathSteps(sourcePath, steps);
+  if (rewritten === undefined) return undefined;
+  const stripped = rewritten.replace(/\/+$/u, "");
+  return stripped === "" ? "." : stripped;
 };
 
 const resolveRewrittenAnchoredDirectory = (

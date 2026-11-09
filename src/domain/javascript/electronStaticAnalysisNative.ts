@@ -390,13 +390,23 @@ const resolutionKey = (
     resolution.asar_unpacked_scope?.replace_all ?? false,
   ];
   if (resolution.kind === "node-gyp-build")
-    return ["node-gyp-build", resolution.directory, ...unpackedKey];
+    return [
+      "node-gyp-build",
+      resolution.directory,
+      ...unpackedKey,
+      resolution.asar_unpacked_steps === undefined
+        ? null
+        : JSON.stringify(resolution.asar_unpacked_steps),
+    ];
   if (resolution.kind === "bindings")
     return [
       "bindings",
       resolution.addon_name,
       resolution.module_root,
       ...unpackedKey,
+      resolution.asar_unpacked_steps === undefined
+        ? null
+        : JSON.stringify(resolution.asar_unpacked_steps),
     ];
   return [
     "candidates",
@@ -406,6 +416,9 @@ const resolutionKey = (
     resolution.candidates,
     resolution.resolution_base_path ?? null,
     ...unpackedKey,
+    resolution.asar_unpacked_candidate_steps === undefined
+      ? null
+      : JSON.stringify(resolution.asar_unpacked_candidate_steps),
   ];
 };
 

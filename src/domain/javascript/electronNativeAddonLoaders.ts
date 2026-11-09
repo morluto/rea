@@ -2,9 +2,13 @@ import { posix } from "node:path";
 
 import * as t from "@babel/types";
 
-import { compareUnicodeCodePoints } from "../unicodeCodePointOrder.js";
+import {
+  compareUnicodeCodePoints,
+  compositeKey,
+} from "../unicodeCodePointOrder.js";
 import { stripQueryAndFragment } from "../artifactPathSyntax.js";
 import type {
+  ElectronAnchoredPathStep,
   ElectronAsarUnpackedRewriteScope,
   ElectronNativeAddonBindingFinding,
   ElectronNativeAddonResolution,
@@ -58,16 +62,27 @@ type PathPiece =
   | { readonly kind: "text"; readonly value: string }
   | { readonly kind: "host"; readonly axis: HostAxis };
 
+type AnchoredTemplateStep =
+  | { readonly kind: "concat"; readonly pieces: readonly PathPiece[] }
+  | {
+      readonly kind: "join";
+      readonly segments: readonly (readonly PathPiece[])[];
+      readonly stripTrailingSeparator?: boolean;
+    }
+  | { readonly kind: "replace-asar-unpacked"; readonly replaceAll: boolean };
+
 interface AsarUnpackedTemplateRewrite {
   readonly scopeDirectory: string | undefined;
   readonly replaceAll: boolean;
   readonly hasPostRewriteSuffix: boolean;
+  readonly orderedSteps?: readonly AnchoredTemplateStep[];
 }
 
 interface NativePathTemplateFact {
   readonly pieces: readonly PathPiece[];
   readonly base: "source-directory" | "literal-path";
   readonly asarUnpacked?: AsarUnpackedTemplateRewrite;
+  readonly anchoredSteps?: readonly AnchoredTemplateStep[];
 }
 
 export interface NativeMemberAccess {
@@ -322,7 +337,10 @@ export const resolveDlopenCall = (
       candidates:
         expanded.base === "source-directory" ? expanded.candidates : [],
       ...(expanded.base === "source-directory" && expanded.asarUnpacked
-        ? asarUnpackedResolutionProps(expanded.asarUnpacked)
+        ? asarUnpackedResolutionProps(
+            expanded.asarUnpacked,
+            expanded.asarUnpackedCandidateSteps,
+          )
         : {}),
     },
   };
@@ -336,6 +354,7 @@ export type RequireResolveSearchOptions =
       readonly asarUnpacked: boolean;
       readonly asarUnpackedReplaceAll?: boolean;
       readonly asarUnpackedScope?: ElectronAsarUnpackedRewriteScope;
+      readonly asarUnpackedSteps?: readonly ElectronAnchoredPathStep[];
     }
   | { readonly kind: "unresolved" };
 
@@ -391,6 +410,9 @@ export const resolveRequireResolveSearchOptions = (
         ...(anchored.asarUnpackedScope === undefined
           ? {}
           : { asarUnpackedScope: anchored.asarUnpackedScope }),
+        ...(anchored.asarUnpackedSteps === undefined
+          ? {}
+          : { asarUnpackedSteps: anchored.asarUnpackedSteps }),
       };
 };
 
@@ -470,7 +492,10 @@ const resolveDlopenRequireResolve = (
           candidates: expanded.candidates,
           ...(expanded.asarUnpacked === undefined
             ? {}
-            : asarUnpackedResolutionProps(expanded.asarUnpacked)),
+            : asarUnpackedResolutionProps(
+                expanded.asarUnpacked,
+                expanded.asarUnpackedCandidateSteps,
+              )),
         },
       };
     if (
@@ -483,6 +508,30 @@ const resolveDlopenRequireResolve = (
       return undefined;
     }
     if (searchOptions.asarUnpacked) {
+      if (searchOptions.asarUnpackedSteps !== undefined) {
+        const dirSteps = searchOptions.asarUnpackedSteps;
+        return {
+          specifier: expanded.display,
+          kind,
+          access,
+          resolution: {
+            kind: "candidates",
+            loader: "dlopen",
+            lookup: "commonjs",
+            resolution_context: "filesystem-expression",
+            candidates: expanded.candidates.map((candidate) =>
+              posix.join(searchOptions.directory, candidate),
+            ),
+            asar_unpacked: true,
+            asar_unpacked_candidate_steps: expanded.candidates.map(
+              (candidate) => [
+                ...dirSteps,
+                { kind: "join", segments: [candidate] },
+              ],
+            ),
+          },
+        };
+      }
       const scope: ElectronAsarUnpackedRewriteScope =
         searchOptions.asarUnpackedScope ?? {
           directory: searchOptions.directory,
@@ -540,7 +589,10 @@ const resolveDlopenRequireResolve = (
             candidates: expanded.candidates,
             ...(expanded.asarUnpacked === undefined
               ? {}
-              : asarUnpackedResolutionProps(expanded.asarUnpacked)),
+              : asarUnpackedResolutionProps(
+                  expanded.asarUnpacked,
+                  expanded.asarUnpackedCandidateSteps,
+                )),
           }
         : {
             kind: "candidates",
@@ -701,6 +753,9 @@ const resolveNodeGypBuildCall = (
       ...(anchored.asarUnpackedScope === undefined
         ? {}
         : { asar_unpacked_scope: anchored.asarUnpackedScope }),
+      ...(anchored.asarUnpackedSteps === undefined
+        ? {}
+        : { asar_unpacked_steps: anchored.asarUnpackedSteps }),
     },
   };
 };
@@ -747,10 +802,7 @@ const resolveBindingsHelperCall = (
     return undefined;
   }
   let rawAddonName: string | undefined;
-  let moduleRoot: string | null = null;
-  let moduleRootUnpacked = false;
-  let moduleRootUnpackedReplaceAll = false;
-  let moduleRootUnpackedScope: ElectronAsarUnpackedRewriteScope | undefined;
+  let moduleRootResolved: ResolvedAnchoredDirectory | undefined;
   let pathOnly = false;
   for (const prop of objectNode.properties) {
     if (t.isSpreadElement(prop) || t.isObjectMethod(prop)) {
@@ -772,10 +824,7 @@ const resolveBindingsHelperCall = (
     } else if (key === "module_root") {
       const valueNode = unwrapJavaScriptExpression(prop.value).node;
       if (isUnshadowedGlobal(valueNode, bindings, "undefined")) {
-        moduleRoot = null;
-        moduleRootUnpacked = false;
-        moduleRootUnpackedReplaceAll = false;
-        moduleRootUnpackedScope = undefined;
+        moduleRootResolved = undefined;
       } else {
         const resolved = resolveSourceAnchoredDirectory(
           valueNode,
@@ -787,10 +836,7 @@ const resolveBindingsHelperCall = (
           context.accumulator.unknownFindings += 1;
           return undefined;
         }
-        moduleRoot = resolved.directory;
-        moduleRootUnpacked = resolved.asarUnpacked;
-        moduleRootUnpackedReplaceAll = resolved.asarUnpackedReplaceAll === true;
-        moduleRootUnpackedScope = resolved.asarUnpackedScope;
+        moduleRootResolved = resolved;
       }
     } else if (key === "path") {
       const evaluatedPath = evaluateBindingsPathOption(prop.value, node, index);
@@ -822,14 +868,19 @@ const resolveBindingsHelperCall = (
     resolution: {
       kind: "bindings",
       addon_name: addonName,
-      module_root: moduleRoot,
-      ...(moduleRootUnpacked ? { asar_unpacked: true } : {}),
-      ...(moduleRootUnpackedReplaceAll
+      module_root: moduleRootResolved?.directory ?? null,
+      ...(moduleRootResolved?.asarUnpacked === true
+        ? { asar_unpacked: true }
+        : {}),
+      ...(moduleRootResolved?.asarUnpackedReplaceAll === true
         ? { asar_unpacked_replace_all: true }
         : {}),
-      ...(moduleRootUnpackedScope === undefined
+      ...(moduleRootResolved?.asarUnpackedScope === undefined
         ? {}
-        : { asar_unpacked_scope: moduleRootUnpackedScope }),
+        : { asar_unpacked_scope: moduleRootResolved.asarUnpackedScope }),
+      ...(moduleRootResolved?.asarUnpackedSteps === undefined
+        ? {}
+        : { asar_unpacked_steps: moduleRootResolved.asarUnpackedSteps }),
     },
   };
 };
@@ -928,7 +979,10 @@ const resolveRequireNativeCall = (
             candidates: expanded.candidates,
             ...(expanded.asarUnpacked === undefined
               ? {}
-              : asarUnpackedResolutionProps(expanded.asarUnpacked)),
+              : asarUnpackedResolutionProps(
+                  expanded.asarUnpacked,
+                  expanded.asarUnpackedCandidateSteps,
+                )),
           }
         : {
             kind: "candidates",
@@ -977,11 +1031,19 @@ const asarUnpackedScopeFromRewrite = (
 
 const asarUnpackedResolutionProps = (
   rewrite: AsarUnpackedTemplateRewrite,
+  candidateSteps?: readonly (readonly ElectronAnchoredPathStep[])[],
 ): {
   readonly asar_unpacked: true;
   readonly asar_unpacked_replace_all?: true;
   readonly asar_unpacked_scope?: ElectronAsarUnpackedRewriteScope;
+  readonly asar_unpacked_candidate_steps?: readonly (readonly ElectronAnchoredPathStep[])[];
 } => {
+  if (candidateSteps !== undefined) {
+    return {
+      asar_unpacked: true,
+      asar_unpacked_candidate_steps: candidateSteps,
+    };
+  }
   const scope = asarUnpackedScopeFromRewrite(rewrite);
   return {
     asar_unpacked: true,
@@ -997,21 +1059,22 @@ const normalizeAnchoredDirectory = (value: string): string => {
   return normalized === "/" ? "/" : normalized.replace(/\/+$/u, "") || ".";
 };
 
+interface ResolvedAnchoredDirectory {
+  readonly directory: string;
+  readonly displayDirectory: string;
+  readonly asarUnpacked: boolean;
+  readonly asarUnpackedReplaceAll?: boolean;
+  readonly asarUnpackedScope?: ElectronAsarUnpackedRewriteScope;
+  readonly asarUnpackedSteps?: readonly ElectronAnchoredPathStep[];
+}
+
 const resolveSourceAnchoredDirectory = (
   raw: t.Node,
   context: JavaScriptFindingContext,
   bindings: JavaScriptSemanticAnalysisState,
   site: t.Node,
   visited: ReadonlySet<string> = new Set(),
-):
-  | {
-      readonly directory: string;
-      readonly displayDirectory: string;
-      readonly asarUnpacked: boolean;
-      readonly asarUnpackedReplaceAll?: boolean;
-      readonly asarUnpackedScope?: ElectronAsarUnpackedRewriteScope;
-    }
-  | undefined => {
+): ResolvedAnchoredDirectory | undefined => {
   const node = unwrapJavaScriptExpression(raw).node;
   if (context.pathIntrinsics?.(node, "source-directory") === true)
     return { directory: ".", displayDirectory: ".", asarUnpacked: false };
@@ -1064,6 +1127,21 @@ const resolveSourceAnchoredDirectory = (
     const directory = normalizeAnchoredDirectory(fact.pieces[0].value);
     const rewrite = fact.asarUnpacked;
     if (rewrite !== undefined) {
+      if (rewrite.orderedSteps !== undefined) {
+        if (anchoredStepsUseHostAxis(rewrite.orderedSteps)) return undefined;
+        const concreteSteps = renderConcreteAnchoredSteps(
+          rewrite.orderedSteps,
+          null,
+          null,
+        );
+        if (concreteSteps === undefined) return undefined;
+        return {
+          directory,
+          displayDirectory: directory,
+          asarUnpacked: true,
+          asarUnpackedSteps: concreteSteps,
+        };
+      }
       if (rewrite.hasPostRewriteSuffix && rewrite.scopeDirectory === undefined)
         return undefined;
       const scope = asarUnpackedScopeFromRewrite(rewrite);
@@ -1130,6 +1208,7 @@ const expandNativePathTemplate = (
       readonly base: "source-directory" | "literal-path";
       readonly candidates: readonly string[];
       readonly asarUnpacked?: AsarUnpackedTemplateRewrite;
+      readonly asarUnpackedCandidateSteps?: readonly (readonly ElectronAnchoredPathStep[])[];
     }
   | undefined => {
   const fact = evaluatePathTemplateFact(
@@ -1143,24 +1222,38 @@ const expandNativePathTemplate = (
   if (fact === undefined) return undefined;
   if (
     fact.asarUnpacked !== undefined &&
+    fact.asarUnpacked.orderedSteps === undefined &&
     fact.asarUnpacked.hasPostRewriteSuffix &&
     fact.asarUnpacked.scopeDirectory === undefined
   )
     return undefined;
-  const usesPlatform = fact.pieces.some(
-    (piece) => piece.kind === "host" && piece.axis === "platform",
-  );
-  const usesArch = fact.pieces.some(
-    (piece) => piece.kind === "host" && piece.axis === "arch",
-  );
+  const orderedSteps = fact.asarUnpacked?.orderedSteps;
+  const usesPlatform =
+    fact.pieces.some(
+      (piece) => piece.kind === "host" && piece.axis === "platform",
+    ) ||
+    (orderedSteps !== undefined &&
+      anchoredStepsUseAxis(orderedSteps, "platform"));
+  const usesArch =
+    fact.pieces.some(
+      (piece) => piece.kind === "host" && piece.axis === "arch",
+    ) ||
+    (orderedSteps !== undefined && anchoredStepsUseAxis(orderedSteps, "arch"));
   const platforms = usesPlatform ? HOST_PLATFORMS : ([null] as const);
   const arches = usesArch ? HOST_ARCHES : ([null] as const);
   const rawDisplay = renderTemplatePieces(fact.pieces, null, null);
   const display =
+    fact.asarUnpacked?.orderedSteps === undefined &&
     fact.asarUnpacked?.hasPostRewriteSuffix === true &&
     fact.asarUnpacked.scopeDirectory !== undefined
       ? posix.join(fact.asarUnpacked.scopeDirectory, rawDisplay)
       : rawDisplay;
+  if (orderedSteps !== undefined) {
+    return expandOrderedAnchoredTemplate(fact, orderedSteps, display, {
+      platforms,
+      arches,
+    });
+  }
   const candidates: string[] = [];
   for (const platform of platforms) {
     for (const arch of arches) {
@@ -1180,6 +1273,70 @@ const expandNativePathTemplate = (
         ...(fact.asarUnpacked === undefined
           ? {}
           : { asarUnpacked: fact.asarUnpacked }),
+      };
+};
+
+const expandOrderedAnchoredTemplate = (
+  fact: NativePathTemplateFact,
+  orderedSteps: readonly AnchoredTemplateStep[],
+  display: string,
+  axes: {
+    readonly platforms: readonly (string | null)[];
+    readonly arches: readonly (string | null)[];
+  },
+):
+  | {
+      readonly display: string;
+      readonly base: "source-directory" | "literal-path";
+      readonly candidates: readonly string[];
+      readonly asarUnpacked?: AsarUnpackedTemplateRewrite;
+      readonly asarUnpackedCandidateSteps: readonly (readonly ElectronAnchoredPathStep[])[];
+    }
+  | undefined => {
+  const entries = new Map<
+    string,
+    {
+      readonly candidate: string;
+      readonly steps: readonly ElectronAnchoredPathStep[];
+    }
+  >();
+  for (const platform of axes.platforms) {
+    for (const arch of axes.arches) {
+      const value = renderTemplatePieces(fact.pieces, platform, arch);
+      const concreteSteps = renderConcreteAnchoredSteps(
+        orderedSteps,
+        platform,
+        arch,
+      );
+      if (
+        concreteSteps === undefined ||
+        value.includes("\0") ||
+        !isNativeSpecifier(value, "require")
+      )
+        return undefined;
+      const key = compositeKey([value, JSON.stringify(concreteSteps)]);
+      if (!entries.has(key))
+        entries.set(key, { candidate: value, steps: concreteSteps });
+    }
+  }
+  const sorted = [...entries.values()].sort(
+    (left, right) =>
+      compareUnicodeCodePoints(left.candidate, right.candidate) ||
+      compareUnicodeCodePoints(
+        JSON.stringify(left.steps),
+        JSON.stringify(right.steps),
+      ),
+  );
+  return sorted.length === 0
+    ? undefined
+    : {
+        display,
+        base: fact.base,
+        candidates: sorted.map((entry) => entry.candidate),
+        ...(fact.asarUnpacked === undefined
+          ? {}
+          : { asarUnpacked: fact.asarUnpacked }),
+        asarUnpackedCandidateSteps: sorted.map((entry) => entry.steps),
       };
 };
 
@@ -1218,6 +1375,7 @@ const evaluatePathTemplateFact = (
     return {
       pieces: [{ kind: "text", value: "." }],
       base: "source-directory",
+      anchoredSteps: [],
     };
   const axis = hostAxisAt(node, bindings, site);
   if (axis !== undefined)
@@ -1332,13 +1490,8 @@ const evaluateTemplateLiteralFact = (
     pieces.push(...evaluated.pieces);
   }
   const compacted = compactPathPieces(pieces);
-  if (leadingAnchored !== undefined) {
-    if (!anchoredFactAllowsSuffix(leadingAnchored, compacted)) return undefined;
-    return normalizeJoinedTemplateSegments(
-      [leadingAnchored, { pieces: compacted, base: "literal-path" }],
-      "source-directory",
-    );
-  }
+  if (leadingAnchored !== undefined)
+    return appendAnchoredConcatenation(leadingAnchored, compacted);
   return { pieces: compacted, base: "literal-path" };
 };
 
@@ -1390,13 +1543,8 @@ const evaluateConcatenationFact = (
     pieces.push(...part.pieces);
   }
   const compacted = compactPathPieces(pieces);
-  if (leading.base === "source-directory") {
-    if (!anchoredFactAllowsSuffix(leading, compacted)) return undefined;
-    return normalizeJoinedTemplateSegments(
-      [leading, { pieces: compacted, base: "literal-path" }],
-      "source-directory",
-    );
-  }
+  if (leading.base === "source-directory")
+    return appendAnchoredConcatenation(leading, compacted);
   return { pieces: compacted, base: "literal-path" };
 };
 
@@ -1428,22 +1576,7 @@ const evaluatePathCallFact = (
         ? undefined
         : { pieces: replaced, base: "literal-path" };
     }
-    if (inner.asarUnpacked !== undefined) return undefined;
-    const scopeDirectory =
-      inner.pieces.length === 1 &&
-      inner.pieces[0]?.kind === "text" &&
-      isRelativeSubpath(inner.pieces[0].value)
-        ? normalizeAnchoredDirectory(inner.pieces[0].value)
-        : undefined;
-    return {
-      pieces: inner.pieces,
-      base: "source-directory",
-      asarUnpacked: {
-        scopeDirectory,
-        replaceAll: unpacked.replaceAll,
-        hasPostRewriteSuffix: false,
-      },
-    };
+    return appendAnchoredAsarReplace(inner, unpacked.replaceAll);
   }
   if (context.pathIntrinsics?.(node.callee, "file-url-to-path") === true)
     return evaluateFileUrlCallFact(
@@ -1518,13 +1651,20 @@ const evaluateFileUrlCallFact = (
       sourceUrl?.directory === true && !staticFile.path.endsWith("/")
         ? `${staticFile.path}/`
         : staticFile.path;
+    const resolvedBase =
+      staticFile.base === "source-directory" &&
+      !isRelativeSubpath(preservedPath)
+        ? "literal-path"
+        : staticFile.base;
+    const textPieces: readonly PathPiece[] = [
+      { kind: "text", value: preservedPath },
+    ];
     return {
-      pieces: [{ kind: "text", value: preservedPath }],
-      base:
-        staticFile.base === "source-directory" &&
-        !isRelativeSubpath(preservedPath)
-          ? "literal-path"
-          : staticFile.base,
+      pieces: textPieces,
+      base: resolvedBase,
+      ...(resolvedBase === "source-directory"
+        ? { anchoredSteps: [{ kind: "join", segments: [textPieces] }] }
+        : {}),
     };
   }
   if (arg0 === undefined) return undefined;
@@ -1613,7 +1753,11 @@ const decodeUrlTemplatePieces = (
         return undefined;
     }
   }
-  return { pieces: decodedPieces, base: "source-directory" };
+  return {
+    pieces: decodedPieces,
+    base: "source-directory",
+    anchoredSteps: [{ kind: "join", segments: [decodedPieces] }],
+  };
 };
 
 const evaluatePathJoinFact = (
@@ -1654,7 +1798,7 @@ const evaluatePathJoinFact = (
   if (anchors.length > 1) return undefined;
   if (anchors.length === 1 && anchors[0] !== firstNonEmpty) return undefined;
   const base = anchors.length === 1 ? "source-directory" : "literal-path";
-  return normalizeJoinedTemplateSegments(parts, base);
+  return appendAnchoredJoinFact(parts, base, false);
 };
 
 const evaluatePathResolveFact = (
@@ -1692,7 +1836,269 @@ const evaluatePathResolveFact = (
     }
   }
   if (base === undefined) return undefined;
-  return normalizeJoinedTemplateSegments(reversed.reverse(), base, true);
+  return appendAnchoredJoinFact(reversed.reverse(), base, true);
+};
+
+const RESERVED_ANCHOR_SENTINEL = "__rea_artifact_root__";
+
+const anchoredStepsFromFact = (
+  fact: NativePathTemplateFact,
+): readonly AnchoredTemplateStep[] =>
+  fact.anchoredSteps ?? [{ kind: "join", segments: [fact.pieces] }];
+
+const anchoredStepsUseAxis = (
+  steps: readonly AnchoredTemplateStep[],
+  axis: HostAxis,
+): boolean =>
+  steps.some((step) => {
+    if (step.kind === "concat")
+      return step.pieces.some(
+        (piece) => piece.kind === "host" && piece.axis === axis,
+      );
+    if (step.kind === "join")
+      return step.segments.some((seg) =>
+        seg.some((piece) => piece.kind === "host" && piece.axis === axis),
+      );
+    return false;
+  });
+
+const anchoredStepsUseHostAxis = (
+  steps: readonly AnchoredTemplateStep[],
+): boolean =>
+  anchoredStepsUseAxis(steps, "platform") ||
+  anchoredStepsUseAxis(steps, "arch");
+
+const stepsRequiresOrderedEvaluation = (
+  steps: readonly AnchoredTemplateStep[],
+): boolean => {
+  const replaceCount = steps.filter(
+    (step) => step.kind === "replace-asar-unpacked",
+  ).length;
+  if (replaceCount === 0) return false;
+  if (replaceCount > 1) return true;
+  if (steps.some((step) => step.kind === "concat")) return true;
+  const replaceIndex = steps.findIndex(
+    (step) => step.kind === "replace-asar-unpacked",
+  );
+  return (
+    steps.length > replaceIndex + 1 &&
+    anchoredStepsUseHostAxis(steps.slice(0, replaceIndex))
+  );
+};
+
+const piecesContainDisallowedToken = (
+  pieces: readonly PathPiece[],
+  platformToken?: string,
+  archToken?: string,
+): boolean =>
+  pieces.some(
+    (piece) =>
+      piece.kind === "text" &&
+      (piece.value.includes("\\") ||
+        piece.value.includes("\0") ||
+        piece.value.includes(RESERVED_ANCHOR_SENTINEL) ||
+        (platformToken !== undefined && piece.value.includes(platformToken)) ||
+        (archToken !== undefined && piece.value.includes(archToken))),
+  );
+
+const renderAnchoredPreviewPieces = (
+  steps: readonly AnchoredTemplateStep[],
+): PathPiece[] | undefined => {
+  const PLATFORM_TOKEN = "__rea_host_platform_token__";
+  const ARCH_TOKEN = "__rea_host_arch_token__";
+  let current = ".";
+  for (const step of steps) {
+    if (step.kind === "concat") {
+      if (piecesContainDisallowedToken(step.pieces, PLATFORM_TOKEN, ARCH_TOKEN))
+        return undefined;
+      current += renderTemplatePieces(step.pieces, PLATFORM_TOKEN, ARCH_TOKEN);
+    } else if (step.kind === "join") {
+      for (const seg of step.segments)
+        if (piecesContainDisallowedToken(seg, PLATFORM_TOKEN, ARCH_TOKEN))
+          return undefined;
+      const joined = posix.join(
+        current,
+        ...step.segments.map((seg) =>
+          renderTemplatePieces(seg, PLATFORM_TOKEN, ARCH_TOKEN),
+        ),
+      );
+      current = maybeStripTrailingSeparator(
+        joined,
+        step.stripTrailingSeparator === true,
+      );
+    }
+  }
+  const hadTrailingSlash = current.endsWith("/") && current !== "/";
+  const normalized = posix.normalize(current);
+  const preview =
+    hadTrailingSlash && !normalized.endsWith("/")
+      ? `${normalized}/`
+      : normalized;
+  return splitTokenizedTemplatePieces(preview, PLATFORM_TOKEN, ARCH_TOKEN);
+};
+
+const renderConcreteAnchoredSteps = (
+  steps: readonly AnchoredTemplateStep[],
+  platform: string | null,
+  arch: string | null,
+): readonly ElectronAnchoredPathStep[] | undefined => {
+  const rendered: ElectronAnchoredPathStep[] = [];
+  for (const step of steps) {
+    if (step.kind === "concat") {
+      if (piecesContainDisallowedToken(step.pieces)) return undefined;
+      const value = renderTemplatePieces(step.pieces, platform, arch);
+      if (value.includes("\0") || value.includes("\\")) return undefined;
+      rendered.push({ kind: "concat", value });
+    } else if (step.kind === "join") {
+      const segments: string[] = [];
+      for (const seg of step.segments) {
+        if (piecesContainDisallowedToken(seg)) return undefined;
+        const value = renderTemplatePieces(seg, platform, arch);
+        if (value.includes("\0") || value.includes("\\")) return undefined;
+        segments.push(value);
+      }
+      rendered.push({
+        kind: "join",
+        segments,
+        ...(step.stripTrailingSeparator === true
+          ? { strip_trailing_separator: true }
+          : {}),
+      });
+    } else {
+      rendered.push({
+        kind: "replace_asar_unpacked",
+        ...(step.replaceAll ? { replace_all: true } : {}),
+      });
+    }
+  }
+  return rendered;
+};
+
+const appendAnchoredConcatenation = (
+  leading: NativePathTemplateFact,
+  suffix: readonly PathPiece[],
+): NativePathTemplateFact | undefined => {
+  if (
+    suffix.length === 1 &&
+    suffix[0]?.kind === "text" &&
+    suffix[0].value === ""
+  )
+    return leading;
+  if (!anchoredFactAllowsSuffix(leading, suffix)) return undefined;
+  const nextSteps: readonly AnchoredTemplateStep[] = [
+    ...anchoredStepsFromFact(leading),
+    { kind: "concat", pieces: suffix },
+  ];
+  const preview = renderAnchoredPreviewPieces(nextSteps);
+  if (preview === undefined) return undefined;
+  return {
+    pieces: preview,
+    base: "source-directory",
+    anchoredSteps: nextSteps,
+    ...(stepsRequiresOrderedEvaluation(nextSteps)
+      ? {
+          asarUnpacked: {
+            scopeDirectory: undefined,
+            replaceAll: false,
+            hasPostRewriteSuffix: true,
+            orderedSteps: nextSteps,
+          },
+        }
+      : {}),
+  };
+};
+
+const appendAnchoredAsarReplace = (
+  inner: NativePathTemplateFact,
+  replaceAll: boolean,
+): NativePathTemplateFact | undefined => {
+  const nextSteps: readonly AnchoredTemplateStep[] = [
+    ...anchoredStepsFromFact(inner),
+    { kind: "replace-asar-unpacked", replaceAll },
+  ];
+  if (stepsRequiresOrderedEvaluation(nextSteps)) {
+    const preview = renderAnchoredPreviewPieces(nextSteps);
+    if (preview === undefined) return undefined;
+    return {
+      pieces: preview,
+      base: "source-directory",
+      anchoredSteps: nextSteps,
+      asarUnpacked: {
+        scopeDirectory: undefined,
+        replaceAll,
+        hasPostRewriteSuffix: false,
+        orderedSteps: nextSteps,
+      },
+    };
+  }
+  if (inner.asarUnpacked !== undefined) return undefined;
+  const scopeDirectory =
+    inner.pieces.length === 1 &&
+    inner.pieces[0]?.kind === "text" &&
+    isRelativeSubpath(inner.pieces[0].value)
+      ? normalizeAnchoredDirectory(inner.pieces[0].value)
+      : undefined;
+  return {
+    pieces: inner.pieces,
+    base: "source-directory",
+    anchoredSteps: nextSteps,
+    asarUnpacked: {
+      scopeDirectory,
+      replaceAll,
+      hasPostRewriteSuffix: false,
+    },
+  };
+};
+
+const appendAnchoredJoinFact = (
+  parts: readonly NativePathTemplateFact[],
+  base: "source-directory" | "literal-path",
+  stripTrailingSeparator: boolean,
+): NativePathTemplateFact | undefined => {
+  if (base !== "source-directory")
+    return normalizeJoinedTemplateSegments(parts, base, stripTrailingSeparator);
+  const anchorIndex = parts.findIndex(
+    (part) => part.base === "source-directory",
+  );
+  const anchor = anchorIndex >= 0 ? parts[anchorIndex] : undefined;
+  if (anchor === undefined) return undefined;
+  const suffixSegments = parts
+    .slice(anchorIndex + 1)
+    .map((part) => part.pieces);
+  const nextSteps: readonly AnchoredTemplateStep[] =
+    suffixSegments.length === 0 && !stripTrailingSeparator
+      ? anchoredStepsFromFact(anchor)
+      : [
+          ...anchoredStepsFromFact(anchor),
+          {
+            kind: "join",
+            segments: suffixSegments,
+            ...(stripTrailingSeparator ? { stripTrailingSeparator: true } : {}),
+          },
+        ];
+  if (stepsRequiresOrderedEvaluation(nextSteps)) {
+    const preview = renderAnchoredPreviewPieces(nextSteps);
+    if (preview === undefined) return undefined;
+    return {
+      pieces: preview,
+      base: "source-directory",
+      anchoredSteps: nextSteps,
+      asarUnpacked: {
+        scopeDirectory: undefined,
+        replaceAll: false,
+        hasPostRewriteSuffix: true,
+        orderedSteps: nextSteps,
+      },
+    };
+  }
+  const normalized = normalizeJoinedTemplateSegments(
+    parts,
+    base,
+    stripTrailingSeparator,
+  );
+  return normalized === undefined
+    ? undefined
+    : { ...normalized, anchoredSteps: nextSteps };
 };
 
 const rewriteLiteralAsarPieces = (
