@@ -312,6 +312,7 @@ const recordCapture = async (
     state: {
       roots: [...scope.roots],
       content_roots: [...scope.contentRoots],
+      baseline_non_files: recorder.baselineNonFiles,
       state_directories: [...scope.stateDirectories],
       excluded: [...scope.excluded],
       checkpoints: recorder.checkpoints,
@@ -371,6 +372,7 @@ const runCapture = async (
   if (signal?.aborted === true && session.end_reason !== "cancelled")
     throw new AnalysisCancelledError(DESKTOP_OPERATION, {
       cause: signal.reason,
+      partialObservation: evidence,
     });
   return evidence;
 };

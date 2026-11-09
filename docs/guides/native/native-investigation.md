@@ -581,8 +581,17 @@ The raw Java `is_dead` flag can remain set after Ghidra decodes a live block;
 `block_membership` reports actual syntax-tree membership separately.
 
 The provider dossier itself retains up to 3,000 p-code operations, 64 inputs per
-operation and 12,000 def-use edges, with explicit omitted counts. A `STORE`
-may describe stack memory and does not itself prove persistent state.
+operation and 12,000 def-use edges, with explicit omitted counts. Memory effects
+cover high-p-code `LOAD` and `STORE` operations; direct memory address varnodes
+in other operations are excluded, so an empty effect list does not establish
+that the function accesses no memory. `procedure_references` can supply
+complementary recorded instruction references, with its own coverage limits. A
+`STORE` may describe stack memory and does not itself prove persistent state.
+The Ghidra analysis profile commits to this effect scope. Snapshots from before
+that commitment are rejected; analyze without the snapshot and save a fresh one.
+To keep historical Evidence, copy the old snapshot's `evidence_bundle` object to
+a separate JSON file and import that bundle. Import validates the Evidence; it
+does not replay the old provider analysis.
 
 Jump-table evidence keeps numeric `mappings`, explicit `default_targets`, and
 backing `data_sources` separate. A null case value denotes an unresolved
@@ -672,11 +681,12 @@ node of the decoder's DOM at a measured upper bound, so a plist made of many
 small elements reaches it at a few MiB of source. JSON decode memory has not
 been measured and has no equivalent decode estimate. A refused input reports non-retryable `resource_constraint` with
 `reported_limits.maximum_input_bytes` or `maximum_decoded_bytes` as applicable.
-Ordinary direct-source decoding has a ceiling of 998 source nesting levels,
-derived from the existing 1000-level JSON result capacity by reserving one level
-for typed scalar fields and one for the result's `value` field. Deeper input reports
-`resource_constraint` with `reported_limits.maximum_nesting_depth: 998` and names
-the fixed nesting allowance. XML admission also requires native validation, which
+Ordinary direct-source decoding has a ceiling of 997 source nesting levels,
+derived from the existing 1000-level JSON result capacity. Three levels are
+reserved for typed scalar fields, the report value and its Evidence envelope.
+Deeper input reports `resource_constraint` with
+`reported_limits.maximum_nesting_depth: 997` and names the fixed nesting allowance.
+XML admission also requires native validation, which
 can refuse input below this decoding ceiling. Compatibility conversions can
 likewise encounter an earlier native utility refusal; both retain native
 diagnostics. Archive and Interface Builder decoding retain their separate

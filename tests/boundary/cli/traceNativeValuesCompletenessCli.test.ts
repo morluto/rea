@@ -219,6 +219,37 @@ it("reuses eligible native value observations and exports their original Evidenc
   expect(reads).toEqual([]);
 });
 
+it("preserves the completed trace's source closure when final close fails", async () => {
+  const run = await serveTraceCli(
+    valueTraceDiamond({ sessionSubject: true }).port,
+    async () =>
+      err(
+        new ProviderCleanupError(valueTraceProvider.id, ["owned session"], {
+          reason: "controlled final close failure",
+        }),
+      ),
+  );
+  const directory = await createTestTempDirectory("rea-trace-close-sources-");
+  const destination = join(directory, "trace.json");
+  const { output } = await run(["--evidence_output", destination, "--json"]);
+
+  const failed = cliFailureSchema.parse(output);
+  expect(failed.code).toBe("cleanup_incomplete");
+  const trace = parseEvidence(failed.details.partial_observation);
+  expect(trace.evidence_links.length).toBeGreaterThan(0);
+  expect(failed.details).toMatchObject({
+    source_closure: {
+      publication: "not_published",
+      complete: true,
+      omitted_count: 0,
+      records: expect.arrayContaining([
+        expect.objectContaining({ evidence_id: trace.evidence_links[0] }),
+      ]),
+    },
+  });
+  await expect(readFile(destination)).rejects.toThrow();
+});
+
 it.each([
   { close: "confirmed", resources: ["owned worker"] },
   { close: "unconfirmed", resources: ["owned session", "owned worker"] },
