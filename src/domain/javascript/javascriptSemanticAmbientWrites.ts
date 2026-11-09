@@ -64,6 +64,15 @@ const canonicalAmbientPath = (
 
 type AmbientPath = readonly (string | null)[];
 
+const ambientEffectCovers = (
+  effect: JavaScriptSemanticAnalysisState["ambientWriteEffects"][number],
+  target: readonly string[],
+): boolean =>
+  effect.path.length <= target.length &&
+  effect.path.every((key, index) =>
+    semanticPropertyPathKeyMatches(key, target[index]!),
+  );
+
 const retainedAmbientEffects = new WeakMap<
   JavaScriptSemanticAnalysisState,
   Map<t.Node | undefined, Set<string>>
@@ -800,8 +809,8 @@ export function* indexJavaScriptAmbientWritesSteps(
     }
   }
   // Settle other ambient effects first. A syntactic resolver call is safe only
-  // if no write or opaque escape can replace the native member anywhere in
-  // this analysis; otherwise retain its receiver escape conservatively.
+  // if no write or opaque escape can replace its native member before this
+  // invocation; ambiguous execution order remains conservative.
   const resolverReceivers: typeof escapes = [];
   for (const effect of escapes) {
     const { node, target } = effect;
@@ -823,10 +832,32 @@ export function* indexJavaScriptAmbientWritesSteps(
   }
   for (const effect of resolverReceivers) {
     const { node } = effect;
+    const selected = ["global", "require", "resolve"];
+    const mayAffectResolver = (
+      effects: typeof state.ambientWriteEffects,
+      covered: boolean,
+    ): boolean => {
+      if (!covered) return false;
+      const matches = effects.filter((entry) =>
+        ambientEffectCovers(entry, selected),
+      );
+      return (
+        matches.length === 0 ||
+        matches.some(
+          (entry) => semanticEffectTiming(node, entry.node, state) !== "after",
+        )
+      );
+    };
     if (
       (t.isCallExpression(node) || t.isOptionalCallExpression(node)) &&
-      !state.ambientWrites.covers(["global", "require", "resolve"]) &&
-      !state.ambientEscapes.covers(["global", "require", "resolve"]) &&
+      !mayAffectResolver(
+        state.ambientWriteEffects,
+        state.ambientWrites.covers(selected),
+      ) &&
+      !mayAffectResolver(
+        state.ambientEscapeEffects,
+        state.ambientEscapes.covers(selected),
+      ) &&
       readSemanticRequireLoader(node, state, new Set()) === "commonjs-loader"
     )
       continue;
@@ -879,14 +910,6 @@ export const createGlobalReferenceReader = (
     string | null,
     typeof state.ambientWriteEffects
   >();
-  const matches = (
-    effect: (typeof state.ambientWriteEffects)[number],
-    target: readonly string[],
-  ) =>
-    effect.path.length <= target.length &&
-    effect.path.every((key, index) =>
-      semanticPropertyPathKeyMatches(key, target[index]!),
-    );
   return (callee) => {
     const namespace = globalReferenceNamespace(callee, state, path);
     if (namespace === undefined) return { status: "unrelated" };
@@ -903,8 +926,9 @@ export const createGlobalReferenceReader = (
     if (effects === undefined) {
       effects = state.ambientWriteEffects.filter(
         (effect) =>
-          matches(effect, selected) ||
-          (namespace !== null && matches(effect, ["global", namespace])),
+          ambientEffectCovers(effect, selected) ||
+          (namespace !== null &&
+            ambientEffectCovers(effect, ["global", namespace])),
       );
       byNamespace.set(namespace, effects);
     }

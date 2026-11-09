@@ -441,7 +441,7 @@ it("indexes native addon inventory once across repeated helper resolutions", () 
     dynamic_member_access: false,
     module_key: null,
     location: { start: { line: 1, column: 0 }, end: { line: 1, column: 10 } },
-    resolution: { kind: "node-gyp-build" as const, directory: null },
+    resolution: { kind: "node-gyp-build" as const, directory: "." },
   };
   const bindingsFinding = {
     ...ngbFinding,

@@ -46,33 +46,41 @@ describe("native addon helper package static recovery", () => {
       import nodeGypBuild from "node-gyp-build";
       export const native = nodeGypBuild(import.meta.dirname);
       const fallback = () => nodeGypBuild();
+      const undefDir = () => nodeGypBuild(undefined);
     `);
-    expect(esm.electron.native_addon_bindings).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          specifier: "node-gyp-build:.",
-          binding_kind: "require",
-          resolution: { kind: "node-gyp-build", directory: "." },
-        }),
-        expect.objectContaining({
-          specifier: "node-gyp-build",
-          binding_kind: "require",
-          resolution: { kind: "node-gyp-build", directory: null },
-        }),
-      ]),
+    expect(esm.electron.native_addon_bindings).toEqual([
+      expect.objectContaining({
+        specifier: "node-gyp-build:.",
+        binding_kind: "require",
+        resolution: { kind: "node-gyp-build", directory: "." },
+      }),
+    ]);
+    expect(esm.parse_status).toBe("partial");
+    expect(esm.analysis_coverage?.semantics.unknown_findings).toBeGreaterThan(
+      0,
     );
   });
 
-  it("recovers bindings helper calls and rejects escaped option objects", () => {
+  it("recovers bindings helper calls, skips path-only lookups, and rejects escaped or custom-search option objects", () => {
     const cjs = analyzeCommonJsStaticFixture(`
       const bindings = require("bindings");
       const { encrypt } = bindings("keychain");
       const safeOpts = {
         bindings: "sqlite.node",
         module_root: __dirname.replace("app.asar", "app.asar.unpacked"),
+        path: false,
       };
+      const resolvedPathOnly = bindings({
+        bindings: "lookup_only",
+        module_root: __dirname,
+        path: true,
+      });
+      void resolvedPathOnly;
       module.exports = require("bindings")(safeOpts);
     `);
+    expect(cjs.parse_status).toBe("complete");
+    expect(cjs.analysis_coverage?.semantics.unknown_findings).toBe(0);
+    expect(cjs.electron.native_addon_bindings).toHaveLength(2);
     expect(cjs.electron.native_addon_bindings).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
@@ -97,6 +105,18 @@ describe("native addon helper package static recovery", () => {
         }),
       ]),
     );
+
+    const customSearch = analyzeCommonJsStaticFixture(`
+      const bindings = require("bindings");
+      const a = bindings({ bindings: "custom", try: [["module_root", "alt", "bindings"]] });
+      const b = bindings({ bindings: "dynamic_path", path: globalThis.onlyPath });
+      void a, b;
+    `);
+    expect(customSearch.electron.native_addon_bindings).toEqual([]);
+    expect(customSearch.parse_status).toBe("partial");
+    expect(
+      customSearch.analysis_coverage?.semantics.unknown_findings,
+    ).toBeGreaterThan(0);
 
     const escaped = analyzeCommonJsStaticFixture(`
       const bindings = require("bindings");
@@ -419,5 +439,34 @@ it("rejects global process loaders/axes after node:process alias patches and han
   expect(unknownResolveOptions.electron.native_addon_bindings).toEqual([]);
   expect(
     unknownResolveOptions.analysis_coverage?.semantics.unknown_findings,
+  ).toBeGreaterThan(0);
+
+  const absoluteUrlHelperRoot = analyzeJavaScriptStaticSource(`
+    import nodeGypBuild from "node-gyp-build";
+    import bindings from "bindings";
+    import path from "node:path";
+    import { fileURLToPath } from "node:url";
+    export const a = nodeGypBuild(fileURLToPath(new URL("/native", import.meta.url)));
+    export const b = bindings({
+      bindings: "addon",
+      module_root: path.join(fileURLToPath(new URL("/native", import.meta.url)), "pkg"),
+    });
+    const holder = { exports: {} };
+    process.dlopen(holder, fileURLToPath(new URL("/opt/ext.node", import.meta.url)));
+  `);
+  expect(absoluteUrlHelperRoot.electron.native_addon_bindings).toEqual([
+    expect.objectContaining({
+      specifier: "/opt/ext.node",
+      binding_kind: "require",
+      resolution: {
+        kind: "candidates",
+        resolution_context: "filesystem-expression",
+        candidates: [],
+      },
+    }),
+  ]);
+  expect(absoluteUrlHelperRoot.parse_status).toBe("partial");
+  expect(
+    absoluteUrlHelperRoot.analysis_coverage?.semantics.unknown_findings,
   ).toBeGreaterThan(0);
 });

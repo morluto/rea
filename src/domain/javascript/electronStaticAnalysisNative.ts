@@ -239,6 +239,10 @@ const inspectReExport = (
   index: JavaScriptBindingIndex,
   receiver: CommonJsExportReceiverEffect | undefined,
 ): void => {
+  if (exported.loaderAuthority === "candidate") {
+    context.accumulator.unknownFindings += 1;
+    return;
+  }
   const applicability = commonJsExportApplicability(
     receiver,
     exported.exportedName,

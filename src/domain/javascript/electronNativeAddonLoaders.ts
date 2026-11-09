@@ -281,21 +281,26 @@ const resolveDlopenRequireResolve = (
     filenameExpr,
     bindings,
     context.accumulator.factoryRequireBindingIds,
+    index,
   );
-  if (resolvedCall === undefined || resolvedCall.operation !== "resolve")
+  if (
+    resolvedCall === undefined ||
+    (resolvedCall.operation !== "resolve" && !resolvedCall.memberUnproven)
+  )
     return "not-require-resolve";
   if (resolvedCall.loader === "local") return undefined;
   const callee = unwrapJavaScriptExpression(filenameExpr.callee).node;
   const resolveMemberChanged =
-    (t.isMemberExpression(callee) || t.isOptionalMemberExpression(callee)) &&
-    t.isExpression(callee.object) &&
-    index
-      .effectsForReferenceAt(filenameExpr, callee.object, ["resolve"])
-      .effects.some(
-        ({ kind: effectKind, timing }) =>
-          timing !== "after" &&
-          (effectKind === "member-write" || effectKind === "escape"),
-      );
+    resolvedCall.memberUnproven === true ||
+    ((t.isMemberExpression(callee) || t.isOptionalMemberExpression(callee)) &&
+      t.isExpression(callee.object) &&
+      index
+        .effectsForReferenceAt(filenameExpr, callee.object, ["resolve"])
+        .effects.some(
+          ({ kind: effectKind, timing }) =>
+            timing !== "after" &&
+            (effectKind === "member-write" || effectKind === "escape"),
+        ));
   const searchOptions = resolveRequireResolveSearchOptions(
     resolvedCall.arguments,
     context,
@@ -438,7 +443,7 @@ export const resolveNativeLoaderCall = (
   return resolveRequireNativeCall(
     node,
     context,
-    bindings,
+    index,
     hasMemberAccess,
     access,
   );
@@ -466,14 +471,9 @@ const resolveNodeGypBuildCall = (
   hasMemberAccess: boolean,
   access: NativeMemberAccess,
 ): ResolvedNativeLoaderCall | undefined => {
-  if (node.arguments.length === 0)
-    return {
-      specifier: "node-gyp-build",
-      hasMemberAccess,
-      access,
-      resolution: { kind: "node-gyp-build", directory: null },
-    };
-  if (node.arguments.length > 1 || t.isSpreadElement(node.arguments[0])) {
+  // Without an explicit directory argument, node-gyp-build resolves from
+  // process.cwd() rather than the caller's module directory.
+  if (node.arguments.length !== 1 || t.isSpreadElement(node.arguments[0])) {
     context.accumulator.unknownFindings += 1;
     return undefined;
   }
@@ -483,13 +483,10 @@ const resolveNodeGypBuildCall = (
     return undefined;
   }
   const unwrapped = unwrapJavaScriptExpression(arg0).node;
-  if (isUnshadowedGlobal(unwrapped, bindings, "undefined"))
-    return {
-      specifier: "node-gyp-build",
-      hasMemberAccess,
-      access,
-      resolution: { kind: "node-gyp-build", directory: null },
-    };
+  if (isUnshadowedGlobal(unwrapped, bindings, "undefined")) {
+    context.accumulator.unknownFindings += 1;
+    return undefined;
+  }
   const anchored = resolveSourceAnchoredDirectory(
     unwrapped,
     context,
@@ -555,6 +552,7 @@ const resolveBindingsHelperCall = (
   let rawAddonName: string | undefined;
   let moduleRoot: string | null = null;
   let moduleRootUnpacked = false;
+  let pathOnly = false;
   for (const prop of objectNode.properties) {
     if (t.isSpreadElement(prop) || t.isObjectMethod(prop)) {
       context.accumulator.unknownFindings += 1;
@@ -591,6 +589,35 @@ const resolveBindingsHelperCall = (
         moduleRoot = resolved.directory;
         moduleRootUnpacked = resolved.asarUnpacked;
       }
+    } else if (key === "path") {
+      const valueNode = unwrapJavaScriptExpression(prop.value).node;
+      if (isUnshadowedGlobal(valueNode, bindings, "undefined")) {
+        pathOnly = false;
+      } else if (
+        t.isObjectExpression(valueNode) ||
+        t.isArrayExpression(valueNode) ||
+        t.isFunction(valueNode)
+      ) {
+        pathOnly = true;
+      } else if (
+        (t.isIdentifier(valueNode) ||
+          t.isMemberExpression(valueNode) ||
+          t.isOptionalMemberExpression(valueNode)) &&
+        index.referenceMayHaveChangedAt(node, valueNode)
+      ) {
+        context.accumulator.unknownFindings += 1;
+        return undefined;
+      } else {
+        const evaluated = evaluateSemanticExpression(valueNode, bindings, node);
+        if (evaluated.status !== "literal") {
+          context.accumulator.unknownFindings += 1;
+          return undefined;
+        }
+        pathOnly = Boolean(evaluated.value);
+      }
+    } else {
+      context.accumulator.unknownFindings += 1;
+      return undefined;
     }
   }
   const addonName =
@@ -601,6 +628,9 @@ const resolveBindingsHelperCall = (
     context.accumulator.unknownFindings += 1;
     return undefined;
   }
+  // When `path` is truthy, `bindings(...)` returns the resolved path string
+  // without requiring or loading the native addon.
+  if (pathOnly) return undefined;
   return {
     specifier: addonName,
     hasMemberAccess,
@@ -617,14 +647,16 @@ const resolveBindingsHelperCall = (
 const resolveRequireNativeCall = (
   node: t.CallExpression | t.OptionalCallExpression,
   context: JavaScriptFindingContext,
-  bindings: JavaScriptSemanticAnalysisState,
+  index: JavaScriptBindingIndex,
   hasMemberAccess: boolean,
   access: NativeMemberAccess,
 ): ResolvedNativeLoaderCall | undefined => {
+  const { bindings } = index;
   const call = semanticRequireCallAt(
     node,
     bindings,
     context.accumulator.factoryRequireBindingIds,
+    index,
   );
   if (
     call === undefined ||
@@ -709,6 +741,13 @@ const normalizeBindingsAddonName = (raw: string): string | undefined => {
   return raw.toLowerCase().endsWith(".node") ? raw : `${raw}.node`;
 };
 
+const isRelativeSubpath = (path: string): boolean =>
+  path !== "" &&
+  !path.includes("\0") &&
+  !path.startsWith("/") &&
+  !path.startsWith("\\") &&
+  !/^[A-Za-z]:/u.test(path);
+
 const resolveSourceAnchoredDirectory = (
   raw: t.Node,
   context: JavaScriptFindingContext,
@@ -735,7 +774,7 @@ const resolveSourceAnchoredDirectory = (
   if (context.pathIntrinsics?.(node, "source-directory") === true)
     return { directory: ".", asarUnpacked: false };
   const fileExpr = staticFileExpressionPath(node, context.pathIntrinsics);
-  if (fileExpr?.base === "source-directory")
+  if (fileExpr?.base === "source-directory" && isRelativeSubpath(fileExpr.path))
     return { directory: posix.normalize(fileExpr.path), asarUnpacked: false };
   if (t.isIdentifier(node)) {
     const binding = resolveSemanticBindingState(bindings, node, node.name);
@@ -769,8 +808,7 @@ const resolveSourceAnchoredDirectory = (
     fact?.base === "source-directory" &&
     fact.pieces.length === 1 &&
     fact.pieces[0]?.kind === "text" &&
-    fact.pieces[0].value !== "" &&
-    !fact.pieces[0].value.includes("\0")
+    isRelativeSubpath(fact.pieces[0].value)
   )
     return {
       directory: posix.normalize(fact.pieces[0].value),
@@ -1149,7 +1187,11 @@ const evaluateFileUrlCallFact = (
   if (staticFile !== undefined)
     return {
       pieces: [{ kind: "text", value: staticFile.path }],
-      base: staticFile.base,
+      base:
+        staticFile.base === "source-directory" &&
+        !isRelativeSubpath(staticFile.path)
+          ? "literal-path"
+          : staticFile.base,
     };
   if (node.arguments.length !== 1) return undefined;
   const arg0 = argumentNode(node.arguments[0]);
