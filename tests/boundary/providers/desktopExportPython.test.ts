@@ -241,6 +241,7 @@ it.each([true, false])(
       : '[("settings", ".local/share/notes"), ("settings/profile", ".config/notes")]';
     const program = `${imports}
 STATE_ALIASES = ${pairs}
+STATE_ALIAS_DIRECTORIES = frozenset()
 ${PYTHON_HELPERS}
 home = Path(sys.argv[1])
 _ensure_state_aliases(home)
@@ -263,6 +264,7 @@ it("restores a selected alias to an existing settings file", async () => {
     .join("\n");
   const program = `${imports}
 STATE_ALIASES = [("settings", ".config/tellicorc")]
+STATE_ALIAS_DIRECTORIES = frozenset()
 ${PYTHON_HELPERS}
 home = Path(sys.argv[1])
 _ensure_state_aliases(home)
@@ -295,6 +297,7 @@ SEED_HOME = "/home/ada"
 TEXT_SEEDS = frozenset()
 SEED_MODES = {}
 STATE_ALIASES = [("settings", ".config/notes")]
+STATE_ALIAS_DIRECTORIES = frozenset({"settings"})
 HERE = Path(sys.argv[1])
 ${PYTHON_HELPERS}
 home = Path(sys.argv[2])

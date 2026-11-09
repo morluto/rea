@@ -129,6 +129,46 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
+describe("exportDesktopApplication state aliases", () => {
+  it("marks a selected directory alias so its state target is made with an empty seed", async () => {
+    const local = capture();
+    const stateRoot = `${HOME}/.config/notes`;
+    const selected = `${HOME}/settings`;
+    const { directory } = await exportCapture({
+      ...local,
+      application: {
+        ...local.application,
+        state_directories: [{ path: stateRoot, exists_at_start: true }],
+      },
+      state: {
+        ...local.state,
+        content_roots: [stateRoot],
+        state_directories: [stateRoot],
+        selected_paths: [
+          { path: selected, physical: stateRoot, kind: "directory" },
+        ],
+        checkpoints: [
+          checkpoint("baseline", "baseline", [], []),
+          checkpoint(
+            "edited",
+            "request",
+            [change(`${stateRoot}/new.ini`, { after: "[ui]\nwrap=true\n" })],
+            [retained(`${stateRoot}/new.ini`, "[ui]\nwrap=true\n")],
+          ),
+        ],
+      },
+    });
+    const module = await readFile(
+      join(directory, "envs/notes/notes_app.py"),
+      "utf8",
+    );
+    expect(module).toContain('STATE_ALIASES = [("settings", ".config/notes")]');
+    expect(module).toContain(
+      'STATE_ALIAS_DIRECTORIES = frozenset(["settings"])',
+    );
+  });
+});
+
 describe("exportDesktopApplication", () => {
   it("writes a computer app bundle with owned paths and the baseline seed", async () => {
     const { result, directory } = await exportCapture(capture());

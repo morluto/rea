@@ -94,6 +94,8 @@ export interface DesktopAppExportPlan {
   readonly stateAliases?: readonly {
     readonly alias: string;
     readonly target: string;
+    /** Whether the capture recorded the selected path as a directory, which the alias target must be made as. */
+    readonly directory?: boolean;
   }[];
   /** Files under the owned paths that existed before the capture but whose bytes were not retained. */
   readonly unseededFiles: readonly string[];
@@ -306,14 +308,14 @@ const capturedStateAliases = (capture: DesktopApplicationCapture) => {
   const relative = (path: string) =>
     path.startsWith(`${home}/`) ? path.slice(home.length + 1) : null;
   const aliases = (capture.state.selected_paths ?? []).flatMap(
-    ({ path, physical }) => {
+    ({ path, physical, kind }) => {
       const index = walked.indexOf(physical);
       const state = index < 0 ? undefined : roots[index]?.path;
       const alias = relative(path);
       const target = state === undefined ? null : relative(state);
       return alias === null || target === null || alias === target
         ? []
-        : [{ alias, target }];
+        : [{ alias, target, directory: kind === "directory" }];
     },
   );
   const retained: typeof aliases = [];
@@ -617,6 +619,7 @@ SEED_MODES = {${Object.entries(plan.seedModes)
     .map(([home, mode]) => `${py(home)}: 0o${mode.toString(8)}`)
     .join(", ")}}
 STATE_ALIASES = [${(plan.stateAliases ?? []).map(({ alias, target }) => `(${py(alias)}, ${py(target)})`).join(", ")}]
+STATE_ALIAS_DIRECTORIES = frozenset(${pyList((plan.stateAliases ?? []).filter(({ directory }) => directory).map(({ alias }) => alias))})
 WINDOW_CLASS = ${py(plan.windowClass)}
 WITHHELD = {${(plan.withheld ?? []).map(({ setting, file }) => `${py(setting)}: ${py(file)}`).join(", ")}}
 ${PYTHON_HELPERS}
