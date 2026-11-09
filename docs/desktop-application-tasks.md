@@ -481,7 +481,9 @@ operation `describe_desktop_application_task` and predicate type
   when the views hold only part of the file; `unreadable_view` when no
   check can read it, as a document REA reads as binary;
   `volatile_lines` when a text file gained lines holding a value the app
-  generates with no text before it to count them by; and `read_as_text`
+  generates with no text before it to count them by; `generated_reference`
+  when an array references a newly generated record ID that cannot be checked
+  exactly across runs, with up to five affected `pointers`; and `read_as_text`
   when a text file opens like XML, with a declaration, a DOCTYPE or an
   element, but reads as text because its DOCTYPE has an internal subset or
   it is not well formed, so its checks compare lines that hold attributes in

@@ -5,6 +5,7 @@ import { draftOf, pointerOf, statePath } from "./appTaskDraft.fixture.js";
 import { evaluateTaskChecks, type TaskFileView } from "./appTaskChecks.js";
 import { jsonCounts } from "./appTaskDraftJson.js";
 import { pairRecordsById } from "./jsonRecordPairing.js";
+import { zipEntry, zipView } from "./zipView.js";
 import type { DesktopTaskCheckInput } from "./appTask.js";
 
 const FILE = "Documents/reading-list.trln";
@@ -187,7 +188,9 @@ describe("draftTaskFiles for records in a JSON array, as TreeLine saves its node
         equals: 3,
       },
     ]);
-    expect(file.notes).toEqual([]);
+    expect(file.notes).toEqual([
+      expect.objectContaining({ code: "generated_reference" }),
+    ]);
     // Another run of the edit generates another uid, which sorts the new record elsewhere.
     const rerun = outline([
       GUNS,
@@ -218,9 +221,14 @@ describe("draftTaskFiles for records in a JSON array, as TreeLine saves its node
       .map(pointerOf)
       .filter((pointer) => pointer?.startsWith("/nodes/3"));
     expect(positional).toContain("/nodes/3/data/Title");
-    expect(twin.notes).toMatchObject([
-      { code: "by_position", pointers: expect.arrayContaining(positional) },
-    ]);
+    expect(twin.notes).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: "by_position",
+          pointers: expect.arrayContaining(positional),
+        }),
+      ]),
+    );
   });
 
   it("checks nothing the seed already holds, nor a removed record's place another record takes, when position alone reaches the records", () => {
@@ -244,6 +252,169 @@ describe("draftTaskFiles for records in a JSON array, as TreeLine saves its node
         .map(pointerOf)
         .filter((pointer) => pointer?.startsWith("/nodes/2")),
     ).toEqual([]);
+  });
+});
+
+describe("draftTaskFiles generated record ids", () => {
+  it("checks an account reference while omitting only the chosen generated record id", () => {
+    const oldId = "550e8400-e29b-41d4-a716-446655440000";
+    const selected = "550e8400-e29b-41d4-a716-446655440001";
+    const before = { selectedAccount: oldId, nodes: [] };
+    const after = {
+      selectedAccount: selected,
+      nodes: [{ uid: "ID_329023692", name: "New", selectedAccount: selected }],
+    };
+    const file = drafted(before, after);
+    expect(file.suggested).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          pointer: "/selectedAccount",
+          value: selected,
+        }),
+        expect.objectContaining({
+          pointer: "/nodes/[name=New]/selectedAccount",
+          value: selected,
+        }),
+      ]),
+    );
+    expect(file.suggested.map(pointerOf)).not.toContain(
+      "/nodes/[name=New]/uid",
+    );
+    expect(
+      passing(
+        { ...after, nodes: [{ ...after.nodes[0]!, uid: "ID_999999999" }] },
+        file.suggested,
+      ).every(Boolean),
+    ).toBe(true);
+  });
+
+  it("keeps a keyfile setting containing a selected profile id", () => {
+    const selected = "550e8400-e29b-41d4-a716-446655440001";
+    const [file] = draftOf({
+      "Documents/profile.ini": statePath(
+        "document",
+        "keyfile",
+        {
+          groups: {
+            profile: { selected: "550e8400-e29b-41d4-a716-446655440000" },
+          },
+        },
+        { groups: { profile: { selected } } },
+      ),
+    });
+    expect(file?.suggested).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ kind: "value_equals", value: selected }),
+      ]),
+    );
+  });
+
+  it("keeps a scalar reference even when it equals a newly added generated id", () => {
+    const file = drafted(
+      { selectedAccount: "old", nodes: [] },
+      {
+        selectedAccount: "ID_329023692",
+        nodes: [{ uid: "ID_329023692", name: "New" }],
+      },
+    );
+    expect(file.suggested).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          pointer: "/selectedAccount",
+          value: "ID_329023692",
+        }),
+      ]),
+    );
+  });
+});
+
+describe("draftTaskFiles generated record ids in archives", () => {
+  it("omits a generated record id in JSON inside an archive while keeping its account reference", () => {
+    const selected = "550e8400-e29b-41d4-a716-446655440001";
+    const archive = (value: unknown) => {
+      const bytes = new TextEncoder().encode(JSON.stringify(value));
+      return zipView(
+        [
+          zipEntry(
+            {
+              name: "state.json",
+              size: bytes.length,
+              compressedSize: bytes.length,
+              method: 8,
+              encrypted: false,
+            },
+            bytes,
+          ),
+        ],
+        1,
+      );
+    };
+    const [file] = draftOf({
+      "Documents/state.zip": statePath(
+        "document",
+        "zip",
+        archive({ nodes: [] }),
+        archive({
+          nodes: [
+            { uid: "ID_329023692", name: "New", selectedAccount: selected },
+          ],
+        }),
+      ),
+    });
+    expect(file?.suggested).toEqual(
+      expect.arrayContaining([expect.objectContaining({ value: selected })]),
+    );
+    expect(
+      file?.suggested
+        .map(pointerOf)
+        .some((pointer) => pointer?.endsWith("/uid")),
+    ).toBe(false);
+  });
+
+  it("does not require a newly generated record id in an archive's reference array", () => {
+    const archive = (value: unknown) => {
+      const bytes = new TextEncoder().encode(JSON.stringify(value));
+      return zipView(
+        [
+          zipEntry(
+            {
+              name: "state.json",
+              size: bytes.length,
+              compressedSize: bytes.length,
+              method: 8,
+              encrypted: false,
+            },
+            bytes,
+          ),
+        ],
+        1,
+      );
+    };
+    const before = { nodes: [{ uid: "old", name: "Parent", children: [] }] };
+    const after = {
+      nodes: [
+        { uid: "old", name: "Parent", children: ["ID_329023692"] },
+        { uid: "ID_329023692", name: "New", children: [] },
+      ],
+    };
+    const [file] = draftOf({
+      "Documents/state.zip": statePath(
+        "document",
+        "zip",
+        archive(before),
+        archive(after),
+      ),
+    });
+    expect(
+      file?.suggested.some(
+        (check) => "value" in check && check.value === "ID_329023692",
+      ),
+    ).toBe(false);
+    expect(file?.notes).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ code: "generated_reference" }),
+      ]),
+    );
   });
 });
 

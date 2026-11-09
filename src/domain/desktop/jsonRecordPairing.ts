@@ -9,6 +9,9 @@ import { MAX_INSIDE_STEPS, spellCondition } from "./viewSelector.js";
 
 /** A field naming a JSON record, as TreeLine's `uid`: `id`, `uid`, `uuid`, `guid`, `key`, or a name ending in `_id`, `-id` or `Id`. */
 const ID_FIELD = /^(?:_?id|uid|uuid|guid|key)$|[_-]id$|[a-z]Id$/u;
+/** Selector marks are not JSON record field names. */
+export const isRecordIdField = (field: string): boolean =>
+  ID_FIELD.test(field) && !/^[@>]|[=[\]]/u.test(field);
 /** The record's own id, ahead of a relationship such as `parent_id`, which also matches `ID_FIELD`. */
 const OWN_ID = ["uid", "uuid", "guid", "id", "key"];
 
@@ -210,16 +213,21 @@ interface Side {
 export const pairRecordsById = (
   newer: readonly JsonValue[],
   older: readonly JsonValue[],
-): { readonly newer: Side; readonly older: Side } | undefined => {
+):
+  | {
+      readonly newer: Side;
+      readonly older: Side;
+      readonly idField: string;
+      readonly generated: readonly boolean[];
+    }
+  | undefined => {
   const [first] = [...newer, ...older];
   if (!isJsonRecord(first ?? null) || ![...newer, ...older].every(isJsonRecord))
     return undefined;
   const key = Object.keys(first ?? {})
     .filter(
       (field) =>
-        ID_FIELD.test(field) &&
-        // `[@attr]` and `[>child]` are selector marks, not a JSON field's name.
-        !/^[@>]|[=[\]]/u.test(field) &&
+        isRecordIdField(field) &&
         namesEach(newer, field) &&
         namesEach(older, field),
     )
@@ -264,5 +272,10 @@ export const pairRecordsById = (
   return {
     newer: { keys: newerKeys, partners: partners.newer },
     older: { keys: olderKeys, partners: partners.older },
+    idField: key,
+    generated: newer.map(
+      (member, index) =>
+        partners.newer[index] === undefined && isGeneratedId(idOf(member)),
+    ),
   };
 };
