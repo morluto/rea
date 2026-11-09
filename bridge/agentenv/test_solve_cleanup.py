@@ -25,11 +25,21 @@ class SolveCleanupTest(unittest.TestCase):
                 test.terminated.append(sandbox_id)
 
         self.module.LocalSandboxProvider = Provider
+        self.module.local_sandbox_ids = self._listed
         self.module.remove_local_work_dir = lambda sandbox_id: self._remove(sandbox_id)
         self.module._marked_pids = lambda _sandbox_id: []
         self.patch_module = patch.dict("sys.modules", {self.module.__name__: self.module})
         self.patch_module.start()
         self.addCleanup(self.patch_module.stop)
+
+    def _listed(self):
+        # As agentenv lists them: `agent-env-<id>-<suffix>` folders, whatever the id's shape.
+        found = set()
+        for entry in self.root.iterdir():
+            sandbox_id, _, suffix = entry.name.removeprefix("agent-env-").rpartition("-")
+            if entry.name.startswith("agent-env-") and sandbox_id and suffix and entry.is_dir():
+                found.add(sandbox_id)
+        return sorted(found)
 
     def _remove(self, sandbox_id):
         folder = next(self.root.glob(f"agent-env-{sandbox_id}-*"))
@@ -75,11 +85,22 @@ class SolveCleanupTest(unittest.TestCase):
                 self.run_cleanup()
         self.assertTrue(self.folder.exists())
 
+    def test_cleans_up_each_sandbox_agentenv_lists_whatever_its_id_looks_like(self):
+        self.folder.rmdir()
+        listed = self.root / "agent-env-local-a1b2c3d4e5-abcdef12"
+        listed.mkdir()
+        with patch.object(solve_cleanup, "_docker", return_value=""), patch.object(solve_cleanup.sys, "platform", "linux"):
+            self.run_cleanup()
+        self.assertEqual(self.terminated, ["local-a1b2c3d4e5"])
+        self.assertFalse(listed.exists())
+
     def test_unexpected_entry_remains_owned(self):
         self.folder.rmdir()
         (self.root / "unexpected").mkdir()
-        with self.assertRaisesRegex(RuntimeError, "Unexpected sandbox root entry"):
-            self.run_cleanup()
+        with patch.object(solve_cleanup, "_docker", return_value=""), patch.object(solve_cleanup.sys, "platform", "linux"):
+            with self.assertRaisesRegex(RuntimeError, "Unexpected sandbox root entries: unexpected"):
+                self.run_cleanup()
+        self.assertEqual(self.terminated, [])
         self.assertTrue((self.root / "unexpected").exists())
 
 

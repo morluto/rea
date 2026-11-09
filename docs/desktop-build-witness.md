@@ -316,8 +316,9 @@ The model endpoint is the one agentenv reads where REA starts,
 `.agentenv/config.toml`; REA holds no model client and never reads the key.
 
 Each solve uses a private agentenv sandbox root. If the helper stops before
-reporting cleanup, REA retries sandboxes whose folders remain there and keeps
-the root when cleanup fails. The pinned provider can remove a folder after an
+reporting cleanup, REA terminates each sandbox agentenv lists under that root
+(`local_sandbox_ids`), including one killed while it recorded its ports, and
+keeps the root when cleanup fails. The pinned provider can remove a folder after an
 unverified teardown, so a missing report still leaves cleanup unknown. On
 macOS, REA cannot verify host processes left by a recovered sandbox.
 

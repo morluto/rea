@@ -5,7 +5,6 @@ import asyncio
 import contextlib
 import json
 import os
-import re
 import subprocess
 import sys
 from pathlib import Path
@@ -20,18 +19,14 @@ def _docker(*args: str) -> str:
 
 
 async def cleanup(root: Path) -> None:
-    # A helper has already stopped. Unknown entries remain owned for inspection.
-    entries = sorted(root.iterdir())
-    if not entries:
+    # A helper has already stopped. agentenv lists the sandboxes under the root
+    # (AGENT_ENV_LOCAL_SANDBOX_DIR); anything else there remains owned for inspection.
+    if not any(root.iterdir()):
         return
     from agent_env.providers.sandbox_providers.local_docker.provider import (
-        LocalSandboxProvider, remove_local_work_dir,
+        LocalSandboxProvider, local_sandbox_ids, remove_local_work_dir,
     )
-    for entry in entries:
-        match = re.fullmatch(r"agent-env-(local-[0-9a-f]{8})-([a-z0-9_]+)", entry.name)
-        if not match or entry.is_symlink() or not entry.is_dir():
-            raise RuntimeError(f"Unexpected sandbox root entry: {entry.name}")
-        sandbox_id = match.group(1)
+    for sandbox_id in local_sandbox_ids():
         await LocalSandboxProvider().terminate_sandbox(sandbox_id)
         # The pinned provider can suppress container/network removal failures.
         # Do not discard the only recovery folder until Docker confirms absence.
@@ -48,8 +43,9 @@ async def cleanup(root: Path) -> None:
             raise RuntimeError(f"Sandbox {sandbox_id} still has marked host processes")
         if remove_local_work_dir(sandbox_id) is None:
             raise RuntimeError(f"Could not confirm removal of sandbox {sandbox_id}'s work folder")
-    if any(root.iterdir()):
-        raise RuntimeError("Sandbox root still contains entries")
+    leftover = sorted(entry.name for entry in root.iterdir())
+    if leftover:
+        raise RuntimeError(f"Unexpected sandbox root entries: {', '.join(leftover)}")
 
 
 def main() -> int:
