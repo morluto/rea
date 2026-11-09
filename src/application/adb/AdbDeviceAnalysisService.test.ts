@@ -53,7 +53,6 @@ it.each([
 it("rejects an unknown operation before any effect", async () => {
   const service = new AdbDeviceAnalysisService(refusedPort);
   const result = await service.execute("unknown_adb_operation" as never, {});
-  expect(result.ok).toBe(false);
   if (result.ok) throw new Error("Expected an unknown operation refusal");
   expect(result.error).toBeInstanceOf(AnalysisInputError);
   if (!(result.error instanceof AnalysisInputError)) throw result.error;

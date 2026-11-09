@@ -64,6 +64,7 @@ const childFailure = (operation: string, cleanup: boolean) =>
 const relationshipPort = (
   relationships: Relationships,
   reads: string[],
+  completeDiscovery = false,
 ): AnalysisOperationPort => ({
   execute: async (operation, parameters) => {
     const procedure = String(parameters.procedure);
@@ -77,7 +78,17 @@ const relationshipPort = (
       ? err(answer)
       : ok(
           createAnalysisExecution(answer, provider, {
-            relationshipCoverage: { status: "complete" },
+            relationshipCoverage: {
+              status: "complete",
+              ...(completeDiscovery
+                ? {
+                    discovery: {
+                      callers: { status: "complete" },
+                      callees: { status: "complete" },
+                    },
+                  }
+                : {}),
+            },
           }),
         );
   },
@@ -96,6 +107,27 @@ const call = (
 });
 
 describe.each(directions)("%s relationship reads", (direction, operation) => {
+  it("keeps discovery unknown when cleanup stops an otherwise complete trace", async () => {
+    const reads: string[] = [];
+    const client = await connect(
+      relationshipPort(
+        { "0x1": ["0x2"], "0x2": childFailure(operation, true) },
+        reads,
+        true,
+      ),
+    );
+    const response = await client.callTool(call("trace_call_path", direction));
+    const { error } = parseMcpToolError(response);
+    expect(error.code).toBe("cleanup_incomplete");
+    expect(reads).toEqual([`${operation}:0x1`, `${operation}:0x2`]);
+    expect(
+      parseEvidence(error.details?.partial_observation).normalized_result,
+    ).toMatchObject({
+      goal_status: "unknown",
+      search_scope: { discovery: "unknown", observed_goal_status: "unknown" },
+    });
+  });
+
   it.each(tools)(
     "%s stops at unconfirmed cleanup and reports it with the admitted result",
     async (tool) => {

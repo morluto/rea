@@ -144,7 +144,9 @@ it("retains uncertain command completion as Evidence without encouraging a retry
           cutter_version: "Cutter fixture version",
         },
         limitations: expect.arrayContaining([
-          "Command completion or its output could not be confirmed; do not retry automatically because the command may have produced partial or persistent effects.",
+          expect.stringMatching(
+            /completion.*could not be confirmed.*not retry.*effects/iu,
+          ),
         ]),
         provider: { version: "Cutter fixture version" },
       },

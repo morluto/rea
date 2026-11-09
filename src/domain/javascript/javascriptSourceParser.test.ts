@@ -7,7 +7,7 @@ import {
   parserPluginsForPath,
   javaScriptRuntimeContext,
   javaScriptProgramStrictness,
-  javaScriptTopLevelThisMayBeGlobal,
+  javaScriptThisOwner,
 } from "./javascriptSourceParser.js";
 import { traverseJavaScriptAst } from "./javascriptSemanticTraversal.js";
 import { analyzeParsedJavaScriptStaticSource } from "./javascriptStaticAnalysis.js";
@@ -39,7 +39,7 @@ it.each([
     });
     if (selected === undefined) throw new Error("Missing this fixture");
     expect(
-      javaScriptTopLevelThisMayBeGlobal(selected, parsed.program, parents),
+      javaScriptThisOwner(selected, parsed.program, parents) === "global",
     ).toBe(expected);
   },
 );
@@ -120,9 +120,17 @@ ipcMain.handle("layout:ready",()=>pick);`;
   for (const path of ["main.js", "main.cjs", "main.mjs", "main.jsx"]) {
     const result = analyze(source, path);
     expect(result?.errors).toBe(0);
-    expect(result?.facts.electron.ipc).toContainEqual(
-      expect.objectContaining({ channel: "layout:ready", operation: "handle" }),
-    );
+    if (path === "main.mjs") {
+      expect(result?.facts.electron.ipc).toEqual([]);
+    } else {
+      expect(result?.facts.electron.ipc).toContainEqual(
+        expect.objectContaining({
+          channel: "layout:ready",
+          operation: "handle",
+          ...(path === "main.cjs" ? {} : { loader_authority: "candidate" }),
+        }),
+      );
+    }
   }
 });
 

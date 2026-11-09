@@ -1,3 +1,4 @@
+import { procedureReferencesSchema } from "../domain/native/procedureReferences.js";
 import {
   nativeAddressListSchema,
   nativeObservationSourceSchemas,
@@ -11,6 +12,7 @@ import {
   nativeFunctionSummaryViewResultSchema,
   nativeInventorySummaryViewResultSchema,
   nativeFeatureTraceSummaryViewResultSchema,
+  nativeProcedureReferencesSummaryViewResultSchema,
   batchDecompileSummaryViewResultSchema,
   nativeLoadImageSummaryViewResultSchema,
   artifactInventorySummaryViewResultSchema,
@@ -33,7 +35,6 @@ import {
   analysisBookmarkSchema,
   nativeInventoryRowsSchemas,
 } from "../domain/native/nativeInventory.js";
-import { procedureReferencesResultSchema } from "../domain/native/nativeReference.js";
 import { z } from "zod";
 import {
   evidenceBundleExportReceiptSchema,
@@ -97,6 +98,8 @@ import { decompileDirectoryManifestSchema } from "./decompileDirectory.js";
 import {
   analysisErrorProjectionSchema,
   analysisInputErrorProjectionSchema,
+  analysisResourceErrorProjectionSchema,
+  evidenceIntegrityErrorProjectionSchema,
 } from "./errorSchemas.js";
 import { relationshipCoverageSchema } from "../domain/relationshipCoverage.js";
 import { nativeDispatchMetadataResultSchema } from "../domain/native/objcSwiftMetadata.js";
@@ -115,14 +118,20 @@ import {
 } from "./toolOutputSchemaPrimitives.js";
 
 import { processCaptureSchema } from "../domain/process/processCapture.js";
+import { processScenarioPlanSchema } from "../domain/process/processScenario.js";
 import { electronFuseReportSchema } from "../domain/electron/electronFuses.js";
+const contextFacetErrorSchema = z.discriminatedUnion("code", [
+  analysisInputErrorProjectionSchema,
+  analysisResourceErrorProjectionSchema,
+  evidenceIntegrityErrorProjectionSchema,
+]);
 const contextFacetSchema = z.discriminatedUnion("state", [
   z.object({ state: z.literal("available"), value: jsonValueSchema }),
   z.object({
     state: z.literal("unavailable"),
     reason: z.string(),
     remediation: z.string(),
-    error: analysisInputErrorProjectionSchema.optional(),
+    error: contextFacetErrorSchema.optional(),
   }),
 ]);
 const bookmarkFacetSchema = z.discriminatedUnion("state", [
@@ -134,7 +143,7 @@ const bookmarkFacetSchema = z.discriminatedUnion("state", [
     state: z.literal("unavailable"),
     reason: z.string(),
     remediation: z.string(),
-    error: analysisInputErrorProjectionSchema.optional(),
+    error: contextFacetErrorSchema.optional(),
   }),
 ]);
 
@@ -223,7 +232,10 @@ export const officialOutputSchemas = {
         ),
     }),
   ),
-  procedure_references: evidenceResultOf(procedureReferencesResultSchema),
+  procedure_references: analysisDetailOutputSchemaOf(
+    procedureReferencesSchema,
+    nativeProcedureReferencesSummaryViewResultSchema,
+  ),
   procedure_pseudo_code: analysisDetailOutputSchemaOf(
     nullableText,
     procedurePseudocodeSummaryViewResultSchema,
@@ -265,6 +277,16 @@ const callPathTraceOutput = evidenceResultOf(
     goal: z.string().nullable(),
     direction: z.enum(["forward", "backward"]),
     goal_status: z.enum(["not_requested", "reached", "not_reached", "unknown"]),
+    search_scope: z.object({
+      graph: z.literal("provider_observed_graph"),
+      discovery: z.enum(["complete", "partial", "unknown"]),
+      observed_goal_status: z.enum([
+        "not_requested",
+        "reached",
+        "not_reached",
+        "unknown",
+      ]),
+    }),
     nodes: z.array(
       z.object({
         address: z.string(),
@@ -545,7 +567,13 @@ export const sessionOutputSchemas = {
       total: z.int().min(0),
     }),
   ),
-  capture_process_scenario: evidenceResultOf(processCaptureSchema),
+  capture_process_scenario: evidenceResultOf(
+    z
+      .union([processCaptureSchema, processScenarioPlanSchema])
+      .describe(
+        `A capture, or the plan a dry run produced without launching a process. ${processCaptureSchema.description ?? ""}`,
+      ),
+  ),
   compare_process_captures: evidenceResultOf(processCaptureComparisonSchema),
   compare_artifacts: evidenceResultOf(artifactComparisonResultSchema),
   compare_functions: evidenceResultOf(functionComparisonResultSchema),

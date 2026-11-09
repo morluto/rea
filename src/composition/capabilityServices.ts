@@ -26,6 +26,7 @@ import {
 } from "./evm.js";
 import { createSqliteDatabaseService } from "./sqlite.js";
 import { createDesktopApplicationService } from "./desktop.js";
+import { DesktopBuildComputers } from "../application/desktop/DesktopBuildComputers.js";
 import { createGoBinaryService } from "./go.js";
 import { createRustBinaryService } from "./rust.js";
 import { createBeamService } from "./erlang.js";
@@ -43,6 +44,10 @@ import {
 } from "./javascriptRecovery.js";
 import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
 import { createReverseEngineeringService } from "./reverseEngineering.js";
+import type {
+  ReverseEngineeringService,
+  CommandProviderLaunchFailures,
+} from "../application/reverse/ReverseEngineeringService.js";
 import { FirmwareAnalysisService } from "../application/firmware/FirmwareAnalysisService.js";
 import {
   createFirmwareAnalysisProvider,
@@ -147,6 +152,7 @@ export interface CapabilityServiceOptions {
   readonly electronActiveObservation?: ElectronActiveObservationPort;
   readonly javascriptRuntimeObservation?: JavaScriptRuntimeObservationPort;
   readonly fridaInstrumentation?: FridaInstrumentationPort;
+  readonly reverseEngineering?: ReverseEngineeringService;
 }
 
 const tsharkLocatable = (environment: Readonly<NodeJS.ProcessEnv>): boolean => {
@@ -318,6 +324,10 @@ const modules = {
     }),
   ),
   desktopApplication: service(() => createDesktopApplicationService()),
+  desktopBuildComputers: capability(
+    ({ providerEnvironment }) => new DesktopBuildComputers(providerEnvironment),
+    (value) => value.closeAll(),
+  ),
   goBinary: service(
     ({ options }) => options.goBinary ?? createGoBinaryService(),
   ),
@@ -374,8 +384,13 @@ const modules = {
     }),
   ),
   artifactResources: service(() => new ArtifactResourceScope()),
-  reverseEngineering: service(({ providerEnvironment }) =>
-    createReverseEngineeringService(providerEnvironment),
+  reverseEngineering: service(
+    ({ providerEnvironment, options }) =>
+      options.reverseEngineering ??
+      createReverseEngineeringService(providerEnvironment),
+    (_context, value) => ({
+      observeCommandProviderFailures: () => value.observedLaunchFailures(),
+    }),
   ),
   firmwareAnalysis: service(
     ({ environment, options }) =>
@@ -608,6 +623,7 @@ export const createCapabilityServices = (context: CapabilityHostContext) => {
   > = {};
   const probes: NonNullable<CapabilityAvailabilityFacts["probes"]> = {};
   const failureObservers: (() => OptionalProviderLoadFailures)[] = [];
+  const commandFailureObservers: (() => CommandProviderLaunchFailures)[] = [];
   const availability = { hostUnsupported, optionalFeatures };
   // This is a key-preserving map of a source-owned typed declaration, not an
   // external value parser or a generic operation dispatcher.
@@ -628,6 +644,10 @@ export const createCapabilityServices = (context: CapabilityHostContext) => {
       Object.assign(probes, instance.availability?.probes);
       const observeFailure = instance.availability?.observeProviderLoadFailures;
       if (observeFailure !== undefined) failureObservers.push(observeFailure);
+      const observeCommandFailure =
+        instance.availability?.observeCommandProviderFailures;
+      if (observeCommandFailure !== undefined)
+        commandFailureObservers.push(observeCommandFailure);
       return [
         id,
         instance.ownership === "host"
@@ -642,6 +662,8 @@ export const createCapabilityServices = (context: CapabilityHostContext) => {
     probes,
     observeProviderLoadFailures: (): OptionalProviderLoadFailures =>
       Object.assign({}, ...failureObservers.map((observe) => observe())),
+    observeCommandProviderFailures: (): CommandProviderLaunchFailures =>
+      Object.assign({}, ...commandFailureObservers.map((observe) => observe())),
     close: () => scope.close(),
   };
 };

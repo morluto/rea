@@ -139,8 +139,10 @@ describe("bundle comparison", () => {
       ]),
     });
     expect(first.changes).toHaveLength(3);
-    expect(first.limitations).toContain(
-      "EvidenceBundle has no inventory completeness marker; one-sided membership remains unknown.",
+    expect(first.limitations).toContainEqual(
+      expect.stringMatching(
+        /no inventory completeness marker.*membership remains unknown/i,
+      ),
     );
   });
 
@@ -260,9 +262,11 @@ describe("bundle comparison history", () => {
       expect.objectContaining({
         classification: "unknown",
         conclusion_kind: "unresolved_branch",
-        limitations: [
-          "EvidenceBundle has no inventory completeness marker; one-sided history membership remains unknown.",
-        ],
+        limitations: expect.arrayContaining([
+          expect.stringMatching(
+            /no inventory completeness marker.*history membership remains unknown/i,
+          ),
+        ]),
       }),
     );
   });

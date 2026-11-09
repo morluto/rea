@@ -33,6 +33,11 @@ export const typeScriptDialectCases = [
     source: 'const value = require("./dep.js") as unknown;',
   },
   {
+    path: "wrapped-as.cts",
+    kind: "require",
+    source: 'const value = require("./dep.js") as unknown;',
+  },
+  {
     path: "generic.ts",
     kind: "static-import",
     source: 'const identity = <T>(value: T): T => value;\nimport "./dep.js";',
@@ -158,7 +163,14 @@ export const expectTypeScriptDialectReference = (
   );
   expect(edges).toHaveLength(1);
   expect(edges[0]).toMatchObject({
-    properties: { resolved_path: "dep.js" },
+    properties:
+      fixture.kind === "require" && !fixture.path.endsWith(".cts")
+        ? {
+            resolved_path: null,
+            loader_authority: "candidate",
+            resolution_mode: null,
+          }
+        : { resolved_path: "dep.js" },
     evidence: {
       artifact: {
         available: true,

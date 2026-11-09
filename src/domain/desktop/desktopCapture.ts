@@ -48,6 +48,63 @@ export const desktopCheckpointSchema = z.strictObject({
 });
 export type DesktopCheckpoint = z.infer<typeof desktopCheckpointSchema>;
 
+/**
+ * What a running capture reports beside its progress text, for a driver to
+ * wait on: the window opening, a checkpoint once it has been taken, with its
+ * counts, and a requested name it refused.
+ */
+export const desktopCaptureEventSchema = z.discriminatedUnion("kind", [
+  z.strictObject({ kind: z.literal("window_open") }),
+  z.strictObject({
+    kind: z.literal("checkpoint"),
+    name: z.string().min(1),
+    trigger: desktopCheckpointSchema.shape.trigger,
+    at_ms: milliseconds,
+    entries: z.int().min(0),
+    changes: z.int().min(0),
+    retained_files: z.int().min(0),
+    retained_bytes: z.int().min(0),
+  }),
+  z.strictObject({
+    kind: z.literal("checkpoint_refused"),
+    name: z.string(),
+    reason: z.string().min(1),
+  }),
+]);
+export type DesktopCaptureEvent = z.infer<typeof desktopCaptureEventSchema>;
+
+/** One progress line `capture-desktop-application` writes to stderr. */
+export const desktopCaptureProgressSchema = z.strictObject({
+  rea_progress: z.strictObject({
+    phase: z.literal("desktop_capture"),
+    message: z.string(),
+    event: desktopCaptureEventSchema.optional(),
+  }),
+});
+export type DesktopCaptureProgress = z.infer<
+  typeof desktopCaptureProgressSchema
+>;
+
+/** The capture event in one progress line, when that line carries one. */
+export const captureProgressEvent = (
+  line: string,
+): DesktopCaptureEvent | undefined =>
+  desktopCaptureProgressSchema.parse(JSON.parse(line)).rea_progress.event;
+
+/** The acknowledgement of a taken checkpoint, from what it recorded. */
+export const checkpointTaken = (
+  checkpoint: DesktopCheckpoint,
+): Extract<DesktopCaptureEvent, { kind: "checkpoint" }> => ({
+  kind: "checkpoint",
+  name: checkpoint.name,
+  trigger: checkpoint.trigger,
+  at_ms: checkpoint.at_ms,
+  entries: checkpoint.entries,
+  changes: checkpoint.changes.length,
+  retained_files: checkpoint.retained.length,
+  retained_bytes: checkpoint.retained.reduce((sum, file) => sum + file.size, 0),
+});
+
 const desktopEntrySchema = z.strictObject({
   id: z.string().nullable(),
   path: z.string().min(1),
@@ -90,6 +147,8 @@ const aptRepositorySchema = z.strictObject({
   signing_key: aptSigningKeySchema.nullable(),
   /** Why no signing key was verified, or why the repository was not checked. */
   signing_key_reason: z.string().optional(),
+  /** Installable library packages, and the executable's package, that the Ubuntu 24.04 archive does not offer and this repository's package files list; absent from captures written before it was recorded. */
+  supplies: z.array(z.string()).optional(),
 });
 export type AptRepository = z.infer<typeof aptRepositorySchema>;
 
@@ -110,7 +169,12 @@ export type DesktopPackageFile = z.infer<typeof packageFileSchema>;
 
 const packageSchema = z.strictObject({
   kind: z.enum(["deb", "snap", "flatpak", "appimage", "unknown"]),
+  /** A Debian package is the launched desktop entry's owner, or else the executable's. */
   name: z.string().nullable(),
+  /** The executable's Debian package when another package owns the desktop entry; absent otherwise. */
+  executable_package: z.string().optional(),
+  /** Why the computer cannot install the program the desktop entry runs: `executable_package` is not offered, or, without it, no package owns the program; absent when it can. */
+  executable_package_reason: z.string().optional(),
   version: z.string().nullable(),
   architecture: z.string().nullable(),
   /** Package sources listing the installed version; empty for local installs. */
@@ -224,12 +288,22 @@ export const desktopApplicationCaptureSchema = z.strictObject({
     architecture: z.string().min(1),
     display: z.string().min(1),
     home: z.string().min(1),
+    /** The host's name and the user's, which captured state can hold; absent from captures written before they were recorded, or when the system could not say. */
+    hostname: z.string().min(1).optional(),
+    user: z.string().min(1).optional(),
   }),
   application: desktopApplicationInventorySchema,
   session: desktopSessionSchema,
   state: z.strictObject({
     roots: z.array(z.string().min(1)).min(1),
     content_roots: z.array(z.string().min(1)),
+    /** Non-file entries observed by the baseline walk, without following links. */
+    baseline_non_files: z.array(
+      z.strictObject({
+        path: z.string().min(1),
+        type: z.enum(["directory", "symlink", "other"]),
+      }),
+    ),
     /**
      * The application's state directories as walked, in their physical
      * spelling; absent from captures written before it was recorded.

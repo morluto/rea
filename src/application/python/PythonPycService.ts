@@ -1,11 +1,7 @@
-import { isAbsolute } from "node:path";
 import type { ExecutionOptions } from "../AnalysisProvider.js";
 import type { PythonPycPort } from "./PythonPycPort.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
-import {
-  AnalysisInputError,
-  AnalysisOutputError,
-} from "../../domain/analysisErrorCore.js";
+import { AnalysisOutputError } from "../../domain/analysisErrorCore.js";
 import { createEvidence, type Evidence } from "../../domain/evidence.js";
 import {
   inspectPythonPycInputSchema,
@@ -37,16 +33,6 @@ export class PythonPycService {
       options?.signal,
     );
     if (!input.ok) return input;
-    if (!isAbsolute(input.value.path))
-      return err(
-        new AnalysisInputError(OPERATION, undefined, [
-          {
-            path: ["path"],
-            reason: "invalid_format",
-            message: "Expected an absolute filesystem path on this host.",
-          },
-        ]),
-      );
     const result = await this.provider.inspect(input.value, options);
     if (!result.ok) return result;
     const report = pythonPycSchema.safeParse(result.value);
