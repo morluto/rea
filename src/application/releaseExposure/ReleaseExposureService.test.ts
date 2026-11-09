@@ -2064,6 +2064,29 @@ describe("ReleaseExposureService Go forwarded linker search paths", () => {
   );
 
   it.each([
+    ["-Wl,@/tmp/private-link.rsp", "/tmp/private-link.rsp"],
+    ["-Xlinker @/tmp/private-link.rsp", "/tmp/private-link.rsp"],
+    ["-Wl,--as-needed,@/tmp/private-link.rsp", "/tmp/private-link.rsp"],
+    ["-Wl,@private-link.rsp", "private-link.rsp"],
+    ["@/tmp/private-cc.rsp", "/tmp/private-cc.rsp"],
+  ])("keeps the response file named in %s", async (value, path) => {
+    const report = await goReport(goModule([{ key: "CGO_LDFLAGS", value }]));
+    const check = report.checks.find((item) => item.id === "go.build_paths");
+    expect(check?.status).toBe("exposed");
+    expect(check?.observation.samples).toEqual([path]);
+  });
+
+  it.each([
+    "-Wl,-install_name,@rpath/libprivate.dylib",
+    "-Xlinker -install_name -Xlinker @rpath/libprivate.dylib",
+    "-Wl,@",
+  ])("reads no response file in %s", async (value) => {
+    const report = await goReport(goModule([{ key: "CGO_LDFLAGS", value }]));
+    const check = report.checks.find((item) => item.id === "go.build_paths");
+    expect(check?.status).toBe("not_observed");
+  });
+
+  it.each([
     ["-Wl,-rpath,@loader_path/lib:extra", "not_observed", []],
     [
       "-Wl,-rpath,$ORIGIN:/opt/private-runtime",

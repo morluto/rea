@@ -1259,6 +1259,23 @@ const linkerSearchLists = (flags: string[]): string[] =>
   });
 
 /**
+ * Each `@FILE` response file the compiler driver or linker reads options from,
+ * named in its own argument and never opened here. An argument after an option
+ * that takes one, as in `-install_name @rpath/libx.dylib`, is that option's
+ * value, and a dyld runtime token names no file on the build host.
+ */
+const responseFilePaths = (args: string[], pathFlag: RegExp): string[] =>
+  args.flatMap((arg, index) => {
+    if (!arg.startsWith("@") || DYLD_RUNTIME_TOKEN.test(arg)) return [];
+    const path = arg.slice(1).trimEnd();
+    const previous = args[index - 1];
+    return path.length === 0 ||
+      (previous !== undefined && pathFlag.exec(previous)?.[1] === "")
+      ? []
+      : [path];
+  });
+
+/**
  * Rooted and relative paths in flags a C compiler driver reads. A forwarded
  * search list is read entry by entry, so an entry the image's loader expands,
  * such as `$ORIGIN` on ELF, drops only itself. Only a search list is loader-expanded: the
@@ -1271,13 +1288,13 @@ const compilerPaths = (value: string, format: NativeImageFormat): string[] => {
   const flags = goFlags(value);
   const { compiler, linker } = splitForwardedLinkerFlags(flags);
   const literal = withoutLinkerSearchLists(flags);
+  const literalLinker = splitForwardedLinkerFlags(literal).linker;
   return [
     ...flagPaths(literal),
     ...goRelativeFlagPaths(compiler, GO_COMPILER_PATH_FLAG),
-    ...goRelativeFlagPaths(
-      splitForwardedLinkerFlags(literal).linker,
-      LINKER_PATH_FLAG,
-    ),
+    ...goRelativeFlagPaths(literalLinker, LINKER_PATH_FLAG),
+    ...responseFilePaths(compiler, GO_COMPILER_PATH_FLAG),
+    ...responseFilePaths(literalLinker, LINKER_PATH_FLAG),
     ...linkerSearchLists(linker).flatMap((list) =>
       searchListEntries(list, format),
     ),
