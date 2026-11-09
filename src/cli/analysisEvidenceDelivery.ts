@@ -10,6 +10,7 @@ import {
   parseEvidence,
   withEvidenceCallerInputPath,
   type Evidence,
+  type CallerInputPaths,
 } from "../domain/evidence.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
@@ -60,7 +61,7 @@ interface CliEvidenceDelivery {
   /** Exact one-shot CLI target spelling, when this invocation selects a file. */
   readonly callerInputPath?: string;
   /** Verbatim named auxiliary path choices for the same direct invocation. */
-  readonly callerInputPaths?: Readonly<Record<string, string>>;
+  readonly callerInputPaths?: CallerInputPaths;
   /** Derived workflows publish their selected source closure with the result. */
   readonly sourceEvidence?: readonly Evidence[];
   /** Invocation exclusions cover final cleanup and publication paths/diagnostics. */
