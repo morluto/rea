@@ -239,16 +239,17 @@ export const createSemanticModuleInterop = (
       (write) =>
         (write.scope === scope || write.scope === "intrinsic") &&
         write.offset < (read.start ?? -1) &&
-        (readKind === "wrapper" && invocationMethod
-          ? write.coverage.covers([
-              "intrinsic",
-              "Function",
-              "prototype",
-              method,
-            ]) ||
-            (write.coverage.covers(path) &&
-              !write.coverage.covers(path.slice(0, -1)))
-          : write.coverage.covers(path)),
+        ((invocationMethod &&
+          write.coverage.covers([
+            "intrinsic",
+            "Function",
+            "prototype",
+            method,
+          ])) ||
+          (write.coverage.covers(path) &&
+            (readKind !== "wrapper" ||
+              !invocationMethod ||
+              !write.coverage.covers(path.slice(0, -1))))),
     );
   };
 

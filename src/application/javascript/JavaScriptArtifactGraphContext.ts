@@ -11,6 +11,7 @@ import {
   type ApplicationGraphEvidence,
 } from "../../domain/javascript/javascriptApplicationEvidenceSchemas.js";
 import type { ApplicationNode } from "../../domain/javascript/javascriptApplicationGraphSchemas.js";
+import { artifactOccurrenceKey } from "../../domain/javascript/javascriptApplicationFileIdentity.js";
 import type { JavaScriptSourceRange } from "../../domain/javascript/javascriptStaticAnalysisTypes.js";
 import type {
   JavaScriptHtmlInlineScriptsObservation,
@@ -394,11 +395,7 @@ export const fileOccurrenceIdentity = (file: JavaScriptArtifactFile) => ({
   sha256: file.sha256,
 });
 
-/** Key a derived fact to its source occurrence, independently of equal bytes. */
-export const artifactOccurrenceKey = (
-  file: JavaScriptArtifactFile,
-  value: unknown,
-): string => JSON.stringify([file.container_sha256, file.path, value]);
+export { artifactOccurrenceKey };
 
 /** Stable identity for a fact scoped to one exact artifact. */
 export const artifactLocalIdentity = (

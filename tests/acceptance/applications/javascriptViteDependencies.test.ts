@@ -3171,6 +3171,55 @@ const allScenarios: readonly ViteScenario[] = [
     resolved: kept ? ["first.js"] : [],
     unknown: !kept,
   })),
+  ...[
+    [
+      "ownerless-constructor",
+      'const C = [].constructor; C.prototype.map = () => ["./last.js"];',
+      false,
+    ],
+    [
+      "ownerless-destructured-constructor",
+      'const {constructor: C} = []; C.prototype.map = () => ["./last.js"];',
+      false,
+    ],
+    [
+      "captured-changed-call",
+      'Function.prototype.call = function (_, m) { m.f[0] = "./last.js"; }; const change = Object.freeze.call; Reflect.apply(change, Object.freeze, [null, __vite__mapDeps]);',
+      false,
+    ],
+    [
+      "captured-changed-apply",
+      'Function.prototype.apply = function (_, args) { args[0].f[0] = "./last.js"; }; const change = Object.freeze.apply; Reflect.apply(change, Object.freeze, [null, [__vite__mapDeps]]);',
+      false,
+    ],
+    [
+      "call-changed-after-capture",
+      'const change = Object.freeze.call; Function.prototype.call = function (_, m) { m.f[0] = "./last.js"; }; Reflect.apply(change, Object.freeze, [null, __vite__mapDeps]);',
+      true,
+    ],
+    [
+      "assign-replaced-source-getter",
+      'const holder = {source: {}}; holder.source = {cache: __vite__mapDeps.f, get x() { this.cache[0] = "./last.js"; return 0; }}; Object.assign({}, holder.source);',
+      false,
+    ],
+    [
+      "assign-replaced-source-data",
+      "const holder = {source: {}}; holder.source = {cache: __vite__mapDeps.f}; Object.assign({}, holder.source);",
+      true,
+    ],
+    [
+      "assign-captured-source",
+      'const holder = {source: {}}; const captured = holder.source; holder.source = {cache: __vite__mapDeps.f, get x() { this.cache[0] = "./last.js"; return 0; }}; Object.assign({}, captured);',
+      true,
+    ],
+  ].map(([name, effect, kept]) => ({
+    file: `snapshot-and-wrapper-authority-${String(name)}.js`,
+    source: mapDependenciesWithEffects(
+      initializeCache + `${String(effect)} __vite__mapDeps([0]);`,
+    ),
+    resolved: kept ? ["first.js"] : [],
+    unknown: !kept,
+  })),
 ];
 
 const batches = Array.from(

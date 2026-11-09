@@ -54,8 +54,12 @@ const identityPaths = (
   identity: ViteCacheIdentity | undefined,
 ): readonly CachePath[] => {
   if (identity === undefined) return [];
+  // named intrinsic paths already have the ambient write owner's precision.
   const paths: CachePath[] =
-    identity.inheritedArrayPrototype === true
+    identity.inheritedArrayPrototype === true ||
+    (identity.allocation === null &&
+      identity.intrinsicPrototype === true &&
+      identity.intrinsicObject === undefined)
       ? [["inherited-array-prototype", null]]
       : [];
   if (identity.owner === undefined) return paths;
@@ -139,6 +143,13 @@ export function* invalidateJavaScriptViteCachesSteps(
   let examined = 0;
   yield* identities.retainSnapshotsSteps(writes, escapes);
   yield* identities.solveSteps();
+  // preliminary exposures help build the snapshots. a safe initial source can
+  // select a different allocation at the call site once writes are applied.
+  context.unsafeTargets = yield* unsafeAssignmentTargetsSteps(
+    { calls, exposures, writes },
+    context,
+  );
+  const snapshotEscapes = yield* indexCallExposuresSteps(calls, context);
   let allOwners = false;
   const invalidate = (owner: string | null | undefined): void => {
     if (
@@ -169,7 +180,7 @@ export function* invalidateJavaScriptViteCachesSteps(
     if (kind === "cache" && !numericSlot(key)) return;
     invalidate(owner);
   };
-  for (const escape of escapes) {
+  for (const escape of [...escapes, ...snapshotEscapes]) {
     if (examined++ % 1024 === 0) yield;
     {
       const identity = identities.read(escape.value);

@@ -1,5 +1,8 @@
 import { nativeExportCorrespondenceKey } from "./javascriptNativeExportFacts.js";
-import { applicationNodeContentDigest } from "./javascriptApplicationFileIdentity.js";
+import {
+  applicationNodeContentDigest,
+  artifactOccurrenceCoordinates,
+} from "./javascriptApplicationFileIdentity.js";
 import { canonicalJson } from "../comparisonSemantics.js";
 import {
   compareUnicodeCodePoints,
@@ -58,6 +61,10 @@ const matchTiers = (): readonly MatchTier[] => [
   {
     match: { basis: "exact-module-source-digest", confidence: "exact" },
     key: bundledSourceOccurrenceKey,
+  },
+  {
+    match: { basis: "exact-module-source-digest", confidence: "exact" },
+    key: electronSourceOccurrenceKey,
   },
   {
     match: { basis: "exact-node-identity", confidence: "exact" },
@@ -292,6 +299,26 @@ const bundledSourceOccurrenceKey = (node: ApplicationNode): string | null => {
     runtime,
     member,
   ]);
+};
+
+const electronSourceNamespaces: ReadonlyMap<ApplicationNode["kind"], string> =
+  new Map([
+    ["browser-window", "electron-browser-window"],
+    ["context-bridge-api", "electron-context-bridge"],
+    ["electron-utility", "electron-utility-process"],
+  ]);
+
+const electronSourceOccurrenceKey = (node: ApplicationNode): string | null => {
+  const { identity } = node;
+  if (
+    identity.strategy !== "artifact-local-key" ||
+    electronSourceNamespaces.get(node.kind) !== identity.namespace
+  )
+    return null;
+  const coordinates = artifactOccurrenceCoordinates(identity.key);
+  return coordinates === null
+    ? null
+    : canonicalJson([node.kind, identity.artifact_sha256, ...coordinates]);
 };
 
 const sourceMapKey = (node: ApplicationNode): string | null => {

@@ -555,3 +555,73 @@ cliTest(
     );
   },
 );
+
+cliTest(
+  "matches unchanged Electron construction sites after a sibling file changes",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-electron-version-");
+    const analyze = async (name: string, version: string) => {
+      const application = join(root, name);
+      await mkdir(application);
+      await writeFile(
+        join(application, "package.json"),
+        JSON.stringify({
+          name: "electron-version-fixture",
+          version,
+          main: "electron.cjs",
+        }),
+      );
+      await writeFile(
+        join(application, "electron.cjs"),
+        'const { BrowserWindow, contextBridge, utilityProcess } = require("electron");\n' +
+          "new BrowserWindow({width: 640});\nnew BrowserWindow({width: 800});\n" +
+          'contextBridge.exposeInMainWorld("api", {ping: () => 1});\n' +
+          'utilityProcess.fork("./util.js");\n',
+      );
+      await writeFile(join(application, "util.js"), "module.exports = 1;\n");
+      const response = await cli.run({
+        arguments: ["analyze-javascript-application", application, "--json"],
+        environment: { REA_LOG_LEVEL: "silent" },
+      });
+      expect(response.exitCode, response.stderr).toBe(0);
+      return parseEvidence(response.json);
+    };
+
+    const base = await analyze("base", "1.0.0");
+    const bumped = await analyze("bumped", "1.0.1");
+    const inputPath = join(root, "comparison.json");
+    await writeFile(inputPath, JSON.stringify({ left: base, right: bumped }));
+    const response = await runFileCli(cli, {
+      arguments: ["compare-application-versions", inputPath, "--json"],
+      environment: { REA_LOG_LEVEL: "silent" },
+    });
+    expect(response.exitCode, response.stderr).toBe(0);
+    const unchanged = applicationVersionComparisonResultSchema.parse(
+      parseEvidence(response.json).normalized_result,
+    );
+    const electronSites = javascriptApplicationAnalysisResultSchema
+      .parse(base.normalized_result)
+      .graph.nodes.filter(
+        ({ kind }) =>
+          kind === "browser-window" ||
+          kind === "context-bridge-api" ||
+          kind === "electron-utility",
+      );
+    expect(electronSites.map(({ kind }) => kind).sort()).toEqual([
+      "browser-window",
+      "browser-window",
+      "context-bridge-api",
+      "electron-utility",
+    ]);
+    for (const node of electronSites) {
+      const item = unchanged.items.find(
+        ({ left_node_id }) => left_node_id === node.node_id,
+      );
+      expect(item).toMatchObject({
+        status: "unchanged",
+        match: { basis: "exact-module-source-digest", confidence: "exact" },
+      });
+      expect(item?.right_node_id).not.toBe(node.node_id);
+    }
+  },
+);
