@@ -294,7 +294,7 @@ export const textSyntaxFormat = (
   if (namedJson(path, trimmed) && isJsonText(text)) return "json";
   if (
     (namedXml(path, trimmed) || opensElement(trimmed)) &&
-    isWellFormedXml(text, XML_POLICY)
+    isWellFormedXml(text, { doctype: "external" })
   )
     return "xml";
   return "text";
