@@ -1415,6 +1415,25 @@ it("rejects a universal Deno image whose sibling slice cannot be read", async ()
   ).resolves.toEqual({ status: "absent" });
 });
 
+it("fails closed when the d3n0l4nd section is zero-fill", async () => {
+  // The 64-bit fixture's first section_64 record follows the Mach-O header
+  // (32 bytes) and the segment command header (72 bytes); flags sit at 64.
+  const flagsAt = 32 + 72 + 64;
+  for (const type of [0x1, 0xc, 0x12]) {
+    const image = denoMachO(buildDenoSection());
+    image.writeUInt32LE(type, flagsAt);
+    await expect(
+      locateDenoStandalone(bytesHandle(image), image.length),
+    ).resolves.toMatchObject({
+      status: "present",
+      failure: {
+        reason: "format",
+        message: expect.stringContaining("zero-fill"),
+      },
+    });
+  }
+});
+
 it("leaves a damaged __SUI segment without a d3n0l4nd section to native inventory", async () => {
   // The 64-bit fixture's first section name sits after the Mach-O header
   // (32 bytes) and the segment command header (72 bytes).

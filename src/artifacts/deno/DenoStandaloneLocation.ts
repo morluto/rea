@@ -1,7 +1,10 @@
 import { createHash } from "node:crypto";
 import type { FileHandle } from "node:fs/promises";
 
-import { readMachoSectionHeader } from "../../domain/apple/machoSectionHeader.js";
+import {
+  isMachoZeroFillSection,
+  readMachoSectionHeader,
+} from "../../domain/apple/machoSectionHeader.js";
 import { readMachoSegmentHeader } from "../../domain/apple/machoSegmentHeader.js";
 import {
   readFatHeaderPrefix,
@@ -319,13 +322,22 @@ const namesDenoSection = (body: Uint8Array, at: number): boolean =>
   at + 16 <= body.byteLength &&
   fixedCString(body.subarray(at, at + 16)) === SECTION_NAME;
 
-/** The file range of a confirmed `d3n0l4nd` record, or a failure. */
+/**
+ * The file range of a confirmed `d3n0l4nd` record, or a failure. A zero-fill
+ * section owns no file bytes, so its declared offset names no payload.
+ */
 const denoSectionRange = (
-  record: { readonly size: bigint; readonly offset: number },
+  record: {
+    readonly size: bigint;
+    readonly offset: number;
+    readonly flags: number;
+  },
   base: number,
   sliceSize: number,
   fileSize: number,
 ): SectionRange => {
+  if (isMachoZeroFillSection(record.flags))
+    throw denoCarrierFailure("Mach-O d3n0l4nd section is zero-fill");
   if (record.size > BigInt(Number.MAX_SAFE_INTEGER))
     throw denoCarrierFailure(
       "Mach-O d3n0l4nd section size is not a safe integer",
