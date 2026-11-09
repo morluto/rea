@@ -35,12 +35,39 @@ const propertyValues = (output: string): ReadonlyMap<string, string> => {
   return values;
 };
 
-/** Read `xprop`'s quoted, comma-separated string list. */
-const quotedStrings = (value: string): readonly string[] => {
-  const strings: string[] = [];
+const XPROP_STRING_ESCAPES: ReadonlyMap<string, string> = new Map([
+  ["n", "\n"],
+  ["t", "\t"],
+  ["\\", "\\"],
+  ['"', '"'],
+]);
+
+/** xprop emits LF/TAB escapes, quoted delimiters, and three-octal-digit bytes. */
+const decodeQuotedString = (source: string): string | null => {
+  let valid = true;
+  const decoded = source.replace(
+    /\\([0-7]{3}|.)/gu,
+    (_match, escape: string) => {
+      if (/^[0-7]{3}$/u.test(escape)) {
+        const byte = Number.parseInt(escape, 8);
+        if (byte <= 0xff) return String.fromCharCode(byte);
+      } else {
+        const value = XPROP_STRING_ESCAPES.get(escape);
+        if (value !== undefined) return value;
+      }
+      valid = false;
+      return "";
+    },
+  );
+  return valid ? decoded : null;
+};
+
+/** Read `xprop`'s quoted list; an uninterpretable member keeps its position unknown. */
+const quotedStrings = (value: string): readonly (string | null)[] => {
+  const strings: (string | null)[] = [];
   const pattern = /"((?:[^"\\]|\\.)*)"/gu;
   for (const match of value.matchAll(pattern))
-    strings.push((match[1] ?? "").replace(/\\(.)/gu, "$1"));
+    strings.push(decodeQuotedString(match[1] ?? ""));
   return strings;
 };
 

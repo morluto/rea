@@ -306,7 +306,10 @@ id rather than the `flatpak` launcher, and adds `~/.var/app/<id>`.
 **Session.** When it started, how long it ran and why it ended; the launched
 process's exit status; every process seen in the application's tree; every
 client window with its class pair, titles, owner pid and type, marked when it
-belongs to the application; when the first application window appeared; the
+belongs to the application. Titles and class names decode xprop's quoted
+delimiters, newline and tab escapes, and three-digit octal byte escapes;
+unsupported escape spellings leave that string unknown rather than inventing
+text. The session also records when the first application window appeared; the
 most common class pair of the application's windows, for matching its window
 later; files the application's processes held open under the walked roots; the first
 8 KiB of the launched process's stderr; and whether cleanup was verified. Each
