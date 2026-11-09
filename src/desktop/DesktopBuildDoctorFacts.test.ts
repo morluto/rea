@@ -469,9 +469,15 @@ it.skipIf(process.platform === "win32")(
       'if [ "$1" = info ]; then echo /tmp; else exit 0; fi',
     );
     const python = (await execute("which", ["python3"])).stdout.trim();
+    const clientPython = join(root, "python-client");
+    const pythonCalls = join(root, "python-calls");
+    await program(
+      clientPython,
+      `printf '%s\\n' "$1" >> "${pythonCalls}"\nexec "${python}" "$@"`,
+    );
     await writeFile(
       join(bin, "agent-env"),
-      `#!${python}\nprint("agent-env 0.9.1431")\n`,
+      `#!${clientPython}\nprint("agent-env 0.9.1431")\n`,
       { mode: 0o755 },
     );
     const packed = join(root, "packed");
@@ -515,6 +521,7 @@ it.skipIf(process.platform === "win32")(
     });
     expect(facts.registrations[0]?.differing ?? []).toEqual([]);
     expect(facts.registrations[0]?.unchecked ?? []).toEqual([]);
+    expect((await readFile(pythonCalls, "utf8")).split("\n")).toContain("-I");
     expect(JSON.stringify(facts.registrations)).not.toContain(root);
     const registration = (runner: string) =>
       JSON.stringify({
