@@ -29,6 +29,17 @@ const declaresInternalSubset = (declaration: string): boolean =>
 /** XML 1.0's `NameStartChar`, and the further characters `NameChar` allows. */
 const NAME_START = String.raw`:A-Z_a-z\u{C0}-\u{D6}\u{D8}-\u{F6}\u{F8}-\u{2FF}\u{370}-\u{37D}\u{37F}-\u{1FFF}\u{200C}\u{200D}\u{2070}-\u{218F}\u{2C00}-\u{2FEF}\u{3001}-\u{D7FF}\u{F900}-\u{FDCF}\u{FDF0}-\u{FFFD}\u{10000}-\u{EFFFF}`;
 const NAME_MORE = String.raw`\-.0-9\u{B7}\u{300}-\u{36F}\u{203F}\u{2040}`;
+/** XML element opening grammar shared by the desktop format readers. */
+export const XML_ELEMENT_OPENING = String.raw`<[${NAME_START}][${NAME_START}${NAME_MORE}]*(?=[ \t\r\n]|/?>)`;
+const XML_OPENING = new RegExp(
+  `^(?:<\\?xml\\b|<!DOCTYPE\\b|${XML_ELEMENT_OPENING})`,
+  "u",
+);
+
+/** Whether text begins with a possible XML declaration, DOCTYPE or start tag. */
+export const opensLikeXml = (source: string): boolean =>
+  XML_OPENING.test(source);
+
 /** XML 1.0's `PubidChar` but the apostrophe, which only a double-quoted literal may hold. */
 const PUBID = String.raw`\n\r a-zA-Z0-9\-()+,./:=?;!*#@$_%`;
 const SPACE = String.raw`[ \t\r\n]`;
@@ -158,6 +169,48 @@ export const xmlElementRanges = (
         ? cause
         : new XmlDocumentParseError("malformed", cause),
     );
+  }
+};
+
+/** Inclusive source ranges of attribute quotes, parsed without reading a DTD. */
+export const xmlAttributeQuoteRanges = (
+  source: string,
+): Result<
+  readonly { readonly start: number; readonly end: number }[],
+  {
+    readonly error: XmlDocumentParseError;
+    readonly ranges: readonly {
+      readonly start: number;
+      readonly end: number;
+    }[];
+    readonly examined: number;
+  }
+> => {
+  const ranges: { start: number; end: number }[] = [];
+  let reader: SaxesParser<{ xmlns: true }> | undefined;
+  try {
+    checkXmlSyntax(source, "allow", (syntax) => {
+      reader = syntax;
+      syntax.on("attribute", () => {
+        const end = syntax.position - 1;
+        const quote = source[end];
+        if (quote !== '"' && quote !== "'")
+          throw new XmlDocumentParseError("malformed");
+        const start = source.lastIndexOf(quote, end - 1);
+        if (start < 0) throw new XmlDocumentParseError("malformed");
+        ranges.push({ start, end });
+      });
+    });
+    return ok(ranges);
+  } catch (cause: unknown) {
+    return err({
+      error:
+        cause instanceof XmlDocumentParseError
+          ? cause
+          : new XmlDocumentParseError("malformed", cause),
+      ranges,
+      examined: Math.max(0, (reader?.position ?? 0) - 1),
+    });
   }
 };
 

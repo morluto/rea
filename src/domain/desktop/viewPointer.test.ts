@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
 
 import type { JsonValue } from "../jsonValue.js";
-import { locatePointer, memberLookup, pairMembers } from "./viewPointer.js";
+import { pairMembers } from "./memberPairing.js";
+import { locatePointer, memberLookup } from "./viewPointer.js";
 
 const element = (
   name: string,

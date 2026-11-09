@@ -58,12 +58,34 @@ operation `describe_desktop_application_task` and predicate type
   JSON file's members or a key file's keys, each whole once. A value only
   position reaches has `note: "by_position"`, and its pointer cannot go into a
   check; noise an app writes as it saves has `view_state`, `renumbered`,
-  `volatile`, `timestamp` or `upkeep` (see `task`). `refers_to` names up to
-  three other elements a value equals the `key` or `id` of, with the
+  `volatile`, `timestamp`, `upkeep` or `layout` (see `task`). A record of
+  text fields added to a list of its kind, as GnuCash's
+  `<gnc:transaction>`, is listed field by field, and a field that lists
+  records, as its `<trn:splits>`, record by record, so the cut never hides
+  one. `refers_to` names up to
+  five other elements a value equals the `key` or `id` (`xmi:id` among them)
+  of, outside a view the app keeps of the document, as Umbrello's
+  `listview` mirroring its model by id, with the
   `attribute` holding it, as HomeBank's `category="44"` names
-  `<cat key="44" name="Groceries"/>`; where several elements share that key,
-  the one whose tag shares the attribute's stem, as `payee` and `<pay>`. What a check can
-  name comes first, then what only position reaches, then noise. A file lists
+  `<cat key="44" name="Groceries"/>`, or the id a child element holds, as a
+  GnuCash split's `<split:account>` names the account whose `<act:id>` it
+  is, shown with its name, `<gnc:account …><act:name>Groceries</act:name>…`;
+  an element added whole lists those of the records of attributes it nests
+  too, as a KMyMoney transaction's splits name their `<ACCOUNT>` and
+  `<PAYEE>`, each once. Where several elements share that key, the one
+  whose tag shares the attribute's stem, as `payee` and `<pay>`, and of
+  those the one named for the attribute, as `account` an `<ACCOUNT>` before
+  an `<ACCOUNTID>`. A plain number names an element only through an
+  attribute so named or ending in `id`, `ref` or `key`, so a list's
+  `count="5"` names no `<FIXVERSION id="5"/>`. A value that changed lists,
+  in `alternatives`, its pointer naming the element by each other identifier
+  or name-like attribute it holds alone among its tag's members, up to
+  three, as an Inkscape text's `[@inkscape:label=Headline]` beside its
+  `[@id=text12]`, for a check to name it by instead; an element its tag
+  alone names inside the first one a condition names, as an EPUB chapter's
+  `h1`, by its `[@id=chapter-two]`. What a check can
+  name comes first, text an edit changed before the rest, so no cut drops
+  the edit, then what only position reaches, then noise. A file lists
   at most 20 values and 8 KB, the draft 24 KB, and `values_cut` says when a
   limit left some out. Values cover XML, archives, JSON and key files; a text
   or SQLite file's change and suggestions already carry its lines and rows.
@@ -74,8 +96,31 @@ operation `describe_desktop_application_task` and predicate type
   in `.log` remain eligible for checks.
   A text file gains `lines_present` for its new lines and `lines_absent` for
   lines it lost (when either is at most ten), and `line_count` for each line
-  holding a letter whose count changed; JSON and key files gain
-  `value_equals` and `value_absent` by pointer; SQLite tables gain rows added,
+  holding a letter whose count changed; a new line holding a value REA
+  recognizes as generated, such as a named epoch time or `ID_329023692`, gets a
+  `line_count` of the lines `contains` its text up to that value, as
+  `<node TEXT="Water filter" ID="`, at the end's number, where both views
+  hold the whole file, instead of a `lines_present` another save would
+  fail, or a `volatile_lines` note when no text comes before it. UUID-shaped
+  text stays exact because its shape alone does not show that it was generated;
+  JSON and key files gain
+  `value_equals` and `value_absent` by pointer, a JSON array's records named
+  by an id field each holds alone at both ends (`id`, `uid`, `uuid`, `guid`,
+  `key` or a name ending in `_id` or `Id`), as TreeLine's
+  `/nodes/[uid=7584d494d9f511f1a873edd4f1920549]`, whatever order the app
+  saves them in, and by position only where nothing names a record, as a
+  new record whose only id the app generated, with a `by_position` note
+  listing those checks; never a value that is a uid the app generates (a
+  GUID, or 32 hex digits as TreeLine's uuid1), nor a check the seed already
+  passes, as a new record's `format` where another record of that kind held
+  its place; a removed record is checked gone by its own pointer, as
+  `/lists/[id=chores]`, and only where the end holds nothing there, so a
+  record only position reached, whose place another took, is left to the
+  count; `member_count` checks of the
+  arrays whose members were added or removed, of the members' kind where
+  records share a `type`, `kind`, `format` or `category` field, as `/nodes`
+  matching `[format=BOOK]`, and a count guard of the innermost array an edit
+  went through, as for XML; SQLite tables gain rows added,
   changed and removed, by primary key, and their new row count. An XML file,
   and the JSON, key file and XML views of a zip archive's entries, gain checks
   by [selectors](#pointers-and-selectors) and never through an element by
@@ -87,19 +132,62 @@ operation `describe_desktop_application_task` and predicate type
     `id`, `xid`, `xml:id`), then by one other attribute, a name-like key such
     as Scribus's `ANNAME` or `inkscape:label`, a worded value or an integer of
     up to five digits first, then by two such attributes together, as
-    Gnumeric's cells by `[@Col=3][@Row=2]`, and last by a coordinate, a long
-    number or a token, such as `XPOS` or `ItemID`, or an attribute naming
-    view state, such as which layer is `selected`. A pair counts every
-    member holding both its values, whichever attributes that member ranks
-    first. An element with identifiers is named by those alone. The selector
-    must name the member alone at both ends, with the same values. An
-    element whose one identifier changed, at its place among its tag's
-    members, with every other attribute and its children alike, is that
-    element renamed, as a MyPaint layer renamed from `Untitled` to `Sun`: it
-    is named by its first other attribute naming it alone at both ends, as
-    `[@src=data/layer-00.png]`, so the rename reads as its `name` changed,
-    and the old name gets a check that it names nothing, unless its change
-    is noise, as an id the app renumbered.
+    Gnumeric's cells by `[@Col=3][@Row=2]`, then by a coordinate, a long
+    number, a length with its unit, as `svg:height="2.629cm"`, an `xml:id`
+    or `draw:id` of the form `id2` that LibreOffice numbers anew as it saves,
+    so a Draw shape is named by its `draw:name`, or a token,
+    such as `XPOS` or `ItemID`, or an id of random case, as Umbrello's
+    `ubcgF2AWfBmHh` (`u` and twelve letters and digits), an automatic style name an app numbers as it
+    saves and renumbers on reload, as LibreOffice's
+    `presentation:style-name="pr1"` (`P1`, `T1`, `MT1`, `L2` on a
+    `*:style-name`), so a slide's frames are named by `presentation:class`,
+    or an attribute naming
+    view state, such as which layer is `selected`, and last by a child
+    element's text, `[>CHILD=VALUE]`, a name-like tag first, as Osmo's
+    record by `[>first_name=Delphine]`, MuseScore's `<Text>` by
+    `[>style=Title]`, a spreadsheet row by its label cell, or GnuCash's
+    transaction by `[>trn:description=Greenleaf Market]`: text of at most 64
+    characters, never a time or a token or id a program generates. A pair
+    counts every member holding both its values, whichever attributes that
+    member ranks first. An element with identifiers is named by those alone;
+    an id the app generates, as Freeplane's `ID_329023692`, or a GUID in
+    any attribute, braced or not, as VYM's `uuid="{18eadb5d-…}"`, ranks
+    last, after a child's text, so a new node is named by its `TEXT` and a
+    new VYM branch by `[>heading=Sunset boat tour]`, while a member
+    both versions hold pairs by such an id first, so records that keep their
+    UUIDs and swap titles read as two title edits. A value that stands for
+    none, as Grisbi's `Id="(null)"` on every transaction, names nothing, so a
+    new transaction is named by its `Nb`. A child's text is
+    counted on every sibling, one an identifier names included, so a title
+    two records share names neither. The selector must name the
+    member alone at both ends, with the same values; a child's text names a
+    member that is in one version only when the list's length changed, so a
+    row whose one cell an edit changed stays that row. An element whose one
+    identifier changed, at its place among its tag's members, with every
+    other attribute and its children alike, is that element renamed, as a
+    MyPaint layer renamed from `Layer` to `Sun`: it is paired by its first
+    other attribute naming it alone at both ends, as
+    `[@src=data/sun.png]`, so the rename reads as its `name` changed, and
+    the old name gets a check that it names nothing, unless its change is
+    noise, as an id the app renumbered. Where that attribute's values number
+    the members in document order, as MyPaint 2 writes `src` as
+    `data/layer-00.png`, `data/layer-01.png` and on along the stack and
+    renumbers them when a layer moves, each version is named by its own
+    value of the renamed identifier instead, `[@name=Sun]` and
+    `[@name=Layer]`.
+  - A child of the document's root that its tag alone names, and that holds
+    a list (two or more elements of one tag and no text of its own) and has
+    an identifier, also gets a condition that keeps it named if the app adds
+    a sibling of its tag, as Dia adds an empty `Background` layer each time
+    it reopens and saves a diagram: an id other than `name` both ends hold,
+    as Inkscape's `[name=g][@id=layer1]`, which a new sibling would not
+    share; else the text of a child both ends hold, as Dia's
+    `[name=dia:layer][>dia:object=#Receive order#]`, which an empty sibling
+    lacks; else its `name`, which a new one may repeat. Deeper, a member of
+    a list named for its tag, as Gnumeric's `gnm:Sheet` in `gnm:Sheets`,
+    holding elements and its tag alone naming it, gets an id, else a
+    name-like child's text, `[name=gnm:Sheet][>gnm:Name=Budget]`, else its
+    `name`. Other steps, and elements with neither, stay as they are.
     An identifier the app numbers by position names nothing: where the
     members of a tag hold it as 1..N (or 0..N-1) in document order at both
     ends, members were inserted or removed, and every member another
@@ -107,11 +195,28 @@ operation `describe_desktop_application_task` and predicate type
     the count did, one at least, as Planner's task `id` after a task is
     inserted, members are paired by their other attributes, so an insertion
     reads as one task added. A value two members swap, or an id appended at
-    the end, as Tellico's next `<entry id="4">`, leaves the ids identity.
+    the end, as Tellico's next `<entry id="4">`, leaves the ids identity. An
+    identifier numbering the members 0..N-1 in document order at both ends,
+    where members came or went, as Parley numbers its `<entry id="6">` by
+    where it saves it, ranks after a child's text where a member has one, so
+    a new entry is `[>translation=library]` and its kept neighbours are named
+    alike; Tellico's ids, which count from 1, Tiled's and Rosegarden's,
+    whose members hold no text, stay identity. An element a change added that
+    holds nothing but the id of a record it added elsewhere, as Parley's
+    lesson membership `<entry id="6"/>`, is `upkeep`, listed with `refers_to`
+    on that record, never a check or a count.
   - The text check names the paragraph rather than a run inside it: it goes up
     from an element sitting in its parent's text, and from one named by its
     tag or position alone to the nearest ancestor named by an attribute, as
-    AbiWord's `p` by its `xid`; where no attribute names one, to the nearest
+    AbiWord's `p` by its `xid`, unless it is a field its tag names in a
+    record of two or more fields holding text, as QElectroTech's `<text>`
+    beside `<info_name>` in a `<dynamic_elmt_text>`, or KmPlot's
+    `<equation-0>` beside `<arg-min>`, which is checked itself rather than
+    the record whose text joins its fields; one line of text the app lays
+    out between line breaks, as KmPlot's formula before the next element, is
+    checked, and its siblings guarded, with `normalize_whitespace: true`,
+    and text whose whitespace alone changed, as a formula the app moved to
+    an indented line of its own, gets no check; where no attribute names one, to the nearest
     ancestor within three levels its tag names with no step by position, as
     MuseScore's `VBox` around untitled `<Text>` elements; and where only
     position reaches the element, to the ancestor above the outermost step by
@@ -124,7 +229,19 @@ operation `describe_desktop_application_task` and predicate type
     number instead. Free text that gains a line, such as a shopping list,
     uses `text_equals` on the whole text: the current XML checks cannot
     compare an unstructured line as a whole item. This can reject a correct
-    edit that puts the item elsewhere or changes spacing. A record added
+    edit that puts the item elsewhere or changes spacing. Text an app keeps in an attribute, one element per run, as Scribus's
+    `<StoryText><ITEXT CH="Spring "/><ITEXT CH="Fair"/>`, gets a `text_equals`
+    with `text_attribute` on the nearest ancestor an attribute names, as
+    `[name=PAGEOBJECT][@ANNAME=Headline]` with `"text_attribute": "CH"`, where
+    that ancestor holds no text nodes and the attribute's holders are runs,
+    none inside another and none carrying an identifier or a name-like
+    attribute beside it, as Umbrello's `<ownedAttribute xmi:id="…"
+    name="email" visibility="private"/>`, a record whose attributes are
+    checked one by one, two or more or one holding words with a space: an
+    element's own attribute, as a Freeplane node's `TEXT` beside the nodes in
+    it, or a lone value, as `<Bool value="false"/>`, is checked where it is.
+    The check covers that attribute and the runs holding it; another change
+    in the frame, as a run's `FONT`, keeps its own check. A record added
     or removed whole, an element holding only elements, its fields, such as
     Tellico's `<entry>` or a record of repeated `<field>` elements, never
     makes the list holding records of its kind a check, whose text would hold
@@ -132,49 +249,136 @@ operation `describe_desktop_application_task` and predicate type
     position names, whose absence only the list's text shows. Text made of
     runs is no record: an element whose tag names a paragraph or a piece of
     text (`p`, Writer's `text:p` and `text:h`, `h1` to `h6`, `li`, `para`,
-    SVG's `text` and `tspan`, a `span` or an `a`), or whose runs split a
-    sentence at a space, as `Meet ` and a linked `Monday`. Nor does an
-    element holding a date the app stamps in parts take a text check.
+    SVG's `text` and `tspan`, a `span` or an `a`), one inside such an
+    element, as Word's `<w:r>` run in its `<w:p>`, one whose elements are all
+    inline formatting (`b`, `i`, `u`, `em`, `strong`, `bold`, `italic`, a
+    `span`, `a`, `code`, `sub`, `sup` and the like, Gnote's `size:` and
+    `link:` runs), as `<list-item><bold>olive oil</bold></list-item>`, or
+    whose runs split a sentence at a space, as `Meet ` and a linked
+    `Monday`. Nor does an element holding a date the app stamps in parts
+    take a text check.
+
   - An element added to a list, where another element of its tag is at either
     end, gets a `value_equals` for each of its attributes, best ranked first,
     at most six, leaving out its selector's attributes, identifiers, times,
-    volatile values and view state, as HomeBank's new `<ope>` gets its
-    `amount`, `category` and `payee`. An element whose other attributes, two
+    volatile values, view state and values standing for none, as HomeBank's
+    new `<ope>` gets its `amount`, `category` and `payee`; a value two or
+    more like siblings all hold, as Grisbi's `Cu="1"`, comes after those
+    that vary, as its `Pa`, `Ca`, `Dt` and `Am`. Records of attributes
+    alone that it nests, as a KMyMoney `<TRANSACTION>` its `<SPLITS>` of
+    `<SPLIT>`, get a `value_equals` of each attribute whose values vary among
+    the like records, its own and those under its like siblings, at most
+    three a record and six in all, as each split's `value` and `payee`, but
+    not one every split holds alike, as `price="1/1"`, nor one each holds
+    equal to an earlier one, as `shares` repeats `value`. Each record is
+    named by an identifier that the app neither generates nor numbers anew
+    in every record holding such a list, as KMyMoney's `S0001` in every
+    transaction, else by its best ranked attribute short of a coordinate or
+    an amount, as `[name=SPLIT][@account=A000001]`. An element whose other attributes, two
     or more, a like sibling holds every one of, as a new Planner task copies
     its neighbour's defaults, and any other element added whole, get a check
-    that it exists. A record added to a list that a selector names, as
-    Tellico's `<entry id="4">`, gets a `text_equals` for each field, at most
-    five, each by its selector among the record's fields, as `[name=title]`,
-    leaving out a field repeating the record's identifier, a date the app
-    stamps in parts, and blank text or times. A record only position names,
-    such as Osmo's `<record>` of fields, also gets a `text_contains` for each
-    new field of three or more characters, at most five, at the nearest
-    ancestor a check can name, each absent from that ancestor's text at the
-    seed.
+    that it exists; of those copied, an attribute naming an element the seed
+    holds by an id that is no plain number, as an Umbrello attribute's
+    `type` its data type, is the user's choice and keeps its check. A record added to a list that a selector names, as
+    Tellico's `<entry id="4">` or Osmo's `<record>` by its first name, gets
+    a `text_equals` for each field, at most five, each by its selector among
+    the record's fields, as `[name=title]`, leaving out a field repeating the
+    record's identifier, the field its selector names it by unless it is
+    the only one left, as a new VYM branch's `<heading>`, a value every
+    like record holds in that field, as Osmo's `<group>None</group>`, noise,
+    a field holding ids of its own, a date the app stamps in parts, and blank
+    text or times; a field that lists records, as GnuCash's `<trn:splits>`,
+    gets its records' fields instead, each record by its own selector. An
+    attribute every like record holds alike, as GnuCash's `version`, is the
+    format's and gets no check. A record only position names also gets a
+    `text_contains` for each new field of three or more characters, at most
+    five, at the nearest ancestor a check can name, each absent from that
+    ancestor's text at the seed.
+  - Where members of a list were added or removed, a `member_count` of the
+    list's members of their tag, and of their kind where they share one
+    (`type`, `kind` or `shape`, as `[name=dia:object][@type=Flowchart - Box]`),
+    unless every member of the tag holds a value of its own, as Tiled's
+    objects a free-form `type` (`well`, `door`, `gate`), which labels each
+    rather than grouping them,
+    equal to the end's number, which differs from the seed's: at most two a
+    file, the shallowest lists first, after the other checks. None for a
+    list of one member at both ends, as a style an app adds for a run, for
+    members of an element a text check reads, which are runs of its text,
+    for an element in mixed content, or for noise.
   - A decimal written as text, such as `146.83`, is suggested as a number
-    with `tolerance: 0.001`, unless the seed's value is that close too.
+    with `tolerance: 0.001`, unless the seed's value, read as the evaluator
+    reads a number (`10` and `1e1` included), is that close too. A
+    `value_equals` that would pass on the seed's value is not suggested.
+  - An element placed by its own position, holding numeric `x` and `y` as a
+    like sibling does, as Xournal++ places each `<text>` note on a layer, is
+    an item of its own, never a run of the others' text: one added whole
+    gets a `text_contains` of its text on the element holding the items,
+    which passes wherever it is placed, and that list's `member_count`.
   - Noise leaves the suggestions when the file's change holds anything
     else, a change only position reaches included: view state, which a tag
-    or attribute on the way names (the cursor, a selection, scrolling, zoom,
-    the viewport, windows, splitters, Inkscape's `namedview`, view and
+    or attribute on the way names (the cursor, a selection, as VYM's
+    `<select>`, the layer, frame,
+    view or colour the app has current, as Pencil2D's `currentLayer`,
+    scrolling, zoom, the viewport, windows, splitters, a list or tree view
+    mirroring the document, as Umbrello's `listview`, Inkscape's `namedview`, view and
     configuration settings, the printer, a save's history, edit time,
     editing duration and cycles, last-saved time, the generator and
-    document statistics), or the value of a name-like attribute or `key` on
+    document statistics, and a preview or thumbnail the app renders, as
+    Xournal++'s `<preview>`), or the value of a name-like attribute or `key` on
     the way, when it is one token of several words, as LibreOffice's
     `config:config-item[@config:name=CursorPositionX]` inside
-    `[@config:name=ooo:view-settings]`; an attribute ending in `ID` or `Id`,
-    or an `rsid`, that the app renumbered, with everything else in its
-    element, as Gnumeric empties a formula cell whose shared expression it
-    renumbers, and an identifier the app numbers by position; volatile
-    values, UUIDs and epoch times, and durations and counts under a
-    document's metadata; times the app stamps, also as a date written in
+    `[@config:name=ooo:view-settings]`, or a settings path ending in how a
+    panel shows (`visible`, `hidden`, `expanded`, `geometry`, `size` and the
+    like), as VYM's `<setting key="/treeeditor/visible">`; an identifier the
+    app numbers by position. An `Id` suffix alone does not show that an
+    attribute is generated, so relationship fields such as `accountId` are
+    retained; other save-generated IDs may need manual review; volatile
+    values, UUIDs and epoch times, binary data encoded as base64 (a PNG's
+    `iVBORw0KGgo`, or 256 or more base64 characters mixing cases and
+    digits), an id counter (`uniqueid`, `nextobjectid`), a value equal to an
+    id the change gave a new element where a counter or that element holds
+    it, as Umbrello's `lastobject` holds the new attribute's `xmi:id`, but
+    never a reference on an element both ends hold, as a KMyMoney split
+    moved to a new account, and durations and counts under a document's metadata; times the app stamps, also as a date written in
     parts whose tag, or one it sits in, names when the app made, changed or
     saved something, as Tellico's `<cdate>` of `<year>`, `<month>` and
-    `<day>` (`cdate`, `mdate`, `created`, `modified`, `saved`, `updated`),
+    `<day>` (`cdate`, `mdate`, `created`, `modified`, `saved`, `updated`,
+    `entered`), or written whole under such a tag, as GnuCash's
+    `<trn:date-entered><ts:date>2026-11-06 08:53:08 +0000`,
     which no check ever reads, while a date a user enters in parts, as a
-    birthday, is an edit like any other; and `upkeep`, the
-    `loext:tab-stop-distance` attributes LibreOffice fills in `styles.xml`
-    while another archive entry holds an edit. However much noise
+    birthday, is an edit like any other; an id the app assigns, an `id`
+    element with `type="guid"`, as GnuCash's `<trn:id>`, and text of control
+    characters, as its unset options hold; `upkeep`, a change inside an
+    app's `slots`, as GnuCash's `book:slots`, which it adds to and fills on
+    reopening a book, a count an app keeps of its members, an attribute
+    whose key ends in `count` or an element whose tag names a count, whose
+    integer changed and at each end equals how many elements of one tag it,
+    or the element holding the text, holds there, the counter left out, as
+    VYM's root `branchCount`, KMyMoney's `<TRANSACTIONS count="5">` or
+    GnuCash's `<gnc:count-data>`, or, for a counter the change added, how
+    many of one tag, more than one, it holds as children, as FreeCAD's
+    `<ObjectDeps Count="2">`, while a count a user enters, as an item's
+    `<count>`, is an edit, and the `loext:tab-stop-distance` attributes
+    LibreOffice fills in `styles.xml` while another entry holds the edit,
+    and, while a change outside them is the edit, any
+    change in `styles.xml`, in a document's style containers or its master,
+    handout and notes pages, or to an attribute naming an automatic style
+    (`P1`, `MT1`) at both ends, as Impress after a reload wraps its master pages' fields in a new `MT1` style and
+    rewrites list style `L2`, and a text showing another field that changed
+    alike, its element beside a field naming that one's key, as
+    QElectroTech's `<dynamic_elmt_text>` shows a component's label in its
+    `<text>` beside `<info_name>label</info_name>`; and `layout`, attributes holding a list of
+    numbers, as Dia's `obj_bb` `6.3225,6.15;12.5775,8.15`, or a number a
+    name on its way calls layout (a position, point, box, corner, width,
+    height, side or offset, as `elem_width`), that changed in an element up
+    to three levels below one whose text changed, below the root's own
+    children, while their own element's text did not, as Dia moves and
+    resizes a box around its new text, or below an element whose tag names a
+    diagram, widget, canvas or scene while the model change is elsewhere, as
+    Umbrello grows a class's `classwidget` `height` when an attribute is
+    added; an order's `<amount value="12"/>` beside its new description is
+    content. Geometry that changed with
+    no text beside it, as a CAD sketch's, is content. However much noise
     comes first, it never takes a check's place. When the change holds
     nothing else, the checks stay and a note flags them: up to three in a
     document, and as many as fit in the app's own state, where a view
@@ -187,15 +391,49 @@ operation `describe_desktop_application_task` and predicate type
 - `guards`: checks an author may add to show the edit left the rest alone,
   kept out of `task.checks`, with ids `guard-1` and on: for each suggested
   `value_equals` or `text_equals` on a member of a list, a field on up to
-  two like siblings, nearest first, at its seed value, which the end holds
-  too: the check's own field where like siblings hold different values in
+  two like siblings, those sharing most of the attributes its selector
+  names it by and its type, as a cell's `Row` or `Col` and `ValueType`,
+  then the nearest first, at its seed value, which the end holds
+  too, trying at most the 16 nearest, so a guard costs the same among
+  thousands of siblings; for a member named as a field, by a name-like attribute alone, as
+  QElectroTech's `elementInformation[@name=label]`, the like siblings of
+  the nearest record out that hold that field too come first, so the other
+  components' labels guard a component's label rather than its other
+  fields: the check's own field where like siblings hold different values in
   it, and otherwise one that varies among them, as Planner's `work` rather
-  than the `type="normal"` every task shares; never through a sibling only
-  position or a renumbered id pairs. A text file gets a `lines_present` of the
-  unchanged list items beside its first new line with the same marker, as
-  Zim's other `[ ]` action items, or else its nearest lines with words in
-  them. At most four a file. They pass on the seed, which the export allows,
-  since one check failing there is enough.
+  than the `type="normal"` every task shares, but not one numbering the
+  members in order, as MyPaint's `src`; never through a sibling only
+  position pairs. A guard never selects its sibling by
+  what it reads: a sibling its selector names by the attribute the guard
+  checks, or by a value that is or holds the text it reads, as Glade's
+  `[>object=CancelTrueTrueTrue]` for a button's `Cancel` label, is named by
+  another identifier, name-like attribute or child's text it holds alone
+  at both ends instead, as Tiled's objects by `[@id=2]` rather than the
+  `name` the guard reads, or Glade's button by `[>packing=TrueTrue0]`, or
+  else the guard reads another field, or there is none. A `text_equals` with `text_attribute`
+  reads its siblings the same way. A text file gets a `lines_present` of the
+  nearest two unchanged lines of its first new line's kind, list items with the same
+  marker, as Zim's other `[ ]` action items, or lines the same command
+  opens, as the other headings after LyX's `\begin_layout Section`, or lines
+  of the same keyword or `key:` in other records, as a gettext catalogue's
+  other `msgstr` lines rather than the edited entry's own `msgid`, or else
+  its nearest lines with words in them; each text both ends hold once, never
+  a line with no text of its own, a command such as `\end_layout`, tags
+  alone such as `<fonts>` or `</node>`, or a key alone such as a RedNotebook
+  day's `24:`, nor a line that repeats; an item placed by its own position
+  that an edit added, a `text_contains` of each of up to four kept items'
+  text, nearest first. Where members were only edited, a
+  `member_count` of the innermost list holding the edited element that an
+  edit goes through by a member with like siblings, a record rather than a
+  field of one (a member named by a name-like attribute alone that the
+  record's like siblings hold too), of the edited member's tag and kind, at
+  the seed's number, as Dia's boxes in their layer, MyPaint's layers in
+  their stack or Glade's buttons in their button box: no member of the kind
+  added or removed; never of runs in an element a text check reads, and
+  only where the end holds the same number. A guard of a coordinate comes
+  after those of text. At most four a file besides the count guard, which
+  sits outside that cap, so sibling guards never squeeze it out. They pass
+  on the seed, which the export allows, since one check failing there is enough.
 - `notes`: why `files` is empty, or why a file's suggestions are thin. Each
   note has a `code` and a `message`. For a draft with no files: `no_change`
   when no file under the home changed between the two checkpoints and nor
@@ -218,8 +456,14 @@ operation `describe_desktop_application_task` and predicate type
   `view_state_only` when every change is noise, the checks kept in
   `pointers`; `long_text` when an element's text changed past the 2,000
   characters a text check compares, the elements in `pointers`; `cut_view`
-  when the views hold only part of the file; and `unreadable_view` when no
-  check can read it, as a document REA reads as binary.
+  when the views hold only part of the file; `unreadable_view` when no
+  check can read it, as a document REA reads as binary;
+  `volatile_lines` when a text file gained lines holding a value the app
+  generates with no text before it to count them by; and `read_as_text`
+  when a text file opens like XML, with a declaration, a DOCTYPE or an
+  element, but reads as text because its DOCTYPE has an internal subset or
+  it is not well formed, so its checks compare lines that hold attributes in
+  the order the app wrote them.
 
 The suggestions are a starting point. Keep the ones that say what the user
 did; drop the ones that only follow from how the app saves its file. Read

@@ -160,7 +160,8 @@ The class declares:
   README and the result's limitations say the sandbox is off.
 - `paths`: the state directories holding the application's state files and the
   folders holding its documents, nested folders collapsed. A folder beside a
-  state directory whose name differs from it only in letter case is owned
+  state directory whose name differs from it only in letter case, or that
+  adds a version, as TreeLine's `~/.treeline-3.1` beside `~/.treeline`, is owned
   whole in the files' spelling, so a `~/.config/GIMP` profile GIMP created
   during the capture beside the candidate `~/.config/gimp` is owned as
   `.config/GIMP`, not as the folder of its first file. The home itself and
@@ -355,8 +356,10 @@ export removes them from what the bundle ships:
   example and template files an app copies on first run do not bury the
   document scrubbed; one already in that form ships as captured. The class copies it at
   boot as it is, so the home it holds stays `/home/user`. One that does not
-  decompress ships as captured, its bytes searched, and one the state view did
-  not read is only searched. One whose document needs no edit but a member of
+  decompress within the scrub limit ships as captured, its bytes searched.
+  A document the state view did not read can still be decompressed and
+  recompressed under the separate 256 MiB scrub limit; its content is searched
+  even when its format cannot be scrubbed. One whose document needs no edit but a member of
   which has an extra field, where BGZF (`.vcf.gz`, `.bam`) and dictzip
   (`.dict.dz`) files index their blocks, also ships as captured, its bytes
   searched, so its blocks stay where its index says; one whose document

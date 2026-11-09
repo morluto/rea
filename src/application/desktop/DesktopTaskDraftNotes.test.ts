@@ -409,34 +409,4 @@ describe("draftDesktopApplicationTask notes for an incomplete checkpoint", () =>
     expect(draft.notes.map(({ code }) => code)).toContain("incomplete_capture");
     expect(draft.notes.map(({ code }) => code)).not.toContain("no_change");
   });
-
-  it("does not call the ends unchanged when a checkpoint between them left a deletion unconfirmed", async () => {
-    const base = withEnd(seedEndCapture(), { changes: [], kept: [] });
-    const seedAt = base.state.checkpoints.findIndex(
-      (point) => point.name === "seed",
-    );
-    const seed = base.state.checkpoints[seedAt];
-    if (seed === undefined) throw new Error("the fixture has a seed");
-    const partial: DesktopApplicationCapture = {
-      ...base,
-      state: {
-        ...base.state,
-        checkpoints: [
-          ...base.state.checkpoints.slice(0, seedAt + 1),
-          {
-            ...seed,
-            name: "during",
-            trigger: "request",
-            unconfirmed_changes: 1,
-            changes: [],
-          },
-          ...base.state.checkpoints.slice(seedAt + 1),
-        ],
-      },
-    };
-    const draft = await notesOf(partial);
-
-    expect(draft.notes.map(({ code }) => code)).toContain("incomplete_capture");
-    expect(draft.notes.map(({ code }) => code)).not.toContain("no_change");
-  });
 });

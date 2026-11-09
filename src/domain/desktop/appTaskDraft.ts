@@ -1,15 +1,20 @@
 import type { JsonValue } from "../jsonValue.js";
 import { isTimestamp, type DesktopTaskCheckInput } from "./appTask.js";
-import { fileNotes, type FileNote } from "./appTaskDraftFileNotes.js";
-import { lineGuards } from "./appTaskDraftLineGuards.js";
+import { isGeneratedUid } from "./attributeRank.js";
 import {
-  ARCHIVE,
-  innermost,
-  namedDraft,
-  presenceValues,
-  XML_FILE,
-  type NamedFacts,
-} from "./appTaskDraftNamed.js";
+  decisive,
+  jsonCounts,
+  outermost,
+  positionalNotes,
+} from "./appTaskDraftJson.js";
+import {
+  fileNotes,
+  readAsTextNotes,
+  type FileNote,
+} from "./appTaskDraftFileNotes.js";
+import { addedLineChecks, lineGuards } from "./appTaskDraftLineGuards.js";
+import { innermost, namedDraft, type NamedFacts } from "./appTaskDraftNamed.js";
+import { ARCHIVE, presenceValues, XML_FILE } from "./appTaskDraftTree.js";
 import { rowSuggestions } from "./appTaskDraftRows.js";
 import {
   draftValues,
@@ -105,18 +110,49 @@ const textSuggestions = (
   file: string,
   baseline: Version,
   final: Version,
-): Suggestion[] => {
+): { suggestions: Suggestion[]; notes: FileNote[] } => {
   const before = new Set(baseline.present ? linesOf(baseline) : []);
   const after = new Set(linesOf(final));
   const added = [...after].filter((line) => !before.has(line));
   const gone = [...before].filter((line) => !after.has(line));
   const suggestions: Suggestion[] = [];
-  if (added.length > 0 && added.length <= MAX_SUGGESTIONS)
-    suggestions.push({ kind: "lines_present", file, lines: added });
   const truncated = [baseline, final].some(
     (version) => isRecord(version.view) && version.view.truncated === true,
   );
-  if (truncated) return suggestions;
+  // A count is decided only on views that hold the whole file.
+  const gained =
+    added.length > 0 && added.length <= MAX_SUGGESTIONS
+      ? addedLineChecks(
+          file,
+          {
+            before: baseline.present ? linesOf(baseline) : [],
+            after: linesOf(final),
+          },
+          { added, counted: !truncated },
+        )
+      : { checks: [], notes: [] };
+  suggestions.push(...gained.checks);
+  const formatNotes = readAsTextNotes(file, linesOf(final));
+  const unreadableAttributes = gained.notes.find(
+    ({ code }) => code === "read_as_text",
+  );
+  const result = {
+    suggestions,
+    notes: [
+      ...gained.notes.filter(({ code }) => code !== "read_as_text"),
+      ...(unreadableAttributes !== undefined && formatNotes.length === 0
+        ? [unreadableAttributes]
+        : formatNotes.map((note) =>
+            unreadableAttributes === undefined
+              ? note
+              : {
+                  ...note,
+                  message: `${note.message} ${unreadableAttributes.message}`,
+                },
+          )),
+    ],
+  };
+  if (truncated) return result;
   if (gone.length > 0 && gone.length <= MAX_SUGGESTIONS)
     suggestions.push({ kind: "lines_absent", file, lines: gone });
   // A line of digits and punctuation is usually a value a rewrite renumbers, not something the user made.
@@ -124,7 +160,7 @@ const textSuggestions = (
     ({ line }) => /\p{L}/u.test(line),
   ))
     suggestions.push({ kind: "line_count", file, exact: line, equals: n });
-  return suggestions;
+  return result;
 };
 
 /** `group/key` entries of key file views as JSON pointers into the view. */
@@ -151,6 +187,7 @@ interface FileDraft {
   readonly valuesCut: boolean;
   readonly guards: readonly Suggestion[];
   readonly facts?: NamedFacts;
+  readonly notes?: readonly FileNote[];
 }
 
 const NO_VALUES = { values: [], valuesCut: false, guards: [] } as const;
@@ -233,36 +270,54 @@ const valueSuggestions = (
   }
   if (format !== "json" && format !== "keyfile")
     return { suggested: [], ...NO_VALUES };
-  const change = diffStateViews(format, baseline.view, final.view);
+  // JSON records are named by an id field each holds, not their place.
+  const change = diffStateViews(format, baseline.view, final.view, {
+    named: true,
+  });
   const pointers = keyPointers([baseline.view, final.view]);
   const pointer = (entry: string) =>
     format === "keyfile" ? pointers.get(entry) : entry;
   // Key file entries are flat; a group may hold `/`, so prefixes mean nothing there.
   const leaves = (entries: readonly string[]) =>
     format === "keyfile" ? entries : innermost(entries);
-  const suggestions: Suggestion[] = [];
+  const wholes = (entries: readonly string[]) =>
+    format === "keyfile" ? entries : outermost(entries);
+  const listed: Suggestion[] = [];
   for (const entry of leaves([...change.added, ...change.changed])) {
     const at = pointer(entry);
     const value = at === undefined ? undefined : resolvePointer(final.view, at);
+    // An id the app generates, as TreeLine's uuid1 `uid`, holds nothing another save repeats.
     if (
       at !== undefined &&
       at !== "" &&
       value !== undefined &&
-      !isTimestamp(value)
+      !isTimestamp(value) &&
+      !(typeof value === "string" && isGeneratedUid(value))
     )
-      suggestions.push({ kind: "value_equals", file, pointer: at, value });
+      listed.push({ kind: "value_equals", file, pointer: at, value });
   }
-  for (const entry of leaves(change.removed)) {
+  for (const entry of wholes(change.removed)) {
     const at = pointer(entry);
     if (at !== undefined && at !== "")
-      suggestions.push({ kind: "value_absent", file, pointer: at });
+      listed.push({ kind: "value_absent", file, pointer: at });
   }
+  const suggestions = decisive(listed, versions(baseline, final));
   const { values, cut } = plainValues(
     plainChange(format, baseline, final),
     baseline,
     final,
   );
-  return { suggested: suggestions, values, valuesCut: cut, guards: [] };
+  if (format === "keyfile")
+    return { suggested: suggestions, values, valuesCut: cut, guards: [] };
+  const counts = jsonCounts(file, change, versions(baseline, final));
+  const suggested = [...suggestions, ...counts.checks];
+  return {
+    suggested,
+    values,
+    valuesCut: cut,
+    guards: counts.guards,
+    notes: positionalNotes(file, suggested, final.view),
+  };
 };
 
 /** Checks that express how a file changed from its baseline to its final version, with the values, guards and facts beside them. */
@@ -281,11 +336,16 @@ const suggestedChecks = (
   const created: Suggestion[] = baseline.present
     ? []
     : [{ kind: "file_present", file }];
-  const content: FileDraft =
+  const lines =
     final.format === "text"
+      ? textSuggestions(file, baseline, final)
+      : undefined;
+  const content: FileDraft =
+    lines !== undefined
       ? {
           ...NO_VALUES,
-          suggested: textSuggestions(file, baseline, final),
+          suggested: lines.suggestions,
+          notes: lines.notes,
           guards: baseline.present
             ? lineGuards(file, linesOf(baseline), linesOf(final))
             : [],
@@ -417,6 +477,8 @@ export const draftTaskFiles = (
   const role = considered.some(({ path }) => path.role === "document")
     ? "document"
     : "application_state";
+  // A file absent from the seed cannot supply a useful check. The same owner
+  // keeps explicitly selected files, including a selected lock.
   return withinDraftBudget(
     changed.map(({ home, path, baseline, final, change }) => {
       const drafted = path.role === role && !isLeftOut(home);
@@ -434,7 +496,10 @@ export const draftTaskFiles = (
         values_cut: draft.valuesCut,
         guards: draft.guards,
         notes: drafted
-          ? fileNotes(home, changeShape(change, final), draft.facts)
+          ? [
+              ...fileNotes(home, changeShape(change, final), draft.facts),
+              ...(draft.notes ?? []),
+            ]
           : [],
       };
     }),

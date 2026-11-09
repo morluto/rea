@@ -216,6 +216,31 @@ export const CHECK_VIEWS: Readonly<Record<string, TaskFileView>> = {
       truncated: false,
     },
   },
+  "Documents/people.xml": {
+    format: "xml",
+    view: {
+      root: element("people", {}, [
+        element("person", {}, [
+          element("details", {}, [
+            "Delphine",
+            element("modified", {}, ["Thu Nov  5 09:20:31 2026"]),
+          ]),
+          element("date", {}, ["2026-11-07T10:12:00Z"]),
+        ]),
+        element("person", {}, [
+          element("details", {}, ["Ada"]),
+          element("date", {}, ["2026-11-08T09:00:00Z"]),
+        ]),
+        element("person", {}, [
+          element("details", {}, [
+            "Alpha",
+            element("saved", {}, ["٢٠٢٦-١١-٠٧T١٠:١٢:٠٠Z"]),
+          ]),
+        ]),
+      ]),
+      truncated: false,
+    },
+  },
   "Documents/flyer.sla": {
     format: "xml",
     view: {
@@ -1227,6 +1252,46 @@ const CHILD_TEXT_CASES: readonly (readonly [DesktopTaskCheckInput, boolean])[] =
   [
     [
       {
+        kind: "member_count",
+        file: "Documents/people.xml",
+        pointer: "/root/children",
+        matching: "[>details=Alpha٢٠٢٦-١١-٠٧T١٠:١٢:٠٠Z]",
+        equals: 1,
+      },
+      true,
+    ],
+    [
+      {
+        kind: "member_count",
+        file: "Documents/people.xml",
+        pointer: "/root/children",
+        matching: "[>date=2026-11-07T10:12:00Z]",
+        equals: 1,
+      },
+      true,
+    ],
+    [
+      {
+        kind: "member_count",
+        file: "Documents/people.xml",
+        pointer: "/root/children",
+        matching: "[>details=Delphine]",
+        equals: 1,
+      },
+      true,
+    ],
+    [
+      {
+        kind: "member_count",
+        file: "Documents/people.xml",
+        pointer: "/root/children",
+        matching: "[>date=1999-01-01T00:00:00Z]",
+        equals: 1,
+      },
+      false,
+    ],
+    [
+      {
         kind: "text_equals",
         file: contacts,
         pointer:
@@ -1309,6 +1374,24 @@ const MEMBER_COUNT_CASES: readonly (readonly [
   DesktopTaskCheckInput,
   boolean,
 ])[] = [
+  [
+    {
+      kind: "member_count",
+      file: "Documents/cut.xml",
+      pointer: "/root/missing",
+      equals: 0,
+    },
+    false,
+  ],
+  [
+    {
+      kind: "member_count",
+      file: "Documents/listing.zip",
+      pointer: "/entries/1/view/root/missing",
+      equals: 0,
+    },
+    false,
+  ],
   [
     {
       kind: "member_count",

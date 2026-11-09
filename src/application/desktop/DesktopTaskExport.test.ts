@@ -422,6 +422,56 @@ describe("exportDesktopApplication with a task's prompt", () => {
 });
 
 describe("draftDesktopApplicationTask", () => {
+  it("uses the export's state-directory exclusion for a lone lock", async () => {
+    const base = capture();
+    const lock = "/home/ada/.config/notes/editor.lock";
+    const checkpoints = base.state.checkpoints.map((checkpoint) =>
+      checkpoint.trigger === "baseline"
+        ? {
+            ...checkpoint,
+            retained: [...checkpoint.retained, retained(lock, "first\n")],
+          }
+        : {
+            ...checkpoint,
+            changes: [
+              ...checkpoint.changes.filter(({ path }) => path !== NOTE_PATH),
+              change(
+                lock,
+                { before: "first\n", after: "second\n" },
+                { state: true },
+              ),
+            ],
+            retained: [
+              ...checkpoint.retained.filter(({ path }) => path !== NOTE_PATH),
+              retained(lock, "second\n"),
+            ],
+          },
+    );
+    const folder = await writeCaptureFolder(
+      { ...base, state: { ...base.state, checkpoints } },
+      undefined,
+      ["first\n", "second\n"],
+    );
+    const result = await draftDesktopApplicationTask(folder, readers);
+    if (result instanceof Error) throw result;
+    const draft = result.normalized_result as {
+      task: { checks: { file?: string }[] };
+      files: { file: string }[];
+    };
+    expect(draft.files.map(({ file }) => file)).toContain(
+      ".config/notes/editor.lock",
+    );
+    expect(
+      draft.task.checks.some(
+        ({ file }) => file === ".config/notes/editor.lock",
+      ),
+    ).toBe(false);
+    expect(
+      draft.task.checks.some(
+        ({ file }) => file === ".config/notes/settings.ini",
+      ),
+    ).toBe(true);
+  });
   it("drafts checks of the document that changed, which the export then accepts", async () => {
     const folder = await writeCaptureFolder(capture());
 

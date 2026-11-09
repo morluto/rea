@@ -183,6 +183,19 @@ the first source that has the app:
   only at a clean exit. It writes `<map>.vym.lock` while a map is open, so
   close the map before `seed`. Press A only after clicking a branch on the
   canvas: keys typed in the tree editor run other shortcuts.
+- KmPlot: Create → Cartesian Plot, then edit the formula in the Function
+  tab and press Return. It stores minus as U+2212 (`−`). Its file:// title
+  still names the file.
+- RedNotebook keeps each month in `~/.rednotebook/data/YYYY-MM.txt`, YAML
+  read as text, folded at about column 80: pick check phrases the fold keeps
+  on one line.
+- Qt5 apps saving with QDom, such as KmPlot, write attributes in a random
+  order in each process, so check their XML by element, never by whole line.
+- Parley's title shows the collection's title, so name the file in
+  `state_paths`. A new collection starts with 15 blank entries. While a
+  document is open KDE keeps an autosave and its `.lock` in
+  `~/.local/share/stalefiles/parley/`, and there is no File → Close: before
+  `seed`, use File → New, then reopen the collection from Open Recent.
 - Sigil unpacks the open book into
   `.local/share/sigil-ebook/sigil/workspace/Sigil-XXXXXX/` and deletes it on
   exit; naming the whole `sigil-ebook` folder seeds that stale copy, so name
@@ -197,6 +210,23 @@ the first source that has the app:
 - Dismiss first-run dialogs, such as a welcome screen, before `seed`. A
   choice the app saves only later, such as Inkscape's "show this every
   time", may not reach the seed, so expect the dialog in the witness too.
+- Some apps write their settings late: Freeplane writes
+  `~/.config/freeplane/1.7.x/auto.properties` only once Preferences is
+  confirmed, and a seed without it reopens its documentation map. Before
+  `seed`, open the app's preferences and confirm them, then read a probe
+  checkpoint's `changed_files` to see the settings file written.
+- Before `seed`, click into the document to clear any selection the app
+  would save: Gnote saves its cursor and selection with the note.
+- An app whose state folder is named after it, such as
+  `~/.local/share/gnote`, or after it and its version, such as TreeLine's
+  `~/.treeline-3.1`, is found without `state_paths`.
+- TreeLine: Ctrl+A adds a child node even while a field has focus. Clicking
+  a node already selected starts an inline rename, so Ctrl+X then cuts its
+  text: cut a node from its context menu. It saves nodes sorted by their
+  generated uid1, so their order changes from run to run.
+- After an app crashes, capture again on a fresh computer, so the seed
+  carries no crash-recovery state, such as MyPaint's "Recover interrupted
+  work?".
 - Give what the task changes a stable name where the app has one, such as an
   id in Inkscape's Object Properties, so a check can select it.
 - Expect apps to split text into runs: Writer's revision ids split an
@@ -204,6 +234,13 @@ the first source that has the app:
   `P1`, and AbiWord wraps each insertion in `<c>`. Check such text whole
   with `text_equals` (see Write the task), and find the paragraph by
   something the edit keeps, such as AbiWord's `xid`.
+- Freeplane's first launch opens a documentation map: close it with Ctrl+W.
+  Its Ctrl+N asks for a template.
+- MyPaint 2.0.1 crashes on brush strokes on the build computer: build its
+  seed with flood fill and layer operations.
+- GnuCash's Ctrl+S on a new book opens a Save dialog with no format choice:
+  use File > Save As to pick XML. Close the book (File > New File) before
+  `seed`, so its `.LCK` lock is not seeded.
 
 ## Build the seed and the edit
 
@@ -257,7 +294,8 @@ the first source that has the app:
    - The app's own compressed format works when it is gzip, such as
      Gnumeric's `.gnumeric`, Dia's `.dia` or Inkscape's `.svgz`: REA reads
      the document inside, and checks point into it as into the same
-     document uncompressed. A format REA reads as binary, such as one
+     document uncompressed. Compression may be off by default: Dia's
+     "Compress diagram files" is unticked, which REA reads as plain XML. A format REA reads as binary, such as one
      compressed with xz, has no view: save in a format the app offers that
      REA reads, then reopen the file once and check that a plain Ctrl+S
      keeps that format.
@@ -331,11 +369,15 @@ Write `{"name", "prompt", "checks"}` from the draft and what you did.
   `text_equals` or `text_contains`.
   Only XML files, archives, JSON and key files have values: a text file's
   or SQLite database's `change` already lists its lines and rows.
-  `refers_to` says what a number stands for, such as `category="44"`
-  naming `<cat key="44" name="Groceries"/>`; use it for the prompt's words.
+  `refers_to` says what a number or id stands for, such as `category="44"`
+  naming `<cat key="44" name="Groceries"/>`, or a new KMyMoney
+  transaction's splits naming their account and payee; use it for the
+  prompt's words. `alternatives` gives a changed value's pointer by the
+  element's other names, such as a label beside an id, to pick another key
+  without another export.
   Skip entries whose `note` is `by_position` (no check can use that
   pointer) or noise (`view_state`, `renumbered`, `volatile`,
-  `timestamp`, `upkeep`). `values_cut` means a limit left some out.
+  `timestamp`, `upkeep`, `layout`). `values_cut` means a limit left some out.
 - Select elements by what they hold, never by position: SVG text by id,
   `/root/children/[name=g][@inkscape:label=Layer 1]/children/[name=text][@id=headline]/children/[name=tspan]/children/0`,
   or an ODF paragraph by style,
@@ -358,8 +400,10 @@ Write `{"name", "prompt", "checks"}` from the draft and what you did.
   unchanged element is in `draft.guards` when it is a like sibling of a
   changed one, and otherwise use the app's usual numbering, such as another
   paragraph's `xid`, and let the export confirm it.
-- In an ODS spreadsheet no attribute names a row or a cell. Name the sheet
-  in the seed, and check its whole text: `text_equals` on
+- In an ODS spreadsheet no attribute names a row: the draft names it by its
+  label cell, `[name=table:table-row][>table:table-cell=February]`. Where no
+  cell names it alone, name the sheet in the seed, and check its whole
+  text: `text_equals` on
   `/entries/[name=content.xml]/view/root/children/[name=office:body]/children/[name=office:spreadsheet]/children/[name=table:table][@table:name=Q1 Sales]`,
   or a stretch of it with `text_contains`. Cell texts join with nothing
   between, so a row reads `February23100`.
@@ -367,6 +411,9 @@ Write `{"name", "prompt", "checks"}` from the draft and what you did.
   draft compares the whole text with `text_equals`. This rejects longer or
   negated items, but can reject a correct edit with different ordering or
   spacing. Report that limitation when the task permits such variations.
+- For a note placed by its own `x` and `y`, such as Xournal++'s `<text>`
+  on a layer, the draft checks its text on the layer with `text_contains`,
+  which passes wherever the user puts it, and guards each note it kept.
 - Some apps keep text in an attribute, one element per run, such as
   Scribus's `<ITEXT CH=...>`: add `"text_attribute": "CH"` to `text_equals`
   or `text_contains` on the frame,

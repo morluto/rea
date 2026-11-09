@@ -190,16 +190,32 @@ def start(arguments: dict) -> int:
         argv += ["--package-file", arguments["package_file"]]
     # Reading and writing, so the capture never reads the end of its input between requests.
     reader = os.open(control, os.O_RDWR)
+    process = None
     try:
-        with open(os.path.join(capture, "capture.out"), "wb") as out, \
-                open(os.path.join(capture, "progress.log"), "wb") as progress:
-            process = subprocess.Popen(
-                ["sh", "-c", 'done=$1; shift; "$@"; code=$?; printf "%s" "$code" > "$done.tmp" && mv "$done.tmp" "$done"',
-                 "sh", os.path.join(capture, "exit"), *argv],
-                cwd=os.path.expanduser("~"), env=_environment(work), stdin=reader, stdout=out, stderr=progress,
-                start_new_session=True)
+        try:
+            with open(os.path.join(capture, "capture.out"), "wb") as out, \
+                    open(os.path.join(capture, "progress.log"), "wb") as progress:
+                process = subprocess.Popen(
+                    ["sh", "-c", 'done=$1; shift; "$@"; code=$?; printf "%s" "$code" > "$done.tmp" && mv "$done.tmp" "$done"',
+                     "sh", os.path.join(capture, "exit"), *argv],
+                    cwd=os.path.expanduser("~"), env=_environment(work), stdin=reader, stdout=out, stderr=progress,
+                    start_new_session=True)
+        except Exception as cause:
+            # Nothing will write exit. Record one and drop the FIFO, so stop does not wait on it.
+            try:
+                with open(os.path.join(capture, "exit"), "w", encoding="utf-8") as handle:
+                    handle.write("1")
+            except OSError:
+                pass
+            try:
+                os.unlink(control)
+            except OSError:
+                pass
+            return _say({"error": f"the capture did not start: {cause}"})
     finally:
         os.close(reader)
+    if process is None:
+        return _say({"error": "the capture did not start"})
     waited = _wait(capture, 0, {"window_open"}, None, arguments.get("timeout_s", 120))
     return _say({"pid": process.pid, "apt": apt, **waited})
 

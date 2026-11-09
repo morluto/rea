@@ -1,8 +1,8 @@
 import type { JsonValue } from "../jsonValue.js";
-import { leftOutFiles } from "./appExportUnowned.js";
 import type { DesktopTaskCheckInput } from "./appTask.js";
 import { evaluateTaskChecks } from "./appTaskChecks.js";
 import { draftTaskFiles, type TaskDraftFile } from "./appTaskDraft.js";
+import { leftOutFiles } from "./appExportUnowned.js";
 import type { DesktopStatePath } from "./desktopState.js";
 import { xmlView } from "./stateFormats.js";
 

@@ -82,7 +82,8 @@ See [desktop builds](https://github.com/morluto/rea/blob/main/.agents/skills/rev
    the values the change added, changed and removed with what each was and
    became, at the pointer a check names it by; suggested checks with a
    placeholder prompt; and `guards`, optional checks that the rest kept its
-   seed values. The draft's
+   seed values: like siblings' fields, each line kept beside new text, and
+   the count of a list whose members were only edited. The draft's
    [task section](desktop-application-tasks.md#describe-the-change) describes
    each. `notes`, each with a `code` and a `message`, say why a draft has no
    files: `no_change` when no file under the home changed between them and
@@ -90,14 +91,16 @@ See [desktop builds](https://github.com/morluto/rea/blob/main/.agents/skills/rev
    none under the owned paths, listing up to five in `files` with their
    roles, desktop files last, and counting the rest in `more`;
    `uncheckable_changes` when the app's keys in dconf were read and changed,
-   listing the database in `files`, since no check reads dconf;
+   listing the database in `files`, since no check reads dconf (a version
+   the capture kept no copy of, as it keeps none of the database at the
+   start, is `unreadable_changes`, not an empty key list);
    `unreadable_changes` when a dconf database changed but REA could not read
-   it, such as without `dconf-cli` or when a present version's bytes were
-   not retained, with the read `error`, so whose keys changed is unknown;
-   and `no_document` when no file has the document role.
+   it, such as without `dconf-cli`, with the read `error`, so whose keys
+   changed is unknown; and `no_document` when no file has the document role.
    `unowned_changes` and `no_document` point at `state_paths`. They also say,
    for a drafted `file`, why its suggestions are thin: `by_position`,
-   `view_state_only`, `long_text`, `cut_view` or `unreadable_view`.
+   `view_state_only`, `long_text`, `cut_view`, `unreadable_view`,
+   `volatile_lines` or `read_as_text`.
 6. Write the task: its name, the prompt in the user's own words naming the
    app (a solving agent's own shell cannot see the computer's files, and the
    export's limitations say when a prompt names neither the app's title,
