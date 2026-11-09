@@ -84,8 +84,18 @@ gone, the capture looks for any process still carrying the run token, so a
 worker whose launcher exited before it was sampled keeps the session open. A
 sample whose window list could not be read is not taken as an empty one; the
 limitations say how many there were. One queued line is handled between
-samples, and reading stdin pauses while 16 lines wait. Progress lines on stderr say when
-the window has opened and when each checkpoint is taken.
+samples, and reading stdin pauses while 16 lines wait.
+
+Progress lines on stderr are JSON, `{"rea_progress": {"phase":
+"desktop_capture", "message": ...}}`. Those a driver waits on also carry an
+`event`: `{"kind": "window_open"}` once the window opens; `{"kind":
+"checkpoint", "name", "trigger", "at_ms", "entries", "changes",
+"retained_files", "retained_bytes"}` once a checkpoint has been taken, the
+baseline, `stop` and `exit` included, with the paths walked, the paths
+changed since the checkpoint before and the files retained; and `{"kind":
+"checkpoint_refused", "name", "reason"}` for a requested name it refused. A
+driver that sends `checkpoint <name>` waits for the event naming it rather
+than for a fixed time.
 
 When the session ends the capture sends SIGTERM to the launched process, its
 process group and every process that carries the run token, waits up to five
@@ -201,21 +211,27 @@ found by verification, not by name: the candidates are the
 entry's `signed-by` keyrings, or else every `.gpg` and `.asc` key in apt's trusted
 parts folder and its trusted keyring, and each is checked with
 `gpgv` against the release's `InRelease` (or `Release` with `Release.gpg`)
-beside its index in apt's lists folder. A key counts when gpgv reports a
-valid signature by it and no bad, expired, revoked or unverifiable signature
-by it, whatever gpgv's exit status: a release also signed by a key the host
-lacks makes gpgv fail. Each candidate is copied, an armored key decoded to a
-binary keyring, into a private temporary folder that is removed afterwards; a
-folder REA cannot remove fails the capture with the folder as its cleanup
-resource. The key that verifies is recorded in `signing_key` with its path,
+beside its index in apt's lists folder. A deb822 entry whose `Signed-By` field
+holds the armored key itself, as `add-apt-repository ppa:<owner>/<name>`
+writes it on Ubuntu 24.04, has that key as its only candidate, as apt trusts
+no other for it: REA reads the field's continuation lines as deb822 writes
+them, a `.` line standing for an empty one, from the key block's `BEGIN` line
+to its last `END` line, and records the key's path as the entry's sources
+file. A key counts when gpgv reports a valid signature by it and no bad,
+expired, revoked or unverifiable signature by it, whatever gpgv's exit status:
+a release also signed by a key the host lacks makes gpgv fail. Each candidate
+is copied, an armored key decoded to a binary keyring, into a private
+temporary folder that is removed afterwards; a folder REA cannot remove
+fails the capture with the folder as its cleanup resource. The key that
+verifies is recorded in `signing_key` with its path,
 SHA-256, format (`binary` or `armored`) and primary fingerprint, and its bytes
 are retained under `content/`. A key file holding one key is retained as it
 is; from one holding several, such as a legacy `/etc/apt/trusted.gpg`, only
 the transferable key with the verifying fingerprint is retained, in binary, so
 the bundle trusts no other key. When no candidate verifies, `gpgv` is
-missing, apt holds no signed release, no sources entry matches, the entry's
-`Signed-By` holds the key itself, or the key is larger than
-`--max-file-bytes` or the content budget, `signing_key` is null and
+missing, apt holds no signed release, no sources entry matches, the key the
+entry's `Signed-By` holds does not verify the release, or the key is larger
+than `--max-file-bytes` or the content budget, `signing_key` is null and
 `signing_key_reason` says why. Ubuntu Pro's ESM repositories (origins such as
 `UbuntuESMApps`, host `esm.ubuntu.com`) are not checked: apt reaches them only
 with the host's Ubuntu Pro credentials, which a computer does not have.
@@ -246,8 +262,14 @@ found nowhere are listed in
 `missing_libraries`, and libraries no package owns in `unpackaged_libraries`.
 `library_packages_reason` says why the lists are incomplete: the executable is
 not an ELF image (a launcher script, for example), `ldconfig`, `dpkg-query` or
-`apt-cache` is missing, a library could not be read or names more than 512
-libraries, or the walk stopped after 512 libraries.
+`apt-cache` is missing, `dpkg-query -S` could not tell which package owns a
+library (it exits 2 rather than 1, which only says no package owns the paths
+it did not name), a library could not be read or names more than 512
+libraries, or the walk stopped after 512 libraries. A failed owner query does
+not list the libraries it covered in `unpackaged_libraries`, since a lookup
+that could not finish is not proof that no package owns them. Completed batches
+retain their package and unowned-library facts. Paths containing package-query
+pattern characters stay unknown unless another candidate identifies an owner.
 
 A sources file, key or library whose handle REA cannot close fails the capture
 with the file as its cleanup resource. When the repository check and the
@@ -342,6 +364,10 @@ remaining content budget is not read, unless stored content of the same size
 could make it a duplicate. Files that could not be
 retained are listed with the reason: too large, over the content budget,
 changed since the walk, changed during the read, or unreadable.
+The baseline also records the paths and types of non-file entries it observed,
+including symlinks, without following them. This is required to distinguish an
+unreadable SQLite sidecar from an absent one. Captures made before this field
+was added must be made again before state inspection, task drafting or export.
 Directories the application held files open in, but whose starting content was
 not retained, are listed so a second capture can pass them with
 `--state-path`.

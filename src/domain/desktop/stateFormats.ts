@@ -4,7 +4,11 @@ import { isExactJsonNumber } from "../exactJsonNumber.js";
 import { MAX_JSON_DEPTH, type JsonValue } from "../jsonValue.js";
 import { err, ok, type Result } from "../result.js";
 import { safeParseJson } from "../safeJson.js";
-import { isWellFormedXml, parseXmlDocument } from "../xmlDocument.js";
+import {
+  declaredDocumentType,
+  isWellFormedXml,
+  parseXmlDocument,
+} from "../xmlDocument.js";
 
 /** Formats the state view reads into JSON. */
 export type DesktopStateFormat =
@@ -27,6 +31,8 @@ const GVDB_HEADER = "GVariant";
 /** A zip archive's local file header, which FreeCAD, ODF, OOXML, EPUB and JAR files begin with. */
 const ZIP_HEADER = "PK\u0003\u0004";
 const XML_EXTENSIONS = /\.(?:xml|xbel|plist|svg|ui)$/iu;
+/** A DOCTYPE that only names its DTD reads as XML; one with an internal subset, which can declare entities, does not. */
+const XML_POLICY = { doctype: "external", lineEndings: "normalize" } as const;
 const MAX_TEXT_LINES = 5000;
 const MAX_XML_NODES = 5000;
 const MAX_XML_DEPTH = 64;
@@ -210,7 +216,7 @@ export const isJsonText = (text: string): boolean => {
 
 /** Whether a file's name or leading text marks it as JSON, which it is if it parses. */
 const namedJson = (path: string, trimmed: string): boolean =>
-  path.endsWith(".json") || /^[[{]/u.test(trimmed);
+  path.toLowerCase().endsWith(".json") || /^[[{]/u.test(trimmed);
 
 /** Whether a file's name or XML declaration marks it as XML, which it is if it parses. */
 const namedXml = (path: string, trimmed: string): boolean =>
@@ -227,7 +233,7 @@ export const textSyntaxFormat = (
 ): "json" | "xml" | "text" => {
   const trimmed = text.trimStart();
   if (namedJson(path, trimmed) && isJsonText(text)) return "json";
-  if (namedXml(path, trimmed) && isWellFormedXml(text, { doctype: "reject" }))
+  if (namedXml(path, trimmed) && isWellFormedXml(text, XML_POLICY))
     return "xml";
   return "text";
 };
@@ -253,12 +259,7 @@ export const detectStateFormat = (
   )
     return "json";
   if (namedXml(path, trimmed))
-    return parseXmlDocument(text, {
-      doctype: "reject",
-      lineEndings: "normalize",
-    }).ok
-      ? "xml"
-      : "text";
+    return parseXmlDocument(text, XML_POLICY).ok ? "xml" : "text";
   return isKeyfile(text) ? "keyfile" : "text";
 };
 
@@ -351,9 +352,32 @@ interface XmlBudget {
 interface XmlScope {
   /** `xml:space="preserve"` applies. */
   readonly preserve: boolean;
-  /** The parent holds child elements, so whitespace-only text between them is formatting. */
+  /**
+   * The parent holds child elements and no text but whitespace, so whitespace-only
+   * text between them is formatting; in mixed content, text beside elements, it is text.
+   */
   readonly elementContent: boolean;
 }
+
+/** XML's whitespace: space, tab, carriage return and line feed, not Unicode's wider set. */
+const XML_WHITESPACE = /^[ \t\r\n]*$/u;
+
+const isTextNode = (node: Node): boolean =>
+  node.nodeType === node.TEXT_NODE || node.nodeType === node.CDATA_SECTION_NODE;
+
+/** Whether an element holds child elements and no text but whitespace beside them. */
+const holdsElementContent = (element: Element): boolean => {
+  let elements = false;
+  for (
+    let child = element.firstChild;
+    child !== null;
+    child = child.nextSibling
+  )
+    if (child.nodeType === child.ELEMENT_NODE) elements = true;
+    else if (isTextNode(child) && !XML_WHITESPACE.test(child.nodeValue ?? ""))
+      return false;
+  return elements;
+};
 
 const xmlNode = (
   node: Node,
@@ -366,12 +390,9 @@ const xmlNode = (
     return undefined;
   }
   budget.remaining -= 1;
-  if (
-    node.nodeType === node.TEXT_NODE ||
-    node.nodeType === node.CDATA_SECTION_NODE
-  ) {
+  if (isTextNode(node)) {
     const text = node.nodeValue ?? "";
-    return text.trim().length === 0 && scope.elementContent && !scope.preserve
+    return XML_WHITESPACE.test(text) && scope.elementContent && !scope.preserve
       ? undefined
       : text;
   }
@@ -383,17 +404,10 @@ const xmlNode = (
     if (attribute !== null) attributes[attribute.name] = attribute.value;
   }
   const space = element.getAttribute("xml:space");
-  let elementContent = false;
-  for (
-    let child = element.firstChild;
-    child !== null && !elementContent;
-    child = child.nextSibling
-  )
-    elementContent = child.nodeType === child.ELEMENT_NODE;
   const inner: XmlScope = {
     preserve:
       space === null || space === "" ? scope.preserve : space === "preserve",
-    elementContent,
+    elementContent: holdsElementContent(element),
   };
   const children: JsonValue[] = [];
   for (
@@ -407,22 +421,35 @@ const xmlNode = (
   return { name: element.tagName, attributes, children };
 };
 
-/** An XML document as a bounded element tree; DOCTYPEs are refused. */
+/**
+ * An XML document as a bounded element tree. A DOCTYPE that only names its DTD
+ * is recorded as `doctype`, its DTD never read; one with an internal subset is
+ * refused, as is a reference to any entity but XML's five.
+ */
 export const xmlView = (text: string): JsonValue | undefined => {
-  const parsed = parseXmlDocument(text, {
-    doctype: "reject",
-    lineEndings: "normalize",
-  });
+  const parsed = parseXmlDocument(text, XML_POLICY);
   const root = parsed.ok ? parsed.value.documentElement : null;
-  if (root === null) return undefined;
+  if (!parsed.ok || root === null) return undefined;
   const budget: XmlBudget = { remaining: MAX_XML_NODES, truncated: false };
   const tree = xmlNode(root, 0, budget, {
     preserve: false,
     elementContent: false,
   });
-  return tree === undefined
-    ? undefined
-    : { root: tree, truncated: budget.truncated };
+  if (tree === undefined) return undefined;
+  const doctype = declaredDocumentType(parsed.value);
+  return {
+    ...(doctype === undefined
+      ? {}
+      : {
+          doctype: {
+            name: doctype.name,
+            public_id: doctype.publicId,
+            system_id: doctype.systemId,
+          },
+        }),
+    root: tree,
+    truncated: budget.truncated,
+  };
 };
 
 /** Formats read from a file's bytes alone, without a tool or worker. */
@@ -460,7 +487,7 @@ export const textualView = (
     case "xml": {
       const tree = xmlView(text);
       return tree === undefined
-        ? err("not well-formed XML, or it declares a DOCTYPE")
+        ? err("not well-formed XML, or its DOCTYPE has an internal subset")
         : ok(tree);
     }
   }

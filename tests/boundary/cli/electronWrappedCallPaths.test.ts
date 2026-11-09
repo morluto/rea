@@ -7,7 +7,11 @@ import { z } from "zod";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { connectLocalToolsMcp } from "../../fixtures/localToolsMcp.js";
 import { writeFixtureFiles } from "../../support/javascriptApplicationFixture.js";
-import { cliTest, type TestCli } from "../../support/cli/cliFixture.js";
+import {
+  cliTest,
+  runFileCli,
+  type TestCli,
+} from "../../support/cli/cliFixture.js";
 import { javascriptApplicationAnalysisResultSchema } from "../../../src/domain/javascript/javascriptApplicationAnalysis.js";
 import { applicationFeatureTraceResultSchema } from "../../../src/domain/javascript/javascriptFeatureTraceSchemas.js";
 import { analyzeJavaScriptDirectory } from "../../support/cli/javascriptApplication.js";
@@ -131,10 +135,10 @@ for (const fixture of restArrayPropertyCases)
 const analyze = async (cli: TestCli, extra = "") => {
   const root = await createTestTempDirectory("rea-electron-wrapped-paths-");
   await writeFixtureFiles(root, {
-    "preload.js": `const e=require("electron");
+    "preload.cjs": `const e=require("electron");
       const sender=channel=>(...args)=>e.ipcRenderer.send(channel,...args);
       e.contextBridge.exposeInMainWorld("desktop",{copy:sender("test:copy"),cut:sender("test:cut")});`,
-    "main.js": `const e=require("electron");
+    "main.cjs": `const e=require("electron");
       function register(channel,handler){e.ipcMain.addListener(channel,event=>allowed(event)&&handler(event))}
       register("test:copy",event=>event.sender.copy());
       register("test:cut",event=>event.sender.cut());${extra}`,
@@ -219,7 +223,7 @@ cliTest(
         direction: "outgoing",
       }),
     );
-    const traced = await cli.run({
+    const traced = await runFileCli(cli, {
       arguments: ["trace-application-feature", input, "--json"],
     });
     expect(traced.exitCode).toBe(0);
@@ -347,7 +351,7 @@ cliTest(
           "rea-electron-early-return-",
         );
         await writeFixtureFiles(root, {
-          "index.js": `const e=require("electron");function f(x){${fixture.body}}f(globalThis.blocked);`,
+          "index.cjs": `const e=require("electron");function f(x){${fixture.body}}f(globalThis.blocked);`,
         });
         const application = await analyzeJavaScriptDirectory(
           surface,
@@ -414,14 +418,14 @@ cliTest(
   async ({ cli }) => {
     const root = await createTestTempDirectory("rea-electron-nested-bridge-");
     await writeFixtureFiles(root, {
-      "preload.js": `const { contextBridge, ipcRenderer } = require("electron");
+      "preload.cjs": `const { contextBridge, ipcRenderer } = require("electron");
         contextBridge.exposeInMainWorld("api", {
           nested: { write: (value) => ipcRenderer.invoke("nested:write", value) }
         });`,
-      "main.js": `const { ipcMain, clipboard } = require("electron");
+      "main.cjs": `const { ipcMain, clipboard } = require("electron");
         ipcMain.handle("nested:write", (event, value) => clipboard.writeText(value));`,
     });
-    const output = await cli.run({
+    const output = await runFileCli(cli, {
       arguments: ["analyze-javascript-application", root, "--json"],
     });
     expect(output.exitCode, output.stderr).toBe(0);
@@ -463,7 +467,7 @@ cliTest(
         direction: "outgoing",
       }),
     );
-    const traced = await cli.run({
+    const traced = await runFileCli(cli, {
       arguments: ["trace-application-feature", traceInput, "--json"],
     });
     expect(traced.exitCode).toBe(0);
@@ -491,7 +495,7 @@ cliTest(
       "main.js": `const { ipcMain } = require("electron");
         ipcMain.on("write", (event) => event.sender.copy());`,
     });
-    const output = await cli.run({
+    const output = await runFileCli(cli, {
       arguments: ["analyze-javascript-application", root, "--json"],
     });
     expect(output.exitCode).toBe(0);
@@ -548,7 +552,7 @@ cliTest(
       "main.js": `const { ipcMain } = require("electron");
         ipcMain.handle("nested:write", (event, value) => value);`,
     });
-    const output = await cli.run({
+    const output = await runFileCli(cli, {
       arguments: ["analyze-javascript-application", root, "--json"],
     });
     expect(output.exitCode).toBe(0);
@@ -581,7 +585,7 @@ cliTest(
         direction: "outgoing",
       }),
     );
-    const traced = await cli.run({
+    const traced = await runFileCli(cli, {
       arguments: ["trace-application-feature", traceInput, "--json"],
     });
     expect(traced.exitCode).toBe(0);
@@ -604,7 +608,7 @@ for (const surface of ["CLI", "stdio MCP"] as const) {
           "rea-electron-spread-bridge-members-",
         );
         await writeFixtureFiles(root, {
-          "preload.js": `const { contextBridge } = require("electron");
+          "preload.cjs": `const { contextBridge } = require("electron");
             const extra = getExtra();
             contextBridge.exposeInMainWorld("api", ${api});`,
         });
@@ -654,7 +658,7 @@ for (const surface of ["CLI", "stdio MCP"] as const) {
         "rea-electron-bridge-helper-calls-",
       );
       await writeFixtureFiles(root, {
-        "preload.js": `const { contextBridge, ipcRenderer } = require("electron");
+        "preload.cjs": `const { contextBridge, ipcRenderer } = require("electron");
           function expose(key, api) { contextBridge.exposeInMainWorld(key, api); }
           function relay(key, label, api) { expose(key, api); }
           function named(label, key) { expose(key, { hidden: () => ipcRenderer.send("hidden") }); }
@@ -736,7 +740,7 @@ for (const surface of ["CLI", "stdio MCP"] as const) {
     async ({ cli }) => {
       const root = await createTestTempDirectory("rea-electron-branch-paths-");
       await writeFixtureFiles(root, {
-        "preload.js": `const e=require("electron");
+        "preload.cjs": `const e=require("electron");
         e.contextBridge.exposeInMainWorld("empty", {});
         function choose(){
           if(flag)return ()=>e.ipcRenderer.send("test:copy");
@@ -750,7 +754,7 @@ for (const surface of ["CLI", "stdio MCP"] as const) {
           conditional:()=>e.ipcRenderer.send("test:conditional"),
           fallback:()=>e.ipcRenderer.send("test:fallback"),
         });`,
-        "main.js": `const e=require("electron");
+        "main.cjs": `const e=require("electron");
         const copy=event=>event.sender.copy(), cut=event=>event.sender.cut();
         function register(channel,handler){e.ipcMain.on(channel,handler)}
         register("test:copy",copy);register("test:cut",cut);
@@ -842,16 +846,16 @@ cliTest(
     for (let index = 0; index < 129; index += 1)
       deepMember = `{ level${index}: ${deepMember} }`;
     await writeFixtureFiles(root, {
-      "preload.js": `const e=require("electron");
+      "preload.cjs": `const e=require("electron");
         e.contextBridge.exposeInMainWorld("desktop", {
           deep: ${deepMember},
           shallow: () => e.ipcRenderer.send("shallow:run")
         });`,
-      "main.js": `const e=require("electron");
+      "main.cjs": `const e=require("electron");
         e.ipcMain.on("shallow:run", event => event.sender.copy());
         e.ipcMain.on("deep:run", event => event.sender.copy());`,
     });
-    const output = await cli.run({
+    const output = await runFileCli(cli, {
       arguments: ["analyze-javascript-application", root, "--json"],
     });
     expect(output.exitCode).toBe(0);
@@ -897,15 +901,15 @@ cliTest(
     for (let index = 0; index < 129; index += 1)
       deepMember = `{ level${index}: ${deepMember} }`;
     await writeFixtureFiles(root, {
-      "preload.js": `const e=require("electron");
+      "preload.cjs": `const e=require("electron");
         e.contextBridge.exposeInMainWorld("desktop", {
           deep: ${deepMember},
           shallow: () => e.ipcRenderer.send("shared:run")
         });`,
-      "main.js": `const e=require("electron");
+      "main.cjs": `const e=require("electron");
         e.ipcMain.on("shared:run", event => event.sender.copy());`,
     });
-    const output = await cli.run({
+    const output = await runFileCli(cli, {
       arguments: ["analyze-javascript-application", root, "--json"],
     });
     expect(output.exitCode, output.stderr).toBe(0);
@@ -937,10 +941,10 @@ cliTest(
 
     // A known second handler is not merely a hidden-coverage uncertainty.
     await writeFile(
-      join(root, "main.js"),
+      join(root, "main.cjs"),
       'const e=require("electron"); e.ipcMain.on("shared:run", () => {}); e.ipcMain.on("shared:run", () => {});',
     );
-    const competing = await cli.run({
+    const competing = await runFileCli(cli, {
       arguments: ["analyze-javascript-application", root, "--json"],
     });
     expect(competing.exitCode, competing.stderr).toBe(0);
@@ -964,14 +968,14 @@ cliTest(
       "rea-electron-empty-bridge-key-",
     );
     await writeFixtureFiles(root, {
-      "preload.js": `const { contextBridge, ipcRenderer } = require("electron");
+      "preload.cjs": `const { contextBridge, ipcRenderer } = require("electron");
         contextBridge.exposeInMainWorld("desktop", {
           "": { nested: { call: () => ipcRenderer.send("empty:key") } }
         });`,
-      "main.js": `const { ipcMain } = require("electron");
+      "main.cjs": `const { ipcMain } = require("electron");
         ipcMain.on("empty:key", event => event.sender.copy());`,
     });
-    const output = await cli.run({
+    const output = await runFileCli(cli, {
       arguments: ["analyze-javascript-application", root, "--json"],
     });
     expect(output.exitCode).toBe(0);
@@ -1004,13 +1008,13 @@ cliTest(
   async ({ cli }) => {
     const root = await createTestTempDirectory("rea-electron-join-conditions-");
     await writeFixtureFiles(root, {
-      "preload.js": `const e=require("electron");
+      "preload.cjs": `const e=require("electron");
         e.contextBridge.exposeInMainWorld("desktop", {
           choose: flag
             ? () => e.ipcRenderer.send("test:copy")
             : () => e.ipcRenderer.send("test:cut")
         });`,
-      "main.js": `const e=require("electron");
+      "main.cjs": `const e=require("electron");
         if(!flag)e.ipcMain.on("test:copy",event=>allowed(event)&&event.sender.copy());
         if(flag)e.ipcMain.on("test:cut",event=>allowed(event)&&event.sender.cut());`,
     });
@@ -1285,5 +1289,51 @@ cliTest.for(["CLI", "stdio MCP"] as const)(
           authority: "static-relationship-inference",
         },
       });
+  },
+);
+
+cliTest.for(["CLI", "stdio MCP"] as const)(
+  "retains conditional wrapped Electron paths without exact joins through %s",
+  async (surface, { cli }) => {
+    const root = await createTestTempDirectory("rea-electron-unknown-wrapper-");
+    await writeFixtureFiles(root, {
+      "preload.js":
+        'const e=require("electron");e.contextBridge.exposeInMainWorld("api",{send:()=>e.ipcRenderer.send("ready")});',
+      "main.js":
+        'const e=require("electron");e.ipcMain.on("ready",event=>event.sender.copy());',
+    });
+    const result = await analyzeJavaScriptDirectory(surface, cli, root);
+    expect(result.graph.coverage.status).toBe("partial");
+    const candidate = result.graph.nodes
+      .flatMap(({ observations }) => observations)
+      .filter(({ properties }) => properties.loader_authority === "candidate");
+    expect(candidate).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          properties: expect.objectContaining({ api_key: "api" }),
+        }),
+        expect.objectContaining({
+          properties: expect.objectContaining({
+            channel: "ready",
+            side: "renderer",
+          }),
+        }),
+        expect.objectContaining({
+          properties: expect.objectContaining({
+            channel: "ready",
+            side: "main",
+          }),
+        }),
+      ]),
+    );
+    expect(
+      candidate.every(({ evidence }) => evidence.confidence === "low"),
+    ).toBe(true);
+    expect(
+      result.graph.edges.filter(
+        ({ evidence }) =>
+          evidence.extractor.operation === "join-electron-wrapper-paths",
+      ),
+    ).toEqual([]);
   },
 );

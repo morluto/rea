@@ -6,14 +6,9 @@ import { expect, it, vi } from "vitest";
 
 import { runDirectAnalysis } from "../../../src/application/DirectAnalysis.js";
 import { registerCoreNativeCommands } from "../../../src/cli/coreNativeCommands.js";
-import { projectCliAnalysisResult } from "../../../src/cli/projectCliAnalysisResult.js";
 import type { CliInstance } from "../../../src/cli/types.js";
 import { createEvidence, parseEvidence } from "../../../src/domain/evidence.js";
-import {
-  createEvidenceBundle,
-  parseEvidenceBundle,
-  type EvidenceBundle,
-} from "../../../src/domain/evidenceBundle.js";
+import { parseEvidenceBundle } from "../../../src/domain/evidenceBundle.js";
 import { REA_WORKFLOW_PROVIDER } from "../../../src/domain/investigationProviders.js";
 import { nativeValueTraceSchema } from "../../../src/domain/native/nativeValueTrace.js";
 import { ok } from "../../../src/domain/result.js";
@@ -91,13 +86,7 @@ const createTraceFixture = () => {
     parameters: { address: "0x2000" },
     result: { name: "unrelated" },
   });
-  const sessionBundle = createEvidenceBundle([
-    trace,
-    procedure,
-    leaf,
-    unrelated,
-  ]);
-  return { leaf, procedure, trace, unrelated, sessionBundle };
+  return { leaf, procedure, trace, unrelated };
 };
 
 type DirectAnalysisRunner = Parameters<typeof registerCoreNativeCommands>[2];
@@ -130,50 +119,41 @@ const runJsonCli = async (
   return JSON.parse(stdout) as Record<string, unknown>;
 };
 
-const verifyDirectAnalysisEvidenceBundleCallback = async (
-  snapshotPath: string,
-) => {
+const verifyDirectAnalysisEvidenceSources = async (snapshotPath: string) => {
   const fixture = await composedWorkflowFixture();
-  let captured: EvidenceBundle | undefined;
-  const direct = parseEvidence(
-    await runDirectAnalysis(
-      fixture.dependencies,
-      fixture.path,
-      "binary_overview",
-      {},
-      { snapshotPath, onEvidenceBundle: (bundle) => (captured = bundle) },
-    ).then(projectCliAnalysisResult),
+  const direct = await runDirectAnalysis(
+    fixture.dependencies,
+    fixture.path,
+    "binary_overview",
+    {},
+    { snapshotPath, includeEvidenceSources: true },
   );
-  expect(captured?.records.map(({ evidence_id }) => evidence_id)).toContain(
-    direct.evidence_id,
+  if (!direct.ok) throw new Error("Direct analysis failed");
+  const replayed = await runDirectAnalysis(
+    fixture.dependencies,
+    fixture.path,
+    "binary_overview",
+    {},
+    { snapshotPath, includeEvidenceSources: true },
   );
-
-  let replayedBundle: EvidenceBundle | undefined;
-  const replayed = parseEvidence(
-    await runDirectAnalysis(
-      fixture.dependencies,
-      fixture.path,
-      "binary_overview",
-      {},
-      {
-        snapshotPath,
-        onEvidenceBundle: (bundle) => (replayedBundle = bundle),
-      },
-    ).then(projectCliAnalysisResult),
+  if (!replayed.ok) throw new Error("Snapshot replay failed");
+  expect(replayed.value).toEqual(direct.value);
+  expect(replayed.sourceEvidence).toEqual(direct.sourceEvidence);
+  expect(direct.sourceEvidence?.map(({ evidence_id }) => evidence_id)).toEqual(
+    expect.arrayContaining(direct.value.evidence_links),
   );
-  expect(replayed).toEqual(direct);
-  expect(
-    replayedBundle?.records.map(({ evidence_id }) => evidence_id),
-  ).toContain(replayed.evidence_id);
 };
 
 it("exports only the transitive source Evidence closure for a native value trace", async () => {
-  const { leaf, procedure, trace, unrelated, sessionBundle } =
-    createTraceFixture();
+  const { leaf, procedure, trace, unrelated } = createTraceFixture();
   const run = vi.fn<DirectAnalysisRunner>(
     async (_path, _tool, _arguments, options) => {
-      options?.onEvidenceBundle?.(sessionBundle);
-      return ok(trace);
+      return {
+        ...ok(trace),
+        ...(options?.includeEvidenceSources
+          ? { sourceEvidence: [procedure, leaf] }
+          : {}),
+      };
     },
   );
   const cli = createTraceCli(run);
@@ -215,11 +195,15 @@ it("exports only the transitive source Evidence closure for a native value trace
 });
 
 it("publishes a bounded trace summary with a complete evidence bundle", async () => {
-  const { leaf, procedure, trace, sessionBundle } = createTraceFixture();
+  const { leaf, procedure, trace } = createTraceFixture();
   const run = vi.fn<DirectAnalysisRunner>(
     async (_path, _tool, _arguments, options) => {
-      options?.onEvidenceBundle?.(sessionBundle);
-      return ok(trace);
+      return {
+        ...ok(trace),
+        ...(options?.includeEvidenceSources
+          ? { sourceEvidence: [procedure, leaf] }
+          : {}),
+      };
     },
   );
   const cli = createTraceCli(run);
@@ -270,12 +254,12 @@ it("publishes a bounded trace summary with a complete evidence bundle", async ()
   expect(run).toHaveBeenCalledOnce();
 });
 
-it("retains completed trace Evidence when the session returns no bundle", async () => {
+it("retains completed trace Evidence when analysis returns no source closure", async () => {
   const { trace } = createTraceFixture();
   const run = vi.fn<DirectAnalysisRunner>(async () => ok(trace));
   const cli = createTraceCli(run);
-  const directory = await createTestTempDirectory("rea-trace-no-bundle-");
-  const destination = join(directory, "missing-bundle.json");
+  const directory = await createTestTempDirectory("rea-trace-no-sources-");
+  const destination = join(directory, "missing-sources.json");
   const error = await runJsonCli(cli, [
     "trace-native-values",
     sourceTarget.path,
@@ -299,46 +283,9 @@ it("retains completed trace Evidence when the session returns no bundle", async 
   expect(run).toHaveBeenCalledOnce();
 });
 
-it("reports a missing linked source with its identity and completed trace", async () => {
-  const { leaf, procedure, trace } = createTraceFixture();
-  const run = vi.fn<DirectAnalysisRunner>(
-    async (_path, _tool, _arguments, options) => {
-      options?.onEvidenceBundle?.(createEvidenceBundle([trace, procedure]));
-      return ok(trace);
-    },
-  );
-  const cli = createTraceCli(run);
-  const directory = await createTestTempDirectory("rea-trace-missing-source-");
-  const destination = join(directory, "missing-source.json");
-  const error = await runJsonCli(cli, [
-    "trace-native-values",
-    sourceTarget.path,
-    "main",
-    "--evidence_output",
-    destination,
-    "--json",
-  ]);
-
-  expect(error).toMatchObject({
-    code: "evidence_integrity_mismatch",
-    details: {
-      evidence_id: leaf.evidence_id,
-      reason: "missing",
-      operation: "trace_native_values",
-      reference_scope: "retained-closure",
-      partial_observation: {
-        operation: "trace_native_values",
-        normalized_result: { seed: "main" },
-      },
-    },
-  });
-  await expect(readFile(destination, "utf8")).rejects.toThrow();
-  expect(run).toHaveBeenCalledOnce();
-});
-
-it("replays direct-analysis Evidence bundle callbacks without rerunning", async () => {
-  const directory = await createTestTempDirectory("rea-trace-callback-");
-  await verifyDirectAnalysisEvidenceBundleCallback(
+it("replays the direct-analysis source closure without rerunning", async () => {
+  const directory = await createTestTempDirectory("rea-trace-source-replay-");
+  await verifyDirectAnalysisEvidenceSources(
     join(directory, "analysis-snapshot.json"),
   );
 });

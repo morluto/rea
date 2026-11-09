@@ -12,7 +12,11 @@ agent's computer-use actions to it through three MCP tools:
 | `close_build_computer`  | Tears the computer down, by agentenv's teardown or by removing its sandbox's containers    |
 
 The tools are MCP-only, like the debugger sessions: the computer lives as long
-as the REA MCP server that started it, or until it is closed.
+as the REA MCP server that started it, or until it is closed. Capturing the
+app, exporting its bundle and witnessing the task on such a computer are in
+[Building and witnessing an environment](desktop-build-witness.md), and REA's
+skill for doing all of it from a request is
+[desktop builds](https://github.com/morluto/rea/blob/main/.agents/skills/reverse-engineer-anything/references/desktop-build.md).
 
 ## Requirements
 
@@ -26,7 +30,11 @@ as the REA MCP server that started it, or until it is closed.
   command to run instead.
 - For a request, `REA_BUILD_COMPUTER_REA_ARCHIVE`: the absolute path of a tar
   archive of a runnable REA, with its production dependencies, whose one top
-  folder holds `scripts/rea.mjs`. The computer runs REA from it.
+  folder holds `scripts/rea.mjs`. The computer runs REA from it. From a
+  checkout, `npm run pack:build-computer-runtime -- /path/to/rea-prod.tar.xz`
+  writes one: `npm pack`, its package folder as
+  `rea-prod` with the lockfile, `npm ci --omit=dev --omit=optional`, then
+  `rea-prod` as `.tar.xz`.
 
 Set these where the MCP server starts; a shell export does not reach a server
 that is already running.
@@ -35,8 +43,9 @@ that is already running.
 
 From a request, REA renders a bundle in a private temporary folder: a computer
 app on the `ubuntu-24.04` base with the `reference` driver that installs the
-app, opens it on demand with `gtk-launch <desktop entry>` and keeps no seed and
-no data hooks. The app is not open when the computer starts: agentenv lists it
+app, opens it on demand with `gtk-launch <desktop entry>` from the computer
+user's home, so its open and save dialogs start there rather than in the
+framework's folder for the app, and keeps no seed and no data hooks. The app is not open when the computer starts: agentenv lists it
 in the desktop's Applications menu under Other by the environment's name, such
 as `mousepad`, and that entry launches it through the app's server.
 
@@ -80,14 +89,25 @@ starts that bundle's `tasks/smoke.json` as it is:
 { "source": { "kind": "bundle", "path": "/home/ada/mousepad-bundle" } }
 ```
 
+REA runs its helper with `PYTHONDONTWRITEBYTECODE=1`, which agentenv's own
+import of the bundle's app class inherits, so a start leaves no `__pycache__`
+in the folder and its files stay as they were shared.
+
 REA runs the deploy with `run_bundle(keep=True, emulate=False)` on the local
 sandbox provider, so only the host's own architecture is built. The first start
-of a bundle builds its image and can take minutes; later starts reuse it. REA
-then waits until the computer's readiness checks pass, opens one MCP session
-to its driver and takes a screenshot, with the `region`, `format` and `quality`
-given in `screenshot`. The result holds `computer_id`, agentenv's `sandbox_id`,
-the environment name or bundle folder, and the screenshot's frame as structured
-content beside its image.
+of a bundle builds its image and can take minutes; later starts reuse it.
+While it waits, REA sends an MCP progress notification every five seconds with
+agentenv's latest line, so a client that resets its request timeout on
+progress keeps waiting. REA then waits until the computer's readiness checks
+pass and opens one MCP session to its driver. Readiness can pass before the
+desktop has drawn, so REA takes a whole-screen PNG screenshot every 500 ms
+while it is one colour throughout. The retries share 10 s, each given only
+what is left of it, and when that runs out REA returns the latest frame;
+progress notifications continue meanwhile. Given `screenshot` with a
+`region`, `format` or `quality`, REA then takes one with them, a `region`
+cropping that frame. The result holds
+`computer_id`, agentenv's `sandbox_id`, the environment name or bundle folder,
+and the screenshot's frame as structured content beside its image.
 
 A failed start returns the last 16 KiB of the helper's stderr, where a failing
 build prints its error, and its exit status; a cancelled one stops the helper,
@@ -110,6 +130,15 @@ arguments for `computer_<action>`, which REA passes through:
 | `type`       | `text`, where `\n` presses Enter and `\t` Tab                   |
 | `key`        | `keys`, one chord pressed in order, and `repeat`                |
 | `wait`       | `ms`                                                            |
+| `reset`      | `screenshot`                                                    |
+
+`reset` is not a driver tool: REA calls the app's `data/reset`, which restores
+the bundle's seed and relaunches the app, then waits until the computer's
+readiness checks pass again, sending an MCP progress notification every five
+seconds while it waits. With `screenshot: true` it then takes a screenshot; if
+that fails, the reset still counts as applied and its result has no `frame`
+but a `screenshot_error` with the computer's message. A computer started from
+a request has no data operations, so it refuses a reset.
 
 Pointer actions also take `frame_id`, `space` and `norm_scale`, and every
 action but `screenshot` takes `screenshot: true` for an image afterwards. That
@@ -129,6 +158,11 @@ larger than the MCP budget is refused with how to ask for a smaller image: a
 `computer_id` included, as `details.result`, since the action or start has
 happened.
 
+Actions, the capture steps and the task checks on one computer run one at a
+time, in the order REA receives them; one that has to wait for the call
+before it sends an MCP progress notification every five seconds meanwhile.
+Different computers run side by side.
+
 Every action is logged on the computer in order with the arguments sent, its
 start and end and whether it was applied, refused or failed. The log keeps the
 latest 256 actions within 256 KiB of JSON, dropping the oldest first. Each
@@ -140,8 +174,8 @@ the last applied action of each kind for rules over the whole session. The log
 and the computer's recording hooks (`computer-recording/v1` start and end under
 REA's own request id, and the segments fetched through the driver's `data/get`
 one at a time, each read within its manifest size and checked against it) are
-kept for later build stages; they are not tools. A recording larger than a
-quarter of the V8 heap is refused before any segment is read.
+what the witness records; they are not tools of their own. A recording larger
+than a quarter of the V8 heap is refused before any segment is read.
 
 ## Close
 
@@ -153,7 +187,9 @@ containers of that exact sandbox: agentenv runs a computer as
 `agentenv.sandbox=<sandbox id>`, so REA lists both with `docker ps -aq
 --filter`, removes them with `docker rm -f`, and says
 `teardown: "container_label"`. When neither confirms it, the error names what
-is left and the computer stays listed, so closing it again retries. Closing the
+is left and the computer stays listed, so closing it again retries. A close
+cancels the call in progress on the computer, refuses the calls waiting for
+it, and tears down once that call has ended. Closing the
 MCP server closes every computer the same way, and a helper whose REA server
 exits sees its stdin close and tears down.
 

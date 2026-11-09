@@ -9,6 +9,7 @@ import {
 } from "./binaryTargetTypes.js";
 import {
   createEvidence,
+  evidenceEnvelopeForAdmission,
   evidenceSchema,
   parseEvidence,
   immutableEvidence,
@@ -680,7 +681,7 @@ it("binds an explicit unknown-subject reason into the semantic Evidence identity
   expect(explicit.subject).toBeNull();
   expect(explicit.limitations).toEqual([reason]);
   expect(defaulted.limitations).toEqual([
-    "Artifact identity is unavailable for this observation.",
+    expect.stringMatching(/artifact identity.*unavailable/iu),
   ]);
   expect(explicit.evidence_id).not.toBe(defaulted.evidence_id);
   expect(parseEvidence(explicit)).toEqual(explicit);
@@ -894,4 +895,21 @@ it("diagnoses a previous explicit-null coverage commitment without admitting or 
     result: { observed: true },
   });
   expect(parseEvidence(current)).toEqual(current);
+});
+
+it("borrows variable-size collections for admission", () => {
+  const limitations = ["one", "two"];
+  const locations: never[] = [];
+  const evidenceLinks = ["ev_" + "a".repeat(64)];
+  const envelope = evidenceEnvelopeForAdmission(TARGET, PROVIDER, {
+    operation: "borrow",
+    parameters: {},
+    result: {},
+    limitations,
+    locations,
+    evidenceLinks,
+  });
+  expect(envelope.limitations).toBe(limitations);
+  expect(envelope.locations).toBe(locations);
+  expect(envelope.evidence_links).toBe(evidenceLinks);
 });

@@ -17,7 +17,7 @@ import {
 import type { AnalysisError } from "../../../src/domain/analysisErrorBase.js";
 import { AnalysisCapabilityUnavailableError } from "../../../src/domain/analysisErrorCore.js";
 import { createAnalysisProfile } from "../../../src/domain/analysisProfile.js";
-import { parseEvidence } from "../../../src/domain/evidence.js";
+import { createEvidence, parseEvidence } from "../../../src/domain/evidence.js";
 import { evidenceBundleSchema } from "../../../src/domain/evidenceBundle.js";
 import { nativeValueTraceSchema } from "../../../src/domain/native/nativeValueTrace.js";
 import { ok } from "../../../src/domain/result.js";
@@ -288,6 +288,51 @@ const openSession = async (port: AnalysisOperationPort) => {
   expect(opened.isError).not.toBe(true);
   return { client, session };
 };
+
+it("keeps the stopped trace and source-publication failure together", async () => {
+  const { port } = failingDiamond({
+    "analyze_function:0x2000": childFailure("analyze_function", true),
+  });
+  const source = createEvidence(undefined, provider, {
+    operation: "analyze_function",
+    parameters: { procedure: "0x1000" },
+    result: { source: "observed" },
+  });
+  const client = await connect({
+    execute: async (operation, parameters, options) => {
+      const outcome = await port.execute(operation, parameters, options);
+      if (
+        outcome.ok &&
+        operation === "analyze_function" &&
+        parameters.procedure === "0x1000"
+      )
+        return ok({ ...outcome.value, sourceEvidence: [source] });
+      return outcome;
+    },
+  });
+
+  const { error } = parseMcpToolError(await client.callTool(trace));
+  expect(error.code).toBe("cleanup_incomplete");
+  const partial = parseEvidence(error.details?.partial_observation);
+  const admitted = nativeValueTraceSchema.parse(partial.normalized_result);
+  expect(admitted.procedures.map(({ address }) => address)).toEqual(["0x1000"]);
+  expect(admitted.traversal).toEqual({
+    status: "truncated",
+    reasons: ["cleanup_incomplete"],
+  });
+  expect(partial.evidence_links).toContain(source.evidence_id);
+  expect(error.details?.secondary_failures).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({
+        code: "capability_unavailable",
+        details: expect.objectContaining({
+          provider_id: "rea",
+          operation: "trace_native_values",
+        }),
+      }),
+    ]),
+  );
+});
 
 it("retains the admitted trace and its completed sources as session Evidence", async () => {
   const { port, reads } = failingDiamond(
