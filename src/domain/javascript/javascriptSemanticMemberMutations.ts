@@ -4,7 +4,7 @@ import {
   createAmbientPathResolver,
   retainSemanticAmbientEffect,
 } from "./javascriptSemanticAmbientWrites.js";
-import { isIntrinsicMapLookup } from "./javascriptSemanticMapOperations.js";
+import { isIntrinsicNonEscapingMapCall } from "./javascriptSemanticMapOperations.js";
 import {
   isIntrinsicTypedArrayConstruction,
   isTypedArrayNumericIndex,
@@ -1720,9 +1720,9 @@ export function* collectSemanticMemberMutationsSteps(
           else markEscaped(argument, node);
         // Constructing a member does not pass its container as `this`.
         if (!t.isNewExpression(node)) {
-          const mapLookup = isIntrinsicMapLookup(node, state);
-          if (mapLookup === undefined) deferredMapReceivers.add(node);
-          else if (!mapLookup) markReceiver(node.callee, node);
+          const intrinsicMapCall = isIntrinsicNonEscapingMapCall(node, state);
+          if (intrinsicMapCall === undefined) deferredMapReceivers.add(node);
+          else if (!intrinsicMapCall) markReceiver(node.callee, node);
         }
       } else if (t.isTaggedTemplateExpression(node)) {
         for (const source of returnedReferences(node.tag).references)
@@ -1841,15 +1841,16 @@ export function* collectSemanticMemberMutationsSteps(
         reference,
       );
     }
-    // Native Map lookup methods do not expose their receiver to user code.
+    // Proven native Map operations do not expose their receiver to user code.
     // Settle genuine effects first, then replay every unproven receiver escape.
     // Keep proven sites until convergence: later propagated effects can revoke them.
     let receiverIndex = 0;
     for (const node of deferredMapReceivers) {
       if (receiverIndex++ % 64 === 0) yield;
       if (
-        isIntrinsicMapLookup(node, state, { referenceMayHaveChangedAt }) ===
-        true
+        isIntrinsicNonEscapingMapCall(node, state, {
+          referenceMayHaveChangedAt,
+        }) === true
       )
         continue;
       deferredMapReceivers.delete(node);

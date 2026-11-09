@@ -518,6 +518,27 @@ e.on("ready");`),
   ).toContainEqual({ kind: "register", method: "on", eventName: "ready" });
 });
 
+// These Promise aliases remain conservative without a shared-module origin fact.
+it.each([
+  "const pending = import('node:events'); const ns = await pending;",
+  "const pending = import('node:events'); const alias = pending; const ns = await alias;",
+  "const { pending } = { pending: import('node:events') }; const ns = await pending;",
+  "const [pending] = [import('node:events')]; const ns = await pending;",
+  "const pending = flag ? import('events') : import('node:events'); const ns = await pending;",
+])(
+  "preserves unknown initializer mutations through Promise aliases: %s",
+  (setup) => {
+    expect(
+      eventsForSource(`import { EventEmitter } from "node:events";
+import { initialize } from "./initialize.js";
+${setup}
+ns.EventEmitter.init = initialize;
+const e = new EventEmitter();
+e.on("ready");`),
+    ).toContainEqual({ kind: "register", method: "on", eventName: "ready" });
+  },
+);
+
 it("does not grant native constructor proof from effect-only dynamic import", () => {
   expect(
     eventsForSource(`const events = await import('events');
