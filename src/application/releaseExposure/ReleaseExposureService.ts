@@ -836,14 +836,14 @@ const limitNativeSample = (
       )
       .map((basis) => nativeDirname(nativeDirname(basis.path))),
   );
-  // An asar: false build names no layout, so an executable outside every found
-  // layout that the sample dropped may be another build's unread host.
-  const droppedOutsideHost = scan.native_images.some((image) => {
-    if (keptPaths.has(image.path)) return false;
-    if (layouts.some((folder) => inLayout(folder, image.path))) return false;
-    const name = nativeBasename(image.path);
-    return name.toLowerCase().endsWith(".exe") || !name.includes(".");
-  });
+  // An asar: false build names no layout, so a native image outside every
+  // found layout that the sample dropped may be another build's unread host.
+  // Its name does not rule it out: a host can be named `My.App`.
+  const droppedOutsideHost = scan.native_images.some(
+    (image) =>
+      !keptPaths.has(image.path) &&
+      !layouts.some((folder) => inLayout(folder, image.path)),
+  );
   const electronExecutableIncluded =
     layouts.length === 0
       ? bundleRead || selectedRead || hostRead(preferred)

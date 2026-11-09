@@ -1108,42 +1108,45 @@ describe("ReleaseExposureService hosts without an ASAR layout", () => {
     expect((await runAsNode(service))?.status).toBe("unknown");
   });
 
-  it("keeps safe fuses unknown when the sample dropped a possible host outside an ASAR layout", async () => {
-    const { service, desktop, electronFuses } = owners(
-      directoryScan([
-        "/work/app/a/a.exe",
-        "/work/app/a/one.exe",
-        "/work/app/a/two.exe",
-        "/work/app/a/three.exe",
-        "/work/app/b/launcher.exe",
-      ]),
-    );
-    const report = electronDesktopReport();
-    desktop.inspect.mockResolvedValue(
-      ok(
-        evidence({
-          ...report,
-          files: [
-            {
-              ...report.files[0],
-              path: "a/resources/app.asar",
-              local_path: "/work/app/a/resources/app.asar",
-            },
-          ],
-        }),
-      ),
-    );
-    electronFuses.inspect.mockResolvedValue(
-      ok(evidence(fuseReport([slice(0)]))),
-    );
-    expect((await runAsNode(service))?.status).toBe("unknown");
-    expect(electronFuses.inspect).toHaveBeenCalledTimes(4);
-    expect(
-      electronFuses.inspect.mock.calls.map(
-        (call) => (call[0] as { path?: string }).path,
-      ),
-    ).not.toContain("/work/app/b/launcher.exe");
-  });
+  it.each(["/work/app/b/launcher.exe", "/work/app/b/My.App"])(
+    "keeps safe fuses unknown when the sample dropped a possible host outside an ASAR layout at %s",
+    async (dropped) => {
+      const { service, desktop, electronFuses } = owners(
+        directoryScan([
+          "/work/app/a/a.exe",
+          "/work/app/a/one.exe",
+          "/work/app/a/two.exe",
+          "/work/app/a/three.exe",
+          dropped,
+        ]),
+      );
+      const report = electronDesktopReport();
+      desktop.inspect.mockResolvedValue(
+        ok(
+          evidence({
+            ...report,
+            files: [
+              {
+                ...report.files[0],
+                path: "a/resources/app.asar",
+                local_path: "/work/app/a/resources/app.asar",
+              },
+            ],
+          }),
+        ),
+      );
+      electronFuses.inspect.mockResolvedValue(
+        ok(evidence(fuseReport([slice(0)]))),
+      );
+      expect((await runAsNode(service))?.status).toBe("unknown");
+      expect(electronFuses.inspect).toHaveBeenCalledTimes(4);
+      expect(
+        electronFuses.inspect.mock.calls.map(
+          (call) => (call[0] as { path?: string }).path,
+        ),
+      ).not.toContain(dropped);
+    },
+  );
 });
 
 describe("ReleaseExposureService Electron host identity", () => {
