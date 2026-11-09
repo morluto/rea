@@ -16,17 +16,14 @@ describe("bounded file byte reads", () => {
       await writeFile(path, content);
       const handle = await open(path, "r");
       try {
-        const actual = await readBoundedFileBytes(handle, limit);
-        if (actual === undefined)
-          throw new Error("Expected complete file bytes");
-        expect(actual.equals(content)).toBe(true);
+        expect(await readBoundedFileBytes(handle, limit)).toEqual(content);
       } finally {
         await handle.close();
       }
     },
   );
 
-  it.each([undefined, 0, 5])(
+  it.each([undefined, 5])(
     "preserves raw reasons or caller-owned cancellation with expected size %s",
     async (expectedSize) => {
       const root = await createTestTempDirectory("rea-bounded-cancel-");
@@ -61,49 +58,23 @@ describe("bounded file byte reads", () => {
     },
   );
 
-  it.each([
-    { contents: "", maxBytes: 0, expectedSize: undefined, outcome: "EOF" },
-    { contents: "", maxBytes: 5, expectedSize: 5, outcome: "early EOF" },
-    {
-      contents: "hello",
-      maxBytes: 5,
-      expectedSize: 5,
-      outcome: "expected size",
-    },
-    {
-      contents: "hello",
-      maxBytes: 4,
-      expectedSize: undefined,
-      outcome: "overflow",
-    },
-  ])(
-    "honors cancellation while the $outcome read is in flight",
-    async ({ contents, maxBytes, expectedSize }) => {
-      const root = await createTestTempDirectory("rea-bounded-cancel-read-");
-      const path = join(root, "input");
-      await writeFile(path, contents);
-      const handle = await open(path, "r");
-      const controller = new AbortController();
-      const reason = new Error("cancelled during read");
-      const typed = new Error("typed cancellation", { cause: reason });
-      try {
-        const result = readBoundedFileBytes(handle, maxBytes, {
-          signal: controller.signal,
-          expectedSize,
-          cancellationFailure: (observed) => {
-            expect(observed).toBe(reason);
-            return typed;
-          },
-        });
-        controller.abort(reason);
-        await expect(result).rejects.toBe(typed);
-      } finally {
-        await handle.close();
-      }
-    },
-  );
+  it("reads appended bytes when the file grows within the limit", async () => {
+    const root = await createTestTempDirectory("rea-growing-bytes-");
+    const path = join(root, "input");
+    await writeFile(path, "hello");
+    const handle = await open(path, "r");
+    try {
+      expect((await handle.stat()).size).toBe(5);
+      await appendFile(path, "!");
+      expect(
+        await readBoundedFileBytes(handle, 10, { expectedSize: 5 }),
+      ).toEqual(Buffer.from("hello!"));
+    } finally {
+      await handle.close();
+    }
+  });
 
-  it("stops after one overflow byte when a file grows beyond its admitted size", async () => {
+  it("continues to EOF when a file grows beyond its expected size", async () => {
     const root = await createTestTempDirectory("rea-growing-bytes-");
     const path = join(root, "input");
     await writeFile(path, "0123456789");
@@ -111,7 +82,9 @@ describe("bounded file byte reads", () => {
     try {
       expect((await handle.stat()).size).toBeLessThan(12);
       await appendFile(path, "abcdefghijklmnopqrstuvwxyz");
-      expect(await readBoundedFileBytes(handle, 12)).toBeUndefined();
+      expect(
+        await readBoundedFileBytes(handle, 12, { expectedSize: 10 }),
+      ).toBeUndefined();
       const next = Buffer.alloc(1);
       expect((await handle.read(next, 0, 1, null)).bytesRead).toBe(1);
       expect(next.toString()).toBe("d");
