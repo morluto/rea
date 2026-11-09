@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
+import { runInNewContext } from "node:vm";
 
-import { analyzeJavaScriptStaticSource } from "./javascriptStaticAnalysis.js";
+import { analyzeJavaScriptStaticSource as analyzeUnknownHostSource } from "./javascriptStaticAnalysis.js";
+import { analyzeCommonJsStaticFixture as analyzeJavaScriptStaticSource } from "../../../tests/fixtures/javascriptCommonJsAnalysis.js";
 
 // Webpack 5 standalone bootstrap with an Electron external, as emitted for
 // `target: "electron-main"`.
@@ -29,6 +31,17 @@ const expectUnresolved = (source: string) => {
     ),
   ).toEqual([]);
 };
+
+it("does not claim Electron host identity from an unbound require in unknown context", () => {
+  const analysis = analyzeUnknownHostSource(bootstrap(EXTERNAL, CONSUMER));
+  expect(analysis.electron.browser_windows).toContainEqual(
+    expect.objectContaining({
+      preload_path: "./preload.js",
+      loader_authority: "candidate",
+    }),
+  );
+  expect(analysis.analysis_coverage?.applicability.electron).toBe("unknown");
+});
 
 describe("Electron identity through Webpack externals", () => {
   it.each([
@@ -178,6 +191,128 @@ describe("Electron identity through Webpack externals", () => {
     ],
   ])("keeps %s unresolved", (_name, source) => {
     expectUnresolved(source);
+  });
+});
+
+describe("Webpack loader alias bounds", () => {
+  const getterSource = (initializers: readonly string[], selection = "") =>
+    bootstrap(
+      EXTERNAL,
+      'const s=n.n(n(45840));new(s().BrowserWindow)({});s().ipcMain.handle("ready",()=>{});',
+      `let box={};${initializers.map((value) => `if(flag)box=${value};`).join("")}${selection}box.n=()=>0;n(100);`,
+    );
+
+  it.each([false, true])(
+    "preserves only proven Electron identity beside a large object union (loader=%s)",
+    (includesLoader) => {
+      const source = getterSource([
+        ...Array<string>(520).fill("{}"),
+        ...(includesLoader ? ["n"] : []),
+      ]);
+      const analysis = analyzeJavaScriptStaticSource(source);
+      expect(analysis.parse_error_count).toBe(0);
+      expect(analysis.electron.browser_windows).toHaveLength(
+        includesLoader ? 0 : 1,
+      );
+      expect(analysis.electron.ipc).toHaveLength(includesLoader ? 0 : 1);
+      if (!includesLoader)
+        expect(analysis.analysis_coverage).toMatchObject({
+          examination: {
+            semantic_resource_limits: expect.not.arrayContaining([
+              "alias-selections",
+            ]),
+          },
+        });
+    },
+  );
+
+  it.each(
+    [1, 520].flatMap((count) =>
+      [
+        "flag?n:{}",
+        "flag&&n",
+        "flag||n",
+        "(0,n)",
+        "getLoader()",
+        "new GetLoader()",
+        "holder.loader",
+        "unresolvedLoader",
+      ].map((value) => ({ count, value })),
+    ),
+  )(
+    "keeps $count possible loader values through $value unknown",
+    ({ count, value }) => {
+      const analysis = analyzeJavaScriptStaticSource(
+        getterSource(Array<string>(count).fill(value)),
+      );
+      expect(analysis.parse_error_count).toBe(0);
+      expect(analysis.electron.browser_windows).toEqual([]);
+      expect(analysis.electron.ipc).toEqual([]);
+    },
+  );
+
+  it.each(["[]", "()=>0", "class {}", "0", "'text'"])(
+    "retains the getter when terminal origins are %s",
+    (value) => {
+      const analysis = analyzeJavaScriptStaticSource(
+        getterSource(Array<string>(520).fill(value)),
+      );
+      expect(analysis.electron.browser_windows).toHaveLength(1);
+      expect(analysis.electron.ipc).toHaveLength(1);
+    },
+  );
+
+  it.each([1, 520])("keeps %s projected loader writes unknown", (count) => {
+    const analysis = analyzeJavaScriptStaticSource(
+      getterSource([], "if(flag)({slot:box}={slot:n});".repeat(count)),
+    );
+    expect(analysis.electron.browser_windows).toEqual([]);
+    expect(analysis.electron.ipc).toEqual([]);
+  });
+
+  it.each(["conditional", "projected"])(
+    "observes no runtime window after a %s alias replaces the getter",
+    (kind) => {
+      let windows = 0;
+      const source =
+        kind === "conditional"
+          ? getterSource(Array<string>(520).fill("flag?n:{}"))
+          : getterSource([], "if(flag)({slot:box}={slot:n});");
+      expect(() =>
+        runInNewContext(source, {
+          flag: true,
+          require: () => ({
+            BrowserWindow: class {
+              constructor() {
+                windows += 1;
+              }
+            },
+            ipcMain: { handle() {} },
+          }),
+        }),
+      ).toThrow(/is not a function/u);
+      expect(windows).toBe(0);
+    },
+  );
+
+  it("keeps a limited loader-alias walk unknown", () => {
+    const aliases = Array.from(
+      { length: 520 },
+      (_, index) => `const box${index + 1}=box${index};`,
+    ).join("");
+    const analysis = analyzeJavaScriptStaticSource(
+      bootstrap(
+        EXTERNAL,
+        "const s=n.n(n(45840));new(s().BrowserWindow)({});",
+        `const box0={};${aliases}box520.n=()=>0;n(100);`,
+      ),
+    );
+    expect(analysis.electron.browser_windows).toEqual([]);
+    expect(analysis.analysis_coverage).toMatchObject({
+      examination: {
+        semantic_resource_limits: expect.arrayContaining(["alias-selections"]),
+      },
+    });
   });
 });
 

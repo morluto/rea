@@ -1,3 +1,5 @@
+import { createAnalysisProfile } from "./analysisProfile.js";
+import { createFunctionCoordinateContext } from "./native/functionCoordinateContext.js";
 import { describe, expect, it } from "vitest";
 
 import { AnalysisInputError } from "./analysisErrorCore.js";
@@ -34,6 +36,20 @@ const makeBaseRun = (
     id: "ghidra",
     name: "Ghidra",
     version: "11.2",
+  },
+  analysis_profile: createAnalysisProfile(
+    { id: "ghidra", name: "Ghidra", version: "11.2" },
+    {
+      function_coordinate_context: createFunctionCoordinateContext({
+        image_base: "0x400000",
+      }),
+    },
+  ),
+  inventory_coverage: {
+    procedure: { status: "complete", omitted_count: 0 },
+    finding: { status: "complete", omitted_count: 0 },
+    obligation: { status: "complete", omitted_count: 0 },
+    residual_unknown: { status: "complete", omitted_count: 0 },
   },
   relationship_coverage: {
     status: "complete",
@@ -129,13 +145,14 @@ describe("analysisRunComparison baseline and permutation invariance (#6338)", ()
           address: "0x00401000",
           name: "main",
           callees: ["0x00401100", "0x00401200"],
+          callers: [],
           metadata: {
             recorded_at: "2026-10-26T08:00:00Z",
             display_label: "main_v1",
             custom_ui_hint: "collapsed",
           },
         },
-        { address: "0x00402000", name: "helper", callees: [] },
+        { address: "0x00402000", name: "helper", callees: [], callers: [] },
       ],
       findings: [
         {
@@ -155,11 +172,12 @@ describe("analysisRunComparison baseline and permutation invariance (#6338)", ()
       run_id: "run-right-reordered",
       evidence_id: EV_RIGHT,
       procedures: [
-        { address: "0x00402000", name: "helper", callees: [] },
+        { address: "0x00402000", name: "helper", callees: [], callers: [] },
         {
           address: "0x00401000",
           name: "main",
           callees: ["0x00401200", "0x00401100"],
+          callers: [],
           metadata: {
             recorded_at: "2026-10-26T09:00:00Z",
             display_label: "main_v2",
@@ -223,7 +241,7 @@ describe("analysisRunComparison semantic deltas and coverage limits (#6338)", ()
     const right = makeBaseRun({
       run_id: "run-right-v2",
       evidence_id: EV_RIGHT,
-      subject: { sha256: SUBJECT_SHA_2, format: "elf", architecture: "x86_64" },
+      subject: { sha256: SUBJECT_SHA_1, format: "elf", architecture: "x86_64" },
       procedures: [
         {
           address: "0x00401000",
@@ -238,6 +256,8 @@ describe("analysisRunComparison semantic deltas and coverage limits (#6338)", ()
         {
           address: "0x00401300",
           name: "verify_hmac",
+          callees: [],
+          callers: [],
           size_bytes: 48,
           evidence_id: EV_PROC_RIGHT,
         },
@@ -277,7 +297,7 @@ describe("analysisRunComparison semantic deltas and coverage limits (#6338)", ()
 
     const report = compareCompatibleAnalysisRuns(left, right);
     expect(report.status).toBe("changed");
-    expect(report.same_artifact_sha256).toBe(false);
+    expect(report.same_artifact_sha256).toBe(true);
     expect(report.summary).toMatchObject({
       total_items: 6,
       unchanged: 0,
@@ -295,16 +315,8 @@ describe("analysisRunComparison semantic deltas and coverage limits (#6338)", ()
     expect(changedProc).toMatchObject({
       status: "changed",
       changed_fields: ["callees", "pseudocode_sha256", "size_bytes"],
-      left_record_ref: {
-        run_id: "run-left-1",
-        evidence_id: EV_LEFT,
-        record_pointer: "/procedures/0",
-      },
-      right_record_ref: {
-        run_id: "run-right-v2",
-        evidence_id: EV_RIGHT,
-        record_pointer: "/procedures/0",
-      },
+      left_record_ref: null,
+      right_record_ref: null,
       evidence_links: [EV_LEFT, EV_RIGHT, EV_PROC_LEFT, EV_PROC_RIGHT],
     });
   });
@@ -313,6 +325,12 @@ describe("analysisRunComparison semantic deltas and coverage limits (#6338)", ()
     const completeLeft = makeBaseRun();
     const incompleteRight = makeBaseRun({
       run_id: "run-right-truncated",
+      inventory_coverage: {
+        procedure: { status: "partial" },
+        finding: { status: "partial" },
+        obligation: { status: "partial" },
+        residual_unknown: { status: "partial" },
+      },
       evidence_id: EV_RIGHT,
       relationship_coverage: {
         status: "partial",
@@ -349,9 +367,7 @@ describe("analysisRunComparison semantic deltas and coverage limits (#6338)", ()
     }
     expect(report.limitations).toEqual(
       expect.arrayContaining([
-        expect.stringContaining(
-          "items absent from the right run are classified as unknown rather than removed",
-        ),
+        expect.stringContaining("unreported call relationships remain unknown"),
         expect.stringContaining("Function table scan stopped at 85%"),
         expect.stringContaining("Decompiler timed out after 30 seconds"),
       ]),
@@ -617,4 +633,153 @@ describe("Run Comparison Unicode code-point order, truncation delta, and schema 
       }),
     ).toThrow(/cannot claim status .*unchanged/i);
   });
+});
+
+describe("comparison inventory coverage ownership", () => {
+  it.each([undefined, null])(
+    "does not invent completeness from %s relationship coverage",
+    (coverage) => {
+      const left = makeBaseRun({
+        inventory_coverage: undefined,
+        relationship_coverage: coverage,
+      });
+      const right = makeBaseRun({
+        inventory_coverage: undefined,
+        relationship_coverage: coverage,
+        procedures: [],
+        findings: [],
+        obligations: [],
+        unknowns: [],
+      });
+      const report = compareCompatibleAnalysisRuns(left, right);
+      expect(report.summary.removed).toBe(0);
+      expect(report.summary.unknown).toBe(4);
+      expect(report.coverage_delta.left_omitted_count).toBeNull();
+      expect(report.coverage_delta.omitted_count_delta).toBeNull();
+    },
+  );
+
+  it("does not use complete call coverage to establish missing inventory items", () => {
+    const left = makeBaseRun({ inventory_coverage: undefined });
+    const right = makeBaseRun({
+      inventory_coverage: undefined,
+      procedures: [],
+      findings: [],
+      obligations: [],
+      unknowns: [],
+    });
+    const report = compareCompatibleAnalysisRuns(left, right);
+    expect(report.summary.removed).toBe(0);
+    expect(report.summary.unknown).toBe(4);
+  });
+});
+
+it("admits absence per inventory kind and retains original source references across reorder", () => {
+  const base = makeBaseRun();
+  const source = { evidence_id: EV_PROC_LEFT, record_pointer: "/procedure" };
+  const first = { ...base.procedures![0]!, source_record_ref: source };
+  const second = {
+    ...first,
+    address: "0x00409999",
+    source_record_ref: { ...source, record_pointer: "/other/procedure" },
+  };
+  const left = makeBaseRun({ procedures: [first, second] });
+  const right = makeBaseRun({
+    evidence_id: EV_RIGHT,
+    procedures: [second, first],
+    findings: [],
+    inventory_coverage: { finding: { status: "complete", omitted_count: 0 } },
+  });
+  const report = compareCompatibleAnalysisRuns(left, right);
+  expect(
+    report.items.find((item) => item.item_key === "procedure:0x00401000")
+      ?.right_record_ref,
+  ).toEqual({ run_id: right.run_id, ...source });
+  expect(
+    report.items.find((item) => item.item_kind === "finding")?.status,
+  ).toBe("removed");
+  const onlyFindingsComplete = makeBaseRun({
+    procedures: [],
+    findings: [],
+    obligations: [],
+    unknowns: [],
+    inventory_coverage: { finding: { status: "complete" } },
+  });
+  const unmatched = compareCompatibleAnalysisRuns(left, onlyFindingsComplete);
+  expect(unmatched.summary.removed).toBe(1);
+  expect(unmatched.summary.by_kind.procedure.unknown).toBe(2);
+  expect(
+    unmatched.inventory_coverage_delta.finding.right_omitted_count,
+  ).toBeNull();
+  expect(
+    unmatched.inventory_coverage_delta.finding.omitted_count_delta,
+  ).toBeNull();
+});
+
+it("keeps unreported truncation unknown and rejects an unchanged report with unknown inventory coverage", () => {
+  const left = makeBaseRun({
+    relationship_coverage: {
+      status: "partial",
+      truncated: true,
+      omitted_count: 2,
+    },
+  });
+  const right = makeBaseRun({
+    relationship_coverage: { status: "partial", omitted_count: 2 },
+  });
+  expect(
+    compareCompatibleAnalysisRuns(left, right).coverage_delta.transition,
+  ).toBe("unchanged");
+  const report = compareCompatibleAnalysisRuns(
+    makeBaseRun(),
+    makeBaseRun({ inventory_coverage: undefined }),
+  );
+  expect(report.status).toBe("unknown");
+  expect(
+    analysisRunComparisonReportSchema.safeParse({
+      ...report,
+      status: "unchanged",
+    }).success,
+  ).toBe(false);
+});
+
+it("refuses unreported call lists and unproven address correspondence", () => {
+  const base = makeBaseRun();
+  const unreported = { ...base.procedures![0]! };
+  Reflect.deleteProperty(unreported, "callees");
+  const missing = compareAnalysisRuns(base, {
+    ...base,
+    procedures: [unreported],
+  });
+  expect(missing).toMatchObject({
+    ok: false,
+    error: { code: "invalid_run_schema" },
+  });
+  for (const right of [
+    makeBaseRun({ subject: { ...base.subject!, sha256: SUBJECT_SHA_2 } }),
+    makeBaseRun({ analysis_profile: null }),
+    makeBaseRun({
+      analysis_profile: createAnalysisProfile(
+        { id: "ghidra", name: "Ghidra", version: "11.2" },
+        {
+          function_coordinate_context: createFunctionCoordinateContext({
+            image_base: "0x800000",
+          }),
+        },
+      ),
+    }),
+  ])
+    expect(compareAnalysisRuns(base, right)).toMatchObject({
+      ok: false,
+      error: { code: "incompatible_procedure_coordinates" },
+    });
+  expect(
+    compareAnalysisRuns(
+      makeBaseRun({ procedures: [] }),
+      makeBaseRun({
+        procedures: [],
+        subject: { ...base.subject!, sha256: SUBJECT_SHA_2 },
+      }),
+    ),
+  ).toMatchObject({ ok: true });
 });

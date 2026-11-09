@@ -1,3 +1,4 @@
+import { analysisProfileSchema } from "./analysisProfile.js";
 import { z } from "zod";
 
 import { digestSchema, prefixedDigestSchema } from "./digests.js";
@@ -61,13 +62,20 @@ export const analysisRunProviderSchema = z.strictObject({
   version: z.string().min(1).nullable(),
 });
 
+/** Original Evidence location supplied by the producing adapter, never an envelope index. */
+const sourceRecordReferenceSchema = z.strictObject({
+  evidence_id: evidenceIdSchema,
+  record_pointer: z.string().regex(/^(?:\/(?:[^~]|~[01])*)?$/u),
+});
+
 export const analysisRunProcedureRecordSchema = z.strictObject({
+  source_record_ref: sourceRecordReferenceSchema.optional(),
   address: z.string().min(1),
   name: z.string().min(1),
   signature: z.string().min(1).nullable().optional(),
   size_bytes: z.int().min(0).nullable().optional(),
-  callees: z.array(z.string().min(1)).optional(),
-  callers: z.array(z.string().min(1)).optional(),
+  callees: z.array(z.string().min(1)),
+  callers: z.array(z.string().min(1)),
   pseudocode_sha256: digestSchema.nullable().optional(),
   evidence_id: evidenceIdSchema.optional(),
   evidence_ids: z.array(evidenceIdSchema).optional(),
@@ -79,6 +87,7 @@ export type AnalysisRunProcedureRecord = z.infer<
 >;
 
 export const analysisRunFindingRecordSchema = z.strictObject({
+  source_record_ref: sourceRecordReferenceSchema.optional(),
   finding_id: z.string().min(1),
   category: z.string().min(1),
   severity: z.enum(["info", "low", "medium", "high", "critical"]),
@@ -108,6 +117,7 @@ export type AnalysisRunObligationStatus = z.infer<
 >;
 
 export const analysisRunObligationRecordSchema = z.strictObject({
+  source_record_ref: sourceRecordReferenceSchema.optional(),
   obligation_id: z.string().min(1),
   category: z.string().min(1),
   description: z.string().min(1),
@@ -121,6 +131,7 @@ export type AnalysisRunObligationRecord = z.infer<
 >;
 
 export const analysisRunUnknownRecordSchema = z.strictObject({
+  source_record_ref: sourceRecordReferenceSchema.optional(),
   unknown_id: z.string().min(1),
   question: z.string().min(1),
   status: z.enum([
@@ -148,8 +159,16 @@ export const analysisRunEnvelopeSchema = z.strictObject({
   predicate_type: z.string().min(1),
   subject: analysisRunSubjectSchema.nullable(),
   provider: analysisRunProviderSchema,
-  analysis_profile_digest: digestSchema.nullable().optional(),
+  analysis_profile: analysisProfileSchema.nullable().optional(),
   relationship_coverage: analysisRunCoverageSchema.nullable().optional(),
+  inventory_coverage: z
+    .strictObject({
+      procedure: analysisRunCoverageSchema.nullable().optional(),
+      finding: analysisRunCoverageSchema.nullable().optional(),
+      obligation: analysisRunCoverageSchema.nullable().optional(),
+      residual_unknown: analysisRunCoverageSchema.nullable().optional(),
+    })
+    .optional(),
   procedures: z.array(analysisRunProcedureRecordSchema).optional(),
   findings: z.array(analysisRunFindingRecordSchema).optional(),
   obligations: z.array(analysisRunObligationRecordSchema).optional(),
@@ -169,6 +188,7 @@ export const analysisRunIncompatibilityCodeSchema = z.enum([
   "incompatible_subject_format",
   "incompatible_subject_architecture",
   "incompatible_provider",
+  "incompatible_procedure_coordinates",
   "duplicate_item_identity",
 ]);
 
@@ -238,7 +258,7 @@ export type AnalysisRunItemStatus = z.infer<typeof analysisRunItemStatusSchema>;
 export const analysisRunRecordReferenceSchema = z.strictObject({
   run_id: z.string().min(1),
   evidence_id: evidenceIdSchema,
-  record_pointer: z.string().min(1),
+  record_pointer: z.string(),
 });
 
 export type AnalysisRunRecordReference = z.infer<
@@ -271,9 +291,9 @@ export const analysisRunCoverageDeltaSchema = z.strictObject({
   right_status: analysisRunCoverageStatusSchema,
   left_complete: z.boolean(),
   right_complete: z.boolean(),
-  left_omitted_count: z.int().min(0),
-  right_omitted_count: z.int().min(0),
-  omitted_count_delta: z.int(),
+  left_omitted_count: z.int().min(0).nullable(),
+  right_omitted_count: z.int().min(0).nullable(),
+  omitted_count_delta: z.int().nullable(),
   transition: z.enum(["unchanged", "improved", "regressed"]),
 });
 
@@ -349,6 +369,12 @@ export const analysisRunComparisonReportSchema = z
     }),
     ignored_presentation_fields: z.array(z.string().min(1)),
     coverage_delta: analysisRunCoverageDeltaSchema,
+    inventory_coverage_delta: z.strictObject({
+      procedure: analysisRunCoverageDeltaSchema,
+      finding: analysisRunCoverageDeltaSchema,
+      obligation: analysisRunCoverageDeltaSchema,
+      residual_unknown: analysisRunCoverageDeltaSchema,
+    }),
     summary: analysisRunComparisonSummarySchema,
     changes: z.array(analysisRunItemDeltaSchema),
     items: z.array(analysisRunItemDeltaSchema),
@@ -383,7 +409,10 @@ export const analysisRunComparisonReportSchema = z
       report.status === "unchanged" &&
       (expectedChanges > 0 ||
         !report.coverage_delta.left_complete ||
-        !report.coverage_delta.right_complete)
+        !report.coverage_delta.right_complete ||
+        Object.values(report.inventory_coverage_delta).some(
+          (coverage) => !coverage.left_complete || !coverage.right_complete,
+        ))
     ) {
       ctx.addIssue({
         code: "custom",
@@ -402,12 +431,18 @@ export interface NormalizedComparisonItem {
   readonly item_kind: AnalysisRunItemKind;
   readonly item_key: string;
   readonly matching_rule: AnalysisRunMatchingRule;
-  readonly record_pointer: string;
+  readonly source_record_ref: z.infer<
+    typeof sourceRecordReferenceSchema
+  > | null;
   readonly evidence_ids: readonly string[];
   readonly semantic_fields: Readonly<Record<string, JsonValue>>;
   readonly presentation_fields: Readonly<Record<string, JsonValue>>;
   readonly semantic_digest: string;
   readonly obligation_status?: AnalysisRunObligationStatus;
   readonly unknown_status?:
-    "open" | "investigating" | "blocked" | "contradicted" | "resolved";
+    | "open"
+    | "investigating"
+    | "blocked"
+    | "contradicted"
+    | "resolved";
 }

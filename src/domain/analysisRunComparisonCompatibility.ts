@@ -1,3 +1,5 @@
+import { committedProvidersEqual } from "./analysisProfile.js";
+import { functionCoordinateContextsEqual } from "./native/functionCoordinateContext.js";
 import {
   type AnalysisRunEnvelope,
   analysisRunEnvelopeSchema,
@@ -183,6 +185,29 @@ const checkPairSemanticCompatibility = (
       summaries,
     );
   }
+  if (
+    (left.procedures?.length ?? 0) + (right.procedures?.length ?? 0) > 0 &&
+    (left.subject === null ||
+      right.subject === null ||
+      left.subject.sha256 !== right.subject.sha256 ||
+      left.subject.architecture === null ||
+      left.analysis_profile == null ||
+      right.analysis_profile == null ||
+      !committedProvidersEqual(left.provider, left.analysis_profile.provider) ||
+      !committedProvidersEqual(
+        right.provider,
+        right.analysis_profile.provider,
+      ) ||
+      !functionCoordinateContextsEqual(
+        left.analysis_profile,
+        right.analysis_profile,
+      ))
+  )
+    return makeIncompatibility(
+      "incompatible_procedure_coordinates",
+      "Address-based procedure comparison requires the same artifact and established provider-owned coordinate mapping. Use an explicit cross-artifact mapping workflow for different binaries.",
+      summaries,
+    );
   return ok(undefined);
 };
 

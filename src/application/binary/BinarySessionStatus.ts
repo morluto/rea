@@ -26,6 +26,7 @@ import type {
 } from "./SessionProviderRouter.js";
 import { compareUnicodeCodePoints } from "../../domain/unicodeCodePointOrder.js";
 import type { BinarySessionDetail } from "../../contracts/sessionStatusContract.js";
+import type { AnalysisCleanupRetry } from "../../domain/analysisErrorRecovery.js";
 
 interface BinarySessionStatusInput {
   readonly investigation: InvestigationStatistics;
@@ -43,8 +44,10 @@ interface BinarySessionStatusInput {
   readonly requestActivitySnapshots: readonly ProviderRequestActivitySnapshot[];
   readonly providerOperationHealth?: ProviderOperationHealth | null;
   readonly cleanupPending?: boolean;
+  readonly cleanupRetry?: AnalysisCleanupRetry;
   readonly detail?: BinarySessionDetail;
   readonly signal?: AbortSignal;
+  readonly refreshCandidates?: boolean;
 }
 
 /** Project internal provider routing state into the caller-visible session status. */
@@ -61,8 +64,10 @@ export const binarySessionStatus = async ({
   requestActivitySnapshots,
   providerOperationHealth,
   cleanupPending = false,
+  cleanupRetry,
   detail = "complete",
   signal,
+  refreshCandidates = false,
 }: BinarySessionStatusInput): Promise<JsonValue> => {
   const routeCapabilities = (
     bundleResourceRoot === undefined
@@ -105,11 +110,24 @@ export const binarySessionStatus = async ({
             provider: providerSummary(route.binding.identity),
             selection_source: route.binding.selectionSource,
             analysis_profile: structuredClone(route.binding.profile),
+            ...(route.binding.releaseVerification === undefined
+              ? {}
+              : {
+                  release_verification: structuredClone(
+                    route.binding.releaseVerification,
+                  ),
+                }),
           };
   const analysisProviderCandidates =
     bundleResourceRoot !== undefined
       ? []
-      : (await router.candidateStatuses(route, signal)).map((candidate) =>
+      : (
+          await router.candidateStatuses(route, {
+            ...(signal === undefined ? {} : { signal }),
+            ...(target === undefined ? {} : { target }),
+            refresh: refreshCandidates,
+          })
+        ).map((candidate) =>
           detail === "summary"
             ? {
                 provider: providerSummary(candidate.provider),
@@ -137,9 +155,18 @@ export const binarySessionStatus = async ({
   const common = {
     investigation,
     cleanup_pending: cleanupPending,
+    ...(cleanupRetry === undefined
+      ? {}
+      : { cleanup_retry: { ...cleanupRetry } }),
     capabilities,
     analysis_provider_binding: analysisProviderBinding,
     analysis_provider_candidates: analysisProviderCandidates,
+    analysis_provider_candidates_observed:
+      bundleResourceRoot !== undefined
+        ? "not_applicable"
+        : route.selection === undefined || refreshCandidates
+          ? "status_request"
+          : "target_selection",
     analysis_run:
       runId === undefined
         ? null
@@ -178,10 +205,10 @@ export const binarySessionStatus = async ({
 const runtimeUnavailable = (
   descriptor: CapabilityDescriptor,
   reason: string,
-): CapabilityDescriptor => {
+): CapabilityDescriptor & { readonly runtimeUnavailable?: true } => {
   if (descriptor.available) {
     const { availabilityCode: _available, ...declared } = descriptor;
-    return { ...declared, available: false, reason };
+    return { ...declared, available: false, reason, runtimeUnavailable: true };
   }
   const { remediation: _superseded, ...declared } = descriptor;
   return { ...declared, reason };
@@ -345,7 +372,7 @@ type CapabilityAvailabilityCode = Exclude<
 type CapabilityProjection = Omit<
   CapabilityDescriptor,
   "operation" | "available" | "reason"
-> & { readonly operation: string } & (
+> & { readonly operation: string; readonly runtimeUnavailable?: true } & (
     | { readonly available: true; readonly reason: null }
     | {
         readonly available: false;
@@ -401,6 +428,9 @@ export const providerCapabilitySets = (
             available: false as const,
             reason: descriptor.reason,
             availability_code: availabilityCode,
+            ...(descriptor.runtimeUnavailable === true
+              ? { runtime_unavailable: true as const }
+              : {}),
             ...(descriptor.remediation === undefined
               ? {}
               : { remediation: descriptor.remediation }),
@@ -408,9 +438,12 @@ export const providerCapabilitySets = (
       const key = JSON.stringify([
         effects,
         limitations,
+        descriptor.nativeValueFlow ?? null,
+        descriptor.independentDecompile ?? null,
         status.available,
         status.reason,
         status.availability_code,
+        status.available ? null : (status.runtime_unavailable ?? null),
         status.available ? null : (status.remediation ?? null),
       ]);
       const group = groups.get(key);
@@ -419,6 +452,12 @@ export const providerCapabilitySets = (
           operations: [descriptor.operation],
           effects,
           limitations,
+          ...(descriptor.nativeValueFlow === undefined
+            ? {}
+            : { native_value_flow: descriptor.nativeValueFlow }),
+          ...(descriptor.independentDecompile === undefined
+            ? {}
+            : { independent_decompile: descriptor.independentDecompile }),
           ...status,
         });
       else group.operations.push(descriptor.operation);

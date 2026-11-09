@@ -31,12 +31,15 @@ import {
 export { checkAnalysisRunCompatibility } from "./analysisRunComparisonCompatibility.js";
 export * from "./analysisRunComparisonSchemas.js";
 
-const DEFAULT_COMPLETE_COVERAGE: AnalysisRunCoverage = Object.freeze({
-  status: "complete",
-  truncated: false,
-  omitted_count: 0,
-  reason: null,
+const UNKNOWN_COVERAGE: AnalysisRunCoverage = Object.freeze({
+  status: "unknown",
 });
+const ITEM_KINDS = [
+  "procedure",
+  "finding",
+  "obligation",
+  "residual_unknown",
+] as const;
 
 const isCoverageComplete = (coverage: AnalysisRunCoverage): boolean =>
   absenceClaimable({
@@ -63,29 +66,32 @@ const computeCoverageDelta = (
   const rightComplete = isCoverageComplete(rightCoverage);
   const leftRank = coverageRank(leftCoverage);
   const rightRank = coverageRank(rightCoverage);
-  const leftOmitted = leftCoverage.omitted_count ?? 0;
-  const rightOmitted = rightCoverage.omitted_count ?? 0;
-  const omittedDelta = rightOmitted - leftOmitted;
+  const leftOmitted = leftCoverage.omitted_count ?? null;
+  const rightOmitted = rightCoverage.omitted_count ?? null;
+  const omittedDelta =
+    leftOmitted === null || rightOmitted === null
+      ? null
+      : rightOmitted - leftOmitted;
 
-  const leftTruncated = leftCoverage.truncated ?? false;
-  const rightTruncated = rightCoverage.truncated ?? false;
+  const leftTruncated = leftCoverage.truncated;
+  const rightTruncated = rightCoverage.truncated;
   let transition: "unchanged" | "improved" | "regressed" = "unchanged";
   if (
     rightRank > leftRank ||
-    (rightRank === leftRank && omittedDelta < 0) ||
+    (rightRank === leftRank && omittedDelta !== null && omittedDelta < 0) ||
     (rightRank === leftRank &&
       omittedDelta === 0 &&
-      leftTruncated &&
-      !rightTruncated)
+      leftTruncated === true &&
+      rightTruncated === false)
   ) {
     transition = "improved";
   } else if (
     rightRank < leftRank ||
-    (rightRank === leftRank && omittedDelta > 0) ||
+    (rightRank === leftRank && omittedDelta !== null && omittedDelta > 0) ||
     (rightRank === leftRank &&
       omittedDelta === 0 &&
-      !leftTruncated &&
-      rightTruncated)
+      leftTruncated === false &&
+      rightTruncated === true)
   ) {
     transition = "regressed";
   }
@@ -186,7 +192,7 @@ const recordUnmatchedKindCount = (
 interface DeltaBuildContext {
   readonly left: AnalysisRunEnvelope;
   readonly right: AnalysisRunEnvelope;
-  readonly coverageDelta: AnalysisRunCoverageDelta;
+  readonly inventoryCoverage: AnalysisRunComparisonReport["inventory_coverage_delta"];
   readonly counters: KindCounters;
 }
 
@@ -226,16 +232,14 @@ const buildMatchedDelta = (
     unknown_reason: null,
     left_semantic_digest: leftItem.semantic_digest,
     right_semantic_digest: rightItem.semantic_digest,
-    left_record_ref: {
-      run_id: ctx.left.run_id,
-      evidence_id: ctx.left.evidence_id,
-      record_pointer: leftItem.record_pointer,
-    },
-    right_record_ref: {
-      run_id: ctx.right.run_id,
-      evidence_id: ctx.right.evidence_id,
-      record_pointer: rightItem.record_pointer,
-    },
+    left_record_ref:
+      leftItem.source_record_ref === null
+        ? null
+        : { run_id: ctx.left.run_id, ...leftItem.source_record_ref },
+    right_record_ref:
+      rightItem.source_record_ref === null
+        ? null
+        : { run_id: ctx.right.run_id, ...rightItem.source_record_ref },
     evidence_links: sortUniqueStrings([
       ...leftItem.evidence_ids,
       ...rightItem.evidence_ids,
@@ -251,8 +255,8 @@ const buildUnmatchedDelta = (
 ): AnalysisRunItemDelta => {
   const otherComplete =
     side === "left_only"
-      ? ctx.coverageDelta.right_complete
-      : ctx.coverageDelta.left_complete;
+      ? ctx.inventoryCoverage[item.item_kind].right_complete
+      : ctx.inventoryCoverage[item.item_kind].left_complete;
   const run = side === "left_only" ? ctx.left : ctx.right;
   const status = otherComplete
     ? side === "left_only"
@@ -260,11 +264,10 @@ const buildUnmatchedDelta = (
       : "added"
     : "unknown";
   recordUnmatchedKindCount(ctx.counters, item.item_kind, status);
-  const ref = {
-    run_id: run.run_id,
-    evidence_id: run.evidence_id,
-    record_pointer: item.record_pointer,
-  };
+  const ref =
+    item.source_record_ref === null
+      ? null
+      : { run_id: run.run_id, ...item.source_record_ref };
   return {
     item_kind: item.item_kind,
     item_key: key,
@@ -318,12 +321,12 @@ const buildReportLimitations = (
       : []),
     ...(!coverageDelta.left_complete
       ? [
-          `Left analysis run (${left.run_id}) has incomplete relationship coverage (${leftCoverage.status}, truncated=${String(leftCoverage.truncated ?? false)}, omitted_count=${String(leftCoverage.omitted_count ?? 0)}); items present only in the right run are classified as unknown rather than added.`,
+          `Left analysis run (${left.run_id}) has incomplete relationship coverage (${leftCoverage.status}, truncated=${String(leftCoverage.truncated ?? "unknown")}, omitted_count=${String(leftCoverage.omitted_count ?? null)}); unreported call relationships remain unknown.`,
         ]
       : []),
     ...(!coverageDelta.right_complete
       ? [
-          `Right analysis run (${right.run_id}) has incomplete relationship coverage (${rightCoverage.status}, truncated=${String(rightCoverage.truncated ?? false)}, omitted_count=${String(rightCoverage.omitted_count ?? 0)}); items absent from the right run are classified as unknown rather than removed.`,
+          `Right analysis run (${right.run_id}) has incomplete relationship coverage (${rightCoverage.status}, truncated=${String(rightCoverage.truncated ?? "unknown")}, omitted_count=${String(rightCoverage.omitted_count ?? null)}); unreported call relationships remain unknown.`,
         ]
       : []),
     ...(left.provider.id !== right.provider.id
@@ -331,32 +334,14 @@ const buildReportLimitations = (
           `Left provider (${left.provider.id}) differs from right provider (${right.provider.id}); only items with explicit matching keys were compared.`,
         ]
       : []),
-    ...((left.analysis_profile_digest ?? null) !==
-    (right.analysis_profile_digest ?? null)
+    ...((left.analysis_profile?.digest ?? null) !==
+    (right.analysis_profile?.digest ?? null)
       ? [
-          `Analysis profile digest differs between left (${String(left.analysis_profile_digest ?? null)}) and right (${String(right.analysis_profile_digest ?? null)}).`,
+          `Analysis profile digest differs between left (${String(left.analysis_profile?.digest ?? null)}) and right (${String(right.analysis_profile?.digest ?? null)}).`,
         ]
       : []),
   ]);
 };
-
-const stripPositionalPointerForDigest = (delta: AnalysisRunItemDelta) => ({
-  ...delta,
-  left_record_ref:
-    delta.left_record_ref === null
-      ? null
-      : {
-          run_id: delta.left_record_ref.run_id,
-          evidence_id: delta.left_record_ref.evidence_id,
-        },
-  right_record_ref:
-    delta.right_record_ref === null
-      ? null
-      : {
-          run_id: delta.right_record_ref.run_id,
-          evidence_id: delta.right_record_ref.evidence_id,
-        },
-});
 
 const collectComparisonDeltas = (
   leftItems: ReadonlyMap<string, NormalizedComparisonItem>,
@@ -410,16 +395,39 @@ export const compareAnalysisRuns = (
   ]);
   const ignoredFieldsSet = new Set(ignoredFieldsList);
 
-  const leftCoverage = left.relationship_coverage ?? DEFAULT_COMPLETE_COVERAGE;
-  const rightCoverage =
-    right.relationship_coverage ?? DEFAULT_COMPLETE_COVERAGE;
+  const leftCoverage = left.relationship_coverage ?? UNKNOWN_COVERAGE;
+  const rightCoverage = right.relationship_coverage ?? UNKNOWN_COVERAGE;
   const coverageDelta = computeCoverageDelta(leftCoverage, rightCoverage);
+  const inventoryCoverage = {
+    procedure: computeCoverageDelta(
+      left.inventory_coverage?.procedure ?? UNKNOWN_COVERAGE,
+      right.inventory_coverage?.procedure ?? UNKNOWN_COVERAGE,
+    ),
+    finding: computeCoverageDelta(
+      left.inventory_coverage?.finding ?? UNKNOWN_COVERAGE,
+      right.inventory_coverage?.finding ?? UNKNOWN_COVERAGE,
+    ),
+    obligation: computeCoverageDelta(
+      left.inventory_coverage?.obligation ?? UNKNOWN_COVERAGE,
+      right.inventory_coverage?.obligation ?? UNKNOWN_COVERAGE,
+    ),
+    residual_unknown: computeCoverageDelta(
+      left.inventory_coverage?.residual_unknown ?? UNKNOWN_COVERAGE,
+      right.inventory_coverage?.residual_unknown ?? UNKNOWN_COVERAGE,
+    ),
+  };
+  const inventoriesComplete = ITEM_KINDS.every(
+    (kind) =>
+      inventoryCoverage[kind].left_complete &&
+      inventoryCoverage[kind].right_complete,
+  );
+
   const counters = createKindCounters();
 
   const sortedItems = collectComparisonDeltas(
     extractNormalizedRunItems(left, ignoredFieldsSet),
     extractNormalizedRunItems(right, ignoredFieldsSet),
-    { left, right, coverageDelta, counters },
+    { left, right, inventoryCoverage, counters },
   );
   const changes = sortedItems.filter((item) => item.status !== "unchanged");
 
@@ -446,7 +454,9 @@ export const compareAnalysisRuns = (
       ? "unknown"
       : hasPositiveChange
         ? "changed"
-        : !coverageDelta.left_complete || !coverageDelta.right_complete
+        : !inventoriesComplete ||
+            !coverageDelta.left_complete ||
+            !coverageDelta.right_complete
           ? "unknown"
           : "unchanged";
 
@@ -473,21 +483,59 @@ export const compareAnalysisRuns = (
     },
     ignored_presentation_fields: ignoredFieldsList,
     coverage_delta: coverageDelta,
+    inventory_coverage_delta: inventoryCoverage,
     summary,
     changes,
     items: sortedItems,
-    limitations: buildReportLimitations(left, right, {
-      leftCoverage,
-      rightCoverage,
-      coverageDelta,
-    }),
+    limitations: sortUniqueStrings([
+      ...buildReportLimitations(left, right, {
+        leftCoverage,
+        rightCoverage,
+        coverageDelta,
+      }),
+      ...ITEM_KINDS.flatMap((kind) => [
+        ...(left.inventory_coverage?.[kind]?.limitations ?? []).map(
+          (note) => `Left ${kind} inventory: ${note}`,
+        ),
+        ...(right.inventory_coverage?.[kind]?.limitations ?? []).map(
+          (note) => `Right ${kind} inventory: ${note}`,
+        ),
+        ...(left.inventory_coverage?.[kind]?.reason == null
+          ? []
+          : [
+              `Left ${kind} inventory: ${left.inventory_coverage[kind]!.reason}`,
+            ]),
+        ...(right.inventory_coverage?.[kind]?.reason == null
+          ? []
+          : [
+              `Right ${kind} inventory: ${right.inventory_coverage[kind]!.reason}`,
+            ]),
+      ]),
+      ...ITEM_KINDS.flatMap((kind) => {
+        const delta = inventoryCoverage[kind];
+        return delta.left_complete && delta.right_complete
+          ? []
+          : [
+              `${kind} inventory coverage is incomplete or unknown; unmatched records cannot establish absence in the incomplete run.`,
+            ];
+      }),
+      ...(sortedItems.some(
+        (item) =>
+          (item.status !== "added" && item.left_record_ref === null) ||
+          (item.status !== "removed" && item.right_record_ref === null),
+      )
+        ? [
+            "Original source record locations were not supplied for some items; no Evidence pointers were inferred from envelope order.",
+          ]
+        : []),
+    ]),
   };
 
   const comparisonId = `arcr_${digestCanonicalValue(
     {
       ...unsignedReport,
-      changes: changes.map(stripPositionalPointerForDigest),
-      items: sortedItems.map(stripPositionalPointerForDigest),
+      changes,
+      items: sortedItems,
     },
     "Analysis run comparison report",
   )}`;

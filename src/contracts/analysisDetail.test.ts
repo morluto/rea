@@ -49,7 +49,12 @@ it("advertises only that operation's summary from analysis detail outputs", () =
     binaryLayoutSummaryViewResultSchema.safeParse(javascript.value).success,
   ).toBe(false);
 
-  const ajv = new Ajv2020({ strict: false, validateFormats: false });
+  const ajv = new Ajv2020({
+    strict: false,
+    validateFormats: false,
+    inlineRefs: false,
+    code: { optimize: false },
+  });
   const validators = Object.fromEntries(
     (
       [

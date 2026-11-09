@@ -77,7 +77,6 @@ const moveIgnoredTopLevelFields = (
 
 export const normalizeProcedureItem = (
   procedure: AnalysisRunProcedureRecord,
-  index: number,
   run: AnalysisRunEnvelope,
   ignoredFields: ReadonlySet<string>,
 ): NormalizedComparisonItem => {
@@ -88,8 +87,8 @@ export const normalizeProcedureItem = (
     name: procedure.name,
     signature: procedure.signature ?? null,
     size_bytes: procedure.size_bytes ?? null,
-    callees: sortUniqueStrings(procedure.callees ?? []),
-    callers: sortUniqueStrings(procedure.callers ?? []),
+    callees: sortUniqueStrings(procedure.callees),
+    callers: sortUniqueStrings(procedure.callers),
     pseudocode_sha256: procedure.pseudocode_sha256 ?? null,
     ...(Object.keys(semanticMeta).length > 0 ? { metadata: semanticMeta } : {}),
   };
@@ -103,9 +102,12 @@ export const normalizeProcedureItem = (
     item_kind: "procedure",
     item_key: `procedure:${procedure.address}`,
     matching_rule: "procedure-address",
-    record_pointer: `/procedures/${String(index)}`,
+    source_record_ref: procedure.source_record_ref ?? null,
     evidence_ids: sortUniqueStrings([
       run.evidence_id,
+      ...(procedure.source_record_ref === undefined
+        ? []
+        : [procedure.source_record_ref.evidence_id]),
       ...(procedure.evidence_id === undefined ? [] : [procedure.evidence_id]),
       ...(procedure.evidence_ids ?? []),
     ]),
@@ -146,7 +148,6 @@ const mergePresentationAttrAndMeta = (
 
 export const normalizeFindingItem = (
   finding: AnalysisRunFindingRecord,
-  index: number,
   run: AnalysisRunEnvelope,
   ignoredFields: ReadonlySet<string>,
 ): NormalizedComparisonItem => {
@@ -182,9 +183,12 @@ export const normalizeFindingItem = (
     item_kind: "finding",
     item_key: `finding:${finding.finding_id}`,
     matching_rule: "finding-id",
-    record_pointer: `/findings/${String(index)}`,
+    source_record_ref: finding.source_record_ref ?? null,
     evidence_ids: sortUniqueStrings([
       run.evidence_id,
+      ...(finding.source_record_ref === undefined
+        ? []
+        : [finding.source_record_ref.evidence_id]),
       ...(finding.evidence_id === undefined ? [] : [finding.evidence_id]),
       ...(finding.evidence_ids ?? []),
     ]),
@@ -199,7 +203,6 @@ export const normalizeFindingItem = (
 
 export const normalizeObligationItem = (
   obligation: AnalysisRunObligationRecord,
-  index: number,
   run: AnalysisRunEnvelope,
   ignoredFields: ReadonlySet<string>,
 ): NormalizedComparisonItem => {
@@ -222,9 +225,12 @@ export const normalizeObligationItem = (
     item_kind: "obligation",
     item_key: `obligation:${obligation.obligation_id}`,
     matching_rule: "obligation-id",
-    record_pointer: `/obligations/${String(index)}`,
+    source_record_ref: obligation.source_record_ref ?? null,
     evidence_ids: sortUniqueStrings([
       run.evidence_id,
+      ...(obligation.source_record_ref === undefined
+        ? []
+        : [obligation.source_record_ref.evidence_id]),
       ...(obligation.evidence_ids ?? []),
     ]),
     semantic_fields: semanticFields,
@@ -239,7 +245,6 @@ export const normalizeObligationItem = (
 
 export const normalizeUnknownItem = (
   unknownRecord: AnalysisRunUnknownRecord,
-  index: number,
   run: AnalysisRunEnvelope,
   ignoredFields: ReadonlySet<string>,
 ): NormalizedComparisonItem => {
@@ -265,9 +270,12 @@ export const normalizeUnknownItem = (
     item_kind: "residual_unknown",
     item_key: `unknown:${unknownRecord.unknown_id}`,
     matching_rule: "unknown-id",
-    record_pointer: `/unknowns/${String(index)}`,
+    source_record_ref: unknownRecord.source_record_ref ?? null,
     evidence_ids: sortUniqueStrings([
       run.evidence_id,
+      ...(unknownRecord.source_record_ref === undefined
+        ? []
+        : [unknownRecord.source_record_ref.evidence_id]),
       ...(unknownRecord.evidence_ids ?? []),
     ]),
     semantic_fields: semanticFields,
@@ -285,20 +293,20 @@ export const extractNormalizedRunItems = (
   ignoredFields: ReadonlySet<string>,
 ): Map<string, NormalizedComparisonItem> => {
   const map = new Map<string, NormalizedComparisonItem>();
-  for (const [index, procedure] of (run.procedures ?? []).entries()) {
-    const item = normalizeProcedureItem(procedure, index, run, ignoredFields);
+  for (const procedure of run.procedures ?? []) {
+    const item = normalizeProcedureItem(procedure, run, ignoredFields);
     map.set(item.item_key, item);
   }
-  for (const [index, finding] of (run.findings ?? []).entries()) {
-    const item = normalizeFindingItem(finding, index, run, ignoredFields);
+  for (const finding of run.findings ?? []) {
+    const item = normalizeFindingItem(finding, run, ignoredFields);
     map.set(item.item_key, item);
   }
-  for (const [index, obligation] of (run.obligations ?? []).entries()) {
-    const item = normalizeObligationItem(obligation, index, run, ignoredFields);
+  for (const obligation of run.obligations ?? []) {
+    const item = normalizeObligationItem(obligation, run, ignoredFields);
     map.set(item.item_key, item);
   }
-  for (const [index, unknownRecord] of (run.unknowns ?? []).entries()) {
-    const item = normalizeUnknownItem(unknownRecord, index, run, ignoredFields);
+  for (const unknownRecord of run.unknowns ?? []) {
+    const item = normalizeUnknownItem(unknownRecord, run, ignoredFields);
     map.set(item.item_key, item);
   }
   return map;

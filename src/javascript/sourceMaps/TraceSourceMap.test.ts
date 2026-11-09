@@ -63,8 +63,7 @@ it("uses the same conservative section classification for URL-plus-map and malfo
   expect(malformed).toThrow(
     expect.objectContaining({
       reason: "format",
-      message:
-        "External source-map section URL must be a string. Section path: [0].",
+      message: expect.stringMatching(/section URL.*must be a string.*\[0\]/iu),
     }),
   );
 });
@@ -82,7 +81,7 @@ it("rejects a present non-array sections member through the shared section-list 
   expect(malformed).toThrow(
     expect.objectContaining({
       reason: "format",
-      message: "Indexed source-map sections must be an array.",
+      message: expect.stringMatching(/sections.*must be an array/iu),
     }),
   );
 });

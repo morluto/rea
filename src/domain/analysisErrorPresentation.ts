@@ -1,4 +1,5 @@
 import { describeResidualUnknownGraphConstraint } from "./residualUnknownGraphError.js";
+import { knownArgumentMistakeRemediation } from "./inputArgumentGuidance.js";
 import {
   AnalysisAccessDeniedError,
   AnalysisArtifactChangedError,
@@ -46,6 +47,10 @@ import {
 } from "./analysisErrorBase.js";
 import type { AnalysisErrorProjection } from "./analysisErrorProjection.js";
 
+/** Explain how to preserve an observation the session could not retain. */
+export const UNRETAINED_EVIDENCE_EXPORT_GUIDANCE =
+  "Unretained Evidence is not included in the exported investigation; if present in this response, save it separately.";
+
 /** File export when one MCP frame cannot carry the retained session bundle. */
 export const MCP_TRANSPORT_EVIDENCE_EXPORT =
   "Export complete retained session evidence through export_evidence_bundle to a caller-selected path, or use complete CLI JSON output. The connection remains usable.";
@@ -55,6 +60,10 @@ export const MCP_TRANSPORT_EVIDENCE_DISCOVERY = `Discover retained records with 
 
 /** Next step when one MCP frame cannot carry a selected page of complete records. */
 export const MCP_TRANSPORT_EVIDENCE_RECORDS = `Request fewer records with get_evidence_bundle detail: records, a smaller limit or an exact evidence_id filter; inspect compatible records in pages through inspect_analysis_view. A single record larger than one response needs export. ${MCP_TRANSPORT_EVIDENCE_EXPORT}`;
+
+/** Next step when one MCP frame cannot carry a selected page of link rows. */
+export const MCP_TRANSPORT_EVIDENCE_LINKS =
+  "Request fewer rows with get_evidence_bundle detail: links, a smaller limit or an exact evidence_id filter, then follow next_offset.";
 
 /** Name the next step that is true for how long the caller keeps REA's runtime and session. */
 export const analysisErrorRemediationAction = (
@@ -85,6 +94,11 @@ export const analysisErrorRemediationAction = (
     return "Set environment.service_workers to allow to permit this capture, or remove the service worker registration through the browser. REA never removes existing registrations.";
   if (error instanceof AnalysisCapabilityUnavailableError && error.retryable)
     return "Review details.reason, then retry the same analysis after the condition clears.";
+  if (
+    error instanceof AnalysisCapabilityUnavailableError &&
+    error.fallbackRemediationAction !== undefined
+  )
+    return error.fallbackRemediationAction;
   if (error instanceof EvidenceFileError && error.published !== undefined)
     return error.published.path === undefined
       ? "Resolve the reported staging cleanup failure. Publication completed; its path identity is excluded."
@@ -158,6 +172,11 @@ export const analysisErrorRemediationAction = (
       : "Use an exact Evidence reference available from the selected source, supply the complete inline Evidence, re-run its producer, or select/import its Evidence bundle. reset_investigation clears retained records; close_binary preserves them.";
   if (
     error instanceof BinaryTargetError &&
+    error.remediationAction !== undefined
+  )
+    return error.remediationAction;
+  if (
+    error instanceof BinaryTargetError &&
     error.constraint === "directory_requires_file"
   )
     return `For a JavaScript/Electron application directory, call analyze_javascript_application with input_path or run \`rea analyze <directory>\`. For binary analysis, select its executable file or an Apple bundle directory (${OPENABLE_APPLE_BUNDLE_TYPES_TEXT}).`;
@@ -210,11 +229,18 @@ export const analysisErrorRemediationAction = (
         ? `Correct ${[...new Set(error.settings.map(({ setting }) => setting))].join(", ")} in the environment that starts REA (your shell or the MCP client's registration), then rerun.`
         : analysisErrorUserMessage(error))
     );
-  if (error instanceof AnalysisInputError)
-    return (
-      error.remediationAction ??
-      `Read the declared input schema or CLI usage for ${error.operation}; if using MCP and the catalog may be stale, call tools/list. Correct the listed fields, then retry. Do not repeat the unchanged call.`
+  if (error instanceof AnalysisInputError) {
+    const mistakeRemediation = knownArgumentMistakeRemediation(
+      error.operation,
+      error.issues,
     );
+    const baseAction =
+      error.remediationAction ??
+      `Read the declared input schema or CLI usage for ${error.operation}; if using MCP and the catalog may be stale, call tools/list. Correct the listed fields, then retry. Do not repeat the unchanged call.`;
+    return mistakeRemediation === undefined
+      ? baseAction
+      : `${mistakeRemediation} ${baseAction}`;
+  }
   if (
     error instanceof AnalysisOutputError &&
     error.remediationAction !== undefined

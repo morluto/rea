@@ -9,6 +9,7 @@ import {
   SREC_S19,
 } from "../../src/domain/firmware/hexRecords.fixture.js";
 import { parseEvidence } from "../../src/domain/evidence.js";
+import { artifactFormatDescriptor } from "../../src/artifacts/artifactFormats.js";
 import { artifactInspectionResultSchema } from "../../src/domain/artifactInspection.js";
 import {
   artifactExtractionResultSchema,
@@ -37,6 +38,32 @@ const cases = [
       "0x00000000-0x0000001f.bin": Buffer.from(
         Array.from({ length: 32 }, (_, index) => index),
       ),
+    },
+  },
+  {
+    encoding: "srec",
+    name: "firmware.s28",
+    text: "S208FEDCBADEADBEEF2B\nS804FEDCBA67\n",
+    root: {
+      variant: "S28",
+      start_address: 0xfe_dcba,
+      start_address_record: "S8",
+    },
+    regions: {
+      "0x00fedcba-0x00fedcbd.bin": Buffer.from("deadbeef", "hex"),
+    },
+  },
+  {
+    encoding: "srec",
+    name: "firmware.s37",
+    text: "S309FEDCBA98DEADBEEF92\nS705FEDCBA98CE\n",
+    root: {
+      variant: "S37",
+      start_address: 0xfedc_ba98,
+      start_address_record: "S7",
+    },
+    regions: {
+      "0xfedcba98-0xfedcba9b.bin": Buffer.from("deadbeef", "hex"),
     },
   },
 ] as const;
@@ -70,9 +97,14 @@ cliTest.for(cases)(
     ).toEqual(Object.keys(regions));
     if (encoding === "intel-hex") {
       expect(graph.coverage.scope).toBe("container-entries");
-      expect(graph.limitations).toContain(
-        "Intel HEX/S-record inventory decodes data records into address-contiguous regions. It does not establish CPU, byte order, memory map, or that a declared start address is executable; gaps are unwritten, not zero.",
+      const limitation = artifactFormatDescriptor(encoding)?.readerLimitation;
+      if (limitation === undefined)
+        throw new Error("Missing format limitation");
+      expect(graph.limitations).toContain(limitation);
+      expect(limitation).toMatch(
+        /not establish.*CPU.*byte order.*memory map.*start address.*executable/iu,
       );
+      expect(limitation).toMatch(/gaps.*unwritten.*not zero/iu);
       expect(
         graph.occurrences.find((row) => row.logical_path === "."),
       ).toMatchObject({
@@ -135,6 +167,7 @@ cliTest.for(cases)(
       expect(
         Buffer.compare(await readFile(join(result.output_root, path)), bytes),
       ).toBe(0);
+    expect((await readFile(source)).equals(Buffer.from(text))).toBe(true);
   },
 );
 
@@ -150,8 +183,8 @@ cliTest("rejects a malformed record through the CLI", async ({ cli }) => {
     code: "artifact_operation_failed",
     details: { operation: "inspect_artifact", reason: "format" },
   });
-  expect(result.stdout + result.stderr).toContain(
-    "Intel HEX is malformed: line 4: record type 00 checksum 0xc4 does not match computed 0xc3",
+  expect(result.stdout + result.stderr).toMatch(
+    /line 4.*record type 00.*checksum 0xc4.*computed 0xc3/iu,
   );
 });
 
