@@ -206,6 +206,55 @@ it.each([
   ]);
 });
 it.each([
+  [
+    "an unreadable computed key that may re-write the version",
+    `const k = "minVersion"; tls.connect({ port: 443, minVersion: "nope", [k]: "TLSv1.2" })`,
+  ],
+  [
+    "a getter that shadows a version method",
+    `tls.connect({ port: 443, get side() { this.minVersion = "TLSv1.2"; }, minVersion() {} })`,
+  ],
+  [
+    "an unreadable second options object",
+    `const o = { minVersion: "TLSv1.2" }; tls.connect({ port: 443, minVersion: "nope" }, o)`,
+  ],
+] as const)("keeps the socket acquisition for %s", (_name, call) => {
+  // `semanticStaticPropertyKey` is the nullable owner: an unresolved key is `null`, not
+  // `""`. An accessor can also replace a plain method before Node copies it, and a
+  // non-literal second argument is a merged options object rather than an absent one.
+  expect(acquisitionsFor(call)).toEqual([
+    { kind: "acquire", method: "connect" },
+  ]);
+});
+
+it.each([
+  [
+    "a signed-zero secure context",
+    `tls.connect({ port: 443, secureContext: -0, minVersion: "nope" })`,
+  ],
+  ["a logical-not version", `tls.connect({ port: 443, minVersion: !0 })`],
+  ["a double-not version", `tls.connect({ port: 443, minVersion: !!0 })`],
+  [
+    "a double-bitwise-not version",
+    `tls.connect({ port: 443, minVersion: ~~0 })`,
+  ],
+  ["a typeof version", `tls.connect({ port: 443, minVersion: typeof 1 })`],
+] as const)("emits no socket acquisition for %s", (_name, call) => {
+  // `-0` is falsy, so the context does not bypass parsing; and a unary operator over a
+  // settled operand is a settled non-string primitive, which Node refuses.
+  expect(acquisitionsFor(call)).toEqual([]);
+});
+
+it.each([
+  ["a void version", `tls.connect({ port: 443, minVersion: void 0 })`],
+] as const)("keeps the socket acquisition for %s", (_name, call) => {
+  // `void` is `undefined`, which Node reads as "not given", and a plain method is a value
+  // Node never reads as a version name when no accessor can replace it.
+  expect(acquisitionsFor(call)).toEqual([
+    { kind: "acquire", method: "connect" },
+  ]);
+});
+it.each([
   ["an unknown version name", `tls.connect({ port: 80, minVersion: "nope" })`],
   ["the TLSv1.0 spelling", `tls.connect({ port: 80, minVersion: "TLSv1.0" })`],
   ["a lower-case name", `tls.connect({ port: 80, minVersion: "tlsv1.2" })`],
