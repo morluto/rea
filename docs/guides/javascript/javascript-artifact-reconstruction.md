@@ -517,6 +517,9 @@ prefix is never presented as a complete stable fingerprint.
 
 ## Cached-data compilation boundaries
 
+The [feature specification](../../specs/javascript/v8-cached-data/spec.md) defines
+the static admission and uncertainty contract.
+
 A `node:vm` compilation reports whether `cachedData` is declared, absent or
 unknown. Source syntax alone does not establish valid cache bytes, V8 acceptance
 or execution. The summary counts declared compilations, not executions.
