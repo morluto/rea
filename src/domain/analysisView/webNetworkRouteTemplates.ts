@@ -69,11 +69,17 @@ export const readRecordedHeaderNames = (
 ): RecordedHeaderNames | null => {
   const record =
     typeof reported === "object" && reported !== null
-      ? (reported as { readonly request?: unknown; readonly response?: unknown })
+      ? (reported as {
+          readonly request?: unknown;
+          readonly response?: unknown;
+        })
       : {};
   const request =
     typeof record.request === "object" && record.request !== null
-      ? (record.request as { readonly headers?: unknown; readonly cookies?: unknown })
+      ? (record.request as {
+          readonly headers?: unknown;
+          readonly cookies?: unknown;
+        })
       : {};
   const response =
     typeof record.response === "object" && record.response !== null
