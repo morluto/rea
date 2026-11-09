@@ -8,7 +8,11 @@ import {
   type ContextBridgeMemberBudget,
   type ContextBridgeNestedPropertyResolution,
 } from "./electronStaticAnalysisValues.js";
-import { unwrapJavaScriptExpression } from "./javascriptAstValues.js";
+import {
+  isObjectPrototypeSetter,
+  semanticStaticPropertyKey,
+  unwrapJavaScriptExpression,
+} from "./javascriptAstValues.js";
 import {
   immutableLexicalInitializerAtRead,
   unwrapUnmodifiedObjectFreezeArgument,
@@ -23,7 +27,21 @@ import { javascriptSourceRangeKey } from "./javascriptSourceCoordinates.js";
 import { range } from "./javascriptStaticAnalysisHelpers.js";
 import type { JavaScriptSourceRange } from "./javascriptStaticAnalysisTypes.js";
 
-/** Defer contextBridge APIs whose root or nested object values may resolve via bindings or Object.freeze. */
+const isSyntacticNonEnumerableLeaf = (node: t.Node): boolean =>
+  t.isFunction(node) ||
+  t.isStringLiteral(node) ||
+  t.isNumericLiteral(node) ||
+  t.isBooleanLiteral(node) ||
+  t.isNullLiteral(node) ||
+  t.isBigIntLiteral(node) ||
+  t.isRegExpLiteral(node) ||
+  t.isTemplateLiteral(node) ||
+  t.isUnaryExpression(node) ||
+  t.isBinaryExpression(node) ||
+  t.isUpdateExpression(node) ||
+  t.isArrayExpression(node);
+
+/** Defer contextBridge APIs whose root or nested object values may resolve via bindings, Object.freeze, or non-leaf expressions. */
 export const needsDeferredContextBridgeApi = (
   apiNode: t.Node | undefined,
   depth = 0,
@@ -37,13 +55,15 @@ export const needsDeferredContextBridgeApi = (
     t.isOptionalCallExpression(unwrapped)
   )
     return true;
-  if (!t.isObjectExpression(unwrapped) || depth >= contextBridgeMemberPathDepth)
-    return false;
-  return unwrapped.properties.some(
-    (property) =>
-      t.isObjectProperty(property) &&
-      needsDeferredContextBridgeApi(property.value, depth + 1),
-  );
+  if (!t.isObjectExpression(unwrapped))
+    return depth > 0 && !isSyntacticNonEnumerableLeaf(unwrapped);
+  if (depth >= contextBridgeMemberPathDepth) return false;
+  return unwrapped.properties.some((property) => {
+    if (!t.isObjectProperty(property)) return false;
+    const name = semanticStaticPropertyKey(property.key, property.computed);
+    if (name !== null && isObjectPrototypeSetter(property, name)) return false;
+    return needsDeferredContextBridgeApi(property.value, depth + 1);
+  });
 };
 
 /** Avoid indexing member-mutation facts unless at least one binding or Object.freeze candidate exists. */

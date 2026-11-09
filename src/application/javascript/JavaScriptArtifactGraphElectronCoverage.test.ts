@@ -528,3 +528,42 @@ it("projects constant-resolved and callable contextBridge exposures with IPC pai
     ]),
   );
 });
+
+it("recovers nested exposed_api_members for TypeScript-wrapped inline contextBridge objects in .cts preloads", async () => {
+  const preloadEntry = await analyzedEntry(
+    `const { contextBridge, ipcRenderer } = require("electron");\n` +
+      `const bag = { sub: { ping: () => ipcRenderer.invoke("cts:ping") } };\n` +
+      `contextBridge.exposeInMainWorld("api", ({ sub: bag.sub } as const));\n`,
+    "preload.cts",
+  );
+  const analysis: JavaScriptArtifactAnalysis = {
+    jsonDocuments: new JavaScriptJsonDocuments(),
+    files: [preloadEntry],
+    packages: [],
+    json_modules: [],
+    html_scripts: [],
+    html_inline_scripts: [],
+    source_maps: [],
+    visited_ast_nodes: 0,
+    findings: 0,
+    modules: 0,
+    parse_failures: 0,
+    limitations: [],
+  };
+  const fileSet = {
+    files: [preloadEntry.file],
+    unavailable_relevant_files: [],
+    containers: [],
+    text_bytes_read: preloadEntry.file.bytes,
+    invalid_utf8_files: 0,
+  };
+  const steps = buildGraph(snapshot, fileSet, analysis);
+  let next = steps.next();
+  while (next.done !== true) next = steps.next();
+
+  expect(next.value.electronSummary).toMatchObject({
+    electron_semantics: "recovered",
+    context_bridge_apis: 1,
+    exposed_api_members: 2,
+  });
+});

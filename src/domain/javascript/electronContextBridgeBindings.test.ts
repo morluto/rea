@@ -1018,3 +1018,101 @@ it("preserves Electron exports across fresh Array.from mappers, overwritten Obje
     }),
   ]);
 });
+
+it("bounds deeply nested parameter-default activation without exponential stalls", () => {
+  let unknownFallbackPattern = "leaf = ipcRenderer";
+  let objectFallbackPattern = "leafObj = ipcRenderer";
+  for (let depth = 31; depth >= 0; depth -= 1) {
+    unknownFallbackPattern = `{ d${depth}: ${unknownFallbackPattern} } = globalThis.unknownFallback`;
+    objectFallbackPattern = `{ d${depth}: ${objectFallbackPattern} } = {}`;
+  }
+  const source = `
+      const { contextBridge, ipcRenderer } = require("electron");
+      function unpackUnknown(${unknownFallbackPattern}) { return leaf; }
+      function unpackObj(${objectFallbackPattern}) { return leafObj; }
+      const maybeLeaf = unpackUnknown(globalThis.unknownInput);
+      maybeLeaf.sendSync = () => 0;
+      const maybeObjLeaf = unpackObj(globalThis.unknownInput);
+      maybeObjLeaf.sendToHost = () => 0;
+      contextBridge.exposeInMainWorld("api", {
+        overwrittenSync: () => ipcRenderer.sendSync("fake-sync"),
+        overwrittenHost: () => ipcRenderer.sendToHost("fake-host"),
+        intactInvoke: () => ipcRenderer.invoke("real-invoke"),
+      });
+    `;
+  const parsed = parseJavaScriptSource(source, "preload.cjs");
+  if (parsed === null) throw new Error("Expected CommonJS parse");
+  const analysis = analyzeParsedJavaScriptStaticSource(source, parsed);
+
+  expect(analysis.parse_status).toBe("complete");
+  expect(analysis.electron.ipc.map(({ channel }) => channel)).toEqual([
+    "real-invoke",
+  ]);
+});
+
+it("handles getter-deleted Object.assign keys, positional Array.from/Object.values slots, mapper defaults, and null-prototype array-likes", () => {
+  const source = `
+      const { contextBridge, ipcRenderer } = require("electron");
+
+      const getterDeleted = Object.assign(
+        {},
+        { ipc: ipcRenderer },
+        { get first() { delete this.ipc; return 0; }, ipc: {} },
+      );
+      getterDeleted.ipc.sendSync = () => 0;
+
+      Array.from([ipcRenderer, {}], (x) => x)[1].invoke = () => 0;
+      Object.values({ a: ipcRenderer, b: {} })[1].send = () => 0;
+      Array.from([{}], (x = ipcRenderer) => x)[0].sendToHost = () => 0;
+      Array.from({ __proto__: null, 0: {}, length: 1, extra: ipcRenderer })[0].postMessage = () => 0;
+
+      contextBridge.exposeInMainWorld("api", {
+        overwrittenSync: () => ipcRenderer.sendSync("fake-sync"),
+        intactInvoke: () => ipcRenderer.invoke("real-invoke"),
+        intactSend: () => ipcRenderer.send("real-send"),
+        intactHost: () => ipcRenderer.sendToHost("real-host"),
+        intactPost: () => ipcRenderer.postMessage("real-post", "*"),
+      });
+    `;
+  const parsed = parseJavaScriptSource(source, "preload.cjs");
+  if (parsed === null) throw new Error("Expected CommonJS parse");
+  const analysis = analyzeParsedJavaScriptStaticSource(source, parsed);
+
+  expect(analysis.parse_status).toBe("complete");
+  expect(analysis.electron.ipc.map(({ channel }) => channel)).toEqual([
+    "real-invoke",
+    "real-send",
+    "real-host",
+    "real-post",
+  ]);
+});
+
+it("recovers nested symbolic bridge members for TypeScript-wrapped inline contextBridge objects", () => {
+  const source = `
+      const { contextBridge, ipcRenderer } = require("electron");
+      const bag = { sub: { ping: () => ipcRenderer.invoke("cts:ping") } };
+      contextBridge.exposeInMainWorld("api", ({ sub: bag.sub } as const));
+    `;
+  const parsed = parseJavaScriptSource(source, "preload.cts");
+  if (parsed === null) throw new Error("Expected .cts parse");
+  const analysis = analyzeParsedJavaScriptStaticSource(source, parsed);
+
+  expect(analysis.parse_status).toBe("partial");
+  expect(analysis.electron.context_bridge_apis).toMatchObject([
+    {
+      api_key: "api",
+      api_status: "dynamic",
+      resolution_basis: "wrapper-substitution",
+      members: ["sub", "sub.ping"],
+      unknown_members: 0,
+    },
+  ]);
+  expect(analysis.electron.call_paths).toEqual([
+    expect.objectContaining({
+      entry_kind: "bridge-member",
+      entry: "api.sub.ping",
+      channel: "cts:ping",
+      terminal: "electron.ipcRenderer.invoke",
+    }),
+  ]);
+});

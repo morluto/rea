@@ -33,6 +33,7 @@ import {
   semanticReferenceRole,
 } from "./javascriptSemanticProjection.js";
 import {
+  isObjectPrototypeSetter,
   readExactJavaScriptLiteral,
   semanticObjectPatternKeys,
   runtimeFunctionParameters,
@@ -100,10 +101,12 @@ import {
 } from "./javascriptSemanticReturns.js";
 import { collectJavaScriptDerivedSemanticsSteps } from "./javascriptSemanticDerivedAnalysis.js";
 import {
+  evaluateSemanticExpression,
   evaluateSemanticProvenance,
   clearSemanticValueCaches,
   semanticValueDefinitelyDefined,
 } from "./javascriptSemanticValues.js";
+import { semanticKnownSymbolKey } from "./javascriptSemanticPropertyKeys.js";
 import { compareUnicodeCodePoints } from "../unicodeCodePointOrder.js";
 import {
   collectJavaScriptIdentityWritesSteps,
@@ -164,7 +167,15 @@ import { indexCommonJsExportReceiversSteps } from "./javascriptCommonJsExportRec
 import { createSemanticElectronAppPathChangeQuery } from "./javascriptElectronAppPathChanges.js";
 import type { JavaScriptModuleResolutionMode } from "./javascriptModuleResolutionMode.js";
 
+interface BindPatternBudget {
+  remaining: number;
+  nextNodeId: number;
+  readonly nodeIds: WeakMap<t.Node, number>;
+  readonly saturatedStates: Set<string>;
+}
+
 interface BindPatternInput {
+  readonly budget?: BindPatternBudget;
   readonly iterationSources?: JavaScriptSemanticBindingState["initializers"][number]["iterationSources"];
   readonly pattern: t.Node;
   readonly entryBody?: t.BlockStatement;
@@ -1586,7 +1597,12 @@ const isInvocationSlotDefinitelyUndefined = (
     isDefinitelyUndefinedExpression(source.node, state)
   )
     return true;
-  if (semanticReferenceIterationUnknown(source, state)) return false;
+  if (
+    state.prototypeEnumerationMayAffect ||
+    state.prototypeMutationSites.length > 0 ||
+    semanticReferenceIterationUnknown(source, state)
+  )
+    return false;
   return (
     semanticSelectedReferenceSlot(source, state, callSite)?.presence ===
     "absent"
@@ -1605,16 +1621,114 @@ const isInvocationSlotDefinitelyDefined = (
   );
 };
 
+const MAX_PATTERN_DEFAULT_VISITS = 256;
+const SYNTHETIC_ARRAY_FROM_INDEX = t.numericLiteral(0);
+
+interface PatternDefaultActivationTracker {
+  remainingVisits: number;
+  nextNodeId: number;
+  readonly nodeIds: WeakMap<t.Node, number>;
+  readonly visitedStates: WeakMap<t.Node, Set<string>>;
+  readonly saturated: WeakSet<t.Node>;
+}
+
+const createPatternDefaultActivationTracker =
+  (): PatternDefaultActivationTracker => ({
+    remainingVisits: MAX_PATTERN_DEFAULT_VISITS,
+    nextNodeId: 1,
+    nodeIds: new WeakMap(),
+    visitedStates: new WeakMap(),
+    saturated: new WeakSet(),
+  });
+
+const patternDefaultNodeId = (
+  node: t.Node,
+  tracker: PatternDefaultActivationTracker,
+): number => {
+  const existing = tracker.nodeIds.get(node);
+  if (existing !== undefined) return existing;
+  const assigned = tracker.nextNodeId;
+  tracker.nextNodeId += 1;
+  tracker.nodeIds.set(node, assigned);
+  return assigned;
+};
+
+const patternDefaultSlotStateKey = (
+  slotState: InvocationDefaultSlotState,
+  tracker: PatternDefaultActivationTracker,
+): string => {
+  if (slotState === "omitted" || slotState === "unknown") return slotState;
+  const { source } = slotState;
+  return JSON.stringify([
+    patternDefaultNodeId(source.node, tracker),
+    source.projection,
+    source.iterationSources?.map((iter) => [
+      patternDefaultNodeId(iter.node, tracker),
+      iter.projection,
+    ]),
+  ]);
+};
+
+const saturatePatternDefaults = (
+  pattern: t.Node,
+  active: Set<t.Node>,
+  tracker: PatternDefaultActivationTracker,
+): void => {
+  const target = t.isTSParameterProperty(pattern)
+    ? pattern.parameter
+    : unwrapJavaScriptExpression(pattern).node;
+  if (tracker.saturated.has(target)) return;
+  tracker.saturated.add(target);
+  if (t.isAssignmentPattern(target)) {
+    active.add(target.right);
+    saturatePatternDefaults(target.left, active, tracker);
+    return;
+  }
+  if (t.isRestElement(target)) {
+    saturatePatternDefaults(target.argument, active, tracker);
+    return;
+  }
+  if (t.isObjectPattern(target)) {
+    for (const prop of target.properties)
+      saturatePatternDefaults(
+        t.isRestElement(prop) ? prop.argument : prop.value,
+        active,
+        tracker,
+      );
+    return;
+  }
+  if (t.isArrayPattern(target)) {
+    for (const elem of target.elements)
+      if (elem !== null) saturatePatternDefaults(elem, active, tracker);
+  }
+};
+
 const markActivePatternDefaults = (
   pattern: t.Node,
   slotState: InvocationDefaultSlotState,
   callSite: t.Node,
   state: JavaScriptSemanticAnalysisState,
   active: Set<t.Node>,
+  tracker: PatternDefaultActivationTracker = createPatternDefaultActivationTracker(),
 ): void => {
   const target = t.isTSParameterProperty(pattern)
     ? pattern.parameter
     : unwrapJavaScriptExpression(pattern).node;
+  if (tracker.saturated.has(target)) return;
+  const stateKey = patternDefaultSlotStateKey(slotState, tracker);
+  let seenForTarget = tracker.visitedStates.get(target);
+  if (seenForTarget === undefined) {
+    seenForTarget = new Set();
+    tracker.visitedStates.set(target, seenForTarget);
+  } else if (seenForTarget.has(stateKey)) {
+    return;
+  }
+  if (tracker.remainingVisits <= 0) {
+    saturatePatternDefaults(target, active, tracker);
+    return;
+  }
+  seenForTarget.add(stateKey);
+  tracker.remainingVisits -= 1;
   if (t.isAssignmentPattern(target)) {
     const defaultSlot: InvocationDefaultSlotState = {
       kind: "source",
@@ -1628,6 +1742,7 @@ const markActivePatternDefaults = (
         callSite,
         state,
         active,
+        tracker,
       );
       return;
     }
@@ -1639,6 +1754,7 @@ const markActivePatternDefaults = (
         callSite,
         state,
         active,
+        tracker,
       );
       markActivePatternDefaults(
         target.left,
@@ -1646,6 +1762,7 @@ const markActivePatternDefaults = (
         callSite,
         state,
         active,
+        tracker,
       );
       return;
     }
@@ -1659,6 +1776,7 @@ const markActivePatternDefaults = (
         callSite,
         state,
         active,
+        tracker,
       );
       return;
     }
@@ -1669,17 +1787,26 @@ const markActivePatternDefaults = (
         callSite,
         state,
         active,
+        tracker,
       );
       return;
     }
     active.add(target.right);
-    markActivePatternDefaults(target.left, slotState, callSite, state, active);
+    markActivePatternDefaults(
+      target.left,
+      slotState,
+      callSite,
+      state,
+      active,
+      tracker,
+    );
     markActivePatternDefaults(
       target.left,
       defaultSlot,
       callSite,
       state,
       active,
+      tracker,
     );
     return;
   }
@@ -1692,6 +1819,7 @@ const markActivePatternDefaults = (
           callSite,
           state,
           active,
+          tracker,
         );
         continue;
       }
@@ -1706,7 +1834,14 @@ const markActivePatternDefaults = (
               },
             }
           : "unknown";
-      markActivePatternDefaults(prop.value, childSlot, callSite, state, active);
+      markActivePatternDefaults(
+        prop.value,
+        childSlot,
+        callSite,
+        state,
+        active,
+        tracker,
+      );
     }
     return;
   }
@@ -1730,6 +1865,7 @@ const markActivePatternDefaults = (
           callSite,
           state,
           active,
+          tracker,
         );
         return;
       }
@@ -1744,7 +1880,14 @@ const markActivePatternDefaults = (
               },
             }
           : "unknown";
-      markActivePatternDefaults(elem, childSlot, callSite, state, active);
+      markActivePatternDefaults(
+        elem,
+        childSlot,
+        callSite,
+        state,
+        active,
+        tracker,
+      );
     });
   }
 };
@@ -1757,6 +1900,7 @@ const markActiveRestDefaults = (
   callSite: t.Node,
   state: JavaScriptSemanticAnalysisState,
   active: Set<t.Node>,
+  tracker: PatternDefaultActivationTracker = createPatternDefaultActivationTracker(),
 ): void => {
   const target = unwrapJavaScriptExpression(pattern).node;
   if (t.isArrayPattern(target)) {
@@ -1772,13 +1916,21 @@ const markActiveRestDefaults = (
           callSite,
           state,
           active,
+          tracker,
         );
         return;
       }
       if (firstSpread < 0 || argIndex < firstSpread) {
         const arg = expanded[argIndex];
         if (arg === undefined)
-          markActivePatternDefaults(elem, "omitted", callSite, state, active);
+          markActivePatternDefaults(
+            elem,
+            "omitted",
+            callSite,
+            state,
+            active,
+            tracker,
+          );
         else if (t.isExpression(arg))
           markActivePatternDefaults(
             elem,
@@ -1786,21 +1938,95 @@ const markActiveRestDefaults = (
             callSite,
             state,
             active,
+            tracker,
           );
         else
-          markActivePatternDefaults(elem, "unknown", callSite, state, active);
+          markActivePatternDefaults(
+            elem,
+            "unknown",
+            callSite,
+            state,
+            active,
+            tracker,
+          );
         return;
       }
-      markActivePatternDefaults(elem, "unknown", callSite, state, active);
+      markActivePatternDefaults(
+        elem,
+        "unknown",
+        callSite,
+        state,
+        active,
+        tracker,
+      );
     });
     return;
   }
   if (t.isObjectPattern(target))
-    markActivePatternDefaults(target, "unknown", callSite, state, active);
+    markActivePatternDefaults(
+      target,
+      "unknown",
+      callSite,
+      state,
+      active,
+      tracker,
+    );
+};
+
+const markActiveTupleRestDefaults = (
+  pattern: t.Node,
+  slotStates: readonly InvocationDefaultSlotState[],
+  offset: number,
+  callSite: t.Node,
+  state: JavaScriptSemanticAnalysisState,
+  active: Set<t.Node>,
+  tracker: PatternDefaultActivationTracker,
+): void => {
+  const target = unwrapJavaScriptExpression(pattern).node;
+  if (t.isArrayPattern(target)) {
+    target.elements.forEach((elem, elemIdx) => {
+      if (elem === null) return;
+      const argIndex = offset + elemIdx;
+      if (t.isRestElement(elem)) {
+        markActiveTupleRestDefaults(
+          elem.argument,
+          slotStates,
+          argIndex,
+          callSite,
+          state,
+          active,
+          tracker,
+        );
+        return;
+      }
+      markActivePatternDefaults(
+        elem,
+        slotStates[argIndex] ?? "omitted",
+        callSite,
+        state,
+        active,
+        tracker,
+      );
+    });
+    return;
+  }
+  if (t.isObjectPattern(target))
+    markActivePatternDefaults(
+      target,
+      "unknown",
+      callSite,
+      state,
+      active,
+      tracker,
+    );
 };
 
 const bindArrayFromMapperParameters = (
   iterable: t.Expression | undefined,
+  inputSegments: readonly JavaScriptSemanticPropertyPath[number][],
+  positionalInput: boolean,
+  knownLength: number | undefined,
+  callSite: t.Node,
   callables: ReadonlySet<t.Function>,
   state: JavaScriptSemanticAnalysisState,
 ): {
@@ -1809,40 +2035,131 @@ const bindArrayFromMapperParameters = (
 } => {
   const mapParams = new Map<string, InvocationParameterSource[]>();
   const inactiveDefaults = new Set<t.Node>();
+  const indexSlotState: InvocationDefaultSlotState = {
+    kind: "source",
+    source: { node: SYNTHETIC_ARRAY_FROM_INDEX, projection: [] },
+  };
   for (const callable of callables) {
     const params = runtimeFunctionParameters(callable);
     for (const param of params)
       registerPatternBindings(param, state, mapParams);
-    // Index parameter (index 1) of Array.from's mapFn is always a non-negative integer.
-    const indexParam = params[1];
-    if (
-      indexParam !== undefined &&
-      !t.isRestElement(indexParam) &&
-      t.isAssignmentPattern(
-        t.isTSParameterProperty(indexParam)
-          ? indexParam.parameter
-          : unwrapJavaScriptExpression(indexParam).node,
-      )
-    ) {
-      const assignPattern = (
-        t.isTSParameterProperty(indexParam)
-          ? indexParam.parameter
-          : unwrapJavaScriptExpression(indexParam).node
-      ) as t.AssignmentPattern;
-      if (t.isIdentifier(assignPattern.left))
-        inactiveDefaults.add(assignPattern.right);
+    const allDefaults = collectPatternDefaultNodes(params);
+    if (allDefaults.length > 0) {
+      const activeDefaults = new Set<t.Node>();
+      const tracker = createPatternDefaultActivationTracker();
+      const firstArgStates: InvocationDefaultSlotState[] = [];
+      if (iterable === undefined || !positionalInput) {
+        firstArgStates.push("unknown");
+      } else {
+        for (const seg of inputSegments) {
+          if (typeof seg === "number") {
+            firstArgStates.push({
+              kind: "source",
+              source: { node: iterable, projection: [seg] },
+            });
+          } else if (
+            seg !== null &&
+            typeof seg === "object" &&
+            knownLength !== undefined &&
+            knownLength <= 32
+          ) {
+            for (let idx = seg.startIndex ?? 0; idx < knownLength; idx += 1) {
+              if (!seg.excludedKeys.includes(String(idx)))
+                firstArgStates.push({
+                  kind: "source",
+                  source: { node: iterable, projection: [idx] },
+                });
+            }
+          } else {
+            firstArgStates.push("unknown");
+          }
+        }
+      }
+      if (firstArgStates.length > 0) {
+        params.forEach((param, paramIndex) => {
+          if (t.isRestElement(param)) {
+            if (paramIndex === 0) {
+              for (const elemState of firstArgStates)
+                markActiveTupleRestDefaults(
+                  param.argument,
+                  [elemState, indexSlotState],
+                  0,
+                  callSite,
+                  state,
+                  activeDefaults,
+                  tracker,
+                );
+            } else if (paramIndex === 1) {
+              markActiveTupleRestDefaults(
+                param.argument,
+                [indexSlotState],
+                0,
+                callSite,
+                state,
+                activeDefaults,
+                tracker,
+              );
+            } else {
+              markActiveTupleRestDefaults(
+                param.argument,
+                [],
+                0,
+                callSite,
+                state,
+                activeDefaults,
+                tracker,
+              );
+            }
+            return;
+          }
+          if (paramIndex === 0) {
+            for (const elemState of firstArgStates)
+              markActivePatternDefaults(
+                param,
+                elemState,
+                callSite,
+                state,
+                activeDefaults,
+                tracker,
+              );
+            return;
+          }
+          if (paramIndex === 1) {
+            markActivePatternDefaults(
+              param,
+              indexSlotState,
+              callSite,
+              state,
+              activeDefaults,
+              tracker,
+            );
+            return;
+          }
+          markActivePatternDefaults(
+            param,
+            "omitted",
+            callSite,
+            state,
+            activeDefaults,
+            tracker,
+          );
+        });
+      }
+      for (const defaultNode of allDefaults)
+        if (!activeDefaults.has(defaultNode)) inactiveDefaults.add(defaultNode);
     }
     if (iterable === undefined) continue;
     const [firstParam] = params;
     if (firstParam === undefined) continue;
     if (!t.isRestElement(firstParam)) {
-      bindParameterPatternSources(
-        firstParam,
-        iterable,
-        [null],
-        state,
-        mapParams,
-      );
+      for (const seg of inputSegments)
+        bindParameterPatternSources(
+          firstParam,
+          iterable,
+          [seg],
+          state,
+          mapParams,
+        );
       continue;
     }
     const restTarget = unwrapJavaScriptExpression(firstParam.argument).node;
@@ -1854,11 +2171,12 @@ const bindArrayFromMapperParameters = (
       );
       if (restBinding !== undefined) {
         const list = mapParams.get(restBinding.bindingId) ?? [];
-        list.push({
-          node: iterable,
-          projection: [null],
-          restElementIndex: 0,
-        });
+        for (const seg of inputSegments)
+          list.push({
+            node: iterable,
+            projection: [seg],
+            restElementIndex: 0,
+          });
         mapParams.set(restBinding.bindingId, list);
       }
     } else if (t.isArrayPattern(restTarget)) {
@@ -1874,22 +2192,24 @@ const bindArrayFromMapperParameters = (
             );
             if (innerBinding !== undefined) {
               const list = mapParams.get(innerBinding.bindingId) ?? [];
-              list.push({
-                node: iterable,
-                projection: [null],
-                restElementIndex: 0,
-              });
+              for (const seg of inputSegments)
+                list.push({
+                  node: iterable,
+                  projection: [seg],
+                  restElementIndex: 0,
+                });
               mapParams.set(innerBinding.bindingId, list);
             }
           }
         } else {
-          bindParameterPatternSources(
-            firstElem,
-            iterable,
-            [null],
-            state,
-            mapParams,
-          );
+          for (const seg of inputSegments)
+            bindParameterPatternSources(
+              firstElem,
+              iterable,
+              [seg],
+              state,
+              mapParams,
+            );
         }
       }
     } else if (t.isObjectPattern(restTarget)) {
@@ -1897,13 +2217,14 @@ const bindArrayFromMapperParameters = (
         if (t.isRestElement(prop)) continue;
         const key = semanticStaticPropertyKey(prop.key, prop.computed);
         if (key === null || semanticArrayIndex(key) === 0)
-          bindParameterPatternSources(
-            prop.value,
-            iterable,
-            [null],
-            state,
-            mapParams,
-          );
+          for (const seg of inputSegments)
+            bindParameterPatternSources(
+              prop.value,
+              iterable,
+              [seg],
+              state,
+              mapParams,
+            );
       }
     }
   }
@@ -1980,6 +2301,7 @@ const mapInvocationParameterSources = (
     for (const param of params) registerPatternBindings(param, state, mapped);
     const allDefaults = collectPatternDefaultNodes(params);
     const activeDefaults = new Set<t.Node>();
+    const defaultTracker = createPatternDefaultActivationTracker();
     let callableArgsComplete = !callableWidened && contexts.length > 0;
     for (const context of contexts) {
       if (context.receiver !== undefined && t.isExpression(context.receiver))
@@ -2012,6 +2334,7 @@ const mapInvocationParameterSources = (
               callSite,
               state,
               activeDefaults,
+              defaultTracker,
             );
           return;
         }
@@ -2027,6 +2350,7 @@ const mapInvocationParameterSources = (
                 callSite,
                 state,
                 activeDefaults,
+                defaultTracker,
               );
             else if (t.isExpression(arg))
               markActivePatternDefaults(
@@ -2035,6 +2359,7 @@ const mapInvocationParameterSources = (
                 callSite,
                 state,
                 activeDefaults,
+                defaultTracker,
               );
             else
               markActivePatternDefaults(
@@ -2043,6 +2368,7 @@ const mapInvocationParameterSources = (
                 callSite,
                 state,
                 activeDefaults,
+                defaultTracker,
               );
           }
           return;
@@ -2066,6 +2392,7 @@ const mapInvocationParameterSources = (
             callSite,
             state,
             activeDefaults,
+            defaultTracker,
           );
       });
     }
@@ -2418,14 +2745,91 @@ const enqueueNonIdentifierMemberWriteSources = (
         maySelectArrayElementSegment(current.suffix[0]!)
       ) {
         const [target] = callArgs;
-        if (target !== undefined && t.isExpression(target))
+        if (target !== undefined && t.isExpression(target)) {
+          const remainingSuffix = current.suffix.slice(1);
+          const readAt = current.readAt ?? node;
+          const staticKeys = staticObjectValuesKeys(target, state);
+          if (staticKeys !== undefined) {
+            for (const seg of selectArrayFromInputSegments(
+              current.suffix[0]!,
+              staticKeys.length,
+            )) {
+              if (typeof seg === "number") {
+                const key = staticKeys[seg];
+                if (key !== undefined)
+                  pending.push({
+                    ...current,
+                    node: target,
+                    suffix: [key, ...remainingSuffix],
+                    readAt,
+                    capturedSelections,
+                  });
+              } else if (
+                seg !== null &&
+                typeof seg === "object" &&
+                staticKeys.length <= SEMANTIC_ALIAS_SELECTION_LIMIT
+              ) {
+                for (
+                  let idx = seg.startIndex ?? 0;
+                  idx < staticKeys.length;
+                  idx += 1
+                ) {
+                  if (!seg.excludedKeys.includes(String(idx)))
+                    pending.push({
+                      ...current,
+                      node: target,
+                      suffix: [staticKeys[idx]!, ...remainingSuffix],
+                      readAt,
+                      capturedSelections,
+                    });
+                }
+              } else if (
+                seg === null &&
+                staticKeys.length <= SEMANTIC_ALIAS_SELECTION_LIMIT
+              ) {
+                for (const key of staticKeys)
+                  pending.push({
+                    ...current,
+                    node: target,
+                    suffix: [key, ...remainingSuffix],
+                    readAt,
+                    capturedSelections,
+                  });
+              } else {
+                pending.push({
+                  ...current,
+                  node: target,
+                  suffix: [null, ...remainingSuffix],
+                  readAt,
+                  capturedSelections,
+                });
+              }
+            }
+            return;
+          }
+          const denseLen = denseKnownArrayLengthAt(target, state, readAt);
+          if (denseLen !== undefined) {
+            for (const seg of selectArrayFromInputSegments(
+              current.suffix[0]!,
+              denseLen,
+            ))
+              pending.push({
+                ...current,
+                node: target,
+                suffix: [seg, ...remainingSuffix],
+                readAt,
+                capturedSelections,
+              });
+            return;
+          }
           pending.push({
             node: target,
-            suffix: [null, ...current.suffix.slice(1)],
-            readAt: current.readAt ?? node,
+            suffix: [null, ...remainingSuffix],
+            readAt,
             capturedSelections,
             callFrame: current.callFrame,
           });
+        }
         return;
       }
       if (ns === "intrinsic" && obj === "Array" && method === "from") {
@@ -2434,7 +2838,30 @@ const enqueueNonIdentifierMemberWriteSources = (
           maySelectArrayElementSegment(current.suffix[0]!)
         ) {
           const elementSuffix = current.suffix.slice(1);
+          const readAt = current.readAt ?? node;
           const [iterable, mapFn, thisArg] = callArgs;
+          const iterableExpr =
+            iterable !== undefined && t.isExpression(iterable)
+              ? iterable
+              : undefined;
+          const knownArrayIter =
+            iterableExpr !== undefined &&
+            semanticKnownArrayIterationAt(iterableExpr, state);
+          const denseArrayLen =
+            knownArrayIter && iterableExpr !== undefined
+              ? denseKnownArrayLengthAt(iterableExpr, state, readAt)
+              : undefined;
+          const arrayLike =
+            !knownArrayIter && iterableExpr !== undefined
+              ? nonIterableArrayLikeFacts(iterableExpr, state)
+              : undefined;
+          const positional = knownArrayIter || arrayLike !== undefined;
+          const knownLength = knownArrayIter
+            ? denseArrayLen
+            : arrayLike?.knownLength;
+          const inputSegments = positional
+            ? selectArrayFromInputSegments(current.suffix[0]!, knownLength)
+            : [null];
           const enqueueDirectCopy = (): void => {
             if (iterable === undefined) return;
             if (t.isSpreadElement(iterable)) {
@@ -2442,70 +2869,105 @@ const enqueueNonIdentifierMemberWriteSources = (
                 {
                   node: iterable.argument,
                   suffix: [null, null, ...elementSuffix],
-                  readAt: current.readAt ?? node,
+                  readAt,
                   callFrame: current.callFrame,
                 },
                 {
                   node: iterable.argument,
                   suffix: [null, ...elementSuffix],
-                  readAt: current.readAt ?? node,
+                  readAt,
                   callFrame: current.callFrame,
                 },
               );
               return;
             }
             if (!t.isExpression(iterable)) return;
-            pending.push({
-              ...current,
-              node: iterable,
-              capturedSelections,
-              iteratedDepths: [
-                ...new Set([
-                  ...(current.iteratedDepths ?? []),
-                  current.suffix.length,
-                ]),
-              ].sort((left, right) => left - right),
-              iteratedElementDepths: [
-                ...new Set([
-                  ...(current.iteratedElementDepths ?? []),
-                  current.suffix.length,
-                ]),
-              ].sort((left, right) => left - right),
-            });
-            if (!semanticKnownArrayIterationAt(iterable, state))
-              pending.push(
-                {
+            if (knownArrayIter) {
+              for (const seg of inputSegments) {
+                const nextSuffix = [seg, ...elementSuffix];
+                pending.push({
+                  ...current,
                   node: iterable,
-                  suffix: [null, ...elementSuffix],
-                  readAt: current.readAt ?? node,
+                  suffix: nextSuffix,
+                  readAt,
+                  capturedSelections,
                   iteratedDepths: [
                     ...new Set([
                       ...(current.iteratedDepths ?? []),
-                      elementSuffix.length + 1,
+                      nextSuffix.length,
                     ]),
                   ].sort((left, right) => left - right),
                   iteratedElementDepths: [
                     ...new Set([
                       ...(current.iteratedElementDepths ?? []),
-                      elementSuffix.length + 1,
+                      nextSuffix.length,
                     ]),
                   ].sort((left, right) => left - right),
-                  callFrame: current.callFrame,
-                },
-                {
+                });
+              }
+              return;
+            }
+            if (arrayLike !== undefined) {
+              for (const seg of inputSegments)
+                pending.push({
+                  ...current,
                   node: iterable,
-                  suffix: elementSuffix,
-                  readAt: current.readAt ?? node,
-                  iteratedDepths: [
-                    ...new Set([
-                      ...(current.iteratedDepths ?? []),
-                      elementSuffix.length,
-                    ]),
-                  ].sort((left, right) => left - right),
-                  iteratedElementDepths: current.iteratedElementDepths,
-                  callFrame: current.callFrame,
-                },
-              );
+                  suffix: [seg, ...elementSuffix],
+                  readAt,
+                  capturedSelections,
+                });
+              return;
+            }
+            pending.push(
+              {
+                ...current,
+                node: iterable,
+                capturedSelections,
+                iteratedDepths: [
+                  ...new Set([
+                    ...(current.iteratedDepths ?? []),
+                    current.suffix.length,
+                  ]),
+                ].sort((left, right) => left - right),
+                iteratedElementDepths: [
+                  ...new Set([
+                    ...(current.iteratedElementDepths ?? []),
+                    current.suffix.length,
+                  ]),
+                ].sort((left, right) => left - right),
+              },
+              {
+                node: iterable,
+                suffix: [null, ...elementSuffix],
+                readAt,
+                iteratedDepths: [
+                  ...new Set([
+                    ...(current.iteratedDepths ?? []),
+                    elementSuffix.length + 1,
+                  ]),
+                ].sort((left, right) => left - right),
+                iteratedElementDepths: [
+                  ...new Set([
+                    ...(current.iteratedElementDepths ?? []),
+                    elementSuffix.length + 1,
+                  ]),
+                ].sort((left, right) => left - right),
+                callFrame: current.callFrame,
+              },
+              {
+                node: iterable,
+                suffix: elementSuffix,
+                readAt,
+                iteratedDepths: [
+                  ...new Set([
+                    ...(current.iteratedDepths ?? []),
+                    elementSuffix.length,
+                  ]),
+                ].sort((left, right) => left - right),
+                iteratedElementDepths: current.iteratedElementDepths,
+                callFrame: current.callFrame,
+              },
+            );
           };
           if (mapFn === undefined) {
             enqueueDirectCopy();
@@ -2545,9 +3007,11 @@ const enqueueNonIdentifierMemberWriteSources = (
             parameterSources: mapParams,
             inactiveDefaultNodes: mapInactiveDefaults,
           } = bindArrayFromMapperParameters(
-            iterable !== undefined && t.isExpression(iterable)
-              ? iterable
-              : undefined,
+            iterableExpr,
+            inputSegments,
+            positional,
+            knownLength,
+            node,
             mapped.callables,
             state,
           );
@@ -2798,6 +3262,267 @@ const enqueueNonIdentifierMemberWriteSources = (
   }
 };
 
+const hasAmbientObjectPrototypeMutation = (
+  state: JavaScriptSemanticAnalysisState,
+): boolean => {
+  if (
+    state.prototypeEnumerationMayAffect ||
+    state.prototypeMutationSites.some((site) => site.owner === "Object")
+  )
+    return true;
+  const target = ["global", "Object", "prototype"];
+  return state.ambientWriteEffects.some(
+    (effect) =>
+      effect.path.length >= 2 &&
+      effect.path.length <= 4 &&
+      effect.path
+        .slice(0, Math.min(effect.path.length, 3))
+        .every(
+          (seg, idx) =>
+            seg === null ||
+            semanticPropertyPathKeyMatches(seg, target[idx] ?? ""),
+        ),
+  );
+};
+
+const resolveUnmutatedObjectExpression = (
+  expr: t.Node,
+  state: JavaScriptSemanticAnalysisState,
+  visited: ReadonlySet<t.Node> = new Set(),
+): t.ObjectExpression | undefined => {
+  const unfrozen = unwrapUnmodifiedObjectFreezeArgument(expr, state) ?? expr;
+  const node = unwrapJavaScriptExpression(unfrozen).node;
+  if (visited.has(node)) return undefined;
+  if (t.isObjectExpression(node)) return node;
+  if (
+    t.isIdentifier(node) &&
+    !semanticResolutionBlocked(state, node, node.name)
+  ) {
+    const binding = resolveSemanticBindingState(state, node, node.name);
+    if (
+      binding !== undefined &&
+      !binding.mutable &&
+      binding.initializers.length === 1 &&
+      binding.referenceInitializers.length === 0 &&
+      binding.memberWrites.length === 0 &&
+      binding.escapedPaths.length === 0 &&
+      binding.initializers[0]?.projection.length === 0 &&
+      semanticBindingAtRead(binding, node, state).hasDefiniteInitializer
+    ) {
+      const nextVisited = new Set(visited);
+      nextVisited.add(node);
+      return resolveUnmutatedObjectExpression(
+        binding.initializers[0].node,
+        state,
+        nextVisited,
+      );
+    }
+  }
+  return undefined;
+};
+
+const staticObjectValuesKeys = (
+  expr: t.Node,
+  state: JavaScriptSemanticAnalysisState,
+): readonly string[] | undefined => {
+  const obj = resolveUnmutatedObjectExpression(expr, state);
+  if (obj === undefined) return undefined;
+  const seen = new Set<string>();
+  const arrayIndexKeys: { readonly index: number; readonly key: string }[] = [];
+  const stringKeys: string[] = [];
+  for (const prop of obj.properties) {
+    if (t.isSpreadElement(prop)) return undefined;
+    if (t.isObjectMethod(prop) && (prop.kind === "get" || prop.kind === "set"))
+      return undefined;
+    if (prop.computed && semanticKnownSymbolKey(prop.key, state)) continue;
+    const name = semanticStaticPropertyKey(prop.key, prop.computed);
+    if (name === null) return undefined;
+    if (isObjectPrototypeSetter(prop, name)) continue;
+    if (seen.has(name)) continue;
+    seen.add(name);
+    const idx = semanticArrayIndex(name);
+    if (idx !== null) arrayIndexKeys.push({ index: idx, key: name });
+    else stringKeys.push(name);
+  }
+  arrayIndexKeys.sort((left, right) => left.index - right.index);
+  return [...arrayIndexKeys.map((entry) => entry.key), ...stringKeys];
+};
+
+const denseKnownArrayLengthAt = (
+  expr: t.Node,
+  state: JavaScriptSemanticAnalysisState,
+  readAt: t.Node,
+): number | undefined => {
+  if (state.arrayIterationUnknown) return undefined;
+  const evaluated = evaluateSemanticExpression(expr, state, readAt);
+  if (
+    evaluated.status !== "array" ||
+    evaluated.unknownItems ||
+    !evaluated.items.every(
+      (item, idx) => item.name === String(idx) && item.presence === "present",
+    )
+  )
+    return undefined;
+  return evaluated.items.length;
+};
+
+const objectLiteralHasNoOwnIterator = (
+  obj: t.ObjectExpression,
+  state: JavaScriptSemanticAnalysisState,
+  visited: ReadonlySet<t.Node>,
+): boolean => {
+  const nextVisited = new Set(visited);
+  nextVisited.add(obj);
+  for (const prop of obj.properties) {
+    if (t.isSpreadElement(prop)) {
+      const spreadObj = resolveUnmutatedObjectExpression(prop.argument, state);
+      if (
+        spreadObj === undefined ||
+        nextVisited.has(spreadObj) ||
+        spreadObj.properties.some(
+          (inner) =>
+            t.isObjectMethod(inner) &&
+            (inner.kind === "get" || inner.kind === "set"),
+        ) ||
+        !objectLiteralHasNoOwnIterator(spreadObj, state, nextVisited)
+      )
+        return false;
+      continue;
+    }
+    if (!prop.computed) continue;
+    if (semanticKnownSymbolKey(prop.key, state)) {
+      const symExpr = unwrapJavaScriptExpression(prop.key).node;
+      if (
+        !t.isMemberExpression(symExpr) ||
+        semanticStaticPropertyKey(symExpr.property, symExpr.computed) ===
+          "iterator"
+      )
+        return false;
+      continue;
+    }
+    if (semanticStaticPropertyKey(prop.key, true) === null) return false;
+  }
+  return true;
+};
+
+const toKnownArrayLikeLength = (
+  valueNode: t.Node,
+  state: JavaScriptSemanticAnalysisState,
+): number | undefined => {
+  if (isDefinitelyUndefinedExpression(valueNode, state)) return 0;
+  const literal = readExactJavaScriptLiteral(valueNode);
+  if (!literal.found) return undefined;
+  if (literal.value === null) return 0;
+  if (typeof literal.value === "boolean") return literal.value ? 1 : 0;
+  if (typeof literal.value === "number") {
+    if (!Number.isFinite(literal.value) || Number.isNaN(literal.value))
+      return literal.value === Number.POSITIVE_INFINITY
+        ? Number.MAX_SAFE_INTEGER
+        : 0;
+    return literal.value <= 0
+      ? 0
+      : Math.min(Math.trunc(literal.value), Number.MAX_SAFE_INTEGER);
+  }
+  if (typeof literal.value === "string") {
+    const num = Number(literal.value);
+    if (!Number.isFinite(num) || Number.isNaN(num))
+      return num === Number.POSITIVE_INFINITY ? Number.MAX_SAFE_INTEGER : 0;
+    return num <= 0 ? 0 : Math.min(Math.trunc(num), Number.MAX_SAFE_INTEGER);
+  }
+  return undefined;
+};
+
+const nonIterableArrayLikeFacts = (
+  expr: t.Node,
+  state: JavaScriptSemanticAnalysisState,
+): { readonly knownLength?: number } | undefined => {
+  const obj = resolveUnmutatedObjectExpression(expr, state);
+  if (
+    obj === undefined ||
+    !objectLiteralHasNoOwnIterator(obj, state, new Set())
+  )
+    return undefined;
+  const protoSetters = obj.properties.filter(
+    (prop): prop is t.ObjectProperty =>
+      !t.isSpreadElement(prop) &&
+      t.isObjectProperty(prop) &&
+      isObjectPrototypeSetter(
+        prop,
+        semanticStaticPropertyKey(prop.key, prop.computed),
+      ),
+  );
+  if (protoSetters.length > 0) {
+    if (
+      !protoSetters.every((setter) =>
+        t.isNullLiteral(unwrapJavaScriptExpression(setter.value).node),
+      )
+    )
+      return undefined;
+  } else if (
+    state.arrayIterationUnknown ||
+    hasAmbientObjectPrototypeMutation(state)
+  ) {
+    return undefined;
+  }
+  if (
+    obj.properties.some(
+      (prop) =>
+        t.isSpreadElement(prop) ||
+        (t.isObjectMethod(prop) &&
+          (prop.kind === "get" || prop.kind === "set")),
+    )
+  )
+    return {};
+  let lengthProp: t.ObjectProperty | t.ObjectMethod | undefined;
+  for (const prop of obj.properties) {
+    if (t.isSpreadElement(prop)) continue;
+    const key = semanticStaticPropertyKey(prop.key, prop.computed);
+    if (key === "length" && !isObjectPrototypeSetter(prop, key))
+      lengthProp = prop;
+  }
+  if (lengthProp === undefined) return { knownLength: 0 };
+  if (!t.isObjectProperty(lengthProp)) return {};
+  const knownLength = toKnownArrayLikeLength(lengthProp.value, state);
+  return knownLength === undefined ? {} : { knownLength };
+};
+
+const selectArrayFromInputSegments = (
+  segment: JavaScriptSemanticPropertyPath[number],
+  knownLength: number | undefined,
+): readonly JavaScriptSemanticPropertyPath[number][] => {
+  if (knownLength !== undefined && knownLength <= 0) return [];
+  if (segment === null) {
+    if (
+      knownLength !== undefined &&
+      knownLength <= SEMANTIC_ALIAS_SELECTION_LIMIT
+    ) {
+      const indices: number[] = [];
+      for (let idx = 0; idx < knownLength; idx += 1) indices.push(idx);
+      return indices;
+    }
+    return [{ excludedKeys: [], startIndex: 0 }];
+  }
+  if (typeof segment === "object") {
+    const startIndex = segment.startIndex ?? 0;
+    if (knownLength !== undefined && startIndex >= knownLength) return [];
+    if (
+      knownLength !== undefined &&
+      knownLength <= SEMANTIC_ALIAS_SELECTION_LIMIT
+    ) {
+      const indices: number[] = [];
+      for (let idx = startIndex; idx < knownLength; idx += 1) {
+        if (!segment.excludedKeys.includes(String(idx))) indices.push(idx);
+      }
+      return indices;
+    }
+    return [{ excludedKeys: segment.excludedKeys, startIndex }];
+  }
+  const idx = semanticArrayIndex(segment);
+  if (idx === null) return [];
+  if (knownLength !== undefined && idx >= knownLength) return [];
+  return [idx];
+};
+
 const objectAssignTargetAllowsOverwrite = (
   expr: t.Node,
   choice: JavaScriptSemanticPropertyPath[number],
@@ -2838,48 +3563,30 @@ const objectAssignTargetAllowsOverwrite = (
     }
     return false;
   }
-  const objectPrototypeMutated = state.ambientWriteEffects.some(
-    (effect) =>
-      effect.path.length <= 4 &&
-      effect.path
-        .slice(0, 3)
-        .every(
-          (seg, idx) =>
-            seg === null ||
-            semanticPropertyPathKeyMatches(
-              seg,
-              ["global", "Object", "prototype"][idx] ?? "",
-            ),
-        ) &&
-      (effect.path.length < 4 ||
-        choice === null ||
-        typeof choice === "object" ||
-        semanticPropertyPathKeyMatches(effect.path[3]!, String(choice))),
-  );
-  if (objectPrototypeMutated) return false;
   if (t.isObjectExpression(node)) {
+    let hasNullPrototype = false;
     for (const prop of node.properties) {
       if (t.isSpreadElement(prop)) continue;
       const name = semanticStaticPropertyKey(prop.key, prop.computed);
-      if (
-        t.isObjectProperty(prop) &&
-        !prop.computed &&
-        !prop.shorthand &&
-        name === "__proto__"
-      )
+      if (isObjectPrototypeSetter(prop, name)) {
+        if (
+          t.isObjectProperty(prop) &&
+          t.isNullLiteral(unwrapJavaScriptExpression(prop.value).node)
+        ) {
+          hasNullPrototype = true;
+          continue;
+        }
         return false;
+      }
       if (
         t.isObjectMethod(prop) &&
-        (prop.kind === "get" || prop.kind === "set") &&
-        (name === null ||
-          choice === null ||
-          typeof choice === "object" ||
-          semanticPropertyPathKeyMatches(choice, name))
+        (prop.kind === "get" || prop.kind === "set")
       )
         return false;
     }
-    return true;
+    return hasNullPrototype || !hasAmbientObjectPrototypeMutation(state);
   }
+  if (hasAmbientObjectPrototypeMutation(state)) return false;
   if (t.isConditionalExpression(node)) {
     return (
       objectAssignTargetAllowsOverwrite(
@@ -2949,6 +3656,14 @@ const definiteObjectAssignSourceKeys = (
   const nextVisited = new Set(visited);
   nextVisited.add(node);
   if (t.isObjectExpression(node)) {
+    if (
+      node.properties.some(
+        (prop) =>
+          t.isObjectMethod(prop) &&
+          (prop.kind === "get" || prop.kind === "set"),
+      )
+    )
+      return new Set();
     const keys = new Set<string>();
     for (const prop of node.properties) {
       if (t.isSpreadElement(prop)) {
@@ -2962,16 +3677,7 @@ const definiteObjectAssignSourceKeys = (
         continue;
       }
       const name = semanticStaticPropertyKey(prop.key, prop.computed);
-      if (
-        name !== null &&
-        !(
-          t.isObjectProperty(prop) &&
-          !prop.computed &&
-          !prop.shorthand &&
-          name === "__proto__"
-        )
-      )
-        keys.add(name);
+      if (name !== null && !isObjectPrototypeSetter(prop, name)) keys.add(name);
     }
     return keys;
   }
@@ -3028,6 +3734,17 @@ const definiteObjectAssignSourceKeys = (
       if (args.length === 0) return new Set();
       const [innerTarget, ...innerSources] = args;
       if (innerTarget === undefined || t.isSpreadElement(innerTarget))
+        return new Set();
+      if (
+        innerSources.length > 0 &&
+        !objectAssignTargetAllowsOverwrite(
+          innerTarget,
+          null,
+          state,
+          interop,
+          nextVisited,
+        )
+      )
         return new Set();
       const keys = new Set<string>(
         definiteObjectAssignSourceKeys(
@@ -4605,7 +5322,55 @@ const bindFunctionLocals = (
     });
 };
 
+const MAX_BIND_PATTERN_VISITS = 512;
+
+const bindPatternNodeId = (node: t.Node, budget: BindPatternBudget): number => {
+  const existing = budget.nodeIds.get(node);
+  if (existing !== undefined) return existing;
+  const assigned = budget.nextNodeId;
+  budget.nextNodeId += 1;
+  budget.nodeIds.set(node, assigned);
+  return assigned;
+};
+
 const bindPattern = (input: BindPatternInput): void => {
+  const budget = input.budget ?? {
+    remaining: MAX_BIND_PATTERN_VISITS,
+    nextNodeId: 1,
+    nodeIds: new WeakMap(),
+    saturatedStates: new Set(),
+  };
+  let effectiveInput: BindPatternInput =
+    input.budget === budget ? input : { ...input, budget };
+  if (budget.remaining > 0) {
+    budget.remaining -= 1;
+  } else {
+    const stateKey = JSON.stringify([
+      bindPatternNodeId(input.pattern, budget),
+      input.initializer === null
+        ? 0
+        : bindPatternNodeId(input.initializer, budget),
+      input.projection ?? [],
+      input.referenceOnly ?? false,
+      input.assignmentReference ?? false,
+      input.copyKind ?? "",
+      input.copyProjectionOffset ?? -1,
+      input.copyExcludedKeys ?? [],
+      input.copyStartIndex ?? -1,
+      input.iterationSources?.map((iter) => [
+        bindPatternNodeId(iter.node, budget),
+        iter.projection,
+      ]),
+    ]);
+    if (budget.saturatedStates.has(stateKey)) return;
+    budget.saturatedStates.add(stateKey);
+    const {
+      fallbackSources: _droppedFallback,
+      requiredSources: _droppedRequired,
+      ...restInput
+    } = effectiveInput;
+    effectiveInput = restInput;
+  }
   const {
     pattern,
     initializer,
@@ -4624,9 +5389,9 @@ const bindPattern = (input: BindPatternInput): void => {
     fallbackSources,
     requiredSources,
     iterationSources,
-  } = input;
+  } = effectiveInput;
   if (t.isTSParameterProperty(pattern)) {
-    bindPattern({ ...input, pattern: pattern.parameter });
+    bindPattern({ ...effectiveInput, pattern: pattern.parameter });
     return;
   }
   if (t.isIdentifier(pattern)) {
@@ -4640,9 +5405,9 @@ const bindPattern = (input: BindPatternInput): void => {
         binding.referenceInitializers.push({
           node: initializer,
           projection,
-          ...(input.entryBody === undefined
+          ...(effectiveInput.entryBody === undefined
             ? {}
-            : { entryBody: input.entryBody }),
+            : { entryBody: effectiveInput.entryBody }),
           ...(assignmentReference === undefined ? {} : { assignment: true }),
           ...(copyKind === undefined ? {} : { copyKind }),
           ...(copyProjectionOffset === undefined
@@ -4671,27 +5436,35 @@ const bindPattern = (input: BindPatternInput): void => {
     return;
   }
   if (t.isAssignmentPattern(pattern)) {
+    const saturated = budget.remaining <= 0;
     bindPattern({
-      ...input,
+      ...effectiveInput,
       pattern: pattern.left,
       initializer:
         kind === "parameter" || kind === "catch"
           ? initializer
           : (initializer ?? pattern.right),
-      requiredSources: [
-        ...(requiredSources ?? []),
-        ...(initializer === null
-          ? []
-          : [
-              {
-                node: initializer,
-                projection,
-                ...(iterationSources === undefined ? {} : { iterationSources }),
-              },
-            ]),
-      ],
+      ...(saturated
+        ? {}
+        : {
+            requiredSources: [
+              ...(requiredSources ?? []),
+              ...(initializer === null
+                ? []
+                : [
+                    {
+                      node: initializer,
+                      projection,
+                      ...(iterationSources === undefined
+                        ? {}
+                        : { iterationSources }),
+                    },
+                  ]),
+            ],
+          }),
     });
     bindPattern({
+      budget,
       state,
       scope,
       mutable,
@@ -4701,25 +5474,31 @@ const bindPattern = (input: BindPatternInput): void => {
       projection: [],
       referenceOnly: true,
       ...(assignmentReference === undefined ? {} : { assignmentReference }),
-      fallbackSources: [
-        ...(fallbackSources ?? []),
-        ...(initializer === null
-          ? []
-          : [
-              {
-                node: initializer,
-                projection,
-                ...(iterationSources === undefined ? {} : { iterationSources }),
-              },
-            ]),
-      ],
-      ...(requiredSources === undefined ? {} : { requiredSources }),
+      ...(saturated
+        ? {}
+        : {
+            fallbackSources: [
+              ...(fallbackSources ?? []),
+              ...(initializer === null
+                ? []
+                : [
+                    {
+                      node: initializer,
+                      projection,
+                      ...(iterationSources === undefined
+                        ? {}
+                        : { iterationSources }),
+                    },
+                  ]),
+            ],
+            ...(requiredSources === undefined ? {} : { requiredSources }),
+          }),
     });
     return;
   }
   if (t.isRestElement(pattern)) {
     bindPattern({
-      ...input,
+      ...effectiveInput,
       pattern: pattern.argument,
       initializer: null,
       mutable: true,
@@ -4730,14 +5509,14 @@ const bindPattern = (input: BindPatternInput): void => {
     for (const property of pattern.properties) {
       if (t.isRestElement(property)) {
         bindPattern({
-          ...input,
+          ...effectiveInput,
           pattern: property.argument,
           initializer: null,
           mutable: true,
           projection: [],
         });
         bindPattern({
-          ...input,
+          ...effectiveInput,
           pattern: property.argument,
           projection: [...projection, null],
           referenceOnly: true,
@@ -4748,7 +5527,7 @@ const bindPattern = (input: BindPatternInput): void => {
       } else {
         const name = semanticStaticPropertyKey(property.key, property.computed);
         bindPattern({
-          ...input,
+          ...effectiveInput,
           pattern: property.value,
           projection: [...projection, name],
         });
@@ -4756,7 +5535,7 @@ const bindPattern = (input: BindPatternInput): void => {
     }
   else if (t.isArrayPattern(pattern)) {
     const arrayInput = {
-      ...input,
+      ...effectiveInput,
       ...(initializer === null
         ? {}
         : {
