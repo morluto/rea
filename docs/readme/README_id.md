@@ -84,6 +84,10 @@ Penyiapan mendukung Claude Code, Codex, Cursor, Gemini CLI, Grok Build, dan [age
 
 MCP menggunakan skema input ringkas secara default. Untuk petunjuk bidang lengkap dan validasi bertingkat, atur `REA_MCP_INPUT_SCHEMA_PROFILE=full` pada pendaftaran MCP. Kedua profil mempertahankan semua alat dan validasi server kanonis yang sama; lihat panduan kontrak MCP.
 
+Setup mencatat runtime yang dipilih dan skrip masuk REA secara langsung. Jika memakai package runner, pertahankan entri cache dan runtime tersebut; unduh paket dari direktori tepercaya di luar proyek target. Lihat panduan instalasi.
+
+Skema keluaran lengkap diumumkan secara default. Jika klien membatasi `tools/list`, atur `REA_MCP_OUTPUT_SCHEMA_PROFILE=compact` atau `off` dalam registrasi MCP. Validasi server dan hasil terstruktur tetap lengkap. Lihat «Output schemas» di panduan kontrak MCP.
+
 ### Minta agen Anda
 
 ```text

@@ -84,6 +84,10 @@ Konfigurator obsługuje Claude Code, Codex, Cursor, Gemini CLI, Grok Build i [in
 
 MCP domyślnie używa zwartych schematów wejściowych. Pełne opisy pól i zagnieżdżonej walidacji włącza `REA_MCP_INPUT_SCHEMA_PROFILE=full` w rejestracji MCP. Oba profile zachowują wszystkie narzędzia i tę samą kanoniczną walidację serwera; zobacz przewodnik kontraktów MCP.
 
+Konfiguracja zapisuje bezpośrednio wybrane środowisko uruchomieniowe i skrypt wejściowy REA. Przy użyciu narzędzia uruchamiającego pakiety zachowaj jego wpis w pamięci podręcznej i środowisko; pobierz pakiet z zaufanego katalogu poza projektem docelowym. Zobacz instrukcję instalacji.
+
+Pełne schematy wyjściowe są udostępniane domyślnie. Jeśli klient ogranicza `tools/list`, ustaw `REA_MCP_OUTPUT_SCHEMA_PROFILE=compact` lub `off` w rejestracji MCP. Walidacja serwera i wyniki strukturalne pozostają pełne. Zobacz „Output schemas” w przewodniku po kontraktach MCP.
+
 ### Zapytaj agenta
 
 ```text
