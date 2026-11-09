@@ -23,6 +23,7 @@ import type {
   ElectronSenderValidationFinding,
   ElectronProtocolFinding,
   ElectronUtilityProcessFinding,
+  ElectronWindowConstructor,
 } from "./electronStaticAnalysisTypes.js";
 import { JavaScriptModuleRangeIndex } from "./javascriptStaticAnalysisFindings.js";
 
@@ -80,7 +81,10 @@ export interface JavaScriptAnalysisAccumulator {
   readonly sourceMaps: JavaScriptStaticAnalysis["source_map_urls"][number][];
   readonly registrations: JavaScriptBundlerRegistration[];
   readonly browserWindows: LocatedJavaScriptFinding<ElectronBrowserWindowFinding>[];
-  readonly pendingBrowserWindows: t.NewExpression[];
+  readonly pendingBrowserWindows: {
+    readonly node: t.NewExpression;
+    readonly constructor: ElectronWindowConstructor;
+  }[];
   readonly contextBridgeApis: LocatedJavaScriptFinding<ElectronContextBridgeFinding>[];
   readonly ipc: LocatedJavaScriptFinding<ElectronIpcFinding>[];
   readonly senderValidations: LocatedJavaScriptFinding<ElectronSenderValidationFinding>[];

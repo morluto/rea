@@ -153,6 +153,9 @@ const ipc = z
   });
 const windowShape = {
   ...electronFindingContext,
+  window_constructor: z
+    .enum(["BaseWindow", "BrowserView", "WebContentsView"])
+    .exactOptional(),
   options_status: z.enum(["object-literal", "dynamic", "missing"]),
   web_preferences_status: z.enum(["object-literal", "dynamic", "missing"]),
   web_preferences: z.array(
