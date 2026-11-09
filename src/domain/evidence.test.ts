@@ -359,9 +359,7 @@ it("retains the recording session's provider selection without changing semantic
   expect(attributed.normalized_result).toEqual(original.normalized_result);
   expect(attributed.raw_result).toEqual(original.raw_result);
   expect(Object.isFrozen(attributed)).toBe(true);
-  expect(
-    withEvidenceProviderSelection(attributed, selection),
-  ).toBe(attributed);
+  expect(withEvidenceProviderSelection(attributed, selection)).toBe(attributed);
   // Older records carry no provenance and still authenticate.
   expect(parseEvidence(JSON.parse(JSON.stringify(original)))).toEqual(original);
   expect(parseEvidence(JSON.parse(JSON.stringify(attributed)))).toEqual(
