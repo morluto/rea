@@ -49,9 +49,15 @@ cliTest(
   async ({ cli }) => {
     const root = await createTestTempDirectory("rea-environment-build-cli-");
     const har = join(root, "grafana.har");
+    const selectedHar = `${root}/./grafana.har`;
     await writeFile(har, JSON.stringify(environmentManifestHar()));
     const built = await cli.run({
-      arguments: ["environment-build", har, join(root, "built"), "--json"],
+      arguments: [
+        "environment-build",
+        selectedHar,
+        join(root, "built"),
+        "--json",
+      ],
       timeoutMs: 60_000,
     });
     expect(built.exitCode, built.stderr).toBe(0);
@@ -67,7 +73,7 @@ cliTest(
     const inspected = await cli.run({
       arguments: [
         "inspect-web-network-capture",
-        har,
+        selectedHar,
         "har",
         "--format",
         "json",
