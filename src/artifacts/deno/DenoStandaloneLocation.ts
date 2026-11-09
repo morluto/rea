@@ -263,16 +263,14 @@ const locateMachOSlice = async (
     const admitted = admitMachoSegmentCommand(
       segment,
       command.body.byteLength,
-      segment64 ? 64 : 32,
+      table.header.wide ? 64 : 32,
       sliceSize,
     );
     if (!admitted.ok) damage ??= admitted.error.message;
+    if (segment64 !== table.header.wide)
+      damage ??= "Mach-O segment command width disagrees with its header";
     const segmentName = fixedCString(segment.nameBytes);
-    if (
-      segmentName !== SEGMENT_NAME &&
-      segmentName !== LINKEDIT_SEGMENT_NAME &&
-      segment.fileSize > 0n
-    ) {
+    if (segmentName !== LINKEDIT_SEGMENT_NAME && segment.fileSize > 0n) {
       // libsui appends the Intel trailer after the image's content, inside
       // or past __LINKEDIT. Bytes any other segment maps belong to the native
       // image, so a sentinel there is stored data such as a __DATA asset.

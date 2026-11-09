@@ -1761,3 +1761,12 @@ it("counts short ELF note tables against the note allowance", async () => {
   // The header reads are fixed; no table is read once the allowance is spent.
   expect(reads).toBeLessThan(count);
 });
+
+it("does not promote a Deno helper stored in an unrelated SUI section", async () => {
+  const image = denoMachO(denoIntelTrailer(), { architecture: "x64" });
+  image.fill(0, 32 + 72, 32 + 72 + 16);
+  image.write("notdeno", 32 + 72, "latin1");
+  await expect(
+    locateDenoStandalone(bytesHandle(image), image.length),
+  ).resolves.toEqual({ status: "absent" });
+});
