@@ -58,6 +58,17 @@ const electronBoundarySummarySchema = z.strictObject({
   resolved_native_addon_bindings: countSchema,
   /** Absent in evidence produced before protocol registrations were reported. */
   protocol_registrations: countSchema.exactOptional(),
+  /**
+   * Whether the Electron boundary surface was actually recovered. `empty` means
+   * an analyzed source names Electron but no boundary fact was recovered, so the
+   * zeroes above are missing coverage and not evidence of absence.
+   *
+   * Absent when no retained fact names an Electron module, or in evidence
+   * produced before this field existed. Absence is unknown rather than proof
+   * that the application has no Electron surface: unread sources, failed
+   * analysis, and dynamic module names can hide one.
+   */
+  electron_semantics: z.enum(["recovered", "empty"]).exactOptional(),
 });
 
 const reconstructionStatisticsSchema = z.strictObject({
@@ -121,6 +132,27 @@ function* checkApplicationBindingsSteps(
   try {
     for (const node of result.graph.nodes) {
       applicationNodeIds.add(node.node_id);
+      if (
+        node.kind === "artifact" &&
+        (node.identity.strategy !== "content-digest" ||
+          node.identity.sha256 !== result.root_artifact_sha256)
+      ) {
+        for (const observation of node.observations) {
+          if (observation.evidence.extractor.operation === "inventory-root") {
+            context.addIssue({
+              code: "custom",
+              path: ["root_artifact_sha256"],
+              message:
+                "Application artifact root must match the declared root SHA-256",
+            });
+            break;
+          }
+          if (++examined === 4096) {
+            examined = 0;
+            yield;
+          }
+        }
+      }
       if (++examined === 4096) {
         examined = 0;
         yield;

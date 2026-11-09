@@ -205,26 +205,37 @@ const packageSources = async (
   return sources;
 };
 
-/**
- * Keep the library packages the computer can install: those some version of
- * which the Ubuntu 24.04 archive or a declared vendor source offers, as
- * `apt-cache policy` lists them; the rest are recorded as uninstallable.
- */
-export const installableLibraries = async (
-  libraries: LibraryPackages,
+/** The packages the computer can install by name, and the rest, as `installableLibraryPackages` decides from `apt-cache policy`; undefined when apt could not be asked. */
+export const installablePackages = async (
+  names: readonly string[],
   available: {
     readonly origins: ReadonlyMap<string, string | null> | undefined;
     readonly declared: ReadonlySet<string>;
   },
   runQuery: QueryRunner,
   signal: AbortSignal | undefined,
-): Promise<LibraryPackages> => {
-  const names = libraries.library_packages;
+): Promise<ReturnType<typeof installableLibraryPackages> | undefined> => {
   const sources =
     names.length === 0
       ? new Map<string, readonly string[]>()
       : await packageSources(names, runQuery, signal);
-  if (sources === undefined)
+  return sources === undefined
+    ? undefined
+    : installableLibraryPackages(names, { ...available, sources });
+};
+
+/**
+ * Keep the library packages the computer can install: those some version of
+ * which the Ubuntu 24.04 archive or a declared vendor source offers, as
+ * `apt-cache policy` listed them for `installablePackages`; the rest are
+ * recorded as uninstallable.
+ */
+export const installableLibraries = (
+  libraries: LibraryPackages,
+  split: Awaited<ReturnType<typeof installablePackages>>,
+): LibraryPackages => {
+  const names = libraries.library_packages;
+  if (split === undefined && names.length > 0)
     return {
       ...libraries,
       library_packages: [],
@@ -236,10 +247,11 @@ export const installableLibraries = async (
         .filter((reason) => reason !== undefined)
         .join("; "),
     };
-  const split = installableLibraryPackages(names, { ...available, sources });
+  const installable = (name: string) =>
+    split?.installable.includes(name) === true;
   return {
     ...libraries,
-    library_packages: split.installable,
-    uninstallable_library_packages: split.uninstallable,
+    library_packages: names.filter(installable),
+    uninstallable_library_packages: names.filter((name) => !installable(name)),
   };
 };

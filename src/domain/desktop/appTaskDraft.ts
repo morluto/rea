@@ -1,8 +1,20 @@
 import type { JsonValue } from "../jsonValue.js";
 import { isTimestamp, type DesktopTaskCheckInput } from "./appTask.js";
-import { namesXmlNamespace, resolvePointer } from "./appTaskChecks.js";
-import type { DesktopStatePath } from "./desktopState.js";
-import { diffStateViews } from "./stateChanges.js";
+import {
+  ARCHIVE,
+  escapeToken,
+  innermost,
+  namedSuggestions,
+  XML_FILE,
+} from "./appTaskDraftNamed.js";
+import {
+  versionAt,
+  type DesktopStatePath,
+  type StateEnds,
+} from "./desktopState.js";
+import { countTaskRows } from "./appTaskChecks.js";
+import { diffStateViews, sqliteRowIdentity } from "./stateChanges.js";
+import { resolvePointer } from "./viewPointer.js";
 
 type Version = DesktopStatePath["versions"][number];
 type Suggestion = DesktopTaskCheckInput;
@@ -11,6 +23,14 @@ type Suggestion = DesktopTaskCheckInput;
 const MAX_SUGGESTIONS = 10;
 const MAX_ITEMS = 200;
 const MAX_CHARS = 2000;
+/** The most text checks a file gets, and the longest text one compares. */
+const LIMIT = { suggestions: MAX_SUGGESTIONS, chars: MAX_CHARS };
+
+/** The views at a file's two ends. */
+const versions = (baseline: Version, final: Version) => ({
+  baseline: baseline.view,
+  final: final.view,
+});
 
 const isRecord = (
   value: JsonValue | null | undefined,
@@ -98,9 +118,6 @@ const textSuggestions = (
   return suggestions;
 };
 
-const escapeToken = (token: string) =>
-  token.replaceAll("~", "~0").replaceAll("/", "~1");
-
 /** `group/key` entries of key file views as JSON pointers into the view. */
 const keyPointers = (
   views: readonly (JsonValue | null)[],
@@ -118,21 +135,20 @@ const keyPointers = (
     ),
   );
 
-/** Pointers without a listed descendant: a container listed with its members is suggested through them. */
-const innermost = (pointers: readonly string[]): readonly string[] =>
-  pointers.filter(
-    (pointer) => !pointers.some((other) => other.startsWith(`${pointer}/`)),
-  );
-
 const valueSuggestions = (
   file: string,
   baseline: Version,
   final: Version,
 ): Suggestion[] => {
   const format = final.format;
-  if (format !== "json" && format !== "xml" && format !== "keyfile") return [];
-  if (format === "xml" && [baseline.view, final.view].some(namesXmlNamespace))
-    return [];
+  if (format === "zip" || format === "xml")
+    return namedSuggestions(
+      file,
+      versions(baseline, final),
+      format === "zip" ? ARCHIVE : XML_FILE,
+      LIMIT,
+    );
+  if (format !== "json" && format !== "keyfile") return [];
   const change = diffStateViews(format, baseline.view, final.view);
   const pointers = keyPointers([baseline.view, final.view]);
   const pointer = (entry: string) =>
@@ -198,6 +214,58 @@ const rowWhere = (
     }),
   );
 
+/** Match uniquely keyed rows separately from multiset row conditions. */
+const keyedRows = (table: TableView) =>
+  new Map(
+    table.rows.flatMap((row) => {
+      const identity = sqliteRowIdentity(table.columns, table.key, row);
+      return identity.keyed ? [[identity.value, row] as const] : [];
+    }),
+  );
+
+/** The predicates a task can express after volatile values are omitted. */
+const rowConditions = (table: TableView) => {
+  const conditions = new Map<string, Record<string, JsonValue>>();
+  for (const row of table.rows) {
+    if (sqliteRowIdentity(table.columns, table.key, row).keyed) continue;
+    const where = rowWhere(table, row, () => true);
+    if (Object.keys(where).length === 0) continue;
+    conditions.set(JSON.stringify(where), where);
+  }
+  return conditions;
+};
+
+const unkeyedRowSuggestions = (
+  file: string,
+  table: string,
+  baseline: TableView,
+  final: TableView,
+): Suggestion[] => {
+  const conditions = new Map([
+    ...rowConditions(final),
+    ...rowConditions(baseline),
+  ]);
+  const suggestions: Suggestion[] = [];
+  for (const where of conditions.values()) {
+    const previous = countTaskRows(baseline.columns, baseline.rows, where);
+    const count = countTaskRows(final.columns, final.rows, where);
+    if (previous === count) continue;
+    if (count === 0)
+      suggestions.push({ kind: "row_absent", file, table, where });
+    else if (previous === 0)
+      suggestions.push({ kind: "row_present", file, table, where });
+    else
+      suggestions.push({
+        kind: "row_count",
+        file,
+        table,
+        where,
+        equals: count,
+      });
+  }
+  return suggestions;
+};
+
 const rowSuggestions = (
   file: string,
   baseline: Version,
@@ -215,28 +283,15 @@ const rowSuggestions = (
   };
   for (const [name, table] of tableViews(final)) {
     const old = before.get(name) ?? { ...table, rows: [] };
-    const identity = (view: TableView, row: readonly JsonValue[]) =>
-      JSON.stringify(
-        view.key.length === 0
-          ? row
-          : view.key.map((column) => row[view.columns.indexOf(column)] ?? null),
-      );
-    const oldRows = new Map(old.rows.map((row) => [identity(old, row), row]));
-    const newRows = new Map(
-      table.rows.map((row) => [identity(table, row), row]),
-    );
-    const keyed = (column: string) => table.key.includes(column);
+    const oldRows = keyedRows(old);
+    const newRows = keyedRows(table);
     for (const [id, row] of newRows) {
       const previous = oldRows.get(id);
       if (previous === undefined)
         push(
           "row_present",
           name,
-          rowWhere(
-            table,
-            row,
-            (column) => table.key.length === 0 || !keyed(column),
-          ),
+          rowWhere(table, row, (column) => !table.key.includes(column)),
         );
       else if (JSON.stringify(previous) !== JSON.stringify(row))
         push(
@@ -246,7 +301,7 @@ const rowSuggestions = (
             table,
             row,
             (column) =>
-              keyed(column) ||
+              table.key.includes(column) ||
               JSON.stringify(row[table.columns.indexOf(column)]) !==
                 JSON.stringify(previous[old.columns.indexOf(column)]),
           ),
@@ -257,12 +312,9 @@ const rowSuggestions = (
         push(
           "row_absent",
           name,
-          rowWhere(
-            old,
-            row,
-            (column) => old.key.length === 0 || old.key.includes(column),
-          ),
+          rowWhere(old, row, (column) => old.key.includes(column)),
         );
+    suggestions.push(...unkeyedRowSuggestions(file, name, old, table));
     if (old.rows.length !== table.rows.length)
       suggestions.push({
         kind: "row_count",
@@ -350,19 +402,20 @@ export interface TaskDraftFile {
 }
 
 /**
- * Each file under the owned paths whose state differs between the baseline and
- * the final version, with suggested checks for the files the user worked on:
- * documents, or the app's own state when no document changed.
+ * Each file under the owned paths whose state differs between its versions at
+ * the seed and end checkpoints, with suggested checks for the files the user
+ * worked on: documents, or the app's own state when no document changed.
  */
 export const draftTaskFiles = (
   files: ReadonlyMap<string, DesktopStatePath>,
   served: (home: string) => boolean,
+  ends: StateEnds,
 ): readonly TaskDraftFile[] => {
   const changed = [...files]
     .filter(([home]) => served(home))
     .flatMap(([home, path]) => {
-      const baseline = path.versions[0];
-      const final = path.versions.at(-1);
+      const baseline = versionAt(path, ends.seed);
+      const final = versionAt(path, ends.end);
       const change =
         baseline === undefined || final === undefined
           ? undefined

@@ -228,6 +228,7 @@ export const CAPABILITY_DECLARATIONS = {
       }),
     ],
   },
+  desktopBuildComputers: { providers: [] },
   devicetree: {
     providers: [providerBinding(DEVICETREE_PROVIDER, ["inspect_devicetree"])],
   },

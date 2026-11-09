@@ -179,6 +179,7 @@ public final class ReaGhidraBridge extends HeadlessScript {
     private List<FunctionEntry> procedureInventory;
     private List<InventoryItem> stringInventory;
     private DecompInterface decompiler;
+    private boolean existingProject;
     // A refused Program may only report its admission failure to the client.
     private String identityAdmissionFailure;
     /** Per-function native decompiler limit from the session; 0 leaves it unbounded. */
@@ -187,6 +188,8 @@ public final class ReaGhidraBridge extends HeadlessScript {
     private static final int MAX_DECOMPILE_TIMEOUT_SECONDS = Integer.MAX_VALUE / 1000;
     private final ReaGhidraExtensions analysisExtensions = new ReaGhidraExtensions();
     private static AddressSpace sessionDefaultAddressSpace;
+    private Path checkpointDirectory;
+    private long checkpointModification;
 
     @Override
     public void run() throws Exception {
@@ -195,7 +198,9 @@ public final class ReaGhidraBridge extends HeadlessScript {
             throw new IllegalArgumentException("REA bridge requires one session descriptor");
         }
         Path descriptorPath = Path.of(arguments[0]);
+        checkpointDirectory = descriptorPath.toAbsolutePath().normalize().getParent();
         SessionDescriptor descriptor = readDescriptor(descriptorPath);
+        existingProject = descriptor.existingProject;
         decompileTimeoutSeconds = descriptor.decompileTimeoutSeconds();
         // Windows retains a native immutable bearer descriptor lease until
         // runtime_close; POSIX removes it after this read. Normal cleanup removes
@@ -247,6 +252,7 @@ public final class ReaGhidraBridge extends HeadlessScript {
                 throw new IOException("Windows Ghidra P0 does not admit metadata recovery or database mutation.");
             analysisExtensions.analyze(descriptor.analysisExtensions, currentProgram, monitor);
             initializeDecompiler();
+            checkpointModification = currentProgram.getModificationNumber();
             serve(descriptor);
         }
         finally {
@@ -451,6 +457,7 @@ public final class ReaGhidraBridge extends HeadlessScript {
         if (descriptor.existingProject && isMutatingOperation(request.method))
             throw new RequestFailure("method_unavailable", "Existing Ghidra project sessions are read-only");
         return switch (request.method) {
+            case "checkpoint_program" -> checkpointProgram(request.params, descriptor);
             case "read_binary_inventory_summary" -> binaryInventorySummary(request.params);
             case "inspect_native_load_image" -> inspectNativeLoadImage(request.params);
             case "read_bytes" -> readMemoryBytes(request.params);
@@ -504,6 +511,31 @@ public final class ReaGhidraBridge extends HeadlessScript {
 
     private static boolean isMutatingOperation(String method) {
         return method.equals("annotate_native_function") || method.equals("set_address_name") || method.equals("set_addresses_names");
+    }
+
+    /** Internal lifecycle request: the destination is inside this owned runtime. */
+    private JsonObject checkpointProgram(JsonObject params, SessionDescriptor descriptor) throws Exception {
+        requireKeys(params, Set.of("path", "force"));
+        if (descriptor.existingProject || !descriptor.transport.equals("unix-socket"))
+            throw new RequestFailure("method_unavailable", "This Program has no checkpoint authority");
+        Path output = Path.of(requireString(params, "path")).toAbsolutePath().normalize();
+        if (!output.getParent().equals(checkpointDirectory) ||
+            !output.getFileName().toString().matches("checkpoint-[a-f0-9-]{36}\\.gzf"))
+            throw new RequestFailure("invalid_request", "Checkpoint destination must belong to this runtime");
+        JsonElement forced = params.get("force");
+        if (!forced.isJsonPrimitive() || !forced.getAsJsonPrimitive().isBoolean())
+            throw new RequestFailure("invalid_request", "Checkpoint force must be a boolean");
+        boolean force = forced.getAsBoolean();
+        JsonObject result = new JsonObject();
+        boolean changed = currentProgram.getModificationNumber() != checkpointModification;
+        result.addProperty("saved", force || changed);
+        if (force || changed) {
+            if (Files.exists(output)) throw new RequestFailure("invalid_request", "Checkpoint destination already exists");
+            currentProgram.saveToPackedFile(output.toFile(), monitor);
+            checkpointModification = currentProgram.getModificationNumber();
+            result.addProperty("path", output.toString());
+        }
+        return result;
     }
 
     private JsonObject sessionInfo(SessionDescriptor descriptor) throws Exception {
@@ -846,6 +878,7 @@ public final class ReaGhidraBridge extends HeadlessScript {
         JsonArray blocks = new JsonArray();
         JsonArray skipped = new JsonArray();
         JsonArray notLoaded = new JsonArray();
+        JsonArray overlays = new JsonArray();
         List<ByteSearchBlock> eligible = new ArrayList<>();
         for (MemoryBlock block : ordered) {
             monitor.checkCancelled();
@@ -853,8 +886,14 @@ public final class ReaGhidraBridge extends HeadlessScript {
             Address high = block.getEnd();
             Address bound = start == null ? end : start;
             if (bound != null && !bound.getAddressSpace().equals(low.getAddressSpace())) continue;
-            if (bound == null && (!block.isLoaded() || block.isOverlay())) {
+            // Without bounds, search loaded non-overlay memory. Unloaded file
+            // parts and loaded overlays stay reachable through explicit bounds.
+            if (bound == null && !block.isLoaded()) {
                 notLoaded.add(byteSearchCoverage(block, low, high));
+                continue;
+            }
+            if (bound == null && block.isOverlay()) {
+                overlays.add(byteSearchCoverage(block, low, high));
                 continue;
             }
             if (start != null && low.compareTo(start) < 0) low = start;
@@ -930,6 +969,7 @@ public final class ReaGhidraBridge extends HeadlessScript {
         searched.addProperty("bytes", covered);
         searched.add("skipped_uninitialized", skipped);
         searched.add("skipped_not_loaded", notLoaded);
+        searched.add("skipped_overlays", overlays);
         JsonObject result = new JsonObject();
         result.add("matches", matches);
         result.add("searched", searched);
@@ -1384,8 +1424,29 @@ public final class ReaGhidraBridge extends HeadlessScript {
         flow.addProperty("conditional", false);
         flow.addProperty("computed", false);
         if (instruction == null) {
-            result.addProperty("status", !currentProgram.getMemory().contains(address) ? "outside-memory" : currentProgram.getListing().getInstructionContaining(address) != null
-                ? "not-instruction-boundary" : currentProgram.getListing().getDefinedDataContaining(address) != null ? "data" : "not-in-listing");
+            Instruction containing = currentProgram.getListing().getInstructionContaining(address);
+            boolean inMemory = currentProgram.getMemory().contains(address);
+            Data containingData = inMemory && containing == null
+                ? currentProgram.getListing().getDefinedDataContaining(address) : null;
+            result.addProperty("status", !inMemory ? "outside-memory" : containing != null
+                ? "not-instruction-boundary" : containingData != null ? "data" : "not-in-listing");
+            if (inMemory && containing == null && containingData != null) {
+                JsonObject parentData = new JsonObject();
+                parentData.addProperty("address", canonicalAddress(containingData.getAddress()));
+                parentData.addProperty("length", containingData.getLength());
+                parentData.addProperty("type_id", containingData.getDataType().getPathName());
+                parentData.addProperty("provenance", "ghidra-listing");
+                result.add("containing_data", parentData);
+            }
+            if (containing != null && currentProgram.getMemory().contains(address)) {
+                JsonObject containingInstruction = new JsonObject();
+                containingInstruction.addProperty("address", canonicalAddress(containing.getAddress()));
+                containingInstruction.addProperty("length", containing.getLength());
+                containingInstruction.addProperty("mnemonic", containing.getMnemonicString());
+                containingInstruction.addProperty("raw_disassembly", containing.toString());
+                containingInstruction.addProperty("provenance", "ghidra-listing");
+                result.add("containing_instruction", containingInstruction);
+            }
             for (String key : List.of("bytes", "length", "mnemonic", "raw_disassembly")) result.add(key, JsonNull.INSTANCE);
         } else {
             result.addProperty("status", "decoded");
@@ -1901,6 +1962,9 @@ public final class ReaGhidraBridge extends HeadlessScript {
             "Def-use links do not cross function boundaries and may omit memory aliasing, call side effects, or unresolved indirect flow."
         );
         limitations.add(
+            "Memory read/write effects cover high-p-code LOAD and STORE operations only; direct memory address varnodes in other operations are not included. An empty effect list does not establish that no memory is accessed. Recorded instruction references may provide complementary evidence."
+        );
+        limitations.add(
             "Memory read/write effects include stack and temporary memory operations; they do not identify persistent state or business meaning."
         );
         limitations.add(
@@ -2346,7 +2410,7 @@ public final class ReaGhidraBridge extends HeadlessScript {
                 if (!match.matched()) {
                     continue;
                 }
-                JsonObject item = resultItem(entry.item, null);
+                JsonObject item = resultItem(entry.item, "procedure");
                 if (!match.aliases().isEmpty()) {
                     JsonArray aliases = new JsonArray();
                     for (String alias : match.aliases()) aliases.add(alias);
@@ -2361,7 +2425,7 @@ public final class ReaGhidraBridge extends HeadlessScript {
             if (!matcher.matches(item.value)) {
                 continue;
             }
-            items.add(resultItem(item, null));
+            items.add(resultItem(item, procedureSearch ? "procedure" : "string"));
         }
         return items;
     }
@@ -3686,7 +3750,7 @@ public final class ReaGhidraBridge extends HeadlessScript {
         return result;
     }
 
-    private static JsonObject callRelationshipCoverage(
+    private JsonObject callRelationshipCoverage(
             CallBoundaryObservation calls, Integer missingCallers) {
         JsonObject coverage = completeResolvedCallCoverage();
         Integer omitted = calls == null ? null : calls.unrepresentedCalleeCalls();
@@ -3703,7 +3767,7 @@ public final class ReaGhidraBridge extends HeadlessScript {
             if (calls == null && missingCallers == null) directions.add("callers");
             directions.add("callees");
             coverage.add("limited_directions", directions);
-            return coverage;
+            return qualifyProjectCallCoverage(coverage, calls, missingCallers);
         }
         JsonArray limitations = new JsonArray();
         if (callerLimitation != null) limitations.add(callerLimitation);
@@ -3717,6 +3781,35 @@ public final class ReaGhidraBridge extends HeadlessScript {
             coverage.add("limitations", limitations);
             coverage.add("limited_directions", directions);
         }
+        return qualifyProjectCallCoverage(coverage, calls, missingCallers);
+    }
+
+    private JsonObject qualifyProjectCallCoverage(
+            JsonObject coverage, CallBoundaryObservation calls, Integer missingCallers) {
+        if (!existingProject) return coverage;
+        String reason = "The selected project's prior analysis completeness is unknown; " +
+            "the recorded call relationships may omit undiscovered callers or callees.";
+        String status = coverage.get("status").getAsString();
+        // A single-direction read with known omissions is still partial; an
+        // unknown project history adds a limitation rather than erasing them.
+        if (status.equals("partial") && (calls == null || missingCallers == null)) {
+            coverage.getAsJsonArray("limitations").add(reason);
+            return coverage;
+        }
+        if (status.equals("unknown")) reason += " " + coverage.get("reason").getAsString();
+        if (status.equals("partial")) {
+            for (JsonElement limitation : coverage.getAsJsonArray("limitations"))
+                reason += " " + limitation.getAsString();
+        }
+        JsonArray directions = new JsonArray();
+        if (missingCallers != null || (calls == null && missingCallers == null))
+            directions.add("callers");
+        if (calls != null || (calls == null && missingCallers == null))
+            directions.add("callees");
+        coverage.addProperty("status", "unknown");
+        coverage.addProperty("reason", reason);
+        coverage.remove("limitations");
+        coverage.add("limited_directions", directions);
         return coverage;
     }
 

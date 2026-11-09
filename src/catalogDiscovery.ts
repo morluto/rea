@@ -2,17 +2,24 @@ import { createHash } from "node:crypto";
 import { z } from "zod";
 import type { createCatalogIdentity } from "./catalogIdentity.js";
 
+// Retained views are loaded like producers: their full cross-domain output
+// contract is unnecessary until a task actually queries retained analysis.
 export const HOT_TOOL_NAMES: ReadonlySet<string> = new Set([
   "binary_session",
   "open_binary",
   "close_binary",
   "get_evidence_bundle",
-  "inspect_analysis_view",
 ]);
 
 // One page activates at most 20 schemas: callers can page a broad search instead
 // of inadvertently expanding the entire catalog into their client's context.
-const pageSize = z.int().min(1).max(20).default(3);
+const MAX_DISCOVERY_TOOLS = 20;
+const DEFAULT_DISCOVERY_PAGE_SIZE = 3;
+const pageSize = z
+  .int()
+  .min(1)
+  .max(MAX_DISCOVERY_TOOLS)
+  .default(DEFAULT_DISCOVERY_PAGE_SIZE);
 const inputSchema = z
   .strictObject({
     query: z
@@ -25,12 +32,14 @@ const inputSchema = z
     names: z
       .array(z.string().min(1))
       .min(1)
-      .max(20)
+      .max(MAX_DISCOVERY_TOOLS)
       .optional()
-      .describe("Exact tool names to load instead of searching."),
+      .describe(
+        `At most ${MAX_DISCOVERY_TOOLS} exact tool names to load instead of searching.`,
+      ),
     offset: z.int().min(0).default(0),
     limit: pageSize.describe(
-      "Search page size; does not apply to exact names.",
+      `Search page size 1..${MAX_DISCOVERY_TOOLS} (default ${DEFAULT_DISCOVERY_PAGE_SIZE}); does not apply to exact names.`,
     ),
   })
   .refine(

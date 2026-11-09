@@ -67,11 +67,18 @@ See [desktop installations](https://github.com/morluto/rea/blob/main/docs/deskto
 Use `inspect_go_binary` for an explicit local ELF, PE or Mach-O (universal
 files need `architecture`) when the
 question concerns the embedded compiler version, module/dependency versions,
-local replacements or build settings. No `open_binary`, Go installation or
+local replacements, build settings, or static Go string literals packed without
+NUL terminators. Pass `include_string_literals: true`
+(`--include-string-literals`, optional `max_string_literals` /
+`--max-string-literals`) to recover bounded inferred word-aligned `(ptr, len)`
+UTF-8 string slices from read-only data and page them through `go`
+`string_literals` views. No `open_binary`, Go installation or
 target execution is required. The CLI equivalent is `inspect-go-binary PATH`.
 Preserve artifact SHA-256, original file ranges, framed module bytes and every
 unparsed module-text line. A missing record is an unknown, not proof of a
-non-Go binary; observed metadata does not authenticate its claims. Function,
+non-Go binary; observed metadata does not authenticate its claims, and static
+`(ptr, len)` string recovery excludes compiler-inlined stack/immediate strings
+without proving runtime reachability. Function,
 source and type recovery remain a separate native-analysis question.
 
 ## Model files
@@ -256,7 +263,7 @@ Choose `row_limit` when a finite sample is useful and keep truncation and
 unspecified row order explicit. Virtual tables, shadow tables and views are
 schema facts, not row-read targets. REA inspects private copies and leaves
 the source files untouched; obtain a coherent quiescent database/WAL snapshot
-before inspection. See [SQLite snapshots](https://github.com/morluto/rea/blob/main/docs/sqlite-databases.md).
+before inspection. See [SQLite snapshots](https://github.com/morluto/rea/blob/main/docs/guides/data/sqlite-databases.md).
 
 ## Recorded Linux crashes
 
@@ -271,7 +278,7 @@ The optional `include_debugger_context` facet adds mapping candidates through
 caller-supplied GDB/pwndbg in an owned core-only session. Display names do not
 establish current file identity; zero reported flags leave permissions unknown.
 Requested unavailable context fails with setup guidance. See
-[recorded crashes](https://github.com/morluto/rea/blob/main/docs/recorded-crashes.md)
+[recorded crashes](https://github.com/morluto/rea/blob/main/docs/guides/native/recorded-crashes.md)
 for exact upstream profiles, bounds and verification coverage.
 
 ## Offline ELF layout
@@ -335,7 +342,8 @@ on the first MCP call. It retains the complete observation and returns the
 original selection, text availability and length without the body. Use
 `normalized_result.parent_evidence_id` with `inspect_analysis_view` and
 `view: {kind: "native", facet: "pseudocode", offset: 0, limit: 20000}`;
-follow `coverage.next_offset` for later pages. Offsets and limits count UTF-16
+follow `coverage.next_offset` for later pages. Choose a smaller limit if one
+page exceeds the client or transport budget. Offsets and limits count UTF-16
 code units, not lines or tokens. Pages reuse the same observation without
 repeating decompilation. Null and empty text remain distinct. Omitted or
 `complete` detail preserves full inline delivery. Summary delivery requires a
@@ -391,6 +399,28 @@ operation's full ordered list. Candidate capabilities, returned with complete
 detail, describe possible providers. Top-level session capabilities describe the current route, and
 `analysis_provider_binding` identifies the selected provider.
 
+## Continue editable Ghidra analysis across processes
+
+For a task spanning agent sessions, check `binary_session` after selecting
+Ghidra: the current provider's `capabilities[].shared_limitations` states whether
+Program checkpoints are enabled or the session is ephemeral. Successful native
+queries distinguish initial analysis from an actually restored packed Program;
+do not infer that restoration happened merely because checkpoint mode is enabled.
+
+In ephemeral mode, choose a private absolute directory and set
+`REA_GHIDRA_CHECKPOINT_DIR` in the environment starting REA. Restart the MCP server
+after changing that launch configuration; no current tool call or runtime
+analysis-setting update enables it. Stock ELF/PE/Mach-O imports on Linux/macOS
+are supported; see the [checkpoint setup and limitations](https://github.com/morluto/rea/blob/main/docs/getting-started/installation.md#automatically-checkpoint-an-owned-ghidra-program).
+
+With the setting enabled, normal opens restore compatible saved Programs
+automatically. Initial completed analysis is saved, and `close_binary` saves
+later metadata edits; no separate save/restore tool is needed. Repair a reported
+save failure and retry close. Cancellation or process failure can lose edits
+after the last successful save; unfinished initial analysis cannot resume.
+Keep the same checkpoint configuration for later processes. Evidence/Unknown
+history and immutable REA query snapshots have separate persistence workflows.
+
 ## Reuse caller-selected Ghidra analysis
 
 When the caller supplies an expanded project, configure `REA_GHIDRA_PROJECT_PATH`
@@ -402,7 +432,7 @@ import overrides and repair scripts are unavailable in this mode. Treat original
 analysis completeness/settings as unknown and prior edits as caller-project state.
 The program's recorded import digest must match the target; changed project content
 requires reopening for a fresh profile. See the
-[setup and preparation guide](https://github.com/morluto/rea/blob/main/docs/installation.md#reuse-an-existing-ghidra-project).
+[setup and preparation guide](https://github.com/morluto/rea/blob/main/docs/getting-started/installation.md#reuse-an-existing-ghidra-project).
 
 ## Ghidra startup deadline recovery
 
@@ -414,7 +444,7 @@ When the error names `ghidra.startup_timeout_ms`, call
 `update_analysis_settings` with `action: "set"` and a larger value within the
 reported bounds. Resolve retained cleanup before the next startup attempt.
 No REA restart is needed; an already accepted startup keeps its original
-budget. A new attempt repeats import. Preserve useful Evidence before closing
+budget. Follow the error's session-specific restart guidance, and preserve useful Evidence before closing
 and reopening the target when remediation requires that lifecycle step.
 
 For a per-function timeout, update `ghidra.decompile_timeout_seconds` and retry
@@ -436,7 +466,7 @@ and memory controls in place. Disable specific expensive analyzers only when
 their missing coverage is acceptable and retain the resulting limitations.
 Exported C and embedded resources remain useful independent evidence, but a
 timeout does not establish complete analysis or absence of code. See the
-[deadline and client guide](https://github.com/morluto/rea/blob/main/docs/mcp-contracts.md#ghidra-first-query-deadlines-and-recovery).
+[deadline and client guide](https://github.com/morluto/rea/blob/main/docs/reference/mcp-contracts.md#ghidra-first-query-deadlines-and-recovery).
 
 ## Bridge request ceiling
 
@@ -587,7 +617,7 @@ broader metadata recovery on Linux; it requires an explicitly configured
 NativeAOT JAR. These are separate routes. The built-in parser also runs on
 Windows Ghidra P0; read frozen literals from its report, because
 `search_strings` does not include them. See the
-[NativeAOT guide](https://github.com/morluto/rea/blob/main/docs/ghidra-nativeaot.md)
+[NativeAOT guide](https://github.com/morluto/rea/blob/main/docs/providers/ghidra-nativeaot.md)
 for setup, supported layouts, and host restrictions. Preserve binary identity
 and distinguish derived metadata from Ghidra database observations. Recovered
 types and native pseudocode are not original C# source. Windows Ghidra P0 has
@@ -616,7 +646,7 @@ every executable in the bundle. It also lists missing or weak loads and earlier
 provides them.
 
 Use `extract_artifact` when materialized files from a supported format are needed.
-It extracts the active target and accepts optional `integrity_policy`; see the [MCP contracts](https://github.com/morluto/rea/blob/main/docs/mcp-contracts.md).
+It extracts the active target and accepts optional `integrity_policy`; see the [MCP contracts](https://github.com/morluto/rea/blob/main/docs/reference/mcp-contracts.md).
 It materializes all regular files into a fresh temporary directory chosen by
 REA. Symlinks and encrypted entries are inventory facts, not extractable files.
 The result reports the materialized directory; callers do not choose the
@@ -644,7 +674,7 @@ temporary, not a retained export of the image's contents.
 For headerless DOS COM, explicitly open with `format: "dos-com"` (CLI
 `--target-format dos-com`). Inspect the load image before trusting function
 analysis: the entry is `0x10100`, file offset zero, with imposed real-mode segment
-context. PSP/stack/device state remains unmodeled. See [DOS guide](https://github.com/morluto/rea/blob/main/docs/ghidra-dos.md).
+context. PSP/stack/device state remains unmodeled. See [DOS guide](https://github.com/morluto/rea/blob/main/docs/providers/ghidra-dos.md).
 
 Use `inspect_byte_entropy` to triage high- and low-entropy ranges before extraction.
 
@@ -658,7 +688,7 @@ otherwise. Big-endian ARM, Thumb-only, and Cortex-M variants are unsupported.
 `0x0000..0xffff`. 65C02, 65816, cartridge containers, bank switching, and mapper
 semantics are unsupported. `m68k` requires an even entry and decodes the 68040
 superset of the 68000 family; Amiga/Atari containers and vector-table entry
-discovery are unsupported. Windows Ghidra P0 admits raw images only for `6502`. See [raw binary guide](https://github.com/morluto/rea/blob/main/docs/raw-binary.md).
+discovery are unsupported. Windows Ghidra P0 admits raw images only for `6502`. See [raw binary guide](https://github.com/morluto/rea/blob/main/docs/providers/raw-binary.md).
 
 Intel HEX, S-record, UF2 and DfuSe files are containers, not raw images:
 `inspect_artifact` lists address regions (UF2 per familyID, DfuSe per element
@@ -670,7 +700,12 @@ numbering gaps leave coverage unknown; a DfuSe suffix CRC mismatch follows
 ### Function annotations in Ghidra
 
 Fresh-import sessions admit annotations; existing-project reuse is read-only.
-Use `annotate_native_function` for one function name and/or entry comments, with at least one explicit change. Review its annotation readback and refreshed dossier inline. Changes are atomic and session-scoped; empty comments clear them, omitted fields preserve them. Later MCP calls observe edits until close. CLI `annotate-native-function` returns the updated analysis before discarding the session. Original executable bytes are unchanged; edits invalidate immutable snapshots. Windows P0 does not admit database mutations. For naming only, `set_address_name` / `set_addresses_names` also work with Ghidra: they name function entries or data addresses (primary labels) and return compact per-address success booleans instead of a dossier. Ghidra rejects batch addresses that request the same name or a name another selected address holds; `raw_result.failures` gives each failure's reason.
+Use `annotate_native_function` for one function name and/or entry comments, with at least one explicit change. Review its annotation readback and refreshed dossier inline. Changes are atomic; empty comments clear them, omitted fields preserve them. Later MCP calls observe edits. Normal close saves them when owned Program checkpoint mode is enabled; ephemeral mode discards them. CLI `annotate-native-function` follows the same setting when closing after its updated result. Select the [checkpoint workflow](#continue-editable-ghidra-analysis-across-processes) before edits that must survive a later process. Original executable bytes are unchanged; edits invalidate immutable snapshots. Windows P0 does not admit database mutations. For naming only, `set_address_name` / `set_addresses_names` also work with Ghidra: they name function entries or data addresses (primary labels) and return compact per-address success booleans instead of a dossier. Ghidra rejects batch addresses that request the same name or a name another selected address holds; `raw_result.failures` gives each failure's reason.
+
+A provider switch or different target can retire the active Ghidra database and discard
+its edits, even if the new provider fails on a later call. Same-target,
+same-profile reopen keeps the active database. Retained annotation Evidence
+records what happened; it does not restore the edits.
 
 For `compare_functions`, obtain `analyze_function` Evidence before and after the
 edit while the MCP session is open; annotation Evidence is not a comparison
@@ -692,7 +727,7 @@ code pages, payload hashes and static icon-group references. Same-language icon
 resolution is explicit; missing references and size mismatch remain visible.
 Other payloads are opaque, and this operation does not decode images or simulate
 Windows resource loading. Consult the budgets and supported tree profile in
-[offline binary diagnostics](https://github.com/morluto/rea/blob/main/docs/binary-diagnostics.md).
+[offline binary diagnostics](https://github.com/morluto/rea/blob/main/docs/guides/native/binary-diagnostics.md).
 
 ## Offline PE and ELF export tables
 
@@ -702,7 +737,7 @@ directory or ELF dynamic symbol table on any host without opening a native
 target. Ordinal-only, forwarded and hidden-version exports stay distinct;
 partial or unsupported coverage means the inventory is incomplete, not that
 exports are absent. Use `inspect_macho` for Mach-O. See
-[offline binary diagnostics](https://github.com/morluto/rea/blob/main/docs/binary-diagnostics.md).
+[offline binary diagnostics](https://github.com/morluto/rea/blob/main/docs/guides/native/binary-diagnostics.md).
 
 For exact core-module import/export differences, use `compare_wasm_interfaces`
 with two complete inspection Evidence records (or current-session retained

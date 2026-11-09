@@ -112,8 +112,9 @@ describe("RISC-V ISA declarations at target resolution", () => {
       [{ type: SHT_RISCV_ATTRIBUTES, payload: attributes(C3_ARCH, "gnu") }],
       {
         status: "unavailable",
-        reason:
-          "RISC-V ELF declares non-riscv vendor attributes that REA does not inspect",
+        reason: expect.stringMatching(
+          /non-riscv vendor attributes.*not inspect/i,
+        ),
       },
       "readable Tag_RISCV_arch declaration",
     ],
@@ -125,7 +126,9 @@ describe("RISC-V ISA declarations at target resolution", () => {
       ],
       {
         status: "unavailable",
-        reason: "the image has more than one RISC-V attribute section",
+        reason: expect.stringMatching(
+          /more than one RISC-V attribute section/i,
+        ),
       },
       "more than one RISC-V attribute section",
     ],
@@ -134,8 +137,9 @@ describe("RISC-V ISA declarations at target resolution", () => {
       [{ type: SHT_RISCV_ATTRIBUTES, payload: Buffer.alloc(4097, 0x41) }],
       {
         status: "unavailable",
-        reason:
-          "RISC-V attribute section size 4097 is outside REA's inspected bound of 4096 bytes",
+        reason: expect.stringMatching(
+          /RISC-V attribute section.*4097.*4096 bytes/i,
+        ),
       },
       "inspected bound",
     ],

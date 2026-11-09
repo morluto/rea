@@ -5,6 +5,8 @@ import {
 import { sourceToBundleViewRequestSchema } from "../../domain/analysisView/sourceToBundleView.js";
 import { featureTraceViewRequestSchema } from "../../domain/analysisView/featureTraceView.js";
 import { z } from "zod";
+import { recordedBrowserOriginSchema } from "../../domain/browserObservation.js";
+import { endpointComparisonViewRequestSchema } from "../../domain/analysisView/endpointComparisonView.js";
 
 import { evidenceInputSchema } from "../../domain/evidenceReference.js";
 import { compareJavaScriptExportShapesInputSchema } from "../../domain/javascript/javascriptExportShapeComparisonSchemas.js";
@@ -50,6 +52,31 @@ const compareApplicationVersionsFacts = {
   left_native_observations: z.array(evidenceInputSchema).default([]),
   right_native_observations: z.array(evidenceInputSchema).default([]),
 } as const;
+
+/** Compare existing static Application Graph and HAR Evidence without acquiring targets. */
+export const compareStaticObservedEndpointsFactsSchema = z.strictObject({
+  application: evidenceInputSchema,
+  capture: evidenceInputSchema,
+  origin: recordedBrowserOriginSchema
+    .optional()
+    .describe(
+      "Caller-declared canonical HTTP(S) origin for root-relative static targets; omit to keep their origin unknown. This never contacts the origin.",
+    ),
+});
+export const compareStaticObservedEndpointsRequestSchema =
+  compareStaticObservedEndpointsFactsSchema.extend({
+    view: endpointComparisonViewRequestSchema
+      .optional()
+      .describe(
+        "Return this selected page in the initial call, retaining the complete comparison. An explicit view takes precedence over detail.",
+      ),
+    detail: z
+      .enum(["summary", "complete"])
+      .default("summary")
+      .describe(
+        "Summary retains the complete comparison and returns counts and source coverage. Use inspect_analysis_view kind endpoint-comparison for selected rows; complete returns all facts inline.",
+      ),
+  });
 
 /** Application comparison request accepting inline or same-session application Evidence. */
 export const compareApplicationVersionsRequestSchema = z.strictObject({

@@ -8,10 +8,7 @@ import {
   createCliResultOutput,
   streamCliCommandResults,
 } from "../../../src/cli/cliResultOutput.js";
-import {
-  JSON_LINES_SELECTION_REMEDIATION,
-  jsonLinesErrorRecord,
-} from "../../../src/cli/jsonLines.js";
+import { jsonLinesErrorRecord } from "../../../src/cli/jsonLines.js";
 import { parseCliOutputArguments } from "../../../src/cliOutput.js";
 import { logCliCommand } from "../../../src/cliLogging.js";
 import { silentLogger } from "../../../src/logger.js";
@@ -139,7 +136,11 @@ const selectionRefusal = (
     code: "invalid_request",
     category: "invalid_input",
     retryable: false,
-    remediation: { action: JSON_LINES_SELECTION_REMEDIATION },
+    remediation: {
+      action: expect.stringMatching(
+        /--format json.*record collection.*--filter-output/iu,
+      ),
+    },
     recovery: { kind: "inspect_input_contract", operation: "fixture" },
     details: {
       operation: "fixture",

@@ -1,7 +1,10 @@
 import { createHash } from "node:crypto";
 import { constants, type BigIntStats } from "node:fs";
 import { lstat, open, realpath, type FileHandle } from "node:fs/promises";
-import { sameRegularFileState } from "../filesystem/RegularFile.js";
+import {
+  resolvedRegularFile,
+  sameRegularFileState,
+} from "../filesystem/RegularFile.js";
 import { ArtifactReaderFailure } from "./ArtifactReader.js";
 import type { ArtifactResourceScope } from "./ArtifactResourceScope.js";
 import {
@@ -51,22 +54,6 @@ const FILE_SYSTEM: StableArtifactFileSystem = {
   lstat: (path) => lstat(path, { bigint: true }),
   open,
   realpath,
-};
-
-/** Suggest a retry only when the rejected link currently resolves to a regular file. */
-const resolvedRegularFile = async (
-  path: string,
-  fileSystem: StableArtifactFileSystem,
-): Promise<string | undefined> => {
-  try {
-    const resolved = await fileSystem.realpath?.(path);
-    if (resolved === undefined) return undefined;
-    const target = await fileSystem.lstat(resolved);
-    return target.isFile() && !target.isSymbolicLink() ? resolved : undefined;
-  } catch {
-    // A missing or unreadable target changes only the recovery hint.
-    return undefined;
-  }
 };
 
 const afterValidation = async <T>(

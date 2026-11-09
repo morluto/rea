@@ -9,6 +9,7 @@ import { ArtifactResourceScope } from "../../../src/artifacts/ArtifactResourceSc
 import * as layout from "../../../src/artifacts/bun/BunModuleGraphLayout.js";
 import { decodeBunModuleGraph } from "../../../src/artifacts/bun/BunModuleGraphMembers.js";
 import {
+  locateBunGraphFixture,
   bunModuleGraphPayload,
   bunPrefixedPayload,
   peBunSection,
@@ -44,10 +45,7 @@ it("reads bounded metadata instead of the stored Bun asset body", async () => {
         : Reflect.get(target, key),
   });
   try {
-    const located = await layout.locateBunStandaloneGraph(
-      counted,
-      bytes.length,
-    );
+    const located = await locateBunGraphFixture(counted, bytes.length);
     if (located.status !== "present" || located.graph === undefined)
       throw new Error("Missing graph");
     const decoded = await decodeBunModuleGraph(located.graph);
