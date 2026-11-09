@@ -14,6 +14,7 @@ import { artifactInspectionResultSchema } from "../../../src/domain/artifactInsp
 import { dfuseFile } from "../../../src/domain/firmware/dfuse.fixture.js";
 import {
   RP2040_FAMILY,
+  UF2_FLAGS,
   RP2XXX_ABSOLUTE_FAMILY,
   patternBytes,
   uf2Block,
@@ -23,6 +24,7 @@ import {
 
 const APP = patternBytes(300, 9);
 const REGION = "family-0xe48bff56/0x10000000-0x1000012b.bin";
+const ABSOLUTE_REGION = "family-0xe48bff57/0x10ffff00-0x10ffffff.bin";
 
 // The compiled stdio fixture checks advertised schemas against their dialect and
 // validates actual tool responses, avoiding a second source server module graph.
@@ -93,8 +95,16 @@ it.each(["full", "compact"] as const)(
         parseEvidence(extracted.structuredContent).normalized_result,
       );
       outputRoot = result.output_root;
+      expect(result.containment_verified).toBe(true);
+      expect(result.coverage.status).toBe("unknown");
       expect(
         Buffer.compare(await readFile(join(result.output_root, REGION)), APP),
+      ).toBe(0);
+      expect(
+        Buffer.compare(
+          await readFile(join(result.output_root, ABSOLUTE_REGION)),
+          Buffer.alloc(256, 0xef),
+        ),
       ).toBe(0);
       await call("close_binary", {});
     } finally {
@@ -103,6 +113,74 @@ it.each(["full", "compact"] as const)(
     }
   },
 );
+
+it("preserves valid regions while excluding a UF2 payload overlapping MD5 metadata", async () => {
+  const root = await createTestTempDirectory("rea-uf2-md5-mcp-");
+  const path = join(root, "firmware.uf2");
+  const valid = patternBytes(452, 1);
+  const plain = patternBytes(476, 2);
+  await writeFile(
+    path,
+    uf2File([
+      uf2Block({
+        address: 0x1000,
+        payload: valid,
+        blockNo: 0,
+        numBlocks: 3,
+        flags: UF2_FLAGS.md5,
+      }),
+      uf2Block({
+        address: 0x2000,
+        payload: patternBytes(453, 3),
+        blockNo: 1,
+        numBlocks: 3,
+        flags: UF2_FLAGS.md5,
+      }),
+      uf2Block({ address: 0x3000, payload: plain, blockNo: 2, numBlocks: 3 }),
+    ]),
+  );
+  const { call } = await connectLocalToolsMcp({});
+  let outputRoot: string | undefined;
+  try {
+    const opened = await call("open_binary", { path });
+    expect(opened.isError, JSON.stringify(opened)).not.toBe(true);
+    const inspected = await call("inspect_artifact", {});
+    expect(inspected.isError, JSON.stringify(inspected)).not.toBe(true);
+    const inspection = artifactInspectionResultSchema.parse(
+      parseEvidence(inspected.structuredContent).normalized_result,
+    );
+    expect(inspection.coverage.status).toBe("partial");
+    expect(inspection.limitations).toContainEqual(
+      expect.stringMatching(/invalid.*block 1.*MD5/iu),
+    );
+    const extracted = await call("extract_artifact", {});
+    expect(extracted.isError, JSON.stringify(extracted)).not.toBe(true);
+    const result = artifactExtractionResultSchema.parse(
+      parseEvidence(extracted.structuredContent).normalized_result,
+    );
+    outputRoot = result.output_root;
+    expect(result.coverage.status).toBe("unknown");
+    expect(
+      Buffer.compare(
+        await readFile(join(outputRoot, "no-family/0x00001000-0x000011c3.bin")),
+        valid,
+      ),
+    ).toBe(0);
+    expect(
+      Buffer.compare(
+        await readFile(join(outputRoot, "no-family/0x00003000-0x000031db.bin")),
+        plain,
+      ),
+    ).toBe(0);
+    await expect(
+      readFile(join(outputRoot, "no-family/0x00002000-0x000021c4.bin")),
+    ).rejects.toMatchObject({ code: "ENOENT" });
+    await call("close_binary", {});
+  } finally {
+    if (outputRoot !== undefined)
+      await rm(outputRoot, { recursive: true, force: true });
+  }
+});
 
 it("delivers a DfuSe CRC contradiction under both integrity policies through MCP", async () => {
   const root = await createTestTempDirectory("rea-dfuse-mcp-");

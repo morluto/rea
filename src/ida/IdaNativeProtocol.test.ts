@@ -385,10 +385,13 @@ describe("native IDA provider observations", () => {
         });
         if (!direct.ok) throw direct.error;
         expect(direct.value.relationshipCoverage).toMatchObject({
-          status: "partial",
-          limitations: expect.arrayContaining([
-            UNCLASSIFIED_CALL_SITE_LIMITATION,
-          ]),
+          status: more ? "partial" : "complete",
+          discovery: {
+            callees: {
+              status: "unknown",
+              reason: UNCLASSIFIED_CALL_SITE_LIMITATION,
+            },
+          },
         });
         const dossier = await client.execute("analyze_function", {
           procedure: "main",
@@ -396,20 +399,21 @@ describe("native IDA provider observations", () => {
         if (!dossier.ok) throw dossier.error;
         expect(dossier.value.relationshipCoverage).toMatchObject({
           status: "unknown",
-          reason: more
-            ? expect.stringContaining(
-                "Callees: Upstream callees capped results at 500; additional callees remain unknown.",
-              )
-            : expect.stringContaining(
-                "Callers: Upstream xrefs do not establish direct caller relationships.",
-              ),
+          reason: expect.stringMatching(/xrefs.*not establish.*caller/iu),
         });
-        if (more)
+        if (more) {
+          const coverage = direct.value.relationshipCoverage;
+          if (coverage?.status !== "partial")
+            throw new Error("Expected partial callee coverage");
+          const limitation = coverage.limitations[0];
+          if (limitation === undefined)
+            throw new Error("Expected callee limitation");
+          expect(limitation).toMatch(/callees.*500.*unknown/iu);
           expect(dossier.value.relationshipCoverage).toMatchObject({
-            reason: expect.stringContaining(
-              "Callers: Upstream xrefs do not establish direct caller relationships.",
-            ),
+            reason: expect.stringContaining(limitation),
           });
+          expect(dossier.value.limitations).toContain(limitation);
+        }
         expect(dossier.value.result).toMatchObject({
           callers: [],
           callees: [{ address: "0x2000", name: "puts" }],
@@ -418,10 +422,6 @@ describe("native IDA provider observations", () => {
             callees: { available: true },
           },
         });
-        if (more)
-          expect(dossier.value.limitations).toContain(
-            "Upstream callees capped results at 500; additional callees remain unknown.",
-          );
       } finally {
         await client.close();
       }

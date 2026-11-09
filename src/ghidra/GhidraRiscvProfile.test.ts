@@ -166,6 +166,8 @@ const registerRiscvLanguageCommitmentCases = () => {
       elf_class: 32,
       rvc_declared: false,
     });
+    expect(wide.value.profile?.digest).toEqual(expect.any(String));
+    expect(narrow.value.profile?.digest).toEqual(expect.any(String));
     expect(wide.value.profile?.digest).not.toBe(narrow.value.profile?.digest);
   });
 
@@ -276,7 +278,6 @@ const registerRiscvAdmissionAndCapabilityCases = () => {
     const resolved = await ghidra({
       REA_GHIDRA_LANGUAGE_ID: "RISCV:LE:32:AndeStar_v5",
     }).resolveAnalysisProfile(target({ elfClass: 32 }));
-    expect(resolved.ok).toBe(false);
     if (resolved.ok) throw new Error("expected a refusal");
     expect(resolved.error.message).toContain("generic little-endian RISC-V");
     expect(resolved.error).toMatchObject({
@@ -382,9 +383,9 @@ describe("RISC-V lane and calling-convention tables", () => {
     });
   });
 
-  it("keeps the decision record in docs/ghidra-riscv.md in step with the tables", async () => {
+  it("keeps the decision record in docs/providers/ghidra-riscv.md in step with the tables", async () => {
     const docs = await readFile(
-      new URL("../../docs/ghidra-riscv.md", import.meta.url),
+      new URL("../../docs/providers/ghidra-riscv.md", import.meta.url),
       "utf8",
     );
     for (const lane of GHIDRA_RISCV_LANES)

@@ -22,6 +22,9 @@ export const UNRECOGNIZED_CALLEE_LIMITATION =
  */
 export const UNCLASSIFIED_CALL_SITE_LIMITATION =
   "IDA's callee read does not identify computed or indirect call sites, so it cannot establish every target of such a call; additional callees may remain unknown.";
+export const IDA_CALLEE_DISCOVERY = {
+  callees: { status: "unknown", reason: UNCLASSIFIED_CALL_SITE_LIMITATION },
+} as const;
 const TRUNCATED_LIMITATION =
   "Upstream callgraph was truncated; additional callees remain unknown.";
 const POSSIBLY_TRUNCATED_LIMITATION =
@@ -109,7 +112,7 @@ export const readCallGraphCallees = async (
   );
   const limitations = [UNRECOGNIZED_CALLEE_LIMITATION];
   const diagnostics = [UNRECOGNIZED_CALLEE_LIMITATION];
-  const coverageLimitations = [UNCLASSIFIED_CALL_SITE_LIMITATION];
+  const coverageLimitations: string[] = [];
   const truncated =
     row.truncated === true ||
     row.per_func_capped === true ||
@@ -171,11 +174,15 @@ export const readCallGraphCallees = async (
       };
     }),
     limitations,
-    coverage: {
-      status: "partial",
-      limitations: coverageLimitations,
-      limited_directions: ["callees"],
-      diagnostics,
-    },
+    coverage:
+      coverageLimitations.length > 0
+        ? {
+            status: "partial",
+            limitations: coverageLimitations,
+            limited_directions: ["callees"],
+            diagnostics,
+            discovery: IDA_CALLEE_DISCOVERY,
+          }
+        : { status: "complete", diagnostics, discovery: IDA_CALLEE_DISCOVERY },
   };
 };

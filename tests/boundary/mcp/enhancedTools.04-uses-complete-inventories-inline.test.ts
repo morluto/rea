@@ -365,6 +365,10 @@ describe("enhanced MCP binary overview", () => {
       segment_count: 2,
       procedure_count: 2,
       string_count: 700,
+      inventory_coverage: {
+        scope: "provider_inventory",
+        discovery_coverage: "unknown",
+      },
     });
   });
 
@@ -407,6 +411,10 @@ describe("enhanced MCP binary overview", () => {
       document: "/tmp/fixture.bin",
       procedure_count: 0,
       string_count: 0,
+      inventory_coverage: {
+        scope: "provider_inventory",
+        discovery_coverage: "unknown",
+      },
     });
   });
 });

@@ -1,3 +1,4 @@
+import { FIRMWARE_OPERATION_ENGINES } from "../contracts/firmware/firmwareToolRequirements.js";
 import { snapshotEnvironment } from "../process/snapshotEnvironment.js";
 import { assertArtifactCommandPath } from "../process/ArtifactCommandPath.js";
 import { join } from "node:path";
@@ -31,13 +32,14 @@ import { publishFirmwareExtraction } from "./FirmwarePublication.js";
 import {
   BINWALK_PROVIDER_IDENTITY,
   UNBLOB_PROVIDER_IDENTITY,
-} from "./FirmwareRelease.js";
+} from "./FirmwareProviderIdentities.js";
 import {
   startFirmwareDeadline,
   type FirmwareDeadline,
 } from "./FirmwareDeadline.js";
 import { admitFirmwareVersion } from "./FirmwareVersion.js";
 import {
+  firmwareFileSizeLimit,
   firmwareToolUnavailable,
   resolveFirmwareCommand,
   runFirmwareCommand,
@@ -332,8 +334,7 @@ export class FirmwareProvider implements FirmwareAnalysisPort {
     const environment = snapshotEnvironment(this.environment);
     let root: PrivateRuntimeRoot | undefined;
     let rootLease: AnalysisCleanupLease | undefined;
-    const engineName =
-      request.operation === "inspect_firmware_regions" ? "binwalk" : "unblob";
+    const engineName = FIRMWARE_OPERATION_ENGINES[request.operation];
     const withCaller = (phase: FirmwareDeadline) =>
       options?.signal === undefined
         ? phase.signal
@@ -462,6 +463,7 @@ export class FirmwareProvider implements FirmwareAnalysisPort {
           execution: processRun,
           files: this.#files,
           signal,
+          deadline,
         });
         result = firmwareResultSchemas.inspect_firmware_regions.parse({
           analysis_timeout_ms: analysisTimeoutMs,
@@ -506,6 +508,7 @@ export class FirmwareProvider implements FirmwareAnalysisPort {
           execution: processRun,
           files: this.#files,
           signal,
+          deadline,
         });
         const normalized = normalizeUnblobReport(report, {
           inputPath: target.inputPath,
@@ -522,6 +525,10 @@ export class FirmwareProvider implements FirmwareAnalysisPort {
           outputRoot,
           request.input.max_output_bytes,
           request.input.max_output_files,
+          firmwareFileSizeLimit(
+            command.fileSizeCeiling,
+            request.input.max_output_bytes,
+          ),
           request.operation,
           signal,
         );

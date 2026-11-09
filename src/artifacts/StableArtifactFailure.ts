@@ -1,9 +1,23 @@
+import type { StableArtifactSnapshot } from "./readStableArtifact.js";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { ArtifactReaderFailure } from "./ArtifactReader.js";
 import { bindArtifactFileCleanup } from "./ArtifactFileOperation.js";
 import { completedStableArtifactObservation } from "./StableArtifactObservation.js";
+
+/** Name an observed regular-file retry that admission will validate again. */
+export const regularFileSymlinkRecovery = (resolvedPath: string): string =>
+  `Retry with the resolved regular file path ${resolvedPath}. The selected symlink is not admitted; the retry will validate the target again.`;
+
+/** Offer the verified regular-file target after a selected symlink is rejected. */
+export const stableArtifactInputRecovery = (cause: ArtifactReaderFailure) =>
+  cause.reason === "path" && cause.resolvedPath !== undefined
+    ? {
+        remediationAction: regularFileSymlinkRecovery(cause.resolvedPath),
+        conformsToInputContract: true,
+      }
+    : {};
 
 const artifactCleanupFailure = (
   cause: unknown,
@@ -39,8 +53,9 @@ export const projectStableArtifactFailure = (
   path: string,
   providerId: string,
   operation: string,
+  snapshot?: StableArtifactSnapshot,
 ): AnalysisError => {
-  const observation = completedStableArtifactObservation(cause, path);
+  const observation = completedStableArtifactObservation(cause, path, snapshot);
   if (observation !== undefined) primary.retainPartialObservation(observation);
   const cleanup = artifactCleanupFailure(cause, providerId, operation);
   if (cleanup === undefined) return primary;

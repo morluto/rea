@@ -31,7 +31,7 @@ import type { RelationshipCoverage } from "../domain/relationshipCoverage.js";
 import { combineFunctionRelationshipCoverage } from "../domain/functionCallCoverage.js";
 import {
   readCallGraphCallees,
-  UNCLASSIFIED_CALL_SITE_LIMITATION,
+  IDA_CALLEE_DISCOVERY,
   unavailableCallGraph,
 } from "./IdaCallGraph.js";
 import type { IdaMcpConnection } from "./IdaMcpConnection.js";
@@ -555,25 +555,24 @@ export class IdaOperationRunner {
         this.limitations.push(
           "Upstream callees capped results at 500; additional callees remain unknown.",
         );
-      coverage =
-        page.more === undefined
+      coverage = {
+        ...(page.more === undefined
           ? {
-              status: "unknown",
+              status: "unknown" as const,
               reason:
                 "Upstream callees omitted an explicit truncation marker; additional callees remain unknown.",
             }
-          : {
-              status: "partial",
-              limitations: [
-                ...(page.more
-                  ? [
-                      "Upstream callees capped results at 500; additional callees remain unknown.",
-                    ]
-                  : []),
-                UNCLASSIFIED_CALL_SITE_LIMITATION,
-              ],
-              limited_directions: ["callees"],
-            };
+          : page.more
+            ? {
+                status: "partial" as const,
+                limitations: [
+                  "Upstream callees capped results at 500; additional callees remain unknown.",
+                ],
+                limited_directions: ["callees"] as const,
+              }
+            : { status: "complete" as const }),
+        discovery: IDA_CALLEE_DISCOVERY,
+      };
       for (const item of page.callees) {
         if ("type" in item && item.type === "external")
           result.set(

@@ -3,6 +3,12 @@
 These source-owned fixtures are compiled at verification time; generated
 binaries and Ghidra projects are never committed.
 
+For the one-shot function bundle handoff, run `npm run build:cached` and then
+`node scripts/verify-real-ghidra-function-bundle.mjs` with `GHIDRA_INSTALL_DIR`
+and `JAVA_HOME` set. The verifier compiles its own target, creates a project
+with a synthetic history report, and exercises complete, summary, and
+no-overwrite CLI delivery. It checks the target and project files for changes.
+
 - `../c/riscv.c` and `riscv-probe.S` produce source-owned RV32/RV64 ELF images
   with double-float ABI declarations and an independently known instruction.
   `../c/riscv-float-abi.c`, `riscv-probe.S` and `riscv-isa-probe.S` produce
@@ -34,11 +40,15 @@ binaries and Ghidra projects are never committed.
   multi-block branch.
 - `entry-aliases.c` preserves secondary imported entry labels, a bare-hex
   alias, and an interior label. The native CLI/MCP lane verifies entry selection,
-  annotation, interior-label rejection, and unchanged source bytes.
+  procedure search and feature tracing by the secondary name, annotation,
+  interior-label rejection, and unchanged source bytes.
 - `cross-format.c` is freestanding so the verifier can produce AArch64 ELF,
   x86-64 PE, and x86-64 Mach-O targets from the same semantics. It preserves an
   exported entry, direct and indirect calls, a volatile string reference, and a
   multi-block branch across loaders.
+- `relocation-symbol.c` builds an x86-64 ELF with named and unnamed dynamic
+  relocations. The cross-format verifier checks their Ghidra observations through
+  the public CLI without executing the artifact.
 - `no-return.c` and `ReaNoReturnProbe.java` inject incorrect import flags into a
   real ELF or Mach-O analysis database, verify caller recovery, propagated flag
   repair and signature preservation, and retain genuine/unknown no-return calls

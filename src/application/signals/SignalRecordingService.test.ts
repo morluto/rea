@@ -83,7 +83,6 @@ it("retains provider metadata in a late-cancellation observation", async () => {
 
   const result = await service.decode(input, { signal: controller.signal });
 
-  expect(result.ok).toBe(false);
   if (result.ok) throw new Error("Expected late cancellation");
   expect(result.error).toMatchObject({ _tag: "AnalysisCancelledError" });
   expect(result.error.cause).toBe(reason);

@@ -13,6 +13,7 @@ import {
   cArchiveBytecodeExecutable,
   pyzArchive,
 } from "../../src/artifacts/pyinstaller/CArchive.fixture.js";
+import { RECONSTRUCTED_PYTHON_HEADER_LIMITATION } from "../../src/artifacts/pyinstaller/PythonBytecode.js";
 import { artifactInspectionResultSchema } from "../../src/domain/artifactInspection.js";
 import { artifactExtractionResultSchema } from "../../src/domain/artifactGraph.js";
 import { parseEvidence } from "../../src/domain/evidence.js";
@@ -468,7 +469,13 @@ it("extracts CArchive members through extract-artifact", async () => {
     rm(extracted.output_root, { recursive: true, force: true }),
   );
   expect(extracted.limitations).toContain(
-    "PYZ.pyz/app.pyc: Python bytecode header was reconstructed from the archive Python magic; this digest covers the derived file.",
+    `PYZ.pyz/app.pyc: ${RECONSTRUCTED_PYTHON_HEADER_LIMITATION}`,
+  );
+  expect(RECONSTRUCTED_PYTHON_HEADER_LIMITATION).toMatch(
+    /header.*reconstructed.*archive.*magic/iu,
+  );
+  expect(RECONSTRUCTED_PYTHON_HEADER_LIMITATION).toMatch(
+    /digest.*derived file/iu,
   );
   expect(extracted.coverage).toEqual({
     scope: "container-entries",
@@ -482,8 +489,13 @@ it("extracts CArchive members through extract-artifact", async () => {
     hello?.bytes_written ?? 0,
   );
   expect(
-    await readFile(join(extracted.output_root, "PYZ.pyz", "app.pyc")),
-  ).toHaveLength(16 + Buffer.from("app-body").length);
+    (await readFile(join(extracted.output_root, "PYZ.pyz", "app.pyc"))).equals(
+      Buffer.concat([
+        Buffer.from("610d0d0a000000000000000000000000", "hex"),
+        Buffer.from("app-body"),
+      ]),
+    ),
+  ).toBe(true);
   expect(
     Buffer.compare(
       await readFile(join(extracted.output_root, "hello")),

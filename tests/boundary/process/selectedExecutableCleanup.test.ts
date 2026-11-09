@@ -4,6 +4,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { afterEach, expect, it, vi } from "vitest";
+import { withVerifierCleanup } from "../../../scripts/lib/verifier-cleanup.mjs";
+import { awaitAcknowledgement } from "../../fixtures/lifecycleAcknowledgement.js";
 
 const injected = vi.hoisted(() => ({
   path: "",
@@ -47,9 +49,11 @@ vi.mock("node:fs/promises", async (importOriginal) => {
   };
 });
 
-import { ProcessCaptureResourceScope } from "../../../src/process/capture/ProcessCaptureLifecycle.js";
+import {
+  ProcessCaptureResourceScope,
+  observeSelectedExecutable,
+} from "../../../src/process/capture/ProcessCaptureLifecycle.js";
 import { ProcessCaptureReadFailure } from "../../../src/process/capture/ProcessCaptureRead.js";
-import { observeSelectedExecutable } from "../../../src/process/capture/ProcessCaptureLifecycle.js";
 
 const roots: string[] = [];
 const createExecutable = async (content: string): Promise<string> => {
@@ -282,33 +286,45 @@ it.each([
         observeSelectedExecutable(path, controller.signal, fileSystem, scope),
       ),
     );
-    await entered;
-    controller.abort(reason);
-    release();
-    const failure = await reading;
-    expect(failure.cause).toBe(primary);
-    expect(failure.outcome).toMatchObject({ kind: "failed", cause: primary });
-    expect(failure.cancellation?.reason).toBe(reason);
-    expect(failure.userCategory).toBeUndefined();
-    expect(failure.cleanupIncomplete).toBe(closeDenied);
-    expect(failure.cleanupCause).toBe(injected.closeFailure);
-    expect(failure.cleanupLeases).toHaveLength(closeDenied ? 1 : 0);
-    expect(injected.closed).toEqual([path]);
+    await withVerifierCleanup(async () => {
+      await awaitAcknowledgement(entered, reading, "selected executable read");
+      controller.abort(reason);
+      release();
+      const failure = await reading;
+      expect(failure.cause).toBe(primary);
+      expect(failure.outcome).toMatchObject({ kind: "failed", cause: primary });
+      expect(failure.cancellation?.reason).toBe(reason);
+      expect(failure.userCategory).toBeUndefined();
+      expect(failure.cleanupIncomplete).toBe(closeDenied);
+      expect(failure.cleanupCause).toBe(injected.closeFailure);
+      expect(failure.cleanupLeases).toHaveLength(closeDenied ? 1 : 0);
+      expect(injected.closed).toEqual([path]);
 
-    injected.closeFailure = undefined;
-    await scope.retryCleanup();
-    expect(failure.cleanupIncomplete).toBe(false);
-    expect(injected.handles[0]?.isOpen()).toBe(false);
-    await expect(
-      scope.run(() =>
-        observeSelectedExecutable(path, undefined, undefined, scope),
-      ),
-    ).resolves.toMatchObject({
-      sha256: createHash("sha256")
-        .update("selected executable read failure")
-        .digest("hex"),
-    });
-    await scope.close();
+      injected.closeFailure = undefined;
+      await scope.retryCleanup();
+      expect(failure.cleanupIncomplete).toBe(false);
+      expect(injected.handles[0]?.isOpen()).toBe(false);
+      await expect(
+        scope.run(() =>
+          observeSelectedExecutable(path, undefined, undefined, scope),
+        ),
+      ).resolves.toMatchObject({
+        sha256: createHash("sha256")
+          .update("selected executable read failure")
+          .digest("hex"),
+      });
+      await scope.close();
+    }, [
+      () => controller.abort(),
+      release,
+      async () => {
+        await reading;
+      },
+      () => {
+        injected.closeFailure = undefined;
+      },
+      () => scope.close(),
+    ]);
   },
 );
 

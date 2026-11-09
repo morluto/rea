@@ -35,7 +35,7 @@ const scenarios = [
     name: "trace_application_feature",
     input: JAVASCRIPT_FEATURE_TRACE_EXAMPLE,
     sourceIds: [application.evidence_id],
-    facts: { summary: { matched_seeds: 1, traced_nodes: 1 } },
+    facts: { summary: { matched_seeds: 1, traced_nodes: 2, traced_edges: 1 } },
   },
   {
     name: "trace_javascript_semantics",
@@ -282,10 +282,15 @@ it.each([
       ...JAVASCRIPT_FEATURE_TRACE_EXAMPLE,
       application: ANDROID_APPLICATION_GRAPH_EXAMPLE.inventory_evidence[0],
     },
+    issue: { path: ["application", "operation"], reason: "invalid_value" },
   },
   {
     name: "project_android_application_graph",
     input: { inventory_evidence: [application] },
+    issue: {
+      path: ["inventory_evidence", 0, "operation"],
+      reason: "invalid_value",
+    },
   },
   {
     name: "reconcile_javascript_runtime",
@@ -297,13 +302,23 @@ it.each([
         },
       ],
     },
+    issue: {
+      path: ["static_layers", 0, "analysis", "normalized_result", "input_path"],
+      reason: "missing_argument",
+    },
   },
 ])(
   "rejects an authenticated source with the wrong role in $name",
-  async ({ name, input }) => {
+  async ({ name, input, issue }) => {
     const reply = await client.callTool({ name, arguments: input });
     expect(parseMcpToolError(reply)).toMatchObject({
-      error: { code: "invalid_request" },
+      error: {
+        code: "invalid_request",
+        details: {
+          operation: name,
+          issues: expect.arrayContaining([expect.objectContaining(issue)]),
+        },
+      },
     });
     await client.ping();
   },

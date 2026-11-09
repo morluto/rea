@@ -55,18 +55,24 @@ import {
 /** Shared analysis commitments for raw and header-selected imports. */
 const sharedAnalysisSemantics = {
   annotation_policy: "atomic-function-entry-metadata-v1",
-  load_image_observations: "source-mappings-entry-context-v2",
+  byte_search_boundary: "contiguous-eligible-initialized-blocks-v1",
+  load_image_observations: "source-mappings-entry-context-relocation-symbol-v3",
   function_body_evidence: "complete-inclusive-ranges-v1",
-  function_references: "complete-body-and-entry-reference-manager-v2",
-  call_relationship_coverage: "function-body-call-coverage-v6",
+  function_references: "complete-body-and-entry-reference-manager-v3",
+  call_relationship_coverage: "observed-call-inventory-and-discovery-v7",
   function_dossier_coverage: "observed-facets-and-call-relationships-v1",
+  value_flow_effect_scope: "pcode-load-store-explicit-v1",
   string_inventory_evidence: "defined-data-coverage-v1",
+  inventory_search_projection: "provider-inventory-facts-v1",
+  data_type_observations: "bit-field-base-and-lookup-v1",
   location_resolution: "explicit-address-exact-entry-symbol-first-v3",
+  procedure_search: "primary-and-exact-entry-symbol-names-v1",
   procedure_file_offset_resolution:
     "address-first-unique-target-source-mapping-v2",
   instruction_flow_evidence: "decoded-return-pcode-v1",
-  instruction_status: "unlisted-address-without-decode-v1",
-  instruction_references: "exact-address-incoming-without-synthetic-entry-v2",
+  instruction_status: "unlisted-and-containing-code-data-v3",
+  instruction_references: "exact-address-incoming-without-synthetic-entry-v3",
+  byte_search_coverage: "separate-loaded-overlays-v1",
   function_boundary_observations: "ghidra-function-boundary-limitations-v4",
 } as const;
 
@@ -473,16 +479,20 @@ export const existingGhidraAnalysisProfile = (
   target: BinaryTarget,
   provider: Parameters<typeof createAnalysisProfile>[0],
   project: JsonValue,
-) =>
-  createAnalysisProfile(provider, {
+) => {
+  const mipsElf = ghidraMipsProfileParameters(target).mips_elf;
+  return createAnalysisProfile(provider, {
     target_kind: target.kind,
     target_format: target.format,
     architecture: target.architecture ?? null,
+    ...(mipsElf === undefined ? {} : { mips_elf: mipsElf }),
     import_mode: "existing-project-private-copy-v1",
     ...sharedAnalysisSemantics,
+    selected_project_relationship_coverage: "prior-analysis-unknown-v1",
     annotation_policy: "read-only-existing-project-v1",
     existing_project: project,
     original_analysis: { completeness: "unknown", settings: "unknown" },
     no_return_repair: "disabled-existing-project",
     process_launch: "inspected-jvm-launch-support-v1",
   });
+};

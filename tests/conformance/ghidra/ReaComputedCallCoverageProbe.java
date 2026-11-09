@@ -21,7 +21,7 @@ import java.lang.reflect.Method;
  * a writable slot, a register and a direct target. Only the slot call's
  * recorded target is injected, as Ghidra's analysis records one for an
  * initialized slot. The production bridge must keep that candidate while
- * callee coverage stays partial and names the call site; the direct call is
+ * observed coverage stays complete and discovery names the unknown targets; the direct call is
  * the complete control. The source-owned bytes are never executed.
  */
 public class ReaComputedCallCoverageProbe extends GhidraScript {
@@ -71,11 +71,12 @@ public class ReaComputedCallCoverageProbe extends GhidraScript {
         require(!contains(computed.getAsJsonArray("value"), canonical(alternate)),
             "No callee is invented for the alternate value");
         JsonObject computedCoverage = computed.getAsJsonObject("relationship_coverage");
-        require(computedCoverage.get("status").getAsString().equals("partial"),
-            "A computed call's recorded target is not an exhaustive callee set");
-        require(onlyCallees(computedCoverage), "Only the callee direction is limited");
-        require(limitationContains(computedCoverage, "1 " + COMPUTED_LIMITATION + canonical(slotCall.getAddress()) + ")"),
-            "The limitation names the computed call site");
+        require(computedCoverage.get("status").getAsString().equals("complete"),
+            "The recorded computed target inventory is complete");
+        JsonObject calleeDiscovery = computedCoverage.getAsJsonObject("discovery").getAsJsonObject("callees");
+        require(calleeDiscovery.get("status").getAsString().equals("unknown"), "Other computed targets stay unknown");
+        require(calleeDiscovery.get("reason").getAsString().contains("1 " + COMPUTED_LIMITATION + canonical(slotCall.getAddress()) + ")"),
+            "Discovery uncertainty names the computed call site");
 
         JsonObject targetless = callees(callees, bridge, registerCaller);
         JsonObject targetlessCoverage = targetless.getAsJsonObject("relationship_coverage");
@@ -89,7 +90,16 @@ public class ReaComputedCallCoverageProbe extends GhidraScript {
         require(directValue.size() == 1 && contains(directValue, selectedAddress), "Direct callee");
         require(direct.getAsJsonObject("relationship_coverage").get("status").getAsString().equals("complete"),
             "A direct call with its recorded destination stays complete");
-        println("REA_COMPUTED_CALL_COVERAGE_OK slot=partial register=partial direct=complete");
+        for (Address target : new Address[] { selected, alternate }) {
+            JsonObject input = new JsonObject(); input.add("document", JsonNull.INSTANCE); input.addProperty("procedure", canonical(target));
+            JsonObject incoming = (JsonObject) callees.invoke(bridge, input, true);
+            JsonObject coverage = incoming.getAsJsonObject("relationship_coverage");
+            require(coverage.get("status").getAsString().equals("complete"), "Recorded incoming edges remain complete");
+            require(coverage.getAsJsonObject("discovery").getAsJsonObject("callers").get("status").getAsString().equals("unknown"), "Additional computed callers stay unknown");
+            if (target.equals(selected)) require(contains(incoming.getAsJsonArray("value"), canonical(directCaller)), "Known direct caller survives");
+            else require(incoming.getAsJsonArray("value").isEmpty(), "No alternate caller is invented");
+        }
+        println("REA_COMPUTED_CALL_COVERAGE_OK slot=observed-complete-discovery-unknown register=partial direct=complete callers=discovery-unknown");
     }
 
     private Instruction requireCall(Address entry, boolean computed) {
@@ -128,12 +138,6 @@ public class ReaComputedCallCoverageProbe extends GhidraScript {
         for (JsonElement value : values)
             if (value.getAsString().equals(expected)) return true;
         return false;
-    }
-
-    private static boolean onlyCallees(JsonObject coverage) {
-        JsonArray directions = coverage.getAsJsonArray("limited_directions");
-        return directions != null && directions.size() == 1 &&
-            directions.get(0).getAsString().equals("callees");
     }
 
     private static boolean limitationContains(JsonObject coverage, String expected) {

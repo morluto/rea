@@ -2,14 +2,13 @@ import { projectCliAnalysisResult } from "../../../src/cli/projectCliAnalysisRes
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
-import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import {
   TextReader,
   Uint8ArrayReader,
   Uint8ArrayWriter,
   ZipWriter,
 } from "@zip.js/zip.js";
-import { afterEach, expect, it } from "vitest";
+import { expect, it } from "vitest";
 
 import { createDirectAnalysis } from "../../../src/composition/directAnalysis.js";
 import { androidApplicationProjectionResultSchema } from "../../../src/domain/android/androidApplication.js";
@@ -19,28 +18,18 @@ import { fragmentInventoryEvidence } from "../../fixtures/artifactEvidence.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
-import { createServer } from "../../../src/server/createServer.js";
+import { createApplicationMcpHarness } from "../../fixtures/applicationMcpHarness.js";
 
 const { runProviderAnalysis } = createDirectAnalysis({});
-
-const resources: Array<{ close(): Promise<unknown> }> = [];
-afterEach(async () => {
-  for (const resource of resources.splice(0)) await resource.close();
-});
 
 async function connect() {
   const session = createTestBinarySession(() => {
     throw new Error("mobile graph projection must not launch a provider");
   });
-  const server = createServer({ kind: "session", session });
-  const client = new Client({
-    name: "mobile-application-graph-test",
-    version: "1",
+  const { client } = await createApplicationMcpHarness({
+    session,
+    clientIdentity: { name: "mobile-application-graph-test", version: "1" },
   });
-  resources.push(client, server, session);
-  const [a, b] = InMemoryTransport.createLinkedPair();
-  await server.connect(b);
-  await client.connect(a);
   return client;
 }
 

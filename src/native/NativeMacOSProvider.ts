@@ -23,9 +23,9 @@ import { readMachoEncryption } from "../artifacts/apple/MachoEncryptionReader.js
 import { snapshotEnvironment } from "../process/snapshotEnvironment.js";
 import {
   APPLE_DISPATCH_METADATA_ANALYSIS_PROFILE,
-  NATIVE_MACOS_PROVIDER_IDENTITY as IDENTITY,
   nativeMacOSCapabilities,
 } from "./NativeMacOSProviderMetadata.js";
+import { NATIVE_MACOS_PROVIDER_IDENTITY as IDENTITY } from "./NativeMacosProviderIdentity.js";
 import {
   appleDispatchMetadataFailure,
   inspectAppleDispatchMetadata,
@@ -792,13 +792,15 @@ class NativeMacOSClient implements AnalysisClient {
         ),
       );
     const target = this.target;
-    const selectedSlice =
+    const slices =
+      target.format === "mach-o-universal" ? target.universalSlices : undefined;
+    const selectedIndex =
       target.format === "mach-o-universal"
-        ? target.universalSlices?.find(
+        ? (slices?.findIndex(
             (slice) => slice.offset === target.universalSlice.offset,
-          )
-        : undefined;
-    if (target.format === "mach-o-universal" && selectedSlice === undefined)
+          ) ?? -1)
+        : -1;
+    if (target.format === "mach-o-universal" && selectedIndex < 0)
       return err(
         new AnalysisCapabilityUnavailableError(
           IDENTITY.id,
@@ -807,14 +809,11 @@ class NativeMacOSClient implements AnalysisClient {
         ),
       );
     const selectedArchitecture =
-      selectedSlice === undefined
+      slices === undefined || selectedIndex < 0
         ? architecture === "x86"
           ? "i386"
           : architecture
-        : machoKnownCodeSignSelector(
-            selectedSlice.cpuType,
-            selectedSlice.cpuSubtype,
-          );
+        : machoKnownCodeSignSelector(slices, selectedIndex);
     if (selectedArchitecture === undefined)
       return err(
         new AnalysisCapabilityUnavailableError(
@@ -1931,14 +1930,15 @@ const codeSignArchitectures = (
   if (target.kind === "executable" && target.format === "mach-o-universal") {
     if (target.universalSlices === undefined)
       return { architectures: [], unknownSlices: true };
-    const names = target.universalSlices.map(({ cpuType, cpuSubtype }) =>
-      machoKnownCodeSignSelector(cpuType, cpuSubtype),
+    const slices = target.universalSlices;
+    // Each known selector names exactly one slice, so known names are unique.
+    const names = slices.map((_, index) =>
+      machoKnownCodeSignSelector(slices, index),
     );
     const known = names.filter((name): name is string => name !== undefined);
     return {
-      architectures: [...new Set(known)],
-      unknownSlices:
-        known.length !== names.length || new Set(known).size !== names.length,
+      architectures: known,
+      unknownSlices: known.length !== names.length,
     };
   }
   const universal = /^Mach-O universal \(([^)\r\n]+)\)$/u.exec(

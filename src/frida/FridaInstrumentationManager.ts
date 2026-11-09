@@ -68,12 +68,6 @@ const isFridaDeviceLookupTimeout = (cause: unknown): boolean =>
   cause instanceof Error &&
   cause.message === FRIDA_DEVICE_LOOKUP_TIMEOUT_MESSAGE;
 
-export const FRIDA_PROVIDER_IDENTITY = {
-  id: "frida",
-  name: "Frida",
-  version: null,
-} as const;
-
 interface ScriptMessageCapture {
   readonly messages: MessageFifo<JsonValue>;
   truncated: boolean;
@@ -111,6 +105,8 @@ interface ManagedSession extends ManagedRemoteConnection {
   readonly scripts: Map<string, ManagedScript>;
   readonly messages: MessageFifo<CapturedMessage>;
   readonly scriptCaptures: Map<string, ScriptMessageCapture>;
+  /** Once close begins, this session is retained only for cleanup. */
+  cleanupStarted: boolean;
   detached: boolean;
   targetResumeObserved: boolean;
   resumeAfterDetachPending: boolean;
@@ -355,6 +351,7 @@ export class FridaInstrumentationManager implements FridaInstrumentationPort {
         scripts: new Map(),
         messages: new MessageFifo(),
         scriptCaptures: new Map(),
+        cleanupStarted: false,
         detached: false,
         targetResumeObserved: false,
         resumeAfterDetachPending: false,
@@ -429,9 +426,9 @@ export class FridaInstrumentationManager implements FridaInstrumentationPort {
   ): Promise<Result<FridaScriptObservation, AnalysisError>> {
     if (signal?.aborted)
       return err(cancelledOperation("load_frida_script", signal));
-    const managed = this.#sessions.get(sessionId);
-    if (managed === undefined || managed.detached)
-      return err(unknownFridaSession("load_frida_script", sessionId));
+    const admitted = this.#admitSessionWork(sessionId, "load_frida_script");
+    if (!admitted.ok) return admitted;
+    const managed = admitted.value;
 
     let scriptSource: string;
     let sourceSha256: string;
@@ -588,9 +585,9 @@ export class FridaInstrumentationManager implements FridaInstrumentationPort {
   async #resumeSession(
     sessionId: string,
   ): Promise<Result<null, AnalysisError>> {
-    const managed = this.#sessions.get(sessionId);
-    if (managed === undefined || managed.detached)
-      return err(unknownFridaSession("resume_frida_session", sessionId));
+    const admitted = this.#admitSessionWork(sessionId, "resume_frida_session");
+    if (!admitted.ok) return admitted;
+    const managed = admitted.value;
     if (managed.mode !== "spawn" || managed.targetResumeObserved)
       return err(
         new AnalysisInputError(
@@ -636,6 +633,26 @@ export class FridaInstrumentationManager implements FridaInstrumentationPort {
     } catch (cause: unknown) {
       return err(providerError("resume_frida_session", cause, managed.remote));
     }
+  }
+
+  #admitSessionWork(
+    sessionId: string,
+    operation: "load_frida_script" | "resume_frida_session",
+  ): Result<ManagedSession, AnalysisError> {
+    const managed = this.#sessions.get(sessionId);
+    if (managed === undefined)
+      return err(unknownFridaSession(operation, sessionId));
+    if (managed.cleanupStarted) {
+      const message = `Frida session ${sessionId} is retained for cleanup.`;
+      return err(
+        new AnalysisCapabilityUnavailableError("frida", operation, message, {
+          userMessage: message,
+          remediationAction: `Retry close_frida_session with session_id ${sessionId} to finish cleanup.`,
+        }),
+      );
+    }
+    if (managed.detached) return err(unknownFridaSession(operation, sessionId));
+    return ok(managed);
   }
 
   unloadScript(
@@ -754,6 +771,7 @@ export class FridaInstrumentationManager implements FridaInstrumentationPort {
     const managed = this.#sessions.get(sessionId);
     if (managed === undefined)
       return err(unknownFridaSession("close_frida_session", sessionId));
+    managed.cleanupStarted = true;
     const scriptFailures = new Map<string, string>();
     const cleanupFailures: string[] = [];
     managed.detached ||= managed.session.isDetached();

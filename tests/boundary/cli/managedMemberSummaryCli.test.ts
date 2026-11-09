@@ -28,7 +28,11 @@ import {
 } from "../../../src/domain/managed/managedArtifact.js";
 import { buildManagedPeFixture } from "../../../src/dotnet/ManagedPe.fixture.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
-import { cliTest, type TestCli } from "../../support/cli/cliFixture.js";
+import {
+  cliTest,
+  runFileCli,
+  type TestCli,
+} from "../../support/cli/cliFixture.js";
 
 const memberFixture = (): Buffer =>
   buildManagedPeFixture({
@@ -82,7 +86,7 @@ const verifyCliSelection = async ({
   parent,
   report,
 }: CliMemberViewContext) => {
-  const selected = await cli.run({
+  const selected = await runFileCli(cli, {
     cwd,
     arguments: [
       "inspect-analysis-view",
@@ -150,7 +154,7 @@ const verifyCliFullPages = async (
     expect(reportedCounts[collection]).toBe(rows.length);
     const paged: unknown[] = [];
     for (let offset: number | null = 0; offset !== null;) {
-      const response = await cli.run({
+      const response = await runFileCli(cli, {
         cwd,
         arguments: [
           "inspect-analysis-view",
@@ -321,6 +325,14 @@ cliTest(
     const report = managedMemberInspectionSchema.parse(
       parent.normalized_result,
     );
+    // The fixture declares three MemberRef rows. Paging against the produced
+    // report alone would also pass if the inspector silently dropped rows.
+    expect(report.member_refs.map(({ token }) => token)).toEqual([
+      "0x0a000001",
+      "0x0a000002",
+      "0x0a000003",
+    ]);
+    expect(summary.summary.reported_counts.member_refs).toBe(3);
     expect(summary.summary.selection).toEqual({
       type_names: typeNames,
       unmatched_type_names: ["Missing.Type"],
@@ -341,6 +353,8 @@ cliTest(
       parent,
       report,
     };
+    // The producer has exited and its target is gone. Reuse only the reader
+    // process across page selections; every command still loads the bundle.
     await verifyCliFullPages(pageContext, summary.summary.reported_counts);
     await verifyCliSelection(pageContext);
     expect(await readFile(bundlePath, "utf8")).toBe(originalBytes);

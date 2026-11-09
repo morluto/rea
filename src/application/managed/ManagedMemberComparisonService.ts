@@ -102,6 +102,8 @@ export const compareManagedMemberPaths = async (
   input: {
     readonly leftPath: string;
     readonly rightPath: string;
+    /** Applied to both sides with inspect_managed_members selection semantics. */
+    readonly typeNames?: readonly string[];
   },
   dependencies: Partial<ManagedMemberComparisonPathDependencies> = {},
   resources?: ArtifactResourceScope,
@@ -159,6 +161,9 @@ export const compareManagedMemberPaths = async (
       try {
         inspection = inspectManagedMembersBytes(snapshot.bytes, target, {
           userStrings: false,
+          ...(input.typeNames === undefined
+            ? {}
+            : { typeNames: input.typeNames }),
         });
       } catch (cause: unknown) {
         throw (
@@ -172,7 +177,10 @@ export const compareManagedMemberPaths = async (
       }
       const evidence = createEvidence(target, MANAGED_STATIC_PROVIDER, {
         operation: "inspect_managed_members",
-        parameters: {},
+        parameters:
+          input.typeNames === undefined
+            ? {}
+            : { type_names: [...input.typeNames] },
         result: inspection,
         rawResult: null,
         limitations: inspection.limitations,
@@ -198,7 +206,7 @@ export const compareManagedMemberPaths = async (
         left.evidence,
         right.evidence,
         result,
-        { leftPath: input.leftPath, rightPath: input.rightPath },
+        input,
       ),
     );
   } catch (cause: unknown) {
@@ -215,7 +223,11 @@ const createManagedMemberComparisonEvidence = (
   left: Evidence,
   right: Evidence,
   result: ManagedMemberComparisonResult,
-  sourcePaths?: { readonly leftPath: string; readonly rightPath: string },
+  sourcePaths?: {
+    readonly leftPath: string;
+    readonly rightPath: string;
+    readonly typeNames?: readonly string[];
+  },
 ): Evidence =>
   createEvidence(undefined, MANAGED_WORKFLOW_PROVIDER, {
     predicateType: "rea.managed-member-comparison",
@@ -229,6 +241,9 @@ const createManagedMemberComparisonEvidence = (
             left_path: sourcePaths.leftPath,
             right_path: sourcePaths.rightPath,
           }),
+      ...(sourcePaths?.typeNames === undefined
+        ? {}
+        : { type_names: [...sourcePaths.typeNames] }),
     },
     result,
     rawResult: null,

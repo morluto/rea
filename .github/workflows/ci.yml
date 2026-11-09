@@ -807,6 +807,8 @@ jobs:
           tests/boundary/mcp/nativeDemangleMcp.test.ts
           tests/boundary/mcp/nativeMachoSummaryMcp.test.ts
           tests/boundary/providers/native/nativeSignatureTargetBinding.test.ts
+          tests/boundary/providers/native/nativeUiOffscreenWindow.test.ts
+          tests/boundary/process/nativeUiVerifierLane.test.ts
           tests/boundary/cli/nativeSignatureCli.test.ts
           tests/boundary/cli/nativeMachoArm64_32Cli.test.ts
           tests/boundary/cli/nativeMachoEncryptionCli.test.ts
@@ -922,6 +924,7 @@ jobs:
           tests/process-global/filesystemSnapshotFallbackCancellation.test.ts
           tests/boundary/filesystem/typescriptCompiler.test.ts
           tests/boundary/filesystem/releaseProposal.test.ts
+          tests/acceptance/byteEntropyWindowsIdentity.test.ts
           tests/boundary/filesystem/binaryTarget.test.ts
           src/contracts/sessionPathInputs.test.ts
           tests/boundary/filesystem/directAnalysisSnapshotReplay.test.ts
@@ -1014,8 +1017,8 @@ jobs:
         uses: ./.github/actions/npm-cache
       - run: npm ci
       - run: npm run docs:check
-      - name: Render documentation and validate page links
-        run: npm run docs:build
+      - name: Verify published routes, source links and local anchors
+        run: npm run verify:docs:routes
       - name: Generation leaves authored files unchanged
         run: git diff --exit-code
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2

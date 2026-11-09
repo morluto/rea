@@ -185,9 +185,7 @@ cliTest.for(scenarios)(
       );
     else if (scenario === "mixed XML")
       expect(result.limitations).toContainEqual(
-        expect.stringContaining(
-          "1 XML scalar value(s) could not be established",
-        ),
+        expect.stringMatching(/1 XML scalar.*could not be established/iu),
       );
     else
       expect(
