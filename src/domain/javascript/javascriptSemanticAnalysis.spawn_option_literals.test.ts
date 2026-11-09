@@ -77,7 +77,6 @@ it.each([
   [`cp.spawn("x", [], { cwd: /x/ })`],
   [`cp.spawn("x", [], { cwd: () => {} })`],
   [`cp.spawn("x", [], { cwd: class {} })`],
-  [`cp.spawn("x", [], { cwd: new String("x") })`],
   [`cp.spawn("x", [], { argv0: 1n })`],
 ] as const)("emits no spawn for a non-string cwd or argv0: %s", (call) => {
   expect(spawnsFor(call)).toEqual([]);
@@ -113,6 +112,11 @@ it.each([
   [`cp.spawn("x", [], { cwd: new Uint8Array([47, 116, 109, 112]) })`],
   [`cp.spawn("x", [], { cwd: new Buffer("/tmp") })`],
   [`cp.spawn("x", [], { cwd: new URL("file:///C:/tmp/") })`],
+  [`cp.spawn("x", [], { cwd: new globalThis.URL("file:///tmp/") })`],
+  [
+    `class DirectoryURL { constructor() { return new URL("file:///tmp/"); } }; cp.spawn("x", [], { cwd: new DirectoryURL() })`,
+  ],
+  [`cp.spawn("x", [], { cwd: new Foo("/tmp") })`],
 ] as const)("keeps the spawn for a path-shaped cwd: %s", (call) => {
   expect(spawnsFor(call)).toHaveLength(1);
 });
@@ -120,9 +124,6 @@ it.each([
 it.each([
   [`cp.spawn("x", [], { argv0: new Uint8Array([120]) })`],
   [`cp.spawn("x", [], { argv0: new URL("file:///C:/t/") })`],
-  [`cp.spawn("x", [], { cwd: new String("/tmp") })`],
-  [`cp.spawn("x", [], { cwd: new Number(1) })`],
-  [`cp.spawn("x", [], { cwd: new Foo("/tmp") })`],
 ] as const)("emits no spawn for a constructor Node refuses: %s", (call) => {
   expect(spawnsFor(call)).toEqual([]);
 });

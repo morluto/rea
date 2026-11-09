@@ -614,15 +614,9 @@ const rejectsStringOptionLiteral = (
       return true;
     }
     if (t.isStringLiteral(value)) continue;
-    // `cwd` is a path, so Node also takes a byte array or a file `URL`: measured on
-    // Node 24.22.1, `{cwd: new Uint8Array([47, 116, 109, 112])}` starts a child on all
-    // four methods, while the same constructors throw for `argv0`. A `URL` stays
-    // undecided because whether its file form resolves depends on the platform: on
-    // Windows `new URL("file:///tmp/")` throws ERR_INVALID_FILE_URL_PATH.
-    if (member === "cwd" && t.isNewExpression(value)) {
-      if (isPathConstructor(value.callee)) continue;
-      return true;
-    }
+    // A constructor can return a URL or another accepted path value. Its name
+    // cannot prove that cwd is invalid, including qualified and custom constructors.
+    if (member === "cwd" && t.isNewExpression(value)) continue;
     if (
       t.isObjectExpression(value) ||
       t.isArrayExpression(value) ||
@@ -639,25 +633,6 @@ const rejectsStringOptionLiteral = (
   return false;
 };
 
-/**
- * Whether a `new` callee names a constructor that can produce a valid `cwd` path.
- *
- * Node reads a path as a string, a byte array or a file `URL`, so these are the only
- * constructors that can serve as one. Measured on Node 24.22.1,
- * `new Uint8Array([47, 116, 109, 112])` starts a child on `spawn`, `fork`, `execFile` and
- * `exec`. Anything else is left to the shape arms below, which reject it.
- */
-const isPathConstructor = (callee: t.Node): boolean => {
-  const target = unwrapJavaScriptExpression(callee).node;
-  if (!t.isIdentifier(target)) return false;
-  return (
-    target.name === "URL" ||
-    target.name === "Buffer" ||
-    target.name === "Uint8Array" ||
-    target.name === "Uint8ClampedArray" ||
-    target.name === "Int8Array"
-  );
-};
 /**
  * Node validates the options object before creating anything, so a literal
  * primitive or literal array in that slot throws ERR_INVALID_ARG_TYPE
