@@ -462,6 +462,20 @@ The workflow reports note owners, types, descriptor hashes, and GNU build-id
 or ABI-tag fields when those descriptors match. A missing note table is
 observed absence of those declarations. See [ELF note tables](../elf-notes.md).
 
+Inspect ELF unwind function ranges without executing the image:
+
+```bash
+rea inspect-elf-unwind-ranges /absolute/path/to/program --json
+```
+
+The workflow reports FDE start, end, and size, the containing section, an exact
+symbol name when one exists, CIE identity, LSDA, and personality. Coverage
+counts ranges that match a symbol, ranges without a symbol, and whether the
+`.eh_frame_hdr` search table agrees with the decoded FDEs. `.debug_frame` is
+reported present, absent, or incomplete and is not decoded. A missing unwind table is
+observed absence of those declarations. See
+[ELF unwind function ranges](../guides/native/elf-unwind-ranges.md).
+
 Inspect an Apple `.ips` crash report without executing a target:
 
 ```bash
@@ -488,6 +502,22 @@ applicable. gzip, xz, and zstd containers are unsupported and name
 `external_decompression` as the next probe: decompress with an external
 utility, then inspect the decompressed file. See
 [Linux kernel modules](../kernel-modules.md).
+
+Read a Linux kernel image's version banner and embedded `CONFIG_IKCONFIG`
+build config without executing it:
+
+```bash
+rea inspect-kernel-build-config /absolute/path/to/vmlinux --json
+rea inspect-kernel-build-config /absolute/path/to/bzImage --name CONFIG_MODULE_SIG --json
+```
+
+The workflow reports the banner version, builder, and compiler, the config
+option count, and paged `CONFIG_*` entries (`y`, `m`, strings, numbers, and
+`not_set`). An `IKCFG_ST` string counts as a config only when a valid gzip
+member follows it and `IKCFG_ED` follows that member. A gzip bzImage payload
+is inflated and searched; other payload codecs are unsupported and name
+`external_decompression` as the next probe. See
+[Linux kernel build config](../guides/native/kernel-build-config.md).
 
 Inspect a CPython 3.7–3.13 `.pyc` header and nested marshal code objects (3.14 and
 3.15 headers are qualified but their marshal layout is not pinned)
@@ -1445,3 +1475,10 @@ Bun standalone executables use the existing `inspect-artifact` and
 `extract-artifact` commands to inventory and materialize embedded source,
 sourcemaps and bytecode without running the executable. See
 [Bun standalone executables](../bun-standalone.md) for layout coverage and limits.
+
+Deno compile executables use the same commands to inventory and materialize the
+embedded virtual filesystem, remote modules, and recorded options. Inventory retains
+embedded environment-file values and certificate bytes in local Evidence with their
+counts and byte lengths, and extraction does not write them as files. The npm snapshot
+length is reported and not decoded, and the executable is not run. See
+[Deno compile executables](../deno-standalone.md).
