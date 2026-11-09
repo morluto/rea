@@ -13131,7 +13131,7 @@ msgstr ""
 "Ο κώδικας επιλέχθηκε. Χρησιμοποιήστε το πληκτρολόγιό σας για να τον "
 "αντιγράψετε."
 
-#: website/public/assets/main.js:158
+#: website/public/assets/main.js:165
 #, python-brace-format
 msgctxt "runtime"
 msgid "REA on GitHub ({count})"
@@ -13212,7 +13212,6 @@ msgid "Solve them together to find the flag."
 msgstr "Λύστε τις μαζί για να βρείτε τη σημαία."
 
 #: website/public/assets/figures/dx-ball-sound-pan-investigation.svg:2
-#: website/public/assets/figures/dx-ball-sound-pan-investigation.svg:20
 msgctxt "figure:dx-ball-sound-pan-investigation.svg"
 msgid "DX-Ball sound-pan investigation"
 msgstr "Διερεύνηση της στερεοφωνικής θέσης του ήχου στο DX-Ball"
@@ -13231,68 +13230,68 @@ msgstr ""
 "συντηρούμενος κώδικας C ελέγχεται σε 3,205 περιπτώσεις με τον αρχικό κώδικα "
 "x86 και σε ξεχωριστή αναπαραγωγή μεταγλώττισης 63 byte."
 
-#: website/public/assets/figures/dx-ball-sound-pan-investigation.svg:39
+#: website/public/assets/figures/dx-ball-sound-pan-investigation.svg:38
 msgctxt "figure:dx-ball-sound-pan-investigation.svg"
 msgid "Stack"
 msgstr "Στοίβα"
 
-#: website/public/assets/figures/dx-ball-sound-pan-investigation.svg:40
+#: website/public/assets/figures/dx-ball-sound-pan-investigation.svg:39
 msgctxt "figure:dx-ball-sound-pan-investigation.svg"
 msgid "input x"
 msgstr "είσοδος x"
 
-#: website/public/assets/figures/dx-ball-sound-pan-investigation.svg:44
+#: website/public/assets/figures/dx-ball-sound-pan-investigation.svg:43
 msgctxt "figure:dx-ball-sound-pan-investigation.svg"
 msgid "Integer"
 msgstr "Ακέραια"
 
-#: website/public/assets/figures/dx-ball-sound-pan-investigation.svg:45
+#: website/public/assets/figures/dx-ball-sound-pan-investigation.svg:44
 msgctxt "figure:dx-ball-sound-pan-investigation.svg"
 msgid "return"
 msgstr "επιστροφή"
 
-#: website/public/assets/figures/dx-ball-sound-pan-investigation.svg:46
+#: website/public/assets/figures/dx-ball-sound-pan-investigation.svg:45
 msgctxt "figure:dx-ball-sound-pan-investigation.svg"
 msgid "Reconstructed function"
 msgstr "Ανακατασκευασμένη συνάρτηση"
 
-#: website/public/assets/figures/dx-ball-sound-pan-investigation.svg:47
+#: website/public/assets/figures/dx-ball-sound-pan-investigation.svg:46
 msgctxt "figure:dx-ball-sound-pan-investigation.svg"
 msgid "Maintained C"
 msgstr "Συντηρούμενος κώδικας C"
 
-#: website/public/assets/figures/dx-ball-sound-pan-investigation.svg:48
+#: website/public/assets/figures/dx-ball-sound-pan-investigation.svg:47
 msgctxt "figure:dx-ball-sound-pan-investigation.svg"
 msgid "Brick-hit caller"
 msgstr "Καλών χτυπήματος τούβλου"
 
-#: website/public/assets/figures/dx-ball-sound-pan-investigation.svg:49
+#: website/public/assets/figures/dx-ball-sound-pan-investigation.svg:48
 msgctxt "figure:dx-ball-sound-pan-investigation.svg"
 msgid "20 + 30 × tile_x"
 msgstr "20 + 30 × tile_x"
 
-#: website/public/assets/figures/dx-ball-sound-pan-investigation.svg:50
+#: website/public/assets/figures/dx-ball-sound-pan-investigation.svg:49
 msgctxt "figure:dx-ball-sound-pan-investigation.svg"
 msgid "Original code"
 msgstr "Αρχικός κώδικας"
 
-#: website/public/assets/figures/dx-ball-sound-pan-investigation.svg:51
-#: website/public/assets/figures/dx-ball-sound-pan-investigation.svg:54
+#: website/public/assets/figures/dx-ball-sound-pan-investigation.svg:50
+#: website/public/assets/figures/dx-ball-sound-pan-investigation.svg:53
 msgctxt "figure:dx-ball-sound-pan-investigation.svg"
 msgid "comparison"
 msgstr "σύγκριση"
 
-#: website/public/assets/figures/dx-ball-sound-pan-investigation.svg:52
+#: website/public/assets/figures/dx-ball-sound-pan-investigation.svg:51
 msgctxt "figure:dx-ball-sound-pan-investigation.svg"
 msgid "3,205 cases"
 msgstr "3,205 περιπτώσεις"
 
-#: website/public/assets/figures/dx-ball-sound-pan-investigation.svg:53
+#: website/public/assets/figures/dx-ball-sound-pan-investigation.svg:52
 msgctxt "figure:dx-ball-sound-pan-investigation.svg"
 msgid "VC4.0 build"
 msgstr "Μεταγλώττιση VC4.0"
 
-#: website/public/assets/figures/dx-ball-sound-pan-investigation.svg:55
+#: website/public/assets/figures/dx-ball-sound-pan-investigation.svg:54
 msgctxt "figure:dx-ball-sound-pan-investigation.svg"
 msgid "63 matching bytes"
 msgstr "63 ίδια byte"
