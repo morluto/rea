@@ -1,6 +1,9 @@
 import { AnalysisInputError } from "../../domain/analysisErrorCore.js";
 import { environmentName } from "../../domain/desktop/appExport.js";
-import { exportInstall } from "../../domain/desktop/appExportInstall.js";
+import {
+  exportInstall,
+  withExtraPackages,
+} from "../../domain/desktop/appExportInstall.js";
 import type { DesktopApplicationCapture } from "../../domain/desktop/desktopCapture.js";
 import { isPortableBundleName } from "../environment/environmentBundle.js";
 
@@ -46,13 +49,17 @@ export const admitApplication = (
   capture: DesktopApplicationCapture,
   environment: string,
   packageUrl: string | undefined,
+  extraPackages: readonly string[] = [],
 ) => {
-  const install = exportInstall(
+  const packaged = exportInstall(
     capture.application.package,
     environment,
     capture.host.architecture,
     packageUrl,
   );
+  const install = packaged.ok
+    ? withExtraPackages(packaged.value, extraPackages)
+    : packaged;
   if (!install.ok)
     throw refuse(
       install.error.reason,

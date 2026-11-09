@@ -325,8 +325,10 @@ Run `rea describe-desktop-application-task CAPTURE --format json`. Read:
 
 ### Write the prompt
 
-Say what the user wants done, in their words and the app's terms: "Add buy
-milk to my to-do list and save it". Never say how the file stores it: no
+Say what the user wants done, in their words and the app's terms, naming the
+app: "In Mousepad, add buy milk to my to-do list and save it". A solving
+agent's own shell cannot see the computer's files; the app's name sends it to
+the screen. Never say how the file stores it: no
 paths the user would not name, line formats, XML, keys or SQL, and never the
 checks. Replace the draft's placeholder; the export refuses it.
 

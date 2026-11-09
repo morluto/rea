@@ -3,6 +3,7 @@ import {
   declaredDocumentType,
   isWellFormedXml,
   parseXmlDocument,
+  xmlElementRanges,
 } from "./xmlDocument.js";
 
 it.each([
@@ -212,4 +213,23 @@ it("preserves Unicode separators under XML 1.0 normalization", () => {
   expect(parsed.value.documentElement?.textContent).toBe(
     "a\n\u0085b\n\u2028c\n\rd\u2029",
   );
+});
+
+it("gives the source range of each picked element, the outermost, through line breaks and astral characters", () => {
+  const source =
+    '<r xmlns:n="urn:n">\r\n<!-- <x n:k="1"/> --><x n:k="1">😀<x n:k="1"/></x>\r\n<x  n:k = \'1\' /><x k="1"/></r>';
+  const ranges = xmlElementRanges(
+    source,
+    (element) =>
+      element.local === "x" && element.attribute("urn:n", "k") === "1",
+    { doctype: "reject" },
+  );
+
+  if (!ranges.ok) throw ranges.error;
+  expect(
+    ranges.value.map(({ start, end }) => source.slice(start, end)),
+  ).toEqual(['<x n:k="1">😀<x n:k="1"/></x>', "<x  n:k = '1' />"]);
+  expect(
+    xmlElementRanges("<r><x></r>", () => true, { doctype: "reject" }).ok,
+  ).toBe(false);
 });
