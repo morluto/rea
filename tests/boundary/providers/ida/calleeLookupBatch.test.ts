@@ -1,6 +1,7 @@
 import { rm } from "node:fs/promises";
 import { afterEach, describe, expect, it } from "vitest";
 import { z } from "zod";
+import { UNCLASSIFIED_CALL_SITE_LIMITATION } from "../../../../src/ida/IdaCallGraph.js";
 import { IdaOperationRunner } from "../../../../src/ida/IdaOperationRunner.js";
 import { IdaSessionClient } from "../../../../src/ida/IdaSessionClient.js";
 import { createIdaTarget, RecordingIdaMcp } from "../../../fixtures/idaMcp.js";
@@ -11,6 +12,12 @@ afterEach(async () => {
     await rm(root, { recursive: true, force: true });
 });
 const queriesSchema = z.object({ queries: z.array(z.string()) });
+/** An uncapped page still cannot classify the call sites behind its edges. */
+const uncappedCalleeCoverage = {
+  status: "partial",
+  limitations: [UNCLASSIFIED_CALL_SITE_LIMITATION],
+  limited_directions: ["callees"],
+};
 const addresses = Array.from(
   { length: 20 },
   (_, index) => `0x${(0x2000 + index * 16).toString(16)}`,
@@ -79,7 +86,7 @@ describe.each(["modern", "native"] as const)(
         "lookup_funcs",
       ]);
       expect(runner.raw.at(-1)?.result).toEqual(addresses.map(row).reverse());
-      expect(runner.relationshipCoverage).toEqual({ status: "complete" });
+      expect(runner.relationshipCoverage).toEqual(uncappedCalleeCoverage);
     });
 
     it.each([
@@ -140,7 +147,7 @@ describe.each(["modern", "native"] as const)(
   },
 );
 
-it("uses the batch through a modern session and preserves complete callee Evidence", async () => {
+it("uses the batch through a modern session and preserves the observed callee Evidence", async () => {
   const { producer, target, root } = await fixture();
   const client = new IdaSessionClient(
     {
@@ -160,7 +167,7 @@ it("uses the batch through a modern session and preserves complete callee Eviden
     });
     if (!result.ok) throw result.error;
     expect(result.value.result).toEqual(["0x9000", ...addresses]);
-    expect(result.value.relationshipCoverage).toEqual({ status: "complete" });
+    expect(result.value.relationshipCoverage).toEqual(uncappedCalleeCoverage);
     expect(
       producer.calls
         .filter(({ name }) => name === "lookup_funcs")
