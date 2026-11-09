@@ -1144,6 +1144,8 @@ const examineMapMember = async (
         read.loaded.bytes.length,
         decodeMemberText(read.loaded.bytes),
       );
+    // A read the allowance stopped leaves the text unchecked.
+    else state.skippedText += 1;
     return true;
   }
   const packaged =
@@ -1174,6 +1176,7 @@ const examineMapMember = async (
         read.loaded.bytes.length,
         decodeMemberText(read.loaded.bytes),
       );
+    else state.skippedText += 1;
     return true;
   }
   if (read !== null) settleMapRead(state, declared, read);

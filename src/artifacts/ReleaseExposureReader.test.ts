@@ -3476,6 +3476,15 @@ const debugCompanionsStatus = (scan: ReleaseExposureScan) =>
     credential_markers: { hits: [], omitted_hits: 0 },
   }).checks.find((check) => check.id === "native.debug_companions")?.status;
 
+const credentialMarkersStatus = (scan: ReleaseExposureScan) =>
+  assembleReleaseExposureReport(scan, {
+    electron_family: "not_electron",
+    fuse_images: [],
+    go_images: [],
+    rust_images: [],
+    credential_markers: { hits: [], omitted_hits: 0 },
+  }).checks.find((check) => check.id === "text.credential_markers")?.status;
+
 const sourceMapSourcesStatus = (scan: ReleaseExposureScan) =>
   assembleReleaseExposureReport(scan, {
     electron_family: "not_electron",
@@ -4044,6 +4053,19 @@ describe("ReleaseExposureReader Node shebang .map scripts", () => {
       expect(sourceMapSourcesStatus(scanned)).toBe("unknown");
     },
   );
+
+  it("leaves the credential markers of an oversized runner.map whose env -S program is a variable unknown", async () => {
+    const root = await createTestTempDirectory(
+      "rea-release-exposure-shebang-map-",
+    );
+    const map = Buffer.alloc(MAX_RELEASE_EXPOSURE_SOURCE_MAP_BYTES + 1, 0x20);
+    map.write("#!/usr/bin/env -S ${NODE_BIN}\nrun();\n");
+    await writeFile(join(root, "runner.map"), map);
+    await writeFile(join(root, "notes.txt"), "plain text\n");
+    const scanned = await inspect(root);
+    expect(scanned.text_members.skipped).toBe(1);
+    expect(credentialMarkersStatus(scanned)).toBe("unknown");
+  });
 });
 
 describe("ReleaseExposureReader resource admission", () => {
