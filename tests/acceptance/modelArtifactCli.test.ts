@@ -520,12 +520,23 @@ cliTest(
     const offsetFailure = parseMcpToolError(
       await call("inspect_model_artifact", { path }),
     );
-    expect(offsetFailure.error).toMatchObject({
-      code: "resource_constraint",
+    // This tiny file cannot contain the declared extent. Physical validity is
+    // established before asking whether a valid offset fits host precision.
+    const invalidExtent = {
+      code: "target_unavailable",
       details: {
-        reported_limits: { maximum_exact_offset: Number.MAX_SAFE_INTEGER },
+        path,
+        constraint: "file_format_rejected",
+        reason: "Declared extent is outside the file",
       },
+    };
+    expect(offsetFailure.error).toMatchObject(invalidExtent);
+    expect(offsetFailure.error.details).not.toHaveProperty("reported_limits");
+    const rejected = await cli.run({
+      arguments: ["inspect-model-artifact", path, "--json"],
     });
+    expect(rejected.exitCode, rejected.stderr).toBe(1);
+    expect(rejected.json).toMatchObject(invalidExtent);
   },
 );
 
