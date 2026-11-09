@@ -14,6 +14,7 @@ import {
   unwrapJavaScriptExpression,
 } from "./javascriptAstValues.js";
 import { isUnmodifiedGlobalReference } from "./javascriptSemanticAmbientWrites.js";
+import { semanticBindingAtRead } from "./javascriptSemanticMutationInitializers.js";
 import {
   resolveSemanticBindingState,
   type JavaScriptSemanticAnalysisState,
@@ -37,7 +38,6 @@ const RELEASE_METHODS = ["close", "destroy", "end"] as const;
 const releaseMethodsFor = (
   acquisition: ResourceCandidate,
 ): readonly ("close" | "destroy" | "end")[] => {
-  if (acquisition.resultIsPromise) return [];
   const key = `${acquisition.specifier}:${acquisition.method}`;
   const table: Readonly<
     Record<string, readonly ("close" | "destroy" | "end")[]>
@@ -52,7 +52,7 @@ interface ResourceCandidate {
   readonly method: JavaScriptSemanticResourceOperation["method"];
   readonly ownerCallableId: string | null;
   readonly resultBindingId: string | null;
-  /** The lexical result is the opening Promise, not its fulfilled FileHandle. */
+  /** The initial result is the opening Promise; later writes may replace it. */
   readonly resultIsPromise: boolean;
 }
 
@@ -393,8 +393,24 @@ const collectReleases = (
     const candidates =
       binding === undefined ? [] : (byBinding.get(binding.bindingId) ?? []);
     if (binding === undefined || candidates.length === 0) return;
-    const linked = candidates.filter((acquisition) =>
-      releaseMethodsFor(acquisition).includes(method),
+    const receiver = candidates.some(({ resultIsPromise }) => resultIsPromise)
+      ? semanticBindingAtRead(binding, member.object, context.state).binding
+      : binding;
+    const knownAcquisitions = new Set<t.Node>(
+      candidates
+        .filter(({ builtinAuthority }) => builtinAuthority === undefined)
+        .map(({ node }) => node),
+    );
+    const linked = candidates.filter(
+      (acquisition) =>
+        releaseMethodsFor(acquisition).includes(method) &&
+        (!acquisition.resultIsPromise ||
+          mayReceiveFulfilledHandle(
+            receiver,
+            acquisition,
+            knownAcquisitions,
+            context.state,
+          )),
     );
     // No linked acquisition exposes this release method, so the call is not a
     // release of it at all: Node throws at the call site instead.
@@ -420,6 +436,34 @@ const collectReleases = (
   return output;
 };
 
+/** Unwrap only direct awaits; a standalone await does not write its operand. */
+const resourceInitializer = (node: t.Node) => {
+  let value = unwrapJavaScriptExpression(node).node;
+  let awaited = false;
+  while (t.isAwaitExpression(value)) {
+    awaited = true;
+    value = unwrapJavaScriptExpression(value.argument).node;
+  }
+  return { value, awaited };
+};
+
+/** Unknown receiver writes retain a candidate; known other acquisitions do not alias it. */
+const mayReceiveFulfilledHandle = (
+  binding: JavaScriptSemanticBindingState,
+  acquisition: ResourceCandidate,
+  knownAcquisitions: ReadonlySet<t.Node>,
+  state: JavaScriptSemanticAnalysisState,
+): boolean =>
+  [...binding.initializers, ...binding.referenceInitializers].some(
+    ({ node, projection }) => {
+      if (projection.length > 0) return true;
+      const { value, awaited } = resourceInitializer(node);
+      if (value === acquisition.node) return awaited;
+      if (isNullishPlaceholder(value, state)) return false;
+      return !knownAcquisitions.has(value);
+    },
+  );
+
 /**
  * A lexical handle identifies its acquisition only while every value written
  * to the binding is that acquisition itself. Any replacement, even a
@@ -435,9 +479,7 @@ const holdsOnlyAcquisitions = (
   [...binding.initializers, ...binding.referenceInitializers].every(
     ({ node, projection }) => {
       if (projection.length > 0) return false;
-      let value = unwrapJavaScriptExpression(node).node;
-      while (t.isAwaitExpression(value))
-        value = unwrapJavaScriptExpression(value.argument).node;
+      const { value } = resourceInitializer(node);
       return (
         isNullishPlaceholder(value, state) ||
         linked.some((acquisition) => acquisition.node === value)

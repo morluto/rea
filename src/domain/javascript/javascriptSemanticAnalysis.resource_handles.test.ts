@@ -1,6 +1,10 @@
 import { expect, it } from "vitest";
 
-import { analyzeJavaScriptSemantics } from "./javascriptSemanticAnalysis.js";
+import {
+  analyzeJavaScriptSemantics,
+  analyzeParsedJavaScriptSemantics,
+} from "./javascriptSemanticAnalysis.js";
+import { parseJavaScriptSource } from "./javascriptSourceParser.js";
 import { analyzeCommonJsSemanticFixture } from "../../../tests/fixtures/javascriptCommonJsAnalysis.js";
 
 const operations = (source: string) => {
@@ -124,4 +128,64 @@ it("keeps the awaited candidate partial when a Promise can replace it", () => {
         resolution,
       })),
   ).toEqual([{ linked: 1, resolution: "partial" }]);
+});
+
+it.each([
+  "h = await h;",
+  "if (settle) h = await h;",
+  "h = await (await h);",
+  "h = await transform(h);",
+])("keeps a candidate FileHandle after receiver write %s", (write) => {
+  const result = operations(`
+    import { open } from "node:fs/promises";
+    let h = open("input.txt");
+    ${write}
+    h.close();
+  `);
+  const acquired = result.filter(({ kind }) => kind === "acquire");
+  expect(acquired).toHaveLength(1);
+  expect(result.filter(({ kind }) => kind === "release")).toEqual([
+    expect.objectContaining({
+      linkedResourceIds: [acquired[0]?.resourceId],
+      resolution: "partial",
+    }),
+  ]);
+});
+
+it.each([
+  'h = open("other.txt"); h.close();',
+  "h = null; h.close();",
+  "h.close(); h = await h;",
+])("does not invent a fulfilled receiver for %s", (after) => {
+  expect(
+    releases(
+      `import { open } from "node:fs/promises"; let h = open("input.txt"); ${after}`,
+    ),
+  ).toEqual([]);
+});
+
+it("preserves ambiguity through a write from an unknown loader", () => {
+  const parsed = parseJavaScriptSource(
+    `
+    import { open } from "node:fs/promises";
+    const other = require("node:fs/promises");
+    let h = open("input.txt");
+    h = other.open("other.txt");
+    h.close();
+  `,
+    "entry.MJS",
+  );
+  if (parsed === null) throw new Error("Expected an unknown-loader fixture");
+  const ir = analyzeParsedJavaScriptSemantics(parsed);
+  expect(ir.coverage.status).toBe("complete");
+  const result = ir.resourceOperations;
+  const acquired = result.filter(({ kind }) => kind === "acquire");
+  expect(acquired).toHaveLength(2);
+  expect(result.filter(({ kind }) => kind === "release")).toEqual([
+    expect.objectContaining({
+      linkedResourceIds: acquired.map(({ resourceId }) => resourceId).sort(),
+      resolution: "partial",
+      builtinAuthority: "candidate",
+    }),
+  ]);
 });

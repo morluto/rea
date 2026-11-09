@@ -9,9 +9,9 @@ import { connectLocalToolsMcp } from "../../fixtures/localToolsMcp.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
 
-cliTest.for([false, true])(
-  "distinguishes the FileHandle carrier with awaited=%s through CLI and MCP",
-  async (awaited, { cli }) => {
+cliTest.for(["promise", "awaited", "reassigned"] as const)(
+  "distinguishes the FileHandle carrier %s through CLI and MCP",
+  async (mode, { cli }) => {
     const { client, call } = await connectLocalToolsMcp({
       REA_MCP_TOOL_FAMILIES: "electron",
       REA_MCP_INPUT_SCHEMA_PROFILE: "full",
@@ -27,7 +27,10 @@ cliTest.for([false, true])(
       validateFormats: false,
     }).compile(definition.inputSchema);
     const root = await createTestTempDirectory("rea-promise-handle-");
-    const source = `import { open } from "node:fs/promises";\nconst handle = ${awaited ? "await " : ""}open("input.txt", "r");\nhandle.close();\n`;
+    const source =
+      mode === "reassigned"
+        ? `import { open } from "node:fs/promises";\nlet handle = open("input.txt", "r");\nhandle = await handle;\nhandle.close();\n`
+        : `import { open } from "node:fs/promises";\nconst handle = ${mode === "awaited" ? "await " : ""}open("input.txt", "r");\nhandle.close();\n`;
     const sha = createHash("sha256").update(source).digest("hex");
     await Promise.all([
       writeFile(
@@ -64,7 +67,30 @@ cliTest.for([false, true])(
       ).toHaveLength(1);
       expect
         .soft(graph.relations.filter(({ relation }) => relation === "releases"))
-        .toHaveLength(awaited ? 1 : 0);
+        .toHaveLength(mode === "promise" ? 0 : 1);
+      if (mode === "reassigned") {
+        const resource = graph.nodes.find(({ kind }) => kind === "resource");
+        expect
+          .soft(
+            graph.relations.filter(({ relation }) => relation === "releases"),
+          )
+          .toEqual([
+            expect.objectContaining({
+              resolution: "candidate",
+              target_node_id: resource?.node_id,
+            }),
+          ]);
+        expect.soft(graph.unknowns).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({
+              family: "resource-lifecycle",
+              reason: "ambiguous-target",
+              relation_kinds: ["releases"],
+              candidate_node_ids: [resource?.node_id],
+            }),
+          ]),
+        );
+      }
       expect(
         graph.nodes.some(
           ({ identity }) =>

@@ -562,7 +562,9 @@ it.each([
 it("preserves a saved promises object after deleting its parent export", () => {
   const ir =
     analyzeCommonJsSemanticFixture(`const fs = require('fs'); const fsp = fs.promises;
-    delete fs.promises; const handle = fsp.open('kept'); handle.close();`);
+    delete fs.promises;
+    async function useHandle() { const handle = await fsp.open('kept'); handle.close(); }
+    useHandle();`);
   expect(
     ir.resourceOperations.map(({ kind, method }) => ({ kind, method })),
   ).toEqual([
@@ -591,7 +593,9 @@ it("recognizes nested ESM namespace receivers as original built-ins", () => {
 it("keeps intact fs/promises identity after deleting the fs.promises slot", () => {
   const ir =
     analyzeCommonJsSemanticFixture(`const fs=require('fs'); delete fs.promises;
-    const fsp=require('fs/promises'); const handle=fsp.open('kept'); handle.close();`);
+    const fsp=require('fs/promises');
+    async function useHandle() { const handle=await fsp.open('kept'); handle.close(); }
+    useHandle();`);
   expect(
     ir.resourceOperations.map(({ kind, method }) => ({ kind, method })),
   ).toEqual([
