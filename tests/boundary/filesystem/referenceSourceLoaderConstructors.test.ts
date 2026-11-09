@@ -16,9 +16,33 @@ it("retains constructor loader requests without inventing host authority", async
       join(root, ".TS"),
       'import {join} from "node:path"; require("./dep.cjs");',
     ),
+    writeFile(
+      join(root, "child-call.cjs"),
+      'require.call.extra=1; require.call(null,"./dep.cjs");',
+    ),
+    writeFile(
+      join(root, "child-apply.cjs"),
+      'require.apply.extra=1; require.apply(null,["./dep.cjs"]);',
+    ),
+    writeFile(
+      join(root, "child-resolve.cjs"),
+      'require.resolve.extra=1; require.resolve("./dep.cjs");',
+    ),
     writeFile(join(root, "direct.cjs"), 'new require("./dep.cjs");'),
     writeFile(join(root, "wrapped.cts"), 'new (require as any)("./dep.cjs");'),
     writeFile(join(root, "wrapped-call.cts"), '(require as any)("./dep.cjs");'),
+    writeFile(
+      join(root, "alias-direct.cjs"),
+      'const box={load:require};box.load("./dep.cjs");',
+    ),
+    writeFile(
+      join(root, "alias-direct-replaced.cjs"),
+      'const box={load:require};box.load=()=>0;box.load("./dep.cjs");',
+    ),
+    writeFile(
+      join(root, "alias-direct-deferred.cjs"),
+      'const box={load:require};function replace(){box.load=()=>0} replace();box.load("./dep.cjs");',
+    ),
     writeFile(
       join(root, "nested-call.cjs"),
       'const box={load:require};box.load.call(null,"./dep.cjs");',
@@ -88,9 +112,13 @@ it("retains constructor loader requests without inventing host authority", async
   );
   for (const from_path of [
     "direct.cjs",
+    "child-call.cjs",
+    "child-apply.cjs",
+    "child-resolve.cjs",
     "wrapped.cts",
     "wrapped-call.cts",
     "nested-call.cjs",
+    "alias-direct.cjs",
     "nested-child.cjs",
     "nested-apply.cjs",
     "wrapped-resolve.cts",
@@ -109,6 +137,8 @@ it("retains constructor loader requests without inventing host authority", async
     ".MJS",
     ".TS",
     "wrapped-receiver.TS",
+    "alias-direct-replaced.cjs",
+    "alias-direct-deferred.cjs",
   ]) {
     expect(result.value.relationships).toContainEqual({
       from_path,
