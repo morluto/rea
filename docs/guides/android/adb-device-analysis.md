@@ -188,7 +188,7 @@ and during shutdown.
   property value remains available in `properties`.
 - **Device paths are not host paths.** `base_apk_device_path` values live on
   the device filesystem. Only pulls and captures produce host-local paths,
-  each paired with byte size and SHA-256 digest. A pulled file's host name is
+  with byte size and SHA-256 digest on success. A pulled file's host name is
   the device path's final POSIX segment. REA preserves the original device
   path and filename; a missing final segment or `.`/`..` is refused before
   output creation. Windows hosts follow [Windows filename rules](https://learn.microsoft.com/en-us/windows/win32/fileio/naming-a-file),
@@ -249,6 +249,10 @@ and during shutdown.
 - Pull and capture outputs are additive: the destination must not already
   exist. Re-running a completed pull refuses the existing directory instead
   of overwriting evidence.
+- If a single-file pull fails and REA observes a regular file at the destination,
+  the error includes its `local_path` with `transfer_status: "unconfirmed"`
+  and `digest_status: "unknown"`. The file remains in place; the receipt does
+  not establish that the transfer completed.
 - Cancellation during a package pull preserves caller-selected output. The
   error includes partial observations identifying completed artifacts and the
   interrupted local path; remaining APKs were not attempted.
