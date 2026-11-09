@@ -19,6 +19,7 @@ import { DESKTOP_EXPORT_FRAMEWORK_VERSION } from "../domain/desktop/appExport.js
 import { readDesktopBuildFacts } from "./DesktopBuildDoctorFacts.js";
 import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
 import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
+import { PRODUCT_IDENTITY } from "../identity.js";
 import {
   defaultBuildComputerArchive,
   resolveBuildComputerEnvironment,
@@ -523,6 +524,8 @@ it.skipIf(process.platform === "win32")(
     );
     const packed = join(root, "packed");
     await mkdir(join(packed, "rea-prod"), { recursive: true });
+    await mkdir(join(packed, "rea-prod", "scripts"));
+    await writeFile(join(packed, "rea-prod", "scripts", "rea.mjs"), "");
     await writeFile(
       join(packed, "rea-prod/package.json"),
       JSON.stringify({ name: "rea-agents", version: "6.7.0" }),
@@ -554,3 +557,28 @@ it.skipIf(process.platform === "win32")(
     expect(facts.archive.detail).toContain("6.7.0");
   },
 );
+
+it("recognizes a gzip runtime archive with a different top folder", async () => {
+  const { root, bin, home } = await buildHost(
+    "rea-desktop-doctor-archive-gzip-",
+  );
+  const packed = join(root, "packed");
+  await mkdir(join(packed, "package", "scripts"), { recursive: true });
+  await writeFile(join(packed, "package", "scripts", "rea.mjs"), "");
+  await writeFile(
+    join(packed, "package", "package.json"),
+    JSON.stringify({ version: PRODUCT_IDENTITY.packageVersion }),
+  );
+  const archive = join(root, "runtime.tar.gz");
+  await execute("tar", ["-czf", archive, "-C", packed, "package"]);
+  const facts = await readFacts(
+    {
+      HOME: home,
+      USERPROFILE: home,
+      PATH: `${bin}:/usr/bin:/bin`,
+      REA_BUILD_COMPUTER_REA_ARCHIVE: archive,
+    },
+    [],
+  );
+  expect(facts.archive).toMatchObject({ path: archive, status: "current" });
+});
