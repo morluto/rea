@@ -45,10 +45,10 @@ def _selector(token: str):
 
 
 _ISO_STAMP = re.compile(
-    r"^\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}(?::\d{2}(?:[.,]\d+)?)?(?:Z|[+-]\d{2}:?\d{2})?$"
+    r"^\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}(?::\d{2}(?:[.,]\d+)?)?(?:Z|[+-]\d{2}:?\d{2})?$", re.ASCII
 )
 _ASCTIME_STAMP = re.compile(
-    r"^(?:Mon|Tue|Wed|Thu|Fri|Sat|Sun) (?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec) [ 0-3]?\d \d{2}:\d{2}:\d{2} \d{4}$"
+    r"^(?:Mon|Tue|Wed|Thu|Fri|Sat|Sun) (?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec) [ 0-3]?\d \d{2}:\d{2}:\d{2} \d{4}$", re.ASCII
 )
 
 
@@ -97,10 +97,7 @@ def _holds_inside(member, path: str, value: str, form) -> bool:
     a JSON record the string at those keys."""
     steps = path.split("/")
     if form == "xml":
-        return _is_element(member) and (
-            _collapse_whitespace(_element_text(member)) == value if steps == ["text()"]
-            else _element_holds(member, steps, value)
-        )
+        return _is_element(member) and _element_holds(member, steps, value)
     found = member
     for step in steps:
         if not isinstance(found, dict) or step not in found:

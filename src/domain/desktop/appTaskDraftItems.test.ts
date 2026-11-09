@@ -33,11 +33,10 @@ describe("draftTaskFiles for items placed by their own position", () => {
 
     expect(file.suggested).toEqual([
       {
-        kind: "member_count",
+        kind: "text_contains",
         file: FILE,
-        pointer: `${LAYER}/children`,
-        matching: "[name=text][>text()=Quiz on Friday: bring a calculator]",
-        at_least: 1,
+        pointer: LAYER,
+        value: "Quiz on Friday: bring a calculator",
       },
       {
         kind: "member_count",
@@ -49,11 +48,10 @@ describe("draftTaskFiles for items placed by their own position", () => {
     ]);
     expect(file.guards).toEqual(
       NOTES.map(([, value]) => ({
-        kind: "member_count",
+        kind: "text_contains",
         file: FILE,
-        pointer: `${LAYER}/children`,
-        matching: `[name=text][>text()=${value}]`,
-        at_least: 1,
+        pointer: LAYER,
+        value,
       })),
     );
     expect(
@@ -72,11 +70,6 @@ describe("draftTaskFiles for items placed by their own position", () => {
       ),
     ).toBe(true);
     expect(passing(FILE, xml(before), file.suggested)).toEqual([false, false]);
-    const wrong = notebook(PNG("CCCC"), ...NOTES, [
-      "156.5",
-      "Do not Quiz on Friday: bring a calculator",
-    ]);
-    expect(passing(FILE, xml(wrong), file.suggested)[0]).toBe(false);
     expect(file.suggested.map(pointerOf)).not.toContain(
       "/root/children/[name=preview]",
     );

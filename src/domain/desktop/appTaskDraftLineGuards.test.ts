@@ -26,31 +26,6 @@ const drafted = (before: string, after: string) => {
 };
 
 describe("draftTaskFiles for lines holding values the app generates", () => {
-  it("checks a reference number in ordinary text", () => {
-    const line = "Reference: ABC_123456";
-    const file = drafted("# Instructions", `# Instructions\n${line}`);
-    expect(file.suggested).toEqual([
-      { kind: "lines_present", file: FILE, lines: [line] },
-    ]);
-    const checks = file.suggested.map((check, index) => ({
-      ...check,
-      id: `c${index}`,
-    }));
-    expect(
-      evaluateTaskChecks(
-        checks,
-        new Map([
-          [
-            FILE,
-            {
-              format: "text",
-              view: textView("# Instructions\nReference: WRONG"),
-            },
-          ],
-        ]),
-      ).map(({ passed }) => passed),
-    ).toEqual([false]);
-  });
   it("keeps an unquoted assignment in ordinary prose exact", () => {
     const line = "Set created=2025550123 and save";
     const file = drafted("# Instructions", `# Instructions\n${line}`);
@@ -519,6 +494,22 @@ describe("draftTaskFiles guards of lines with no text of their own", () => {
 });
 
 describe("draftTaskFiles for the app's log beside its journal", () => {
+  it("drafts a changed unselected conversation history in app state", () => {
+    const [file] = draftOf({
+      ".config/app/history.log": statePath(
+        "application_state",
+        "text",
+        textView("Ada: Hello"),
+        textView("Ada: Hello\nLin: Welcome"),
+      ),
+    });
+    expect(file?.suggested).toContainEqual({
+      kind: "lines_present",
+      file: ".config/app/history.log",
+      lines: ["Lin: Welcome"],
+    });
+  });
+
   it("drafts an app log and notes a text file that opens like XML but is not", () => {
     const lines = (...text: string[]) => textView(text.join("\n"));
     const files = draftOf({

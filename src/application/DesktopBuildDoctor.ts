@@ -362,13 +362,6 @@ const registrationCheck = (
       unresolved.length > 0 || (unchecked?.length ?? 0) > 0,
   );
   const repair = failing[0]?.client ?? unknown[0]?.client;
-  const remediation = failing.some(
-    ({ differing }) => (differing?.length ?? 0) > 0,
-  )
-    ? "Correct or remove the failed settings in the client's REA registration, then restart the client and run doctor again."
-    : unknown.length > 0
-      ? "Check the unverified settings in the client's REA registration, then restart the client and run doctor again."
-      : `Run ${setupCommand(repair === undefined ? clients : [repair])}, then restart the client.`;
   return result(
     "registration",
     gaps.length > 0 && failing.length === 0 && unknown.length === 0,
@@ -378,7 +371,7 @@ const registrationCheck = (
     {
       classification:
         failing.length === 0 && gaps.length > 0 ? "unknown" : "config_drift",
-      remediation,
+      remediation: `Run ${setupCommand(repair === undefined ? clients : [repair])}, then restart the client.`,
       details: { registrations: gaps },
     },
   );
@@ -405,12 +398,12 @@ const registrationDetail = (gap: {
     ...(gap.differing === undefined
       ? []
       : [
-          `${gap.client}'s recorded ${gap.differing.join(", ")} failed verification.`,
+          `${gap.client}'s registration records different values for ${gap.differing.join(", ")}.`,
         ]),
     ...(gap.unchecked === undefined
       ? []
       : [
-          `REA could not verify ${gap.client}'s recorded ${gap.unchecked.join(", ")}.`,
+          `REA did not check ${gap.client}'s recorded ${gap.unchecked.join(", ")} against the paths used in this terminal.`,
         ]),
   ];
   return details.length > 0

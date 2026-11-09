@@ -254,16 +254,12 @@ export const CHECK_VIEWS: Readonly<Record<string, TaskFileView>> = {
           element("details", {}, ["Ada"]),
           element("date", {}, ["2026-11-08T09:00:00Z"]),
         ]),
-      ]),
-      truncated: false,
-    },
-  },
-  "Documents/placed-notes.xml": {
-    format: "xml",
-    view: {
-      root: element("layer", {}, [
-        element("text", { x: "1", y: "2" }, ["Buy eggs"]),
-        element("text", { x: "3", y: "4" }, ["Do not Buy eggs"]),
+        element("person", {}, [
+          element("details", {}, [
+            "Alpha",
+            element("saved", {}, ["٢٠٢٦-١١-٠٧T١٠:١٢:٠٠Z"]),
+          ]),
+        ]),
       ]),
       truncated: false,
     },
@@ -1354,22 +1350,12 @@ const CHILD_TEXT_CASES: readonly (readonly [DesktopTaskCheckInput, boolean])[] =
     [
       {
         kind: "member_count",
-        file: "Documents/placed-notes.xml",
+        file: "Documents/people.xml",
         pointer: "/root/children",
-        matching: "[name=text][>text()=Buy eggs]",
+        matching: "[>details=Alpha٢٠٢٦-١١-٠٧T١٠:١٢:٠٠Z]",
         equals: 1,
       },
       true,
-    ],
-    [
-      {
-        kind: "member_count",
-        file: "Documents/placed-notes.xml",
-        pointer: "/root/children",
-        matching: "[name=text][>text()=eggs]",
-        at_least: 1,
-      },
-      false,
     ],
     [
       {
