@@ -247,7 +247,7 @@ export class DesktopBuildCapture {
     private readonly computer: ControlledComputer,
     request: BuildRequest | undefined,
     private readonly secrets: {
-      readonly all: () => Promise<readonly KnownSecret[]>;
+      readonly all: (signal?: AbortSignal) => Promise<readonly KnownSecret[]>;
       readonly keep: (handle: string, bytes: Buffer) => Promise<string>;
       readonly redact: (text: string) => string;
       readonly hasDeclaredSecret: boolean;
@@ -592,6 +592,18 @@ export class DesktopBuildCapture {
         ),
       );
     run.exports += 1;
+    let secrets: readonly KnownSecret[];
+    try {
+      secrets = await this.secrets.all(signal);
+    } catch (cause: unknown) {
+      return err(
+        cause instanceof AnalysisError
+          ? cause
+          : signal.aborted
+            ? new AnalysisCancelledError(EXPORT, { cause: signal.reason })
+            : adapterError(EXPORT, errorText(cause), cause),
+      );
+    }
     return exportBuild(
       this.computer,
       {
@@ -601,7 +613,7 @@ export class DesktopBuildCapture {
           ? {}
           : { packageUrl: this.#packageFile.url }),
         extraPackages: this.#extraPackages,
-        secrets: await this.secrets.all(),
+        secrets,
         keep: this.secrets.keep,
         signIn: signIn.length === 2,
         consents: [...this.#consents],

@@ -165,8 +165,19 @@ export class DesktopBuildSecrets {
     redactSecretsInJson(value, this.#known());
 
   /** Every secret no bundle may hold: each value typed or kept here, then each the folder holds now, readable by others or not. */
-  async all(): Promise<KnownSecret[]> {
-    const handles = await listBuildSecretHandles(this.directory);
+  async all(signal?: AbortSignal): Promise<KnownSecret[]> {
+    signal?.throwIfAborted();
+    let handles: string[];
+    try {
+      handles = await listBuildSecretHandles(this.directory);
+    } catch (cause: unknown) {
+      throw new AnalysisInputError("export_build_environment", {
+        userMessage: `REA cannot check the declared secrets in ${this.directory}.`,
+        remediationAction:
+          "Make the secrets folder readable and retry the export.",
+        cause,
+      });
+    }
     const read: { handle: string; file: Result<string, string> }[] = [];
     for (const handle of handles)
       read.push({
@@ -175,10 +186,20 @@ export class DesktopBuildSecrets {
           readBuildSecretFile(this.directory, handle, {
             searchOnly: true,
             maxCharacters: MAX_SETTING_CHARACTERS,
+            minCharacters: 0,
             resources: this.#resources,
+            ...(signal === undefined ? {} : { signal }),
             onCloseFailureValue: (value) => this.#remember(handle, value),
           }),
         ),
+      });
+    signal?.throwIfAborted();
+    const refused = read.find(({ file }) => !file.ok);
+    if (refused !== undefined && !refused.file.ok)
+      throw new AnalysisInputError("export_build_environment", {
+        userMessage: `REA cannot check the declared secret ${refused.handle}: ${refused.file.error}`,
+        remediationAction:
+          "Repair or remove the secret file, then retry the export.",
       });
     const known = this.#known();
     const held = new Set(
@@ -187,7 +208,9 @@ export class DesktopBuildSecrets {
     return [
       ...known,
       ...read.flatMap(({ handle, file }) =>
-        file.ok && !held.has(`${handle}\0${file.value}`)
+        file.ok &&
+        isScannableSecret(file.value) &&
+        !held.has(`${handle}\0${file.value}`)
           ? [{ handle, value: file.value }]
           : [],
       ),

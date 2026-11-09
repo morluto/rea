@@ -30,6 +30,11 @@ import {
   secretValueRefusal,
 } from "../domain/desktop/buildSecrets.js";
 import { err, ok, type Result } from "../domain/result.js";
+import {
+  RegularFileCapacityError,
+  readStableFileBytes,
+} from "../filesystem/readStableFileBytes.js";
+import { RegularFileChangedError } from "../filesystem/RegularFile.js";
 
 /** The most bytes a secret file of at most `characters` may hold: those in UTF-8 and a line break. */
 const maxFileBytes = (characters: number) => characters * 4 + 2;
@@ -102,12 +107,14 @@ export const readBuildSecretFile = async (
     minCharacters,
     resources,
     onCloseFailureValue,
+    signal,
   }: {
     readonly searchOnly?: boolean;
     readonly maxCharacters?: number;
     readonly minCharacters?: number;
     readonly resources?: ArtifactResourceScope;
     readonly onCloseFailureValue?: (value: string) => void;
+    readonly signal?: AbortSignal;
   } = {},
 ): Promise<Result<string, string>> => {
   const path = join(directory, handle);
@@ -138,7 +145,7 @@ export const readBuildSecretFile = async (
       path,
       file,
       resources,
-      undefined,
+      signal,
       async (file) => {
         const stats = await file.stat();
         if (!stats.isFile()) {
@@ -159,7 +166,15 @@ export const readBuildSecretFile = async (
           result = err(`${path} is larger than one secret.`);
           return;
         }
-        const bytes = await file.readFile();
+        const bytes = await readStableFileBytes(
+          file,
+          path,
+          maxFileBytes(maxCharacters),
+          {
+            symlinks: "reject",
+            ...(signal === undefined ? {} : { signal }),
+          },
+        );
         let text: string;
         try {
           text = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
@@ -184,6 +199,10 @@ export const readBuildSecretFile = async (
         result?.ok === false ? result.error : undefined,
       );
     }
+    if (cause instanceof RegularFileCapacityError)
+      return err(`${path} is larger than one secret.`);
+    if (cause instanceof RegularFileChangedError)
+      return err(`${path} changed while REA read it.`);
     throw cause;
   }
   if (result === undefined)
@@ -191,12 +210,30 @@ export const readBuildSecretFile = async (
   return result;
 };
 
-/** The handles the folder holds files for; none when it is missing or unreadable. */
+/** The handles the folder holds files for; only a missing folder is empty. */
 export const listBuildSecretHandles = async (
   directory: string,
 ): Promise<string[]> => {
-  if ((await folderRefusal(directory)) !== undefined) return [];
-  const names = await readdir(directory).catch(() => []);
+  try {
+    const entry = await lstat(directory);
+    if (entry.isSymbolicLink() || !entry.isDirectory())
+      throw new Error(
+        `The secrets folder ${directory} is not a directory of its own.`,
+      );
+  } catch (cause: unknown) {
+    if (errorCode(cause) === "ENOENT") return [];
+    throw new Error(`The secrets folder ${directory} could not be inspected.`, {
+      cause,
+    });
+  }
+  let names: string[];
+  try {
+    names = await readdir(directory);
+  } catch (cause: unknown) {
+    throw new Error(`The secrets folder ${directory} could not be listed.`, {
+      cause,
+    });
+  }
   return names
     .filter((name) => buildSecretHandleSchema.safeParse(name).success)
     .sort();

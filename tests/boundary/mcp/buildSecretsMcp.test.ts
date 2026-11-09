@@ -1,4 +1,11 @@
-import { chmod, mkdir, readdir, readFile, writeFile } from "node:fs/promises";
+import {
+  chmod,
+  mkdir,
+  readdir,
+  readFile,
+  symlink,
+  writeFile,
+} from "node:fs/promises";
 import { join } from "node:path";
 import { gzipSync } from "node:zlib";
 
@@ -234,6 +241,29 @@ it("refuses to write a bundle that holds a handle's value, naming the files but 
   expect(error.message).toContain("task-name");
   expect(error.message).toContain("tasks/<secret:task-name>.json");
   expect(error.message).not.toContain(TASK.name);
+  expect(await readdir(directory).catch(() => [])).toEqual([]);
+});
+
+it("refuses export if a declared handle cannot be checked", async () => {
+  const config = await secretsConfig({ master: { text: VALUE } });
+  await symlink("missing", join(config, "rea", "build-secrets", "unreadable"));
+  const { client } = await buildCaptureFakes({
+    serverEnv: { XDG_CONFIG_HOME: config },
+  });
+  const id = await startBuildComputer(client, REQUEST);
+  await callOk(client, "start_build_capture", { computer_id: id });
+  for (const name of ["seed", "end"])
+    await callOk(client, "mark_build_checkpoint", { computer_id: id, name });
+  await callOk(client, "stop_build_capture", { computer_id: id });
+  const directory = join(await createTestTempDirectory("build-out-"), "notes");
+  const result = await client.callTool({
+    name: "export_build_environment",
+    arguments: { computer_id: id, task: TASK, directory },
+  });
+  const { error } = parseMcpToolError(result);
+  expect(error.code).toBe("invalid_request");
+  expect(error.message).toContain("unreadable");
+  expect(error.message).not.toContain(VALUE);
   expect(await readdir(directory).catch(() => [])).toEqual([]);
 });
 

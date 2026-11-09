@@ -233,7 +233,7 @@ const liveComputer = (
         computer,
         source.kind === "request" ? source : undefined,
         {
-          all: () => secrets.all(),
+          all: (signal) => secrets.all(signal),
           keep: (handle, bytes) => secrets.keep(handle, bytes),
           redact: secrets.redact,
           get hasDeclaredSecret() {
