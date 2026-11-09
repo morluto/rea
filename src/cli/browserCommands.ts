@@ -1,4 +1,8 @@
 import { parseCliJsonInput } from "../cliJsonInput.js";
+import {
+  fetchedSourceMapLimitCliOptions,
+  sourceMapLimitsFromCli,
+} from "./sourceMapLimits.js";
 import { projectCliAnalysisResult } from "./projectCliAnalysisResult.js";
 import { webBundleDeliveryOptions } from "./javascriptRouteDelivery.js";
 import {
@@ -196,6 +200,7 @@ const registerBundleAnalysis = (
       totalAnalysisTimeoutMs: cliDecimalField(
         analyzeWebBundleInputSchema.shape.total_analysis_timeout_ms,
       ),
+      ...fetchedSourceMapLimitCliOptions,
       sourceMapFetchTimeoutMs: cliDecimalField(
         analyzeWebBundleInputSchema.shape.source_map_fetch_timeout_ms,
       ),
@@ -229,6 +234,7 @@ const registerBundleAnalysis = (
             ...(precision === undefined
               ? {}
               : { semantic_precision: precision.value }),
+            ...sourceMapLimitsFromCli(options),
             ...(options.maxHeapMb === undefined
               ? {}
               : { max_heap_mb: options.maxHeapMb }),

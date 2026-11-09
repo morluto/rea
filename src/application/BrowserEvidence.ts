@@ -195,6 +195,9 @@ const browserParameters = (
     ...("fetch_source_maps" in input
       ? {
           fetch_source_maps: input.fetch_source_maps,
+          ...(input.source_map_limits === undefined
+            ? {}
+            : { source_map_limits: input.source_map_limits }),
           ...(input.semantic_precision === undefined
             ? {}
             : { semantic_precision: input.semantic_precision }),

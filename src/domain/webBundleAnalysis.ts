@@ -1,4 +1,5 @@
 import { javaScriptSemanticPrecisionSchema } from "./javascript/javascriptSemanticPrecision.js";
+import { fetchedSourceMapLimitsSchema } from "./sourceMapLimits.js";
 import { z } from "zod";
 import { browserExclusionSchema } from "./browserCompleteness.js";
 import { webPageInspectionSchema } from "./browserObservationSchemas.js";
@@ -47,6 +48,11 @@ export const analyzeWebBundleInputSchema = inspectWebPageWithSourceInputSchema
       .describe(
         "Per-script semantic evaluator budgets; omitted fields preserve defaults. Independent of worker memory, deadlines and reply budgets.",
       ),
+    source_map_limits: fetchedSourceMapLimitsSchema
+      .exactOptional()
+      .describe(
+        "Source-map fetch/representation and decoder admission for this call. Omitted fields keep existing defaults; no restart required.",
+      ),
     max_heap_mb: z
       .number()
       .int()
@@ -61,10 +67,17 @@ export const analyzeWebBundleInputSchema = inspectWebPageWithSourceInputSchema
       webBundleTotalTimeoutDescription,
     ),
     source_map_fetch_timeout_ms: optionalBrowserDeadlineMs(
-      `Source-map fetch deadline in milliseconds (default ${String(DEFAULT_SOURCE_MAP_FETCH_TIMEOUT_MS)}). Omitted means ${String(DEFAULT_SOURCE_MAP_FETCH_TIMEOUT_MS)} and applies on the next fetch. A fetch overrun is an item limitation (fetch_failed), not a thrown analysis timeout. Does not raise the fixed 64 MiB response budget or the source-map decode deadline. The response budget has no runtime override.`,
+      `Source-map fetch deadline in milliseconds (default ${String(DEFAULT_SOURCE_MAP_FETCH_TIMEOUT_MS)}). Omitted means ${String(DEFAULT_SOURCE_MAP_FETCH_TIMEOUT_MS)} and applies on the next fetch. A fetch overrun is an item limitation (fetch_failed), not a thrown analysis timeout. Response/representation and decoder budgets are independent source_map_limits fields.`,
     ),
   })
   .superRefine((input, context) => {
+    if (input.source_map_limits !== undefined && !input.fetch_source_maps)
+      context.addIssue({
+        code: "custom",
+        path: ["source_map_limits"],
+        message:
+          "source_map_limits requires fetch_source_maps: true; inspection does not fetch maps unless explicitly selected.",
+      });
     const perScript =
       input.analysis_timeout_ms ?? DEFAULT_WEB_BUNDLE_SCRIPT_TIMEOUT_MS;
     const total =
