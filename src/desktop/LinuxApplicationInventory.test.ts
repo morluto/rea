@@ -384,6 +384,50 @@ describe.skipIf(process.platform === "win32")(
       }
     });
 
+    it.each(["plain", "vendor-app", "loop-vendor-app"])(
+      "ignores unrelated directory-link cycles when resolving %s in a later root",
+      async (id) => {
+        const { home, environment } = await fixture();
+        const applications = join(home, ".local/share/applications");
+        await mkdir(applications, { recursive: true });
+        await symlink(".", join(applications, "loop"));
+        await writeFile(
+          join(environment.XDG_DATA_DIRS, "applications", id + ".desktop"),
+          "[Desktop Entry]\nType=Application\nName=Selected\nExec=notes-app\n",
+        );
+        const inventory = await inventoryOf(id, { home, environment });
+        expect(inventory.desktop_entry).toMatchObject({ id, name: "Selected" });
+      },
+    );
+
+    it("keeps an applicable path beyond the depth allowance unresolved", async () => {
+      const { home, environment } = await fixture();
+      const applications = join(home, ".local/share/applications");
+      const directory = join(applications, "one/two/three/four/five");
+      await mkdir(directory, { recursive: true });
+      await writeFile(
+        join(directory, "app.desktop"),
+        "[Desktop Entry]\nType=Application\nName=High\nExec=notes-app\n",
+      );
+      const id = "one-two-three-four-five-app";
+      await writeFile(
+        join(environment.XDG_DATA_DIRS, "applications", id + ".desktop"),
+        "[Desktop Entry]\nType=Application\nName=Low\nExec=notes-app\n",
+      );
+      const result = await inspectLinuxApplication({
+        desktopEntry: id,
+        executable: undefined,
+        arguments: [],
+        environment,
+        home,
+        callerDirectory: home,
+      });
+      expect(result).toMatchObject({
+        ok: false,
+        error: { reason: "desktop_entry_search_incomplete" },
+      });
+    });
+
     it("searches a directory whose own name ends in .desktop", async () => {
       const { home, environment } = await fixture();
       const directory = join(home, ".local/share/applications/vendor.desktop");
@@ -432,7 +476,7 @@ describe.skipIf(process.platform === "win32")(
 describe.skipIf(process.platform === "win32")(
   "inspectLinuxApplication incomplete desktop file searches",
   () => {
-    it("refuses rather than launch a lower-priority entry when the search is cut short", async () => {
+    it("ignores deep trees that cannot encode the requested desktop ID", async () => {
       const { home, environment } = await fixture();
       const share = environment.XDG_DATA_DIRS;
       const applications = join(home, ".local/share/applications");
@@ -456,9 +500,14 @@ describe.skipIf(process.platform === "win32")(
         callerDirectory: home,
       });
 
-      expect(!inspected.ok && inspected.error.reason).toBe(
-        "desktop_entry_search_incomplete",
-      );
+      expect(inspected).toMatchObject({
+        ok: true,
+        value: {
+          inventory: {
+            desktop_entry: { id: "buried-org.example.app", name: "Low" },
+          },
+        },
+      });
     });
   },
 );

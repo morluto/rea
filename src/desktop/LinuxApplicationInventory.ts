@@ -1,12 +1,5 @@
-import { lstat, opendir, realpath, stat } from "node:fs/promises";
-import {
-  basename,
-  dirname,
-  isAbsolute,
-  join,
-  relative,
-  resolve,
-} from "node:path";
+import { lstat, realpath, stat } from "node:fs/promises";
+import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 
 import type { DesktopApplicationInventory } from "../domain/desktop/desktopCapture.js";
 import {
@@ -108,7 +101,7 @@ export const desktopEntryDirectories = (
 
 /** How deep below one applications directory a nested id search may descend. */
 const NESTED_SEARCH_MAX_DEPTH = 4;
-/** How many directory entries one applications directory search may examine. */
+/** How many applicable path probes one applications directory search may issue. */
 const NESTED_SEARCH_MAX_ENTRIES = 4096;
 
 type DesktopPathKind = "file" | "directory" | "other" | "absent";
@@ -129,71 +122,45 @@ const desktopPathKind = async (
 };
 
 /**
- * The entry in `applicationsDirectory` whose desktop file id is `id`, when one
- * is there. The Desktop Entry spec forms the id from the entry's path below
- * `applications/` by replacing the separators with dashes, so
- * `vendor/org.example.App.desktop` advertises `vendor-org.example.App.desktop`.
- * A dash may also belong to a name, so the id does not say where the
- * separators fall; list the directory instead and form each entry's id from
- * the path that holds it.
- *
- * The walk is bounded, and both bounds are reported as `truncated` rather than
- * as absence: an unvisited directory or an unreadable subtree may still hold
- * the entry, and selecting a lower-priority root would launch a different
- * application under the same id.
+ * A desktop ID replaces path separators with dashes, while names can also
+ * contain dashes. Probe only spellings that encode this ID, rather than
+ * enumerating unrelated directories. Each descent consumes part of the ID.
  */
 const findNestedDesktopEntry = async (
   applicationsDirectory: string,
   id: string,
   signal: AbortSignal | undefined,
 ): Promise<{ path: string } | { truncated: true } | undefined> => {
-  const pending = [{ path: applicationsDirectory, depth: 1 }];
+  const pending = [{ path: applicationsDirectory, remaining: id, depth: 1 }];
   let examined = 0;
-  // An unreadable or over-budget subtree may still hold the entry, but the
-  // rest of this root has not been walked yet: an answer found there is the
-  // right one, so remember the gap and report it only after the walk ends.
   let incomplete = false;
   while (pending.length > 0) {
     signal?.throwIfAborted();
-    const directory = pending.pop();
-    if (directory === undefined) break;
-    let handle: Awaited<ReturnType<typeof opendir>>;
-    try {
-      handle = await opendir(directory.path);
-    } catch (cause: unknown) {
-      // A root that is not installed holds nothing; one that exists but cannot
-      // be read may still hold the entry, so that search has no answer.
-      const code = (cause as NodeJS.ErrnoException).code;
-      if (code === "ENOENT" || code === "ENOTDIR") continue;
-      incomplete = true;
-      continue;
-    }
-    for await (const entry of handle) {
+    const directory = pending.pop()!;
+    if (directory.depth > 1) {
+      if (examined >= NESTED_SEARCH_MAX_ENTRIES) return { truncated: true };
+      examined++;
+      const path = join(directory.path, directory.remaining);
+      const kind = await desktopPathKind(path);
       signal?.throwIfAborted();
-      // The budget is charged while enumerating, because readdir would
-      // materialize every name in a huge directory before any check ran.
-      examined += 1;
-      if (examined > NESTED_SEARCH_MAX_ENTRIES) return { truncated: true };
-      const path = join(directory.path, entry.name);
-      const kind = entry.isDirectory()
-        ? ok("directory" as const)
-        : entry.isFile()
-          ? ok("file" as const)
-          : await desktopPathKind(path);
+      if (!kind.ok) incomplete = true;
+      else if (kind.value === "file") return { path };
+    }
+    for (
+      let split = directory.remaining.indexOf("-");
+      split !== -1;
+      split = directory.remaining.indexOf("-", split + 1)
+    ) {
+      const prefix = directory.remaining.slice(0, split);
+      if (prefix === "" || prefix === "." || prefix === "..") continue;
+      if (examined >= NESTED_SEARCH_MAX_ENTRIES) return { truncated: true };
+      examined++;
+      const path = join(directory.path, prefix);
+      const kind = await desktopPathKind(path);
       signal?.throwIfAborted();
       if (!kind.ok) {
         incomplete = true;
         continue;
-      }
-      if (entry.name.endsWith(".desktop") && kind.value === "file") {
-        // A directory may be named `*.desktop`; the spec still forms the ids
-        // of the entries inside it from their full path, so only a file is a
-        // candidate here.
-        const encoded = relative(applicationsDirectory, path).replaceAll(
-          "/",
-          "-",
-        );
-        if (encoded === id) return { path };
       }
       if (kind.value !== "directory") continue;
       if (directory.depth >= NESTED_SEARCH_MAX_DEPTH) {
@@ -201,7 +168,8 @@ const findNestedDesktopEntry = async (
         continue;
       }
       pending.push({
-        path: join(directory.path, entry.name),
+        path,
+        remaining: directory.remaining.slice(split + 1),
         depth: directory.depth + 1,
       });
     }

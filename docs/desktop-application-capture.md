@@ -47,6 +47,13 @@ computer would not have that entry. An `--executable` runs from
 the current directory, as it would from a shell, and a relative path to it is
 resolved there.
 
+A nested desktop file uses a dashed ID: `vendor/app.desktop` has ID
+`vendor-app`. REA checks path spellings that can encode that ID within each
+XDG root before trying the next root. Unrelated directories do not affect
+selection. If an applicable path cannot be examined or the bounded search
+cannot establish absence, capture reports an incomplete desktop-entry search
+rather than selecting a different application from a later root.
+
 Desktop-entry string values retain literal trailing spaces. For example,
 `Path=/tmp/workspace ` and `Path=/tmp/workspace\s` name the same directory
 ending in a space. Use the escaped spelling to make such a suffix visible.
