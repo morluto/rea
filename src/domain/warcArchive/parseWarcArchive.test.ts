@@ -776,6 +776,25 @@ describe("embedded HTTP message inventory", () => {
       "NoColonHere",
     ]);
   });
+
+  it("marks a field whose value carries a control byte as malformed", () => {
+    const archive = parsed(
+      record(
+        "response",
+        [["WARC-Record-ID", "<urn:1>"]],
+        "HTTP/1.1 200 OK\r\nX-Note: a\u0000b\r\nContent-Type: text/html\r\n\r\n",
+      ),
+    );
+    // The bytes are kept, but the line cannot be trusted as one ordinary field,
+    // so it is reported instead of counting toward complete header coverage.
+    expect(archive.records[0]?.http?.headers).toEqual([
+      { name: "Content-Type", value: "text/html" },
+    ]);
+    expect(archive.records[0]?.http?.malformed_header_lines).toHaveLength(1);
+    expect(archive.records[0]?.http?.malformed_header_lines[0]).toContain(
+      "X-Note",
+    );
+  });
 });
 
 describe("folded URL headers", () => {

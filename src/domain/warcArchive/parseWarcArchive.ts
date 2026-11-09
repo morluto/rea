@@ -128,6 +128,15 @@ const withoutUrlUserInfo = (
  * value the line, block, and archive allowances all admit; scanning the end
  * once is the same result in linear time.
  */
+/**
+ * A field value may not carry a control byte. NUL, CR and LF are the ones that
+ * make a stored header look like a different header or a second line, and a
+ * value holding one is reported as malformed rather than as an ordinary field,
+ * so the header inventory never claims complete coverage for a line that
+ * cannot be trusted as written.
+ */
+const HTTP_FORBIDDEN_VALUE_BYTES = /[\u0000\u000d\u000a]/u;
+
 const trimHttpSpaces = (text: string, start: number): string => {
   let first = start;
   let last = text.length;
@@ -636,7 +645,12 @@ const readHttpMessage = (
       foldedUrl?.finish();
       foldedUrl = url ? new FoldedUrl(redaction) : undefined;
     }
-    if (colon <= 0 || !TOKEN.test(name)) {
+    const value = colon > 0 ? trimHttpSpaces(text, colon + 1) : "";
+    if (
+      colon <= 0 ||
+      !TOKEN.test(name) ||
+      HTTP_FORBIDDEN_VALUE_BYTES.test(value)
+    ) {
       const index = malformed.length;
       malformed.push(
         sanitizedMalformedHeader(text, previousSensitive, redaction),
@@ -654,7 +668,6 @@ const readHttpMessage = (
         });
       }
     } else {
-      const value = trimHttpSpaces(text, colon + 1);
       const index = fields.length;
       fields.push({
         name,
