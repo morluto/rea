@@ -4,30 +4,57 @@
  * C++ compiler or no readelf.
  */
 import assert from "node:assert/strict";
-import { execFileSync, spawnSync } from "node:child_process";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
+import { withVerifierCleanup } from "./lib/verifier-cleanup.mjs";
+import { createVerifierCommands } from "./lib/verify-commands.mjs";
 
-const available = (command) => {
+/**
+ * Every probe, compiler driver and inspection runs as an owned process tree,
+ * so a timeout or close also stops the children a driver starts. Close it
+ * before removing the compiled outputs.
+ */
+const commands = await createVerifierCommands();
+
+/**
+ * Ctrl-C or SIGTERM aborts the running command instead of ending Node, so the
+ * owned process trees and the compiled outputs are still cleaned up below.
+ */
+const interruption = new AbortController();
+const interrupt = (signal) =>
+  interruption.abort(
+    new Error(`ELF unwind ranges verifier interrupted by ${signal}`),
+  );
+process.on("SIGINT", interrupt);
+process.on("SIGTERM", interrupt);
+
+const run = (command, args, timeout) =>
+  commands.exec(command, args, {
+    maxBuffer: 64 * 1024 * 1024,
+    timeout,
+    signal: interruption.signal,
+  });
+
+const available = async (command) => {
   // zig has no --version flag; it reports through the `version` subcommand.
   const probe = command === "zig" ? ["version"] : ["--version"];
-  const result = spawnSync(command, probe, { encoding: "utf8" });
-  return result.error === undefined && result.status === 0;
+  try {
+    await run(command, probe, 30000);
+    return true;
+  } catch (failure) {
+    // An absent tool or a failing probe means the candidate is unavailable.
+    if (failure?.code === "ENOENT" || typeof failure?.code === "number")
+      return false;
+    throw failure;
+  }
 };
 
-const firstAvailable = (commands) =>
-  commands.find((command) => available(command)) ?? null;
-
-const compiler = firstAvailable(["zig", "clang++", "g++"]);
-const readelf = firstAvailable(["readelf", "greadelf", "llvm-dwarfdump"]);
-const stripper = firstAvailable(["llvm-strip", "llvm-objcopy", "zig", "strip"]);
-if (compiler === null || readelf === null || stripper === null) {
-  console.error(
-    "verify:elf:unwind-ranges needs an ELF C++ compiler (zig, clang++, or g++) and readelf (readelf, greadelf, or llvm-dwarfdump), plus a stripper.",
-  );
-  process.exit(1);
-}
+const firstAvailable = async (candidates) => {
+  for (const command of candidates)
+    if (await available(command)) return command;
+  return null;
+};
 
 const sourceText = `
 struct Guard { ~Guard(); };
@@ -43,7 +70,7 @@ int main() {
 }
 `;
 
-const compileArguments = (source, output) => {
+const compileArguments = (compiler, source, output) => {
   if (compiler === "zig")
     return [
       "c++",
@@ -68,44 +95,36 @@ const compileArguments = (source, output) => {
   return ["-O0", "-g", "-fexceptions", source, "-o", output];
 };
 
-const compile = (source, output) => {
-  execFileSync(compiler, compileArguments(source, output), {
-    stdio: "inherit",
-    timeout: 120000,
-  });
+const compile = async (compiler, source, output) => {
+  await run(compiler, compileArguments(compiler, source, output), 120000);
 };
 
-const stripArguments = (input, output) => {
+const stripArguments = (stripper, input, output) => {
   if (stripper === "llvm-strip") return ["--strip-all", "-o", output, input];
   if (stripper === "llvm-objcopy") return ["--strip-all", input, output];
   if (stripper === "zig") return ["objcopy", "--strip-all", input, output];
   return ["-o", output, input];
 };
 
-const stripCopy = (input, output) => {
-  execFileSync(stripper, stripArguments(input, output), {
-    stdio: "inherit",
-    timeout: 30000,
-  });
+const stripCopy = async (stripper, input, output) => {
+  await run(stripper, stripArguments(stripper, input, output), 30000);
 };
 
 // llvm-readelf has no --debug-dump=frames; llvm-dwarfdump --eh-frame prints
 // the same `pc=<start>..<end>` FDE ranges under an `.eh_frame contents:` head.
-const frameDump = (path) =>
-  readelf === "llvm-dwarfdump"
-    ? execFileSync(readelf, ["--eh-frame", path], {
-        encoding: "utf8",
-        timeout: 30000,
-        maxBuffer: 64 * 1024 * 1024,
-      })
-    : execFileSync(readelf, ["--debug-dump=frames", path], {
-        encoding: "utf8",
-        timeout: 30000,
-        maxBuffer: 64 * 1024 * 1024,
-      });
+const frameDump = async (readelf, path) =>
+  (
+    await run(
+      readelf,
+      readelf === "llvm-dwarfdump"
+        ? ["--eh-frame", path]
+        : ["--debug-dump=frames", path],
+      30000,
+    )
+  ).stdout;
 
-const ehFrameStarts = (path) => {
-  const stdout = frameDump(path);
+const ehFrameStarts = async (readelf, path) => {
+  const stdout = await frameDump(readelf, path);
   const starts = new Set();
   let inEhFrame = false;
   for (const line of stdout.split("\n")) {
@@ -128,11 +147,11 @@ const ehFrameStarts = (path) => {
   return starts;
 };
 
-const inspectedStarts = (path) => {
+const inspectedStarts = async (path) => {
   const starts = new Set();
   let offset = 0;
   for (;;) {
-    const output = execFileSync(
+    const { stdout: output } = await run(
       process.execPath,
       [
         resolve("scripts/rea.mjs"),
@@ -146,7 +165,7 @@ const inspectedStarts = (path) => {
         "--max-ranges",
         "65536",
       ],
-      { encoding: "utf8", timeout: 60000 },
+      60000,
     );
     const report = JSON.parse(output).normalized_result;
     for (const range of report.ranges) starts.add(BigInt(range.start));
@@ -159,16 +178,40 @@ const inspectedStarts = (path) => {
   }
 };
 
-const root = await mkdtemp(join(tmpdir(), "rea-elf-unwind-"));
-try {
+// The root holds every compiled image. Remove it only after the owned
+// commands have settled, and keep it when their cleanup failed.
+let root;
+let commandsClosed = false;
+let unavailable = false;
+await withVerifierCleanup(async () => {
+  const compiler = await firstAvailable(["zig", "clang++", "g++"]);
+  const readelf = await firstAvailable([
+    "readelf",
+    "greadelf",
+    "llvm-dwarfdump",
+  ]);
+  const stripper = await firstAvailable([
+    "llvm-strip",
+    "llvm-objcopy",
+    "zig",
+    "strip",
+  ]);
+  if (compiler === null || readelf === null || stripper === null) {
+    console.error(
+      "verify:elf:unwind-ranges needs an ELF C++ compiler (zig, clang++, or g++) and readelf (readelf, greadelf, or llvm-dwarfdump), plus a stripper.",
+    );
+    unavailable = true;
+    return;
+  }
+  root = await mkdtemp(join(tmpdir(), "rea-elf-unwind-"));
   const source = join(root, "ranges.cpp");
   const unstripped = join(root, "ranges.unstripped");
   const stripped = join(root, "ranges.stripped");
   await writeFile(source, sourceText);
-  compile(source, unstripped);
-  stripCopy(unstripped, stripped);
-  const expected = ehFrameStarts(unstripped);
-  const observed = inspectedStarts(stripped);
+  await compile(compiler, source, unstripped);
+  await stripCopy(stripper, unstripped, stripped);
+  const expected = await ehFrameStarts(readelf, unstripped);
+  const observed = await inspectedStarts(stripped);
   assert.ok(expected.size > 0, "readelf listed no .eh_frame FDEs");
   const missing = [...expected].filter((start) => !observed.has(start));
   const extra = [...observed].filter((start) => !expected.has(start));
@@ -183,6 +226,21 @@ try {
       fde_starts: expected.size,
     }),
   );
-} finally {
-  await rm(root, { recursive: true, force: true });
-}
+}, [
+  async () => {
+    await commands.close();
+    commandsClosed = true;
+  },
+  async () => {
+    if (commandsClosed && root !== undefined)
+      await rm(root, { recursive: true, force: true });
+  },
+  async () => {
+    process.off("SIGINT", interrupt);
+    process.off("SIGTERM", interrupt);
+  },
+]);
+// A signal that lands outside a command, such as during the final rm, is still
+// a failed run. An earlier failure already left through the rejection above.
+if (interruption.signal.aborted) throw interruption.signal.reason;
+if (unavailable) process.exitCode = 1;
