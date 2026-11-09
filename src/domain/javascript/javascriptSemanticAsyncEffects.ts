@@ -229,7 +229,10 @@ const nodeEventEmitterConstruction = (
   if (selected === null) return null;
   // An empty selected path is the module's default export, which `events`
   // defines as `EventEmitter`.
-  return selected.length === 0 || selected.at(-1) === "EventEmitter"
+  // A suffix alone cannot prove the class: user-defined nested exports may
+  // end in EventEmitter while selecting an unrelated implementation.
+  return selected.length === 0 ||
+    (selected.length === 1 && selected[0] === "EventEmitter")
     ? value
     : null;
 };

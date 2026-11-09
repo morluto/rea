@@ -219,6 +219,34 @@ bus.on("ready");`,
   });
 });
 
+it.each([
+  ["extra.EventEmitter", "extra", "{ EventEmitter: Bus }"],
+  ["extra.deep.EventEmitter", "extra", "{ deep: { EventEmitter: Bus } }"],
+  ["default.EventEmitter", "default", "{ EventEmitter: Bus }"],
+] as const)(
+  "keeps custom nested events exports as candidates: %s",
+  (selected, changed, replacement) => {
+    for (const listener of ["", ", () => {}"]) {
+      expect(
+        eventsForSource(`import A from "events";
+import B from "node:events";
+import { Bus } from "./bus.js";
+A.${changed} = ${replacement};
+const e = new B.${selected}();
+e.on("ready"${listener});`),
+      ).toContainEqual({ kind: "register", method: "on", eventName: "ready" });
+    }
+  },
+);
+
+it("still rejects a canonical class through a namespace default export", () => {
+  expect(
+    eventsForSource(`import * as events from "node:events";
+const e = new events.default.EventEmitter();
+e.on("ready");`),
+  ).toEqual([]);
+});
+
 /**
  * A member write replaces the method the native contract belongs to. Measured
  * on Node 22.23.3: `e.on = (name, fn = () => {}) => ...` stores `"ready"`, so

@@ -114,6 +114,54 @@ it.each([
     "Object.getPrototypeOf = () => Map.prototype; Object.getPrototypeOf({}).get = fetch; new Map().get('/accounts');",
     true,
   ],
+  [
+    "const records = new Map(); records.get('/accounts'); const other = new Map(); consume(other);",
+    false,
+  ],
+  [
+    "const records = new Map(); records.delete('/accounts'); const other = new Map(); consume(other);",
+    false,
+  ],
+  [
+    "const records = new Map(); const other = new Map(); consume(other); records.get('/accounts');",
+    true,
+  ],
+  [
+    "const records = new Map(); const other = new Map(); consume(other); records.delete('/accounts');",
+    true,
+  ],
+  [
+    "const records = new Map(); records.get('/accounts'); Map.prototype.get = fetch;",
+    false,
+  ],
+  [
+    "const records = new Map(); Map.prototype.get = fetch; records.get('/accounts');",
+    true,
+  ],
+  [
+    "const records = new Map(); records.get('/accounts'); consume(Map.prototype);",
+    false,
+  ],
+  [
+    "const records = new Map(); consume(Map.prototype); records.get('/accounts');",
+    true,
+  ],
+  [
+    "const records = new Map([['x', 1]]); Map.prototype.set = replacement; records.get('/accounts');",
+    false,
+  ],
+  [
+    "Map.prototype.set = replacement; const records = new Map([['x', 1]]); records.get('/accounts');",
+    true,
+  ],
+  [
+    "const records = new Map(); function later() { consume(Map.prototype); } records.get('/accounts');",
+    true,
+  ],
+  [
+    "const records = new Map((Map.prototype.set = function () { this.get = fetch; return this; }, [['x', 1]])); records.get('/accounts');",
+    true,
+  ],
   ["client.get('/accounts');", true],
   ["eval('Map.prototype.get = fetch'); new Map().get('/accounts');", true],
 ] as const)(

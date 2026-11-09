@@ -4,7 +4,10 @@ import {
   semanticStaticPropertyName,
   unwrapJavaScriptExpression,
 } from "./javascriptAstValues.js";
-import { isUnmodifiedGlobalReference } from "./javascriptSemanticAmbientWrites.js";
+import {
+  isUnmodifiedGlobalReference,
+  semanticAmbientPathMayHaveChangedAt,
+} from "./javascriptSemanticAmbientWrites.js";
 import { semanticOpaqueGlobalMayHaveChanged } from "./javascriptSemanticOpaqueEffects.js";
 import { semanticBindingAtRead } from "./javascriptSemanticMutationInitializers.js";
 import {
@@ -25,15 +28,20 @@ export const isIntrinsicMapLookup = (
     return false;
   const method = semanticStaticPropertyName(callee.property, callee.computed);
   if (method !== "get" && method !== "delete") return false;
-  const prototypeMemberMayHaveChanged = (member: string): boolean =>
-    ["Map", "Object"].some((owner) => {
-      const path = ["global", owner, "prototype", member];
-      return (
-        bindings.ambientWrites.covers(path) ||
-        bindings.ambientEscapes.covers(path)
-      );
-    });
-  if (prototypeMemberMayHaveChanged(method)) return false;
+  const prototypeMemberMayHaveChanged = (
+    member: string,
+    read: t.Node,
+    invocation: t.Node,
+  ): boolean =>
+    ["Map", "Object"].some((owner) =>
+      semanticAmbientPathMayHaveChangedAt(
+        read,
+        bindings,
+        ["global", owner, "prototype", member],
+        invocation,
+      ),
+    );
+  if (prototypeMemberMayHaveChanged(method, callee, node)) return false;
   let receiver = unwrapJavaScriptExpression(callee.object).node;
   const seen = new Set<string>();
   while (t.isIdentifier(receiver)) {
@@ -66,7 +74,11 @@ export const isIntrinsicMapLookup = (
     return false;
   // Iterable construction reads and invokes the instance's set hook. A changed
   // adder can install its own get/delete before the constructed value is read.
-  if (receiver.arguments.length > 0 && prototypeMemberMayHaveChanged("set"))
+  // The adder is selected after arguments evaluate, not at the callee read.
+  if (
+    receiver.arguments.length > 0 &&
+    prototypeMemberMayHaveChanged("set", receiver, receiver)
+  )
     return false;
   if (semanticOpaqueGlobalMayHaveChanged(callee, bindings)) return false;
   return index === undefined && seen.size > 0 ? undefined : true;
