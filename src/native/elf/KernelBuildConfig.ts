@@ -18,7 +18,10 @@ type Entry = KernelBuildConfigEntry;
 type Space = "file" | "inflated_payload";
 type Located = { space: Space; offset: number; bytes: number };
 type Reason = NonNullable<Report["config"]["reason"]>;
-type Knob = "max_entries" | "max_config_bytes" | "max_payload_bytes";
+type KernelBuildConfigBudgetKnob =
+  | "max_entries"
+  | "max_config_bytes"
+  | "max_payload_bytes";
 
 const IKCFG_ST = Buffer.from("IKCFG_ST");
 const IKCFG_ED = Buffer.from("IKCFG_ED");
@@ -50,12 +53,20 @@ const yieldTurn = async (signal: AbortSignal | undefined): Promise<void> => {
   assertArtifactReadActive(signal);
 };
 
-const budget = (knob: Knob, limit: number): never => {
-  throw new ArtifactReaderFailure(
-    "limit",
-    `Kernel build config exceeds ${knob} (${String(limit)}).`,
-    { boundary: "capacity" },
-  );
+/** A caller-selected budget refused the image; `knob` names it as a typed fact. */
+export class KernelBuildConfigBudgetFailure extends ArtifactReaderFailure {
+  constructor(
+    readonly knob: KernelBuildConfigBudgetKnob,
+    limit: number,
+  ) {
+    super("limit", `Kernel build config exceeds ${knob} (${String(limit)}).`, {
+      boundary: "capacity",
+    });
+  }
+}
+
+const budget = (knob: KernelBuildConfigBudgetKnob, limit: number): never => {
+  throw new KernelBuildConfigBudgetFailure(knob, limit);
 };
 
 const isElf = (bytes: Buffer): boolean =>

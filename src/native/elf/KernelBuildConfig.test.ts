@@ -25,7 +25,10 @@ import {
   trailingBytesKernelConfigFixture,
   truncatedKernelConfigFixture,
 } from "./KernelBuildConfig.fixture.js";
-import { parseKernelBuildConfig } from "./KernelBuildConfig.js";
+import {
+  KernelBuildConfigBudgetFailure,
+  parseKernelBuildConfig,
+} from "./KernelBuildConfig.js";
 
 const artifactPath = "/artifacts/vmlinux";
 
@@ -339,15 +342,22 @@ it("names a whole-file codec stream without inflating it", async () => {
 });
 
 it("fails closed when a config exceeds its entry or inflation budget", async () => {
-  await expect(
-    parse(kernelBuildConfigFixture(), { max_entries: 2 }),
-  ).rejects.toThrow(ArtifactReaderFailure);
-  await expect(
-    parse(kernelBuildConfigFixture(), { max_config_bytes: 64 }),
-  ).rejects.toThrow(/max_config_bytes/u);
-  await expect(
-    parse(bzImageGzipFixture(), { max_payload_bytes: 64 }),
-  ).rejects.toThrow(/max_payload_bytes/u);
+  // Recovery reads the typed knob, never the message text.
+  for (const [bytes, extra, knob] of [
+    [kernelBuildConfigFixture(), { max_entries: 2 }, "max_entries"],
+    [kernelBuildConfigFixture(), { max_config_bytes: 64 }, "max_config_bytes"],
+    [bzImageGzipFixture(), { max_payload_bytes: 64 }, "max_payload_bytes"],
+  ] as const) {
+    const failure = parse(bytes, extra);
+    await expect(failure).rejects.toBeInstanceOf(
+      KernelBuildConfigBudgetFailure,
+    );
+    await expect(failure).rejects.toMatchObject({
+      reason: "limit",
+      boundary: "capacity",
+      knob,
+    });
+  }
 });
 
 it("ignores banner-shaped text that is unterminated or lacks a version", async () => {

@@ -51,6 +51,14 @@ describe("kernel build config stable filesystem boundary", () => {
         _tag: "AnalysisResourceConstraintError",
         remediationAction: expect.stringContaining("max_entries"),
       });
+      const inflated = await service.inspect({ path, max_config_bytes: 64 });
+      if (inflated.ok) throw new Error("Expected config budget failure");
+      expect(inflated.error).toMatchObject({
+        _tag: "AnalysisResourceConstraintError",
+        remediationAction: expect.stringContaining(
+          "Raise max_config_bytes above 64",
+        ),
+      });
       const cancelled = await service.inspect(
         { path },
         { signal: AbortSignal.abort() },

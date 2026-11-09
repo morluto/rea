@@ -31,7 +31,10 @@ import {
 } from "../../domain/native/kernelBuildConfig.js";
 import { err, ok } from "../../domain/result.js";
 import { KERNEL_BUILD_CONFIG_PROVIDER } from "../../domain/investigationProviders.js";
-import { parseKernelBuildConfig } from "./KernelBuildConfig.js";
+import {
+  KernelBuildConfigBudgetFailure,
+  parseKernelBuildConfig,
+} from "./KernelBuildConfig.js";
 
 const OPERATION = "inspect_kernel_build_config";
 
@@ -84,17 +87,6 @@ export class KernelBuildConfigProvider implements KernelBuildConfigPort {
   }
 }
 
-const BUDGET_KNOBS = [
-  "max_entries",
-  "max_config_bytes",
-  "max_payload_bytes",
-] as const;
-
-type BudgetKnob = (typeof BUDGET_KNOBS)[number];
-
-const budgetKnob = (message: string): BudgetKnob | null =>
-  BUDGET_KNOBS.find((knob) => message.includes(knob)) ?? null;
-
 const ceiling = (
   knob: string,
   maximum: number,
@@ -108,13 +100,14 @@ const ceiling = (
 const inputBudgetRemediation = (
   boundary: "file-size" | "capacity",
   input: InspectKernelBuildConfigInput,
-  message: string,
+  cause: ArtifactReaderFailure,
 ): string => {
   if (boundary === "file-size")
     return input.max_file_bytes >= MAX_INSPECT_KERNEL_BUILD_CONFIG_FILE_BYTES
       ? `The image exceeds the ${String(MAX_INSPECT_KERNEL_BUILD_CONFIG_FILE_BYTES)}-byte input ceiling this operation accepts; select a smaller artifact.`
       : `Raise max_file_bytes above ${String(input.max_file_bytes)} bytes or select a smaller artifact; the limit is the caller-selected input read budget.`;
-  const knob = budgetKnob(message);
+  const knob =
+    cause instanceof KernelBuildConfigBudgetFailure ? cause.knob : null;
   if (knob === "max_entries")
     return ceiling(
       knob,
@@ -187,7 +180,7 @@ const kernelBuildConfigFailurePrimary = (
                 remediationAction: inputBudgetRemediation(
                   cause.boundary,
                   input,
-                  cause.message,
+                  cause,
                 ),
               }),
         },
