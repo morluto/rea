@@ -1,8 +1,16 @@
+import type { DownloadInstall } from "./appDownloadInstall.js";
 import {
   INSTALL_SCRIPT,
   type ExportAptSource,
   type ExportPackageFile,
 } from "./appExportInstall.js";
+import {
+  downloadDeclarations,
+  downloadKind,
+  installName,
+  installNotes,
+  installs,
+} from "./appExportInstallText.js";
 import {
   PYTHON_DATA_HOOKS,
   PYTHON_HELPERS,
@@ -10,12 +18,8 @@ import {
   PYTHON_MODULE_NAMES,
   PYTHON_READY_CHECK,
   PYTHON_WITHHELD_DATA_HOOKS,
+  ownlessBody,
 } from "./appExportPython.js";
-import {
-  installName,
-  installNotes,
-  installs,
-} from "./appExportInstallNotes.js";
 import {
   withheldNotes,
   withheldSettingsClass,
@@ -36,9 +40,10 @@ import { capturedFileUrl, type LaunchDocument } from "./seedDocument.js";
 import { posix } from "node:path";
 import { roleFacts, stateDirectoryOf } from "./stateRoles.js";
 import { shellQuote } from "./shellQuote.js";
+export { shellQuote } from "./shellQuote.js";
 
 /** agentenv-framework release the exported class was checked against. */
-export const DESKTOP_EXPORT_FRAMEWORK_VERSION = "0.9.1431";
+export const DESKTOP_EXPORT_FRAMEWORK_VERSION = "0.9.1464";
 
 /** Everything the export renders, decided from a capture and its state view. */
 export interface DesktopAppExportPlan {
@@ -58,6 +63,8 @@ export interface DesktopAppExportPlan {
   readonly architectures: readonly string[];
   /** The package file downloaded and installed in place of the app's apt package; null when apt installs it. */
   readonly packageFile: ExportPackageFile | null;
+  /** The AppImage or tarball downloaded and unpacked in place of a package; absent for a package. */
+  readonly download?: DownloadInstall;
   /** The package of the program the desktop entry runs, installed by name after the app's; absent when the app's package owns it. */
   readonly executablePackage?: string;
   /** Packages installed beside the app because the export was asked for them; absent when none. */
@@ -70,6 +77,8 @@ export interface DesktopAppExportPlan {
   readonly windowClass: string;
   /** Home-relative paths the app owns for data add, get and reset. */
   readonly paths: readonly string[];
+  /** Relaunch an ownless app for a screen-judged task. */
+  readonly relaunchOnReset?: boolean;
   readonly capturedHome: string;
   /** The checkpoint whose state the seed holds. */
   readonly seedCheckpoint: string;
@@ -522,20 +531,18 @@ ${withheldSettingsClass(withheld)}
         _ensure_state_aliases(Path.home())
         keep_initial(self.paths)
 ${withheld.length === 0 ? PYTHON_DATA_HOOKS : PYTHON_WITHHELD_DATA_HOOKS}${PYTHON_READY_CHECK}`;
-  if (plan.dconf.length > 0)
-    return `    """${title}, launched at boot with its captured settings. It owns no files, so it serves no data operations."""
-
-    def __init__(self) -> None:
-        super().__init__()
-        _load_dconf(Path.home())
-${PYTHON_READY_CHECK}`;
-  return `    """${title}, launched at boot. No state was observed, so it serves no data operations."""\n${PYTHON_READY_CHECK}`;
+  return ownlessBody(
+    title,
+    plan.dconf.length > 0,
+    plan.relaunchOnReset === true,
+  );
 };
 
 /** The app's package, or a package file's dependencies, then the extra packages, its program's package, its library packages and dconf-cli when settings are loaded. */
 const aptPackages = (plan: DesktopAppExportPlan): readonly string[] => [
   ...new Set([
-    ...(plan.packageFile?.dependencies ?? [installName(plan)]),
+    ...(plan.packageFile?.dependencies ??
+      (plan.download === undefined ? [installName(plan)] : [])),
     ...(plan.extraPackages ?? []),
     ...(plan.executablePackage === undefined ? [] : [plan.executablePackage]),
     ...plan.libraryPackages,
@@ -596,7 +603,7 @@ export const renderAppClass = (plan: DesktopAppExportPlan): string => {
   const hooks = classBody(plan);
   return `"""${docText(plan.title)} as an agentenv computer app, exported by REA from a desktop application capture.
 
-Package: ${plan.aptPackage}${plan.packageVersion === null ? "" : ` (captured at ${plan.packageVersion})`}. Capture Evidence: ${plan.captureEvidenceId}.
+${plan.download === undefined ? `Package: ${plan.aptPackage}${plan.packageVersion === null ? "" : ` (captured at ${plan.packageVersion})`}` : `Downloaded: ${docText(plan.download.url)}`}. Capture Evidence: ${plan.captureEvidenceId}.
 ${seedWording(plan).docstring}
 """
 
@@ -616,7 +623,7 @@ ${PYTHON_HELPERS}
 
 @computer_app(supports=[{"os": {"type": "linux", "display": ["x11"]}, "arch": ${pyList(plan.architectures)}}])
 @linux(
-    packages=Packages(apt=${pyList(aptPackages(plan))}),${aptSources(plan)}${packageFileInstall(plan)}
+    packages=Packages(apt=${pyList(aptPackages(plan))}),${aptSources(plan)}${packageFileInstall(plan)}${downloadDeclarations(plan)}
     launch=Launch(at="boot", command=${pyList(plan.command)}, window={"class": ${py(plan.windowClass)}}, ready=Ready(window=True)),
     paths=PATHS,
     skill="SKILL.md",
@@ -721,7 +728,7 @@ export const renderReadme = (
 ): string =>
   `# ${plan.title} computer app
 
-Exported by REA's \`export-desktop-application\` from a capture of the \`${plan.aptPackage}\` package
+Exported by REA's \`export-desktop-application\` from a capture of the \`${plan.aptPackage}\` ${plan.download === undefined ? "package" : downloadKind(plan.download)}
 (capture Evidence \`${plan.captureEvidenceId}\`). It was checked against agentenv-framework
 ${DESKTOP_EXPORT_FRAMEWORK_VERSION}.
 

@@ -10,6 +10,7 @@ import {
 import { CHECK_CASES, CHECK_VIEWS } from "./appTaskChecks.fixture.js";
 import { textView, xmlView } from "./stateFormats.js";
 import { elementText } from "./viewPointer.js";
+
 import { redactSecretsInJson } from "./buildSecrets.js";
 
 const portable = (name: string) => /^[a-z0-9]+(?:-[a-z0-9]+)*$/u.test(name);
@@ -29,7 +30,7 @@ it("redacts full check values before shortening descriptions without changing th
   const views = new Map<string, TaskFileView>([
     ["data.json", { format: "json", view: { value: actual } }],
   ]);
-  const [result] = evaluateTaskChecks(checks, views, (value) =>
+  const [result] = evaluateTaskChecks(checks, views, new Map(), (value) =>
     redactSecretsInJson(value, [{ handle: "master", value: secret }]),
   );
   expect(result?.passed).toBe(false);

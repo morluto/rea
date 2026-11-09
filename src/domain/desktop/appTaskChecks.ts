@@ -1,3 +1,5 @@
+import { cut } from "./compactValue.js";
+import { CHECK_VALUE_CHARS } from "./valueCuts.js";
 import type { JsonValue } from "../jsonValue.js";
 import {
   collapseWhitespace,
@@ -6,7 +8,6 @@ import {
   type DesktopTaskCheck,
   type PointerCheck,
 } from "./appTask.js";
-import { cut } from "./compactValue.js";
 import type { DesktopStatePath } from "./desktopState.js";
 import {
   elementText,
@@ -15,7 +16,6 @@ import {
   selectorTest,
   type Located,
 } from "./viewPointer.js";
-import { CHECK_VALUE_CHARS } from "./valueCuts.js";
 import {
   viewlessEntryAt,
   zipArrayLeavesOut,
@@ -59,6 +59,8 @@ export type TaskCheckOutcome = {
 };
 
 type Verdict = Omit<TaskCheckOutcome, "id">;
+/** A check that reads a file's view, every kind but the screen judge. */
+type FileCheck = Exclude<DesktopTaskCheck, { kind: "screen_judge" }>;
 type Check<Kind extends DesktopTaskCheck["kind"]> = Extract<
   DesktopTaskCheck,
   { kind: Kind }
@@ -150,7 +152,7 @@ const truncatedView = (format: string | null, view: JsonValue | null) => {
 
 /** A file's view of one format, or why the check cannot read it; an absent file reads as empty. */
 const viewOf = (
-  check: DesktopTaskCheck,
+  check: FileCheck,
   entry: TaskFileView | undefined,
   format: string | undefined,
 ): { view: JsonValue | null; truncated: boolean } | Verdict => {
@@ -579,7 +581,7 @@ const rowVerdict = (
 };
 
 const verdict = (
-  check: DesktopTaskCheck,
+  check: FileCheck,
   entry: TaskFileView | undefined,
   shown: ShowValue,
 ): Verdict => {
@@ -611,16 +613,27 @@ const verdict = (
   }
 };
 
-/** Evaluate each check against views by home path, as the exported verifier does. */
+/** Evaluate each check against views by home path, or its reader's view of its file by reader id, as the exported verifier does. */
 export const evaluateTaskChecks = (
   checks: readonly DesktopTaskCheck[],
   views: ReadonlyMap<string, TaskFileView>,
+  readers: ReadonlyMap<string, TaskFileView> = new Map(),
   redact: (value: JsonValue) => JsonValue = (value) => value,
 ): readonly TaskCheckOutcome[] => {
   const shown: ShowValue = (value) =>
     cut(JSON.stringify(redact(value)), CHECK_VALUE_CHARS);
   return checks.map((check) => ({
     id: check.id,
-    ...verdict(check, views.get(check.file), shown),
+    ...(check.kind === "screen_judge"
+      ? unread(
+          "a screen judge's question is answered from the computer's screen by the bundle's judge, which REA's evaluator does not run",
+        )
+      : verdict(
+          check,
+          "reader" in check && check.reader !== undefined
+            ? readers.get(check.reader)
+            : views.get(check.file),
+          shown,
+        )),
   }));
 };

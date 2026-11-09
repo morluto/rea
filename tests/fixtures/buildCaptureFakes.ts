@@ -37,6 +37,7 @@ const ENDS = ["--seed-checkpoint", "seed", "--end-checkpoint", "end"];
 export interface CapturedInstall {
   readonly package?: DesktopPackage;
   readonly packageUrl?: string;
+  readonly downloadInstall?: Readonly<Record<string, string>>;
   readonly extraPackages?: readonly string[];
 }
 
@@ -72,6 +73,9 @@ const realCliOutputs = async (
   const task = join(work, "task.json");
   await writeFile(task, JSON.stringify(BUILD_TASK));
   const bundle = join(work, "bundle");
+  const download = join(work, "download-install.json");
+  if (install?.downloadInstall !== undefined)
+    await writeFile(download, JSON.stringify(install.downloadInstall));
   const withheld = join(work, "withheld");
   const schema = await serveCli([
     "export-desktop-application",
@@ -97,6 +101,9 @@ const realCliOutputs = async (
     ...(install?.packageUrl === undefined
       ? []
       : ["--package-url", install.packageUrl]),
+    ...(install?.downloadInstall === undefined
+      ? []
+      : ["--download-install", download]),
     ...(install?.extraPackages ?? []).flatMap((name) => [
       "--extra-package",
       name,

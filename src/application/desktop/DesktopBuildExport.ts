@@ -2,6 +2,13 @@ import { Readable } from "node:stream";
 
 import { z } from "zod";
 
+import type { DownloadInstall } from "../../domain/desktop/appDownloadInstall.js";
+import {
+  READER_RUNNER_SLACK_S,
+  readerTimeout,
+} from "../../domain/desktop/appTaskReaders.js";
+import { BUILD_REA_TIMEOUT_S } from "../../desktop/BuildComputerController.js";
+import { BuildComputerLongRuns } from "../../desktop/BuildComputerLongRuns.js";
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
 import { AnalysisCancelledError } from "../../domain/analysisErrorCore.js";
 import type { desktopTaskSchema } from "../../domain/desktop/appTask.js";
@@ -35,6 +42,7 @@ import {
   refused,
   reportedFailure,
   runRea,
+  WORK,
 } from "./DesktopBuildCommands.js";
 import {
   writeOutputTree,
@@ -214,7 +222,9 @@ const writeBundle = async (
 /** The export's arguments past the capture and the bundle: the task, the ends, the install, and withheld state with its consents. */
 const exportArguments = (
   capture: {
+    readonly folder: string;
     readonly packageUrl?: string;
+    readonly downloadInstall?: DownloadInstall;
     readonly extraPackages: readonly string[];
     readonly signIn: boolean;
     readonly consents: readonly BuildConsent[];
@@ -224,6 +234,7 @@ const exportArguments = (
     readonly task: string;
     readonly consent: string;
     readonly withheld: string;
+    readonly download: string;
   },
 ): string[] => [
   "--task",
@@ -231,10 +242,15 @@ const exportArguments = (
   ...ENDS,
   // The building agent made the seed in this computer for the task.
   "--synthetic-seed",
+  "--screens",
+  `${capture.folder}/screens`,
   ...(request.name === undefined ? [] : ["--name", request.name]),
   ...(capture.packageUrl === undefined
     ? []
     : ["--package-url", capture.packageUrl]),
+  ...(capture.downloadInstall === undefined
+    ? []
+    : ["--download-install", files.download]),
   ...capture.extraPackages.flatMap((name) => ["--extra-package", name]),
   ...(capture.signIn
     ? ["--withhold-from", SIGN_IN_START, "--withhold-to", SIGN_IN_END]
@@ -299,6 +315,7 @@ interface ExportCapture {
   readonly attempt: number;
   /** The URL a computer downloads the app's `.deb` from, when the capture says apt does not install it. */
   readonly packageUrl?: string;
+  readonly downloadInstall?: DownloadInstall;
   /** The packages the request named beside the app, which the bundle installs beside it too. */
   readonly extraPackages: readonly string[];
   /** The secrets no bundle may hold, and where the withheld files' bytes are kept as secrets. */
@@ -320,6 +337,7 @@ export const exportBuild = async (
   capture: ExportCapture,
   request: BuildExportRequest,
   signal: AbortSignal,
+  longRuns: BuildComputerLongRuns = new BuildComputerLongRuns(computer),
 ): Promise<Result<ExportedBuild, AnalysisError>> => {
   const { folder } = capture;
   const attempt = String(capture.attempt);
@@ -328,6 +346,8 @@ export const exportBuild = async (
   const consent = `${folder}/consent-${attempt}.json`;
   const withheld = `${bundle}-withheld`;
   const stdout = `${folder}/export-${attempt}.json`;
+  const downloadPath = `${folder}/download-install-${attempt}.json`;
+  const download = capture.downloadInstall;
   const taskFile = `${JSON.stringify(request.task, null, 2)}\n`;
   const completed: WithheldReport[] = [];
   let published:
@@ -339,25 +359,42 @@ export const exportBuild = async (
       }
     | undefined;
   try {
-    const { stdoutBytes: bytes } = await runRea(
-      computer,
-      [
-        "export-desktop-application",
-        `${folder}/capture`,
-        bundle,
-        ...exportArguments(capture, request, { task, consent, withheld }),
-      ],
-      {
-        stdout,
-        files: {
-          [task]: taskFile,
-          ...(capture.consents.length === 0
-            ? {}
-            : { [consent]: consentFile(capture.consents) }),
-        },
-        signal,
+    const argv = [
+      "export-desktop-application",
+      `${folder}/capture`,
+      bundle,
+      ...exportArguments(capture, request, {
+        task,
+        consent,
+        withheld,
+        download: downloadPath,
+      }),
+    ];
+    const timeoutS =
+      BUILD_REA_TIMEOUT_S +
+      2 *
+        (request.task.readers ?? []).reduce(
+          (sum, reader) => sum + readerTimeout(reader) + READER_RUNNER_SLACK_S,
+          0,
+        );
+    const options = {
+      stdout,
+      files: {
+        [task]: taskFile,
+        ...(download === undefined
+          ? {}
+          : { [downloadPath]: `${JSON.stringify(download, null, 2)}\n` }),
+        ...(capture.consents.length === 0
+          ? {}
+          : { [consent]: consentFile(capture.consents) }),
       },
-    );
+      timeoutS,
+      signal,
+    };
+    const { stdoutBytes: bytes } =
+      timeoutS + 60 <= 3600
+        ? await runRea(computer, argv, options)
+        : await longRuns.run(argv, { ...options, work: WORK });
     const output = await readOutput(computer, stdout, bytes, signal);
     if (output.kind === "failure")
       return err(

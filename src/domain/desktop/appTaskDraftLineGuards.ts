@@ -141,11 +141,12 @@ const volatileAt = (
       }
     }
     if (
-      (isVolatileValue(token, key !== undefined && isBookkeepingName(key)) &&
+      xmlAttribute &&
+      ((isVolatileValue(token, key !== undefined && isBookkeepingName(key)) &&
         !isUuid(token)) ||
-      (key !== undefined &&
-        /^(?:[^:]+:)?id$/iu.test(key) &&
-        /^\p{L}+_\d{6,}$/u.test(token))
+        (key !== undefined &&
+          /^(?:[^:]+:)?id$/iu.test(key) &&
+          /^\p{L}+_\d{6,}$/u.test(token)))
     )
       return index;
     previous = token;

@@ -37,14 +37,14 @@ recorded instead. It records `REA_AGENT_ENV_COMMAND`, `REA_DOCKER_COMMAND` and
 `REA_BUILD_COMPUTER_REA_ARCHIVE` as absolute paths in that client's REA
 registration, keeping a value the registration already has other than an
 archive setup packed for an earlier REA version, and refreshes the skill.
-`--install-agentenv` runs `uv tool install agentenv-framework==0.9.1431`
+`--install-agentenv` runs `uv tool install agentenv-framework==0.9.1464`
 when `uv` is on `PATH`, and otherwise prints the command. Setup never
 installs Docker or Node.js and never runs `sudo`. Restart the client
 afterwards.
 
 Doctor is read-only and checks, in order: a Linux amd64 or arm64 host,
 Node.js, procps `ps`, the Docker CLI, a Docker daemon reachable without
-`sudo`, 20 GB free where Docker keeps images, agentenv-framework 0.9.1431,
+`sudo`, 20 GB free where Docker keeps images, agentenv-framework 0.9.1464,
 the runtime archive of this REA version, the build settings in the
 registration or the environment, and the skill. Each failure names its fix.
 It also reports, without counting them against `healthy`, whether a model
@@ -67,9 +67,9 @@ rest of this page is the same setup by hand.
 - [Docker Engine](https://docs.docker.com/engine/install/) and its
   [post-install steps](https://docs.docker.com/engine/install/linux-postinstall/):
   add yourself to the `docker` group, then log in again.
-- agentenv-framework 0.9.1431, the version bundles target. Install
+- agentenv-framework 0.9.1464, the version bundles target. Install
   [uv](https://docs.astral.sh/uv/getting-started/installation/) first, then
-  run `uv tool install agentenv-framework==0.9.1431`. Set
+  run `uv tool install agentenv-framework==0.9.1464`. Set
   `REA_AGENT_ENV_COMMAND` to the absolute path of the resulting `agent-env`
   program, normally `$HOME/.local/bin/agent-env`; `command -v agent-env`
   shows the path when its install directory is on your `PATH`. Installing it
@@ -256,17 +256,16 @@ progress and waits for them before closing every computer.
 `act_on_build_computer` takes `computer_id`, an `action` and the driver's own
 arguments for `computer_<action>`, which REA passes through:
 
-| `action`      | Arguments                                                               |
-| ------------- | ----------------------------------------------------------------------- |
-| `screenshot`  | `region`, `format` (`png` or `jpeg`), `quality`                         |
-| `click`       | `x`, `y`, `button`, `count` (2 double-clicks), `modifiers`              |
-| `drag`        | `path` of 2 to 50 `[x, y]` points, `button`, `duration_ms`, `modifiers` |
-| `scroll`      | `direction`, `x`, `y`, `amount`, `modifiers`                            |
-| `type`        | `text`, where `\n` presses Enter and `\t` Tab                           |
-| `type_secret` | `secret`, the handle of a secret's file; see [Secrets](#secrets)        |
-| `key`         | `keys`, one chord pressed in order, and `repeat`                        |
-| `wait`        | `ms`                                                                    |
-| `reset`       | `screenshot`                                                            |
+| `action`     | Arguments                                                               |
+| ------------ | ----------------------------------------------------------------------- |
+| `screenshot` | `region`, `format` (`png` or `jpeg`), `quality`                         |
+| `click`      | `x`, `y`, `button`, `count` (2 double-clicks), `modifiers`              |
+| `drag`       | `path` of 2 to 50 `[x, y]` points, `button`, `duration_ms`, `modifiers` |
+| `scroll`     | `direction`, `x`, `y`, `amount`, `modifiers`                            |
+| `type`       | `text`, where `\n` presses Enter and `\t` Tab                           |
+| `key`        | `keys`, one chord pressed in order, and `repeat`                        |
+| `wait`       | `ms`                                                                    |
+| `reset`      | `screenshot`                                                            |
 
 `reset` is not a driver tool: REA calls the app's `data/reset`, which restores
 the bundle's seed and relaunches the app, then waits until the computer's
@@ -314,88 +313,6 @@ REA's own request id, and the segments fetched through the driver's `data/get`
 one at a time, each read within its manifest size and checked against it) are
 what the witness records; they are not tools of their own. A recording larger
 than a quarter of the V8 heap is refused before any segment is read.
-
-## Secrets
-
-An app that asks for a password, a licence key or a sign-in gets it from a
-secret the person keeps on the build host, which the agent types by its
-handle without seeing it. The person writes the secret, and nothing else, in
-a file named after its handle in REA's build-secrets folder:
-`$XDG_CONFIG_HOME/rea/build-secrets/<handle>`, or
-`~/.config/rea/build-secrets/<handle>` when `XDG_CONFIG_HOME` is unset or
-relative. A handle is lowercase letters, digits, dot, dash and underscore,
-starting with a letter or digit, up to 63 characters.
-
-```bash
-mkdir -p ~/.config/rea/build-secrets && chmod 700 ~/.config/rea/build-secrets
-( umask 077 && cat > ~/.config/rea/build-secrets/keepassxc-master )
-```
-
-`act_on_build_computer` with `{"action": "type_secret", "secret": "keepassxc-master"}`
-reads the file afresh and types its value into the focused field with the
-driver's `computer_type`. REA refuses the file unless it is a regular file,
-not a symbolic link, in a folder that is not one, owned by the server's user
-and readable by no one else (`chmod 600`), and its text, without one final
-line break, is UTF-8 of 8 to 1024 characters with no control character. A
-refusal names the file and why, never its text.
-
-- The result says `Typed the secret <handle>` with whether the driver
-  delivered it; it carries none of the driver's own words, and a refusal or
-  failure is REA's own message, since the driver's could quote the value.
-  `type_secret` takes no `screenshot`: look with a `wait` afterwards.
-- The action log, and so `witness.json`, records the action as
-  `{"secret": "<handle>"}`. Any string the log keeps, and every string in the
-  witness record and in the build tools' results, has each secret typed on
-  this server, in any text spelling the scan below knows, replaced by
-  `<secret:<handle>>`.
-- After this server uses a declared secret, `stop_build_capture` withholds
-  its automatic draft before running it. The capture remains available; write
-  the task manually and export it. Check descriptions redact known values
-  before shortening them.
-- `export_build_environment` refuses a bundle whose file names or contents
-  hold any secret the folder holds, typed or not, readable by others or not:
-  as it is, escaped in JSON, in UTF-16 of either byte order, in hex, in base64
-  at any alignment and in either alphabet, URL-encoded, or inside a gzip file.
-  It writes nothing to the folder and names each secret's handle and the
-  files, a value in a file's name shown by its handle.
-
-Secrets stay unseen only where the app masks what is typed: screenshots and
-the witness's recording are images, which REA cannot redact. Type a secret
-only into a field that shows dots, such as a password field, and never into
-one that shows its text, such as many licence-key fields. Seeds and drafts
-are searched only for the spellings above: a zip archive's compressed
-entries, and a token an app derives from a secret, such as a session token
-after a sign-in, are not found. The agent's own shell on the build host can
-read the folder, so a client that should never see a secret also denies its
-tools that folder, for example with Claude Code's permission rules.
-
-REA does not infer secrets from token-shaped text or file names. Explicitly
-withhold files containing other sensitive state; only known handle values are
-searched in bundle contents.
-
-### Sign-in and licence state
-
-What an app writes when someone signs in or activates a licence stays out of
-the bundle. Mark `pre-sign-in` just before the sign-in and `post-sign-in` just
-after: `stop_build_capture`'s draft leaves out the files under the owned
-paths that changed between them and lists them as `withheld_files`, and
-`export_build_environment` withholds them, with any its `withhold` names,
-as [the export](desktop-application-export.md#withheld-sign-in-state) does.
-With only one of the two checkpoints the export is refused. The export's
-`withheld_files` gives each file's environment variable and the handle of a
-secret file, `rea-<app>-<file>`, `0600`, in which REA keeps the file's bytes
-in base64; nothing else on the host holds them. To witness the bundle,
-`start_build_computer` takes `"settings": {"<variable>": "<handle>"}` beside
-the bundle's `path`; REA reads each secret, up to 64 Ki characters, and puts
-it in the deploy's environment only. A variable must start with `REA_`.
-
-`record_build_consent` keeps a consent the person gave, in their words, with
-the computer: kind `licence` for a licence they accepted, which the agent
-then accepts for them, or `seed_sign_in` for letting the bundle hold their
-signed-in state. The export ships every consent as the bundle's
-`consent.json`, and `seed_sign_in: true` seeds the withheld files instead,
-refused without a `seed_sign_in` consent. The agent relays the person's
-words; REA cannot tell a relayed consent from one the person typed.
 
 ## Close
 

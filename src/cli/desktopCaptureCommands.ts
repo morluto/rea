@@ -6,6 +6,10 @@ import type { Logger } from "pino";
 import { captureDesktopApplication } from "../application/desktop/DesktopApplicationCapture.js";
 import type { DesktopStateReaders } from "../application/desktop/DesktopApplicationState.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
+import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
+import { ProviderCleanupError } from "../domain/providerCleanupError.js";
+import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
+import { bindArtifactFileCleanup } from "../artifacts/ArtifactFileOperation.js";
 import type { Evidence } from "../domain/evidence.js";
 import { localPathStringSchema } from "../domain/localPath.js";
 import { err, ok } from "../domain/result.js";
@@ -153,7 +157,54 @@ const withStateReaders = async (
       });
       return result instanceof AnalysisError ? err(result) : ok(result);
     },
-    sqlite,
+    {
+      close: async () => {
+        const failures: unknown[] = [];
+        try {
+          await sqlite.close();
+        } catch (cause: unknown) {
+          failures.push(cause);
+        }
+        if (operation === "export_desktop_application") {
+          try {
+            const { OwnedWorkerRuntime } =
+              await import("../process/OwnedWorkerRuntime.js");
+            await OwnedWorkerRuntime.retryPending();
+          } catch (cause: unknown) {
+            failures.push(cause);
+          }
+        }
+        if (failures.length === 1) throw failures[0];
+        if (failures.length > 1) {
+          const typed = failures.map((cause) => {
+            if (cause instanceof AnalysisError) return cause;
+            const observation =
+              cause instanceof ArtifactReaderFailure
+                ? ArtifactReaderFailure.cleanupObservation(cause, [])
+                : {
+                    resources: [],
+                    reason:
+                      cause instanceof Error ? cause.message : String(cause),
+                  };
+            const failure = new ProviderCleanupError(
+              "rea-desktop",
+              observation.resources,
+              { reason: observation.reason },
+              { operation, cause },
+            );
+            bindArtifactFileCleanup(cause, failure);
+            return failure;
+          });
+          const combined = analysisErrorWithCleanupFailure(
+            typed[0]!,
+            typed[1]!,
+            operation,
+          );
+          combined.bindCleanupDependencies(typed);
+          throw combined;
+        }
+      },
+    },
     "rea-desktop",
     operation,
     signal,
@@ -238,6 +289,12 @@ const registerDesktopExportCommand = (
         .describe(
           "http or https URL the computer downloads the captured --package-file from when the bundle is put, for an application installed from a .deb file",
         ),
+      downloadInstall: z
+        .string()
+        .optional()
+        .describe(
+          "JSON file naming the AppImage or tarball a build computer unpacked the application from: kind, desktop_entry, url, sha256, architecture, and a tarball's program and name",
+        ),
       extraPackage: z
         .array(z.string())
         .optional()
@@ -249,6 +306,12 @@ const registerDesktopExportCommand = (
         .default(false)
         .describe(
           "The seed was made for the task, as in a build computer, not taken from the user's own data; the README says so instead of keeping the bundle local",
+        ),
+      screens: z
+        .string()
+        .optional()
+        .describe(
+          "Folder holding checkpoint screenshots for screen-judge examples.",
         ),
       ...withheldExportOptions,
       ...checkpointOptions,
@@ -275,10 +338,18 @@ const registerDesktopExportCommand = (
                       absoluteCallerPath(path),
                     ),
                     packageUrl: options.packageUrl,
+                    downloadInstall:
+                      options.downloadInstall === undefined
+                        ? undefined
+                        : absoluteCallerPath(options.downloadInstall),
                     extraPackages: options.extraPackage,
                     seedCheckpoint: options.seedCheckpoint,
                     endCheckpoint: options.endCheckpoint,
                     syntheticSeed: options.syntheticSeed,
+                    screens:
+                      options.screens === undefined
+                        ? undefined
+                        : absoluteCallerPath(options.screens),
                     ...withheldRequestOf(options),
                   },
                   readers,
