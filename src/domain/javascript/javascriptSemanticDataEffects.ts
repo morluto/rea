@@ -587,13 +587,15 @@ const requestFields = (
  * The characters Node refuses in an `http.request` path.
  *
  * `checkInvalidHeaderChar` is not what runs here; the path goes through
- * `validatePath`/`ERR_UNESCAPED_CHARACTERS`. Measured by enumerating every ASCII code point
- * inside a literal path on Node 24.22.1, exactly `0x00`-`0x20` are refused and `0x21`-`0x7f`
- * are accepted, so this is a closed range rather than a list of known-bad characters. A
- * space is in it: `path: "/a b"` throws while `"/a%20b"` connects. Non-ASCII is accepted, so
- * `path: "/aéb"` connects.
+ * `validatePath`/`ERR_UNESCAPED_CHARACTERS`. Measured on Node 24.22.1, the accepted range is
+ * exactly `U+0021`-`U+00FF`: every ASCII code point was enumerated inside a literal path and
+ * `0x00`-`0x20` are refused, and probing the upper bound refuses `U+0100` onward while
+ * `U+007f`, `U+00a0`, `U+00e9` and `U+00ff` are accepted. So this is a closed range rather
+ * than a list of known-bad characters, and it is Latin-1 rather than ASCII. A space is
+ * refused: `path: "/a b"` throws while `"/a%20b"` connects. `U+0100` and above are refused,
+ * so `path: "/aĀb"` throws too.
  */
-const UNESCAPED_PATH_CHARACTER = /[\u0000-\u0020]/u;
+const UNESCAPED_PATH_CHARACTER = /[^\u0021-\u00ff]/u;
 
 /**
  * Whether a literal `options.path` makes `http.request` throw before any request exists.

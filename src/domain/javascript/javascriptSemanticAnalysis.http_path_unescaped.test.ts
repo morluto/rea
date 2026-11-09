@@ -3,15 +3,17 @@ import { expect, it } from "vitest";
 import { analyzeJavaScriptSemantics } from "./javascriptSemanticAnalysis.js";
 
 /**
- * `http.request` and `https.request` validate `options.path` before they build the request,
- * so a literal carrying an unescaped character throws `ERR_UNESCAPED_CHARACTERS` from the
- * call itself and no request exists.
+ * `http.request` and `https.request` validate `options.path` before they build the
+ * request, so a literal carrying a refused character throws `ERR_UNESCAPED_CHARACTERS` from
+ * the call itself and no request exists.
  *
- * Measured on Node 24.22.1 by putting every ASCII code point inside a literal path: exactly
- * `0x00`-`0x20` are refused and `0x21`-`0x7f` are accepted, so the rule is a closed range
- * rather than a list of known-bad characters. A space is in it — `"/a b"` throws while
- * `"/a%20b"` connects — and non-ASCII is accepted, so `"/aéb"` connects. An empty path is
- * accepted because Node reads `""` as "not given" and falls back to `/`.
+ * Measured on Node 24.22.1, the accepted range is exactly `U+0021`-`U+00FF`: every ASCII
+ * code point was enumerated inside a literal path and `0x00`-`0x20` are refused, and probing
+ * the upper bound refuses `U+0100` onward while `U+007f`, `U+00a0`, `U+00e9` and `U+00ff`
+ * are accepted. So the rule is a closed **Latin-1** range, not ASCII and not a list of
+ * known-bad characters. A space is refused — `"/a b"` throws while `"/a%20b"` connects — and
+ * so is anything above Latin-1, which is why `"/aĀb"` throws. An empty path is accepted
+ * because Node reads `""` as "not given" and falls back to `/`.
  */
 const requestsFor = (body: string) =>
   analyzeJavaScriptSemantics(
@@ -46,3 +48,23 @@ it.each([
 ] as const)("keeps the request for an accepted path: %s", (call) => {
   expect(requestsFor(call)).toHaveLength(1);
 });
+
+it.each([["/aĀb"], ["/a中b"], ["/a😀b"], ["/a\u2028b"]] as const)(
+  "emits no request above Latin-1: %s",
+  (path) => {
+    // The accepted range ends at U+00FF; measured on Node 24.22.1, U+0100 and above throw
+    // ERR_UNESCAPED_CHARACTERS.
+    expect(
+      requestsFor(`http.request({ host: "h", path: ${JSON.stringify(path)} })`),
+    ).toEqual([]);
+  },
+);
+
+it.each([["/a\u00ffb"], ["/a\u00a0b"], ["/a\u007fb"]] as const)(
+  "keeps the request inside Latin-1: %s",
+  (path) => {
+    expect(
+      requestsFor(`http.request({ host: "h", path: ${JSON.stringify(path)} })`),
+    ).toHaveLength(1);
+  },
+);
