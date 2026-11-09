@@ -1569,10 +1569,24 @@ const examineLoadedText = (
     )
       noteUnreadBinary(state, member);
     else state.skippedText += 1;
-    if (holdsScripts(member)) state.skippedMaps += 1;
+    // A header cut short of its first line, or never read, cannot rule out a
+    // Node shebang, so a text-named member's maps stay unassessed as well.
+    if (
+      holdsScripts(member) ||
+      (!isCssMember(member) && shebangUndecided(headerOfRead(loaded)))
+    )
+      state.skippedMaps += 1;
   }
   return loaded.kind !== "unread";
 };
+
+/**
+ * Whether a partial header leaves a Node shebang undecided: none was read, or
+ * it could start one and ends before the shebang line does.
+ */
+const shebangUndecided = (header: Buffer | null): boolean =>
+  header === null ||
+  ("#!".startsWith(header.toString("latin1", 0, 2)) && !header.includes(0x0a));
 
 /**
  * A shebang that runs Node makes a file a script whatever it is called. The
