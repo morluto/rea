@@ -487,10 +487,8 @@ const listenerDataDescriptor = (listener) => {
   return descriptor.get === undefined ? undefined : null;
 };
 
-// A decorator that wraps once's hook wrapper and names it through `.listener`
-// already records through that wrapper. Registering the decorator as is keeps
-// native self-removal working: the once wrapper removes itself by identity, and
-// removeListener matches the decorator through its `.listener`.
+// Only a directly owned wrapper proves dispatch through the hook. A decorator's
+// .listener metadata can name one without calling it; preserve that uncertainty.
 const classifyHookListenerWrapper = (listener) => {
   const visited = new SetConstructor();
   let candidate = listener;
@@ -499,7 +497,8 @@ const classifyHookListenerWrapper = (listener) => {
     hops <= MAX_LISTENER_CHAIN_HOPS && typeof candidate === "function";
     hops += 1
   ) {
-    if (weakMapHas(hookListenerRemovalTargets, candidate)) return "owned";
+    if (weakMapHas(hookListenerRemovalTargets, candidate))
+      return candidate === listener ? "owned" : "unknown";
     if (setHas(visited, candidate)) return "unowned";
     setAdd(visited, candidate);
     const descriptor = listenerDataDescriptor(candidate);

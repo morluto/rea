@@ -84,6 +84,10 @@ Quá trình thiết lập hỗ trợ Claude Code, Codex, Cursor, Gemini CLI, Gro
 
 MCP mặc định dùng schema đầu vào gọn. Để có hướng dẫn đầy đủ về trường và xác thực lồng nhau, đặt `REA_MCP_INPUT_SCHEMA_PROFILE=full` trong đăng ký MCP. Cả hai cấu hình giữ toàn bộ công cụ và cùng xác thực chuẩn ở máy chủ; xem hướng dẫn hợp đồng MCP.
 
+Thiết lập đăng ký trực tiếp runtime đã chọn và script khởi chạy REA. Khi dùng trình chạy gói, hãy giữ mục cache và runtime đó; tải gói từ một thư mục đáng tin cậy bên ngoài dự án đích. Xem hướng dẫn cài đặt.
+
+Schema đầu ra đầy đủ được công bố theo mặc định. Nếu client giới hạn `tools/list`, hãy đặt `REA_MCP_OUTPUT_SCHEMA_PROFILE=compact` hoặc `off` trong cấu hình MCP. Xác thực phía server và kết quả có cấu trúc vẫn đầy đủ. Xem mục “Output schemas” trong hướng dẫn hợp đồng MCP.
+
 ### Hỏi tác nhân
 
 ```text
@@ -183,6 +187,7 @@ REA yêu cầu Node.js 22.x (>=22.23.4), 24.x (>=24.22.1) hoặc 26+ (>=26.12.1)
 | Gói và tài nguyên                 | Danh sách tệp, giá trị băm, plist, cấu trúc bundle Apple và tài nguyên được trích xuất                          | [Hướng dẫn hiện vật phần mềm và JavaScript](../guides/javascript/javascript-artifact-reconstruction.md), [ứng dụng Apple](../guides/apple/apple-application-analysis.md) |
 | Hành vi tiến trình                | Đầu ra terminal, tương tác, quan sát khi thoát và hệ thống tệp, cùng so sánh các lần chạy                       | Linux/macOS có PTY gốc; [ghi lại tiến trình](../guides/runtime/process-capture.md)                                                                                       |
 | PyInstaller                       | CArchive, PYZ, Python bytecode                                                                                  | Static inspection; [Python packaged applications](../python-packaged-applications.md)                                                                                    |
+| Deno compile binaries             | Virtual files, entry point, recorded options, npm snapshot length                                               | Static inspection; [Deno compile executables](../deno-standalone.md)                                                                                                     |
 | Tệp nhị phân Go                   | Phiên bản trình biên dịch nhúng, mô-đun, thay thế và thiết lập build                                            | Kiểm tra tĩnh tích hợp ELF/PE/thin Mach-O; Không cần cài Go                                                                                                              |
 | Cơ sở dữ liệu SQLite              | Bảng, cột, chỉ mục, view, trigger và hàng được chọn từ bảng thông thường                                        | Ảnh chụp cơ sở dữ liệu/WAL cục bộ; Node.js 24.x >=24.15 hoặc 26+ có giới hạn SQLite native                                                                               |
 | Đối tượng mã GPU                  | Đích CUDA/HIP, tham số và tài nguyên kernel được chọn, văn bản PTX được giữ lại                                 | Kiểm tra tĩnh tích hợp ELF/PE/fatbin/CUBIN/PTX; [GPU](../gpu-code-objects.md)                                                                                            |
