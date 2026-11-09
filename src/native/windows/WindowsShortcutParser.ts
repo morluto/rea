@@ -295,38 +295,45 @@ const isFullPath = (path: string): boolean =>
 const hasUnexpandedVariable = (path: string): boolean =>
   /%[^%\\/]+%/u.test(path);
 
-/** A recorded path and whether it is the Latin1 projection of ANSI bytes. */
-type TargetPath = { readonly path: string; readonly ansi: boolean };
+/**
+ * A recorded path and where its non-ASCII text came from. Every ANSI code page
+ * agrees with ASCII, so only non-ASCII characters depend on the encoding. A
+ * non-ASCII ANSI byte is a character from the unobserved system code page,
+ * which its Latin1 projection does not name.
+ */
+type RecordedPath = {
+  readonly path: string;
+  /** Holds non-ASCII text projected from ANSI bytes. */
+  readonly ansi: boolean;
+  /** Holds non-ASCII UTF-16 text. */
+  readonly unicode: boolean;
+};
 
 const isAscii = (text: string): boolean =>
   [...text].every((char) => char <= "\u007f");
 
-/**
- * Every ANSI code page agrees with ASCII, so an ASCII-only ANSI path is the
- * same text as its Unicode form. A non-ASCII byte is a character from the
- * unobserved system code page, which its Latin1 projection does not name.
- */
-const comparableText = (
-  target: TargetPath,
-  icon: string,
-  iconAnsi: boolean,
-): boolean =>
-  target.ansi === iconAnsi || isAscii(target.ansi ? target.path : icon);
+const recorded = (path: string, ansi: boolean): RecordedPath => {
+  const nonAscii = !isAscii(path);
+  return { path, ansi: ansi && nonAscii, unicode: !ansi && nonAscii };
+};
+
+/** Two paths compare as text only when their non-ASCII parts share one encoding. */
+const comparableText = (left: RecordedPath, right: RecordedPath): boolean =>
+  !((left.ansi || right.ansi) && (left.unicode || right.unicode));
 
 const iconDiffersFromTarget = (
   icon: WindowsShortcut["string_data"]["icon_location"],
-  targets: readonly TargetPath[],
+  targets: readonly RecordedPath[],
 ): boolean | null => {
   if (icon === null) return null;
   const text = icon.value;
   if (!isFullPath(text) || hasUnexpandedVariable(text)) return null;
-  const iconAnsi = icon.encoding === "ansi";
+  const iconPath = recorded(text, icon.encoding === "ansi");
   const location = normalizePath(text);
   const fullTargets = targets.filter((target) => isFullPath(target.path));
   const fixedTargets = fullTargets.filter(
     (target) =>
-      !hasUnexpandedVariable(target.path) &&
-      comparableText(target, text, iconAnsi),
+      !hasUnexpandedVariable(target.path) && comparableText(target, iconPath),
   );
   if (fixedTargets.some((target) => normalizePath(target.path) === location))
     return false;
@@ -339,24 +346,34 @@ const iconDiffersFromTarget = (
 /** LinkInfo local and network base paths, each joined with CommonPathSuffix. */
 const linkInfoTargets = (
   info: NonNullable<WindowsShortcut["link_info"]>,
-): TargetPath[] => {
-  const suffix = info.common_path_suffix_unicode ?? info.common_path_suffix;
-  const hasSuffix = suffix !== null && suffix.length > 0;
-  const withSuffix = (base: string, baseAnsi: boolean): TargetPath =>
-    hasSuffix
-      ? {
-          path: `${base.replace(/\\$/u, "")}\\${suffix.replace(/^\\/u, "")}`,
-          ansi: baseAnsi || info.common_path_suffix_unicode === null,
-        }
-      : { path: base, ansi: baseAnsi };
-  const values: TargetPath[] = [];
+): RecordedPath[] => {
+  const suffixText = info.common_path_suffix_unicode ?? info.common_path_suffix;
+  const suffix =
+    suffixText === null || suffixText.length === 0
+      ? null
+      : recorded(suffixText, info.common_path_suffix_unicode === null);
+  // Each part keeps its own encoding, so an ASCII ANSI part never hides a
+  // comparable Unicode part.
+  const withSuffix = (base: RecordedPath): RecordedPath =>
+    suffix === null
+      ? base
+      : {
+          path: `${base.path.replace(/\\$/u, "")}\\${suffix.path.replace(/^\\/u, "")}`,
+          ansi: base.ansi || suffix.ansi,
+          unicode: base.unicode || suffix.unicode,
+        };
+  const values: RecordedPath[] = [];
   const local = info.local_base_path_unicode ?? info.local_base_path;
-  if (local !== null && (hasSuffix || local.length > 0))
-    values.push(withSuffix(local, info.local_base_path_unicode === null));
+  if (local !== null && (suffix !== null || local.length > 0))
+    values.push(
+      withSuffix(recorded(local, info.local_base_path_unicode === null)),
+    );
   const net = info.common_network_relative_link;
-  const share = net === null ? null : (net.net_name_unicode ?? net.net_name);
-  if (share !== null)
-    values.push(withSuffix(share, net?.net_name_unicode === null));
+  if (net !== null) {
+    const share = net.net_name_unicode ?? net.net_name;
+    if (share !== null)
+      values.push(withSuffix(recorded(share, net.net_name_unicode === null)));
+  }
   return values;
 };
 
@@ -365,22 +382,21 @@ const targetPaths = (report: {
   readonly string_data: WindowsShortcut["string_data"];
   readonly id_list: WindowsShortcut["id_list"];
   readonly extra_data: WindowsShortcut["extra_data"];
-}): TargetPath[] => {
-  const values: TargetPath[] =
+}): RecordedPath[] => {
+  const values: RecordedPath[] =
     report.link_info === null ? [] : linkInfoTargets(report.link_info);
   const relative = report.string_data.relative_path;
   if (relative !== null)
-    values.push({ path: relative.value, ansi: relative.encoding === "ansi" });
+    values.push(recorded(relative.value, relative.encoding === "ansi"));
   if (report.id_list !== null) {
     const lastFile = [...report.id_list.items]
       .reverse()
       .find((item) => item.kind === "file_entry");
     // Type bit 0x04 marks a UTF-16LE name; otherwise the name is ANSI.
     if (lastFile?.kind === "file_entry")
-      values.push({
-        path: lastFile.short_name,
-        ansi: (lastFile.type_byte & 0x04) === 0,
-      });
+      values.push(
+        recorded(lastFile.short_name, (lastFile.type_byte & 0x04) === 0),
+      );
   }
   // A stored literal target, never expanded: `%VAR%` text stays as written.
   for (const block of report.extra_data.blocks) {
@@ -389,7 +405,7 @@ const targetPaths = (report: {
     const stored = unicode
       ? block.decoded.target_unicode
       : block.decoded.target_ansi;
-    if (stored.length > 0) values.push({ path: stored, ansi: !unicode });
+    if (stored.length > 0) values.push(recorded(stored, !unicode));
   }
   return values;
 };

@@ -72,6 +72,8 @@ export type FixtureLinkInfo = {
    * network names. Defaults to the link's IsUnicode.
    */
   readonly unicode?: boolean;
+  /** Write Unicode network names; defaults to `unicode`. */
+  readonly networkUnicode?: boolean;
 };
 
 export type FixtureExtraBlock =
@@ -283,7 +285,9 @@ const linkInfoBytes = (info: FixtureLinkInfo, unicode: boolean): Buffer => {
       ? ansiZ(info.localBasePath ?? "C:\\target.exe")
       : Buffer.alloc(0);
   const network =
-    flags & 0x2 ? networkLinkBytes(info, unicode) : Buffer.alloc(0);
+    flags & 0x2
+      ? networkLinkBytes(info, info.networkUnicode ?? unicode)
+      : Buffer.alloc(0);
   const suffixAnsi = ansiZ(info.commonPathSuffix ?? "");
   const localWide =
     unicode && flags & 0x1

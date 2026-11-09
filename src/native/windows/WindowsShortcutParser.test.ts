@@ -701,6 +701,37 @@ it("compares an icon with a target only in a shared or ASCII encoding", async ()
         iconLocation,
       }),
     ).toBe(differs);
+  // A joined path keeps each part's encoding: an ASCII ANSI share with a
+  // Unicode suffix, or a Unicode share with an ASCII ANSI suffix, compares.
+  for (const [linkInfo, iconLocation, differs] of [
+    [
+      { netName: "\\\\server\\share", commonPathSuffix: "工具\\app.exe" },
+      "\\\\server\\share\\工具\\app.exe",
+      false,
+    ],
+    [
+      { netName: "\\\\server\\share", commonPathSuffix: "工具\\app.exe" },
+      "\\\\server\\share\\工具\\other.exe",
+      true,
+    ],
+  ] as const)
+    expect(
+      await iconFor({
+        linkInfo: { ...linkInfo, unicode: true, networkUnicode: false },
+        iconLocation,
+      }),
+    ).toBe(differs);
+  expect(
+    await iconFor({
+      linkInfo: {
+        netName: "\\\\server\\共享",
+        commonPathSuffix: "app.exe",
+        unicode: false,
+        networkUnicode: true,
+      },
+      iconLocation: "\\\\server\\共享\\app.exe",
+    }),
+  ).toBe(false);
 });
 
 it("compares an icon with a target after collapsing dot segments as text", async () => {
