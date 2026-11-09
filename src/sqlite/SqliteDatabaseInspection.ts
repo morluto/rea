@@ -306,6 +306,13 @@ type RowKeyFacts = {
 
 const ROWID_ALIASES = ["rowid", "_rowid_", "oid"] as const;
 
+/** Name bytes per character for each encoding `asciiLower` accepts. */
+const ASCII_CHARACTER_BYTES: Readonly<Record<DatabaseEncoding, number>> = {
+  "UTF-8": 1,
+  "UTF-16le": 2,
+  "UTF-16be": 2,
+};
+
 const asciiLower = (
   bytes: Uint8Array,
   encoding: DatabaseEncoding,
@@ -340,6 +347,13 @@ const readRowKeyFacts = (
   name: string,
   encoding: DatabaseEncoding,
 ): RowKeyFacts => {
+  // SQLite enables up to 2 KiB names by default, but a rebuilt table can declare
+  // more; an alias test that decodes a name first would turn that into an
+  // unbounded allocation. Alias detection only needs names of alias byte length.
+  const maximumAliasBytes =
+    Math.max(...ROWID_ALIASES.map((alias) => alias.length)) *
+    ASCII_CHARACTER_BYTES[encoding];
+
   const row = z
     .object({ wr: z.union([z.bigint(), z.number()]) })
     .optional()
@@ -365,7 +379,10 @@ const readRowKeyFacts = (
         pk: z.union([z.bigint(), z.number()]),
       })
       .parse(raw);
-    const alias = asciiLower(value.name, encoding);
+    const alias =
+      value.name.length <= maximumAliasBytes
+        ? asciiLower(value.name, encoding)
+        : undefined;
     if (
       alias !== undefined &&
       (ROWID_ALIASES as readonly string[]).includes(alias)
