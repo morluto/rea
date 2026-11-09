@@ -1,7 +1,11 @@
 import { expect, it } from "vitest";
 
 import { contextBridgeMemberVisitLimit } from "./electronStaticAnalysisValues.js";
-import { analyzeJavaScriptStaticSource } from "./javascriptStaticAnalysis.js";
+import { parseJavaScriptSource } from "./javascriptSourceParser.js";
+import {
+  analyzeJavaScriptStaticSource,
+  analyzeParsedJavaScriptStaticSource,
+} from "./javascriptStaticAnalysis.js";
 
 it("resolves hoisted const, Object.freeze, nested const, DAGs, and TS wrappers in main and isolated worlds", () => {
   const analysis = analyzeJavaScriptStaticSource(`
@@ -537,15 +541,80 @@ it("rejects TDZ read-before-init, uninvoked parameters, shadowed bindings, and c
   ]);
 
   const classicGlobalFn = analyzeJavaScriptStaticSource(`
-      const { contextBridge } = require("electron");
-      function bridgeCall() { return 1; }
-      globalThis.bridgeCall = replacement;
-      contextBridge.exposeInMainWorld("ClassicFn", bridgeCall);
+      const { contextBridge, ipcRenderer } = require("electron");
+      function bridgeFn() { ipcRenderer.send("classic:fn"); }
+      function bridgeObj() { ipcRenderer.send("classic:obj"); }
+      globalThis.bridgeFn = replacement;
+      globalThis.bridgeObj = replacement;
+      contextBridge.exposeInMainWorld("ClassicFn", bridgeFn);
+      contextBridge.exposeInMainWorld("ClassicObj", { bridgeObj });
     `);
   expect(classicGlobalFn.parse_status).toBe("partial");
   expect(classicGlobalFn.electron.context_bridge_apis).toMatchObject([
     { api_key: "ClassicFn", api_status: "dynamic", unknown_members: 1 },
+    {
+      api_key: "ClassicObj",
+      api_status: "dynamic",
+      members: ["bridgeObj"],
+      unknown_members: 0,
+    },
   ]);
+  expect(
+    (classicGlobalFn.electron.call_paths ?? []).filter(
+      ({ entry_kind }) => entry_kind === "bridge-member",
+    ),
+  ).toEqual([]);
+
+  const commonJsSource = `
+      const { contextBridge, ipcRenderer } = require("electron");
+      function forwardObj() { ipcRenderer.send("cjs:obj"); }
+      function forwardFn() { ipcRenderer.send("cjs:fn"); }
+      globalThis.forwardObj = replacement;
+      globalThis.forwardFn = replacement;
+      contextBridge.exposeInMainWorld("CjsApi", { forwardObj });
+      contextBridge.exposeInMainWorld("CjsFn", forwardFn);
+    `;
+  for (const parsed of [
+    parseJavaScriptSource(commonJsSource, "preload.cjs"),
+    parseJavaScriptSource(commonJsSource, "preload.js", "commonjs"),
+  ]) {
+    if (parsed === null) throw new Error("Expected CommonJS parse");
+    const cjsAnalysis = analyzeParsedJavaScriptStaticSource(
+      commonJsSource,
+      parsed,
+    );
+    expect(cjsAnalysis.parse_status).toBe("complete");
+    expect(cjsAnalysis.electron.context_bridge_apis).toMatchObject([
+      {
+        api_key: "CjsApi",
+        api_status: "object-literal",
+        members: ["forwardObj"],
+        unknown_members: 0,
+      },
+      {
+        api_key: "CjsFn",
+        api_status: "function",
+        members: [],
+        unknown_members: 0,
+      },
+    ]);
+    expect(cjsAnalysis.electron.call_paths).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          entry_kind: "bridge-member",
+          entry: "CjsApi.forwardObj",
+          channel: "cjs:obj",
+          terminal: "electron.ipcRenderer.send",
+        }),
+        expect.objectContaining({
+          entry_kind: "bridge-member",
+          entry: "CjsFn",
+          channel: "cjs:fn",
+          terminal: "electron.ipcRenderer.send",
+        }),
+      ]),
+    );
+  }
 });
 
 it("preserves shared expose(key, obj) helper behavior across multiple object and callable invocations", () => {

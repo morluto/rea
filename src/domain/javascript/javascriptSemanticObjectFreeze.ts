@@ -10,6 +10,7 @@ import {
 } from "./javascriptSemanticGlobalReference.js";
 import { semanticBindingAtRead } from "./javascriptSemanticMutationInitializers.js";
 import { semanticOpaqueGlobalMayHaveChanged } from "./javascriptSemanticOpaqueEffects.js";
+import { javaScriptRuntimeContext } from "./javascriptSourceParser.js";
 import {
   resolveSemanticBindingState,
   semanticStableInitializer,
@@ -20,7 +21,6 @@ import {
 const isImmutableConstOrFunctionBinding = (
   binding: JavaScriptSemanticBindingState,
   state: JavaScriptSemanticAnalysisState,
-  sourceType?: t.Program["sourceType"],
 ): boolean => {
   if (binding.mutable) return false;
   if (
@@ -38,7 +38,7 @@ const isImmutableConstOrFunctionBinding = (
     // Classic-script top-level function declarations mirror onto the global
     // object, so an ambient property write can replace the function binding.
     if (
-      sourceType !== "module" &&
+      javaScriptRuntimeContext(state.program) === "unknown" &&
       binding.scopeId.startsWith("scope:program:") &&
       state.ambientWrites.covers(["global", binding.name])
     )
@@ -52,7 +52,6 @@ const isImmutableConstOrFunctionBinding = (
 export const immutableLexicalInitializerAtRead = (
   identifier: t.Identifier,
   state: JavaScriptSemanticAnalysisState,
-  sourceType?: t.Program["sourceType"],
 ):
   | {
       readonly binding: JavaScriptSemanticBindingState;
@@ -66,7 +65,7 @@ export const immutableLexicalInitializerAtRead = (
   );
   if (
     binding === undefined ||
-    !isImmutableConstOrFunctionBinding(binding, state, sourceType)
+    !isImmutableConstOrFunctionBinding(binding, state)
   )
     return undefined;
   const initializer = semanticStableInitializer(binding, state);

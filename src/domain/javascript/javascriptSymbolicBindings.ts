@@ -29,6 +29,7 @@ import {
   traverseJavaScriptAst,
 } from "./javascriptSemanticTraversal.js";
 import { unwrapUnmodifiedObjectFreezeArgument } from "./javascriptSemanticObjectFreeze.js";
+import { javaScriptRuntimeContext } from "./javascriptSourceParser.js";
 import {
   resolveSemanticBindingState,
   semanticResolutionBlocked,
@@ -771,7 +772,7 @@ export class JavaScriptSymbolicBindings {
     if (binding.definitions.some((d) => d.kind === "assignment"))
       return symbolicUnknown("reassigned binding");
     if (
-      this.state.program.sourceType !== "module" &&
+      javaScriptRuntimeContext(this.state.program) === "unknown" &&
       binding.kind === "function" &&
       binding.scopeId.startsWith("scope:program:") &&
       this.state.ambientWrites.covers(["global", binding.name])

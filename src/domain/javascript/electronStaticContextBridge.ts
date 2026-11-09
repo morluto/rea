@@ -62,11 +62,7 @@ export const hasContextBridgeResolutionCandidate = (
   if (frozen !== undefined) return true;
   if (t.isIdentifier(unwrapped))
     return (
-      immutableLexicalInitializerAtRead(
-        unwrapped,
-        index.bindings,
-        index.sourceType,
-      ) !== undefined
+      immutableLexicalInitializerAtRead(unwrapped, index.bindings) !== undefined
     );
   if (!t.isObjectExpression(unwrapped) || depth >= contextBridgeMemberPathDepth)
     return false;
@@ -180,11 +176,7 @@ const resolveContextBridgeValue = (
     if (seenBindings.has(binding.bindingId))
       return { kind: "invalid-or-cyclic" };
     seenBindings.add(binding.bindingId);
-    const lexical = immutableLexicalInitializerAtRead(
-      current,
-      index.bindings,
-      index.sourceType,
-    );
+    const lexical = immutableLexicalInitializerAtRead(current, index.bindings);
     if (lexical === undefined) return { kind: "invalid-or-cyclic" };
     if (index.referenceMayHaveChangedAt(site, current))
       return { kind: "invalid-or-cyclic" };
