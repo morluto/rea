@@ -55,9 +55,9 @@ and the recording and writes the record as Evidence.
   A draft with no files carries `notes`, coded `no_change`,
   `unowned_changes` (up to five changed home paths with their roles, and a
   count of the rest), `uncheckable_changes` (dconf databases whose app keys
-  were read and changed, which no check reads, a version kept without its
-  bytes counting as holding none), `unreadable_changes` (dconf
-  databases that changed but could not be read, with the read `error`) and
+  were read and changed, which no check reads), `unreadable_changes` (dconf
+  databases that changed but could not be read, including a present version
+  whose bytes were not retained, with the read `error`) and
   `no_document`; a drafted file whose suggestions are thin carries one
   naming its `file`, coded `by_position`, `view_state_only`, `long_text`,
   `cut_view` or `unreadable_view`.

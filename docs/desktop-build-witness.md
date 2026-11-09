@@ -90,12 +90,11 @@ See [desktop builds](https://github.com/morluto/rea/blob/main/.agents/skills/rev
    none under the owned paths, listing up to five in `files` with their
    roles, desktop files last, and counting the rest in `more`;
    `uncheckable_changes` when the app's keys in dconf were read and changed,
-   listing the database in `files`, since no check reads dconf (a version
-   the capture kept no copy of, as it keeps none of the database at the
-   start, counts as holding none of the app's keys);
+   listing the database in `files`, since no check reads dconf;
    `unreadable_changes` when a dconf database changed but REA could not read
-   it, such as without `dconf-cli`, with the read `error`, so whose keys
-   changed is unknown; and `no_document` when no file has the document role.
+   it, such as without `dconf-cli` or when a present version's bytes were
+   not retained, with the read `error`, so whose keys changed is unknown;
+   and `no_document` when no file has the document role.
    `unowned_changes` and `no_document` point at `state_paths`. They also say,
    for a drafted `file`, why its suggestions are thin: `by_position`,
    `view_state_only`, `long_text`, `cut_view` or `unreadable_view`.
