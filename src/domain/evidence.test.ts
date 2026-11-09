@@ -15,6 +15,7 @@ import {
   immutableEvidence,
   withEvidenceCallerInputPath,
   rebindEvidenceToTargetPath,
+  withEvidenceProviderSelection,
 } from "./evidence.js";
 import {
   MAX_JSON_DEPTH,
@@ -321,6 +322,54 @@ it("retains verbatim caller input without changing semantic identity or copying 
       .success,
   ).toBe(false);
   expect(() => withEvidenceCallerInputPath(second, "invalid\0path")).toThrow();
+});
+
+it("retains the recording session's provider selection without changing semantic identity", () => {
+  const original = createEvidence(TARGET, PROVIDER, {
+    operation: "inspect",
+    parameters: { address: "0x1000" },
+    result: { nested: ["observed"] },
+    rawResult: { source: "provider" },
+  });
+  const selection = {
+    selection_source: "auto-single-candidate" as const,
+    candidates: [
+      {
+        provider: { id: "ghidra", name: "Ghidra", version: "11.2" },
+        selected: true,
+        availability: "available" as const,
+        target_support: "supported" as const,
+        rejection_codes: [],
+      },
+      {
+        provider: { id: "ida", name: "IDA", version: null },
+        selected: false,
+        availability: "unavailable" as const,
+        target_support: "unknown" as const,
+        rejection_codes: ["ida_missing"],
+      },
+    ],
+  };
+  const attributed = withEvidenceProviderSelection(original, selection);
+
+  expect(attributed.provider_selection).toEqual(selection);
+  expect(original.provider_selection).toBeUndefined();
+  // Selection provenance describes the session, not the observation.
+  expect(attributed.evidence_id).toBe(original.evidence_id);
+  expect(attributed.normalized_result).toEqual(original.normalized_result);
+  expect(attributed.raw_result).toEqual(original.raw_result);
+  expect(Object.isFrozen(attributed)).toBe(true);
+  expect(
+    withEvidenceProviderSelection(attributed, selection),
+  ).toBe(attributed);
+  // Older records carry no provenance and still authenticate.
+  expect(parseEvidence(JSON.parse(JSON.stringify(original)))).toEqual(original);
+  expect(parseEvidence(JSON.parse(JSON.stringify(attributed)))).toEqual(
+    attributed,
+  );
+  expect(withEvidenceProviderSelection(original, undefined)).toEqual(
+    immutableEvidence(original),
+  );
 });
 
 it("retains named auxiliary path choices without changing identity, history or shared payloads", () => {

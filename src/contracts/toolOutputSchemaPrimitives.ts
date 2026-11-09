@@ -640,6 +640,9 @@ export const sessionProviderFacts = z
         analysis_profile: analysisProfileSchema,
         release_verification: providerReleaseVerificationSchema.optional(),
       })
+      .describe(
+        "Binding for the active target. The same selection source and candidate outcomes are retained with each admitted Evidence record as provider_selection.",
+      )
       .nullable(),
     client_features: z.object({
       elicitation_form: z.boolean(),

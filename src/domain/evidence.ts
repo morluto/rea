@@ -86,6 +86,35 @@ const executionEnvironmentSchema = z.strictObject({
   architecture: z.string().min(1),
   isolation: z.enum(["none", "process", "container", "virtual-machine"]),
 });
+
+/**
+ * Where the recording session's provider came from and how the other
+ * candidates fared. Session provenance, not observation identity: the same
+ * result observed under a different selection is the same observation.
+ */
+const providerSelectionProvenanceSchema = z
+  .strictObject({
+    selection_source: z.enum([
+      "request",
+      "environment",
+      "auto-single-candidate",
+    ]),
+    candidates: z.array(
+      z.strictObject({
+        provider: providerSchema,
+        selected: z.boolean(),
+        availability: z.enum(["available", "unavailable", "unknown"]),
+        target_support: z.enum(["supported", "unsupported", "unknown"]),
+        rejection_codes: z.array(z.string().min(1)),
+      }),
+    ),
+  })
+  .describe(
+    "Selected-session provider provenance; excluded from Evidence semantic identity.",
+  );
+export type ProviderSelectionProvenance = z.infer<
+  typeof providerSelectionProvenanceSchema
+>;
 const callerInputPathsSchema = z.record(
   nulFreeStringSchema,
   z.union([nulFreeStringSchema, z.array(nulFreeStringSchema)]),
@@ -112,6 +141,11 @@ const evidenceBaseSchema = z
       .exactOptional()
       .describe(
         "Verbatim auxiliary input paths keyed by argument name; repeated selections retain their order. Caller assertions are outside semantic identity.",
+      ),
+    provider_selection: providerSelectionProvenanceSchema
+      .exactOptional()
+      .describe(
+        "Provider selection provenance of the recording session; absent on older records and outside semantic identity.",
       ),
     raw_result: jsonValueSchema.nullable(),
     normalized_result: jsonValueSchema,
@@ -325,7 +359,8 @@ export const evidenceDisplayMetadataAgree = (
   left.subject?.name === right.subject?.name &&
   left.subject?.local_path === right.subject?.local_path &&
   left.caller_input_path === right.caller_input_path &&
-  isDeepStrictEqual(left.caller_input_paths, right.caller_input_paths);
+  isDeepStrictEqual(left.caller_input_paths, right.caller_input_paths) &&
+  isDeepStrictEqual(left.provider_selection, right.provider_selection);
 
 /** Recognize authenticated Evidence in a union of partial observations. */
 export const tryParseEvidence = (input: unknown): Evidence | undefined => {
@@ -405,6 +440,19 @@ export const withEvidenceCallerInputPath = (
       : { caller_input_path: callerInputPath }),
     ...(paths === undefined ? {} : { caller_input_paths: paths }),
   };
+  return rememberReboundEvidence(owned, rebound);
+};
+
+/** Bind the recording session's provider selection facts without changing semantic identity. */
+export const withEvidenceProviderSelection = (
+  evidence: Evidence,
+  selection: ProviderSelectionProvenance | undefined,
+): Evidence => {
+  if (selection === undefined) return immutableEvidence(evidence);
+  const provenance = providerSelectionProvenanceSchema.parse(selection);
+  const owned = immutableEvidence(evidence);
+  if (isDeepStrictEqual(owned.provider_selection, provenance)) return owned;
+  const rebound = { ...owned, provider_selection: provenance };
   return rememberReboundEvidence(owned, rebound);
 };
 

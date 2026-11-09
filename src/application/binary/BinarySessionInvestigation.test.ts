@@ -177,6 +177,42 @@ it("preserves metadata invalidation across reset until the mutated engine is ret
   }
 });
 
+it("records the selected session's provider provenance with every admitted observation", async () => {
+  const [target] = await createBinarySessionTargets();
+  const session = createTestBinarySession(createCacheProvider([]));
+  try {
+    expect((await session.open(target)).ok).toBe(true);
+    expect(
+      (
+        await session.execute("address_name", {
+          address: "0x1000",
+          document: "fixture",
+        })
+      ).ok,
+    ).toBe(true);
+    const records = session.exportEvidenceBundle().records;
+    expect(records.length).toBeGreaterThan(0);
+    for (const record of records)
+      expect(record.provider_selection).toMatchObject({
+        selection_source: expect.stringMatching(
+          /^(request|environment|auto-single-candidate)$/u,
+        ),
+        candidates: [
+          expect.objectContaining({
+            provider: expect.objectContaining({ id: "fixture", version: "1" }),
+            selected: true,
+          }),
+        ],
+      });
+    // Provenance is session metadata, so semantic identity is unchanged.
+    expect(parseEvidenceBundle(session.exportEvidenceBundle()).records).toEqual(
+      records,
+    );
+  } finally {
+    await session.dispose();
+  }
+});
+
 it("preserves records through failed disposal and clears them only after its owned cleanup succeeds", async () => {
   const [target] = await createBinarySessionTargets();
   const client = new ControllableAnalysisClient();

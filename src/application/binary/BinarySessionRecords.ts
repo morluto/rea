@@ -3,6 +3,10 @@ import { analysisProfilesEqual } from "../../domain/analysisProfile.js";
 import type { AnalysisSnapshot } from "../../domain/analysisSnapshot.js";
 import type { BinaryTarget } from "../../domain/binaryTargetTypes.js";
 import type { Evidence } from "../../domain/evidence.js";
+import {
+  withEvidenceProviderSelection,
+  type ProviderSelectionProvenance,
+} from "../../domain/evidence.js";
 import type { EvidenceBundle } from "../../domain/evidenceBundle.js";
 import type { JsonValue } from "../../domain/jsonValue.js";
 import { evidenceBundleForTarget } from "../../domain/evidenceBundle.js";
@@ -71,6 +75,8 @@ export interface ActiveAnalysisBinding {
   readonly profile: AnalysisProfileCommitment | null;
   /** Current route profile for the single profileless native dispatch workflow. */
   readonly profilelessWorkflowProfile?: AnalysisProfileCommitment;
+  /** Recording session's provider selection, retained with every admitted record. */
+  readonly providerSelection?: ProviderSelectionProvenance;
 }
 
 /** Validated composed-workflow payload bound to the active target and profile. */
@@ -121,7 +127,13 @@ export abstract class BinarySessionRecords {
   ): Result<"added" | "duplicate", AnalysisError> {
     if (this.#investigationDisposed)
       return err(new AnalysisCancelledError("record_evidence"));
-    const recorded = this.#records.recordEvidence(evidence);
+    // Selection facts belong to the session that admitted the observation, so
+    // every record stays attributable to the exact engine that produced it.
+    const attributed = withEvidenceProviderSelection(
+      evidence,
+      this.activeAnalysisBinding()?.providerSelection,
+    );
+    const recorded = this.#records.recordEvidence(attributed);
     if (recorded.ok && recorded.value === "added") this.#emitSnapshotChanged();
     return recorded;
   }

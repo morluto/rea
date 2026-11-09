@@ -50,6 +50,7 @@ import {
   routeAllowsSnapshotReplay,
   routeProviderIdentity,
 } from "./SessionProviderPolicy.js";
+import { selectionProvenanceForRoute } from "./ProviderSelectionProvenance.js";
 import { InvestigationRecords } from "../investigation/InvestigationRecords.js";
 import { recordEvidenceSources } from "../investigation/recordEvidenceSources.js";
 import { recoverProviderSourceFailure } from "../investigation/sourcePublicationRecovery.js";
@@ -751,12 +752,14 @@ export class BinarySession
     }
     const profilelessWorkflowProfile =
       profile === null ? profilelessNativeDispatchProfile(route) : undefined;
+    const providerSelection = selectionProvenanceForRoute(route);
     this.#active = {
       target,
       profile,
       ...(profilelessWorkflowProfile === undefined
         ? {}
         : { profilelessWorkflowProfile }),
+      ...(providerSelection === undefined ? {} : { providerSelection }),
       ...run,
       nativeSourceAdmitted: false,
     };
