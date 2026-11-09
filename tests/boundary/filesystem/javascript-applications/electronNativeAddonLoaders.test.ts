@@ -5,10 +5,13 @@ import { join } from "node:path";
 import { createPackageWithOptions } from "@electron/asar";
 import { expect, it } from "vitest";
 
+import { createElectronNativeAddonResolver } from "../../../../src/application/javascript/ElectronBoundaryNativeResolution.js";
+import { JavaScriptJsonDocuments } from "../../../../src/application/javascript/JavaScriptJsonDocuments.js";
 import { traceApplicationFeatureEvidence } from "../../../../src/application/javascript/JavaScriptApplicationWorkflowService.js";
 import { projectAnalysisError } from "../../../../src/domain/analysisErrorProjection.js";
 import { createEvidence } from "../../../../src/domain/evidence.js";
 import { javascriptApplicationAnalysisResultSchema } from "../../../../src/domain/javascript/javascriptApplicationAnalysis.js";
+import type { JavaScriptArtifactFile } from "../../../../src/domain/javascript/javascriptArtifactFiles.js";
 import { createTestTempDirectory } from "../../../fixtures/temporaryDirectory.js";
 import { writeFixtureFiles } from "../../../support/javascriptApplicationFixture.js";
 import { analyzeJavaScriptApplication } from "../../../support/javascriptApplicationScope.js";
@@ -266,4 +269,202 @@ it("links post-pack code-signed unpacked ASAR addons under record-and-continue w
       evidence_ids: [signedEvidence.evidence_id],
     }),
   ]);
+});
+
+it("selects app.asar.unpacked binaries for rewritten loads and preserves anchored directory and URL paths", async () => {
+  const root = await createTestTempDirectory("rea-unpacked-and-url-addons-");
+  const packedBytes = "packed-asar-addon-bytes";
+  const unpackedBytes = "loose-unpacked-addon-bytes";
+  const nestedBytes = "nested-native-addon-bytes";
+  const spaceUrlBytes = "space-decoded-url-addon-bytes";
+
+  await writeFixtureFiles(root, {
+    "resources/app.asar/package.json": JSON.stringify({
+      name: "packaged-dir-app",
+      main: "src/main.cjs",
+    }),
+    "resources/app.asar/src/main.cjs": `
+      const { ipcMain } = require("electron");
+      const path = require("node:path");
+      const vault = require("../node_modules/vault/index.cjs");
+      const missing = require("../node_modules/packed-only/index.cjs");
+      const nested = require(\`\${path.join(__dirname, "native")}/addon.node\`);
+      const urlAddon = require("./url-loader.mjs");
+      ipcMain.handle("app:boot", () => [vault, missing, nested, urlAddon]);
+    `,
+    "resources/app.asar/src/addon.node": "wrong-sibling-decoy-bytes",
+    "resources/app.asar/src/native/addon.node": nestedBytes,
+    "resources/app.asar/src/url-loader.mjs": `
+      import { createRequire } from "node:module";
+      import { fileURLToPath } from "node:url";
+      const req = createRequire(import.meta.url);
+      export const space = req(
+        fileURLToPath(
+          new URL(\`./native%20dir/\${process.platform}/space%20addon.node?v=1#hash\`, import.meta.url),
+        ),
+      );
+    `,
+    "resources/app.asar/src/native dir/darwin/space addon.node": spaceUrlBytes,
+    "resources/app.asar/node_modules/vault/package.json": JSON.stringify({
+      name: "vault",
+      main: "index.cjs",
+    }),
+    "resources/app.asar/node_modules/vault/index.cjs": `
+      const load = require("node-gyp-build");
+      module.exports = load(__dirname.replace("app.asar", "app.asar.unpacked"));
+    `,
+    "resources/app.asar/node_modules/vault/prebuilds/darwin-arm64/vault.node":
+      packedBytes,
+    "resources/app.asar.unpacked/node_modules/vault/prebuilds/darwin-arm64/vault.node":
+      unpackedBytes,
+    "resources/app.asar/node_modules/packed-only/package.json": JSON.stringify({
+      name: "packed-only",
+      main: "index.cjs",
+    }),
+    "resources/app.asar/node_modules/packed-only/index.cjs": `
+      const load = require("node-gyp-build");
+      module.exports = load(__dirname.replace("app.asar", "app.asar.unpacked"));
+    `,
+    "resources/app.asar/node_modules/packed-only/prebuilds/darwin-arm64/only.node":
+      "packed-only-should-not-match",
+  });
+
+  const analyzed = await analyzeJavaScriptApplication({ input_path: root });
+  if (!analyzed.ok) throw analyzed.error;
+  const result = javascriptApplicationAnalysisResultSchema.parse(
+    analyzed.value.normalized_result,
+  );
+  expect(result.summary).toMatchObject({
+    native_addon_bindings: 4,
+    resolved_native_addon_bindings: 3,
+  });
+
+  const unpackedPath =
+    "resources/app.asar.unpacked/node_modules/vault/prebuilds/darwin-arm64/vault.node";
+  const unpackedEvidence = createSimulatedNativeEvidence(
+    join(root, unpackedPath),
+    unpackedBytes,
+  );
+  const traced = traceApplicationFeatureEvidence({
+    application: analyzed.value,
+    seed: { kind: "module", value: "resources/app.asar/src/main.cjs" },
+    direction: "outgoing",
+    native_observations: [unpackedEvidence],
+  });
+  if (!traced.ok) throw traced.error;
+
+  const byPath = new Map(
+    traced.value.result.native_handoffs.map((handoff) => [
+      handoff.artifact_path,
+      handoff,
+    ]),
+  );
+  expect([...byPath.keys()].sort()).toEqual([
+    "resources/app.asar.unpacked/node_modules/vault/prebuilds/darwin-arm64/vault.node",
+    "resources/app.asar/src/native dir/darwin/space addon.node",
+    "resources/app.asar/src/native/addon.node",
+  ]);
+  expect(byPath.get(unpackedPath)).toMatchObject({
+    artifact_sha256: sha256Hex(unpackedBytes),
+    status: "evidence-linked",
+  });
+  expect(byPath.get("resources/app.asar/src/native/addon.node")).toMatchObject({
+    artifact_sha256: sha256Hex(nestedBytes),
+  });
+  expect(
+    byPath.get("resources/app.asar/src/native dir/darwin/space addon.node"),
+  ).toMatchObject({
+    artifact_sha256: sha256Hex(spaceUrlBytes),
+  });
+});
+
+it("indexes native addon inventory once across repeated helper resolutions", () => {
+  const mkFile = (
+    path: string,
+    kind: JavaScriptArtifactFile["kind"],
+    textValue?: string,
+  ): JavaScriptArtifactFile => ({
+    path,
+    sha256: sha256Hex(path),
+    container_sha256: "0".repeat(64),
+    bytes: 16,
+    inventory_artifact_id: "resolver-cache-fixture",
+    kind,
+    unpacked: false,
+    text:
+      textValue !== undefined
+        ? { included: true, value: textValue }
+        : { included: false, reason: "not-applicable" },
+  });
+  const baseFiles = new Map<string, JavaScriptArtifactFile>([
+    [
+      "pkg/package.json",
+      mkFile("pkg/package.json", "package-json", '{"name":"pkg"}'),
+    ],
+    ["pkg/a.cjs", mkFile("pkg/a.cjs", "javascript", "")],
+    ["pkg/b.cjs", mkFile("pkg/b.cjs", "javascript", "")],
+    [
+      "pkg/prebuilds/darwin-arm64/addon.node",
+      mkFile("pkg/prebuilds/darwin-arm64/addon.node", "native-addon"),
+    ],
+    [
+      "pkg/build/Release/extra.node",
+      mkFile("pkg/build/Release/extra.node", "native-addon"),
+    ],
+  ]);
+  let fullIterations = 0;
+  const countedFiles: ReadonlyMap<string, JavaScriptArtifactFile> = {
+    get size() {
+      return baseFiles.size;
+    },
+    get: (key) => baseFiles.get(key),
+    has: (key) => baseFiles.has(key),
+    entries: () => baseFiles.entries(),
+    keys: () => baseFiles.keys(),
+    values: () => baseFiles.values(),
+    forEach: (cb, thisArg) => baseFiles.forEach(cb, thisArg),
+    [Symbol.iterator]() {
+      fullIterations += 1;
+      return baseFiles[Symbol.iterator]();
+    },
+  };
+  const resolver = createElectronNativeAddonResolver({
+    files: countedFiles,
+    jsonDocuments: new JavaScriptJsonDocuments(),
+  });
+  const ngbFinding = {
+    module_kind: "require" as const,
+    binding_kind: "require" as const,
+    specifier: "node-gyp-build:.",
+    members: [],
+    namespace_access: true,
+    dynamic_member_access: false,
+    module_key: null,
+    location: { start: { line: 1, column: 0 }, end: { line: 1, column: 10 } },
+    resolution: { kind: "node-gyp-build" as const, directory: null },
+  };
+  const bindingsFinding = {
+    ...ngbFinding,
+    specifier: "extra.node",
+    resolution: {
+      kind: "bindings" as const,
+      addon_name: "extra.node",
+      module_root: null,
+    },
+  };
+  expect(resolver.resolve(baseFiles.get("pkg/a.cjs")!, ngbFinding)).toEqual([
+    "pkg/build/Release/extra.node",
+    "pkg/prebuilds/darwin-arm64/addon.node",
+  ]);
+  expect(resolver.resolve(baseFiles.get("pkg/b.cjs")!, ngbFinding)).toEqual([
+    "pkg/build/Release/extra.node",
+    "pkg/prebuilds/darwin-arm64/addon.node",
+  ]);
+  expect(
+    resolver.resolve(baseFiles.get("pkg/a.cjs")!, bindingsFinding),
+  ).toEqual(["pkg/build/Release/extra.node"]);
+  expect(
+    resolver.resolve(baseFiles.get("pkg/b.cjs")!, bindingsFinding),
+  ).toEqual(["pkg/build/Release/extra.node"]);
+  expect(fullIterations).toBe(1);
 });

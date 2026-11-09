@@ -202,17 +202,20 @@ export type ElectronNativeAddonResolution =
   | {
       readonly kind: "node-gyp-build";
       readonly directory: string | null;
+      readonly asar_unpacked?: boolean;
     }
   | {
       readonly kind: "bindings";
       readonly addon_name: string;
       readonly module_root: string | null;
+      readonly asar_unpacked?: boolean;
     }
   | {
       readonly kind: "candidates";
       readonly resolution_context: JavaScriptStaticPathContext;
       readonly candidates: readonly string[];
       readonly resolution_base_path?: string;
+      readonly asar_unpacked?: boolean;
     };
 
 /** JavaScript-side binding or re-export requested from one native .node addon. */

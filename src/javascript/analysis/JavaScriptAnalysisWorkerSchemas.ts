@@ -303,17 +303,20 @@ const electron = z
             z.strictObject({
               kind: z.literal("node-gyp-build"),
               directory: z.string().nullable(),
+              asar_unpacked: z.boolean().exactOptional(),
             }),
             z.strictObject({
               kind: z.literal("bindings"),
               addon_name: z.string(),
               module_root: z.string().nullable(),
+              asar_unpacked: z.boolean().exactOptional(),
             }),
             z.strictObject({
               kind: z.literal("candidates"),
               resolution_context: pathContext,
               candidates: strings,
               resolution_base_path: z.string().exactOptional(),
+              asar_unpacked: z.boolean().exactOptional(),
             }),
           ])
           .optional(),

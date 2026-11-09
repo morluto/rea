@@ -13,6 +13,7 @@ import type {
   JavaScriptArtifactFileKind,
 } from "../../domain/javascript/javascriptArtifactFiles.js";
 import type { JsonValue } from "../../domain/jsonValue.js";
+import type { ElectronNativeAddonResolver } from "./ElectronBoundaryNativeResolution.js";
 import type { JavaScriptJsonDocuments } from "./JavaScriptJsonDocuments.js";
 
 interface JavaScriptStructuredObservation {
@@ -214,6 +215,7 @@ export const isSkippedJavaScriptAnalysis = (
 export interface JavaScriptArtifactAnalysis {
   /** Internal source-facts owner shared with graph path resolution. */
   readonly jsonDocuments: JavaScriptJsonDocuments;
+  readonly nativeAddonResolver?: ElectronNativeAddonResolver;
   readonly files: readonly AnalyzedJavaScriptArtifactFile[];
   readonly packages: readonly JavaScriptPackageObservation[];
   readonly json_modules: readonly JavaScriptJsonModuleObservation[];

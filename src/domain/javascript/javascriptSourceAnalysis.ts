@@ -6,6 +6,7 @@ import type { AnalysisError } from "../analysisErrorBase.js";
 import type { AnalysisResourceConstraintError } from "../analysisErrorCore.js";
 import type { Result } from "../result.js";
 import type { JavaScriptArtifactFile } from "./javascriptArtifactFiles.js";
+import type { ElectronNativeAddonBindingFinding } from "./electronStaticAnalysisTypes.js";
 import type { JavaScriptStaticAnalysis } from "./javascriptStaticAnalysisTypes.js";
 import type { JavaScriptModuleSemanticIr } from "./javascriptModuleSemanticIr.js";
 import type { JavaScriptPackageType } from "./javascriptSourceParser.js";
@@ -53,6 +54,11 @@ export interface JavaScriptSourceAnalysisPort {
     packageType?: JavaScriptPackageType,
     /** Discover loader declarations without retaining semantic projections. */
     purpose?: "analysis" | "preload-discovery",
+    /** Count resolved native-addon targets for parent projection admission. */
+    resolveNativeAddonTargets?: (
+      file: JavaScriptArtifactFile,
+      finding: ElectronNativeAddonBindingFinding,
+    ) => number,
   ): Promise<Result<JavaScriptAnalyzedSource, JavaScriptSourceAnalysisFailure>>;
   close(): Promise<void>;
 }

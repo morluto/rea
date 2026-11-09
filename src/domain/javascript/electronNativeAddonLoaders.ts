@@ -12,7 +12,11 @@ import {
   semanticStaticPropertyKey,
   unwrapJavaScriptExpression,
 } from "./javascriptAstValues.js";
-import { builtinDataEffectCallablePath } from "./javascriptSemanticDataEffectHelpers.js";
+import { resolveElectronOptionObject } from "./electronStaticOptionObjects.js";
+import {
+  builtinDataEffectCallablePath,
+  semanticProcessHostAxis,
+} from "./javascriptSemanticDataEffectHelpers.js";
 import {
   isUnmodifiedGlobalReference,
   isUnmodifiedImportMetaUrl,
@@ -25,12 +29,10 @@ import { semanticRequireCallAt } from "./javascriptSemanticRequireOrigin.js";
 import {
   resolveSemanticBindingState,
   semanticStableInitializer,
+  type JavaScriptBindingIndex,
   type JavaScriptSemanticAnalysisState,
 } from "./javascriptSemanticState.js";
-import {
-  evaluateSemanticExpression,
-  evaluateSemanticExpressionProvenance,
-} from "./javascriptSemanticValues.js";
+import { evaluateSemanticExpression } from "./javascriptSemanticValues.js";
 import { javaScriptRuntimeContext } from "./javascriptSourceParser.js";
 import {
   argumentNode,
@@ -53,6 +55,7 @@ type PathPiece =
 interface NativePathTemplateFact {
   readonly pieces: readonly PathPiece[];
   readonly base: "source-directory" | "literal-path";
+  readonly asarUnpacked?: boolean;
 }
 
 export interface NativeMemberAccess {
@@ -140,8 +143,9 @@ export const nativeCallReceiver = (
 export const resolveDlopenCall = (
   node: t.CallExpression | t.OptionalCallExpression,
   context: JavaScriptFindingContext,
-  bindings: JavaScriptSemanticAnalysisState,
+  index: JavaScriptBindingIndex,
 ): ResolvedDlopenCall | undefined => {
+  const { bindings } = index;
   if (!isProvenProcessDlopen(node.callee, bindings)) return undefined;
   const rawModule = argumentNode(node.arguments[0]);
   const rawFilename = argumentNode(node.arguments[1]);
@@ -172,52 +176,14 @@ export const resolveDlopenCall = (
     t.isCallExpression(filenameExpr) ||
     t.isOptionalCallExpression(filenameExpr)
   ) {
-    const resolvedCall = semanticRequireCallAt(
+    const resolvedRequire = resolveDlopenRequireResolve(
       filenameExpr,
-      bindings,
-      context.accumulator.factoryRequireBindingIds,
+      kind,
+      access,
+      context,
+      index,
     );
-    if (resolvedCall !== undefined && resolvedCall.operation === "resolve") {
-      if (resolvedCall.loader === "local") return undefined;
-      if (resolvedCall.loader === "unknown" || !resolvedCall.sourceRelative) {
-        context.accumulator.unknownFindings += 1;
-        return undefined;
-      }
-      const resolveArg = argumentNode(resolvedCall.arguments?.[0]);
-      const expanded =
-        resolveArg === undefined
-          ? undefined
-          : expandNativePathTemplate(
-              resolveArg,
-              context,
-              bindings,
-              filenameExpr,
-            );
-      if (expanded === undefined) {
-        context.accumulator.unknownFindings += 1;
-        return undefined;
-      }
-      return {
-        specifier: expanded.display,
-        kind,
-        access,
-        resolution:
-          expanded.base === "source-directory"
-            ? {
-                kind: "candidates",
-                resolution_context: "filesystem-expression",
-                candidates: expanded.candidates,
-              }
-            : {
-                kind: "candidates",
-                resolution_context: "module-specifier",
-                candidates: expanded.candidates,
-                ...(resolvedCall.sourceRelativePath === undefined
-                  ? {}
-                  : { resolution_base_path: resolvedCall.sourceRelativePath }),
-              },
-      };
-    }
+    if (resolvedRequire !== "not-require-resolve") return resolvedRequire;
   }
   const expanded = expandNativePathTemplate(
     filenameExpr,
@@ -240,7 +206,78 @@ export const resolveDlopenCall = (
       // host mount layout unless anchored to the source file's directory.
       candidates:
         expanded.base === "source-directory" ? expanded.candidates : [],
+      ...(expanded.base === "source-directory" && expanded.asarUnpacked
+        ? { asar_unpacked: true }
+        : {}),
     },
+  };
+};
+
+const resolveDlopenRequireResolve = (
+  filenameExpr: t.CallExpression | t.OptionalCallExpression,
+  kind: "require" | "re-export",
+  access: NativeMemberAccess,
+  context: JavaScriptFindingContext,
+  index: JavaScriptBindingIndex,
+): ResolvedDlopenCall | undefined | "not-require-resolve" => {
+  const { bindings } = index;
+  const resolvedCall = semanticRequireCallAt(
+    filenameExpr,
+    bindings,
+    context.accumulator.factoryRequireBindingIds,
+  );
+  if (resolvedCall === undefined || resolvedCall.operation !== "resolve")
+    return "not-require-resolve";
+  if (resolvedCall.loader === "local") return undefined;
+  const callee = unwrapJavaScriptExpression(filenameExpr.callee).node;
+  const resolveMemberChanged =
+    (t.isMemberExpression(callee) || t.isOptionalMemberExpression(callee)) &&
+    t.isExpression(callee.object) &&
+    index
+      .effectsForReferenceAt(filenameExpr, callee.object, ["resolve"])
+      .effects.some(
+        ({ kind: effectKind, timing }) =>
+          timing !== "after" &&
+          (effectKind === "member-write" || effectKind === "escape"),
+      );
+  if (
+    resolveMemberChanged ||
+    resolvedCall.loader === "unknown" ||
+    !resolvedCall.sourceRelative
+  ) {
+    context.accumulator.unknownFindings += 1;
+    return undefined;
+  }
+  const resolveArg = argumentNode(resolvedCall.arguments?.[0]);
+  const expanded =
+    resolveArg === undefined
+      ? undefined
+      : expandNativePathTemplate(resolveArg, context, bindings, filenameExpr);
+  if (expanded === undefined) {
+    context.accumulator.unknownFindings += 1;
+    return undefined;
+  }
+  return {
+    specifier: expanded.display,
+    kind,
+    access,
+    resolution:
+      expanded.base === "source-directory"
+        ? {
+            kind: "candidates",
+            resolution_context: "filesystem-expression",
+            candidates: expanded.candidates,
+            ...(expanded.asarUnpacked ? { asar_unpacked: true } : {}),
+          }
+        : {
+            kind: "candidates",
+            resolution_context: "module-specifier",
+            candidates: expanded.candidates,
+            ...(resolvedCall.sourceRelativePath === undefined
+              ? {}
+              : { resolution_base_path: resolvedCall.sourceRelativePath }),
+            ...(expanded.asarUnpacked ? { asar_unpacked: true } : {}),
+          },
   };
 };
 
@@ -248,8 +285,9 @@ export const resolveDlopenCall = (
 export const resolveNativeLoaderCall = (
   node: t.Node | null | undefined,
   context: JavaScriptFindingContext,
-  bindings: JavaScriptSemanticAnalysisState,
+  index: JavaScriptBindingIndex,
 ): ResolvedNativeLoaderCall | undefined => {
+  const { bindings } = index;
   if (node == null) return undefined;
   node = unwrapJavaScriptExpression(node).node;
   let member: string | null = null;
@@ -285,7 +323,7 @@ export const resolveNativeLoaderCall = (
     return resolveBindingsHelperCall(
       node,
       context,
-      bindings,
+      index,
       hasMemberAccess,
       access,
     );
@@ -344,30 +382,36 @@ const resolveNodeGypBuildCall = (
       access,
       resolution: { kind: "node-gyp-build", directory: null },
     };
-  const directory = resolveSourceAnchoredDirectory(
+  const anchored = resolveSourceAnchoredDirectory(
     unwrapped,
     context,
     bindings,
+    node,
   );
-  if (directory === undefined) {
+  if (anchored === undefined) {
     context.accumulator.unknownFindings += 1;
     return undefined;
   }
   return {
-    specifier: `node-gyp-build:${directory}`,
+    specifier: `node-gyp-build:${anchored.directory}`,
     hasMemberAccess,
     access,
-    resolution: { kind: "node-gyp-build", directory },
+    resolution: {
+      kind: "node-gyp-build",
+      directory: anchored.directory,
+      ...(anchored.asarUnpacked ? { asar_unpacked: true } : {}),
+    },
   };
 };
 
 const resolveBindingsHelperCall = (
   node: t.CallExpression | t.OptionalCallExpression,
   context: JavaScriptFindingContext,
-  bindings: JavaScriptSemanticAnalysisState,
+  index: JavaScriptBindingIndex,
   hasMemberAccess: boolean,
   access: NativeMemberAccess,
 ): ResolvedNativeLoaderCall | undefined => {
+  const { bindings } = index;
   if (node.arguments.length !== 1 || t.isSpreadElement(node.arguments[0])) {
     context.accumulator.unknownFindings += 1;
     return undefined;
@@ -395,13 +439,14 @@ const resolveBindingsHelperCall = (
       },
     };
   }
-  const objectNode = resolveStaticObjectExpression(arg0, bindings);
+  const objectNode = resolveElectronOptionObject(arg0, node, index);
   if (objectNode === undefined) {
     context.accumulator.unknownFindings += 1;
     return undefined;
   }
   let rawAddonName: string | undefined;
   let moduleRoot: string | null = null;
+  let moduleRootUnpacked = false;
   for (const prop of objectNode.properties) {
     if (t.isSpreadElement(prop) || t.isObjectMethod(prop)) {
       context.accumulator.unknownFindings += 1;
@@ -423,17 +468,20 @@ const resolveBindingsHelperCall = (
       const valueNode = unwrapJavaScriptExpression(prop.value).node;
       if (isUnshadowedGlobal(valueNode, bindings, "undefined")) {
         moduleRoot = null;
+        moduleRootUnpacked = false;
       } else {
         const resolved = resolveSourceAnchoredDirectory(
           valueNode,
           context,
           bindings,
+          node,
         );
         if (resolved === undefined) {
           context.accumulator.unknownFindings += 1;
           return undefined;
         }
-        moduleRoot = resolved;
+        moduleRoot = resolved.directory;
+        moduleRootUnpacked = resolved.asarUnpacked;
       }
     }
   }
@@ -453,6 +501,7 @@ const resolveBindingsHelperCall = (
       kind: "bindings",
       addon_name: addonName,
       module_root: moduleRoot,
+      ...(moduleRootUnpacked ? { asar_unpacked: true } : {}),
     },
   };
 };
@@ -522,6 +571,7 @@ const resolveRequireNativeCall = (
             kind: "candidates",
             resolution_context: "filesystem-expression",
             candidates: expanded.candidates,
+            ...(expanded.asarUnpacked ? { asar_unpacked: true } : {}),
           }
         : {
             kind: "candidates",
@@ -530,6 +580,7 @@ const resolveRequireNativeCall = (
             ...(call.sourceRelativePath === undefined
               ? {}
               : { resolution_base_path: call.sourceRelativePath }),
+            ...(expanded.asarUnpacked ? { asar_unpacked: true } : {}),
           },
   };
 };
@@ -554,21 +605,30 @@ const resolveSourceAnchoredDirectory = (
   raw: t.Node,
   context: JavaScriptFindingContext,
   bindings: JavaScriptSemanticAnalysisState,
+  site: t.Node,
   visited: ReadonlySet<string> = new Set(),
-): string | undefined => {
+):
+  | { readonly directory: string; readonly asarUnpacked: boolean }
+  | undefined => {
   const node = unwrapJavaScriptExpression(raw).node;
   const unpackedReceiver = unwrapAsarUnpackedReplace(node, bindings);
-  if (unpackedReceiver !== undefined)
-    return resolveSourceAnchoredDirectory(
+  if (unpackedReceiver !== undefined) {
+    const inner = resolveSourceAnchoredDirectory(
       unpackedReceiver,
       context,
       bindings,
+      site,
       visited,
     );
-  if (context.pathIntrinsics?.(node, "source-directory") === true) return ".";
+    return inner === undefined
+      ? undefined
+      : { directory: inner.directory, asarUnpacked: true };
+  }
+  if (context.pathIntrinsics?.(node, "source-directory") === true)
+    return { directory: ".", asarUnpacked: false };
   const fileExpr = staticFileExpressionPath(node, context.pathIntrinsics);
   if (fileExpr?.base === "source-directory")
-    return posix.normalize(fileExpr.path);
+    return { directory: posix.normalize(fileExpr.path), asarUnpacked: false };
   if (t.isIdentifier(node)) {
     const binding = resolveSemanticBindingState(bindings, node, node.name);
     if (
@@ -579,42 +639,36 @@ const resolveSourceAnchoredDirectory = (
     )
       return undefined;
     const stable = semanticStableInitializer(binding, bindings);
-    if (stable !== undefined && stable.projection.length === 0)
-      return resolveSourceAnchoredDirectory(
-        stable.node,
-        context,
-        bindings,
-        new Set([...visited, binding.bindingId]),
-      );
+    return stable !== undefined && stable.projection.length === 0
+      ? resolveSourceAnchoredDirectory(
+          stable.node,
+          context,
+          bindings,
+          site,
+          new Set([...visited, binding.bindingId]),
+        )
+      : undefined;
   }
-  return undefined;
-};
-
-const resolveStaticObjectExpression = (
-  raw: t.Node,
-  bindings: JavaScriptSemanticAnalysisState,
-  visited: ReadonlySet<string> = new Set(),
-): t.ObjectExpression | undefined => {
-  const node = unwrapJavaScriptExpression(raw).node;
-  if (t.isObjectExpression(node)) return node;
-  if (!t.isIdentifier(node)) return undefined;
-  const binding = resolveSemanticBindingState(bindings, node, node.name);
+  const fact = evaluatePathTemplateFact(
+    node,
+    context,
+    bindings,
+    site,
+    0,
+    visited,
+  );
   if (
-    binding === undefined ||
-    binding.mutable ||
-    binding.referenceInitializers.length > 0 ||
-    binding.memberWrites.length > 0 ||
-    visited.has(binding.bindingId)
+    fact?.base === "source-directory" &&
+    fact.pieces.length === 1 &&
+    fact.pieces[0]?.kind === "text" &&
+    fact.pieces[0].value !== "" &&
+    !fact.pieces[0].value.includes("\0")
   )
-    return undefined;
-  const stable = semanticStableInitializer(binding, bindings);
-  return stable !== undefined && stable.projection.length === 0
-    ? resolveStaticObjectExpression(
-        stable.node,
-        bindings,
-        new Set([...visited, binding.bindingId]),
-      )
-    : undefined;
+    return {
+      directory: posix.normalize(fact.pieces[0].value),
+      asarUnpacked: fact.asarUnpacked === true,
+    };
+  return undefined;
 };
 
 const isProvenProcessDlopen = (
@@ -653,6 +707,7 @@ const expandNativePathTemplate = (
       readonly display: string;
       readonly base: "source-directory" | "literal-path";
       readonly candidates: readonly string[];
+      readonly asarUnpacked?: boolean;
     }
   | undefined => {
   const fact = evaluatePathTemplateFact(
@@ -672,21 +727,11 @@ const expandNativePathTemplate = (
   );
   const platforms = usesPlatform ? HOST_PLATFORMS : ([null] as const);
   const arches = usesArch ? HOST_ARCHES : ([null] as const);
-  const render = (platform: string | null, arch: string | null): string =>
-    fact.pieces
-      .map((piece) =>
-        piece.kind === "text"
-          ? piece.value
-          : piece.axis === "platform"
-            ? (platform ?? "${platform}")
-            : (arch ?? "${arch}"),
-      )
-      .join("");
-  const display = render(null, null);
+  const display = renderTemplatePieces(fact.pieces, null, null);
   const candidates: string[] = [];
   for (const platform of platforms) {
     for (const arch of arches) {
-      const value = render(platform, arch);
+      const value = renderTemplatePieces(fact.pieces, platform, arch);
       if (value.includes("\0") || !isNativeSpecifier(value, "require"))
         return undefined;
       candidates.push(value);
@@ -695,8 +740,28 @@ const expandNativePathTemplate = (
   const unique = [...new Set(candidates)].sort(compareUnicodeCodePoints);
   return unique.length === 0
     ? undefined
-    : { display, base: fact.base, candidates: unique };
+    : {
+        display,
+        base: fact.base,
+        candidates: unique,
+        ...(fact.asarUnpacked ? { asarUnpacked: true } : {}),
+      };
 };
+
+const renderTemplatePieces = (
+  pieces: readonly PathPiece[],
+  platform: string | null,
+  arch: string | null,
+): string =>
+  pieces
+    .map((piece) =>
+      piece.kind === "text"
+        ? piece.value
+        : piece.axis === "platform"
+          ? (platform ?? "${platform}")
+          : (arch ?? "${arch}"),
+    )
+    .join("");
 
 const evaluatePathTemplateFact = (
   raw: t.Node,
@@ -805,16 +870,11 @@ const evaluateTemplateLiteralFact = (
   visitedBindings: ReadonlySet<string>,
 ): NativePathTemplateFact | undefined => {
   const pieces: PathPiece[] = [];
-  let anchored = false;
+  let leadingAnchored: NativePathTemplateFact | undefined;
   for (let index = 0; index < node.quasis.length; index += 1) {
     const cooked = node.quasis[index]?.value.cooked;
     if (cooked == null) return undefined;
-    if (index === 1 && anchored && !cooked.startsWith("/")) return undefined;
-    if (cooked !== "")
-      pieces.push({
-        kind: "text",
-        value: index === 1 && anchored ? posix.join(".", cooked) : cooked,
-      });
+    if (cooked !== "") pieces.push({ kind: "text", value: cooked });
     const expr = node.expressions[index];
     if (expr === undefined || !t.isExpression(expr)) {
       if (expr !== undefined) return undefined;
@@ -831,16 +891,22 @@ const evaluateTemplateLiteralFact = (
     if (evaluated === undefined) return undefined;
     if (evaluated.base === "source-directory") {
       if (index !== 0 || pieces.length > 0) return undefined;
-      anchored = true;
+      leadingAnchored = evaluated;
       continue;
     }
     pieces.push(...evaluated.pieces);
   }
-  if (anchored && pieces.length === 0) return undefined;
-  return {
-    pieces: compactPathPieces(pieces),
-    base: anchored ? "source-directory" : "literal-path",
-  };
+  const compacted = compactPathPieces(pieces);
+  if (leadingAnchored !== undefined) {
+    const first = compacted[0];
+    if (first?.kind !== "text" || !first.value.startsWith("/"))
+      return undefined;
+    return normalizeJoinedTemplateSegments(
+      [leadingAnchored, { pieces: compacted, base: "literal-path" }],
+      "source-directory",
+    );
+  }
+  return { pieces: compacted, base: "literal-path" };
 };
 
 const evaluateConcatenationFact = (
@@ -885,13 +951,10 @@ const evaluateConcatenationFact = (
     const first = compacted[0];
     if (first?.kind !== "text" || !first.value.startsWith("/"))
       return undefined;
-    return {
-      pieces: [
-        { kind: "text", value: posix.join(".", first.value) },
-        ...compacted.slice(1),
-      ],
-      base: "source-directory",
-    };
+    return normalizeJoinedTemplateSegments(
+      [leading, { pieces: compacted, base: "literal-path" }],
+      "source-directory",
+    );
   }
   return { pieces: compacted, base: "literal-path" };
 };
@@ -914,7 +977,9 @@ const evaluatePathCallFact = (
       depth + 1,
       visitedBindings,
     );
-    return inner?.base === "source-directory" ? inner : undefined;
+    return inner?.base === "source-directory"
+      ? { ...inner, asarUnpacked: true }
+      : undefined;
   }
   if (context.pathIntrinsics?.(node.callee, "file-url-to-path") === true)
     return evaluateFileUrlCallFact(
@@ -1001,22 +1066,73 @@ const evaluateFileUrlCallFact = (
     visitedBindings,
   );
   if (inner === undefined || inner.base !== "literal-path") return undefined;
-  // Validate with concrete safe tokens via staticSourceRelativeUrlPath.
-  const probeText = inner.pieces
-    .map((piece) => (piece.kind === "text" ? piece.value : "darwin"))
-    .join("");
-  const probeNode = t.newExpression(t.identifier("URL"), [
-    t.stringLiteral(probeText),
-    t.identifier("base"),
-  ]);
-  const probeResult = staticSourceRelativeUrlPath(probeNode);
+  return decodeUrlTemplatePieces(inner.pieces);
+};
+
+const decodeUrlTemplatePieces = (
+  rawPieces: readonly PathPiece[],
+): NativePathTemplateFact | undefined => {
+  const PLATFORM_TOKEN = "__rea_url_platform_token__";
+  const ARCH_TOKEN = "__rea_url_arch_token__";
   if (
-    probeResult === undefined ||
-    probeResult.directory ||
-    probeResult.path.startsWith("/")
+    rawPieces.some(
+      (piece) =>
+        piece.kind === "text" &&
+        (piece.value.includes(PLATFORM_TOKEN) ||
+          piece.value.includes(ARCH_TOKEN)),
+    )
   )
     return undefined;
-  return normalizeJoinedTemplateSegments([inner], "source-directory");
+  const tokenizedSpec = renderTemplatePieces(
+    rawPieces,
+    PLATFORM_TOKEN,
+    ARCH_TOKEN,
+  );
+  const tokenizedParsed = staticSourceRelativeUrlPath(
+    t.newExpression(t.identifier("URL"), [
+      t.stringLiteral(tokenizedSpec),
+      t.identifier("base"),
+    ]),
+  );
+  if (
+    tokenizedParsed === undefined ||
+    tokenizedParsed.directory ||
+    tokenizedParsed.path.startsWith("/")
+  )
+    return undefined;
+  const decodedPieces = splitTokenizedTemplatePieces(
+    tokenizedParsed.path,
+    PLATFORM_TOKEN,
+    ARCH_TOKEN,
+  );
+  const usesPlatform = rawPieces.some(
+    (piece) => piece.kind === "host" && piece.axis === "platform",
+  );
+  const usesArch = rawPieces.some(
+    (piece) => piece.kind === "host" && piece.axis === "arch",
+  );
+  const platforms = usesPlatform ? HOST_PLATFORMS : ([null] as const);
+  const arches = usesArch ? HOST_ARCHES : ([null] as const);
+  for (const platform of platforms) {
+    for (const arch of arches) {
+      const concreteSpec = renderTemplatePieces(rawPieces, platform, arch);
+      const concreteParsed = staticSourceRelativeUrlPath(
+        t.newExpression(t.identifier("URL"), [
+          t.stringLiteral(concreteSpec),
+          t.identifier("base"),
+        ]),
+      );
+      if (
+        concreteParsed === undefined ||
+        concreteParsed.directory ||
+        concreteParsed.path.startsWith("/") ||
+        concreteParsed.path !==
+          renderTemplatePieces(decodedPieces, platform, arch)
+      )
+        return undefined;
+    }
+  }
+  return { pieces: decodedPieces, base: "source-directory" };
 };
 
 const evaluatePathJoinFact = (
@@ -1105,15 +1221,7 @@ const normalizeJoinedTemplateSegments = (
   const PLATFORM_TOKEN = "__rea_host_platform_token__";
   const ARCH_TOKEN = "__rea_host_arch_token__";
   const encoded = parts.map((part) =>
-    part.pieces
-      .map((piece) =>
-        piece.kind === "text"
-          ? piece.value
-          : piece.axis === "platform"
-            ? PLATFORM_TOKEN
-            : ARCH_TOKEN,
-      )
-      .join(""),
+    renderTemplatePieces(part.pieces, PLATFORM_TOKEN, ARCH_TOKEN),
   );
   if (
     encoded.some(
@@ -1132,22 +1240,36 @@ const normalizeJoinedTemplateSegments = (
     return undefined;
   const joined = posix.join(...encoded);
   const trimmed = joined === "/" ? joined : joined.replace(/\/$/u, "");
+  return {
+    pieces: splitTokenizedTemplatePieces(trimmed, PLATFORM_TOKEN, ARCH_TOKEN),
+    base,
+    ...(parts.some((part) => part.asarUnpacked === true)
+      ? { asarUnpacked: true }
+      : {}),
+  };
+};
+
+const splitTokenizedTemplatePieces = (
+  text: string,
+  platformToken: string,
+  archToken: string,
+): PathPiece[] => {
   const pieces: PathPiece[] = [];
-  const tokenPattern = new RegExp(`(${PLATFORM_TOKEN}|${ARCH_TOKEN})`, "gu");
+  const tokenPattern = new RegExp(`(${platformToken}|${archToken})`, "gu");
   let cursor = 0;
-  for (const match of trimmed.matchAll(tokenPattern)) {
+  for (const match of text.matchAll(tokenPattern)) {
     const index = match.index ?? 0;
     if (index > cursor)
-      pieces.push({ kind: "text", value: trimmed.slice(cursor, index) });
+      pieces.push({ kind: "text", value: text.slice(cursor, index) });
     pieces.push({
       kind: "host",
-      axis: match[0] === PLATFORM_TOKEN ? "platform" : "arch",
+      axis: match[0] === platformToken ? "platform" : "arch",
     });
     cursor = index + match[0].length;
   }
-  if (cursor < trimmed.length)
-    pieces.push({ kind: "text", value: trimmed.slice(cursor) });
-  return { pieces: compactPathPieces(pieces), base };
+  if (cursor < text.length)
+    pieces.push({ kind: "text", value: text.slice(cursor) });
+  return compactPathPieces(pieces);
 };
 
 const compactPathPieces = (pieces: readonly PathPiece[]): PathPiece[] => {
@@ -1201,44 +1323,20 @@ const hostAxisAt = (
           visited,
         );
   }
+  const processAxis = semanticProcessHostAxis(
+    node,
+    bindings,
+    selectedProjection,
+  );
+  if (processAxis !== undefined) return processAxis;
   if (!t.isIdentifier(node)) return undefined;
   const binding = resolveSemanticBindingState(bindings, node, node.name);
-  if (binding === undefined) {
-    if (
-      selectedProjection.length === 1 &&
-      (selectedProjection[0] === "platform" ||
-        selectedProjection[0] === "arch") &&
-      !bindings.ambientWrites.covers([
-        "global",
-        "process",
-        selectedProjection[0],
-      ]) &&
-      isUnmodifiedGlobalReference(node, bindings, "process")
-    )
-      return selectedProjection[0];
-    return undefined;
-  }
-  if (visited.has(binding.bindingId)) return undefined;
-  const provenance = evaluateSemanticExpressionProvenance(node, bindings);
-  if (provenance.status === "module" && provenance.origins.length === 1) {
-    const origin = provenance.origins[0]!;
-    if (origin.specifier.replace(/^node:/u, "") === "process") {
-      const imported =
-        origin.resolutionMode !== "require" &&
-        origin.importedPath[0] === "default"
-          ? origin.importedPath.slice(1)
-          : origin.importedPath;
-      const fullPath = [...imported, ...selectedProjection];
-      if (
-        fullPath.length === 1 &&
-        (fullPath[0] === "platform" || fullPath[0] === "arch") &&
-        !bindings.ambientWrites.covers(["global", "process", fullPath[0]]) &&
-        binding.memberWrites.length === 0
-      )
-        return fullPath[0];
-    }
-  }
-  if (binding.mutable || binding.referenceInitializers.length > 0)
+  if (
+    binding === undefined ||
+    visited.has(binding.bindingId) ||
+    binding.mutable ||
+    binding.referenceInitializers.length > 0
+  )
     return undefined;
   const stable = semanticStableInitializer(binding, bindings);
   if (
@@ -1272,16 +1370,36 @@ const staticStringPiece = (
 
 const looksLikeUnresolvedNativePath = (raw: t.Node): boolean => {
   const node = unwrapJavaScriptExpression(raw).node;
+  const literal = stringValue(node);
+  if (literal !== undefined) return isNativeSpecifier(literal, "import");
   if (t.isTemplateLiteral(node)) {
     const tail = node.quasis.at(-1)?.value.cooked ?? "";
-    return tail.toLowerCase().endsWith(".node");
+    return isNativeSpecifier(tail, "import");
   }
-  if (t.isBinaryExpression(node, { operator: "+" })) {
-    const right = stringValue(node.right);
-    return right !== undefined && right.toLowerCase().endsWith(".node");
+  if (t.isBinaryExpression(node, { operator: "+" }))
+    return looksLikeUnresolvedNativePath(node.right);
+  if (
+    t.isCallExpression(node) ||
+    t.isOptionalCallExpression(node) ||
+    t.isNewExpression(node)
+  ) {
+    const candidate = t.isNewExpression(node)
+      ? argumentNode(node.arguments[0])
+      : argumentNode(node.arguments.at(-1));
+    return candidate !== undefined && looksLikeUnresolvedNativePath(candidate);
   }
-  if (t.isCallExpression(node)) {
-    const last = argumentNode(node.arguments.at(-1));
+  if (t.isConditionalExpression(node))
+    return (
+      looksLikeUnresolvedNativePath(node.consequent) ||
+      looksLikeUnresolvedNativePath(node.alternate)
+    );
+  if (t.isLogicalExpression(node))
+    return (
+      looksLikeUnresolvedNativePath(node.left) ||
+      looksLikeUnresolvedNativePath(node.right)
+    );
+  if (t.isSequenceExpression(node)) {
+    const last = node.expressions.at(-1);
     return last !== undefined && looksLikeUnresolvedNativePath(last);
   }
   return false;

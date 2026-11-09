@@ -8,7 +8,7 @@ import {
 import type { ElectronBoundarySummary } from "../../domain/javascript/javascriptApplicationAnalysis.js";
 import type { JavaScriptArtifactAnalysis } from "./JavaScriptArtifactAnalysisTypes.js";
 import type { JavaScriptArtifactFile } from "../../domain/javascript/javascriptArtifactFiles.js";
-import { resolveElectronNativeAddonPaths } from "./ElectronBoundaryNativeResolution.js";
+import { createElectronNativeAddonResolver } from "./ElectronBoundaryNativeResolution.js";
 import {
   resolveArtifactPathByContext,
   type ResolveArtifactPathInput,
@@ -207,6 +207,13 @@ export const summarizeElectronBoundaries = (
   coverageAnalysis: JavaScriptArtifactAnalysis = analysis,
 ): ElectronBoundarySummary => {
   const files = new Map(analysis.files.map(({ file }) => [file.path, file]));
+  const nativeAddonResolver =
+    analysis.nativeAddonResolver ??
+    createElectronNativeAddonResolver({
+      files,
+      jsonDocuments: analysis.jsonDocuments,
+      directoryPaths,
+    });
   const javascript = analysis.files.flatMap(({ javascript: value }) =>
     value === null ? [] : [value],
   );
@@ -301,13 +308,7 @@ export const summarizeElectronBoundaries = (
     native_addon_bindings: nativeBindings.length,
     resolved_native_addon_bindings: nativeBindings.filter(
       ({ file, finding }) =>
-        resolveElectronNativeAddonPaths({
-          file,
-          finding,
-          files,
-          jsonDocuments: analysis.jsonDocuments,
-          directoryPaths,
-        }).length > 0,
+        nativeAddonResolver.resolve(file, finding).length > 0,
     ).length,
     protocol_registrations: protocolCount,
   };

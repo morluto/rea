@@ -197,6 +197,11 @@ export const reconstructJavaScriptArtifact = async (
         scope,
         signal,
       );
+      const directoryPaths = new Set(
+        snapshot.occurrences
+          .filter(({ entry_kind }) => entry_kind === "directory")
+          .map(({ logical_path }) => logical_path),
+      );
       const worker = await createJavaScriptSourceAnalysis(
         sourceLimits,
         files.files.filter(
@@ -239,6 +244,7 @@ export const reconstructJavaScriptArtifact = async (
           },
           preloads.paths,
           preloads.limitations,
+          directoryPaths,
         );
       } finally {
         try {
@@ -308,11 +314,6 @@ export const reconstructJavaScriptArtifact = async (
       const semanticGraph =
         await completeJavaScriptAnalysisSteps(semanticGraphSteps);
       await checkpointCompletedAnalysis();
-      const directoryPaths = new Set(
-        snapshot.occurrences
-          .filter(({ entry_kind }) => entry_kind === "directory")
-          .map(({ logical_path }) => logical_path),
-      );
       const nextAppContext = createJavaScriptNextAppContext(
         files,
         analysis.jsonDocuments,

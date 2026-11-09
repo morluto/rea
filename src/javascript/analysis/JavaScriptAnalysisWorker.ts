@@ -15,6 +15,7 @@ import { fileURLToPath } from "node:url";
 import { getHeapStatistics } from "node:v8";
 import { z } from "zod";
 import type { JavaScriptArtifactFile } from "../../domain/javascript/javascriptArtifactFiles.js";
+import type { ElectronNativeAddonBindingFinding } from "../../domain/javascript/electronStaticAnalysisTypes.js";
 import type { JavaScriptStaticAnalysis } from "../../domain/javascript/javascriptStaticAnalysisTypes.js";
 import { estimateJavaScriptStaticApplicationProjection } from "../../domain/javascript/javascriptApplicationProjectionResources.js";
 import type { JavaScriptModuleSemanticIr } from "../../domain/javascript/javascriptModuleSemanticIr.js";
@@ -295,6 +296,10 @@ export class JavaScriptAnalysisWorker {
     onPhase?: (phase: string) => Promise<void>,
     packageType: JavaScriptPackageType = "unknown",
     purpose: "analysis" | "preload-discovery" = "analysis",
+    resolveNativeAddonTargets?: (
+      file: JavaScriptArtifactFile,
+      finding: ElectronNativeAddonBindingFinding,
+    ) => number,
   ): Promise<
     Result<JavaScriptAnalyzedSource, JavaScriptSourceAnalysisFailure>
   > {
@@ -403,6 +408,9 @@ export class JavaScriptAnalysisWorker {
             file.path,
             sourceIndex,
             response,
+            resolveNativeAddonTargets === undefined
+              ? undefined
+              : (finding) => resolveNativeAddonTargets(file, finding),
           );
           const exhausted = this.#parentCapacityFailure(file.path);
           if (exhausted !== undefined) throw exhausted;
@@ -763,6 +771,9 @@ export class JavaScriptAnalysisWorker {
     sourcePath: string,
     sourceIndex: number,
     expected?: { readonly bytes: number; readonly sha256: string },
+    resolvedNativeAddonTargets?: (
+      finding: ElectronNativeAddonBindingFinding,
+    ) => number,
   ): Promise<JavaScriptStaticAnalysis> {
     const rootPath = this.#runtime.rootPath;
     if (rootPath === undefined)
@@ -866,6 +877,7 @@ export class JavaScriptAnalysisWorker {
       facts,
       bytes,
       sourcePath,
+      resolvedNativeAddonTargets,
     );
     const availableResultBudget = this.#remainingResultBudget();
     if (expandedBytes <= availableResultBudget) {

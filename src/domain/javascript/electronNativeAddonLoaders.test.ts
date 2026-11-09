@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { analyzeCommonJsStaticFixture } from "../../../tests/fixtures/javascriptCommonJsAnalysis.js";
+import { estimateJavaScriptStaticApplicationProjection } from "./javascriptApplicationProjectionResources.js";
 import { analyzeJavaScriptStaticSource } from "./javascriptStaticAnalysis.js";
 
 describe("native addon helper package static recovery", () => {
@@ -29,6 +30,15 @@ describe("native addon helper package static recovery", () => {
           namespace_access: true,
           resolution: { kind: "node-gyp-build", directory: ".." },
         }),
+        expect.objectContaining({
+          specifier: "node-gyp-build:.",
+          binding_kind: "require",
+          resolution: {
+            kind: "node-gyp-build",
+            directory: ".",
+            asar_unpacked: true,
+          },
+        }),
       ]),
     );
 
@@ -53,14 +63,15 @@ describe("native addon helper package static recovery", () => {
     );
   });
 
-  it("recovers bindings helper calls with string and options-object arguments", () => {
+  it("recovers bindings helper calls and rejects escaped option objects", () => {
     const cjs = analyzeCommonJsStaticFixture(`
       const bindings = require("bindings");
       const { encrypt } = bindings("keychain");
-      module.exports = require("bindings")({
+      const safeOpts = {
         bindings: "sqlite.node",
-        module_root: __dirname,
-      });
+        module_root: __dirname.replace("app.asar", "app.asar.unpacked"),
+      };
+      module.exports = require("bindings")(safeOpts);
     `);
     expect(cjs.electron.native_addon_bindings).toEqual(
       expect.arrayContaining([
@@ -81,26 +92,23 @@ describe("native addon helper package static recovery", () => {
             kind: "bindings",
             addon_name: "sqlite.node",
             module_root: ".",
+            asar_unpacked: true,
           },
         }),
       ]),
     );
 
-    const esm = analyzeJavaScriptStaticSource(`
-      import bindings from "bindings";
-      const mod = bindings("crypto_bridge");
+    const escaped = analyzeCommonJsStaticFixture(`
+      const bindings = require("bindings");
+      const opts = { bindings: "first", module_root: __dirname };
+      globalThis.externalConfigure(opts);
+      const addon = bindings(opts);
     `);
-    expect(esm.electron.native_addon_bindings).toEqual([
-      expect.objectContaining({
-        specifier: "crypto_bridge.node",
-        binding_kind: "require",
-        resolution: {
-          kind: "bindings",
-          addon_name: "crypto_bridge.node",
-          module_root: null,
-        },
-      }),
-    ]);
+    expect(escaped.electron.native_addon_bindings).toEqual([]);
+    expect(escaped.parse_status).toBe("partial");
+    expect(
+      escaped.analysis_coverage?.semantics.unknown_findings,
+    ).toBeGreaterThan(0);
   });
 });
 
@@ -235,5 +243,120 @@ describe("native addon dlopen and host-axis template recovery", () => {
       export const addon = nodeGypBuild(import.meta.dirname);
     `);
     expect(mutatedMeta.electron.native_addon_bindings).toEqual([]);
+  });
+});
+
+describe("native addon path proofs, mutation guards, and projection budgets", () => {
+  it("preserves anchored directory offsets and decodes URL-expanded candidates", () => {
+    const cjs = analyzeCommonJsStaticFixture(`
+      const path = require("node:path");
+      const a = require(\`\${path.join(__dirname, "native")}/bridge-\${process.arch}.node\`);
+      const b = require(path.join(__dirname, "native") + "/addon.node");
+    `);
+    expect(cjs.electron.native_addon_bindings).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          specifier: "native/bridge-${arch}.node",
+          resolution: {
+            kind: "candidates",
+            resolution_context: "filesystem-expression",
+            candidates: [
+              "native/bridge-arm64.node",
+              "native/bridge-ia32.node",
+              "native/bridge-x64.node",
+            ],
+          },
+        }),
+        expect.objectContaining({
+          specifier: "native/addon.node",
+          resolution: {
+            kind: "candidates",
+            resolution_context: "filesystem-expression",
+            candidates: ["native/addon.node"],
+          },
+        }),
+      ]),
+    );
+
+    const esm = analyzeJavaScriptStaticSource(`
+      import { createRequire } from "node:module";
+      import { fileURLToPath } from "node:url";
+      const req = createRequire(import.meta.url);
+      export const addon = req(
+        fileURLToPath(
+          new URL(\`./native%20dir/\${process.platform}/space%20addon.node?cache=1#v2\`, import.meta.url),
+        ),
+      );
+    `);
+    expect(esm.electron.native_addon_bindings).toEqual([
+      expect.objectContaining({
+        specifier: "./native dir/${platform}/space addon.node",
+        resolution: {
+          kind: "candidates",
+          resolution_context: "filesystem-expression",
+          candidates: [
+            "./native dir/darwin/space addon.node",
+            "./native dir/linux/space addon.node",
+            "./native dir/win32/space addon.node",
+          ],
+        },
+      }),
+    ]);
+  });
+
+  it("rejects patched node:process imports, mutated require.resolve, and unresolved path.join literals", () => {
+    const patchedProcess = analyzeJavaScriptStaticSource(`
+      import { createRequire } from "node:module";
+      import p from "node:process";
+      import q from "node:process";
+      Object.defineProperty(q, "arch", { value: "custom" });
+      const req = createRequire(import.meta.url);
+      export const addon = req(\`./\${p.arch}.node\`);
+    `);
+    expect(patchedProcess.electron.native_addon_bindings).toEqual([]);
+    expect(patchedProcess.parse_status).toBe("partial");
+    expect(
+      patchedProcess.analysis_coverage?.semantics.unknown_findings,
+    ).toBeGreaterThan(0);
+
+    const replacedResolve = analyzeCommonJsStaticFixture(`
+      require.resolve = () => "/other.node";
+      process.dlopen(module, require.resolve("./addon.node"));
+    `);
+    expect(replacedResolve.electron.native_addon_bindings).toEqual([]);
+    expect(replacedResolve.parse_status).toBe("partial");
+    expect(
+      replacedResolve.analysis_coverage?.semantics.unknown_findings,
+    ).toBeGreaterThan(0);
+
+    const unresolvedJoin = analyzeCommonJsStaticFixture(`
+      const path = require("node:path");
+      const addon = require(path.join(__dirname, globalThis.variant, "addon.node"));
+    `);
+    expect(unresolvedJoin.electron.native_addon_bindings).toEqual([]);
+    expect(unresolvedJoin.parse_status).toBe("partial");
+    expect(
+      unresolvedJoin.analysis_coverage?.semantics.unknown_findings,
+    ).toBeGreaterThan(0);
+  });
+
+  it("scales projection estimates with resolved native addon target counts", () => {
+    const facts = analyzeCommonJsStaticFixture(`
+      const load = require("node-gyp-build");
+      const first = load(__dirname);
+      const second = load(__dirname);
+    `);
+    const fallbackEstimate = estimateJavaScriptStaticApplicationProjection(
+      facts,
+      256,
+      "node_modules/pkg/index.cjs",
+    );
+    const expandedEstimate = estimateJavaScriptStaticApplicationProjection(
+      facts,
+      256,
+      "node_modules/pkg/index.cjs",
+      () => 12,
+    );
+    expect(expandedEstimate).toBeGreaterThan(fallbackEstimate);
   });
 });

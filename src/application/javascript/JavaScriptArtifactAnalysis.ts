@@ -37,6 +37,10 @@ import type {
 import { javascriptArtifactAnalysisScopes } from "./JavaScriptArtifactAnalysisTypes.js";
 import { analyzeJavaScriptJsonModule } from "./JavaScriptJsonModules.js";
 import {
+  createElectronNativeAddonResolver,
+  type ElectronNativeAddonResolver,
+} from "./ElectronBoundaryNativeResolution.js";
+import {
   JavaScriptJsonDocuments,
   type JavaScriptJsonDocumentFacts,
 } from "./JavaScriptJsonDocuments.js";
@@ -56,6 +60,7 @@ import {
 
 interface MutableArtifactAnalysis {
   readonly jsonDocuments: JavaScriptJsonDocuments;
+  readonly nativeAddonResolver?: ElectronNativeAddonResolver;
   readonly files: AnalyzedJavaScriptArtifactFile[];
   readonly packages: JavaScriptPackageObservation[];
   readonly jsonModules: JavaScriptJsonModuleObservation[];
@@ -83,11 +88,12 @@ export const analyzeAndAdoptJavaScriptArtifactFiles = async (
   preloadPaths: ReadonlySet<string> = new Set(),
   /** Discovery gaps that may leave a declared preload in its package scope. */
   preloadLimitations: readonly string[] = [],
+  directoryPaths?: ReadonlySet<string>,
 ): Promise<{
   readonly analysis: JavaScriptArtifactAnalysis;
   readonly interruption: AnalysisError | null;
 }> => {
-  const state = emptyArtifactAnalysis();
+  const state = emptyArtifactAnalysis(fileSet, directoryPaths);
   const sourceIndices: number[] = [];
   const packageTypeFor = createJavaScriptPackageTypeLookup(
     fileSet,
@@ -132,6 +138,11 @@ export const analyzeAndAdoptJavaScriptArtifactFiles = async (
           /\.js$/iu.test(file.path)
           ? "commonjs"
           : packageTypeFor(file),
+        "analysis",
+        state.nativeAddonResolver === undefined
+          ? undefined
+          : (sourceFile, finding) =>
+              state.nativeAddonResolver!.resolve(sourceFile, finding).length,
       );
       const facts = result.ok ? result.value : result.error;
       for (const revoked of facts.revokedStaticProjections ?? []) {
@@ -320,6 +331,9 @@ const finalizeArtifactAnalysis = (
 ): JavaScriptArtifactAnalysis => {
   return {
     jsonDocuments: state.jsonDocuments,
+    ...(state.nativeAddonResolver === undefined
+      ? {}
+      : { nativeAddonResolver: state.nativeAddonResolver }),
     files: state.files,
     packages: state.packages,
     json_modules: state.jsonModules,
@@ -379,19 +393,34 @@ const classifyUnavailableSource = (
   return true;
 };
 
-const emptyArtifactAnalysis = (): MutableArtifactAnalysis => ({
-  jsonDocuments: new JavaScriptJsonDocuments(),
-  files: [],
-  packages: [],
-  jsonModules: [],
-  htmlScripts: [],
-  htmlInlineScripts: [],
-  sourceMaps: [],
-  visitedNodes: 0,
-  findings: 0,
-  modules: 0,
-  parseFailures: 0,
-});
+const emptyArtifactAnalysis = (
+  fileSet?: JavaScriptArtifactFileSet,
+  directoryPaths?: ReadonlySet<string>,
+): MutableArtifactAnalysis => {
+  const jsonDocuments = new JavaScriptJsonDocuments();
+  return {
+    jsonDocuments,
+    ...(fileSet === undefined
+      ? {}
+      : {
+          nativeAddonResolver: createElectronNativeAddonResolver({
+            files: new Map(fileSet.files.map((file) => [file.path, file])),
+            jsonDocuments,
+            directoryPaths,
+          }),
+        }),
+    files: [],
+    packages: [],
+    jsonModules: [],
+    htmlScripts: [],
+    htmlInlineScripts: [],
+    sourceMaps: [],
+    visitedNodes: 0,
+    findings: 0,
+    modules: 0,
+    parseFailures: 0,
+  };
+};
 
 const addStructuredObservations = (
   file: JavaScriptArtifactFile,

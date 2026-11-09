@@ -1,3 +1,4 @@
+import type { ElectronNativeAddonBindingFinding } from "./electronStaticAnalysisTypes.js";
 import type { JavaScriptStaticAnalysis } from "./javascriptStaticAnalysisTypes.js";
 
 /** Forecast static-fact expansion into observations, nodes and relationships. */
@@ -5,6 +6,9 @@ export const estimateJavaScriptStaticApplicationProjection = (
   facts: JavaScriptStaticAnalysis,
   checkpointBytes: number,
   sourcePath: string,
+  resolvedNativeAddonTargets?: (
+    finding: ElectronNativeAddonBindingFinding,
+  ) => number,
 ): number => {
   // A finding can produce a node, a separate observation and several edges.
   // Allow for identifiers, locations, authority, coverage and schema copies,
@@ -38,13 +42,16 @@ export const estimateJavaScriptStaticApplicationProjection = (
       2;
   }
   for (const binding of facts.electron.native_addon_bindings) {
+    const resolvedTargets = resolvedNativeAddonTargets?.(binding);
     records +=
       binding.members.length * 3 +
-      (binding.resolution?.kind === "candidates"
-        ? binding.resolution.candidates.length * 2
-        : binding.resolution === undefined
-          ? 0
-          : 4);
+      (resolvedTargets !== undefined
+        ? resolvedTargets * 2
+        : binding.resolution?.kind === "candidates"
+          ? binding.resolution.candidates.length * 2
+          : binding.resolution === undefined
+            ? 0
+            : 4);
   }
   for (const path of facts.electron.call_paths ?? []) {
     // One contextual node and edge per step, with repeated guards and identity.

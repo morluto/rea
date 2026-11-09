@@ -164,3 +164,51 @@ it("keeps parent-budget recovery when capacity is exhausted after a static check
     await worker.close();
   }
 });
+
+it("omits expanded application relationships while retaining static facts when resolved native addon targets exceed the parent result budget", async () => {
+  heapObservation.remainingBytes = 320 * 1024 * 1024;
+  heapObservation.reclaimedBytes = 0;
+  const text = `
+    const load = require("node-gyp-build");
+    const first = load(__dirname);
+    const second = load(__dirname);
+  `;
+  const file: JavaScriptArtifactFile = {
+    path: "pkg/native-heavy.cjs",
+    sha256: createHash("sha256").update(text).digest("hex"),
+    container_sha256: "3".repeat(64),
+    bytes: Buffer.byteLength(text),
+    inventory_artifact_id: "parent-native-budget-fixture",
+    kind: "javascript",
+    unpacked: false,
+    text: { included: true, value: text },
+  };
+  const worker = new JavaScriptAnalysisWorker({
+    heapMb: 1024,
+    timeoutMs: 30_000,
+  });
+  try {
+    const result = await worker.analyze(
+      file,
+      { nodes: 20_000, unknowns: 20_000 },
+      undefined,
+      undefined,
+      "commonjs",
+      "analysis",
+      () => 12_000,
+    );
+    if (!result.ok) throw result.error.error;
+    expect(result.value.javascript.electron.native_addon_bindings).toHaveLength(
+      2,
+    );
+    expect(result.value.applicationProjectionFailure).toMatchObject({
+      _tag: "AnalysisResourceConstraintError",
+      resource: "memory",
+      reason: expect.stringMatching(
+        /pkg\/native-heavy\.cjs.*result budget.*complete static facts were retained/i,
+      ),
+    });
+  } finally {
+    await worker.close();
+  }
+});

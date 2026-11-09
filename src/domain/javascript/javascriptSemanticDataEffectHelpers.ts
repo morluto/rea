@@ -881,6 +881,51 @@ export const isSemanticProcessObject = (
   );
 };
 
+/** Resolve an unmodified host axis (`platform` or `arch`) from `process` or `node:process`. */
+export const semanticProcessHostAxis = (
+  node: t.Node,
+  state: JavaScriptSemanticAnalysisState,
+  selectedPath: readonly string[] = [],
+): "platform" | "arch" | undefined => {
+  const required = semanticRequireOrigin(node, state);
+  if (required !== undefined) {
+    const origin = builtinNamespaceOrigin(required.origin);
+    const fullPath = [...origin.importedPath, ...selectedPath];
+    return origin.specifier === "process" &&
+      fullPath.length === 1 &&
+      (fullPath[0] === "platform" || fullPath[0] === "arch") &&
+      !state.ambientWrites.covers(["global", "process", fullPath[0]]) &&
+      !requiredModuleChanged(required.origin.specifier, fullPath, node, state)
+      ? fullPath[0]
+      : undefined;
+  }
+  if (!t.isIdentifier(node)) return undefined;
+  const binding = resolveSemanticBindingState(state, node, node.name);
+  if (binding === undefined) {
+    return selectedPath.length === 1 &&
+      (selectedPath[0] === "platform" || selectedPath[0] === "arch") &&
+      !state.ambientWrites.covers(["global", "process", selectedPath[0]]) &&
+      semanticGlobalProcessOrigin(node, state) !== undefined &&
+      !requiredModuleChanged("process", selectedPath, node, state)
+      ? selectedPath[0]
+      : undefined;
+  }
+  const resolved = builtinBindingPath(
+    binding,
+    state,
+    ["process", "node:process"],
+    node,
+    selectedPath,
+  );
+  const fullPath =
+    resolved === null ? undefined : [...resolved, ...selectedPath];
+  return fullPath?.length === 1 &&
+    (fullPath[0] === "platform" || fullPath[0] === "arch") &&
+    !state.ambientWrites.covers(["global", "process", fullPath[0]])
+    ? fullPath[0]
+    : undefined;
+};
+
 /** Resolve the nearest direct variable/assignment owner before a callable. */
 export const outerDataEffectBinding = (
   node: t.Node,

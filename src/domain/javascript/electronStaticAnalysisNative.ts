@@ -39,7 +39,7 @@ import {
 import type { JavaScriptReceiverIndex } from "./javascriptSemanticAnalysis.js";
 import {
   resolveSemanticBindingState,
-  type JavaScriptSemanticAnalysisState,
+  type JavaScriptBindingIndex,
 } from "./javascriptSemanticState.js";
 import type { JavaScriptFindingContext } from "./javascriptStaticAnalysisState.js";
 
@@ -102,28 +102,22 @@ export function* finishElectronNativeBindingsSteps(
     | undefined;
   for (const node of pending) {
     if (t.isVariableDeclarator(node)) {
-      inspectRequireBinding(node, context, index.bindings);
+      inspectRequireBinding(node, context, index);
     } else if (t.isAssignmentExpression(node)) {
       const exported = commonJsRuntimeExportValues(node, index.bindings)[0];
       if (exported !== undefined) {
         if (receivers === undefined)
           receivers = yield* indexCommonJsExportReceiversSteps(index.bindings);
-        inspectReExport(
-          node,
-          exported,
-          context,
-          index.bindings,
-          receivers.get(node),
-        );
+        inspectReExport(node, exported, context, index, receivers.get(node));
       } else {
-        inspectLexicalAssignment(node, context, index.bindings);
+        inspectLexicalAssignment(node, context, index);
       }
     } else if (t.isReturnStatement(node)) {
-      inspectReturnedLoader(node, node.argument, context, index.bindings);
+      inspectReturnedLoader(node, node.argument, context, index);
     } else if (t.isArrowFunctionExpression(node)) {
-      inspectReturnedLoader(node.body, node.body, context, index.bindings);
+      inspectReturnedLoader(node.body, node.body, context, index);
     } else {
-      inspectDlopen(node, context, index.bindings);
+      inspectDlopen(node, context, index);
     }
   }
   pending.length = 0;
@@ -221,9 +215,9 @@ const inspectExportAll = (
 const inspectRequireBinding = (
   node: t.VariableDeclarator,
   context: JavaScriptFindingContext,
-  bindings: JavaScriptSemanticAnalysisState,
+  index: JavaScriptBindingIndex,
 ): void => {
-  const required = resolveNativeLoaderCall(node.init, context, bindings);
+  const required = resolveNativeLoaderCall(node.init, context, index);
   if (required === undefined) return;
   addBinding({
     context,
@@ -242,7 +236,7 @@ const inspectReExport = (
   node: t.AssignmentExpression,
   exported: NonNullable<ReturnType<typeof commonJsRuntimeExportValues>[number]>,
   context: JavaScriptFindingContext,
-  bindings: JavaScriptSemanticAnalysisState,
+  index: JavaScriptBindingIndex,
   receiver: CommonJsExportReceiverEffect | undefined,
 ): void => {
   const applicability = commonJsExportApplicability(
@@ -253,7 +247,7 @@ const inspectReExport = (
   // The export owner leaves arithmetic/logical stores without a selected RHS.
   const value = exported.value;
   if (value == null) return;
-  const required = resolveNativeLoaderCall(value, context, bindings);
+  const required = resolveNativeLoaderCall(value, context, index);
   if (required === undefined) return;
   if (applicability === "uncertain") {
     context.accumulator.unknownFindings += 1;
@@ -275,7 +269,7 @@ const inspectReExport = (
 const inspectLexicalAssignment = (
   node: t.AssignmentExpression,
   context: JavaScriptFindingContext,
-  bindings: JavaScriptSemanticAnalysisState,
+  index: JavaScriptBindingIndex,
 ): void => {
   if (
     node.operator !== "=" &&
@@ -288,11 +282,11 @@ const inspectLexicalAssignment = (
     t.isIdentifier(left) &&
     left.name !== "module" &&
     left.name !== "exports" &&
-    resolveSemanticBindingState(bindings, left, left.name) !== undefined;
+    resolveSemanticBindingState(index.bindings, left, left.name) !== undefined;
   const isDestructuringAssign =
     node.operator === "=" && t.isObjectPattern(left);
   if (!isLexicalIdentifier && !isDestructuringAssign) return;
-  const required = resolveNativeLoaderCall(node.right, context, bindings);
+  const required = resolveNativeLoaderCall(node.right, context, index);
   if (required === undefined) return;
   addBinding({
     context,
@@ -311,9 +305,9 @@ const inspectReturnedLoader = (
   locationNode: t.Node,
   valueNode: t.Node | null | undefined,
   context: JavaScriptFindingContext,
-  bindings: JavaScriptSemanticAnalysisState,
+  index: JavaScriptBindingIndex,
 ): void => {
-  const required = resolveNativeLoaderCall(valueNode, context, bindings);
+  const required = resolveNativeLoaderCall(valueNode, context, index);
   if (required === undefined) return;
   addBinding({
     context,
@@ -331,9 +325,9 @@ const inspectReturnedLoader = (
 const inspectDlopen = (
   node: t.CallExpression | t.OptionalCallExpression,
   context: JavaScriptFindingContext,
-  bindings: JavaScriptSemanticAnalysisState,
+  index: JavaScriptBindingIndex,
 ): void => {
-  const dlopened = resolveDlopenCall(node, context, bindings);
+  const dlopened = resolveDlopenCall(node, context, index);
   if (dlopened === undefined) return;
   addBinding({
     context,

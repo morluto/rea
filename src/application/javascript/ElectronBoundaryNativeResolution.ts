@@ -4,40 +4,237 @@ import {
   logicalPathEscapesRoot,
   normalizeJoinedLogicalPath,
 } from "../../domain/artifactIdentity.js";
-import { compareUnicodeCodePoints } from "../../domain/unicodeCodePointOrder.js";
+import {
+  compareUnicodeCodePoints,
+  compositeKey,
+} from "../../domain/unicodeCodePointOrder.js";
 import type { ElectronNativeAddonBindingFinding } from "../../domain/javascript/electronStaticAnalysisTypes.js";
 import type { JavaScriptArtifactFile } from "../../domain/javascript/javascriptArtifactFiles.js";
 import type { JavaScriptJsonDocuments } from "./JavaScriptJsonDocuments.js";
 import { resolveArtifactPathByContext } from "./JavaScriptArtifactPathResolution.js";
 
-export interface ResolveElectronNativeAddonInput {
-  readonly file: JavaScriptArtifactFile;
-  readonly finding: ElectronNativeAddonBindingFinding;
+export interface ElectronNativeAddonResolverInput {
   readonly files: ReadonlyMap<string, JavaScriptArtifactFile>;
   readonly jsonDocuments: JavaScriptJsonDocuments;
   readonly directoryPaths?: ReadonlySet<string> | undefined;
 }
 
-/** Resolve all inventoried `.node` addon artifacts targeted by one binding. */
-export const resolveElectronNativeAddonPaths = (
-  input: ResolveElectronNativeAddonInput,
+export interface ElectronNativeAddonResolver {
+  resolve(
+    file: JavaScriptArtifactFile,
+    finding: ElectronNativeAddonBindingFinding,
+  ): readonly string[];
+}
+
+interface NativeAddonInventoryIndex {
+  readonly nativeAddonPaths: readonly string[];
+  readonly childSegmentsByDir: ReadonlyMap<string, ReadonlySet<string>>;
+}
+
+interface NativeAddonResolverState {
+  readonly input: ElectronNativeAddonResolverInput;
+  inventoryIndex: NativeAddonInventoryIndex | undefined;
+  readonly packageRootCache: Map<string, string>;
+  readonly nodeGypBuildCache: Map<string, readonly string[]>;
+  readonly bindingsCache: Map<string, readonly string[]>;
+  readonly findingCache: WeakMap<
+    ElectronNativeAddonBindingFinding,
+    Map<string, readonly string[]>
+  >;
+}
+
+/** Build one request-local native-addon resolver shared by admission, graph, and summary. */
+export const createElectronNativeAddonResolver = (
+  input: ElectronNativeAddonResolverInput,
+): ElectronNativeAddonResolver => {
+  const state: NativeAddonResolverState = {
+    input,
+    inventoryIndex: undefined,
+    packageRootCache: new Map(),
+    nodeGypBuildCache: new Map(),
+    bindingsCache: new Map(),
+    findingCache: new WeakMap(),
+  };
+
+  return {
+    resolve(file, finding) {
+      let byPath = state.findingCache.get(finding);
+      const cached = byPath?.get(file.path);
+      if (cached !== undefined) return cached;
+      let resolved: readonly string[];
+      if (finding.resolution?.asar_unpacked === true) {
+        const rewrittenSourcePath = rewriteAppAsarSourcePath(file.path);
+        resolved =
+          rewrittenSourcePath !== undefined
+            ? resolveFromSourcePath(state, rewrittenSourcePath, finding)
+            : resolveFromSourcePath(state, file.path, finding);
+      } else {
+        const direct = resolveFromSourcePath(state, file.path, finding);
+        if (direct.length > 0) {
+          resolved = direct;
+        } else {
+          const unpackedSourcePath = siblingAsarUnpackedSourcePath(file.path);
+          resolved =
+            unpackedSourcePath === undefined
+              ? []
+              : resolveFromSourcePath(state, unpackedSourcePath, finding);
+        }
+      }
+      if (byPath === undefined) {
+        byPath = new Map();
+        state.findingCache.set(finding, byPath);
+      }
+      byPath.set(file.path, resolved);
+      return resolved;
+    },
+  };
+};
+
+const ensureInventoryIndex = (
+  state: NativeAddonResolverState,
+): NativeAddonInventoryIndex => {
+  if (state.inventoryIndex !== undefined) return state.inventoryIndex;
+  const nativeAddonPaths: string[] = [];
+  const childSegmentsByDir = new Map<string, Set<string>>();
+  const addChildSegment = (dir: string, child: string): void => {
+    let set = childSegmentsByDir.get(dir);
+    if (set === undefined) {
+      set = new Set();
+      childSegmentsByDir.set(dir, set);
+    }
+    set.add(child);
+  };
+  for (const [path, file] of state.input.files) {
+    if (isNativeAddonFile(path, state.input.files, file))
+      nativeAddonPaths.push(path);
+    const segments = path.split("/");
+    if (segments[0] !== undefined && segments[0] !== "")
+      addChildSegment(".", segments[0]);
+    for (let index = 0; index < segments.length - 1; index += 1) {
+      const child = segments[index + 1];
+      if (child !== undefined && child !== "")
+        addChildSegment(segments.slice(0, index + 1).join("/"), child);
+    }
+  }
+  nativeAddonPaths.sort(compareUnicodeCodePoints);
+  state.inventoryIndex = { nativeAddonPaths, childSegmentsByDir };
+  return state.inventoryIndex;
+};
+
+const findEnclosingPackageRoot = (
+  state: NativeAddonResolverState,
+  sourceDir: string,
+  fallbackMarkerDirs: readonly string[],
+): string => {
+  const normalizedDir = sourceDir === "" ? "." : sourceDir;
+  const cacheKey = compositeKey([normalizedDir, fallbackMarkerDirs]);
+  const cached = state.packageRootCache.get(cacheKey);
+  if (cached !== undefined) return cached;
+  let current = normalizedDir;
+  const ancestors: string[] = [];
+  while (true) {
+    ancestors.push(current);
+    const packageJson =
+      current === "." ? "package.json" : `${current}/package.json`;
+    if (
+      state.input.files.has(packageJson) ||
+      isNodeModulesPackageBoundary(current)
+    ) {
+      state.packageRootCache.set(cacheKey, current);
+      return current;
+    }
+    if (isArchiveContainerBoundary(current)) break;
+    const parent = posix.dirname(current);
+    if (parent === current) break;
+    current = parent;
+  }
+  const { childSegmentsByDir } = ensureInventoryIndex(state);
+  for (const ancestor of ancestors) {
+    const children = childSegmentsByDir.get(ancestor);
+    if (
+      children !== undefined &&
+      fallbackMarkerDirs.some((marker) => children.has(marker))
+    ) {
+      state.packageRootCache.set(cacheKey, ancestor);
+      return ancestor;
+    }
+  }
+  state.packageRootCache.set(cacheKey, normalizedDir);
+  return normalizedDir;
+};
+
+const resolveHelperSearchRoot = (
+  state: NativeAddonResolverState,
+  sourcePath: string,
+  explicitDirectory: string | null,
+  fallbackMarkerDirs: readonly string[],
+): string | undefined => {
+  const sourceDir = posix.dirname(sourcePath);
+  if (explicitDirectory !== null) {
+    const joined = normalizeJoinedLogicalPath(
+      posix.join(sourceDir, explicitDirectory),
+    );
+    if (logicalPathEscapesRoot(joined)) return undefined;
+    return joined === "" ? "." : joined;
+  }
+  return findEnclosingPackageRoot(state, sourceDir, fallbackMarkerDirs);
+};
+
+const scanNodeGypBuildTargets = (
+  state: NativeAddonResolverState,
+  root: string,
 ): readonly string[] => {
-  const direct = resolveFromSourcePath(input, input.file.path);
-  if (direct.length > 0) return direct;
-  const unpackedSourcePath = siblingAsarUnpackedSourcePath(input.file.path);
-  return unpackedSourcePath === undefined
-    ? []
-    : resolveFromSourcePath(input, unpackedSourcePath);
+  const cached = state.nodeGypBuildCache.get(root);
+  if (cached !== undefined) return cached;
+  const prefix = root === "." ? "" : `${root}/`;
+  const matched: string[] = [];
+  for (const path of ensureInventoryIndex(state).nativeAddonPaths) {
+    if (!path.startsWith(prefix)) continue;
+    const rel = path.slice(prefix.length);
+    const segments = rel.split("/");
+    if (segments.includes("node_modules")) continue;
+    const isPrebuild = segments.length === 3 && segments[0] === "prebuilds";
+    const isGypBuild =
+      segments.length === 3 &&
+      segments[0] === "build" &&
+      (segments[1] === "Release" || segments[1] === "Debug");
+    if (isPrebuild || isGypBuild) matched.push(path);
+  }
+  state.nodeGypBuildCache.set(root, matched);
+  return matched;
+};
+
+const scanBindingsTargets = (
+  state: NativeAddonResolverState,
+  root: string,
+  addonName: string,
+): readonly string[] => {
+  const cacheKey = compositeKey([root, addonName]);
+  const cached = state.bindingsCache.get(cacheKey);
+  if (cached !== undefined) return cached;
+  const prefix = root === "." ? "" : `${root}/`;
+  const matched: string[] = [];
+  for (const path of ensureInventoryIndex(state).nativeAddonPaths) {
+    if (!path.startsWith(prefix)) continue;
+    const rel = path.slice(prefix.length);
+    const segments = rel.split("/");
+    if (segments.includes("node_modules")) continue;
+    if (segments.at(-1) !== addonName) continue;
+    if (matchesBindingsSearchDirectory(segments.slice(0, -1)))
+      matched.push(path);
+  }
+  state.bindingsCache.set(cacheKey, matched);
+  return matched;
 };
 
 const resolveFromSourcePath = (
-  input: ResolveElectronNativeAddonInput,
+  state: NativeAddonResolverState,
   sourcePath: string,
+  finding: ElectronNativeAddonBindingFinding,
 ): readonly string[] => {
-  const { finding, files } = input;
   const resolution = finding.resolution;
   if (resolution === undefined) {
-    const resolved = resolveSinglePath(input, {
+    const resolved = resolveSinglePath(state.input, {
       declaredPath: finding.specifier,
       sourcePath,
       context: "module-specifier",
@@ -45,61 +242,72 @@ const resolveFromSourcePath = (
     });
     return resolved === undefined ? [] : [resolved];
   }
-  if (resolution.kind === "candidates") {
-    const baseSourcePath =
-      resolution.resolution_context === "module-specifier" &&
-      resolution.resolution_base_path !== undefined
-        ? normalizeJoinedLogicalPath(
-            posix.join(
-              posix.dirname(sourcePath),
-              resolution.resolution_base_path,
-            ),
-          )
-        : sourcePath;
-    if (logicalPathEscapesRoot(baseSourcePath)) return [];
-    const matched = resolution.candidates.flatMap((candidate) => {
-      const resolved =
-        resolution.resolution_context === "filesystem-expression"
-          ? resolveSinglePath(input, {
-              declaredPath: candidate,
-              sourcePath: baseSourcePath,
-              context: "filesystem-expression",
-              runtimePathKind: "exact-file",
-            })
-          : resolveSinglePath(input, {
-              declaredPath: candidate,
-              sourcePath: baseSourcePath,
-              context: "module-specifier",
-              moduleKind: finding.module_kind,
-            });
-      return resolved === undefined ? [] : [resolved];
-    });
-    return [...new Set(matched)].sort(compareUnicodeCodePoints);
-  }
+  if (resolution.kind === "candidates")
+    return resolveCandidatePaths(state.input, sourcePath, finding, resolution);
   if (resolution.kind === "node-gyp-build") {
     const searchRoot = resolveHelperSearchRoot(
+      state,
       sourcePath,
       resolution.directory,
-      files,
       ["prebuilds", "build"],
     );
     return searchRoot === undefined
       ? []
-      : scanNodeGypBuildTargets(searchRoot, files);
+      : scanNodeGypBuildTargets(state, searchRoot);
   }
   const searchRoot = resolveHelperSearchRoot(
+    state,
     sourcePath,
     resolution.module_root,
-    files,
     ["build", "out", "Release", "Debug", "compiled", "addon-build", "lib"],
   );
   return searchRoot === undefined
     ? []
-    : scanBindingsTargets(searchRoot, resolution.addon_name, files);
+    : scanBindingsTargets(state, searchRoot, resolution.addon_name);
+};
+
+const resolveCandidatePaths = (
+  input: ElectronNativeAddonResolverInput,
+  sourcePath: string,
+  finding: ElectronNativeAddonBindingFinding,
+  resolution: Extract<
+    NonNullable<ElectronNativeAddonBindingFinding["resolution"]>,
+    { readonly kind: "candidates" }
+  >,
+): readonly string[] => {
+  const baseSourcePath =
+    resolution.resolution_context === "module-specifier" &&
+    resolution.resolution_base_path !== undefined
+      ? normalizeJoinedLogicalPath(
+          posix.join(
+            posix.dirname(sourcePath),
+            resolution.resolution_base_path,
+          ),
+        )
+      : sourcePath;
+  if (logicalPathEscapesRoot(baseSourcePath)) return [];
+  const matched = resolution.candidates.flatMap((candidate) => {
+    const resolved =
+      resolution.resolution_context === "filesystem-expression"
+        ? resolveSinglePath(input, {
+            declaredPath: candidate,
+            sourcePath: baseSourcePath,
+            context: "filesystem-expression",
+            runtimePathKind: "exact-file",
+          })
+        : resolveSinglePath(input, {
+            declaredPath: candidate,
+            sourcePath: baseSourcePath,
+            context: "module-specifier",
+            moduleKind: finding.module_kind,
+          });
+    return resolved === undefined ? [] : [resolved];
+  });
+  return [...new Set(matched)].sort(compareUnicodeCodePoints);
 };
 
 const resolveSinglePath = (
-  input: ResolveElectronNativeAddonInput,
+  input: ElectronNativeAddonResolverInput,
   options: {
     readonly declaredPath: string;
     readonly sourcePath: string;
@@ -129,53 +337,6 @@ const resolveSinglePath = (
     : undefined;
 };
 
-const resolveHelperSearchRoot = (
-  sourcePath: string,
-  explicitDirectory: string | null,
-  files: ReadonlyMap<string, JavaScriptArtifactFile>,
-  fallbackMarkerDirs: readonly string[],
-): string | undefined => {
-  const sourceDir = posix.dirname(sourcePath);
-  if (explicitDirectory !== null) {
-    const joined = normalizeJoinedLogicalPath(
-      posix.join(sourceDir, explicitDirectory),
-    );
-    if (logicalPathEscapesRoot(joined)) return undefined;
-    return joined === "" ? "." : joined;
-  }
-  return findEnclosingPackageRoot(sourceDir, files, fallbackMarkerDirs);
-};
-
-const findEnclosingPackageRoot = (
-  sourceDir: string,
-  files: ReadonlyMap<string, JavaScriptArtifactFile>,
-  fallbackMarkerDirs: readonly string[],
-): string => {
-  let current = sourceDir === "" ? "." : sourceDir;
-  const ancestors: string[] = [];
-  while (true) {
-    ancestors.push(current);
-    const packageJson =
-      current === "." ? "package.json" : `${current}/package.json`;
-    if (files.has(packageJson) || isNodeModulesPackageBoundary(current))
-      return current;
-    if (isArchiveContainerBoundary(current)) break;
-    const parent = posix.dirname(current);
-    if (parent === current) break;
-    current = parent;
-  }
-  for (const ancestor of ancestors) {
-    const prefix = ancestor === "." ? "" : `${ancestor}/`;
-    for (const path of files.keys()) {
-      if (!path.startsWith(prefix)) continue;
-      const remainder = path.slice(prefix.length);
-      const firstSegment = remainder.split("/", 1)[0] ?? "";
-      if (fallbackMarkerDirs.includes(firstSegment)) return ancestor;
-    }
-  }
-  return sourceDir === "" ? "." : sourceDir;
-};
-
 const isNodeModulesPackageBoundary = (directory: string): boolean => {
   if (directory === ".") return false;
   const segments = directory.split("/");
@@ -191,48 +352,6 @@ const isNodeModulesPackageBoundary = (directory: string): boolean => {
 const isArchiveContainerBoundary = (directory: string): boolean => {
   const base = posix.basename(directory).toLowerCase();
   return base.endsWith(".asar") || base.endsWith(".asar.unpacked");
-};
-
-const scanNodeGypBuildTargets = (
-  root: string,
-  files: ReadonlyMap<string, JavaScriptArtifactFile>,
-): readonly string[] => {
-  const prefix = root === "." ? "" : `${root}/`;
-  const matched: string[] = [];
-  for (const [path, file] of files) {
-    if (!isNativeAddonFile(path, files, file)) continue;
-    if (!path.startsWith(prefix)) continue;
-    const rel = path.slice(prefix.length);
-    const segments = rel.split("/");
-    if (segments.includes("node_modules")) continue;
-    const isPrebuild = segments.length === 3 && segments[0] === "prebuilds";
-    const isGypBuild =
-      segments.length === 3 &&
-      segments[0] === "build" &&
-      (segments[1] === "Release" || segments[1] === "Debug");
-    if (isPrebuild || isGypBuild) matched.push(path);
-  }
-  return matched.sort(compareUnicodeCodePoints);
-};
-
-const scanBindingsTargets = (
-  root: string,
-  addonName: string,
-  files: ReadonlyMap<string, JavaScriptArtifactFile>,
-): readonly string[] => {
-  const prefix = root === "." ? "" : `${root}/`;
-  const matched: string[] = [];
-  for (const [path, file] of files) {
-    if (!isNativeAddonFile(path, files, file)) continue;
-    if (!path.startsWith(prefix)) continue;
-    const rel = path.slice(prefix.length);
-    const segments = rel.split("/");
-    if (segments.includes("node_modules")) continue;
-    if (segments.at(-1) !== addonName) continue;
-    if (matchesBindingsSearchDirectory(segments.slice(0, -1)))
-      matched.push(path);
-  }
-  return matched.sort(compareUnicodeCodePoints);
 };
 
 const matchesBindingsSearchDirectory = (
@@ -272,6 +391,18 @@ const isNativeAddonFile = (
   file: JavaScriptArtifactFile | undefined = files.get(path),
 ): boolean =>
   file?.kind === "native-addon" && path.toLowerCase().endsWith(".node");
+
+const rewriteAppAsarSourcePath = (sourcePath: string): string | undefined => {
+  const segments = sourcePath.split("/");
+  for (let index = 0; index < segments.length - 1; index += 1) {
+    if (segments[index] === "app.asar") {
+      const copy = [...segments];
+      copy[index] = "app.asar.unpacked";
+      return copy.join("/");
+    }
+  }
+  return undefined;
+};
 
 const siblingAsarUnpackedSourcePath = (
   sourcePath: string,

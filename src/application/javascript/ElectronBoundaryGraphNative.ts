@@ -15,10 +15,14 @@ import {
   electronFindingSourceNode,
   electronObservationIdentity,
 } from "./ElectronBoundaryGraphContext.js";
-import { resolveElectronNativeAddonPaths } from "./ElectronBoundaryNativeResolution.js";
+import {
+  createElectronNativeAddonResolver,
+  type ElectronNativeAddonResolver,
+} from "./ElectronBoundaryNativeResolution.js";
 
 interface NativeBindingInput {
   readonly context: JavaScriptArtifactGraphContext;
+  readonly resolver: ElectronNativeAddonResolver;
   readonly file: JavaScriptArtifactFile;
   readonly javascript: JavaScriptStaticAnalysis;
   readonly value: ElectronNativeAddonBindingFinding;
@@ -29,17 +33,31 @@ interface NativeBindingInput {
 export const addElectronNativeBoundaries = (
   context: JavaScriptArtifactGraphContext,
 ): void => {
+  const resolver =
+    context.analysis.nativeAddonResolver ??
+    createElectronNativeAddonResolver({
+      files: context.filesByPath,
+      jsonDocuments: context.analysis.jsonDocuments,
+      directoryPaths: context.directoryPaths,
+    });
   for (const analyzed of context.analysis.files) {
     const { file, javascript } = analyzed;
     if (javascript === null) continue;
     const coverage = javascriptAnalysisCoverage(javascript);
     for (const value of javascript.electron.native_addon_bindings)
-      addNativeBinding({ context, file, javascript, value, coverage });
+      addNativeBinding({
+        context,
+        resolver,
+        file,
+        javascript,
+        value,
+        coverage,
+      });
   }
 };
 
 const addNativeBinding = (input: NativeBindingInput): void => {
-  const { context, file, javascript, value, coverage } = input;
+  const { context, resolver, file, javascript, value, coverage } = input;
   const source = electronFindingSourceNode(
     context,
     file,
@@ -47,13 +65,7 @@ const addNativeBinding = (input: NativeBindingInput): void => {
     value.module_runtime,
   );
   if (source === undefined) return;
-  const resolvedPaths = resolveElectronNativeAddonPaths({
-    file,
-    finding: value,
-    files: context.filesByPath,
-    jsonDocuments: context.analysis.jsonDocuments,
-    directoryPaths: context.directoryPaths,
-  });
+  const resolvedPaths = resolver.resolve(file, value);
   const primaryResolved =
     resolvedPaths.length === 1 ? (resolvedPaths[0] ?? null) : null;
   const binding = context.accumulator.addNode({
