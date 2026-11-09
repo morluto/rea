@@ -816,6 +816,38 @@ process.stdout.write(JSON.stringify({
   expect(invocations).toEqual(["ch"]);
 });
 
+it("does not infer hook dispatch from an application's listener metadata", async () => {
+  const root = await createTestTempDirectory(
+    "rea-electron-hook-indirect-owner-",
+  );
+  temporary.push(root);
+  await writeElectronFixture(root);
+  const script = join(root, "indirect-owner.cjs");
+  await writeFile(
+    script,
+    `const {ipcMain}=require("electron");
+ipcMain.on("seed",()=>{});
+let calls=0;
+const outer=()=>{calls++;};
+outer.listener=ipcMain.rawListeners("seed")[0];
+ipcMain.on("outer",outer);
+ipcMain.emit("outer", {sender:{id:9}});
+ipcMain.removeListener("outer",outer);
+const events=globalThis.__reaElectronActiveSnapshot().events;
+process.stdout.write(JSON.stringify({calls,remaining:ipcMain.listenerCount("outer"),
+ invocations:events.filter(e=>e.kind==="main-event-invocation"&&e.channel==="outer").length,
+ gaps:events.filter(e=>e.kind==="ipc-observation-gap"&&e.channel==="outer").map(e=>e.event)}));`,
+  );
+  const execution = await runNode(script, root);
+  expect(execution.code, execution.stderr).toBe(0);
+  expect(JSON.parse(execution.stdout)).toEqual({
+    calls: 1,
+    remaining: 0,
+    invocations: 0,
+    gaps: ["listener-chain"],
+  });
+});
+
 it("keeps ipcMain once self-removal through an on decorator that wraps the hook", async () => {
   const root = await createTestTempDirectory("rea-electron-hook-ipc-wrap-");
   temporary.push(root);
@@ -1559,7 +1591,7 @@ it.each([
     depth: 16,
     prototypeDepth: 0,
     once: true,
-    gaps: 0,
+    gaps: 1,
     remaining: 1,
   },
   {
@@ -1599,7 +1631,7 @@ it.each([
     depth: 1,
     prototypeDepth: 1,
     once: true,
-    gaps: 0,
+    gaps: 1,
     remaining: 0,
   },
   {
@@ -1623,7 +1655,7 @@ it.each([
     depth: 1,
     prototypeDepth: 16,
     once: true,
-    gaps: 0,
+    gaps: 1,
     remaining: 0,
   },
   {

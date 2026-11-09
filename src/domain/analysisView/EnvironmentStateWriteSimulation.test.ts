@@ -51,6 +51,122 @@ const gated = (rows: readonly TimedCaptureRow[], tool: string) => {
 
 const RENAMED = renamedBook(FIRST_BOOK, "Renamed Book", 3);
 
+it.each([
+  ["read", "1", null],
+  ["read", "2", { ordinal: 4, pointer: "" }],
+  ["source", "1", null],
+  ["source", "2", { ordinal: 5, pointer: "" }],
+] as const)(
+  "does not borrow an entity read across an overlapping %s write to book %s",
+  (phase, target, expected) => {
+    const rows = [
+      [
+        "GET",
+        "/api/books",
+        [
+          { id: 1, name: "A" },
+          { id: 2, name: "B" },
+        ],
+        200,
+        undefined,
+        0,
+        5,
+      ],
+      ["GET", "/api/books/1", { id: 1, name: "A" }, 200, undefined, 1, 5],
+      ["GET", "/api/books/2", { id: 2, name: "B" }, 200, undefined, 2, 5],
+      ...(phase === "source"
+        ? [
+            [
+              "POST",
+              `/api/books/${target}/archive`,
+              null,
+              204,
+              {},
+              3,
+              10_000,
+            ] as const,
+          ]
+        : []),
+      [
+        "PATCH",
+        "/api/books/1",
+        null,
+        204,
+        { name: "Z" },
+        phase === "source" ? 4 : 3,
+        5,
+      ],
+      [
+        "GET",
+        "/api/books/1",
+        { id: 1, name: "Z" },
+        200,
+        undefined,
+        phase === "source" ? 5 : 4,
+        phase === "source" ? 5 : 1_500,
+      ],
+      ...(phase === "read"
+        ? [
+            [
+              "POST",
+              `/api/books/${target}/archive`,
+              null,
+              204,
+              {},
+              5,
+              5,
+            ] as const,
+          ]
+        : []),
+      [
+        "GET",
+        "/api/books/1",
+        { id: 1, name: "Z" },
+        200,
+        undefined,
+        phase === "source" ? 14 : 6,
+        5,
+      ],
+    ] as const;
+    const entries = rows.map(
+      ([method, path, body, status, request, time, duration]) => ({
+        startedDateTime: new Date(
+          Date.UTC(2026, 0, 1, 0, 0, time),
+        ).toISOString(),
+        time: duration,
+        request: {
+          method,
+          url: `http://app.example${path}`,
+          bodySize:
+            request === undefined
+              ? 0
+              : Buffer.byteLength(JSON.stringify(request)),
+          ...(request === undefined
+            ? {}
+            : {
+                postData: {
+                  mimeType: "application/json",
+                  text: JSON.stringify(request),
+                },
+              }),
+        },
+        response: {
+          status,
+          content: { mimeType: "application/json", text: JSON.stringify(body) },
+        },
+      }),
+    );
+    const capture = analysisViewCaptureEvidence(
+      environmentManifestCaptureFixture(entries),
+    );
+    const plan = environmentStateViewOf(capture).writes.find(
+      ({ tool }) => tool === "patch_books_by_id",
+    );
+    expect(plan?.observation).toEqual(expected);
+    if (target === "1") expect(plan?.served).toBe(false);
+  },
+);
+
 /** A book whose constant names organisation 1, created at exchange `seconds`. */
 const tiedToOrgOne = (id: number, name: string, seconds: number): Book => ({
   ...book(id, name, bookClock(seconds)),
@@ -1532,6 +1648,7 @@ describe("resolved encoded item observations", () => {
     const search: ObservationSearch = {
       records,
       chronology: new StateRecordChronology(records, "record-order"),
+      overlapsWrite: () => false,
       from: 0,
       viewOf: () => itemView,
       withBody: (_ordinal, use) => use({ id: "%61", name: "After" }),

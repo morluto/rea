@@ -157,6 +157,29 @@ describe("SessionObservations", () => {
     ]);
   });
 
+  it("does not attribute a reused pid discovered while recording windows", async () => {
+    const table = new Map<number, FakeProcess>([
+      [100, { parentPid: 1, startTime: "10", runId: "run" }],
+      [101, { parentPid: 100, startTime: "11", runId: "run" }],
+    ]);
+    const observations = observe(table);
+    await trackProcess(observations, 100, signal);
+    await sampleProcesses(observations, signal);
+    table.set(101, { parentPid: 1, startTime: "99" });
+
+    expect(
+      await recordWindows(observations, [window("0x8", 101, "Other")], signal),
+    ).toBe(0);
+    expect(
+      await recordWindows(observations, [window("0x8", 101, "Other")], signal),
+    ).toBe(0);
+    expect(observedSession(observations).windows[0]?.application).toBe(false);
+    expect(observations.firstWindowMs).toBeNull();
+    expect(
+      await recordWindows(observations, [window("0x9", 101, "Notes")], signal),
+    ).toBe(1);
+  });
+
   it("does not keep a zombie child alive, whether first seen as one or exiting later", async () => {
     const table = new Map<number, FakeProcess>([
       [100, { parentPid: 1, startTime: "10", runId: "run" }],

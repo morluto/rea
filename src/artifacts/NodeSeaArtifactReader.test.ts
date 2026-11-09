@@ -3,7 +3,7 @@ import { once } from "node:events";
 import { writeFileSync } from "node:fs";
 import { buffer } from "node:stream/consumers";
 import { createReader } from "./inventory/reader.js";
-import { open, readFile, writeFile } from "node:fs/promises";
+import { open, readFile, writeFile, type FileHandle } from "node:fs/promises";
 import { join } from "node:path";
 import { setImmediate } from "node:timers";
 
@@ -950,5 +950,76 @@ it.each(["valid replacement", "malformed blob"] as const)(
     ).rejects.toMatchObject({ reason: "integrity" });
     expect(created).toBeInstanceOf(NodeSeaArtifactReader);
     expect(created?.formatMetadata()).toBeUndefined();
+  },
+);
+
+it("allows an uncancelled inventory after a cancelled SEA preparation", async () => {
+  const path = await writeCarrier("cancel-retry", nodeSeaElf(populated));
+  const reader = new NodeSeaArtifactReader(path);
+  const controller = new AbortController();
+  const reason = { stop: "first inventory" };
+  const observed = await open(path, "r");
+  const prototype = Object.getPrototypeOf(observed) as FileHandle;
+  const original = prototype.read;
+  let stopped = false;
+  const spy = vi.spyOn(prototype, "read").mockImplementation(async function (
+    this: FileHandle,
+    ...args: Parameters<typeof original>
+  ) {
+    const result = await original.apply(this, args);
+    if (!stopped) {
+      stopped = true;
+      controller.abort(reason);
+    }
+    return result;
+  });
+  try {
+    await expect(
+      reader.entries(controller.signal)[Symbol.asyncIterator]().next(),
+    ).rejects.toMatchObject({ reason: "cancelled" });
+    spy.mockRestore();
+    const entries = [];
+    for await (const entry of reader.entries()) entries.push(entry);
+    expect(entries.length).toBeGreaterThan(0);
+  } finally {
+    spy.mockRestore();
+    await observed.close();
+    await reader.close();
+  }
+});
+
+it.each([
+  {
+    field: "assets",
+    count: 100_001n,
+    blob: buildNodeSeaBlob({ assets: [{ name: "a", body: "" }] }),
+  },
+  {
+    field: "exec argv",
+    count: 4097n,
+    blob: buildNodeSeaBlob({ execArgv: ["a"] }),
+  },
+])(
+  "reports a truncated $field table as malformed through the reader",
+  async ({ count, blob }) => {
+    const declared = Buffer.alloc(8);
+    declared.writeBigUInt64LE(count);
+    // Each case has one optional table immediately after the common fields.
+    const tableOffset = buildNodeSeaBlob().length;
+    const truncated = Buffer.concat([blob.subarray(0, tableOffset), declared]);
+    const path = await writeCarrier(
+      "truncated-sea",
+      nodeSeaElf({ blob: truncated, fuse: "set" }),
+    );
+    const reader = new NodeSeaArtifactReader(path);
+    try {
+      await expect(async () => {
+        for await (const _entry of reader.entries()) {
+          /* consume */
+        }
+      }).rejects.toMatchObject({ reason: "format" });
+    } finally {
+      await reader.close();
+    }
   },
 );

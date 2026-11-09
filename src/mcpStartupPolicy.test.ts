@@ -54,6 +54,7 @@ describe("MCP tool deadline allowance for a Ghidra decompile limit", () => {
         }),
         "json",
       ),
+      undefined,
     );
     if (!details.ok) throw details.error;
     expect(details.value.timeoutInputs).toMatchObject({
