@@ -86,6 +86,11 @@ properties and remains readable without migration.
 
 ## Select sources before analysis
 
+Explicit `source_paths` retain the acquisition owner's requested order, including
+selected dependency files. First-party priority applies only to unscoped analysis.
+Recovered syntax or incomplete semantic examination keeps Electron coverage
+partial even when useful windows or IPC facts were retained.
+
 For a question about known entry sources, supply exact artifact-relative file
 paths in `source_paths`, or repeat `--source-path` on either CLI route:
 

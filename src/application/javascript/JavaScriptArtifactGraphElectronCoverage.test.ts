@@ -7,10 +7,13 @@ import { moduleResolutionModeForJavaScriptReference } from "../../domain/javascr
 import { analyzeParsedJavaScriptSemanticsSteps } from "../../domain/javascript/javascriptSemanticAnalysis.js";
 import { parseJavaScriptSource } from "../../domain/javascript/javascriptSourceParser.js";
 import { analyzeParsedJavaScriptStaticSourceSteps } from "../../domain/javascript/javascriptStaticAnalysis.js";
+import { AnalysisResourceConstraintError } from "../../domain/analysisErrorCore.js";
+import { projectAnalysisError } from "../../domain/analysisErrorProjection.js";
 import type {
   AnalyzedJavaScriptArtifactFile,
   JavaScriptArtifactAnalysis,
 } from "./JavaScriptArtifactAnalysisTypes.js";
+import { javascriptArtifactAnalysisScopes } from "./JavaScriptArtifactAnalysisTypes.js";
 import { completeJavaScriptAnalysisSteps } from "./JavaScriptAnalysisControl.js";
 import { buildImmutableJavaScriptArtifactGraphSteps as buildGraph } from "./JavaScriptArtifactGraphBuilder.js";
 import { JavaScriptJsonDocuments } from "./JavaScriptJsonDocuments.js";
@@ -86,10 +89,19 @@ const graphFor = async (
   electronSemantics: string | undefined;
 }> => {
   const base = await analyzedEntry(source, path);
-  const entry = mutate === undefined ? base : mutate(base);
+  return graphForEntries([mutate === undefined ? base : mutate(base)]);
+};
+
+const graphForEntries = (
+  entries: readonly AnalyzedJavaScriptArtifactFile[],
+): {
+  limitations: readonly string[];
+  electronSemantics: string | undefined;
+  browserWindows: number;
+} => {
   const analysis: JavaScriptArtifactAnalysis = {
     jsonDocuments: new JavaScriptJsonDocuments(),
-    files: [entry],
+    files: [...entries],
     packages: [],
     json_modules: [],
     html_scripts: [],
@@ -102,10 +114,10 @@ const graphFor = async (
     limitations: [],
   };
   const fileSet = {
-    files: [entry.file],
+    files: entries.map(({ file }) => file),
     unavailable_relevant_files: [],
     containers: [],
-    text_bytes_read: entry.file.bytes,
+    text_bytes_read: entries.reduce((total, { file }) => total + file.bytes, 0),
     invalid_utf8_files: 0,
   };
   const steps = buildGraph(snapshot, fileSet, analysis);
@@ -114,6 +126,7 @@ const graphFor = async (
   return {
     limitations: next.value.graph.limitations,
     electronSemantics: next.value.electronSummary.electron_semantics,
+    browserWindows: next.value.electronSummary.browser_windows,
   };
 };
 
@@ -565,5 +578,104 @@ it("recovers nested exposed_api_members for TypeScript-wrapped inline contextBri
     electron_semantics: "recovered",
     context_bridge_apis: 1,
     exposed_api_members: 2,
+  });
+});
+
+it("reports partial coverage when an Electron source was dropped for the result budget", async () => {
+  // #9321: IPC handlers from an admitted source were reported while the
+  // window source's projection was rejected, so zero windows is unknown.
+  const reported = await analyzedEntry(
+    `const electron = require("electron");\nelectron.ipcMain.handle("ping", () => "pong");\n`,
+    "out/main/ipc.cjs",
+  );
+  const window = await analyzedEntry(
+    `const electron = require("electron");\nnew electron.BrowserWindow({ webPreferences: { contextIsolation: true } });\n`,
+    "out/main/window.cjs",
+  );
+  expect(window.javascript?.electron.browser_windows).toHaveLength(1);
+  const complete = graphForEntries([reported, window]);
+  expect(complete.electronSemantics).toBe("recovered");
+  expect(complete.browserWindows).toBe(1);
+
+  const notStarted = new AnalysisResourceConstraintError(
+    "analyze_javascript_application",
+    "memory",
+    "semantic analysis of out/main/window.cjs was not started",
+    { semantic_result_budget_bytes: 0 },
+  );
+  const dropped: AnalyzedJavaScriptArtifactFile[] = [
+    {
+      ...window,
+      application_projection_failure: {
+        reason: "result budget exhausted",
+        error: projectAnalysisError(notStarted),
+        limits: null,
+      },
+    },
+    {
+      ...window,
+      semantic: null,
+      analysis_failure: {
+        scope: javascriptArtifactAnalysisScopes.javascript,
+        status: "interrupted",
+        reason: `out/main/window.cjs: ${notStarted.message}`,
+        error: projectAnalysisError(notStarted),
+        limits: notStarted.reportedLimits,
+      },
+    },
+  ];
+  for (const entry of dropped) {
+    const partial = graphForEntries([reported, entry]);
+    expect(partial.electronSemantics).toBe("partial");
+    expect(partial.limitations).not.toContain(EMPTY_COVERAGE);
+    expect(partial.limitations).toContainEqual(
+      expect.stringContaining(
+        "Electron boundary facts are partial: 1 Electron-loading source(s)",
+      ),
+    );
+  }
+});
+
+it("reports partial coverage when a successful static pass stopped at a limit", async () => {
+  // The wrapper expansion budget ends Electron call-path discovery without
+  // failing the worker, so no failure field marks the source as incomplete.
+  const { electronSemantics, limitations } = await graphFor(
+    `const electron = require("electron");\nelectron.ipcMain.handle("ping", () => "pong");\n`,
+    (entry) => {
+      const javascript = entry.javascript!;
+      const coverage = javascript.analysis_coverage!;
+      return {
+        ...entry,
+        javascript: {
+          ...javascript,
+          analysis_coverage: {
+            ...coverage,
+            examination: {
+              ...coverage.examination,
+              status: "limited",
+              electron_call_paths_limited: true,
+            },
+          },
+        },
+      };
+    },
+    "main.cjs",
+  );
+  expect(electronSemantics).toBe("partial");
+  expect(limitations).toContainEqual(
+    expect.stringContaining(
+      "Electron boundary facts are partial: 1 Electron-loading source(s)",
+    ),
+  );
+});
+
+it("keeps recovered Electron facts partial after syntax recovery", async () => {
+  const source = `import { BrowserWindow } from "electron"; new BrowserWindow({webPreferences: {sandbox: true}}); const duplicate = 1; const duplicate = 2;`;
+  const entry = await analyzedEntry(source, "main.mjs");
+  expect(entry.javascript?.parse_status).toBe("partial");
+  expect(entry.javascript?.electron.browser_windows.length).toBeGreaterThan(0);
+  expect(graphForEntries([entry])).toMatchObject({
+    electronSemantics: "partial",
+    browserWindows: 1,
   });
 });
