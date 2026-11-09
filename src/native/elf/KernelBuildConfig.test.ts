@@ -257,6 +257,15 @@ it("keeps truncated and unusable bzImage payloads incomplete", () => {
   });
 });
 
+it("detects the bzImage payload codec within the declared payload only", () => {
+  const image = bzImageXzFixture();
+  image.writeUInt32LE(1, 0x24c);
+  expect(parse(image)).toMatchObject({
+    payload: { codec: null, status: "unsupported", bytes: 1 },
+    config: { reason: "unrecognized_payload_codec" },
+  });
+});
+
 it("names a whole-file codec stream without inflating it", () => {
   const report = parse(gzipSync(Buffer.from(SAMPLE_KERNEL_CONFIG)));
   expect(report).toMatchObject({

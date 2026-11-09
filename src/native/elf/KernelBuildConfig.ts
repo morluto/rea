@@ -687,7 +687,9 @@ const bzImageReport = (
       `The bzImage payload declared by the setup header extends past the file. ${NOT_SEARCHED}`,
     );
   const { payload } = header;
-  const codec = codecAt(bytes, payload.offset);
+  // Detection and inflation read only the declared payload range.
+  const body = bytes.subarray(payload.offset, payload.offset + payload.bytes);
+  const codec = codecAt(body, 0);
   const base = {
     container: "bzimage" as const,
     offset: payload.offset,
@@ -708,11 +710,7 @@ const bzImageReport = (
   // Only the leading gzip member is inflated; its own ISIZE trailer carries
   // the length. Bytes after the member inside the payload are not read.
   assertArtifactReadActive(signal);
-  const member = inflateGzipMember(
-    bytes.subarray(payload.offset, payload.offset + payload.bytes),
-    0,
-    input.max_payload_bytes,
-  );
+  const member = inflateGzipMember(body, 0, input.max_payload_bytes);
   if (member.kind === "limit")
     budget("max_payload_bytes", input.max_payload_bytes);
   if (member.kind !== "member")
