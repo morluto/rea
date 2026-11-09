@@ -478,6 +478,16 @@ export const parsePerfData = (
   // A present-but-unrepresentable field stays unknown instead of becoming the
   // zero-byte stride a different diagnostic would report.
   const stride = rawStride ?? 0;
+  // The stride is a header fact independent of the section extents below, so
+  // report it before any extent branch can return early; otherwise a rejected
+  // attribute extent hides that the recorded stride itself is unreadable.
+  if (rawStride === null)
+    diagnose(
+      state,
+      null,
+      "unsafe-attribute-size",
+      `The attribute entry stride exceeds Number.MAX_SAFE_INTEGER, so the recorded value cannot be represented and the events were not read.`,
+    );
   const attributeRead = sectionAt(bytes, read, ATTRS_SECTION_FIELD);
   const dataRead = sectionAt(bytes, read, DATA_SECTION_FIELD);
   const attributeSection = attributeRead.section;
@@ -504,19 +514,38 @@ export const parsePerfData = (
   // events. Only a readable, nonempty extent can conflict.
   const eventTypesRead = sectionAt(bytes, read, EVENT_TYPES_SECTION_FIELD);
   const eventTypes = eventTypesRead.section;
-  // An unrepresentable `event_types` extent owns unknown bytes, so whether the
-  // walk publishes its contents cannot be decided: treating it as absent is
-  // what the overlap predicate below would do, and the walk would then publish
-  // contested attribute bytes as events while still reporting complete scope.
-  if (eventTypesRead.unrepresentable) {
+  // `sectionAt` reports the whole extent as unrepresentable when either half
+  // is, so the serialized size is read again to tell a zero-byte section from
+  // one whose size could not be read at all.
+  const eventTypesSize = read.u64(bytes, EVENT_TYPES_SECTION_FIELD + 8);
+  // An unrepresentable `event_types` extent with a nonzero size owns unknown
+  // bytes, so whether the walk publishes its contents cannot be decided:
+  // treating it as absent is what the overlap predicate below would do, and the
+  // walk would then publish contested attribute bytes as events while still
+  // reporting complete scope.
+  //
+  // A serialized zero size proves the section owns no bytes, so its offset
+  // cannot create an overlap. The offset is still unrepresentable and worth
+  // reporting, but dropping otherwise readable attributes would state less
+  // than the file does.
+  if (eventTypesRead.unrepresentable && eventTypesSize !== 0) {
     diagnose(
       state,
       null,
       "unsafe-section-extent",
-      "The event-types section extent exceeds Number.MAX_SAFE_INTEGER, so its range cannot be compared with the attribute section.",
+      eventTypesSize === null
+        ? "The event-types section size exceeds Number.MAX_SAFE_INTEGER, so its range cannot be compared with the attribute section."
+        : "The event-types section offset exceeds Number.MAX_SAFE_INTEGER while it declares bytes, so its range cannot be compared with the attribute section.",
     );
     return ok(emptyRecording(artifact, state.diagnostics, order));
   }
+  if (eventTypesRead.unrepresentable)
+    diagnose(
+      state,
+      null,
+      "unsafe-section-extent",
+      "The event-types section offset exceeds Number.MAX_SAFE_INTEGER, so its position cannot be compared with the attribute section; it declares no bytes.",
+    );
   const attributeOverlapsEventTypes =
     eventTypes !== null &&
     attributeSection.size > 0 &&
@@ -567,16 +596,6 @@ export const parsePerfData = (
         : "The attribute and data sections overlap, so neither extent is trusted.",
     );
   else {
-    // A present-but-unrepresentable stride is a fact about the source whatever
-    // the section holds, so it is reported even when no entry needs walking;
-    // the empty section is then a second, independent fact.
-    if (rawStride === null)
-      diagnose(
-        state,
-        null,
-        "unsafe-attribute-size",
-        `The attribute entry stride exceeds Number.MAX_SAFE_INTEGER, so the recorded value cannot be represented and the events were not read.`,
-      );
     // The stride is a fact about the header too, so an unusable one is
     // reported whatever the section holds: an empty section alone leaves scope
     // complete, and a malformed stride would then read as a legitimate empty

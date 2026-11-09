@@ -304,12 +304,45 @@ describe("parsePerfData section accounting", () => {
     // The extent owns bytes the walk cannot compare against, so whether the
     // attributes it covers belong to the event-types section is undecidable.
     bytes.writeBigUInt64LE(0xffffffffffffffffn, 0x38);
+    bytes.writeBigUInt64LE(16n, 0x40);
     const archive = parsed(bytes);
     expect(archive.events).toEqual([]);
     expect(archive.diagnostics).toEqual([
       expect.objectContaining({ code: "unsafe-section-extent" }),
     ]);
     expect(archive.source_coverage.status).not.toBe("complete-within-scope");
+  });
+
+  it("keeps readable attributes when an empty event-types offset is unrepresentable", () => {
+    const bytes = buildPerfRecording();
+    // A serialized zero size owns no bytes, so an unrepresentable offset cannot
+    // create an overlap; dropping the whole attribute walk would state less
+    // than the file does.
+    bytes.writeBigUInt64LE(0xffffffffffffffffn, 0x38);
+    bytes.writeBigUInt64LE(0n, 0x40);
+    const archive = parsed(bytes);
+    expect(archive.diagnostics.map(({ code }) => code)).toContain(
+      "unsafe-section-extent",
+    );
+    expect(archive.events).toHaveLength(1);
+    expect(archive.summary.identifiers_present).toBe(true);
+  });
+
+  it("reports an unrepresentable stride even when the attribute extent is rejected", () => {
+    const bytes = buildPerfRecording();
+    // The stride is a header fact of its own; a rejected attribute extent must
+    // not hide that the recorded value cannot be represented.
+    bytes.writeBigUInt64LE(0xffffffffffffffffn, 0x10);
+    bytes.writeBigUInt64LE(5_000_000n, 0x18);
+    bytes.writeBigUInt64LE(100n, 0x20);
+    const archive = parsed(bytes);
+    expect(archive.file_header.attribute_bytes).toBeNull();
+    expect(archive.diagnostics.map(({ code }) => code)).toEqual(
+      expect.arrayContaining([
+        "unsafe-attribute-size",
+        "invalid-attribute-section",
+      ]),
+    );
   });
 
   it("treats a zero-length data extent as empty rather than overlapping", () => {
