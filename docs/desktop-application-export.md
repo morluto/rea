@@ -72,7 +72,7 @@ Evidence; the bundle itself is complete.
 | `envs/<name>/install-download.sh` | With `--download-install`: the run script that unpacks the downloaded AppImage or tarball          |
 | `envs/<name>/applications/`       | With a tarball's `--download-install`: the desktop entry REA wrote for its program                 |
 | `tasks/smoke.json`                | A task that deploys the app                                                                        |
-| `tasks/<task>.json`               | With `--task`: each of the agent's tasks, its verifier in `artifacts/` and the eval in `evals/`             |
+| `tasks/<task>.json`               | With `--task`: each of the agent's tasks, its verifier in `artifacts/` and the eval in `evals/`    |
 | `README.md`                       | What was exported, from which capture, and what to keep in mind                                    |
 
 The class file is `<name>_app.py` with hyphens as underscores, for example
