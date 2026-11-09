@@ -2,7 +2,7 @@ import type { ExecutionOptions } from "../AnalysisProvider.js";
 import type { ElfDebugLinkPort } from "./ElfDebugLinkPort.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
 import { AnalysisOutputError } from "../../domain/analysisErrorCore.js";
-import { createEvidence, type Evidence } from "../../domain/evidence.js";
+import type { Evidence } from "../../domain/evidence.js";
 import { elfObjectTypeName } from "../../domain/native/elfNotes.js";
 import {
   debugFileNameIsSingleSegment,
@@ -19,15 +19,16 @@ import {
   type ElfDebugLink,
   type InspectElfDebugLinkInput,
 } from "../../domain/native/elfDebugLink.js";
-import { BINARY_ARCHITECTURES } from "../../domain/binaryTargetTypes.js";
-import { elfArchitecture } from "../../domain/elfFixedHeader.js";
+import {
+  createElfDebugLinkEvidence,
+  elfDebugLinkRanges,
+  type ElfDebugLinkRange,
+} from "../../domain/native/elfDebugLinkEvidence.js";
 import { err, type Result } from "../../domain/result.js";
 import { completeProviderEvidence } from "../ProviderOperationExecution.js";
 import { parseAnalysisInput } from "../AnalysisInput.js";
 
 const OPERATION = "inspect_elf_debug_link";
-
-type Range = { readonly offset: number; readonly bytes: number };
 
 /** Shared caller validation, output parsing and Evidence provenance for CLI/MCP. */
 export class ElfDebugLinkService {
@@ -62,38 +63,11 @@ export class ElfDebugLinkService {
           "ELF debug-link provider returned malformed output or changed artifact identity.",
         ),
       );
-    const value = report.data;
-    const architecture = BINARY_ARCHITECTURES.find(
-      (supported) => supported === elfArchitecture(value.machine),
-    );
-    const locations = [
-      { kind: "artifact-path" as const, path: value.artifact.path },
-      ...(value.candidate === null
-        ? []
-        : [{ kind: "artifact-path" as const, path: value.candidate.path }]),
-      ...rangesOf(value).map((range) => ({
-        kind: "file-offset-range" as const,
-        start: range.offset,
-        end: range.offset + range.bytes,
-      })),
-    ];
     return completeProviderEvidence(
-      createEvidence(
-        {
-          path: value.artifact.path,
-          format: "elf",
-          sha256: value.artifact.sha256,
-          ...(architecture === undefined ? {} : { architecture }),
-        },
+      createElfDebugLinkEvidence(
+        report.data,
         this.provider.identity,
-        {
-          operation: OPERATION,
-          parameters: input.value,
-          result: value,
-          confidence: "observed",
-          limitations: value.limitations,
-          locations,
-        },
+        input.value,
       ),
       options?.signal,
     );
@@ -102,19 +76,8 @@ export class ElfDebugLinkService {
 
 const inside =
   (fileBytes: number) =>
-  (range: Range): boolean =>
+  (range: ElfDebugLinkRange): boolean =>
     range.bytes <= fileBytes && range.offset <= fileBytes - range.bytes;
-
-const rangesOf = (report: ElfDebugLink): Range[] => {
-  const found: Range[] = [];
-  const add = (range: Range | null): void => {
-    if (range !== null) found.push(range);
-  };
-  add(report.debuglink.location);
-  add(report.debugaltlink.location);
-  add(report.debugdata.location);
-  return found;
-};
 
 const nameLiterals = (name: ElfDebugLink["debuglink"]["filename"]): boolean =>
   name === null ||
@@ -524,7 +487,7 @@ const validReport = (
   if (
     report.artifact.bytes > input.max_file_bytes ||
     report.type_name !== elfObjectTypeName(report.type) ||
-    !rangesOf(report).every(inside(report.artifact.bytes)) ||
+    !elfDebugLinkRanges(report).every(inside(report.artifact.bytes)) ||
     report.build_id.ids.length > input.max_entries
   )
     return false;

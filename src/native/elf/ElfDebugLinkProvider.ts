@@ -5,8 +5,10 @@ import {
 import { isSelectedRegularFileError } from "../../filesystem/RegularFile.js";
 import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
 import {
+  completedStableArtifactStream,
   readStableArtifact,
   streamStableArtifact,
+  type StableArtifactStream,
 } from "../../artifacts/readStableArtifact.js";
 import {
   artifactFilePrimaryFacts,
@@ -27,12 +29,16 @@ import {
 } from "../../domain/analysisErrorCore.js";
 import { fixedAllowanceOptions } from "../../domain/fixedAllowanceRemediation.js";
 import {
+  ELF_DEBUG_LINK_CANDIDATE_INCOMPLETE_LIMITATION,
   MAX_ELF_DEBUG_CANDIDATE_BYTES,
   MAX_INSPECT_ELF_DEBUG_LINK_ENTRIES,
   MAX_INSPECT_ELF_DEBUG_LINK_FILE_BYTES,
+  type ElfDebugLink,
   type InspectElfDebugLinkInput,
 } from "../../domain/native/elfDebugLink.js";
 import { err, ok } from "../../domain/result.js";
+import type { AnalysisPartialObservation } from "../../domain/analysisErrorBase.js";
+import { createElfDebugLinkEvidence } from "../../domain/native/elfDebugLinkEvidence.js";
 import { ELF_DEBUG_LINK_PROVIDER } from "../../domain/investigationProviders.js";
 import {
   BinaryFormatFailure,
@@ -69,6 +75,8 @@ export class ElfDebugLinkProvider implements ElfDebugLinkPort {
 
   async inspect(input: InspectElfDebugLinkInput, options?: ExecutionOptions) {
     let field: SelectedField = "path";
+    let candidatePhase: CandidatePhase | undefined;
+    let crc32 = 0;
     try {
       return await this.#resources.run(async () => {
         field = "path";
@@ -79,7 +87,7 @@ export class ElfDebugLinkProvider implements ElfDebugLinkPort {
           undefined,
           this.#resources,
         );
-        const report = parseElfDebugLink(
+        const image = parseElfDebugLink(
           snapshot.bytes,
           {
             path: input.path,
@@ -88,9 +96,9 @@ export class ElfDebugLinkProvider implements ElfDebugLinkPort {
           },
           input,
         );
-        if (input.candidate_path === undefined) return ok(report);
+        if (input.candidate_path === undefined) return ok(image);
         field = "candidate_path";
-        let crc32 = 0;
+        candidatePhase = { report: image, path: input.candidate_path };
         let candidate;
         try {
           // Stream the whole candidate for the debuglink CRC32 and SHA-256.
@@ -111,34 +119,85 @@ export class ElfDebugLinkProvider implements ElfDebugLinkPort {
           );
         } catch (cause) {
           if (!candidateUnreadable(cause)) throw cause;
-          return ok(unreadableElfDebugCandidate(report));
+          return ok(unreadableElfDebugCandidate(image));
         }
-        return ok(
-          verifyElfDebugCandidate(
-            report,
-            {
-              path: input.candidate_path,
-              sha256: candidate.sha256,
-              bytes: candidate.size,
-              crc32,
-              prefix: candidate.prefix,
-            },
-            input,
-          ),
-        );
+        return ok(verifiedCandidate(candidatePhase, candidate, crc32, input));
       });
     } catch (cause) {
-      return err(elfDebugLinkFailure(cause, input, field));
+      return err(
+        elfDebugLinkFailure(
+          cause,
+          input,
+          field,
+          candidatePhase === undefined
+            ? undefined
+            : candidatePhaseObservation(
+                candidatePhase,
+                cause,
+                crc32,
+                input,
+                this.identity,
+              ),
+        ),
+      );
     }
   }
 }
+
+type CandidatePhase = { readonly report: ElfDebugLink; readonly path: string };
+
+const verifiedCandidate = (
+  phase: CandidatePhase,
+  candidate: StableArtifactStream,
+  crc32: number,
+  input: InspectElfDebugLinkInput,
+): ElfDebugLink =>
+  verifyElfDebugCandidate(
+    phase.report,
+    {
+      path: phase.path,
+      sha256: candidate.sha256,
+      bytes: candidate.size,
+      crc32,
+      prefix: candidate.prefix,
+    },
+    input,
+  );
+
+/**
+ * The decoded image survives a failed candidate phase. A candidate stream that
+ * completed before cancellation or a failed close keeps its full comparison;
+ * otherwise only the image linkage is retained, without any comparison.
+ */
+const candidatePhaseObservation = (
+  phase: CandidatePhase,
+  cause: unknown,
+  crc32: number,
+  input: InspectElfDebugLinkInput,
+  provider: typeof ELF_DEBUG_LINK_PROVIDER,
+): AnalysisPartialObservation => {
+  const completed = completedStableArtifactStream(cause);
+  return createElfDebugLinkEvidence(
+    completed === undefined
+      ? {
+          ...phase.report,
+          limitations: [
+            ...phase.report.limitations,
+            ELF_DEBUG_LINK_CANDIDATE_INCOMPLETE_LIMITATION,
+          ],
+        }
+      : verifiedCandidate(phase, completed, crc32, input),
+    provider,
+    input,
+  );
+};
 
 /** Enough retained bytes for an ELF32 or ELF64 fixed header. */
 const ELF_HEADER_PREFIX_BYTES = 64;
 
 /**
- * A candidate that is missing, unreadable, changed while streamed, or above
- * the whole-file ceiling cannot be compared. Path-shape refusals, cancellation,
+ * A candidate that is missing, unreadable, fails a data read, changed while
+ * streamed, or is above the whole-file ceiling cannot be compared. Path-shape refusals, cancellation,
  * and descriptor close failures, including a close that failed after an
  * integrity or limit refusal, still fail the call.
  */
@@ -155,7 +214,8 @@ const candidateUnreadable = (cause: unknown): boolean => {
     cause.code === "ENOENT" ||
     cause.code === "ENOTDIR" ||
     cause.code === "EACCES" ||
-    cause.code === "EPERM"
+    cause.code === "EPERM" ||
+    cause.code === "EIO"
   );
 };
 
@@ -343,12 +403,16 @@ const elfDebugLinkFailure = (
   cause: unknown,
   input: InspectElfDebugLinkInput,
   field: SelectedField,
+  retained: AnalysisPartialObservation | undefined,
 ) => {
   const primary = elfDebugLinkFailurePrimary(
     artifactFilePrimaryFacts(cause),
     input,
     field,
   );
+  // Retained before stable-read projection so the decoded report, which
+  // already carries any completed candidate identity, takes precedence.
+  if (retained !== undefined) primary.retainPartialObservation(retained);
   return projectStableArtifactFailure(
     cause,
     primary,

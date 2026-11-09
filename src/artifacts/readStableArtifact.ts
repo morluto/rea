@@ -37,6 +37,41 @@ export const completedStableArtifact = (
   return { bytes: value.bytes, sha256: value.sha256 };
 };
 
+/** Recover only the exact streamed outcome retained by descriptor finalization. */
+export const completedStableArtifactStream = (
+  cause: unknown,
+): StableArtifactStream | undefined => {
+  const value = artifactFileCompletion(cause)?.value;
+  if (
+    value === null ||
+    typeof value !== "object" ||
+    !("sha256" in value) ||
+    typeof value.sha256 !== "string" ||
+    !("size" in value) ||
+    typeof value.size !== "number" ||
+    !Number.isSafeInteger(value.size) ||
+    value.size < 0 ||
+    !("prefix" in value) ||
+    !Buffer.isBuffer(value.prefix)
+  )
+    return undefined;
+  return { sha256: value.sha256, size: value.size, prefix: value.prefix };
+};
+
+/** Whole-file identity of a completed buffered or streamed stable read. */
+export const completedStableArtifactIdentity = (
+  cause: unknown,
+): { readonly sha256: string; readonly bytes: number } | undefined => {
+  const snapshot = completedStableArtifact(cause);
+  if (snapshot !== undefined)
+    return { sha256: snapshot.sha256, bytes: snapshot.bytes.length };
+  // A stream retains only a prefix; its size is the whole-file length.
+  const stream = completedStableArtifactStream(cause);
+  return stream === undefined
+    ? undefined
+    : { sha256: stream.sha256, bytes: stream.size };
+};
+
 /** Filesystem boundary for stable reads, including deterministic replacement probes. */
 export interface StableArtifactFileSystem {
   lstat(path: string): Promise<BigIntStats>;

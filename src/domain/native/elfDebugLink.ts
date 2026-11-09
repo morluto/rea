@@ -56,6 +56,10 @@ export const ELF_DEBUG_LINK_CANDIDATE_BUDGET_LIMITATION =
 export const ELF_DEBUG_LINK_CANDIDATE_UNREADABLE_LIMITATION =
   "The selected candidate could not be read as one unchanged regular file, so it was not compared.";
 
+/** A failed candidate phase retains the image report without any comparison. */
+export const ELF_DEBUG_LINK_CANDIDATE_INCOMPLETE_LIMITATION =
+  "The candidate read did not complete, so the candidate was not compared. Only the image linkage is retained.";
+
 /**
  * Whole-file ceiling for a streamed candidate. Only `max_file_bytes` of it is
  * retained for ELF decoding; the rest is hashed in bounded chunks.
