@@ -106,10 +106,10 @@ describe("raw-binary snapshots saved before base_address", () => {
     expect(snapshotMatchesTarget(snapshot.target, target)).toBe(true);
     // Upstream's instruction-status (#7823, #8777), load-image observation
     // (#8531), procedure search (#8520), reference, byte-search (#8840,
-    // #8608), data-type (#8602), inventory-search (#8376) and value-flow
-    // (#8651) revisions keep every Ghidra snapshot saved before them from
-    // replaying. Apart from those parameters, the profile is the one this
-    // snapshot recorded.
+    // #8608), data-type (#8602), inventory-search (#8376), value-flow (#8651)
+    // and call-coverage (#8340) revisions keep every Ghidra snapshot saved
+    // before them from replaying. Apart from those parameters, the profile is
+    // the one this snapshot recorded.
     const mismatch = snapshotBindingMismatch(snapshot, target, profile);
     expect(mismatch).not.toHaveProperty("target");
     expect(mismatch).toHaveProperty("profile_digest");
@@ -124,6 +124,7 @@ describe("raw-binary snapshots saved before base_address", () => {
       data_type_observations: dataTypes,
       inventory_search_projection: inventorySearch,
       value_flow_effect_scope: valueFlow,
+      call_relationship_coverage: callCoverage,
       ...parameters
     } = profile.parameters;
     expect(status).toBe("unlisted-and-containing-code-data-v3");
@@ -137,12 +138,17 @@ describe("raw-binary snapshots saved before base_address", () => {
     expect(byteSearchCoverage).toBe("separate-loaded-overlays-v1");
     expect(valueFlow).toBe("pcode-load-store-explicit-v1");
     const {
+      call_relationship_coverage: savedCallCoverage,
       load_image_observations: savedObservations,
       function_references: savedFunctionReferences,
       instruction_references: savedInstructionReferences,
       ...savedParameters
     } = snapshot.binding.analysis_profile.parameters;
     expect(savedObservations).toBe("source-mappings-entry-context-v2");
+    expect([savedCallCoverage, callCoverage]).toEqual([
+      "function-body-call-coverage-v5",
+      "observed-call-inventory-and-discovery-v7",
+    ]);
     expect([savedFunctionReferences, functionReferences]).toEqual([
       "complete-body-and-entry-reference-manager-v2",
       "complete-body-and-entry-reference-manager-v3",

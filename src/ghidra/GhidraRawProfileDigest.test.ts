@@ -36,27 +36,27 @@ const LEGACY_RAW_DIGESTS = [
   [
     "x86",
     "0x1000",
-    "3cef1074b1972e1f51670d47c84c2a72357615ba21d14a07ae9df59c0875457a",
+    "2b4d13720e118636004ccb1ba8c065c7c4c82299c46e8c6d83a0620f700f3d98",
   ],
   [
     "x86_64",
     "0x401000",
-    "12c0156fb34243b4f0e31260630316a106ca77ff57bba60003c2c0e1d829a28f",
+    "8c05fcbfbadfef2942878b79dfe683c8e9a94abd5732599e90762f93dd4c1568",
   ],
   [
     "arm",
     "0x8000000",
-    "d4bdfb0d8dc285d56b95a04b3150a01a2948ff5c7afa30cc15325c76c537bfe6",
+    "9261c9064cdc6bec4004ba09000716c219d338fd995e6bd58fdbc776bf3fb02a",
   ],
   [
     "arm64",
     "0x80000",
-    "e431ecc257aec2e048a00f9a194a6fe682b85eee0bf052d5133babb8bcdad5ef",
+    "990deba2fe5ea63b38b395fa181ae84656807856f56cb9ab1cd8517d423e5df5",
   ],
   [
     "m68k",
     "0x1000",
-    "ef201fc6986e91fc0832230324ec450021e66eb2c3183e66933a7be29137dd54",
+    "973d3992d7052b28bcfb3215319045da77ef182da76ddee476ef64a319cd30d4",
   ],
 ] as const;
 
@@ -231,7 +231,7 @@ describe("M-profile raw-binary analysis profile", () => {
     const digest = (await profile(reset("armv7-m"))).digest;
     // Pinned so a change to raw_load semantics must bump its version.
     expect(digest).toBe(
-      "b4717c64c38b185061eca24e2dd38e5ce61d062febdc77db894f4be21840a624",
+      "0813b7e620f8b9ec081455cd7db0f36e8ad68eaf00d211913c29ee3150048bc3",
     );
     expect(
       (await profile(reset("armv7-m", { baseAddress: "0x8000000" }))).digest,
