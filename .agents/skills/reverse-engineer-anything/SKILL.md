@@ -70,7 +70,10 @@ returns the Evidence record directly. This fallback does not establish that
 MCP is configured. Native CLI tasks still require their selected engine.
 Prefer an existing `rea` CLI. When none is installed and REA package acquisition
 is within the authorized scope, use `npx -y rea-agents@latest` in its place from a
-trusted directory outside the target project, with absolute target paths. Managed
+trusted directory outside the target project and outside any REA source checkout,
+with absolute target paths. Inside a checkout npm resolves `rea-agents` to the
+local unbuilt package, so the launcher fails and the client reports a closed
+connection. Managed
 setup binds the current installation directly; retain its runtime and package
 cache entry, or restore that installation before repairing its registration.
 For setup-owned registration, configuration repair starts with a read-only setup plan; show paths, backups and

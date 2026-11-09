@@ -88,7 +88,9 @@ REA's MCP server and matching workflow instructions, with backups of existing
 configuration. Restart your agent afterward. Setup records the selected runtime and REA
 entry script directly. If acquired through a package runner, keep its cache entry
 available. Run package acquisition from a trusted directory outside the target
-project. Installation and recovery details are in the setup guide below.
+project and outside a REA source checkout: inside that checkout npm resolves
+`rea-agents` to the local (unbuilt) package instead of the published one, so the
+launcher fails before REA starts. Installation and recovery details are in the setup guide below.
 
 Setup supports Claude Code, Codex, Cursor, Gemini CLI, Grok Build and
 [other agents](docs/getting-started/installation.md#supported-agents). See

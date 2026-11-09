@@ -158,8 +158,12 @@ Use the current supported client's ID: `claude_code`, `claude_desktop`, `codex`,
 scope. `grok_bot` uses a chat registration step rather than local `mcp.json`.
 For unsupported clients, use manual stdio registration with the selected
 installation’s absolute runtime and entry script, or continue through the CLI.
-Acquire packages from a trusted directory outside the target project. Keep a
+Acquire packages from a trusted directory outside the target project and outside
+any REA source checkout. Keep a
 package-runner installation and its runtime available while registrations use it.
+Inside a checkout, npm resolves `rea-agents` to the local unbuilt package, so the
+launcher fails before REA starts and a registration that runs from there reports a
+closed connection rather than a REA diagnostic.
 
 Show the plan's exact paths, backups, changes and bundled-skill replacement.
 Obtain approval for writes when that concrete scope is not already authorized,

@@ -1241,7 +1241,8 @@ Java, or Python. It preserves valid detected Ghidra/JDK settings in agent
 registrations. See [Windows Ghidra P0](../providers/windows-ghidra-p0.md) for provider diagnostics.
 
 The separate `rea mcp add` builtin delegates most clients to Incur's package-runner
-child launcher. Run that acquisition from a trusted directory; prefer managed
+child launcher. Run that acquisition from a trusted directory outside any REA
+source checkout; prefer managed
 `rea setup` when supported. That child launcher can fail on Windows with `MCP_ADD_FAILED: spawn npx ENOENT`
 before registering a client. REA's setup path is unaffected. For a client supported
 by setup, review `rea setup --client opencode --skill=false --dry-run --json`
