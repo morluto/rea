@@ -118,7 +118,7 @@ const commonJsDelegateChangedAt = (
   state: JavaScriptSemanticAnalysisState,
 ): boolean =>
   writesModuleRequire(state).some(
-    (write) => semanticEffectTiming(node, write, state) !== "after",
+    (write) => semanticEffectTiming(node, write.node, state) !== "after",
   );
 
 const commonJsLoaderAt = (
@@ -1003,9 +1003,14 @@ const globalProcessReplacements = new WeakMap<
   JavaScriptSemanticAnalysisState,
   readonly (t.Node | undefined)[]
 >();
+type ModuleSourceMatch = "possible" | "no-match" | "incomplete";
+type ModuleRequireWrite = {
+  readonly node: t.Node;
+  readonly resolution: "possible" | "incomplete";
+};
 const moduleRequireWrites = new WeakMap<
   JavaScriptSemanticAnalysisState,
-  readonly t.Node[]
+  readonly ModuleRequireWrite[]
 >();
 const moduleReturnedReferences = new WeakMap<
   JavaScriptSemanticAnalysisState,
@@ -1144,7 +1149,10 @@ const isCommonJsModuleObject = (
   node: t.Node,
   state: JavaScriptSemanticAnalysisState,
   includeUnknown = true,
-): boolean => hasCommonJsModuleSource(node, state, includeUnknown, "module");
+): boolean => {
+  const result = hasCommonJsModuleSource(node, state, includeUnknown, "module");
+  return result === "possible" || (includeUnknown && result === "incomplete");
+};
 
 /** A captured delegate uses the same receiver and assignment ownership facts. */
 export const isCommonJsRequireDelegate = (
@@ -1153,7 +1161,8 @@ export const isCommonJsRequireDelegate = (
   includeUnknown = false,
   readAt?: t.Node,
 ): boolean =>
-  hasCommonJsModuleSource(node, state, includeUnknown, "delegate", readAt);
+  hasCommonJsModuleSource(node, state, includeUnknown, "delegate", readAt) ===
+  "possible";
 
 const hasCommonJsModuleSource = (
   node: t.Node,
@@ -1161,7 +1170,7 @@ const hasCommonJsModuleSource = (
   includeUnknown: boolean,
   target: "module" | "delegate",
   readAt?: t.Node,
-): boolean => {
+): ModuleSourceMatch => {
   type Work = ModuleObjectSource & {
     /** Await occurs after this many requested outer property selections. */
     readonly awaitDepths: readonly number[];
@@ -1208,7 +1217,7 @@ const hasCommonJsModuleSource = (
     }
     let path = exhausted ? next.path : selections.normalize(context, next.path);
     if (selections.limited && !exhausted) {
-      if (includeUnknown) return true;
+      if (includeUnknown) return "possible";
       exhausted = true;
       // The limiter widens every key after exhaustion. Keep the selected keys.
       path = next.path;
@@ -1219,13 +1228,13 @@ const hasCommonJsModuleSource = (
       // Consumption contexts must not provide an unbounded second path to
       // expansion beyond the shared selector budget.
       if (exhausted) {
-        if (++drained > SEMANTIC_ALIAS_SELECTION_LIMIT) break;
+        if (++drained > SEMANTIC_ALIAS_SELECTION_LIMIT) return "incomplete";
       } else if (
         (byMode.size > 1 || context.identities.size > 0) &&
         ++additionalStates > SEMANTIC_ALIAS_SELECTION_LIMIT
       ) {
         state.valueResourceLimits.add("alias-selections");
-        if (includeUnknown) return true;
+        if (includeUnknown) return "possible";
         exhausted = true;
       }
       identity = {};
@@ -1240,10 +1249,18 @@ const hasCommonJsModuleSource = (
       ...sources: ModuleObjectSource[]
     ) => {
       pending.push(
-        ...inheritLoaderSourceContext(next, sources).map((source) => ({
-          ...source,
-          awaitDepths: depths,
-        })),
+        ...inheritLoaderSourceContext(next, sources)
+          // These leaves cannot contribute a module source and the walker
+          // would discard them without expanding their selected paths.
+          .filter((source) => {
+            const value = unwrapJavaScriptExpression(source.node).node;
+            return (
+              !t.isNumericLiteral(value) &&
+              !t.isBooleanLiteral(value) &&
+              !t.isNullLiteral(value)
+            );
+          })
+          .map((source) => ({ ...source, awaitDepths: depths })),
       );
     };
     const enqueue = (...sources: ModuleObjectSource[]) => {
@@ -1311,7 +1328,7 @@ const hasCommonJsModuleSource = (
         value.callee,
         t.isNewExpression(value) ? undefined : value,
       );
-      if (returnedResult.unresolvedInvocation) return true;
+      if (returnedResult.unresolvedInvocation) return "possible";
       enqueue(
         ...returnedResult.references.map((source) => ({
           node: source.node,
@@ -1338,7 +1355,7 @@ const hasCommonJsModuleSource = (
           (key) =>
             key === null || semanticPropertyPathKeyMatches(key, "require"),
         ));
-    if (processMainModulePath) return true;
+    if (processMainModulePath) return "possible";
     const mainModulePath =
       value.name === "require" &&
       state.program.sourceType === "script" &&
@@ -1358,7 +1375,7 @@ const hasCommonJsModuleSource = (
       binding === undefined &&
       !semanticResolutionBlocked(state, value, "require")
     )
-      return true;
+      return "possible";
     const copyAdmitsModuleDelegate =
       value.name !== "module" ||
       target !== "delegate" ||
@@ -1381,7 +1398,7 @@ const hasCommonJsModuleSource = (
             )) &&
         !semanticResolutionBlocked(state, value, "module")
       )
-        return true;
+        return "possible";
       continue;
     }
     if (binding === undefined) continue;
@@ -1402,7 +1419,7 @@ const hasCommonJsModuleSource = (
       binding.declarationKinds.has("var") &&
       !read.hasDefiniteInitializer
     )
-      return true;
+      return "possible";
     if (
       value.name === "module" &&
       copyAdmitsModuleDelegate &&
@@ -1416,7 +1433,7 @@ const hasCommonJsModuleSource = (
       commonJsWrapperBindingDeclaration(value, "module", state) !== undefined &&
       !read.hasDefiniteInitializer
     )
-      return true;
+      return "possible";
     let eligibility = next.eligibility;
     const facts = eligibility
       ? undefined
@@ -1429,7 +1446,8 @@ const hasCommonJsModuleSource = (
           next.readAt ?? value,
           next.capturedSelections,
         );
-    if (retainsMainModule && (eligibility || facts?.retainsOrigin)) return true;
+    if (retainsMainModule && (eligibility || facts?.retainsOrigin))
+      return "possible";
     let sources = eligibility
       ? semanticProjectedSourceEligibilityAtRead(
           binding,
@@ -1441,7 +1459,7 @@ const hasCommonJsModuleSource = (
         )
       : facts?.sources;
     if (sources === undefined) {
-      if (target !== "delegate") return true;
+      if (target !== "delegate") return "possible";
       // An opaque member effect can obscure a selected native delegate, but
       // cannot make every escaped callable a possible Node loader. Keep its
       // receiver's retained sources as the eligibility boundary for that gap.
@@ -1453,7 +1471,7 @@ const hasCommonJsModuleSource = (
         next.readAt ?? value,
         next.capturedSelections,
       );
-      if (sources === undefined) return true;
+      if (sources === undefined) return "possible";
       eligibility = true;
     }
     enqueue(
@@ -1462,7 +1480,7 @@ const hasCommonJsModuleSource = (
       ),
     );
   }
-  return false;
+  return "no-match";
 };
 
 /** Select an unchecked member-loader receiver before its identity is examined. */
@@ -1523,18 +1541,20 @@ export const semanticModuleRequireCallAt = (
 
 const writesModuleRequire = (
   state: JavaScriptSemanticAnalysisState,
-): readonly t.Node[] => {
+): readonly ModuleRequireWrite[] => {
   const cached = moduleRequireWrites.get(state);
   if (cached !== undefined) return cached;
   // Interop invocation resolution may ask for require provenance while this
   // index is being built. Publish a temporary empty result to break that cycle.
   moduleRequireWrites.set(state, []);
-  const writes: t.Node[] = [];
+  const writes: ModuleRequireWrite[] = [];
   const interop = createSemanticModuleInterop(state);
-  const isModuleObject = (node: t.Node): boolean =>
-    // Only a retained module identity can revoke the host delegate. Escaping
-    // an unrelated local table is not evidence that it became the host module.
-    isCommonJsModuleObject(node, state, false);
+  const isModuleObject = (node: t.Node): ModuleSourceMatch =>
+    hasCommonJsModuleSource(node, state, false, "module");
+  const record = (node: t.Node, receiver: t.Node): void => {
+    const resolution = isModuleObject(receiver);
+    if (resolution !== "no-match") writes.push({ node, resolution });
+  };
   traverseJavaScriptValueAst(state.program, state.erasedSyntaxNodes, {
     enter: (node) => {
       const target = t.isAssignmentExpression(node)
@@ -1548,11 +1568,8 @@ const writesModuleRequire = (
         t.isOptionalMemberExpression(target)
       ) {
         const key = semanticStaticPropertyKey(target.property, target.computed);
-        if (
-          (key === "require" || (key === null && target.computed)) &&
-          isModuleObject(target.object)
-        )
-          writes.push(node);
+        if (key === "require" || (key === null && target.computed))
+          record(node, target.object);
       }
       if (t.isCallExpression(node) || t.isOptionalCallExpression(node)) {
         const invocation = interop.intrinsicInvocation(node);
@@ -1562,16 +1579,12 @@ const writesModuleRequire = (
         const args = invocation?.arguments;
         if (
           (owner === "Object" || owner === "Reflect") &&
-          method === "defineProperty" &&
-          isModuleObject(args?.[0] ?? t.nullLiteral())
+          method === "defineProperty"
         ) {
           const key = interop.staticString(args?.[1]);
-          if (key === "require" || key === undefined) writes.push(node);
-        } else if (
-          owner === "Object" &&
-          method === "defineProperties" &&
-          isModuleObject(args?.[0] ?? t.nullLiteral())
-        ) {
+          if (key === "require" || key === undefined)
+            record(node, args?.[0] ?? t.nullLiteral());
+        } else if (owner === "Object" && method === "defineProperties") {
           const descriptors = args?.[1];
           if (
             !t.isObjectExpression(descriptors) ||
@@ -1583,14 +1596,10 @@ const writesModuleRequire = (
                     "require"),
             )
           )
-            writes.push(node);
-        } else if (
-          owner === "Object" &&
-          method === "assign" &&
-          args?.some((arg) => isModuleObject(arg))
-        ) {
+            record(node, args?.[0] ?? t.nullLiteral());
+        } else if (owner === "Object" && method === "assign") {
           const target = args?.[0];
-          if (target !== undefined && isModuleObject(target)) {
+          if (target !== undefined) {
             const sourceHasRequire = args
               ?.slice(1)
               .some(
@@ -1609,7 +1618,7 @@ const writesModuleRequire = (
               sourceHasRequire ||
               args?.slice(1).some((arg) => !t.isObjectExpression(arg))
             )
-              writes.push(node);
+              record(node, target);
           }
         }
       }

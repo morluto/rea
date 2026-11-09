@@ -195,8 +195,12 @@ const expectElectronProbe = (
   return analysis;
 };
 
-it("keeps electron facts when a loop-aliased defineProperty exhausts alias selections", () => {
-  const analysis = expectElectronProbe(loopAliasedPropertyWalk(true));
+it("keeps a possible defineProperty write unknown when alias selections are exhausted", () => {
+  const analysis = analyzeJavaScriptStaticSource(loopAliasedPropertyWalk(true));
+  expect(analysis.electron.browser_windows).toHaveLength(0);
+  expect(analysis.references).toEqual([
+    expect.objectContaining({ kind: "require", specifier: null }),
+  ]);
   expect(analysis.analysis_coverage).toMatchObject({
     examination: {
       semantic_resource_limits: expect.arrayContaining(["alias-selections"]),
@@ -238,13 +242,71 @@ it.each([
   },
 );
 
+it.each([true, false])(
+  "does not certify a loader when the final drain leaves a module source pending (reversed: %s)",
+  (reversed) => {
+    const array = `[${Array.from({ length: 520 }, () => "0").join(",")},module][key]`;
+    const receiver = reversed ? `(flag?r:${array})` : `(flag?${array}:r)`;
+    const analysis = analyzeJavaScriptStaticSource(
+      exhaustedWalkWrite(receiver),
+    );
+    expect(analysis.electron.browser_windows).toHaveLength(0);
+    expect(analysis.references).toEqual([
+      expect.objectContaining({ kind: "require", specifier: null }),
+    ]);
+  },
+);
+
+it.each([true, false])(
+  "keeps the loader unknown when identifier alternatives exhaust the final drain (reversed: %s)",
+  (reversed) => {
+    const array = `[${Array.from({ length: 520 }, () => "zero").join(",")},module][key]`;
+    const receiver = reversed ? `(flag?r:${array})` : `(flag?${array}:r)`;
+    const source = `const zero=0;${exhaustedWalkWrite(receiver)}`;
+    const analysis = analyzeJavaScriptStaticSource(source);
+    expect(analysis.references).toEqual([
+      expect.objectContaining({ kind: "require", specifier: null }),
+    ]);
+    expect(
+      analysis.analysis_coverage?.examination.semantic_resource_limits,
+    ).toContain("alias-selections");
+  },
+);
+
+it.each(["defineProperty", "assign"])(
+  "keeps a possible Object.%s write unknown when receiver analysis is incomplete",
+  (operation) => {
+    const array = `[${Array.from({ length: 520 }, () => "zero").join(",")},module][key]`;
+    const receiver = `(flag?${array}:r)`;
+    const write =
+      operation === "defineProperty"
+        ? `Object.defineProperty(${receiver},"require",{value:replacement})`
+        : `Object.assign(${receiver},{require:replacement})`;
+    const source = `const zero=0;${exhaustedWalkWrite(receiver).replace(`${receiver}.require=replacement`, write)}`;
+    const analysis = analyzeJavaScriptStaticSource(source);
+    expect(analysis.parse_error_count).toBe(0);
+    expect(analysis.references).toEqual([
+      expect.objectContaining({ kind: "require", specifier: null }),
+    ]);
+    expect(
+      analysis.analysis_coverage?.examination.semantic_resource_limits,
+    ).toContain("alias-selections");
+  },
+);
+
 it.each(["(flag?process.foo:r)", "(flag?r:process.foo)"])(
-  "keeps the host delegate through %s after alias selections are exhausted",
+  "keeps the delegate unknown through %s after alias selections are exhausted",
   (receiver) => {
     const analysis = analyzeJavaScriptStaticSource(
       exhaustedWalkWrite(receiver),
     );
     expect(analysis.parse_error_count).toBe(0);
-    expect(analysis.electron.browser_windows).toHaveLength(1);
+    expect(analysis.electron.browser_windows).toHaveLength(0);
+    expect(analysis.references).toEqual([
+      expect.objectContaining({ kind: "require", specifier: null }),
+    ]);
+    expect(
+      analysis.analysis_coverage?.examination.semantic_resource_limits,
+    ).toContain("alias-selections");
   },
 );
