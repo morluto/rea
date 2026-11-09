@@ -94,6 +94,7 @@ const createV8InspectorEvidence = (
           .slice(0, 64)}`,
         location: { kind: "file", file_path: filePath },
         execution_context_key: null,
+        execution_context_id: null,
         cdp_hash: null,
         length: null,
         is_module: true,

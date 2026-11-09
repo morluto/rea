@@ -11,6 +11,13 @@ for the specification lifecycle, roadmap granularity and producer-owned contract
 - [Organization](documentation/organization/spec.md)
   ([plan](documentation/organization/plan.md), [tasks](documentation/organization/tasks.md))
 
+## JavaScript
+
+- [Single-file JavaScript application analysis](javascript/single-file-application-analysis/spec.md)
+  ([plan](javascript/single-file-application-analysis/plan.md), [tasks](javascript/single-file-application-analysis/tasks.md))
+- [JavaScript per-file worker timeout continuation policy](javascript/per-file-timeout-policy/spec.md)
+  ([plan](javascript/per-file-timeout-policy/plan.md), [tasks](javascript/per-file-timeout-policy/tasks.md))
+
 ## Native
 
 - [Go static string-header literal recovery](native/go-string-literals/spec.md)
