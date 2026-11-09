@@ -129,7 +129,7 @@ export const analyzeAndAdoptJavaScriptArtifactFiles = async (
         signal,
         onPhase === undefined ? undefined : (phase) => onPhase(file, phase),
         preloadPaths.has(`${file.container_sha256}:${file.path}`) &&
-          /\.js$/u.test(file.path)
+          posix.extname(file.path) === ".js"
           ? "commonjs"
           : packageTypeFor(file),
       );

@@ -1,5 +1,9 @@
 import { expect, it } from "vitest";
-import { moduleResolutionModeForJavaScriptReference } from "./javascriptModuleResolutionMode.js";
+import {
+  isJsonModuleTarget,
+  isNativeAddonModuleTarget,
+  moduleResolutionModeForJavaScriptReference,
+} from "./javascriptModuleResolutionMode.js";
 import * as t from "@babel/types";
 
 import {
@@ -22,6 +26,13 @@ import {
   parserPluginsForPath,
 } from "./javascriptSourceParser.js";
 
+it("does not treat suffix-only dotfiles as JSON or native addon loaders", () => {
+  expect(isJsonModuleTarget(".json", "json")).toBe(false);
+  expect(isNativeAddonModuleTarget(".node", "native-addon")).toBe(false);
+  expect(isJsonModuleTarget("value.json", "json")).toBe(true);
+  expect(isNativeAddonModuleTarget("value.node", "native-addon")).toBe(true);
+});
+
 it.each([
   ["entry.cjs", "require"],
   ["entry.cts", "require"],
@@ -38,6 +49,10 @@ it.each([
 );
 
 it.each([
+  [".js", "module", "unknown"],
+  [".ts", "commonjs", "unknown"],
+  [".mjs", "commonjs", "unknown"],
+  [".cjs", "module", "unknown"],
   ["entry.cjs", "module", "commonjs"],
   ["entry.cts", "module", "commonjs"],
   ["entry.mjs", "commonjs", "module"],

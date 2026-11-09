@@ -1,3 +1,4 @@
+import { posix } from "node:path";
 import { parse, type ParserOptions, type ParserPlugin } from "@babel/parser";
 import * as t from "@babel/types";
 import { javaScriptDefinitionExpression } from "./javascriptAstValues.js";
@@ -93,7 +94,8 @@ const parseWithRuntimeContext = (
         ? "module"
         : packageContext === "module" || packageContext === "commonjs"
           ? packageContext
-          : packageContext === "unspecified" && /\.js$/u.test(sourcePath ?? "")
+          : packageContext === "unspecified" &&
+              posix.extname(sourcePath ?? "") === ".js"
             ? file.program.sourceType === "module"
               ? "module"
               : "commonjs"
@@ -151,7 +153,7 @@ export const parserPluginsForPath = (sourcePath?: string): ParserPlugin[] => {
 const runtimeSourceTypeForPath = (
   path?: string,
 ): "commonjs" | "module" | "unambiguous" =>
-  path?.endsWith(".cjs")
+  explicitJavaScriptLoaderMode(path) === "commonjs" && path?.endsWith(".cjs")
     ? "commonjs"
     : explicitJavaScriptLoaderMode(path) === "module"
       ? "module"
@@ -165,7 +167,8 @@ const packageContextForPath = (
   sourcePath: string | undefined,
   observedPackageType: JavaScriptPackageType | undefined,
 ): JavaScriptPackageType | undefined =>
-  /\.(?:js|ts)$/u.test(sourcePath ?? "") && !/\.d\.ts$/iu.test(sourcePath ?? "")
+  [".js", ".ts"].includes(posix.extname(sourcePath ?? "")) &&
+  !/\.d\.ts$/iu.test(sourcePath ?? "")
     ? observedPackageType
     : undefined;
 
@@ -195,7 +198,8 @@ export const parseRecoveredJavaScript = (
       ? filenameType
       : packageContext === "module"
         ? "module"
-        : packageContext === "commonjs" && /\.js$/u.test(sourcePath ?? "")
+        : packageContext === "commonjs" &&
+            posix.extname(sourcePath ?? "") === ".js"
           ? "commonjs"
           : "unambiguous";
   if (sourceType !== "unambiguous") {

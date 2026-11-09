@@ -996,6 +996,34 @@ cliTest(
 );
 
 cliTest(
+  "does not infer preload loader authority from a candidate Electron window",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-candidate-preload-");
+    await writeFixtureFiles(root, {
+      "package.json": JSON.stringify({ type: "module", main: "main.MJS" }),
+      "main.MJS":
+        'const {BrowserWindow}=require("electron"); new BrowserWindow({webPreferences:{preload:"./preload.js"}});',
+      "preload.js": 'require("./helper.cjs");',
+      "helper.cjs": "module.exports = 1;",
+    });
+    const response = await cli.run({
+      arguments: ["analyze-javascript-application", root, "--format", "json"],
+      environment: { REA_LOG_LEVEL: "silent" },
+    });
+    expect(response.exitCode, response.stderr).toBe(0);
+    const { graph } = javascriptApplicationAnalysisResultSchema.parse(
+      parseEvidence(response.json).normalized_result,
+    );
+    expect(sourceRequireFacts(graph, "preload.js").module_format).not.toBe(
+      "commonjs",
+    );
+    expect(
+      sourceRequireFacts(graph, "preload.js").require_targets,
+    ).not.toContainEqual(["./helper.cjs", "helper.cjs", "resolved"]);
+  },
+);
+
+cliTest(
   "keeps a declared preload's helper require without renderer API text",
   async ({ cli }) => {
     const root = await createTestTempDirectory("rea-helper-only-preload-");

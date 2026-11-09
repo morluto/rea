@@ -6,19 +6,20 @@ export const isJsonModuleTarget = (
   path: string,
   kind: JavaScriptArtifactFileKind | undefined,
 ): boolean =>
-  path.endsWith(".json") && (kind === "json" || kind === "package-json");
+  posix.extname(path) === ".json" &&
+  (kind === "json" || kind === "package-json");
 
 /** Native-addon dispatch likewise needs the exact `.node` loader suffix. */
 export const isNativeAddonModuleTarget = (
   path: string,
   kind: JavaScriptArtifactFileKind | undefined,
-): boolean => path.endsWith(".node") && kind === "native-addon";
+): boolean => posix.extname(path) === ".node" && kind === "native-addon";
 
 /** Exact loader suffixes are separate from case-folded artifact grammar. */
 export const explicitJavaScriptLoaderMode = (
   path?: string,
 ): "module" | "commonjs" | undefined => {
-  switch (path?.slice(-4)) {
+  switch (path === undefined ? undefined : posix.extname(path)) {
     case ".mjs":
     case ".mts":
       return "module";

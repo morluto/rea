@@ -1,3 +1,5 @@
+import { posix } from "node:path";
+
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
 import { analysisErrorWithCleanupFailure } from "../../domain/analysisErrorCleanup.js";
 import {
@@ -41,7 +43,7 @@ export const discoverJavaScriptPreloadPaths = async (
       (file) =>
         file.kind === "javascript" &&
         file.text.included &&
-        /\.js$/u.test(file.path) &&
+        posix.extname(file.path) === ".js" &&
         packageTypeFor(file) === "module",
     )
   )
@@ -87,7 +89,11 @@ export const discoverJavaScriptPreloadPaths = async (
         break;
       }
       for (const window of result.value.javascript.electron.browser_windows) {
-        if (window.preload_path === null) continue;
+        if (
+          window.preload_path === null ||
+          window.loader_authority === "candidate"
+        )
+          continue;
         const resolution = resolveArtifactPathByContext({
           declaredPath: window.preload_path,
           sourcePath: file.path,

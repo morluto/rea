@@ -24,6 +24,10 @@ cliTest.for(["CLI", "stdio MCP"] as const)(
       "module/entry.TS": source,
       "module/mixed.JS":
         'import {join} from "node:path"; require("./dep.cjs");',
+      "lower-module/package.json": '{"type":"module"}',
+      "lower-common/package.json": '{"type":"commonjs"}',
+      "lower-module/.cjs": 'require("./dep.cjs");',
+      "lower-common/.mjs": 'require("./dep.cjs");',
       "module/.MJS": 'import {join} from "node:path"; require("./dep.cjs");',
       "module/ordinary.js": "console.log('module');",
       "module/main.mjs":
@@ -40,6 +44,8 @@ cliTest.for(["CLI", "stdio MCP"] as const)(
       "module/mixed.JS",
       "common/.MJS",
       "module/.MJS",
+      "lower-common/.mjs",
+      "lower-module/.cjs",
     ]) {
       const edges = result.graph.edges.filter(
         ({ relation, properties, evidence }) =>
