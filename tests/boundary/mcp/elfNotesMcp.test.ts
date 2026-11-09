@@ -1,6 +1,8 @@
 import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect } from "vitest";
+import type { JsonSchemaType } from "@modelcontextprotocol/client";
+import { AjvJsonSchemaValidator } from "@modelcontextprotocol/client/validators/ajv";
 import { toolContract } from "../../../src/contracts/toolContracts.js";
 import { createServer } from "../../../src/server/createServer.js";
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
@@ -34,13 +36,15 @@ mcpTest(
         readOnlyHint: false,
         idempotentHint: true,
       });
+      if (advertised === undefined)
+        throw new Error("inspect_elf_notes must be advertised");
       const root = await createTestTempDirectory("rea-elf-notes-mcp-");
       const path = join(root, "program");
       await writeFile(path, elfNoteFixture({ bits: 32, ownership: "section" }));
-      const response = await client.callTool({
-        name: "inspect_elf_notes",
-        arguments: { path },
-      });
+      const response = await client.callTool(
+        { name: "inspect_elf_notes", arguments: { path } },
+        { toolDefinition: advertised },
+      );
       expect(response.isError, JSON.stringify(response.content)).not.toBe(true);
       const evidence = toolContract("inspect_elf_notes").outputSchema.parse(
         response.structuredContent,
@@ -73,6 +77,57 @@ mcpTest("requires an absolute path for inspect_elf_notes", async ({ mcp }) => {
     await session.close();
   }
 });
+
+mcpTest(
+  "rejects invalid ELF output through the advertised SDK schema",
+  async ({ mcp }) => {
+    const session = createTestBinarySession(() => {
+      throw new Error("ELF schema validation must not start a deep provider");
+    });
+    const provider = new AjvJsonSchemaValidator();
+    const client = await mcp.connect(
+      createServer({ kind: "session", session }),
+      undefined,
+      {
+        getValidator<T>(schema: JsonSchemaType) {
+          const validate = provider.getValidator<T>(schema);
+          return (value: unknown) => {
+            // Inject a wire-value fault at the SDK validation boundary while
+            // retaining the actual advertised schema and its validator.
+            const evidence = value as Record<string, unknown>;
+            return validate({
+              ...evidence,
+              normalized_result: {
+                ...(evidence.normalized_result as Record<string, unknown>),
+                machine: "invalid machine",
+              },
+            });
+          };
+        },
+      },
+    );
+    try {
+      const definition = (await client.listTools()).tools.find(
+        (tool) => tool.name === "inspect_elf_notes",
+      );
+      if (definition === undefined)
+        throw new Error("Missing ELF tool definition");
+      const root = await createTestTempDirectory("rea-elf-notes-schema-");
+      const path = join(root, "program");
+      await writeFile(path, elfNoteFixture({ bits: 32, ownership: "section" }));
+      await expect(
+        client.callTool(
+          { name: "inspect_elf_notes", arguments: { path } },
+          { toolDefinition: definition },
+        ),
+      ).rejects.toThrow(
+        /Structured content does not match the tool's output schema/u,
+      );
+    } finally {
+      await session.close();
+    }
+  },
+);
 
 mcpTest(
   "keeps GNU notes when a section name is not NUL-terminated",
