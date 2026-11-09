@@ -1087,3 +1087,11 @@ it("excludes load mappings whose file size exceeds memory size", () => {
     "An invalid PT_LOAD mapping was excluded from unwind address resolution.",
   );
 });
+
+it("compares the header pointer with a nonallocated frame's mapped address", () => {
+  const bytes = elfUnwindSectionlessFixture({ sections: ".eh_frame_hdr" });
+  const section = findSection(bytes, ".eh_frame");
+  bytes.writeBigUInt64LE(0n, section.headerOffset + 8);
+  bytes.writeBigUInt64LE(0n, section.headerOffset + 16);
+  expect(parse(bytes).coverage.eh_frame_hdr_agreement).toBe("agree");
+});
