@@ -45,6 +45,7 @@ const LIMITATIONS = [
   "Recovering logic requires a version-pinned V8 decompiler (View8-style) that this tool neither installs nor runs.",
   "Embedded strings are byte-pattern observations inside the payload, not parsed heap objects: a reported sequence is not proof V8 retained it as a string, and a missing literal is not proof it is absent.",
   "Header field roles beyond magic, source length, and payload length are inferred from one producer and are version-dependent; treat them as observations, not a fixed ABI.",
+  "An unflagged producer word is reported as unknown: whether V8 marks a vm.compileFunction cache at all is a build detail, so the container cannot separate a vm.Script from an unmarked function cache on its own.",
 ];
 
 /** Printable ASCII and horizontal tab, the run alphabet of one observation. */
@@ -92,16 +93,23 @@ export const parseV8CodeCache = (
 
   const sourceWord = field(2);
   const sourceLength = sourceWord & V8_CODE_CACHE_SOURCE_LENGTH_MASK;
-  // Bit 30 marks a `vm.SourceTextModule` cache and bit 29 a `vm.compileFunction`
-  // one. Measured on Node 24.22.1, an 19-unit module source reads `0x40000013` while a
-  // script of the same length reads `0x00000013`, so the function bit alone reports a
-  // module cache as a script. Both bits sit outside the source-length mask.
+  // Bit 30 marks a `vm.SourceTextModule` cache and bit 29 a `vm.compileFunction` one.
+  // Measured on Node 24.22.1, a 19-unit module source reads `0x40000013` while a script of
+  // the same length reads `0x00000013`, so the function bit alone reports a module cache as
+  // a script. Both bits sit outside the source-length mask.
+  //
+  // The unflagged case is `unknown`, not `script`: whether V8 marks a function cache is a
+  // build detail. A `vm.compileFunction` cache reads `0x20000004` on Node 24.22.1 and
+  // `0x00000004` on Node 22.23.4 for a 4-unit source, so an unflagged word is either
+  // `vm.Script` or an unmarked function cache, and the container carries nothing that
+  // separates them. `fields` keeps the observed word so a caller can resolve it against a
+  // build fingerprint it trusts.
   const producer =
     (sourceWord & V8_CODE_CACHE_MODULE_BIT) !== 0
       ? ("module" as const)
       : (sourceWord & V8_CODE_CACHE_COMPILE_FUNCTION_BIT) !== 0
         ? ("compile_function" as const)
-        : ("script" as const);
+        : ("unknown" as const);
 
   const payload = bytes.subarray(payloadOffset);
   const observations: V8CodeCache["embedded_strings"] = [];

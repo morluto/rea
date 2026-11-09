@@ -114,13 +114,19 @@ const headerSchema = z.strictObject({
   /**
    * Producer family observed from the source-length word.
    *
-   * `vm.Script`/bytenode output carries neither flag. V8 sets bit 29 for
-   * `vm.compileFunction` and bit 30 for `vm.SourceTextModule`, the two upper bits the
-   * source-length mask leaves out. Measured on Node 24.22.1: a module cache reads
-   * `0x40000013` for a 19-unit source, so a producer check that only looks at the
+   * V8 sets bit 29 for `vm.compileFunction` and bit 30 for `vm.SourceTextModule`, the two
+   * upper bits the source-length mask leaves out. Measured on Node 24.22.1: a module cache
+   * reads `0x40000013` for a 19-unit source, so a producer check that only looks at the
    * function bit reports a module cache as a plain script.
+   *
+   * `unknown` is the unflagged case, and it is not `vm.Script` for certain: whether V8
+   * marks a function cache at all is a build detail. Measured on Node 24.22.1 a
+   * `vm.compileFunction` cache reads `0x20000004` for a 4-unit source while Node 22.23.4
+   * writes `0x00000004` for the same call. An unflagged word is therefore either
+   * `vm.Script` or a `vm.compileFunction` cache from a build that does not mark it, and
+   * the file carries nothing that separates the two.
    */
-  producer: z.enum(["script", "compile_function", "module"]),
+  producer: z.enum(["script", "compile_function", "module", "unknown"]),
 });
 
 /** One printable run found in the payload. An observation, not a decoded heap object. */

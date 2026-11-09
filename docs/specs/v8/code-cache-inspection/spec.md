@@ -21,8 +21,12 @@ through the `inspect_v8_code_cache` MCP tool.
   cache by accident.
 - The producer is decided from the header's producer bits, not from the file extension:
   a module bit means `vm.SourceTextModule`, a compile-function bit means
-  `vm.compileFunction`, and neither means `vm.Script`. All three were measured on Node
-  24.22.1.
+  `vm.compileFunction`, and neither bit means `unknown`. The unflagged case is not
+  `vm.Script` by inference — whether V8 marks a function cache is a build detail. A
+  `vm.compileFunction` cache reads `0x20000004` for a 4-unit source on Node 24.22.1 and
+  `0x00000004` on Node 22.23.4, so an unflagged word could be either producer. The
+  observed word stays in `header.fields` for a caller that trusts a specific build
+  fingerprint.
 - Retained strings are reported above the caller's byte threshold, with
   `--minStringBytes` bounded so a pathological threshold cannot make the read unbounded.
 - Observation is bounded by a budget that reports which bound it hit and how to raise it,

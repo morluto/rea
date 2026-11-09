@@ -83,7 +83,11 @@ it("reports the source length the producer recorded", () => {
   const cache = v8CodeCacheFixture(source);
   const report = parse(cache);
   expect(report.header.source_length).toBe(source.length);
-  expect(report.header.producer).toBe("script");
+  // An unflagged word is `unknown`, not `script`: a `vm.compileFunction` cache from a
+  // build that does not mark bit 29 reads the same as a script, so the container alone
+  // cannot separate them. The observed word stays available in `header.fields`.
+  expect(report.header.producer).toBe("unknown");
+  expect(report.header.fields[2]?.value).toBe(cache.readUInt32LE(8));
 });
 
 it("reports a module cache as a module rather than a script", () => {
@@ -95,7 +99,8 @@ it("reports a module cache as a module rather than a script", () => {
   const word = script.readUInt32LE(8);
   const length = word & 0x1fffffff;
   expect(word & 0x40000000).toBe(0);
-  expect(parse(script).header.producer).toBe("script");
+  expect(word & 0x20000000).toBe(0);
+  expect(parse(script).header.producer).toBe("unknown");
 
   const moduleCache = withHeaderWord(script, 2, word | 0x40000000);
   const report = parse(moduleCache);
@@ -132,7 +137,7 @@ it("separates the compileFunction producer bit from the source length", () => {
   // that word correctly; the flag meanings themselves are pinned by the synthetic
   // `withHeaderWord` cases above.
   expect(report.header.producer).toBe(
-    (word & 0x20000000) === 0 ? "script" : "compile_function",
+    (word & 0x20000000) === 0 ? "unknown" : "compile_function",
   );
   // The source length is the low bits either way, so it is the part that must hold.
   expect(report.header.source_length).toBe(word & 0x1fffffff);
