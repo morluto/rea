@@ -148,6 +148,7 @@ describe("native addon dlopen and host-axis template recovery", () => {
           binding_kind: "re-export",
           resolution: {
             kind: "candidates",
+            loader: "dlopen",
             resolution_context: "filesystem-expression",
             candidates: ["native/bridge.node"],
           },
@@ -157,6 +158,7 @@ describe("native addon dlopen and host-axis template recovery", () => {
           binding_kind: "require",
           resolution: {
             kind: "candidates",
+            loader: "dlopen",
             resolution_context: "module-specifier",
             candidates: ["./local.node"],
           },
@@ -166,6 +168,7 @@ describe("native addon dlopen and host-axis template recovery", () => {
           binding_kind: "require",
           resolution: {
             kind: "candidates",
+            loader: "dlopen",
             resolution_context: "filesystem-expression",
             candidates: [],
           },
@@ -424,6 +427,7 @@ it("rejects global process loaders/axes after node:process alias patches and han
       specifier: "./addon.node",
       resolution: {
         kind: "candidates",
+        loader: "dlopen",
         resolution_context: "filesystem-expression",
         candidates: ["native/addon.node"],
       },
@@ -460,6 +464,7 @@ it("rejects global process loaders/axes after node:process alias patches and han
       binding_kind: "require",
       resolution: {
         kind: "candidates",
+        loader: "dlopen",
         resolution_context: "filesystem-expression",
         candidates: [],
       },
@@ -485,8 +490,11 @@ it("preserves exact app.asar replacement scope and bindings .node suffix normali
     const replaceAllDir = load(
       path.join(__dirname, "app.asar", "nested", "app.asar").replaceAll("app.asar", "app.asar.unpacked"),
     );
+    const innerReplaceAll = load(
+      path.join(__dirname.replaceAll("app.asar", "app.asar.unpacked"), "vendor", "app.asar"),
+    );
     const upperCaseBindings = bindings("upper.NODE");
-    void outerReplace, innerReplace, replaceAllDir, upperCaseBindings;
+    void outerReplace, innerReplace, replaceAllDir, innerReplaceAll, upperCaseBindings;
   `);
   expect(cjs.electron.native_addon_bindings).toEqual(
     expect.arrayContaining([
@@ -513,8 +521,17 @@ it("preserves exact app.asar replacement scope and bindings .node suffix normali
           kind: "node-gyp-build",
           directory: "app.asar/nested/app.asar",
           asar_unpacked: true,
+          asar_unpacked_replace_all: true,
+        },
+      }),
+      expect.objectContaining({
+        specifier: "node-gyp-build:vendor/app.asar",
+        resolution: {
+          kind: "node-gyp-build",
+          directory: "vendor/app.asar",
+          asar_unpacked: true,
           asar_unpacked_scope: {
-            directory: "app.asar/nested/app.asar",
+            directory: ".",
             replace_all: true,
           },
         },

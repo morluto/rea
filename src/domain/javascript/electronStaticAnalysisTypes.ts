@@ -219,6 +219,7 @@ export type ElectronNativeAddonResolution =
       readonly kind: "node-gyp-build";
       readonly directory: string;
       readonly asar_unpacked?: boolean;
+      readonly asar_unpacked_replace_all?: boolean;
       readonly asar_unpacked_scope?: ElectronAsarUnpackedRewriteScope;
     }
   | {
@@ -226,14 +227,17 @@ export type ElectronNativeAddonResolution =
       readonly addon_name: string;
       readonly module_root: string | null;
       readonly asar_unpacked?: boolean;
+      readonly asar_unpacked_replace_all?: boolean;
       readonly asar_unpacked_scope?: ElectronAsarUnpackedRewriteScope;
     }
   | {
       readonly kind: "candidates";
+      readonly loader?: "dlopen";
       readonly resolution_context: JavaScriptStaticPathContext;
       readonly candidates: readonly string[];
       readonly resolution_base_path?: string;
       readonly asar_unpacked?: boolean;
+      readonly asar_unpacked_replace_all?: boolean;
       readonly asar_unpacked_scope?: ElectronAsarUnpackedRewriteScope;
     };
 

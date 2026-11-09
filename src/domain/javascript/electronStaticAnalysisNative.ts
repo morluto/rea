@@ -379,17 +379,30 @@ const addBinding = (input: NativeBindingInput): void => {
 
 const resolutionKey = (
   resolution: ElectronNativeAddonResolution | undefined,
-): readonly (string | readonly string[] | null)[] => {
+): readonly (string | boolean | readonly string[] | null)[] => {
   if (resolution === undefined) return ["direct"];
+  const unpackedKey = [
+    resolution.asar_unpacked ?? false,
+    resolution.asar_unpacked_replace_all ?? false,
+    resolution.asar_unpacked_scope?.directory ?? null,
+    resolution.asar_unpacked_scope?.replace_all ?? false,
+  ];
   if (resolution.kind === "node-gyp-build")
-    return ["node-gyp-build", resolution.directory];
+    return ["node-gyp-build", resolution.directory, ...unpackedKey];
   if (resolution.kind === "bindings")
-    return ["bindings", resolution.addon_name, resolution.module_root];
+    return [
+      "bindings",
+      resolution.addon_name,
+      resolution.module_root,
+      ...unpackedKey,
+    ];
   return [
     "candidates",
+    resolution.loader ?? null,
     resolution.resolution_context,
     resolution.candidates,
     resolution.resolution_base_path ?? null,
+    ...unpackedKey,
   ];
 };
 

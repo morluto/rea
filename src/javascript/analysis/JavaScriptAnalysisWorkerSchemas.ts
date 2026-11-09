@@ -305,6 +305,7 @@ const electron = z
               kind: z.literal("node-gyp-build"),
               directory: z.string(),
               asar_unpacked: z.boolean().exactOptional(),
+              asar_unpacked_replace_all: z.boolean().exactOptional(),
               asar_unpacked_scope: z
                 .strictObject({
                   directory: z.string(),
@@ -317,6 +318,7 @@ const electron = z
               addon_name: z.string(),
               module_root: z.string().nullable(),
               asar_unpacked: z.boolean().exactOptional(),
+              asar_unpacked_replace_all: z.boolean().exactOptional(),
               asar_unpacked_scope: z
                 .strictObject({
                   directory: z.string(),
@@ -326,10 +328,12 @@ const electron = z
             }),
             z.strictObject({
               kind: z.literal("candidates"),
+              loader: z.literal("dlopen").exactOptional(),
               resolution_context: pathContext,
               candidates: strings,
               resolution_base_path: z.string().exactOptional(),
               asar_unpacked: z.boolean().exactOptional(),
+              asar_unpacked_replace_all: z.boolean().exactOptional(),
               asar_unpacked_scope: z
                 .strictObject({
                   directory: z.string(),

@@ -524,7 +524,7 @@ it("resolves dlopen require.resolve search paths without linking sibling addon.n
   ]);
 });
 
-it("traces sibling unpacked require, outside-wrapper rewritten directories, nested ASAR anchored require, and skips uppercase .NODE decoys", async () => {
+it("traces sibling unpacked require, outside-wrapper rewritten directories, nested ASAR anchored require, and dlopen uppercase .NODE while skipping require uppercase decoys", async () => {
   const root = await createTestTempDirectory("rea-nested-asar-native-fixes-");
   const asarSource = join(root, "asar-src");
   const appRoot = join(root, "app");
@@ -532,7 +532,10 @@ it("traces sibling unpacked require, outside-wrapper rewritten directories, nest
   const unpackedOnlyBytes = "unpacked-sibling-direct-require-bytes";
   const packedNgbBytes = "packed-ngb-addon-bytes";
   const looseNgbBytes = "loose-rewritten-ngb-addon-bytes";
+  const replaceAllNgbBytes = "loose-replace-all-ngb-addon-bytes";
+  const duplicatedSubtreeDecoyBytes = "duplicated-replace-all-subtree-decoy";
   const nestedInsideBytes = "nested-asar-anchored-require-bytes";
+  const dlopenUpperBytes = "dlopen-uppercase-native-addon-bytes";
   const decoyUpperBytes = "uppercase-node-decoy-bytes";
 
   await writeFixtureFiles(asarSource, {
@@ -565,16 +568,24 @@ it("traces sibling unpacked require, outside-wrapper rewritten directories, nest
       'const load = require("node-gyp-build");',
       'const inner = require("./resources/app.asar/pkg/index.cjs");',
       'const rewritten = load(path.join(__dirname, "resources", "app.asar", "ngb-pkg").replace("app.asar", "app.asar.unpacked"));',
+      'const rewrittenAll = load(path.join(__dirname, "resources", "app.asar", "replace-all-pkg").replaceAll("app.asar", "app.asar.unpacked"));',
       'const anchored = require(path.join(__dirname, "resources", "app.asar", "inside.node"));',
       'const upperDecoy = require(path.join(__dirname, "decoy-dir", "decoy.NODE"));',
-      'ipcMain.handle("wrapper:boot", () => [inner, rewritten, anchored, upperDecoy]);',
+      "const dlopenUpper = { exports: {} };",
+      'process.dlopen(dlopenUpper, path.join(__dirname, "dlopen-upper", "Addon.NODE"));',
+      'ipcMain.handle("wrapper:boot", () => [inner, rewritten, rewrittenAll, anchored, upperDecoy, dlopenUpper.exports]);',
     ].join("\n"),
     "decoy-dir/decoy.NODE": "module.exports = { notNative: true };",
+    "dlopen-upper/Addon.NODE": dlopenUpperBytes,
     "resources/app.asar.unpacked/pkg/unpacked-only.node": unpackedOnlyBytes,
     "resources/app.asar.unpacked/ngb-pkg/prebuilds/darwin-arm64/ngb.node":
       looseNgbBytes,
     "resources/app.asar.unpacked/ngb-pkg/prebuilds/linux-x64/decoy.NODE":
       decoyUpperBytes,
+    "resources/app.asar.unpacked/replace-all-pkg/prebuilds/darwin-arm64/real-all.node":
+      replaceAllNgbBytes,
+    "resources/app.asar.unpacked/replace-all-pkg/resources/app.asar/replace-all-pkg/prebuilds/darwin-arm64/dup.node":
+      duplicatedSubtreeDecoyBytes,
   });
 
   const analyzed = await analyzeJavaScriptApplication({
@@ -586,7 +597,7 @@ it("traces sibling unpacked require, outside-wrapper rewritten directories, nest
     analyzed.value.normalized_result,
   );
   expect(result.summary).toMatchObject({
-    resolved_native_addon_bindings: 3,
+    resolved_native_addon_bindings: 5,
   });
 
   const traced = traceApplicationFeatureEvidence({
@@ -606,8 +617,19 @@ it("traces sibling unpacked require, outside-wrapper rewritten directories, nest
         looseNgbBytes,
       ),
       createSimulatedNativeEvidence(
+        join(
+          appRoot,
+          "resources/app.asar.unpacked/replace-all-pkg/prebuilds/darwin-arm64/real-all.node",
+        ),
+        replaceAllNgbBytes,
+      ),
+      createSimulatedNativeEvidence(
         join(appRoot, "resources/app.asar/inside.node"),
         nestedInsideBytes,
+      ),
+      createSimulatedNativeEvidence(
+        join(appRoot, "dlopen-upper/Addon.NODE"),
+        dlopenUpperBytes,
       ),
     ],
   });
@@ -620,8 +642,10 @@ it("traces sibling unpacked require, outside-wrapper rewritten directories, nest
     ]),
   );
   expect([...byPath.keys()].sort()).toEqual([
+    "dlopen-upper/Addon.NODE",
     "resources/app.asar.unpacked/ngb-pkg/prebuilds/darwin-arm64/ngb.node",
     "resources/app.asar.unpacked/pkg/unpacked-only.node",
+    "resources/app.asar.unpacked/replace-all-pkg/prebuilds/darwin-arm64/real-all.node",
     "resources/app.asar/inside.node",
   ]);
   expect(
@@ -630,6 +654,18 @@ it("traces sibling unpacked require, outside-wrapper rewritten directories, nest
     ),
   ).toMatchObject({
     artifact_sha256: sha256Hex(looseNgbBytes),
+    status: "evidence-linked",
+  });
+  expect(
+    byPath.get(
+      "resources/app.asar.unpacked/replace-all-pkg/prebuilds/darwin-arm64/real-all.node",
+    ),
+  ).toMatchObject({
+    artifact_sha256: sha256Hex(replaceAllNgbBytes),
+    status: "evidence-linked",
+  });
+  expect(byPath.get("dlopen-upper/Addon.NODE")).toMatchObject({
+    artifact_sha256: sha256Hex(dlopenUpperBytes),
     status: "evidence-linked",
   });
   expect(

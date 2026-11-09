@@ -299,12 +299,18 @@ const resolveCandidatePaths = (
             context: "filesystem-expression",
             moduleKind: finding.module_kind,
             runtimePathKind: "exact-file",
+            ...(resolution.loader === undefined
+              ? {}
+              : { loader: resolution.loader }),
           })
         : resolveSinglePath(input, {
             declaredPath: candidate,
             sourcePath: baseSourcePath,
             context: "module-specifier",
             moduleKind: finding.module_kind,
+            ...(resolution.loader === undefined
+              ? {}
+              : { loader: resolution.loader }),
           });
     return resolved === undefined ? [] : [resolved];
   });
@@ -323,6 +329,7 @@ const resolveAsarUnpackedFinding = (
       sourcePath,
       resolution.directory,
       resolution.asar_unpacked_scope,
+      resolution.asar_unpacked_replace_all,
     );
     return searchRoot === undefined
       ? []
@@ -334,6 +341,7 @@ const resolveAsarUnpackedFinding = (
         sourcePath,
         resolution.module_root,
         resolution.asar_unpacked_scope,
+        resolution.asar_unpacked_replace_all,
       );
       return searchRoot === undefined
         ? []
@@ -343,6 +351,7 @@ const resolveAsarUnpackedFinding = (
       sourcePath,
       ".",
       resolution.asar_unpacked_scope,
+      resolution.asar_unpacked_replace_all,
     );
     if (rewrittenDir === undefined) return [];
     const searchRoot = findEnclosingPackageRoot(state, rewrittenDir, [
@@ -363,6 +372,7 @@ const resolveAsarUnpackedFinding = (
         sourcePath,
         candidate,
         resolution.asar_unpacked_scope,
+        resolution.asar_unpacked_replace_all,
       );
       if (rewrittenPath === undefined || rewrittenPath === ".") return [];
       const relativeToSource = posix.relative(sourceDir, rewrittenPath);
@@ -375,13 +385,19 @@ const resolveAsarUnpackedFinding = (
         context: "filesystem-expression",
         moduleKind: finding.module_kind,
         runtimePathKind: "exact-file",
+        ...(resolution.loader === undefined
+          ? {}
+          : { loader: resolution.loader }),
       });
       return resolved === undefined ? [] : [resolved];
     });
     return [...new Set(matched)].sort(compareUnicodeCodePoints);
   }
   const rewrittenSourcePath =
-    rewriteAppAsarSourcePath(sourcePath) ?? sourcePath;
+    rewriteAppAsarSourcePath(
+      sourcePath,
+      resolution.asar_unpacked_replace_all,
+    ) ?? sourcePath;
   return resolveCandidatePaths(
     state.input,
     rewrittenSourcePath,
@@ -394,6 +410,7 @@ const resolveRewrittenAnchoredPath = (
   sourcePath: string,
   targetRelPath: string,
   scope: ElectronAsarUnpackedRewriteScope | undefined,
+  replaceAll = false,
 ): string | undefined => {
   const sourceDir = posix.dirname(sourcePath);
   if (scope === undefined) {
@@ -402,7 +419,9 @@ const resolveRewrittenAnchoredPath = (
     );
     if (logicalPathEscapesRoot(joined)) return undefined;
     const normalized = joined === "" ? "." : joined;
-    return normalized.replace("app.asar", "app.asar.unpacked");
+    return replaceAll
+      ? normalized.replaceAll("app.asar", "app.asar.unpacked")
+      : normalized.replace("app.asar", "app.asar.unpacked");
   }
   const prefixJoined = normalizeJoinedLogicalPath(
     posix.join(sourceDir, scope.directory),
@@ -428,6 +447,7 @@ const resolveSinglePath = (
     readonly context: "module-specifier" | "filesystem-expression";
     readonly moduleKind?: "import" | "require";
     readonly runtimePathKind?: "exact-file";
+    readonly loader?: "dlopen";
   },
 ): string | undefined => {
   const resolved = resolveArtifactPathByContext({
@@ -446,10 +466,12 @@ const resolveSinglePath = (
       ? {}
       : { runtimePathKind: options.runtimePathKind }),
   }).resolved_path;
-  return resolved !== null &&
-    isNativeAddonModuleTarget(resolved, input.files.get(resolved)?.kind)
-    ? resolved
-    : undefined;
+  const validTarget =
+    resolved !== null &&
+    (options.loader === "dlopen"
+      ? isNativeAddonFile(resolved, input.files)
+      : isNativeAddonModuleTarget(resolved, input.files.get(resolved)?.kind));
+  return validTarget ? resolved : undefined;
 };
 
 const isNodeModulesPackageBoundary = (directory: string): boolean => {
@@ -507,16 +529,21 @@ const isNativeAddonFile = (
 ): boolean =>
   file?.kind === "native-addon" && path.toLowerCase().endsWith(".node");
 
-const rewriteAppAsarSourcePath = (sourcePath: string): string | undefined => {
+const rewriteAppAsarSourcePath = (
+  sourcePath: string,
+  replaceAll = false,
+): string | undefined => {
   const segments = sourcePath.split("/");
+  let changed = false;
+  const copy = [...segments];
   for (let index = 0; index < segments.length - 1; index += 1) {
     if (segments[index] === "app.asar") {
-      const copy = [...segments];
       copy[index] = "app.asar.unpacked";
-      return copy.join("/");
+      changed = true;
+      if (!replaceAll) break;
     }
   }
-  return undefined;
+  return changed ? copy.join("/") : undefined;
 };
 
 const siblingAsarUnpackedSourcePath = (

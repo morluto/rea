@@ -206,6 +206,7 @@ export const resolveDlopenCall = (
     access,
     resolution: {
       kind: "candidates",
+      loader: "dlopen",
       resolution_context: "filesystem-expression",
       // Relative/absolute literal strings in process.dlopen depend on cwd or
       // host mount layout unless anchored to the source file's directory.
@@ -224,6 +225,7 @@ export type RequireResolveSearchOptions =
       readonly kind: "directory";
       readonly directory: string;
       readonly asarUnpacked: boolean;
+      readonly asarUnpackedReplaceAll?: boolean;
       readonly asarUnpackedScope?: ElectronAsarUnpackedRewriteScope;
     }
   | { readonly kind: "unresolved" };
@@ -274,6 +276,9 @@ export const resolveRequireResolveSearchOptions = (
         kind: "directory",
         directory: anchored.directory,
         asarUnpacked: anchored.asarUnpacked,
+        ...(anchored.asarUnpackedReplaceAll === true
+          ? { asarUnpackedReplaceAll: true }
+          : {}),
         ...(anchored.asarUnpackedScope === undefined
           ? {}
           : { asarUnpackedScope: anchored.asarUnpackedScope }),
@@ -350,6 +355,7 @@ const resolveDlopenRequireResolve = (
         access,
         resolution: {
           kind: "candidates",
+          loader: "dlopen",
           resolution_context: "filesystem-expression",
           candidates: expanded.candidates,
           ...(expanded.asarUnpacked === undefined
@@ -370,6 +376,9 @@ const resolveDlopenRequireResolve = (
       const scope: ElectronAsarUnpackedRewriteScope =
         searchOptions.asarUnpackedScope ?? {
           directory: searchOptions.directory,
+          ...(searchOptions.asarUnpackedReplaceAll === true
+            ? { replace_all: true }
+            : {}),
         };
       const rebasedCandidates =
         searchOptions.asarUnpackedScope === undefined
@@ -383,6 +392,7 @@ const resolveDlopenRequireResolve = (
         access,
         resolution: {
           kind: "candidates",
+          loader: "dlopen",
           resolution_context: "filesystem-expression",
           candidates: rebasedCandidates,
           asar_unpacked: true,
@@ -396,6 +406,7 @@ const resolveDlopenRequireResolve = (
       access,
       resolution: {
         kind: "candidates",
+        loader: "dlopen",
         resolution_context: "filesystem-expression",
         candidates: expanded.candidates.map((candidate) =>
           posix.join(searchOptions.directory, candidate),
@@ -411,6 +422,7 @@ const resolveDlopenRequireResolve = (
       expanded.base === "source-directory"
         ? {
             kind: "candidates",
+            loader: "dlopen",
             resolution_context: "filesystem-expression",
             candidates: expanded.candidates,
             ...(expanded.asarUnpacked === undefined
@@ -419,6 +431,7 @@ const resolveDlopenRequireResolve = (
           }
         : {
             kind: "candidates",
+            loader: "dlopen",
             resolution_context: "module-specifier",
             candidates: expanded.candidates,
             ...(resolvedCall.sourceRelativePath === undefined
@@ -539,6 +552,9 @@ const resolveNodeGypBuildCall = (
       kind: "node-gyp-build",
       directory: anchored.directory,
       ...(anchored.asarUnpacked ? { asar_unpacked: true } : {}),
+      ...(anchored.asarUnpackedReplaceAll === true
+        ? { asar_unpacked_replace_all: true }
+        : {}),
       ...(anchored.asarUnpackedScope === undefined
         ? {}
         : { asar_unpacked_scope: anchored.asarUnpackedScope }),
@@ -589,6 +605,7 @@ const resolveBindingsHelperCall = (
   let rawAddonName: string | undefined;
   let moduleRoot: string | null = null;
   let moduleRootUnpacked = false;
+  let moduleRootUnpackedReplaceAll = false;
   let moduleRootUnpackedScope: ElectronAsarUnpackedRewriteScope | undefined;
   let pathOnly = false;
   for (const prop of objectNode.properties) {
@@ -613,6 +630,7 @@ const resolveBindingsHelperCall = (
       if (isUnshadowedGlobal(valueNode, bindings, "undefined")) {
         moduleRoot = null;
         moduleRootUnpacked = false;
+        moduleRootUnpackedReplaceAll = false;
         moduleRootUnpackedScope = undefined;
       } else {
         const resolved = resolveSourceAnchoredDirectory(
@@ -627,6 +645,7 @@ const resolveBindingsHelperCall = (
         }
         moduleRoot = resolved.directory;
         moduleRootUnpacked = resolved.asarUnpacked;
+        moduleRootUnpackedReplaceAll = resolved.asarUnpackedReplaceAll === true;
         moduleRootUnpackedScope = resolved.asarUnpackedScope;
       }
     } else if (key === "path") {
@@ -680,6 +699,9 @@ const resolveBindingsHelperCall = (
       addon_name: addonName,
       module_root: moduleRoot,
       ...(moduleRootUnpacked ? { asar_unpacked: true } : {}),
+      ...(moduleRootUnpackedReplaceAll
+        ? { asar_unpacked_replace_all: true }
+        : {}),
       ...(moduleRootUnpackedScope === undefined
         ? {}
         : { asar_unpacked_scope: moduleRootUnpackedScope }),
@@ -795,8 +817,8 @@ const isRelativeSubpath = (path: string): boolean =>
 const asarUnpackedScopeFromRewrite = (
   rewrite: AsarUnpackedTemplateRewrite,
 ): ElectronAsarUnpackedRewriteScope | undefined => {
-  if (!rewrite.hasPostRewriteSuffix && !rewrite.replaceAll) return undefined;
-  if (rewrite.scopeDirectory === undefined) return undefined;
+  if (!rewrite.hasPostRewriteSuffix || rewrite.scopeDirectory === undefined)
+    return undefined;
   return {
     directory: rewrite.scopeDirectory,
     ...(rewrite.replaceAll ? { replace_all: true } : {}),
@@ -807,11 +829,15 @@ const asarUnpackedResolutionProps = (
   rewrite: AsarUnpackedTemplateRewrite,
 ): {
   readonly asar_unpacked: true;
+  readonly asar_unpacked_replace_all?: true;
   readonly asar_unpacked_scope?: ElectronAsarUnpackedRewriteScope;
 } => {
   const scope = asarUnpackedScopeFromRewrite(rewrite);
   return {
     asar_unpacked: true,
+    ...(!rewrite.hasPostRewriteSuffix && rewrite.replaceAll
+      ? { asar_unpacked_replace_all: true }
+      : {}),
     ...(scope === undefined ? {} : { asar_unpacked_scope: scope }),
   };
 };
@@ -827,6 +853,7 @@ const resolveSourceAnchoredDirectory = (
       readonly directory: string;
       readonly displayDirectory: string;
       readonly asarUnpacked: boolean;
+      readonly asarUnpackedReplaceAll?: boolean;
       readonly asarUnpackedScope?: ElectronAsarUnpackedRewriteScope;
     }
   | undefined => {
@@ -882,10 +909,7 @@ const resolveSourceAnchoredDirectory = (
     const directory = posix.normalize(fact.pieces[0].value);
     const rewrite = fact.asarUnpacked;
     if (rewrite !== undefined) {
-      if (
-        (rewrite.hasPostRewriteSuffix || rewrite.replaceAll) &&
-        rewrite.scopeDirectory === undefined
-      )
+      if (rewrite.hasPostRewriteSuffix && rewrite.scopeDirectory === undefined)
         return undefined;
       const scope = asarUnpackedScopeFromRewrite(rewrite);
       const displayDirectory =
@@ -896,6 +920,9 @@ const resolveSourceAnchoredDirectory = (
         directory,
         displayDirectory,
         asarUnpacked: true,
+        ...(!rewrite.hasPostRewriteSuffix && rewrite.replaceAll
+          ? { asarUnpackedReplaceAll: true }
+          : {}),
         ...(scope === undefined ? {} : { asarUnpackedScope: scope }),
       };
     }
@@ -957,7 +984,7 @@ const expandNativePathTemplate = (
   if (fact === undefined) return undefined;
   if (
     fact.asarUnpacked !== undefined &&
-    (fact.asarUnpacked.hasPostRewriteSuffix || fact.asarUnpacked.replaceAll) &&
+    fact.asarUnpacked.hasPostRewriteSuffix &&
     fact.asarUnpacked.scopeDirectory === undefined
   )
     return undefined;
