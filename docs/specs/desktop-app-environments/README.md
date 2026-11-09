@@ -1,11 +1,19 @@
 # Desktop application environments
 
+This roadmap records the planned implementation sequence. It does not establish
+current completion, review approval or verification status. For current workflows,
+see [desktop capture](../../desktop-application-capture.md),
+[build computers](../../desktop-build-computer.md),
+[tasks](../../desktop-application-tasks.md) and
+[export](../../desktop-application-export.md). Individual verification records
+retain their original scope and limitations.
+
 Goal: REA turns an application installed and used on a Linux desktop into an
 agent environment's computer application. The real application installs into
 a computer image, launches to ready, exposes reset, load and get over its own
 state, and ships with tasks graded through that state.
 
-The work lands as one PR per step:
+The planned sequence was one PR per step:
 
 1. Pin the real agent environment lane to the framework release that carries
    the computer application contract.
