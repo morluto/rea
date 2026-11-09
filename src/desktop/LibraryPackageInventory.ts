@@ -89,6 +89,12 @@ const packageOwners = async (
     const outcome = await runQuery("dpkg-query", ["-S", ...batch], signal);
     if (outcome === "missing") return err("dpkg-query is not installed");
     if (outcome === "failed") return err("dpkg-query -S did not finish");
+    // dpkg-query exits 1 when some path has no owner; a higher exit code is a
+    // fatal query failure whose empty output must not mark libraries unowned.
+    if (outcome.exitCode > 1)
+      return err(
+        `dpkg-query -S exited ${String(outcome.exitCode)} without saying which packages own the libraries`,
+      );
     for (const path of batch) {
       const names = parseDpkgOwners(outcome.stdout, path);
       if (names.length > 0) owners.set(path, names);

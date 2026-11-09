@@ -649,6 +649,25 @@ describe.skipIf(process.platform === "win32")("library packages", () => {
     expect(queries.some((query) => query.endsWith("ldconfig"))).toBe(false);
   });
 
+  it("keeps library ownership unknown with the reason when the owner query fails fatally", async () => {
+    const { runQuery, inspect } = await vendorFixture();
+    // dpkg-query exits 2 when its database cannot answer, not merely unowned.
+    const fatalOwnerQuery: QueryRunner = async (command, argv, signal) =>
+      command === "dpkg-query" && argv[0] === "-S" && argv.length > 2
+        ? { stdout: "", exitCode: 2 }
+        : runQuery(command, argv, signal);
+
+    const result = await inspect(fatalOwnerQuery);
+
+    if (!result.ok) throw new Error(result.error.reason);
+    expect(result.value.inventory.package).toMatchObject({
+      library_packages: [],
+      unpackaged_libraries: [],
+      missing_libraries: ["libsecret-1.so.0"],
+      library_packages_reason: expect.stringMatching(/dpkg-query -S exited 2/u),
+    });
+  });
+
   it("keeps a library from another component of the vendor entry the export declares", async () => {
     const { package: installed } = await inspected({
       repository: COMPONENTS,
