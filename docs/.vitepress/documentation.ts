@@ -399,6 +399,11 @@ export const documentationSections = [
         route: "/bun-standalone",
       },
       {
+        text: "Deno compile executables",
+        source: "deno-standalone.md",
+        route: "/deno-standalone",
+      },
+      {
         text: "Capability composition and ownership",
         source: "capability-composition.md",
         route: "/capability-composition",
