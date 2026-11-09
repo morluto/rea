@@ -1,16 +1,20 @@
 import { constants } from "node:fs";
-import { access, readFile, stat, statfs } from "node:fs/promises";
+import { access, stat, statfs } from "node:fs/promises";
 import { dirname, isAbsolute, join } from "node:path";
 
-import { parse as parseToml } from "smol-toml";
+import { z } from "zod";
 
 import type {
   DesktopBuildCommand,
   DesktopBuildFacts,
   DesktopBuildFactsInput,
 } from "../application/DesktopBuildDoctor.js";
-import { homeDirectoryFromEnvironment } from "../config/homeDirectory.js";
 import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
+import { safeParseJson } from "../domain/safeJson.js";
+import {
+  readRegularFileText,
+  RetainedRegularFileCleanupFailure,
+} from "../application/RegularFileRead.js";
 import { DESKTOP_EXPORT_FRAMEWORK_VERSION } from "../domain/desktop/appExport.js";
 import { PRODUCT_IDENTITY } from "../identity.js";
 import { execFileOutputFailure } from "../process/ExecFileOutput.js";
@@ -92,7 +96,7 @@ export const readDesktopBuildFacts = async (
     environmentSettings: BUILD_COMPUTER_SETTINGS.filter(
       (name) => (environment[name] ?? "") !== "",
     ),
-    solveEndpoint: await solveEndpoint(environment, input.platform),
+    solveEndpoint: await solveEndpoint(input, agentEnv),
     leftoverContainers:
       docker.status === "found" && daemon.status === "reachable"
         ? await leftoverContainers(input, docker.path)
@@ -358,31 +362,105 @@ const registrationFacts = async (
 };
 
 const solveEndpoint = async (
-  environment: Readonly<NodeJS.ProcessEnv>,
-  platform: NodeJS.Platform,
-): Promise<string | undefined> => {
+  input: DesktopBuildFactsInput,
+  runner: DesktopBuildCommand,
+): Promise<string | null | undefined> => {
+  if (input.signal.aborted)
+    throw new AnalysisCancelledError("doctor", { cause: input.signal.reason });
+  if (runner.status !== "found") return null;
+  const discovery = await attempt(input, runner.path, [
+    "config",
+    "debug",
+    "--json",
+  ]);
+  if (!discovery.ok) return null;
+  const discovered = safeParseJson(discovery.stdout);
+  const candidates = discovered.ok
+    ? z
+        .object({
+          search_path: z.array(
+            z.object({ path: z.string(), exists: z.boolean() }),
+          ),
+        })
+        .safeParse(discovered.value)
+    : undefined;
+  if (candidates === undefined || !candidates.success) return null;
+  const selected = candidates.data.search_path.find(
+    ({ exists }) => exists,
+  )?.path;
   if (
-    (environment.LITELLM_BASE_URL ?? "") !== "" &&
-    (environment.LITELLM_API_KEY ?? "") !== ""
+    selected === undefined &&
+    (input.environment.AGENT_ENV_CONFIG ?? "") !== ""
   )
-    return "LITELLM_BASE_URL and LITELLM_API_KEY";
-  const home = homeDirectoryFromEnvironment(environment, platform);
-  for (const path of [
-    environment.AGENT_ENV_CONFIG,
-    join(process.cwd(), ".agentenv/config.toml"),
-    join(home, ".agentenv/config.toml"),
-  ])
-    if (path !== undefined && path !== "" && (await hasModelTable(path)))
-      return path;
-  return undefined;
+    return null;
+  if (selected !== undefined && !(await canReadModelConfig(selected, input)))
+    return null;
+  const explained = await attempt(input, runner.path, [
+    "config",
+    "explain",
+    "model.base_url",
+    "--json",
+  ]);
+  if (!explained.ok) return null;
+  const parsed = safeParseJson(explained.stdout);
+  const result = parsed.ok
+    ? z
+        .object({
+          path: z.literal("model.base_url"),
+          value: z.unknown(),
+          error: z.unknown(),
+          winner: z.object({ kind: z.string() }).nullable().optional(),
+        })
+        .safeParse(parsed.value)
+    : undefined;
+  if (result === undefined || !result.success || result.data.error != null)
+    return null;
+  const value = result.data.value;
+  // Agentenv's explain command lists an empty env override, while the runtime
+  // getter falls through to the file. The explanation cannot prove that value.
+  if (value === "" && result.data.winner?.kind === "env") return null;
+  if (value === null || value === "") return undefined;
+  if (typeof value !== "string" || /^(?:env|secret):/u.test(value)) return null;
+  return result.data.winner?.kind === "env"
+    ? "LITELLM_BASE_URL"
+    : (selected ?? "agentenv model configuration");
 };
 
-const hasModelTable = async (path: string): Promise<boolean> => {
+const canReadModelConfig = async (
+  path: string,
+  input: DesktopBuildFactsInput,
+): Promise<boolean> => {
   try {
-    if ((await stat(path)).size > CONFIG_BYTES) return false;
-    const model: unknown = parseToml(await readFile(path, "utf8")).model;
-    return typeof model === "object" && model !== null;
-  } catch {
+    if (input.signal.aborted)
+      throw new AnalysisCancelledError("doctor", {
+        cause: input.signal.reason,
+      });
+    const candidate = await stat(path);
+    if (input.signal.aborted)
+      throw new AnalysisCancelledError("doctor", {
+        cause: input.signal.reason,
+      });
+    if (!candidate.isFile() || candidate.size > CONFIG_BYTES) return false;
+    await readRegularFileText(path, {
+      signal: input.signal,
+      admit: (state) => {
+        if (state.size > CONFIG_BYTES)
+          throw new Error("Configuration exceeds the read limit");
+      },
+      cancellationFailure: (reason) =>
+        new AnalysisCancelledError("doctor", { cause: reason }),
+    });
+    return true;
+  } catch (cause: unknown) {
+    if (cause instanceof RetainedRegularFileCleanupFailure) {
+      input.resources.retain(cause.cleanupOwner);
+      throw cause;
+    }
+    if (cause instanceof AnalysisCancelledError) throw cause;
+    if (input.signal.aborted)
+      throw new AnalysisCancelledError("doctor", {
+        cause: input.signal.reason,
+      });
     return false;
   }
 };
