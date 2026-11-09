@@ -1,5 +1,3 @@
-import type { UnsignedAnalysisView } from "./analysisViewResult.js";
-import type { AnalysisError } from "../analysisErrorBase.js";
 import { z } from "zod";
 import {
   webSourceLocationResultSchema,
@@ -12,7 +10,7 @@ import {
 import { jsonValueByteLength } from "../jsonValueByteLength.js";
 import type { JsonValue } from "../jsonValue.js";
 import { AnalysisResourceConstraintError } from "../analysisErrorCore.js";
-import { err, ok, type Result } from "../result.js";
+import { err, ok } from "../result.js";
 import {
   createAnalysisViewResultReader,
   type AnalysisViewParent,
@@ -295,7 +293,7 @@ const projectMatches = (
 export const projectWebSourceLocationView = (
   parent: AnalysisViewParent,
   admitted: AdmittedView,
-): Result<UnsignedAnalysisView, AnalysisError> => {
+) => {
   const view = ownedView<
     SummaryAnalysisView | z.output<typeof webSourceLocationViewRequestSchema>
   >(admitted, "summary", "source-location");
