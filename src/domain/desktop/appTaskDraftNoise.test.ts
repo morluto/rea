@@ -268,7 +268,7 @@ describe("draftTaskFiles upkeep in an archive", () => {
       ),
       entry(
         "styles.xml",
-        `<styles><style name="Default">${styles}</style></styles>`,
+        `<styles xmlns:loext="urn:loext" xmlns:fo="urn:fo"><style name="Default">${styles}</style></styles>`,
       ),
     ],
     entry_count: 2,
@@ -282,12 +282,12 @@ describe("draftTaskFiles upkeep in an archive", () => {
     return file;
   };
   const filled =
-    "/entries/[name=styles.xml]/view/root/children/[name=style]/children/[name=props]/attributes/tab-stop";
+    "/entries/[name=styles.xml]/view/root/children/[name=style]/children/[name=props]/attributes/loext:tab-stop-distance";
 
   it("demotes attributes an entry's elements only gained while another entry holds the edit", () => {
     const file = drafted(
       archive("Spring Sale", "<props/>"),
-      archive("Summer Sale", `<props tab-stop="0in"/>`),
+      archive("Summer Sale", `<props loext:tab-stop-distance="0in"/>`),
     );
 
     expect(file.suggested.map(pointerOf)).toEqual([
@@ -301,10 +301,20 @@ describe("draftTaskFiles upkeep in an archive", () => {
   it("suggests an attribute an entry gained when nothing else changed, since that may be the edit", () => {
     const file = drafted(
       archive("Spring Sale", "<props/>"),
-      archive("Spring Sale", `<props tab-stop="0in"/>`),
+      archive("Spring Sale", `<props loext:tab-stop-distance="0in"/>`),
     );
 
     expect(file.suggested.map(pointerOf)).toEqual([filled]);
     expect(file.values.map(({ note }) => note)).toEqual([undefined]);
+  });
+
+  it("keeps a formatting edit when another archive entry also changes", () => {
+    const file = drafted(
+      archive("Spring Sale", "<props/>"),
+      archive("Summer Sale", `<props fo:font-weight="bold"/>`),
+    );
+    expect(file.suggested.map(pointerOf)).toContain(
+      "/entries/[name=styles.xml]/view/root/children/[name=style]/children/[name=props]/attributes/fo:font-weight",
+    );
   });
 });
