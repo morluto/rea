@@ -266,8 +266,14 @@ found nowhere are listed in
 `missing_libraries`, and libraries no package owns in `unpackaged_libraries`.
 `library_packages_reason` says why the lists are incomplete: the executable is
 not an ELF image (a launcher script, for example), `ldconfig`, `dpkg-query` or
-`apt-cache` is missing, a library could not be read or names more than 512
-libraries, or the walk stopped after 512 libraries.
+`apt-cache` is missing, `dpkg-query -S` could not tell which package owns a
+library (it exits 2 rather than 1, which only says no package owns the paths
+it did not name), a library could not be read or names more than 512
+libraries, or the walk stopped after 512 libraries. A failed owner query does
+not list the libraries it covered in `unpackaged_libraries`, since a lookup
+that could not finish is not proof that no package owns them. Completed batches
+retain their package and unowned-library facts. Paths containing package-query
+pattern characters stay unknown unless another candidate identifies an owner.
 
 A sources file, key or library whose handle REA cannot close fails the capture
 with the file as its cleanup resource. When the repository check and the
