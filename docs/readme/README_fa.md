@@ -76,6 +76,10 @@ npx rea-agents setup
 
 MCP به‌طور پیش‌فرض از schema ورودی فشرده استفاده می‌کند. برای راهنمای کامل فیلدها و اعتبارسنجی تو‌در‌تو، در ثبت MCP مقدار `REA_MCP_INPUT_SCHEMA_PROFILE=full` را تنظیم کنید. هر دو حالت همهٔ ابزارها و اعتبارسنجی استاندارد یکسان سرور را نگه می‌دارند؛ راهنمای قراردادهای MCP را ببینید.
 
+راه‌اندازی، محیط اجرای انتخاب‌شده و اسکریپت ورودی REA را مستقیماً ثبت می‌کند. اگر از اجراکنندهٔ بسته استفاده می‌کنید، ورودی حافظهٔ پنهان و محیط اجرا را حفظ کنید؛ بسته را از پوشه‌ای قابل اعتماد خارج از پروژهٔ هدف دریافت کنید. راهنمای نصب را ببینید.
+
+طرح‌های خروجی کامل به‌طور پیش‌فرض اعلام می‌شوند. اگر کلاینت `tools/list` را محدود می‌کند، در ثبت MCP مقدار `REA_MCP_OUTPUT_SCHEMA_PROFILE=compact` یا `off` را تنظیم کنید. اعتبارسنجی سرور و نتایج ساخت‌یافته کامل می‌مانند. بخش «Output schemas» در راهنمای قراردادهای MCP را ببینید.
+
 ### از ایجنت خود بپرسید
 
 ```text
@@ -164,6 +168,7 @@ REA به Node.js 22.x (>=22.23.4)، 24.x (>=24.22.1) یا 26+ (>=26.12.1)، به
 | داده‌های ضبط‌شدهٔ شبکه    | درخواست‌ها، پاسخ‌ها، payloadهای آشکارشده و مکان آن‌ها در منبع                          | HAR / Fiddler Everywhere SAZ؛ ابزار mitmdump در لینوکس برای ضبط‌های بومی mitmproxy؛ [راهنمای ضبط شبکه](../guides/web/web-network-captures.md)               |
 | اسمبلی‌های .NET         | فراداده، دستورالعمل‌های CIL، وابستگی‌های بومی اعلام‌شده و مقایسهٔ buildها                | بررسی ایستا؛ [راهنمای کد مدیریت‌شده](../guides/managed/managed-code-analysis.md)                                                                            |
 | PyInstaller            | CArchive, PYZ, Python bytecode                                                      | Static inspection; [Python packaged applications](../python-packaged-applications.md)                                                                      |
+| Deno compile binaries  | Virtual files, entry point, recorded options, npm snapshot length                   | Static inspection; [Deno compile executables](../deno-standalone.md)                                                                                       |
 | فایل‌های APK اندروید    | تعاریف Manifest، کلاس‌ها، متدهای دیکامپایل‌شده و ارجاعات                               | JADX بدون رابط گرافیکی و JDK کامل در Linux/macOS/Windows x64؛ [راهنمای اندروید](../guides/android/android-analysis.md)                                     |
 | دستگاه‌های اندروید      | دستگاه‌ها، بسته‌ها، فرایندها، لاگ‌ها، دامپ‌ها، اسکرین‌شات‌ها و انتقال APK/فایل             | adb تأمین‌شده توسط فراخوان‌کننده (شبیه‌ساز یا دستگاه)؛ [راهنمای ADB](../guides/android/adb-device-analysis.md)                                                |
 | پروژه‌های JEB           | واحدهای پروژه از موتور، هش‌های مصنوع و شبه‌کدِ نوع/متد                                 | یک کلاینت JEB که توسط فراخوان‌کننده اجرا شده و MCP ارائه می‌دهد و با REA_JEB_MCP_URL انتخاب می‌شود؛ [راهنمای JEB](../providers/jeb-analysis.md)                |

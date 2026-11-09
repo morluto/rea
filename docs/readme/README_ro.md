@@ -99,6 +99,10 @@ validării structurilor imbricate. Ambele profiluri păstrează toate uneltele �
 validarea canonică a serverului. Consultă secțiunea „Compact input schema profile”
 din ghidul contractelor MCP.
 
+Configurarea înregistrează direct mediul de execuție ales și scriptul de intrare REA. Dacă folosești un executor de pachete, păstrează intrarea sa din cache și mediul de execuție; obține pachetul dintr-un director de încredere din afara proiectului țintă. Consultă ghidul de instalare.
+
+Schemele complete de ieșire sunt anunțate implicit. Dacă clientul limitează `tools/list`, setează `REA_MCP_OUTPUT_SCHEMA_PROFILE=compact` sau `off` în înregistrarea MCP. Validarea serverului și rezultatele structurate rămân complete. Consultă „Output schemas” din ghidul contractelor MCP.
+
 ### Cere-i agentului
 
 ```text
@@ -226,6 +230,7 @@ Uneltele suplimentare și platformele acceptate depind de ținta analizată:
 | Pachete și resurse                  | Inventare de fișiere, hash-uri, fișiere plist, structura pachetelor de aplicație Apple și resurse extrase                     | [Ghidul artefactelor și JavaScript](../guides/javascript/javascript-artifact-reconstruction.md), [aplicații Apple](../guides/apple/apple-application-analysis.md) |
 | Comportamentul proceselor           | Ieșirea în terminal, interacțiuni, observații despre terminarea proceselor și sistemul de fișiere și comparații între rulări  | Linux/macOS cu un PTY nativ; [capturarea proceselor](../guides/runtime/process-capture.md)                                                                        |
 | Executabile PyInstaller             | Membri CArchive, versiunea Python, scripturi de intrare și bytecode extras                                                    | Fără cerințe suplimentare (doar analiză statică); [aplicații Python împachetate](../python-packaged-applications.md)                                              |
+| Deno compile binaries               | Virtual files, entry point, recorded options, npm snapshot length                                                             | Static inspection; [Deno compile executables](../deno-standalone.md)                                                                                              |
 
 Inspectarea statică JavaScript și .NET citește fișierele furnizate fără a rula
 aplicația. Capturarea în timpul execuției rulează ținta selectată sau interacționează
