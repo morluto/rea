@@ -1347,3 +1347,92 @@ describe("wrapper write isolation and definite helper installation receivers", (
     expectNoDirectElectron(source);
   });
 });
+
+describe("wrapped aliases, parameter reassignments, and generator completion values", () => {
+  it("invalidates Electron exports mutated through wrapped helper and Array.from returns", () => {
+    expectNoDirectElectron(`
+      const e = require("electron");
+      const wrap = (x) => ({ ipc: x.ipcRenderer });
+      const alias = wrap(e);
+      alias.ipc.invoke = () => 0;
+      e.ipcRenderer.invoke("WRAPPED_HELPER");
+    `);
+    expectNoDirectElectron(`
+      const e = require("electron");
+      const items = Array.from([e], (x) => ({ ipc: x.ipcRenderer }));
+      items[0].ipc.invoke = () => 0;
+      e.ipcRenderer.invoke("WRAPPED_ARRAY_FROM");
+    `);
+  });
+
+  it("preserves Electron identity when call or mapper parameters are reassigned before returning", () => {
+    const direct = analyzeJavaScriptStaticSource(`
+      const e = require("electron");
+      const fresh = ((x) => {
+        x = {};
+        return x;
+      })(e);
+      fresh.ipcRenderer = {};
+      e.ipcRenderer.invoke("REASSIGNED_PARAM_INTACT");
+    `);
+    expect(direct.electron.ipc).toEqual([
+      expect.objectContaining({
+        channel: "REASSIGNED_PARAM_INTACT",
+        operation: "invoke",
+        side: "renderer",
+      }),
+    ]);
+
+    const mapped = analyzeJavaScriptStaticSource(`
+      const e = require("electron");
+      const items = Array.from([e], (x) => {
+        x = {};
+        return x;
+      });
+      items[0].ipcRenderer = {};
+      e.ipcRenderer.invoke("REASSIGNED_MAPPER_INTACT");
+    `);
+    expect(mapped.electron.ipc).toEqual([
+      expect.objectContaining({
+        channel: "REASSIGNED_MAPPER_INTACT",
+        operation: "invoke",
+        side: "renderer",
+      }),
+    ]);
+  });
+
+  it("excludes generator completion values from iterated writes while tainting yielded exports", () => {
+    const completionOnly = analyzeJavaScriptStaticSource(`
+      const e = require("electron");
+      function* values() {
+        yield {};
+        return e;
+      }
+      for (const item of values()) {
+        item.ipcRenderer = {};
+      }
+      for (const spreadItem of [...values()]) {
+        spreadItem.ipcRenderer = {};
+      }
+      e.ipcRenderer.invoke("GENERATOR_RETURN_IGNORED");
+    `);
+    expect(completionOnly.electron.ipc).toEqual([
+      expect.objectContaining({
+        channel: "GENERATOR_RETURN_IGNORED",
+        operation: "invoke",
+        side: "renderer",
+      }),
+    ]);
+
+    expectNoDirectElectron(`
+      const e = require("electron");
+      function* values() {
+        yield e;
+      }
+      for (const item of values()) {
+        item.ipcRenderer = {};
+      }
+      e.ipcRenderer.invoke("GENERATOR_YIELD_TAINTED");
+    `);
+  });
+});

@@ -51,6 +51,8 @@ import {
 export interface SemanticReturnedReference {
   readonly node: t.Node;
   readonly projection: JavaScriptSemanticPropertyPath;
+  readonly kind?: "return" | "yield";
+  readonly resultKind?: "value" | "promise" | "iterator" | "async-iterator";
 }
 
 interface Candidate {
@@ -105,6 +107,7 @@ export const createSemanticReturnedReferences = (
     | "potential-reference"
     | "direct-call"
     | "awaited-call" = "potential-reference",
+  options?: { readonly includeResultMetadata?: boolean },
 ): ((
   callee: t.Node,
   invocation?: t.CallExpression | t.OptionalCallExpression,
@@ -711,7 +714,16 @@ export const createSemanticReturnedReferences = (
           node === null ||
           (consumption !== "potential-reference" && kind !== "return")
             ? []
-            : [{ node, projection: delegated ? [null] : [] }],
+            : [
+                options?.includeResultMetadata === true
+                  ? {
+                      node,
+                      projection: delegated ? [null] : [],
+                      kind,
+                      resultKind,
+                    }
+                  : { node, projection: delegated ? [null] : [] },
+              ],
       );
     });
     result.references = output;
