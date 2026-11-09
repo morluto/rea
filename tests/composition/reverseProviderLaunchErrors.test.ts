@@ -850,6 +850,25 @@ it("restricts Linux process ownership prerequisite remediation to missing ps and
     system_code: "ENOENT",
   });
 
+  const noCodeError = new Error("ps failed with no error code");
+  currentError = noCodeError;
+  const noCodeFailure = (await host
+    .captureBaseline?.()
+    .catch((error: unknown) => error)) as LinuxOwnedProcessPrerequisiteError;
+  expect(noCodeFailure).toBeInstanceOf(LinuxOwnedProcessPrerequisiteError);
+  expect(noCodeFailure.reason).toContain(
+    "could not obtain the process table using ps: ps failed with no error code",
+  );
+  expect(noCodeFailure.remediationAction).toContain(
+    processOwnershipAdmissionRecovery("baseline_unavailable", "linux"),
+  );
+  expect(noCodeFailure.remediationAction).not.toContain("procps");
+  expect(noCodeFailure.remediationAction).not.toContain("PATH");
+  expect(noCodeFailure.diagnostics).toMatchObject({
+    boundary: "process-ownership",
+  });
+  expect(noCodeFailure.diagnostics).not.toHaveProperty("system_code");
+
   const emptyTableHost = createSystemProcessOwnershipHost(
     "linux",
     {},
@@ -1186,6 +1205,45 @@ it("ignores older launch failure when newer successful launch completes first an
     if (call1Promise !== undefined) {
       await call1Promise.catch(() => {});
     }
+    await service.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+it("preserves provider-launch ENOENT for a real execute_rizin_command target and records launch failure", async () => {
+  const { directory, path } = await createArtifact();
+  const command = resolve(directory, "missing-rizin");
+  const service = new TestReverseEngineeringService({
+    environment: { REA_RIZIN_COMMAND: command },
+  });
+  try {
+    const result = await service.executeRizinCommand({
+      path,
+      command: "iI",
+    });
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      const projected = projectAnalysisError(result.error);
+      expect(projected.code).toBe("capability_unavailable");
+      expect(projected.details).toMatchObject({
+        provider_id: "rizin",
+        diagnostics: {
+          boundary: "provider-launch",
+          command,
+          system_code: "ENOENT",
+        },
+      });
+      expect(projected.remediation.action).toContain(
+        "Set REA_RIZIN_COMMAND to an installed executable Rizin command",
+      );
+    }
+    expect(service.observedLaunchFailures()).toMatchObject({
+      execute_rizin_command: {
+        reason: expect.stringContaining(command),
+        remediation: expect.stringContaining("REA_RIZIN_COMMAND"),
+      },
+    });
+  } finally {
     await service.close();
     await rm(directory, { recursive: true, force: true });
   }

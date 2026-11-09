@@ -1463,7 +1463,10 @@ export const createSystemProcessOwnershipHost = (
           : undefined);
       const systemCode = typeof rawCode === "string" ? rawCode : undefined;
       if (platform === "linux")
-        throw new LinuxOwnedProcessPrerequisiteError(cause, systemCode);
+        throw new LinuxOwnedProcessPrerequisiteError(cause, {
+          missing: systemCode === "ENOENT",
+          systemCode,
+        });
       throw new ProcessAdmissionError(
         "baseline_unavailable",
         systemCode === undefined ? undefined : { system_code: systemCode },
@@ -1699,16 +1702,32 @@ export const signalProcessWithStartIdentity = async (
 export const LINUX_PROCESS_OWNERSHIP_REMEDIATION =
   "Install your distribution's procps or procps-ng package, or put a procps-compatible ps on REA's PATH, then retry.";
 
+/** Options describing why Linux process ownership inspection could not run `ps`. */
+export interface LinuxOwnedProcessPrerequisiteOptions {
+  readonly missing?: boolean;
+  readonly systemCode?: string | undefined;
+}
+
 /** Refusal before an owned launch when Linux `ps` is missing or incompatible. */
 export class LinuxOwnedProcessPrerequisiteError extends AnalysisCapabilityUnavailableError {
   readonly systemCode: string | undefined;
   readonly admissionCode: string | undefined;
 
-  constructor(cause: unknown, systemCode?: string) {
+  constructor(
+    cause: unknown,
+    optionsOrSystemCode: LinuxOwnedProcessPrerequisiteOptions | string = {},
+  ) {
+    const options: LinuxOwnedProcessPrerequisiteOptions =
+      typeof optionsOrSystemCode === "string"
+        ? {
+            missing: optionsOrSystemCode === "ENOENT",
+            systemCode: optionsOrSystemCode,
+          }
+        : optionsOrSystemCode;
     const admissionCode =
       cause instanceof ProcessAdmissionError ? cause.code : undefined;
     const rawCode =
-      systemCode ??
+      options.systemCode ??
       execFileOutputFailure(cause)?.code ??
       (typeof cause === "object" && cause !== null
         ? Reflect.get(cause, "code")
@@ -1719,11 +1738,14 @@ export class LinuxOwnedProcessPrerequisiteError extends AnalysisCapabilityUnavai
         : undefined;
     const isMissing =
       admissionCode === undefined &&
-      (resolvedCode === "ENOENT" || resolvedCode === undefined);
+      (options.missing ??
+        (resolvedCode === "ENOENT" || resolvedCode === undefined));
     const reason =
       admissionCode !== undefined || isMissing
         ? `Linux process ownership inspection requires a procps-compatible ps on REA's PATH before launching a child: ${errorMessage(cause)}`
-        : `Linux process ownership inspection failed to execute ps (${resolvedCode}): ${errorMessage(cause)}`;
+        : resolvedCode !== undefined
+          ? `Linux process ownership inspection failed to execute ps (${resolvedCode}): ${errorMessage(cause)}`
+          : `Linux process ownership inspection could not obtain the process table using ps: ${errorMessage(cause)}`;
     const remediation =
       admissionCode !== undefined
         ? processOwnershipAdmissionRecovery(admissionCode, "linux")

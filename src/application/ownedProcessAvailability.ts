@@ -3,11 +3,11 @@ import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import { jsonValueSchema } from "../domain/jsonValue.js";
 import { DarwinProcessOwnershipInspectionError } from "../process/DarwinProcessRunTokenReader.js";
 import { OwnedCommandFailure } from "../process/OwnedCommand.js";
-import { LinuxOwnedProcessPrerequisiteError } from "../process/ProcessOwnershipObservation.js";
+import {
+  LINUX_PROCESS_OWNERSHIP_REMEDIATION,
+  LinuxOwnedProcessPrerequisiteError,
+} from "../process/ProcessOwnershipObservation.js";
 import type { ProviderAvailability } from "./AnalysisProvider.js";
-
-const REMEDIATION =
-  "Install your distribution's procps or procps-ng package, or put a procps-compatible ps on REA's PATH, then retry.";
 
 const DARWIN_REMEDIATION =
   "Check the selected Xcode or Command Line Tools and Swift compiler configuration, then restart REA and retry.";
@@ -69,7 +69,8 @@ export const ownedProcessPrerequisiteAvailability = (
 ): ProviderAvailability | undefined => {
   const refusal = prerequisiteRefusal(cause);
   if (refusal !== undefined) {
-    const remediation = refusal.remediationAction ?? REMEDIATION;
+    const remediation =
+      refusal.remediationAction ?? LINUX_PROCESS_OWNERSHIP_REMEDIATION;
     return {
       status: "unavailable",
       code: "runtime_unavailable",
