@@ -49,13 +49,12 @@ it.each([
   {
     parameter: "include_script_sources",
     value: false,
-    message:
-      "Runtime Evidence contains source without source-capture selection",
+    message: /source.*without source-capture selection/i,
   },
   {
     parameter: "target_id",
     value: " target-main ",
-    message: "Runtime Evidence target disagrees with its captured result",
+    message: /target.*disagrees.*captured result/i,
   },
 ])(
   "preserves $parameter input paths for runtime Evidence",
@@ -84,7 +83,7 @@ it.each([
           {
             path: ["runtime_observations", 0, "parameters", parameter],
             reason: "invalid_value",
-            message,
+            message: expect.stringMatching(message),
           },
         ],
       },

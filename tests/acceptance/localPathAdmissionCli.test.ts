@@ -27,6 +27,7 @@ const fileCommands = [
   "inspect-rust-binary",
   "inspect-gpu-code-objects",
   "inspect-il2cpp-metadata",
+  "inspect-native-data-type",
 ] as const;
 
 cliTest(
@@ -38,6 +39,8 @@ cliTest(
         arguments: [command, ""],
         field: "path",
       })),
+      { arguments: ["decompile-all", "", "--output", "out"], field: "path" },
+      { arguments: ["observe-native-calls", "", "{}"], field: "path" },
       { arguments: ["inspect-evm-interface", "", "hex"], field: "path" },
       {
         arguments: ["inspect-web-network-capture", "", "har"],

@@ -17,8 +17,6 @@ import { createTestBinarySession } from "../../fixtures/binarySession.js";
 import { observed } from "../../fixtures/analysisExecution.js";
 
 import {
-  MCP_DOCTOR_SESSION_SCOPE_DETAIL,
-  compareInventory,
   runProductionMcpDoctor,
   runProductionMcpDoctorCli,
 } from "../../../src/mcpDoctor.js";
@@ -53,6 +51,12 @@ const expectDoctorDeadline = (
       }).doctor,
     ),
   );
+  expect(detail).toContain("REA_MCP_DOCTOR_DEADLINE_MS");
+  expect(detail).toContain(`${String(milliseconds)} ms`);
+  expect(detail).toContain("source setting");
+  expect(detail).toMatch(/restart REA/i);
+  expect(detail).toMatch(/Codex.*startup_timeout_sec.*client guidance/i);
+  expect(detail).toMatch(/REA does not enforce/i);
 };
 
 const captureProductionCli = async (
@@ -401,7 +405,9 @@ describe("production MCP doctor family scopes", () => {
     expect(result.checks).toContainEqual({
       name: "request-flow",
       ok: false,
-      detail: MCP_DOCTOR_SESSION_SCOPE_DETAIL,
+      detail: expect.stringMatching(
+        /binary_session.*outside.*selected tool families.*include.*session family.*request.flow.*identity/iu,
+      ),
     });
   });
 
@@ -566,7 +572,7 @@ describe("production MCP doctor output", () => {
 });
 
 describe("production MCP doctor probe validation", () => {
-  it("rejects a schema-invalid probe while retaining the discovered inventory", async () => {
+  it("reports schema-invalid probes and mismatched inventory from the child", async () => {
     const root = await createTestTempDirectory("rea-mcp-doctor-reply-");
     const snapshotPath = join(root, "reply.json");
     const environment = { PATH: process.env.PATH ?? "" };
@@ -578,10 +584,15 @@ describe("production MCP doctor probe validation", () => {
       env: environment,
       stderr: "pipe",
     });
+    let removedToolName = "";
     transport.stderr?.on("data", () => undefined);
     try {
       await client.connect(transport);
       const tools = await client.listTools();
+      removedToolName =
+        tools.tools.find(({ name }) => name !== "binary_session")?.name ?? "";
+      if (removedToolName === "")
+        throw new Error("Expected a second production tool");
       const prompts = await client.listPrompts();
       const toolDefinition = tools.tools.find(
         ({ name }) => name === "binary_session",
@@ -607,7 +618,7 @@ describe("production MCP doctor probe validation", () => {
       await transport.close();
     }
     // Replay real production metadata through a synthetic stdio producer.
-    for (const mode of ["valid", "invalid"]) {
+    for (const mode of ["valid", "invalid", "inventory"]) {
       const result = await runProductionMcpDoctor({
         command: process.execPath,
         args: [
@@ -620,7 +631,7 @@ describe("production MCP doctor probe validation", () => {
       });
       expect(result.healthy).toBe(mode === "valid");
       expect(result.inventory?.tools.observed).toBe(
-        FULL_CATALOG_IDENTITY.counts.mcp_tools,
+        FULL_CATALOG_IDENTITY.counts.mcp_tools + (mode === "inventory" ? 1 : 0),
       );
       expect(result.inventory?.prompts.observed).toBe(
         FULL_CATALOG_IDENTITY.counts.mcp_prompts,
@@ -636,18 +647,22 @@ describe("production MCP doctor probe validation", () => {
           ok: false,
           detail: expect.stringMatching(/output schema/iu),
         });
+      if (mode === "inventory") {
+        expect(result.inventory?.tools).toMatchObject({
+          expected: FULL_CATALOG_IDENTITY.counts.mcp_tools,
+          observed: FULL_CATALOG_IDENTITY.counts.mcp_tools + 1,
+          missing: [removedToolName],
+          unexpected: ["doctor_unexpected_fixture"],
+          duplicates: ["doctor_unexpected_fixture"],
+        });
+        expect(result.checks).toContainEqual({
+          name: "inventory:tools",
+          ok: false,
+          detail: expect.stringContaining("doctor_unexpected_fixture"),
+        });
+      }
     }
   }, 30_000);
-
-  it("reports exact missing, unexpected, and duplicate inventory names", () => {
-    expect(compareInventory(["a", "b"], ["b", "c", "c"])).toEqual({
-      expected: 2,
-      observed: 3,
-      missing: ["a"],
-      unexpected: ["c"],
-      duplicates: ["c"],
-    });
-  });
 });
 
 describe("production MCP doctor child lifecycle", () => {

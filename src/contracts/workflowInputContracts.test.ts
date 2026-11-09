@@ -76,8 +76,9 @@ describe("workflow input contracts", () => {
       issues: [
         {
           path: ["native_observations", 0],
-          message:
-            "Native observation Evidence must be distinct from managed boundary Evidence",
+          message: expect.stringMatching(
+            /native observation Evidence.*distinct.*managed boundary Evidence/i,
+          ),
         },
       ],
     },
@@ -90,7 +91,9 @@ describe("workflow input contracts", () => {
       issues: [
         {
           path: ["native_observations", 1],
-          message: "Native observation Evidence IDs must be unique",
+          message: expect.stringMatching(
+            /native observation Evidence IDs.*unique/i,
+          ),
         },
       ],
     },
@@ -103,17 +106,21 @@ describe("workflow input contracts", () => {
       issues: [
         {
           path: ["native_observations", 0],
-          message:
-            "Native observation Evidence must be distinct from managed boundary Evidence",
+          message: expect.stringMatching(
+            /native observation Evidence.*distinct.*managed boundary Evidence/i,
+          ),
         },
         {
           path: ["native_observations", 1],
-          message:
-            "Native observation Evidence must be distinct from managed boundary Evidence",
+          message: expect.stringMatching(
+            /native observation Evidence.*distinct.*managed boundary Evidence/i,
+          ),
         },
         {
           path: ["native_observations", 1],
-          message: "Native observation Evidence IDs must be unique",
+          message: expect.stringMatching(
+            /native observation Evidence IDs.*unique/i,
+          ),
         },
       ],
     },
@@ -131,14 +138,18 @@ describe("workflow input contracts", () => {
         native_observations: observations,
       };
       const contract = toolContract("verify_managed_native_boundaries");
+      let originalDiagnostics: unknown;
       for (const schema of [
         contract.inputSchema,
         toolInputSchemaWithMetadata(contract),
       ]) {
         const result = await schema["~standard"].validate(input);
-        expect(
-          result.issues?.map(({ path, message }) => ({ path, message })) ?? [],
-        ).toEqual(issues);
+        const diagnostics =
+          result.issues?.map(({ path, message }) => ({ path, message })) ?? [];
+        expect(diagnostics).toEqual(issues);
+        if (originalDiagnostics === undefined)
+          originalDiagnostics = diagnostics;
+        else expect(diagnostics).toEqual(originalDiagnostics);
         if (issues.length === 0) expect(result).toEqual({ value: input });
       }
     },

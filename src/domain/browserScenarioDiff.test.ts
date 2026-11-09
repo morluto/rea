@@ -308,8 +308,8 @@ it("reports a shared unknown redirect predecessor only once", () => {
   for (const diff of diffs) {
     expect(diff.status).toBe("unknown");
     expect(diff.before_sha256).toBe(diff.after_sha256);
-    expect(diff.reason).toBe(
-      "Redirect predecessor evidence is missing; network transaction identity remains unknown.",
+    expect(diff.reason).toMatch(
+      /redirect predecessor evidence.*missing.*network transaction identity.*unknown/iu,
     );
   }
 });

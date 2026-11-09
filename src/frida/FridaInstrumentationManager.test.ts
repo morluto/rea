@@ -1,4 +1,4 @@
-import { describe, expect, it, onTestFinished } from "vitest";
+import { describe, expect, it, onTestFinished, vi } from "vitest";
 import { createDeferred } from "../../tests/fixtures/binarySession.js";
 
 import type {
@@ -777,6 +777,72 @@ describe("FridaInstrumentationManager", () => {
     expect(closed.ok).toBe(false);
     expect(bindings.device.resumed).toEqual([]);
     expect(manager.status(started.value.sessionId)?.scripts).toHaveLength(1);
+  });
+
+  it("refuses new session work after incomplete close while retaining cleanup for retry", async () => {
+    const bindings = new FakeDeviceManager();
+    bindings.device.session.detachFailureCount = 1;
+    const manager = new FridaInstrumentationManager({
+      deviceManager: bindings,
+    });
+    onTestFinished(() => manager.closeAll());
+    const started = await manager.startSession({ mode: "attach", pid: 512 });
+    if (!started.ok) throw started.error;
+    const id = started.value.sessionId;
+
+    const closing = manager.closeSession(id);
+    const loading = manager.loadScript(id, {
+      sourceKind: "inline",
+      source: "send('after close');",
+    });
+    const closed = await closing;
+    if (closed.ok) throw new Error("Expected incomplete close");
+    expect(closed.error.cleanupIncomplete).toBe(true);
+    const loaded = await loading;
+    expect(loaded.ok).toBe(false);
+    if (loaded.ok) throw new Error("Expected cleanup-only session refusal");
+    expect(projectAnalysisError(loaded.error).remediation?.action).toContain(
+      "close_frida_session",
+    );
+    expect(bindings.device.session.scripts).toHaveLength(0);
+
+    expect((await manager.closeSession(id)).ok).toBe(true);
+    expect(closed.error.cleanupIncomplete).toBe(false);
+    expect(manager.status(id)).toBeUndefined();
+  });
+
+  it("refuses new session work after incomplete close without blocking cleanup resume", async () => {
+    const bindings = new FakeDeviceManager();
+    bindings.device.session.detachFailureCount = 1;
+    bindings.device.resumeFailureCount = 1;
+    const resume = vi.spyOn(bindings.device, "resume");
+    const manager = new FridaInstrumentationManager({
+      deviceManager: bindings,
+    });
+    onTestFinished(async () => {
+      try {
+        await manager.closeAll();
+      } finally {
+        resume.mockRestore();
+      }
+    });
+    const started = await manager.startSession({
+      mode: "spawn",
+      program: "/tmp/fixture",
+    });
+    if (!started.ok) throw started.error;
+    const id = started.value.sessionId;
+
+    const closed = await manager.closeSession(id);
+    if (closed.ok) throw new Error("Expected incomplete close");
+    expect(resume).toHaveBeenCalledTimes(1);
+    const resumed = await manager.resumeSession(id);
+    expect(resumed.ok).toBe(false);
+    expect(resume).toHaveBeenCalledTimes(1);
+    expect((await manager.closeSession(id)).ok).toBe(true);
+    expect(resume).toHaveBeenCalledTimes(2);
+    expect(bindings.device.resumed).toEqual([512]);
+    expect(closed.error.cleanupIncomplete).toBe(false);
   });
 
   it("retries resuming a spawn after detach succeeded but resume failed", async () => {

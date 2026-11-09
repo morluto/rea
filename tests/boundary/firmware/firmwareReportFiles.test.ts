@@ -9,6 +9,7 @@ import {
 import { readFirmwareCommandReport } from "../../../src/firmware/FirmwareCommand.js";
 import { FIRMWARE_LIMITS } from "../../../src/firmware/FirmwareRelease.js";
 import { AnalysisError } from "../../../src/domain/analysisErrorBase.js";
+import { AnalysisResourceConstraintError } from "../../../src/domain/analysisErrorCore.js";
 import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
 import { SafeOutputTree } from "../../../src/artifacts/SafeOutputTree.js";
 import {
@@ -235,14 +236,33 @@ it("refuses a staged file that reaches the producer's per-file limit", async () 
     inventoryFirmwareOutput(root, 1024, 10, 4, "extract_firmware"),
   ).resolves.toEqual([expect.objectContaining({ size: 3 })]);
   await writeFile(join(root, "reached"), "1234");
-  await expect(
-    inventoryFirmwareOutput(root, 1024, 10, 4, "extract_firmware"),
-  ).rejects.toMatchObject({
+  const failure: unknown = await inventoryFirmwareOutput(
+    root,
+    1024,
+    10,
+    4,
+    "extract_firmware",
+  ).then(
+    () => undefined,
+    (cause: unknown) => cause,
+  );
+  expect(failure).toMatchObject({
     _tag: "AnalysisResourceConstraintError",
     resource: "file-size",
     reportedLimits: { file_size_bytes: 4 },
     retryable: false,
   });
+  if (!(failure instanceof AnalysisResourceConstraintError)) throw failure;
+  expect(failure.remediationAction).toMatch(
+    /inherited.*4-byte file-size limit.*RLIMIT_FSIZE/iu,
+  );
+  expect(failure.remediationAction).toMatch(
+    /raise the file-size limit.*ulimit -f/iu,
+  );
+  expect(failure.remediationAction).toMatch(
+    /analysis_timeout_ms does not raise it/iu,
+  );
+  expect(failure.remediationAction).toMatch(/unchanged request fails/iu);
 });
 
 it("attributes missing sources to the selected path without relabeling snapshot destination failure", async () => {
