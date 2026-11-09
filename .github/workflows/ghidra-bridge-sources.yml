@@ -122,4 +122,4 @@ jobs:
             -postScript ReaComputedCallCoverageProbe.java "${GITHUB_WORKSPACE}/bridge/ghidra" \
             > "${probe_root}/output.log" 2>&1 || { cat "${probe_root}/output.log"; exit 1; }
           cat "${probe_root}/output.log"
-          grep -F 'REA_COMPUTED_CALL_COVERAGE_OK slot=partial register=partial direct=complete' "${probe_root}/output.log"
+          grep -F 'REA_COMPUTED_CALL_COVERAGE_OK slot=observed-complete-discovery-unknown register=partial direct=complete callers=discovery-unknown' "${probe_root}/output.log"
