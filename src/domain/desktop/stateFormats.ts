@@ -34,7 +34,7 @@ const GVDB_HEADER = "GVariant";
 const ZIP_HEADER = "PK\u0003\u0004";
 const XML_EXTENSIONS = /\.(?:xml|xbel|plist|svg|ui)$/iu;
 /** A DOCTYPE that only names its DTD reads as XML; one with an internal subset, which can declare entities, does not. */
-const XML_POLICY = {
+export const XML_POLICY = {
   doctype: "external",
   lineEndings: "normalize",
   nameSupported: expatXmlName,
@@ -327,7 +327,7 @@ export const textSyntaxFormat = (
   if (namedJson(path, trimmed) && isJsonText(text)) return "json";
   if (
     (namedXml(path, trimmed) || opensElement(trimmed)) &&
-    isWellFormedXml(text, XML_POLICY)
+    isWellFormedXml(text, { doctype: "external" })
   )
     return "xml";
   return "text";
