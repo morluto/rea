@@ -1131,6 +1131,9 @@ original JSON scalar types. Values that JSON cannot represent faithfully,
 including unsafe integers, negative zero and non-finite numbers, remain null
 with a path-specific gap and incomplete capture coverage. Null alone does not
 establish that an accessibility value was successfully read or absent.
+Failed role, title, value or action reads add a path-specific gap and mark the
+capture truncated. An empty `actions` array with an action-read gap means the
+available actions are unknown.
 
 An initial PID or window mismatch is `invalid_request` on `pid` or
 `window_id` and leaves provider availability intact. A selected window that

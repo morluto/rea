@@ -174,7 +174,10 @@ describe("native UI screenshot validation", () => {
         },
       ],
       truncated: true,
-      gaps: ["AX actions unavailable at path []: AXError -25204"],
+      gaps: [
+        "AX actions unavailable at path []: AXError -25204",
+        "AX value unavailable at path []: AXError -25204",
+      ],
     };
     const result = await observeNativeUi(
       target,

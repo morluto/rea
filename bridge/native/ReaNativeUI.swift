@@ -18,9 +18,10 @@ struct Request: Decodable {
 struct Action: Decodable { var kind: String; var path: [Int]?; var direction: String?; var text: String? }
 struct BoundaryFailure: Error { var code: String; var message: String }
 func fail(_ code: String, _ message: String) throws -> Never { throw BoundaryFailure(code: code, message: message) }
-func attribute(_ element: AXUIElement, _ key: String) -> CFTypeRef? {
+func attribute(_ element: AXUIElement, _ key: String) -> (value: CFTypeRef?, error: Int32?) {
   var value: CFTypeRef?
-  return AXUIElementCopyAttributeValue(element, key as CFString, &value) == .success ? value : nil
+  let status = AXUIElementCopyAttributeValue(element, key as CFString, &value)
+  return captureAttributeValue(status: status.rawValue, success: AXError.success.rawValue, absent: [AXError.noValue.rawValue, AXError.attributeUnsupported.rawValue], value: value)
 }
 func childCount(_ element: AXUIElement) -> ChildCount {
   var count = 0
@@ -34,9 +35,8 @@ func children(_ element: AXUIElement, count: Int) -> ChildBatch<AXUIElement> {
     return value as? [AXUIElement]
   }
 }
-func text(_ element: AXUIElement, _ key: String) -> Any { (attribute(element, key) as? String) ?? NSNull() as Any }
 func windowBounds(_ element: AXUIElement) -> CGRect? {
-  guard let p = attribute(element, kAXPositionAttribute), let s = attribute(element, kAXSizeAttribute),
+  guard let p = attribute(element, kAXPositionAttribute).value, let s = attribute(element, kAXSizeAttribute).value,
     CFGetTypeID(p) == AXValueGetTypeID(), CFGetTypeID(s) == AXValueGetTypeID() else { return nil }
   var point = CGPoint.zero; var size = CGSize.zero
   guard AXValueGetValue(p as! AXValue, .cgPoint, &point), AXValueGetValue(s as! AXValue, .cgSize, &size) else { return nil }
@@ -84,7 +84,7 @@ func observe(_ request: Request) async throws -> [String: Any] {
     guard AXIsProcessTrusted() else { try fail("accessibility-denied", "Grant Accessibility to the REA host in System Settings > Privacy & Security, then retry") }
     let application = AXUIElementCreateApplication(request.pid)
     AXUIElementSetMessagingTimeout(application, 2)
-    guard let axWindows = attribute(application, kAXWindowsAttribute) as? [AXUIElement] else {
+    guard let axWindows = attribute(application, kAXWindowsAttribute).value as? [AXUIElement] else {
       try fail("accessibility-unavailable", "Selected application does not expose accessibility windows")
     }
     let matches = axWindows.filter { windowBounds($0) == bounds }
@@ -125,9 +125,15 @@ func observe(_ request: Request) async throws -> [String: Any] {
       let actionStatus = AXUIElementCopyActionNames(element, &actions)
       let observedActions = captureActionNames(status: actionStatus.rawValue, success: AXError.success.rawValue, names: actions as? [String])
       if let error = observedActions.error { gaps.append("AX actions unavailable at path \(path): AXError \(error)"); truncated = true }
-      let observedValue = captureAccessibilityValue(attribute(element, kAXValueAttribute))
+      let role = attribute(element, kAXRoleAttribute)
+      let title = attribute(element, kAXTitleAttribute)
+      let value = attribute(element, kAXValueAttribute)
+      for (name, error) in [("role", role.error), ("title", title.error), ("value", value.error)] {
+        if let error { gaps.append("AX \(name) unavailable at path \(path): AXError \(error)"); truncated = true }
+      }
+      let observedValue = captureAccessibilityValue(value.value)
       if let gap = observedValue.gap { gaps.append("\(gap) at path \(path)"); truncated = true }
-      nodes.append(["path": path, "role": text(element, kAXRoleAttribute), "title": text(element, kAXTitleAttribute), "value": observedValue.value, "actions": observedActions.names, "children_count": childCountResult.value.map { $0 as Any } ?? NSNull()])
+      nodes.append(["path": path, "role": (role.value as? String) ?? NSNull() as Any, "title": (title.value as? String) ?? NSNull() as Any, "value": observedValue.value, "actions": observedActions.names, "children_count": childCountResult.value.map { $0 as Any } ?? NSNull()])
       guard let totalChildren = childCountResult.value else {
         truncated = true
         gaps.append("AX child count unavailable at path \(path): AXError \(childCountResult.error ?? -1)")

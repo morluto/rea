@@ -30,3 +30,10 @@ func captureActionNames(status: Int32, success: Int32, names: [String]?) -> (nam
   guard status == success else { return ([], status) }
   return (names ?? [], nil)
 }
+
+/** AX absence is distinct from a failed attribute read. */
+func captureAttributeValue<Value>(status: Int32, success: Int32, absent: [Int32], value: Value?) -> (value: Value?, error: Int32?) {
+  if status == success { return (value, nil) }
+  if absent.contains(status) { return (nil, nil) }
+  return (nil, status)
+}

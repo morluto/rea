@@ -65,3 +65,12 @@ let emptyActions = captureActionNames(status: 0, success: 0, names: [])
 precondition(emptyActions.names.isEmpty && emptyActions.error == nil, "Successful empty action lists must remain known empty")
 let knownActions = captureActionNames(status: 0, success: 0, names: ["AXPress"])
 precondition(knownActions.names == ["AXPress"] && knownActions.error == nil)
+
+let failedAttribute = captureAttributeValue(status: -25204, success: 0, absent: [-25205, -25212], value: Optional("stale"))
+precondition(failedAttribute.value == nil && failedAttribute.error == -25204, "A failed attribute read must retain its AX error")
+for status: Int32 in [-25205, -25212] {
+  let absent = captureAttributeValue(status: status, success: 0, absent: [-25205, -25212], value: Optional("stale"))
+  precondition(absent.value == nil && absent.error == nil, "An unsupported or absent attribute is not a read failure")
+}
+let knownAttribute = captureAttributeValue(status: 0, success: 0, absent: [-25205, -25212], value: Optional("known"))
+precondition(knownAttribute.value == "known" && knownAttribute.error == nil)
