@@ -1533,3 +1533,25 @@ it("fails closed on nonzero bytes after the last note in a SUI note table", asyn
     locateDenoStandalone(bytesHandle(native), native.length),
   ).resolves.toEqual({ status: "absent" });
 });
+
+it("rejects a universal Deno image whose FAT row misstates a slice's CPU", async () => {
+  const armImage = denoMachO(sectionFor(Buffer.from("arm\n")));
+  const arm = Buffer.concat([
+    armImage,
+    Buffer.alloc(4096 - (armImage.length % 4096)),
+  ]);
+  const intel = denoIntelTrailer(sectionFor(Buffer.from("intel\n")));
+  // The x64 slice's FAT row keeps the fixture's arm64 CPU type, so only the
+  // slice's own header names x86_64.
+  const bytes = denoUniversal([arm, intel]);
+  bytes.writeUInt32BE(3, 8 + 24);
+  await expect(
+    locateDenoStandalone(bytesHandle(bytes), bytes.length),
+  ).resolves.toMatchObject({
+    status: "present",
+    failure: {
+      reason: "format",
+      message: expect.stringContaining("disagrees with its Mach-O header"),
+    },
+  });
+});

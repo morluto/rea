@@ -317,6 +317,8 @@ const thinMachOWithoutDenoSection = (): Buffer => {
   const image = Buffer.alloc(headerSize + segmentHeader);
   write32(image, 0, 0xfeedfacf, little);
   write32(image, 4, 0x01000007, little);
+  // CPU_SUBTYPE_X86_64_ALL, so a FAT row can state this slice exactly.
+  write32(image, 8, 3, little);
   write32(image, 12, 2, little);
   write32(image, 16, 1, little);
   write32(image, 20, segmentHeader, little);

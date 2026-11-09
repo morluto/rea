@@ -6,6 +6,8 @@ import { readMachoSegmentHeader } from "../../domain/apple/machoSegmentHeader.js
 import {
   readFatHeaderPrefix,
   readMachoHeaderPrefixFacts,
+  validateFatSliceIdentity,
+  type FatSliceDeclaration,
 } from "../../domain/apple/machoContainer.js";
 import { readElfSectionHeader } from "../../domain/elfSectionHeader.js";
 import { readElfProgramHeader } from "../../domain/elfProgramHeader.js";
@@ -174,9 +176,7 @@ const locateMachO = async (carrier: Carrier): Promise<SectionRange[]> => {
   const scan = async (
     label: string,
     rangeIssue: string | null | undefined,
-    offset: number,
-    size: number,
-    cpuType: number,
+    declaration: FatSliceDeclaration,
   ): Promise<void> => {
     if (rangeIssue != null) {
       unread.push(`${label} ${rangeIssue}`);
@@ -185,9 +185,9 @@ const locateMachO = async (carrier: Carrier): Promise<SectionRange[]> => {
     const result = await locateMachOSlice(
       carrier,
       readAt,
-      offset,
-      size,
-      cpuType,
+      declaration.offset,
+      declaration.size,
+      declaration,
     );
     found.push(...result.found);
     if (result.unread !== null) unread.push(`${label} ${result.unread}`);
@@ -196,19 +196,11 @@ const locateMachO = async (carrier: Carrier): Promise<SectionRange[]> => {
     await scan(
       `slice ${String(index)}`,
       container.header.rangeIssues[index]?.reason,
-      slice.offset,
-      slice.size,
-      slice.cpuType,
+      slice,
     );
   const hidden = container.hidden;
   if (hidden?.status === "declared")
-    await scan(
-      "hidden slice",
-      hidden.rangeIssue,
-      hidden.declaration.offset,
-      hidden.declaration.size,
-      hidden.declaration.cpuType,
-    );
+    await scan("hidden slice", hidden.rangeIssue, hidden.declaration);
   // A sibling that could not be examined may declare a different Deno
   // application, so a section found elsewhere cannot stand for the whole
   // universal image. With none found, the image stays with native inventory.
@@ -224,11 +216,16 @@ const locateMachOSlice = async (
   readAt: ReadAt,
   base: number,
   sliceSize: number,
-  fatCpu: number | null,
+  fat: FatSliceDeclaration | null,
 ): Promise<SliceScan> => {
   const table = await readSliceCommandTable(readAt, base, sliceSize);
   if (table.status !== "read")
     return { found: [], unread: `cannot be read: ${table.reason}` };
+  // A FAT row that misstates the slice's CPU cannot choose how the slice is
+  // searched, so the slice stays unread.
+  const identityIssue =
+    fat === null ? null : validateFatSliceIdentity(fat, table.header);
+  if (identityIssue !== null) return { found: [], unread: identityIssue };
   const found: SectionRange[] = [];
   const owned: OwnedRange[] = [];
   let confirmed = false;
@@ -308,8 +305,7 @@ const locateMachOSlice = async (
   // A damaged or unparsed segment may hold an unread d3n0l4nd section, so the
   // slice is not fully examined and the trailer search cannot stand for it.
   if (damage !== undefined) return { found, unread: damage };
-  const cpu = fatCpu ?? table.header.cpuType;
-  if (found.length > 0 || cpu === CPU_TYPE_ARM64)
+  if (found.length > 0 || table.header.cpuType === CPU_TYPE_ARM64)
     return { found, unread: null };
   return locateIntelTrailers(carrier, base, sliceSize, owned);
 };
