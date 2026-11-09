@@ -153,39 +153,22 @@ def _seed_home(home: Path) -> None:
 
 def _ensure_state_aliases(home: Path) -> None:
     """Restore selected aliases without replacing any existing user data."""
-    aliases = sorted(STATE_ALIASES, key=lambda pair: len(Path(pair[0]).parts))
-    for alias, target in aliases:
+    aliases = sorted(STATE_ALIASES, key=lambda entry: len(Path(entry[0]).parts))
+    for alias, target, kind in aliases:
         link = home / alias
         destination = home / target
-        has_children = any(Path(alias) in Path(child).parents for child, _ in aliases)
+        directory = kind == "directory" or any(Path(alias) in Path(child).parents for child, _, _ in aliases)
         if link.is_symlink() and link.resolve() == destination.resolve():
-            if has_children:
+            if directory:
                 destination.mkdir(parents=True, exist_ok=True)
             continue
         if os.path.lexists(link):
             raise FileExistsError(f"Cannot restore selected state alias; path already exists: {link}")
         link.parent.mkdir(parents=True, exist_ok=True)
-        if has_children:
+        if directory:
             destination.mkdir(parents=True, exist_ok=True)
-        link.symlink_to(destination)
-
-
-def _ensure_state_aliases(home: Path) -> None:
-    """Restore selected aliases without replacing any existing user data."""
-    aliases = sorted(STATE_ALIASES, key=lambda pair: len(Path(pair[0]).parts))
-    for alias, target in aliases:
-        link = home / alias
-        destination = home / target
-        has_children = any(Path(alias) in Path(child).parents for child, _ in aliases)
-        if link.is_symlink() and link.resolve() == destination.resolve():
-            if has_children:
-                destination.mkdir(parents=True, exist_ok=True)
-            continue
-        if os.path.lexists(link):
-            raise FileExistsError(f"Cannot restore selected state alias; path already exists: {link}")
-        link.parent.mkdir(parents=True, exist_ok=True)
-        if has_children:
-            destination.mkdir(parents=True, exist_ok=True)
+        elif kind == "file":
+            destination.parent.mkdir(parents=True, exist_ok=True)
         link.symlink_to(destination)
 
 

@@ -9,7 +9,14 @@ import {
 } from "node:child_process";
 import { mkdtempSync, writeFileSync, unlinkSync, rmdirSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { chmod, mkdir, readFile, stat, writeFile } from "node:fs/promises";
+import {
+  chmod,
+  mkdir,
+  readFile,
+  readlink,
+  stat,
+  writeFile,
+} from "node:fs/promises";
 import { join } from "node:path";
 
 import { expect, it } from "vitest";
@@ -243,8 +250,8 @@ it.each([true, false])(
       .filter((line) => !line.includes("agentenv_protocol"))
       .join("\n");
     const pairs = childFirst
-      ? '[("settings/profile", ".config/notes"), ("settings", ".local/share/notes")]'
-      : '[("settings", ".local/share/notes"), ("settings/profile", ".config/notes")]';
+      ? '[("settings/profile", ".config/notes", "directory"), ("settings", ".local/share/notes", "directory")]'
+      : '[("settings", ".local/share/notes", "directory"), ("settings/profile", ".config/notes", "directory")]';
     const program = `${imports}
 STATE_ALIASES = ${pairs}
 ${PYTHON_HELPERS}
@@ -268,7 +275,7 @@ it("restores a selected alias to an existing settings file", async () => {
     .filter((line) => !line.includes("agentenv_protocol"))
     .join("\n");
   const program = `${imports}
-STATE_ALIASES = [("settings", ".config/tellicorc")]
+STATE_ALIASES = [("settings", ".config/tellicorc", "file")]
 ${PYTHON_HELPERS}
 home = Path(sys.argv[1])
 _ensure_state_aliases(home)
@@ -300,7 +307,7 @@ it("restores a selected settings alias without replacing an existing path", asyn
 SEED_HOME = "/home/ada"
 TEXT_SEEDS = frozenset()
 SEED_MODES = {}
-STATE_ALIASES = [("settings", ".config/notes")]
+STATE_ALIASES = [("settings", ".config/notes", json.loads(sys.argv[3]))]
 HERE = Path(sys.argv[1])
 ${PYTHON_HELPERS}
 home = Path(sys.argv[2])
@@ -308,7 +315,10 @@ _seed_home(home)
 _ensure_state_aliases(home)
 _ensure_state_aliases(home)
 `;
-  execPython(["-I", "-B", "-c", program, root, home], { encoding: "utf8" });
+  execPython(
+    ["-I", "-B", "-c", program, root, home, JSON.stringify("directory")],
+    { encoding: "utf8" },
+  );
   expect(await readFile(join(home, "settings", "settings.ini"), "utf8")).toBe(
     "saved",
   );
@@ -322,10 +332,13 @@ _ensure_state_aliases(home)
   await mkdir(other);
   await writeFile(join(other, "settings"), "preserve");
   expect(() =>
-    execPython(["-I", "-B", "-c", program, root, other], {
-      encoding: "utf8",
-      stdio: "pipe",
-    }),
+    execPython(
+      ["-I", "-B", "-c", program, root, other, JSON.stringify("directory")],
+      {
+        encoding: "utf8",
+        stdio: "pipe",
+      },
+    ),
   ).toThrow();
   expect(await readFile(join(other, "settings"), "utf8")).toBe("preserve");
 
@@ -333,13 +346,29 @@ _ensure_state_aliases(home)
   await mkdir(empty);
   const emptySeed = join(root, "empty-seed");
   await mkdir(emptySeed);
-  execPython(["-I", "-B", "-c", program, emptySeed, empty], {
-    encoding: "utf8",
-  });
+  execPython(
+    ["-I", "-B", "-c", program, emptySeed, empty, JSON.stringify("directory")],
+    {
+      encoding: "utf8",
+    },
+  );
   await writeFile(join(empty, "settings", "new.ini"), "new settings");
   expect(
     await readFile(join(empty, ".config", "notes", "new.ini"), "utf8"),
   ).toBe("new settings");
+
+  // An older capture does not establish the missing target's kind.
+  const unknown = join(root, "unknown-home");
+  await mkdir(unknown);
+  execPython(["-I", "-B", "-c", program, emptySeed, unknown, "null"], {
+    encoding: "utf8",
+  });
+  expect(await readlink(join(unknown, "settings"))).toBe(
+    join(unknown, ".config", "notes"),
+  );
+  await expect(stat(join(unknown, ".config", "notes"))).rejects.toMatchObject({
+    code: "ENOENT",
+  });
 });
 
 /** A stand-in xprop answering the root window list and each window's class and state from a table. */
