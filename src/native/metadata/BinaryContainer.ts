@@ -85,6 +85,7 @@ export type ImageSection = {
       /** Null when the ELF name table is unavailable or this name is unreadable. */
       readonly name: string | null;
       readonly type: number;
+      readonly flags: bigint;
       readonly address: bigint;
       readonly declared_range: {
         readonly offset: bigint;
@@ -105,6 +106,7 @@ export type ImageSection = {
       readonly name: string;
       readonly section_name: string;
       readonly type: number;
+      readonly flags: number;
       readonly address: bigint;
       readonly declared_range: {
         readonly offset: bigint;

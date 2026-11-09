@@ -5,13 +5,17 @@ import {
   className,
   environmentName,
   launchCommand,
+  launchDocumentLimitation,
+  launchDocumentNote,
   ownedPaths,
   renderAppClass,
   renderEnvToml,
   renderInstallScript,
   renderReadme,
+  seedWording,
   type DesktopAppExportPlan,
 } from "./appExport.js";
+import type { LaunchDocument } from "./seedDocument.js";
 
 const plan: DesktopAppExportPlan = {
   name: "mousepad",
@@ -26,10 +30,12 @@ const plan: DesktopAppExportPlan = {
   packageFile: null,
   electron: false,
   command: ["mousepad"],
+  opens: { kind: "empty" },
   windowClass: "Mousepad",
   paths: [".config/Mousepad", "Documents"],
   capturedHome: "/home/ada",
   seedCheckpoint: "baseline",
+  syntheticSeed: false,
   seedFiles: ["Documents/todo.txt"],
   textSeeds: ["Documents/todo.txt"],
   unseededFiles: [],
@@ -307,5 +313,74 @@ describe("renderers", () => {
     expect(readme).toContain(
       "such as a trial's terms, is the operator's to check",
     );
+  });
+});
+
+describe("README and class wording", () => {
+  it("adds one README line on what the launch opens: the seed's document, or why it opens none", () => {
+    const command = launchCommand(
+      ["mousepad", "/home/ada/Documents/todo.txt"],
+      "/home/ada",
+      "/home/ada",
+    );
+    const readme = (opens: LaunchDocument) =>
+      renderReadme({ ...plan, command, opens });
+    const bare = readme({ kind: "empty" });
+    const seed = { kind: "seed", document: "Documents/todo.txt" } as const;
+    const none = {
+      kind: "none",
+      reason: "the test gives this reason",
+    } as const;
+
+    expect(command.join(" ")).toContain(`"$HOME"/'Documents/todo.txt'`);
+    expect(bare).toContain(`\`${command.join(" ")}\``);
+    for (const opens of [seed, none]) {
+      const note = launchDocumentNote({ opens });
+      expect(note).not.toBe("");
+      expect(readme(opens).replace(note, "")).toBe(bare);
+    }
+    expect(readme(seed)).toContain("`~/Documents/todo.txt`");
+    expect(bare).not.toContain("~/Documents/todo.txt");
+    const limitation = launchDocumentLimitation(none);
+    expect(limitation).toContain(none.reason);
+    expect(launchDocumentNote({ opens: none })).toContain(limitation);
+    expect(readme({ kind: "captured" })).toBe(bare);
+    for (const opens of [
+      seed,
+      { kind: "captured" },
+      { kind: "empty" },
+    ] as const)
+      expect(launchDocumentLimitation(opens)).toBeUndefined();
+  });
+
+  it("says the seed is the user's own data to keep local, unless it was made for the task", () => {
+    const own = { ...plan, seedCheckpoint: "drafted" };
+    const made = { ...own, syntheticSeed: true };
+    const wording = { own: seedWording(own), made: seedWording(made) };
+    // The README's seed line and closing notice, and the class's docstring.
+    const renderedIn = {
+      origin: renderReadme,
+      notice: renderReadme,
+      docstring: renderAppClass,
+    } satisfies Record<
+      keyof typeof wording.own,
+      (from: DesktopAppExportPlan) => string
+    >;
+
+    for (const [from, kept, other] of [
+      [own, wording.own, wording.made],
+      [made, wording.made, wording.own],
+    ] as const)
+      for (const key of ["origin", "notice", "docstring"] as const) {
+        const rendered = renderedIn[key](from);
+        expect(rendered).toContain(kept[key]);
+        expect(rendered).not.toContain(other[key]);
+      }
+    for (const { origin, docstring } of [wording.own, wording.made]) {
+      expect(origin).toContain("`drafted`");
+      expect(docstring).toContain("drafted");
+    }
+    expect(renderReadme(made)).toContain("`envs/mousepad/seed/`");
+    expect(renderReadme(own)).not.toContain("`envs/mousepad/seed/`");
   });
 });

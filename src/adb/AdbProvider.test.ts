@@ -48,6 +48,7 @@ import { PrivateRuntimeRoot } from "../process/PrivateRuntimeRoot.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import { parseEvidence } from "../domain/evidence.js";
 import type { AdbRequest } from "../domain/adb/adbDeviceAnalysis.js";
+import { awaitAcknowledgement } from "../../tests/fixtures/lifecycleAcknowledgement.js";
 
 const it = test.skipIf(process.platform === "win32");
 
@@ -128,6 +129,46 @@ it("inspects the adb client without contacting the server", async () => {
   });
   expect(result.contacted_adb_server).toBe(false);
 });
+
+it("joins an admitted availability probe before close and refuses later probes", async () => {
+  const { binary, root } = await writeAdbStub(
+    (directory) => `if [ "$1" = "version" ]; then
+  : > '${directory}/started'
+  while [ ! -f '${directory}/release' ]; do /bin/sleep 0.05; done
+  ${VERSION_BLOCK}
+fi`,
+  );
+  const provider = providerOver(binary);
+  const inspection = provider.inspectAvailability();
+  let closing: Promise<void> | undefined;
+  try {
+    await awaitAcknowledgement(
+      vi.waitFor(
+        async () => expect(await lstat(join(root, "started"))).toBeDefined(),
+        { timeout: 10_000 },
+      ),
+      inspection,
+      "ADB version probe",
+      10_000,
+    );
+    let closed = false;
+    closing = provider.close().then(() => {
+      closed = true;
+    });
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(closed).toBe(false);
+    await writeFile(join(root, "release"), "");
+    expect((await inspection).status).toBe("available");
+    await closing;
+    await expect(provider.inspectAvailability()).rejects.toMatchObject({
+      _tag: "AnalysisCancelledError",
+    });
+  } finally {
+    await writeFile(join(root, "release"), "");
+    await Promise.allSettled([inspection, closing]);
+    await provider.close();
+  }
+}, 15_000);
 
 it("fails closed when adb exits successfully without a recognized version", async () => {
   const stdout = `unexpected adb output ${"x".repeat(700)}\n`;

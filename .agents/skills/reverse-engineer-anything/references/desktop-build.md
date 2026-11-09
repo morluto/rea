@@ -136,7 +136,9 @@ the first source that has the app:
    `~/Documents`: build the document in the app, or write its source where
    the app edits its format as text, then save it again from the app. Make
    it look real but synthetic: the thing the task changes, plus a few things
-   the change must leave alone. For a starting file of the requester's,
+   the change must leave alone. Keep it to one document: the bundle's app
+   opens the seed's document at launch only when there is exactly one, and
+   otherwise starts on its own screen. For a starting file of the requester's,
    read it here and rebuild it in the app with synthetic data in place of
    personal data; REA cannot copy a file into the computer.
 4. Only once the seed is saved, `mark_build_checkpoint` with name `seed`.
@@ -225,9 +227,11 @@ checks. Give every `check_build_task` the task exactly as exported.
 
 1. `start_build_computer` with
    `{"source": {"kind": "bundle", "path": "<bundle>"}}`. The app starts
-   with the seed's files in place but need not open the document: open it
-   from the prompt's path, as a solving agent would. Take a `wait`
-   screenshot first, since the desktop may not have drawn yet.
+   with the seed's files in place and opens the seed's document when the
+   seed holds exactly one and the app takes a file. When the export's
+   `limitations` say it opens no document, open it from the prompt's path,
+   as a solving agent would. Take a `wait` screenshot first, since the
+   desktop may not have drawn yet.
 2. `check_build_task` with `stage: "seed"` and `directory`, the absolute
    path of a new or empty folder for the record. A check must fail.
    Recording starts. Later stages take no `directory`.
