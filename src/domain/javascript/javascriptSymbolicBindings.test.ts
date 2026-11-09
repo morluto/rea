@@ -298,6 +298,41 @@ it("loads modules through a loader parameter whose members a module writes", () 
   ).toEqual({ kind: "external", path: ["electron", "ipcMain"] });
 });
 
+it.each([
+  [
+    "a spread of a written element",
+    `function g(a){return a} function f(...args){args[0]="real";return g(...args)} inspect(f("stale"));`,
+  ],
+  [
+    "a spread after a written length",
+    `function g(a,b){return b} function f(...args){args.length=1;return g(...args)} inspect(f("first","stale"));`,
+  ],
+  [
+    "an index read after a written length",
+    `function f(...args){args.length=0;return args[0]} inspect(f("stale"));`,
+  ],
+  [
+    "an argument after a spread written past its end",
+    `function g(a,b,c){return c} function f(...args){args[2]="added";return g(...args,"after")} inspect(f("first","second"));`,
+  ],
+])(
+  "keeps a written rest parameter element unresolved for %s",
+  (_name, source) => {
+    expect(inspectOne(source).kind).toBe("unknown");
+  },
+);
+
+it.each(['args[0]="real"', 'args[2]="added"', "args.handled=true"])(
+  "spreads the rest parameter elements %s does not write",
+  (write) => {
+    expect(
+      inspectOne(
+        `function g(a,b){return b} function f(...args){${write};return g(...args)} inspect(f("first","kept"));`,
+      ),
+    ).toEqual({ kind: "literal", value: "kept" });
+  },
+);
+
 it("builds a parameter's written members once for every read and call", () => {
   const { parsed, resolver } = resolverFor(
     `function f(o){o.channel="real";o.extra=1;inspect(o);inspect(o)}`,

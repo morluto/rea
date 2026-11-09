@@ -895,6 +895,30 @@ it.each([
     ).toEqual([[null, "direct"], ...substituted]);
   },
 );
+it.each([
+  // The wrapper spreads its rewritten element, not the argument.
+  ['args[0] = "app:" + args[0]', []],
+  ['args[2] = "added"', [["ping", "wrapper-substitution"]]],
+  ["args.registered = true", [["ping", "wrapper-substitution"]]],
+])(
+  "substitutes a spread rest parameter's channel only while unwritten: %s",
+  (write, substituted) => {
+    const result = analyzeJavaScriptStaticSource(`
+    const { ipcMain } = require("electron");
+    function register(...args) {
+      ${write};
+      ipcMain.handle(...args);
+    }
+    register("ping", () => "pong");
+  `);
+    expect(
+      result.electron.ipc.map(({ channel, resolution_basis }) => [
+        channel,
+        resolution_basis ?? "direct",
+      ]),
+    ).toEqual([[null, "direct"], ...substituted]);
+  },
+);
 it("does not trace a bridge member its wrapper replaces before exposure", () => {
   const result = analyzeJavaScriptStaticSource(`
     const { contextBridge, ipcRenderer } = require("electron");

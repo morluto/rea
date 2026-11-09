@@ -80,6 +80,31 @@ const containsOwnedReturn = (root: t.Node): boolean => {
   return found;
 };
 
+/**
+ * Elements a read of a rest parameter's array observes after its writes.
+ * Writes are not ordered against reads, so a written index is unknown. A
+ * written length or an index past the end leaves the count unknown; one
+ * unknown element then stands for the rest, as for any dynamic spread.
+ */
+const writtenArrayElements = (
+  elements: readonly SymbolicValue[],
+  members: ReadonlySet<string>,
+): readonly SymbolicValue[] => {
+  if (members.has("length"))
+    return [symbolicUnknown("overwritten array length")];
+  const written = [...elements];
+  let grows = false;
+  for (const member of members) {
+    const index = semanticArrayIndex(member);
+    if (index === null) continue;
+    if (index < elements.length)
+      written[index] = symbolicUnknown("overwritten object members");
+    else grows = true;
+  }
+  if (grows) written.push(symbolicUnknown("overwritten array length"));
+  return written;
+};
+
 /** Demand-driven substitutions for local bindings, closures and literal module tables. */
 export class JavaScriptSymbolicBindings {
   readonly #writes = new Map<string, PropertyWrite[]>();
@@ -848,14 +873,16 @@ export class JavaScriptSymbolicBindings {
     const cached = views.get(bindingId);
     if (cached !== undefined) return cached;
     const variants = symbolicVariants(value);
-    // Charge each copy and merged member set before allocating it.
+    // Charge each copy, merged member set and rewritten element list before
+    // allocating it.
     const cost = variants.reduce(
       (sum, variant) =>
         sum +
         1 +
         (variant.overwrittenMembers === undefined
           ? 0
-          : variant.overwrittenMembers.size + members.size),
+          : variant.overwrittenMembers.size + members.size) +
+        (variant.kind === "array" ? variant.values.length + members.size : 0),
       0,
     );
     if (cost > this.#remainingEvaluations) {
@@ -865,17 +892,21 @@ export class JavaScriptSymbolicBindings {
     }
     this.#remainingEvaluations -= cost;
     const view = symbolicUnion(
-      variants.map((variant) =>
-        variant.kind === "unknown"
-          ? variant
-          : {
+      variants.map((variant) => {
+        if (variant.kind === "unknown") return variant;
+        const overwrittenMembers =
+          variant.overwrittenMembers === undefined
+            ? members
+            : new Set([...variant.overwrittenMembers, ...members]);
+        // A spread or index read of a rest parameter observes its writes too.
+        return variant.kind === "array"
+          ? {
               ...variant,
-              overwrittenMembers:
-                variant.overwrittenMembers === undefined
-                  ? members
-                  : new Set([...variant.overwrittenMembers, ...members]),
-            },
-      ),
+              overwrittenMembers,
+              values: writtenArrayElements(variant.values, members),
+            }
+          : { ...variant, overwrittenMembers };
+      }),
     );
     views.set(bindingId, view);
     this.#writtenViews.set(value, views);
