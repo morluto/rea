@@ -1,9 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 
-import {
-  decodeChainedPointer,
-  parsePointerFixups,
-} from "./AppleMachoFixups.js";
+import { decodeChainedPointer } from "./AppleMachoFixups.js";
+import { parsePointerFixups } from "./AppleMachoFixups.fixture.js";
 import type { Segment } from "./AppleMachoSelection.js";
 
 const BASE = 0x100000000n;
@@ -562,9 +560,9 @@ it("retains unaligned pointer locations accepted by dyld's rebase state checks",
     kind: "rebase",
     target: 0x1234n,
   });
-  expect(fixups.decode(BASE + 0x100n, 0n)).toEqual({
-    kind: "raw",
-    target: 0n,
+  expect(fixups.decode(BASE + 0x100n, 0n)).toMatchObject({
+    kind: "unsupported",
+    reason: "A legacy fixup partially overlaps the pointer slot",
   });
 });
 
@@ -1589,6 +1587,32 @@ describe("chained import library identity", () => {
     },
   );
 });
+it("keeps both pointer slots unresolved when a legacy bind overlaps them", () => {
+  const opcodes = Buffer.from([
+    0x11,
+    0x40,
+    ...Buffer.from("_foo\0"),
+    0x51,
+    0x71,
+    0x04,
+    0x90,
+    0x00,
+  ]);
+  const fixups = parsePointerFixups(
+    opcodes,
+    {
+      chained: null,
+      binds: [{ offset: 0, size: opcodes.length, stream: "bind" }],
+      rebases: [],
+      dylibs: ["/lib"],
+    },
+    SEGMENTS,
+    BASE,
+  );
+  expect(fixups.decode(BASE + 0x4000n, 123n).kind).toBe("unsupported");
+  expect(fixups.decode(BASE + 0x4008n, 456n).kind).toBe("unsupported");
+});
+
 describe("legacy pointer fixup streams", () => {
   it("interprets legacy bind, weak-bind and lazy-bind opcodes", () => {
     const opcodes = Buffer.from([
