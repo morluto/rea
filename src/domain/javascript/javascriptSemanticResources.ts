@@ -903,6 +903,18 @@ const rejectsOptionsPortLiteral = (
  * on Node 24.22.1 yet none of them is a falsy literal, and treating them as truthy
  * dropped real sockets.
  */
+/**
+ * Whether `Number(value)` is defined for a folded primitive.
+ *
+ * `Number(null)` is `0` and `Number("0")` is `0`, so a unary sign over either is a falsy
+ * number rather than an unknown; `undefined` becomes `NaN`, which is falsy too. A symbol
+ * or a plain object would throw `TypeError` in the runtime, so those stay unknown here.
+ */
+const isCoercibleToNumber = (value: unknown): boolean =>
+  typeof value === "string" ||
+  typeof value === "boolean" ||
+  value === null ||
+  value === undefined;
 const staticConstantValue = (
   node: t.Node,
   state: JavaScriptSemanticAnalysisState,
@@ -950,14 +962,21 @@ const staticConstantValue = (
       case "!":
         return { found: true, value: !operand.value };
       case "-":
+        // Unary `+`/`-` coerce to a number, so `-"0"`, `+null`, `+""` and `+undefined`
+        // are `0` or `NaN` rather than unknown. Measured on Node 24.22.1, all of them are
+        // falsy or `NaN`, and each connects as a `socket`.
         return typeof operand.value === "number" ||
           typeof operand.value === "bigint"
           ? { found: true, value: -(operand.value as number) }
-          : { found: false };
+          : isCoercibleToNumber(operand.value)
+            ? { found: true, value: -Number(operand.value) }
+            : { found: false };
       case "+":
         return typeof operand.value === "number"
           ? { found: true, value: operand.value }
-          : { found: false };
+          : isCoercibleToNumber(operand.value)
+            ? { found: true, value: Number(operand.value) }
+            : { found: false };
       case "~":
         return typeof operand.value === "number" ||
           typeof operand.value === "bigint"

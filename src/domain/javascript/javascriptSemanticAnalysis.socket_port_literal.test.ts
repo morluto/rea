@@ -627,6 +627,42 @@ it.each([
   ]);
 });
 it.each([
+  [`tls.connect({ port: 80, socket: +null })`],
+  [`tls.connect({ port: 80, socket: +undefined })`],
+  [`tls.connect({ port: 80, socket: +"" })`],
+  [`tls.connect({ port: 80, socket: -"0" })`],
+  [`tls.connect({ port: 80, socket: -"0x0" })`],
+  [`tls.connect({ port: 80, socket: +false })`],
+  // `+"x"` is `NaN`, which is falsy, so TLS still skips the wrap and the port decides.
+  [`tls.connect({ port: 80, socket: +"x" })`],
+] as const)("coerces a signed operand to a number: %s", (call) => {
+  // Unary `+`/`-` coerce, so these reach the port check rather than being unknown.
+  // Measured on Node 24.22.1.
+  expect(socketAcquisitionsFor(call)).toEqual([
+    { kind: "acquire", method: "connect" },
+  ]);
+});
+
+it.each([
+  [`tls.connect({ port: 80, socket: -true })`],
+  [`tls.connect({ port: 80, socket: +"1" })`],
+] as const)("rejects a signed operand that is truthy: %s", (call) => {
+  expect(socketAcquisitionsFor(call)).toEqual([]);
+});
+
+it.each([
+  [
+    `tls.connect({ port: 80, socket: { on() {}, pause() {}, resume() {}, write() {}, end() {}, destroy() {} } })`,
+  ],
+  [
+    `tls.connect({ port: -1, socket: { on() {}, pause() {}, resume() {}, write() {}, end() {}, destroy() {} } })`,
+  ],
+] as const)("treats a method-bag literal as a non-stream: %s", (call) => {
+  // A bag of stream-looking methods is still not a `net.Socket`, so the wrap throws.
+  // Measured on Node 24.22.1.
+  expect(socketAcquisitionsFor(call)).toEqual([]);
+});
+it.each([
   [`tls.connect({ port: 80, socket: +0 })`],
   [`tls.connect({ port: 80, socket: -0 })`],
   [`tls.connect({ port: 80, socket: !true })`],
