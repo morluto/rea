@@ -35,12 +35,15 @@ func children(_ element: AXUIElement, count: Int) -> ChildBatch<AXUIElement> {
     return value as? [AXUIElement]
   }
 }
-func windowBounds(_ element: AXUIElement) -> CGRect? {
-  guard let p = attribute(element, kAXPositionAttribute).value, let s = attribute(element, kAXSizeAttribute).value,
-    CFGetTypeID(p) == AXValueGetTypeID(), CFGetTypeID(s) == AXValueGetTypeID() else { return nil }
-  var point = CGPoint.zero; var size = CGSize.zero
-  guard AXValueGetValue(p as! AXValue, .cgPoint, &point), AXValueGetValue(s as! AXValue, .cgSize, &size) else { return nil }
-  return CGRect(origin: point, size: size)
+func windowBounds(_ element: AXUIElement) -> (bounds: CGRect?, error: Int32?) {
+  let position = attribute(element, kAXPositionAttribute)
+  let size = attribute(element, kAXSizeAttribute)
+  if let error = position.error ?? size.error { return (nil, error) }
+  guard let p = position.value, let s = size.value,
+    CFGetTypeID(p) == AXValueGetTypeID(), CFGetTypeID(s) == AXValueGetTypeID() else { return (nil, nil) }
+  var point = CGPoint.zero; var dimensions = CGSize.zero
+  guard AXValueGetValue(p as! AXValue, .cgPoint, &point), AXValueGetValue(s as! AXValue, .cgSize, &dimensions) else { return (nil, nil) }
+  return (CGRect(origin: point, size: dimensions), nil)
 }
 func observe(_ request: Request) async throws -> [String: Any] {
   guard let app = NSRunningApplication(processIdentifier: request.pid) else {
@@ -84,11 +87,22 @@ func observe(_ request: Request) async throws -> [String: Any] {
     guard AXIsProcessTrusted() else { try fail("accessibility-denied", "Grant Accessibility to the REA host in System Settings > Privacy & Security, then retry") }
     let application = AXUIElementCreateApplication(request.pid)
     AXUIElementSetMessagingTimeout(application, 2)
-    guard let axWindows = attribute(application, kAXWindowsAttribute).value as? [AXUIElement] else {
-      try fail("accessibility-unavailable", "Selected application does not expose accessibility windows")
+    let windowsAttribute = attribute(application, kAXWindowsAttribute)
+    if let error = windowsAttribute.error {
+      try fail("accessibility-unavailable", "Cannot read accessibility windows: AXError \(error)")
     }
-    let matches = axWindows.filter { windowBounds($0) == bounds }
-    guard matches.count == 1 else { try fail("ambiguous-window", "Accessibility window geometry does not identify exactly one selected window; selected CG bounds \(bounds), AX candidates \(axWindows.map { String(describing: windowBounds($0)) })") }
+    guard let axWindows = windowsAttribute.value as? [AXUIElement] else {
+      try fail("accessibility-unavailable", "Accessibility windows are unavailable for the selected application")
+    }
+    let candidates = axWindows.map { (element: $0, observation: windowBounds($0)) }
+    if let error = candidates.compactMap({ $0.observation.error }).first {
+      try fail("accessibility-unavailable", "Cannot read accessibility window geometry: AXError \(error)")
+    }
+    guard candidates.allSatisfy({ $0.observation.bounds != nil }) else {
+      try fail("accessibility-unavailable", "Accessibility window geometry is unavailable; the selected window cannot be identified")
+    }
+    let matches = candidates.filter { $0.observation.bounds == bounds }.map { $0.element }
+    guard matches.count == 1 else { try fail("ambiguous-window", "Accessibility window geometry does not identify exactly one selected window; selected CG bounds \(bounds), AX candidates \(candidates.map { String(describing: $0.observation.bounds) })") }
     selected = matches[0]
   }
   if let action = request.action, let root = selected {
@@ -99,13 +113,16 @@ func observe(_ request: Request) async throws -> [String: Any] {
       guard let available = count.value else {
         try fail("element-count-unavailable", "Cannot validate selected accessibility path because child count failed with AXError \(count.error ?? -1)")
       }
-      guard index >= 0 && index < available,
-        AXUIElementCopyAttributeValues(element, kAXChildrenAttribute as CFString, index, 1, &selectedChild) == .success,
-        let item = (selectedChild as? [AXUIElement])?.first else { try fail("element-missing", "Selected accessibility path no longer exists") }
+      guard index >= 0 && index < available else { try fail("element-missing", "Selected accessibility path no longer exists") }
+      let childStatus = AXUIElementCopyAttributeValues(element, kAXChildrenAttribute as CFString, index, 1, &selectedChild)
+      guard childStatus == .success else { try fail("accessibility-unavailable", "Cannot read selected accessibility child: AXError \(childStatus.rawValue)") }
+      guard let item = (selectedChild as? [AXUIElement])?.first else { try fail("accessibility-unavailable", "Selected accessibility child was not returned") }
       element = item
     }
     var owner: pid_t = 0
-    guard AXUIElementGetPid(element, &owner) == .success && owner == request.pid else { try fail("element-owner-mismatch", "Selected element belongs to another process") }
+    let ownerStatus = AXUIElementGetPid(element, &owner)
+    guard ownerStatus == .success else { try fail("accessibility-unavailable", "Cannot identify accessibility element owner: AXError \(ownerStatus.rawValue)") }
+    guard owner == request.pid else { try fail("element-owner-mismatch", "Selected element belongs to another process") }
     let outcome: AXError
     switch action.kind {
     case "click": outcome = AXUIElementPerformAction(element, kAXPressAction as CFString)

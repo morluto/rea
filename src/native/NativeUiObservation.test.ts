@@ -571,6 +571,7 @@ describe("native UI interruption provenance", () => {
 describe("native UI target and cancellation failures", () => {
   it.each([
     "accessibility-denied",
+    "accessibility-unavailable",
     "screen-recording-denied",
     "ambiguous-window",
   ])("preserves actionable %s without fallback", async (code) => {
@@ -597,7 +598,10 @@ describe("native UI target and cancellation failures", () => {
             ],
           },
         });
-      else expect(projected.details?.reason).toContain(code);
+      else {
+        expect(projected.code).toBe("capability_unavailable");
+        expect(projected.details?.reason).toContain(code);
+      }
     }
   });
   it("preserves the underlying helper failure reason in diagnostics", async () => {
