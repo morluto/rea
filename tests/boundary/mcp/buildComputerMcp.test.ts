@@ -340,6 +340,21 @@ it("points a bundle's start that never got ready at the lock files its seed hold
   expect(otherFailure).not.toContain(locks[0]);
 });
 
+it("points a final readiness failure at seeded locks", async () => {
+  const { runner } = await fakes({ readinessFails: true });
+  const bundle = await bundleFolder();
+  const seed = join(bundle, "envs", "calc", "seed", "Documents");
+  await mkdir(seed, { recursive: true });
+  await writeFile(join(seed, ".~lock.q1.ods#"), "lock");
+  const result = await (await connect(runner.environment)).callTool({
+    name: "start_build_computer",
+    arguments: { source: { kind: "bundle", path: bundle } },
+  });
+  const { error } = parseMcpToolError(result);
+  expect(error.message).toContain("display check failed");
+  expect(error.message).toContain(".~lock.q1.ods#");
+});
+
 it("keeps the end of a long build's output, where its failure is", async () => {
   const { runner } = await fakes();
   const client = await connect({

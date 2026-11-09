@@ -13,6 +13,7 @@ import { toolContract } from "../../../src/contracts/toolContracts.js";
 import type { DesktopApplicationCapture } from "../../../src/domain/desktop/desktopCapture.js";
 import { seedWording } from "../../../src/domain/desktop/appExport.js";
 import { parseEvidence } from "../../../src/domain/evidence.js";
+import { LINUX_ARGUMENT_VECTOR_BYTES } from "../../../src/desktop/BuildComputerController.js";
 import {
   BUILD_REQUEST as REQUEST,
   BUILD_TASK as TASK,
@@ -416,6 +417,24 @@ it("exports a task larger than the old 96 KiB refusal and keeps its prompt", asy
   expect(calls.map(({ argv }) => argv[0])).toContain(
     "export-desktop-application",
   );
+  const refused = await client.callTool({
+    name: "export_build_environment",
+    arguments: {
+      computer_id: id,
+      task: { ...task, prompt: "a".repeat(LINUX_ARGUMENT_VECTOR_BYTES) },
+      directory: join(await createTestTempDirectory("build-out-"), "b"),
+    },
+  });
+  expect(parseMcpToolError(refused).error).toMatchObject({
+    code: "resource_constraint",
+    details: {
+      reported_limits: {
+        actual_bytes: expect.any(Number),
+        max_bytes: LINUX_ARGUMENT_VECTOR_BYTES,
+      },
+    },
+    remediation: { action: expect.any(String) },
+  });
 });
 
 it("refuses capture steps out of order and a capture of a bundle's computer", async () => {

@@ -332,12 +332,16 @@ const exportLimitations = (
     readonly recovered: readonly string[];
     /** What the export says about the task, such as a prompt that does not name the app. */
     readonly task: readonly string[];
+    readonly files: ReadonlyMap<string, StatePath>;
   },
 ): string[] => {
   const opened = heldOpenLimitation(
     capture.state.unretained_opened_directories,
     capture.host.home,
-    plan.seedFiles,
+    plan.seedFiles.flatMap((seed) => {
+      const source = facts.files.get(seed)?.path;
+      return source === undefined ? [] : [{ seed, source }];
+    }),
   );
   const opens = launchDocumentLimitation(plan.opens);
   const unowned = unownedFoldersLimitation(plan.unownedFolders);
@@ -447,6 +451,7 @@ const runExport = async (
     trashed,
     recovered: scrub.recovered ?? [],
     task: admitted?.limitations ?? [],
+    files,
   });
   const result: DesktopExportResult = {
     directory: request.directory,
