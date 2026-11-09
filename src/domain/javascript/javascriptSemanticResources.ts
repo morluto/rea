@@ -10,17 +10,25 @@ import type {
   JavaScriptSemanticResourceOperation,
 } from "./javascriptSemanticIr.js";
 import {
+  readExactJavaScriptLiteral,
+  isObjectPrototypeSetter,
+  primitiveOwnKeys,
   semanticStaticPropertyName,
+  staticJavaScriptTruthiness,
+  staticObjectPropertyReader,
+  staticObjectCopyPropertyReader,
   unwrapJavaScriptExpression,
 } from "./javascriptAstValues.js";
 import { isUnmodifiedGlobalReference } from "./javascriptSemanticAmbientWrites.js";
+import { semanticOpaqueBindingReadMayHaveChanged } from "./javascriptSemanticOpaqueEffects.js";
+import { semanticBindingAtRead } from "./javascriptSemanticMutationInitializers.js";
 import {
   resolveSemanticBindingState,
   type JavaScriptSemanticAnalysisState,
   type JavaScriptSemanticBindingState,
 } from "./javascriptSemanticState.js";
 import {
-  builtinDataEffectMethod,
+  builtinDataEffectIdentity,
   dataEffectMemberCallee,
   outerDataEffectBinding,
   traverseDataEffects,
@@ -45,11 +53,14 @@ const releaseMethodsFor = (
 };
 
 interface ResourceCandidate {
+  readonly builtinAuthority?: "candidate";
   readonly node: t.CallExpression | t.OptionalCallExpression;
   readonly specifier: string;
   readonly method: JavaScriptSemanticResourceOperation["method"];
   readonly ownerCallableId: string | null;
   readonly resultBindingId: string | null;
+  /** The initial result is the opening Promise; later writes may replace it. */
+  readonly resultIsPromise: boolean;
 }
 
 /** Recover built-in filesystem/network acquisition and local release handles. */
@@ -67,7 +78,12 @@ export const collectJavaScriptSemanticResources = (
   const acquisitions = collectAcquisitions(program, context).filter(
     (candidate) =>
       !socketPortInFirstArgument(candidate) ||
-      !rejectsSocketPortLiteral(candidate.node, context),
+      (!rejectsSocketPortLiteral(candidate.node, context) &&
+        !rejectsTlsProtocolVersionLiteral(
+          candidate.node,
+          candidate.specifier,
+          context.state,
+        )),
   );
   return [
     ...acquisitions.map(immutableAcquisition),
@@ -339,8 +355,20 @@ const collectAcquisitions = (
       node,
       specifier: reference.specifier,
       method: reference.method,
+      ...(reference.builtinAuthority === undefined
+        ? {}
+        : { builtinAuthority: reference.builtinAuthority }),
       ownerCallableId: context.callableStack.at(-1) ?? null,
       resultBindingId: outerDataEffectBinding(node, context),
+      resultIsPromise:
+        reference.builtinAuthority === undefined &&
+        reference.specifier === "fs/promises" &&
+        reference.method === "open" &&
+        !context.ancestors.some(
+          (parent) =>
+            t.isAwaitExpression(parent) &&
+            unwrapJavaScriptExpression(parent.argument).node === node,
+        ),
     });
   });
   return output;
@@ -377,8 +405,30 @@ const collectReleases = (
     const candidates =
       binding === undefined ? [] : (byBinding.get(binding.bindingId) ?? []);
     if (binding === undefined || candidates.length === 0) return;
-    const linked = candidates.filter((acquisition) =>
-      releaseMethodsFor(acquisition).includes(method),
+    const opaqueReceiver = semanticOpaqueBindingReadMayHaveChanged(
+      binding,
+      member.object,
+      context.state,
+    );
+    const receiver = candidates.some(({ resultIsPromise }) => resultIsPromise)
+      ? semanticBindingAtRead(binding, member.object, context.state).binding
+      : binding;
+    const knownAcquisitions = new Set<t.Node>(
+      candidates
+        .filter(({ builtinAuthority }) => builtinAuthority === undefined)
+        .map(({ node }) => node),
+    );
+    const linked = candidates.filter(
+      (acquisition) =>
+        releaseMethodsFor(acquisition).includes(method) &&
+        (!acquisition.resultIsPromise ||
+          opaqueReceiver ||
+          mayReceiveFulfilledHandle(
+            receiver,
+            acquisition,
+            knownAcquisitions,
+            context.state,
+          )),
     );
     // No linked acquisition exposes this release method, so the call is not a
     // release of it at all: Node throws at the call site instead.
@@ -391,7 +441,11 @@ const collectReleases = (
       ownerCallableId: context.callableStack.at(-1) ?? null,
       resultBindingId: binding.bindingId,
       linkedResourceIds: linked.map(resourceCandidateId).sort(),
+      ...(linked.some((value) => value.builtinAuthority === "candidate")
+        ? { builtinAuthority: "candidate" as const }
+        : {}),
       resolution:
+        !opaqueReceiver &&
         linked.length === 1 &&
         holdsOnlyAcquisitions(binding, linked, context.state)
           ? "complete"
@@ -400,6 +454,34 @@ const collectReleases = (
   });
   return output;
 };
+
+/** Unwrap only direct awaits; a standalone await does not write its operand. */
+const resourceInitializer = (node: t.Node) => {
+  let value = unwrapJavaScriptExpression(node).node;
+  let awaited = false;
+  while (t.isAwaitExpression(value)) {
+    awaited = true;
+    value = unwrapJavaScriptExpression(value.argument).node;
+  }
+  return { value, awaited };
+};
+
+/** Unknown receiver writes retain a candidate; known other acquisitions do not alias it. */
+const mayReceiveFulfilledHandle = (
+  binding: JavaScriptSemanticBindingState,
+  acquisition: ResourceCandidate,
+  knownAcquisitions: ReadonlySet<t.Node>,
+  state: JavaScriptSemanticAnalysisState,
+): boolean =>
+  [...binding.initializers, ...binding.referenceInitializers].some(
+    ({ node, projection }) => {
+      if (projection.length > 0) return true;
+      const { value, awaited } = resourceInitializer(node);
+      if (value === acquisition.node) return awaited;
+      if (isNullishPlaceholder(value, state)) return false;
+      return !knownAcquisitions.has(value);
+    },
+  );
 
 /**
  * A lexical handle identifies its acquisition only while every value written
@@ -416,9 +498,7 @@ const holdsOnlyAcquisitions = (
   [...binding.initializers, ...binding.referenceInitializers].every(
     ({ node, projection }) => {
       if (projection.length > 0) return false;
-      let value = unwrapJavaScriptExpression(node).node;
-      if (t.isAwaitExpression(value))
-        value = unwrapJavaScriptExpression(value.argument).node;
+      const { value } = resourceInitializer(node);
       return (
         isNullishPlaceholder(value, state) ||
         linked.some((acquisition) => acquisition.node === value)
@@ -440,6 +520,9 @@ const immutableAcquisition = (
   resourceId: resourceCandidateId(candidate),
   kind: "acquire",
   method: candidate.method,
+  ...(candidate.builtinAuthority === undefined
+    ? {}
+    : { builtinAuthority: candidate.builtinAuthority }),
   location: range(candidate.node),
   ownerCallableId: candidate.ownerCallableId,
   resultBindingId: candidate.resultBindingId,
@@ -448,6 +531,7 @@ const immutableAcquisition = (
 });
 
 interface AcquisitionReference {
+  readonly builtinAuthority?: "candidate";
   readonly specifier: string;
   readonly method: JavaScriptSemanticResourceOperation["method"];
 }
@@ -457,7 +541,9 @@ const acquisitionMethod = (
   state: JavaScriptSemanticAnalysisState,
 ): AcquisitionReference | null => {
   for (const specifier of BUILTIN_RESOURCE_SPECIFIERS) {
-    const method = builtinDataEffectMethod(callee, state, [specifier]);
+    const identity = builtinDataEffectIdentity(callee, state, [specifier]);
+    const method =
+      identity?.path.length === 1 ? (identity.path[0] ?? null) : null;
     if (
       method !== null &&
       (
@@ -468,6 +554,9 @@ const acquisitionMethod = (
     )
       return {
         specifier,
+        ...(identity?.builtinAuthority === undefined
+          ? {}
+          : { builtinAuthority: identity.builtinAuthority }),
         method: method as JavaScriptSemanticResourceOperation["method"],
       };
   }
@@ -520,6 +609,206 @@ const rejectsSocketPortLiteral = (
       t.isNumericLiteral(operand) &&
       (value.operator === "-" || !Number.isInteger(operand.value))
     );
+  }
+  return false;
+};
+
+/**
+ * The TLS protocol version names Node accepts for `minVersion` and `maxVersion`.
+ *
+ * Measured on Node 24.22.1: `"TLSv1"`, `"TLSv1.1"`, `"TLSv1.2"` and `"TLSv1.3"` connect
+ * while `"TLSv1.0"`, `"tlsv1"`, `"tlsv1.2"`, `"TLSv1.4"`, `"nope"` and `""` throw
+ * `ERR_TLS_INVALID_PROTOCOL_VERSION`. The set is exact and case-sensitive, so it is a
+ * closed list rather than a pattern.
+ */
+const TLS_PROTOCOL_VERSIONS = new Set([
+  "TLSv1",
+  "TLSv1.1",
+  "TLSv1.2",
+  "TLSv1.3",
+]);
+
+/** Select Node's merge target and source without conflating typeof with own keys. */
+const tlsOptionMerge = (
+  node: t.CallExpression | t.OptionalCallExpression,
+  state: JavaScriptSemanticAnalysisState,
+):
+  | {
+      readonly target: t.ObjectExpression | "fresh" | "unknown";
+      readonly source: t.Node | undefined;
+    }
+  | undefined => {
+  if (node.arguments.some((argument) => t.isSpreadElement(argument)))
+    return undefined;
+  const argument = (index: number): t.Node | undefined => {
+    const value = node.arguments[index];
+    return value === undefined
+      ? undefined
+      : unwrapJavaScriptExpression(value as t.Node).node;
+  };
+  const objectKind = (
+    value: t.Node | undefined,
+  ): "object" | "non-object" | "unknown" => {
+    if (value === undefined) return "non-object";
+    if (
+      t.isObjectExpression(value) ||
+      t.isArrayExpression(value) ||
+      t.isRegExpLiteral(value) ||
+      t.isNewExpression(value)
+    )
+      return "object";
+    if (
+      t.isFunctionExpression(value) ||
+      t.isArrowFunctionExpression(value) ||
+      t.isClassExpression(value) ||
+      primitiveOwnKeys(value, (child) => isNullishPlaceholder(child, state)) !==
+        null
+    )
+      return "non-object";
+    return "unknown";
+  };
+  const first = argument(0);
+  const firstKind = objectKind(first);
+  const second = argument(1);
+  const secondKind = objectKind(second);
+  if (firstKind === "unknown" || secondKind === "unknown") return undefined;
+  return {
+    target:
+      firstKind === "non-object"
+        ? "fresh"
+        : t.isObjectExpression(first)
+          ? first
+          : "unknown",
+    source: secondKind === "object" ? second : argument(2),
+  };
+};
+
+/**
+ * Whether a `tls` call carries a protocol version Node rejects.
+ *
+ * `tls.connect` resolves the version before it opens a socket, so a bad literal throws
+ * from the call itself and no socket exists. Measured on Node 24.22.1: `null` and
+ * `undefined` are accepted as "not given", every other non-string value throws
+ * `ERR_TLS_INVALID_PROTOCOL_VERSION` (a BigInt throws `TypeError`), and a string is
+ * accepted only when it is one of `TLS_PROTOCOL_VERSIONS`.
+ *
+ * A truthy `secureContext` bypasses version parsing — Node uses
+ * `options.secureContext || tls.createSecureContext(options)` — while a falsy one does
+ * not, so only a truthy context ends the check.
+ *
+ * The answer stays undecided, which keeps the acquisition, whenever an accessor could
+ * have written the member first. Measured on Node 24.22.1,
+ * `{get side() { this.minVersion = "TLSv1.2"; }, minVersion: "nope"}` connects because
+ * the getter runs during Node's own copy, and a `set minVersion` in an earlier argument
+ * absorbs a later write. Both are bodies this reader does not run.
+ *
+ * Only `tls` reads these members, so `net` is not consulted.
+ */
+const rejectsTlsProtocolVersionLiteral = (
+  node: t.CallExpression | t.OptionalCallExpression,
+  specifier: string,
+  state: JavaScriptSemanticAnalysisState,
+): boolean => {
+  if (specifier !== "tls") return false;
+  const merge = tlsOptionMerge(node, state);
+  if (merge === undefined || merge.target === "unknown") return false;
+  const isNullish = (value: t.Node) => isNullishPlaceholder(value, state);
+  const target = merge.target === "fresh" ? undefined : merge.target;
+  // A known source value proves the final option only when target writes are
+  // ordinary. Target prototypes and copied __proto__ can absorb later writes.
+  if (
+    target?.properties.some(
+      (property) =>
+        !t.isSpreadElement(property) &&
+        isObjectPrototypeSetter(property) &&
+        t.isObjectProperty(property) &&
+        primitiveOwnKeys(property.value, isNullish) === null,
+    )
+  )
+    return false;
+  const sourceReader = staticObjectCopyPropertyReader(merge.source, isNullish);
+  const copiedPrototype = sourceReader("__proto__");
+  if (
+    copiedPrototype.status === "dynamic" ||
+    (copiedPrototype.status === "explicit" &&
+      primitiveOwnKeys(copiedPrototype.value, isNullish) === null)
+  )
+    return false;
+  const objects = [target, merge.source].filter(
+    (value): value is t.ObjectExpression => t.isObjectExpression(value),
+  );
+  const accessorWritten = objects.some((options) =>
+    options.properties.some(
+      (property) => t.isObjectMethod(property) && property.kind !== "method",
+    ),
+  );
+  const readers = [staticObjectPropertyReader(target, isNullish), sourceReader];
+  const effective = (member: string): t.Node | "unknown" | undefined => {
+    let read: t.Node | "unknown" | undefined;
+    for (const reader of readers) {
+      const property = reader(member);
+      if (property.status === "missing") continue;
+      read =
+        property.status !== "explicit" || accessorWritten
+          ? "unknown"
+          : property.value;
+    }
+    return read;
+  };
+  // A truthy context means Node never parses the members at all. The shared owner
+  // already treats `-0` as falsy. Measured on Node 24.22.1,
+  // `{secureContext: -0, minVersion: "nope"}` throws while a real context connects.
+  const context = effective("secureContext");
+  if (context === "unknown") return false;
+  if (
+    context !== undefined &&
+    !isNullishPlaceholder(context, state) &&
+    staticJavaScriptTruthiness(context) !== false
+  )
+    return false;
+  const rejectsValue = (value: t.Node): boolean => {
+    const read = unwrapJavaScriptExpression(value).node;
+    // `null` and `undefined` mean "not given", which Node accepts.
+    if (isNullishPlaceholder(read, state)) return false;
+    if (t.isStringLiteral(read)) return !TLS_PROTOCOL_VERSIONS.has(read.value);
+    if (t.isTemplateLiteral(read) && read.expressions.length === 0) {
+      const cooked = read.quasis[0]?.value.cooked;
+      if (cooked === null || cooked === undefined) return false;
+      return !TLS_PROTOCOL_VERSIONS.has(cooked);
+    }
+    // Numeric, boolean and typeof results cannot equal an admitted version
+    // string. `void` is the accepted undefined/default case.
+    if (t.isUnaryExpression(read)) return read.operator !== "void";
+    // `NaN` and `Infinity` are unshadowed globals and neither is a version name, the
+    // same way the adjacent port filter treats them.
+    if (
+      t.isIdentifier(read) &&
+      (read.name === "NaN" || read.name === "Infinity") &&
+      isUnmodifiedGlobalReference(read, state, read.name)
+    )
+      return true;
+    if (readExactJavaScriptLiteral(read).found) return true;
+    // Every other statically known shape is truthy and not a string, so the call throws.
+    if (
+      t.isObjectMethod(read) ||
+      t.isNumericLiteral(read) ||
+      t.isBooleanLiteral(read) ||
+      t.isBigIntLiteral(read) ||
+      t.isObjectExpression(read) ||
+      t.isArrayExpression(read) ||
+      t.isRegExpLiteral(read) ||
+      t.isArrowFunctionExpression(read) ||
+      t.isFunctionExpression(read) ||
+      t.isClassExpression(read) ||
+      t.isNewExpression(read)
+    )
+      return true;
+    return false;
+  };
+  for (const member of ["minVersion", "maxVersion"] as const) {
+    const read = effective(member);
+    if (read === undefined || read === "unknown") continue;
+    if (rejectsValue(read)) return true;
   }
   return false;
 };
