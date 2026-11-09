@@ -215,6 +215,14 @@ const liveComputer = (
 ): HeldComputer => {
   const actions = new BuildComputerActionLog();
   const turns = new DesktopBuildTurns();
+  const witness = new DesktopBuildWitness(
+    computer,
+    actions,
+    grading.settle,
+    source.kind === "bundle"
+      ? { path: source.path, judge: grading.judge.judge }
+      : undefined,
+  );
   let closedComputer: Extract<ComputerRelease, { verified: true }> | undefined;
   const attempt = async (
     release: () => Promise<ComputerRelease>,
@@ -232,6 +240,8 @@ const liveComputer = (
   return {
     computer,
     release: async () => {
+      const readers = await witness.readers.release();
+      if (!readers.verified) return readers;
       const [judge, computerResult] = await Promise.all([
         attempt(() => grading.judge.close()),
         closedComputer === undefined
@@ -257,14 +267,7 @@ const liveComputer = (
         computer,
         source.kind === "request" ? source : undefined,
       ),
-      witness: new DesktopBuildWitness(
-        computer,
-        actions,
-        grading.settle,
-        source.kind === "bundle"
-          ? { path: source.path, judge: grading.judge.judge }
-          : undefined,
-      ),
+      witness,
       turns,
     },
     turns,

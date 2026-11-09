@@ -10,6 +10,7 @@ import type { DesktopTaskReader } from "../../../src/domain/desktop/appTask.js";
 import {
   readerAnswerView,
   readerCommand,
+  PYTHON_READER_CLEANUP,
 } from "../../../src/domain/desktop/appTaskReaders.js";
 import { runReaderHere } from "../../../src/desktop/TaskReaderProcess.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
@@ -94,6 +95,47 @@ it("runs the reader on a private copy of the file in a fresh home, without the d
   // The reader changed only its copy, which is gone with its folder.
   expect(await readFile(join(home, NOTE), "utf8")).toBe("milk\neggs\n");
   await expect(access(dirname(dirname(copy)))).rejects.toThrow();
+});
+
+it("retains a remotely owned copy until the matching lease removes it", async () => {
+  const { home, app } = await computer();
+  const root = await createTestTempDirectory("reader-lease-");
+  const lease = { path: join(root, "owned"), token: "owner-token" };
+  const [python = "", ...args] = readerCommand(
+    reporting(app),
+    undefined,
+    undefined,
+    lease,
+  );
+  const { stdout } = await execute(python, args, {
+    env: { ...process.env, HOME: home },
+  });
+  expect(readerAnswerView(stdout)?.format).toBe("json");
+  await expect(
+    access(join(lease.path, "file", "today.txt")),
+  ).resolves.toBeUndefined();
+  await expect(
+    execute(python, [
+      "-I",
+      "-c",
+      PYTHON_READER_CLEANUP,
+      JSON.stringify({ ...lease, token: "other" }),
+    ]),
+  ).rejects.toThrow();
+  await expect(access(lease.path)).resolves.toBeUndefined();
+  const refused = `import shutil\ndef fail(path): raise PermissionError("denied")\nshutil.rmtree = fail\nexec(${JSON.stringify(PYTHON_READER_CLEANUP)})`;
+  await expect(
+    execute(python, ["-I", "-c", refused, JSON.stringify(lease)]),
+  ).rejects.toThrow();
+  expect(await readFile(`${lease.path}.owner`, "utf8")).toBe(lease.token);
+  await execute(python, [
+    "-I",
+    "-c",
+    PYTHON_READER_CLEANUP,
+    JSON.stringify(lease),
+  ]);
+  await expect(access(lease.path)).rejects.toThrow();
+  await expect(access(`${lease.path}.owner`)).rejects.toThrow();
 });
 
 it("passes maximum-length Unicode stdin through bounded arguments to the real reader", async () => {

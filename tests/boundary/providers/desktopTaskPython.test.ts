@@ -48,6 +48,9 @@ from agentenv_protocol import client
 scenario = json.load(sys.stdin)
 saves, durations, called, reads, clock = scenario["saves"], scenario["durations"], [], [], [0.0]
 answers, execs = scenario.get("answers") or {}, []
+cleanup_failures = [scenario.get("cleanup_failures", 0)]
+cancel_cleanup = [scenario.get("cancel_cleanup", False)]
+verify_task = None
 #: Virtual seconds each data/get takes, a binary fraction so the clock stays exact.
 READ_S = 0.125
 
@@ -65,6 +68,15 @@ async def get_card(url, **_):
 
 async def invoke_extension(url, card, uri, params=None, timeout=30, verify=True, *, method=None, headers=None):
     execs.append({"url": url, "uri": uri, "method": method, "timeout": timeout, **params})
+    if params["request_id"].startswith("rea-reader-cleanup-"):
+        if cancel_cleanup[0]:
+            cancel_cleanup[0] = False
+            verify_task.cancel()
+            await asyncio.sleep(0)
+        if cleanup_failures[0] > 0:
+            cleanup_failures[0] -= 1
+            return {"exit_code": 1, "stdout": "", "stderr": "permission denied", "timed_out": False}
+        return {"exit_code": 0, "stdout": "", "stderr": "", "timed_out": False}
     answer = answers[json.loads("".join(params["argv"][4:]))["id"]]
     stdout = answer if isinstance(answer, str) else "Python noise\n" + json.dumps(answer) + "\n"
     return {"exit_code": 0, "stdout": stdout, "stderr": "", "truncated": False, "timed_out": False}
@@ -103,9 +115,23 @@ spec = importlib.util.spec_from_file_location("verifier", verifier)
 module = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(module)
 module.time = types.SimpleNamespace(monotonic=lambda: clock[0])
-module.asyncio = types.SimpleNamespace(sleep=sleep, wait_for=wait_for, TimeoutError=Cut)
-results = asyncio.run(module.verify("http://mcp", "http://computer:8080"))
-print(json.dumps({"called": called, "reads": reads, "ended": clock[0], "results": results, "execs": execs}))
+module.asyncio = types.SimpleNamespace(sleep=sleep, wait_for=wait_for, TimeoutError=Cut,
+                                       create_task=asyncio.create_task, shield=asyncio.shield,
+                                       CancelledError=asyncio.CancelledError)
+async def run():
+    global verify_task
+    first_error = None
+    if scenario.get("retry"):
+        try:
+            verify_task = asyncio.create_task(module.verify("http://mcp", "http://computer:8080"))
+            await verify_task
+        except (RuntimeError, asyncio.CancelledError) as error:
+            first_error = str(error) + " ".join(getattr(error, "__notes__", ()))
+    results = await module.verify("http://mcp", "http://computer:8080")
+    return results, first_error
+
+results, first_error = asyncio.run(run())
+print(json.dumps({"called": called, "reads": reads, "ended": clock[0], "results": results, "execs": execs, "first_error": first_error}))
 `;
 
 type VerifierOutput = {
@@ -113,6 +139,7 @@ type VerifierOutput = {
   execs: Record<string, unknown>[];
   reads: number[];
   ended: number;
+  first_error: string | null;
   results: {
     id: string;
     result: boolean;
@@ -131,6 +158,9 @@ const runVerifier = async (
     readonly readers?: readonly DesktopTaskReader[];
     readonly answers?: Readonly<Record<string, unknown>>;
     readonly exec?: boolean;
+    readonly cleanupFailures?: number;
+    readonly retry?: boolean;
+    readonly cancelCleanup?: boolean;
   } = {},
 ): Promise<VerifierOutput> => {
   const folder = await createTestTempDirectory("desktop-task-python-");
@@ -163,6 +193,9 @@ const runVerifier = async (
         durations,
         answers: computer.answers,
         exec: computer.exec ?? true,
+        cleanup_failures: computer.cleanupFailures,
+        retry: computer.retry,
+        cancel_cleanup: computer.cancelCleanup,
       }),
       encoding: "utf8",
     }),
@@ -400,7 +433,18 @@ it("sends large reader input in the same bounded arguments as the witness", asyn
     readers: [reader],
     answers: ANSWERS,
   });
-  expect(output.execs[0]?.argv).toEqual(readerCommand(reader, undefined));
+  const argv = output.execs[0]?.argv as string[];
+  const arguments_ = JSON.parse(argv.slice(4).join("")) as Record<
+    string,
+    unknown
+  >;
+  expect(arguments_).toMatchObject({
+    stdin: reader.stdin,
+    lease: { path: expect.stringMatching(/^\/tmp\/rea-reader-/u) },
+  });
+  expect(
+    argv.slice(4).every((argument) => Buffer.byteLength(argument) < 131072),
+  ).toBe(true);
 });
 
 it("reads each reader's view through the computer's computer-exec and grades it as REA does", async () => {
@@ -410,25 +454,30 @@ it("reads each reader's view through the computer's computer-exec and grades it 
   });
 
   expect(
-    output.execs.map(({ url, uri, method, argv, timeout_s }) => ({
-      url,
-      uri,
-      method,
-      argv,
-      timeout_s,
-    })),
+    output.execs
+      .filter(
+        ({ request_id }) =>
+          !String(request_id).startsWith("rea-reader-cleanup-"),
+      )
+      .map(({ url, uri, method, argv, timeout_s }) => ({
+        url,
+        uri,
+        method,
+        argv: (argv as string[]).slice(0, 4),
+        timeout_s,
+      })),
   ).toEqual(
     READERS.map((reader) => ({
       url: "http://computer:8080",
       uri: "urn:agentenv:computer-exec/v1",
       method: "run",
-      argv: readerCommand(reader, undefined),
+      argv: readerCommand(reader, undefined).slice(0, 4),
       timeout_s: (reader.timeout_s ?? 60) + 30,
     })),
   );
   // computer-exec answers a repeated request id with its first result, so each reader's is new.
   expect(new Set(output.execs.map(({ request_id }) => request_id)).size).toBe(
-    READERS.length,
+    READERS.length * 2,
   );
   const readers = new Map<string, TaskFileView>();
   for (const [id, answer] of Object.entries(ANSWERS)) {
@@ -458,6 +507,40 @@ it("reads each reader's view through the computer's computer-exec and grades it 
     false,
     true,
   ]);
+});
+
+it("reports a cleanup failure with the completed view and retries the same folder on the next verification", async () => {
+  const output = await runVerifier(READER_CHECKS, [[0, CHECK_VIEWS]], [], {
+    readers: [READERS[0]!],
+    answers: ANSWERS,
+    cleanupFailures: 1,
+    retry: true,
+  });
+  expect(output.first_error).toContain("Could not remove owned reader folder");
+  expect(output.first_error).toContain("completed reader views");
+  const cleanups = output.execs.filter(({ request_id }) =>
+    String(request_id).startsWith("rea-reader-cleanup-"),
+  );
+  expect(cleanups).toHaveLength(3);
+  const lease = (entry: Record<string, unknown>) =>
+    JSON.parse((entry.argv as string[])[4]!);
+  expect(lease(cleanups[1]!)).toEqual(lease(cleanups[0]!));
+  expect(cleanups[1]?.request_id).not.toBe(cleanups[0]?.request_id);
+});
+
+it("keeps cleanup owned when verification is cancelled during final cleanup", async () => {
+  const output = await runVerifier(READER_CHECKS, [[0, CHECK_VIEWS]], [], {
+    readers: [READERS[0]!],
+    answers: ANSWERS,
+    cancelCleanup: true,
+    retry: true,
+  });
+  expect(output.first_error).toContain("Reader cleanup remains owned");
+  expect(output.first_error).toContain("completed reader views");
+  const cleanups = output.execs.filter(({ request_id }) =>
+    String(request_id).startsWith("rea-reader-cleanup-"),
+  );
+  expect(cleanups).toHaveLength(2);
 });
 
 it.each([

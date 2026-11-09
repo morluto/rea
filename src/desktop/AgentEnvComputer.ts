@@ -565,11 +565,12 @@ export class AgentEnvComputer {
     argv: readonly string[],
     timeoutS: number,
     signal?: AbortSignal,
+    requestId: string = randomUUID(),
   ): Promise<ComputerCommandResult> {
     const result = execSchema.parse(
       await this.#request(
         "/agentenv/ext/computer-exec/run",
-        { argv, request_id: randomUUID(), timeout_s: timeoutS },
+        { argv, request_id: requestId, timeout_s: timeoutS },
         signal,
         {
           limit: {

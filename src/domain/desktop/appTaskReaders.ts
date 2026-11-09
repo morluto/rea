@@ -177,6 +177,15 @@ def main(arguments: dict) -> int:
     source = arguments["path"] if os.path.isabs(arguments["path"]) else os.path.join(home, arguments["path"])
     if not os.path.isfile(source):
         return _say({"absent": True})
+    # A remote caller owns this exact folder before starting the command, and
+    # removes it only after the command has settled.
+    lease = arguments.get("lease")
+    if lease is not None:
+        work = lease["path"]
+        os.mkdir(work, 0o700)
+        with open(work + ".owner", "x", encoding="ascii") as owner:
+            owner.write(lease["token"])
+        return _say(_run(arguments, source, work))
     # A caller that names a work folder removes it itself, even when this runner is killed.
     work = os.path.realpath(tempfile.mkdtemp(prefix="rea-reader-", dir=arguments.get("work")))
     try:
@@ -189,6 +198,26 @@ if __name__ == "__main__":
     sys.exit(main(json.loads("".join(sys.argv[1:]))))
 `;
 
+/** Remove only the remote folder whose ownership marker matches the caller's lease. */
+export const PYTHON_READER_CLEANUP = String.raw`
+import json, os, shutil, sys
+lease = json.loads(sys.argv[1])
+path = lease["path"]
+marker = path + ".owner"
+if os.path.lexists(path) or os.path.lexists(marker):
+    with open(marker, encoding="ascii") as owner:
+        if owner.read() != lease["token"]:
+            raise RuntimeError("reader folder ownership does not match")
+    if os.path.lexists(path):
+        shutil.rmtree(path)
+    os.unlink(marker)
+`;
+
+export interface ReaderLease {
+  readonly path: string;
+  readonly token: string;
+}
+
 /**
  * The command that runs a reader through the runner: on `path`, or on its
  * file in the home when none is given, in a folder under `work` when given,
@@ -198,12 +227,13 @@ export const readerCommand = (
   reader: DesktopTaskReader,
   path: string | undefined,
   work?: string,
+  lease?: ReaderLease,
 ): string[] => [
   "python3",
   "-I",
   "-c",
   PYTHON_READER_RUNNER,
-  ...readerArgumentChunks(reader, path, work),
+  ...readerArgumentChunks(reader, path, work, lease),
 ];
 
 /** The runner's one argument for a reader, as JSON. */
@@ -211,6 +241,7 @@ export const readerArguments = (
   reader: DesktopTaskReader,
   path: string | undefined,
   work?: string,
+  lease?: ReaderLease,
 ): string =>
   JSON.stringify({
     id: reader.id,
@@ -222,6 +253,7 @@ export const readerArguments = (
     timeout_s: readerTimeout(reader),
     display: reader.display ?? false,
     ...(work === undefined ? {} : { work }),
+    ...(lease === undefined ? {} : { lease }),
   });
 
 /** Keep every argument below Linux's 128 KiB per-string limit, including four-byte UTF-8 characters. */
@@ -229,8 +261,9 @@ const readerArgumentChunks = (
   reader: DesktopTaskReader,
   path: string | undefined,
   work?: string,
+  lease?: ReaderLease,
 ): string[] => {
-  const characters = Array.from(readerArguments(reader, path, work));
+  const characters = Array.from(readerArguments(reader, path, work, lease));
   const chunks: string[] = [];
   for (let index = 0; index < characters.length; index += 8192)
     chunks.push(characters.slice(index, index + 8192).join(""));
@@ -286,6 +319,55 @@ export const readerAnswerView = (stdout: string): TaskFileView | undefined => {
 /** The verifier's runs of the task's readers through the computer's computer-exec, as the witness runs them. */
 export const PYTHON_READER_VIEWS = String.raw`
 
+# Entries retain interrupted commands and their exact folders for a retry.
+_PENDING_READERS = {}
+
+
+def _owned_task(awaitable):
+    task = asyncio.create_task(awaitable)
+    task.add_done_callback(lambda done: None if done.cancelled() else done.exception())
+    return task
+
+
+async def _cleanup_readers(env_url, card):
+    for token, pending in list(_PENDING_READERS.items()):
+        if pending["env_url"] != env_url:
+            continue
+        if not pending["settled"]:
+            if pending["task"].cancelled():
+                raise RuntimeError(f"Reader {pending['request_id']} has an unknown outcome; retained {pending['lease']['path']}")
+            try:
+                result = await asyncio.shield(pending["task"])
+            except Exception as error:
+                raise RuntimeError(f"Reader {pending['request_id']} may still own {pending['lease']['path']}: {error}") from error
+            if not isinstance(result, dict) or result.get("timed_out"):
+                raise RuntimeError(f"Reader {pending['request_id']} may still be running; retained {pending['lease']['path']}")
+            pending["settled"] = True
+        if pending.get("cleanup_uncertain"):
+            raise RuntimeError(f"Cleanup may still be running; retained {pending['lease']['path']}")
+        pending.setdefault("cleanup_id", f"rea-reader-cleanup-{uuid.uuid4().hex}")
+        cleanup = {"argv": ["python3", "-I", "-c", READER_CLEANUP, json.dumps(pending["lease"])],
+                   "request_id": pending["cleanup_id"], "timeout_s": RUNNER_SLACK_S}
+        if "cleanup_task" not in pending:
+            pending["cleanup_task"] = _owned_task(
+                protocol.invoke_extension(env_url, card, EXEC, cleanup, method="run", timeout=2 * RUNNER_SLACK_S))
+        if pending["cleanup_task"].cancelled():
+            raise RuntimeError(f"Cleanup has an unknown outcome; retained {pending['lease']['path']}")
+        try:
+            answer = await asyncio.shield(pending["cleanup_task"])
+        except Exception as error:
+            pending.pop("cleanup_task", None)
+            raise RuntimeError(f"Cleanup of owned reader folder {pending['lease']['path']} is unconfirmed: {error}") from error
+        if not isinstance(answer, dict) or answer.get("timed_out"):
+            pending["cleanup_uncertain"] = True
+            raise RuntimeError(f"Cleanup may still be running; retained {pending['lease']['path']}")
+        if answer.get("exit_code") != 0:
+            pending.pop("cleanup_id", None)
+            pending.pop("cleanup_task", None)
+            raise RuntimeError(f"Could not remove owned reader folder {pending['lease']['path']}: {answer}")
+        del _PENDING_READERS[token]
+
+
 async def _reader_views(env_url, card):
     """Each reader's view of its file, by its id, read by REA's reader runner in the computer; a file the home lacks
     has none. A runner that does not answer raises, so the run fails rather than scoring the agent."""
@@ -293,16 +375,42 @@ async def _reader_views(env_url, card):
         return {}
     if protocol.find_extension(card, EXEC) is None:
         raise RuntimeError(f"the computer at {env_url} offers no {EXEC}, which runs the task's readers")
+    await _cleanup_readers(env_url, card)
     views = {}
     for reader in READERS:
-        params = {"argv": ["python3", "-I", "-c", READER_RUNNER, *reader["arguments"]],
-                  "request_id": f"rea-reader-{reader['id']}-{uuid.uuid4().hex}",
+        token = uuid.uuid4().hex
+        lease = {"path": f"/tmp/rea-reader-{token}", "token": token}
+        arguments = json.loads("".join(reader["arguments"]))
+        arguments["lease"] = lease
+        encoded = json.dumps(arguments)
+        params = {"argv": ["python3", "-I", "-c", READER_RUNNER,
+                           *(encoded[i:i + 8192] for i in range(0, len(encoded), 8192))],
+                  "request_id": f"rea-reader-{token}",
                   "timeout_s": reader["timeout_s"] + RUNNER_SLACK_S}
-        answer = await protocol.invoke_extension(env_url, card, EXEC, params, method="run",
-                                                 timeout=reader["timeout_s"] + 2 * RUNNER_SLACK_S)
-        view = _reader_answer(reader["id"], answer)
-        if view is not None:
-            views[reader["id"]] = view
+        task = _owned_task(protocol.invoke_extension(
+            env_url, card, EXEC, params, method="run", timeout=reader["timeout_s"] + 2 * RUNNER_SLACK_S))
+        _PENDING_READERS[token] = {"env_url": env_url, "lease": lease, "task": task,
+                                   "request_id": params["request_id"], "settled": False}
+        try:
+            answer = await asyncio.shield(task)
+        except BaseException as error:
+            error.add_note(f"Reader command {params['request_id']} and folder {lease['path']} remain owned for retry.")
+            raise
+        if not isinstance(answer, dict) or answer.get("timed_out"):
+            raise RuntimeError(f"Reader {params['request_id']} may still be running; retained {lease['path']}")
+        _PENDING_READERS[token]["settled"] = True
+        try:
+            view = _reader_answer(reader["id"], answer)
+            if view is not None:
+                views[reader["id"]] = view
+        finally:
+            try:
+                await _cleanup_readers(env_url, card)
+            except asyncio.CancelledError as error:
+                error.add_note(f"Reader cleanup remains owned for {lease['path']}; completed reader views: {json.dumps(views)}")
+                raise
+            except Exception as error:
+                raise RuntimeError(f"{error}; completed reader views: {json.dumps(views)}") from error
     return views
 
 
@@ -342,6 +450,7 @@ EXEC = "urn:agentenv:computer-exec/v1"
 RUNNER_SLACK_S = ${String(READER_RUNNER_SLACK_S)}
 #: REA's reader runner, which runs each reader on a private copy of its file in a fresh home.
 READER_RUNNER = ${JSON.stringify(PYTHON_READER_RUNNER)}
+READER_CLEANUP = ${JSON.stringify(PYTHON_READER_CLEANUP)}
 READERS = [
 ${readers.map((reader) => `    {"id": ${JSON.stringify(reader.id)}, "arguments": ${JSON.stringify(readerArgumentChunks(reader, undefined))}, "timeout_s": ${String(readerTimeout(reader))}},`).join("\n")}
 ]

@@ -43,7 +43,7 @@ import type { ReadonlyActionLog } from "./DesktopBuildActionLog.js";
 import { errorText } from "./DesktopBuildCommands.js";
 import { desktopOperationFailure } from "./DesktopCaptureRefusals.js";
 import { settledAppData, type BuildSettle } from "./DesktopBuildSettle.js";
-import { readTaskReaderViews } from "./DesktopTaskReaders.js";
+import { DesktopRemoteTaskReaders } from "./DesktopRemoteTaskReaders.js";
 import {
   bundleTaskDifference,
   judgeScreenTask,
@@ -189,6 +189,7 @@ export const retryPublishedCleanup = async (
 
 export class DesktopBuildWitness {
   #witness: OpenWitness | undefined;
+  readonly readers: DesktopRemoteTaskReaders;
   /**
    * The request id of this computer's one witness recording, fixed before any
    * start is sent: a seed retried after a lost reply asks for the same id,
@@ -202,7 +203,12 @@ export class DesktopBuildWitness {
     private readonly actions: ReadonlyActionLog,
     private readonly settle: BuildSettle = SETTLE_TIMING,
     private readonly bundle?: WitnessBundle,
-  ) {}
+  ) {
+    this.readers = new DesktopRemoteTaskReaders(
+      (argv, timeout, signal, requestId) =>
+        this.computer.exec(argv, timeout, signal, requestId),
+    );
+  }
 
   async check(
     input: {
@@ -270,10 +276,7 @@ export class DesktopBuildWitness {
             "Start the computer from a bundle export_build_environment wrote.",
           ),
         );
-      const readers = await readTaskReaderViews(
-        task.readers ?? [],
-        (argv, timeoutS) => this.computer.exec(argv, timeoutS, signal),
-      );
+      const readers = await this.readers.read(task.readers ?? [], signal);
       return ok({
         results: [...evaluateTaskChecks(task.checks, views.value, readers)],
         settled: read.settled,

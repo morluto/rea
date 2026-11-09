@@ -61,6 +61,11 @@ grades them in the solving agent's computer, all through one runner.
   It grades through `evaluate_with_readers`, which only such a verifier holds:
   a task without readers renders the verifier byte for byte as before, so a
   bundle exported earlier witnesses as the same task.
+- Cleanup: the witness and verifier own each remote reader's temporary copy
+  until the command finishes and its folder is removed. They report failed
+  cleanup with its folder and retain it for retry; an interrupted command is
+  not assumed to have stopped. The witness retries on check or close, and
+  the verifier on a later call in the same process.
 - Draft: a file REA reads as binary is noted as checkable through a reader.
 
 ## Non-goals

@@ -886,6 +886,13 @@ printed. The witness runs the readers in the witness computer through
 does the same in the solving agent's computer, under the run's grant of the
 computer's control token. The README lists each reader's command.
 
+The witness and verifier remove each reader's temporary copy after its
+command finishes. If removal fails, they report the owned folder rather than
+score the task. The witness retries cleanup on the next check or when the
+computer closes; the verifier retries on its next call in the same process.
+An interrupted command remains owned until its outcome is known, so its
+folder is not removed while it may still be running.
+
 ## Screen judges
 
 Some apps keep a task's state only on screen: a calculator's result, a
