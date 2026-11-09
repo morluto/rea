@@ -151,6 +151,9 @@ it("rejects YAML that the decoder cannot compose, without inventing declarations
     ),
   );
   expect(repeated).toContain("repeats a mapping key");
+  // `yaml` locates the repeated key at the second `version` (line 5); the
+  // diagnostic must name that line, not one past it.
+  expect(repeated).toContain("at line 5 (");
 });
 
 it("rejects composition failures and non-scalar keys without escaping the Result", async () => {

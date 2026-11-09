@@ -126,7 +126,9 @@ export const decodeOpenApiYaml = (
   const document = parseDocument(text, {
     // Comments, styles and YAML 1.1 scalar dialects stay unread; the document
     // is composed to the same JSON-compatible shape the JSON profile parses.
-    prettyErrors: false,
+    // `prettyErrors` stays on because `yaml` only fills `linePos` from it, and
+    // a duplicate-key report has to name the source line it read.
+    prettyErrors: true,
     // A repeated key cannot express the JSON profile's last-value-wins member.
     uniqueKeys: true,
     lineCounter,
@@ -134,8 +136,16 @@ export const decodeOpenApiYaml = (
   const duplicate = document.errors.find(
     (error) => error.code === "DUPLICATE_KEY",
   );
+  const duplicateLine = duplicate?.linePos?.[0]?.line;
   if (duplicate !== undefined)
-    return err(duplicateKeyDiagnostic(path, duplicate.linePos?.[0]?.line));
+    // `linePos` is already one-based; the helper adds 1 for its zero-based
+    // callers, so subtract here as the projection-collision branch does.
+    return err(
+      duplicateKeyDiagnostic(
+        path,
+        duplicateLine === undefined ? undefined : duplicateLine - 1,
+      ),
+    );
   if (document.errors.length > 0) {
     const [first] = document.errors;
     return err(
