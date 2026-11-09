@@ -14,8 +14,7 @@ ZIP_CENTRAL = b"PK\x01\x02"
 ZIP64_LOCATOR = b"PK\x06\x07"
 ZIP64_END = b"PK\x06\x06"
 #: Formats an archive entry may have whose reader needs a tool, a worker or another archive opened.
-NOT_READ_INSIDE = ((SQLITE_HEADER, "sqlite", "a SQLite database"), (GVDB_HEADER, "dconf", "a dconf database"),
-                   (ZIP_HEADER, "zip", "an archive"))
+NOT_READ_INSIDE = ((SQLITE_HEADER, "sqlite", "a SQLite database"), (GVDB_HEADER, "dconf", "a dconf database"))
 
 
 def _entry_view(name: str, data: bytes) -> dict:
@@ -24,6 +23,8 @@ def _entry_view(name: str, data: bytes) -> dict:
     for header, form, inside in NOT_READ_INSIDE:
         if data.startswith(header):
             return {"format": form, "view": None, "error": f"{inside} inside an archive is not read"}
+    if _is_zip(data):
+        return {"format": "zip", "view": None, "error": "an archive inside an archive is not read"}
     try:
         text = data.decode("utf-8-sig") if b"\x00" not in data[:8192] else None
     except UnicodeDecodeError:

@@ -39,8 +39,8 @@ generation reads the kinds of change.
   with exact numbers; XML through the shared strict parser, a DOCTYPE read
   only when it has no internal subset and its DTD never read
   ([XML text checks](../xml-text-checks/spec.md)); key files up to 4 MiB
-  whose every line parses; zip archives by
-  their local file header, as their entries with each entry's own format and
+  whose every line parses; zip archives by their local file header or a
+  classic/Zip64 empty-archive signature, as entries with each entry's own format and
   view ([document views](../document-views/spec.md)); text; binary.
 - Changes between versions are created, deleted, or lines, values, keys or
   rows with added, removed and changed lists (100 each, with counts); content
