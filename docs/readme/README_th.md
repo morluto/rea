@@ -84,6 +84,10 @@ npx rea-agents setup
 
 MCP ใช้สคีมาอินพุตแบบกระชับโดยปริยาย หากต้องการคำอธิบายฟิลด์และการตรวจสอบแบบซ้อนทั้งหมด ให้ตั้ง `REA_MCP_INPUT_SCHEMA_PROFILE=full` ในการลงทะเบียน MCP ทั้งสองแบบคงเครื่องมือครบและใช้การตรวจสอบมาตรฐานฝั่งเซิร์ฟเวอร์เดียวกัน ดูคู่มือสัญญา MCP
 
+การตั้งค่าจะลงทะเบียนรันไทม์ที่เลือกและสคริปต์เริ่มต้นของ REA โดยตรง หากใช้ตัวรันแพ็กเกจ ให้เก็บรายการแคชและรันไทม์ไว้ และรับแพ็กเกจจากไดเรกทอรีที่เชื่อถือได้นอกโปรเจกต์เป้าหมาย ดูคู่มือการติดตั้ง
+
+ระบบประกาศสคีมาเอาต์พุตฉบับเต็มตามค่าเริ่มต้น หากไคลเอนต์จำกัด `tools/list` ให้ตั้ง `REA_MCP_OUTPUT_SCHEMA_PROFILE=compact` หรือ `off` ในการลงทะเบียน MCP การตรวจสอบฝั่งเซิร์ฟเวอร์และผลลัพธ์แบบมีโครงสร้างยังคงครบถ้วน ดูหัวข้อ “Output schemas” ในคู่มือสัญญา MCP
+
 ### ถามเอเจนต์
 
 ```text
@@ -173,6 +177,7 @@ REA ต้องใช้ Node.js 22.x (>=22.23.4), 24.x (>=24.22.1) หรื�
 | การจับแพ็กเก็ต                  | จุดเชื่อมต่อ, DNS, TLS SNI, การกระจายโปรโตคอล และคำขอ HTTP                          | tshark และ capinfos ที่ผู้เรียกจัดเตรียม; [คู่มือ pcap](../guides/data/pcap-analysis.md)                                                                            |
 | แอสเซมบลี .NET                | เมทาดาทา คำสั่ง CIL การพึ่งพาเนทีฟที่ประกาศไว้ และการเปรียบเทียบผลการบิลด์                  | การตรวจสอบแบบสถิต; [คู่มือโค้ดแบบจัดการ](../guides/managed/managed-code-analysis.md)                                                                            |
 | PyInstaller                  | CArchive, PYZ, Python bytecode                                                  | Static inspection; [Python packaged applications](../python-packaged-applications.md)                                                                     |
+| Deno compile binaries        | Virtual files, entry point, recorded options, npm snapshot length               | Static inspection; [Deno compile executables](../deno-standalone.md)                                                                                      |
 | APK ของ Android              | การประกาศใน manifest คลาส เมธอดที่ดีคอมไพล์ และการอ้างอิง                             | JADX แบบไม่มี GUI และ JDK แบบเต็มบน Linux/macOS/Windows x64; [คู่มือ Android](../guides/android/android-analysis.md)                                            |
 | อุปกรณ์ Android                | อุปกรณ์ แพ็กเกจ โพรเซส บันทึก ดัมพ์ ภาพหน้าจอ และการถ่ายโอน APK/ไฟล์                      | adb ที่ผู้เรียกจัดเตรียม (โปรแกรมจำลองหรืออุปกรณ์จริง); [คู่มือ ADB](../guides/android/adb-device-analysis.md)                                                          |
 | โปรเจกต์ JEB                  | หน่วยโปรเจกต์จากเอนจิน, แฮชของอาร์ติแฟกต์ และซูโดโค้ดของไทป์/เมท็อด                       | ไคลเอนต์ JEB ที่ผู้เรียกเริ่มและให้บริการ MCP เลือกด้วย REA_JEB_MCP_URL; [คู่มือ JEB](../providers/jeb-analysis.md)                                                      |

@@ -120,7 +120,7 @@ correspondence merely from their different retained registrations.
 - `compare_web_screenshots` / `rea compare-web-screenshots` performs bounded local PNG pixel comparison without OCR or external services.
 - The CLI comparison commands accept each capture, screenshot artifact or normalization policy as inline JSON or a JSON file path. Use files for screenshot artifacts and scenario captures, whose embedded PNG bytes can exceed the host's command-line length limit.
 - Every surface has equivalent CLI and MCP contracts and returns Evidence provenance.
-- MCP tools return complete results inline and include the Evidence ID. Session evidence can be exported with `export_evidence_bundle`.
+- By default, MCP tools return complete results inline and include the Evidence ID. Selected summary views retain the complete parent Evidence and return a projection. Session evidence can be exported with `export_evidence_bundle`.
 
 Target discovery returns the complete in-scope target array in one result.
 
@@ -228,7 +228,7 @@ in an existing profile.
 For such a browser, pass the browser socket instead of the HTTP endpoint:
 
 ```bash
-rea list-browser-targets ws://127.0.0.1:9222/devtools/browser/<id>
+rea list-browser-targets "ws://127.0.0.1:9222/devtools/browser/<id>"
 ```
 
 Chrome writes the port and the `/devtools/browser/<id>` path to the
