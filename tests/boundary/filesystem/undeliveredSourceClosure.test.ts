@@ -702,3 +702,55 @@ it("leaves a primary failure without a completed observation untouched", async (
     await publishCliAnalysisEvidence(err(primary), delivery(root, [held])),
   ).toBe(primary);
 });
+
+it.each([false, true])(
+  "keeps source closure unknown when embedded inspection sources cannot be read (captured link: %s)",
+  async (captured) => {
+    const root = await createTestTempDirectory(
+      "rea-closure-invalid-inspection-",
+    );
+    const held = source("held");
+    const observation = createEvidence(undefined, provider, {
+      operation: "inspect_artifact",
+      parameters: {},
+      result: { malformed: true },
+      evidenceLinks: captured ? [held.evidence_id] : [],
+    });
+    const output = await publishCliAnalysisEvidence(
+      err(cancelledWith(observation)),
+      delivery(root, captured ? [held] : []),
+    );
+    expect(output).toMatchObject({
+      details: {
+        source_closure: {
+          publication: "not_published",
+          complete: false,
+          collection_failure: expect.any(String),
+        },
+      },
+    });
+    expect(closureOf(output).records).toEqual(captured ? [held] : []);
+    expect(await readdir(root)).toEqual([]);
+  },
+);
+
+it("reports missing links as unknown when an embedded source list cannot be read", async () => {
+  const root = await createTestTempDirectory("rea-closure-invalid-missing-");
+  const missing = "ev_".padEnd(67, "a");
+  const observation = createEvidence(undefined, provider, {
+    operation: "inspect_artifact",
+    parameters: {},
+    result: { malformed: true },
+    evidenceLinks: [missing],
+  });
+  const output = await publishCliAnalysisEvidence(
+    err(cancelledWith(observation)),
+    delivery(root, []),
+  );
+  expect(closureOf(output)).toMatchObject({
+    complete: false,
+    collection_failure: expect.any(String),
+    omitted_count: 1,
+    omitted: [{ evidence_id: missing, reason: "not_captured" }],
+  });
+});
