@@ -1259,18 +1259,27 @@ const linkerSearchLists = (flags: string[]): string[] =>
   });
 
 /**
+ * Options whose separate argument is a dyld install name or path, which may
+ * start with a runtime token such as `@rpath`: `-install_name @rpath/libx.dylib`.
+ */
+const LINKER_DYLD_VALUE_FLAG =
+  /^-{1,2}(?:dylib_file|dylib_install_name|install_name|rpath)$/u;
+
+/**
  * Each `@FILE` response file the compiler driver or linker reads options from,
  * named in its own argument and never opened here. An argument after an option
- * that takes one, as in `-install_name @rpath/libx.dylib`, is that option's
- * value, and a dyld runtime token names no file on the build host.
+ * that takes one is that option's value, as is a dyld runtime token after
+ * `-install_name`; a standalone `@rpath/x.rsp` is still a response file.
  */
 const responseFilePaths = (args: string[], pathFlag: RegExp): string[] =>
   args.flatMap((arg, index) => {
-    if (!arg.startsWith("@") || DYLD_RUNTIME_TOKEN.test(arg)) return [];
+    if (!arg.startsWith("@")) return [];
     const path = arg.slice(1).trimEnd();
     const previous = args[index - 1];
     return path.length === 0 ||
-      (previous !== undefined && pathFlag.exec(previous)?.[1] === "")
+      (previous !== undefined &&
+        (pathFlag.exec(previous)?.[1] === "" ||
+          LINKER_DYLD_VALUE_FLAG.test(previous)))
       ? []
       : [path];
   });

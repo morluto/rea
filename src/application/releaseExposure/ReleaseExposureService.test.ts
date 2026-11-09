@@ -2072,6 +2072,8 @@ describe("ReleaseExposureService Go forwarded linker search paths", () => {
     ["-Wl,--as-needed,@/tmp/private-link.rsp", "/tmp/private-link.rsp"],
     ["-Wl,@private-link.rsp", "private-link.rsp"],
     ["@/tmp/private-cc.rsp", "/tmp/private-cc.rsp"],
+    ["-Wl,@rpath/private-link.rsp", "rpath/private-link.rsp"],
+    ["-Xlinker @loader_path/private-link.rsp", "loader_path/private-link.rsp"],
   ])("keeps the response file named in %s", async (value, path) => {
     const report = await goReport(goModule([{ key: "CGO_LDFLAGS", value }]));
     const check = report.checks.find((item) => item.id === "go.build_paths");
@@ -2080,13 +2082,23 @@ describe("ReleaseExposureService Go forwarded linker search paths", () => {
   });
 
   it.each([
-    "-Wl,-install_name,@rpath/libprivate.dylib",
-    "-Xlinker -install_name -Xlinker @rpath/libprivate.dylib",
-    "-Wl,@",
-  ])("reads no response file in %s", async (value) => {
+    ["-Wl,-install_name,@rpath/libprivate.dylib", "rpath/libprivate.dylib"],
+    [
+      "-Xlinker -install_name -Xlinker @rpath/libprivate.dylib",
+      "rpath/libprivate.dylib",
+    ],
+    ["-Wl,-rpath,@loader_path/lib", "loader_path/lib"],
+    [
+      "-Wl,-dylib_file,@rpath/libprivate.dylib:/opt/lib/libprivate.dylib",
+      "rpath/libprivate.dylib:/opt/lib/libprivate.dylib",
+    ],
+    ["-Wl,@", ""],
+  ])("reads no response file in %s", async (value, responseFile) => {
     const report = await goReport(goModule([{ key: "CGO_LDFLAGS", value }]));
     const check = report.checks.find((item) => item.id === "go.build_paths");
-    expect(check?.status).toBe("not_observed");
+    // An option's own value may still be a literal path, as an ELF `-rpath`
+    // entry is, but it is not a response file with its `@` dropped.
+    expect(check?.observation.samples ?? []).not.toContain(responseFile);
   });
 
   it.each([
