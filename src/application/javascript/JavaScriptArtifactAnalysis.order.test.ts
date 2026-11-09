@@ -106,3 +106,53 @@ it("spends a limited result budget on first-party sources and keeps inventory or
   ]);
   expect(outcome.interruption).toBeNull();
 });
+
+it("spends capacity in the caller's requested order for explicitly selected sources", async () => {
+  const files = [
+    source("node_modules/selected/index.js"),
+    source("src/main.js"),
+  ];
+  const admitted: string[] = [];
+  const javascript = analyzeJavaScriptStaticSource("export const x = 1;");
+  const outcome = await analyzeAndAdoptJavaScriptArtifactFiles(
+    {
+      files,
+      unavailable_relevant_files: [],
+      containers: [],
+      text_bytes_read: 40,
+      invalid_utf8_files: 0,
+      source_selection: {
+        requested_paths: files.map((file) => file.path),
+        unselected_files: 0,
+      },
+    },
+    {
+      analyze: async (file) => {
+        const value = { javascript, module: null, projection: null };
+        admitted.push(file.path);
+        return admitted.length === 1
+          ? ok(value)
+          : err({
+              ...value,
+              error: new AnalysisResourceConstraintError(
+                "analyze_javascript_application",
+                "memory",
+                "result capacity exhausted",
+                { semantic_result_budget_bytes: 0 },
+              ),
+            });
+      },
+    },
+    createJavaScriptSemanticGraphProjection(),
+    async () => {},
+  );
+  expect(admitted).toEqual(files.map((file) => file.path));
+  expect(
+    outcome.analysis.files.find(({ file }) => file.path === files[0]!.path)
+      ?.analysis_failure,
+  ).toBeUndefined();
+  expect(
+    outcome.analysis.files.find(({ file }) => file.path === files[1]!.path)
+      ?.analysis_failure,
+  ).toBeDefined();
+});

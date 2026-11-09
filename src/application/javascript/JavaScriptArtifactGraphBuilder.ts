@@ -399,7 +399,7 @@ const graphLimitations = (
         ]
       : electronSemantics === "partial"
         ? [
-            `Electron boundary facts are partial: ${String(electronIncompleteSourceCount(context.analysis))} Electron-loading source(s) were not fully examined or reported because analysis was interrupted or a resource limit was reached. BrowserWindows, preloads, bridges, and IPC operations from those sources are unknown, not absent; analyze fewer sources, such as first-party main and preload files selected with source_paths.`,
+            `Electron boundary facts are partial: ${String(electronIncompleteSourceCount(context.analysis))} Electron-loading source(s) were not fully examined or reported because syntax was recovered, semantics remained unresolved, analysis was interrupted, or a resource limit was reached. BrowserWindows, preloads, bridges, and IPC operations from those sources are unknown, not absent; analyze fewer sources, such as first-party main and preload files selected with source_paths.`,
             "Electron relationships are derived from inert syntax; runtime registration, reachability, defaults, and enforcement remain unproven.",
           ]
         : electronSemantics === "recovered"

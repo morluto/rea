@@ -232,20 +232,26 @@ export const hasCandidateElectronFindings = (
 
 /**
  * A completed static pass can still stop early, for example at the Electron
- * wrapper expansion budget. The examination status owns that verdict.
+ * wrapper expansion budget. Syntax recovery and examination facts jointly own that verdict.
  */
 const electronExaminationLimited = ({
   javascript,
 }: AnalyzedJavaScriptArtifactFile): boolean => {
-  const status = javascript?.analysis_coverage?.examination.status;
-  return status !== undefined && status !== "complete";
+  if (javascript === null) return false;
+  const status = javascript.analysis_coverage?.examination.status;
+  const syntax = javascript.analysis_coverage?.syntax.status;
+  return (
+    javascript.parse_status !== "complete" ||
+    (syntax !== undefined && syntax !== "complete") ||
+    (status !== undefined && status !== "complete")
+  );
 };
 
 /**
  * Electron-loading sources whose boundary facts may be missing from the
  * report: their analysis was interrupted or not started, their application
  * projection was rejected for the result budget, or their static examination
- * stopped at a resource limit.
+ * stopped at a resource limit or retained only partial syntax/semantics.
  */
 export const electronIncompleteSourceCount = (
   analysis: JavaScriptArtifactAnalysis,

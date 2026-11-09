@@ -445,3 +445,14 @@ it("reports partial coverage when a successful static pass stopped at a limit", 
     ),
   );
 });
+
+it("keeps recovered Electron facts partial after syntax recovery", async () => {
+  const source = `import { BrowserWindow } from "electron"; new BrowserWindow({webPreferences: {sandbox: true}}); const duplicate = 1; const duplicate = 2;`;
+  const entry = await analyzedEntry(source, "main.mjs");
+  expect(entry.javascript?.parse_status).toBe("partial");
+  expect(entry.javascript?.electron.browser_windows.length).toBeGreaterThan(0);
+  expect(graphForEntries([entry])).toMatchObject({
+    electronSemantics: "partial",
+    browserWindows: 1,
+  });
+});

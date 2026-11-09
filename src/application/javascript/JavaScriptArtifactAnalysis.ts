@@ -97,7 +97,9 @@ export const analyzeAndAdoptJavaScriptArtifactFiles = async (
   const selectedFileCount =
     fileSet.files.length - (fileSet.source_selection?.unselected_files ?? 0);
   let selectedFileIndex = 0;
-  for (const file of javaScriptAnalysisOrder(fileSet.files)) {
+  for (const file of fileSet.source_selection === undefined
+    ? javaScriptAnalysisOrder(fileSet.files)
+    : fileSet.files) {
     let analysisStarted = false;
     try {
       await setImmediate();
