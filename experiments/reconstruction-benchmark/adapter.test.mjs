@@ -104,7 +104,13 @@ test("failed verification retains claims and exact request", async () => {
   assert.deepEqual(report.tasks[0].verification_input, request);
 });
 
-for (const mode of ["success", "overflow", "wrong-record", "wrong-operation"]) {
+for (const mode of [
+  "success",
+  "overflow",
+  "missing-record",
+  "wrong-id",
+  "wrong-operation",
+]) {
   test(`retained Evidence recovery: ${mode}`, async () => {
     const pack = calibrationPack();
     const args = pack.tasks[0].comparison.arguments;
@@ -112,6 +118,14 @@ for (const mode of ["success", "overflow", "wrong-record", "wrong-operation"]) {
       { record: args.left, capture: args.left.normalized_result },
       { record: args.right, capture: args.right.normalized_result },
     ).evidence;
+    // A different, valid comparison record isolates the identity guard from schema validation.
+    const otherArgs = pack.tasks[1].comparison.arguments;
+    const otherRecord = compareProcessCaptureEvidence(
+      { record: otherArgs.left, capture: otherArgs.left.normalized_result },
+      { record: otherArgs.right, capture: otherArgs.right.normalized_result },
+    ).evidence;
+    assert.notEqual(otherRecord.evidence_id, record.evidence_id);
+    assert.equal(otherRecord.operation, record.operation);
     const calls = [];
     const error = {
       error: {
@@ -146,11 +160,11 @@ for (const mode of ["success", "overflow", "wrong-record", "wrong-operation"]) {
             limit: 1,
             next_offset: null,
             records:
-              mode === "wrong-record"
+              mode === "missing-record"
                 ? []
                 : [
                     {
-                      ...record,
+                      ...(mode === "wrong-id" ? otherRecord : record),
                       operation:
                         mode === "wrong-operation"
                           ? "mcp_tool_error"
