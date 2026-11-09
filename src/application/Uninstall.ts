@@ -235,8 +235,8 @@ export const runUninstall = async (
 };
 
 /**
- * Each client is reread when it is edited, so a concurrent change is never
- * overwritten. A client that fails then still stops the remaining removals.
+ * Reread each client when editing and refuse detected changes before publication.
+ * A client that fails still stops the remaining removals.
  */
 const removeAll = async (
   clients: readonly UninstallClient[],

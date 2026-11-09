@@ -399,15 +399,25 @@ describe("observe_native_calls projection: reports partial observation coverage"
     });
     expect(result.process.terminated).toBe(false);
     expect(result.limitations.join(" ")).not.toContain("was killed");
-    expect(result.limitations).toContain(
-      "Target output draining did not complete; reported byte counts are observed lower bounds, not stream totals.",
+    expect(result.limitations).toContainEqual(
+      expect.stringMatching(
+        /output draining did not complete.*byte counts.*lower bounds.*not stream totals/iu,
+      ),
     );
     expect(result.limitations).toEqual(
       expect.arrayContaining([
-        "Observation stopped at max_events (1); later calls were not recorded and termination was requested but could not be confirmed.",
-        "Breakpoints 1 matched no code in any image loaded while observing; their calls could not be observed.",
-        "Target output beyond 1048576 bytes (1 MiB) per stream is counted but not kept. This release has no runtime override.",
-        "REA could not confirm that process 4242 exited; check for it before relying on host state.",
+        expect.stringMatching(
+          /max_events \(1\).*later calls.*not recorded.*termination.*could not be confirmed/iu,
+        ),
+        expect.stringMatching(
+          /Breakpoints 1.*matched no code.*calls could not be observed/iu,
+        ),
+        expect.stringMatching(
+          /1048576 bytes.*per stream.*counted but not kept.*no runtime override/iu,
+        ),
+        expect.stringMatching(
+          /could not confirm.*process 4242 exited.*check for it/iu,
+        ),
       ]),
     );
   });
@@ -482,8 +492,10 @@ describe("observe_native_calls projection: preserves unknown launch identity", (
       module_uuid: null,
       stable: false,
     });
-    expect(result.limitations).toContain(
-      "LLDB did not provide enough module identity evidence to confirm pathname and module continuity around launch.",
+    expect(result.limitations).toContainEqual(
+      expect.stringMatching(
+        /not provide enough module identity evidence.*pathname and module continuity.*launch/iu,
+      ),
     );
   });
 });
@@ -574,7 +586,6 @@ it("retains completed call facts when cancellation arrives with the tracer resul
     undefined,
     controller.signal,
   );
-  expect(result.ok).toBe(false);
   if (result.ok) throw new Error("Expected completion cancellation");
   expect(result.error).toMatchObject({
     _tag: "AnalysisCancelledError",

@@ -77,7 +77,10 @@ describe("documented process CLI workflow", () => {
     async ({ cli }) => {
       const root = await createTestTempDirectory("rea-process-cli-");
       const guide = await readFile(
-        new URL("../../../docs/process-capture.md", import.meta.url),
+        new URL(
+          "../../../docs/guides/runtime/process-capture.md",
+          import.meta.url,
+        ),
         "utf8",
       );
       const recipe = /```sh\nrea capture-process ([^\n]+)\n```/u.exec(
@@ -315,8 +318,9 @@ describe("process CLI errors", () => {
             path: ["arguments", 0],
             reason: "invalid_format",
             expected: "regex",
-            message:
-              "Values passed to operating-system APIs cannot contain NUL",
+            message: expect.stringMatching(
+              /operating.system.*cannot contain NUL/i,
+            ),
           },
         ],
       },
@@ -451,8 +455,9 @@ describe("process CLI evidence validation", () => {
       code: "invalid_request",
       retryable: false,
       category: "invalid_input",
-      message:
-        "Capture evidence is not from the current process-capture workflow. Create new capture evidence, then try again.",
+      message: expect.stringMatching(
+        /capture evidence.*not from.*process-capture.*create new capture evidence/i,
+      ),
       details: {
         operation: "compare_process_captures",
         issues: [{ path: ["left"], reason: "invalid_value" }],

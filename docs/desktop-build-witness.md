@@ -18,10 +18,19 @@ grades the witness with the same checks the exported verifier runs.
 Like the computer tools, these are MCP-only and act on a `computer_id` from
 `start_build_computer`.
 
+REA's skill walks an agent from a request such as "build me an Inkscape
+environment where the agent changes a poster's headline" to a witnessed
+bundle with these tools: the questions it asks first, when it stops for the
+person, the install, the seed, the task, the witness and its final report.
+See [desktop builds](https://github.com/morluto/rea/blob/main/.agents/skills/reverse-engineer-anything/references/desktop-build.md).
+
 ## Build
 
 1. `start_build_computer` from a request. REA is installed in the computer.
-2. `start_build_capture`. REA writes an apt configuration under
+2. `start_build_capture`. REA first checks the installed runtime's export
+   schema for synthetic-seed support. If the archive is too old, repack a
+   current REA, update `REA_BUILD_COMPUTER_REA_ARCHIVE`, restart the REA MCP
+   server and start a new build computer. REA then writes an apt configuration under
    `~/.rea-build/apt` and runs `apt-get update` as the computer's user, so the
    capture finds the package's sources (`package_lists` counts the lists,
    and `package_lists_error` gives apt's exit status and last lines when the
@@ -49,8 +58,12 @@ Like the computer tools, these are MCP-only and act on a `computer_id` from
    --end-checkpoint end`, so it seeds what was saved at `seed`, scrubs the
    computer's host name and user from it, and refuses a task whose checks
    all pass on the seed. A task larger than 96 KiB as REA passes it to the
-   computer is refused before anything runs. A file moved to the desktop Trash is not seeded,
-   and the export's limitations name what the Trash held at `seed`. For a
+   computer is refused before anything runs. It also passes `--synthetic-seed`,
+   since the agent made the seed for the task, so the README does not call it
+   the user's real data. When the seed holds exactly one document and the
+   app's desktop entry takes files, the bundle's app opens that document at
+   launch. A file moved to the desktop Trash is not seeded, and the export's
+   limitations name what the Trash held at `seed`. For a
    `.deb` app that no apt source the capture found offers, the export takes
    the request's URL with `--package-url`; one apt offers installs from apt. REA lists the bundle's files with their sizes
    and SHA-256 in the computer, into a file beside the bundle that it reads
@@ -102,7 +115,8 @@ cancels the call in progress on it and refuses the calls still waiting.
 ## Witness
 
 Start a fresh computer from the exported folder with `start_build_computer`
-and `{"kind": "bundle", "path": ...}`; agentenv boots the app with the seed.
+and `{"kind": "bundle", "path": ...}`; agentenv boots the app with the seed,
+on the seed's document when the export opens one.
 Then, with the task exactly as exported:
 
 | `stage`       | Before it                                                         | Its checks must              |
@@ -137,14 +151,17 @@ SQLite file locked past the reader's wait, or because what it looks for may
 lie in what its view cut, is `undecided` in its result: it shows nothing
 about the task. That covers a line `lines_present` misses in a text view cut
 at 5,000 lines, a row `row_present` misses in a table whose view keeps only
-its first rows, a `value_equals` pointer that names nothing in a truncated
-view or past a cut zip listing, and the absence checks and counts on a cut
-view. A check that passes on what the view kept stays decided, and so does a
-value found there that differs from the one expected. The result's `passed`
-and description are the exported verifier's, which has no undecided results.
-A stage that only undecided checks would settle, such as a near miss whose
-one failing check could not read its file, files nothing and is refused;
-check it again once the files read whole.
+its first rows, a `value_equals` or text check pointer that names nothing
+in a truncated view or past a cut zip listing, the absence checks and counts
+on a cut view, and `text_equals` or `text_contains` of an element on one,
+even where the element's kept text holds the value, since the cut may have
+dropped text from between its runs. Any other check that passes on what the
+view kept stays decided, and so does a value found there that differs from
+the one expected.
+The result's `passed` and description are the exported verifier's, which has
+no undecided results. A stage that only undecided checks would settle, such
+as a near miss whose one failing check could not read its file, files nothing
+and is refused; check it again once the files read whole.
 
 A stage whose checks do not show what it must ends the witness, and so does
 `after_reset`. REA then ends the recording, fetches its segments through
