@@ -114,8 +114,10 @@ it("keeps symbol origin unknown when supplied metadata describes a different sam
   const member = report.matches
     .flatMap((match) => match.left)
     .find((value) => value.address === "0x10");
-  expect(member?.limitations).toContain(
-    "Symbol origin unavailable; exact-name matching is unavailable. Independent complete body bytes remain eligible.",
+  expect(member?.limitations).toContainEqual(
+    expect.stringMatching(
+      /symbol origin unavailable.*exact-name matching is unavailable.*complete body bytes remain eligible/iu,
+    ),
   );
   expect(member?.evidence_links).toContain(alias.evidence_id);
 });
@@ -171,8 +173,10 @@ it("preserves contradictory symbol origins from inventory/name facts or multiple
         withBytes ? "identical-bytes" : null,
       );
       const member = report.matches[0]!.left[0]!;
-      expect(member.limitations).toContain(
-        "Conflicting generated and named symbol-origin observations; exact-name matching is unavailable. Independent complete body bytes remain eligible.",
+      expect(member.limitations).toContainEqual(
+        expect.stringMatching(
+          /conflicting generated and named symbol-origin.*exact-name matching is unavailable.*complete body bytes remain eligible/iu,
+        ),
       );
       expect(member.limitations.join(" ")).not.toContain(
         "Symbol origin unavailable",

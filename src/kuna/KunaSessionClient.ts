@@ -86,6 +86,7 @@ import {
   isKunaOperation,
   KUNA_RELATIONSHIP_LIMITATION,
   KUNA_SINGLE_FUNCTION_LIMITATION,
+  KUNA_VALUE_FLOW_UNAVAILABLE,
   kunaLimitations,
   type KunaOperation,
 } from "./KunaProviderCapabilities.js";
@@ -345,10 +346,6 @@ const kunaVerificationLimitations = (
 
 /** Kuna names a procedure by its inventory entry or by an exact entry address. */
 const procedureSelectorSchema = z.string().min(1);
-
-/** REA's Kuna integration does not supply a def-use model for any procedure. */
-export const KUNA_NATIVE_VALUE_FLOW_UNAVAILABLE =
-  "REA's Kuna provider does not report native def-use observations.";
 
 /**
  * One Kuna analysis session for one target.
@@ -1092,6 +1089,12 @@ export class KunaSessionClient implements AnalysisClient {
         locations,
         limitations: [
           ...limitations,
+          ...(references.value.pointers !== null &&
+          references.value.pointers.length > 0
+            ? [
+                'The recorded pointer rows can be paged from this Evidence with inspect_analysis_view: view {"kind":"recorded-array","path":["references","pointers"]}. These raw Kuna rows may include alias targets; compare each row\'s to_address with the selected address before treating it as an exact-target reference.',
+              ]
+            : []),
           ...(references.value.pointerCoverage === null
             ? []
             : [
@@ -1733,7 +1736,7 @@ export class KunaSessionClient implements AnalysisClient {
       native_api: null,
       native_value_flow: {
         available: false,
-        reason: KUNA_NATIVE_VALUE_FLOW_UNAVAILABLE,
+        reason: KUNA_VALUE_FLOW_UNAVAILABLE,
         limitations: [],
       },
       facet_availability: {

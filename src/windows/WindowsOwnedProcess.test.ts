@@ -1,10 +1,12 @@
 import { once } from "node:events";
 import { describe, expect, it, vi } from "vitest";
 
+import { RuntimeControlUnavailableError } from "../process/RuntimeControlUnavailableError.js";
 import type { WindowsNativeAuthority } from "./WindowsNativeLoader.js";
 import {
   quoteWindowsProcessArgument,
   WindowsNativeControlUnavailableError,
+  WindowsNativeSpawnControlError,
   WindowsOwnedProcess,
 } from "./WindowsOwnedProcess.js";
 
@@ -286,7 +288,97 @@ describe("Windows Job Object memory limits", () => {
       jobMemoryLimit: true,
       appliedLimit: () => LIMIT - 4096,
     });
-    expect(() => launch(native, LIMIT)).toThrow();
+    expect(() => launch(native, LIMIT)).toThrow(WindowsNativeSpawnControlError);
+  });
+});
+
+describe("Windows process_spawn control vs executable classification", () => {
+  it("wraps process_spawn host-control rejections as RuntimeControlUnavailableError while preserving executable launch failures", () => {
+    const { native } = authority();
+    const affinityFailure = Object.assign(
+      new Error(
+        "Caller CPU affinity cannot bound an owned process in another processor group [C:\\runtime\\bun.exe] (Win32 87): The parameter is incorrect.",
+      ),
+      {
+        code: "ERR_REA_WINDOWS_NATIVE",
+        constraint:
+          "Caller CPU affinity cannot bound an owned process in another processor group",
+        requestedPath: "C:\\runtime\\bun.exe",
+        win32Code: 87,
+      },
+    );
+    const affinityAuthority: WindowsNativeAuthority = {
+      ...native,
+      call: (operation) => {
+        if (operation === "process_spawn") throw affinityFailure;
+        throw new Error(`Unmodeled native operation ${operation}`);
+      },
+    };
+    expect(() => launch(affinityAuthority)).toThrow(
+      expect.objectContaining({
+        constructor: WindowsNativeSpawnControlError,
+        code: "windows-native-spawn-control-unavailable",
+        constraint:
+          "Caller CPU affinity cannot bound an owned process in another processor group",
+        win32Code: 87,
+        retryable: true,
+        cause: affinityFailure,
+      }),
+    );
+
+    const jobMembershipFailure = Object.assign(
+      new Error(
+        "Suspended process has no owned Job Object membership [C:\\runtime\\bun.exe] (Win32 5): Access is denied.",
+      ),
+      {
+        code: "EACCES",
+        constraint: "Suspended process has no owned Job Object membership",
+        requestedPath: "C:\\runtime\\bun.exe",
+        win32Code: 5,
+      },
+    );
+    const jobMembershipAuthority: WindowsNativeAuthority = {
+      ...native,
+      call: (operation) => {
+        if (operation === "process_spawn") throw jobMembershipFailure;
+        throw new Error(`Unmodeled native operation ${operation}`);
+      },
+    };
+    let caughtMembership: unknown;
+    try {
+      launch(jobMembershipAuthority);
+    } catch (cause) {
+      caughtMembership = cause;
+    }
+    expect(caughtMembership).toBeInstanceOf(RuntimeControlUnavailableError);
+    expect(caughtMembership).toBeInstanceOf(WindowsNativeSpawnControlError);
+
+    const executableFailure = Object.assign(
+      new Error(
+        "Create process atomically inside owned Job Object failed [C:\\runtime\\bun.exe] (Win32 2): The system cannot find the file specified.",
+      ),
+      {
+        code: "ENOENT",
+        constraint: "Create process atomically inside owned Job Object failed",
+        requestedPath: "C:\\runtime\\bun.exe",
+        win32Code: 2,
+      },
+    );
+    const executableAuthority: WindowsNativeAuthority = {
+      ...native,
+      call: (operation) => {
+        if (operation === "process_spawn") throw executableFailure;
+        throw new Error(`Unmodeled native operation ${operation}`);
+      },
+    };
+    let caughtExecutable: unknown;
+    try {
+      launch(executableAuthority);
+    } catch (cause) {
+      caughtExecutable = cause;
+    }
+    expect(caughtExecutable).toBe(executableFailure);
+    expect(caughtExecutable).not.toBeInstanceOf(RuntimeControlUnavailableError);
   });
 });
 

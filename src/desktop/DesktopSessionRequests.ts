@@ -9,7 +9,7 @@ const QUEUE_RESUME = 4;
  * `stop` ends the session. An empty line, `checkpoint` or `checkpoint <name>`
  * requests a checkpoint; any other line names one.
  */
-export const parseSessionRequest = (line: string): SessionRequest => {
+const parseSessionRequest = (line: string): SessionRequest => {
   const text = line.trim();
   if (text === "stop") return { kind: "stop" };
   const name = text.replace(/^checkpoint(?:\s+|$)/u, "");

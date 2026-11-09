@@ -1,0 +1,123 @@
+import { describe, expect, it } from "vitest";
+
+import { AnalysisResourceConstraintError } from "../../domain/analysisErrorCore.js";
+import {
+  GUEST_FILE_ANSWER_SOURCE,
+  guestFileAnswerCeiling,
+} from "../../desktop/AgentEnvComputer.js";
+import { readOutput } from "./DesktopBuildCommands.js";
+import { endedCapture } from "./DesktopBuildCaptureFailure.js";
+
+describe("endedCapture", () => {
+  it("returns the size refusal instead of a generic exit when the capture output is too large", async () => {
+    const error = await endedCapture(
+      {
+        homeFiles: () => Promise.resolve(new Map()),
+        redacted: (text) => text,
+        exec: () => Promise.reject(new Error("unused")),
+      },
+      {
+        operation: "desktop.capture",
+        when: "before checkpoint seed",
+        afterAppExit: "unused",
+        folder: "/tmp/capture",
+      },
+      { exited: 0, output_bytes: Number.MAX_SAFE_INTEGER },
+      new AbortController().signal,
+    );
+
+    expect(error).toBeInstanceOf(AnalysisResourceConstraintError);
+    expect(error.message).toContain("max-old-space-size");
+  });
+});
+
+describe("readOutput", () => {
+  it("does not fetch a command output whose reported size exceeds the host answer ceiling", async () => {
+    let fetched = false;
+    const failure = await readOutput(
+      {
+        homeFiles: () => {
+          fetched = true;
+          return Promise.resolve(new Map());
+        },
+        redacted: (text) => text,
+        exec: () => Promise.reject(new Error("unused")),
+      },
+      "out.json",
+      Number.MAX_SAFE_INTEGER,
+      new AbortController().signal,
+    ).catch((cause: unknown) => cause);
+    expect(fetched).toBe(false);
+    expect(failure).toBeInstanceOf(AnalysisResourceConstraintError);
+    if (!(failure instanceof AnalysisResourceConstraintError)) return;
+    expect(failure.reportedLimits).toMatchObject({
+      guest_file_bytes: Number.MAX_SAFE_INTEGER,
+      file_count: 1,
+      answer_ceiling_bytes: guestFileAnswerCeiling(),
+      ceiling_source: GUEST_FILE_ANSWER_SOURCE,
+    });
+  });
+
+  it("reads a reported failure that fits the ceiling", async () => {
+    const body = Buffer.from(
+      JSON.stringify({ code: "busy", message: "the app is busy" }),
+    );
+    let reported = 0;
+    const output = await readOutput(
+      {
+        homeFiles: (_paths, bytes) => {
+          reported = bytes;
+          return Promise.resolve(new Map([["out.json", body]]));
+        },
+        redacted: (text) => text,
+        exec: () => Promise.reject(new Error("unused")),
+      },
+      "out.json",
+      body.length,
+      new AbortController().signal,
+    );
+    expect(reported).toBe(body.length);
+    expect(output.kind).toBe("failure");
+    if (output.kind !== "failure") return;
+    expect(output.failure).toMatchObject({
+      code: "busy",
+      message: "the app is busy",
+    });
+  });
+});
+
+describe("endedCapture", () => {
+  it("keeps a capacity error from the capture output, including its recovery", async () => {
+    let fetched = false;
+    const failure = await endedCapture(
+      {
+        homeFiles: () => {
+          fetched = true;
+          return Promise.resolve(new Map());
+        },
+        redacted: (text) => text,
+        exec: () => Promise.reject(new Error("unused")),
+      },
+      {
+        operation: "desktop_build_capture_start",
+        when: "before checkpoint seed",
+        afterAppExit: "Start the capture again.",
+        folder: "capture",
+      },
+      { exited: 0, output_bytes: Number.MAX_SAFE_INTEGER },
+      new AbortController().signal,
+    );
+    expect(fetched).toBe(false);
+    expect(failure).toBeInstanceOf(AnalysisResourceConstraintError);
+    if (!(failure instanceof AnalysisResourceConstraintError)) return;
+    expect(failure.operation).toBe("data/get");
+    expect(failure.retryable).toBe(false);
+    expect(failure.remediationAction).toContain("--max-old-space-size");
+    expect(failure.reportedLimits).toMatchObject({
+      guest_file_bytes: Number.MAX_SAFE_INTEGER,
+      file_count: 1,
+      answer_ceiling_bytes: guestFileAnswerCeiling(),
+      ceiling_source: GUEST_FILE_ANSWER_SOURCE,
+    });
+  });
+});

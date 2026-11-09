@@ -1,7 +1,9 @@
 """Run REA inside an agentenv build computer for REA on the host: capture the app, draft its task and export it.
 
 REA sends this file's source through the computer's ``computer-exec/v1`` route as
-``python3 -I -c <source> <command> <JSON arguments>``; each command prints one JSON line and exits. ``start``
+``python3 -I -c <source> <command> <JSON arguments>``. JSON that would exceed the bytes Linux
+passes as one string travels as several arguments, which this file joins before parsing. Each command prints
+one JSON line and exits. ``start``
 leaves the capture running on its own: its stdin is a FIFO it holds open for reading and writing, so it never
 sees the end of its input, and ``mark`` and ``stop`` write their requests there and wait for the capture's own
 acknowledgement on its progress log. A small shell around the capture writes its exit status to a file, the
@@ -91,6 +93,13 @@ def _exit_code(capture: str):
         return None
 
 
+def _ended(capture: str, code: int) -> dict:
+    """A capture that has exited: its status, the end of its progress log and its output's size, which REA reads
+    whole for the Evidence or failure it ended with, whichever step was waiting on it."""
+    return {"exited": code, "progress": _tail(os.path.join(capture, "progress.log")),
+            "output_bytes": os.path.getsize(os.path.join(capture, "capture.out"))}
+
+
 def _event_line(path: str, offset: int, kinds: set, name):
     """The first progress line after ``offset`` whose event is of one of ``kinds``, for ``name`` when given."""
     try:
@@ -119,10 +128,39 @@ def _wait(capture: str, offset: int, kinds: set, name, timeout: float) -> dict:
             return {"line": line}
         code = _exit_code(capture)
         if code is not None:
-            return {"exited": code, "progress": _tail(log), "output": _tail(os.path.join(capture, "capture.out"))}
+            return _ended(capture, code)
         if time.monotonic() > deadline:
             return {"timed_out": True, "progress": _tail(log)}
         time.sleep(POLL_S)
+
+
+def _within(path: str, folder: str) -> bool:
+    return path == folder or path.startswith(folder + os.sep)
+
+
+def _state_paths(values: list, work: str):
+    """Each state path as an absolute path strictly under the home and outside REA's work folder, both as named
+    and with its links resolved, or the refusal of the first that is not. The capture resolves the links again
+    and retains what they lead to, so a link out of the home is refused here. Each passes on as named, so the
+    capture keeps what its spelling means, such as a hidden settings folder."""
+    home = os.path.normpath(os.path.expanduser("~"))
+    real_home, real_work = os.path.realpath(home), os.path.realpath(work)
+    spellings = {home, real_home}
+    paths = []
+    for value in values:
+        relative = value[2:] if value.startswith("~/") else value
+        path = os.path.normpath(os.path.join(home, relative))
+        if ".." in relative.split("/") or not any(path.startswith(spelling + os.sep) for spelling in spellings):
+            return None, f"The state path {value} is not under the computer's home, {home}."
+        # Every link on the way is followed, a dangling one too; a path that does not exist yet resolves
+        # through its nearest existing folder.
+        resolved = os.path.realpath(path)
+        if not resolved.startswith(real_home + os.sep):
+            return None, f"The state path {value} leads through a link to {resolved}, which is not under the computer's home, {home}."
+        if _within(path, work) or _within(resolved, real_work):
+            return None, f"The state path {value} is in REA's work folder {work}, which every capture leaves out."
+        paths.append(path)
+    return paths, None
 
 
 def start(arguments: dict) -> int:
@@ -130,6 +168,9 @@ def start(arguments: dict) -> int:
     rea = shutil.which("rea")
     if rea is None:
         return _say({"error": "REA is not installed in this computer; start the computer from a request, which installs it."})
+    state_paths, refusal = _state_paths(arguments.get("state_paths", []), work)
+    if refusal is not None:
+        return _say({"refused": refusal})
     if os.path.exists(capture):
         return _say({"error": f"the capture folder {capture} is already used"})
     apt = _apt(work, arguments.get("apt_timeout_s", 600))
@@ -143,6 +184,8 @@ def start(arguments: dict) -> int:
             "--output", os.path.join(capture, "capture"), "--exclude", work, "--json"]
     for value in arguments.get("arguments", []):
         argv += ["--argument", value]
+    for path in state_paths:
+        argv += ["--state-path", path]
     if arguments.get("package_file"):
         argv += ["--package-file", arguments["package_file"]]
     # Reading and writing, so the capture never reads the end of its input between requests.
@@ -175,11 +218,13 @@ def _request(capture: str, line: str) -> bool:
 
 
 def mark(arguments: dict) -> int:
+    """Request a checkpoint and answer with the capture's acknowledgement line as it wrote it: the checkpoint's
+    counts and up to ten of the files that changed, home-relative, with a count of the rest."""
     capture, name = os.path.abspath(arguments["capture"]), arguments["name"]
     code = _exit_code(capture)
     log = os.path.join(capture, "progress.log")
     if code is not None:
-        return _say({"exited": code, "progress": _tail(log)})
+        return _say(_ended(capture, code))
     # A checkpoint already taken, whose answer was lost, is answered from the capture's own log.
     taken = _event_line(log, 0, {"checkpoint"}, name)
     if taken is not None:
@@ -213,6 +258,7 @@ def run(arguments: dict) -> int:
     rea = shutil.which("rea")
     if rea is None:
         return _say({"error": "REA is not installed in this computer"})
+    os.makedirs(os.path.dirname(arguments["stdout"]), exist_ok=True)
     for path, text in arguments.get("files", {}).items():
         os.makedirs(os.path.dirname(path), exist_ok=True)
         with open(path, "w", encoding="utf-8") as handle:
@@ -236,8 +282,18 @@ def listing(arguments: dict) -> int:
     """
     home = os.path.expanduser("~")
     files, skipped = [], []
-    for directory, folders, names in os.walk(os.path.abspath(arguments["root"])):
+
+    def fail_walk(error: OSError) -> None:
+        raise error
+
+    for directory, folders, names in os.walk(os.path.abspath(arguments["root"]), onerror=fail_walk):
         folders.sort()
+        # os.walk does not follow directory symlinks; disclose them to the consumer.
+        for name in folders[:]:
+            path = os.path.join(directory, name)
+            if os.path.islink(path):
+                skipped.append(os.path.relpath(path, home))
+                folders.remove(name)
         for name in sorted(names):
             path = os.path.join(directory, name)
             relative = os.path.relpath(path, home)
@@ -259,4 +315,4 @@ def listing(arguments: dict) -> int:
 COMMANDS = {"start": start, "mark": mark, "stop": stop, "run": run, "list": listing}
 
 if __name__ == "__main__":
-    sys.exit(COMMANDS[sys.argv[1]](json.loads(sys.argv[2])))
+    sys.exit(COMMANDS[sys.argv[1]](json.loads("".join(sys.argv[2:]))))

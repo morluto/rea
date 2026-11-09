@@ -170,17 +170,17 @@ it("reads a 309 crash report, uppercase UUID, and lossless register", () => {
 
 it("refuses a stackshot bug_type without a crash body", () => {
   const bytes = appleIpsBytes({ bugType: "288" });
-  expect(() => parseAppleIps(bytes, artifact(bytes), input)).toThrow(
-    AppleIpsFormatFailure,
-  );
+  let failure: unknown;
   try {
     parseAppleIps(bytes, artifact(bytes), input);
   } catch (cause) {
-    expect(cause).toMatchObject({
-      kind: "unsupported",
-      message: expect.stringContaining("288"),
-    });
+    failure = cause;
   }
+  expect(failure).toBeInstanceOf(AppleIpsFormatFailure);
+  expect(failure).toMatchObject({
+    kind: "unsupported",
+    message: expect.stringContaining("288"),
+  });
 });
 
 it("fails closed on a truncated crash body", () => {

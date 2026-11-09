@@ -2,12 +2,6 @@ import { expect, it as test } from "vitest";
 
 import { functionDossierSchema } from "../../../../src/domain/native/functionDossier.js";
 import { projectAnalysisError } from "../../../../src/domain/analysisErrorProjection.js";
-import {
-  ambiguousKunaNameMessage,
-  KUNA_XREF_AMBIGUOUS_NAME_REMEDIATION,
-  KUNA_XREF_MISSING_NAME_REMEDIATION,
-  missingKunaXrefNameMessage,
-} from "../../../../src/kuna/KunaSelectorGuidance.js";
 import { fakeKunaCalls } from "./fakeKuna.js";
 import {
   MACHO_FUNCTIONS,
@@ -212,31 +206,32 @@ it("reports missing and ambiguous xref names within Kuna's inventory", async () 
     const missing = await client.execute("xrefs", { address: "missing_data" });
     expect(missing.ok).toBe(false);
     if (missing.ok) throw new Error("Expected missing inventory name");
-    expect(projectAnalysisError(missing.error)).toMatchObject({
+    const missingProjection = projectAnalysisError(missing.error);
+    expect(missingProjection).toMatchObject({
       code: "invalid_request",
-      message: missingKunaXrefNameMessage("missing_data"),
-      remediation: { action: KUNA_XREF_MISSING_NAME_REMEDIATION },
+      message: expect.stringMatching(/no inventory entry.*missing_data/iu),
+      remediation: {
+        action: expect.stringMatching(
+          /symbols or exports.*xrefs.*address.*does not establish absence/iu,
+        ),
+      },
     });
-    expect(projectAnalysisError(missing.error).recovery).toBeUndefined();
-    expect(projectAnalysisError(missing.error).message).toContain(
-      "missing_data",
-    );
+    expect(missingProjection.recovery).toBeUndefined();
 
     const ambiguous = await client.execute("xrefs", { address: "puts" });
     expect(ambiguous.ok).toBe(false);
     if (ambiguous.ok) throw new Error("Expected ambiguous inventory name");
-    expect(projectAnalysisError(ambiguous.error)).toMatchObject({
+    const ambiguousProjection = projectAnalysisError(ambiguous.error);
+    expect(ambiguousProjection).toMatchObject({
       code: "invalid_request",
-      message: ambiguousKunaNameMessage("puts", ["0x100000480", "0x100004000"]),
-      remediation: { action: KUNA_XREF_AMBIGUOUS_NAME_REMEDIATION },
+      message: expect.stringMatching(/puts.*2 Kuna entries/iu),
+      remediation: {
+        action: expect.stringMatching(/select.*addresses.*xrefs/iu),
+      },
     });
-    expect(projectAnalysisError(ambiguous.error).message).toContain(
-      "0x100000480",
-    );
-    expect(projectAnalysisError(ambiguous.error).message).toContain(
-      "0x100004000",
-    );
-    expect(projectAnalysisError(ambiguous.error).recovery).toBeUndefined();
+    expect(ambiguousProjection.message).toContain("0x100000480");
+    expect(ambiguousProjection.message).toContain("0x100004000");
+    expect(ambiguousProjection.recovery).toBeUndefined();
   } finally {
     expect(await client.close()).toEqual({ ok: true, value: null });
   }

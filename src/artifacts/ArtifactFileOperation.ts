@@ -246,6 +246,17 @@ export const assertArtifactReadActive = (
     });
 };
 
+/** Recognize only the originating caller's cancellation without discarding cleanup ownership. */
+export const artifactReadCancelledBy = (
+  cause: unknown,
+  signal: AbortSignal | undefined,
+): boolean =>
+  signal?.aborted === true &&
+  cause instanceof ArtifactReaderFailure &&
+  cause.reason === "cancelled" &&
+  cause.cleanup === undefined &&
+  Object.is(cause.cancellation?.reason, signal.reason);
+
 /** Admit a regular file without blocking on pipes, retaining failed admission closes. */
 export const withArtifactRegularFile = async <Value>(
   path: string,
@@ -327,7 +338,8 @@ export const withArtifactFileHandle = async <Value>(
   }
 };
 
-const artifactOperationCause = (cause: unknown): unknown =>
+/** Convert only cancellation produced by the regular-file owner. */
+export const artifactOperationCause = (cause: unknown): unknown =>
   cause instanceof RegularFileOperationCancelled
     ? new ArtifactReaderFailure(
         "cancelled",

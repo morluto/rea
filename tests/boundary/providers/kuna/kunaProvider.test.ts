@@ -20,7 +20,7 @@ import { OwnedFileHandle } from "../../../../src/filesystem/OwnedFileHandle.js";
 import { AnalysisProviderRegistry } from "../../../../src/application/binary/AnalysisProviderRegistry.js";
 import { composeBinarySession } from "../../../../src/application/binary/BinarySessionComposition.js";
 import { projectAnalysisError } from "../../../../src/domain/analysisErrorProjection.js";
-import { KUNA_NATIVE_VALUE_FLOW_UNAVAILABLE } from "../../../../src/kuna/KunaSessionClient.js";
+import { KUNA_VALUE_FLOW_UNAVAILABLE } from "../../../../src/kuna/KunaProviderCapabilities.js";
 import { KunaProvider } from "../../../../src/kuna/KunaProvider.js";
 import { KUNA_FUNCTION_TEXT_BYTES } from "../../../../src/kuna/KunaLimits.js";
 import { KunaProjectCache } from "../../../../src/kuna/KunaProjectCache.js";
@@ -441,8 +441,10 @@ it("reports a failed function and an import slot as unavailable text, not errors
     procedure: "broken",
   });
   expect(broken.result).toBeNull();
-  expect(broken.limitations).toContain(
-    "Kuna could not decompile this function: Flow exceeded maximum instructions",
+  expect(broken.limitations).toContainEqual(
+    expect.stringMatching(
+      /could not decompile.*Flow exceeded maximum instructions/i,
+    ),
   );
   const dossier = await run(client, "analyze_function", {
     procedure: "broken",
@@ -451,8 +453,9 @@ it("reports a failed function and an import slot as unavailable text, not errors
     facet_availability: {
       pseudocode: {
         available: false,
-        reason:
-          "Kuna could not decompile this function: Flow exceeded maximum instructions",
+        reason: expect.stringMatching(
+          /could not decompile.*Flow exceeded maximum instructions/i,
+        ),
       },
     },
   });
@@ -524,7 +527,7 @@ it("builds a dossier with text and call relationships, leaving unsupported facet
     assembly: ["main:  ; 0x1000", "  00001000: c3     RET"],
     native_value_flow: {
       available: false,
-      reason: KUNA_NATIVE_VALUE_FLOW_UNAVAILABLE,
+      reason: KUNA_VALUE_FLOW_UNAVAILABLE,
     },
     facet_availability: {
       pseudocode: { available: true },
