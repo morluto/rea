@@ -2303,6 +2303,16 @@ describe("ReleaseExposureService Go forwarded linker search paths", () => {
   );
 });
 
+it("preserves a quoted linker path containing a flag-like suffix", async () => {
+  const report = await goReport(
+    goModule([{ key: "-ldflags", value: '-s "-L=/tmp/private -sdk" -w' }]),
+  );
+  expect(
+    report.checks.find((item) => item.id === "go.build_paths")?.observation
+      .samples,
+  ).toEqual(["/tmp/private -sdk"]);
+});
+
 describe("ReleaseExposureService Go relative flag paths", () => {
   it("keeps relative paths given to compiler path flags, attached or not", async () => {
     const report = await goReport(
@@ -2374,12 +2384,11 @@ describe("ReleaseExposureService Go relative flag paths", () => {
 
   it.each([
     ["-L private-sdk -s -w", "private-sdk"],
-    [`"-L private-sdk -s -w"`, "private-sdk"],
     ["-L=private-sdk -s -w", "private-sdk"],
     [`-L "private - sdk" -s -w`, "private - sdk"],
     [`-L "/tmp/private - sdk" -s -w`, "/tmp/private - sdk"],
     [`-s "-L=/tmp/private - sdk" -w`, "/tmp/private - sdk"],
-    [`"-L=private - sdk -s -w"`, "private - sdk"],
+    [`"-L=private - sdk -s -w"`, "private - sdk -s -w"],
     ["-X main.version=1 -L private-sdk", "private-sdk"],
   ])("keeps the relative linker directory in %s", async (value, path) => {
     const report = await goReport(
@@ -2392,7 +2401,6 @@ describe("ReleaseExposureService Go relative flag paths", () => {
 
   it.each([
     "all=-L private-sdk -s -w",
-    `"all=-L private-sdk -s -w"`,
     "all=-s -L private-sdk",
     "github.com/acme/...=-B gobuildid -L private-sdk",
   ])("reads the package selector once in %s", async (value) => {
@@ -2460,6 +2468,21 @@ describe("ReleaseExposureService Go relative flag paths", () => {
 });
 
 describe("ReleaseExposureService Go linker file operands", () => {
+  it("treats linker map stdout as output, not a build path", async () => {
+    const report = await goReport(
+      goModule([{ key: "CGO_LDFLAGS", value: "-Wl,-Map=-" }]),
+    );
+    const check = report.checks.find((item) => item.id === "go.build_paths");
+    expect(check?.status).toBe("not_observed");
+  });
+  it("reports a relative GNU linker -R operand", async () => {
+    const report = await goReport(
+      goModule([{ key: "CGO_LDFLAGS", value: "-Wl,-R,private-runtime" }]),
+    );
+    const check = report.checks.find((item) => item.id === "go.build_paths");
+    expect(check?.observation.samples).toContain("private-runtime");
+  });
+
   it.each([
     [
       "-s -w -extldflags=-Wl,--version-script=private-versions.map",

@@ -1102,7 +1102,7 @@ const GO_COMPILER_PATH_FLAG =
  * the linker map to one.
  */
 const LINKER_PATH_FLAG =
-  /^(?:-(?!T(?:bss|data|text|(?:ldata|rodata|text)-segment)(?:=|$))[ILT]|-{1,2}(?:dynamic-linker|dynamic-list|library-path|Map|retain-symbols-file|rpath|rpath-link|script|version-script)(?==|$))=?(.*)$/su;
+  /^(?:-(?!T(?:bss|data|text|(?:ldata|rodata|text)-segment)(?:=|$))[ILRT]|-{1,2}(?:dynamic-linker|dynamic-list|library-path|Map|retain-symbols-file|rpath|rpath-link|script|version-script)(?==|$))=?(.*)$/su;
 type NativeImageFormat = ReleaseExposureNativeImage["format"];
 /**
  * A runtime search path the image's loader expands, which names no directory
@@ -1130,7 +1130,7 @@ const LINKER_SEARCH_LIST_SEPARATOR = /(?<!(?:^|:)[A-Za-z]):/u;
  * name a program or `none`, so only their rooted values read as paths.
  */
 const GO_LINKER_PATH_FLAG =
-  /^-{1,2}(?:I|L|benchmarkprofile|capturehostobjs|cpuprofile|fipso|importcfg|memprofile|o|r|tmpdir)(?:=|\s+|$)(.*)$/su;
+  /^-{1,2}(?:I|L|benchmarkprofile|capturehostobjs|cpuprofile|fipso|importcfg|memprofile|o|r|tmpdir)(?:=|$)(.*)$/su;
 /** The options `go tool compile -h` documents as taking a directory, path or file. */
 const GO_COMPILE_PATH_FLAG =
   /^-{1,2}(?:D|I|asmhdr|bench|blockprofile|coveragecfg|cpuprofile|embedcfg|importcfg|linkobj|memprofile|mutexprofile|o|pgoprofile|symabis|traceprofile|trimpath)(?:=|\s+|$)(.*)$/su;
@@ -1157,27 +1157,13 @@ const goFields = (value: string): string[] =>
     ([field, double, single]) => double ?? single ?? field,
   );
 
-/**
- * A field's flags. A quoted field that begins with a flag, after any package
- * selector, can hold several, so it splits before each later flag. A dash
- * alone is not a flag, so `-L=/tmp/private - sdk` stays one argument. Any
- * other field is one argument, such as the directory in `-L "/tmp/a - b"`,
- * and is kept whole.
- */
-const splitGoField = (field: string): string[] =>
-  field.replace(GO_PACKAGE_SELECTOR, "").startsWith("-")
-    ? field.split(/\s+(?=-\S)/u)
-    : [field];
-
-/** Flags in one value. */
-const goFlags = (value: string): string[] =>
-  goFields(value).flatMap(splitGoField);
+/** Flags preserve the field boundaries established by Go quoting. */
+const goFlags = (value: string): string[] => goFields(value);
 
 /**
  * One Go tool's flags, each `-X` kept apart from the string it sets, and the
  * values given to `-extldflags` kept apart for the external linker. `own` is
- * every flag the tool reads itself, `-X` strings included, split as `goFlags`
- * splits them.
+ * every flag the tool reads itself, `-X` strings included, with quoted fields intact.
  */
 const goToolFlags = (
   value: string,
@@ -1189,7 +1175,7 @@ const goToolFlags = (
   for (const [index, field] of goFields(value).entries()) {
     if (argument !== null) {
       if (argument === "external") external.push(field);
-      else own.push(...splitGoField(field));
+      else own.push(field);
       argument = null;
       continue;
     }
@@ -1200,12 +1186,12 @@ const goToolFlags = (
       else external.push(externalFlags[1]);
       continue;
     }
-    own.push(...splitGoField(field));
+    own.push(field);
     if (GO_LINKER_STRING_FLAG.test(flag)) {
       if (/^-{1,2}X$/u.test(flag)) argument = "string";
       continue;
     }
-    flags.push(...splitGoField(flag));
+    flags.push(flag);
   }
   return { flags, own, external };
 };
@@ -1231,6 +1217,9 @@ const goRelativeFlagPaths = (flags: string[], pathFlag: RegExp): string[] =>
       attached.length > 0 || next?.startsWith("-") === true ? attached : next;
     return argument === undefined ||
       argument.length === 0 ||
+      (pathFlag === LINKER_PATH_FLAG &&
+        /^-{1,2}Map(?:=|$)/u.test(flag) &&
+        argument === "-") ||
       filesystemPath(argument) !== null
       ? []
       : [argument];

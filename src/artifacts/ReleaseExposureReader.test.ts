@@ -4013,6 +4013,21 @@ describe("ReleaseExposureReader unreadable launchers", () => {
 });
 
 describe("ReleaseExposureReader Node shebang .map scripts", () => {
+  it("counts Node-shebang map reads against the map allowance", async () => {
+    const root = await createTestTempDirectory(
+      "rea-release-shebang-map-budget-",
+    );
+    for (let i = 0; i < MAX_RELEASE_EXPOSURE_SOURCE_MAPS; i += 1)
+      await writeFile(
+        join(root, `${String(i).padStart(3, "0")}.map`),
+        "#!/usr/bin/env node\nrun();\n",
+      );
+    await writeFile(join(root, "zzz.js.map"), embeddedSourceMap());
+    const scanned = await inspect(root);
+    expect(scanned.source_maps.skipped).toBeGreaterThan(0);
+    expect(sourceMapSourcesStatus(scanned)).toBe("unknown");
+  });
+
   const mapUrl = `data:application/json;base64,${embeddedSourceMap().toString(
     "base64",
   )}`;

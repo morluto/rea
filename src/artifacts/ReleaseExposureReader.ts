@@ -1123,10 +1123,11 @@ const examineMapMember = async (
   const declared = undeclared
     ? member
     : { ...member, logical: `${member.logical}.js.map` };
+  const bytesReadBefore = state.memberBytesRead;
   const read = await readMap(state, declared);
   const header = read === null ? null : headerOfRead(read.loaded);
   if (undeclared && read !== null && header !== null && hasNodeShebang(header))
-    return examineShebangMap(state, member, read.hasSlot, context);
+    return examineShebangMap(state, member, read.loaded, bytesReadBefore);
   // A shebang whose program an unresolved variable names may run Node, so the
   // member may be a script and is no linker-map evidence, as for a sibling.
   if (
@@ -1202,21 +1203,38 @@ const examineMapMember = async (
 
 /**
  * An undeclared `.map` that starts with a Node shebang is a script, such as
- * `runner.map`, so it is not a linker map. Its map slot is returned and the
- * text reader examines it as JavaScript, which reads its inline maps.
+ * `runner.map`, so it is not a linker map. Its completed map read keeps its
+ * slot and its bytes are reused for the text and inline-map checks.
  */
-const examineShebangMap = async (
+const examineShebangMap = (
   state: ScanState,
   member: MemberView,
-  hasSlot: boolean,
-  context: ScanContext,
-): Promise<boolean> => {
-  if (hasSlot) state.mapsRead -= 1;
+  loaded: MemberRead,
+  bytesReadBefore: number,
+): boolean => {
   const key = memberLocationKey(member.location);
   state.examinedMaps.delete(key);
   state.examinedLocations.add(key);
   state.examinedScripts.add(key);
-  return examineTextMember(state, { ...member, kind: "javascript" }, context);
+  const remaining = MAX_RELEASE_EXPOSURE_TEXT_BYTES - state.textBytes;
+  if (
+    loaded.kind === "bytes" &&
+    loaded.bytes.length <=
+      Math.min(MAX_RELEASE_EXPOSURE_TEXT_MEMBER_BYTES, remaining)
+  )
+    return examineLoadedText(
+      state,
+      { ...member, kind: "javascript" },
+      loaded,
+      bytesReadBefore,
+    );
+  state.textBytes += Math.min(
+    Math.max(remaining, 0),
+    state.memberBytesRead - bytesReadBefore,
+  );
+  state.skippedText += 1;
+  state.skippedMaps += 1;
+  return loaded.kind !== "unread";
 };
 
 /** The first bytes a read returned, or null when it returned none. */
