@@ -254,6 +254,12 @@ export const CHECK_VIEWS: Readonly<Record<string, TaskFileView>> = {
           element("details", {}, ["Ada"]),
           element("date", {}, ["2026-11-08T09:00:00Z"]),
         ]),
+        element("person", {}, [
+          element("details", {}, [
+            "Alpha",
+            element("saved", {}, ["٢٠٢٦-١١-٠٧T١٠:١٢:٠٠Z"]),
+          ]),
+        ]),
       ]),
       truncated: false,
     },
@@ -1341,6 +1347,16 @@ const ledger = "Documents/ledger.json";
 /** Members named by a child element's text, its whitespace collapsed, alone or with other conditions. */
 const CHILD_TEXT_CASES: readonly (readonly [DesktopTaskCheckInput, boolean])[] =
   [
+    [
+      {
+        kind: "member_count",
+        file: "Documents/people.xml",
+        pointer: "/root/children",
+        matching: "[>details=Alpha٢٠٢٦-١١-٠٧T١٠:١٢:٠٠Z]",
+        equals: 1,
+      },
+      true,
+    ],
     [
       {
         kind: "member_count",
