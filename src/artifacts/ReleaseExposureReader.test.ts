@@ -103,7 +103,8 @@ vi.mock("./inventory/ArtifactInventory.js", async () => {
 
 const createdReaders = vi.hoisted(() => ({
   wrap: undefined as
-    undefined | ((reader: ArtifactReader, path: string) => ArtifactReader),
+    | undefined
+    | ((reader: ArtifactReader, path: string) => ArtifactReader),
 }));
 
 vi.mock("./createArtifactReader.js", async () => {
@@ -4022,6 +4023,25 @@ describe("ReleaseExposureReader Node shebang .map scripts", () => {
       expect(scanned.source_maps).toMatchObject({ embedded: 1, skipped: 0 });
       expect(scanned.debug_companions.paths).toEqual([]);
       expect(sourceMapSourcesStatus(scanned)).toBe("exposed");
+    },
+  );
+
+  it.each([true, false])(
+    "leaves a runner.map whose env -S program is a variable unassessed, selected: %s",
+    async (selected) => {
+      const root = await createTestTempDirectory(
+        "rea-release-exposure-shebang-map-",
+      );
+      const path = join(root, "runner.map");
+      await writeFile(
+        path,
+        `#!/usr/bin/env -S \${NODE_BIN}\nrun();\n//# sourceMappingURL=${mapUrl}\n`,
+      );
+      const scanned = await inspect(selected ? path : root);
+      expect(scanned.source_maps).toMatchObject({ embedded: 0, skipped: 1 });
+      expect(scanned.debug_companions.paths).toEqual([]);
+      expect(scanned.debug_companions.skipped).toBe(1);
+      expect(sourceMapSourcesStatus(scanned)).toBe("unknown");
     },
   );
 });

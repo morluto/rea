@@ -1127,6 +1127,25 @@ const examineMapMember = async (
   const header = read === null ? null : headerOfRead(read.loaded);
   if (undeclared && read !== null && header !== null && hasNodeShebang(header))
     return examineShebangMap(state, member, read.hasSlot, context);
+  // A shebang whose program an unresolved variable names may run Node, so the
+  // member may be a script and is no linker-map evidence, as for a sibling.
+  if (
+    undeclared &&
+    read !== null &&
+    header !== null &&
+    nodeShebang(header) === undefined
+  ) {
+    state.skippedMaps += 1;
+    state.skippedCompanions += 1;
+    if (read.loaded.kind === "bytes")
+      scanText(
+        state,
+        member,
+        read.loaded.bytes.length,
+        decodeMemberText(read.loaded.bytes),
+      );
+    return true;
+  }
   const packaged =
     read === null ? null : packagedFormatOfRead(state, member, read.loaded);
   if (packaged === "asar") {
