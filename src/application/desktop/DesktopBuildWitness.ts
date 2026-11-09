@@ -1,7 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
 import { readdir } from "node:fs/promises";
-import { join } from "node:path";
-import { isDeepStrictEqual } from "node:util";
 
 import { z } from "zod";
 
@@ -12,15 +10,12 @@ import {
   type desktopTaskSchema,
   type DesktopTask,
 } from "../../domain/desktop/appTask.js";
+import { SETTLE_TIMING } from "../../domain/desktop/appSettle.js";
 import {
   evaluateTaskChecks,
   type TaskCheckOutcome,
 } from "../../domain/desktop/appTaskChecks.js";
-import {
-  renderTaskSteps,
-  renderTaskVerifier,
-  taskVerifierArtifact,
-} from "../../domain/desktop/appTaskPython.js";
+import { isScreenTask } from "../../domain/desktop/appTaskScreen.js";
 import {
   admitWitnessStage,
   appStateViews,
@@ -32,19 +27,30 @@ import {
   type WitnessStage,
   type WitnessStageRecord,
 } from "../../domain/desktop/buildWitness.js";
+import type { JsonValue } from "../../domain/jsonValue.js";
 import { ProviderAdapterError } from "../../domain/providerAdapterError.js";
 import { err, ok, type Result } from "../../domain/result.js";
-import { safeParseUtf8Json } from "../../domain/safeJson.js";
 import type {
   AgentEnvComputer,
   RecordingManifest,
 } from "../../desktop/AgentEnvComputer.js";
 import { AGENTENV_PROVIDER } from "../../desktop/AgentEnvComputerHelper.js";
-import { readHostFile } from "../../desktop/HostFileRead.js";
 import { isPortableBundleName } from "../environment/environmentBundle.js";
+import {
+  silentProgressReporter,
+  type ProgressReporter,
+} from "../ProgressReporter.js";
 import type { ReadonlyActionLog } from "./DesktopBuildActionLog.js";
 import { errorText } from "./DesktopBuildCommands.js";
 import { desktopOperationFailure } from "./DesktopCaptureRefusals.js";
+import { settledAppData, type BuildSettle } from "./DesktopBuildSettle.js";
+import { DesktopRemoteTaskReaders } from "./DesktopRemoteTaskReaders.js";
+import {
+  bundleTaskDifference,
+  judgeScreenTask,
+  type Graded,
+  type WitnessBundle,
+} from "./DesktopBuildWitnessBundle.js";
 import {
   writeWitnessRecord,
   type EndedWitness,
@@ -58,7 +64,12 @@ const FRESH =
 /** The computer routes the witness reads. */
 export type WitnessedComputer = Pick<
   AgentEnvComputer,
-  "appData" | "startRecording" | "endRecording" | "recordingSegments"
+  | "appData"
+  | "startRecording"
+  | "endRecording"
+  | "recordingSegments"
+  | "exec"
+  | "callTool"
 >;
 
 type WitnessSummary = {
@@ -76,6 +87,10 @@ export type CheckedTask = {
   readonly passed: number;
   readonly failed: number;
   readonly results: TaskCheckOutcome[];
+  /** Whether the app's files had held for the settle window when they were graded, rather than at its bound. */
+  readonly settled: boolean;
+  /** Whether a read still in flight at the settle bound was cut, so the last completed read was graded. */
+  readonly read_cut: boolean;
   readonly witness: WitnessSummary | null;
 };
 
@@ -97,42 +112,6 @@ const usableFolder = async (directory: string): Promise<boolean> =>
       (cause as NodeJS.ErrnoException | undefined)?.code === "ENOENT",
   );
 
-/** The most bytes REA reads of each of the bundle's files for the task. */
-const BUNDLE_FILE_BYTES = 1024 * 1024;
-const stepsSchema = z.array(
-  z.looseObject({ type: z.string(), env_id: z.string().optional() }),
-);
-
-/** Why the bundle's steps and verifier for the task are not what the export writes for it; undefined when they are. */
-const bundleTaskDifference = async (
-  bundle: string,
-  task: DesktopTask,
-  signal: AbortSignal,
-): Promise<string | undefined> => {
-  const stepsPath = `tasks/${task.name}.json`;
-  const verifierPath = `artifacts/${taskVerifierArtifact(task)}/verify.py`;
-  const [steps, verifier] = await Promise.all(
-    [stepsPath, verifierPath].map((path) =>
-      readHostFile(join(bundle, path), BUNDLE_FILE_BYTES, signal),
-    ),
-  );
-  if (!Buffer.isBuffer(steps) || !Buffer.isBuffer(verifier))
-    return `the bundle at ${bundle} has no readable ${Buffer.isBuffer(steps) ? verifierPath : stepsPath}.`;
-  const parsed = safeParseUtf8Json(steps);
-  const listed = parsed.ok ? parsed.value : undefined;
-  const app = stepsSchema
-    .safeParse(listed)
-    .data?.find((step) => step.type === "deploy_env")?.env_id;
-  if (
-    app === undefined ||
-    !isDeepStrictEqual(listed, JSON.parse(renderTaskSteps(task, app)))
-  )
-    return `the bundle's ${stepsPath} differs from this task's steps.`;
-  return verifier.toString("utf8") === renderTaskVerifier(task, app)
-    ? undefined
-    : `the bundle's ${verifierPath} differs from this task's checks.`;
-};
-
 /**
  * A witness from its seed on: `open` while stages are checked, `saving`
  * once a stage ended it and until its record is written, which a repeat of
@@ -144,6 +123,11 @@ interface OpenWitness extends EndedWitness {
   record?: WitnessRecord;
   /** A manifest whose segments still need to be fetched. */
   pendingManifest?: RecordingManifest | undefined;
+  /**
+   * The action log as it stood when the record was first written. A retry
+   * uses this copy, so later activity cannot drop the witnessed actions.
+   */
+  logged?: Pick<ReadonlyActionLog, "entries" | "dropped">;
   /**
    * A published record whose handles are still open. The error already carries
    * the record and the cleanup lease; every later close failure returns it.
@@ -171,9 +155,16 @@ const summaryOf = (
 });
 
 /** The pass and fail counts of one set of results. */
-const counted = (task: DesktopTask, results: TaskCheckOutcome[]) => {
+const counted = (task: DesktopTask, { results, settled, read_cut }: Graded) => {
   const passed = results.filter((result) => result.passed).length;
-  return { task: task.name, passed, failed: results.length - passed, results };
+  return {
+    task: task.name,
+    passed,
+    failed: results.length - passed,
+    results,
+    settled,
+    read_cut,
+  };
 };
 
 /**
@@ -199,6 +190,7 @@ export const retryPublishedCleanup = async (
 
 export class DesktopBuildWitness {
   #witness: OpenWitness | undefined;
+  readonly readers: DesktopRemoteTaskReaders;
   /**
    * The request id of this computer's one witness recording, fixed before any
    * start is sent: a seed retried after a lost reply asks for the same id,
@@ -206,12 +198,26 @@ export class DesktopBuildWitness {
    */
   readonly #recordingRequest = `rea-witness:${randomUUID()}`;
 
-  /** `bundle` is the folder the computer was started from, if it was; the witness takes only the task it holds. */
+  readonly #bundle: WitnessBundle | undefined;
+  readonly #redact: (value: JsonValue) => JsonValue;
+
+  /** `bundle` is the folder the computer was started from, if it was; the witness takes only the task it holds. `redact` puts known secrets' handles in place of their values in the record. */
   constructor(
     private readonly computer: WitnessedComputer,
     private readonly actions: ReadonlyActionLog,
-    private readonly bundle?: string,
-  ) {}
+    private readonly settle: BuildSettle = SETTLE_TIMING,
+    options: {
+      readonly bundle?: WitnessBundle | undefined;
+      readonly redact?: (value: JsonValue) => JsonValue;
+    } = {},
+  ) {
+    this.#bundle = options.bundle;
+    this.#redact = options.redact ?? ((value) => value);
+    this.readers = new DesktopRemoteTaskReaders(
+      (argv, timeout, signal, requestId) =>
+        this.computer.exec(argv, timeout, signal, requestId),
+    );
+  }
 
   async check(
     input: {
@@ -220,6 +226,7 @@ export class DesktopBuildWitness {
       readonly directory?: string | undefined;
     },
     signal: AbortSignal,
+    progress: ProgressReporter = silentProgressReporter,
   ): Promise<Result<CheckedTask, AnalysisError>> {
     const parsed = parseDesktopTask(input.task, isPortableBundleName);
     if (!parsed.ok)
@@ -243,27 +250,48 @@ export class DesktopBuildWitness {
         ? undefined
         : await this.#admit(task, stage, input.directory, signal);
     if (admitted?.ok === false) return admitted;
-    const graded = await this.#grade(task, signal);
+    const graded = await this.#grade(task, signal, progress);
     if (!graded.ok) return graded;
-    const results = graded.value;
-    const checked = counted(task, results);
+    const checked = counted(task, graded.value);
     if (stage === undefined || admitted === undefined)
       return ok({ ...checked, witness: null });
-    const filed = await this.#file(stage, admitted.value, results, signal);
+    const filed = await this.#file(stage, admitted.value, graded.value, signal);
     return filed.ok ? ok({ ...checked, witness: filed.value }) : filed;
   }
 
-  /** The task's checks against the app's live views, one result per check. */
+  /** The task's checks against the app's views once its files settle, and its readers' views read then, one result per check. */
   async #grade(
     task: DesktopTask,
     signal: AbortSignal,
-  ): Promise<Result<TaskCheckOutcome[], AnalysisError>> {
+    progress: ProgressReporter,
+  ): Promise<Result<Graded, AnalysisError>> {
+    if (isScreenTask(task))
+      return judgeScreenTask(this.computer, this.#bundle, task, signal);
     try {
-      const views = appStateViews(
-        await this.computer.appData("data/get", signal),
+      const read = await settledAppData(
+        (turn) => this.computer.appData("data/get", turn),
+        this.settle,
+        signal,
+        (message) =>
+          progress
+            .report({ phase: CHECK, completed: 0, total: null, message })
+            .catch(() => undefined),
       );
+      const views = appStateViews(read.parts);
+      const readers = await this.readers.read(task.readers ?? [], signal);
       return views.ok
-        ? ok([...evaluateTaskChecks(task.checks, views.value)])
+        ? ok({
+            results: [
+              ...evaluateTaskChecks(
+                task.checks,
+                views.value,
+                readers,
+                this.#redact,
+              ),
+            ],
+            settled: read.settled,
+            read_cut: read.readCut,
+          })
         : err(
             refused(
               views.error,
@@ -290,7 +318,7 @@ export class DesktopBuildWitness {
   async #file(
     stage: WitnessStage,
     actionsBefore: number,
-    results: TaskCheckOutcome[],
+    { results, settled, read_cut }: Graded,
     signal: AbortSignal,
   ): Promise<Result<WitnessSummary, AnalysisError>> {
     const witness = this.#witness;
@@ -328,6 +356,8 @@ export class DesktopBuildWitness {
       checked_at: new Date().toISOString(),
       expectation: stageExpectation(stage),
       held,
+      settled,
+      read_cut,
       results,
       ...(unrestored.length === 0
         ? {}
@@ -361,12 +391,19 @@ export class DesktopBuildWitness {
       witness.state = "saved";
       return ok(summaryOf(filed, null, witness.record));
     }
+    witness.logged ??= {
+      entries: [...this.actions.entries],
+      dropped: this.actions.dropped,
+    };
     const written = await writeWitnessRecord(
       this.computer,
       witness,
-      this.actions,
-      signal,
-      witness.pendingManifest,
+      witness.logged,
+      {
+        signal,
+        redact: this.#redact,
+        pendingManifest: witness.pendingManifest,
+      },
     );
     if (written.kind === "retry") {
       if (written.manifest !== undefined)
@@ -410,7 +447,7 @@ export class DesktopBuildWitness {
         ),
       );
     return ok({
-      ...counted(task, filed.results),
+      ...counted(task, filed),
       witness: summaryOf(filed, null, witness.record),
     });
   }
@@ -436,7 +473,10 @@ export class DesktopBuildWitness {
       );
     const saved = await this.#save(witness, filed, signal);
     return saved.ok
-      ? ok({ ...counted(task, filed.results), witness: saved.value })
+      ? ok({
+          ...counted(task, filed),
+          witness: saved.value,
+        })
       : saved;
   }
 
@@ -493,9 +533,9 @@ export class DesktopBuildWitness {
         ),
       );
     let differs: string | undefined;
-    if (this.bundle !== undefined) {
+    if (this.#bundle !== undefined) {
       try {
-        differs = await bundleTaskDifference(this.bundle, task, signal);
+        differs = await bundleTaskDifference(this.#bundle.path, task, signal);
       } catch (cause: unknown) {
         // A cancelled read, an I/O failure, or a handle that would not close
         // stays a Result. A cleanup lease stays bound to that error.

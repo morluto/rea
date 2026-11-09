@@ -7,6 +7,10 @@ import {
 } from "../../domain/analysisErrorCore.js";
 import { PrivateRuntimeRoot } from "../../process/PrivateRuntimeRoot.js";
 import {
+  createSystemProcessOwnershipHost,
+  LinuxOwnedProcessPrerequisiteError,
+} from "../../process/ProcessOwnershipObservation.js";
+import {
   ProviderProcessSupervisor,
   spawnOwnedProviderProcess,
 } from "../../process/ProviderProcess.js";
@@ -80,6 +84,41 @@ const runChild = (
 
 const exitsAfterHoldingOutput =
   'const {spawn}=require("node:child_process"); spawn(process.execPath,["-e","setTimeout(()=>{},400)"],{stdio:["ignore","inherit","inherit"]}); process.stderr.write("physical exit 7"); process.exit(7)';
+
+it("preserves Linux process inspection failure and recovery before launching the codec", async () => {
+  const cause = Object.assign(new Error("ps permission denied"), {
+    code: "EACCES",
+  });
+  const host = createSystemProcessOwnershipHost(
+    "linux",
+    {},
+    {
+      execFileOutput: async () => {
+        throw cause;
+      },
+    },
+  );
+  const result = await runSourceMapCommand(
+    "{}",
+    "/probe/source.map",
+    undefined,
+    {
+      prepareOwnership: () => host.prepare!(),
+      launcher: async () => {
+        throw new Error("must not launch");
+      },
+    },
+    unexpectedCleanup,
+  );
+  expect(result.ok).toBe(false);
+  if (result.ok) throw new Error("expected prerequisite failure");
+  expect(result.error).toBeInstanceOf(LinuxOwnedProcessPrerequisiteError);
+  expect(result.error).toMatchObject({
+    cause,
+    remediationAction: expect.stringContaining("EACCES"),
+  });
+});
+
 const exitsThenDescendantExceedsStderrBudget =
   'const {spawn}=require("node:child_process"); spawn(process.execPath,["-e",`setTimeout(()=>{process.stderr.write("x".repeat(1024*1024+64)); setInterval(()=>{},1000)},25)`],{stdio:["ignore","inherit","inherit"]}); process.stderr.write("physical exit 7"); process.exit(7)';
 

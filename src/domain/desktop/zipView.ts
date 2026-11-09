@@ -13,11 +13,11 @@ const MIB = 1024 * 1024;
 /** Entries a zip view lists; past them it counts entries and is truncated. */
 export const MAX_ZIP_ENTRIES = 1000;
 /** Largest entry read, uncompressed. */
-const MAX_ZIP_ENTRY_BYTES = 16 * MIB;
+export const MAX_ZIP_ENTRY_BYTES = 16 * MIB;
 /** Uncompressed bytes read from one archive, the same as the largest file the state view reads. */
 const MAX_ZIP_BYTES = 64 * MIB;
 /** Most an entry may expand over its compressed size; a zip bomb expands about a thousand times. */
-const MAX_ZIP_RATIO = 100;
+export const MAX_ZIP_RATIO = 100;
 
 /** Why an archive has no view; the exported reader words it the same. */
 export const UNREADABLE_ZIP = "not a readable zip archive";
@@ -138,7 +138,7 @@ export const zipEntryAt = (
 ): Record<string, JsonValue> | "none" | undefined => {
   const [first, second] = pointer.slice(1).split("/");
   if (first !== "entries" || second === undefined) return undefined;
-  const entry = locatePointer(view, `/entries/${second}`);
+  const entry = locatePointer(view, `/entries/${second}`, "zip");
   if (entry.kind !== "value") return "none";
   return isRecord(entry.value) ? entry.value : undefined;
 };

@@ -40,6 +40,7 @@ import {
 import type { ProviderProcessSupervisor } from "../../process/ProviderProcess.js";
 import { prepareWakaruExecution } from "./WakaruExecution.js";
 import { RECOVERY_LIMITS } from "./WakaruRelease.js";
+import { WakaruReportReadFailure } from "./WakaruReport.js";
 
 const OPERATION = "recover_javascript_sources";
 
@@ -166,14 +167,25 @@ export class WakaruProvider implements JavaScriptRecoveryPort {
       failed = { cause };
     }
     if (failed !== undefined) {
+      const reportFailure =
+        failed.cause instanceof WakaruReportReadFailure
+          ? failed.cause
+          : undefined;
+      const primary = reportFailure?.failure ?? failed.cause;
       const failure =
-        failed.cause instanceof ArtifactReaderFailure &&
-        failed.cause.reason === "cancelled" &&
-        failed.cause.cleanup === undefined
+        primary instanceof ArtifactReaderFailure &&
+        primary.reason === "cancelled" &&
+        primary.cleanup === undefined
           ? new AnalysisCancelledError(OPERATION, {
-              cause: artifactFileCancellationCause(failed.cause),
+              cause: artifactFileCancellationCause(primary),
+              ...(primary.partialObservation === undefined
+                ? {}
+                : { partialObservation: primary.partialObservation }),
+              ...(reportFailure === undefined
+                ? {}
+                : { capturedOutput: reportFailure.capturedOutput }),
             })
-          : failed.cause;
+          : primary;
       const residuals: string[] = [];
       const cleanupFailures: { resource: string; reason: string }[] = [];
       const cleanupOwner =
@@ -263,6 +275,9 @@ export class WakaruProvider implements JavaScriptRecoveryPort {
           {
             operation: OPERATION,
             cause: failure,
+            ...(reportFailure === undefined
+              ? {}
+              : { capturedOutput: reportFailure.capturedOutput }),
             ...(tree?.published && execution !== undefined
               ? {
                   partialObservation: {
@@ -272,7 +287,10 @@ export class WakaruProvider implements JavaScriptRecoveryPort {
                     ),
                   },
                 }
-              : {}),
+              : failure instanceof ArtifactReaderFailure &&
+                  failure.partialObservation !== undefined
+                ? { partialObservation: failure.partialObservation }
+                : {}),
           },
         );
         const lease = this.#pendingCleanup?.lease;
@@ -290,6 +308,9 @@ export class WakaruProvider implements JavaScriptRecoveryPort {
           : new ProviderAdapterError("wakaru", OPERATION, {
               cause: failure,
               diagnostics: { reason: recoveryFailureMessage(failure) },
+              ...(reportFailure === undefined
+                ? {}
+                : { capturedOutput: reportFailure.capturedOutput }),
             }),
       );
     }

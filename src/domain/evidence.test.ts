@@ -331,16 +331,24 @@ it("retains named auxiliary path choices without changing identity, history or s
       result: { rows: ["source facts"] },
     }),
   );
-  const paths = { operations_path: "./queries 雪.graphql" };
+  const paths = {
+    operations_path: "./queries 雪.graphql",
+    candidate_paths: ["./a", "./a", "./b"],
+  };
   const rebound = withEvidenceCallerInputPath(
     original,
     "./schema.graphql",
     paths,
   );
   paths.operations_path = "later unrelated choice";
+  paths.candidate_paths.push("./later");
   expect(rebound.caller_input_paths).toEqual({
     operations_path: "./queries 雪.graphql",
+    candidate_paths: ["./a", "./a", "./b"],
   });
+  expect(Object.isFrozen(rebound.caller_input_paths?.candidate_paths)).toBe(
+    true,
+  );
   expect(original.caller_input_paths).toBeUndefined();
   expect(rebound.evidence_id).toBe(original.evidence_id);
   expect(rebound.normalized_result).toBe(original.normalized_result);
@@ -349,6 +357,7 @@ it("retains named auxiliary path choices without changing identity, history or s
   expect(
     withEvidenceCallerInputPath(rebound, "./schema.graphql", {
       operations_path: "./queries 雪.graphql",
+      candidate_paths: ["./a", "./a", "./b"],
     }),
   ).toBe(rebound);
   expect(
@@ -912,4 +921,25 @@ it("borrows variable-size collections for admission", () => {
   expect(envelope.limitations).toBe(limitations);
   expect(envelope.locations).toBe(locations);
   expect(envelope.evidence_links).toBe(evidenceLinks);
+});
+
+it("retains safe auxiliary paths when the direct caller path is unavailable", () => {
+  const original = createEvidence(TARGET, PROVIDER, {
+    operation: "inspect",
+    parameters: {},
+    result: null,
+  });
+  const rebound = withEvidenceCallerInputPath(original, undefined, {
+    descriptor_set_path: "./schema.pb",
+  });
+  expect(rebound.caller_input_path).toBeUndefined();
+  expect(rebound.caller_input_paths).toEqual({
+    descriptor_set_path: "./schema.pb",
+  });
+  expect(rebound.evidence_id).toBe(original.evidence_id);
+  expect(() =>
+    withEvidenceCallerInputPath(original, undefined, {
+      descriptor_set_path: "bad\0path",
+    }),
+  ).toThrow();
 });

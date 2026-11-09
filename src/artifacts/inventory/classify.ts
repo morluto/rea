@@ -1,3 +1,4 @@
+import { artifactOperationCause } from "../ArtifactFileOperation.js";
 import {
   nesContainerFormat,
   parseInesLayout,
@@ -244,14 +245,13 @@ const classifyRootFormat = async (
       ...(signal === undefined ? {} : { signal }),
     });
   } catch (cause: unknown) {
-    abortIfNeeded(signal);
     if (cause instanceof RegularFileChangedError)
       throw new ArtifactReaderFailure(
         "integrity",
         `Root artifact changed during classification: ${path}`,
         { cause: cause.cause ?? cause },
       );
-    throw cause;
+    throw artifactOperationCause(cause);
   }
   // Fill each range: a short result is end of file, not a partial host read.
   const read = async (position: number, length: number): Promise<Buffer> => {
@@ -362,6 +362,9 @@ const classifyRootFormat = async (
     const bun = await embeddedProbes.bunStandalone();
     if (bun.status === "present")
       return { kind: "bun-standalone", source, probe: bun };
+    const deno = await embeddedProbes.denoStandalone();
+    if (deno.status === "present")
+      return { kind: "deno-standalone", source, probe: deno };
     const packaged = await embeddedProbes.pyInstaller();
     abortIfNeeded(signal);
     if (format !== "mach-o-universal") {
