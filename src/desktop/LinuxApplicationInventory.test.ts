@@ -248,37 +248,6 @@ describe.skipIf(process.platform === "win32")(
       });
     });
 
-    it("refuses rather than launch a lower-priority entry when the search is cut short", async () => {
-      const { home, environment } = await fixture();
-      const share = environment.XDG_DATA_DIRS;
-      const applications = join(home, ".local/share/applications");
-      // More nested directories than the bounded search may enter.
-      for (let index = 0; index < 6; index += 1)
-        await mkdir(
-          join(applications, ...Array<string>(index + 1).fill("deep")),
-          {
-            recursive: true,
-          },
-        );
-      await writeFile(
-        join(share, "applications/buried-org.example.app.desktop"),
-        "[Desktop Entry]\nType=Application\nName=Low\nExec=notes-app\n",
-      );
-
-      const inspected = await inspectLinuxApplication({
-        desktopEntry: "buried-org.example.app",
-        executable: undefined,
-        arguments: [],
-        environment,
-        home,
-        callerDirectory: home,
-      });
-
-      expect(!inspected.ok && inspected.error.reason).toBe(
-        "desktop_entry_search_incomplete",
-      );
-    });
-
     it("refuses rather than launch a lower-priority entry when a subtree cannot be listed", async () => {
       const { home, environment } = await fixture();
       const share = environment.XDG_DATA_DIRS;
@@ -307,11 +276,45 @@ describe.skipIf(process.platform === "win32")(
           callerDirectory: home,
         });
 
-        expect(!inspected.ok && inspected.error.reason).toBe(
-          "desktop_entry_search_incomplete",
-        );
+        // Root ignores the mode bits, so the directory stays listable and the
+        // scenario this asserts cannot be built.
+        if (inspected.ok) expect(process.getuid?.()).toBe(0);
+        else
+          expect(inspected.error.reason).toBe(
+            "desktop_entry_search_incomplete",
+          );
       } finally {
         await chmod(vendor, 0o755);
+      }
+    });
+
+    it("finds the entry before reporting an unreachable sibling as incomplete", async () => {
+      const { home, environment } = await fixture();
+      const applications = join(home, ".local/share/applications");
+      const found = join(applications, "zz-vendor");
+      const unreadable = join(applications, "aa-vendor");
+      await mkdir(found, { recursive: true });
+      await mkdir(unreadable, { recursive: true });
+      await writeFile(
+        join(found, "org.example.app.desktop"),
+        "[Desktop Entry]\nType=Application\nName=High\nExec=notes-app\n",
+      );
+      await chmod(unreadable, 0o000);
+
+      try {
+        const inventory = await inventoryOf("zz-vendor-org.example.app", {
+          home,
+          environment,
+        });
+
+        // The sibling that cannot be listed may hold the entry too, but this
+        // root already answered, so the reachable answer is the one to use.
+        expect(inventory.desktop_entry).toMatchObject({
+          id: "zz-vendor-org.example.app",
+          name: "High",
+        });
+      } finally {
+        await chmod(unreadable, 0o755);
       }
     });
 
@@ -356,6 +359,40 @@ describe.skipIf(process.platform === "win32")(
         id: "org.example-tools-my-app",
         name: "Both",
       });
+    });
+  },
+);
+
+describe.skipIf(process.platform === "win32")(
+  "inspectLinuxApplication incomplete desktop file searches",
+  () => {
+    it("refuses rather than launch a lower-priority entry when the search is cut short", async () => {
+      const { home, environment } = await fixture();
+      const share = environment.XDG_DATA_DIRS;
+      const applications = join(home, ".local/share/applications");
+      // More nested directories than the bounded search may enter.
+      for (let index = 0; index < 6; index += 1)
+        await mkdir(
+          join(applications, ...Array<string>(index + 1).fill("deep")),
+          { recursive: true },
+        );
+      await writeFile(
+        join(share, "applications/buried-org.example.app.desktop"),
+        "[Desktop Entry]\nType=Application\nName=Low\nExec=notes-app\n",
+      );
+
+      const inspected = await inspectLinuxApplication({
+        desktopEntry: "buried-org.example.app",
+        executable: undefined,
+        arguments: [],
+        environment,
+        home,
+        callerDirectory: home,
+      });
+
+      expect(!inspected.ok && inspected.error.reason).toBe(
+        "desktop_entry_search_incomplete",
+      );
     });
   },
 );

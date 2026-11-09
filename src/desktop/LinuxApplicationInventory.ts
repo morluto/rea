@@ -1,4 +1,4 @@
-import { lstat, opendir, readdir, realpath, stat } from "node:fs/promises";
+import { lstat, opendir, realpath, stat } from "node:fs/promises";
 import {
   basename,
   dirname,
@@ -129,6 +129,18 @@ const isFile = async (path: string): Promise<boolean> =>
  * the entry, and selecting a lower-priority root would launch a different
  * application under the same id.
  */
+const isDirectoryEntry = async (
+  directory: string,
+  entry: Awaited<ReturnType<typeof opendir>> extends AsyncIterable<infer Entry>
+    ? Entry
+    : never,
+): Promise<boolean> => {
+  if (entry.isDirectory()) return true;
+  if (entry.isFile()) return false;
+  const stats = await stat(join(directory, entry.name)).catch(() => undefined);
+  return stats?.isDirectory() === true;
+};
+
 const findNestedDesktopEntry = async (
   applicationsDirectory: string,
   id: string,
@@ -136,6 +148,10 @@ const findNestedDesktopEntry = async (
 ): Promise<{ path: string } | { truncated: true } | undefined> => {
   const pending = [{ path: applicationsDirectory, depth: 1 }];
   let examined = 0;
+  // An unreadable or over-budget subtree may still hold the entry, but the
+  // rest of this root has not been walked yet: an answer found there is the
+  // right one, so remember the gap and report it only after the walk ends.
+  let incomplete = false;
   while (pending.length > 0) {
     signal?.throwIfAborted();
     const directory = pending.pop();
@@ -148,41 +164,41 @@ const findNestedDesktopEntry = async (
       // be read may still hold the entry, so that search has no answer.
       const code = (cause as NodeJS.ErrnoException).code;
       if (code === "ENOENT" || code === "ENOTDIR") continue;
-      return { truncated: true };
+      incomplete = true;
+      continue;
     }
-    {
-      for await (const entry of handle) {
-        // The budget is charged while enumerating, because readdir would
-        // materialize every name in a huge directory before any check ran.
-        examined += 1;
-        if (examined > NESTED_SEARCH_MAX_ENTRIES) return { truncated: true };
-        const path = join(directory.path, entry.name);
-        const stats =
-          entry.isDirectory() || entry.isFile()
-            ? undefined
-            : await stat(path).catch(() => undefined);
-        const isDirectory =
-          entry.isDirectory() || stats?.isDirectory() === true;
-        if (entry.name.endsWith(".desktop")) {
-          // A directory may be named `*.desktop`; the spec still forms the ids
-          // of the entries inside it from their full path, so only a file is a
-          // candidate here.
-          if (!isDirectory) {
-            const encoded = relative(applicationsDirectory, path).replaceAll(
-              "/",
-              "-",
-            );
-            if (encoded === id && (await isFile(path))) return { path };
-          }
-        }
-        if (!isDirectory) continue;
-        if (directory.depth >= NESTED_SEARCH_MAX_DEPTH)
-          return { truncated: true };
-        pending.push({ path, depth: directory.depth + 1 });
+    for await (const entry of handle) {
+      // The budget is charged while enumerating, because readdir would
+      // materialize every name in a huge directory before any check ran.
+      examined += 1;
+      if (examined > NESTED_SEARCH_MAX_ENTRIES) {
+        incomplete = true;
+        break;
       }
+      const isDirectory = await isDirectoryEntry(directory.path, entry);
+      if (entry.name.endsWith(".desktop") && !isDirectory) {
+        // A directory may be named `*.desktop`; the spec still forms the ids
+        // of the entries inside it from their full path, so only a file is a
+        // candidate here.
+        const path = join(directory.path, entry.name);
+        const encoded = relative(applicationsDirectory, path).replaceAll(
+          "/",
+          "-",
+        );
+        if (encoded === id && (await isFile(path))) return { path };
+      }
+      if (!isDirectory) continue;
+      if (directory.depth >= NESTED_SEARCH_MAX_DEPTH) {
+        incomplete = true;
+        continue;
+      }
+      pending.push({
+        path: join(directory.path, entry.name),
+        depth: directory.depth + 1,
+      });
     }
   }
-  return undefined;
+  return incomplete ? { truncated: true } : undefined;
 };
 
 const locateDesktopEntry = async (
