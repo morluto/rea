@@ -41,6 +41,15 @@ export const registerAdbCommands = (
     .min(1)
     .describe("Device serial exactly as `adb devices` reports it");
 
+  const packageName = z
+    .string()
+    .min(1)
+    .max(256)
+    .regex(
+      /^[A-Za-z][A-Za-z0-9_]*(\.[A-Za-z][A-Za-z0-9_]*)*$/u,
+      "Package name must be dot-separated Java identifiers",
+    );
+
   cli.command(CLI_COMMANDS.inspectAdbClient, {
     description:
       "Inspect the caller-selected adb client without contacting devices",
@@ -81,7 +90,7 @@ export const registerAdbCommands = (
       "Pull one installed package's complete APK set with SHA-256 digests",
     args: z.object({
       serial,
-      package: z.string().min(1).describe("Installed package name"),
+      package: packageName.describe("Installed package name"),
     }),
     options: z.object({
       "output-directory": z
@@ -131,7 +140,7 @@ export const registerAdbCommands = (
   cli.command(CLI_COMMANDS.inspectAdbPackage, {
     description:
       "Inspect one installed package's version, installer, and flags through dumpsys",
-    args: z.object({ serial, package: z.string().min(1).describe("Package") }),
+    args: z.object({ serial, package: packageName.describe("Package") }),
     run: ({ args }) =>
       execute(CLI_COMMANDS.inspectAdbPackage, "inspect_adb_package", {
         serial: args.serial,
@@ -306,7 +315,7 @@ export const registerAdbCommands = (
     description: "Uninstall one package and its data from the device",
     args: z.object({
       serial,
-      package: z.string().min(1).describe("Installed package to uninstall"),
+      package: packageName.describe("Installed package to uninstall"),
     }),
     run: ({ args }) =>
       execute(CLI_COMMANDS.uninstallAdbPackage, "uninstall_adb_package", {
@@ -319,7 +328,7 @@ export const registerAdbCommands = (
       "Start one installed app by resolving and launching its launcher activity",
     args: z.object({
       serial,
-      package: z.string().min(1).describe("Installed package to start"),
+      package: packageName.describe("Installed package to start"),
     }),
     run: ({ args }) =>
       execute(CLI_COMMANDS.startAdbApp, "start_adb_app", {
@@ -356,11 +365,7 @@ export const registerAdbCommands = (
           throw new Error(`--extra expects type:key:value, received: ${entry}`);
         return {
           type: entry.slice(0, first) as
-            | "string"
-            | "boolean"
-            | "int"
-            | "long"
-            | "float",
+            "string" | "boolean" | "int" | "long" | "float",
           key: entry.slice(first + 1, second),
           value: entry.slice(second + 1),
         };
@@ -382,7 +387,7 @@ export const registerAdbCommands = (
     description: "Force-stop every process of one package",
     args: z.object({
       serial,
-      package: z.string().min(1).describe("Package to force-stop"),
+      package: packageName.describe("Package to force-stop"),
     }),
     run: ({ args }) =>
       execute(CLI_COMMANDS.stopAdbApp, "stop_adb_app", {
