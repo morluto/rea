@@ -26,6 +26,31 @@ const drafted = (before: string, after: string) => {
 };
 
 describe("draftTaskFiles for lines holding values the app generates", () => {
+  it("checks a reference number in ordinary text", () => {
+    const line = "Reference: ABC_123456";
+    const file = drafted("# Instructions", `# Instructions\n${line}`);
+    expect(file.suggested).toEqual([
+      { kind: "lines_present", file: FILE, lines: [line] },
+    ]);
+    const checks = file.suggested.map((check, index) => ({
+      ...check,
+      id: `c${index}`,
+    }));
+    expect(
+      evaluateTaskChecks(
+        checks,
+        new Map([
+          [
+            FILE,
+            {
+              format: "text",
+              view: textView("# Instructions\nReference: WRONG"),
+            },
+          ],
+        ]),
+      ).map(({ passed }) => passed),
+    ).toEqual([false]);
+  });
   it("keeps an unquoted assignment in ordinary prose exact", () => {
     const line = "Set created=2025550123 and save";
     const file = drafted("# Instructions", `# Instructions\n${line}`);
