@@ -892,6 +892,7 @@ export type AdbAcquiredFilePartialObservation =
             readonly local_path: string;
             readonly device_path: string;
             readonly digest_status: "unknown";
+            readonly transfer_status?: "unconfirmed";
           }
         | z.infer<typeof adbResultSchemas.pull_adb_file>;
     }
