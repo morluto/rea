@@ -208,7 +208,7 @@ or a stable page.
 
 ## inspect_analysis_view: JavaScript modules and facts
 
-For an exact module's item facts or original code, search guidance for
+For an exact module's retained facts and source locations, search guidance for
 "read module without repeating analysis" and follow that retained-parent workflow.
 
 Module pages include assets, bundled and source modules; use node_id for ambiguous or
