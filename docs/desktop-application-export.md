@@ -180,7 +180,9 @@ The class declares:
   unless that spelling is outside the captured home, as when the home itself is
   a symbolic link. When a selected link names an application state directory,
   the bundle seeds the application's state path and restores the selected
-  alias at boot. Selections nested under that alias are seeded under the same
+  alias at boot. Targets recorded as directories are created even when the seed
+  has no files there; file targets and targets of unknown kind are not turned
+  into directories. Selections nested under that alias are seeded under the same
   state path. An existing incompatible alias stops setup without replacing it. When two files map to one home path, the export uses the one present
   before the capture, else the first by path, and a limitation names the other.
 - Data hooks, because declaring any hook switches off agentenv's default data

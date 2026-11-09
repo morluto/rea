@@ -4,7 +4,14 @@ import {
 } from "node:child_process";
 import { mkdtempSync, writeFileSync, unlinkSync, rmdirSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { chmod, mkdir, readFile, stat, writeFile } from "node:fs/promises";
+import {
+  chmod,
+  mkdir,
+  readFile,
+  readlink,
+  stat,
+  writeFile,
+} from "node:fs/promises";
 import { join } from "node:path";
 
 import { expect, it } from "vitest";
@@ -237,8 +244,8 @@ it.each([true, false])(
       .filter((line) => !line.includes("agentenv_protocol"))
       .join("\n");
     const pairs = childFirst
-      ? '[("settings/profile", ".config/notes"), ("settings", ".local/share/notes")]'
-      : '[("settings", ".local/share/notes"), ("settings/profile", ".config/notes")]';
+      ? '[("settings/profile", ".config/notes", None), ("settings", ".local/share/notes", None)]'
+      : '[("settings", ".local/share/notes", None), ("settings/profile", ".config/notes", None)]';
     const program = `${imports}
 STATE_ALIASES = ${pairs}
 ${PYTHON_HELPERS}
@@ -262,7 +269,7 @@ it("restores a selected alias to an existing settings file", async () => {
     .filter((line) => !line.includes("agentenv_protocol"))
     .join("\n");
   const program = `${imports}
-STATE_ALIASES = [("settings", ".config/tellicorc")]
+STATE_ALIASES = [("settings", ".config/tellicorc", "file")]
 ${PYTHON_HELPERS}
 home = Path(sys.argv[1])
 _ensure_state_aliases(home)
@@ -272,7 +279,30 @@ _ensure_state_aliases(home)
   expect(await readFile(join(home, "settings"), "utf8")).toBe("saved");
 });
 
-it("restores a selected settings alias without replacing an existing path", async () => {
+it.each(["file", undefined] as const)(
+  "keeps an absent alias target of kind %s without inventing a directory",
+  async (kind) => {
+    const home = await createTestTempDirectory("desktop-absent-alias-");
+    const imports = PYTHON_IMPORTS.split("\n")
+      .filter((line) => !line.includes("agentenv_protocol"))
+      .join("\n");
+    const program = `${imports}
+STATE_ALIASES = [("settings", ".config/notes", ${kind === undefined ? "None" : '"file"'})]
+${PYTHON_HELPERS}
+_ensure_state_aliases(Path(sys.argv[1]))
+_ensure_state_aliases(Path(sys.argv[1]))
+`;
+    execPython(["-I", "-B", "-c", program, home], { encoding: "utf8" });
+    expect(await readlink(join(home, "settings"))).toBe(
+      join(home, ".config", "notes"),
+    );
+    await expect(stat(join(home, ".config", "notes"))).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+  },
+);
+
+it("restores a selected settings directory alias without replacing an existing path", async () => {
   const root = await createTestTempDirectory("desktop-state-alias-");
   const home = join(root, "home");
   await mkdir(join(root, "seed", ".config", "notes"), { recursive: true });
@@ -294,7 +324,7 @@ it("restores a selected settings alias without replacing an existing path", asyn
 SEED_HOME = "/home/ada"
 TEXT_SEEDS = frozenset()
 SEED_MODES = {}
-STATE_ALIASES = [("settings", ".config/notes")]
+STATE_ALIASES = [("settings", ".config/notes", "directory")]
 HERE = Path(sys.argv[1])
 ${PYTHON_HELPERS}
 home = Path(sys.argv[2])
