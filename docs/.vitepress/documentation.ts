@@ -44,6 +44,11 @@ export const documentationSections = [
         route: "/binary-diagnostics",
       },
       {
+        text: "ELF separate debug files",
+        source: "guides/native/elf-debug-link.md",
+        route: "/elf-debug-link",
+      },
+      {
         text: "Recorded crash evidence",
         source: "guides/native/recorded-crashes.md",
         route: "/recorded-crashes",
@@ -524,11 +529,6 @@ export const documentationSections = [
         route: "/electron-fuses",
       },
       { text: "ELF note tables", source: "elf-notes.md", route: "/elf-notes" },
-      {
-        text: "ELF separate debug files",
-        source: "elf-debug-link.md",
-        route: "/elf-debug-link",
-      },
       {
         text: "Erlang BEAM files",
         source: "erlang-beam.md",

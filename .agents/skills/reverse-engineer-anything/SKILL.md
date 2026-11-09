@@ -304,7 +304,7 @@ explicit path or endpoint and do not need it.
   does_not_match, or cannot_verify. A missing section is observed absence only
   when section names are complete. The `.gnu_debugdata` xz payload is not
   decoded. See the
-  [ELF debug files guide](https://github.com/morluto/rea/blob/main/docs/elf-debug-link.md).
+  [ELF debug files guide](https://github.com/morluto/rea/blob/main/docs/guides/native/elf-debug-link.md).
 - Apple `.ips` crash reports: `inspect_apple_ips` with the explicit local
   file. This built-in target-free inspection requires no Xcode, atos, or
   pwntools. Preserve first-line metadata, `bug_type` as a string, process and

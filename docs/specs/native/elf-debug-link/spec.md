@@ -12,7 +12,7 @@ This feature adds `inspect_elf_debug_link` and `inspect-elf-debug-link`. They
 read one selected ELF32 or ELF64 image, report its debug-file linkage, and, when
 the caller supplies one candidate file, check whether the candidate matches.
 
-[ELF debug files](../../../elf-debug-link.md) describes the current behavior and
+[ELF debug files](../../../guides/native/elf-debug-link.md) describes the current behavior and
 limitations. This directory is the feature specification, implementation plan
 and task list. The guide does not replace these files.
 

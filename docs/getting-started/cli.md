@@ -461,7 +461,7 @@ name and build-id, the GNU build-id, conventional lookup path strings, and
 `.gnu_debugdata` presence, offset, and size. Lookup paths are not opened. An
 optional candidate is verified by CRC32 and build-id equality. A missing
 section is observed absence only when section names are complete. See
-[ELF debug files](../elf-debug-link.md).
+[ELF debug files](../guides/native/elf-debug-link.md).
 
 Inspect an Apple `.ips` crash report without executing a target:
 

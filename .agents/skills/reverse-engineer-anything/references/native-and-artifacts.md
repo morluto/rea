@@ -191,7 +191,7 @@ for a file you already chose. The verdict compares debuglink CRC32 and GNU
 build-id; the alt-file build-id is not that comparison. A missing named
 section is observed absence only when section names are complete. The
 `.gnu_debugdata` xz payload is not decoded. See
-[ELF debug files](https://github.com/morluto/rea/blob/main/docs/elf-debug-link.md).
+[ELF debug files](https://github.com/morluto/rea/blob/main/docs/guides/native/elf-debug-link.md).
 
 ## Apple IPS crash reports
 
