@@ -11,6 +11,7 @@ import {
 } from "./javascriptAstValues.js";
 import { collectJavaScriptIdentityWritesSteps } from "./javascriptElectronMemberWrites.js";
 import { semanticBindingAtRead } from "./javascriptSemanticMutationInitializers.js";
+import { isUnmodifiedGlobalReference } from "./javascriptSemanticGlobalReference.js";
 import { SEMANTIC_ALIAS_SELECTION_LIMIT } from "./javascriptSemanticResourceLimits.js";
 import { createSemanticModuleInterop } from "./javascriptModuleInterop.js";
 import {
@@ -41,6 +42,8 @@ interface BootstrapExternals {
   readonly loaderBindingIds: ReadonlySet<string>;
   /** Loader bindings with the canonical n.n getter installed before dispatch. */
   readonly interopGetterBindingIds: ReadonlySet<string>;
+  /** Loader bindings with the canonical d and o export helpers installed before dispatch. */
+  readonly exportGetterBindingIds: ReadonlySet<string>;
   /** Table keys whose factory only re-exports one unshadowed literal require; null when a key repeats. */
   readonly externals: ReadonlyMap<string, string | null>;
 }
@@ -151,15 +154,31 @@ export const semanticBundledRequireOrigin = (
   return undefined;
 };
 
-/** Prove the source-local n.n getter and reject visible replacements. */
-const canonicalWebpackInteropBindings = (
+/**
+ * Loader bindings whose `d(exports, definitions)` is the bootstrap's own
+ * Webpack export-getter helper. Each definition then installs one live getter
+ * unless exports already owns that key.
+ */
+export const semanticWebpackExportGetterLoaders = (
+  call: t.CallExpression,
+  state: JavaScriptSemanticAnalysisState,
+): ReadonlySet<string> =>
+  bootstrapExternals(call, state)?.exportGetterBindingIds ?? new Set();
+
+/** Prove the source-local n.n, d and o helpers and reject visible replacements. */
+const canonicalWebpackRuntimeHelpers = (
   loaderBindingIds: ReadonlySet<string>,
   bootstrapBody: t.BlockStatement,
   state: JavaScriptSemanticAnalysisState,
-): ReadonlySet<string> => {
+): Pick<
+  BootstrapExternals,
+  "interopGetterBindingIds" | "exportGetterBindingIds"
+> => {
   // The shared identity-write owner covers assignment, delete, destructuring,
-  // and Object/Reflect mutators; any write that may select `n` counts.
-  const writes = new Set<t.Node>();
+  // and Object/Reflect mutators; any write that may select a helper counts.
+  const writes = new Map(
+    ["n", "d", "o"].map((helper) => [helper, new Set<t.Node>()]),
+  );
   const interop = createSemanticModuleInterop(state);
   const excludesLoader = (node: t.Node): boolean =>
     interop.isFreshObject(node) || readExactJavaScriptLiteral(node).found;
@@ -209,26 +228,196 @@ const canonicalWebpackInteropBindings = (
       interop.staticString,
       interop.isFreshObject,
       (node, path) => {
-        if (path.length < 2 || path[1] === "n" || path[1] === null)
-          writes.add(node);
+        for (const [helper, selected] of writes)
+          if (path.length < 2 || path[1] === helper || path[1] === null)
+            selected.add(node);
       },
     ),
   );
-  const proven = new Set<string>();
-  const [write] = writes;
+  const installed = (
+    helper: string,
+    canonical: (write: t.AssignmentExpression) => boolean,
+  ): boolean => {
+    const [write, ...others] = writes.get(helper) ?? [];
+    return (
+      others.length === 0 &&
+      t.isAssignmentExpression(write) &&
+      isInstalledBeforeEntryDispatch(
+        write,
+        bootstrapBody,
+        loaderBindingIds,
+        state,
+      ) &&
+      canonical(write)
+    );
+  };
+  const proven = (holds: boolean): ReadonlySet<string> =>
+    holds ? loaderBindingIds : new Set();
+  return {
+    interopGetterBindingIds: proven(
+      installed("n", (write) => isCanonicalGetter(write, state)),
+    ),
+    exportGetterBindingIds: proven(
+      installed("d", (write) =>
+        isCanonicalExportGetters(write, loaderBindingIds, state),
+      ) && installed("o", (write) => isCanonicalOwnPropertyCheck(write, state)),
+    ),
+  };
+};
+
+/** A two-parameter helper assigned by `=`: its parameter bindings and sole statement. */
+const helperFunction = (
+  write: t.AssignmentExpression,
+  state: JavaScriptSemanticAnalysisState,
+):
+  | { readonly parameters: string[]; readonly body: t.Node | undefined }
+  | undefined => {
+  const fn = write.right;
   if (
-    writes.size === 1 &&
-    t.isAssignmentExpression(write) &&
-    isInstalledBeforeEntryDispatch(
-      write,
-      bootstrapBody,
-      loaderBindingIds,
-      state,
-    ) &&
-    isCanonicalGetter(write, state)
+    write.operator !== "=" ||
+    !(t.isArrowFunctionExpression(fn) || t.isFunctionExpression(fn)) ||
+    fn.async ||
+    fn.generator ||
+    fn.params.length !== 2
   )
-    for (const bindingId of loaderBindingIds) proven.add(bindingId);
-  return proven;
+    return undefined;
+  const parameters = fn.params.flatMap(
+    (node) => bindingIdOf(node, state) ?? [],
+  );
+  return parameters.length === 2 && parameters[0] !== parameters[1]
+    ? { parameters, body: soleStatement(fn.body) }
+    : undefined;
+};
+
+const bindingIdOf = (
+  node: t.Node | null | undefined,
+  state: JavaScriptSemanticAnalysisState,
+): string | undefined =>
+  t.isIdentifier(node)
+    ? resolveSemanticBindingState(state, node, node.name)?.bindingId
+    : undefined;
+
+/** Braces around one statement do not add operations. */
+const soleStatement = (node: t.Node): t.Node | undefined => {
+  let current: t.Node | undefined = node;
+  while (t.isBlockStatement(current))
+    current = current.body.length === 1 ? current.body[0] : undefined;
+  return current;
+};
+
+/** A call whose arguments are exactly these bindings; `null` admits any argument. */
+const callsWith = (
+  node: t.Node | null | undefined,
+  state: JavaScriptSemanticAnalysisState,
+  ...bindingIds: readonly (string | null)[]
+): node is t.CallExpression =>
+  t.isCallExpression(node) &&
+  node.arguments.length === bindingIds.length &&
+  bindingIds.every(
+    (id, index) =>
+      id === null || sameBinding(node.arguments[index]!, id, state),
+  );
+
+/**
+ * Webpack's `d(exports, definition)` defines one enumerable getter per own
+ * definition key that exports does not own yet:
+ * `for (var key in definition) if (o(definition, key) && !o(exports, key))
+ * Object.defineProperty(exports, key, {enumerable: true, get: definition[key]})`.
+ * Minifiers emit the same operation as one `&&` expression statement.
+ */
+const isCanonicalExportGetters = (
+  write: t.AssignmentExpression,
+  loaderBindingIds: ReadonlySet<string>,
+  state: JavaScriptSemanticAnalysisState,
+): boolean => {
+  const helper = helperFunction(write, state);
+  const [exportsId, definitionId] = helper?.parameters ?? [];
+  const loop = helper?.body;
+  if (
+    exportsId === undefined ||
+    definitionId === undefined ||
+    !t.isForInStatement(loop) ||
+    !sameBinding(loop.right, definitionId, state) ||
+    !t.isVariableDeclaration(loop.left) ||
+    loop.left.declarations.length !== 1 ||
+    loop.left.declarations[0]?.init != null
+  )
+    return false;
+  const keyId = bindingIdOf(loop.left.declarations[0]?.id, state);
+  if (keyId === undefined || keyId === exportsId || keyId === definitionId)
+    return false;
+  const ownProperty = (node: t.Node, objectId: string): boolean =>
+    callsWith(node, state, objectId, keyId) &&
+    t.isMemberExpression(node.callee) &&
+    semanticStaticPropertyKey(node.callee.property, node.callee.computed) ===
+      "o" &&
+    loaderBindingIds.has(bindingIdOf(node.callee.object, state) ?? "");
+  const statement = soleStatement(loop.body);
+  let test: t.Node | undefined;
+  let define: t.Node | undefined;
+  if (t.isIfStatement(statement) && statement.alternate == null) {
+    const consequent = soleStatement(statement.consequent);
+    test = statement.test;
+    if (t.isExpressionStatement(consequent)) define = consequent.expression;
+  } else if (
+    t.isExpressionStatement(statement) &&
+    t.isLogicalExpression(statement.expression, { operator: "&&" })
+  ) {
+    test = statement.expression.left;
+    define = statement.expression.right;
+  }
+  if (
+    !t.isLogicalExpression(test, { operator: "&&" }) ||
+    !ownProperty(test.left, definitionId) ||
+    !t.isUnaryExpression(test.right, { operator: "!" }) ||
+    !ownProperty(test.right.argument, exportsId) ||
+    !callsWith(define, state, exportsId, keyId, null) ||
+    !isUnmodifiedGlobalReference(define.callee, state, [
+      "Object",
+      "defineProperty",
+    ])
+  )
+    return false;
+  // Webpack emits exactly `{ enumerable: true, get: definition[key] }`.
+  const descriptor = define.arguments[2];
+  const [enumerable, getter, ...others] = t.isObjectExpression(descriptor)
+    ? descriptor.properties
+    : [];
+  return (
+    others.length === 0 &&
+    t.isObjectProperty(enumerable, { computed: false }) &&
+    t.isIdentifier(enumerable.key, { name: "enumerable" }) &&
+    (t.isBooleanLiteral(enumerable.value, { value: true }) ||
+      (t.isUnaryExpression(enumerable.value, { operator: "!" }) &&
+        t.isNumericLiteral(enumerable.value.argument, { value: 0 }))) &&
+    t.isObjectProperty(getter, { computed: false }) &&
+    t.isIdentifier(getter.key, { name: "get" }) &&
+    t.isMemberExpression(getter.value, { computed: true }) &&
+    sameBinding(getter.value.object, definitionId, state) &&
+    sameBinding(getter.value.property, keyId, state)
+  );
+};
+
+/** Webpack's `o(object, key)`: `Object.prototype.hasOwnProperty.call(object, key)`. */
+const isCanonicalOwnPropertyCheck = (
+  write: t.AssignmentExpression,
+  state: JavaScriptSemanticAnalysisState,
+): boolean => {
+  const helper = helperFunction(write, state);
+  const body = helper?.body;
+  const call = t.isReturnStatement(body) ? body.argument : body;
+  return (
+    helper !== undefined &&
+    callsWith(call, state, ...helper.parameters) &&
+    t.isMemberExpression(call.callee) &&
+    semanticStaticPropertyKey(call.callee.property, call.callee.computed) ===
+      "call" &&
+    isUnmodifiedGlobalReference(call.callee.object, state, [
+      "Object",
+      "prototype",
+      "hasOwnProperty",
+    ])
+  );
 };
 
 const isCanonicalGetter = (
@@ -414,11 +603,7 @@ const proveBootstrapExternals = (
   }
   return {
     loaderBindingIds,
-    interopGetterBindingIds: canonicalWebpackInteropBindings(
-      loaderBindingIds,
-      bootstrap.body,
-      state,
-    ),
+    ...canonicalWebpackRuntimeHelpers(loaderBindingIds, bootstrap.body, state),
     externals,
   };
 };

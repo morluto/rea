@@ -13,6 +13,7 @@ import {
 import { createSemanticExpressionShapeResolver } from "./javascriptSemanticExpressionShapes.js";
 import { createGlobalReferenceReader } from "./javascriptSemanticAmbientWrites.js";
 import { javascriptBootstrapAt } from "./javascriptBootstrap.js";
+import { semanticWebpackExportGetterLoaders } from "./javascriptBundledRequireOrigin.js";
 import { ELECTRON_MODULE } from "./javascriptElectronMemberWrites.js";
 import {
   indexJavaScriptElectronIdentitySteps,
@@ -50,6 +51,8 @@ interface PropertyWrite {
   readonly path: readonly string[];
   readonly value: t.Node;
   readonly site: t.Node;
+  /** A Webpack export getter, which keeps the key's first definition. */
+  readonly getter?: true;
 }
 interface SymbolicReturnFlow extends SymbolicMetadata {
   readonly values: readonly SymbolicValue[];
@@ -78,6 +81,27 @@ const containsOwnedReturn = (root: t.Node): boolean => {
     },
   });
   return found;
+};
+
+/** The expression a Webpack export getter returns: `() => value` or `function () { return value; }`. */
+const exportGetterValue = (
+  property: t.ObjectMethod | t.ObjectProperty,
+): t.Node | undefined => {
+  const getter = t.isObjectProperty(property)
+    ? unwrapJavaScriptExpression(property.value).node
+    : undefined;
+  if (
+    !(t.isArrowFunctionExpression(getter) || t.isFunctionExpression(getter)) ||
+    getter.async ||
+    getter.generator ||
+    getter.params.length !== 0
+  )
+    return undefined;
+  if (!t.isBlockStatement(getter.body)) return getter.body;
+  const [statement] = getter.body.body;
+  return getter.body.body.length === 1 && t.isReturnStatement(statement)
+    ? (statement.argument ?? undefined)
+    : undefined;
 };
 
 /** Demand-driven substitutions for local bindings, closures and literal module tables. */
@@ -113,6 +137,8 @@ export class JavaScriptSymbolicBindings {
   readonly #namespaceOwners = new Map<string, t.Function>();
   readonly #moduleFactories = new WeakSet<t.Function>();
   readonly #unsafeExports = new Set<string>();
+  /** Loader bindings whose `d` is a proven Webpack export-getter helper. */
+  readonly #exportGetterLoaders = new Set<string>();
   readonly #aliasesByBinding = new Map<string, string[]>();
   readonly #bootstrapTables: Array<{
     readonly tableAliases: ReadonlySet<string>;
@@ -147,6 +173,7 @@ export class JavaScriptSymbolicBindings {
         const target = semanticWriteSiteTarget(node);
         if (target !== null) this.#indexWriteSite(target, node);
         if (t.isCallExpression(node) && t.isMemberExpression(node.callee)) {
+          if (this.#indexExportGetters(node, node.callee)) return;
           const intrinsic = defineProperty(node.callee);
           if (intrinsic.status === "unrelated") return;
           const [target, key, descriptor] = node.arguments;
@@ -395,6 +422,10 @@ export class JavaScriptSymbolicBindings {
       const writes = available.filter(
         (w) => w.path.length === 1 && w.path[0] === key,
       );
+      // A getter keeps the key's first definition: an earlier write makes
+      // the helper skip the key, and a later one fails against the accessor.
+      if (writes.length > 1 && writes.some(({ getter }) => getter))
+        return symbolicUnknown("ambiguous export writes");
       const write = writes.at(-1);
       return write
         ? this.evaluate(write.value, value.environment)
@@ -1362,6 +1393,8 @@ export class JavaScriptSymbolicBindings {
   #indexBootstrap(call: t.CallExpression): void {
     const bootstrap = javascriptBootstrapAt(call, this.state);
     if (!bootstrap) return;
+    for (const loaderId of semanticWebpackExportGetterLoaders(call, this.state))
+      this.#exportGetterLoaders.add(loaderId);
     const modules = new Map<string, SymbolicValue>();
     const tableAliases = new Set([bootstrap.tableBindingId]);
     const pendingAliases = [bootstrap.tableBindingId];
@@ -1420,6 +1453,53 @@ export class JavaScriptSymbolicBindings {
       modules.set(moduleKey, namespace);
     }
     this.#bootstrapTables.push({ tableAliases, modules });
+  }
+
+  /**
+   * Index a proven Webpack `d(exports, {key: () => value})` as live export
+   * getters: a read evaluates the returned expression in the module's
+   * environment. Other getter shapes are writes of unknown values.
+   */
+  #indexExportGetters(
+    call: t.CallExpression,
+    callee: t.MemberExpression,
+  ): boolean {
+    const [target, definitions, ...rest] = call.arguments;
+    const binding = (node: t.Node | undefined) =>
+      t.isIdentifier(node)
+        ? resolveSemanticBindingState(this.state, node, node.name)?.bindingId
+        : undefined;
+    const exportsId = binding(target);
+    const namespaceId =
+      exportsId === undefined || this.#moduleBindings.has(exportsId)
+        ? undefined
+        : this.#exportAliases.get(exportsId);
+    if (
+      semanticStaticPropertyKey(callee.property, callee.computed) !== "d" ||
+      !this.#exportGetterLoaders.has(binding(callee.object) ?? "") ||
+      !t.isIdentifier(target) ||
+      namespaceId === undefined
+    )
+      return false;
+    if (rest.length > 0 || !t.isObjectExpression(definitions))
+      this.#mutated.add(namespaceId);
+    else
+      for (const property of definitions.properties) {
+        const key = t.isSpreadElement(property)
+          ? null
+          : semanticStaticPropertyKey(property.key, property.computed);
+        if (key === null || t.isSpreadElement(property))
+          this.#mutated.add(namespaceId);
+        else if (!isObjectPrototypeSetter(property, key))
+          this.#addWrite(
+            target,
+            [key],
+            exportGetterValue(property) ?? call,
+            call,
+            true,
+          );
+      }
+    return true;
   }
 
   #indexBindingAliases(): void {
@@ -1506,6 +1586,7 @@ export class JavaScriptSymbolicBindings {
     path: readonly string[],
     value: t.Node,
     site: t.Node,
+    getter = false,
   ): void {
     const binding = resolveSemanticBindingState(this.state, root, root.name);
     if (!binding) return;
@@ -1539,7 +1620,7 @@ export class JavaScriptSymbolicBindings {
       }
     }
     const writes = this.#writes.get(key) ?? [];
-    writes.push({ path: selected, value, site });
+    writes.push({ path: selected, value, site, ...(getter ? { getter } : {}) });
     this.#writes.set(key, writes);
   }
 }

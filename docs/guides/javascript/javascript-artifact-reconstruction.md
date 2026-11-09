@@ -568,7 +568,14 @@ bounded source-order check, not a proof that runtime activation succeeds.
 
 Recognized literal module-table bootstraps also support bounded lexical
 substitution through module exports, import helper bodies, local wrapper calls,
-returned closures, object spreads, and callback parameters. Recovered Electron
+returned closures, object spreads, and callback parameters. Module exports
+include Webpack export getters,
+`__webpack_require__.d(exports, { name: () => value })`, when top-level
+statements install the bootstrap's own `d` and `o` helpers before the entry
+call and nothing else writes them; a read evaluates the getter's returned
+expression in the completed module. A key also written another way, a replaced
+or reshaped helper, and helpers installed inside another function stay
+unresolved. Recovered Electron
 paths retain source ranges, module identities, literal channels and branch
 conditions as static candidates. A channel the IPC call site itself
 determines, such as a local constant, resolves that call's observation rather
