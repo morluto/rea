@@ -406,7 +406,6 @@ export const exportedStateFiles = (
     dconf,
     collisions,
     paths,
-    selected,
     isLeftOut,
   };
 };

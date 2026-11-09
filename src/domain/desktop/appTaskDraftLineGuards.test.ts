@@ -555,6 +555,29 @@ describe("draftTaskFiles for the app's log beside its journal", () => {
   });
 });
 
+describe("draftTaskFiles for a lock the export leaves out of a state directory", () => {
+  it("drafts no check or guard on a lock directly in a state directory, which the export leaves out of the seed", () => {
+    const [lock] = draftOf(
+      {
+        ".config/notes/sync.lock": statePath(
+          "application_state",
+          "text",
+          textView("pid 1\n"),
+          textView("pid 2\n"),
+        ),
+      },
+      [],
+      [".config/notes"],
+    );
+
+    expect(lock).toMatchObject({
+      file: ".config/notes/sync.lock",
+      suggested: [],
+      guards: [],
+    });
+  });
+});
+
 describe("draftTaskFiles guards of a line-keyed catalogue, as Poedit saves one", () => {
   it("guards the other records' lines of the changed line's keyword, never its own record's source reference or msgid", () => {
     const entry = (line: number, msgid: string, msgstr: string) => [
