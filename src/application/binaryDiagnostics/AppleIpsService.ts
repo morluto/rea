@@ -1,11 +1,7 @@
-import { isAbsolute } from "node:path";
 import type { ExecutionOptions } from "../AnalysisProvider.js";
 import type { AppleIpsPort } from "./AppleIpsPort.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
-import {
-  AnalysisInputError,
-  AnalysisOutputError,
-} from "../../domain/analysisErrorCore.js";
+import { AnalysisOutputError } from "../../domain/analysisErrorCore.js";
 import { createEvidence, type Evidence } from "../../domain/evidence.js";
 import {
   appleIpsSchema,
@@ -38,16 +34,6 @@ export class AppleIpsService {
       options?.signal,
     );
     if (!input.ok) return input;
-    if (!isAbsolute(input.value.path))
-      return err(
-        new AnalysisInputError(OPERATION, undefined, [
-          {
-            path: ["path"],
-            reason: "invalid_format",
-            message: "Expected an absolute filesystem path on this host.",
-          },
-        ]),
-      );
     const result = await this.provider.inspect(input.value, options);
     if (!result.ok) return result;
     const report = appleIpsSchema.safeParse(result.value);
@@ -77,7 +63,12 @@ export class AppleIpsService {
           result: value,
           confidence: "observed",
           limitations: value.limitations,
-          locations: [{ kind: "artifact-path", path: value.artifact.path }],
+          locations: [
+            { kind: "artifact-path", path: value.artifact.path },
+            ...(value.join === null || value.join.path === value.artifact.path
+              ? []
+              : [{ kind: "artifact-path" as const, path: value.join.path }]),
+          ],
         },
       ),
       options?.signal,
@@ -90,6 +81,11 @@ const validReport = (
   input: InspectAppleIpsInputLike,
 ): boolean => {
   if (
+    (input.join_path === undefined
+      ? report.join !== null
+      : report.join === null ||
+        report.join.path !== input.join_path ||
+        report.join.bytes > input.max_join_bytes) ||
     report.artifact.bytes > input.max_file_bytes ||
     report.coverage.threads > input.max_threads ||
     report.coverage.frames > input.max_frames ||
@@ -126,6 +122,8 @@ const validReport = (
 };
 
 type InspectAppleIpsInputLike = {
+  readonly join_path?: string | undefined;
+  readonly max_join_bytes: number;
   readonly max_file_bytes: number;
   readonly max_threads: number;
   readonly max_frames: number;

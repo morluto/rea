@@ -358,7 +358,8 @@ describe("ELF dynamic symbol exports", () => {
     { name: "hidden_fn", visibility: 2 },
     { name: "undefined_fn", section: 0 },
     { name: "local_fn", binding: 0 },
-    { name: "local_version_fn", version: 0 },
+    { name: "local_version_fn", binding: 0, version: 0 },
+    { name: "unversioned_fn", version: 0 },
   ];
 
   it("lists defined default and protected globals with their versions", () => {
@@ -374,7 +375,7 @@ describe("ELF dynamic symbol exports", () => {
       bits: 64,
       byte_order: "little",
       architecture: "amd64",
-      coverage: { status: "complete", examined_entries: 10, exports: 6 },
+      coverage: { status: "complete", examined_entries: 11, exports: 7 },
       issues: [],
     });
     expect(
@@ -441,9 +442,69 @@ describe("ELF dynamic symbol exports", () => {
         visibility: "protected",
         version: null,
       },
+      {
+        name: "unversioned_fn",
+        type: "function",
+        binding: "global",
+        visibility: "default",
+        version: null,
+      },
     ]);
   });
 
+  it("reads a big-endian ELF32 table", () => {
+    const result = parse(
+      elfExportImage({
+        bits: 32,
+        little: false,
+        machine: 20,
+        symbols: [{ name: "be_fn", value: 0x10000n, size: 8n }],
+      }),
+    );
+
+    expect(result).toMatchObject({
+      bits: 32,
+      byte_order: "big",
+      architecture: "ppc",
+      exports: [{ name: "be_fn", value: "0x10000", size: "8" }],
+    });
+  });
+});
+
+describe("ELF version index 0 unversioned exports", () => {
+  it("retains defined global and weak symbols with GNU version index 0 as unversioned exports", () => {
+    const bytes = elfExportImage({
+      symbols: [
+        { name: "global_symbol", version: 0 },
+        { name: "weak_symbol", binding: 2, version: 0 },
+        { name: "plain_symbol", version: 1 },
+        { name: "hidden_symbol", visibility: 2, version: 0 },
+        { name: "undefined_symbol", section: 0, version: 0 },
+        { name: "local_symbol", binding: 0, version: 0 },
+      ],
+    });
+    const result = parse(bytes);
+    expect(result).toMatchObject({
+      format: "elf",
+      coverage: { status: "complete", examined_entries: 6, exports: 3 },
+      issues: [],
+    });
+    expect(
+      result.format === "elf" &&
+        result.exports.map(({ name, binding, version }) => ({
+          name,
+          binding,
+          version,
+        })),
+    ).toEqual([
+      { name: "global_symbol", binding: "global", version: null },
+      { name: "weak_symbol", binding: "weak", version: null },
+      { name: "plain_symbol", binding: "global", version: null },
+    ]);
+  });
+});
+
+describe("historical ELF export evidence", () => {
   it("normalizes historical ELF export evidence lacking visibility to unknown", () => {
     const historical = {
       artifact,
@@ -477,24 +538,6 @@ describe("ELF dynamic symbol exports", () => {
     if (parsed.format !== "elf") throw new Error("Expected ELF result");
     expect(parsed.exports[0]?.visibility).toBe("unknown");
   });
-
-  it("reads a big-endian ELF32 table", () => {
-    const result = parse(
-      elfExportImage({
-        bits: 32,
-        little: false,
-        machine: 20,
-        symbols: [{ name: "be_fn", value: 0x10000n, size: 8n }],
-      }),
-    );
-
-    expect(result).toMatchObject({
-      bits: 32,
-      byte_order: "big",
-      architecture: "ppc",
-      exports: [{ name: "be_fn", value: "0x10000", size: "8" }],
-    });
-  });
 });
 
 describe("ELF export version and name coverage", () => {
@@ -515,8 +558,9 @@ describe("ELF export version and name coverage", () => {
       status: "partial",
       examined_entries: 2,
       exports: 2,
-      reason:
-        "1 export table issue(s) affect reported rows or metadata; see issues",
+      reason: expect.stringMatching(
+        /1 export table issue.*reported rows or metadata/iu,
+      ),
     });
     expect(result.issues).toMatchObject([{ code: "version_unresolved" }]);
   });
@@ -816,8 +860,9 @@ describe("export inventory review regressions", () => {
       status: "partial",
       examined_entries: 1,
       exports: 1,
-      reason:
-        "1 export table issue(s) affect reported rows or metadata; see issues",
+      reason: expect.stringMatching(
+        /1 export table issue.*reported rows or metadata/iu,
+      ),
     });
   });
 

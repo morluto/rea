@@ -10,6 +10,7 @@ import { withCommandCancellation } from "./commandCancellation.js";
 import { localPathStringSchema } from "../domain/localPath.js";
 import { absoluteCallerPath } from "../filesystem/callerPath.js";
 import { finishCliEvidenceCommand } from "./cliEvidenceCallerPath.js";
+import { cliDecimalField } from "./options.js";
 import { inspectEvmInterfaceInputSchema } from "../domain/evm/evmInterface.js";
 
 /** Resolve operator paths and preserve explicit encoding through the shared workflow. */
@@ -43,7 +44,9 @@ export const registerEvmCommands = (
         .enum(["creation", "deployed"])
         .optional()
         .describe("Selected compiler bytecode object"),
-      timeoutMs: inspectEvmInterfaceInputSchema.shape.timeout_ms,
+      timeoutMs: cliDecimalField(
+        inspectEvmInterfaceInputSchema.shape.timeout_ms,
+      ),
     }),
     run: ({ args, options }) =>
       withCommandCancellation((signal) =>

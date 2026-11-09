@@ -39,9 +39,11 @@ const failure = (
 });
 
 const cancelled = (
+  signal: AbortSignal | undefined,
   partial?: ReferenceSourceRead,
 ): ReferenceSourceImportError => ({
   ...failure("cancelled", "Reference source import cancelled"),
+  ...(signal?.aborted === true ? { cause: signal.reason } : {}),
   ...(partial === undefined ? {} : { partial }),
 });
 
@@ -168,11 +170,11 @@ export const importReferenceSource = async (
   options: ReferenceSourceImportOptions,
   resources: ArtifactResourceScope,
 ): Promise<Result<HistoricalSourceGraph, ReferenceSourceImportError>> => {
-  if (isAborted(options.signal)) return err(cancelled());
+  if (isAborted(options.signal)) return err(cancelled(options.signal));
   const prepared = await prepareReferenceSourceImport(options, resources);
   if (!prepared.ok) return prepared;
   const { ignored, root, secrets } = prepared.value;
-  if (isAborted(options.signal)) return err(cancelled());
+  if (isAborted(options.signal)) return err(cancelled(options.signal));
 
   const exclusions: HistoricalSourceGraphInput["exclusions"] = [];
   const shouldExclude = createShouldExclude(exclusions, secrets, ignored);
@@ -201,13 +203,14 @@ export const importReferenceSource = async (
 
   const vcs = vcsResult.value;
 
-  if (isAborted(options.signal)) return err(cancelled(readResult.value));
+  if (isAborted(options.signal))
+    return err(cancelled(options.signal, readResult.value));
 
   const read = readResult.value;
   const { entries, relationships, parseFailures, limitations } =
     parseReferenceSourceEntries(read, exclusions, options.signal);
 
-  if (isAborted(options.signal)) return err(cancelled(read));
+  if (isAborted(options.signal)) return err(cancelled(options.signal, read));
 
   const uniqueRelationships = deduplicateRelationships(relationships);
   const uniqueFailures = normalizeHistoricalSourceParseFailures(parseFailures);

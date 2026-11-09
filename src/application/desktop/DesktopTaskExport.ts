@@ -1,15 +1,16 @@
 import { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
 import {
+  isPointerCheck,
   parseDesktopTask,
   type DesktopTask,
   type DesktopTaskCheck,
 } from "../../domain/desktop/appTask.js";
 import {
   evaluateTaskChecks,
-  namesXmlNamespace,
   versionView,
   type TaskFileView,
 } from "../../domain/desktop/appTaskChecks.js";
+import { SETTLE_TIMING } from "../../domain/desktop/appSettle.js";
 import {
   renderTaskEval,
   renderTaskSteps,
@@ -17,8 +18,18 @@ import {
   taskVerifierArtifact,
 } from "../../domain/desktop/appTaskPython.js";
 import type { DesktopAppExportPlan } from "../../domain/desktop/appExport.js";
-import type { DesktopStatePath } from "../../domain/desktop/desktopState.js";
+import { STATE_PATH_INPUTS } from "../../domain/desktop/buildCapture.js";
+import {
+  versionAt,
+  type DesktopStatePath,
+  type StateEnds,
+} from "../../domain/desktop/desktopState.js";
+import {
+  identityLeftIn,
+  type HostIdentity,
+} from "../../domain/desktop/hostIdentity.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
+import type { JsonValue } from "../../domain/jsonValue.js";
 import { AnalysisInputError } from "../../domain/analysisErrorCore.js";
 import { analysisErrorWithCleanupFailure } from "../../domain/analysisErrorCleanup.js";
 import { EvidenceFileError } from "../../domain/evidenceErrors.js";
@@ -32,13 +43,22 @@ import { refuse } from "./DesktopExportInstall.js";
 
 const OPERATION = "export_desktop_application";
 const REWRITE = "Fix the task file and export again.";
+/** Where the change shows on either path: a capture inside a build computer cannot be described with the CLI, so its draft comes from stop_build_capture. */
+const DRAFT =
+  "each changed file's values in the task draft (describe-desktop-application-task, or stop_build_capture on a build computer) show what it held at the seed and at the end, at the pointer a check names it by";
 
-/** What the export knows of the app: its name, owned paths, captured home and state files by home path. */
+/** What the export knows of the app: its name, owned paths, captured home, host identity, state files by home path and the checkpoints it reads. */
 type TaskTarget = Pick<
   DesktopAppExportPlan,
   "name" | "paths" | "capturedHome"
 > & {
   readonly files: ReadonlyMap<string, DesktopStatePath>;
+  readonly identity: HostIdentity;
+  readonly ends: StateEnds;
+  /** Views of the text seeds the export rewrites, as it ships them. */
+  readonly seedViews: ReadonlyMap<string, TaskFileView>;
+  /** Home paths the bundle actually ships, including files that are not text. */
+  readonly seeded: ReadonlySet<string>;
 };
 
 /** A task the capture validated: the files it adds to the bundle, its README section and its summary. */
@@ -101,44 +121,79 @@ const readTaskFile = async (
   throw primary ?? typed(loaded.error);
 };
 
+/** The task's views of every file at its seed, as the bundle ships it, and at its end. */
+interface TaskViews {
+  readonly seed: ReadonlyMap<string, TaskFileView>;
+  readonly end: ReadonlyMap<string, TaskFileView>;
+}
+
+/** Every string in a value, member names included. */
+const valueStrings = (value: JsonValue | undefined): string[] => {
+  if (typeof value === "string") return [value];
+  if (Array.isArray(value)) return value.flatMap(valueStrings);
+  if (typeof value !== "object" || value === null) return [];
+  return Object.entries(value).flatMap(([name, member]) => [
+    name,
+    ...valueStrings(member),
+  ]);
+};
+
 /** Why a check cannot be validated against this app, or undefined. */
 const targetProblem = (
   check: DesktopTaskCheck,
   target: TaskTarget,
+  views: TaskViews,
 ): string | undefined => {
   if (!isWithinAny(check.file, target.paths))
-    return `names ${check.file}, which is not under the app's owned paths (${target.paths.join(", ") || "none"}); data/get serves only those`;
-  if (JSON.stringify(check).includes(target.capturedHome))
-    return `names the captured home ${target.capturedHome}, which the computer's home replaces`;
-  if (check.kind !== "value_equals" && check.kind !== "value_absent")
-    return undefined;
-  const versions = target.files.get(check.file)?.versions ?? [];
-  if (versions.some((version) => version.format === "text"))
-    return `points into ${check.file}, which is text; use lines_present, lines_absent or line_count`;
-  return versions.some(
-    (version) => version.format === "xml" && namesXmlNamespace(version.view),
+    return `names ${check.file}, which is not under the app's owned paths (${target.paths.join(", ") || "none"}); data/get serves only those. For the bundle to own it, capture again naming it with ${STATE_PATH_INPUTS}`;
+  // What the check compares and names; its field names, kind and id label it.
+  const { id: _id, kind: _kind, ...fields } = check;
+  for (const value of Object.values(fields).flatMap(valueStrings)) {
+    if (value.includes(target.capturedHome))
+      return `names the captured home ${target.capturedHome}, which the computer's home replaces`;
+    const named = identityLeftIn(value, target.identity);
+    if (named !== undefined)
+      return `names ${named}, the capture host's name or user, which the export removes from the seed`;
+  }
+  if (!isPointerCheck(check)) return undefined;
+  return [views.seed, views.end].some(
+    (at) => at.get(check.file)?.format === "text",
   )
-    ? `points into ${check.file}, whose XML uses namespaces the verifier names differently`
+    ? `points into ${check.file}, which is text; use lines_present, lines_absent or line_count`
     : undefined;
 };
 
-/** Views of every file at one end of the capture: its first or its last version. */
+/**
+ * A seed check's view of one file. A file the bundle does not ship is absent,
+ * including a lock the capture saw. A shipped text file uses the scrubbed
+ * view; any other shipped file uses the captured view.
+ */
+export const shippedSeedCheckView = (
+  seeded: boolean,
+  shipped: TaskFileView | undefined,
+  captured: TaskFileView | undefined,
+): TaskFileView | undefined => (seeded ? (shipped ?? captured) : undefined);
+
+/** Views of every file at the end checkpoint, or at the seed as the bundle ships it. */
 const viewsAt = (
-  files: ReadonlyMap<string, DesktopStatePath>,
-  end: "baseline" | "final",
+  target: TaskTarget,
+  end: keyof StateEnds,
 ): ReadonlyMap<string, TaskFileView> => {
   const views = new Map<string, TaskFileView>();
-  for (const [home, path] of files) {
-    const version =
-      end === "baseline" ? path.versions[0] : path.versions.at(-1);
-    // A file not retained at the baseline is not seeded, so the computer starts without it.
-    if (
-      end === "baseline" &&
-      version?.present === true &&
-      version.sha256 === null
-    )
+  for (const [home, path] of target.files) {
+    const version = versionAt(path, target.ends[end]);
+    // A file not retained at the seed is not seeded, so the computer starts without it.
+    if (end === "seed" && version?.present === true && version.sha256 === null)
       continue;
-    const view = version === undefined ? undefined : versionView(version);
+    const captured = version === undefined ? undefined : versionView(version);
+    const view =
+      end === "seed"
+        ? shippedSeedCheckView(
+            target.seeded.has(home),
+            target.seedViews.get(home),
+            captured,
+          )
+        : captured;
     if (view !== undefined) views.set(home, view);
   }
   return views;
@@ -153,7 +208,9 @@ const taskReadme = (
 
 \`tasks/${task.name}.json\` deploys the app, has the agent work through the computer from the prompt below, and grades
 the outcome with \`artifacts/${taskVerifierArtifact(task)}/verify.py\`, which reads the app's \`data/get\` views and needs
-no model. \`evals/${app}.toml\` names it, so a run of the bundle runs it.
+no model. It grades once the app's files have held for ${String(SETTLE_TIMING.windowMs / 1000)} s, so a save the app makes on its own within that
+time of the agent stopping counts; each result's \`settled\` is false when they were still changing ${String(SETTLE_TIMING.boundMs / 1000)} s after the
+first read. \`evals/${app}.toml\` names it, so a run of the bundle runs it.
 
 ${task.prompt
   .split("\n")
@@ -198,8 +255,12 @@ export const admitDesktopTask = async (
       REWRITE,
     );
   const task = parsed.value;
+  const views: TaskViews = {
+    seed: viewsAt(target, "seed"),
+    end: viewsAt(target, "end"),
+  };
   for (const check of task.checks) {
-    const problem = targetProblem(check, target);
+    const problem = targetProblem(check, target, views);
     if (problem !== undefined)
       throw refuse(
         `Check ${JSON.stringify(check.id)} ${problem}.`,
@@ -207,25 +268,34 @@ export const admitDesktopTask = async (
         REWRITE,
       );
   }
-  const end = evaluateTaskChecks(task.checks, viewsAt(target.files, "final"));
+  const end = evaluateTaskChecks(task.checks, views.end);
   const failing = end.find((outcome) => !outcome.passed);
   if (failing !== undefined)
     throw refuse(
       `Check ${JSON.stringify(failing.id)} fails on the captured end state: ${failing.description}.`,
       "task",
-      "Write checks that the captured end state passes; describe-desktop-application-task shows its views.",
+      `Write checks that the captured end state passes; ${DRAFT}.`,
     );
-  const failingOnSeed = evaluateTaskChecks(
-    task.checks,
-    viewsAt(target.files, "baseline"),
-  )
-    .filter((outcome) => !outcome.passed)
-    .map((outcome) => outcome.id);
-  if (failingOnSeed.length === 0)
+  const seed = evaluateTaskChecks(task.checks, views.seed).filter(
+    (outcome) => !outcome.passed,
+  );
+  if (seed.length === 0)
     throw refuse(
       "Every check already passes on the seed, so the task would be done before the agent starts.",
       "task",
       "Add a check that the change the user made is needed for.",
+    );
+  // Only a failure on what the seed's view shows proves the task is not done yet.
+  const failingOnSeed = seed
+    .filter((outcome) => outcome.undecided !== true)
+    .map((outcome) => outcome.id);
+  if (failingOnSeed.length === 0)
+    throw refuse(
+      `No check fails on what the seed's views show: each failure there may come from a view that could not be read or is cut short (${seed
+        .map(({ id, description }) => `${JSON.stringify(id)}: ${description}`)
+        .join("; ")}).`,
+      "task",
+      `Add a check that fails on what the seed's views hold, such as a line or row of a file read whole; ${DRAFT}.`,
     );
   return {
     summary: {

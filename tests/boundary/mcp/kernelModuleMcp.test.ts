@@ -1,4 +1,6 @@
 import { writeFile } from "node:fs/promises";
+import { Ajv2020 } from "ajv/dist/2020.js";
+import type { AnySchema } from "ajv";
 import { join } from "node:path";
 import { expect } from "vitest";
 import { toolContract } from "../../../src/contracts/toolContracts.js";
@@ -56,6 +58,56 @@ mcpTest(
       });
       expect(evidence.normalized_result.versions?.entries[1]?.crc_hex).toBe(
         "90abcdef",
+      );
+    } finally {
+      await session.close();
+    }
+  },
+);
+
+mcpTest(
+  "reports duplicate sections as partial in MCP Evidence",
+  async ({ mcp }) => {
+    const { client, session } = await connect(mcp);
+    try {
+      const root = await createTestTempDirectory(
+        "rea-kernel-module-duplicate-mcp-",
+      );
+      const path = join(root, "duplicate.ko");
+      await writeFile(
+        path,
+        kernelModuleFixture({
+          sharedNameSections: {
+            name: ".exit.text",
+            count: 1,
+            body: Buffer.from([1, 2, 3]),
+          },
+        }),
+      );
+      const response = await client.callTool({
+        name: "inspect_kernel_module",
+        arguments: { path },
+      });
+      expect(response.isError, JSON.stringify(response.content)).not.toBe(true);
+      const outputSchema = (await client.listTools()).tools.find(
+        (tool) => tool.name === "inspect_kernel_module",
+      )?.outputSchema;
+      if (outputSchema === undefined) throw new Error("Missing output schema");
+      const ajv = new Ajv2020({ strict: false, validateFormats: false });
+      expect(ajv.validateSchema(outputSchema as AnySchema)).toBe(true);
+      expect(
+        ajv.compile(outputSchema as AnySchema)(response.structuredContent),
+      ).toBe(true);
+      const evidence = toolContract("inspect_kernel_module").outputSchema.parse(
+        response.structuredContent,
+      );
+      expect(evidence.normalized_result.coverage.status).toBe("partial");
+      expect(evidence.normalized_result.exit_text).toMatchObject({
+        status: "present",
+        bytes: 1,
+      });
+      expect(evidence.normalized_result.limitations).toContain(
+        "Multiple .exit.text sections are declared; the first is examined.",
       );
     } finally {
       await session.close();

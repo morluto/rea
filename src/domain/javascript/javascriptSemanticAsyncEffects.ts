@@ -24,7 +24,7 @@ import { isUnmodifiedGlobalReference } from "./javascriptSemanticAmbientWrites.j
 import { semanticOpaqueNameMayHaveChanged } from "./javascriptSemanticOpaqueEffects.js";
 import { range } from "./javascriptStaticAnalysisHelpers.js";
 import {
-  builtinDataEffectMethod,
+  builtinDataEffectIdentity,
   dataEffectArgumentBindingId,
   dataEffectLiteralString,
   dataEffectMemberCallee,
@@ -68,12 +68,31 @@ const TIMER_CANCEL_METHODS = [
   "clearImmediate",
 ] as const;
 
+/**
+ * Node keeps two timer handle families. `clearTimeout` and `clearInterval` are
+ * aliases that act only on a `Timeout` from `setTimeout` or `setInterval`, and
+ * `clearImmediate` acts only on an `Immediate` from `setImmediate`. Clearing
+ * within a family always cancels. Clearing across the families is
+ * runtime-dependent: `setImmediate` then `clearTimeout`/`clearInterval` never
+ * cancels, but `setTimeout` then `clearImmediate` reports as cancelled on some
+ * supported Node versions and fires on others. The analysis therefore treats a
+ * cross-family clear as unresolved rather than as proof that the timer kept
+ * running.
+ */
+const timerHandleFamily = (
+  method: JavaScriptSemanticTimerOperation["method"],
+): "timeout" | "immediate" =>
+  method === "setImmediate" || method === "clearImmediate"
+    ? "immediate"
+    : "timeout";
+
 interface AsyncEffectAnalysis {
   readonly eventOperations: readonly JavaScriptSemanticEventOperation[];
   readonly timerOperations: readonly JavaScriptSemanticTimerOperation[];
 }
 
 interface TimerCandidate {
+  readonly builtinAuthority?: "candidate";
   readonly node: t.CallExpression | t.OptionalCallExpression;
   readonly method: JavaScriptSemanticTimerOperation["method"];
   readonly kind: JavaScriptSemanticTimerOperation["kind"];
@@ -288,20 +307,25 @@ const emitterIdentity = (
 };
 
 /**
- * A timer proven to come from the Node `timers` module rather than a bare
- * global. Browser and Electron renderer sources reach this analysis without a
- * Node/browser distinction, and there `setTimeout("refresh()", 0)` is a real
+ * A timer associated with the Node `timers` module, either proven or
+ * conditional, rather than a bare global. Browser and Electron renderer sources
+ * reach this analysis without a Node/browser distinction, and there `setTimeout("refresh()", 0)` is a real
  * timer: the string is evaluated by the host. Node's callback rule therefore
- * applies only when the timer is imported from `node:timers`, where that form
- * cannot exist.
+ * applies when interpreting the call as `node:timers`, where that form
+ * cannot create a Node timer even if the module identity is conditional.
  */
 const nodeBuiltinTimerMethod = (
   callee: t.Node,
   state: JavaScriptSemanticAnalysisState,
-): JavaScriptSemanticTimerOperation["method"] | null =>
-  admittedTimerMethod(
-    builtinDataEffectMethod(callee, state, ["timers", "node:timers"]) ?? "",
+): JavaScriptSemanticTimerOperation["method"] | null => {
+  const identity = builtinDataEffectIdentity(callee, state, [
+    "timers",
+    "node:timers",
+  ]);
+  return admittedTimerMethod(
+    identity?.path.length === 1 ? (identity.path[0] ?? "") : "",
   );
+};
 
 /**
  * A schedule imported from Node's `timers` module requires a function in
@@ -352,8 +376,9 @@ const schedulesWithNonFunctionCallback = (
 
 const collectTimer = (input: TimerCollectionInput): void => {
   const { node, ownerCallableId, state, output, ancestors } = input;
-  const method = timerMethod(node.callee, state);
-  if (method === null) return;
+  const identity = timerMethod(node.callee, state);
+  if (identity === null) return;
+  const { method, builtinAuthority } = identity;
   if (
     TIMER_SCHEDULE_METHODS.some((candidate) => candidate === method) &&
     nodeBuiltinTimerMethod(node.callee, state) !== null &&
@@ -403,6 +428,7 @@ const collectTimer = (input: TimerCollectionInput): void => {
   output.push({
     node,
     method,
+    ...(builtinAuthority === undefined ? {} : { builtinAuthority }),
     kind,
     ownerCallableId,
     handleBindingId:
@@ -435,12 +461,24 @@ const resolveTimers = (
     const linked =
       candidate.handleRead?.origins.flatMap((origin) => {
         const schedule = schedules.get(origin);
-        return schedule === undefined ? [] : [schedule];
+        // A handle always clears its own family. Clearing across families is
+        // runtime-dependent, so it establishes no link in either direction.
+        if (
+          schedule === undefined ||
+          timerHandleFamily(schedule.method) !==
+            timerHandleFamily(candidate.method)
+        )
+          return [];
+        return [schedule];
       }) ?? [];
     const incompleteOrigins =
       candidate.handleRead !== null &&
       candidate.handleRead.origins.length !== linked.length;
     return {
+      ...(candidate.builtinAuthority === "candidate" ||
+      linked.some((item) => item.builtinAuthority === "candidate")
+        ? { builtinAuthority: "candidate" as const }
+        : {}),
       timerId: timerId(candidate),
       kind: candidate.kind,
       method: candidate.method,
@@ -473,7 +511,10 @@ const resolveTimers = (
 const timerMethod = (
   callee: t.Node,
   state: JavaScriptSemanticAnalysisState,
-): JavaScriptSemanticTimerOperation["method"] | null => {
+): {
+  readonly method: JavaScriptSemanticTimerOperation["method"];
+  readonly builtinAuthority?: "candidate";
+} | null => {
   if (t.isIdentifier(callee)) {
     const binding = resolveSemanticBindingState(state, callee, callee.name);
     if (binding === undefined) {
@@ -482,12 +523,24 @@ const timerMethod = (
       return semanticResolutionBlocked(state, callee, callee.name) ||
         !isUnmodifiedGlobalReference(callee, state, callee.name)
         ? null
-        : method;
+        : { method };
     }
   }
-  return admittedTimerMethod(
-    builtinDataEffectMethod(callee, state, ["timers", "node:timers"]) ?? "",
+  const identity = builtinDataEffectIdentity(callee, state, [
+    "timers",
+    "node:timers",
+  ]);
+  const method = admittedTimerMethod(
+    identity?.path.length === 1 ? (identity.path[0] ?? "") : "",
   );
+  return method === null
+    ? null
+    : {
+        method,
+        ...(identity?.builtinAuthority === undefined
+          ? {}
+          : { builtinAuthority: identity.builtinAuthority }),
+      };
 };
 const admittedTimerMethod = (
   value: string,

@@ -47,12 +47,26 @@ computer would not have that entry. An `--executable` runs from
 the current directory, as it would from a shell, and a relative path to it is
 resolved there.
 
+A nested desktop file uses a dashed ID: `vendor/app.desktop` has ID
+`vendor-app`. REA checks path spellings that can encode that ID within each
+XDG root before trying the next root. Unrelated directories do not affect
+selection. If an applicable path cannot be examined or the bounded search
+cannot establish absence, capture reports an incomplete desktop-entry search
+rather than selecting a different application from a later root.
+
+Desktop-entry string values retain literal trailing spaces. For example,
+`Path=/tmp/workspace ` and `Path=/tmp/workspace\s` name the same directory
+ending in a space. Use the escaped spelling to make such a suffix visible.
+
 Before writing anything the command refuses to start if a window of the
 application is already open, or if the window list cannot be read. A launch
 beside a running instance can hand off to it, and that instance's unsaved
 state would be missing from the baseline. It then records the starting state,
 launches the application in its own process group with a run token in its
-environment, and reads commands from stdin, one per line:
+environment, and reads commands from stdin, one per line. The application gets
+REA's environment without the `AGENTENV_*` variables an agent environment sets,
+such as its control token: an app the exported computer launches never has
+them, and an app captured inside a computer must not hold a credential to it.
 
 | Line                                        | Effect                                                      |
 | ------------------------------------------- | ----------------------------------------------------------- |
@@ -65,6 +79,15 @@ session. A name that repeats an earlier checkpoint, or is one of the capture's
 own names (`baseline`, `stop`, `time-limit`, `exit`), is refused with a
 progress line on stderr; no checkpoint is taken and the session continues.
 
+Name the checkpoints a later step reads by what they mark. The
+[export](desktop-application-export.md) seeds the bundle from the baseline
+unless `--seed-checkpoint` names another, and a
+[task](desktop-application-tasks.md) is checked against the last checkpoint
+unless `--end-checkpoint` names another. So one capture can build a seed and
+then the change: launch the app, create and save the document, send
+`checkpoint seed`, make the edit and save it, send `checkpoint end`, then
+`stop`.
+
 The session also finishes when the launched process has exited and the
 application's processes and windows are all gone in two consecutive samples,
 or when `--max-duration-seconds` passes. Before deciding the processes are
@@ -72,8 +95,26 @@ gone, the capture looks for any process still carrying the run token, so a
 worker whose launcher exited before it was sampled keeps the session open. A
 sample whose window list could not be read is not taken as an empty one; the
 limitations say how many there were. One queued line is handled between
-samples, and reading stdin pauses while 16 lines wait. Progress lines on stderr say when
-the window has opened and when each checkpoint is taken.
+samples, and reading stdin pauses while 16 lines wait.
+
+Progress lines on stderr are JSON, `{"rea_progress": {"phase":
+"desktop_capture", "message": ...}}`. Those a driver waits on also carry an
+`event`: `{"kind": "window_open"}` once the window opens; `{"kind":
+"checkpoint", "name", "trigger", "at_ms", "entries", "changes",
+"retained_files", "retained_bytes", "changed_files", "more_changed_files"}`
+once a checkpoint has been taken, the baseline, `stop` and `exit` included,
+with the paths walked, the paths changed since the checkpoint before, the
+files retained, and up to ten of the files (not folders) that changed,
+home-relative: those under a `--state-path` or absolute `--argument` first,
+then those the application held open, then those in its state directories,
+then the rest, and last caches (a folder whose name ends in `cache`, such as
+`~/.cache`) and WebKit or Chromium storage, each by path, with a count of the
+rest. An application can rewrite dozens of cache files on a save, and KDE's
+holds its service cache open, so the saved document would otherwise fall past
+the ten;
+and `{"kind": "checkpoint_refused", "name", "reason"}` for a requested name it
+refused. A driver that sends `checkpoint <name>` waits for the event naming it
+rather than for a fixed time.
 
 When the session ends the capture sends SIGTERM to the launched process, its
 process group and every process that carries the run token, waits up to five
@@ -122,7 +163,13 @@ command makes it private (mode 0700). It holds:
   distinct content.
 
 The Evidence operation is `capture_desktop_application` and its predicate type
-is `rea.desktop-application-capture`. Its result has four parts.
+is `rea.desktop-application-capture`. Its `host` names the platform,
+architecture, display and home directory, and the host's name (`hostname`)
+and the user's (`user`), which captured state can hold, as in a mail
+template's `ada@e81232be457d`; the export removes them from the bundle. A
+capture written before they were recorded has neither, and one is left out
+when the system cannot say, as for a user with no passwd entry. The rest of
+the result has four parts.
 
 **Application.** The desktop entry (id, path, name, `Exec`, icon,
 `StartupWMClass`, categories, MIME types), the launch command and working
@@ -132,7 +179,39 @@ architecture and the apt sources that list the installed version, with the
 origin (`o=`) apt reports for each source in `source_origins`, such as `Ubuntu`
 for the Ubuntu archive and its mirrors or `LP-PPA-<name>` for a PPA; an empty
 source list means the version came from a local `.deb` or the package lists
-are missing, which `package_lists_present` tells apart.
+are missing, which `package_lists_present` tells apart. apt's lists folder,
+and the trusted keys below, are where `apt-config` resolves
+`Dir::State::Lists`, `Dir::Etc::TrustedParts` and `Dir::Etc::Trusted` under
+`Dir`, so an `APT_CONFIG` file that moves them is followed: on a computer
+without lists, an ordinary user can run `apt-get update` with an `APT_CONFIG`
+naming writable `Dir::State::Lists` and `Dir::Cache` folders and capture with
+the same `APT_CONFIG`. Without `apt-config`, or when it fails, they are
+`/var/lib/apt/lists`, `/etc/apt/trusted.gpg.d` and `/etc/apt/trusted.gpg`.
+
+The Debian package is the one `dpkg-query -S` names as the owner of the
+desktop entry the capture launched, or else of the executable, since the
+entry's package is what installs the application: LibreOffice Writer's entry
+belongs to `libreoffice-writer`, while the `/usr/bin/libreoffice` it runs
+belongs to `libreoffice-common`, which does not bring Writer with it. When the
+two differ, `executable_package` names the executable's package, which the
+export installs beside the entry's, since the entry's package need not depend
+on it (`vim-common` owns Vim's entry but does not depend on `vim`).
+`executable_package_reason` says why the computer could not install it by
+name, by the rule for library packages below: neither the Ubuntu 24.04 archive
+nor a vendor repository the export declares offers it, or `apt-cache policy`
+did not say. When a package owns the entry but none owns its program, such as
+a `~/.local/bin/<name>` found first on `PATH`, the entry's package is recorded
+without `executable_package`, and `executable_package_reason` says no package
+owns the program, so the export refuses rather than install a package that
+does not bring it. A program link that dpkg does not own counts as owned when
+dpkg owns the file it resolves to, as an alternatives link does. An
+`--executable` launch, or an entry no package owns, such as
+one in `~/.local/share/applications`, records the executable's package. When
+`dpkg-query` does not finish or exits with an error for the executable or the
+entry, the package is `unknown` and the limitations say which path, since a
+failed lookup is not proof that no package owns it. The sources, vendor
+repositories and `--package-file` match below are the recorded package's; the
+library walk still reads the executable.
 
 Each source whose origin is not `Ubuntu` is also recorded in
 `apt_repositories`. `apt-get indextargets` names the sources file entry apt
@@ -148,24 +227,30 @@ and in `apt-get indextargets` and `apt-cache policy` output alike, so entries
 match whether or not apt prints it, and sets `uri_credentials_removed` on a repository whose URI held
 one (a capture written before this was recorded omits the field). The key is
 found by verification, not by name: the candidates are the
-entry's `signed-by` keyrings, or else every `.gpg` and `.asc` key in
-`/etc/apt/trusted.gpg.d` and `/etc/apt/trusted.gpg`, and each is checked with
+entry's `signed-by` keyrings, or else every `.gpg` and `.asc` key in apt's trusted
+parts folder and its trusted keyring, and each is checked with
 `gpgv` against the release's `InRelease` (or `Release` with `Release.gpg`)
-beside its index in apt's lists folder. A key counts when gpgv reports a
-valid signature by it and no bad, expired, revoked or unverifiable signature
-by it, whatever gpgv's exit status: a release also signed by a key the host
-lacks makes gpgv fail. Each candidate is copied, an armored key decoded to a
-binary keyring, into a private temporary folder that is removed afterwards; a
-folder REA cannot remove fails the capture with the folder as its cleanup
-resource. The key that verifies is recorded in `signing_key` with its path,
+beside its index in apt's lists folder. A deb822 entry whose `Signed-By` field
+holds the armored key itself, as `add-apt-repository ppa:<owner>/<name>`
+writes it on Ubuntu 24.04, has that key as its only candidate, as apt trusts
+no other for it: REA reads the field's continuation lines as deb822 writes
+them, a `.` line standing for an empty one, from the key block's `BEGIN` line
+to its last `END` line, and records the key's path as the entry's sources
+file. A key counts when gpgv reports a valid signature by it and no bad,
+expired, revoked or unverifiable signature by it, whatever gpgv's exit status:
+a release also signed by a key the host lacks makes gpgv fail. Each candidate
+is copied, an armored key decoded to a binary keyring, into a private
+temporary folder that is removed afterwards; a folder REA cannot remove
+fails the capture with the folder as its cleanup resource. The key that
+verifies is recorded in `signing_key` with its path,
 SHA-256, format (`binary` or `armored`) and primary fingerprint, and its bytes
 are retained under `content/`. A key file holding one key is retained as it
 is; from one holding several, such as a legacy `/etc/apt/trusted.gpg`, only
 the transferable key with the verifying fingerprint is retained, in binary, so
 the bundle trusts no other key. When no candidate verifies, `gpgv` is
-missing, apt holds no signed release, no sources entry matches, the entry's
-`Signed-By` holds the key itself, or the key is larger than
-`--max-file-bytes` or the content budget, `signing_key` is null and
+missing, apt holds no signed release, no sources entry matches, the key the
+entry's `Signed-By` holds does not verify the release, or the key is larger
+than `--max-file-bytes` or the content budget, `signing_key` is null and
 `signing_key_reason` says why. Ubuntu Pro's ESM repositories (origins such as
 `UbuntuESMApps`, host `esm.ubuntu.com`) are not checked: apt reaches them only
 with the host's Ubuntu Pro credentials, which a computer does not have.
@@ -187,12 +272,23 @@ listed, and neither is the application's own package. One batched
 recorded vendor repository with a verified key offers, in any component its
 sources entry lists, since the export declares them all; the rest, such as
 packages from a PPA or a local `.deb`, are listed in
-`uninstallable_library_packages`. Sonames found nowhere are listed in
+`uninstallable_library_packages`. The same query checks `executable_package`.
+Each recorded repository's `supplies` lists the kept packages, and the
+executable's package, that the archive does not offer and its package files
+list, so the export can leave out those only a repository it does not declare
+supplies, such as one whose key the content budget later dropped. Sonames
+found nowhere are listed in
 `missing_libraries`, and libraries no package owns in `unpackaged_libraries`.
 `library_packages_reason` says why the lists are incomplete: the executable is
 not an ELF image (a launcher script, for example), `ldconfig`, `dpkg-query` or
-`apt-cache` is missing, a library could not be read or names more than 512
-libraries, or the walk stopped after 512 libraries.
+`apt-cache` is missing, `dpkg-query -S` could not tell which package owns a
+library (it exits 2 rather than 1, which only says no package owns the paths
+it did not name), a library could not be read or names more than 512
+libraries, or the walk stopped after 512 libraries. A failed owner query does
+not list the libraries it covered in `unpackaged_libraries`, since a lookup
+that could not finish is not proof that no package owns them. Completed batches
+retain their package and unowned-library facts. Paths containing package-query
+pattern characters stay unknown unless another candidate identifies an owner.
 
 A sources file, key or library whose handle REA cannot close fails the capture
 with the file as its cleanup resource. When the repository check and the
@@ -223,19 +319,28 @@ the fuse sentinel in their binary or a `resources/app.asar` beside it. State
 directories are the XDG config, data, state and cache folders and the
 dot-folder named after the package, the executable, the desktop entry's full
 id and its last part, and the entry's name, with whether each existed at the
-start. Dotfiles in the home named after the application (`.<name>rc`, or
+start. A folder in those places whose name is one of these in another letter
+case joins them, such as GIMP's `~/.config/GIMP` for the `gimp` package; only
+the whole name is compared, so `~/.config/GIMPshop` does not. Dotfiles in the
+home named after the application (`.<name>rc`, or
 `.<name>` followed by `-`, `.` or `_`, for a name of three or more characters)
 that exist at the start join them, since an application may only read such a
-file during the capture. A `flatpak run` launch is named after its application
+file during the capture. So does KDE's settings file in the config folder,
+`<name>rc` such as Tellico's `~/.config/tellicorc`, for each such name of three
+or more characters, whether or not it exists yet. A `flatpak run` launch is named after its application
 id rather than the `flatpak` launcher, and adds `~/.var/app/<id>`.
 
 **Session.** When it started, how long it ran and why it ended; the launched
 process's exit status; every process seen in the application's tree; every
 client window with its class pair, titles, owner pid and type, marked when it
-belongs to the application; when the first application window appeared; the
+belongs to the application. Titles and class names decode xprop's quoted
+delimiters, newline and tab escapes, and three-digit octal byte escapes;
+unsupported escape spellings leave that string unknown rather than inventing
+text. The session also records when the first application window appeared; the
 most common class pair of the application's windows, for matching its window
-later; files the application's processes held open under the walked roots; the first
-8 KiB of the launched process's stderr; and whether cleanup was verified. Each
+later; files the application's processes held open under the walked roots; the last
+8 KiB of the launched process's stderr, where a failing app's last words are,
+with `stderr_truncated` when earlier output was dropped; and whether cleanup was verified. Each
 process records whether the capture started it: the launched process, a
 process carrying the capture's run token, or a descendant of one, even when
 its environment cannot be read, as for a zombie or a sandboxed renderer.
@@ -261,7 +366,9 @@ directory, which are named in the limitations instead; a selected path that is
 not a directory brings the `-wal` and `-journal` paths beside it, so a database
 selected on its own is captured with its logs), the state directories
 as walked (their physical spelling, which differs from the inventory's when one
-is a symlink), the paths every walk left out (the output folder and
+is a symlink), the selected paths (each `--state-path` and content-root
+`--argument` as named, absolute, beside the physical path walked, so a
+symlinked settings folder keeps what its name means), the paths every walk left out (the output folder and
 `--exclude` values), and the checkpoints in order: `baseline` before
 launch, each requested checkpoint, `stop` or `time-limit`, and `exit` after the
 application has gone. Each checkpoint records how many paths its walk saw,
@@ -284,9 +391,14 @@ remaining content budget is not read, unless stored content of the same size
 could make it a duplicate. Files that could not be
 retained are listed with the reason: too large, over the content budget,
 changed since the walk, changed during the read, or unreadable.
+The baseline also records the paths and types of non-file entries it observed,
+including symlinks, without following them. This is required to distinguish an
+unreadable SQLite sidecar from an absent one. Captures made before this field
+was added must be made again before state inspection, task drafting or export.
 Directories the application held files open in, but whose starting content was
 not retained, are listed so a second capture can pass them with
-`--state-path`.
+`--state-path`, or `state_paths` on a build computer's `start_build_capture`,
+and a limitation names them, spelled from `~/` under the home.
 
 **Limitations.** What the capture could not establish, such as a truncated
 walk or a missing window.

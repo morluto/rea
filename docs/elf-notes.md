@@ -44,6 +44,13 @@ file memory regions and paths (`NT_FILE`), fault signal and code (`NT_SIGINFO`),
 auxiliary vectors (`NT_AUXV`) across 32-bit and 64-bit images. Other owners or unparsed
 notes keep `core` null.
 
+Linux `CORE` decoding requires System V/unspecified (0) or GNU/Linux (3)
+OSABI with ABI version zero. An unspecified OSABI alone does not establish
+Linux origin. An explicitly different OSABI or ABI version leaves `core` null
+and its Linux-specific `type_name` unknown, with a limitation explaining the
+profile. Owner/type numbers, descriptor ranges and hashes, GNU-owned notes,
+and complete table-examination coverage remain available.
+
 `PT_NOTE` and `SHT_NOTE` are examined independently. The same file range may
 appear twice when both tables declare it.
 

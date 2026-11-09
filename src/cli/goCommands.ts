@@ -12,12 +12,18 @@ import {
 import { localPathStringSchema } from "../domain/localPath.js";
 import { absoluteCallerPath } from "../filesystem/callerPath.js";
 import { machoSliceArchitectureSchema } from "../domain/apple/machoTargetSelection.js";
+import {
+  DEFAULT_MAX_GO_STRING_LITERALS,
+  MAX_GO_STRING_LITERALS_LIMIT,
+  goMaxStringLiteralsSchema,
+} from "../domain/go/goBinary.js";
+import { cliDecimalField } from "./options.js";
 
 /** Resolve caller paths and inspect static build metadata through the shared workflow. */
 export const registerGoCommands = (cli: CliInstance, logger: Logger): void => {
   cli.command(CLI_COMMANDS.inspectGoBinary, {
     description:
-      "Inspect embedded Go compiler, modules and build settings without target execution",
+      "Inspect embedded Go compiler, modules, build settings and optional static (ptr, len) string literals without target execution",
     args: z.object({
       path: localPathStringSchema.describe(
         "Local ELF, PE, thin Mach-O or universal Mach-O image",
@@ -30,6 +36,17 @@ export const registerGoCommands = (cli: CliInstance, logger: Logger): void => {
         .describe(
           "CPU family of the slice to read from a universal Mach-O; required for universal files",
         ),
+      includeStringLiterals: z
+        .boolean()
+        .optional()
+        .describe(
+          "Also recover bounded inferred Go UTF-8 string literals from static (ptr, len) headers",
+        ),
+      maxStringLiterals: cliDecimalField(
+        goMaxStringLiteralsSchema.optional(),
+      ).describe(
+        `Maximum distinct recovered string literals (1-${String(MAX_GO_STRING_LITERALS_LIMIT)}; default ${String(DEFAULT_MAX_GO_STRING_LITERALS)}; requires --include-string-literals)`,
+      ),
     }),
     run: ({ args, options }) =>
       withCommandCancellation(async (signal) => {
@@ -47,6 +64,15 @@ export const registerGoCommands = (cli: CliInstance, logger: Logger): void => {
                     ...(options.architecture === undefined
                       ? {}
                       : { architecture: options.architecture }),
+                    ...(options.includeStringLiterals === undefined
+                      ? {}
+                      : {
+                          include_string_literals:
+                            options.includeStringLiterals,
+                        }),
+                    ...(options.maxStringLiterals === undefined
+                      ? {}
+                      : { max_string_literals: options.maxStringLiterals }),
                   },
                   { signal },
                 ),

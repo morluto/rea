@@ -1,4 +1,4 @@
-import { readdir } from "node:fs/promises";
+import { readdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { describe, expect, it, vi } from "vitest";
@@ -64,6 +64,33 @@ describe.skipIf(process.platform !== "linux")("runDesktopSession", () => {
     expect(checkpoints).toEqual(["stop", "exit"]);
     expect(vi.mocked(terminateTokenOwnedProcesses)).toHaveBeenCalledTimes(1);
   }, 30_000);
+
+  it("launches the application without the agent environment's variables", async () => {
+    const root = await createTestTempDirectory("desktop-session-env-");
+    const plan = shellPlan(root, `env > "${join(root, "env")}"`);
+
+    await runDesktopSession({
+      ...plan,
+      environment: {
+        ...plan.environment,
+        AGENTENV_CONTROL_TOKEN: "control",
+        AGENTENV_URL: "http://127.0.0.1:1",
+        NOT_AGENTENV_KEPT: "kept",
+      },
+    });
+
+    const names = (await readFile(join(root, "env"), "utf8"))
+      .split("\n")
+      .map((line) => line.split("=")[0]);
+    expect(names.filter((name) => name?.startsWith("AGENTENV_"))).toEqual([]);
+    expect(names).toEqual(
+      expect.arrayContaining([
+        "NOT_AGENTENV_KEPT",
+        "PATH",
+        "REA_PROCESS_RUN_ID",
+      ]),
+    );
+  }, 30_000);
 });
 
 describe.skipIf(process.platform !== "linux")(
@@ -109,6 +136,30 @@ describe.skipIf(process.platform !== "linux")(
       expect(outcome.session.end_reason).toBe("application_exited");
       expect(outcome.unreadableWindowSamples).toBe(4);
       expect(samples).toBeGreaterThanOrEqual(6);
+    }, 30_000);
+  },
+);
+
+describe.skipIf(process.platform === "win32")(
+  "runDesktopSession stderr",
+  () => {
+    it("keeps the end of an app's stderr when it writes more than the session keeps", async () => {
+      const root = await createTestTempDirectory("desktop-session-stderr-");
+      const cause =
+        "[error] notes: Unable to find an appropriate java runtime.";
+      // About 16 KiB of warnings, then the cause, as an app that fails at launch writes.
+      const outcome = await runDesktopSession(
+        shellPlan(
+          root,
+          `i=0; while [ $i -lt 400 ]; do echo "[warning] notes: probing runtime $i of 400" >&2; i=$((i+1)); done; echo '${cause}' >&2; exit 1`,
+        ),
+      );
+
+      const { stderr, stderr_truncated } = outcome.session;
+      expect(stderr.trimEnd().endsWith(cause)).toBe(true);
+      expect(stderr).not.toContain("runtime 0 of 400");
+      expect(Buffer.byteLength(stderr)).toBeLessThanOrEqual(8 * 1024);
+      expect(stderr_truncated).toBe(true);
     }, 30_000);
   },
 );

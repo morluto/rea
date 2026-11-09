@@ -5,6 +5,7 @@ import {
   aptListFileName,
   entryForTarget,
   isUbuntuProRepository,
+  parseAptConfigShell,
   parseAptIndexTargets,
   parseDeb822Sources,
   parseOneLineSources,
@@ -13,7 +14,11 @@ import {
   type AptSourceStanza,
 } from "../domain/desktop/aptRepositories.js";
 import type { AptRepository } from "../domain/desktop/desktopCapture.js";
-import { withGpgvKeyCheck, type VerifiedKey } from "./GpgvKeyCheck.js";
+import {
+  withGpgvKeyCheck,
+  type HeldKey,
+  type VerifiedKey,
+} from "./GpgvKeyCheck.js";
 import { isHostFile, readHostFile } from "./HostFileRead.js";
 import { succeeded, type QueryRunner } from "./HostQuery.js";
 
@@ -28,6 +33,44 @@ export const APT_LOCATIONS: AptLocations = {
   trustedParts: "/etc/apt/trusted.gpg.d",
   trusted: "/etc/apt/trusted.gpg",
   lists: "/var/lib/apt/lists",
+};
+
+/**
+ * apt's folders as `apt-config` resolves them under `Dir`, which an
+ * `APT_CONFIG` file can move, as a user-space `apt-get update` does with its
+ * lists. Each is the fallback's when apt-config is missing, fails or does not
+ * name it.
+ */
+export const resolveAptLocations = async (
+  runQuery: QueryRunner,
+  signal: AbortSignal | undefined,
+  fallback: AptLocations = APT_LOCATIONS,
+): Promise<AptLocations> => {
+  const output = succeeded(
+    await runQuery(
+      "apt-config",
+      [
+        "shell",
+        "LISTS",
+        "Dir::State::Lists/d",
+        "PARTS",
+        "Dir::Etc::TrustedParts/d",
+        "TRUSTED",
+        "Dir::Etc::Trusted/f",
+      ],
+      signal,
+    ),
+  );
+  const values = parseAptConfigShell(output ?? "");
+  const value = (name: string) => {
+    const found = values.get(name);
+    return found?.startsWith("/") === true ? found : undefined;
+  };
+  return {
+    lists: value("LISTS") ?? fallback.lists,
+    trustedParts: value("PARTS") ?? fallback.trustedParts,
+    trusted: value("TRUSTED") ?? fallback.trusted,
+  };
 };
 
 /** The host commands and apt folders the repository check reads. */
@@ -120,12 +163,15 @@ const signedRelease = async (
     : undefined;
 };
 
+/** The keys gpgv checks a release with: candidate key files, or the one key the sources entry holds. */
+type KeyCandidates = readonly string[] | HeldKey;
+
 interface RepositoryContext {
   readonly apt: AptLocations;
   readonly targets: ReadonlyMap<string, AptIndexTarget> | undefined;
   readonly sources: (file: string) => Promise<readonly AptSourceStanza[]>;
   readonly verify: (
-    candidates: readonly string[],
+    candidates: KeyCandidates,
     release: readonly string[],
   ) => Promise<VerifiedKey | { readonly reason: string }>;
 }
@@ -139,7 +185,7 @@ const keyCheck = async (
   | { readonly reason: string }
   | {
       readonly release: readonly string[];
-      readonly candidates: readonly string[];
+      readonly candidates: KeyCandidates;
     }
 > => {
   if (target === undefined)
@@ -153,15 +199,16 @@ const keyCheck = async (
     return {
       reason: `no sources entry at ${target.sourcesFile}:${String(target.position)} configures it`,
     };
-  if (entry.inlineKey)
-    return {
-      reason:
-        "its Signed-By field holds the key itself, which REA does not read",
-    };
   const release = await signedRelease(target);
   if (release === undefined)
     return {
       reason: `apt holds no signed release file for it in ${dirname(target.filename)}`,
+    };
+  // apt trusts only the key an entry holds, never the keys it trusts for all repositories.
+  if (entry.inlineKey !== null)
+    return {
+      release,
+      candidates: { path: entry.file, bytes: Buffer.from(entry.inlineKey) },
     };
   const candidates = await candidateKeys(entry, context.apt);
   return candidates.length > MAX_CANDIDATE_KEYS
@@ -230,7 +277,8 @@ const repositoryFacts = async (
  * The apt repositories other than Ubuntu's that list the installed version.
  * `apt-get indextargets` names each source's sources entry, release and
  * signed release file; the key is the one whose signature over that release
- * gpgv verified: the entry's Signed-By keyrings, or every key apt trusts.
+ * gpgv verified: the key the entry's Signed-By holds, its Signed-By keyrings,
+ * or every key apt trusts.
  */
 export const inspectAptRepositories = async (
   installed: {
@@ -259,7 +307,9 @@ export const inspectAptRepositories = async (
       targets,
       sources: files.read,
       verify: (candidates, release) =>
-        check.firstVerifying(candidates, release),
+        "bytes" in candidates
+          ? check.heldVerifying(candidates, release)
+          : check.firstVerifying(candidates, release),
     };
     const keys = new Map<string, Buffer>();
     const repositories: AptRepository[] = [];

@@ -30,7 +30,7 @@ rea environment-serve manifest.json --evidence capture.json --port 8765
 ```
 
 The first command inspects the capture; the second projects the
-[environment manifest](web-network-captures.md#environment-manifest) view from
+[environment manifest](guides/web/web-network-captures.md#environment-manifest) view from
 it, where `view.json` wraps the capture Evidence as the inline source:
 
 ```json
@@ -163,7 +163,7 @@ at info level; the report is the only output on stdout:
 
 `coverage` is the state's read views and write plans summarized, and `null`
 when the state is unavailable and the bundle serves replay. The
-[environment coverage](web-network-captures.md#environment-coverage) view
+[environment coverage](guides/web/web-network-captures.md#environment-coverage) view
 reports the same summary for any capture without building, so an agent can
 check it after each recording. The view summarizes the state as derived; it
 does not apply the serve-time admission checks, so for an environment whose
@@ -235,7 +235,7 @@ name `export_environment_bundle`; the others name their stage as
 ## From a browser scenario
 
 The capture can also come from REA itself: a
-[browser scenario](browser-scenario-contract.md) records a scripted session
+[browser scenario](guides/web/browser-scenario-contract.md) records a scripted session
 in a browser REA launches, and its Evidence is a manifest parent like a HAR
 inspection. Select the `network` event family and response bodies. A replayed
 reply carries up to 256 KiB of a recorded body, but the scenario keeps at most
@@ -321,7 +321,7 @@ declared secret replaced by its redaction marker (a body that redaction had to
 empty replays no body).
 
 To record writes, sign in through the UI and then send the application's API
-calls with [request steps](browser-scenario-contract.md#request-steps): each
+calls with [request steps](guides/web/browser-scenario-contract.md#request-steps): each
 sends one request to the start origin through the page's own `fetch`, with the
 session's cookies, and a header can carry the CSRF cookie or stored token the
 application's own requests send. A write is served only when the capture shows
@@ -481,7 +481,7 @@ captured text without changing the tool names or schema fields clients use.
 
 Replay answers each call from one recording, so the answers reflect whichever
 moment of the capture recorded them. The
-[environment state](web-network-captures.md#environment-state) view extracts
+[environment state](guides/web/web-network-captures.md#environment-state) view extracts
 instead the data the capture's reads observed before the first related write:
 entity types with an identity field, entities with their recorded values,
 documents for reads that are not entities, and a render plan per read tool,
@@ -503,14 +503,14 @@ see [Serve from the state](#serve-from-the-state).
 
 `--host` and `--port` default to `MCP_HOST` and `MCP_PORT` from the
 environment, then to `127.0.0.1` and an ephemeral port, exactly as
-[`rea mcp --http`](cli.md#serve-mcp-over-streamable-http) resolves them. The
+[`rea mcp --http`](getting-started/cli.md#serve-mcp-over-streamable-http) resolves them. The
 bound MCP URL is written to stderr as one JSON log line
 (`"msg":"MCP transport listening"` with `url`); `REA_LOG_LEVEL` overrides that
 log level. `ENVIRONMENT_NAME` renames the served environment; otherwise the
 manifest's `name` is used, and a set but blank value is refused as
 `configuration_invalid` before binding rather than silently falling back. The
 listener serves one MCP client at a time with the same session, `Host` header
-and shutdown contract as [transports](mcp-contracts.md#transports) describes.
+and shutdown contract as [transports](reference/mcp-contracts.md#transports) describes.
 It runs until SIGINT or SIGTERM, then closes the listener, prints one
 `{"status":"stopped", …}` document whose `state` member says whether it served
 from the state, and exits `130` or `143`.
@@ -585,7 +585,7 @@ names the method and path template, then what the tool returns, one level deep:
 `returns a JSON object with fields …`, `returns a JSON array of objects with
 fields …` or `returns a JSON object whose <member> lists objects with fields …`,
 where a list is an array of objects found by the
-[environment state](web-network-captures.md#environment-state)'s list rule (the
+[environment state](guides/web/web-network-captures.md#environment-state)'s list rule (the
 root array, or the one array of objects an envelope carries). Field and member
 names are written as JSON strings, so a captured name cannot read as more of
 the description; a member name too long to show whole is a quoted prefix marked
@@ -641,7 +641,7 @@ rea environment-serve manifest.json --evidence capture.json
 ```
 
 Before it binds, the server derives the
-[environment state](web-network-captures.md#environment-state) the capture
+[environment state](guides/web/web-network-captures.md#environment-state) the capture
 observed: it runs the `environment-state` view on the capture in-process with
 the manifest's `template_rules` in the same order, exactly as
 `inspect-analysis-view` projects it from the same capture, so the state
@@ -733,7 +733,7 @@ query model may describe supported paging; an empty later page cannot start
 returning earlier entities merely because it was empty in the capture.
 
 `POST`, `PUT`, `PATCH` and `DELETE` tools are served only when the state's
-[write plan](web-network-captures.md#environment-state) for them is served:
+[write plan](guides/web/web-network-captures.md#environment-state) for them is served:
 the capture's later reads confirmed the effect the plan models. Other write
 tools are not served, so no call claims a change it does not make; each one's
 plan states why in its `reason`. A served write changes the live state, which
@@ -1049,8 +1049,9 @@ unknown recorded status stays unknown; it is not borrowed from another
 record). A bundle with no such tool yields a verifier that checks the count
 only and says so. `tasks/smoke.json` deploys the env on the local
 sandbox and runs that verifier against the env's MCP endpoint; the first run
-also builds the framework's own infrastructure, and the run tears everything
-down when it ends.
+also pulls the framework's published infrastructure images from `ghcr.io`,
+building one only if its pull fails, and the run tears everything down when it
+ends.
 
 The README written into the bundle records the capture artifact's SHA-256, the
 capture and manifest Evidence ids, the manifest view digest, the served tool
@@ -1186,7 +1187,7 @@ read, not that the write had no other effect.
 ## Compatibility verification
 
 `npm run verify:agentenv:environment` is the hosted `real-agentenv` lane
-described in [testing](testing.md#exported-environment-bundles). It projects
+described in [testing](development/testing.md#exported-environment-bundles). It projects
 the Grafana-shaped source-owned capture through the built CLI, packs the
 checkout, exports a bundle with `--package-tarball`, runs it with the pinned
 `agentenv-framework` release on the runner's Docker and requires the smoke task

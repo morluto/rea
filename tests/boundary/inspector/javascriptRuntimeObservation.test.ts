@@ -26,7 +26,7 @@ import {
 import { inspectWebPageInputSchema } from "../../../src/domain/browserObservation.js";
 import { createEvidence } from "../../../src/domain/evidence.js";
 import { javascriptRuntimeReconciliationResultSchema } from "../../../src/domain/javascript/javascriptRuntimeReconciliationSchemas.js";
-import { parseRuntimeCaptures } from "../../../src/domain/javascript/javascriptRuntimeReconciliationCaptureParsing.js";
+import { parseRuntimeCapture } from "../../../src/domain/javascript/javascriptRuntimeReconciliationCaptureParsing.js";
 import { startFakeV8Inspector } from "../../fixtures/inspector/fakeV8Inspector.js";
 import { startFakeCdpBrowser } from "../../fixtures/fakeCdpBrowser.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
@@ -62,7 +62,7 @@ test("reports static-layer Evidence digest failure at its caller path", () => {
         {
           path: ["static_layers", 0, "analysis", "evidence_id"],
           reason: "invalid_value",
-          message: "Evidence semantic identifier does not match its record",
+          message: expect.stringMatching(/semantic identifier.*not match/iu),
         },
       ],
     },
@@ -109,8 +109,9 @@ test("reports browser origin scope mismatch at the caller parameter path", async
           {
             path: ["runtime_observations", 0, "parameters", "allowed_origins"],
             reason: "invalid_value",
-            message:
-              "Browser Evidence target is outside its recorded origin scope",
+            message: expect.stringMatching(
+              /target.*outside.*recorded origin scope/i,
+            ),
           },
         ],
       },
@@ -155,7 +156,8 @@ describe("Inspector execution-context lifecycle metadata", () => {
         if (!result.ok) throw result.error;
         expect(result.value.execution_contexts).toEqual([
           {
-            context_key: "1",
+            context_key: "context_0",
+            execution_context_id: 1,
             state,
             name: "worker#one",
             origin: "https://context.example",
@@ -167,7 +169,7 @@ describe("Inspector execution-context lifecycle metadata", () => {
     },
   );
 
-  test("replaces context metadata only when a new context creation is observed", async () => {
+  test("retains each context lifetime after an ID is reused", async () => {
     const fixture = await runtimeFixture();
     const fake = await startFakeV8Inspector({
       targetUrl: pathToFileURL(fixture.entry).href,
@@ -202,14 +204,35 @@ describe("Inspector execution-context lifecycle metadata", () => {
       );
       if (!result.ok) throw result.error;
       expect(result.value.execution_contexts).toEqual([
-        { context_key: "1", state: "created", name: "", origin: "" },
-        { context_key: "2", state: "destroyed", name: null, origin: null },
+        {
+          context_key: "context_0",
+          execution_context_id: 1,
+          state: "destroyed",
+          name: "old context",
+          origin: "https://old.example",
+        },
+        {
+          context_key: "context_1",
+          execution_context_id: 1,
+          state: "created",
+          name: "",
+          origin: "",
+        },
+        {
+          context_key: "context_2",
+          execution_context_id: 2,
+          state: "destroyed",
+          name: null,
+          origin: null,
+        },
       ]);
     } finally {
       await fake.close();
     }
   });
+});
 
+describe("Inspector execution-context ID validation", () => {
   test.each([
     ["malformed", "2", "1"],
     ["valid", 2, 1],
@@ -251,7 +274,13 @@ describe("Inspector execution-context lifecycle metadata", () => {
         });
         if (mode === "malformed") {
           expect(result.value.execution_contexts).toEqual([
-            { context_key: "1", state: "created", name: "main", origin: "" },
+            {
+              context_key: "context_0",
+              execution_context_id: 1,
+              state: "created",
+              name: "main",
+              origin: "",
+            },
           ]);
           expect(invalidContextUnknowns).toEqual([
             "2 execution-context lifecycle events with a missing or malformed execution-context ID were excluded; the affected contexts' lifecycle state is unknown.",
@@ -259,8 +288,20 @@ describe("Inspector execution-context lifecycle metadata", () => {
           return;
         }
         expect(result.value.execution_contexts).toEqual([
-          { context_key: "1", state: "destroyed", name: "main", origin: "" },
-          { context_key: "2", state: "created", name: "worker", origin: "" },
+          {
+            context_key: "context_0",
+            execution_context_id: 1,
+            state: "destroyed",
+            name: "main",
+            origin: "",
+          },
+          {
+            context_key: "context_1",
+            execution_context_id: 2,
+            state: "created",
+            name: "worker",
+            origin: "",
+          },
         ]);
         expect(invalidContextUnknowns).toEqual([]);
       } finally {
@@ -401,7 +442,8 @@ test("captures complete metadata with two enable commands", async () => {
     expect(result.value.scripts.excluded.unsupported_location).toBe(0);
     expect(result.value.execution_contexts).toEqual([
       {
-        context_key: "1",
+        context_key: "context_0",
+        execution_context_id: 1,
         state: "created",
         name: "node[fixture]",
         origin: "",
@@ -867,7 +909,10 @@ test("keeps Inspector parse failures separate and preserves file URL script iden
     );
     expect(new Set(scriptKeys).size).toBe(2);
 
-    const parsedCapture = parseRuntimeCaptures([evidence])[0];
+    const parsedCapture = parseRuntimeCapture(evidence, [
+      "runtime_observations",
+      0,
+    ]);
     if (parsedCapture?.kind !== "v8-inspector")
       throw new Error("Expected the Inspector Evidence to parse as V8 capture");
     expect(
@@ -971,6 +1016,7 @@ const runtimeObservation = (
         script_key: `v8_script_${"4".repeat(64)}`,
         location: { kind: "file", file_path: scriptPath },
         execution_context_key: "1",
+        execution_context_id: 1,
         cdp_hash: "v8-hash",
         length: 29,
         is_module: true,

@@ -2,7 +2,14 @@ import {
   observeElfStringTableEntry,
   elfStringTableText,
 } from "../domain/elfStringTable.js";
+import { err, ok } from "../domain/result.js";
 import { readElfDynamicEntry } from "../domain/elfDynamicEntry.js";
+import {
+  readElfGnuHashSymbolCount,
+  readElfHashSymbolCount,
+  type ElfGnuHashCountWalk,
+  type ElfHashWordReader,
+} from "../domain/elfHashSymbolCount.js";
 import { readElfSectionHeader } from "../domain/elfSectionHeader.js";
 import { readElfProgramHeader } from "../domain/elfProgramHeader.js";
 import { readElfSymbol } from "../domain/elfSymbol.js";
@@ -16,6 +23,18 @@ import {
   SNAPSHOT_HASH_PATTERN,
 } from "./FlutterPayloadScan.js";
 import { readElfFixedHeader } from "../domain/elfFixedHeader.js";
+
+/** Keep the event loop and cancellation live across a large DT_GNU_HASH walk. */
+const finishGnuHashCount = async (
+  walk: ElfGnuHashCountWalk,
+  signal: AbortSignal | undefined,
+) => {
+  for (let step = walk.next(); ; step = walk.next()) {
+    if (step.done === true) return step.value;
+    await yieldToEventLoop();
+    signal?.throwIfAborted();
+  }
+};
 
 /** Bounds-checked little-endian reader over one loaded buffer. */
 class BoundedReader {
@@ -396,64 +415,37 @@ export const readElfSymbols = async (
       return failure(
         "Stripped ELF lacks a complete dynamic symbol-table description",
       );
-    // DT_HASH's nchain is the dynsym count. GNU hash instead records the
-    // first hashed index and bounded buckets/chains. No payload-to-EOF walk.
-    let count: number;
     const sysv = tags.get(DT_HASH);
     const gnu = tags.get(DT_GNU_HASH);
-    if (sysv !== undefined) {
-      const at = toOffset(sysv, 8);
-      if (!at.ok) return failure(`DT_HASH header ${at.error.reason}`);
-      const buckets = reader.u32(at.value)!;
-      count = reader.u32(at.value + 4)!;
-      const table = toOffset(sysv, 8 + 4 * (buckets + count));
-      if (!table.ok) return failure(`DT_HASH table ${table.error.reason}`);
-    } else if (gnu !== undefined) {
-      const at = toOffset(gnu, 16);
-      if (!at.ok) return failure(`DT_GNU_HASH header ${at.error.reason}`);
-      const buckets = reader.u32(at.value)!;
-      const firstSymbol = reader.u32(at.value + 4)!;
-      const bloomWords = reader.u32(at.value + 8)!;
-      const prefixBytes = 16 + bloomWords * (is64 ? 8 : 4) + buckets * 4;
-      if (buckets === 0 || bloomWords === 0)
-        return failure("DT_GNU_HASH buckets are malformed");
-      const prefix = toOffset(gnu, prefixBytes);
-      if (!prefix.ok)
-        return failure(`DT_GNU_HASH buckets ${prefix.error.reason}`);
-      let last = 0;
-      const bucketsAt = at.value + 16 + bloomWords * (is64 ? 8 : 4);
-      for (let index = 0; index < buckets; index += 1) {
-        if (index % 4096 === 0) {
-          await yieldToEventLoop();
-          signal?.throwIfAborted();
-        }
-        const value = reader.u32(bucketsAt + index * 4)!;
-        if (value !== 0 && value < firstSymbol)
-          return failure("DT_GNU_HASH bucket precedes its first symbol");
-        last = Math.max(last, value);
-      }
-      count = firstSymbol;
-      if (last !== 0) {
-        let index = last;
-        while (true) {
-          if ((index - last) % 4096 === 0) {
-            await yieldToEventLoop();
-            signal?.throwIfAborted();
-          }
-          const span = prefixBytes + (index - firstSymbol + 1) * 4;
-          const range = toOffset(gnu, span);
-          if (!range.ok)
-            return failure(`DT_GNU_HASH chain ${range.error.reason}`);
-          const chain = reader.u32(at.value + span - 4)!;
-          index += 1;
-          if ((chain & 1) !== 0) {
-            count = index;
-            break;
-          }
-        }
-      }
-    } else
+    const hashWords =
+      (address: number): ElfHashWordReader =>
+      (offset) => {
+        const mapped = toOffset(address, offset + 4);
+        return mapped.ok
+          ? ok(reader.u32(mapped.value + offset)!)
+          : err(mapped.error.reason);
+      };
+    if (sysv === undefined && gnu === undefined)
       return failure("Stripped ELF has no DT_HASH or DT_GNU_HASH symbol count");
+    const counted =
+      sysv !== undefined
+        ? readElfHashSymbolCount(hashWords(sysv))
+        : await finishGnuHashCount(
+            readElfGnuHashSymbolCount(hashWords(gnu!), is64 ? 8 : 4),
+            signal,
+          );
+    // These walks pass no budget, so a failure here is always malformed.
+    if (!counted.ok)
+      return failure(
+        counted.error.kind === "malformed"
+          ? counted.error.message
+          : counted.error.label,
+      );
+    const count = counted.value;
+    if (count === null)
+      return failure(
+        "Stripped ELF has an indeterminate DT_GNU_HASH symbol count",
+      );
     const offset = toOffset(sym, count * entrySize);
     const stringOffset = toOffset(str, stringSize);
     if (!offset.ok)

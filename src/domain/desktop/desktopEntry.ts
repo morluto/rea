@@ -32,6 +32,43 @@ const unescapeValue = (value: string): string =>
     (match, next: string) => VALUE_ESCAPES[next] ?? match,
   );
 
+/**
+ * Escape a string for a desktop-entry value. This is the inverse of the
+ * escapes `parseDesktopEntry` removes, and the same rules GLib uses when it
+ * writes a string: `\\`, `\n`, `\r`, a leading `\s` or `\t`. A backslash that
+ * is only command-quoted would otherwise be eaten before `Exec` is tokenized,
+ * and `gio launch` rejects the resulting entry.
+ */
+export const escapeDesktopEntryValue = (value: string): string => {
+  let escaped = "";
+  let leading = true;
+  for (const character of value) {
+    switch (character) {
+      case " ":
+        escaped += leading ? "\\s" : " ";
+        break;
+      case "\t":
+        escaped += leading ? "\\t" : "\t";
+        break;
+      case "\n":
+        escaped += "\\n";
+        break;
+      case "\r":
+        escaped += "\\r";
+        break;
+      case "\\":
+        escaped += "\\\\";
+        leading = false;
+        break;
+      default:
+        escaped += character;
+        leading = false;
+        break;
+    }
+  }
+  return escaped;
+};
+
 const listValue = (value: string | undefined): readonly string[] =>
   value === undefined
     ? []
@@ -56,11 +93,18 @@ export const parseDesktopEntry = (
       found ||= group === "Desktop Entry";
       continue;
     }
-    const entry = ENTRY.exec(line);
+    // Full-line trimming is syntax-only: string-value suffixes are data.
+    const entry = ENTRY.exec(raw.trimStart());
     if (group !== "Desktop Entry" || entry?.groups === undefined) continue;
     const { key, value } = entry.groups;
     if (key !== undefined && value !== undefined && !values.has(key))
-      values.set(key, unescapeValue(value));
+      // Keep the existing enum/boolean token treatment before value unescaping.
+      values.set(
+        key,
+        unescapeValue(
+          key === "Type" || key === "Terminal" ? value.trimEnd() : value,
+        ),
+      );
   }
   if (!found) return err("missing_desktop_entry_group");
   const field = (key: string) => values.get(key) ?? null;
@@ -109,6 +153,58 @@ export const tokenizeDesktopExec = (
   return tokens.length === 0 ? err("empty_command") : ok(tokens);
 };
 
+/** Reserved characters an unquoted `Exec` argument must not contain. */
+const EXEC_RESERVED = /[\t\n\r "'\\><~|&;$*?#()`]/u;
+
+/**
+ * Quote `Exec` arguments so `tokenizeDesktopExec` reads them back. The
+ * desktop-entry value escapes around that command are applied when the line
+ * is written.
+ */
+export const formatDesktopExec = (argv: readonly string[]): string =>
+  argv
+    .map((argument) =>
+      argument.length > 0 && !EXEC_RESERVED.test(argument)
+        ? argument
+        : `"${argument.replace(/[\\"`$]/gu, (character) => `\\${character}`)}"`,
+    )
+    .join(" ");
+
+const EXEC_LINE = /^Exec\s*=/u;
+
+/**
+ * Replace the first `Exec` line of the main group, leaving other groups
+ * alone. `exec` is the command `tokenizeDesktopExec` reads; it is escaped for
+ * the desktop-entry value layer before it is written.
+ */
+export const replaceDesktopExec = (
+  text: string,
+  exec: string,
+): Result<string, "missing_exec_line"> => {
+  const newline = text.includes("\r\n") ? "\r\n" : "\n";
+  let group: string | undefined;
+  let replaced = false;
+  const lines = text.split(/\r?\n/u).map((line) => {
+    const trimmed = line.trim();
+    const header = GROUP.exec(trimmed);
+    if (header?.groups?.name !== undefined) {
+      group = header.groups.name;
+      return line;
+    }
+    if (
+      replaced ||
+      group !== "Desktop Entry" ||
+      trimmed.length === 0 ||
+      trimmed.startsWith("#") ||
+      !EXEC_LINE.test(trimmed)
+    )
+      return line;
+    replaced = true;
+    return `Exec=${escapeDesktopEntryValue(exec)}`;
+  });
+  return replaced ? ok(lines.join(newline)) : err("missing_exec_line");
+};
+
 /** Facts substituted for the `%i`, `%c` and `%k` field codes. */
 export interface DesktopExecContext {
   readonly icon: string | null;
@@ -117,6 +213,12 @@ export interface DesktopExecContext {
 }
 
 const FILE_FIELD_CODES = new Set(["%f", "%F", "%u", "%U"]);
+
+/** Whether an `Exec` value takes files: it holds a `%f`, `%F`, `%u` or `%U` field code. */
+export const execTakesFiles = (exec: string): boolean => {
+  const tokens = tokenizeDesktopExec(exec);
+  return tokens.ok && tokens.value.some((token) => FILE_FIELD_CODES.has(token));
+};
 
 /**
  * Expand field codes for a launch with no files, then append caller arguments.
@@ -247,4 +349,24 @@ export const unwrapDesktopCommand = (
       application_id: flatpakApplicationId(argv.slice(index + 2)),
     };
   return { kind: "direct", program, environment, index };
+};
+
+/** The first argument after an `env` prefix, the program, and a `flatpak run` id. */
+export const desktopArgumentIndex = (argv: readonly string[]): number => {
+  const command = unwrapDesktopCommand(argv);
+  if (command.kind === "direct") return command.index + 1;
+  let index = 0;
+  if (argv[0]?.split("/").at(-1) === "env") {
+    index = 1;
+    while (/^[A-Za-z_][A-Za-z0-9_]*=/u.test(argv[index] ?? "")) index += 1;
+  }
+  index += 1;
+  if (argv[index] === "run") index += 1;
+  for (; index < argv.length; index += 1) {
+    const token = argv[index] ?? "";
+    if (token === "--") return Math.min(index + 2, argv.length);
+    if (!token.startsWith("-")) return index + 1;
+    if (FLATPAK_RUN_VALUE_OPTIONS.has(token)) index += 1;
+  }
+  return argv.length;
 };

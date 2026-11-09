@@ -576,7 +576,7 @@ export const systemMacHopperInstallHost = (
 };
 
 /** Installer detail naming the declared minimum this Mac's version does not meet. */
-export const macHopperHostVersionDetail = (
+const macHopperHostVersionDetail = (
   refusal: (
     | { readonly source: "release_feed"; readonly packageUrl: string }
     | { readonly source: "signed_app" }
@@ -587,7 +587,7 @@ export const macHopperHostVersionDetail = (
     : `The signed Hopper application declares LSMinimumSystemVersion ${refusal.minimumVersion}; this Mac runs macOS ${refusal.hostVersion}. Nothing was copied.`;
 
 /** Installer detail for a signed-app minimum REA cannot compare with this Mac's version. */
-export const macHopperIncomparableMinimumDetail = (
+const macHopperIncomparableMinimumDetail = (
   declared: string,
   hostVersion: string,
 ): string =>

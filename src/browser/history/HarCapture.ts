@@ -64,7 +64,7 @@ export const decodeHarCapture = (
   );
   const records = entries.map((entry, ordinal): WebNetworkCaptureRecord => {
     // Validate each original record even when a structural ancestor excludes it.
-    const projected = projectHar(entry, sensitiveValues, "entry");
+    const projected = projectRecordedHarEntry(entry, sensitiveValues);
     const projection: Projection = recordsExcluded
       ? {
           reported: null,
@@ -102,6 +102,12 @@ export const decodeHarCapture = (
     records,
   };
 };
+
+/** Project producer-owned HAR entry facts without pretending another format is a HAR document. */
+export const projectRecordedHarEntry = (
+  value: unknown,
+  sensitiveValues: readonly string[],
+): Projection => projectHar(value, sensitiveValues, "entry");
 
 /** Relative HTTP paths belong only to entries, never similarly named container extensions. */
 const projectHar = (

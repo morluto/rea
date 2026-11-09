@@ -1,8 +1,9 @@
 import { constants } from "node:fs";
 import { constants as osConstants } from "node:os";
 import type { BigIntStats, Stats } from "node:fs";
-import { lstat, open, stat, type FileHandle } from "node:fs/promises";
+import { lstat, open, realpath, stat, type FileHandle } from "node:fs/promises";
 
+import { settleChangeTimeBaseline } from "./ChangeTimeBaseline.js";
 import { OwnedFileHandle } from "./OwnedFileHandle.js";
 
 /** Cancellation observed at a file operation's explicit checkpoint. */
@@ -32,6 +33,41 @@ export class NonRegularFileReadError extends Error {
     this.code = directory ? "EISDIR" : "ENOTFILE";
   }
 }
+
+/** O_NOFOLLOW refused a selected leaf observed as a symbolic link. */
+export class RejectedRegularFileSymlink extends Error {
+  readonly code = "ELOOP";
+  constructor(
+    readonly path: string,
+    readonly resolvedPath: string | undefined,
+    cause: unknown,
+  ) {
+    super(`Selected path is a symbolic link and is not admitted: ${path}`, {
+      cause,
+    });
+    this.name = "RejectedRegularFileSymlink";
+  }
+}
+
+/** Resolve recovery only when the selected path currently names a regular file. */
+export const resolvedRegularFile = async (
+  path: string,
+  fileSystem: {
+    readonly realpath?: (path: string) => Promise<string>;
+    readonly lstat: (
+      path: string,
+    ) => Promise<{ isFile(): boolean; isSymbolicLink(): boolean }>;
+  } = { realpath, lstat },
+): Promise<string | undefined> => {
+  try {
+    const resolved = await fileSystem.realpath?.(path);
+    if (resolved === undefined) return undefined;
+    const target = await fileSystem.lstat(resolved);
+    return target.isFile() && !target.isSymbolicLink() ? resolved : undefined;
+  } catch {
+    return undefined;
+  }
+};
 
 /** Admission failed and the opened descriptor could not be confirmed closed. */
 export class RegularFileAdmissionFailure extends Error {
@@ -99,12 +135,20 @@ export interface StableRegularFileDescriptor {
   readonly initial: Stats;
 }
 
+/**
+ * Whether admission waits out a fresh Windows ChangeTime.
+ * External files settle. A private file REA just wrote is recorded as written.
+ */
+export type ChangeTimeAdmission = "settle" | "as-written";
+
 /** Admit a non-blocking regular-file descriptor with its validated initial facts. */
 export const openRegularFile = async (
   path: string,
   options: {
     readonly symlinks: "follow" | "reject";
     readonly signal?: AbortSignal | undefined;
+    /** Omission settles. Private files REA just wrote pass "as-written". */
+    readonly changeTime?: ChangeTimeAdmission | undefined;
   },
 ): Promise<StableRegularFileDescriptor> => {
   assertRegularFileActive(options.signal);
@@ -115,6 +159,20 @@ export const openRegularFile = async (
       (constants.O_NOCTTY ?? 0) |
       (options.symlinks === "reject" ? (constants.O_NOFOLLOW ?? 0) : 0),
   ).catch(async (cause: unknown) => {
+    if (
+      options.symlinks === "reject" &&
+      cause instanceof Error &&
+      "code" in cause &&
+      cause.code === "ELOOP"
+    ) {
+      const named = await lstat(path).catch(() => undefined);
+      if (named?.isSymbolicLink())
+        throw new RejectedRegularFileSymlink(
+          path,
+          await resolvedRegularFile(path),
+          cause,
+        );
+    }
     const nonRegular = await nonRegularOpenFailure(
       path,
       options.symlinks,
@@ -126,9 +184,28 @@ export const openRegularFile = async (
   const owner = new OwnedFileHandle(handle);
   try {
     assertRegularFileActive(options.signal);
-    const metadata = await handle.stat();
-    if (!metadata.isFile())
-      throw new NonRegularFileReadError(path, metadata.isDirectory());
+    // The admitted facts become the baseline every later comparison tests
+    // against. External files wait out a Windows ChangeTime that can still
+    // move. A private file REA just wrote is recorded as written: settling
+    // each one costs about a second, and a compressed PYZ spool does that
+    // once per image. The first observation still validates the file type,
+    // so a directory is refused before any settling delay.
+    const readMetadata = async (): Promise<Stats> => {
+      assertRegularFileActive(options.signal);
+      const observed = await handle.stat();
+      if (!observed.isFile())
+        throw new NonRegularFileReadError(path, observed.isDirectory());
+      return observed;
+    };
+    const metadata =
+      options.changeTime === "as-written"
+        ? await readMetadata()
+        : await settleChangeTimeBaseline(readMetadata, {
+            signal: options.signal,
+            // Callers match on this type to tell cancellation from a read fault.
+            cancellationError: (reason) =>
+              new RegularFileOperationCancelled(reason),
+          });
     assertRegularFileActive(options.signal);
     // O_NOFOLLOW is unavailable on Windows. Recheck the name only on hosts
     // where open could have followed a symlink, while the descriptor is owned.

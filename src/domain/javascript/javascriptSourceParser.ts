@@ -1,6 +1,11 @@
+import { posix } from "node:path";
 import { parse, type ParserOptions, type ParserPlugin } from "@babel/parser";
 import * as t from "@babel/types";
 import { javaScriptDefinitionExpression } from "./javascriptAstValues.js";
+import {
+  explicitJavaScriptLoaderMode,
+  hasCaseVariantJavaScriptLoaderSuffix,
+} from "./javascriptModuleResolutionMode.js";
 import {
   hasOnlyInlineTypeExportSpecifiers,
   hasOnlyInlineTypeImportSpecifiers,
@@ -78,27 +83,31 @@ const parseWithRuntimeContext = (
   packageContext?: JavaScriptPackageType,
 ): ParsedJavaScriptSource => {
   const file = parse(source, options);
+  const filenameMode = explicitJavaScriptLoaderMode(sourcePath);
   runtimeContextByProgram.set(
     file.program,
-    /\.c[jt]s$/iu.test(sourcePath ?? "")
-      ? /\.d\.cts$/iu.test(sourcePath ?? "")
+    filenameMode === "commonjs"
+      ? sourcePath?.toLowerCase().endsWith(".d.cts")
         ? "unknown"
         : "commonjs"
-      : isExplicitModuleSourcePath(sourcePath)
+      : filenameMode === "module"
         ? "module"
         : packageContext === "module" || packageContext === "commonjs"
           ? packageContext
-          : packageContext === "unspecified" && /\.js$/iu.test(sourcePath ?? "")
+          : packageContext === "unspecified" &&
+              posix.extname(sourcePath ?? "") === ".js"
             ? file.program.sourceType === "module"
               ? "module"
               : "commonjs"
-            : file.program.body.some((node) => t.isTSExportAssignment(node))
-              ? // CommonJS isolation does not establish strict ESM semantics.
-                "commonjs"
-              : file.program.sourceType === "module" &&
-                  hasRuntimeModuleDeclaration(file.program)
-                ? "module"
-                : "unknown",
+            : hasCaseVariantJavaScriptLoaderSuffix(sourcePath)
+              ? "unknown"
+              : file.program.body.some((node) => t.isTSExportAssignment(node))
+                ? // CommonJS isolation does not establish strict ESM semantics.
+                  "commonjs"
+                : file.program.sourceType === "module" &&
+                    hasRuntimeModuleDeclaration(file.program)
+                  ? "module"
+                  : "unknown",
   );
   return file;
 };
@@ -141,18 +150,27 @@ export const parserPluginsForPath = (sourcePath?: string): ParserPlugin[] => {
   return jsxCapable ? [...syntax, "jsx", typescript] : [...syntax, typescript];
 };
 
-/** `.mjs` and `.mts` explicitly select module mode. */
-export const isExplicitModuleSourcePath = (path?: string): boolean =>
-  /\.m[jt]s$/iu.test(path ?? "");
-
 const runtimeSourceTypeForPath = (
   path?: string,
 ): "commonjs" | "module" | "unambiguous" =>
-  /\.cjs$/iu.test(path ?? "")
+  explicitJavaScriptLoaderMode(path) === "commonjs" && path?.endsWith(".cjs")
     ? "commonjs"
-    : isExplicitModuleSourcePath(path)
+    : explicitJavaScriptLoaderMode(path) === "module"
       ? "module"
       : "unambiguous";
+
+/**
+ * Node package facts apply to .js/.ts sources, not explicit suffixes,
+ * declaration wrappers, or an unknown JSX compilation pipeline.
+ */
+const packageContextForPath = (
+  sourcePath: string | undefined,
+  observedPackageType: JavaScriptPackageType | undefined,
+): JavaScriptPackageType | undefined =>
+  [".js", ".ts"].includes(posix.extname(sourcePath ?? "")) &&
+  !/\.d\.ts$/iu.test(sourcePath ?? "")
+    ? observedPackageType
+    : undefined;
 
 export interface RecoveredJavaScriptParse {
   readonly file: ParsedJavaScriptSource;
@@ -173,20 +191,15 @@ export const parseRecoveredJavaScript = (
   observedPackageType?: JavaScriptPackageType,
 ): RecoveredJavaScriptParse => {
   const filenameType = runtimeSourceTypeForPath(sourcePath);
-  // Node package facts apply to .js/.ts sources, not explicit suffixes,
-  // declaration wrappers, or an unknown JSX compilation pipeline.
-  const packageContext =
-    /\.(?:js|ts)$/iu.test(sourcePath ?? "") &&
-    !/\.d\.ts$/iu.test(sourcePath ?? "")
-      ? observedPackageType
-      : undefined;
+  const packageContext = packageContextForPath(sourcePath, observedPackageType);
   // Retain TypeScript import syntax for later CommonJS compilation.
   const sourceType =
     filenameType !== "unambiguous"
       ? filenameType
       : packageContext === "module"
         ? "module"
-        : packageContext === "commonjs" && /\.js$/iu.test(sourcePath ?? "")
+        : packageContext === "commonjs" &&
+            posix.extname(sourcePath ?? "") === ".js"
           ? "commonjs"
           : "unambiguous";
   if (sourceType !== "unambiguous") {
@@ -246,36 +259,55 @@ export const parseRecoveredJavaScript = (
   };
 };
 
-/** Parse inert JavaScript or TypeScript facts without attaching comments to AST nodes. */
+/**
+ * Parse inert JavaScript or TypeScript facts without attaching comments to AST
+ * nodes. An observed package type selects the runtime context of .js/.ts
+ * sources as it does for reference imports; syntax recovery is unchanged.
+ */
 export const parseJavaScriptSource = (
   source: string,
   sourcePath?: string,
+  observedPackageType?: JavaScriptPackageType,
 ): ParsedJavaScriptSource | null => {
   try {
     const runtimeSourceType = runtimeSourceTypeForPath(sourcePath);
     const commonjs = runtimeSourceType === "commonjs";
+    const packageContext = packageContextForPath(
+      sourcePath,
+      observedPackageType,
+    );
     const options = {
       errorRecovery: true,
       attachComment: false,
       plugins: parserPluginsForPath(sourcePath),
     };
-    const file = parseWithRuntimeContext(source, sourcePath, {
-      ...options,
-      // Inert artifact analysis retains module declarations even in .cjs assets.
-      // Infer their syntax here; reference imports keep filename-mode diagnostics.
-      sourceType: commonjs ? "unambiguous" : runtimeSourceType,
-      allowReturnOutsideFunction: commonjs,
-      allowNewTargetOutsideFunction: commonjs,
-    });
+    const file = parseWithRuntimeContext(
+      source,
+      sourcePath,
+      {
+        ...options,
+        // Inert artifact analysis retains module declarations even in .cjs assets.
+        // Infer their syntax here; reference imports keep filename-mode diagnostics.
+        sourceType: commonjs ? "unambiguous" : runtimeSourceType,
+        allowReturnOutsideFunction: commonjs,
+        allowNewTargetOutsideFunction: commonjs,
+      },
+      packageContext,
+    );
     // Unambiguous mode retains module-only diagnostics after choosing a script.
     // The .cjs extension establishes wrapper mode, so obtain its own diagnostics.
     return commonjs &&
       file.program.sourceType === "script" &&
       file.errors.length > 0
-      ? parseWithRuntimeContext(source, sourcePath, {
-          ...options,
-          sourceType: "commonjs",
-        })
+      ? parseWithRuntimeContext(
+          source,
+          sourcePath,
+          {
+            ...options,
+            sourceType: "commonjs",
+          },
+          packageContext,
+        )
       : file;
   } catch (cause: unknown) {
     // Unparseable source is represented by the null return.
@@ -325,9 +357,3 @@ export const javaScriptThisOwner = (
     ? "global"
     : "isolated";
 };
-
-export const javaScriptTopLevelThisMayBeGlobal = (
-  node: t.ThisExpression,
-  program: t.Program,
-  parents: WeakMap<t.Node, t.Node>,
-): boolean => javaScriptThisOwner(node, program, parents) === "global";

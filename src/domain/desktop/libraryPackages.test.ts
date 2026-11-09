@@ -209,6 +209,7 @@ describe("installableLibraryPackages", () => {
     ).toEqual({
       installable: ["libnss3", "typora-helper"],
       uninstallable: ["libfoo", "libgone"],
+      supplied: new Map([["typora-helper", [TYPORA]]]),
     });
   });
 });

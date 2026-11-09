@@ -1,5 +1,7 @@
 import {
   MachoLoadCommandCursor,
+  decodeMachoFixedWordFields,
+  machoFixedWordFieldNames,
   readMachoLoadCommandTableHeader,
 } from "../domain/apple/machoLoadCommands.js";
 import { readMachoSegmentHeader } from "../domain/apple/machoSegmentHeader.js";
@@ -24,81 +26,6 @@ const LC_STR_COMMANDS = new Set([
   0x8000001c,
   0x27,
   0x39,
-]);
-
-// Fields with fixed uint32 layouts in mach-o/loader.h. Keep these names at
-// the binary owner so a downstream projection need not reinterpret text.
-const FIXED_WORD_FIELDS: ReadonlyMap<number, readonly string[]> = new Map([
-  [0x2, ["symoff", "nsyms", "stroff", "strsize"]],
-  [0x3, ["offset", "size"]],
-  [
-    0xb,
-    [
-      "ilocalsym",
-      "nlocalsym",
-      "iextdefsym",
-      "nextdefsym",
-      "iundefsym",
-      "nundefsym",
-      "tocoff",
-      "ntoc",
-      "modtaboff",
-      "nmodtab",
-      "extrefsymoff",
-      "nextrefsyms",
-      "indirectsymoff",
-      "nindirectsyms",
-      "extreloff",
-      "nextrel",
-      "locreloff",
-      "nlocrel",
-    ],
-  ],
-  [0x16, ["offset", "nhints"]],
-  [0x17, ["cksum"]],
-  [0x1d, ["dataoff", "datasize"]],
-  [0x1e, ["dataoff", "datasize"]],
-  [0x21, ["cryptoff", "cryptsize", "cryptid"]],
-  [
-    0x22,
-    [
-      "rebase_off",
-      "rebase_size",
-      "bind_off",
-      "bind_size",
-      "weak_bind_off",
-      "weak_bind_size",
-      "lazy_bind_off",
-      "lazy_bind_size",
-      "export_off",
-      "export_size",
-    ],
-  ],
-  [
-    0x80000022,
-    [
-      "rebase_off",
-      "rebase_size",
-      "bind_off",
-      "bind_size",
-      "weak_bind_off",
-      "weak_bind_size",
-      "lazy_bind_off",
-      "lazy_bind_size",
-      "export_off",
-      "export_size",
-    ],
-  ],
-  [0x26, ["dataoff", "datasize"]],
-  [0x29, ["dataoff", "datasize"]],
-  [0x2b, ["dataoff", "datasize"]],
-  [0x2c, ["cryptoff", "cryptsize", "cryptid", "pad"]],
-  [0x2e, ["dataoff", "datasize"]],
-  [0x80000033, ["dataoff", "datasize"]],
-  [0x80000034, ["dataoff", "datasize"]],
-  [0x36, ["dataoff", "datasize"]],
-  [0x37, ["dataoff", "datasize"]],
-  [0x38, ["dataoff", "datasize"]],
 ]);
 
 /** Read exact ranges from an already admitted and identity-verified slice. */
@@ -304,26 +231,23 @@ export const readMachoCommandNames = async (
     if (!row.ok) throw new MachoBinaryFormatError(row.error);
     const frame = row.value;
     const at = table.headerSize + frame.offset;
-    const fixedNames = FIXED_WORD_FIELDS.get(frame.command);
-    let fixedFields: Record<string, number> | undefined;
+    const fixedNames = machoFixedWordFieldNames(frame.command);
+    let fixedFields: Readonly<Record<string, number>> | undefined;
     if (fixedNames !== undefined) {
       const byteLength = fixedNames.length * 4;
-      if (frame.size < 8 + byteLength)
+      const decoded =
+        frame.size < 8 + byteLength
+          ? null
+          : decodeMachoFixedWordFields(
+              frame.command,
+              await exact(at + 8, byteLength),
+              table.littleEndian,
+            );
+      if (decoded === null)
         throw new MachoBinaryFormatError(
           "Mach-O fixed command fields are truncated",
         );
-      const bytes = await exact(at + 8, byteLength);
-      const view = new DataView(
-        bytes.buffer,
-        bytes.byteOffset,
-        bytes.byteLength,
-      );
-      fixedFields = Object.fromEntries(
-        fixedNames.map((name, index) => [
-          name,
-          view.getUint32(index * 4, table.littleEndian),
-        ]),
-      );
+      fixedFields = decoded;
     }
     const segmentWide =
       frame.command === 0x19 ? true : frame.command === 1 ? false : null;

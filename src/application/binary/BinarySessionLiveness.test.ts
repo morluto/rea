@@ -179,8 +179,8 @@ it("keeps unbound observations out of persisted target snapshots", async () => {
   expect(
     replay.value.sourceEvidence?.map((source) => source.evidence_id),
   ).toEqual([bound.value.evidenceId]);
-  expect(replay.value.limitations).toContain(
-    "Loaded from a local REA analysis snapshot; this call did not re-run the provider.",
+  expect(replay.value.limitations).toContainEqual(
+    expect.stringMatching(/snapshot.*did not re.run the provider/iu),
   );
 });
 
