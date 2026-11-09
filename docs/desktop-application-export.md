@@ -360,6 +360,12 @@ when a DOCTYPE names a DTD. Known differences remain:
   a write lock the running app holds is waited out for a quarter of a second
   and then gives the file an `error`, and so does a table or column name that
   is not UTF-8.
+- XML names admitted by the native reader retain their Unicode spelling in the
+  exported view, including XML 1.0 fifth-edition name characters. Where expat's
+  older name tables need adaptation, its compatible input must also fit the
+  existing 64 MiB view allowance. Text and attribute values retain the XML reader's
+  existing interpretation. External DTDs are never fetched; internal subsets
+  remain refused.
 
 Unless it was [made for the task](#a-seed-made-for-the-task), the seed is the
 user's real data. Keep the bundle local and do not publish it.

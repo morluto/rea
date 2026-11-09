@@ -1,3 +1,5 @@
+import { PYTHON_XML_NAMES } from "./appExportPythonXmlNames.js";
+
 /** The generated module's XML reader: REA's XML view of a document, built with expat. */
 export const PYTHON_XML_READER = String.raw`#: XML's whitespace, which alone can be formatting between elements; Unicode's wider set is text.
 XML_WHITESPACE = " \t\r\n"
@@ -5,6 +7,8 @@ PREDEFINED_ENTITIES = ("amp", "lt", "gt", "apos", "quot")
 ENTITY_REFERENCE = re.compile(r"&([^#;][^;]*);")
 #: A line ending as XML normalizes it before parsing; expat leaves a DOCTYPE's system literal as written.
 XML_LINE_ENDING = re.compile(r"\r\n?")
+
+${PYTHON_XML_NAMES}
 
 
 def _expat(namespaces: bool, doctype=None):
@@ -55,13 +59,15 @@ class _XmlReader:
 
     def __init__(self) -> None:
         self.remaining, self.truncated, self.root, self.doctype = MAX_XML_NODES, False, None, None
+        self.names_encoded = False
         #: Per open element: its view or None when left out, whether xml:space="preserve" applies inside it, whether
         #: it holds an element, and whether it holds text other than whitespace: whitespace-only text is formatting
         #: only in an element that holds elements and no such text.
         self.open = []
         self.text, self.cdata = [], None
 
-    def read(self, text: str) -> None:
+    def read(self, text: str, names_encoded: bool = False) -> None:
+        self.names_encoded = names_encoded
         parser = _expat(False, self._doctype)
         parser.buffer_text = True
         parser.StartElementHandler, parser.EndElementHandler = self._start, self._end
@@ -71,6 +77,8 @@ class _XmlReader:
         parser.Parse(text, True)
 
     def _doctype(self, declared: dict) -> None:
+        if self.names_encoded:
+            declared["name"] = _xml_original_name(declared["name"])
         self.doctype = declared
 
     def _admit(self) -> bool:
@@ -114,6 +122,9 @@ class _XmlReader:
             self._admit()
 
     def _start(self, name: str, attributes: dict) -> None:
+        if self.names_encoded:
+            name = _xml_original_name(name)
+            attributes = {_xml_original_name(key): value for key, value in attributes.items()}
         self._flush()
         parent = self.open[-1] if self.open else [None, False, False, False]
         parent[2] = True
@@ -133,15 +144,28 @@ class _XmlReader:
             self.root = view
 
 
+def _check_xml_namespaces(text: str) -> None:
+    check = _expat(True)
+    check.CharacterDataHandler, check.DefaultHandler = _ignore_text, _check_tag
+    check.Parse(text, True)
+
+
 def _xml_view(text: str):
-    """REA's XML view, or None for a document REA's parser refuses: a pass with namespaces checks the document as REA's
-    parser does, then a pass without them reads names as spelled, as REA's view keeps them, and the DOCTYPE."""
+    """REA's XML view, or None on syntax/entity refusal or an unreadable compatibility form. A namespace pass checks
+    the document, retrying older name tables through a bounded name-only bridge when needed; the non-namespace
+    pass builds the view, restoring original names and the declared DOCTYPE."""
     reader = _XmlReader()
     try:
-        check = _expat(True)
-        check.CharacterDataHandler, check.DefaultHandler = _ignore_text, _check_tag
-        check.Parse(text, True)
-        reader.read(text)
+        encoded = False
+        try:
+            _check_xml_namespaces(text)
+        except expat.ExpatError as error:
+            if error.code != XML_INVALID_TOKEN or text.isascii():
+                raise
+            text = _xml_names_for_expat(text)
+            encoded = True
+            _check_xml_namespaces(text)
+        reader.read(text, encoded)
     except (expat.ExpatError, ValueError):
         return None
     view = {"root": reader.root, "truncated": reader.truncated}

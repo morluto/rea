@@ -1,6 +1,10 @@
 import { DOMParser, onErrorStopParsing, type Document } from "@xmldom/xmldom";
 import { SaxesParser } from "saxes";
 import { err, ok, type Result } from "./result.js";
+import {
+  XML_NAME_START as NAME_START,
+  XML_NAME_MORE as NAME_MORE,
+} from "./xmlNames.js";
 
 /** XML 1.0 literal line endings; Unicode separators remain source characters. */
 export const XML_LINE_ENDING = /\r\n?|\n/gu;
@@ -26,9 +30,6 @@ export class XmlDocumentParseError extends Error {
 const declaresInternalSubset = (declaration: string): boolean =>
   declaration.replace(/"[^"]*"|'[^']*'/gu, "").includes("[");
 
-/** XML 1.0's `NameStartChar`, and the further characters `NameChar` allows. */
-const NAME_START = String.raw`:A-Z_a-z\u{C0}-\u{D6}\u{D8}-\u{F6}\u{F8}-\u{2FF}\u{370}-\u{37D}\u{37F}-\u{1FFF}\u{200C}\u{200D}\u{2070}-\u{218F}\u{2C00}-\u{2FEF}\u{3001}-\u{D7FF}\u{F900}-\u{FDCF}\u{FDF0}-\u{FFFD}\u{10000}-\u{EFFFF}`;
-const NAME_MORE = String.raw`\-.0-9\u{B7}\u{300}-\u{36F}\u{203F}\u{2040}`;
 /** XML 1.0's `PubidChar` but the apostrophe, which only a double-quoted literal may hold. */
 const PUBID = String.raw`\n\r a-zA-Z0-9\-()+,./:=?;!*#@$_%`;
 const SPACE = String.raw`[ \t\r\n]`;
