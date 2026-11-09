@@ -392,9 +392,9 @@ export const parseAppleIps = (
   bytes: Buffer,
   artifact: Artifact,
   input: InspectAppleIpsInput,
+  read: FieldReader = new FieldReader(input.max_integer_text_bytes),
 ): AppleIps => {
   const text = crashText(bytes);
-  const read = new FieldReader(input.max_integer_text_bytes);
   const metadata = metadataOf(text.metadata, read);
   if (text.body.length === 0)
     throw new AppleIpsFormatFailure(

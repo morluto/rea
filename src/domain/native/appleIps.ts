@@ -320,6 +320,8 @@ const joinSchema = z.discriminatedUnion("status", [
   z.strictObject({
     status: z.literal("unreadable"),
     path: z.string().min(1),
+    sha256: digestSchema,
+    bytes: uint,
     reason: z.string().min(1),
   }),
 ]);
@@ -415,5 +417,21 @@ export const appleIpsReportIntegerTextBytes = (report: AppleIps): number => {
   }
   for (const mismatch of report.coverage.type_mismatches)
     bytes += 2 * (mismatch.recorded_integer?.length ?? 0);
+  if (report.join?.status === "selected") {
+    for (const slice of report.join.slices)
+      bytes +=
+        2 *
+          (slice.offset.length +
+            slice.cpu_type.length +
+            slice.cpu_subtype.length) +
+        appleIpsIntegerTextBytes(slice.text_vmaddr);
+    for (const match of report.join.image_matches)
+      bytes +=
+        2 * match.slice_offset.length +
+        appleIpsIntegerTextBytes(match.text_vmaddr) +
+        appleIpsIntegerTextBytes(match.runtime_base);
+    for (const frame of report.join.frames)
+      bytes += appleIpsIntegerTextBytes(frame.static_address);
+  }
   return bytes;
 };

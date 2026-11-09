@@ -1,3 +1,16 @@
+import {
+  readUniversalMachoImage,
+  readUniversalMachoSlice,
+} from "../../domain/apple/machoImageSelection.js";
+import {
+  readMachoLoadCommandTableHeader,
+  MachoLoadCommandCursor,
+} from "../../domain/apple/machoLoadCommands.js";
+import {
+  readMachoSegmentHeader,
+  admitMachoSegmentCommand,
+} from "../../domain/apple/machoSegmentHeader.js";
+import { FieldReader } from "./AppleIpsFieldReader.js";
 import { machoArchitectureName } from "../../domain/apple/machoCpuIdentity.js";
 import type {
   AppleIps,
@@ -11,23 +24,10 @@ import type {
  * join artifact; the report stays the owner of its own recorded rows.
  */
 
-const MH_MAGIC = 0xfeedface;
-const MH_MAGIC_64 = 0xfeedfacf;
-const FAT_MAGIC = 0xcafebabe;
-const FAT_CIGAM = 0xbebafeca;
-const FAT_MAGIC_64 = 0xcafebabf;
-const FAT_CIGAM_64 = 0xbfbafeca;
 const LC_SEGMENT = 0x1;
 const LC_SEGMENT_64 = 0x19;
 const LC_UUID = 0x1b;
 const MAX_SLICES = 64;
-
-const text = new TextDecoder("utf-8", { fatal: false, ignoreBOM: true });
-
-const recorded = (value: bigint): RecordedInteger => ({
-  decimal: value.toString(),
-  hex: value < 0n ? null : `0x${value.toString(16)}`,
-});
 
 /** Canonical uppercase UUID text, or the source spelling when not 16 bytes. */
 const canonicalUuidBytes = (bytes: Uint8Array): string | null => {
@@ -52,64 +52,34 @@ type SliceParse =
   | { readonly kind: "slices"; readonly slices: readonly SliceIdentity[] }
   | { readonly kind: "unreadable"; readonly reason: string };
 
-const readSliceIdentities = (bytes: Uint8Array): SliceParse => {
-  if (bytes.byteLength < 28)
-    return {
-      kind: "unreadable",
-      reason: "artifact is shorter than a Mach-O header",
-    };
-  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
-  // Mach-O magics are stored little-endian on every supported Apple host.
-  const thinMagic = view.getUint32(0, true);
-  if (thinMagic === MH_MAGIC || thinMagic === MH_MAGIC_64) {
-    const slice = sliceAt(view, 0, 0);
+const readSliceIdentities = (bytes: Buffer): SliceParse => {
+  const fat = readUniversalMachoImage(bytes);
+  if (!fat.ok) return { kind: "unreadable", reason: fat.error.message };
+  if (fat.value === null) {
+    const slice = sliceAt(bytes, 0n, 0);
     return slice === null
-      ? { kind: "unreadable", reason: "Mach-O slice header is unreadable" }
+      ? {
+          kind: "unreadable",
+          reason: "Mach-O slice or command table is unreadable",
+        }
       : { kind: "slices", slices: [slice] };
   }
-  const magic = view.getUint32(0, false);
-  if (
-    magic !== FAT_MAGIC &&
-    magic !== FAT_CIGAM &&
-    magic !== FAT_MAGIC_64 &&
-    magic !== FAT_CIGAM_64
-  )
-    return {
-      kind: "unreadable",
-      reason: "artifact is neither a Mach-O slice nor a FAT container",
-    };
-  const littleEndian = magic === FAT_CIGAM || magic === FAT_CIGAM_64;
-  const wide = magic === FAT_MAGIC_64 || magic === FAT_CIGAM_64;
-  const count = view.getUint32(4, littleEndian);
-  if (count === 0)
-    return { kind: "unreadable", reason: "FAT container declares no slices" };
-  if (count > MAX_SLICES)
-    return {
-      kind: "unreadable",
-      reason: `FAT container declares ${String(count)} slices, above the ${String(MAX_SLICES)}-slice limit`,
-    };
-  const recordSize = wide ? 32 : 20;
-  if (8 + count * recordSize > bytes.byteLength)
-    return { kind: "unreadable", reason: "FAT slice table is truncated" };
+  if (fat.value.slices.length > MAX_SLICES)
+    return { kind: "unreadable", reason: "Join slice allowance exceeded" };
   const slices: SliceIdentity[] = [];
-  for (let index = 0; index < count; index += 1) {
-    const base = 8 + index * recordSize;
-    const offset = wide
-      ? view.getBigUint64(base + 8, littleEndian)
-      : BigInt(view.getUint32(base + 8, littleEndian));
-    const size = wide
-      ? view.getBigUint64(base + 16, littleEndian)
-      : BigInt(view.getUint32(base + 12, littleEndian));
-    if (offset + size > BigInt(bytes.byteLength))
-      return {
-        kind: "unreadable",
-        reason: `FAT slice ${String(index)} extends beyond the artifact`,
-      };
-    const slice = sliceAt(view, Number(offset), index);
+  for (const declaration of fat.value.slices) {
+    const selected = readUniversalMachoSlice(bytes, fat.value, declaration);
+    if (!selected.ok)
+      return { kind: "unreadable", reason: selected.error.message };
+    const slice = sliceAt(
+      selected.value,
+      BigInt(declaration.offset),
+      declaration.index,
+    );
     if (slice === null)
       return {
         kind: "unreadable",
-        reason: `FAT slice ${String(index)} is not a Mach-O image`,
+        reason: `FAT slice ${String(declaration.index)} or its command table is unreadable`,
       };
     slices.push(slice);
   }
@@ -117,68 +87,70 @@ const readSliceIdentities = (bytes: Uint8Array): SliceParse => {
 };
 
 const sliceAt = (
-  view: DataView,
-  offset: number,
+  bytes: Buffer,
+  offset: bigint,
   index: number,
 ): SliceIdentity | null => {
-  if (offset + 28 > view.byteLength) return null;
-  const magic = view.getUint32(offset, true);
-  const wide = magic === MH_MAGIC_64;
-  if (!wide && magic !== MH_MAGIC) return null;
-  const cpuType = view.getUint32(offset + 4, true);
-  const cpuSubtype = view.getUint32(offset + 8, true);
-  const headerSize = wide ? 32 : 28;
-  const commandCount = view.getUint32(offset + 16, true);
-  let cursor = offset + headerSize;
+  const parsed = readMachoLoadCommandTableHeader(bytes, bytes.length);
+  if (!parsed.ok || parsed.value === null) return null;
+  const header = parsed.value;
+  const cursor = new MachoLoadCommandCursor(header);
   let uuid: string | null = null;
+  let uuidSeen = false;
   let textVmaddr: bigint | null = null;
-  const unexamined: string[] = [];
-  for (let command = 0; command < commandCount; command += 1) {
-    if (cursor + 8 > view.byteLength) {
-      unexamined.push(
-        `load command ${String(cursor)} stops outside the artifact; later load commands and the symbol table are unexamined`,
-      );
-      break;
+  for (;;) {
+    const next = cursor.nextOffset;
+    if (next === null) break;
+    const command = bytes.subarray(header.headerSize + next);
+    const frame = cursor.read(command);
+    if (!frame.ok) return null;
+    const payload = command.subarray(0, frame.value.size);
+    if (frame.value.command === LC_UUID) {
+      if (uuidSeen || payload.length !== 24) return null;
+      uuidSeen = true;
+      uuid = canonicalUuidBytes(payload.subarray(8, 24));
     }
-    const kind = view.getUint32(cursor, true);
-    const size = view.getUint32(cursor + 4, true);
-    if (size < 8 || cursor + size > view.byteLength) {
-      unexamined.push(
-        `load command ${String(cursor)} has an invalid size; later load commands and the symbol table are unexamined`,
-      );
-      break;
-    }
-    if (kind === LC_UUID && size >= 24 && uuid === null)
-      uuid = canonicalUuidBytes(
-        new Uint8Array(view.buffer, view.byteOffset + cursor + 8, 16),
-      );
     if (
-      (kind === LC_SEGMENT || kind === LC_SEGMENT_64) &&
-      textVmaddr === null
+      frame.value.command === LC_SEGMENT ||
+      frame.value.command === LC_SEGMENT_64
     ) {
-      const segmentWide = kind === LC_SEGMENT_64;
-      const segmentHeader = segmentWide ? 72 : 56;
-      if (size >= segmentHeader) {
-        const name = text
-          .decode(new Uint8Array(view.buffer, view.byteOffset + cursor + 8, 16))
-          .replace(/\0.*$/su, "");
-        if (name === "__TEXT")
-          textVmaddr = segmentWide
-            ? view.getBigUint64(cursor + 24, true)
-            : BigInt(view.getUint32(cursor + 24, true));
+      const wide = frame.value.command === LC_SEGMENT_64;
+      if (wide !== header.wide) return null;
+      const segment = readMachoSegmentHeader(
+        payload,
+        wide,
+        header.littleEndian,
+      );
+      if (
+        !segment.ok ||
+        !admitMachoSegmentCommand(
+          segment.value,
+          payload.length,
+          wide ? 64 : 32,
+          bytes.length,
+        ).ok
+      )
+        return null;
+      const name = segment.value.nameBytes
+        .toString("utf8")
+        .replace(/\0.*$/su, "");
+      if (name === "__TEXT") {
+        if (textVmaddr !== null) return null;
+        textVmaddr = segment.value.address;
       }
     }
-    cursor += size;
   }
+  if (!cursor.finish().ok) return null;
+  const { cpuType, cpuSubtype } = header.identity;
   return {
     index,
-    offset: BigInt(offset),
-    arch: machoArchitectureName(cpuType, cpuSubtype),
+    offset,
     cpuType,
     cpuSubtype,
+    arch: machoArchitectureName(cpuType, cpuSubtype),
     uuid,
     textVmaddr,
-    unexamined,
+    unexamined: [],
   };
 };
 
@@ -212,10 +184,17 @@ export const resolveAppleIpsJoin = (
     readonly bytes: Buffer;
   },
   input: { readonly path: string; readonly max_join_bytes: number },
+  read: FieldReader,
 ): AppleIpsJoin => {
   const parsed = readSliceIdentities(artifact.bytes);
   if (parsed.kind === "unreadable")
-    return { status: "unreadable", path: input.path, reason: parsed.reason };
+    return {
+      status: "unreadable",
+      path: input.path,
+      sha256: artifact.sha256,
+      bytes: artifact.bytes.length,
+      reason: parsed.reason,
+    };
   const matches: AppleIpsJoinDigest[] = [];
   const limitations: string[] = [];
   const matchedImage = new Map<number, AppleIpsJoinDigest>();
@@ -255,10 +234,10 @@ export const resolveAppleIpsJoin = (
       uuid: image.uuid,
       recorded_arch: recordedArch,
       slice_index: slice.index,
-      slice_offset: slice.offset.toString(),
+      slice_offset: read.decimalText64(slice.offset),
       slice_arch: slice.arch,
-      text_vmaddr: recorded(slice.textVmaddr),
-      runtime_base: image.base,
+      text_vmaddr: read.recordedUnsigned64(slice.textVmaddr),
+      runtime_base: read.retainIntegerReference(image.base),
     };
     matches.push(digest);
     matchedImage.set(image.index, digest);
@@ -270,6 +249,7 @@ export const resolveAppleIpsJoin = (
         matched: matchedImage,
         rejected: rejectedImage,
         slices: parsed.slices,
+        read,
       }),
     ),
   );
@@ -280,13 +260,15 @@ export const resolveAppleIpsJoin = (
     bytes: artifact.bytes.length,
     slices: parsed.slices.map((slice) => ({
       index: slice.index,
-      offset: slice.offset.toString(),
+      offset: read.decimalText64(slice.offset),
       arch: slice.arch,
-      cpu_type: `0x${slice.cpuType.toString(16)}`,
-      cpu_subtype: `0x${slice.cpuSubtype.toString(16)}`,
+      cpu_type: read.hexText32(slice.cpuType),
+      cpu_subtype: read.hexText32(slice.cpuSubtype),
       uuid: slice.uuid,
       text_vmaddr:
-        slice.textVmaddr === null ? null : recorded(slice.textVmaddr),
+        slice.textVmaddr === null
+          ? null
+          : read.recordedUnsigned64(slice.textVmaddr),
       unexamined: [...slice.unexamined],
     })),
     image_matches: matches,
@@ -305,6 +287,7 @@ interface FrameJoinContext {
   readonly matched: ReadonlyMap<number, AppleIpsJoinDigest>;
   readonly rejected: ReadonlyMap<number, string>;
   readonly slices: readonly SliceIdentity[];
+  readonly read: FieldReader;
 }
 
 const frameJoin = (
@@ -348,10 +331,13 @@ const frameJoin = (
     );
   }
   const offset = frame.image_offset;
-  const staticAddress =
-    offset === null
-      ? null
-      : recorded(BigInt(digest.text_vmaddr.decimal) + BigInt(offset.decimal));
+  if (offset === null)
+    return unjoined(
+      threadIndex,
+      frame.frame_index,
+      "frame records no imageOffset",
+    );
+  const staticAddress = context.read.add(digest.text_vmaddr, offset);
   return {
     thread_index: threadIndex,
     frame_index: frame.frame_index,

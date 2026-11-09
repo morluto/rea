@@ -156,3 +156,18 @@ rea inspect-apple-ips /absolute/path/to/report.ips --max-integer-text-bytes 1677
 `max_join_bytes` (`--max-join-bytes`) independently bounds the join artifact
 read, defaulting to 64 MiB. This workflow does not execute a target, launch
 atos, or search for dSYMs.
+
+
+## Join admission and failures
+
+The join uses the shared Mach-O container, slice, command-table and segment
+readers. Slice extents and `sizeofcmds` bound every identity observation; duplicate
+UUIDs or malformed commands cannot select the first plausible value. Unreadable
+join results retain the successfully read artifact's path, SHA-256 and byte count.
+
+The integer-text allowance spans the report and join, including repeated integer
+facts and derived static addresses. Reservation precedes derived address
+expansion. If a selected join read, interpretation or allowance fails, the error
+retains the completed IPS report. Join read limits and recovery use
+`max_join_bytes`, even when the report and join paths are identical. Cancellation
+retains the caller's reason independently of those completed facts.

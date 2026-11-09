@@ -1,3 +1,9 @@
+import { createHash } from "node:crypto";
+import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
+import {
+  appleIpsReportIntegerTextBytes,
+  appleIpsSchema,
+} from "../../../src/domain/native/appleIps.js";
 import { join } from "node:path";
 import { writeFile } from "node:fs/promises";
 import { describe, expect, it } from "vitest";
@@ -78,7 +84,7 @@ const fatImage = (slices: readonly SliceSpec[]): Buffer => {
     table.writeUInt32BE(slices[index]?.cpu.subtype ?? 0, 12 + index * 20);
     table.writeUInt32BE(cursor, 16 + index * 20);
     table.writeUInt32BE(body_.length, 20 + index * 20);
-    table.writeUInt32BE(14, 24 + index * 20);
+    table.writeUInt32BE(12, 24 + index * 20);
     cursor += Math.ceil(body_.length / alignment) * alignment;
   }
   const out = Buffer.alloc(cursor);
@@ -223,7 +229,147 @@ describe("Apple IPS Mach-O and dSYM join", () => {
     const report = result.value.normalized_result as { readonly join: unknown };
     expect(report.join).toMatchObject({
       status: "unreadable",
-      reason: expect.stringContaining("neither a Mach-O"),
+      reason: expect.any(String),
     });
   });
+});
+
+it.each([
+  "slice-extent",
+  "command-extent",
+  "cpu-disagreement",
+  "duplicate-uuid",
+] as const)(
+  "does not borrow identity outside the admitted %s",
+  async (mode) => {
+    const root = await createTestTempDirectory("rea-ips-invalid-join-");
+    let bytes = fatImage([
+      { cpu: ARM64, uuid: FIXTURE_UUID, textVmaddr: 0x100000000n },
+    ]);
+    if (mode === "slice-extent") bytes.writeUInt32BE(28, 20);
+    if (mode === "command-extent") bytes.writeUInt32LE(0, 0x1000 + 20);
+    if (mode === "cpu-disagreement") bytes.writeUInt32BE(X86_64.type, 8);
+    if (mode === "duplicate-uuid") {
+      const slice = machoSlice({
+        cpu: ARM64,
+        uuid: FIXTURE_UUID,
+        textVmaddr: 0x100000000n,
+      });
+      bytes = Buffer.concat([slice, uuidCommand(FIXTURE_UUID)]);
+      bytes.writeUInt32LE(3, 16);
+      bytes.writeUInt32LE(bytes.length - 32, 20);
+    }
+    const path = join(root, "report.ips");
+    const joinPath = join(root, "join.bin");
+    await writeFile(path, appleIpsBytes());
+    await writeFile(joinPath, bytes);
+    const result = await createAppleIpsService().inspect({
+      path,
+      join_path: joinPath,
+    });
+    if (!result.ok) throw result.error;
+    const report = appleIpsSchema.parse(result.value.normalized_result);
+    expect(report.join).toMatchObject({
+      status: "unreadable",
+      bytes: bytes.length,
+      sha256: createHash("sha256").update(bytes).digest("hex"),
+    });
+    expect(report.images.length).toBeGreaterThan(0);
+  },
+);
+
+it("retains completed report facts on a failed join read and charges join integer expansion", async () => {
+  const root = await createTestTempDirectory("rea-ips-join-failure-");
+  const path = join(root, "report.ips");
+  const joinPath = join(root, "join.bin");
+  await writeFile(path, appleIpsBytes());
+  const service = createAppleIpsService();
+  try {
+    const plain = await service.inspect({ path });
+    if (!plain.ok) throw plain.error;
+    const report = appleIpsSchema.parse(plain.value.normalized_result);
+    const missing = await service.inspect({ path, join_path: joinPath });
+    expect(missing).toMatchObject({ ok: false });
+    if (missing.ok) throw new Error("Missing join was admitted");
+    expect(missing.error.partialObservation).toEqual(report);
+    await writeFile(
+      joinPath,
+      machoSlice({ cpu: ARM64, uuid: FIXTURE_UUID, textVmaddr: 0x100000000n }),
+    );
+    const allowance = appleIpsReportIntegerTextBytes(report) + 128;
+    const baseline = await service.inspect({
+      path,
+      max_integer_text_bytes: allowance,
+    });
+    expect(baseline.ok).toBe(true);
+    const limited = await service.inspect({
+      path,
+      join_path: joinPath,
+      max_integer_text_bytes: allowance,
+    });
+    expect(limited).toMatchObject({ ok: false });
+    if (limited.ok) throw new Error("Join expansion exceeded its allowance");
+    expect(limited.error.partialObservation).toEqual(report);
+    const complete = await service.inspect({ path, join_path: joinPath });
+    if (!complete.ok) throw complete.error;
+    const joined = appleIpsSchema.parse(complete.value.normalized_result);
+    expect(appleIpsReportIntegerTextBytes(joined)).toBeGreaterThan(allowance);
+  } finally {
+    await service.close();
+  }
+});
+
+it("keeps a frame without imageOffset unjoined", async () => {
+  const root = await createTestTempDirectory("rea-ips-unknown-offset-");
+  const path = join(root, "report.ips");
+  const joinPath = join(root, "join.bin");
+  await writeFile(
+    path,
+    appleIpsBytes()
+      .toString()
+      .replace(/"imageOffset"\s*:\s*\d+/u, '"imageOffset":null'),
+  );
+  await writeFile(
+    joinPath,
+    machoSlice({ cpu: ARM64, uuid: FIXTURE_UUID, textVmaddr: 0x100000000n }),
+  );
+  const result = await createAppleIpsService().inspect({
+    path,
+    join_path: joinPath,
+  });
+  if (!result.ok) throw result.error;
+  const joinResult = appleIpsSchema.parse(result.value.normalized_result).join;
+  if (joinResult?.status !== "selected")
+    throw new Error("Expected selected join");
+  expect(joinResult.frames[0]).toMatchObject({
+    status: "unjoined",
+    static_address: null,
+  });
+});
+
+it("uses the selected join budget even when report and join paths are identical", async () => {
+  const root = await createTestTempDirectory("rea-ips-same-path-");
+  const path = join(root, "report.ips");
+  await writeFile(path, appleIpsBytes());
+  const service = createAppleIpsService();
+  try {
+    const result = await service.inspect({
+      path,
+      join_path: path,
+      max_join_bytes: 2,
+    });
+    if (result.ok) throw new Error("The join exceeded its own read allowance");
+    const failure = projectAnalysisError(result.error);
+    expect(failure).toMatchObject({
+      code: "resource_constraint",
+      details: {
+        partial_observation: { artifact: { path } },
+        reported_limits: { max_join_bytes: 2, selected_input: "join_path" },
+      },
+    });
+    expect(JSON.stringify(failure)).toContain("max_join_bytes");
+    expect(JSON.stringify(failure)).not.toContain("Raise max_file_bytes");
+  } finally {
+    await service.close();
+  }
 });
