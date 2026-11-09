@@ -1,3 +1,4 @@
+import { ExportPublishedCleanupFailure } from "./exportResources.js";
 import { join } from "node:path";
 import { z } from "zod";
 
@@ -199,7 +200,18 @@ export const decompileAll = async (
     ...(closed.ok ? [] : [closed.error]),
   ];
   const primary = failures[0];
+  const publishedIndex = indexed.ok
+    ? join(session.root, DECOMPILE_DIRECTORY_INDEX_NAME)
+    : indexed.error.cause instanceof ExportPublishedCleanupFailure
+      ? indexed.error.cause.publishedPath
+      : undefined;
+  const publishedOutput =
+    publishedIndex === undefined
+      ? undefined
+      : { output_directory: session.root, index_path: publishedIndex };
   if (primary !== undefined) {
+    if (publishedOutput !== undefined)
+      primary.retainDiagnostics({ published_output: publishedOutput });
     if (
       isAborted(signal) &&
       !(
@@ -210,22 +222,33 @@ export const decompileAll = async (
       primary.retainSecondaryFailure(cancelled(signal));
     for (const failure of failures.slice(1))
       primary.retainSecondaryFailure(failure);
-    return !closed.ok &&
+    if (
+      !closed.ok &&
       primary !== closed.error &&
       closed.error.cleanupIncomplete
-      ? err(
-          analysisErrorWithCleanupFailure(
-            primary,
-            closed.error,
-            "decompile_all",
-          ).bindCleanupDependencies([primary, closed.error]),
-        )
-      : err(primary);
+    ) {
+      const combined = analysisErrorWithCleanupFailure(
+        primary,
+        closed.error,
+        "decompile_all",
+      ).bindCleanupDependencies([primary, closed.error]);
+      // The composed error is projected until cleanup resolves; afterward its
+      // primary is projected, so both owners must retain the same receipt.
+      if (publishedOutput !== undefined)
+        combined.retainDiagnostics({ published_output: publishedOutput });
+      return err(combined);
+    }
+    return err(primary);
   }
   // Finalization succeeded, so committed files and the index are usable on
   // resume, but a caller abort that stopped the loop or arrived meanwhile is
   // not a success. Report it with the caller's own reason.
-  if (isAborted(signal)) return err(cancelled(signal));
+  if (isAborted(signal)) {
+    const failure = cancelled(signal);
+    if (publishedOutput !== undefined)
+      failure.retainDiagnostics({ published_output: publishedOutput });
+    return err(failure);
+  }
   const manifest = decompileDirectoryManifestSchema.safeParse(
     manifestOf({
       root: session.root,
