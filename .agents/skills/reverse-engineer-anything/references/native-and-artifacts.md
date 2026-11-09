@@ -76,7 +76,7 @@ source and type recovery remain a separate native-analysis question. For a
 scanner, project the retained parent with `inspect_analysis_view` kind
 `cyclonedx`. That document is CycloneDX 1.6, reads no target bytes, and states
 `compositions` as incomplete or unknown. See
-[CycloneDX dependencies](https://github.com/morluto/rea/blob/main/docs/cyclonedx-view.md).
+[CycloneDX dependencies](https://github.com/morluto/rea/blob/main/docs/guides/native/cyclonedx-view.md).
 
 ## Model files
 
@@ -120,7 +120,7 @@ inferred from a read-only `/rustc/<40-hex>/` path and does not by itself
 identify the compiler. Project the retained parent with `inspect_analysis_view`
 kind `cyclonedx` for one CycloneDX 1.6 document. Build-kind packages are
 `scope: excluded`. See [Rust binaries](https://github.com/morluto/rea/blob/main/docs/rust-binaries.md)
-and [CycloneDX dependencies](https://github.com/morluto/rea/blob/main/docs/cyclonedx-view.md).
+and [CycloneDX dependencies](https://github.com/morluto/rea/blob/main/docs/guides/native/cyclonedx-view.md).
 
 ## PE Authenticode certificate tables
 

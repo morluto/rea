@@ -632,7 +632,7 @@ export const documentationSections = [
       },
       {
         text: "CycloneDX dependencies",
-        source: "cyclonedx-view.md",
+        source: "guides/native/cyclonedx-view.md",
         route: "/cyclonedx-view",
       },
       {

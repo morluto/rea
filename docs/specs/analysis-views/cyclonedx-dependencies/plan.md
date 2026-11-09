@@ -29,7 +29,7 @@ views into `src/domain/analysisView/metadataReportSubject.ts` so
 5. Add `scripts/verify-cyclonedx-view.mjs` (`npm run verify:cyclonedx:view`)
    to build real Go and `cargo auditable` fixtures and validate the documents
    against pinned CycloneDX 1.6.1 schema files and a CycloneDX consumer.
-6. Add the [CycloneDX guide](../../../cyclonedx-view.md), link it from the CLI,
+6. Add the [CycloneDX guide](../../../guides/native/cyclonedx-view.md), link it from the CLI,
    Go and Rust guides and the skill reference, and register its route.
 
 ## Effects and compatibility

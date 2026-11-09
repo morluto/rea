@@ -270,7 +270,7 @@ JSON
 rea inspect-analysis-view cyclonedx-view.json --json | jq '.normalized_result.document' > sbom.cdx.json
 ```
 
-See [CycloneDX dependencies](../cyclonedx-view.md).
+See [CycloneDX dependencies](../guides/native/cyclonedx-view.md).
 
 Inspect a Godot PCK without running the game:
 

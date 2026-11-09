@@ -60,7 +60,7 @@ remain in the parent and can be exported as an Evidence bundle.
 
 The same parent projects a CycloneDX 1.6 document with
 `view: { "kind": "cyclonedx" }`. It reads no target bytes. See
-[CycloneDX dependencies](../../cyclonedx-view.md).
+[CycloneDX dependencies](cyclonedx-view.md).
 
 One-shot CLI summaries save complete Evidence before returning the projection:
 
